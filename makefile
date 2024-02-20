@@ -10,6 +10,8 @@ PROJECT = wind
 
 SRCS += main.cpp
 SRCS += Debug.cpp
+SRCS += Window.cpp
+SRCS += glad.cpp
 
 OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 
@@ -19,6 +21,7 @@ default: $(OBJS)
 $(OBJS): %.o: %.cpp
 	$(CC) -c $(CFLAGS) $(IPATHS) $< -o $@
 
-
-
 all: default
+
+clean:
+	-rm -rf $(OBJS)
