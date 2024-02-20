@@ -1,53 +1,7 @@
-//-----------------------------------------------------------------------------
-// Copyright (c) 2006-2010 dhpoware. All Rights Reserved.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the "Software"),
-// to deal in the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-// IN THE SOFTWARE.
-//-----------------------------------------------------------------------------
-//
-// This demo builds on the previous layered window demo.
-// (http://www.dhpoware.com/downloads/LayeredWindow.zip).
-//
-// In the previous demo, we used a TGA image with an embedded alpha mask as the
-// source of our layered window.
-//
-// In this demo we use OpenGL to draw a rotating cube to a pbuffer. Once the
-// scene is drawn to the pbuffer we then make a local system memory copy of
-// the pbuffer's pixel data and use that as the source of our layered window.
-//
-// You can move the cube around the screen by holding down the left mouse
-// button and dragging. To exit the demo press the ESC key.
-//
-// This demo requires Windows 2000, XP, or higher to run. The minimum supported
-// operating system for the layered windows API is Windows 2000.
-//
-// This demo also requires the following OpenGL extensions:
-//  WGL_ARB_pbuffer
-//  WGL_ARB_pixel_format
-//
-//-----------------------------------------------------------------------------
+
 
 // Force the layered windows APIs to be visible.
 #define _WIN32_WINNT 0x0500
-
-// Disable warning C4244: conversion from 'float' to 'BYTE', possible loss of
-// data. Used in the ImagePreMultAlpha() function.
-#pragma warning (disable : 4244)
 
 #include <windows.h>
 #include <GL/gl.h>
@@ -57,6 +11,12 @@
 #include <cstdio>
 #include <vector>
 #include <crtdbg.h>
+
+#include "Debug.h"
+static Debugger* debug = new Debugger("Main",DEBUG_ALL);
+
+bool quit = false;
+bool f_control_down = false;
 
 //-----------------------------------------------------------------------------
 // WGL_ARB_pbuffer.
@@ -238,6 +198,16 @@ Vertex g_cube[36] =
     {-0.5f, -0.5f,  0.5f,   -1.0f, 0.0f, 0.0f,   0.0f, 1.0f},
     {-0.5f, -0.5f, -0.5f,   -1.0f, 0.0f, 0.0f,   1.0f, 1.0f}
 };
+
+BOOL WINAPI ConsoleHandler(DWORD console_event){
+    switch(console_event){
+        case CTRL_C_EVENT:
+            debug->Ok("Shutting down by CTRL+C\n");
+            quit = true;
+        break;
+    }
+    return true;
+}
 
 //-----------------------------------------------------------------------------
 // Functions.
@@ -717,17 +687,32 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
-
+    case WM_KEYUP:
+        if (wParam == VK_CONTROL){
+            f_control_down = false;
+        }
+        return 0;
     case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE)
-        {
+        if (wParam == VK_ESCAPE){
             SendMessage(hWnd, WM_CLOSE, 0, 0);
+            return 0;
+        }else if (wParam == VK_CONTROL){
+            f_control_down = true;
+            return 0;
+        }else if (wParam == 'C'){
+            if (f_control_down){
+                quit = true;
+            }
+            return 0;
+        }else{
+            //debug->Info("WM_KEYDOWN: %lu (0x%0X)\n",wParam,wParam);
             return 0;
         }
         break;
 
     case WM_NCHITTEST:
-        return HTCAPTION;   // allows dragging of the window
+        //This returns the mouse is over the Titlebar of the window, which allows it to be dragged.
+        return HTCAPTION;
 
     case WM_TIMER:
         _stprintf(szBuffer, _TEXT("%d FPS"), g_frames);
@@ -742,11 +727,11 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-                   LPSTR lpCmdLine, int nShowCmd)
-{
-
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd){
+    //Used to do things from console, like CTRL+C
+    if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)ConsoleHandler,TRUE)==FALSE){
+        debug->Err("Unable to install a console handler!\n");
+    }
 
     MSG msg = {0};
     WNDCLASSEX wcl = {0};
@@ -778,7 +763,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             ShowWindow(g_hWnd, nShowCmd);
             UpdateWindow(g_hWnd);
 
-            while (true)
+            while (quit == false)
             {
                 if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
                 {

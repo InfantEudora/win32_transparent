@@ -1,0 +1,12 @@
+*.exe
+*.o
+*.stl
+*.zip
+*.rar
+*.log
+imgui.ini
+3dmodels/*
+AppIso/imgs_reference/*
+*.d
+*.blend1
+*.blend
