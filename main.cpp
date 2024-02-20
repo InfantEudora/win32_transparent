@@ -1,7 +1,6 @@
 
 
-// Force the layered windows APIs to be visible.
-#define _WIN32_WINNT 0x0500
+
 
 #include <GL/gl.h>
 #include <GL/glu.h>
@@ -17,8 +16,6 @@
 
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
-bool quit = false;
-bool f_control_down = false;
 
 //Window everything will be drawn in.
 Window* wind = NULL;
@@ -119,7 +116,9 @@ BOOL WINAPI ConsoleHandler(DWORD console_event){
     switch(console_event){
         case CTRL_C_EVENT:
             debug->Ok("Shutting down by CTRL+C\n");
-            quit = true;
+            if (wind){
+                wind->Close();
+            }
         break;
     }
     return true;
@@ -376,8 +375,6 @@ bool InitPBuffer()
     int format = 0;
     UINT matchingFormats = 0;
 
-
-
     if (!wglChoosePixelFormatARB(g_hDC, attribList, 0, 1, &format, &matchingFormats)){
         debug->Fatal("wglChoosePixelFormatARB() failed");
     }
@@ -387,21 +384,16 @@ bool InitPBuffer()
     }
 
     if (!(g_hPBufferDC = wglGetPbufferDCARB(g_hPBuffer))){
-        MessageBox(0, _T("wglGetPbufferDCARB() failed"), _T("Error"), MB_ICONSTOP);
-        return false;
+        debug->Fatal("wglGetPbufferDCARB() failed");
     }
 
-    if (!(g_hPBufferRC = wglCreateContext(g_hPBufferDC)))
-    {
-        MessageBox(0, _T("wglCreateContext() failed for PBuffer"), _T("Error"), MB_ICONSTOP);
-        return false;
+    if (!(g_hPBufferRC = wglCreateContext(g_hPBufferDC))){
+        debug->Fatal("wglCreateContext() failed for PBuffer");
     }
-
     return true;
 }
 
-bool InitGL()
-{
+bool InitGL(){
     // Even though we aren't going to be rendering the scene to the window
     // we still need to create a dummy rendering context in order to load the
     // pbuffer extensions and to create our pbuffer.
@@ -555,58 +547,6 @@ void DrawFrame()
     g_frames++;
 }
 
-LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    static TCHAR szBuffer[32] = {0};
-
-    switch (msg)
-    {
-    case WM_CREATE:
-
-
-        return 0;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    case WM_KEYUP:
-        if (wParam == VK_CONTROL){
-            f_control_down = false;
-        }
-        return 0;
-    case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE){
-            SendMessage(hWnd, WM_CLOSE, 0, 0);
-            return 0;
-        }else if (wParam == VK_CONTROL){
-            f_control_down = true;
-            return 0;
-        }else if (wParam == 'C'){
-            if (f_control_down){
-                quit = true;
-            }
-            return 0;
-        }else{
-            //debug->Info("WM_KEYDOWN: %lu (0x%0X)\n",wParam,wParam);
-            return 0;
-        }
-        break;
-
-    case WM_NCHITTEST:
-        //This returns the mouse is over the Titlebar of the window, which allows it to be dragged.
-        return HTCAPTION;
-
-    case WM_TIMER:
-        _stprintf(szBuffer, _TEXT("%d FPS"), g_frames);
-        SetWindowText(hWnd, szBuffer);
-        g_frames = 0;
-        return 0;
-
-    default:
-        break;
-    }
-
-    return DefWindowProc(hWnd, msg, wParam, lParam);
-}
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd){
     //Used to do things from console, like CTRL+C
@@ -614,30 +554,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         debug->Err("Unable to install a console handler!\n");
     }
 
-
+    wind = new Window();
 
     MSG msg = {0};
-    WNDCLASSEX wcl = {0};
 
-    wcl.cbSize = sizeof(wcl);
-    wcl.style = CS_HREDRAW | CS_VREDRAW;
-    wcl.lpfnWndProc = WindowProc;
-    wcl.cbClsExtra = 0;
-    wcl.cbWndExtra = 0;
-    wcl.hInstance = hInstance;
-    wcl.hIcon = LoadIcon(0, IDI_APPLICATION);
-    wcl.hCursor = LoadCursor(0, IDC_ARROW);
-    wcl.hbrBackground = 0;
-    wcl.lpszMenuName = 0;
-    wcl.lpszClassName = _T("GLLayeredWindowClass");
-    wcl.hIconSm = 0;
+    wind->RegisterWindowClass(hInstance);
 
-    if (!RegisterClassEx(&wcl))
-        return 0;
 
-    g_hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST, wcl.lpszClassName,
+    wind->hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST, wind->wc.lpszClassName,
                 _T("GL Layered Window Demo"), WS_POPUP, 0, 0, IMAGE_WIDTH,
-                IMAGE_HEIGHT, 0, 0, wcl.hInstance, 0);
+                IMAGE_HEIGHT, 0, 0, wind->wc.hInstance, 0);
+
+    g_hWnd = wind->hWnd;
 
     if (g_hWnd)
     {
@@ -646,7 +574,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             ShowWindow(g_hWnd, nShowCmd);
             UpdateWindow(g_hWnd);
 
-            while (quit == false)
+            while (wind->f_should_quit == false)
             {
                 if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
                 {
@@ -664,7 +592,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
 
         Cleanup();
-        UnregisterClass(wcl.lpszClassName, hInstance);
+        UnregisterClass(wind->wc.lpszClassName, hInstance);
     }
 
     return (int)(msg.wParam);

@@ -15,6 +15,8 @@
 */
 class Window;
 
+LRESULT CALLBACK windproc(HWND hwnd, UINT wm, WPARAM wp, LPARAM lp);
+
 class Window{
     public:
     static Window* dummywindow;
@@ -24,6 +26,7 @@ class Window{
     HWND        hWnd = 0; //Handle to a window
     HDC         hDC; //Handle to a Device Context
     HGLRC       hRC;
+    WNDCLASSEX  wc;      //Main window class
 
     int left = 0;
     int top = 0;
@@ -37,11 +40,14 @@ class Window{
     bool f_has_focus = false;
     std::string title = "Window Title";
 
+    bool f_should_quit = false;
+    bool f_control_down = false;
 
-    Window(){};
-    ~Window(){};
 
-    void RegisterWindowClasses();
+    Window();
+    ~Window();
+
+    void RegisterWindowClass(HINSTANCE hInst);
     void InitOpenGL(HINSTANCE hInst);
     //void InitGL(HWND& hWnd, HINSTANCE hInst);
     void SetVSync(bool enable);
@@ -49,6 +55,7 @@ class Window{
     void Resize(int width, int height);
     void Move(int x, int y);
     void SetTitle(std::string);
+    void Close(void);
     static HWND _FindWindow(std::string title);
 
     //void Register_DropFiles();
