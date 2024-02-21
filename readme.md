@@ -13,6 +13,10 @@ All code in this repository is supplied with the same copyright.
 - A new thread can be spawned which creates a new window with it's own OpenGL context. Change `num_threads = 1`
 - It can render to a normal window by requesting `CreateNewWindow` instead of `CreateNewLayeredWindow`
 
+It should kind of look like this:
+
+![screenshot](example_desktop.png)
+
 ### ToDo's
 - [x] Multisampling to a seperate FBO
 - [x] Resolve the multisample to a FBO.
