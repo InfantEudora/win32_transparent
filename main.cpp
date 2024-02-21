@@ -74,7 +74,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     Window::RegisterWindowClasses();
 
-    Window* wind = Window::CreateNewLayeredWindow(256,256,&Window::wcs.at(0));
+    Window* wind = Window::CreateNewWindow(256,256,&Window::wcs.at(0));
     if (!wind){
         debug->Fatal("Unable to create window\n");
     }
@@ -84,8 +84,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     //Now we can make shaders
     Shader* shader = new Shader("default.vert","default.frag");
+    shader->Use();
 
-    for (int i =0;i<1;i++){
+    for (int i =0;i<0;i++){
         HANDLE hThread = NULL;
         DWORD thread_id;
         // Create a new thread which will get it's own render context

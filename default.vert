@@ -24,8 +24,8 @@ void main() {
 	mat4 mat_trans = mat4(
 		1		,0		,0		,0,
 		0		,1		,0		,0,
-		0		,0		,1		,0,
-		0		,0		,0		,1
+		0		,0		,-1.004		,-1.0,
+		0		,0		,5		,5
 	);
 
 	//Only object rotation. We want to decompose this from the mat_trans for light calculations
@@ -44,5 +44,7 @@ void main() {
 	vnormal = (mat_rotate * vn).xyz;
 
 	vuv = uv;
+
+	gl_Position = (mat_worldcam * transpos) ;
 
 }

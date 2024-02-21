@@ -141,3 +141,7 @@ int Shader::LinkProgram(){
 	//The data may now be deleted.
 	return programid;
 }
+
+void Shader::Use(){
+	glUseProgram(progid);
+}

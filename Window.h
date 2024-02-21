@@ -27,6 +27,10 @@ typedef struct{
     BYTE *pPixels;
 } Image;
 
+#define ATTRIB_VERTEX   0
+#define ATTRIB_NORMAL   1
+#define ATTRIB_UVCOORD  2
+
 /*
     A Class for managing WIN32 windows.
 
@@ -73,8 +77,11 @@ class Window{
     GLuint color_rbo_id = -1; // Main color
     GLuint depth_rbo_id = -1; // Main depth
 
-    GLuint resolve_fbo_id = -1;  //Corresponding frame buffer
-    GLuint resolve_rbo_id = -1;  //Corresponding frame buffer
+    GLuint resolve_fbo_id = -1;  //Resolve frame buffer
+    GLuint resolve_rbo_id = -1;  //Corresponding render buffer
+
+    GLuint cube_vao = -1;
+
 
     //Bitmap image for layered window
     Image g_image;
@@ -95,6 +102,7 @@ class Window{
 
     bool CheckFrameBuffer();
     bool InitFBO();
+    bool InitVBO();
     void ResolveAA();
     void DrawFrame();
     void CopyBufferToImage();

@@ -26,6 +26,7 @@ public:
     int CompileVertex(char* data);
     int CompileFragment(char* data);
     int LinkProgram();
+    void Use();
 
 };
 

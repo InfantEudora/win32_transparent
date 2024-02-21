@@ -249,6 +249,10 @@ bool Window::Init(){
         return false;
     }
 
+    if (!InitVBO()){
+        return false;
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glEnable(GL_DEPTH_TEST);
@@ -333,6 +337,21 @@ bool Window::InitOpenGL(){
     if (!InitGLExtensions())
         return false;
 
+    //Some deletecontext maybe?
+
+    int attributes[] = {
+        WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
+        WGL_CONTEXT_MINOR_VERSION_ARB, 3,
+        WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
+        0
+    };
+
+    hRC = wglCreateContextAttribsARB( hDC, 0, attributes );
+    debug->Info("wglCreateContextAttribsARB: hRC = %lu\n",hRC);
+
+    if (!wglMakeCurrent(hDC, hRC))
+        debug->Err("wglMakeCurrent failed (%d)\n", GetLastError());
+
     return true;
 }
 
@@ -373,6 +392,12 @@ bool Window::InitFBO(){
     return true;
 }
 
+
+bool Window::InitVBO(){
+    glGenBuffers(1, (GLuint*)&cube_vao);
+    return true;
+}
+
 //Blit all multisampled buffer back to main/resolve buffers
 void Window::ResolveAA(){
     //Blit from multisampled buffer to main backbuffer = GL_COLOR_ATTACHMENT0
@@ -391,8 +416,45 @@ void Window::DrawFrame(){
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    int num_vertices = 36;
 
+    glEnableVertexAttribArray(ATTRIB_VERTEX);
+    glEnableVertexAttribArray(ATTRIB_NORMAL);
+    glEnableVertexAttribArray(ATTRIB_UVCOORD);
 
+    //Make one interleaved buffer for the cube
+    glBindBuffer(GL_ARRAY_BUFFER, cube_vao);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW );
+	glVertexAttribPointer(
+        ATTRIB_VERTEX,  // Index in shader
+        3,              // Size
+        GL_FLOAT,       // Type
+        GL_FALSE,       // Normalized
+        8*sizeof(float),// Stride
+        (void*)0        // Offset
+    );
+
+	glVertexAttribPointer(
+        ATTRIB_NORMAL,       // must match the layout in the shader.
+        3,                  // size
+        GL_FLOAT,           // type
+        GL_TRUE,           // normalized?
+        8*sizeof(float),   // Stride
+        (void*)(3*sizeof(float)) // array buffer offset
+    );
+
+	glVertexAttribPointer(
+        ATTRIB_UVCOORD, // Index in shader
+        2,              // Size
+        GL_FLOAT,       // Type
+        GL_FALSE,       // Normalized
+        8*sizeof(float),   // Stride
+        (void*)(6*sizeof(float))        // Offset
+	);
+
+    glDrawArraysInstanced(GL_TRIANGLES, 0, num_vertices,1); // Starting from vertex 0; 3 vertices total -> 1 triangle
+
+/*
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     gluPerspective(45.0f, (float)width / (float)height, 1.0f, 100.0f);
@@ -423,6 +485,7 @@ void Window::DrawFrame(){
     glDisableClientState(GL_TEXTURE_COORD_ARRAY);
     glDisableClientState(GL_NORMAL_ARRAY);
     glDisableClientState(GL_VERTEX_ARRAY);
+    */
 
     ResolveAA();
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
