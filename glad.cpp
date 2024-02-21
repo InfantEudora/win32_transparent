@@ -3,27 +3,28 @@
 
 static Debugger* debug = new Debugger("Glad",DEBUG_ALL);
 
-PFNWGLCHOOSEPIXELFORMATARBPROC                    wglChoosePixelFormatARB;
-PFNWGLGETPIXELFORMATATTRIBFVARBPROC               wglGetPixelFormatAttribfvARB;
-PFNWGLGETPIXELFORMATATTRIBIVARBPROC               wglGetPixelFormatAttribivARB;
+PFNWGLCHOOSEPIXELFORMATARBPROC                    wglChoosePixelFormatARB = NULL;
+PFNWGLGETPIXELFORMATATTRIBFVARBPROC               wglGetPixelFormatAttribfvARB = NULL;
+PFNWGLGETPIXELFORMATATTRIBIVARBPROC               wglGetPixelFormatAttribivARB = NULL;
 
-PFNWGLDESTROYPBUFFERARBPROC                       wglDestroyPbufferARB;
-PFNWGLQUERYPBUFFERARBPROC                         wglQueryPbufferARB;
-PFNWGLGETPBUFFERDCARBPROC                         wglGetPbufferDCARB;
-PFNWGLCREATEPBUFFERARBPROC                        wglCreatePbufferARB;
-PFNWGLRELEASEPBUFFERDCARBPROC                     wglReleasePbufferDCARB;
+PFNWGLDESTROYPBUFFERARBPROC                       wglDestroyPbufferARB = NULL;
+PFNWGLQUERYPBUFFERARBPROC                         wglQueryPbufferARB = NULL;
+PFNWGLGETPBUFFERDCARBPROC                         wglGetPbufferDCARB = NULL;
+PFNWGLCREATEPBUFFERARBPROC                        wglCreatePbufferARB = NULL;
+PFNWGLRELEASEPBUFFERDCARBPROC                     wglReleasePbufferDCARB = NULL;
 
-PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
+PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
 
-PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers;
-PFNGLGENRENDERBUFFERSPROC glGenRenderbuffers;
+PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers = NULL;
+PFNGLGENRENDERBUFFERSPROC glGenRenderbuffers = NULL;
 
-PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus;
-PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer;
-PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer;
-PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC glRenderbufferStorageMultisample;
-PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer;
-PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage;
+PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus = NULL;
+PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = NULL;
+PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer = NULL;
+PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC glRenderbufferStorageMultisample = NULL;
+PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = NULL;
+PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage = NULL;
+PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer = NULL;
 
 bool InitGLExtensions(void){
     // WGL_ARB_pbuffer.
@@ -51,6 +52,7 @@ bool InitGLExtensions(void){
     glRenderbufferStorageMultisample = (PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC)wglGetProcAddress("glRenderbufferStorageMultisample");
     glFramebufferRenderbuffer = (PFNGLFRAMEBUFFERRENDERBUFFERPROC)wglGetProcAddress("glFramebufferRenderbuffer");
     glRenderbufferStorage = (PFNGLRENDERBUFFERSTORAGEPROC)wglGetProcAddress("glRenderbufferStorage");
+    glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)wglGetProcAddress("glBlitFramebuffer");
 
     if (!wglDestroyPbufferARB || !wglQueryPbufferARB || !wglGetPbufferDCARB || !wglCreatePbufferARB || !wglReleasePbufferDCARB){
         debug->Fatal("Required extension WGL_ARB_pbuffer not supported");

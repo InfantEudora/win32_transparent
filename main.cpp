@@ -341,10 +341,10 @@ void InitCheckerPatternTexture()
     glGenTextures(1, &g_textureId);
     glBindTexture(GL_TEXTURE_2D, g_textureId);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glTexEnvf(GL_TEXTURE_2D, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
@@ -449,7 +449,7 @@ bool InitFBO(){
         return false;
     }
 
-    int aa_samples = 4;
+    int aa_samples = 16;
     int width = 256;
     int height = 256;
 
@@ -470,10 +470,21 @@ bool InitFBO(){
 
     //The resolve buffer
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
+    glBindRenderbuffer(GL_RENDERBUFFER, resolve_rbo_id);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA16F, width, height);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, resolve_rbo_id);
-
+    CheckFrameBuffer();
     return true;
+}
+
+//Blit all multisampled buffer back to main/resolve buffers
+void ResolveAA(int width, int height){
+    //Blit from multisampled buffer to main backbuffer = GL_COLOR_ATTACHMENT0
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, msaa_fbo_id);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve_fbo_id);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
 bool InitGL(){
@@ -487,7 +498,7 @@ bool InitGL(){
     // context so just ask for the bare minimum.
     pfd.nSize = sizeof(pfd);
     pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
     pfd.iPixelType = PFD_TYPE_RGBA;
     pfd.cColorBits = 24;
     pfd.cDepthBits = 24;
@@ -515,17 +526,18 @@ bool InitGL(){
     }
 
 
-    if (!InitPBuffer())
-        return false;
+    //if (!InitPBuffer())
+    //    return false;
 
     // Deactivate the dummy rendering context now that the pbuffer is created.
-    wglMakeCurrent(g_hDC, 0);
-    ReleaseDC(g_hWnd, g_hDC);
-    g_hDC = 0;
+    //wglMakeCurrent(g_hDC, 0);
+    //ReleaseDC(g_hWnd, g_hDC);
+    //g_hDC = 0;
 
     // We are only doing off-screen rendering. So activate our pbuffer once.
-    wglMakeCurrent(g_hPBufferDC, g_hPBufferRC);
+    //wglMakeCurrent(g_hPBufferDC, g_hPBufferRC);
 
+    glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
@@ -581,6 +593,9 @@ void DrawFrame(){
     // all normal OpenGL draw calls will affect the pbuffer's framebuffer NOT
     // the normal rendering context for the window.
 
+    //Select the mutisampled frambuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
+
     glViewport(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -595,7 +610,7 @@ void DrawFrame(){
 
     // This seems to produce a nice smooth rotation for our cube.
     //glRotatef(timeGetTime() / 50.0f, 0.0f, 1.0f, 0.0f);
-    rotation += 0.01f;
+    rotation += 0.1f;
     glRotatef(rotation, 0.0f, 1.0f, 0.0f);
 
     //
@@ -616,6 +631,9 @@ void DrawFrame(){
     glDisableClientState(GL_NORMAL_ARRAY);
     glDisableClientState(GL_VERTEX_ARRAY);
 
+    ResolveAA(256,256);
+    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
+
     // At this stage the pbuffer will contain our scene. Now we make a system
     // memory copy of the pbuffer.
     CopyPBufferToImage();
@@ -627,8 +645,9 @@ void DrawFrame(){
     // Finally we update our layered window with our scene.
     RedrawLayeredWindow();
 
+
     glFinish();
-    SwapBuffers(g_image.hdc);
+    SwapBuffers(g_hDC);
 
     // Since we're doing off-screen rendering the frame rate will be
     // independent of the video display's refresh rate.
