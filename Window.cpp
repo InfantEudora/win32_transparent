@@ -4,6 +4,7 @@
 static Debugger* debug = new Debugger("Window",DEBUG_ALL);
 
 std::vector<Window*>Window::windows; //A list of windows to match handles to
+std::vector<WNDCLASSEX>Window::wcs;      //Different types of window classes
 
 //Used to match window to handle
 Window* Window::GetWindowByHandle(HWND hWnd){
@@ -28,28 +29,84 @@ void Window::Close(){
     SendMessage(hWnd, WM_CLOSE, 0, 0);
 }
 
+void Window::Show(int nShowCmd){
+    ShowWindow(hWnd, nShowCmd);
+    //UpdateWindow(hWnd);
+}
+
 //This registers the window classes for this application
-void Window::RegisterWindowClass(HINSTANCE hInst){
-    wc = {0};
+void Window::RegisterWindowClasses(){
+    WNDCLASSEX wc = {0};
 
     wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.style = 0; //CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = windproc;
     wc.cbClsExtra = 0;
     wc.cbWndExtra = 0;
-    wc.hInstance = hInst;
-    wc.hIcon = LoadIcon(0, IDI_APPLICATION);
-    wc.hCursor = LoadCursor(0, IDC_ARROW);
-    wc.hbrBackground = 0;
-    wc.lpszMenuName = 0;
-    wc.lpszClassName = "GLLayeredWindowClass";
+    wc.hInstance = NULL;
+    wc.hIcon = NULL; // LoadIcon(0, IDI_APPLICATION);
+    wc.hCursor = NULL; //LoadCursor(0, IDC_ARROW);
+    wc.hbrBackground = NULL;
+    wc.lpszMenuName = NULL;
+    wc.lpszClassName = "MainWindowClass";
     wc.hIconSm = 0;
 
     if (!RegisterClassEx(&wc)){
         debug->Fatal("Failed to register GLLayeredWindowClass\n");
     }
+    wcs.push_back(wc);
+
 }
 
+Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEX* wc){
+    Window* wnd = new Window();
+    wnd->hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST, wc->lpszClassName,
+                "GL Layered Window", WS_POPUP, 0, 0, width,
+                height, 0, 0, NULL, 0);
+
+    if(wnd->hWnd == NULL){
+        debug->Err("Could not create requested window\n");
+    }else{
+
+    }
+
+    return wnd;
+}
+
+Window* Window::CreateNewWindow(int width, int height, WNDCLASSEX* wc){
+    Window* wnd = new Window();
+
+    int left = 200;
+    int top = 200;
+
+    //Get the coordinates of the renderable content in a window
+    RECT rect;
+    LPRECT lpRect = &rect;
+    lpRect->left = left;
+    lpRect->right = width + left;
+    lpRect->top = top;
+    lpRect->bottom = height + top;
+    AdjustWindowRectEx(lpRect,WS_OVERLAPPEDWINDOW,false,WS_EX_LEFT);
+
+    wnd->hWnd = CreateWindowEx(WS_EX_LEFT,
+        wc->lpszClassName,
+        "Normal Window",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        lpRect->right-lpRect->left,
+        lpRect->bottom-lpRect->top,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+
+    if(wnd->hWnd == NULL){
+        debug->Err("Could not create requested window\n");
+    }
+
+    return wnd;
+}
 
 LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     Window* wnd = Window::GetWindowByHandle(hWnd);
@@ -98,8 +155,8 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
 
             break;
         case WM_DESTROY:
-            debug->Warn("We should definitely quit now.\n");
-            PostQuitMessage(0);
+            debug->Warn("Window destroyed\n");
+            wnd->f_should_quit = true;
             break;
         case WM_CREATE:
             {
@@ -146,58 +203,3 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-
-/*
-LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    static TCHAR szBuffer[32] = {0};
-
-    switch (msg)
-    {
-    case WM_CREATE:
-
-
-        return 0;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    case WM_KEYUP:
-        if (wParam == VK_CONTROL){
-            f_control_down = false;
-        }
-        return 0;
-    case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE){
-            SendMessage(hWnd, WM_CLOSE, 0, 0);
-            return 0;
-        }else if (wParam == VK_CONTROL){
-            f_control_down = true;
-            return 0;
-        }else if (wParam == 'C'){
-            if (f_control_down){
-                quit = true;
-            }
-            return 0;
-        }else{
-            //debug->Info("WM_KEYDOWN: %lu (0x%0X)\n",wParam,wParam);
-            return 0;
-        }
-        break;
-
-    case WM_NCHITTEST:
-        //This returns the mouse is over the Titlebar of the window, which allows it to be dragged.
-        return HTCAPTION;
-
-    case WM_TIMER:
-        _stprintf(szBuffer, _TEXT("%d FPS"), g_frames);
-        SetWindowText(hWnd, szBuffer);
-        g_frames = 0;
-        return 0;
-
-    default:
-        break;
-    }
-
-    return DefWindowProc(hWnd, msg, wParam, lParam);
-}
-*/

@@ -1,7 +1,3 @@
-
-
-
-
 #include <GL/gl.h>
 #include <GL/glu.h>
 #include <tchar.h>
@@ -19,6 +15,7 @@ static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
 //Window everything will be drawn in.
 Window* wind = NULL;
+Window* wind_norm = NULL;
 
 //-----------------------------------------------------------------------------
 // Globals.
@@ -27,12 +24,11 @@ Window* wind = NULL;
 #define IMAGE_WIDTH     256
 #define IMAGE_HEIGHT    256
 
-#define TEXTURE_WIDTH   64
-#define TEXTURE_HEIGHT  64
+#define TEXTURE_WIDTH   128
+#define TEXTURE_HEIGHT  128
 
 // Generic wrapper around a DIB with a 32-bit color depth.
-typedef struct
-{
+typedef struct{
     int width;
     int height;
     int pitch;
@@ -42,16 +38,15 @@ typedef struct
     BYTE *pPixels;
 } Image;
 
-struct Vertex
-{
+struct Vertex{
     float pos[3];
     float normal[3];
     float texcoord[2];
 };
 
 Image g_image;
-HWND  g_hWnd;
-HDC   g_hDC;
+
+
 HGLRC g_hRC;
 HDC   g_hPBufferDC;
 HGLRC g_hPBufferRC;
@@ -185,8 +180,7 @@ bool ImageCreate(Image *pImage, int width, int height)
     pImage->hBitmap = CreateDIBSection(pImage->hdc, &pImage->info,
         DIB_RGB_COLORS, (void**)&pImage->pPixels, NULL, 0);
 
-    if (!pImage->hBitmap)
-    {
+    if (!pImage->hBitmap){
         ImageDestroy(pImage);
         return false;
     }
@@ -262,10 +256,9 @@ void RedrawLayeredWindow()
     // argument ULW_ALPHA, and provide a BLENDFUNCTION structure filled in
     // to do per pixel alpha blending.
 
-    HDC hdc = GetDC(g_hWnd);
+    HDC hdc = GetDC(wind->hWnd);
 
-    if (hdc)
-    {
+    if (hdc){
         HGDIOBJ hPrevObj = 0;
         POINT ptDest = {0, 0};
         POINT ptSrc = {0, 0};
@@ -273,13 +266,13 @@ void RedrawLayeredWindow()
         BLENDFUNCTION blendFunc = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
 
         hPrevObj = SelectObject(g_image.hdc, g_image.hBitmap);
-        ClientToScreen(g_hWnd, &ptDest);
+        ClientToScreen(wind->hWnd, &ptDest);
 
-        UpdateLayeredWindow(g_hWnd, hdc, &ptDest, &client,
+        UpdateLayeredWindow(wind->hWnd, hdc, &ptDest, &client,
             g_image.hdc, &ptSrc, 0, &blendFunc, ULW_ALPHA);
 
         SelectObject(g_image.hdc, hPrevObj);
-        ReleaseDC(g_hWnd, hdc);
+        ReleaseDC(wind->hWnd, hdc);
     }
 }
 
@@ -301,17 +294,15 @@ void Cleanup()
         g_hPBuffer = 0;
     }
 
-    if (g_hDC)
-    {
-        if (g_hRC)
-        {
-            wglMakeCurrent(g_hDC, 0);
+    if (wind->hDC){
+        if (g_hRC){
+            wglMakeCurrent(wind->hDC, 0);
             wglDeleteContext(g_hRC);
             g_hRC = 0;
         }
 
-        ReleaseDC(g_hWnd, g_hDC);
-        g_hDC = 0;
+        ReleaseDC(wind->hWnd, wind->hDC);
+        wind->hDC = 0;
     }
 
     ImageDestroy(&g_image);
@@ -327,14 +318,16 @@ void InitCheckerPatternTexture()
     UINT pitch = TEXTURE_WIDTH * 4;
     std::vector<BYTE> checkerImage(pitch * TEXTURE_HEIGHT);
 
-    for (UINT i = 0; i < TEXTURE_HEIGHT; ++i)
-    {
-        for (UINT j = 0; j < TEXTURE_WIDTH; ++j)
-        {
-            c = (BYTE)((((i & 0x8) == 0) ^ ((j & 0x8) == 0)) * 255);
+    for (UINT i = 0; i < TEXTURE_HEIGHT; ++i){
+        for (UINT j = 0; j < TEXTURE_WIDTH; ++j){
+            c = (BYTE)((((i & 0x10) == 0) ^ ((j & 0x10) == 0)) * 255);
             pPixels = &checkerImage[i * pitch + (j * 4)];
             pPixels[0] = pPixels[1] = pPixels[2] = c;
-            pPixels[3] = 255;
+            if (c == 0){
+                pPixels[3] = 255;
+            }else{
+                pPixels[3] = 200;
+            }
         }
     }
 
@@ -343,60 +336,12 @@ void InitCheckerPatternTexture()
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
 
-    glTexEnvf(GL_TEXTURE_2D, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, TEXTURE_WIDTH, TEXTURE_HEIGHT,
         0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, &checkerImage[0]);
-}
-
-
-bool InitPBuffer()
-{
-    // Create a pbuffer for off-screen rendering. Notice that since we aren't
-    // going to be using the pbuffer for dynamic texturing (i.e., using the
-    // pbuffer containing our rendered scene as a texture) we don't need to
-    // request for WGL_BIND_TO_TEXTURE_RGBA_ARB support in the attribute list.
-
-    int attribList[] =
-    {
-        WGL_DRAW_TO_PBUFFER_ARB, TRUE,      // allow rendering to the pbuffer
-        WGL_SUPPORT_OPENGL_ARB,  TRUE,      // associate with OpenGL
-        WGL_DOUBLE_BUFFER_ARB,   FALSE,     // single buffered
-        WGL_RED_BITS_ARB,   8,              // minimum 8-bits for red channel
-        WGL_GREEN_BITS_ARB, 8,              // minimum 8-bits for green channel
-        WGL_BLUE_BITS_ARB, 8,              // minimum 8-bits for blue channel
-        WGL_ALPHA_BITS_ARB, 8,              // minimum 8-bits for alpha channel
-        WGL_DEPTH_BITS_ARB, 16,             // minimum 16-bits for depth buffer
-        0
-    };
-
-
-
-    int format = 0;
-    UINT matchingFormats = 0;
-
-    if (!wglChoosePixelFormatARB(g_hDC, attribList, 0, 1, &format, &matchingFormats)){
-        debug->Fatal("wglChoosePixelFormatARB() failed");
-    }
-
-    //Instead of a Pbuffer, we use a framebuffer.
-
-
-    if (!(g_hPBuffer = wglCreatePbufferARB(g_hDC, format, IMAGE_WIDTH, IMAGE_HEIGHT, 0))){
-        debug->Fatal("wglCreatePbufferARB() failed");
-    }
-
-    if (!(g_hPBufferDC = wglGetPbufferDCARB(g_hPBuffer))){
-        debug->Fatal("wglGetPbufferDCARB() failed");
-    }
-
-    if (!(g_hPBufferRC = wglCreateContext(g_hPBufferDC))){
-        debug->Fatal("wglCreateContext() failed for PBuffer");
-    }
-    return true;
 }
 
 //We'll have one multisampled framebuffer with a single color and depth buffer.
@@ -504,18 +449,18 @@ bool InitGL(){
     pfd.cDepthBits = 24;
     pfd.iLayerType = PFD_MAIN_PLANE;
 
-    if (!(g_hDC = GetDC(g_hWnd)))
+    if (!(wind->hDC = GetDC(wind->hWnd)))
         return false;
 
-    int pf = ChoosePixelFormat(g_hDC, &pfd);
+    int pf = ChoosePixelFormat(wind->hDC, &pfd);
 
-    if (!SetPixelFormat(g_hDC, pf, &pfd))
+    if (!SetPixelFormat(wind->hDC, pf, &pfd))
         return false;
 
-    if (!(g_hRC = wglCreateContext(g_hDC)))
+    if (!(g_hRC = wglCreateContext(wind->hDC)))
         return false;
 
-    if (!wglMakeCurrent(g_hDC, g_hRC))
+    if (!wglMakeCurrent(wind->hDC, g_hRC))
         return false;
 
     if (!InitGLExtensions())
@@ -525,19 +470,8 @@ bool InitGL(){
         return false;
     }
 
-
-    //if (!InitPBuffer())
-    //    return false;
-
-    // Deactivate the dummy rendering context now that the pbuffer is created.
-    //wglMakeCurrent(g_hDC, 0);
-    //ReleaseDC(g_hWnd, g_hDC);
-    //g_hDC = 0;
-
-    // We are only doing off-screen rendering. So activate our pbuffer once.
-    //wglMakeCurrent(g_hPBufferDC, g_hPBufferRC);
-
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
+
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
@@ -551,14 +485,12 @@ bool InitGL(){
 }
 
 bool Init(){
-    if (!InitGL())
-    {
+    if (!InitGL()){
         Cleanup();
         return false;
     }
 
-    if (!ImageCreate(&g_image, IMAGE_WIDTH, IMAGE_HEIGHT))
-    {
+    if (!ImageCreate(&g_image, IMAGE_WIDTH, IMAGE_HEIGHT)){
         Cleanup();
         return false;
     }
@@ -566,7 +498,7 @@ bool Init(){
     return true;
 }
 
-void CopyPBufferToImage(){
+void CopyBufferToImage(){
     // Copy the contents of the framebuffer - which in our case is our pbuffer -
     // to our bitmap image in local system memory. Notice that we also need
     // to invert the pbuffer's pixel data since OpenGL by default orients the
@@ -576,7 +508,7 @@ void CopyPBufferToImage(){
     static BYTE pixels[IMAGE_WIDTH * IMAGE_HEIGHT * 4] = {0};
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT, GL_BGRA_EXT, GL_UNSIGNED_BYTE, pixels);
+    glReadPixels(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
     for (int i = 0; i < IMAGE_HEIGHT; ++i)
     {
@@ -636,7 +568,7 @@ void DrawFrame(){
 
     // At this stage the pbuffer will contain our scene. Now we make a system
     // memory copy of the pbuffer.
-    CopyPBufferToImage();
+    CopyBufferToImage();
 
     // Then we pre-multiply each pixel with its alpha component. This is how
     // the layered windows API expects images containing alpha information.
@@ -645,9 +577,10 @@ void DrawFrame(){
     // Finally we update our layered window with our scene.
     RedrawLayeredWindow();
 
-
+    //Called from the current context
     glFinish();
-    SwapBuffers(g_hDC);
+
+    SwapBuffers(wind->hDC);
 
     // Since we're doing off-screen rendering the frame rate will be
     // independent of the video display's refresh rate.
@@ -668,55 +601,51 @@ void SetVSync(bool enable){
     }
 }
 
-
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd){
     //Used to do things from console, like CTRL+C
     if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)ConsoleHandler,TRUE)==FALSE){
         debug->Err("Unable to install a console handler!\n");
     }
 
-    wind = new Window();
+
 
     MSG msg = {0};
 
-    wind->RegisterWindowClass(hInstance);
+    debug->Info("WinMain hInstance = %lu\n",hInstance);
+    debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
 
+    Window::RegisterWindowClasses();
+    wind = Window::CreateNewLayeredWindow(IMAGE_WIDTH,IMAGE_HEIGHT,&Window::wcs.at(0));
+    wind_norm = Window::CreateNewWindow(IMAGE_WIDTH,IMAGE_HEIGHT,&Window::wcs.at(0));
 
-    wind->hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST, wind->wc.lpszClassName,
-                _T("GL Layered Window Demo"), WS_POPUP, 0, 0, IMAGE_WIDTH,
-                IMAGE_HEIGHT, 0, 0, wind->wc.hInstance, 0);
-
-    if (!wind->hWnd){
+    if (!wind){
         debug->Fatal("Unable to create window\n");
     }
-
-    g_hWnd = wind->hWnd;
-
+    if (!wind_norm){
+        debug->Fatal("Unable to create normal window\n");
+    }
 
     if (Init()){
-        ShowWindow(g_hWnd, nShowCmd);
-        UpdateWindow(g_hWnd);
+        wind->Show(nShowCmd);
+        wind_norm->Show(nShowCmd);
+
         SetVSync(true);
 
-        while (wind->f_should_quit == false)
-        {
-            if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
-            {
+        while (wind->f_should_quit == false){
+            if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
                 if (msg.message == WM_QUIT)
                     break;
 
                 TranslateMessage(&msg);
                 DispatchMessage(&msg);
-            }
-            else
-            {
+            }else{
                 DrawFrame();
             }
         }
     }
 
     Cleanup();
-    UnregisterClass(wind->wc.lpszClassName, hInstance);
+    //UnregisterClass(wind->wc.lpszClassName, hInstance);
 
     return 0;
 }

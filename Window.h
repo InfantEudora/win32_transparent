@@ -9,9 +9,8 @@
 /*
     A Class for managing WIN32 windows.
 
-    We need at least one dummy window to be able to query OpenGL capabilities on.
+    We need at least one window to be able to query OpenGL capabilities on.
     After that, we can spawn as many windows as we like... theoretically.
-    Right now only one main window is supported.
 */
 class Window;
 
@@ -19,14 +18,13 @@ LRESULT CALLBACK windproc(HWND hwnd, UINT wm, WPARAM wp, LPARAM lp);
 
 class Window{
     public:
-    static Window* dummywindow;
     static Window* GetWindowByHandle(HWND hWnd);
 
-    HINSTANCE   hInst;
-    HWND        hWnd = 0; //Handle to a window
-    HDC         hDC; //Handle to a Device Context
+
+    HWND        hWnd = 0;   //Handle to a window
+    HDC         hDC;        //Handle to a Device Context
     HGLRC       hRC;
-    WNDCLASSEX  wc;      //Main window class
+    WNDCLASSEX*  wc = NULL;         //The class this window has
 
     int left = 0;
     int top = 0;
@@ -47,22 +45,26 @@ class Window{
     Window();
     ~Window();
 
-    void RegisterWindowClass(HINSTANCE hInst);
-    void InitOpenGL(HINSTANCE hInst);
-    //void InitGL(HWND& hWnd, HINSTANCE hInst);
+    static void RegisterWindowClasses();
+    void InitOpenGL();
+    static Window* CreateNewLayeredWindow(int width, int height, WNDCLASSEX* wc);
+    static Window* CreateNewWindow(int width, int height, WNDCLASSEX* wc);
+
     void SetVSync(bool enable);
-    void Show(int cmd);
+    void Show(int nShowCmd);
     void Resize(int width, int height);
     void Move(int x, int y);
     void SetTitle(std::string);
     void Close(void);
     static HWND _FindWindow(std::string title);
+    static std::vector<WNDCLASSEX>wcs;      //Different types of window classes
 
     //void Register_DropFiles();
     //std::queue<std::string> dropped_files;
 private:
     static bool f_dummy_created;
     static std::vector<Window*> windows; //An array of all created windows
+
     void CreateDummyWindow();
 };
 
