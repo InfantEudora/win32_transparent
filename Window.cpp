@@ -263,7 +263,7 @@ bool Window::Init(){
     InitCheckerPatternTexture();
     glBindTexture(GL_TEXTURE_2D, g_textureId);
 
-    if (!ImageCreate(&g_image, IMAGE_WIDTH, IMAGE_HEIGHT)){
+    if (!ImageCreate(&g_image, width, height)){
         return false;
     }
 
@@ -352,9 +352,6 @@ bool Window::InitFBO(){
     }
 
     int aa_samples = 16;
-    int width = 256;
-    int height = 256;
-
 
     //Setup buffers:
     //Mutisampled color 16bit float
@@ -380,7 +377,7 @@ bool Window::InitFBO(){
 }
 
 //Blit all multisampled buffer back to main/resolve buffers
-void Window::ResolveAA(int width, int height){
+void Window::ResolveAA(){
     //Blit from multisampled buffer to main backbuffer = GL_COLOR_ATTACHMENT0
     glBindFramebuffer(GL_READ_FRAMEBUFFER, msaa_fbo_id);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve_fbo_id);
@@ -390,20 +387,17 @@ void Window::ResolveAA(int width, int height){
 }
 
 void Window::DrawFrame(){
-    // Once the pbuffer is created and its rendering context is made current
-    // all normal OpenGL draw calls will affect the pbuffer's framebuffer NOT
-    // the normal rendering context for the window.
 
     //Select the mutisampled frambuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
-    glViewport(0, 0, 256, 256);
+    glViewport(0, 0, width, height);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    gluPerspective(45.0f, (float)256 / (float)256, 1.0f, 100.0f);
+    gluPerspective(45.0f, (float)width / (float)height, 1.0f, 100.0f);
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
@@ -432,24 +426,30 @@ void Window::DrawFrame(){
     glDisableClientState(GL_NORMAL_ARRAY);
     glDisableClientState(GL_VERTEX_ARRAY);
 
-    ResolveAA(256,256);
+    ResolveAA();
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
 
-    // At this stage the pbuffer will contain our scene. Now we make a system
-    // memory copy of the pbuffer.
-    CopyBufferToImage();
+    if (f_is_layered){
+        SwapBuffers(hDC);
 
-    // Then we pre-multiply each pixel with its alpha component. This is how
-    // the layered windows API expects images containing alpha information.
-    ImagePreMultAlpha(&g_image);
+        CopyBufferToImage();
 
-    // Finally we update our layered window with our scene.
-    RedrawLayeredWindow();
+        // Then we pre-multiply each pixel with its alpha component. This is how
+        // the layered windows API expects images containing alpha information.
+        ImagePreMultAlpha(&g_image);
 
-    //Called from the current context
-    glFinish();
+        // Finally we update our layered window with our scene.
+        RedrawLayeredWindow();
+    }else{
+        //Now we blit the resolve buffer into the back buffer
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, resolve_fbo_id);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glDrawBuffer(GL_BACK);
+        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
-    SwapBuffers(hDC);
+        SwapBuffers(hDC);
+    }
 
 }
 
@@ -486,16 +486,17 @@ void Window::CopyBufferToImage(){
     // bitmap image bottom up. Our Windows DIB wrapper expects images to be
     // top down in orientation.
 
-    static BYTE pixels[IMAGE_WIDTH * IMAGE_HEIGHT * 4] = {0};
+    if (pixels == NULL){
+        pixels = new BYTE[width * height * 4];
+    }
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
-    for (int i = 0; i < IMAGE_HEIGHT; ++i)
-    {
+    for (int i = 0; i < height; ++i){
         memcpy(&g_image.pPixels[g_image.pitch * i],
-            &pixels[((IMAGE_HEIGHT - 1) - i) * (IMAGE_WIDTH * 4)],
-            IMAGE_WIDTH * 4);
+            &pixels[((height - 1) - i) * (width * 4)],
+            width * 4);
     }
 }
 
@@ -539,7 +540,9 @@ Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEX* wc){
     }else{
         debug->Ok("New layered window hWnd=%lu\n",wnd->hWnd);
     }
-
+    wnd->f_is_layered = true;
+    wnd->width = width;
+    wnd->height = height;
     return wnd;
 }
 
@@ -576,7 +579,8 @@ Window* Window::CreateNewWindow(int width, int height, WNDCLASSEX* wc){
     }else{
         debug->Ok("New window hWnd=%lu\n",wnd->hWnd);
     }
-
+    wnd->width = width;
+    wnd->height = height;
     return wnd;
 }
 

@@ -55,6 +55,8 @@ class Window{
     int height = 600;
     int width_windowed = 800;
     int height_windowed = 600;
+
+    bool f_is_layered = false;
     bool f_resized = false;
     bool f_fullscreen = false;
     bool f_istogglingfullscreen = false;
@@ -74,12 +76,11 @@ class Window{
     GLuint resolve_fbo_id = -1;  //Corresponding frame buffer
     GLuint resolve_rbo_id = -1;  //Corresponding frame buffer
 
-    //Bitmap image for layered winfow
+    //Bitmap image for layered window
     Image g_image;
+    BYTE* pixels = NULL;//[width * height * 4] = {0};
     UINT g_textureId;
-
     float rotation = 0;
-
 
     Window();
     ~Window();
@@ -94,7 +95,7 @@ class Window{
 
     bool CheckFrameBuffer();
     bool InitFBO();
-    void ResolveAA(int width, int height);
+    void ResolveAA();
     void DrawFrame();
     void CopyBufferToImage();
     void RedrawLayeredWindow();

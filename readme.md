@@ -8,6 +8,8 @@ We'd like:
 - [x] Copy pixel data out of FBO instead of BPO.
 - [x] Thread per window, seperate context per window.
 - [ ] Use a modern pipeline and get rid of glu stuff.
+- [ ] Seperate window and drawing somehow
+- [ ] Resize to arbitrary size
 
 wglGetProcAddress:
 https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-wglgetprocaddress
