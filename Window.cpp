@@ -2,7 +2,6 @@
 #include "Debug.h"
 #include "glad.h"
 
-
 static Debugger* debug = new Debugger("Window",DEBUG_ALL);
 
 std::vector<Window*>Window::windows; //A list of windows to match handles to
@@ -337,8 +336,10 @@ bool Window::InitOpenGL(){
     if (!InitGLExtensions())
         return false;
 
-    //Some deletecontext maybe?
+    wglMakeCurrent(hDC, NULL);
+    wglDeleteContext(hRC);
 
+    //Now we ask for a specific OpenGL Context
     int attributes[] = {
         WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
         WGL_CONTEXT_MINOR_VERSION_ARB, 3,
@@ -392,9 +393,11 @@ bool Window::InitFBO(){
     return true;
 }
 
-
 bool Window::InitVBO(){
     glGenBuffers(1, (GLuint*)&cube_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, cube_vao);
+    //Upload data
+	glBufferData(GL_ARRAY_BUFFER, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW );
     return true;
 }
 
@@ -408,13 +411,20 @@ void Window::ResolveAA(){
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
-void Window::DrawFrame(){
+void Window::DrawFrame(Shader* shader){
     //Select the mutisampled frambuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glViewport(0, 0, width, height);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    //Modify the cube
+    rotation += 0.01f;
+    fmat3 mr;
+    vec3 v = vec3(0,1,0);
+    mr.set_rotation(v,rotation);
+    shader->Setmat3("obj_rotate",mr);
 
     int num_vertices = 36;
 
@@ -424,7 +434,6 @@ void Window::DrawFrame(){
 
     //Make one interleaved buffer for the cube
     glBindBuffer(GL_ARRAY_BUFFER, cube_vao);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW );
 	glVertexAttribPointer(
         ATTRIB_VERTEX,  // Index in shader
         3,              // Size
@@ -454,39 +463,6 @@ void Window::DrawFrame(){
 
     glDrawArraysInstanced(GL_TRIANGLES, 0, num_vertices,1); // Starting from vertex 0; 3 vertices total -> 1 triangle
 
-/*
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    gluPerspective(45.0f, (float)width / (float)height, 1.0f, 100.0f);
-
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-    gluLookAt(0.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
-
-    // This seems to produce a nice smooth rotation for our cube.
-    //glRotatef(timeGetTime() / 50.0f, 0.0f, 1.0f, 0.0f);
-    rotation += 0.1f;
-    glRotatef(rotation, 0.0f, 1.0f, 0.0f);
-
-    //
-    // Draw the unit cube.
-    //
-
-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-    glEnableClientState(GL_NORMAL_ARRAY);
-    glEnableClientState(GL_VERTEX_ARRAY);
-
-    glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex), g_cube[0].texcoord);
-    glNormalPointer(GL_FLOAT, sizeof(Vertex), g_cube[0].normal);
-    glVertexPointer(3, GL_FLOAT, sizeof(Vertex), g_cube[0].pos);
-
-    glDrawArrays(GL_TRIANGLES, 0, sizeof(g_cube) / sizeof(g_cube[0]));
-
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-    glDisableClientState(GL_NORMAL_ARRAY);
-    glDisableClientState(GL_VERTEX_ARRAY);
-    */
-
     ResolveAA();
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
 
@@ -511,7 +487,6 @@ void Window::DrawFrame(){
 
         SwapBuffers(hDC);
     }
-
 }
 
 void Window::RedrawLayeredWindow(){

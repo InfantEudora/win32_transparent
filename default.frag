@@ -17,7 +17,5 @@ uniform sampler2D  albedo_texture;   //Input texture
 
 void main(){
     vec4 col = texture(albedo_texture, vuv);
-
-
     color = col;
 }

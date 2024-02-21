@@ -8,12 +8,7 @@
     This named glad, because it might have been... but it isn't
 */
 
-
-
-//-----------------------------------------------------------------------------
 // WGL_ARB_pixel_format.
-//-----------------------------------------------------------------------------
-
 #define WGL_ACCELERATION_ARB                      0x2003
 #define WGL_ACCUM_ALPHA_BITS_ARB                  0x2021
 #define WGL_ACCUM_BITS_ARB                        0x201D
@@ -202,6 +197,11 @@ typedef void (APIENTRYP PFNGLDETACHSHADERPROC)(GLuint program, GLuint shader);
 GLAPI PFNGLDETACHSHADERPROC glDetachShader;
 typedef void (APIENTRYP PFNGLUSEPROGRAMPROC)(GLuint program);
 GLAPI PFNGLUSEPROGRAMPROC glUseProgram;
+//Uniforms
+typedef GLint (APIENTRYP PFNGLGETUNIFORMLOCATIONPROC)(GLuint program, const char *name);
+GLAPI PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation;
+typedef void (APIENTRYP PFNGLUNIFORMMATRIX3FVPROC)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+GLAPI PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv;
 
 //VBOs
 typedef void (APIENTRYP PFNGLDISABLEVERTEXATTRIBARRAYPROC)(GLuint index);

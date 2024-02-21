@@ -10,6 +10,8 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
+#include "Shader.h"
+
 struct Vertex{
     float pos[3];
     float normal[3];
@@ -104,7 +106,7 @@ class Window{
     bool InitFBO();
     bool InitVBO();
     void ResolveAA();
-    void DrawFrame();
+    void DrawFrame(Shader* shader);
     void CopyBufferToImage();
     void RedrawLayeredWindow();
 

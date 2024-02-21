@@ -6,6 +6,8 @@
 #include <vector>
 #include <iostream>
 
+#include "type_fmat3.h"
+
 class Shader{
 private:
     static char* LoadFile(const char* filename);
@@ -27,6 +29,9 @@ public:
     int CompileFragment(char* data);
     int LinkProgram();
     void Use();
+
+    //Uniforms
+    void Setmat3(const char* name, const fmat3& matrix);
 
 };
 

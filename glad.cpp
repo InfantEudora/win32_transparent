@@ -1,12 +1,15 @@
 #include "glad.h"
 #include "Debug.h"
+/*
+    So, this is not actually glad, but only the needed thigs are pulled from one ginormous glad file.
+    You could replace this with glad, it would just be bigger.
+*/
 
 static Debugger* debug = new Debugger("Glad",DEBUG_ALL);
 
-PFNWGLCHOOSEPIXELFORMATARBPROC                    wglChoosePixelFormatARB = NULL;
-PFNWGLGETPIXELFORMATATTRIBFVARBPROC               wglGetPixelFormatAttribfvARB = NULL;
-PFNWGLGETPIXELFORMATATTRIBIVARBPROC               wglGetPixelFormatAttribivARB = NULL;
-
+PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB = NULL;
+PFNWGLGETPIXELFORMATATTRIBFVARBPROC wglGetPixelFormatAttribfvARB = NULL;
+PFNWGLGETPIXELFORMATATTRIBIVARBPROC wglGetPixelFormatAttribivARB = NULL;
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
 
@@ -43,6 +46,9 @@ PFNGLBUFFERDATAPROC glBufferData = NULL;
 PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = NULL;
 PFNGLDRAWARRAYSINSTANCEDPROC glDrawArraysInstanced = NULL;
 PFNGLGENBUFFERSPROC glGenBuffers = NULL;
+
+PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = NULL;
+PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv = NULL;
 
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = NULL;
 
@@ -96,10 +102,13 @@ bool InitGLExtensions(void){
     glDrawArraysInstanced = (PFNGLDRAWARRAYSINSTANCEDPROC)wglGetProcAddress("glDrawArraysInstanced");
     glGenBuffers = (PFNGLGENBUFFERSPROC)wglGetProcAddress("glGenBuffers");
 
+
+    glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
+    glUniformMatrix3fv = (PFNGLUNIFORMMATRIX3FVPROC)wglGetProcAddress("glUniformMatrix3fv");
+
     wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
 
     debug->Info("glGenFramebuffers = %p\n",glGenFramebuffers);
-
 
     if (!wglChoosePixelFormatARB || !wglGetPixelFormatAttribfvARB || !wglGetPixelFormatAttribivARB){
         debug->Fatal("Required extension WGL_ARB_pixel_format not supported");

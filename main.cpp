@@ -38,13 +38,16 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
     DWORD thread_id = GetCurrentThreadId();
     debug->Info("Output from Thread ID: %lu\n",thread_id);
 
-    Window* wind = Window::CreateNewLayeredWindow(128,128,&Window::wcs.at(0));
+    Window* wind = Window::CreateNewLayeredWindow(256,256,&Window::wcs.at(0));
     if (!wind){
         debug->Fatal("Unable to create normal window\n");
     }
     if (!wind->Init()){
         return false;
     }
+
+    Shader* shader = new Shader("default.vert","default.frag");
+    shader->Use();
 
     wind->Show(SW_SHOWDEFAULT);
     MSG msg = {0};
@@ -56,7 +59,7 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
-            wind->DrawFrame();
+            wind->DrawFrame(shader);
         }
     }
     debug->Info("Thread terminated\n");
@@ -69,12 +72,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         debug->Err("Unable to install a console handler!\n");
     }
 
+    int num_threads = 1;
+
     DWORD main_id = GetCurrentThreadId();
     debug->Info("WinMain Thread ID: %lu\n",main_id);
 
     Window::RegisterWindowClasses();
 
-    Window* wind = Window::CreateNewWindow(256,256,&Window::wcs.at(0));
+    Window* wind = Window::CreateNewLayeredWindow(256,256,&Window::wcs.at(0));
     if (!wind){
         debug->Fatal("Unable to create window\n");
     }
@@ -86,7 +91,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     Shader* shader = new Shader("default.vert","default.frag");
     shader->Use();
 
-    for (int i =0;i<0;i++){
+    for (int i =0;i<num_threads;i++){
         HANDLE hThread = NULL;
         DWORD thread_id;
         // Create a new thread which will get it's own render context
@@ -122,7 +127,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
-            wind->DrawFrame();
+            wind->DrawFrame(shader);
         }
     }
 

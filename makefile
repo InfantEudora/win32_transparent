@@ -2,9 +2,11 @@
 CC = g++
 
 #No Console on windows, just the window
-FLAG_NOCONSOLE = -Wl,-subsystem,windows
+FNOCONSOLE = -Wl,-subsystem,windows
 
-CFLAGS = -lopengl32  -lgdi32 -lglu32 -Wl,-Bstatic -static-libstdc++ -static-libgcc  -static -lstdc++  -Wl,--gc-sections
+CFLAGS = -lopengl32 -lgdi32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections
+#CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
+#CFLAGS += $(FNOCONSOLE)
 
 PROJECT = wind
 
@@ -17,7 +19,7 @@ SRCS += glad.cpp
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #03 highest optimisation #-s to strip symbols
 
-#CFLAGS += $(DFLAGS);
+CFLAGS += $(RFLAGS)
 
 OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 

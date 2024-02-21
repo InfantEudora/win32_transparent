@@ -15,17 +15,23 @@ layout (location = 2) out vec2 vuv;		//Texture UV coordinates
 uniform mat4 mat_worldcam = mat4(
 	1		,0		,0		,0,
 	0		,1		,0		,0,
-	0		,0		,1		,0,
-	0		,0		,0		,1
+	0		,0		,-1.004		,-1.0,
+	0		,0		,1.2		,1.2
+);
+
+//Matrix rotating all incoming vertex data
+uniform mat3 obj_rotate = mat3(
+		1		,0		,0,
+		0		,1		,0,
+		0		,0		,1
 );
 
 void main() {
 	//Rotation and position in 1
-	mat4 mat_trans = mat4(
-		1		,0		,0		,0,
-		0		,1		,0		,0,
-		0		,0		,-1.004		,-1.0,
-		0		,0		,5		,5
+	mat3 mat_trans = mat3(
+		1		,0		,0,
+		0		,1		,0,
+		0		,0		,1
 	);
 
 	//Only object rotation. We want to decompose this from the mat_trans for light calculations
@@ -36,8 +42,10 @@ void main() {
 		0		,0		,0		,1
 	);
 
-	vec4 v = vec4(position,1); //Vertex in
-	vec4 transpos = mat_trans * v; //In world space
+	mat_trans = obj_rotate;
+
+
+	vec3 transpos = mat_trans * position; //In world space
 	vposition = transpos.xyz;
 
 	vec4 vn = vec4(normal,1);
@@ -45,6 +53,6 @@ void main() {
 
 	vuv = uv;
 
-	gl_Position = (mat_worldcam * transpos) ;
+	gl_Position = (mat_worldcam * vec4(transpos,1)) ;
 
 }
