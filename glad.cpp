@@ -7,11 +7,6 @@ PFNWGLCHOOSEPIXELFORMATARBPROC                    wglChoosePixelFormatARB = NULL
 PFNWGLGETPIXELFORMATATTRIBFVARBPROC               wglGetPixelFormatAttribfvARB = NULL;
 PFNWGLGETPIXELFORMATATTRIBIVARBPROC               wglGetPixelFormatAttribivARB = NULL;
 
-PFNWGLDESTROYPBUFFERARBPROC                       wglDestroyPbufferARB = NULL;
-PFNWGLQUERYPBUFFERARBPROC                         wglQueryPbufferARB = NULL;
-PFNWGLGETPBUFFERDCARBPROC                         wglGetPbufferDCARB = NULL;
-PFNWGLCREATEPBUFFERARBPROC                        wglCreatePbufferARB = NULL;
-PFNWGLRELEASEPBUFFERDCARBPROC                     wglReleasePbufferDCARB = NULL;
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
 
@@ -26,13 +21,12 @@ PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = NULL;
 PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage = NULL;
 PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer = NULL;
 
+bool extensions_loaded = false;
+
 bool InitGLExtensions(void){
-    // WGL_ARB_pbuffer.
-    wglDestroyPbufferARB   = (PFNWGLDESTROYPBUFFERARBPROC)wglGetProcAddress("wglDestroyPbufferARB");
-    wglQueryPbufferARB     = (PFNWGLQUERYPBUFFERARBPROC)wglGetProcAddress("wglQueryPbufferARB");
-    wglGetPbufferDCARB     = (PFNWGLGETPBUFFERDCARBPROC)wglGetProcAddress("wglGetPbufferDCARB");
-    wglCreatePbufferARB    = (PFNWGLCREATEPBUFFERARBPROC)wglGetProcAddress("wglCreatePbufferARB");
-    wglReleasePbufferDCARB = (PFNWGLRELEASEPBUFFERDCARBPROC)wglGetProcAddress("wglReleasePbufferDCARB");
+    if (extensions_loaded){
+        return true;
+    }
 
     // WGL_ARB_pixel_format.
     wglChoosePixelFormatARB      = (PFNWGLCHOOSEPIXELFORMATARBPROC)wglGetProcAddress("wglChoosePixelFormatARB");
@@ -54,12 +48,13 @@ bool InitGLExtensions(void){
     glRenderbufferStorage = (PFNGLRENDERBUFFERSTORAGEPROC)wglGetProcAddress("glRenderbufferStorage");
     glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)wglGetProcAddress("glBlitFramebuffer");
 
-    if (!wglDestroyPbufferARB || !wglQueryPbufferARB || !wglGetPbufferDCARB || !wglCreatePbufferARB || !wglReleasePbufferDCARB){
-        debug->Fatal("Required extension WGL_ARB_pbuffer not supported");
-    }
+    debug->Info("glGenFramebuffers = %p\n",glGenFramebuffers);
+
 
     if (!wglChoosePixelFormatARB || !wglGetPixelFormatAttribfvARB || !wglGetPixelFormatAttribivARB){
         debug->Fatal("Required extension WGL_ARB_pixel_format not supported");
     }
+
+    extensions_loaded = true;
     return true;
 }

@@ -9,21 +9,6 @@
 */
 
 
-//-----------------------------------------------------------------------------
-// WGL_ARB_pbuffer.
-//-----------------------------------------------------------------------------
-
-#define WGL_DRAW_TO_PBUFFER_ARB                   0x202D
-#define WGL_MAX_PBUFFER_HEIGHT_ARB                0x2030
-#define WGL_MAX_PBUFFER_PIXELS_ARB                0x202E
-#define WGL_MAX_PBUFFER_WIDTH_ARB                 0x202F
-#define WGL_PBUFFER_HEIGHT_ARB                    0x2035
-#define WGL_PBUFFER_LARGEST_ARB                   0x2033
-#define WGL_PBUFFER_LOST_ARB                      0x2036
-#define WGL_PBUFFER_WIDTH_ARB                     0x2034
-
-DECLARE_HANDLE(HPBUFFERARB);
-
 
 //-----------------------------------------------------------------------------
 // WGL_ARB_pixel_format.
@@ -119,11 +104,6 @@ bool InitGLExtensions(void);
 
 #define GLAPI extern
 
-typedef BOOL (WINAPI * PFNWGLDESTROYPBUFFERARBPROC) (HPBUFFERARB hPbuffer);
-typedef BOOL (WINAPI * PFNWGLQUERYPBUFFERARBPROC) (HPBUFFERARB hPbuffer, int iAttribute, int *piValue);
-typedef HDC (WINAPI * PFNWGLGETPBUFFERDCARBPROC) (HPBUFFERARB hPbuffer);
-typedef HPBUFFERARB (WINAPI * PFNWGLCREATEPBUFFERARBPROC) (HDC hDC, int iPixelFormat, int iWidth, int iHeight, const int *piAttribList);
-typedef int (WINAPI * PFNWGLRELEASEPBUFFERDCARBPROC) (HPBUFFERARB hPbuffer, HDC hDC);
 
 typedef BOOL (WINAPI * PFNWGLSWAPINTERVALEXTPROC)(GLint);
 typedef void (APIENTRYP PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint *framebuffers);
@@ -142,11 +122,6 @@ GLAPI PFNWGLCHOOSEPIXELFORMATARBPROC                    wglChoosePixelFormatARB;
 GLAPI PFNWGLGETPIXELFORMATATTRIBFVARBPROC               wglGetPixelFormatAttribfvARB;
 GLAPI PFNWGLGETPIXELFORMATATTRIBIVARBPROC               wglGetPixelFormatAttribivARB;
 
-GLAPI PFNWGLDESTROYPBUFFERARBPROC                       wglDestroyPbufferARB;
-GLAPI PFNWGLQUERYPBUFFERARBPROC                         wglQueryPbufferARB;
-GLAPI PFNWGLGETPBUFFERDCARBPROC                         wglGetPbufferDCARB;
-GLAPI PFNWGLCREATEPBUFFERARBPROC                        wglCreatePbufferARB;
-GLAPI PFNWGLRELEASEPBUFFERDCARBPROC                     wglReleasePbufferDCARB;
 
 
 GLAPI PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
