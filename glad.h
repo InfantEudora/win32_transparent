@@ -88,6 +88,15 @@
 #define GL_READ_FRAMEBUFFER 0x8CA8
 #define GL_DRAW_FRAMEBUFFER 0x8CA9
 
+//Shaders
+#define GL_FRAGMENT_SHADER 0x8B30
+#define GL_VERTEX_SHADER 0x8B31
+
+#define GL_COMPILE_STATUS 0x8B81
+#define GL_LINK_STATUS 0x8B82
+#define GL_VALIDATE_STATUS 0x8B83
+#define GL_INFO_LOG_LENGTH 0x8B84
+
 
 typedef BOOL (WINAPI * PFNWGLCHOOSEPIXELFORMATARBPROC) (HDC hdc, const int *piAttribIList, const FLOAT *pfAttribFList, UINT nMaxFormats, int *piFormats, UINT *nNumFormats);
 typedef BOOL (WINAPI * PFNWGLGETPIXELFORMATATTRIBFVARBPROC) (HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes, const int *piAttributes, FLOAT *pfValues);
@@ -134,9 +143,49 @@ GLAPI PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer;
 GLAPI PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer;
 GLAPI PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC glRenderbufferStorageMultisample;
 GLAPI PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer;
-
 GLAPI PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage;
 GLAPI PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer;
 
+//Shaders
+typedef void (APIENTRYP PFNGLSHADERSOURCEPROC)(GLuint shader, GLsizei count, const char *const*string, const GLint *length);
+GLAPI PFNGLSHADERSOURCEPROC glShaderSource;
+
+typedef void (APIENTRYP PFNGLGETSHADERIVPROC)(GLuint shader, GLenum pname, GLint *params);
+GLAPI PFNGLGETSHADERIVPROC glGetShaderiv;
+
+typedef GLuint (APIENTRYP PFNGLCREATESHADERPROC)(GLenum type);
+GLAPI PFNGLCREATESHADERPROC glCreateShader;
+
+typedef void (APIENTRYP PFNGLCOMPILESHADERPROC)(GLuint shader);
+GLAPI PFNGLCOMPILESHADERPROC glCompileShader;
+
+typedef void (APIENTRYP PFNGLGETSHADERINFOLOGPROC)(GLuint shader, GLsizei bufSize, GLsizei *length, char *infoLog);
+GLAPI PFNGLGETSHADERINFOLOGPROC glGetShaderInfoLog;
+
+//Shader programs
+
+typedef GLuint (APIENTRYP PFNGLCREATEPROGRAMPROC)(void);
+GLAPI PFNGLCREATEPROGRAMPROC glCreateProgram;
+
+typedef void (APIENTRYP PFNGLATTACHSHADERPROC)(GLuint program, GLuint shader);
+GLAPI PFNGLATTACHSHADERPROC glAttachShader;
+
+typedef void (APIENTRYP PFNGLLINKPROGRAMPROC)(GLuint program);
+GLAPI PFNGLLINKPROGRAMPROC glLinkProgram;
+
+typedef void (APIENTRYP PFNGLGETPROGRAMIVPROC)(GLuint program, GLenum pname, GLint *params);
+GLAPI PFNGLGETPROGRAMIVPROC glGetProgramiv;
+
+typedef void (APIENTRYP PFNGLGETPROGRAMINFOLOGPROC)(GLuint program, GLsizei bufSize, GLsizei *length, char *infoLog);
+GLAPI PFNGLGETPROGRAMINFOLOGPROC glGetProgramInfoLog;
+
+typedef void (APIENTRYP PFNGLDELETESHADERPROC)(GLuint shader);
+GLAPI PFNGLDELETESHADERPROC glDeleteShader;
+
+typedef void (APIENTRYP PFNGLDETACHSHADERPROC)(GLuint program, GLuint shader);
+GLAPI PFNGLDETACHSHADERPROC glDetachShader;
+
+typedef void (APIENTRYP PFNGLUSEPROGRAMPROC)(GLuint program);
+GLAPI PFNGLUSEPROGRAMPROC glUseProgram;
 
 #endif

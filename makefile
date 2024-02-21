@@ -11,6 +11,7 @@ PROJECT = wind
 SRCS += main.cpp
 SRCS += Debug.cpp
 SRCS += Window.cpp
+SRCS += Shader.cpp
 SRCS += glad.cpp
 
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.

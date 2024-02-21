@@ -8,9 +8,6 @@ static Debugger* debug = new Debugger("Window",DEBUG_ALL);
 std::vector<Window*>Window::windows; //A list of windows to match handles to
 std::vector<WNDCLASSEX>Window::wcs;      //Different types of window classes
 
-#define IMAGE_WIDTH     256
-#define IMAGE_HEIGHT    256
-
 #define TEXTURE_WIDTH   128
 #define TEXTURE_HEIGHT  128
 
@@ -387,13 +384,14 @@ void Window::ResolveAA(){
 }
 
 void Window::DrawFrame(){
-
     //Select the mutisampled frambuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glViewport(0, 0, width, height);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -589,7 +587,7 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     if (!wnd){
         //Cannot find window before WM_CREATE is issued
         //Normally, you get: WM_NCCREATE, WM_NCCALCSIZE, WM_CREATE, WM_SIZE, WM_MOVE
-        debug->Err("Unable to find window by handle. msg = %lu (0x%0X) hWnd = %lu (0x%0X) \n",msg,msg,hWnd,hWnd);
+        //debug->Err("Unable to find window by handle. msg = %lu (0x%0X) hWnd = %lu (0x%0X) \n",msg,msg,hWnd,hWnd);
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
 

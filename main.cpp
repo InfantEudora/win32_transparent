@@ -7,6 +7,7 @@
 
 #include "Debug.h"
 #include "Window.h"
+#include "Shader.h"
 #include "glad.h"
 
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
@@ -73,6 +74,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     Window::RegisterWindowClasses();
 
+    Window* wind = Window::CreateNewLayeredWindow(256,256,&Window::wcs.at(0));
+    if (!wind){
+        debug->Fatal("Unable to create window\n");
+    }
+    if (!wind->Init()){
+        debug->Fatal("Failed to init window\n");
+    }
+
+    //Now we can make shaders
+    Shader* shader = new Shader("default.vert","default.frag");
+
     for (int i =0;i<1;i++){
         HANDLE hThread = NULL;
         DWORD thread_id;
@@ -95,31 +107,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug->Info("WinMain hInstance = %lu\n",hInstance);
     debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
 
-    Window* wind = Window::CreateNewLayeredWindow(256,256,&Window::wcs.at(0));
 
-    if (!wind){
-        debug->Fatal("Unable to create window\n");
-    }
 
-    if (wind->Init()){
-        wind->Show(SW_SHOWDEFAULT);
-        SetVSync(true);
-        MSG msg = {0};
-        while (wind->f_should_quit == false){
-            if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
-                if (msg.message == WM_QUIT)
-                    break;
 
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }else{
-                wind->DrawFrame();
-            }
+    wind->Show(SW_SHOWDEFAULT);
+    SetVSync(true);
+    MSG msg = {0};
+    while (wind->f_should_quit == false){
+        if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
+            if (msg.message == WM_QUIT)
+                break;
+
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }else{
+            wind->DrawFrame();
         }
     }
 
-    //Cleanup();
-    //UnregisterClass(wind->wc.lpszClassName, hInstance);
 
     return 0;
 }
