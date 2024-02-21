@@ -55,7 +55,8 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     Window* wnd = Window::GetWindowByHandle(hWnd);
     if (!wnd){
         //Cannot find window before WM_CREATE is issued
-        debug->Err("Unable to find window by handle.\n");
+        //Normally, you get: WM_NCCREATE, WM_NCCALCSIZE, WM_CREATE, WM_SIZE, WM_MOVE
+        debug->Err("Unable to find window by handle. msg = %lu (0x%0X) hWnd = %lu (0x%0X) \n",msg,msg,hWnd,hWnd);
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
@@ -70,6 +71,7 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
             }else if (wParam == 'C'){
                 if (wnd->f_control_down){
                     wnd->f_should_quit = true;
+                    debug->Info("CTRL+C on window\n");
                 }
                 return 0;
             }else{
@@ -132,6 +134,9 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         case WM_KILLFOCUS:
             wnd->f_has_focus = false;
         break;
+        case WM_PAINT:
+            debug->Info("WM_PAINT received\n");
+        break;
 
 
         default:
@@ -140,6 +145,7 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
+
 
 /*
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)

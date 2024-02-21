@@ -79,13 +79,31 @@ DECLARE_HANDLE(HPBUFFERARB);
 #define WGL_TYPE_COLORINDEX_ARB                   0x202C
 #define WGL_TYPE_RGBA_ARB                         0x202B
 
+// FRAME/RENDER BUFFERS
+#define GL_FRAMEBUFFER                                  0x8D40
+#define GL_RENDERBUFFER                                 0x8D41
+
+#define GL_FRAMEBUFFER_UNDEFINED                        0x8219
+#define GL_FRAMEBUFFER_COMPLETE                         0x8CD5
+#define GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT            0x8CD6
+#define GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT    0x8CD7
+#define GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER           0x8CDB
+#define GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER           0x8CDC
+#define GL_FRAMEBUFFER_UNSUPPORTED                      0x8CDD
+#define GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE           0x8D56
+#define GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS         0x8DA8
+
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_COLOR_ATTACHMENT1 0x8CE1
+#define GL_DEPTH_ATTACHMENT 0x8D00
+
+#define GL_RGBA16F 0x881A
+#define GL_DEPTH_COMPONENT32F 0x8CAC
+
+
 typedef BOOL (WINAPI * PFNWGLCHOOSEPIXELFORMATARBPROC) (HDC hdc, const int *piAttribIList, const FLOAT *pfAttribFList, UINT nMaxFormats, int *piFormats, UINT *nNumFormats);
 typedef BOOL (WINAPI * PFNWGLGETPIXELFORMATATTRIBFVARBPROC) (HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes, const int *piAttributes, FLOAT *pfValues);
 typedef BOOL (WINAPI * PFNWGLGETPIXELFORMATATTRIBIVARBPROC) (HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes, const int *piAttributes, int *piValues);
-
-
-
-
 
 bool InitGLExtensions(void);
 
@@ -104,6 +122,18 @@ typedef HDC (WINAPI * PFNWGLGETPBUFFERDCARBPROC) (HPBUFFERARB hPbuffer);
 typedef HPBUFFERARB (WINAPI * PFNWGLCREATEPBUFFERARBPROC) (HDC hDC, int iPixelFormat, int iWidth, int iHeight, const int *piAttribList);
 typedef int (WINAPI * PFNWGLRELEASEPBUFFERDCARBPROC) (HPBUFFERARB hPbuffer, HDC hDC);
 
+typedef BOOL (WINAPI * PFNWGLSWAPINTERVALEXTPROC)(GLint);
+typedef void (APIENTRYP PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint *framebuffers);
+typedef void (APIENTRYP PFNGLGENRENDERBUFFERSPROC)(GLsizei n, GLuint *renderbuffers);
+
+typedef GLenum (APIENTRYP PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
+typedef void (APIENTRYP PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
+typedef void (APIENTRYP PFNGLBINDRENDERBUFFEREXTPROC)(GLenum target, GLuint renderbuffer);
+typedef void (APIENTRYP PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
+typedef void (APIENTRYP PFNGLBINDRENDERBUFFERPROC)(GLenum target, GLuint renderbuffer);
+typedef void (APIENTRYP PFNGLFRAMEBUFFERRENDERBUFFERPROC)(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
+typedef void (APIENTRYP PFNGLRENDERBUFFERSTORAGEPROC)(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
+
 GLAPI PFNWGLCHOOSEPIXELFORMATARBPROC                    wglChoosePixelFormatARB;
 GLAPI PFNWGLGETPIXELFORMATATTRIBFVARBPROC               wglGetPixelFormatAttribfvARB;
 GLAPI PFNWGLGETPIXELFORMATATTRIBIVARBPROC               wglGetPixelFormatAttribivARB;
@@ -113,5 +143,21 @@ GLAPI PFNWGLQUERYPBUFFERARBPROC                         wglQueryPbufferARB;
 GLAPI PFNWGLGETPBUFFERDCARBPROC                         wglGetPbufferDCARB;
 GLAPI PFNWGLCREATEPBUFFERARBPROC                        wglCreatePbufferARB;
 GLAPI PFNWGLRELEASEPBUFFERDCARBPROC                     wglReleasePbufferDCARB;
+
+
+GLAPI PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
+
+GLAPI PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers;
+GLAPI PFNGLGENRENDERBUFFERSPROC glGenRenderbuffers;
+
+GLAPI PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus;
+GLAPI PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer;
+GLAPI PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer;
+GLAPI PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC glRenderbufferStorageMultisample;
+GLAPI PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer;
+
+GLAPI PFNGLRENDERBUFFERSTORAGEPROC glRenderbufferStorage;
+
+
 
 #endif

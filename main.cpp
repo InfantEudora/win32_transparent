@@ -153,6 +153,7 @@ void ImageDestroy(Image *pImage)
     pImage->pPixels = NULL;
 }
 
+//
 bool ImageCreate(Image *pImage, int width, int height)
 {
     if (!pImage)
@@ -372,12 +373,17 @@ bool InitPBuffer()
         0
     };
 
+
+
     int format = 0;
     UINT matchingFormats = 0;
 
     if (!wglChoosePixelFormatARB(g_hDC, attribList, 0, 1, &format, &matchingFormats)){
         debug->Fatal("wglChoosePixelFormatARB() failed");
     }
+
+    //Instead of a Pbuffer, we use a framebuffer.
+
 
     if (!(g_hPBuffer = wglCreatePbufferARB(g_hDC, format, IMAGE_WIDTH, IMAGE_HEIGHT, 0))){
         debug->Fatal("wglCreatePbufferARB() failed");
@@ -390,6 +396,83 @@ bool InitPBuffer()
     if (!(g_hPBufferRC = wglCreateContext(g_hPBufferDC))){
         debug->Fatal("wglCreateContext() failed for PBuffer");
     }
+    return true;
+}
+
+//We'll have one multisampled framebuffer with a single color and depth buffer.
+//And a resolve buffer, where the mutisampling is resolved to.
+
+GLuint msaa_fbo_id = -1; //Main FBO consisting of:
+GLuint color_rbo_id = -1; // Main color
+GLuint depth_rbo_id = -1; // Main depth
+
+GLuint resolve_fbo_id = -1;  //Corresponding frame buffer
+GLuint resolve_rbo_id = -1;  //Corresponding frame buffer
+
+//Returns true if the framebuffer checks OK.
+bool CheckFrameBuffer(){
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status == GL_FRAMEBUFFER_COMPLETE){
+        debug->Ok("GL_FRAMEBUFFER_COMPLETE\n");
+        return true;
+    }
+    if (status == GL_FRAMEBUFFER_UNDEFINED)
+        debug->Err("GL_FRAMEBUFFER_UNDEFINED\n");
+    else if (status == GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT)
+        debug->Err("GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT\n");
+    else if (status == GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT)
+        debug->Err("GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT\n");
+    else if (status == GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER)
+        debug->Err("GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER\n");
+    else if (status == GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER)
+        debug->Err("GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER\n");
+    else if (status == GL_FRAMEBUFFER_UNSUPPORTED)
+        debug->Err("GL_FRAMEBUFFER_UNSUPPORTED\n");
+    else if (status == GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE)
+        debug->Err("GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE\n");
+    else if (status == GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS)
+        debug->Err("GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS\n");
+    else
+        debug->Err("glCheckFramebufferStatus UNKNOWN\n");
+    return false;
+}
+
+bool InitFBO(){
+    glGenFramebuffers(1, &msaa_fbo_id);
+    glGenRenderbuffers(1, &color_rbo_id);
+    glGenRenderbuffers(1, &depth_rbo_id);
+
+    glGenFramebuffers(1, &resolve_fbo_id);
+    glGenRenderbuffers(1, &resolve_rbo_id);
+
+    if (msaa_fbo_id == -1){
+        return false;
+    }
+
+    int aa_samples = 4;
+    int width = 256;
+    int height = 256;
+
+
+    //Setup buffers:
+    //Mutisampled color 16bit float
+    glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
+    glBindRenderbuffer(GL_RENDERBUFFER, color_rbo_id);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, aa_samples, GL_RGBA16F, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color_rbo_id);
+    CheckFrameBuffer();
+
+    //32-bit depth
+    glBindRenderbuffer(GL_RENDERBUFFER, depth_rbo_id);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, aa_samples, GL_DEPTH_COMPONENT32F, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_rbo_id);
+    CheckFrameBuffer();
+
+    //The resolve buffer
+    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA16F, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, resolve_rbo_id);
+
     return true;
 }
 
@@ -407,7 +490,7 @@ bool InitGL(){
     pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL;
     pfd.iPixelType = PFD_TYPE_RGBA;
     pfd.cColorBits = 24;
-    pfd.cDepthBits = 16;
+    pfd.cDepthBits = 24;
     pfd.iLayerType = PFD_MAIN_PLANE;
 
     if (!(g_hDC = GetDC(g_hWnd)))
@@ -426,6 +509,11 @@ bool InitGL(){
 
     if (!InitGLExtensions())
         return false;
+
+    if (!InitFBO()){
+        return false;
+    }
+
 
     if (!InitPBuffer())
         return false;
@@ -450,8 +538,7 @@ bool InitGL(){
     return true;
 }
 
-bool Init()
-{
+bool Init(){
     if (!InitGL())
     {
         Cleanup();
@@ -467,8 +554,7 @@ bool Init()
     return true;
 }
 
-void CopyPBufferToImage()
-{
+void CopyPBufferToImage(){
     // Copy the contents of the framebuffer - which in our case is our pbuffer -
     // to our bitmap image in local system memory. Notice that we also need
     // to invert the pbuffer's pixel data since OpenGL by default orients the
@@ -490,8 +576,7 @@ void CopyPBufferToImage()
 
 float rotation = 0.0f;
 
-void DrawFrame()
-{
+void DrawFrame(){
     // Once the pbuffer is created and its rendering context is made current
     // all normal OpenGL draw calls will affect the pbuffer's framebuffer NOT
     // the normal rendering context for the window.
@@ -542,9 +627,26 @@ void DrawFrame()
     // Finally we update our layered window with our scene.
     RedrawLayeredWindow();
 
+    glFinish();
+    SwapBuffers(g_image.hdc);
+
     // Since we're doing off-screen rendering the frame rate will be
     // independent of the video display's refresh rate.
     g_frames++;
+}
+
+
+//Uses a WGL extension
+
+void SetVSync(bool enable){
+    if (wglSwapIntervalEXT){
+        wglSwapIntervalEXT(enable);
+        if (enable){
+            debug->Ok("VSync: Enabled\n");
+        }else{
+            debug->Ok("VSync: Disabled\n");
+        }
+    }
 }
 
 
@@ -565,35 +667,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 _T("GL Layered Window Demo"), WS_POPUP, 0, 0, IMAGE_WIDTH,
                 IMAGE_HEIGHT, 0, 0, wind->wc.hInstance, 0);
 
-    g_hWnd = wind->hWnd;
-
-    if (g_hWnd)
-    {
-        if (Init())
-        {
-            ShowWindow(g_hWnd, nShowCmd);
-            UpdateWindow(g_hWnd);
-
-            while (wind->f_should_quit == false)
-            {
-                if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
-                {
-                    if (msg.message == WM_QUIT)
-                        break;
-
-                    TranslateMessage(&msg);
-                    DispatchMessage(&msg);
-                }
-                else
-                {
-                    DrawFrame();
-                }
-            }
-        }
-
-        Cleanup();
-        UnregisterClass(wind->wc.lpszClassName, hInstance);
+    if (!wind->hWnd){
+        debug->Fatal("Unable to create window\n");
     }
 
-    return (int)(msg.wParam);
+    g_hWnd = wind->hWnd;
+
+
+    if (Init()){
+        ShowWindow(g_hWnd, nShowCmd);
+        UpdateWindow(g_hWnd);
+        SetVSync(true);
+
+        while (wind->f_should_quit == false)
+        {
+            if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+            {
+                if (msg.message == WM_QUIT)
+                    break;
+
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+            else
+            {
+                DrawFrame();
+            }
+        }
+    }
+
+    Cleanup();
+    UnregisterClass(wind->wc.lpszClassName, hInstance);
+
+    return 0;
 }
