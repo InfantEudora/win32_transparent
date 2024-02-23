@@ -54,7 +54,8 @@ void main() {
 	mat_trans = obj_rotate;
 
 
-	vec3 transpos = mat_trans * (position + instance_data[gl_InstanceID].position); //In world space
+	vec3 transpos = mat_trans * position; //In world space
+	transpos +=  instance_data[gl_InstanceID].position;
 	vposition = transpos.xyz;
 
 	vec4 vn = vec4(normal,1);

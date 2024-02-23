@@ -4,6 +4,7 @@ class Renderer;
 #include "Shader.h"
 #include "glad.h"
 #include "Object.h"
+#include "Camera.h"
 
 //This should have the same layout as in the shader
 typedef struct {
@@ -64,6 +65,7 @@ class Renderer{
     //Our example cube
     void InitCheckerPatternTexture();
     Object* cube = NULL;
+    Camera* camera = NULL;
 };
 
 

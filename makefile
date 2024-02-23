@@ -17,6 +17,7 @@ SRCS += Renderer.cpp
 SRCS += Shader.cpp
 
 SRCS += Object.cpp
+SRCS += Camera.cpp
 SRCS += Mesh.cpp
 
 SRCS += glad.cpp

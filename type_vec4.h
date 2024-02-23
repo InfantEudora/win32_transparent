@@ -27,13 +27,19 @@ struct vec4{
 	vec4() : x(0), y(0), z(0), w(0) {}
     vec4(float x, float y, float z,float w) : x(x), y(y), z(z), w(w){}
 
-    vec4&   set(float x, float y, float z, float w);
+    void   set(float x, float y, float z, float w);
+    void    clear();
     vec4&  	normalize();
 };
 
-inline vec4& vec4::set(float x, float y, float z, float w) {
-    this->x = x; this->y = y; this->z = z; this->w = w; return *this;
+inline void vec4::set(float x, float y, float z, float w){
+    this->x = x; this->y = y; this->z = z; this->w = w;
 }
+
+inline void vec4::clear(){
+    this->x = 0; this->y = 0; this->z = 0; this->w = 0;
+}
+
 inline vec4& vec4::normalize(){
 	double s = (x*x) + (y*y)  + (z*z) + (w*w);
 	if (s <= 0){

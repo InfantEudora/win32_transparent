@@ -34,7 +34,11 @@ class Object{
     fmat4 local_transform_scale_matrix;
     fmat4 world_transform_scale_matrix;
     fmat3 mat_rotation;
+
     vec3 position;
+    vec3 lookat;
+    vec3 up;
+
     float rotation = 0.0f;
 
     bool f_was_transformed = false;

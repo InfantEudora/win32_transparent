@@ -2,7 +2,7 @@
 #include "Renderer.h"
 
 #include "Debug.h"
-static Debugger* debug = new Debugger("Renderer",DEBUG_ALL);
+static Debugger* debug = new Debugger("Renderer",DEBUG_WARN);
 
 #define TEXTURE_WIDTH   128
 #define TEXTURE_HEIGHT  128
@@ -26,6 +26,10 @@ bool Renderer::Init(){
     cube = new Object();
     cube->SetMesh(new Mesh());
     objects.push_back(cube);
+
+    camera = new Camera();
+    camera->SetPosition(vec3(0,0,4));
+    camera->SetupPerspective(256,256,45,0.1,10);
 
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
@@ -201,6 +205,7 @@ void Renderer::DrawFrame(Shader* shader){
     DrawObjects();
 
     cube->Rotate();
+    shader->Setmat4("mat_worldcam",camera->mat_cam);
     shader->Setmat3("obj_rotate",cube->mat_rotation);
 
     //Mesh* mesh = cube->GetMesh();

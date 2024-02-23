@@ -7,7 +7,6 @@ static Debugger* debug = new Debugger("Window",DEBUG_ALL);
 std::vector<Window*>Window::windows; //A list of windows to match handles to
 std::vector<WNDCLASSEXA>Window::wcs;      //Different types of window classes
 
-
 void ImageDestroy(Image *pImage){
     if (!pImage)
         return;

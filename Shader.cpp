@@ -154,3 +154,12 @@ void Shader::Setmat3(const char* name, const fmat3& matrix){
 	}
 	glUniformMatrix3fv(matid,1,GL_FALSE,(GLfloat*)&matrix);
 }
+
+void Shader::Setmat4(const char* name, const fmat4& matrix){
+	GLuint matid = glGetUniformLocation(progid, name);
+	if (matid == -1){
+		debug->Fatal("Could not set %i's mat4 %s\n",progid,name);
+		return;
+	}
+	glUniformMatrix4fv(matid,1,GL_FALSE,(GLfloat*)&matrix);
+}

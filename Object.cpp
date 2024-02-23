@@ -5,6 +5,7 @@ objectid_t Object::object_ids = 0;
 Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
+    up = vec3(0,1,0);
 }
 
 void Object::GenerateUniqueID(){
@@ -48,7 +49,7 @@ void Object::Rotate(){
     f_was_transformed = true;
     //Modify the cube
     rotation += 0.01f;
-    MoveBy(vec3(0.01,0,0));
+    MoveBy(vec3(0.001,0,0));
     vec3 target_axis = vec3(0,1,0);
     mat_rotation.set_rotation(target_axis,rotation);
 }
