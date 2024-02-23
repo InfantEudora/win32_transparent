@@ -5,7 +5,7 @@
 static Debugger* debug = new Debugger("Window",DEBUG_ALL);
 
 std::vector<Window*>Window::windows; //A list of windows to match handles to
-std::vector<WNDCLASSEX>Window::wcs;      //Different types of window classes
+std::vector<WNDCLASSEXA>Window::wcs;      //Different types of window classes
 
 
 void ImageDestroy(Image *pImage){
@@ -99,7 +99,7 @@ void Window::Show(int nShowCmd){
 
 //This registers the window classes for this application
 void Window::RegisterWindowClasses(){
-    WNDCLASSEX wc = {0};
+    WNDCLASSEXA wc = {0};
 
     wc.cbSize = sizeof(wc);
     wc.style = 0; //CS_HREDRAW | CS_VREDRAW;
@@ -114,7 +114,7 @@ void Window::RegisterWindowClasses(){
     wc.lpszClassName = "MainWindowClass";
     wc.hIconSm = 0;
 
-    if (!RegisterClassEx(&wc)){
+    if (!RegisterClassExA(&wc)){
         debug->Fatal("Failed to register GLLayeredWindowClass\n");
     }
     wcs.push_back(wc);
@@ -254,9 +254,9 @@ void Window::CopyBufferToBackBuffer(){
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
-Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEX* wc){
+Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc){
     Window* wnd = new Window();
-    wnd->hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST, wc->lpszClassName,
+    wnd->hWnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_TOPMOST, wc->lpszClassName,
                 "GL Layered Window", WS_POPUP, 0, 0, width,
                 height, 0, 0, NULL, 0);
 
@@ -271,7 +271,7 @@ Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEX* wc){
     return wnd;
 }
 
-Window* Window::CreateNewWindow(int width, int height, WNDCLASSEX* wc){
+Window* Window::CreateNewWindow(int width, int height, WNDCLASSEXA* wc){
     Window* wnd = new Window();
 
     int left = 200;
@@ -286,7 +286,7 @@ Window* Window::CreateNewWindow(int width, int height, WNDCLASSEX* wc){
     lpRect->bottom = height + top;
     AdjustWindowRectEx(lpRect,WS_OVERLAPPEDWINDOW,false,WS_EX_LEFT);
 
-    wnd->hWnd = CreateWindowEx(WS_EX_LEFT,
+    wnd->hWnd = CreateWindowExA(WS_EX_LEFT,
         wc->lpszClassName,
         "Normal Window",
         WS_OVERLAPPEDWINDOW,

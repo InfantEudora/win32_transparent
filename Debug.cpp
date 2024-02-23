@@ -191,40 +191,40 @@ void Debugger::color_tobuffer(int color) {
 
     switch (color) {
         case CLR_BLACK:
-            boffset += sprintf(&buffer[boffset], "\x1b[30m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[30m");
             break;
         case CLR_RED:
-            boffset += sprintf(&buffer[boffset], "\x1b[31m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[31m");
             break;
         case CLR_GREEN:
-            boffset += sprintf(&buffer[boffset], "\x1b[32m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[32m");
             break;
         case CLR_LIGHTGREEN:
-            boffset += sprintf(&buffer[boffset], "\x1b[92m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[92m");
             break;
         case CLR_YELLOW:
-            boffset += sprintf(&buffer[boffset], "\x1b[33m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[33m");
             break;
         case CLR_BLUE:
-            boffset += sprintf(&buffer[boffset], "\x1b[34m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[34m");
             break;
         case CLR_MAGENTA:
-            boffset += sprintf(&buffer[boffset], "\x1b[35m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[35m");
             break;
         case CLR_CYAN:
-            boffset += sprintf(&buffer[boffset], "\x1b[36m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[36m");
             break;
         case CLR_LIGHTCYAN:
-            boffset += sprintf(&buffer[boffset], "\x1b[96m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[96m");
             break;
         case CLR_GREY: // Default set by Cancel.
-            boffset += sprintf(&buffer[boffset], "\x1b[90m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[90m");
             break;
         case CLR_WHITE:
-            boffset += sprintf(&buffer[boffset], "\x1b[97m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[97m");
             break;
         case CLR_CANCEL:
-            boffset += sprintf(&buffer[boffset], "\x1b[39m");
+            boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "\x1b[39m");
             break;
         default:
             break;
@@ -239,33 +239,33 @@ void Debugger::PrintLineva(debug_t type, const char *format, va_list arglist) {
 
     if (type == DEBUG_TRACE) {
         color_tobuffer(CLR_GREY);
-        boffset += sprintf(&buffer[boffset], "trace");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "trace");
     } else if (type == DEBUG_DEBUG) {
         color_tobuffer(CLR_WHITE);
-        boffset += sprintf(&buffer[boffset], "debug");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "debug");
     } else if (type == DEBUG_INFO) {
         color_tobuffer(CLR_CYAN);
-        boffset += sprintf(&buffer[boffset], " info");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, " info");
     } else if (type == DEBUG_OK) {
         color_tobuffer(CLR_GREEN);
-        boffset += sprintf(&buffer[boffset], "  ok ");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "  ok ");
     } else if (type == DEBUG_WARN) {
         color_tobuffer(CLR_YELLOW);
-        boffset += sprintf(&buffer[boffset], " warn");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, " warn");
     } else if (type == DEBUG_ERROR) {
         color_tobuffer(CLR_RED);
-        boffset += sprintf(&buffer[boffset], " err ");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, " err ");
     } else if (type == DEBUG_FATAL) {
         color_tobuffer(CLR_RED);
-        boffset += sprintf(&buffer[boffset], "fatal");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "fatal");
     } else {
-        boffset += sprintf(&buffer[boffset], " -- ");
+        boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, " -- ");
     }
     color_tobuffer(CLR_WHITE);
-    boffset += sprintf(&buffer[boffset], "] %20s : ", name);
+    boffset += sprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, "] %20s : ", name);
     color_tobuffer(CLR_CANCEL);
 
-    boffset += vsprintf(&buffer[boffset], format, arglist);
+    boffset += vsprintf_s(&buffer[boffset], DEBUG_IO_BUFFERSIZE, format, arglist);
     if (boffset > (DEBUG_IO_BUFFERSIZE - 1)) {
         printf("Wrote past buffer\n");
         exit(1);

@@ -1,5 +1,6 @@
 #ifndef _TYPE_FMAT3_H_
 #define _TYPE_FMAT3_H_
+#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
@@ -12,8 +13,9 @@ struct fmat3{
 	vec3 vertex[3];
 
     //Functions
-    fmat3& identity();  //Set's this matrix to identity.
-    fmat3& set_rotation(const vec3& axis, float angle);
+    void    print();
+    fmat3&  identity();  //Set's this matrix to identity.
+    fmat3&  set_rotation(const vec3& axis, float angle);
 };
 
 inline fmat3& fmat3::identity(){
@@ -43,6 +45,14 @@ inline fmat3& fmat3::set_rotation(const vec3& axis, float angle){
 	vertex[2].z = oc * axis.z * axis.z + c;
 
 	return *this;
+}
+
+inline void fmat3::print(){
+    printf("fmat3:\n");
+    vertex[0].print();
+    vertex[1].print();
+    vertex[2].print();
+
 }
 
 #endif

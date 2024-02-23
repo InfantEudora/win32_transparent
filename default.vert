@@ -6,6 +6,14 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec2 uv;
 
+struct InstanceData{
+	mat4 mat_transformscale;
+};
+
+layout (std430, binding = 0) buffer InstanceDataBuffer{
+	InstanceData instance_data[];
+};
+
 //Output
 layout (location = 0) out vec3 vposition; //Vertex position in world space, used for lighting
 layout (location = 1) out vec3 vnormal;	//Normals
@@ -54,5 +62,7 @@ void main() {
 	vuv = uv;
 
 	gl_Position = (mat_worldcam * vec4(transpos,1)) ;
+
+	//gl_Position = uProjection * uView * vec4(lPosition + instance_data[gl_InstanceID].position, 1.f);
 
 }

@@ -38,7 +38,7 @@ public:
     HWND        hWnd = 0;   //Handle to a window
     HDC         hDC;        //Handle to a Device Context
     HGLRC       hRC;
-    WNDCLASSEX*  wc = NULL;         //The class this window has
+    WNDCLASSEXA*  wc = NULL;         //The class this window has
 
     int left = 0;
     int top = 0;
@@ -68,8 +68,8 @@ public:
     bool Init();
     bool InitOpenGL(); //Needs to be called on a window, only once.
 
-    static Window* CreateNewLayeredWindow(int width, int height, WNDCLASSEX* wc);
-    static Window* CreateNewWindow(int width, int height, WNDCLASSEX* wc);
+    static Window* CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc);
+    static Window* CreateNewWindow(int width, int height, WNDCLASSEXA* wc);
 
     void DrawFrame();
     void CopyBufferToImage();
@@ -82,7 +82,7 @@ public:
     void SetTitle(std::string);
     void Close(void);
     static HWND _FindWindow(std::string title);
-    static std::vector<WNDCLASSEX>wcs;      //Different types of window classes
+    static std::vector<WNDCLASSEXA>wcs;      //Different types of window classes
 
 private:
     static std::vector<Window*> windows; //An array of all created windows

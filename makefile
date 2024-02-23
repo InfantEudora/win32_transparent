@@ -15,6 +15,10 @@ SRCS += Debug.cpp
 SRCS += Window.cpp
 SRCS += Renderer.cpp
 SRCS += Shader.cpp
+
+SRCS += Object.cpp
+SRCS += Mesh.cpp
+
 SRCS += glad.cpp
 
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.

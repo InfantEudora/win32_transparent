@@ -3,12 +3,12 @@
 class Renderer;
 #include "Shader.h"
 #include "glad.h"
+#include "Object.h"
 
-struct Vertex{
-    float pos[3];
-    float normal[3];
-    float texcoord[2];
-};
+//This should have the same layout as in the shader
+typedef struct {
+    fmat4 mat_transformscale; //Matrix holding object rotation, scale and translation
+}InstanceData;
 
 /*
     A class responsible of managing the OpenGL state and pipeline.
@@ -22,11 +22,20 @@ class Renderer{
     int width = 1;
     int height = 1;
 
+    void CullObjects();
+    void RebuildUniqueMeshList();
+    void ClearBatches();
+    void FillBactches();
+    void DrawObjects();
+    void BuildSSBO();
+    void RenderUniqueMeshes();
+
     void DrawFrame(Shader* shader);
+
     bool CheckFrameBuffer();
     bool Init();
     bool InitFBO();
-    bool InitVBO();
+    bool InitSSBO();
     void ResolveAA();
 
     //We'll have one multisampled framebuffer with a single color and depth buffer.
@@ -38,13 +47,22 @@ class Renderer{
     GLuint resolve_fbo_id = -1;  //Resolve frame buffer
     GLuint resolve_rbo_id = -1;  //Corresponding render buffer
 
-    GLuint cube_vbo = -1;
-    GLuint cube_vao = -1;
+    GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
+
     UINT texture_id = -1;
+
+    //These will differ per frame
+    std::vector<Mesh*> unique_meshes;               // An array of unique meshes
+    std::vector<Object*>renderable_objects;         // All objects we will render this frame
+    std::vector<std::vector<objectid_t>*>batch_ids; // An array of arrays containing the object id's per unique mesh, these form batches
+    std::vector<InstanceData>instancedata;          // Object data per unique mesh instance
+
+    std::vector<Object*>objects;                    //All known objects
+
 
     //Our example cube
     void InitCheckerPatternTexture();
-    float rotation = 0;
+    Object* cube = NULL;
 };
 
 

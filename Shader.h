@@ -8,9 +8,7 @@
 
 #include "type_fmat3.h"
 
-#define ATTRIB_VERTEX   0
-#define ATTRIB_NORMAL   1
-#define ATTRIB_UVCOORD  2
+
 
 class Shader{
 private:

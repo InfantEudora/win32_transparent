@@ -11,6 +11,8 @@
 #include "Renderer.h"
 #include "glad.h"
 
+#pragma comment(lib, "opengl32.lib")
+
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
 BOOL WINAPI ConsoleHandler(DWORD console_event){
@@ -103,7 +105,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         debug->Err("Unable to install a console handler!\n");
     }
 
-    int num_threads = 1;
+    int num_threads = 0;
 
     DWORD main_id = GetCurrentThreadId();
     debug->Info("WinMain Thread ID: %lu\n",main_id);

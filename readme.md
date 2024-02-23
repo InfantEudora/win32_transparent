@@ -28,7 +28,10 @@ It should kind of look like this:
 - [x] Resize to an arbitrary size
 - [ ] Share the texture across contexts?
 - [ ] Use named versions of Frame/Renderbuffers
-- [ ] Continue rotating while being dragged...
+- [x] Continue rotating while being dragged...
+- [ ] Add another instance of cube
+- [ ] Add another object type... sphere?
+- [ ] Move something with input
 
 ### Some notes
 
