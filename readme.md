@@ -24,10 +24,11 @@ It should kind of look like this:
 - [x] Copy pixel data out of FBO instead of BPO.
 - [x] Thread per window, seperate context per window.
 - [x] Use a slightly more modern pipeline and get rid of glu stuff.
-- [ ] Seperate window and drawing primitive somehow
+- [x] Seperate window and drawing primitive somehow
 - [x] Resize to an arbitrary size
 - [ ] Share the texture across contexts?
 - [ ] Use named versions of Frame/Renderbuffers
+- [ ] Continue rotating while being dragged...
 
 ### Some notes
 

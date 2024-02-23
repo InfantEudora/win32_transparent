@@ -70,13 +70,40 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
     return 0;
 }
 
+Window* wind_frame = NULL;
+Shader* shader_frame = NULL;
+Renderer* renderer_frame = NULL;
+
+//Function for rendering the frame to a window
+DWORD WINAPI FrameFunction(LPVOID lpParameter){
+    DWORD thread_id = GetCurrentThreadId();
+    debug->Info("Output from FrameFunction Thread ID: %lu\n",thread_id);
+
+    Window* wind = wind_frame;
+    Renderer* renderer = renderer_frame;
+    Shader* shader = shader_frame;
+
+    //We make the window's context current to this thread
+    if (!wglMakeCurrent(wind->hDC, wind->hRC)){
+        debug->Info("FrameFunction Thread unable to get Context\n");
+        return false;
+    }
+
+    while (wind->f_should_quit == false){
+        renderer->DrawFrame(shader);
+        wind->DrawFrame();
+    }
+    debug->Info("Thread terminated\n");
+    return 0;
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd){
     //Used to do things from console, like CTRL+C
     if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)ConsoleHandler,TRUE)==FALSE){
         debug->Err("Unable to install a console handler!\n");
     }
 
-    int num_threads = 0;
+    int num_threads = 1;
 
     DWORD main_id = GetCurrentThreadId();
     debug->Info("WinMain Thread ID: %lu\n",main_id);
@@ -120,6 +147,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     wind->Show(SW_SHOWDEFAULT);
     SetVSync(true);
+
+    wind_frame = wind;
+    shader_frame = shader;
+    renderer_frame = renderer;
+
+    //We release the window's context from this thread
+    wglMakeCurrent(wind->hDC, NULL);
+
+    if (1){
+        HANDLE hThread = NULL;
+        DWORD thread_id;
+        // Create a new thread which will get this one's render context
+        hThread = CreateThread(
+            NULL,    // Thread attributes
+            0,       // Stack size (0 = use default)
+            FrameFunction, // Thread start address
+            NULL,    // Parameter to pass to the thread
+            0,       // Creation flags
+            &thread_id);   // Thread id
+
+        if (hThread == NULL){
+            debug->Fatal("Unable to FrameFunction thread\n");
+        }
+    }
+
+
     MSG msg = {0};
     while (wind->f_should_quit == false){
         if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
@@ -128,8 +181,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
-            renderer->DrawFrame(shader);
-            wind->DrawFrame();
+            Sleep(1);
         }
     }
 

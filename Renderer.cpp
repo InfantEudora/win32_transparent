@@ -215,7 +215,6 @@ void Renderer::ResolveAA(){
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
-
 //Returns true if the framebuffer checks OK.
 bool Renderer::CheckFrameBuffer(){
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
