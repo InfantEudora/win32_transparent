@@ -144,13 +144,10 @@ GLAPI PFNWGLCHOOSEPIXELFORMATARBPROC                    wglChoosePixelFormatARB;
 GLAPI PFNWGLGETPIXELFORMATATTRIBFVARBPROC               wglGetPixelFormatAttribfvARB;
 GLAPI PFNWGLGETPIXELFORMATATTRIBIVARBPROC               wglGetPixelFormatAttribivARB;
 
-
-
 GLAPI PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
 GLAPI PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers;
 GLAPI PFNGLGENRENDERBUFFERSPROC glGenRenderbuffers;
-
 GLAPI PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus;
 GLAPI PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer;
 GLAPI PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer;
@@ -195,7 +192,6 @@ typedef void (APIENTRYP PFNGLUNIFORMMATRIX3FVPROC)(GLint location, GLsizei count
 GLAPI PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv;
 
 //VBOs
-
 typedef void (APIENTRYP PFNGLBINDBUFFERPROC)(GLenum target, GLuint buffer);
 GLAPI PFNGLBINDBUFFERPROC glBindBuffer;
 typedef void (APIENTRYP PFNGLBUFFERDATAPROC)(GLenum target, GLsizeiptr size, const void *data, GLenum usage);
@@ -220,6 +216,18 @@ typedef void (APIENTRYP PFNGLVERTEXARRAYATTRIBBINDINGPROC)(GLuint vaobj, GLuint 
 GLAPI PFNGLVERTEXARRAYATTRIBBINDINGPROC glVertexArrayAttribBinding;
 typedef void (APIENTRYP PFNGLBINDVERTEXARRAYPROC)(GLuint array);
 GLAPI PFNGLBINDVERTEXARRAYPROC glBindVertexArray;
+
+//Textures
+typedef void (APIENTRYP PFNGLCREATETEXTURESPROC)(GLenum target, GLsizei n, GLuint *textures);
+GLAPI PFNGLCREATETEXTURESPROC glCreateTextures;
+typedef void (APIENTRYP PFNGLTEXTUREPARAMETERIPROC)(GLuint texture, GLenum pname, GLint param);
+GLAPI PFNGLTEXTUREPARAMETERIPROC glTextureParameteri;
+typedef void (APIENTRYP PFNGLTEXTURESTORAGE2DPROC)(GLuint texture, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
+GLAPI PFNGLTEXTURESTORAGE2DPROC glTextureStorage2D;
+typedef void (APIENTRYP PFNGLTEXTURESUBIMAGE2DPROC)(GLuint texture, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels);
+GLAPI PFNGLTEXTURESUBIMAGE2DPROC glTextureSubImage2D;
+typedef void (APIENTRYP PFNGLBINDTEXTUREUNITPROC)(GLuint unit, GLuint texture);
+GLAPI PFNGLBINDTEXTUREUNITPROC glBindTextureUnit;
 
 
 

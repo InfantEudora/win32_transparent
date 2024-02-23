@@ -293,17 +293,15 @@ void Window::InitCheckerPatternTexture(){
         }
     }
 
-    glGenTextures(1, &g_textureId);
-    glBindTexture(GL_TEXTURE_2D, g_textureId);
+    glCreateTextures(GL_TEXTURE_2D, 1, &g_textureId);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+    glTextureParameteri(g_textureId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(g_textureId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(g_textureId, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+    glTextureParameteri(g_textureId, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
 
-
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, TEXTURE_WIDTH, TEXTURE_HEIGHT,
-        0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, &checkerImage[0]);
+    glTextureStorage2D(g_textureId, 1, GL_RGBA8, TEXTURE_WIDTH, TEXTURE_WIDTH);
+    glTextureSubImage2D(g_textureId, 0, 0, 0, TEXTURE_WIDTH, TEXTURE_WIDTH, GL_RGBA, GL_UNSIGNED_BYTE, &checkerImage[0]);
 }
 
 bool Window::InitOpenGL(){

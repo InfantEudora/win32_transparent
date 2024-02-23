@@ -26,8 +26,11 @@ It should kind of look like this:
 - [ ] Seperate window and drawing primitive somehow
 - [x] Resize to an arbitrary size
 - [ ] Share the texture across contexts?
+- [ ] Use named versions of Frame/Renderbuffers
 
 ### Some notes
+
+https://github.com/fendevel/Guide-to-Modern-OpenGL-Functions
 
 ```wglGetProcAddress```<br>
 https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-wglgetprocaddress
