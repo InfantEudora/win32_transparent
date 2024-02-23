@@ -45,9 +45,10 @@ void Object::SetMeshBatchIndex(int32_t index){
 }
 
 void Object::Rotate(){
+    f_was_transformed = true;
     //Modify the cube
     rotation += 0.01f;
-    position += vec3(0.01,0,0);
+    MoveBy(vec3(0.01,0,0));
     vec3 target_axis = vec3(0,1,0);
     mat_rotation.set_rotation(target_axis,rotation);
 }

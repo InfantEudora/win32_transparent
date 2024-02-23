@@ -163,8 +163,12 @@ void Renderer::RenderUniqueMeshes(){
 
             InstanceData data;
             data.mat_transformscale = object->GetWorldTransformScaleMatrix();
+            data.position = object->position;
             instancedata.push_back(data);
         }
+
+        glInvalidateBufferData(instdata_ssbo);
+        glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(InstanceData) , &instancedata.at(0),GL_DYNAMIC_DRAW);
 
         debug->Info("Rendering instances\n");
         mesh->RenderInstances(mesh->batch_num_instances);
@@ -209,8 +213,9 @@ void Renderer::DrawFrame(Shader* shader){
 //Create the required Shader Storage Buffer
 bool Renderer::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&instdata_ssbo);
-    glNamedBufferStorage(instdata_ssbo, 0 , NULL, GL_DYNAMIC_STORAGE_BIT);
-    //glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, instdata_ssbo);
+    //glNamedBufferStorage(instdata_ssbo, 0 , NULL, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferData(instdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, instdata_ssbo);
     return true;
 }
 

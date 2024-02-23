@@ -8,6 +8,7 @@ class Renderer;
 //This should have the same layout as in the shader
 typedef struct {
     fmat4 mat_transformscale; //Matrix holding object rotation, scale and translation
+    vec3 position;
 }InstanceData;
 
 /*

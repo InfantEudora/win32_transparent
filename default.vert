@@ -8,6 +8,7 @@ layout (location = 2) in vec2 uv;
 
 struct InstanceData{
 	mat4 mat_transformscale;
+	vec3 position;
 };
 
 layout (std430, binding = 0) buffer InstanceDataBuffer{
@@ -53,7 +54,7 @@ void main() {
 	mat_trans = obj_rotate;
 
 
-	vec3 transpos = mat_trans * position; //In world space
+	vec3 transpos = mat_trans * (position + instance_data[gl_InstanceID].position); //In world space
 	vposition = transpos.xyz;
 
 	vec4 vn = vec4(normal,1);

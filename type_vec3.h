@@ -53,7 +53,7 @@ inline vec3& vec3::operator+=(const vec3& rhs) {
     x += rhs.x; y += rhs.y; z += rhs.z; return *this;
 }
 
-void vec3::print(){
+inline void vec3::print(){
     printf("vec3: %7.2f | %7.2f | %7.2f\n",x,y,z);
 }
 

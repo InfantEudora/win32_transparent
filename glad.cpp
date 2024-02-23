@@ -41,7 +41,6 @@ PFNGLUSEPROGRAMPROC glUseProgram = NULL;
 
 
 PFNGLBINDBUFFERPROC glBindBuffer = NULL;
-PFNGLBUFFERDATAPROC glBufferData = NULL;
 PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = NULL;
 PFNGLDRAWARRAYSINSTANCEDPROC glDrawArraysInstanced = NULL;
 PFNGLCREATEBUFFERSPROC glCreateBuffers = NULL;
@@ -52,6 +51,11 @@ PFNGLENABLEVERTEXARRAYATTRIBPROC glEnableVertexArrayAttrib = NULL;
 PFNGLVERTEXARRAYATTRIBFORMATPROC glVertexArrayAttribFormat = NULL;
 PFNGLVERTEXARRAYATTRIBBINDINGPROC glVertexArrayAttribBinding = NULL;
 PFNGLBINDVERTEXARRAYPROC glBindVertexArray = NULL;
+
+PFNGLBINDBUFFERBASEPROC glBindBufferBase = NULL;
+PFNGLNAMEDBUFFERDATAPROC glNamedBufferData = NULL;
+PFNGLNAMEDBUFFERSUBDATAPROC glNamedBufferSubData = NULL;
+PFNGLINVALIDATEBUFFERDATAPROC glInvalidateBufferData = NULL;
 
 PFNGLCREATETEXTURESPROC glCreateTextures = NULL;
 PFNGLTEXTUREPARAMETERIPROC glTextureParameteri = NULL;
@@ -108,7 +112,7 @@ bool InitGLExtensions(void){
 
 
     glBindBuffer = (PFNGLBINDBUFFERPROC)wglGetProcAddress("glBindBuffer");
-    glBufferData = (PFNGLBUFFERDATAPROC)wglGetProcAddress("glBufferData");
+
     glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)wglGetProcAddress("glVertexAttribPointer");
     glDrawArraysInstanced = (PFNGLDRAWARRAYSINSTANCEDPROC)wglGetProcAddress("glDrawArraysInstanced");
     glCreateBuffers = (PFNGLCREATEBUFFERSPROC)wglGetProcAddress("glCreateBuffers");
@@ -119,6 +123,11 @@ bool InitGLExtensions(void){
     glVertexArrayAttribFormat = (PFNGLVERTEXARRAYATTRIBFORMATPROC)wglGetProcAddress("glVertexArrayAttribFormat");
     glVertexArrayAttribBinding = (PFNGLVERTEXARRAYATTRIBBINDINGPROC)wglGetProcAddress("glVertexArrayAttribBinding");
     glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
+
+    glBindBufferBase = (PFNGLBINDBUFFERBASEPROC)wglGetProcAddress("glBindBufferBase");
+    glNamedBufferData = (PFNGLNAMEDBUFFERDATAPROC)wglGetProcAddress("glNamedBufferData");
+    glNamedBufferSubData = (PFNGLNAMEDBUFFERSUBDATAPROC)wglGetProcAddress("glNamedBufferSubData");
+    glInvalidateBufferData = (PFNGLINVALIDATEBUFFERDATAPROC)wglGetProcAddress("glInvalidateBufferData");
 
     glCreateTextures = (PFNGLCREATETEXTURESPROC)wglGetProcAddress("glCreateTextures");
     glTextureParameteri = (PFNGLTEXTUREPARAMETERIPROC)wglGetProcAddress("glTextureParameteri");
