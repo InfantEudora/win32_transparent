@@ -343,7 +343,7 @@ bool Window::InitOpenGL(){
     int attributes[] = {
         WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
         WGL_CONTEXT_MINOR_VERSION_ARB, 3,
-        WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
+        WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
         0
     };
 
@@ -394,10 +394,10 @@ bool Window::InitFBO(){
 }
 
 bool Window::InitVBO(){
-    glGenBuffers(1, (GLuint*)&cube_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, cube_vao);
-    //Upload data
-	glBufferData(GL_ARRAY_BUFFER, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW );
+    glCreateBuffers(1, (GLuint*)&cube_vbo);
+    glNamedBufferStorage(cube_vbo, sizeof(g_cube), (float*)g_cube, GL_DYNAMIC_STORAGE_BIT);
+    glCreateVertexArrays(1, (GLuint*)&cube_vao);
+    glVertexArrayVertexBuffer(cube_vao, 0, cube_vbo, 0, sizeof(Vertex));
     return true;
 }
 
@@ -428,38 +428,19 @@ void Window::DrawFrame(Shader* shader){
 
     int num_vertices = 36;
 
-    glEnableVertexAttribArray(ATTRIB_VERTEX);
-    glEnableVertexAttribArray(ATTRIB_NORMAL);
-    glEnableVertexAttribArray(ATTRIB_UVCOORD);
+    glEnableVertexArrayAttrib(cube_vao,ATTRIB_VERTEX);
+    glEnableVertexArrayAttrib(cube_vao,ATTRIB_NORMAL);
+    glEnableVertexArrayAttrib(cube_vao,ATTRIB_UVCOORD);
 
-    //Make one interleaved buffer for the cube
-    glBindBuffer(GL_ARRAY_BUFFER, cube_vao);
-	glVertexAttribPointer(
-        ATTRIB_VERTEX,  // Index in shader
-        3,              // Size
-        GL_FLOAT,       // Type
-        GL_FALSE,       // Normalized
-        8*sizeof(float),// Stride
-        (void*)0        // Offset
-    );
+    glVertexArrayAttribFormat(cube_vao, ATTRIB_VERTEX, 3, GL_FLOAT, GL_FALSE, 0*sizeof(float));
+    glVertexArrayAttribFormat(cube_vao, ATTRIB_NORMAL, 3, GL_FLOAT, GL_TRUE , 3*sizeof(float));
+    glVertexArrayAttribFormat(cube_vao, ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float));
 
-	glVertexAttribPointer(
-        ATTRIB_NORMAL,       // must match the layout in the shader.
-        3,                  // size
-        GL_FLOAT,           // type
-        GL_TRUE,           // normalized?
-        8*sizeof(float),   // Stride
-        (void*)(3*sizeof(float)) // array buffer offset
-    );
+    glVertexArrayAttribBinding(cube_vao, ATTRIB_VERTEX, 0);
+    glVertexArrayAttribBinding(cube_vao, ATTRIB_NORMAL, 0);
+    glVertexArrayAttribBinding(cube_vao, ATTRIB_UVCOORD, 0);
 
-	glVertexAttribPointer(
-        ATTRIB_UVCOORD, // Index in shader
-        2,              // Size
-        GL_FLOAT,       // Type
-        GL_FALSE,       // Normalized
-        8*sizeof(float),   // Stride
-        (void*)(6*sizeof(float))        // Offset
-	);
+    glBindVertexArray(cube_vao);
 
     glDrawArraysInstanced(GL_TRIANGLES, 0, num_vertices,1); // Starting from vertex 0; 3 vertices total -> 1 triangle
 

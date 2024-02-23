@@ -82,6 +82,7 @@ class Window{
     GLuint resolve_fbo_id = -1;  //Resolve frame buffer
     GLuint resolve_rbo_id = -1;  //Corresponding render buffer
 
+    GLuint cube_vbo = -1;
     GLuint cube_vao = -1;
 
 
