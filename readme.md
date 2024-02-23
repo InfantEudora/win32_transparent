@@ -12,6 +12,7 @@ All code in this repository is supplied with the same copyright.
 - The white squares should be slightly see-through.
 - A new thread can be spawned which creates a new window with it's own OpenGL context. Change `num_threads = 1`
 - It can render to a normal window by requesting `CreateNewWindow` instead of `CreateNewLayeredWindow`
+- ImagePreMultAlpha function makes no sense, removed. You can just let OpenGL do this for you with glBlendFunc
 
 It should kind of look like this:
 

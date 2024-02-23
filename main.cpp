@@ -72,7 +72,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         debug->Err("Unable to install a console handler!\n");
     }
 
-    int num_threads = 1;
+    int num_threads = 0;
 
     DWORD main_id = GetCurrentThreadId();
     debug->Info("WinMain Thread ID: %lu\n",main_id);

@@ -129,65 +129,6 @@ bool ImageCreate(Image *pImage, int width, int height){
     return true;
 }
 
-void ImagePreMultAlpha(Image *pImage){
-    // The per pixel alpha blending API for layered windows deals with
-    // pre-multiplied alpha values in the RGB channels. For further details see
-    // the MSDN documentation for the BLENDFUNCTION structure. It basically
-    // means we have to multiply each red, green, and blue channel in our image
-    // with the alpha value divided by 255.
-    //
-    // Notes:
-    // 1. ImagePreMultAlpha() needs to be called before every call to
-    //    UpdateLayeredWindow() (in the RedrawLayeredWindow() function).
-    //
-    // 2. Must divide by 255.0 instead of 255 to prevent alpha values in range
-    //    [1, 254] from causing the pixel to become black. This will cause a
-    //    conversion from 'float' to 'BYTE' possible loss of data warning which
-    //    can be safely ignored.
-
-    if (!pImage)
-        return;
-
-    BYTE *pPixel = NULL;
-
-    if (pImage->width * 4 == pImage->pitch)
-    {
-        // This is a special case. When the image width is already a multiple
-        // of 4 the image does not require any padding bytes at the end of each
-        // scan line. Consequently we do not need to address each scan line
-        // separately. This is much faster than the below case where the image
-        // width is not a multiple of 4.
-
-        int totalBytes = pImage->width * pImage->height * 4;
-
-        for (int i = 0; i < totalBytes; i += 4)
-        {
-            pPixel = &pImage->pPixels[i];
-			pPixel[0] = (BYTE)(pPixel[0] * (float)pPixel[3] / 255.0f);
-			pPixel[1] = (BYTE)(pPixel[1] * (float)pPixel[3] / 255.0f);
-			pPixel[2] = (BYTE)(pPixel[2] * (float)pPixel[3] / 255.0f);
-        }
-    }
-    else
-    {
-        // Width of the image is not a multiple of 4. So padding bytes have
-        // been included in the DIB's pixel data. Need to address each scan
-        // line separately. This is much slower than the above case where the
-        // width of the image is already a multiple of 4.
-
-        for (int y = 0; y < pImage->height; ++y)
-        {
-            for (int x = 0; x < pImage->width; ++x)
-            {
-                pPixel = &pImage->pPixels[(y * pImage->pitch) + (x * 4)];
-				pPixel[0] = (BYTE)(pPixel[0] * (float)pPixel[3] / 255.0f);
-				pPixel[1] = (BYTE)(pPixel[1] * (float)pPixel[3] / 255.0f);
-				pPixel[2] = (BYTE)(pPixel[2] * (float)pPixel[3] / 255.0f);
-            }
-        }
-    }
-}
-
 //Used to match window to handle
 Window* Window::GetWindowByHandle(HWND hWnd){
     for (Window* wnd:windows){
@@ -255,13 +196,16 @@ bool Window::Init(){
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glEnable(GL_DEPTH_TEST);
-    glEnable(GL_LIGHTING);
-    glEnable(GL_LIGHT0);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
     glEnable(GL_TEXTURE_2D);
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_BLEND);
 
     // Create and bind the texture to the pbuffer's rendering context.
     InitCheckerPatternTexture();
-    glBindTexture(GL_TEXTURE_2D, g_textureId);
+    glBindTextureUnit(0, g_textureId);
 
     if (!ImageCreate(&g_image, width, height)){
         return false;
@@ -447,12 +391,7 @@ void Window::DrawFrame(Shader* shader){
 
     if (f_is_layered){
         SwapBuffers(hDC);
-
         CopyBufferToImage();
-
-        // Then we pre-multiply each pixel with its alpha component. This is how
-        // the layered windows API expects images containing alpha information.
-        ImagePreMultAlpha(&g_image);
 
         // Finally we update our layered window with our scene.
         RedrawLayeredWindow();
