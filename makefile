@@ -4,7 +4,7 @@ CC = g++
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
-CFLAGS = -lopengl32 -lgdi32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections
+CFLAGS = -lopengl32 -lgdi32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 #CFLAGS += $(FNOCONSOLE)
 
@@ -13,6 +13,7 @@ PROJECT = wind
 SRCS += main.cpp
 SRCS += Debug.cpp
 SRCS += Window.cpp
+SRCS += Renderer.cpp
 SRCS += Shader.cpp
 SRCS += glad.cpp
 

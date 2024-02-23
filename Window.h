@@ -10,14 +10,6 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
-#include "Shader.h"
-
-struct Vertex{
-    float pos[3];
-    float normal[3];
-    float texcoord[2];
-};
-
 // Generic wrapper around a DIB with a 32-bit color depth.
 typedef struct{
     int width;
@@ -29,10 +21,6 @@ typedef struct{
     BYTE *pPixels;
 } Image;
 
-#define ATTRIB_VERTEX   0
-#define ATTRIB_NORMAL   1
-#define ATTRIB_UVCOORD  2
-
 /*
     A Class for managing WIN32 windows.
 
@@ -43,12 +31,9 @@ class Window;
 
 LRESULT CALLBACK windproc(HWND hwnd, UINT wm, WPARAM wp, LPARAM lp);
 
-void ImagePreMultAlpha(Image *pImage);
-
 class Window{
-    public:
+public:
     static Window* GetWindowByHandle(HWND hWnd);
-
 
     HWND        hWnd = 0;   //Handle to a window
     HDC         hDC;        //Handle to a Device Context
@@ -72,25 +57,9 @@ class Window{
     bool f_should_quit = false;
     bool f_control_down = false;
 
-    //We'll have one multisampled framebuffer with a single color and depth buffer.
-    //And a resolve buffer, where the mutisampling is resolved to.
-
-    GLuint msaa_fbo_id = -1; //Main FBO consisting of:
-    GLuint color_rbo_id = -1; // Main color
-    GLuint depth_rbo_id = -1; // Main depth
-
-    GLuint resolve_fbo_id = -1;  //Resolve frame buffer
-    GLuint resolve_rbo_id = -1;  //Corresponding render buffer
-
-    GLuint cube_vbo = -1;
-    GLuint cube_vao = -1;
-
-
     //Bitmap image for layered window
     Image g_image;
     BYTE* pixels = NULL;//[width * height * 4] = {0};
-    UINT g_textureId;
-    float rotation = 0;
 
     Window();
     ~Window();
@@ -98,20 +67,15 @@ class Window{
     static void RegisterWindowClasses();
     bool Init();
     bool InitOpenGL(); //Needs to be called on a window, only once.
-    void InitCheckerPatternTexture();
 
     static Window* CreateNewLayeredWindow(int width, int height, WNDCLASSEX* wc);
     static Window* CreateNewWindow(int width, int height, WNDCLASSEX* wc);
 
-    bool CheckFrameBuffer();
-    bool InitFBO();
-    bool InitVBO();
-    void ResolveAA();
-    void DrawFrame(Shader* shader);
+    void DrawFrame();
     void CopyBufferToImage();
+    void CopyBufferToBackBuffer();
     void RedrawLayeredWindow();
 
-    void SetVSync(bool enable);
     void Show(int nShowCmd);
     void Resize(int width, int height);
     void Move(int x, int y);
@@ -120,13 +84,8 @@ class Window{
     static HWND _FindWindow(std::string title);
     static std::vector<WNDCLASSEX>wcs;      //Different types of window classes
 
-    //void Register_DropFiles();
-    //std::queue<std::string> dropped_files;
 private:
-
     static std::vector<Window*> windows; //An array of all created windows
-
-    void CreateDummyWindow();
 };
 
 #endif

@@ -8,6 +8,7 @@
 #include "Debug.h"
 #include "Window.h"
 #include "Shader.h"
+#include "Renderer.h"
 #include "glad.h"
 
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
@@ -48,6 +49,8 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
 
     Shader* shader = new Shader("default.vert","default.frag");
     shader->Use();
+    Renderer* renderer = new Renderer(256,256);
+    renderer->Init();
 
     wind->Show(SW_SHOWDEFAULT);
     MSG msg = {0};
@@ -59,7 +62,8 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
-            wind->DrawFrame(shader);
+            renderer->DrawFrame(shader);
+            wind->DrawFrame();
         }
     }
     debug->Info("Thread terminated\n");
@@ -90,6 +94,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     //Now we can make shaders
     Shader* shader = new Shader("default.vert","default.frag");
     shader->Use();
+    Renderer* renderer = new Renderer(256,256);
+    renderer->Init();
 
     for (int i =0;i<num_threads;i++){
         HANDLE hThread = NULL;
@@ -108,13 +114,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     }
 
-
     debug->Info("nShowCmd = %i\n",nShowCmd);
     debug->Info("WinMain hInstance = %lu\n",hInstance);
     debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
-
-
-
 
     wind->Show(SW_SHOWDEFAULT);
     SetVSync(true);
@@ -123,14 +125,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
             if (msg.message == WM_QUIT)
                 break;
-
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
-            wind->DrawFrame(shader);
+            renderer->DrawFrame(shader);
+            wind->DrawFrame();
         }
     }
-
 
     return 0;
 }
