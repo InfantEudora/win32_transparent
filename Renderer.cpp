@@ -1,5 +1,6 @@
 
 #include "Renderer.h"
+#include "OBJLoader.h"
 
 #include "Debug.h"
 static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
@@ -24,15 +25,29 @@ bool Renderer::Init(){
 
     //A single mesh
     Mesh* cube_mesh = new Mesh();
+    cube_mesh->LoadUnitCube();
+
+    Mesh* sphere_mesh = OBJLoader::ParseOBJFile("sphere.obj");
+    Mesh* char_mesh = OBJLoader::ParseOBJFile("chara.obj");
 
     //Make a bunch of objects
-    for (int i = 0;i<1;i++){
+    for (int i = 0;i<5;i++){
         cube = new Object();
         cube->SetMesh(cube_mesh);
         objects.push_back(cube);
         cube->rotation = (rand()%100) / 10.0f;
         cube->rot_speed = rand()%10 *0.001f;
         cube->SetPosition(vec3(0.5,0.5,0.0));
+    }
+
+    //Make a bunch of spheres
+    for (int i = 0;i<5;i++){
+        cube = new Object();
+        cube->SetMesh(char_mesh);
+        objects.push_back(cube);
+        cube->rotation = (rand()%100) / 10.0f;
+        cube->rot_speed = rand()%10 *0.001f;
+        cube->SetPosition(vec3(-0.5,0.5,0.0));
     }
 
     camera = new Camera();
@@ -42,6 +57,7 @@ bool Renderer::Init(){
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_FRONT);
 
@@ -160,9 +176,8 @@ void Renderer::FillBactches(){
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
 void Renderer::RenderUniqueMeshes(){
-    instancedata.clear();
-
     for (int i = 0;i<unique_meshes.size();i++){
+        instancedata.clear();
         Mesh* mesh = unique_meshes.at(i);
         int batch_index = unique_meshes.at(i)->batch_index;
         if (batch_ids.at(batch_index)->size() == 0){
@@ -178,10 +193,10 @@ void Renderer::RenderUniqueMeshes(){
             //data.mat_transformscale.print();
             instancedata.push_back(data);
         }
-
+        glInvalidateBufferData(instdata_ssbo);
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(InstanceData) , &instancedata.at(0),GL_DYNAMIC_DRAW);
 
-        debug->Trace("Rendering instances\n");
+        debug->Trace("Rendering %i instances of mesh->id %i\n",mesh->batch_num_instances,mesh->GetID());
         mesh->RenderInstances(mesh->batch_num_instances);
         mesh->batch_num_instances = 0;
     }
@@ -206,7 +221,7 @@ void Renderer::DrawFrame(Shader* shader){
 
     glViewport(0, 0, width, height);
     vec4 clr_clear = vec4(0,0,0,0);
-    float depth = 1;
+    float depth = 1.0;
     glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
 
@@ -224,7 +239,7 @@ bool Renderer::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&instdata_ssbo);
     //glNamedBufferStorage(instdata_ssbo, 0 , NULL, GL_DYNAMIC_STORAGE_BIT);
     glNamedBufferData(instdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
-    glInvalidateBufferData(instdata_ssbo);
+
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, instdata_ssbo);
     return true;
 }

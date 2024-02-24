@@ -1,26 +1,19 @@
-#include <cstring>
-#include <string>
-#include <cstdlib>
-#include <math.h>
-#include <iostream>
-#include <algorithm>
-#include <filesystem>
-
 #include "glad.h"
 
 #include "Shader.h"
 #include "Debug.h"
+#include "File.h"
 
 static Debugger *debug = new Debugger("Shader", DEBUG_ALL);
 
 Shader::Shader(const char* vert_path,const char* frag_path){
     debug->Info("Load and compile: %s, %s ...\n",vert_path,frag_path);
 
-	char* vert_data = LoadFile(vert_path);
+	uint8_t* vert_data = LoadFile(vert_path,NULL);
 	if (!vert_data){
 		return;
 	}
-	char* frag_data = LoadFile(frag_path);
+	uint8_t* frag_data = LoadFile(frag_path,NULL);
 	if (!frag_data){
 		return;
 	}
@@ -38,30 +31,6 @@ Shader::Shader(const char* vert_path,const char* frag_path){
 
 Shader::~Shader(){
 
-};
-
-//Loads text from from file into memory.
-char* Shader::LoadFile(const char* filename){
-	FILE* file;
-	long size = 0;
-
-	file = fopen(filename, "rb");
-	if(!file){
-		debug->Fatal("LoadFile [%s] failed.\n",filename);
-		return NULL;
-	}
-
-	/*get filesize:*/
-	fseek(file , 0 , SEEK_END);
-	size = ftell(file);
-	rewind(file);
-
-	debug->Info("LoadFile: File %s is %li bytes\n",filename,size);
-
-	char* data = (char*)calloc(size+1,1);
-	fread(data, 1, (size_t)size, file);
-	fclose(file);
-	return data;
 };
 
 int Shader::CompileVertex(char* vert_data){

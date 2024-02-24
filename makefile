@@ -14,6 +14,7 @@ SRCS += main.cpp
 SRCS += Debug.cpp
 SRCS += Window.cpp
 SRCS += Renderer.cpp
+SRCS += File.cpp
 SRCS += Shader.cpp
 
 SRCS += Object.cpp
@@ -21,6 +22,7 @@ SRCS += Camera.cpp
 SRCS += Mesh.cpp
 
 SRCS += InputController.cpp
+SRCS += OBJLoader.cpp
 
 SRCS += glad.cpp
 

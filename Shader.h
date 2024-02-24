@@ -4,14 +4,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <vector>
-#include <iostream>
+#include <string>
 
 #include "type_fmat3.h"
 #include "type_fmat4.h"
 
 class Shader{
-private:
-    static char* LoadFile(const char* filename);
 public:
     int progid = -1;        //ID of the compiled shader program.
     int vertid = -1;             //ID of the vertex shader if it exists.

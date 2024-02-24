@@ -2,7 +2,7 @@
 
 // Vertex data for a unit cube centered about the origin.
 // Each face contains 2 triangles.
-Vertex g_cube[36] = {
+vertex g_cube[36] = {
     // Positive Z.
     { 0.5f,  0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   0.0f, 0.0f},
     { 0.5f, -0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f},
@@ -55,8 +55,7 @@ Vertex g_cube[36] = {
 meshid_t Mesh::mesh_ids = 0;
 
 Mesh::Mesh(){
-    GenerateUniqueID();
-    InitVBOVAO();
+
 }
 
 void Mesh::GenerateUniqueID(){
@@ -67,17 +66,36 @@ meshid_t Mesh::GetID(){
     return id;
 };
 
+void Mesh::LoadUnitCube(){
+    GenerateUniqueID();
+    InitVBOVAO();
+    glNamedBufferData(vbo, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW);
+    num_vertices = 36;
+}
+
+void Mesh::SetMeshData(vertex* verts, int vertex_count){
+    //Copy the data in
+    vertices.clear();
+    for (int i=0;i<vertex_count;i++){
+        vertices.push_back(verts[i]);
+    }
+
+    GenerateUniqueID();
+    InitVBOVAO();
+    glNamedBufferData(vbo, sizeof(vertex) * vertex_count, (float*)&vertices.at(0), GL_STATIC_DRAW);
+    num_vertices = vertex_count;
+}
+
 bool Mesh::InitVBOVAO(){
     glCreateBuffers(1, (GLuint*)&vbo);
     //glNamedBufferStorage(vbo, sizeof(g_cube), (float*)g_cube, GL_DYNAMIC_STORAGE_BIT);
-    glNamedBufferData(vbo, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW);
     glCreateVertexArrays(1, (GLuint*)&vao);
-    glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(Vertex));
+    glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(vertex));
     return true;
 }
 
 void Mesh::RenderInstances(int num_instances){
-    int num_vertices = 36;
+
 
     glEnableVertexArrayAttrib(vao,ATTRIB_VERTEX);
     glEnableVertexArrayAttrib(vao,ATTRIB_NORMAL);

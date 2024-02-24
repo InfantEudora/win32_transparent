@@ -30,8 +30,8 @@ It should kind of look like this:
 - [x] Use named versions of Frame/Renderbuffers
 - [x] Continue rotating while being dragged...
 - [x] Add another instance of cube
-- [ ] Add another object type... sphere?
-- [ ] Move something with input
+- [x] Add another object type... sphere?
+- [x] Move something with input
 
 ### Some notes
 
