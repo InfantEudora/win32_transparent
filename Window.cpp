@@ -267,6 +267,7 @@ Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc){
     wnd->f_is_layered = true;
     wnd->width = width;
     wnd->height = height;
+    wnd->inputcontroller = new InputController();
     return wnd;
 }
 
@@ -305,6 +306,7 @@ Window* Window::CreateNewWindow(int width, int height, WNDCLASSEXA* wc){
     }
     wnd->width = width;
     wnd->height = height;
+    wnd->inputcontroller = new InputController();
     return wnd;
 }
 
@@ -321,27 +323,27 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE){
                 SendMessage(hWnd, WM_CLOSE, 0, 0);
-                return 0;
+                break;
             }else if (wParam == VK_CONTROL){
                 wnd->f_control_down = true;
-                return 0;
+                break;
             }else if (wParam == 'C'){
                 if (wnd->f_control_down){
                     wnd->f_should_quit = true;
                     debug->Info("CTRL+C on window\n");
                     DestroyWindow(wnd->hWnd);
                 }
-                return 0;
+                break;
             }else{
                 //debug->Info("WM_KEYDOWN: %lu (0x%0X)\n",wParam,wParam);
-                return 0;
+                break;
             }
             break;
 
         case WM_NCHITTEST:
             //This returns the mouse is over the Titlebar of the window, which allows it to be dragged.
             return HTCAPTION;
-        //case WM_KEYDOWN:
+
         case WM_KEYUP:
         case WM_MOUSEMOVE:
         case WM_RBUTTONUP:
@@ -400,6 +402,10 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         default:
             //ebug->Info("Window Message %lu\n",msg);
             break;
+    }
+
+    if (wnd->inputcontroller){
+        wnd->inputcontroller->HandleMessage(msg,wParam,lParam);
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }

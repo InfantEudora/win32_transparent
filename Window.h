@@ -10,6 +10,8 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
+#include "InputController.h"
+
 // Generic wrapper around a DIB with a 32-bit color depth.
 typedef struct{
     int width;
@@ -39,6 +41,8 @@ public:
     HDC         hDC;        //Handle to a Device Context
     HGLRC       hRC;
     WNDCLASSEXA*  wc = NULL;         //The class this window has
+
+    InputController* inputcontroller = NULL;
 
     int left = 0;
     int top = 0;

@@ -91,8 +91,26 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
     }
 
     while (wind->f_should_quit == false){
+        wind->inputcontroller->UpdateKeyState();
+        if (renderer->objects.size() > 0){
+            Object* obj = renderer->objects.at(0);
+            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_UP)){
+                obj->MoveBy(vec3(0,0.05,0));
+            }
+            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_DOWN)){
+                obj->MoveBy(vec3(0,-0.05,0));
+            }
+            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_LEFT)){
+                obj->MoveBy(vec3(-0.05,0,0));
+            }
+            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_RIGHT)){
+                obj->MoveBy(vec3(0.05,0,0));
+            }
+        }
+
         renderer->DrawFrame(shader);
         wind->DrawFrame();
+        wind->inputcontroller->Tick();
     }
     debug->Info("Thread terminated\n");
     return 0;
