@@ -2,7 +2,7 @@
 #include "Renderer.h"
 
 #include "Debug.h"
-static Debugger* debug = new Debugger("Renderer",DEBUG_WARN);
+static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
 
 #define TEXTURE_WIDTH   128
 #define TEXTURE_HEIGHT  128
@@ -22,21 +22,28 @@ bool Renderer::Init(){
         return false;
     }
 
-    //Make an object
-    cube = new Object();
-    cube->SetMesh(new Mesh());
-    objects.push_back(cube);
+    //A single mesh
+    Mesh* cube_mesh = new Mesh();
+
+    //Make a bunch of objects
+    for (int i = 0;i<1;i++){
+        cube = new Object();
+        cube->SetMesh(cube_mesh);
+        objects.push_back(cube);
+        cube->rotation = (rand()%100) / 10.0f;
+        cube->rot_speed = rand()%10 *0.001f;
+        cube->SetPosition(vec3(0.5,0.5,0.0));
+    }
 
     camera = new Camera();
-    camera->SetPosition(vec3(0,0,4));
-    camera->SetupPerspective(256,256,45,0.1,10);
+    camera->SetPosition(vec3(0,0.5,8));
+    camera->SetupPerspective(width,height,45,0.1,10);
 
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_FRONT);
-    glEnable(GL_TEXTURE_2D);
 
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_BLEND);
@@ -91,7 +98,7 @@ void Renderer::CullObjects(){
 void Renderer::RebuildUniqueMeshList(){
     unique_meshes.clear();
 
-    debug->Info("Rebuilding unique list. batch_ids.size() = %i unique_mesh.size()=%i\n",batch_ids.size(),unique_meshes.size());
+    debug->Trace("Rebuilding unique list. batch_ids.size() = %i unique_mesh.size()=%i\n",batch_ids.size(),unique_meshes.size());
     for (Object* object:renderable_objects){
         bool new_mesh = true;
         for (Mesh* mesh:unique_meshes){
@@ -123,8 +130,8 @@ void Renderer::ClearBatches(){
 
 void Renderer::FillBactches(){
     //This should mark all meshes that need to for render, and have uploaded their data.
-    debug->Info("objects.size() = %i\n",objects.size());
-    debug->Info("batch_ids.size() = %i\n",batch_ids.size());
+    debug->Trace("objects.size() = %i\n",objects.size());
+    debug->Trace("batch_ids.size() = %i\n",batch_ids.size());
 
     //Reset stats
     int num_rendered_objects = 0;
@@ -137,14 +144,14 @@ void Renderer::FillBactches(){
             num_rendered_objects++;
             //It can only be rendered if it has a mesh
             int32_t mesh_index = object->GetMeshBatchIndex();
-            debug->Info("batch_ids.at(mesh_index=%i) mesh_id = %lu\n",mesh_index,object->GetMeshID());
+            debug->Trace("batch_ids.at(mesh_index=%i) mesh_id = %lu\n",mesh_index,object->GetMeshID());
             int32_t id = object_index;
             batch_ids.at(mesh_index)->push_back(id);
         }else{
             debug->Err("Object '%s' did not render while it should have.\n",object->name.c_str());
         }
     }
-    debug->Info("num_rendered_objects = %i\n",num_rendered_objects);
+    debug->Trace("num_rendered_objects = %i\n",num_rendered_objects);
     if (num_rendered_objects == 0){
         debug->Info("Nothing to be rendered\n");
         return;
@@ -163,18 +170,18 @@ void Renderer::RenderUniqueMeshes(){
         }
         for (uint32_t object_index : *batch_ids.at(batch_index)){
             Object* object = renderable_objects.at(object_index);
-            debug->Info("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
-
+            debug->Trace("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
+            object->Rotate();
             InstanceData data;
             data.mat_transformscale = object->GetWorldTransformScaleMatrix();
-            data.position = object->position;
+            //object->mat_rotation.print();
+            //data.mat_transformscale.print();
             instancedata.push_back(data);
         }
 
-        glInvalidateBufferData(instdata_ssbo);
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(InstanceData) , &instancedata.at(0),GL_DYNAMIC_DRAW);
 
-        debug->Info("Rendering instances\n");
+        debug->Trace("Rendering instances\n");
         mesh->RenderInstances(mesh->batch_num_instances);
         mesh->batch_num_instances = 0;
     }
@@ -193,23 +200,20 @@ void Renderer::DrawObjects(){
     RenderUniqueMeshes();
 }
 
-
 void Renderer::DrawFrame(Shader* shader){
     //Select the mutisampled frambuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glViewport(0, 0, width, height);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    vec4 clr_clear = vec4(0,0,0,0);
+    float depth = 1;
+    glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
+    glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
+
+    shader->Use();
+    shader->Setmat4("mat_worldcam",camera->mat_cam);
 
     DrawObjects();
-
-    cube->Rotate();
-    shader->Setmat4("mat_worldcam",camera->mat_cam);
-    shader->Setmat3("obj_rotate",cube->mat_rotation);
-
-    //Mesh* mesh = cube->GetMesh();
-    //mesh->RenderInstances();
 
     ResolveAA();
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
@@ -220,18 +224,19 @@ bool Renderer::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&instdata_ssbo);
     //glNamedBufferStorage(instdata_ssbo, 0 , NULL, GL_DYNAMIC_STORAGE_BIT);
     glNamedBufferData(instdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glInvalidateBufferData(instdata_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, instdata_ssbo);
     return true;
 }
 
 //Create all the frame and renderbuffers
 bool Renderer::InitFBO(){
-    glGenFramebuffers(1, &msaa_fbo_id);
-    glGenRenderbuffers(1, &color_rbo_id);
-    glGenRenderbuffers(1, &depth_rbo_id);
+    glCreateFramebuffers(1, &msaa_fbo_id);
+    glCreateRenderbuffers(1, &color_rbo_id);
+    glCreateRenderbuffers(1, &depth_rbo_id);
 
-    glGenFramebuffers(1, &resolve_fbo_id);
-    glGenRenderbuffers(1, &resolve_rbo_id);
+    glCreateFramebuffers(1, &resolve_fbo_id);
+    glCreateRenderbuffers(1, &resolve_rbo_id);
 
     if (msaa_fbo_id == -1){
         return false;
@@ -241,28 +246,21 @@ bool Renderer::InitFBO(){
 
     //Setup buffers:
     //Mutisampled color 16bit float
-    glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
-    glBindRenderbuffer(GL_RENDERBUFFER, color_rbo_id);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, aa_samples, GL_RGBA16F, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color_rbo_id);
+    glNamedRenderbufferStorageMultisample(color_rbo_id, aa_samples, GL_RGBA16F, width, height);
+    glNamedFramebufferRenderbuffer(msaa_fbo_id, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color_rbo_id);
     CheckFrameBuffer();
 
     //32-bit depth
-    glBindRenderbuffer(GL_RENDERBUFFER, depth_rbo_id);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, aa_samples, GL_DEPTH_COMPONENT32F, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_rbo_id);
+    glNamedRenderbufferStorageMultisample(depth_rbo_id, aa_samples, GL_DEPTH_COMPONENT32F, width, height);
+    glNamedFramebufferRenderbuffer(msaa_fbo_id, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_rbo_id);
     CheckFrameBuffer();
 
     //The resolve buffer
-    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
-    glBindRenderbuffer(GL_RENDERBUFFER, resolve_rbo_id);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA16F, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, resolve_rbo_id);
+    glNamedRenderbufferStorage(resolve_rbo_id, GL_RGBA16F, width, height);
+    glNamedFramebufferRenderbuffer(resolve_fbo_id, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, resolve_rbo_id);
     CheckFrameBuffer();
     return true;
 }
-
-
 
 //Blit all multisampled buffer back to main/resolve buffers
 void Renderer::ResolveAA(){

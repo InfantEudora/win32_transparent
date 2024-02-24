@@ -9,7 +9,7 @@ class Renderer;
 //This should have the same layout as in the shader
 typedef struct {
     fmat4 mat_transformscale; //Matrix holding object rotation, scale and translation
-    vec3 position;
+
 }InstanceData;
 
 /*
@@ -60,7 +60,6 @@ class Renderer{
     std::vector<InstanceData>instancedata;          // Object data per unique mesh instance
 
     std::vector<Object*>objects;                    //All known objects
-
 
     //Our example cube
     void InitCheckerPatternTexture();

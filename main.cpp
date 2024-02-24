@@ -50,7 +50,6 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
     }
 
     Shader* shader = new Shader("default.vert","default.frag");
-    shader->Use();
     Renderer* renderer = new Renderer(256,256);
     renderer->Init();
 
@@ -112,7 +111,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     Window::RegisterWindowClasses();
 
-    Window* wind = Window::CreateNewLayeredWindow(256,256,&Window::wcs.at(0));
+    Window* wind = Window::CreateNewLayeredWindow(512,512,&Window::wcs.at(0));
     if (!wind){
         debug->Fatal("Unable to create window\n");
     }
@@ -122,8 +121,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     //Now we can make shaders
     Shader* shader = new Shader("default.vert","default.frag");
-    shader->Use();
-    Renderer* renderer = new Renderer(256,256);
+    Renderer* renderer = new Renderer(512,512);
     renderer->Init();
 
     for (int i =0;i<num_threads;i++){

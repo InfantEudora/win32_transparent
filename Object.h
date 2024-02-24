@@ -24,10 +24,12 @@ class Object{
     bool WouldRender();
     void MarkForRender();
 
+
     void UpdateTransformMatrix();
     fmat4& GetWorldTransformScaleMatrix();
 
     void MoveBy(const vec3& delta);
+    void SetScale(const vec3& newscale);
     void SetPosition(const vec3& newpos);
 
     std::string name;
@@ -35,11 +37,13 @@ class Object{
     fmat4 world_transform_scale_matrix;
     fmat3 mat_rotation;
 
-    vec3 position;
-    vec3 lookat;
-    vec3 up;
+    vec3 scale = vec3(1,1,1);
+    vec3 position = vec3(0,0,0);
+    vec3 lookat = vec3(0,0,0);
+    vec3 up = vec3(0,1,0);
 
     float rotation = 0.0f;
+    float rot_speed = 0.05f;
 
     bool f_was_transformed = false;
 

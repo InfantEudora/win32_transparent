@@ -52,7 +52,6 @@ inline void fmat3::print(){
     vertex[0].print();
     vertex[1].print();
     vertex[2].print();
-
 }
 
 #endif

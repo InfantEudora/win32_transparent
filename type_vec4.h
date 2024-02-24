@@ -27,7 +27,8 @@ struct vec4{
 	vec4() : x(0), y(0), z(0), w(0) {}
     vec4(float x, float y, float z,float w) : x(x), y(y), z(z), w(w){}
 
-    void   set(float x, float y, float z, float w);
+    void    print();
+    void    set(float x, float y, float z, float w);
     void    clear();
     vec4&  	normalize();
 };
@@ -49,6 +50,10 @@ inline vec4& vec4::normalize(){
 	s = sqrt(s);
 	x/=s; y/=s; z/=s; w/=s;
 	return *this;
+}
+
+inline void vec4::print(){
+    printf("vec4: %7.2f | %7.2f | %7.2f | %7.2f\n",x,y,z,w);
 }
 
 #endif

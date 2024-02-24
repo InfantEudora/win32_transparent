@@ -69,7 +69,8 @@ meshid_t Mesh::GetID(){
 
 bool Mesh::InitVBOVAO(){
     glCreateBuffers(1, (GLuint*)&vbo);
-    glNamedBufferStorage(vbo, sizeof(g_cube), (float*)g_cube, GL_DYNAMIC_STORAGE_BIT);
+    //glNamedBufferStorage(vbo, sizeof(g_cube), (float*)g_cube, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferData(vbo, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW);
     glCreateVertexArrays(1, (GLuint*)&vao);
     glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(Vertex));
     return true;
@@ -92,5 +93,5 @@ void Mesh::RenderInstances(int num_instances){
 
     glBindVertexArray(vao);
 
-    glDrawArraysInstanced(GL_TRIANGLES, 0, num_vertices,1); // Starting from vertex 0; 3 vertices total -> 1 triangle
+    glDrawArraysInstanced(GL_TRIANGLES, 0, num_vertices,num_instances);
 }

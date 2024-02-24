@@ -5,7 +5,6 @@ objectid_t Object::object_ids = 0;
 Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
-    up = vec3(0,1,0);
 }
 
 void Object::GenerateUniqueID(){
@@ -48,8 +47,8 @@ void Object::SetMeshBatchIndex(int32_t index){
 void Object::Rotate(){
     f_was_transformed = true;
     //Modify the cube
-    rotation += 0.01f;
-    MoveBy(vec3(0.001,0,0));
+    rotation += rot_speed;
+    MoveBy(vec3(0.005 * sin(rotation),0.005 * cos(rotation),0));
     vec3 target_axis = vec3(0,1,0);
     mat_rotation.set_rotation(target_axis,rotation);
 }
@@ -65,11 +64,28 @@ void Object::MoveBy(const vec3& delta){
     SetPosition(position + delta);
 }
 
+//The size of the object in 3 dimensions
+void Object::SetScale(const vec3& newscale){
+    scale = newscale;
+    f_was_transformed = true;
+}
+
 //Calculate the single transformation matrix
 void Object::UpdateTransformMatrix(){
     //We do in order:
     //scale, rotate, translate
-    world_transform_scale_matrix.rotationmatrix(mat_rotation);
+    float size = 1.0 + 0.1 * sin(rotation);
+
+    world_transform_scale_matrix.identity();
+    world_transform_scale_matrix.vertex[0].x *= size * scale.x;
+    world_transform_scale_matrix.vertex[1].y *= size * scale.y;
+    world_transform_scale_matrix.vertex[2].z *= size * scale.z;
+
+    fmat4 rotation_matrix;
+    rotation_matrix.rotationmatrix(mat_rotation);
+
+    world_transform_scale_matrix = world_transform_scale_matrix * rotation_matrix;
+
     world_transform_scale_matrix.set_position(position);
 
     //The object is now static. This get's reset upon moving or rotating the object.

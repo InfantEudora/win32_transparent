@@ -8,7 +8,6 @@ layout (location = 2) in vec2 uv;
 
 struct InstanceData{
 	mat4 mat_transformscale;
-	vec3 position;
 };
 
 layout (std430, binding = 0) buffer InstanceDataBuffer{
@@ -24,47 +23,28 @@ layout (location = 2) out vec2 vuv;		//Texture UV coordinates
 uniform mat4 mat_worldcam = mat4(
 	1		,0		,0		,0,
 	0		,1		,0		,0,
-	0		,0		,-1.004		,-1.0,
-	0		,0		,1.2		,1.2
+	0		,0		,1		,0,
+	0		,0		,0		,1
 );
 
-//Matrix rotating all incoming vertex data
-uniform mat3 obj_rotate = mat3(
-		1		,0		,0,
-		0		,1		,0,
-		0		,0		,1
-);
-
-void main() {
-	//Rotation and position in 1
-	mat3 mat_trans = mat3(
-		1		,0		,0,
-		0		,1		,0,
-		0		,0		,1
-	);
-
+void main(){
 	//Only object rotation. We want to decompose this from the mat_trans for light calculations
-	mat4 mat_rotate = mat4(
-		1		,0		,0		,0,
-		0		,1		,0		,0,
-		0		,0		,1		,0,
-		0		,0		,0		,1
-	);
+	mat3 mat_rotate;
 
-	mat_trans = obj_rotate;
+	//We need to decompose the matrix into a rotation only, used to compute normals.
+	//Zero out the translation and scale.
+	mat_rotate[0] = instance_data[gl_InstanceID].mat_transformscale[0].xyz;
+	mat_rotate[1] = instance_data[gl_InstanceID].mat_transformscale[1].xyz;
+	mat_rotate[2] = instance_data[gl_InstanceID].mat_transformscale[2].xyz;
 
+	vec3 objpos = instance_data[gl_InstanceID].mat_transformscale[3].xyz;
 
-	vec3 transpos = mat_trans * position; //In world space
-	transpos +=  instance_data[gl_InstanceID].position;
+	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(position,1); //In world space
 	vposition = transpos.xyz;
 
-	vec4 vn = vec4(normal,1);
-	vnormal = (mat_rotate * vn).xyz;
+	vnormal = (mat_rotate * normal);
 
 	vuv = uv;
 
-	gl_Position = (mat_worldcam * vec4(transpos,1)) ;
-
-	//gl_Position = uProjection * uView * vec4(lPosition + instance_data[gl_InstanceID].position, 1.f);
-
+	gl_Position = (mat_worldcam * transpos);
 }

@@ -27,9 +27,9 @@ It should kind of look like this:
 - [x] Seperate window and drawing primitive somehow
 - [x] Resize to an arbitrary size
 - [ ] Share the texture across contexts?
-- [ ] Use named versions of Frame/Renderbuffers
+- [x] Use named versions of Frame/Renderbuffers
 - [x] Continue rotating while being dragged...
-- [ ] Add another instance of cube
+- [x] Add another instance of cube
 - [ ] Add another object type... sphere?
 - [ ] Move something with input
 

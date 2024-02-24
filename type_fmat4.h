@@ -15,6 +15,7 @@ struct fmat4{
 	vec4 vertex[4];
 
     //Functions
+    void    print();
     void    clear();
     fmat4&  identity();  //Set's this matrix to identity.
     fmat4&  rotationmatrix(const fmat3& mr);
@@ -34,6 +35,7 @@ inline void fmat4::clear(){
 }
 
 inline fmat4& fmat4::identity(){
+    clear();
 	vertex[0].x = 1;
 	vertex[1].y = 1;
 	vertex[2].z = 1;
@@ -186,6 +188,14 @@ inline fmat4 fmat4::operator*(const fmat4& rhs) const {
 	mat.vertex[3].z = (vertex[3].x * rhs.vertex[0].z) + (vertex[3].y * rhs.vertex[1].z) + (vertex[3].z * rhs.vertex[2].z) + (vertex[3].w * rhs.vertex[3].z);
 	mat.vertex[3].w = (vertex[3].x * rhs.vertex[0].w) + (vertex[3].y * rhs.vertex[1].w) + (vertex[3].z * rhs.vertex[2].w) + (vertex[3].w * rhs.vertex[3].w);
 	return mat;
+}
+
+inline void fmat4::print(){
+    printf("fmat4:\n");
+    vertex[0].print();
+    vertex[1].print();
+    vertex[2].print();
+    vertex[3].print();
 }
 
 #endif
