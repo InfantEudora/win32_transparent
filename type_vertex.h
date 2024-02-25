@@ -24,6 +24,7 @@ inline vertex::vertex(float a,float b,float c,float d,float e,float f,float g,fl
     pos.set(a,b,c);
     normal.set(d,e,f);
     uv.set(g,h);
+    matid = 0;
 };
 
 #endif

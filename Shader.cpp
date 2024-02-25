@@ -163,6 +163,17 @@ void Shader::Use(){
 	glUseProgram(progid);
 }
 
+//Set a uniform int
+void Shader::Setint(const char* name, int value){
+	GLuint intid = glGetUniformLocation(progid, name);
+	if (intid == -1){
+		//Warn once.
+		debug->Fatal("Could not set %i's int %s\n",progid,name);
+		return;
+	}
+	glUniform1i(intid,(GLint)value);
+}
+
 void Shader::Setmat3(const char* name, const fmat3& matrix){
 	GLuint matid = glGetUniformLocation(progid, name);
 	if (matid == -1){

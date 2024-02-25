@@ -24,7 +24,6 @@ class Object{
     bool WouldRender();
     void MarkForRender();
 
-
     void UpdateTransformMatrix();
     fmat4& GetWorldTransformScaleMatrix();
 
@@ -41,6 +40,8 @@ class Object{
     vec3 position = vec3(0,0,0);
     vec3 lookat = vec3(0,0,0);
     vec3 up = vec3(0,1,0);
+
+    int material_slot[4] = {};
 
     float rotation = 0.0f;
     float rot_speed = 0.05f;

@@ -9,13 +9,32 @@ layout (location = 0) out vec4 color;
 //gl_FragDepth
 
 //Passed from vertex shader.
-layout (location = 0)  in vec3 vposition;      //Vertex position in world space, now fragment position in worldspace.
-layout (location = 1)  in vec3 vnormal;        //Vertex normals
-layout (location = 2)  in vec2 vuv;            //Texture UV coordinates
+layout (location = 0)  in vec3 vposition;       //Vertex position in world space, now fragment position in worldspace.
+layout (location = 1)  in vec3 vnormal;         //Vertex normals
+layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
+layout (location = 3)  flat in int vmatindex;   //Material index
 
-uniform sampler2D  albedo_texture;   //Input texture
+//We force the two texture to be bound to GL_TEXTURE0+0
+//It's set with glBindTextureUnit
+layout (binding = 0) uniform sampler2D material_texture[2];   //Input texture
+
+struct Material{
+	vec4 color;
+    int texture_unit;
+    int pad1;
+    int pad2;
+    int pad3;
+};
+
+layout (std430, binding = 1) buffer MaterialBuffer{
+	Material materials[];
+};
 
 void main(){
-    vec4 col = texture(albedo_texture, vuv);
+    Material m = materials[vmatindex];
+
+    vec4 col = texture(material_texture[m.texture_unit], vuv);
+    col *= m.color;
+
     color = col;
 }

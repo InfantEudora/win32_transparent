@@ -32,6 +32,8 @@ public:
     void Use();
 
     //Uniforms
+
+    void Setint(const char* name, int value);
     void Setmat3(const char* name, const fmat3& matrix);
     void Setmat4(const char* name, const fmat4& matrix);
 

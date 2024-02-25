@@ -1,23 +1,33 @@
 #version 430 core
 //In version 330 core we only have textures or uniform arrays as an arbitrary data input.
 
+//Multiple of 4 for padding
+#define NUM_MATERIAL_SLOTS  4
+
 //Input variables
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec2 uv;
+layout (location = 3) in int matindex;
 
 struct InstanceData{
 	mat4 mat_transformscale;
+	int material_slot[NUM_MATERIAL_SLOTS];
 };
+
+//A material index comes in from a vertex, which matches a material specified in the OBJ file.
+//This matches our material slot, which looks up the global index.
 
 layout (std430, binding = 0) buffer InstanceDataBuffer{
 	InstanceData instance_data[];
 };
 
+
 //Output
 layout (location = 0) out vec3 vposition; //Vertex position in world space, used for lighting
 layout (location = 1) out vec3 vnormal;	//Normals
 layout (location = 2) out vec2 vuv;		//Texture UV coordinates
+layout (location = 3) flat out int vmatindex;	//Material index
 
 //Matrix for world camera.
 uniform mat4 mat_worldcam = mat4(
@@ -43,6 +53,8 @@ void main(){
 	vposition = transpos.xyz;
 
 	vnormal = (mat_rotate * normal);
+
+	vmatindex =  instance_data[gl_InstanceID].material_slot[matindex];
 
 	vuv = uv;
 

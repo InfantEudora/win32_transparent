@@ -35,16 +35,19 @@ bool Renderer::Init(){
         cube->rotation = (rand()%100) / 10.0f;
         cube->rot_speed = rand()%10 *0.001f;
         cube->SetPosition(vec3(0.5,0.5,0.0));
+
+        cube->material_slot[0] = i%2;
     }
 
     //Make a bunch of spheres
     for (int i = 0;i<5;i++){
         cube = new Object();
-        cube->SetMesh(char_mesh);
+        cube->SetMesh(sphere_mesh);
         objects.push_back(cube);
         cube->rotation = (rand()%100) / 10.0f;
         cube->rot_speed = rand()%10 *0.001f;
         cube->SetPosition(vec3(-0.5,0.5,0.0));
+        cube->material_slot[0] = i%2;
     }
 
     camera = new Camera();
@@ -69,12 +72,37 @@ bool Renderer::Init(){
     Shader* comp_shader = new Shader();
     comp_shader->CreateComputeShader("texture.comp");
     comp_shader->Use();
-    glBindImageTexture(0, texture->texture_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+    //glBindImageTexture(0, texture->texture_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
     glBindImageTexture(1, texture->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
     glDispatchCompute(texture->width, texture->height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
+
+    //A second texture
+    Texture* texture_2 = new Texture();
+    texture_2->Create2D(128,128,GL_RGBA8);
+    comp_shader->Setint("pattern",1);
+    //glBindImageTexture(0, texture_2->texture_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+    glBindImageTexture(1, texture_2->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+    glDispatchCompute(texture_2->width, texture_2->height, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
     glBindTextureUnit(0, texture->texture_id);
+    glBindTextureUnit(1, texture_2->texture_id);
+
+
+
+    //Create a material
+    material_t m;
+    m.color = vec4(0,1,0,1);
+    m.texture_unit = 0;
+    materials.push_back(m);
+    m.color = vec4(1,0.5,0,1);
+    m.texture_unit = 1;
+    materials.push_back(m);
+    debug->Info("We have %i materials\n",materials.size());
+
+
     return true;
 }
 
@@ -162,14 +190,17 @@ void Renderer::RenderUniqueMeshes(){
             Object* object = renderable_objects.at(object_index);
             debug->Trace("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
             object->Rotate();
-            InstanceData data;
+            instancedata_t data;
             data.mat_transformscale = object->GetWorldTransformScaleMatrix();
+            for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
+                data.material_slot[i] = object->material_slot[i];
+            }
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
             instancedata.push_back(data);
         }
         glInvalidateBufferData(instdata_ssbo);
-        glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(InstanceData) , &instancedata.at(0),GL_DYNAMIC_DRAW);
+        glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_DYNAMIC_DRAW);
 
         debug->Trace("Rendering %i instances of mesh->id %i\n",mesh->batch_num_instances,mesh->GetID());
         mesh->RenderInstances(mesh->batch_num_instances);
@@ -177,6 +208,13 @@ void Renderer::RenderUniqueMeshes(){
     }
 }
 
+//This for now just uploads all the known materials to a SSBO... each frame.
+//Might only need to do this once.
+void Renderer::UploadMaterials(){
+
+    glInvalidateBufferData(materialdata_ssbo);
+    glNamedBufferData(materialdata_ssbo,materials.size()*sizeof(material_t) , &materials.at(0),GL_DYNAMIC_DRAW);
+}
 
 void Renderer::DrawObjects(){
     //First, we cull all objects we are sure of are not visible.
@@ -186,7 +224,7 @@ void Renderer::DrawObjects(){
     RebuildUniqueMeshList();
     ClearBatches();
     FillBactches();
-
+    UploadMaterials();
     RenderUniqueMeshes();
 }
 
@@ -214,8 +252,12 @@ bool Renderer::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&instdata_ssbo);
     //glNamedBufferStorage(instdata_ssbo, 0 , NULL, GL_DYNAMIC_STORAGE_BIT);
     glNamedBufferData(instdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
-
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, instdata_ssbo);
+
+    //A buffer for the materials
+    glCreateBuffers(1, (GLuint*)&materialdata_ssbo);
+    glNamedBufferData(materialdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, materialdata_ssbo);
     return true;
 }
 

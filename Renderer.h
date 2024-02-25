@@ -6,12 +6,15 @@ class Renderer;
 #include "Object.h"
 #include "Camera.h"
 #include "Texture.h"
+#include "Material.h"
 
 //This should have the same layout as in the shader
-typedef struct {
-    fmat4 mat_transformscale; //Matrix holding object rotation, scale and translation
+#define NUM_MATERIAL_SLOTS  4
 
-}InstanceData;
+typedef struct {
+    fmat4 mat_transformscale; // Matrix holding object rotation, scale and translation
+    int material_slot[NUM_MATERIAL_SLOTS];     // We could do that each instance has a material assigned to a fixed number of slots
+}instancedata_t;
 
 /*
     A class responsible of managing the OpenGL state and pipeline.
@@ -30,7 +33,7 @@ class Renderer{
     void ClearBatches();
     void FillBactches();
     void DrawObjects();
-    void BuildSSBO();
+    void UploadMaterials();
     void RenderUniqueMeshes();
 
     void DrawFrame(Shader* shader);
@@ -38,6 +41,7 @@ class Renderer{
     bool CheckFrameBuffer();
     bool Init();
     bool InitFBO();
+
     bool InitSSBO();
     void ResolveAA();
 
@@ -51,6 +55,7 @@ class Renderer{
     GLuint resolve_rbo_id = -1;  //Corresponding render buffer
 
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
+    GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
 
     Texture* texture = NULL;
 
@@ -58,7 +63,8 @@ class Renderer{
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
     std::vector<Object*>renderable_objects;         // All objects we will render this frame
     std::vector<std::vector<objectid_t>*>batch_ids; // An array of arrays containing the object id's per unique mesh, these form batches
-    std::vector<InstanceData>instancedata;          // Object data per unique mesh instance
+    std::vector<instancedata_t>instancedata;          // Object data per unique mesh instance
+    std::vector<material_t>materials;                 // List of all known materials
 
     std::vector<Object*>objects;                    //All known objects
 

@@ -66,6 +66,7 @@ PFNGLBINDIMAGETEXTUREPROC glBindImageTexture = NULL;
 PFNGLMEMORYBARRIERPROC glMemoryBarrier = NULL;
 
 PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = NULL;
+PFNGLUNIFORM1IPROC glUniform1i = NULL;
 PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv = NULL;
 PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = NULL;
 
@@ -139,6 +140,7 @@ bool InitGLExtensions(void){
     glMemoryBarrier = (PFNGLMEMORYBARRIERPROC)wglGetProcAddress("glMemoryBarrier");
 
     glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
+    glUniform1i = (PFNGLUNIFORM1IPROC)wglGetProcAddress("glUniform1i");
     glUniformMatrix3fv = (PFNGLUNIFORMMATRIX3FVPROC)wglGetProcAddress("glUniformMatrix3fv");
     glUniformMatrix4fv = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
 

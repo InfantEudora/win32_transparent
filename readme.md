@@ -33,9 +33,9 @@ It should kind of look like this:
 - [x] Add another object type... sphere?
 - [x] Move something with input
 - [x] Compute shader to generate the texture
-- [ ] Have some kind of global list of materials somewhere
-- [ ] Assign different textures to materials
-- [ ] Assign different materials to objects
+- [x] Have some kind of global list of materials somewhere
+- [x] Assign different textures to materials
+- [ ] Assign different materials to objects by storing their material index in a sperate VAO.
 
 ### Some notes
 
@@ -57,3 +57,5 @@ A thread must set a current rendering context before calling any OpenGL function
 A rendering context can be current to only one thread at a time. You cannot make a rendering context current to multiple threads.
 
 An application can perform multithread drawing by making different rendering contexts current to different threads, supplying each thread with its own rendering context and device context.
+
+https://www.shadertoy.com/view/ld2Gz3
