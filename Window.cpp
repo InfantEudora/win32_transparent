@@ -222,6 +222,54 @@ void Window::RedrawLayeredWindow(){
     }
 }
 
+//hDC 0 = Desktop
+HBITMAP GetScreenBMP(HDC hdc, int x, int y, int width, int height) {
+    // Get screen dimensions
+    //int nScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    //int nScreenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+    // Create compatible DC, create a compatible bitmap and copy the screen using BitBlt()
+    HDC hCaptureDC  = CreateCompatibleDC(hdc);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hdc, width, height);
+    HGDIOBJ hOld = SelectObject(hCaptureDC, hBitmap);
+    BOOL bOK = BitBlt(hCaptureDC,0,0,width, height, hdc,x,y,SRCCOPY|CAPTUREBLT);
+
+    SelectObject(hCaptureDC, hOld); // always select the previously selected object once done
+    DeleteDC(hCaptureDC);
+    return hBitmap;
+}
+
+BYTE* GetScreenCap(int width,int height){
+    HDC hdc = GetDC(0);
+
+    HBITMAP hBitmap = GetScreenBMP(hdc,500,200,width,height);
+
+    BITMAPINFO MyBMInfo = {0};
+    MyBMInfo.bmiHeader.biSize = sizeof(MyBMInfo.bmiHeader);
+
+    // Get the BITMAPINFO structure from the bitmap
+    if(0 == GetDIBits(hdc, hBitmap, 0, 0, NULL, &MyBMInfo, DIB_RGB_COLORS)) {
+        debug->Err("GetDIBits\n");
+    }
+
+    // create the bitmap buffer
+    BYTE* lpPixels = new BYTE[MyBMInfo.bmiHeader.biSizeImage];
+
+    // Better do this here - the original bitmap might have BI_BITFILEDS, which makes it
+    // necessary to read the color table - you might not want this.
+    MyBMInfo.bmiHeader.biCompression = BI_RGB;
+
+    // get the actual bitmap buffer
+    if(0 == GetDIBits(hdc, hBitmap, 0, MyBMInfo.bmiHeader.biHeight, (LPVOID)lpPixels, &MyBMInfo, DIB_RGB_COLORS)) {
+        debug->Err("GetDIBits 2\n");
+    }
+
+    DeleteObject(hBitmap);
+    ReleaseDC(NULL, hdc);
+    return lpPixels;
+    //delete[] lpPixels;
+}
+
 void Window::CopyBufferToImage(){
     // Copy the contents of the framebuffer
     // to our bitmap image in local system memory. Notice that we also need
@@ -230,18 +278,26 @@ void Window::CopyBufferToImage(){
     // top down in orientation.
     //The correct buffer should have already been selected.
 
+    BYTE* cap = GetScreenCap(width,height);
+
     if (pixels == NULL){
         pixels = new BYTE[width * height * 4];
     }
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-
+    //Copy OpenGL buffer to bitmap
     for (int i = 0; i < height; ++i){
         memcpy(&g_image.pPixels[g_image.pitch * i],
             &pixels[((height - 1) - i) * (width * 4)],
             width * 4);
     }
+
+    //Copy screenshot to bitmap
+    for (int i = 0; i < height; ++i){
+        memcpy(&g_image.pPixels[g_image.pitch * i], &cap[((height - 1) - i) * (width * 4)], width * 4);
+    }
+    delete[] cap;
 }
 
 void Window::CopyBufferToBackBuffer(){

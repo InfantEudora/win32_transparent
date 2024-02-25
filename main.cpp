@@ -115,7 +115,6 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
                 //debug->Info("Mouse wheel delta: %i\n",delta);
                 m->state->delta = 0;
             }
-
         }
 
         renderer->DrawFrame(shader);
