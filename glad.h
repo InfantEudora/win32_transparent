@@ -59,6 +59,20 @@
 #define WGL_TYPE_COLORINDEX_ARB                   0x202C
 #define WGL_TYPE_RGBA_ARB                         0x202B
 
+// MEMORY BARRIERS
+#define GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT 0x00000001
+#define GL_ELEMENT_ARRAY_BARRIER_BIT 0x00000002
+#define GL_UNIFORM_BARRIER_BIT 0x00000004
+#define GL_TEXTURE_FETCH_BARRIER_BIT 0x00000008
+#define GL_SHADER_IMAGE_ACCESS_BARRIER_BIT 0x00000020
+#define GL_COMMAND_BARRIER_BIT 0x00000040
+#define GL_PIXEL_BUFFER_BARRIER_BIT 0x00000080
+#define GL_TEXTURE_UPDATE_BARRIER_BIT 0x00000100
+#define GL_BUFFER_UPDATE_BARRIER_BIT 0x00000200
+#define GL_FRAMEBUFFER_BARRIER_BIT 0x00000400
+#define GL_TRANSFORM_FEEDBACK_BARRIER_BIT 0x00000800
+#define GL_ATOMIC_COUNTER_BARRIER_BIT 0x00001000
+
 // FRAME/RENDER BUFFERS
 #define GL_FRAMEBUFFER                                  0x8D40
 #define GL_RENDERBUFFER                                 0x8D41
@@ -84,6 +98,10 @@
 
 #define GL_READ_FRAMEBUFFER 0x8CA8
 #define GL_DRAW_FRAMEBUFFER 0x8CA9
+
+#define GL_READ_ONLY 0x88B8
+#define GL_WRITE_ONLY 0x88B9
+#define GL_READ_WRITE 0x88BA
 
 //Shaders
 #define GL_FRAGMENT_SHADER 0x8B30
@@ -177,7 +195,6 @@ GLAPI PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer;
 typedef void (APIENTRYP PFNGLCLEARNAMEDFRAMEBUFFERFVPROC)(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value);
 GLAPI PFNGLCLEARNAMEDFRAMEBUFFERFVPROC glClearNamedFramebufferfv;
 
-
 //Shaders
 typedef void (APIENTRYP PFNGLSHADERSOURCEPROC)(GLuint shader, GLsizei count, const char *const*string, const GLint *length);
 GLAPI PFNGLSHADERSOURCEPROC glShaderSource;
@@ -189,6 +206,8 @@ typedef void (APIENTRYP PFNGLCOMPILESHADERPROC)(GLuint shader);
 GLAPI PFNGLCOMPILESHADERPROC glCompileShader;
 typedef void (APIENTRYP PFNGLGETSHADERINFOLOGPROC)(GLuint shader, GLsizei bufSize, GLsizei *length, char *infoLog);
 GLAPI PFNGLGETSHADERINFOLOGPROC glGetShaderInfoLog;
+typedef void (APIENTRYP PFNGLDISPATCHCOMPUTEPROC)(GLuint num_groups_x, GLuint num_groups_y, GLuint num_groups_z);
+GLAPI PFNGLDISPATCHCOMPUTEPROC glDispatchCompute;
 
 //Shader programs
 typedef GLuint (APIENTRYP PFNGLCREATEPROGRAMPROC)(void);
@@ -207,6 +226,7 @@ typedef void (APIENTRYP PFNGLDETACHSHADERPROC)(GLuint program, GLuint shader);
 GLAPI PFNGLDETACHSHADERPROC glDetachShader;
 typedef void (APIENTRYP PFNGLUSEPROGRAMPROC)(GLuint program);
 GLAPI PFNGLUSEPROGRAMPROC glUseProgram;
+
 //Uniforms
 typedef GLint (APIENTRYP PFNGLGETUNIFORMLOCATIONPROC)(GLuint program, const char *name);
 GLAPI PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation;
@@ -258,8 +278,10 @@ typedef void (APIENTRYP PFNGLTEXTURESUBIMAGE2DPROC)(GLuint texture, GLint level,
 GLAPI PFNGLTEXTURESUBIMAGE2DPROC glTextureSubImage2D;
 typedef void (APIENTRYP PFNGLBINDTEXTUREUNITPROC)(GLuint unit, GLuint texture);
 GLAPI PFNGLBINDTEXTUREUNITPROC glBindTextureUnit;
-
-
+typedef void (APIENTRYP PFNGLBINDIMAGETEXTUREPROC)(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access, GLenum format);
+GLAPI PFNGLBINDIMAGETEXTUREPROC glBindImageTexture;
+typedef void (APIENTRYP PFNGLMEMORYBARRIERPROC)(GLbitfield barriers);
+GLAPI PFNGLMEMORYBARRIERPROC glMemoryBarrier;
 
 //WGL Contexts - When we want RenderDoc to work
 typedef HGLRC (APIENTRYP PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC hDC, HGLRC hShareContext, const int *attribList);

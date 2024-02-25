@@ -39,6 +39,7 @@ PFNGLGETPROGRAMINFOLOGPROC glGetProgramInfoLog = NULL;
 PFNGLDELETESHADERPROC glDeleteShader = NULL;
 PFNGLDETACHSHADERPROC glDetachShader = NULL;
 PFNGLUSEPROGRAMPROC glUseProgram = NULL;
+PFNGLDISPATCHCOMPUTEPROC glDispatchCompute = NULL;
 
 PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = NULL;
 PFNGLDRAWARRAYSINSTANCEDPROC glDrawArraysInstanced = NULL;
@@ -61,6 +62,8 @@ PFNGLTEXTUREPARAMETERIPROC glTextureParameteri = NULL;
 PFNGLTEXTURESTORAGE2DPROC glTextureStorage2D = NULL;
 PFNGLTEXTURESUBIMAGE2DPROC glTextureSubImage2D = NULL;
 PFNGLBINDTEXTUREUNITPROC glBindTextureUnit = NULL;
+PFNGLBINDIMAGETEXTUREPROC glBindImageTexture = NULL;
+PFNGLMEMORYBARRIERPROC glMemoryBarrier = NULL;
 
 PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = NULL;
 PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv = NULL;
@@ -109,6 +112,7 @@ bool InitGLExtensions(void){
     glDeleteShader = (PFNGLDELETESHADERPROC)wglGetProcAddress("glDeleteShader");
     glDetachShader = (PFNGLDETACHSHADERPROC)wglGetProcAddress("glDetachShader");
     glUseProgram = (PFNGLUSEPROGRAMPROC)wglGetProcAddress("glUseProgram");
+    glDispatchCompute = (PFNGLDISPATCHCOMPUTEPROC)wglGetProcAddress("glDispatchCompute");
 
     glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)wglGetProcAddress("glVertexAttribPointer");
     glDrawArraysInstanced = (PFNGLDRAWARRAYSINSTANCEDPROC)wglGetProcAddress("glDrawArraysInstanced");
@@ -131,6 +135,8 @@ bool InitGLExtensions(void){
     glTextureStorage2D = (PFNGLTEXTURESTORAGE2DPROC)wglGetProcAddress("glTextureStorage2D");
     glTextureSubImage2D = (PFNGLTEXTURESUBIMAGE2DPROC)wglGetProcAddress("glTextureSubImage2D");
     glBindTextureUnit = (PFNGLBINDTEXTUREUNITPROC)wglGetProcAddress("glBindTextureUnit");
+    glBindImageTexture = (PFNGLBINDIMAGETEXTUREPROC)wglGetProcAddress("glBindImageTexture");
+    glMemoryBarrier = (PFNGLMEMORYBARRIERPROC)wglGetProcAddress("glMemoryBarrier");
 
     glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
     glUniformMatrix3fv = (PFNGLUNIFORMMATRIX3FVPROC)wglGetProcAddress("glUniformMatrix3fv");

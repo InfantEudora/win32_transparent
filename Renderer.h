@@ -5,6 +5,7 @@ class Renderer;
 #include "glad.h"
 #include "Object.h"
 #include "Camera.h"
+#include "Texture.h"
 
 //This should have the same layout as in the shader
 typedef struct {
@@ -51,7 +52,7 @@ class Renderer{
 
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
 
-    UINT texture_id = -1;
+    Texture* texture = NULL;
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
@@ -62,7 +63,6 @@ class Renderer{
     std::vector<Object*>objects;                    //All known objects
 
     //Our example cube
-    void InitCheckerPatternTexture();
     Object* cube = NULL;
     Camera* camera = NULL;
 };

@@ -2,12 +2,9 @@
 #include "Renderer.h"
 #include "OBJLoader.h"
 
+
 #include "Debug.h"
 static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
-
-#define TEXTURE_WIDTH   128
-#define TEXTURE_HEIGHT  128
-
 
 Renderer::Renderer(int w, int h){
     width = w;
@@ -64,47 +61,21 @@ bool Renderer::Init(){
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_BLEND);
 
+    // Create the texture
+    texture = new Texture();
+    texture->Create2D(128,128,GL_RGBA8);
+
     //Create a compute shader that will massage the texture.
     Shader* comp_shader = new Shader();
     comp_shader->CreateComputeShader("texture.comp");
+    comp_shader->Use();
+    glBindImageTexture(0, texture->texture_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+    glBindImageTexture(1, texture->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+    glDispatchCompute(texture->width, texture->height, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-    // Create and bind the texture to the pbuffer's rendering context.
-    InitCheckerPatternTexture();
-    glBindTextureUnit(0, texture_id);
+    glBindTextureUnit(0, texture->texture_id);
     return true;
-}
-
-void Renderer::InitCheckerPatternTexture(){
-    // Procedurally create a black and white checker pattern texture.
-    // Adapted from the "OpenGL Programming Guide" (aka the red book).
-
-    BYTE *pPixels = 0;
-    BYTE c = 0;
-    UINT pitch = TEXTURE_WIDTH * 4;
-    std::vector<BYTE> checkerImage(pitch * TEXTURE_HEIGHT);
-
-    for (UINT i = 0; i < TEXTURE_HEIGHT; ++i){
-        for (UINT j = 0; j < TEXTURE_WIDTH; ++j){
-            c = (BYTE)((((i & 0x10) == 0) ^ ((j & 0x10) == 0)) * 255);
-            pPixels = &checkerImage[i * pitch + (j * 4)];
-            pPixels[0] = pPixels[1] = pPixels[2] = c;
-            if (c == 0){
-                pPixels[3] = 255;
-            }else{
-                pPixels[3] = 200;
-            }
-        }
-    }
-
-    glCreateTextures(GL_TEXTURE_2D, 1, &texture_id);
-
-    glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
-
-    glTextureStorage2D(texture_id, 1, GL_RGBA8, TEXTURE_WIDTH, TEXTURE_WIDTH);
-    glTextureSubImage2D(texture_id, 0, 0, 0, TEXTURE_WIDTH, TEXTURE_WIDTH, GL_RGBA, GL_UNSIGNED_BYTE, &checkerImage[0]);
 }
 
 //For now, we simple render all objects.

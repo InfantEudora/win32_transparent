@@ -97,7 +97,6 @@ int Shader::CompileFragment(char* frag_data){
 	return id;
 }
 
-
 int Shader::CompileCompute(char* comp_data){
 	int id = glCreateShader(GL_COMPUTE_SHADER);
 

@@ -20,6 +20,7 @@ SRCS += Shader.cpp
 SRCS += Object.cpp
 SRCS += Camera.cpp
 SRCS += Mesh.cpp
+SRCS += Texture.cpp
 
 SRCS += InputController.cpp
 SRCS += OBJLoader.cpp

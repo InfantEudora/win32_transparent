@@ -32,7 +32,10 @@ It should kind of look like this:
 - [x] Add another instance of cube
 - [x] Add another object type... sphere?
 - [x] Move something with input
-- [ ] Compute shader to generate the texture
+- [x] Compute shader to generate the texture
+- [ ] Have some kind of global list of materials somewhere
+- [ ] Assign different textures to materials
+- [ ] Assign different materials to objects
 
 ### Some notes
 
