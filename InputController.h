@@ -5,6 +5,7 @@ class InputController;
 #include <windows.h>
 #include "stdint.h"
 #include <vector>
+#include <atomic>
 /*
     Handles input messages from a window message queue,
     or get's them from the system.
@@ -26,17 +27,19 @@ typedef enum{
     INPUT_MOVE_RIGHT,
     INPUT_MOVE_UP,
     INPUT_MOVE_DOWN,
-    MOUSE_X,
-    MOUSE_Y
+    INPUT_MOUSE_X,
+    INPUT_MOUSE_Y,
+    INPUT_MOUSE_WHEEL
 }keycode_t;
 
 typedef struct{
-    bool        f_isdown = false;
-    bool        f_was_released = false;
-    int32_t     value = 0;
-    float       fvalue = 0.0f;
-    void        Down();
-    void        Up();
+    bool                    f_isdown = false;
+    bool                    f_was_released = false;
+    int32_t                 value = 0;
+    float                   fvalue = 0.0f;
+    std::atomic<int32_t>    delta = 0;          //Delta value this tick
+    void                    Down();
+    void                    Up();
 }KeyState;
 
 typedef struct{
@@ -60,6 +63,7 @@ class InputController{
 
     bool    IsKeyDown(uint32_t mapped);
     bool    WasKeyReleased(uint32_t mapped);
+    int32_t GetDelta(uint32_t mapped, KeyMap** map_out);
 
     void    Tick();
 

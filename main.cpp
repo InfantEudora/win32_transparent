@@ -106,6 +106,16 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
             if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_RIGHT)){
                 obj->MoveBy(vec3(0.05,0,0));
             }
+            KeyMap* m = NULL;
+            int32_t delta = wind->inputcontroller->GetDelta(INPUT_MOUSE_WHEEL,&m);
+            if (m){
+                renderer->camera->MoveBy(vec3(0,0,delta*-0.25));
+                renderer->camera->CalculateLookatMatrix();
+                //We reset the delta here.
+                //debug->Info("Mouse wheel delta: %i\n",delta);
+                m->state->delta = 0;
+            }
+
         }
 
         renderer->DrawFrame(shader);

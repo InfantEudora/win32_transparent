@@ -30,6 +30,7 @@ class Object{
     void MoveBy(const vec3& delta);
     void SetScale(const vec3& newscale);
     void SetPosition(const vec3& newpos);
+    void SetLookat(const vec3& newpos);
 
     std::string name;
     fmat4 local_transform_scale_matrix;

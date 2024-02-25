@@ -15,8 +15,9 @@ void KeyState::Down(){
 
 InputController::InputController(){
     //Let's always map the mouse.
-    AddKeyMap(0,MOUSE_X);
-    AddKeyMap(0,MOUSE_Y);
+    AddKeyMap(0,INPUT_MOUSE_X);
+    AddKeyMap(0,INPUT_MOUSE_Y);
+    AddKeyMap(0,INPUT_MOUSE_WHEEL);
 
     AddKeyMap(VK_UP,INPUT_MOVE_UP);
     AddKeyMap(VK_DOWN,INPUT_MOVE_DOWN);
@@ -44,11 +45,11 @@ void InputController::UpdateKeyState(){
     }
 
     for (KeyMap& map: keymap){
-        if (mousepoint_valid && (map.mapped_keycode == MOUSE_X)){
+        if (mousepoint_valid && (map.mapped_keycode == INPUT_MOUSE_X)){
             map.state->value = p.x;
             continue;
         }
-        if (mousepoint_valid && (map.mapped_keycode == MOUSE_Y)){
+        if (mousepoint_valid && (map.mapped_keycode == INPUT_MOUSE_Y)){
             map.state->value = p.y;
             continue;
         }
@@ -97,15 +98,28 @@ bool InputController::WasKeyReleased(uint32_t mapped){
     return m->state->f_was_released;
 }
 
+int32_t InputController::GetDelta(uint32_t mapped, KeyMap** map_out = NULL){
+    KeyMap* m = GetByMappedKey(mapped);
+    if (!m){
+        return 0;
+    }
+    if (map_out){
+        *map_out = m;
+    }
+    return m->state->delta;
+}
+
 //Clears the button and input transition flags
 void InputController::Tick(){
     for (KeyMap& km:keymap){
         km.state->f_was_released = false;
+        //km.state->delta = 0;
     }
 }
 
-//Handles message from a WIN32 message handler.
+//Handles message from a WIN32 message handler, which are from a different thread.
 void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
+
     if (msg == WM_MOUSELEAVE){
         //debug->Warn("Mouse has left the building.\n");
     }else if (msg == WM_NCMOUSEMOVE){
@@ -117,10 +131,15 @@ void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
         int y = GET_Y_LPARAM(lParam);
         debug->Trace("WM_MOUSEMOVE x,y = %li,%li\n",x,y);
     }else if (msg == WM_MOUSEWHEEL){
-        int wheel = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+        int d = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
-        debug->Trace("WM_MOUSEWHEEL x,y = %li,%li\n",x,y);
+        debug->Trace("WM_MOUSEWHEEL x,y = %li,%li delta=%i\n",x,y,d);
+        KeyMap* m = GetByMappedKey(INPUT_MOUSE_WHEEL);
+        if (m){
+            m->state->value += d;
+            m->state->delta += d;
+        }
     }else if (msg == WM_NCMOUSELEAVE){
     }else if (msg == WM_SETCURSOR){
     }else if (msg == WM_CHAR){

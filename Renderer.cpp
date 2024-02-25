@@ -52,7 +52,8 @@ bool Renderer::Init(){
 
     camera = new Camera();
     camera->SetPosition(vec3(0,0.5,8));
-    camera->SetupPerspective(width,height,45,0.1,10);
+    camera->SetLookat(vec3());
+    camera->SetupPerspective(width,height,45,0.1,100);
 
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 

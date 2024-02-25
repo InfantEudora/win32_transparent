@@ -56,7 +56,14 @@ void Object::Rotate(){
 //Move to new position, optionally change lookat as well
 void Object::SetPosition(const vec3& newpos){
     f_was_transformed = true;
+    vec3 delta = position - newpos;
     position = newpos;
+    SetLookat(lookat-delta);
+}
+
+//Set the new lookat position
+void Object::SetLookat(const vec3& target){
+    lookat = target;
 }
 
 //Move object by a vector

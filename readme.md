@@ -59,3 +59,6 @@ A rendering context can be current to only one thread at a time. You cannot make
 An application can perform multithread drawing by making different rendering contexts current to different threads, supplying each thread with its own rendering context and device context.
 
 https://www.shadertoy.com/view/ld2Gz3
+
+### Input
+Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
