@@ -1,10 +1,26 @@
 #include "glad.h"
-
+#include <vector>
 #include "Shader.h"
 #include "Debug.h"
 #include "File.h"
 
 static Debugger *debug = new Debugger("Shader", DEBUG_ALL);
+
+
+void Shader::CreateComputeShader(const char* comp_path){
+	debug->Info("Load and compile: %s ...\n",comp_path);
+	uint8_t* comp_data = LoadFile(comp_path,NULL);
+	if (!comp_data){
+		return;
+	}
+	int compid = -1;
+	debug->Info("Compiling compute shader : %s\n", comp_path);
+	compid = CompileCompute((char*)comp_data);
+	debug->Info("Linking program\n");
+	progid = LinkProgram(1,compid);
+
+	free(comp_data);
+};
 
 Shader::Shader(const char* vert_path,const char* frag_path){
     debug->Info("Load and compile: %s, %s ...\n",vert_path,frag_path);
@@ -18,12 +34,14 @@ Shader::Shader(const char* vert_path,const char* frag_path){
 		return;
 	}
 
+	int vertid = -1;
+    int fragid = -1;
 	debug->Info("Compiling vertex shader : %s\n", vert_path);
 	vertid = CompileVertex((char*)vert_data);
 	debug->Info("Compiling fragment shader : %s\n", frag_path);
 	fragid = CompileFragment((char*)frag_data);
 	debug->Info("Linking program\n");
-	progid = LinkProgram();
+	progid = LinkProgram(2,vertid,fragid);
 
 	free(vert_data);
 	free(frag_data);
@@ -79,13 +97,45 @@ int Shader::CompileFragment(char* frag_data){
 	return id;
 }
 
-int Shader::LinkProgram(){
+
+int Shader::CompileCompute(char* comp_data){
+	int id = glCreateShader(GL_COMPUTE_SHADER);
+
+	GLint result = GL_FALSE;
+	int infolen = 0;
+
+	glShaderSource(id, 1, (const char**)&comp_data , NULL);
+	glCompileShader(id);
+
+	glGetShaderiv(id, GL_COMPILE_STATUS, &result);
+	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &infolen);
+	if (!result){
+		char* errormsg = (char*)malloc(infolen+1);
+		glGetShaderInfoLog(id, infolen, NULL, errormsg);
+		debug->Fatal("CompileFragment: error: %s\n", errormsg);
+		free(errormsg);
+		return 0;
+	}else{
+		debug->Ok("Compute shader compiled\n");
+	}
+	return id;
+}
+
+int Shader::LinkProgram(int count, ...){
 	GLint result = GL_FALSE;
 	int infolen = 0;
 
 	GLuint programid = glCreateProgram();
-	glAttachShader(programid, vertid);
-	glAttachShader(programid, fragid);
+	va_list arglist;
+    va_start(arglist,count);
+	std::vector<int>ids;
+    for (int i = 0; i < count; ++i) {
+        int id = va_arg(arglist, int);
+		glAttachShader(programid, id);
+		ids.push_back(id);
+		debug->Info("LinkProgram: Attaching ID %i\n",id);
+    }
+    va_end(arglist);
 	glLinkProgram(programid);
 
 	// Check the program
@@ -101,11 +151,10 @@ int Shader::LinkProgram(){
 		debug->Info("LinkProgram: Linked! ID: %i\n",programid);
 	}
 
-	glDetachShader(programid, vertid );
-	glDetachShader(programid, fragid);
-
-	glDeleteShader(vertid);
-	glDeleteShader(fragid);
+	for (int id:ids){
+		glDetachShader(programid, id);
+		glDeleteShader(id);
+	}
 
 	//The data may now be deleted.
 	return programid;

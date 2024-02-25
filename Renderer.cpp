@@ -64,6 +64,10 @@ bool Renderer::Init(){
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_BLEND);
 
+    //Create a compute shader that will massage the texture.
+    Shader* comp_shader = new Shader();
+    comp_shader->CreateComputeShader("texture.comp");
+
     // Create and bind the texture to the pbuffer's rendering context.
     InitCheckerPatternTexture();
     glBindTextureUnit(0, texture_id);

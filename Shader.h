@@ -11,9 +11,7 @@
 
 class Shader{
 public:
-    int progid = -1;        //ID of the compiled shader program.
-    int vertid = -1;             //ID of the vertex shader if it exists.
-    int fragid = -1;             //IF of the fragment shader
+    int progid = -1;        // ID of the compiled shader program.
 
     //Names for the currently loaded shader files.
     std::string vname; //Vertex shader name
@@ -21,12 +19,16 @@ public:
 
     bool f_compiled = false;
 
+    Shader(){};
     Shader(const char* vert,const char* frag);
     ~Shader();
 
+    void CreateComputeShader(const char* comp);
+
     int CompileVertex(char* data);
     int CompileFragment(char* data);
-    int LinkProgram();
+    int CompileCompute(char* data);
+    int LinkProgram(int count, ...);
     void Use();
 
     //Uniforms
