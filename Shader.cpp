@@ -177,6 +177,15 @@ void Shader::Setint(const char* name, int value){
 	glUniform1i(intid,(GLint)value);
 }
 
+void Shader::Setvec3(const char* name, const vec3& value){
+	GLuint fid = glGetUniformLocation(progid, name);
+	if (fid == -1){
+		debug->Warn("Could not set %i's vec3 %s\n",progid,name);
+		return;
+	}
+	glUniform3fv(fid,1,(GLfloat*)&value);
+}
+
 void Shader::Setmat3(const char* name, const fmat3& matrix){
 	GLuint matid = glGetUniformLocation(progid, name);
 	if (matid == -1){

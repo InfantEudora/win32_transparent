@@ -26,15 +26,102 @@ struct Material{
     int pad3;
 };
 
+#define PI 	3.14159265359
+
+float metallic = 0.5f;
+float roughness = 0.5f;
+uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
+
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
 };
 
-void main(){
+float DistributionGGX(vec3 N, vec3 H, float a){
+    float a2     = a*a;
+    float NdotH  = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
+
+    float nom    = a2;
+    float denom  = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom        = PI * denom * denom;
+    return nom / denom;
+}
+
+float GeometrySchlickGGX(float NdotV, float k){
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float k){
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx1 = GeometrySchlickGGX(NdotV, k);
+    float ggx2 = GeometrySchlickGGX(NdotL, k);
+    return ggx1 * ggx2;
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0){
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+//Returns the light intensity from a single directional light
+vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     Material m = materials[vmatindex];
+    vec3 albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
 
-    vec4 col = texture(material_texture[m.texture_unit], vuv);
-    col *= m.color;
+    vec3 N = vnormal;
+    vec3 V = normalize(eye_position - vposition);
 
-    color = col;
+    vec3 F0 = vec3(0.04); //Fresnell factor
+    F0 = mix(F0, albedo, metallic);
+
+    // reflectance equation
+    vec3 Lo = vec3(0.0);
+
+    // calculate per-light radiance
+    vec3 L = normalize(lightpos);
+    vec3 H = normalize(V + L);
+
+    vec3 radiance     = color * brightness;
+
+    // cook-torrance brdf
+    float NDF = DistributionGGX(N, H, roughness + 0.0001); //Some base roughness to prevent /0
+    float G   = GeometrySmith(N, V, L, roughness + 0.0001);
+    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - metallic;
+
+    vec3 numerator    = NDF * G * F;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+    vec3 specular     = numerator / denominator;
+
+    // add to outgoing radiance Lo
+    float NdotL = max(dot(N, L), 0.0);
+    Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+    return Lo;
+}
+
+float GetTransparency(){
+    Material m = materials[vmatindex];
+    return texture(material_texture[m.texture_unit], vuv).w;
+}
+
+vec4 CalcPBRLighting(){
+    vec4 final;
+
+    vec3 light = CalcDirectionalPBRLight(vec3(-10,10,10),vec3(1,1,1),5.0);
+    float alpha = GetTransparency();
+    final = vec4(light,alpha);
+
+    return final;
+}
+
+void main(){
+    vec4 final = CalcPBRLighting();
+
+    color = final;
 }

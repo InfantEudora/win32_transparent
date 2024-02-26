@@ -55,13 +55,12 @@ void Renderer::UpdateState(){
     }
 
     if (!all_completed){
-        debug->Warn("Not all objects have complete state_physics_prev\n");
+        //debug->Warn("Not all objects have complete state_physics_prev\n");
         //Physics is still modifying the current and/or previous state.
         //We are rendering faster than physics.
         //Draw the current state.
         return;
     }
-
 
     //We take the completed state, copy it over and mark it as incomplete.
     //Physics is allowed to swap when a state is incomplete.
@@ -203,6 +202,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader){
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
 
     shader->Use();
+    shader->Setvec3("eye_position",camera->GetPosition());
     shader->Setmat4("mat_worldcam",camera->mat_cam);
 
     DrawObjects();

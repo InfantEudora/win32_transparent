@@ -55,9 +55,7 @@ class Object{
     fmat4 local_transform_scale_matrix;
     fmat4 world_transform_scale_matrix;
 
-
     vec3 scale = vec3(1,1,1);
-
     vec3 lookat = vec3(0,0,0);
     vec3 up = vec3(0,1,0);
 
@@ -65,8 +63,6 @@ class Object{
 
     //For checking if the state_physics_prev is complete
     bool PhysicsCompleted();
-
-
 
     //Maybe we want some place for the current object transforms, that may be rendered.
     //And some place where the new ones are calculated.
@@ -76,10 +72,9 @@ class Object{
     // So, one render function will iterate over all objects... see if all their last physics states are completed.
     // And copy them over. During this time, physics will have to wait.
 protected:
-    ObjectState state;                        //<- State that may be rendered this frame
-    ObjectState state_physics;      //Reference to the state physics may update.
+    ObjectState state;              //<- State that may be rendered this frame
+    ObjectState state_physics;      //<- State physics may update.
     ObjectState state_physics_prev; //<- Last complete state the physics has calculated.
-
 
     Mesh* mesh = NULL;
     objectid_t id = OBJECTID_INVALID;

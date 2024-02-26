@@ -124,6 +124,10 @@ bool Object::PhysicsCompleted(){
     return !!state_physics_prev.completed;
 }
 
+vec3& Object::GetPosition(){
+    return state.position;
+}
+
 //Calculate the single transformation matrix for rendering
 void Object::UpdateTransformMatrix(){
     //We do in order:
