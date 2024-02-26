@@ -108,6 +108,14 @@ void Scene::UpdatePhysics(){
         return;
     }
 
+    if (inputcontroller->WasKeyReleased(INPUT_PAUSE)){
+        f_paused = !f_paused;
+    }
+
+    if (f_paused){
+        return;
+    }
+
     if (renderer->objects.size() > 0){
         Object* obj = renderer->objects.at(0);
         if (inputcontroller->IsKeyDown(INPUT_MOVE_UP)){

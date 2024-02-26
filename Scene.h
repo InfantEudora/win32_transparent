@@ -27,6 +27,8 @@ public:
     void UpdatePhysics();
     void DrawFrame();
 
+    bool f_paused = false;
+
     //Our example objects and thigs that definitely need to be in their own class
     Object* cube = NULL;
     Camera* camera = NULL;

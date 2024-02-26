@@ -23,6 +23,8 @@ InputController::InputController(){
     AddKeyMap(VK_DOWN,INPUT_MOVE_DOWN);
     AddKeyMap(VK_LEFT,INPUT_MOVE_LEFT);
     AddKeyMap(VK_RIGHT,INPUT_MOVE_RIGHT);
+
+    AddKeyMap(VK_PAUSE,INPUT_PAUSE);
 }
 
 KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){

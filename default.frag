@@ -1,5 +1,7 @@
 #version 430 core
 
+layout(early_fragment_tests) in;
+
 //When rendering to multiple color targets
 layout (location = 0) out vec4 color;
 
@@ -40,6 +42,7 @@ layout (std430, binding = 1) buffer MaterialBuffer{
 layout (std430, binding = 2) buffer ReadbackBuffer{
 	int data_in[4];
     int data_out[4];
+    float fdata_out[4];
 };
 
 float DistributionGGX(vec3 N, vec3 H, float a){
@@ -138,9 +141,14 @@ void main(){
         color = vec4(0,0,1,1);
     }
 
-
+    //We do another Z-Test
     if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y)){
-        data_out[0] = vobjid;
-        data_out[1] = frag_coord.y;
+        //Z-Value 0 ... 1
+        float z = gl_FragCoord.z;
+        if (fdata_out[0] > z){
+            data_out[0] = vobjid;
+            data_out[1] = frag_coord.y;
+            fdata_out[0] = z;
+        }
     }
 }

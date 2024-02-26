@@ -21,6 +21,7 @@ typedef struct {
 typedef struct{
     int data_in[4];     //Stored pixel coordinates of mouse
     int data_out[4];    //Holds objid
+    float fdata_out[4];    //Holds ztest
 }readback_buffer_t;
 
 /*
