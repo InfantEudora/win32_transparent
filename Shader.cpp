@@ -6,6 +6,9 @@
 
 static Debugger *debug = new Debugger("Shader", DEBUG_ALL);
 
+Shader::Shader(){
+
+};
 
 void Shader::CreateComputeShader(const char* comp_path){
 	debug->Info("Load and compile: %s ...\n",comp_path);
@@ -22,7 +25,7 @@ void Shader::CreateComputeShader(const char* comp_path){
 	free(comp_data);
 };
 
-Shader::Shader(const char* vert_path,const char* frag_path){
+Shader::Shader(const char* vert_path,const char* frag_path):Shader(){
     debug->Info("Load and compile: %s, %s ...\n",vert_path,frag_path);
 
 	uint8_t* vert_data = LoadFile(vert_path,NULL);

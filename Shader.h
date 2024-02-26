@@ -19,7 +19,7 @@ public:
 
     bool f_compiled = false;
 
-    Shader(){};
+    Shader();
     Shader(const char* vert,const char* frag);
     ~Shader();
 

@@ -278,7 +278,7 @@ void Window::CopyBufferToImage(){
     // top down in orientation.
     //The correct buffer should have already been selected.
 
-    BYTE* cap = GetScreenCap(width,height);
+    //BYTE* cap = GetScreenCap(width,height);
 
     if (pixels == NULL){
         pixels = new BYTE[width * height * 4];
@@ -294,10 +294,12 @@ void Window::CopyBufferToImage(){
     }
 
     //Copy screenshot to bitmap
+    /*
     for (int i = 0; i < height; ++i){
         memcpy(&g_image.pPixels[g_image.pitch * i], &cap[((height - 1) - i) * (width * 4)], width * 4);
     }
     delete[] cap;
+    */
 }
 
 void Window::CopyBufferToBackBuffer(){

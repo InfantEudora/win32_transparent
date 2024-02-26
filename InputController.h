@@ -32,7 +32,7 @@ typedef enum{
     INPUT_MOUSE_WHEEL
 }keycode_t;
 
-typedef struct{
+struct KeyState{
     bool                    f_isdown = false;
     bool                    f_was_released = false;
     int32_t                 value = 0;
@@ -40,13 +40,15 @@ typedef struct{
     std::atomic<int32_t>    delta = 0;          //Delta value this tick
     void                    Down();
     void                    Up();
-}KeyState;
 
-typedef struct{
+
+};
+
+struct KeyMap{
     uint32_t system_keycode = 0;   // The system keycode.
     uint32_t mapped_keycode = 0;   // Our keycode
     KeyState* state = NULL;        // The state. Multiple maps can refer to the same state.
-}KeyMap;
+};
 
 class InputController{
     public:
