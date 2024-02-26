@@ -24,7 +24,7 @@ public:
     void SetupExample();
 
     void HandleInput();
-    void DoPhysics();
+    void UpdatePhysics();
     void DrawFrame();
 
     //Our example objects and thigs that definitely need to be in their own class

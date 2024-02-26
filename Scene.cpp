@@ -23,8 +23,8 @@ void Scene::SetupExample(){
         cube = new Object();
         cube->SetMesh(cube_mesh);
         renderer->objects.push_back(cube);
-        cube->rotation = (rand()%100) / 10.0f;
-        cube->rot_speed = rand()%10 *0.001f;
+        cube->SetRotation((rand()%100) / 10.0f);
+        cube->SetRotationSpeed(rand()%10 *0.001f);
         cube->SetPosition(vec3(0.5,0.5,0.0));
 
         cube->material_slot[0] = i%2;
@@ -35,8 +35,8 @@ void Scene::SetupExample(){
         cube = new Object();
         cube->SetMesh(sphere_mesh);
         renderer->objects.push_back(cube);
-        cube->rotation = (rand()%100) / 10.0f;
-        cube->rot_speed = rand()%10 *0.001f;
+        cube->SetRotation((rand()%100) / 10.0f);
+        cube->SetRotationSpeed(rand()%10 *0.001f);
         cube->SetPosition(vec3(-0.5,0.5,0.0));
         cube->material_slot[0] = i%2;
     }
@@ -45,6 +45,7 @@ void Scene::SetupExample(){
     camera->SetPosition(vec3(0,0.5,8));
     camera->SetLookat(vec3());
     camera->SetupPerspective(renderer->width,renderer->height,45,0.1,100);
+    renderer->objects.push_back(camera);
 
     // Create a texture
     Texture* texture = new Texture();
@@ -91,7 +92,7 @@ void Scene::HandleInput(){
     inputcontroller->UpdateKeyState();
 };
 
-void Scene::DoPhysics(){
+void Scene::UpdatePhysics(){
     if (!inputcontroller){
         return;
     }
@@ -109,6 +110,7 @@ void Scene::DoPhysics(){
         }
         if (inputcontroller->IsKeyDown(INPUT_MOVE_LEFT)){
             obj->MoveBy(vec3(-0.05,0,0));
+
         }
         if (inputcontroller->IsKeyDown(INPUT_MOVE_RIGHT)){
             obj->MoveBy(vec3(0.05,0,0));
@@ -117,14 +119,22 @@ void Scene::DoPhysics(){
         int32_t delta = inputcontroller->GetDelta(INPUT_MOUSE_WHEEL,&m);
         if (m){
             camera->MoveBy(vec3(0,0,delta*-0.25));
-            camera->CalculateLookatMatrix();
+
             //We reset the delta here.
             //debug->Info("Mouse wheel delta: %i\n",delta);
             m->state->delta = 0;
         }
     }
+
+    for (Object* object:renderer->objects){
+        object->Rotate();
+        //Copies object state and invalidates physics state
+        object->UpdatePhysicsState();
+    }
 };
 
 void Scene::DrawFrame(){
+    camera->CalculateLookatMatrix();
+
     renderer->DrawFrame(camera, shader);
 };

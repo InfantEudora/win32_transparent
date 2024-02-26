@@ -36,7 +36,43 @@ bool Renderer::Init(){
 void Renderer::CullObjects(){
     renderable_objects.clear();
     for (Object* object:objects){
+        if (object->GetMesh() == NULL){
+            continue;
+        }
+
         renderable_objects.push_back(object);
+    }
+}
+
+//This checks if all objects we are interested in have completed.
+void Renderer::UpdateState(){
+    bool all_completed = true;
+    for (Object* object:objects){
+        if (!object->PhysicsCompleted()){
+            all_completed = false;
+            break;
+        }
+    }
+
+    if (!all_completed){
+        debug->Warn("Not all objects have complete state_physics_prev\n");
+        //Physics is still modifying the current and/or previous state.
+        //We are rendering faster than physics.
+        //Draw the current state.
+        return;
+    }
+
+
+    //We take the completed state, copy it over and mark it as incomplete.
+    //Physics is allowed to swap when a state is incomplete.
+    for (Object* object:objects){
+        //This was previously tested, and it's now broken....?
+        if (!object->PhysicsCompleted()){
+            debug->Fatal("Previously set complete state now incomplete.\n");
+        }
+        //Copies object state and invalidates physics state
+        object->UpdateState();
+
     }
 }
 
@@ -115,7 +151,7 @@ void Renderer::RenderUniqueMeshes(){
         for (uint32_t object_index : *batch_ids.at(batch_index)){
             Object* object = renderable_objects.at(object_index);
             debug->Trace("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
-            object->Rotate();
+
             instancedata_t data;
             data.mat_transformscale = object->GetWorldTransformScaleMatrix();
             for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
@@ -147,6 +183,8 @@ void Renderer::DrawObjects(){
     //Then we make a list of all objects that need to be rendered.
     //Of those objects, we make a list for each unique mesh with object attributes and object ids.
     CullObjects();
+    UpdateState();
+
     RebuildUniqueMeshList();
     ClearBatches();
     FillBactches();

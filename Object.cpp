@@ -45,19 +45,19 @@ void Object::SetMeshBatchIndex(int32_t index){
 }
 
 void Object::Rotate(){
-    f_was_transformed = true;
+    state_physics.f_was_transformed = true;
     //Modify the cube
-    rotation += rot_speed;
-    MoveBy(vec3(0.005 * sin(rotation),0.005 * cos(rotation),0));
+    state_physics.rotation += state_physics.rot_speed;
+    MoveBy(vec3(0.005 * sin(state_physics.rotation),0.005 * cos(state_physics.rotation),0));
     vec3 target_axis = vec3(0,1,0);
-    mat_rotation.set_rotation(target_axis,rotation);
+    state_physics.mat_rotation.set_rotation(target_axis,state_physics.rotation);
 }
 
 //Move to new position, optionally change lookat as well
 void Object::SetPosition(const vec3& newpos){
-    f_was_transformed = true;
-    vec3 delta = position - newpos;
-    position = newpos;
+    state_physics.f_was_transformed = true;
+    vec3 delta = state_physics.position - newpos;
+    state_physics.position = newpos;
     SetLookat(lookat-delta);
 }
 
@@ -68,20 +68,67 @@ void Object::SetLookat(const vec3& target){
 
 //Move object by a vector
 void Object::MoveBy(const vec3& delta){
-    SetPosition(position + delta);
+    SetPosition(state_physics.position + delta);
 }
 
 //The size of the object in 3 dimensions
 void Object::SetScale(const vec3& newscale){
     scale = newscale;
-    f_was_transformed = true;
+    state_physics.f_was_transformed = true;
 }
 
-//Calculate the single transformation matrix
+
+void Object::SetRotation(float newrot){
+    state_physics.rotation = newrot;
+}
+
+void Object::SetRotationSpeed(float newspeed){
+    state_physics.rot_speed = newspeed;
+}
+
+//Copies physics state over to this state.
+void Object::UpdateState(){
+    state.position          = state_physics_prev.position;
+    state.f_was_transformed = state_physics_prev.f_was_transformed;
+    state.rotation          = state_physics_prev.rotation;
+    state.rot_speed         = state_physics_prev.rot_speed;
+    state.mat_rotation      = state_physics_prev.mat_rotation;
+
+    state.completed = true;
+    state_physics_prev.completed = 0;
+}
+
+void Object::UpdatePhysicsState(){
+    //Massages all the physics things.
+    //HERE
+
+    //Done
+    state_physics.completed++;
+
+    //Checks to see if we can swap state
+    if (state_physics_prev.completed == 0){
+        state_physics_prev.position             = state_physics.position;
+        state_physics_prev.f_was_transformed    = state_physics.f_was_transformed;
+        state_physics_prev.rotation             = state_physics.rotation;
+        state_physics_prev.rot_speed            = state_physics.rot_speed;
+        state_physics_prev.mat_rotation         = state_physics.mat_rotation;
+        state_physics_prev.completed = true;
+        state_physics.completed = 0;
+    }
+
+    //Dont know where to put this one yet.
+    //state_physics.f_was_transformed = false;
+}
+
+bool Object::PhysicsCompleted(){
+    return !!state_physics_prev.completed;
+}
+
+//Calculate the single transformation matrix for rendering
 void Object::UpdateTransformMatrix(){
     //We do in order:
     //scale, rotate, translate
-    float size = 1.0 + 0.1 * sin(rotation);
+    float size = 1.0 + 0.1 * sin(state.rotation);
 
     world_transform_scale_matrix.identity();
     world_transform_scale_matrix.vertex[0].x *= size * scale.x;
@@ -89,19 +136,17 @@ void Object::UpdateTransformMatrix(){
     world_transform_scale_matrix.vertex[2].z *= size * scale.z;
 
     fmat4 rotation_matrix;
-    rotation_matrix.rotationmatrix(mat_rotation);
+    rotation_matrix.rotationmatrix(state.mat_rotation);
 
     world_transform_scale_matrix = world_transform_scale_matrix * rotation_matrix;
 
-    world_transform_scale_matrix.set_position(position);
+    world_transform_scale_matrix.set_position(state.position);
 
-    //The object is now static. This get's reset upon moving or rotating the object.
-    f_was_transformed = false;
 }
 
 //Returns the total transformation matrix in world space for this frame
 fmat4& Object::GetWorldTransformScaleMatrix(){
-    if (f_was_transformed){
+    if (state.f_was_transformed){
         //Update local transform matrices
         UpdateTransformMatrix();
     }

@@ -29,6 +29,7 @@ class Renderer{
     int height = 1;
 
     void CullObjects();
+    void UpdateState();
     void RebuildUniqueMeshList();
     void ClearBatches();
     void FillBactches();

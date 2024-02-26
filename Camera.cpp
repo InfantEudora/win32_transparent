@@ -49,6 +49,6 @@ void Camera::CalculateLookatMatrix(){
 	}else{
 		mat_frus.perspectivematrix(viewport.fov,viewport.aspect, viewport.znear, viewport.zfar);
 	}
-	mat_look.lookatmatrix(position,lookat,up);
+	mat_look.lookatmatrix(state.position,lookat,up);
 	mat_cam = mat_look * mat_frus;
 }

@@ -78,6 +78,25 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
     return 0;
 }
 
+
+Scene* physics_scene = NULL;
+
+//Function for rendering the frame to a window
+DWORD WINAPI PhysicsThread(LPVOID lpParameter){
+    DWORD thread_id = GetCurrentThreadId();
+    debug->Info("Output from PhysicsThread Thread ID: %lu\n",thread_id);
+    while (1){
+        timeBeginPeriod(1);
+        Sleep(5);
+        timeEndPeriod(1);
+        if (physics_scene){
+            physics_scene->UpdatePhysics();
+        }
+    }
+    debug->Info("Thread terminated\n");
+    return 0;
+}
+
 //Window passed to thread
 Window* wind_frame = NULL;
 
@@ -104,10 +123,30 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
     scene->shader = shader;
     scene->SetupExample();
 
+    scene->UpdatePhysics();
+    physics_scene = scene;
+    //Build a physics update thread
+    {
+        HANDLE hThread = NULL;
+        DWORD thread_id;
+        // Create a new thread which will get it's own render context
+        hThread = CreateThread(
+            NULL,    // Thread attributes
+            0,       // Stack size (0 = use default)
+            PhysicsThread, // Thread start address
+            NULL,    // Parameter to pass to the thread
+            0,       // Creation flags
+            &thread_id);   // Thread id
+
+        if (hThread == NULL){
+            debug->Fatal("Unable to create thread\n");
+        }
+    }
+
     while (wind->f_should_quit == false){
         //Should only modify the object, and we should be able to move this to a seperate thread.
         scene->HandleInput();
-        scene->DoPhysics();
+
 
         //This should render the frame only.
         scene->DrawFrame();
@@ -119,6 +158,10 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
     debug->Info("Thread terminated\n");
     return 0;
 }
+
+
+
+
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd){
     //Used to do things from console, like CTRL+C
