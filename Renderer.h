@@ -12,9 +12,16 @@ class Renderer;
 #define NUM_MATERIAL_SLOTS  4
 
 typedef struct {
-    fmat4 mat_transformscale; // Matrix holding object rotation, scale and translation
-    int material_slot[NUM_MATERIAL_SLOTS];     // We could do that each instance has a material assigned to a fixed number of slots
+    fmat4 mat_transformscale;               // Matrix holding object rotation, scale and translation
+    int material_slot[NUM_MATERIAL_SLOTS];  // We could do that each instance has a material assigned to a fixed number of slots
+    int objectindex;                           // The Object's index it was rendered with this frame. (So not object->id)
+    int pad1[3];
 }instancedata_t;
+
+typedef struct{
+    int data_in[4];     //Stored pixel coordinates of mouse
+    int data_out[4];    //Holds objid
+}readback_buffer_t;
 
 /*
     A class responsible of managing the OpenGL state and pipeline.
@@ -34,10 +41,12 @@ class Renderer{
     void ClearBatches();
     void FillBactches();
     void DrawObjects();
+
+    void UpdateReadbackBuffer();
     void UploadMaterials();
     void RenderUniqueMeshes();
 
-    void DrawFrame(Camera* camera, Shader* shader);
+    void DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey);
 
     bool CheckFrameBuffer();
     bool Init();
@@ -57,6 +66,7 @@ class Renderer{
 
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
+    GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
@@ -64,6 +74,7 @@ class Renderer{
     std::vector<std::vector<objectid_t>*>batch_ids; // An array of arrays containing the object id's per unique mesh, these form batches
     std::vector<instancedata_t>instancedata;          // Object data per unique mesh instance
     std::vector<material_t>materials;                 // List of all known materials
+    readback_buffer_t readbackbuffer;               //A single buffer for reading back data from shader
 
     std::vector<Object*>objects;                    //All known objects
 };

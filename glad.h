@@ -270,6 +270,8 @@ typedef void (APIENTRYP PFNGLNAMEDBUFFERSUBDATAPROC)(GLuint buffer, GLintptr off
 GLAPI PFNGLNAMEDBUFFERSUBDATAPROC glNamedBufferSubData;
 typedef void (APIENTRYP PFNGLINVALIDATEBUFFERDATAPROC)(GLuint buffer);
 GLAPI PFNGLINVALIDATEBUFFERDATAPROC glInvalidateBufferData;
+typedef void (APIENTRYP PFNGLGETNAMEDBUFFERSUBDATAPROC)(GLuint buffer, GLintptr offset, GLsizeiptr size, void *data);
+GLAPI PFNGLGETNAMEDBUFFERSUBDATAPROC glGetNamedBufferSubData;
 
 //Textures
 typedef void (APIENTRYP PFNGLCREATETEXTURESPROC)(GLenum target, GLsizei n, GLuint *textures);

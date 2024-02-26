@@ -41,6 +41,7 @@ void InputController::UpdateKeyState(){
     bool mousepoint_valid = false;
     POINT p;
     if (mousepoint_valid = GetCursorPos(&p)){
+        mouse_position = {p.x,p.y};
         //debug->Info("Mouse: %li x %li\n",p.x,p.y);
     }
 
@@ -109,6 +110,14 @@ int32_t InputController::GetDelta(uint32_t mapped, KeyMap** map_out = NULL){
     return m->state->delta;
 }
 
+int2 InputController::GetAbsoluteMousePosition(){
+    return mouse_position;
+}
+
+int2 InputController::GetRelativeMousePosition(){
+    return (mouse_position - window_position);
+}
+
 //Clears the button and input transition flags
 void InputController::Tick(){
     for (KeyMap& km:keymap){
@@ -148,6 +157,10 @@ void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
         debug->Trace("WM_KEYDOWN wParam= %li\n",wParam);
     }else if (msg == WM_KEYUP){
         debug->Trace("WM_KEYUP wParam= %li\n",wParam);
+    }else if (msg == WM_MOVE){
+        int x = (int)(short) LOWORD(lParam);
+        int y = (int)(short) HIWORD(lParam);
+        window_position = {x,y};
     }else{
         debug->Trace("msg = %li (0x%04X)\n",msg,msg);
     }

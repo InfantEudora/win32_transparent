@@ -16,7 +16,7 @@ struct ObjectState{
     bool f_was_transformed = false;
     vec3 position = vec3(0,0,0);
     float rotation = 0.0f;
-    float rot_speed = 0.05f;
+    float rot_speed = 0.0f;
     fmat3 mat_rotation;
 };
 
@@ -45,8 +45,10 @@ class Object{
     void SetLookat(const vec3& newpos);
     void SetRotation(float newrot);
     void SetRotationSpeed(float newspeed);
+    void SetMouseOver(bool state);
 
     vec3& GetPosition();
+    bool IsHovered();
 
     void UpdateState(); //Called from render thread before rendering
     void UpdatePhysicsState();
@@ -72,6 +74,8 @@ class Object{
     // So, one render function will iterate over all objects... see if all their last physics states are completed.
     // And copy them over. During this time, physics will have to wait.
 protected:
+    bool f_mouse_over = false;      //This is set after frame complete.
+
     ObjectState state;              //<- State that may be rendered this frame
     ObjectState state_physics;      //<- State physics may update.
     ObjectState state_physics_prev; //<- Last complete state the physics has calculated.

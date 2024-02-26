@@ -86,6 +86,10 @@ void Object::SetRotationSpeed(float newspeed){
     state_physics.rot_speed = newspeed;
 }
 
+void Object::SetMouseOver(bool state){
+    f_mouse_over = state;
+}
+
 //Copies physics state over to this state.
 void Object::UpdateState(){
     state.position          = state_physics_prev.position;
@@ -126,6 +130,10 @@ bool Object::PhysicsCompleted(){
 
 vec3& Object::GetPosition(){
     return state.position;
+}
+
+bool Object::IsHovered(){
+    return f_mouse_over;
 }
 
 //Calculate the single transformation matrix for rendering

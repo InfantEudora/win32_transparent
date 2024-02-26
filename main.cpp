@@ -60,6 +60,8 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
     scene->shader = shader;
     scene->SetupExample();
 
+    scene->UpdatePhysics();
+
     wind->Show(SW_SHOWDEFAULT);
     MSG msg = {0};
     while (wind->f_should_quit == false){
@@ -70,6 +72,8 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
+
+            scene->UpdatePhysics();
             scene->DrawFrame();
             wind->DrawFrame();
         }

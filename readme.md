@@ -38,9 +38,12 @@ It should kind of look like this:
 - [ ] Assign different materials to objects by storing their material index in a sperate VAO.
 - [x] A seperate physics thread that updates object positions and manages input
 - [x] A scene to put things in.
+- [ ] Scale window and framebuffers
 - [ ] Simple lighting, but keep in mind it needs to be PBR at some point.
 - [ ] Attempt to put ImGui in and keep the crazy overlay going.
-- [ ] Object selection based on ID with a buffer...?
+- [ ] Object selection based on ID with a buffer...? Yes, SSBO read/write
+- [ ] Make the hovered / selected object use a certain material.
+- [ ] Blue and Red are reversed somewhere.. somehow.
 
 
 ### Some notes

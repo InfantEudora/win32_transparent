@@ -24,10 +24,11 @@ void Scene::SetupExample(){
         cube->SetMesh(cube_mesh);
         renderer->objects.push_back(cube);
         cube->SetRotation((rand()%100) / 10.0f);
-        cube->SetRotationSpeed(rand()%10 *0.001f);
+        cube->SetRotationSpeed(rand()%100 * 0.0001f);
         cube->SetPosition(vec3(0.5,0.5,0.0));
 
         cube->material_slot[0] = i%2;
+        cube->material_slot[1] = i%2;
     }
 
     //Make a bunch of spheres
@@ -36,9 +37,10 @@ void Scene::SetupExample(){
         cube->SetMesh(sphere_mesh);
         renderer->objects.push_back(cube);
         cube->SetRotation((rand()%100) / 10.0f);
-        cube->SetRotationSpeed(rand()%10 *0.001f);
+        cube->SetRotationSpeed(rand()%100 * 0.0001f);
         cube->SetPosition(vec3(-0.5,0.5,0.0));
         cube->material_slot[0] = i%2;
+        cube->material_slot[1] = i%2;
     }
 
     camera = new Camera();
@@ -78,9 +80,15 @@ void Scene::SetupExample(){
     m.color = vec4(0,1,0,1);
     m.texture_unit = 0;
     renderer->materials.push_back(m);
+
     m.color = vec4(1,0.5,0,1);
     m.texture_unit = 1;
     renderer->materials.push_back(m);
+
+    m.color = vec4(0,0.5,1,1);
+    m.texture_unit = 1;
+    renderer->materials.push_back(m);
+
     debug->Info("We have %i materials\n",renderer->materials.size());
 
 };
@@ -127,6 +135,10 @@ void Scene::UpdatePhysics(){
     }
 
     for (Object* object:renderer->objects){
+        if (object == camera){
+            object->UpdatePhysicsState();
+            continue;
+        }
         object->Rotate();
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();
@@ -136,5 +148,6 @@ void Scene::UpdatePhysics(){
 void Scene::DrawFrame(){
     camera->CalculateLookatMatrix();
 
-    renderer->DrawFrame(camera, shader);
+    int2 m = inputcontroller->GetRelativeMousePosition();
+    renderer->DrawFrame(camera, shader,m.x,m.y);
 };

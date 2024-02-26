@@ -13,6 +13,7 @@ layout (location = 0)  in vec3 vposition;       //Vertex position in world space
 layout (location = 1)  in vec3 vnormal;         //Vertex normals
 layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
 layout (location = 3)  flat in int vmatindex;   //Material index
+layout (location = 4)  flat in int vobjid;      //ObjectID from vertex shader
 
 //We force the two texture to be bound to GL_TEXTURE0+0
 //It's set with glBindTextureUnit
@@ -34,6 +35,11 @@ uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
+};
+
+layout (std430, binding = 2) buffer ReadbackBuffer{
+	int data_in[4];
+    int data_out[4];
 };
 
 float DistributionGGX(vec3 N, vec3 H, float a){
@@ -123,5 +129,18 @@ vec4 CalcPBRLighting(){
 void main(){
     vec4 final = CalcPBRLighting();
 
+    ivec2 mouse_coord = ivec2(data_in[0],data_in[1]);
+    ivec2 frag_coord = ivec2(gl_FragCoord.xy);
     color = final;
+
+    float dist = length(frag_coord - mouse_coord);
+    if (dist < 5){
+        color = vec4(0,0,1,1);
+    }
+
+
+    if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y)){
+        data_out[0] = vobjid;
+        data_out[1] = frag_coord.y;
+    }
 }

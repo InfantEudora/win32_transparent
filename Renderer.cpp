@@ -156,6 +156,15 @@ void Renderer::RenderUniqueMeshes(){
             for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
                 data.material_slot[i] = object->material_slot[i];
             }
+            data.objectindex = object_index;
+            //This is not really the place to do this... TODO
+            if (object->IsHovered()){
+                data.material_slot[1] = data.material_slot[0];
+                data.material_slot[0] = 2;
+            }else{
+                data.material_slot[0] = data.material_slot[1];
+            }
+            object->SetMouseOver(false);
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
             instancedata.push_back(data);
@@ -172,9 +181,14 @@ void Renderer::RenderUniqueMeshes(){
 //This for now just uploads all the known materials to a SSBO... each frame.
 //Might only need to do this once.
 void Renderer::UploadMaterials(){
-
     glInvalidateBufferData(materialdata_ssbo);
     glNamedBufferData(materialdata_ssbo,materials.size()*sizeof(material_t) , &materials.at(0),GL_DYNAMIC_DRAW);
+}
+
+//Set's the SSBO that will be used for reading back data
+void Renderer::UpdateReadbackBuffer(){
+    readbackbuffer.data_out[0] = -1;
+    glNamedBufferSubData(readback_ssbo,0,sizeof(readback_buffer_t), &readbackbuffer);
 }
 
 void Renderer::DrawObjects(){
@@ -191,7 +205,7 @@ void Renderer::DrawObjects(){
     RenderUniqueMeshes();
 }
 
-void Renderer::DrawFrame(Camera* camera, Shader* shader){
+void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey){
     //Select the mutisampled frambuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
@@ -205,9 +219,22 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader){
     shader->Setvec3("eye_position",camera->GetPosition());
     shader->Setmat4("mat_worldcam",camera->mat_cam);
 
-    DrawObjects();
+    readbackbuffer.data_in[0] = mousex;
+    readbackbuffer.data_in[1] = height - mousey;
+    UpdateReadbackBuffer();
 
+    DrawObjects();
     ResolveAA();
+
+    //Read back buffer contents
+    glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
+    //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
+    if(readbackbuffer.data_out[0] != -1){
+        debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
+        int index = readbackbuffer.data_out[0];
+        renderable_objects.at(index)->SetMouseOver(true);
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
 }
 
@@ -222,6 +249,12 @@ bool Renderer::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&materialdata_ssbo);
     glNamedBufferData(materialdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, materialdata_ssbo);
+
+    //A buffer where we read back data from, mainly the object id at mouse coordinate.
+    glCreateBuffers(1, (GLuint*)&readback_ssbo);
+    glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, readback_ssbo);
+
     return true;
 }
 

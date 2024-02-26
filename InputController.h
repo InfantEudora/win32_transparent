@@ -6,6 +6,8 @@ class InputController;
 #include "stdint.h"
 #include <vector>
 #include <atomic>
+#include "type_int2.h"
+
 /*
     Handles input messages from a window message queue,
     or get's them from the system.
@@ -40,8 +42,6 @@ struct KeyState{
     std::atomic<int32_t>    delta = 0;          //Delta value this tick
     void                    Down();
     void                    Up();
-
-
 };
 
 struct KeyMap{
@@ -67,10 +67,18 @@ class InputController{
     bool    WasKeyReleased(uint32_t mapped);
     int32_t GetDelta(uint32_t mapped, KeyMap** map_out);
 
+    int2    GetAbsoluteMousePosition();
+    int2    GetRelativeMousePosition(); //Relative to the window
+
     void    Tick();
 
-    //Mouse position
+    //Mouse position is also stored in keymap, and seperately
     std::vector<KeyMap>keymap;
+
+protected:
+    int2 mouse_position;
+    int2 window_position;   //Stored here seperately
+
 };
 
 #endif

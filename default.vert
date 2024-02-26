@@ -13,6 +13,10 @@ layout (location = 3) in int matindex;
 struct InstanceData{
 	mat4 mat_transformscale;
 	int material_slot[NUM_MATERIAL_SLOTS];
+	int objectid;
+	int pad1;
+	int pad2;
+	int pad3;
 };
 
 //A material index comes in from a vertex, which matches a material specified in the OBJ file.
@@ -28,6 +32,7 @@ layout (location = 0) out vec3 vposition; //Vertex position in world space, used
 layout (location = 1) out vec3 vnormal;	//Normals
 layout (location = 2) out vec2 vuv;		//Texture UV coordinates
 layout (location = 3) flat out int vmatindex;	//Material index
+layout (location = 4) flat out int vobjid;	//gl_InstanceID
 
 //Matrix for world camera.
 uniform mat4 mat_worldcam = mat4(
@@ -57,6 +62,8 @@ void main(){
 	vmatindex =  instance_data[gl_InstanceID].material_slot[matindex];
 
 	vuv = uv;
+
+	vobjid = instance_data[gl_InstanceID].objectid;
 
 	gl_Position = (mat_worldcam * transpos);
 }

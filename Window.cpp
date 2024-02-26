@@ -435,8 +435,9 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         {
             int x = (int)(short) LOWORD(lParam);
             int y = (int)(short) HIWORD(lParam);
-            //debug->Info("WM_MOVE to %i,%i\n",x,y);
-            //return 0;
+            debug->Info("WM_MOVE to %i,%i\n",x,y);
+            wnd->top = y;
+            wnd->left = x;
         }
         break;
         case WM_MOVING:

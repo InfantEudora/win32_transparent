@@ -56,6 +56,7 @@ PFNGLBINDBUFFERBASEPROC glBindBufferBase = NULL;
 PFNGLNAMEDBUFFERDATAPROC glNamedBufferData = NULL;
 PFNGLNAMEDBUFFERSUBDATAPROC glNamedBufferSubData = NULL;
 PFNGLINVALIDATEBUFFERDATAPROC glInvalidateBufferData = NULL;
+PFNGLGETNAMEDBUFFERSUBDATAPROC glGetNamedBufferSubData = NULL;
 
 PFNGLCREATETEXTURESPROC glCreateTextures = NULL;
 PFNGLTEXTUREPARAMETERIPROC glTextureParameteri = NULL;
@@ -131,6 +132,7 @@ bool InitGLExtensions(void){
     glNamedBufferData = (PFNGLNAMEDBUFFERDATAPROC)wglGetProcAddress("glNamedBufferData");
     glNamedBufferSubData = (PFNGLNAMEDBUFFERSUBDATAPROC)wglGetProcAddress("glNamedBufferSubData");
     glInvalidateBufferData = (PFNGLINVALIDATEBUFFERDATAPROC)wglGetProcAddress("glInvalidateBufferData");
+    glGetNamedBufferSubData = (PFNGLGETNAMEDBUFFERSUBDATAPROC)wglGetProcAddress("glGetNamedBufferSubData");
 
     glCreateTextures = (PFNGLCREATETEXTURESPROC)wglGetProcAddress("glCreateTextures");
     glTextureParameteri = (PFNGLTEXTUREPARAMETERIPROC)wglGetProcAddress("glTextureParameteri");
