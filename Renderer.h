@@ -36,7 +36,7 @@ class Renderer{
     void UploadMaterials();
     void RenderUniqueMeshes();
 
-    void DrawFrame(Shader* shader);
+    void DrawFrame(Camera* camera, Shader* shader);
 
     bool CheckFrameBuffer();
     bool Init();
@@ -57,8 +57,6 @@ class Renderer{
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
 
-    Texture* texture = NULL;
-
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
     std::vector<Object*>renderable_objects;         // All objects we will render this frame
@@ -67,10 +65,6 @@ class Renderer{
     std::vector<material_t>materials;                 // List of all known materials
 
     std::vector<Object*>objects;                    //All known objects
-
-    //Our example cube
-    Object* cube = NULL;
-    Camera* camera = NULL;
 };
 
 

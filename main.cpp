@@ -9,6 +9,7 @@
 #include "Window.h"
 #include "Shader.h"
 #include "Renderer.h"
+#include "Scene.h"
 #include "glad.h"
 
 #pragma comment(lib, "opengl32.lib")
@@ -52,6 +53,12 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
     Shader* shader = new Shader("default.vert","default.frag");
     Renderer* renderer = new Renderer(256,256);
     renderer->Init();
+    Scene* scene = new Scene();
+    //Bind all the stuff
+    scene->renderer = renderer;
+    scene->inputcontroller = wind->inputcontroller;
+    scene->shader = shader;
+    scene->SetupExample();
 
     wind->Show(SW_SHOWDEFAULT);
     MSG msg = {0};
@@ -63,7 +70,7 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
-            renderer->DrawFrame(shader);
+            scene->DrawFrame();
             wind->DrawFrame();
         }
     }
@@ -71,53 +78,41 @@ DWORD WINAPI ThreadFunction(LPVOID lpParameter){
     return 0;
 }
 
+//Window passed to thread
 Window* wind_frame = NULL;
-Shader* shader_frame = NULL;
-Renderer* renderer_frame = NULL;
 
 //Function for rendering the frame to a window
 DWORD WINAPI FrameFunction(LPVOID lpParameter){
     DWORD thread_id = GetCurrentThreadId();
     debug->Info("Output from FrameFunction Thread ID: %lu\n",thread_id);
 
-    Window* wind = wind_frame;
-    Renderer* renderer = renderer_frame;
-    Shader* shader = shader_frame;
-
     //We make the window's context current to this thread
+    Window* wind = wind_frame;
     if (!wglMakeCurrent(wind->hDC, wind->hRC)){
         debug->Info("FrameFunction Thread unable to get Context\n");
         return false;
     }
 
-    while (wind->f_should_quit == false){
-        wind->inputcontroller->UpdateKeyState();
-        if (renderer->objects.size() > 0){
-            Object* obj = renderer->objects.at(0);
-            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_UP)){
-                obj->MoveBy(vec3(0,0.05,0));
-            }
-            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_DOWN)){
-                obj->MoveBy(vec3(0,-0.05,0));
-            }
-            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_LEFT)){
-                obj->MoveBy(vec3(-0.05,0,0));
-            }
-            if (wind->inputcontroller->IsKeyDown(INPUT_MOVE_RIGHT)){
-                obj->MoveBy(vec3(0.05,0,0));
-            }
-            KeyMap* m = NULL;
-            int32_t delta = wind->inputcontroller->GetDelta(INPUT_MOUSE_WHEEL,&m);
-            if (m){
-                renderer->camera->MoveBy(vec3(0,0,delta*-0.25));
-                renderer->camera->CalculateLookatMatrix();
-                //We reset the delta here.
-                //debug->Info("Mouse wheel delta: %i\n",delta);
-                m->state->delta = 0;
-            }
-        }
+    Renderer* renderer = new Renderer(512,512);
+    renderer->Init();
+    Shader* shader = new Shader("default.vert","default.frag");
 
-        renderer->DrawFrame(shader);
+    Scene* scene = new Scene();
+    //Bind all the stuff
+    scene->renderer = renderer;
+    scene->inputcontroller = wind->inputcontroller;
+    scene->shader = shader;
+    scene->SetupExample();
+
+    while (wind->f_should_quit == false){
+        //Should only modify the object, and we should be able to move this to a seperate thread.
+        scene->HandleInput();
+        scene->DoPhysics();
+
+        //This should render the frame only.
+        scene->DrawFrame();
+
+        //Copy to screen and finish
         wind->DrawFrame();
         wind->inputcontroller->Tick();
     }
@@ -146,11 +141,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         debug->Fatal("Failed to init window\n");
     }
 
-    //Now we can make shaders
-    Shader* shader = new Shader("default.vert","default.frag");
-    Renderer* renderer = new Renderer(512,512);
-    renderer->Init();
-
     for (int i =0;i<num_threads;i++){
         HANDLE hThread = NULL;
         DWORD thread_id;
@@ -176,8 +166,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     SetVSync(true);
 
     wind_frame = wind;
-    shader_frame = shader;
-    renderer_frame = renderer;
 
     //We release the window's context from this thread
     wglMakeCurrent(wind->hDC, NULL);

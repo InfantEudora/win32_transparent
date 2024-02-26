@@ -36,10 +36,11 @@ It should kind of look like this:
 - [x] Have some kind of global list of materials somewhere
 - [x] Assign different textures to materials
 - [ ] Assign different materials to objects by storing their material index in a sperate VAO.
+- [ ] A seperate physics thread that updates object positions and manages input
 - [ ] A scene to put things in.
 - [ ] Simple lighting, but keep in mind it needs to be PBR at some point.
 - [ ] Attempt to put ImGui in and keep the crazy overlay going.
-- [ ]
+
 
 ### Some notes
 

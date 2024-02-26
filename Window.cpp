@@ -181,9 +181,8 @@ bool Window::InitOpenGL(){
     return true;
 }
 
+//Simply copies buffer to backbuffer
 void Window::DrawFrame(){
-    //Renderer->DrawFrame();
-
     if (f_is_layered){
         SwapBuffers(hDC);
         CopyBufferToImage();
