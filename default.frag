@@ -138,7 +138,7 @@ void main(){
 
     float dist = length(frag_coord - mouse_coord);
     if (dist < 5){
-        color = vec4(0,0,1,1);
+        color = vec4(1,0,0,1);
     }
 
     //We do another Z-Test

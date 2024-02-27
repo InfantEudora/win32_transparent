@@ -12,7 +12,6 @@ typedef uint32_t objectid_t;
 #define OBJECTID_INVALID 0xFFFFFFFF
 
 struct ObjectState{
-    std::atomic<int>completed = 0;  //If this state is completed.
     bool f_was_transformed = false;
     vec3 position = vec3(0,0,0);
     float rotation = 0.0f;
@@ -79,6 +78,10 @@ protected:
     ObjectState state;              //<- State that may be rendered this frame
     ObjectState state_physics;      //<- State physics may update.
     ObjectState state_physics_prev; //<- Last complete state the physics has calculated.
+
+    std::atomic<int>state_completed = 0;  //If this state is completed.
+    std::atomic<int>state_physics_completed = 0;
+    std::atomic<int>state_physics_prev_completed = 0;
 
     Mesh* mesh = NULL;
     objectid_t id = OBJECTID_INVALID;

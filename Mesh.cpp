@@ -95,6 +95,8 @@ bool Mesh::InitVBOVAO(){
 }
 
 void Mesh::RenderInstances(int num_instances){
+    glBindVertexArray(vao);
+
     glEnableVertexArrayAttrib(vao,ATTRIB_VERTEX);
     glEnableVertexArrayAttrib(vao,ATTRIB_NORMAL);
     glEnableVertexArrayAttrib(vao,ATTRIB_UVCOORD);
@@ -103,14 +105,12 @@ void Mesh::RenderInstances(int num_instances){
     glVertexArrayAttribFormat(vao, ATTRIB_VERTEX, 3, GL_FLOAT, GL_FALSE, 0*sizeof(float));
     glVertexArrayAttribFormat(vao, ATTRIB_NORMAL, 3, GL_FLOAT, GL_TRUE , 3*sizeof(float));
     glVertexArrayAttribFormat(vao, ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float));
-    glVertexArrayAttribFormat(vao, ATTRIB_MATINDEX, 1, GL_INT, GL_FALSE, 8*sizeof(float));
+    glVertexArrayAttribIFormat(vao, ATTRIB_MATINDEX, 1, GL_INT, 8*sizeof(float));
 
     glVertexArrayAttribBinding(vao, ATTRIB_VERTEX, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_NORMAL, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_UVCOORD, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_MATINDEX, 0);
-
-    glBindVertexArray(vao);
 
     glDrawArraysInstanced(GL_TRIANGLES, 0, num_vertices,num_instances);
 }

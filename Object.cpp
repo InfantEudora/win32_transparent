@@ -92,14 +92,10 @@ void Object::SetMouseOver(bool state){
 
 //Copies physics state over to this state.
 void Object::UpdateState(){
-    state.position          = state_physics_prev.position;
-    state.f_was_transformed = state_physics_prev.f_was_transformed;
-    state.rotation          = state_physics_prev.rotation;
-    state.rot_speed         = state_physics_prev.rot_speed;
-    state.mat_rotation      = state_physics_prev.mat_rotation;
+    state = state_physics_prev;
 
-    state.completed = true;
-    state_physics_prev.completed = 0;
+    state_completed = true;
+    state_physics_prev_completed = 0;
 }
 
 void Object::UpdatePhysicsState(){
@@ -107,17 +103,13 @@ void Object::UpdatePhysicsState(){
     //HERE
 
     //Done
-    state_physics.completed++;
+    state_physics_completed++;
 
     //Checks to see if we can swap state
-    if (state_physics_prev.completed == 0){
-        state_physics_prev.position             = state_physics.position;
-        state_physics_prev.f_was_transformed    = state_physics.f_was_transformed;
-        state_physics_prev.rotation             = state_physics.rotation;
-        state_physics_prev.rot_speed            = state_physics.rot_speed;
-        state_physics_prev.mat_rotation         = state_physics.mat_rotation;
-        state_physics_prev.completed = true;
-        state_physics.completed = 0;
+    if (state_physics_prev_completed == 0){
+        state_physics_prev = state_physics;
+        state_physics_prev_completed = true;
+        state_physics_completed = 0;
     }
 
     //Dont know where to put this one yet.
@@ -125,7 +117,7 @@ void Object::UpdatePhysicsState(){
 }
 
 bool Object::PhysicsCompleted(){
-    return !!state_physics_prev.completed;
+    return !!state_physics_prev_completed;
 }
 
 vec3& Object::GetPosition(){

@@ -51,6 +51,7 @@ class Renderer{
 
     bool CheckFrameBuffer();
     bool Init();
+    void SetNumAASamples(int desired);
     bool InitFBO();
 
     bool InitSSBO();
@@ -68,6 +69,8 @@ class Renderer{
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
     GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
+
+    int aa_samples = 1;
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes

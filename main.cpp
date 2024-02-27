@@ -89,13 +89,17 @@ Scene* physics_scene = NULL;
 DWORD WINAPI PhysicsThread(LPVOID lpParameter){
     DWORD thread_id = GetCurrentThreadId();
     debug->Info("Output from PhysicsThread Thread ID: %lu\n",thread_id);
+    uint32_t physics_ticks = 0;
     while (1){
+        //debug->Info("Physics Loop %lu\n",physics_ticks);
         timeBeginPeriod(1);
         Sleep(5);
         timeEndPeriod(1);
         if (physics_scene){
             physics_scene->UpdatePhysics();
         }
+        //debug->Ok("Physics Loop %lu completed\n",physics_ticks);
+        physics_ticks++;
     }
     debug->Info("Thread terminated\n");
     return 0;
@@ -130,7 +134,7 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
     scene->UpdatePhysics();
     physics_scene = scene;
     //Build a physics update thread
-    {
+    if(1){
         HANDLE hThread = NULL;
         DWORD thread_id;
         // Create a new thread which will get it's own render context
@@ -150,7 +154,7 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
     while (wind->f_should_quit == false){
         //Should only modify the object, and we should be able to move this to a seperate thread.
         scene->HandleInput();
-
+        //scene->UpdatePhysics();
 
         //This should render the frame only.
         scene->DrawFrame();
@@ -180,7 +184,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     Window::RegisterWindowClasses();
 
-    Window* wind = Window::CreateNewLayeredWindow(512,512,&Window::wcs.at(0));
+    Window* wind = Window::CreateNewWindow(512,512,&Window::wcs.at(0));
     if (!wind){
         debug->Fatal("Unable to create window\n");
     }
@@ -233,7 +237,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             debug->Fatal("Unable to FrameFunction thread\n");
         }
     }
-
 
     MSG msg = {0};
     while (wind->f_should_quit == false){

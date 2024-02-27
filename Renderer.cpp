@@ -260,6 +260,20 @@ bool Renderer::InitSSBO(){
     return true;
 }
 
+void Renderer::SetNumAASamples(int desired){
+    int max_samples;
+	glGetIntegerv(GL_MAX_SAMPLES, &max_samples);
+    debug->Info("GL_MAX_SAMPLES=%i\n",max_samples);
+
+    aa_samples = desired;
+    if (aa_samples > max_samples){
+        aa_samples = max_samples;
+        debug->Info("Limited desired number of AA Samples from %i to %i\n",desired,aa_samples);
+    }else{
+         debug->Info("Number of AA Samples set to %i\n",aa_samples);
+    }
+}
+
 //Create all the frame and renderbuffers
 bool Renderer::InitFBO(){
     glCreateFramebuffers(1, &msaa_fbo_id);
@@ -273,7 +287,7 @@ bool Renderer::InitFBO(){
         return false;
     }
 
-    int aa_samples = 16;
+    SetNumAASamples(16);
 
     //Setup buffers:
     //Mutisampled color 16bit float

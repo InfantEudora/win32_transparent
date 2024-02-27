@@ -101,6 +101,7 @@ void Scene::HandleInput(){
 };
 
 void Scene::UpdatePhysics(){
+
     if (!inputcontroller){
         return;
     }
@@ -143,6 +144,7 @@ void Scene::UpdatePhysics(){
     }
 
     for (Object* object:renderer->objects){
+        //debug->Info("Updating physics for obj->id %i\n",object->GetID());
         if (object == camera){
             object->UpdatePhysicsState();
             continue;

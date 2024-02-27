@@ -141,7 +141,7 @@ bool Window::InitOpenGL(){
     pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
     pfd.iPixelType = PFD_TYPE_RGBA;
     pfd.cColorBits = 32;
-    pfd.cDepthBits = 32;
+    pfd.cDepthBits = 24;
     pfd.iLayerType = PFD_MAIN_PLANE;
 
     if (!(hDC = GetDC(hWnd)))
@@ -184,6 +184,7 @@ bool Window::InitOpenGL(){
 //Simply copies buffer to backbuffer
 void Window::DrawFrame(){
     if (f_is_layered){
+        glFinish();
         SwapBuffers(hDC);
         CopyBufferToImage();
 
@@ -191,6 +192,7 @@ void Window::DrawFrame(){
         RedrawLayeredWindow();
     }else{
         CopyBufferToBackBuffer();
+        glFinish();
         SwapBuffers(hDC);
     }
 }
