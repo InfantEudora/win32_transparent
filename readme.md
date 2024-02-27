@@ -39,9 +39,9 @@ It should kind of look like this:
 - [x] A seperate physics thread that updates object positions and manages input
 - [x] A scene to put things in.
 - [ ] Scale window and framebuffers
-- [ ] Simple lighting, but keep in mind it needs to be PBR at some point.
+- [x] Simple lighting, but keep in mind it needs to be PBR at some point.
 - [ ] Attempt to put ImGui in and keep the crazy overlay going.
-- [ ] Object selection based on ID with a buffer...? Yes, SSBO read/write
+- [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
 - [ ] Make the hovered / selected object use a certain material.
 - [ ] Blue and Red are reversed somewhere.. somehow.
 
@@ -71,3 +71,6 @@ https://www.shadertoy.com/view/ld2Gz3
 
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
+
+### Tested
+Fragment shader writes ObjectID to a SSBO when the fragment at mouse position is being rendered. This has some problems with Z testing.
