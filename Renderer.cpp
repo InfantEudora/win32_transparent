@@ -239,7 +239,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey)
     glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
     //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
     if(readbackbuffer.data_out[0] != -1){
-        //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
+        debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
         int index = readbackbuffer.data_out[0];
         renderable_objects.at(index)->SetMouseOver(true);
     }
@@ -298,7 +298,7 @@ bool Renderer::InitFBO(){
         return false;
     }
 
-    SetNumAASamples(1);
+    SetNumAASamples(16);
 
     //Setup buffers:
     //Mutisampled color 16bit float

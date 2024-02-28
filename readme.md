@@ -42,7 +42,8 @@ It should kind of look like this:
 - [x] Simple lighting, but keep in mind it needs to be PBR at some point.
 - [ ] Attempt to put ImGui in and keep the crazy overlay going.
 - [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
-- [ ] Make the hovered / selected object use a certain material.
+- [ ] Since we want deferred rendering for SSAO, it will solve the ID selection problem.
+- [x] Make the hovered / selected object use a certain material.
 - [x] Blue and Red are reversed somewhere.. somehow.
 - [x] All files / assets that are loaded from file should be compilable into the application by some kind of asset manager.
 
@@ -73,4 +74,9 @@ https://www.shadertoy.com/view/ld2Gz3
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
 
 ### Tested
+Video Cards:
+ - Intel HD Graphics 520 (Thinkpad T460s)
+ - NVidia RTX 2070
+ - AMD FirePro M4000 (Elitebook 8570W)
+
 Fragment shader writes ObjectID to a SSBO when the fragment at mouse position is being rendered. This has some problems with Z testing.

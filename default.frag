@@ -1,6 +1,9 @@
 #version 430 core
 
 layout(early_fragment_tests) in;
+//We get info from the deferred stage. When the fragment has full MSAA coverage, it's in the GBUFFEr.
+//Else, it's in a sperate buffer and we have to run code here. The edges cannot be looked up in the gbuffer.
+
 
 //When rendering to multiple color targets
 layout (location = 0) out vec4 color;
@@ -141,13 +144,22 @@ void main(){
         color = vec4(1,0,0,1);
     }
 
+    uint m = (1 << gl_SampleID);
+    m = gl_SampleMaskIn[0] & m;
+
+    //gl_SampleMaskIn[0]
+    //gl_NumSamples
+    //gl_SampleID
+
     //We do another Z-Test
-    if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y)){
+    if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y) && (gl_SampleID == (gl_NumSamples-1))){
         //Z-Value 0 ... 1
         float z = gl_FragCoord.z;
         if (fdata_out[0] > z){
             data_out[0] = vobjid;
-            data_out[1] = frag_coord.y;
+
+            data_out[1] = gl_NumSamples;
+
             fdata_out[0] = z;
         }
     }

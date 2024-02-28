@@ -5,7 +5,7 @@ CC = g++
 FNOCONSOLE = -Wl,-subsystem,windows
 
 #This is a two stage process
-COMPILE_ASSETS = 1#Set when all assets need to be compiled into the application binary.
+COMPILE_ASSETS = 0#Set when all assets need to be compiled into the application binary.
 DUMP_ASSETS = 0#Set when all assets need to be dumped to a file.
 
 CFLAGS = -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
