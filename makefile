@@ -21,6 +21,9 @@ SRCS += Object.cpp
 SRCS += Camera.cpp
 SRCS += Mesh.cpp
 SRCS += Texture.cpp
+SRCS += Asset.cpp
+SRCS += AssetMemory.cpp
+
 
 SRCS += InputController.cpp
 SRCS += OBJLoader.cpp
@@ -32,7 +35,7 @@ SRCS += Scene.cpp
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #03 highest optimisation #-s to strip symbols
 
-CFLAGS += $(DFLAGS)
+CFLAGS += $(RFLAGS)
 
 OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 

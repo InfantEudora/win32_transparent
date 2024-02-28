@@ -43,8 +43,8 @@ It should kind of look like this:
 - [ ] Attempt to put ImGui in and keep the crazy overlay going.
 - [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
 - [ ] Make the hovered / selected object use a certain material.
-- [ ] Blue and Red are reversed somewhere.. somehow.
-
+- [x] Blue and Red are reversed somewhere.. somehow.
+- [x] All files / assets that are loaded from file should be compilable into the application by some kind of asset manager.
 
 ### Some notes
 

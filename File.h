@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "Asset.h"
 
 //From nob
 typedef struct {

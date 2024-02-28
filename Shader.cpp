@@ -12,27 +12,31 @@ Shader::Shader(){
 
 void Shader::CreateComputeShader(const char* comp_path){
 	debug->Info("Load and compile: %s ...\n",comp_path);
-	uint8_t* comp_data = LoadFile(comp_path,NULL);
+	size_t comp_data_sz = 0;
+	uint8_t* comp_data = LoadFile(comp_path,&comp_data_sz);
 	if (!comp_data){
 		return;
 	}
 	int compid = -1;
 	debug->Info("Compiling compute shader : %s\n", comp_path);
-	compid = CompileCompute((char*)comp_data);
+	compid = CompileCompute((char*)comp_data,comp_data_sz);
 	debug->Info("Linking program\n");
 	progid = LinkProgram(1,compid);
 
-	free(comp_data);
+	//TODO: Figure out if loaded from file or from memory.
+	//free(comp_data);
 };
 
 Shader::Shader(const char* vert_path,const char* frag_path):Shader(){
     debug->Info("Load and compile: %s, %s ...\n",vert_path,frag_path);
 
-	uint8_t* vert_data = LoadFile(vert_path,NULL);
+	size_t vert_data_sz = 0;
+	uint8_t* vert_data = LoadFile(vert_path,&vert_data_sz);
 	if (!vert_data){
 		return;
 	}
-	uint8_t* frag_data = LoadFile(frag_path,NULL);
+	size_t frag_data_sz = 0;
+	uint8_t* frag_data = LoadFile(frag_path,&frag_data_sz);
 	if (!frag_data){
 		return;
 	}
@@ -40,27 +44,30 @@ Shader::Shader(const char* vert_path,const char* frag_path):Shader(){
 	int vertid = -1;
     int fragid = -1;
 	debug->Info("Compiling vertex shader : %s\n", vert_path);
-	vertid = CompileVertex((char*)vert_data);
+	vertid = CompileVertex((char*)vert_data,vert_data_sz);
 	debug->Info("Compiling fragment shader : %s\n", frag_path);
-	fragid = CompileFragment((char*)frag_data);
+	fragid = CompileFragment((char*)frag_data,frag_data_sz);
 	debug->Info("Linking program\n");
 	progid = LinkProgram(2,vertid,fragid);
 
-	free(vert_data);
-	free(frag_data);
+
+	//TODO: Figure out if loaded from file or from memory.
+	//free(vert_data);
+	//free(frag_data);
 }
 
 Shader::~Shader(){
 
 };
 
-int Shader::CompileVertex(char* vert_data){
+int Shader::CompileVertex(char* vert_data, size_t size){
 	int id = glCreateShader(GL_VERTEX_SHADER);
 
 	GLint result = GL_FALSE;
 	int infolen = 0;
+	GLint sz = size;
 
-	glShaderSource(id, 1, (const char**)&vert_data , NULL);
+	glShaderSource(id, 1, (const char**)&vert_data , &sz);
 	glCompileShader(id);
 
 	glGetShaderiv(id, GL_COMPILE_STATUS, &result);
@@ -77,13 +84,14 @@ int Shader::CompileVertex(char* vert_data){
 	return id;
 }
 
-int Shader::CompileFragment(char* frag_data){
+int Shader::CompileFragment(char* frag_data, size_t size){
 	int id = glCreateShader(GL_FRAGMENT_SHADER);
 
 	GLint result = GL_FALSE;
 	int infolen = 0;
+	GLint sz = size;
 
-	glShaderSource(id, 1, (const char**)&frag_data , NULL);
+	glShaderSource(id, 1, (const char**)&frag_data , &sz);
 	glCompileShader(id);
 
 	glGetShaderiv(id, GL_COMPILE_STATUS, &result);
@@ -100,13 +108,14 @@ int Shader::CompileFragment(char* frag_data){
 	return id;
 }
 
-int Shader::CompileCompute(char* comp_data){
+int Shader::CompileCompute(char* comp_data, size_t size){
 	int id = glCreateShader(GL_COMPUTE_SHADER);
 
 	GLint result = GL_FALSE;
 	int infolen = 0;
+	GLint sz = size;
 
-	glShaderSource(id, 1, (const char**)&comp_data , NULL);
+	glShaderSource(id, 1, (const char**)&comp_data , &sz);
 	glCompileShader(id);
 
 	glGetShaderiv(id, GL_COMPILE_STATUS, &result);

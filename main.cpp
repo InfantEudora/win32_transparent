@@ -10,6 +10,7 @@
 #include "Shader.h"
 #include "Renderer.h"
 #include "Scene.h"
+#include "Asset.h"
 #include "glad.h"
 
 #pragma comment(lib, "opengl32.lib")
@@ -130,6 +131,8 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
     scene->inputcontroller = wind->inputcontroller;
     scene->shader = shader;
     scene->SetupExample();
+
+    Asset::DumpAssets();
 
     scene->UpdatePhysics();
     physics_scene = scene;

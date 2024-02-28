@@ -29,6 +29,16 @@ StringView sv_from_parts(uint8_t* data, size_t count){
 
 //Loads binary file into memory.
 uint8_t* LoadFile(const char* filename, size_t* size){
+    bool store_assets = true;   //Flag if file assets need to be held in memory so they can be exported.
+    Asset* memory_asset = Asset::GetAsset(filename);
+
+    if (memory_asset){
+        if (size){
+            *size = memory_asset->size;
+        }
+        return memory_asset->data;
+    }
+
 	FILE* file;
 	size_t sz = 0;
 
@@ -51,5 +61,10 @@ uint8_t* LoadFile(const char* filename, size_t* size){
     if (size){
         *size = sz;
     }
+    //It was loaded from a file
+    if (!memory_asset){
+        Asset::StoreAsset(filename,data,sz);
+    }
+
 	return data;
 };

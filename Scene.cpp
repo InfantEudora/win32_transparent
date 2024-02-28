@@ -16,7 +16,7 @@ void Scene::SetupExample(){
     cube_mesh->LoadUnitCube();
 
     Mesh* sphere_mesh = OBJLoader::ParseOBJFile("sphere.obj");
-    Mesh* char_mesh = OBJLoader::ParseOBJFile("chara.obj");
+    //Mesh* char_mesh = OBJLoader::ParseOBJFile("chara.obj");
 
     //Make a bunch of objects
     for (int i = 0;i<5;i++){

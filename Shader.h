@@ -25,9 +25,9 @@ public:
 
     void CreateComputeShader(const char* comp);
 
-    int CompileVertex(char* data);
-    int CompileFragment(char* data);
-    int CompileCompute(char* data);
+    int CompileVertex(char* data, size_t sz);
+    int CompileFragment(char* data, size_t sz);
+    int CompileCompute(char* data, size_t sz);
     int LinkProgram(int count, ...);
     void Use();
 
