@@ -24,6 +24,9 @@ typedef struct{
     float fdata_out[4];    //Holds ztest
 }readback_buffer_t;
 
+//A callback for debugging
+void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, char const* message, void const* user_param);
+
 /*
     A class responsible of managing the OpenGL state and pipeline.
     You should be able to make a renderer without a window,

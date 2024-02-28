@@ -44,6 +44,7 @@ Asset* Asset::GetAsset(const char* filename){
     return NULL;
 }
 
+#ifdef DUMP_ASSETS
 void Asset::DumpAssets(){
     int num_file_assets = file_assets.size();
     if (num_file_assets == 0){
@@ -84,3 +85,8 @@ void Asset::DumpAssets(){
     fprintf(file,"};\n");
     fclose(file);
 }
+#else
+void Asset::DumpAssets(){
+    ListAssets();
+}
+#endif

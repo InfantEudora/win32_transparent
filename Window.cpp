@@ -2,7 +2,7 @@
 #include "Debug.h"
 #include "glad.h"
 
-static Debugger* debug = new Debugger("Window",DEBUG_ALL);
+static Debugger* debug = new Debugger("Window",DEBUG_INFO);
 
 std::vector<Window*>Window::windows; //A list of windows to match handles to
 std::vector<WNDCLASSEXA>Window::wcs;      //Different types of window classes
@@ -138,10 +138,11 @@ bool Window::InitOpenGL(){
     // context so just ask for the bare minimum.
     pfd.nSize = sizeof(pfd);
     pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_SUPPORT_GDI;
     pfd.iPixelType = PFD_TYPE_RGBA;
     pfd.cColorBits = 32;
-    pfd.cDepthBits = 24;
+    pfd.cDepthBits = 32;
+    pfd.cStencilBits = 8;
     pfd.iLayerType = PFD_MAIN_PLANE;
 
     if (!(hDC = GetDC(hWnd)))
@@ -164,10 +165,20 @@ bool Window::InitOpenGL(){
     wglMakeCurrent(hDC, NULL);
     wglDeleteContext(hRC);
 
+     //Read back the format
+    pf = GetPixelFormat(hDC);                          // pixel format descriptor index
+    DescribePixelFormat(hDC,pf,sizeof(pfd),&pfd);    // format from index
+    debug->Info("GetPixelFormat\n",hWnd);
+    debug->Info(" ColorBuffer : %i bits\n",pfd.cColorBits);
+    debug->Info(" ZBuffer     : %i bits\n",pfd.cDepthBits);
+    debug->Info(" Stencil     : %i bits\n",pfd.cStencilBits);
+    debug->Info(" dwFlags     : 0x%08lX bits\n",pfd.dwFlags);
+
     //Now we ask for a specific OpenGL Context
     int attributes[] = {
         WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
         WGL_CONTEXT_MINOR_VERSION_ARB, 3,
+        WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB,
         WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
         0
     };
@@ -175,16 +186,18 @@ bool Window::InitOpenGL(){
     hRC = wglCreateContextAttribsARB( hDC, 0, attributes );
     debug->Info("wglCreateContextAttribsARB: hRC = %lu\n",hRC);
 
-    if (!wglMakeCurrent(hDC, hRC))
+    if (!wglMakeCurrent(hDC, hRC)){
         debug->Err("wglMakeCurrent failed (%d)\n", GetLastError());
+    }
 
+    const char* gl_version = (const char*)glGetString(GL_VERSION);
+    debug->Info("OpenGL Version: %s\n", gl_version);
     return true;
 }
 
 //Simply copies buffer to backbuffer
 void Window::DrawFrame(){
     if (f_is_layered){
-        glFinish();
         SwapBuffers(hDC);
         CopyBufferToImage();
 
@@ -192,7 +205,6 @@ void Window::DrawFrame(){
         RedrawLayeredWindow();
     }else{
         CopyBufferToBackBuffer();
-        glFinish();
         SwapBuffers(hDC);
     }
 }
@@ -437,7 +449,7 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         {
             int x = (int)(short) LOWORD(lParam);
             int y = (int)(short) HIWORD(lParam);
-            debug->Info("WM_MOVE to %i,%i\n",x,y);
+            debug->Trace("WM_MOVE to %i,%i\n",x,y);
             wnd->top = y;
             wnd->left = x;
         }

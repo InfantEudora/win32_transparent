@@ -4,6 +4,10 @@ CC = g++
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
+#This is a two stage process
+COMPILE_ASSETS = 0#Set when all assets need to be compiled into the application binary.
+DUMP_ASSETS = 0#Set when all assets need to be dumped to a file.
+
 CFLAGS = -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 #CFLAGS += $(FNOCONSOLE)
@@ -22,8 +26,16 @@ SRCS += Camera.cpp
 SRCS += Mesh.cpp
 SRCS += Texture.cpp
 SRCS += Asset.cpp
-SRCS += AssetMemory.cpp
 
+ifeq ($(COMPILE_ASSETS), 1)
+	SRCS += AssetMemory.cpp
+else
+	SRCS += AssetMemoryEmpty.cpp
+endif
+
+ifeq ($(DUMP_ASSETS), 1)
+CFLAGS += _DDUMP_ASSETS
+endif
 
 SRCS += InputController.cpp
 SRCS += OBJLoader.cpp
@@ -41,6 +53,7 @@ OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 
 default: $(OBJS) $(DEPOBJS)
 	$(CC) $^ -o $(PROJECT) $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS)
+#@echo COMPILE_ASSETS == $(COMPILE_ASSETS)
 
 $(OBJS): %.o: %.cpp
 	$(CC) -c $(CFLAGS) $(IPATHS) $< -o $@

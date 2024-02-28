@@ -2,7 +2,7 @@
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 //These are set with glBindImageTexture
-layout(rgba8, binding = 0) uniform image2D imgIn;
+//layout(rgba8, binding = 0) uniform image2D imgIn;
 layout(rgba8, binding = 1) uniform image2D imgOut;
 
 vec4 checker_pattern(ivec2 pixel);
@@ -15,7 +15,7 @@ uniform int pattern = 0;
 void main(){
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
     //We don't really need to read the input
-    vec4 invalue = imageLoad(imgIn,texelCoord);
+    //vec4 invalue = imageLoad(imgIn,texelCoord);
 
     vec4 outval;
     if (pattern == 0){

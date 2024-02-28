@@ -17,6 +17,11 @@ bool Renderer::Init(){
         return false;
     }
 
+    //We make intel happy
+    GLuint empty_vao = -1;
+    glGenVertexArrays(1,&empty_vao);
+    glBindVertexArray(empty_vao);
+
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glEnable(GL_DEPTH_TEST);
@@ -27,8 +32,9 @@ bool Renderer::Init(){
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_BLEND);
 
-
-
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(opengl_message_callback, nullptr);
     return true;
 }
 
@@ -231,13 +237,13 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey)
     glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
     //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
     if(readbackbuffer.data_out[0] != -1){
-        debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],
-        readbackbuffer.fdata_out[0]);
+        //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
         int index = readbackbuffer.data_out[0];
         renderable_objects.at(index)->SetMouseOver(true);
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
+    glFinish();
 }
 
 //Create the required Shader Storage Buffer
@@ -287,7 +293,7 @@ bool Renderer::InitFBO(){
         return false;
     }
 
-    SetNumAASamples(16);
+    SetNumAASamples(1);
 
     //Setup buffers:
     //Mutisampled color 16bit float
@@ -343,4 +349,47 @@ bool Renderer::CheckFrameBuffer(){
     else
         debug->Err("glCheckFramebufferStatus UNKNOWN\n");
     return false;
+}
+
+void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, char const* message, void const* user_param){
+    if (severity != GL_DEBUG_SEVERITY_HIGH){
+        return;
+    }
+	const char* src_str = [source]() {
+		switch (source)
+		{
+		case GL_DEBUG_SOURCE_API: return "API";
+		case GL_DEBUG_SOURCE_WINDOW_SYSTEM: return "WINDOW SYSTEM";
+		case GL_DEBUG_SOURCE_SHADER_COMPILER: return "SHADER COMPILER";
+		case GL_DEBUG_SOURCE_THIRD_PARTY: return "THIRD PARTY";
+		case GL_DEBUG_SOURCE_APPLICATION: return "APPLICATION";
+		case GL_DEBUG_SOURCE_OTHER: return "OTHER";
+		}
+        return "";
+	}();
+
+	const char* type_str = [type]() {
+		switch (type)
+		{
+		case GL_DEBUG_TYPE_ERROR: return "ERROR";
+		case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: return "DEPRECATED_BEHAVIOR";
+		case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR: return "UNDEFINED_BEHAVIOR";
+		case GL_DEBUG_TYPE_PORTABILITY: return "PORTABILITY";
+		case GL_DEBUG_TYPE_PERFORMANCE: return "PERFORMANCE";
+		case GL_DEBUG_TYPE_MARKER: return "MARKER";
+		case GL_DEBUG_TYPE_OTHER: return "OTHER";
+		}
+        return "";
+	}();
+
+	const char* severity_str = [severity]() {
+		switch (severity) {
+		case GL_DEBUG_SEVERITY_NOTIFICATION:    return "NOTIFICATION";
+		case GL_DEBUG_SEVERITY_LOW:             return "LOW";
+		case GL_DEBUG_SEVERITY_MEDIUM:          return "MEDIUM";
+		case GL_DEBUG_SEVERITY_HIGH:            return "HIGH";
+		}
+        return "";
+	}();
+    debug->Warn("GL_%s from %s: %s\n",severity_str,  src_str,message);
 }
