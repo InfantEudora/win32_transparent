@@ -194,7 +194,8 @@ void Renderer::UploadMaterials(){
 //Set's the SSBO that will be used for reading back data
 void Renderer::UpdateReadbackBuffer(){
     readbackbuffer.data_out[0] = -1;
-    glNamedBufferSubData(readback_ssbo,0,sizeof(readback_buffer_t), &readbackbuffer);
+    glInvalidateBufferData(readback_ssbo);
+    glNamedBufferData(readback_ssbo,sizeof(readback_buffer_t), &readbackbuffer,GL_DYNAMIC_DRAW);
 }
 
 void Renderer::DrawObjects(){
@@ -234,6 +235,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey)
     ResolveAA();
 
     //Read back buffer contents
+
     glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
     //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
     if(readbackbuffer.data_out[0] != -1){
@@ -259,9 +261,12 @@ bool Renderer::InitSSBO(){
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, materialdata_ssbo);
 
     //A buffer where we read back data from, mainly the object id at mouse coordinate.
+
     glCreateBuffers(1, (GLuint*)&readback_ssbo);
-    glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferData(readback_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    //glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, readback_ssbo);
+
 
     return true;
 }
