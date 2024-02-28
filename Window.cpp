@@ -298,7 +298,7 @@ void Window::CopyBufferToImage(){
     }
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
     //Copy OpenGL buffer to bitmap
     for (int i = 0; i < height; ++i){
         memcpy(&g_image.pPixels[g_image.pitch * i],

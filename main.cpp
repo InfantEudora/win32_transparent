@@ -187,7 +187,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     Window::RegisterWindowClasses();
 
-    Window* wind = Window::CreateNewWindow(512,512,&Window::wcs.at(0));
+    Window* wind = Window::CreateNewLayeredWindow(512,512,&Window::wcs.at(0));
     if (!wind){
         debug->Fatal("Unable to create window\n");
     }
