@@ -1,0 +1,82 @@
+#version 430 core
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+//These are set with glBindImageTexture
+layout(rgba8, binding = 0) uniform image2D imgOut;
+
+//The textures we're sampling from
+layout (binding = 0) uniform sampler2D positiontexture;
+layout (binding = 1) uniform sampler2D normaltexture;
+
+uniform mat4 mat_worldcam;
+
+//Actual voronoi from IQ: https://www.shadertoy.com/view/MslGD8
+vec2 hashwithoutsine22(vec2 p){
+	vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973));
+    p3 += dot(p3, p3.yzx+33.33);
+    return fract((p3.xx+p3.yz)*p3.zy);
+}
+
+vec3 hashwithoutsine32(vec2 p){
+	vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973));
+    p3 += dot(p3, p3.yxz+33.33);
+    return fract((p3.xxy+p3.yzz)*p3.zyx);
+}
+
+vec3 hashwithoutsine33(vec3 p3){
+	p3 = fract(p3 * vec3(.1031, .1030, .0973));
+    p3 += dot(p3, p3.yxz+33.33);
+    return fract((p3.xxy + p3.yxx)*p3.zyx);
+}
+
+vec2 hash(vec2 p){
+    p = vec2(dot(p,vec2(127.1,311.7)),
+             dot(p,vec2(269.5,183.3)));
+    return fract(sin(p)*18.5453);
+}
+
+//This reads the texture in, and outputs to the texture out.
+void main(){
+    ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv = vec2(texelCoord) / 512.0;
+
+    vec3 fragPos = texture(positiontexture, uv).xyz;
+    vec3 normal    = texture(normaltexture, uv).xyz;
+    vec3 randomVec  = hashwithoutsine32(vec2(texelCoord));
+
+    vec3 tangent   = normalize(randomVec - normal * dot(randomVec, normal));
+    vec3 bitangent = cross(normal, tangent);
+    mat3 TBN       = mat3(tangent, bitangent, normal);
+
+    float occlusion = 0.0;
+    float radius = 0.5;
+    float bias = 0.025;
+    int kernelSize = 64;
+    for(int i = 0; i < kernelSize; ++i){
+        // get sample position
+        vec3 sampl = normalize(hashwithoutsine33(vec3(uv,float(i*i))));
+
+        vec3 samplePos = TBN * sampl; // from tangent to view-space
+        samplePos = fragPos + samplePos * radius;
+
+        vec4 offset = vec4(samplePos, 1.0);
+        offset      = mat_worldcam * offset;    // from view to clip-space
+        offset.xyz /= offset.w;               // perspective divide
+        offset.xyz  = offset.xyz * 0.5 + 0.5; // transform to range 0.0 - 1.0
+
+        float sampleDepth = texture(positiontexture, offset.xy).z;
+        occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0);
+
+        float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
+        occlusion       += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;
+    }
+    occlusion = 1.0 - (occlusion / kernelSize);
+
+
+    vec4 outval;
+    outval = vec4(occlusion,occlusion,occlusion ,1);
+
+    //outval = vec4(normal,1) ;
+
+    imageStore(imgOut, texelCoord, outval);
+}

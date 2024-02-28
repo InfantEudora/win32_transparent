@@ -32,6 +32,9 @@ public:
     //Our example objects and thigs that definitely need to be in their own class
     Object* cube = NULL;
     Camera* camera = NULL;
+    //The textures we want to use as material
+    Texture* tex_1 = NULL;
+    Texture* tex_2 = NULL;
 
 };
 

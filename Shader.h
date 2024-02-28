@@ -23,7 +23,7 @@ public:
     Shader(const char* vert,const char* frag);
     ~Shader();
 
-    void CreateComputeShader(const char* comp);
+    void CreateComputeShader(const char* filename);
 
     int CompileVertex(char* data, size_t sz);
     int CompileFragment(char* data, size_t sz);

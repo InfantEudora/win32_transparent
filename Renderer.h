@@ -50,12 +50,16 @@ class Renderer{
     void UploadMaterials();
     void RenderUniqueMeshes();
 
+    void DeferredPass(Camera* camera);
+    void SSAOPass(Camera* camera);
     void DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey);
 
     bool CheckFrameBuffer();
     bool Init();
+    void SetState();
     void SetNumAASamples(int desired);
     bool InitFBO();
+    bool InitDeferredFBO();
 
     bool InitSSBO();
     void ResolveAA();
@@ -72,6 +76,17 @@ class Renderer{
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
     GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
+
+    //Deferred stuff: Non-MSAA?
+    GLuint deferred_fbo_id = -1; //Deferred FBO consisting of:
+    GLuint deferred_depth_tex_id = -1; // Main depth buffer
+    GLuint deferred_position_tex_id = -1; // Position of objects
+    GLuint deferred_normal_tex_id = -1; // Normals of objects
+    GLuint ssao_tex_id = -1; // SSAO output texture
+
+    Shader* deferred_shader = NULL;     //Shader that outputs data to textures
+    Shader* ssao_compute_shader = NULL;
+
 
     int aa_samples = 1;
 

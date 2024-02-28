@@ -35,7 +35,7 @@ layout (location = 3) flat out int vmatindex;	//Material index
 layout (location = 4) flat out int vobjid;	//gl_InstanceID
 
 //Matrix for world camera.
-uniform mat4 mat_worldcam = mat4(
+layout(location = 0) uniform mat4 mat_worldcam = mat4(
 	1		,0		,0		,0,
 	0		,1		,0		,0,
 	0		,0		,1		,0,

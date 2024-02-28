@@ -1,9 +1,7 @@
 #version 430 core
 
-layout(early_fragment_tests) in;
 //We get info from the deferred stage. When the fragment has full MSAA coverage, it's in the GBUFFEr.
 //Else, it's in a sperate buffer and we have to run code here. The edges cannot be looked up in the gbuffer.
-
 
 //When rendering to multiple color targets
 layout (location = 0) out vec4 color;

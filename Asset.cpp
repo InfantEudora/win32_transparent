@@ -34,6 +34,14 @@ void Asset::ListAssets(){
 }
 
 Asset* Asset::GetAsset(const char* filename){
+    //Find in file assets
+    for (Asset& asset:file_assets){
+        if (asset.name.compare(filename) == 0){
+            debug->Info("Got Asset %s from cache\n",asset.name.c_str());
+            return &asset;
+        }
+    }
+
     for (int i =0;i<num_memory_assets;i++){
         Asset* asset = &assets[i];
         if (asset->name.compare(filename) == 0){

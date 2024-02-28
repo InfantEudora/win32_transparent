@@ -8,22 +8,7 @@ Renderer::Renderer(int w, int h){
     height = h;
 }
 
-bool Renderer::Init(){
-    if (!InitFBO()){
-        return false;
-    }
-
-    if (!InitSSBO()){
-        return false;
-    }
-
-    //We make intel happy
-    GLuint empty_vao = -1;
-    glGenVertexArrays(1,&empty_vao);
-    glBindVertexArray(empty_vao);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
-
+void Renderer::SetState(){
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
@@ -34,6 +19,35 @@ bool Renderer::Init(){
 
     glEnable(GL_DEBUG_OUTPUT);
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+}
+
+bool Renderer::Init(){
+    if (!InitFBO()){
+        return false;
+    }
+
+    if (!InitDeferredFBO()){
+        return false;
+    }
+
+    if (!InitSSBO()){
+        return false;
+    }
+
+    deferred_shader = new Shader("default.vert","deferred.frag");
+    ssao_compute_shader = new Shader();
+    ssao_compute_shader->CreateComputeShader("ssao_compute.comp");
+
+    SetState();
+
+    //We make intel happy with an empty VAO
+    GLuint empty_vao = -1;
+    glGenVertexArrays(1,&empty_vao);
+    glBindVertexArray(empty_vao);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
+
+
     glDebugMessageCallback(opengl_message_callback, nullptr);
     return true;
 }
@@ -212,10 +226,65 @@ void Renderer::DrawObjects(){
     RenderUniqueMeshes();
 }
 
+void Renderer::DeferredPass(Camera* camera){
+    //Select the deferred framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, deferred_fbo_id);
+
+    deferred_shader->Use();
+    deferred_shader->Setmat4("mat_worldcam",camera->mat_cam);
+
+    unsigned int attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glNamedFramebufferDrawBuffers(deferred_fbo_id,2, attachments);
+
+    //Viewport and clear
+    glViewport(0, 0, width, height);
+    vec4 clr_clear = vec4(0,0,0,0);
+    float depth = 1.0;
+    glClearNamedFramebufferfv(deferred_fbo_id,GL_DEPTH,0,&depth);
+    glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,0,(float*)&clr_clear);
+    clr_clear = vec4(0,0,0,0);
+    glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,1,(float*)&clr_clear);
+
+    //UpdateReadbackBuffer();
+
+    DrawObjects();
+
+    //glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
+    //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
+
+    glFinish();
+    //We have deferred bound...
+}
+
+//Uses a compute shader and uses the textures from deferred pass.
+void Renderer::SSAOPass(Camera* camera){
+    ssao_compute_shader->Use();
+    glBindImageTexture(0, ssao_tex_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+    glBindTextureUnit(0, deferred_position_tex_id);
+    glBindTextureUnit(1, deferred_normal_tex_id);
+
+    ssao_compute_shader->Setmat4("mat_worldcam",camera->mat_cam);
+
+
+
+    glDispatchCompute(width, height, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+    //Set this as output buffer
+    glBindFramebuffer(GL_FRAMEBUFFER, deferred_fbo_id);
+    glReadBuffer(GL_COLOR_ATTACHMENT2);
+}
+
+
 void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey){
-    //Select the mutisampled frambuffer
+    DeferredPass(camera);
+    SSAOPass(camera);
+    return;
+
+    //Select the mutisampled framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
+    //Viewport and clear
     glViewport(0, 0, width, height);
     vec4 clr_clear = vec4(0,0,0,0);
     float depth = 1.0;
@@ -285,7 +354,46 @@ void Renderer::SetNumAASamples(int desired){
     }
 }
 
-//Create all the frame and renderbuffers
+bool Renderer::InitDeferredFBO(){
+    debug->Info("Creating buffers for deferred stage\n");
+    glCreateFramebuffers(1, &deferred_fbo_id);
+
+    //Color buffer for object position 32-bit
+    glCreateTextures(GL_TEXTURE_2D, 1, &deferred_position_tex_id);
+    glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA32F, width, height);
+    glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT0, deferred_position_tex_id, 0);
+    CheckFrameBuffer();
+
+    //Normals for objects.
+    glCreateTextures(GL_TEXTURE_2D, 1, &deferred_normal_tex_id);
+    glTextureStorage2D(deferred_normal_tex_id, 1, GL_RGBA16F, width, height);
+    glTextureParameteri(deferred_normal_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(deferred_normal_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT1, deferred_normal_tex_id, 0);
+    CheckFrameBuffer();
+
+    //32-bit depth
+    glCreateTextures(GL_TEXTURE_2D, 1, &deferred_depth_tex_id);
+    glTextureStorage2D(deferred_depth_tex_id, 1, GL_DEPTH_COMPONENT32F, width, height);
+    glTextureParameteri(deferred_depth_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(deferred_depth_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(deferred_fbo_id, GL_DEPTH_ATTACHMENT, deferred_depth_tex_id, 0);
+    CheckFrameBuffer();
+
+    //We also generate a texture for the SSAO output, and attach it to the deferred FBO.
+    glCreateTextures(GL_TEXTURE_2D, 1, &ssao_tex_id);
+    glTextureStorage2D(ssao_tex_id, 1, GL_RGBA32F, width, height);
+    glTextureParameteri(ssao_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(ssao_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT2, ssao_tex_id, 0);
+    CheckFrameBuffer();
+
+    return true;
+}
+
+//Create all the frame and renderbuffers for mulisampling
 bool Renderer::InitFBO(){
     glCreateFramebuffers(1, &msaa_fbo_id);
     glCreateRenderbuffers(1, &color_rbo_id);

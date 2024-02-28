@@ -50,30 +50,30 @@ void Scene::SetupExample(){
     renderer->objects.push_back(camera);
 
     // Create a texture
-    Texture* texture = new Texture();
-    texture->Create2D(128,128,GL_RGBA8);
+    tex_1 = new Texture();
+    tex_1->Create2D(128,128,GL_RGBA8);
 
     //Create a compute shader that will massage the texture.
     Shader* comp_shader = new Shader();
     comp_shader->CreateComputeShader("texture.comp");
     comp_shader->Use();
     //glBindImageTexture(0, texture->texture_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
-    glBindImageTexture(1, texture->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-    glDispatchCompute(texture->width, texture->height, 1);
+    glBindImageTexture(1, tex_1->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+    glDispatchCompute(tex_1->width, tex_1->height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
 
     //A second texture
-    Texture* texture_2 = new Texture();
-    texture_2->Create2D(128,128,GL_RGBA8);
+    tex_2 = new Texture();
+    tex_2->Create2D(128,128,GL_RGBA8);
     comp_shader->Setint("pattern",1);
     //glBindImageTexture(0, texture_2->texture_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
-    glBindImageTexture(1, texture_2->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-    glDispatchCompute(texture_2->width, texture_2->height, 1);
+    glBindImageTexture(1, tex_2->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+    glDispatchCompute(tex_2->width, tex_2->height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-    glBindTextureUnit(0, texture->texture_id);
-    glBindTextureUnit(1, texture_2->texture_id);
+    glBindTextureUnit(0, tex_1->texture_id);
+    glBindTextureUnit(1, tex_2->texture_id);
 
     //Create a material
     material_t m;
@@ -159,5 +159,8 @@ void Scene::DrawFrame(){
     camera->CalculateLookatMatrix();
 
     int2 m = inputcontroller->GetRelativeMousePosition();
+
+    glBindTextureUnit(0, tex_1->texture_id);
+    glBindTextureUnit(1, tex_2->texture_id);
     renderer->DrawFrame(camera, shader,m.x,m.y);
 };
