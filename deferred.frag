@@ -37,11 +37,17 @@ layout (std430, binding = 2) buffer ReadbackBuffer{
     float fdata_out[4];
 };
 
+float GetTransparency(){
+    Material m = materials[vmatindex];
+    return texture(material_texture[m.texture_unit], vuv).w;
+}
+
 void main(){
 
     Material m = materials[vmatindex];
     vec3 albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
-    dposition = vec4(vposition,1);
+    float alpha = GetTransparency();
+    dposition = vec4(vposition,alpha);
     dnormal = vec4(vnormal,1);
     data_out[0] = vobjid;
     float z = gl_FragCoord.z;

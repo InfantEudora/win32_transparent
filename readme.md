@@ -70,6 +70,10 @@ An application can perform multithread drawing by making different rendering con
 
 https://www.shadertoy.com/view/ld2Gz3
 
+
+Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... what's the position or normal for a fragment that's a blend of different fragments...? Actually... why wouldn't it? It can blend normals, the blended edges just get a curved normal. Blending to transparent would probably be weird...
+
+
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
 

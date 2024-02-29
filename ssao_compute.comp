@@ -81,9 +81,7 @@ void main(){
     occlusion *= alpha;
 
     vec4 outval;
-    outval = vec4(occlusion,occlusion,occlusion ,alpha);
-
-    //outval = texture(normaltexture, uv) ;
+    outval = vec4(vec3(occlusion)*normal ,alpha);
 
     imageStore(imgOut, texelCoord, outval);
 }
