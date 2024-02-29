@@ -260,13 +260,12 @@ void Renderer::DeferredPass(Camera* camera){
 //Uses a compute shader and uses the textures from deferred pass.
 void Renderer::SSAOPass(Camera* camera){
     ssao_compute_shader->Use();
-    glBindImageTexture(0, ssao_tex_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+    glBindImageTexture(0, ssao_tex_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA16F);
     glBindTextureUnit(0, deferred_position_tex_id);
     glBindTextureUnit(1, deferred_normal_tex_id);
+    glBindTextureUnit(2, resolve_tex_id);
 
     ssao_compute_shader->Setmat4("mat_worldcam",camera->mat_cam);
-
-
 
     glDispatchCompute(width, height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -276,12 +275,7 @@ void Renderer::SSAOPass(Camera* camera){
     glReadBuffer(GL_COLOR_ATTACHMENT2);
 }
 
-
 void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey){
-    DeferredPass(camera);
-    SSAOPass(camera);
-    return;
-
     //Select the mutisampled framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
@@ -305,7 +299,6 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey)
     ResolveAA();
 
     //Read back buffer contents
-
     glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
     //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
     if(readbackbuffer.data_out[0] != -1){
@@ -316,6 +309,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey)
 
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
     glFinish();
+
+    DeferredPass(camera);
+
+    SSAOPass(camera);
 }
 
 //Create the required Shader Storage Buffer
@@ -359,9 +356,9 @@ bool Renderer::InitDeferredFBO(){
     debug->Info("Creating buffers for deferred stage\n");
     glCreateFramebuffers(1, &deferred_fbo_id);
 
-    //Color buffer for object position 32-bit
+    //Color buffer for object position 32-bit... 16?
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_position_tex_id);
-    glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA32F, width, height);
+    glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT0, deferred_position_tex_id, 0);
@@ -385,7 +382,7 @@ bool Renderer::InitDeferredFBO(){
 
     //We also generate a texture for the SSAO output, and attach it to the deferred FBO.
     glCreateTextures(GL_TEXTURE_2D, 1, &ssao_tex_id);
-    glTextureStorage2D(ssao_tex_id, 1, GL_RGBA32F, width, height);
+    glTextureStorage2D(ssao_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT2, ssao_tex_id, 0);
@@ -401,7 +398,7 @@ bool Renderer::InitFBO(){
     glCreateRenderbuffers(1, &depth_rbo_id);
 
     glCreateFramebuffers(1, &resolve_fbo_id);
-    glCreateRenderbuffers(1, &resolve_rbo_id);
+    //glCreateRenderbuffers(1, &resolve_rbo_id);
 
     if (msaa_fbo_id == -1){
         return false;
@@ -420,9 +417,12 @@ bool Renderer::InitFBO(){
     glNamedFramebufferRenderbuffer(msaa_fbo_id, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_rbo_id);
     CheckFrameBuffer();
 
-    //The resolve buffer
-    glNamedRenderbufferStorage(resolve_rbo_id, GL_RGBA16F, width, height);
-    glNamedFramebufferRenderbuffer(resolve_fbo_id, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, resolve_rbo_id);
+    //The resolve buffer is texture backed
+    glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
+    glTextureStorage2D(resolve_tex_id, 1, GL_RGBA16F, width, height);
+    glTextureParameteri(resolve_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(resolve_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(resolve_fbo_id, GL_COLOR_ATTACHMENT0, resolve_tex_id, 0);
     CheckFrameBuffer();
     return true;
 }

@@ -71,7 +71,8 @@ class Renderer{
     GLuint depth_rbo_id = -1; // Main depth
 
     GLuint resolve_fbo_id = -1;  //Resolve frame buffer
-    GLuint resolve_rbo_id = -1;  //Corresponding render buffer
+    GLuint resolve_tex_id = -1;  //Resolves into a texture
+    //GLuint resolve_rbo_id = -1;  //Corresponding render buffer
 
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials

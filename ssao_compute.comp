@@ -7,6 +7,7 @@ layout(rgba8, binding = 0) uniform image2D imgOut;
 //The textures we're sampling from
 layout (binding = 0) uniform sampler2D positiontexture;
 layout (binding = 1) uniform sampler2D normaltexture;
+layout (binding = 2) uniform sampler2D albedotexture;
 
 uniform mat4 mat_worldcam;
 
@@ -40,11 +41,10 @@ void main(){
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv = vec2(texelCoord) / 512.0;
 
-
-    float alpha = texture(positiontexture, uv).w;
-
     vec3 fragPos = texture(positiontexture, uv).xyz;
     vec3 normal    = texture(normaltexture, uv).xyz;
+    vec4 albedo    = texture(albedotexture, uv);
+    float alpha = albedo.w;
 
     vec3 randomVec  = hashwithoutsine32(hashwithoutsine22(vec2(uv.x,uv.y)));
     randomVec.z = 0;
@@ -55,7 +55,7 @@ void main(){
     mat3 TBN       = mat3(tangent, bitangent, normal);
 
     float occlusion = 0.0;
-    float radius = 0.25;
+    float radius = 0.5;
     float bias = 0.025;
     int kernelSize = 64;
     for(int i = 0; i < kernelSize; ++i){
@@ -63,6 +63,9 @@ void main(){
         vec3 sampl = hashwithoutsine33(tangent +  vec3(float(i)));
         sampl.z = abs(sampl.z);
         sampl = normalize(sampl);
+        float scale = float(i) / 64.0;
+        scale   = mix(0.1f, 1.0f, scale * scale); //mix = lerp
+        sampl *= scale;
 
         vec3 samplePos = TBN * sampl; // from tangent to view-space
         samplePos = fragPos + samplePos * radius;
@@ -81,7 +84,8 @@ void main(){
     occlusion *= alpha;
 
     vec4 outval;
-    outval = vec4(vec3(occlusion)*normal ,alpha);
+    outval = vec4(albedo.xyz * occlusion,alpha);
+    //outval = vec4(vec3(occlusion),1);
 
     imageStore(imgOut, texelCoord, outval);
 }
