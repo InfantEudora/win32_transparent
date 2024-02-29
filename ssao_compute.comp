@@ -40,21 +40,29 @@ void main(){
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
     vec2 uv = vec2(texelCoord) / 512.0;
 
+
+    float alpha = texture(positiontexture, uv).w;
+
     vec3 fragPos = texture(positiontexture, uv).xyz;
     vec3 normal    = texture(normaltexture, uv).xyz;
-    vec3 randomVec  = hashwithoutsine32(vec2(texelCoord));
+
+    vec3 randomVec  = hashwithoutsine32(hashwithoutsine22(vec2(uv.x,uv.y)));
+    randomVec.z = 0;
+    randomVec = normalize(randomVec);
 
     vec3 tangent   = normalize(randomVec - normal * dot(randomVec, normal));
     vec3 bitangent = cross(normal, tangent);
     mat3 TBN       = mat3(tangent, bitangent, normal);
 
     float occlusion = 0.0;
-    float radius = 0.5;
+    float radius = 0.25;
     float bias = 0.025;
     int kernelSize = 64;
     for(int i = 0; i < kernelSize; ++i){
-        // get sample position
-        vec3 sampl = normalize(hashwithoutsine33(vec3(uv,float(i*i))));
+        // get sample in unit sphere
+        vec3 sampl = hashwithoutsine33(tangent +  vec3(float(i)));
+        sampl.z = abs(sampl.z);
+        sampl = normalize(sampl);
 
         vec3 samplePos = TBN * sampl; // from tangent to view-space
         samplePos = fragPos + samplePos * radius;
@@ -65,18 +73,17 @@ void main(){
         offset.xyz  = offset.xyz * 0.5 + 0.5; // transform to range 0.0 - 1.0
 
         float sampleDepth = texture(positiontexture, offset.xy).z;
-        occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0);
-
+        float sampleAlpha = texture(positiontexture, offset.xy).w;
         float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
-        occlusion       += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;
+        occlusion       += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck * sampleAlpha;
     }
-    occlusion = 1.0 - (occlusion / kernelSize);
-
+    occlusion = 1.0 - (occlusion / float(kernelSize));
+    occlusion *= alpha;
 
     vec4 outval;
-    outval = vec4(occlusion,occlusion,occlusion ,1);
+    outval = vec4(occlusion,occlusion,occlusion ,alpha);
 
-    //outval = vec4(normal,1) ;
+    //outval = texture(normaltexture, uv) ;
 
     imageStore(imgOut, texelCoord, outval);
 }

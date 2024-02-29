@@ -98,6 +98,7 @@ DWORD WINAPI PhysicsThread(LPVOID lpParameter){
         timeEndPeriod(1);
         if (physics_scene){
             physics_scene->UpdatePhysics();
+            physics_scene->inputcontroller->Tick();
         }
         //debug->Ok("Physics Loop %lu completed\n",physics_ticks);
         physics_ticks++;
@@ -164,7 +165,7 @@ DWORD WINAPI FrameFunction(LPVOID lpParameter){
 
         //Copy to screen and finish
         wind->DrawFrame();
-        wind->inputcontroller->Tick();
+
     }
     debug->Info("Thread terminated\n");
     return 0;

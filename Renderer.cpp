@@ -242,8 +242,9 @@ void Renderer::DeferredPass(Camera* camera){
     float depth = 1.0;
     glClearNamedFramebufferfv(deferred_fbo_id,GL_DEPTH,0,&depth);
     glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,0,(float*)&clr_clear);
-    clr_clear = vec4(0,0,0,0);
+    clr_clear = vec4(1,0,0,0);
     glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,1,(float*)&clr_clear);
+    glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,2,(float*)&clr_clear);
 
     //UpdateReadbackBuffer();
 
