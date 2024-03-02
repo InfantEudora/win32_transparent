@@ -120,6 +120,14 @@ int2 InputController::GetRelativeMousePosition(){
     return (mouse_position - window_position);
 }
 
+void InputController::SetHoveredObjectID(objectid_t id){
+    hovered_object = id;
+}
+
+objectid_t InputController::GetHoveredObjectID(){
+    return hovered_object;
+}
+
 //Clears the button and input transition flags
 void InputController::Tick(){
     for (KeyMap& km:keymap){

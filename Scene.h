@@ -36,6 +36,8 @@ public:
     Texture* tex_1 = NULL;
     Texture* tex_2 = NULL;
 
+    uint64_t physics_ticks = 0;
+
 };
 
 #endif

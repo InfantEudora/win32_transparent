@@ -143,13 +143,22 @@ void Scene::UpdatePhysics(){
         }
     }
 
+    //debug->Info("Updating object phyics for tick %llu\n",physics_ticks++);
     for (Object* object:renderer->objects){
         //debug->Info("Updating physics for obj->id %i\n",object->GetID());
         if (object == camera){
             object->UpdatePhysicsState();
             continue;
         }
+        if (object->GetID() == inputcontroller->GetHoveredObjectID()){
+            //debug->Warn("Object is hovered %i\n",object->GetID());
+            object->material_slot[0] = 2;
+        }else{
+            object->material_slot[0] = object->material_slot[1];
+        }
         object->Rotate();
+
+
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();
     }
@@ -162,5 +171,5 @@ void Scene::DrawFrame(){
 
     glBindTextureUnit(0, tex_1->texture_id);
     glBindTextureUnit(1, tex_2->texture_id);
-    renderer->DrawFrame(camera, shader,m.x,m.y);
+    renderer->DrawFrame(camera, shader,inputcontroller);
 };

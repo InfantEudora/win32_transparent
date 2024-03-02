@@ -46,6 +46,8 @@ It should kind of look like this:
 - [x] Make the hovered / selected object use a certain material.
 - [x] Blue and Red are reversed somewhere.. somehow.
 - [x] All files / assets that are loaded from file should be compilable into the application by some kind of asset manager.
+- [ ] Stop testing things on Intel IGPs
+- [ ] Some visual properties, like material etc. Are they updated on phsysics?
 
 ### Some notes
 
@@ -73,6 +75,17 @@ https://www.shadertoy.com/view/ld2Gz3
 
 Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... what's the position or normal for a fragment that's a blend of different fragments...? Actually... why wouldn't it? It can blend normals, the blended edges just get a curved normal. Blending to transparent would probably be weird...
 
+### Rendering / Input / Physics
+
+Physics, input and rendering can be completely decouplped, but they have to talk to each other at some point.
+i.e. Physics an run at 100Hz, FPS at 75Hz. We can sample input at framerate, but maybe it's better at physics.
+Physics can be slower, in which case the same frame will be drawn multiple times.
+
+Physics will always attempt to run at set rate, so it makes sense to couple input and networking to the Physics rate.
+
+Some input, like which object is selected or settings from a UI, are only gatherd after a frame was completed. Let's say in the UI we get an object ID that we've selected, and we move the object by one in Z direction. These 2 inputs, the object id and the move command need to be queued as an input, and processed next time the input gathers it's information.
+
+Networking: You'd ideally just submit which buttons were pressed. If the other client is running at 10FPS and you are at 60FPS but both physics are at 50FPS, the input from the other client with respect to object selection will not be as fast. But replaying you input will still happen at 50Hz. And the fact that his UI is lagging does not mean anything for you, since it's keyboard and mouse can still be polled at 50Hz. Although he won't see them with the same speed as you.
 
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.

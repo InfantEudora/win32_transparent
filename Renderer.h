@@ -7,6 +7,7 @@ class Renderer;
 #include "Camera.h"
 #include "Texture.h"
 #include "Material.h"
+#include "InputController.h"
 
 //This should have the same layout as in the shader
 #define NUM_MATERIAL_SLOTS  4
@@ -52,7 +53,7 @@ class Renderer{
 
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
-    void DrawFrame(Camera* camera, Shader* shader, int mousex, int mousey);
+    void DrawFrame(Camera* camera, Shader* shader, InputController* input);
 
     bool CheckFrameBuffer();
     bool Init();

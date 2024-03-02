@@ -6,6 +6,7 @@ class InputController;
 #include "stdint.h"
 #include <vector>
 #include <atomic>
+#include "Object.h"
 #include "type_int2.h"
 
 /*
@@ -72,6 +73,11 @@ class InputController{
     int2    GetRelativeMousePosition(); //Relative to the window
 
     void    Tick();
+    void    SetHoveredObjectID(objectid_t id);
+    objectid_t GetHoveredObjectID();
+
+    //There needs to be at least some form of feedback from UI which object was selected/hovered.
+
 
     //Mouse position is also stored in keymap, and seperately
     std::vector<KeyMap>keymap;
@@ -79,6 +85,8 @@ class InputController{
 protected:
     int2 mouse_position;
     int2 window_position;   //Stored here seperately
+
+    std::atomic<objectid_t>hovered_object = OBJECTID_INVALID;
 
 };
 
