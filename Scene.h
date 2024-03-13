@@ -22,6 +22,7 @@ public:
     Shader* shader = NULL;
 
     void SetupExample();
+    void SetupShipExample();
 
     void HandleInput();
     void UpdatePhysics();

@@ -161,7 +161,7 @@ void Renderer::FillBactches(){
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
 void Renderer::RenderUniqueMeshes(){
-    //debug->Info("Rendering Meshes\n");
+    //dadebug->Info("Rendering Meshes\n");
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
         Mesh* mesh = unique_meshes.at(i);
@@ -318,9 +318,8 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
     glFinish();
 
-    DeferredPass(camera);
-
-    SSAOPass(camera);
+    //DeferredPass(camera);
+    //SSAOPass(camera);
 }
 
 //Create the required Shader Storage Buffer
@@ -514,4 +513,15 @@ void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum sever
         return "";
 	}();
     debug->Warn("GL_%s from %s: %s\n",severity_str,  src_str,message);
+}
+
+void Renderer::SetVSync(bool enable){
+    if (wglSwapIntervalEXT){
+        wglSwapIntervalEXT(enable);
+        if (enable){
+            debug->Ok("VSync: Enabled\n");
+        }else{
+            debug->Ok("VSync: Disabled\n");
+        }
+    }
 }

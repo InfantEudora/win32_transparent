@@ -39,13 +39,21 @@ layout (std430, binding = 2) buffer ReadbackBuffer{
 
 float GetTransparency(){
     Material m = materials[vmatindex];
-    return texture(material_texture[m.texture_unit], vuv).w;
+    if (m.texture_unit >= 0){
+        return texture(material_texture[m.texture_unit], vuv).w;
+    }
+    return m.color.w;
 }
 
 void main(){
 
     Material m = materials[vmatindex];
-    vec3 albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
+    vec3 albedo;
+    if (m.texture_unit >= 0){
+        albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
+    }else{
+        albedo = m.color.xyz;
+    }
     float alpha = GetTransparency();
     dposition = vec4(vposition,alpha);
     dnormal = vec4(vnormal,1);

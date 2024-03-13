@@ -10,6 +10,44 @@ Scene::Scene(){
 
 };
 
+void Scene::SetupShipExample(){
+    Mesh* mesh_ship = OBJLoader::ParseOBJFile("ship_003.obj");
+
+    camera = new Camera();
+    camera->SetPosition(vec3(0,0.5,8));
+    camera->SetLookat(vec3());
+    camera->SetupPerspective(renderer->width,renderer->height,45,0.1,100);
+    renderer->objects.push_back(camera);
+
+    Object* ship = new Object();
+    ship->SetMesh(mesh_ship);
+
+    ship->SetRotation((rand()%100) / 10.0f);
+    ship->SetRotationSpeed(rand()%100 * 0.0001f);
+    ship->SetPosition(vec3(0.5,0.5,0.0));
+
+    ship->material_slot[0] = 0;
+    ship->material_slot[1] = 0;
+
+    renderer->objects.push_back(ship);
+
+    //Create a material
+    material_t m;
+    m.color = vec4(0.8,0.8,1,1);
+    m.texture_unit = -1;
+    renderer->materials.push_back(m);
+
+    m.color = vec4(0.8,0.0,0.1,1);
+    m.texture_unit = -1;
+    renderer->materials.push_back(m);
+
+    m.color = vec4(0.8,0.0,0.1,1);
+    m.texture_unit = -1;
+    renderer->materials.push_back(m);
+
+    debug->Info("We have %i materials\n",renderer->materials.size());
+}
+
 void Scene::SetupExample(){
     //A single mesh
     Mesh* cube_mesh = new Mesh();
@@ -78,11 +116,11 @@ void Scene::SetupExample(){
     //Create a material
     material_t m;
     m.color = vec4(0,1,0,1);
-    m.texture_unit = 0;
+    m.texture_unit = -1;
     renderer->materials.push_back(m);
 
-    m.color = vec4(1,0.5,0,1);
-    m.texture_unit = 1;
+    m.color = vec4(0.5,0.5,0.50,1);
+    m.texture_unit = -1;
     renderer->materials.push_back(m);
 
     m.color = vec4(0,0.5,1,1);
@@ -169,7 +207,9 @@ void Scene::DrawFrame(){
 
     int2 m = inputcontroller->GetRelativeMousePosition();
 
+    if (tex_1)
     glBindTextureUnit(0, tex_1->texture_id);
+    if (tex_2)
     glBindTextureUnit(1, tex_2->texture_id);
     renderer->DrawFrame(camera, shader,inputcontroller);
 };

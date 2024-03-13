@@ -44,7 +44,6 @@ class Object{
     void SetLookat(const vec3& newpos);
     void SetRotation(float newrot);
     void SetRotationSpeed(float newspeed);
-    void SetMouseOver(bool state);
 
     vec3& GetPosition();
     bool IsHovered();

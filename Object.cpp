@@ -86,10 +86,6 @@ void Object::SetRotationSpeed(float newspeed){
     state_physics.rot_speed = newspeed;
 }
 
-void Object::SetMouseOver(bool state){
-    f_mouse_over = state;
-}
-
 //Copies physics state over to this state.
 void Object::UpdateState(){
     state = state_physics_prev;

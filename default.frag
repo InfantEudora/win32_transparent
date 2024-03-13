@@ -79,7 +79,13 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0){
 //Returns the light intensity from a single directional light
 vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     Material m = materials[vmatindex];
-    vec3 albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
+
+    vec3 albedo;
+    if (m.texture_unit >= 0){
+        albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
+    }else{
+        albedo = m.color.xyz;
+    }
 
     vec3 N = vnormal;
     vec3 V = normalize(eye_position - vposition);
@@ -117,7 +123,10 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 
 float GetTransparency(){
     Material m = materials[vmatindex];
-    return texture(material_texture[m.texture_unit], vuv).w;
+    if (m.texture_unit >= 0){
+        return texture(material_texture[m.texture_unit], vuv).w;
+    }
+    return m.color.w;
 }
 
 vec4 CalcPBRLighting(){

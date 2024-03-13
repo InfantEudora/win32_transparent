@@ -48,6 +48,7 @@ It should kind of look like this:
 - [x] All files / assets that are loaded from file should be compilable into the application by some kind of asset manager.
 - [ ] Stop testing things on Intel IGPs
 - [ ] Some visual properties, like material etc. Are they updated on phsysics?
+- [ ] Different test scene's with different behaviours require an application, that ties all the logic together.
 
 ### Some notes
 

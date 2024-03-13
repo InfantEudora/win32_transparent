@@ -65,6 +65,8 @@ class Renderer{
     bool InitSSBO();
     void ResolveAA();
 
+    static void SetVSync(bool enable);
+
     //We'll have one multisampled framebuffer with a single color and depth buffer.
     //And a resolve buffer, where the mutisampling is resolved to.
     GLuint msaa_fbo_id = -1; //Main FBO consisting of:

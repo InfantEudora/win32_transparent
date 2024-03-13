@@ -1,0 +1,42 @@
+# Blender 4.0.1 MTL File: 'ships.blend'
+# www.blender.org
+
+newmtl hull_components_001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd AppSeeker/data/planets/hull_components_001.png
+
+newmtl hull_components_002
+Ns 0.000000
+Ka 0.723577 0.723577 0.723577
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd AppSeeker/data/planets/hull_components_002.png
+
+newmtl metal_plating_002
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd AppSeeker/data/planets/metal_plating_002.png
+
+newmtl waves_blue_001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd AppSeeker/data/planets/waves_blue_001.png

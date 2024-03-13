@@ -205,8 +205,7 @@ void Debugger::PrintLine(debug_t type, const char *format, ...) {
     va_end(arglist);
 }
 
-void Debugger::color_tobuffer(int color) {
-
+void Debugger::color_tobuffer(int color){
     switch (color) {
         case CLR_BLACK:
             boffset += sprintf(&buffer[boffset], "\x1b[30m");

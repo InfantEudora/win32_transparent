@@ -40,9 +40,10 @@ endif
 SRCS += InputController.cpp
 SRCS += OBJLoader.cpp
 SRCS += glad.cpp
+SRCS += type_helpers.cpp
 
 SRCS += Scene.cpp
-
+SRCS += Application.cpp
 
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #03 highest optimisation #-s to strip symbols
