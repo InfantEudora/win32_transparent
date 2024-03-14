@@ -10,8 +10,6 @@ struct fmat4;
 #include "type_vec4.h"
 
 struct fmat4{
-    fmat4(){};
-
 	vec4 vertex[4];
 
     //Functions

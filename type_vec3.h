@@ -26,16 +26,19 @@ struct vec3{
     void    print();
     vec3&   set(float x, float y, float z);
     float   length() const;
-	float   distance(const vec3& vec) const;     // distance between two vectors
+	float   distance(const vec3& vec) const;                // distance between two vectors
     vec3&  	normalize();
-	float  	dot(const vec3& vec) const;          // dot product
-    vec3   	cross(const vec3& vec) const;        // cross product
+	float  	dot(const vec3& vec) const;                     // dot product
+    vec3   	cross(const vec3& vec) const;                   // cross product
 
-    vec3   	operator-() const;                   // unary operator (negate)
-    vec3   	operator-(const vec3& rhs) const;    // subtract rhs
-    vec3&  	operator-=(const vec3& rhs);         // subtract rhs and update this object
-    vec3   	operator+(const vec3& rhs) const;    // add rhs
-    vec3&  	operator+=(const vec3& rhs);         // add rhs and update this object
+    vec3   	operator-() const;                              // unary operator (negate)
+    vec3   	operator-(const vec3& rhs) const;               // subtract rhs
+    vec3&  	operator-=(const vec3& rhs);                    // subtract rhs and update this object
+    vec3   	operator+(const vec3& rhs) const;               // add rhs
+    vec3&  	operator+=(const vec3& rhs);                    // add rhs and update this object
+    vec3  	operator*(const float scale) const;             // scale
+    vec3& 	operator*=(const float scale);                  // scale and update this object
+    friend vec3 operator*(const float a, const vec3 vec);   // scale
 };
 
 inline vec3& vec3::set(float x, float y, float z) {
@@ -91,6 +94,18 @@ inline vec3 vec3::operator+(const vec3& rhs) const {
 
 inline vec3& vec3::operator+=(const vec3& rhs) {
     x += rhs.x; y += rhs.y; z += rhs.z; return *this;
+}
+
+inline vec3 operator*(const float a, const vec3 vec) {
+    return vec3(a*vec.x, a*vec.y, a*vec.z);
+}
+
+inline vec3 vec3::operator*(const float a) const {
+	return vec3(x*a, y*a, z*a);
+}
+
+inline vec3& vec3::operator*=(const float a) {
+	x *= a; y *= a; z *= a; return *this;
 }
 
 inline void vec3::print(){

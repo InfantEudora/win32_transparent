@@ -5,6 +5,7 @@ class Object;
 #include "type_fmat3.h"
 #include "type_fmat4.h"
 #include "type_vec3.h"
+#include "type_quat.h"
 #include <string>
 #include <atomic>
 
@@ -14,7 +15,7 @@ typedef uint32_t objectid_t;
 struct ObjectState{
     bool f_was_transformed = false;
     vec3 position = vec3(0,0,0);
-    float rotation = 0.0f;
+    quat rotation;
     float rot_speed = 0.0f;
     fmat3 mat_rotation;
 };
@@ -25,7 +26,7 @@ class Object{
     public:
     Object();
     void GenerateUniqueID();
-    void Rotate();
+
     meshid_t GetMeshID();
     objectid_t GetID();
     Mesh* GetMesh();
@@ -42,7 +43,9 @@ class Object{
     void SetScale(const vec3& newscale);
     void SetPosition(const vec3& newpos);
     void SetLookat(const vec3& newpos);
-    void SetRotation(float newrot);
+
+    void RotateAroundAxis(const vec3& target_axis,float by, bool f_lookat=false);
+
     void SetRotationSpeed(float newspeed);
 
     vec3& GetPosition();

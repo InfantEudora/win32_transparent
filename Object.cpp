@@ -5,6 +5,7 @@ objectid_t Object::object_ids = 0;
 Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
+    state_physics.rotation.identity();
     state_physics.mat_rotation.identity();
 }
 
@@ -46,13 +47,18 @@ void Object::SetMeshBatchIndex(int32_t index){
 }
 
 //TODO: Remove me. We need a quaternion to represent object orientation....?
-void Object::Rotate(){
+void Object::RotateAroundAxis(const vec3& target_axis,float by,bool f_lookat){
     state_physics.f_was_transformed = true;
 
-    state_physics.rotation += state_physics.rot_speed;
-    MoveBy(vec3(0.005 * sin(state_physics.rotation),0.005 * cos(state_physics.rotation),0));
-    vec3 target_axis = vec3(0,1,0);
-    state_physics.mat_rotation.set_rotation(target_axis,state_physics.rotation);
+    //We get the quaternion representing this rotation:
+    quat r;
+    r.set_rotation(target_axis,by);
+
+    //We multiply by the current object rotation
+    quat nq = r * state_physics.rotation;
+    state_physics.rotation = nq;
+
+    //state_physics.mat_rotation.set_rotation(target_axis,state_physics.rotation);
 }
 
 //Move to new position, optionally change lookat as well
@@ -80,9 +86,6 @@ void Object::SetScale(const vec3& newscale){
 }
 
 
-void Object::SetRotation(float newrot){
-    state_physics.rotation = newrot;
-}
 
 void Object::SetRotationSpeed(float newspeed){
     state_physics.rot_speed = newspeed;
@@ -130,7 +133,10 @@ bool Object::IsHovered(){
 void Object::UpdateTransformMatrix(){
     //We do in order:
     //scale, rotate, translate
-    float size = 1.0 + 0.1 * sin(state.rotation);
+    float size = 1.0;
+
+
+
 
     world_transform_scale_matrix.identity();
     world_transform_scale_matrix.vertex[0].x *= size * scale.x;
@@ -138,7 +144,9 @@ void Object::UpdateTransformMatrix(){
     world_transform_scale_matrix.vertex[2].z *= size * scale.z;
 
     fmat4 rotation_matrix;
-    rotation_matrix.rotationmatrix(state.mat_rotation);
+    //Compute the rotation matrix from the rotation quaternion
+    //rotation_matrix.rotationmatrix(state.mat_rotation);
+    rotation_matrix = state.rotation.tofmat4();
 
     world_transform_scale_matrix = world_transform_scale_matrix * rotation_matrix;
 
