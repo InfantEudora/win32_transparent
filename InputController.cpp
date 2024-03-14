@@ -24,6 +24,11 @@ InputController::InputController(){
     AddKeyMap(VK_LEFT,INPUT_MOVE_LEFT);
     AddKeyMap(VK_RIGHT,INPUT_MOVE_RIGHT);
 
+    AddKeyMap('A',INPUT_TURN_LEFT);
+    AddKeyMap('D',INPUT_TURN_RIGHT);
+
+
+
     AddKeyMap(VK_PAUSE,INPUT_PAUSE);
 }
 

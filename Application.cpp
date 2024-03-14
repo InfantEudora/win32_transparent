@@ -145,7 +145,6 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     while (app->main_window->f_should_quit == false){
         //Should only modify the object, and we should be able to move this to a seperate thread.
         app->main_scene->HandleInput();
-        //scene->UpdatePhysics();
 
         //This should render the frame only.
         app->main_scene->DrawFrame();
@@ -175,6 +174,7 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
         Sleep(5);
         timeEndPeriod(1);
         if (app->main_scene){
+            app->RunLogic();
             app->main_scene->UpdatePhysics();
             app->main_scene->inputcontroller->Tick();
         }
@@ -183,4 +183,25 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     }
     debug->Info("Thread terminated\n");
     return 0;
+}
+
+//Called before update physics
+void Application::RunLogic(){
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+
+    Object* target = renderer->objects.at(1);
+
+    if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+
+    }
+
+    for (Object* object:renderer->objects){
+        if (object == camera){
+            object->UpdatePhysicsState();
+            continue;
+        }
+
+        //object->Rotate();
+    }
 }

@@ -194,8 +194,6 @@ void Scene::UpdatePhysics(){
         }else{
             object->material_slot[0] = object->material_slot[1];
         }
-        object->Rotate();
-
 
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();

@@ -32,6 +32,8 @@ public:
     Shader* default_shader = NULL;
     Scene* main_scene = NULL;
 
+    void RunLogic();
+
 private:
     bool SetupConsole();
     static bool WINAPI ConsoleHandler(DWORD console_event);

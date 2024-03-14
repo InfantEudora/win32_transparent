@@ -5,6 +5,7 @@ objectid_t Object::object_ids = 0;
 Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
+    state_physics.mat_rotation.identity();
 }
 
 void Object::GenerateUniqueID(){
@@ -44,9 +45,10 @@ void Object::SetMeshBatchIndex(int32_t index){
     }
 }
 
+//TODO: Remove me. We need a quaternion to represent object orientation....?
 void Object::Rotate(){
     state_physics.f_was_transformed = true;
-    //Modify the cube
+
     state_physics.rotation += state_physics.rot_speed;
     MoveBy(vec3(0.005 * sin(state_physics.rotation),0.005 * cos(state_physics.rotation),0));
     vec3 target_axis = vec3(0,1,0);
