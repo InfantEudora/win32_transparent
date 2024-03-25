@@ -34,9 +34,9 @@ bool Renderer::Init(){
         return false;
     }
 
-    deferred_shader = new Shader("default.vert","deferred.frag");
+    deferred_shader = new Shader("shaders/default.vert","shaders/deferred.frag");
     ssao_compute_shader = new Shader();
-    ssao_compute_shader->CreateComputeShader("ssao_compute.comp");
+    ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
 
     SetState();
 

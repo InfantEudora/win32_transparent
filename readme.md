@@ -18,7 +18,33 @@ It should kind of look like this:
 
 ![screenshot](example_desktop.png)
 
+### Folder structure
+`/core`         Contains all core files for this 'Engine'.
+`/shaders`      Contains default shaders.
+`/applications` Contain different applications that test / implement different things.
+
 ### ToDo's
+
+- [ ] Share the texture across contexts?
+- [ ] Assign different materials to objects by storing their material index in a sperate VAO.
+- [ ] Scale window and framebuffers
+- [ ] Attempt to put ImGui in and keep the crazy overlay going.
+- [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
+- [ ] Since we want deferred rendering for SSAO, it will solve the ID selection problem.
+- [ ] Continue testing things on Intel IGPs
+- [ ] Some visual properties, like material etc. Are they updated on phsysics?
+- [ ] Different test scene's with different behaviours require an application, that ties all the logic together.
+- [ ] Resize full screen and back to something small
+- [ ] Textures. Will bindless work on Intel? Should be nice.
+- [ ] Test a model imported from Blender with Materials in OBJ .mat file.
+- [ ] Use header stb lib to load png/jpg with/without Alpha.
+- [ ] Figure out how to do sound?
+- [ ] Some kind of project structure, where different games/applications can exist and you can build one or more of them.
+- [ ] Maybe have some kind of test / example thing.
+- [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
+- [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array.
+
+### Done's
 - [x] Multisampling to a seperate FBO
 - [x] Resolve the multisample to a FBO.
 - [x] Copy pixel data out of FBO instead of BPO.
@@ -26,7 +52,6 @@ It should kind of look like this:
 - [x] Use a slightly more modern pipeline and get rid of glu stuff.
 - [x] Seperate window and drawing primitive somehow
 - [x] Resize to an arbitrary size
-- [ ] Share the texture across contexts?
 - [x] Use named versions of Frame/Renderbuffers
 - [x] Continue rotating while being dragged...
 - [x] Add another instance of cube
@@ -35,20 +60,13 @@ It should kind of look like this:
 - [x] Compute shader to generate the texture
 - [x] Have some kind of global list of materials somewhere
 - [x] Assign different textures to materials
-- [ ] Assign different materials to objects by storing their material index in a sperate VAO.
 - [x] A seperate physics thread that updates object positions and manages input
 - [x] A scene to put things in.
-- [ ] Scale window and framebuffers
 - [x] Simple lighting, but keep in mind it needs to be PBR at some point.
-- [ ] Attempt to put ImGui in and keep the crazy overlay going.
-- [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
-- [ ] Since we want deferred rendering for SSAO, it will solve the ID selection problem.
 - [x] Make the hovered / selected object use a certain material.
 - [x] Blue and Red are reversed somewhere.. somehow.
 - [x] All files / assets that are loaded from file should be compilable into the application by some kind of asset manager.
-- [ ] Stop testing things on Intel IGPs
-- [ ] Some visual properties, like material etc. Are they updated on phsysics?
-- [ ] Different test scene's with different behaviours require an application, that ties all the logic together.
+
 
 ### Some notes
 

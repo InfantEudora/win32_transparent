@@ -70,7 +70,6 @@ void Application::Run(void){
 }
 
 int Application::Exit(void){
-
     return 1;
 }
 
@@ -114,7 +113,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     app->renderer = new Renderer(512,512);
     app->renderer->Init();
 
-    app->default_shader = new Shader("default.vert","default.frag");
+    app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
     app->main_scene = new Scene();
     app->main_scene->renderer = app->renderer;

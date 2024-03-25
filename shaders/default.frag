@@ -103,8 +103,8 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     vec3 radiance     = color * brightness;
 
     // cook-torrance brdf
-    float NDF = DistributionGGX(N, H, roughness + 0.0001); //Some base roughness to prevent /0
-    float G   = GeometrySmith(N, V, L, roughness + 0.0001);
+    float NDF = DistributionGGX(N, H, roughness + 0.001); //Some base roughness to prevent /0
+    float G   = GeometrySmith(N, V, L, roughness + 0.001);
     vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     vec3 kS = F;
@@ -112,7 +112,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     kD *= 1.0 - metallic;
 
     vec3 numerator    = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.001;
     vec3 specular     = numerator / denominator;
 
     // add to outgoing radiance Lo

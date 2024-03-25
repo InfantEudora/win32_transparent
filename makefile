@@ -14,18 +14,11 @@ CFLAGS = -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic -static-libstdc++ -static-libgc
 
 PROJECT = wind
 
-SRCS += main.cpp
-SRCS += Debug.cpp
-SRCS += Window.cpp
-SRCS += Renderer.cpp
-SRCS += File.cpp
-SRCS += Shader.cpp
+DIR_SRC += ./core
+IPATHS += -Icore/
 
-SRCS += Object.cpp
-SRCS += Camera.cpp
-SRCS += Mesh.cpp
-SRCS += Texture.cpp
-SRCS += Asset.cpp
+SRCS += main.cpp
+SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 
 ifeq ($(COMPILE_ASSETS), 1)
 	SRCS += AssetMemory.cpp
@@ -36,14 +29,6 @@ endif
 ifeq ($(DUMP_ASSETS), 1)
 CFLAGS += -DDUMP_ASSETS
 endif
-
-SRCS += InputController.cpp
-SRCS += OBJLoader.cpp
-SRCS += glad.cpp
-SRCS += type_helpers.cpp
-
-SRCS += Scene.cpp
-SRCS += Application.cpp
 
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #03 highest optimisation #-s to strip symbols
