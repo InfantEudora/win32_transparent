@@ -7,7 +7,6 @@
 #include "Renderer.h"
 #include "Shader.h"
 #include "Scene.h"
-
 /*
     The thing that ties everything together.
 

@@ -31,6 +31,9 @@ void Application::Run(void){
     if (!main_window->Init()){
         debug->Fatal("Failed to init window\n");
     }
+    if (!main_window->InitImGui()){
+        debug->Fatal("Failed to setup ImGui on Window\n");
+    }
     main_window->Show(SW_SHOWDEFAULT);
 
     //Setup renderer
@@ -145,8 +148,13 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
         //Should only modify the object, and we should be able to move this to a seperate thread.
         app->main_scene->HandleInput();
 
+        //Tell ImGui to start a new frame
+        app->main_window->ImGuiNewFrame();
+
         //This should render the frame only.
         app->main_scene->DrawFrame();
+
+        app->main_window->ImGuiDrawFrame();
 
         //Copy to screen and finish
         app->main_window->DrawFrame();

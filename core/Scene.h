@@ -13,6 +13,8 @@
 #include "Renderer.h"
 #include "Shader.h"
 
+#include "imgui.h"
+
 class Scene{
 public:
     Scene();

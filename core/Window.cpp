@@ -195,6 +195,42 @@ bool Window::InitOpenGL(){
     return true;
 }
 
+bool Window::InitImGui(){
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Setup Dear ImGui style
+    ImGui::StyleColorsDark();
+
+    //Load a font
+    ImFontConfig config;
+    config.OversampleH = 2;
+    config.OversampleV = 2;
+    config.GlyphExtraSpacing.x = 0.0f;
+    //TODO: This can be loaded with our own file loading mechanism.
+    ImFont* font = io.Fonts->AddFontFromFileTTF("fonts/consola.ttf", 13, &config);
+    const char* glsl_version = "#version 430";
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplWin32_Init(hWnd);
+    ImGui_ImplOpenGL3_Init(glsl_version);
+    return true;
+}
+
+void Window::ImGuiNewFrame(){
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+}
+
+void Window::ImGuiDrawFrame(){
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
 //Simply copies buffer to backbuffer
 void Window::DrawFrame(){
     if (f_is_layered){

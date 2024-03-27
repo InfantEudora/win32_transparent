@@ -12,6 +12,11 @@
 
 #include "InputController.h"
 
+//ImGui
+#include "imgui.h"
+#include "backends\imgui_impl_win32.h"
+#include "backends\imgui_impl_opengl3.h"
+
 // Generic wrapper around a DIB with a 32-bit color depth.
 typedef struct{
     int width;
@@ -71,10 +76,13 @@ public:
     static void RegisterWindowClasses();
     bool Init();
     bool InitOpenGL(); //Needs to be called on a window, only once.
+    bool InitImGui();
 
     static Window* CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc);
     static Window* CreateNewWindow(int width, int height, WNDCLASSEXA* wc);
 
+    void ImGuiNewFrame();
+    void ImGuiDrawFrame();
     void DrawFrame();
     void CopyBufferToImage();
     void CopyBufferToBackBuffer();

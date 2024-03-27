@@ -22,6 +22,7 @@ It should kind of look like this:
 `/core`         Contains all core files for this 'Engine'.
 `/shaders`      Contains default shaders.
 `/applications` Contain different applications that test / implement different things.
+`/3rdparty/*`   Contains external libraries source code, either as an entire repo or single files.
 
 ### ToDo's
 
@@ -29,6 +30,7 @@ It should kind of look like this:
 - [ ] Assign different materials to objects by storing their material index in a sperate VAO.
 - [ ] Scale window and framebuffers
 - [ ] Attempt to put ImGui in and keep the crazy overlay going.
+- [ ] Compile ImGUI once to a library.
 - [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
 - [ ] Since we want deferred rendering for SSAO, it will solve the ID selection problem.
 - [ ] Continue testing things on Intel IGPs
@@ -91,8 +93,9 @@ An application can perform multithread drawing by making different rendering con
 
 https://www.shadertoy.com/view/ld2Gz3
 
-
 Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... what's the position or normal for a fragment that's a blend of different fragments...? Actually... why wouldn't it? It can blend normals, the blended edges just get a curved normal. Blending to transparent would probably be weird...
+
+ImGui: ImGui_ImplWin32_EnableAlphaCompositing needs to be commented out. It's a Windows 7 feature.
 
 ### Rendering / Input / Physics
 

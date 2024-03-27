@@ -210,4 +210,9 @@ void Scene::DrawFrame(){
     if (tex_2)
     glBindTextureUnit(1, tex_2->texture_id);
     renderer->DrawFrame(camera, shader,inputcontroller);
+
+    //UI
+    ImGui::Begin("Hello! Here are some settings");
+    ImGui::Text("Here is some text!");
+    ImGui::End();
 };
