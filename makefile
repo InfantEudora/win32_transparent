@@ -66,4 +66,4 @@ imgui: $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
 all: default
 
 clean:
-	-rm -rf libs/libimgui.a $(OBJS) $(OBJ_LIBIMGUI)
+	-rm -rf $(OBJS) $(OBJ_LIBIMGUI)

@@ -425,6 +425,9 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
+    //Forward message to ImGui
+    int res = ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+
     switch(msg){
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE){
@@ -446,9 +449,9 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
             }
             break;
 
-        case WM_NCHITTEST:
+        //case WM_NCHITTEST:
             //This returns the mouse is over the Titlebar of the window, which allows it to be dragged.
-            return HTCAPTION;
+            //return HTCAPTION;
 
         case WM_KEYUP:
         case WM_MOUSEMOVE:
