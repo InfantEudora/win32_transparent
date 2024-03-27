@@ -29,8 +29,8 @@ It should kind of look like this:
 - [ ] Share the texture across contexts?
 - [ ] Assign different materials to objects by storing their material index in a sperate VAO.
 - [ ] Scale window and framebuffers
-- [ ] Attempt to put ImGui in and keep the crazy overlay going.
-- [ ] Compile ImGUI once to a library.
+- [x] Attempt to put ImGui in and keep the crazy overlay going.
+- [x] Compile ImGUI once to a library.
 - [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
 - [ ] Since we want deferred rendering for SSAO, it will solve the ID selection problem.
 - [ ] Continue testing things on Intel IGPs

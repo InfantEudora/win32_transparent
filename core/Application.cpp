@@ -45,7 +45,7 @@ int2 Application::GetDisplaySettings(){
 
 void Application::Run(void){
     //Create a main window
-    main_window = Window::CreateNewLayeredWindow(768,512,&Window::wcs.at(0));
+    main_window = Window::CreateNewLayeredWindow(512,512,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }

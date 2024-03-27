@@ -4,7 +4,7 @@
 #include "Application.h"
 
 /*
-    An attempt at an application that overrides the default, and shows a grid.
+    An attempt at an application that overrides the default, and shows a UI only.
 */
 class ApplicationUI : public Application{
 public:
@@ -12,8 +12,6 @@ public:
 
     void Run(void) override;
     void RunLogic() override;
-
-
 
 private:
     void UpdateUI();

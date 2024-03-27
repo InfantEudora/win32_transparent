@@ -15,7 +15,10 @@ CFLAGS = -Llibs/ -limgui -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic -static-libstdc
 PROJECT = wind
 
 DIR_SRC += ./core
+DIR_SRC += ./isoterrain
 IPATHS += -Icore/
+IPATHS += -Iisoterrain/
+
 IPATHS += -I3rdparty/imgui/
 
 SRCS += main.cpp
@@ -38,7 +41,7 @@ else
 endif
 
 #Application
-SRCS += ApplicationUI.cpp
+SRCS += ApplicationGrid.cpp
 
 ifeq ($(DUMP_ASSETS), 1)
 CFLAGS += -DDUMP_ASSETS

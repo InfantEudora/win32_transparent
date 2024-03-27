@@ -38,11 +38,12 @@ public:
 
     int2 GetDisplaySettings();
 
+protected:
+    static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);
 private:
     bool SetupConsole();
     static bool WINAPI ConsoleHandler(DWORD console_event);
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
-    static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);
 };
 
 #endif

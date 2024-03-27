@@ -11,6 +11,7 @@ Scene::Scene(){
 };
 
 void Scene::SetupShipExample(){
+    debug->Info("Setup Ship Example\n");
     Mesh* mesh_ship = OBJLoader::ParseOBJFile("data/ship_003.obj");
 
     camera = new Camera();
@@ -201,7 +202,9 @@ void Scene::UpdatePhysics(){
 };
 
 void Scene::DrawFrame(){
-    camera->CalculateLookatMatrix();
+    if (camera){
+        camera->CalculateLookatMatrix();
+    }
 
     int2 m = inputcontroller->GetRelativeMousePosition();
 
@@ -210,9 +213,4 @@ void Scene::DrawFrame(){
     if (tex_2)
     glBindTextureUnit(1, tex_2->texture_id);
     renderer->DrawFrame(camera, shader,inputcontroller);
-
-    //UI
-    ImGui::Begin("Hello! Here are some settings");
-    ImGui::Text("Here is some text!");
-    ImGui::End();
 };

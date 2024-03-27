@@ -30,7 +30,7 @@ bool Renderer::Init(){
         return false;
     }
 
-    if ((pipeline == PIPELINE_DEFERRED) && !InitSSBO()){
+    if (!InitSSBO()){
         return false;
     }
 
