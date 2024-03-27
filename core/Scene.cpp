@@ -156,6 +156,7 @@ void Scene::UpdatePhysics(){
         return;
     }
 
+    /*
     if (renderer->objects.size() > 0){
         Object* obj = renderer->objects.at(0);
         if (inputcontroller->IsKeyDown(INPUT_MOVE_UP)){
@@ -181,6 +182,7 @@ void Scene::UpdatePhysics(){
             m->state->delta = 0;
         }
     }
+    */
 
     //debug->Info("Updating object phyics for tick %llu\n",physics_ticks++);
     for (Object* object:renderer->objects){
@@ -189,15 +191,20 @@ void Scene::UpdatePhysics(){
             object->UpdatePhysicsState();
             continue;
         }
+
+
+        //Copies object state and invalidates physics state
+        object->UpdatePhysicsState();
+    }
+
+    //Highlighting only rendered objects
+    for (Object* object:renderer->renderable_objects){
         if (object->GetID() == inputcontroller->GetHoveredObjectID()){
             //debug->Warn("Object is hovered %i\n",object->GetID());
             object->material_slot[0] = 2;
         }else{
             object->material_slot[0] = object->material_slot[1];
         }
-
-        //Copies object state and invalidates physics state
-        object->UpdatePhysicsState();
     }
 };
 

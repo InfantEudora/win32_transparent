@@ -52,8 +52,15 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //We now generate a terrain, and load that in.
     IsoTerrain* terrain = new IsoTerrain();
-    terrain->CreateTerrain(1,1);
+    terrain->CreateTerrain(3,3);
     scene->renderer->objects.push_back(terrain);
+
+    app->main_scene->UpdatePhysics();
+
+    for (Object* child:terrain->children){
+        vec3 p = child->GetPosition();
+        debug->Info("Terrain Child ID, Pos: %3i,  %.2f %.2f %.2f\n",child->GetID(), p.x,p.y,p.z);
+    }
 
     //Create a material
     material_t m;
@@ -64,7 +71,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     Asset::DumpAssets();
 
-    app->main_scene->UpdatePhysics();
+
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;

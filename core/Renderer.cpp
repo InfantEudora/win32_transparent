@@ -53,15 +53,28 @@ bool Renderer::Init(){
     return true;
 }
 
+//Put's all children and it's childrens children etc into a list
+void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects){
+    if (!object){
+        return;
+    }
+
+    //This object is renderable
+    if (object->GetMesh() != NULL){
+        objects.push_back(object);
+    }
+
+    //We check all the children
+    for (Object* child:object->children){
+        GetAllRenderableVisableSubObjects(child,objects);
+    }
+}
+
 //For now, we simple render all objects.
 void Renderer::CullObjects(){
     renderable_objects.clear();
     for (Object* object:objects){
-        if (object->GetMesh() == NULL){
-            continue;
-        }
-
-        renderable_objects.push_back(object);
+        GetAllRenderableVisableSubObjects(object,renderable_objects);
     }
 }
 

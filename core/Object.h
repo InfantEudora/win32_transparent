@@ -8,6 +8,7 @@ class Object;
 #include "type_quat.h"
 #include <string>
 #include <atomic>
+#include <list>
 
 typedef uint32_t objectid_t;
 #define OBJECTID_INVALID 0xFFFFFFFF
@@ -74,6 +75,15 @@ class Object{
     // A thread will be iterating over objects, and updating random things in random order.
     // So, one render function will iterate over all objects... see if all their last physics states are completed.
     // And copy them over. During this time, physics will have to wait.
+
+    //Hierarchy
+    Object* parent = NULL;              //Object we are a child of.
+    std::list<Object*>children;
+
+    bool AttachChild(Object* newchild); //Attaches an object as a child.
+    void DetachChild(Object* targetchild);
+    void GetAllSubObjects(std::vector<Object*>*objects); //Add's all objects attached to this object into a vector.
+
 protected:
     bool f_mouse_over = false;      //This is set after frame complete.
 

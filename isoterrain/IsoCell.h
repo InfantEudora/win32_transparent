@@ -11,7 +11,8 @@
 class IsoCell;
 
 class IsoCell : public Object{
-
+public:
+   IsoCell();
 
 };
 

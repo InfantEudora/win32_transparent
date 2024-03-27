@@ -17,10 +17,9 @@ void IsoTerrain::CreateTerrain(int w, int d){
             IsoCell* c = new IsoCell();
 
             //Object* tile= new Object();
-            SetMesh(OBJLoader::ParseOBJFile("isoterrain/data/tile_terrain.obj"));
-
-
-
+            c->SetMesh(OBJLoader::ParseOBJFile("isoterrain/data/tile_terrain.obj"));
+            c->SetPosition(vec3(x,0,z));
+            AttachChild(c);
         }
     }
 

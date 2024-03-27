@@ -46,6 +46,7 @@ class Renderer{
     int height = 1;
 
     void CullObjects();
+    void GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects);
     void UpdateState();
     void RebuildUniqueMeshList();
     void ClearBatches();
