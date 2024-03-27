@@ -11,7 +11,7 @@ Scene::Scene(){
 };
 
 void Scene::SetupShipExample(){
-    Mesh* mesh_ship = OBJLoader::ParseOBJFile("ship_003.obj");
+    Mesh* mesh_ship = OBJLoader::ParseOBJFile("data/ship_003.obj");
 
     camera = new Camera();
     camera->SetPosition(vec3(0,0.5,8));

@@ -14,6 +14,9 @@
     but since there will be many different types of example applications and tests...
     It's hard to come up with anything generic right now.
     Most of the things needs some kind of specific order: Frame, input, physics.
+
+    We'd also like an application that isn't so much a game, but only a UI from maybe ImGui or the default windows one.
+
 */
 class Application{
 public:

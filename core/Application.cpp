@@ -24,16 +24,14 @@ Application::Application(){
 
 void Application::Run(void){
     //Create a main window
-    main_window = Window::CreateNewLayeredWindow(512,512,&Window::wcs.at(0));
+    main_window = Window::CreateNewLayeredWindow(768,512,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
     if (!main_window->Init()){
         debug->Fatal("Failed to init window\n");
     }
-    if (!main_window->InitImGui()){
-        debug->Fatal("Failed to setup ImGui on Window\n");
-    }
+
     main_window->Show(SW_SHOWDEFAULT);
 
     //Setup renderer
@@ -112,8 +110,12 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
         return 0;
     }
 
+    if (!app->main_window->InitImGui()){
+        debug->Fatal("Failed to setup ImGui on Window\n");
+    }
+
     //Create a renderer for this window
-    app->renderer = new Renderer(512,512);
+    app->renderer = new Renderer(app->main_window->width,app->main_window->height);
     app->renderer->Init();
 
     app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
