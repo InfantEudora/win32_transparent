@@ -37,6 +37,9 @@ else
 	SRCS += AssetMemoryEmpty.cpp
 endif
 
+#Application
+SRCS += ApplicationUI.cpp
+
 ifeq ($(DUMP_ASSETS), 1)
 CFLAGS += -DDUMP_ASSETS
 endif

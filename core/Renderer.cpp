@@ -26,17 +26,19 @@ bool Renderer::Init(){
         return false;
     }
 
-    if (!InitDeferredFBO()){
+    if ((pipeline == PIPELINE_DEFERRED) && !InitDeferredFBO()){
         return false;
     }
 
-    if (!InitSSBO()){
+    if ((pipeline == PIPELINE_DEFERRED) && !InitSSBO()){
         return false;
     }
 
-    deferred_shader = new Shader("shaders/default.vert","shaders/deferred.frag");
-    ssao_compute_shader = new Shader();
-    ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
+    if (pipeline == PIPELINE_DEFERRED){
+        deferred_shader = new Shader("shaders/default.vert","shaders/deferred.frag");
+        ssao_compute_shader = new Shader();
+        ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
+    }
 
     SetState();
 
@@ -46,7 +48,6 @@ bool Renderer::Init(){
     glBindVertexArray(empty_vao);
 
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
-
 
     glDebugMessageCallback(opengl_message_callback, nullptr);
     return true;
@@ -154,7 +155,7 @@ void Renderer::FillBactches(){
     }
     debug->Trace("num_rendered_objects = %i\n",num_rendered_objects);
     if (num_rendered_objects == 0){
-        debug->Info("Nothing to be rendered\n");
+        //debug->Info("Nothing to be rendered\n");
         return;
     }
 }
@@ -198,8 +199,10 @@ void Renderer::RenderUniqueMeshes(){
 //This for now just uploads all the known materials to a SSBO... each frame.
 //Might only need to do this once.
 void Renderer::UploadMaterials(){
-    glInvalidateBufferData(materialdata_ssbo);
-    glNamedBufferData(materialdata_ssbo,materials.size()*sizeof(material_t) , &materials.at(0),GL_DYNAMIC_DRAW);
+    if (materials.size() > 0){
+        glInvalidateBufferData(materialdata_ssbo);
+        glNamedBufferData(materialdata_ssbo,materials.size()*sizeof(material_t) , &materials.at(0),GL_DYNAMIC_DRAW);
+    }
 }
 
 //Set's the SSBO that will be used for reading back data
@@ -283,34 +286,35 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
 
-    shader->Use();
-    shader->Setvec3("eye_position",camera->GetPosition());
-    shader->Setmat4("mat_worldcam",camera->mat_cam);
-
-    int2 mouse = {-1,-1};
-    if (input){
-        mouse = input->GetRelativeMousePosition();
+    if (shader && camera){
+        shader->Use();
+        shader->Setvec3("eye_position",camera->GetPosition());
+        shader->Setmat4("mat_worldcam",camera->mat_cam);
     }
 
-    readbackbuffer.data_in[0] = mouse.x;
-    readbackbuffer.data_in[1] = height - mouse.y;
-    readbackbuffer.fdata_out[0] = 1.0f;
-    UpdateReadbackBuffer();
+    if (input){
+        int2 mouse = {-1,-1};
+        if (input){
+            mouse = input->GetRelativeMousePosition();
+        }
+        readbackbuffer.data_in[0] = mouse.x;
+        readbackbuffer.data_in[1] = height - mouse.y;
+        readbackbuffer.fdata_out[0] = 1.0f;
+        UpdateReadbackBuffer();
+    }
 
     DrawObjects();
     ResolveAA();
 
-    //Read back buffer contents
-    glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
-    //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
-    if(readbackbuffer.data_out[0] != -1){
-        //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
-        int index = readbackbuffer.data_out[0];
-        if (input){
+    if (input){
+        //Read back buffer contents
+        glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
+        //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
+        if(readbackbuffer.data_out[0] != -1){
+            //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
+            int index = readbackbuffer.data_out[0];
             input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
-        }
-    }else{
-        if (input){
+        }else{
             input->SetHoveredObjectID(OBJECTID_INVALID);
         }
     }

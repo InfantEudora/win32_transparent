@@ -28,6 +28,11 @@ typedef struct{
 //A callback for debugging
 void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, char const* message, void const* user_param);
 
+#define PIPELINE_NONE       0
+#define PIPELINE_MSAA       1
+#define PIPELINE_DEFERRED   2
+
+
 /*
     A class responsible of managing the OpenGL state and pipeline.
     You should be able to make a renderer without a window,
@@ -91,8 +96,8 @@ class Renderer{
     Shader* deferred_shader = NULL;     //Shader that outputs data to textures
     Shader* ssao_compute_shader = NULL;
 
-
     int aa_samples = 1;
+    int pipeline = PIPELINE_MSAA;   //Which pipeline to initialise
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes

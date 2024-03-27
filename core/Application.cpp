@@ -22,6 +22,27 @@ Application::Application(){
     Window::RegisterWindowClasses();
 };
 
+int2 Application::GetDisplaySettings(){
+    DWORD       iMode = 0;
+    BOOL	    res = true;
+    DEVMODEA    devmode;
+
+    //This would list all the supported setting for whatever the current display is.
+    while(0 && res){
+        res = EnumDisplaySettings(NULL, iMode++, &devmode);
+        if (res){
+            debug->Info("%d x %d, %d bits %d Hz\n", devmode.dmPelsWidth,devmode.dmPelsHeight, devmode.dmBitsPerPel, devmode.dmDisplayFrequency);
+        }
+    }
+
+    res = EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+    if (res){
+        debug->Info("Current Display Settings: %d x %d, %d bits %d Hz\n", devmode.dmPelsWidth,devmode.dmPelsHeight, devmode.dmBitsPerPel, devmode.dmDisplayFrequency);
+    }
+    int2 dimensions = {(int)devmode.dmPelsWidth,(int)devmode.dmPelsHeight};
+    return dimensions;
+}
+
 void Application::Run(void){
     //Create a main window
     main_window = Window::CreateNewLayeredWindow(768,512,&Window::wcs.at(0));

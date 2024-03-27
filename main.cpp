@@ -14,6 +14,9 @@
 #include "Asset.h"
 #include "glad.h"
 
+//Would be the name of the application
+#include "ApplicationUI.h"
+
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd){
@@ -22,7 +25,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug->Info("WinMain hInstance = %lu\n",hInstance);
     debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
 
-    Application* main_app = new Application();
+    Application* main_app = new ApplicationUI();
     main_app->Run();
     return main_app->Exit();
 }

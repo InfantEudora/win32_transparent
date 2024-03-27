@@ -368,7 +368,7 @@ Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc){
     if(wnd->hWnd == NULL){
         debug->Err("Could not create requested window\n");
     }else{
-        debug->Ok("New layered window hWnd=%lu\n",wnd->hWnd);
+        debug->Ok("New layered window %i x %i hWnd=%lu\n",width,height,wnd->hWnd);
     }
     wnd->f_is_layered = true;
     wnd->width = width;

@@ -22,7 +22,7 @@ class Application{
 public:
     Application();
 
-    void Run(void);
+    virtual void Run(void);
     int Exit(void);
 
     DWORD thread_id_main = -1;
@@ -34,7 +34,9 @@ public:
     Shader* default_shader = NULL;
     Scene* main_scene = NULL;
 
-    void RunLogic();
+    virtual void RunLogic();
+
+    int2 GetDisplaySettings();
 
 private:
     bool SetupConsole();
