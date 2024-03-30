@@ -192,19 +192,8 @@ void Scene::UpdatePhysics(){
             continue;
         }
 
-
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();
-    }
-
-    //Highlighting only rendered objects
-    for (Object* object:renderer->renderable_objects){
-        if (object->GetID() == inputcontroller->GetHoveredObjectID()){
-            //debug->Warn("Object is hovered %i\n",object->GetID());
-            object->material_slot[0] = 2;
-        }else{
-            object->material_slot[0] = object->material_slot[1];
-        }
     }
 };
 

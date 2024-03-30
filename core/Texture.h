@@ -16,6 +16,7 @@ public:
     int height = 0;
 
     void Create2D(int width, int height, UINT format);    //Creates a 2D openGL texture
+    void LoadFromFile(const char* filename);
 };
 
 #endif

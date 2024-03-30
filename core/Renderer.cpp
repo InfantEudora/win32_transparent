@@ -218,6 +218,14 @@ void Renderer::UploadMaterials(){
     }
 }
 
+material_t* Renderer::GetMaterial(int index){
+    if ((index >= materials.size()) || (index < 0) || (materials.size() == 0)){
+        //Return an invalid material
+        return NULL;
+    }
+    return &materials.at(index);
+}
+
 //Set's the SSBO that will be used for reading back data
 void Renderer::UpdateReadbackBuffer(){
     readbackbuffer.data_out[0] = -1;

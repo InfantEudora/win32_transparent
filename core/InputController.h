@@ -33,7 +33,10 @@ typedef enum{
     INPUT_PAUSE,
     INPUT_MOUSE_X,
     INPUT_MOUSE_Y,
-    INPUT_MOUSE_WHEEL
+    INPUT_MOUSE_WHEEL,
+    INPUT_CLICK_LEFT,
+    INPUT_CLICK_MIDDLE,
+    INPUT_CLICK_RIGHT
 }keycode_t;
 
 struct KeyState{

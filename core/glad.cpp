@@ -70,6 +70,7 @@ PFNGLTEXTURESTORAGE2DPROC glTextureStorage2D = NULL;
 PFNGLTEXTURESUBIMAGE2DPROC glTextureSubImage2D = NULL;
 PFNGLBINDTEXTUREUNITPROC glBindTextureUnit = NULL;
 PFNGLBINDIMAGETEXTUREPROC glBindImageTexture = NULL;
+PFNGLGENERATETEXTUREMIPMAPPROC glGenerateTextureMipmap = NULL;
 PFNGLMEMORYBARRIERPROC glMemoryBarrier = NULL;
 
 PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = NULL;
@@ -154,6 +155,7 @@ bool InitGLExtensions(void){
     glTextureSubImage2D = (PFNGLTEXTURESUBIMAGE2DPROC)wglGetProcAddress("glTextureSubImage2D");
     glBindTextureUnit = (PFNGLBINDTEXTUREUNITPROC)wglGetProcAddress("glBindTextureUnit");
     glBindImageTexture = (PFNGLBINDIMAGETEXTUREPROC)wglGetProcAddress("glBindImageTexture");
+    glGenerateTextureMipmap = (PFNGLGENERATETEXTUREMIPMAPPROC)wglGetProcAddress("glGenerateTextureMipmap");
     glMemoryBarrier = (PFNGLMEMORYBARRIERPROC)wglGetProcAddress("glMemoryBarrier");
 
     glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");

@@ -20,6 +20,7 @@ IPATHS += -Icore/
 IPATHS += -Iisoterrain/
 
 IPATHS += -I3rdparty/imgui/
+IPATHS += -I3rdparty/
 
 SRCS += main.cpp
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))

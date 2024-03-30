@@ -27,9 +27,11 @@ InputController::InputController(){
     AddKeyMap('A',INPUT_TURN_LEFT);
     AddKeyMap('D',INPUT_TURN_RIGHT);
 
-
-
     AddKeyMap(VK_PAUSE,INPUT_PAUSE);
+
+    AddKeyMap(VK_LBUTTON,INPUT_CLICK_LEFT);
+    AddKeyMap(VK_MBUTTON,INPUT_CLICK_MIDDLE);
+    AddKeyMap(VK_RBUTTON,INPUT_CLICK_RIGHT);
 }
 
 KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){

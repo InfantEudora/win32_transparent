@@ -52,26 +52,35 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //We now generate a terrain, and load that in.
     IsoTerrain* terrain = new IsoTerrain();
-    terrain->CreateTerrain(3,3);
+    terrain->CreateTerrain(5,5);
     scene->renderer->objects.push_back(terrain);
 
     app->main_scene->UpdatePhysics();
 
     for (Object* child:terrain->children){
         vec3 p = child->GetPosition();
-        debug->Info("Terrain Child ID, Pos: %3i,  %.2f %.2f %.2f\n",child->GetID(), p.x,p.y,p.z);
+        //debug->Info("Terrain Child ID, Pos: %3i,  %.2f %.2f %.2f\n",child->GetID(), p.x,p.y,p.z);
     }
 
     //Create a material
     material_t m;
-    m.color = vec4(0.2,0.8,0.2,0.9);
-    m.texture_unit = -1;
+    m.color = vec4(1,1,1,1);
+    m.texture_unit = 0;
+    scene->renderer->materials.push_back(m);
+
+    //A material with a texture.
+    Texture* texture = new Texture();
+    texture->LoadFromFile("data/textures/test_texture_4096.png");
+    glBindTextureUnit(0, texture->texture_id);
+
+
+    m.color = vec4(1,0.2,0.2,0.9);
+    m.texture_unit = 0;
     scene->renderer->materials.push_back(m);
 
 
+
     Asset::DumpAssets();
-
-
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -114,7 +123,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewLayeredWindow(768,512,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(768,512,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -164,13 +173,28 @@ void ApplicationGrid::Run(void){
 void ApplicationGrid::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
+
+    //Check if we selected a tile
+    objectid_t objid = input->GetHoveredObjectID();
+
     for (Object* object:renderer->objects){
         if (object == camera){
             object->UpdatePhysicsState();
             continue;
         }
+    }
 
-        //object->Rotate();
+    //Iterate over all the rendered objects
+    for (Object* object:renderer->renderable_objects){
+        if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == objid)){
+            vec3 p = object->GetPosition();
+            debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",objid,p.x,p.y,p.z);
+            object->material_slot[1] = 1;
+        }else if (object->GetID() == objid){
+            object->material_slot[0] = 2;
+        }else{
+            object->material_slot[0] = object->material_slot[1];
+        }
     }
 }
 

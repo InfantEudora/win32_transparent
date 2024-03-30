@@ -55,6 +55,7 @@ class Renderer{
 
     void UpdateReadbackBuffer();
     void UploadMaterials();
+    material_t* GetMaterial(int index);
     void RenderUniqueMeshes();
 
     void DeferredPass(Camera* camera);
