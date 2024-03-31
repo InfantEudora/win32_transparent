@@ -70,7 +70,7 @@ class InputController{
 
     bool    IsKeyDown(uint32_t mapped);
     bool    WasKeyReleased(uint32_t mapped);
-    int32_t GetDelta(uint32_t mapped, KeyMap** map_out);
+    int32_t GetDelta(uint32_t mapped, KeyMap** map_out = NULL);
 
     int2    GetAbsoluteMousePosition();
     int2    GetRelativeMousePosition(); //Relative to the window

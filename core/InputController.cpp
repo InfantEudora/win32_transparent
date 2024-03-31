@@ -56,10 +56,12 @@ void InputController::UpdateKeyState(){
 
     for (KeyMap& map: keymap){
         if (mousepoint_valid && (map.mapped_keycode == INPUT_MOUSE_X)){
+            map.state->delta = p.x - map.state->value;
             map.state->value = p.x;
             continue;
         }
         if (mousepoint_valid && (map.mapped_keycode == INPUT_MOUSE_Y)){
+            map.state->delta = p.y - map.state->value;
             map.state->value = p.y;
             continue;
         }
@@ -108,7 +110,7 @@ bool InputController::WasKeyReleased(uint32_t mapped){
     return m->state->f_was_released;
 }
 
-int32_t InputController::GetDelta(uint32_t mapped, KeyMap** map_out = NULL){
+int32_t InputController::GetDelta(uint32_t mapped, KeyMap** map_out){
     KeyMap* m = GetByMappedKey(mapped);
     if (!m){
         return 0;

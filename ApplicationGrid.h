@@ -13,6 +13,8 @@ public:
     void Run(void) override;
     void RunLogic() override;
 
+    Object* arrows = NULL;
+
 private:
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
     void UpdateUI();

@@ -5,7 +5,8 @@ static Debugger* debug = new Debugger("Camera",DEBUG_ALL);
 
 //Emptry constructor
 Camera::Camera():Object(){
-
+	//Camera should start with a position, so that all subsequent operations on it's
+	//transformation make sense.
 };
 
 void Camera::SetupPerspective(float _width, float _height, float _fov, float _znear, float _zfar){
@@ -49,6 +50,6 @@ void Camera::CalculateLookatMatrix(){
 	}else{
 		mat_frus.perspectivematrix(viewport.fov,viewport.aspect, viewport.znear, viewport.zfar);
 	}
-	mat_look.lookatmatrix(state.position,lookat,up);
+	mat_look.lookatmatrix(state.position,GetLookat(),GetUp());
 	mat_cam = mat_look * mat_frus;
 }

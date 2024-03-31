@@ -15,6 +15,8 @@ struct quat{
 
     quat(){};
     quat(float x, float y, float z,float w) : x(x), y(y), z(z),w(w){}
+    quat(const vec3& axis, float angle);            // rot axis & angle (radian)
+
 
     //Functions
     void    print();
@@ -23,8 +25,16 @@ struct quat{
 
     fmat4   tofmat4() const;
 
+    vec3    operator*(const vec3& rhs) const; // rotate a vector
     quat    operator*(const quat& rhs) const; // multiplication
+
+    static quat getquat(const vec3& v1, const vec3& v2);
+    static quat getquat(const vec3& target, const vec3& position, const vec3& worldup);
 };
+
+inline quat::quat(const vec3& axis, float angle){
+    set_rotation(axis, angle);
+}
 
 inline void quat::identity(){
     x = 0;
@@ -58,6 +68,22 @@ inline quat quat::operator*(const quat& rhs) const{
     return quat(v3.x, v3.y, v3.z,w * rhs.w - dot);
 }
 
+// Overloaded operator for the multiplication with a vectoleft.
+/// This methods rotates a point given the rotation of a quaternion.
+inline vec3 quat::operator*(const vec3& rhs) const {
+    /* The following code is equivalent to this
+     * Quaternion p(point.x, point.y, point.z, 0.0);
+     * return (((*this) * p) * getConjugate()).getVectorV();
+    */
+    const float prodX = w * rhs.x + y * rhs.z - z * rhs.y;
+    const float prodY = w * rhs.y + z * rhs.x - x * rhs.z;
+    const float prodZ = w * rhs.z + x * rhs.y - y * rhs.x;
+    const float prodW = -x * rhs.x - y * rhs.y - z * rhs.z;
+    return vec3(w * prodX - prodY * z + prodZ * y - prodW * x,
+                   w * prodY - prodZ * x + prodX * z - prodW * y,
+                   w * prodZ - prodX * y + prodY * x - prodW * z);
+}
+
 inline fmat4 quat::tofmat4() const{
     // NOTE: assume the quat is unit length
     // compute common values
@@ -85,6 +111,79 @@ inline fmat4 quat::tofmat4() const{
     // 2xy-2sz,     ss-xx+yy-zz, 2yz-2sx,     0
     // 2xz+2sy,     2yz+2sx,     ss-xx-yy+zz, 0
     // 0,           0,           0,           1
+}
+
+// find quat for rotating from v1 to v2
+inline quat quat::getquat(const vec3& v1, const vec3& v2){
+    const float HALF_PI = acos(-1) * 0.5f;
+
+    // if two vectors are equal return the vector with 0 rotation
+    if(v1.equal(v2)){
+        return quat(v1, 0);
+    }else if(v1.equal(-v2)){
+        // if two vectors are opposite return a perpendicular vector with 180 angle
+        vec3 v;
+        if(v1.x > -FT_EPSILON && v1.x < FT_EPSILON)       // if x ~= 0
+            v.set(1, 0, 0);
+        else if(v1.y > -FT_EPSILON && v1.y < FT_EPSILON)  // if y ~= 0
+            v.set(0, 1, 0);
+        else                                        // if z ~= 0
+            v.set(0, 0, 1);
+        return quat(v, HALF_PI);
+    }
+
+    vec3 u1 = v1;                    // convert to normal vector
+    vec3 u2 = v2;
+    u1.normalize();
+    u2.normalize();
+
+    vec3 v = u1.cross(u2);           // compute rotation axis
+    v.normalize();
+
+    float dot = u1.dot(u2);
+    dot = clamp(dot,0.0,1.0);
+    float angle = acosf(dot);    // rotation angle: This was being naugty getting fed a 1.0000001f = nan
+
+    return quat(v, angle * 0.5f); // half angle
+}
+
+
+//Constructs a quaternion from a lookat and position. Supplied worldup should point in the half sphere that is up.
+inline quat quat::getquat(const vec3& target, const vec3& position, const vec3& worldup){
+    vec3 lookat = (position - target).normalize();
+    vec3 left = worldup.cross(lookat).normalize();
+    vec3 u = lookat.cross(left);
+
+    quat q;
+    double trace = left.x + u.y + lookat.z;
+    if (trace > 0.0) {
+        double s = 0.5 / sqrt(trace + 1.0);
+        q.w = 0.25 / s;
+        q.x = (u.z - lookat.y) * s;
+        q.y = (lookat.x - left.z) * s;
+        q.z = (left.y - u.x) * s;
+    } else {
+    if (left.x > u.y && left.x > lookat.z) {
+            double s = 2.0 * sqrt(1.0 + left.x - u.y - lookat.z);
+            q.w = (u.z - lookat.y) / s;
+            q.x = 0.25 * s;
+            q.y = (u.x + left.y) / s;
+            q.z = (lookat.x + left.z) / s;
+        } else if (u.y > lookat.z) {
+            double s = 2.0 * sqrt(1.0 + u.y - left.x - lookat.z);
+            q.w = (lookat.x - left.z) / s;
+            q.x = (u.x + left.y) / s;
+            q.y = 0.25 * s;
+            q.z = (lookat.y + u.z) / s;
+        } else {
+            double s = 2.0 * sqrt(1.0 + lookat.z - left.x - u.y);
+            q.w = (left.y - u.x) / s;
+            q.x = (lookat.x + left.z) / s;
+            q.y = (lookat.y + u.z) / s;
+            q.z = 0.25 * s;
+        }
+    }
+    return q;
 }
 
 inline void quat::print(){

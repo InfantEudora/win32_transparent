@@ -24,6 +24,10 @@ It should kind of look like this:
 `/applications` Contain different applications that test / implement different things.
 `/3rdparty/*`   Contains external libraries source code, either as an entire repo or single files.
 
+### Doing:
+
+Set a camera's initial position and lookat to something. It should have an up vector change.
+
 ### ToDo's
 
 - [ ] Share the texture across contexts?
@@ -45,6 +49,7 @@ It should kind of look like this:
 - [ ] Maybe have some kind of test / example thing.
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
 - [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array.
+- [ ] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
 
 ### Done's
 - [x] Multisampling to a seperate FBO

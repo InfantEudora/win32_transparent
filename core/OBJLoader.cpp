@@ -33,7 +33,7 @@ Mesh* OBJLoader::ParseOBJFileData(uint8_t* data, size_t size){
         }
     }
     debug->Info("Object has %i faces, %i vertices.\n",
-        loader.face_vertexindexlist.size(),loader.face_vertexlist.size());
+    loader.face_vertexindexlist.size(),loader.face_vertexlist.size());
 
     return loader.BuildMesh();
 }

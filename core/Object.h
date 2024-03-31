@@ -16,9 +16,8 @@ typedef uint32_t objectid_t;
 struct ObjectState{
     bool f_was_transformed = false;
     vec3 position = vec3(0,0,0);
+    vec3 lookat = vec3(0,0,0);
     quat rotation;
-    float rot_speed = 0.0f;
-    fmat3 mat_rotation;
 };
 
 //All Set functions may only be set from physics
@@ -41,15 +40,18 @@ class Object{
     fmat4& GetWorldTransformScaleMatrix();
 
     void MoveBy(const vec3& delta);
+    void RollBy(float by);
+
     void SetScale(const vec3& newscale);
-    void SetPosition(const vec3& newpos);
-    void SetLookat(const vec3& newpos);
+    void SetRotation(const quat& q);
+    void SetPosition(const vec3& newpos,bool f_lookat=false);
+    void SetLookat(const vec3& newpos, vec3* up=NULL);
+    void UpdateDirections();
 
     void RotateAroundAxis(const vec3& target_axis,float by, bool f_lookat=false);
 
-    void SetRotationSpeed(float newspeed);
-
     vec3& GetPosition();
+    vec3& GetLookat();
     bool IsHovered();
 
     void UpdateState(); //Called from render thread before rendering
@@ -60,8 +62,13 @@ class Object{
     fmat4 world_transform_scale_matrix;
 
     vec3 scale = vec3(1,1,1);
-    vec3 lookat = vec3(0,0,0);
-    vec3 up = vec3(0,1,0);
+
+    //The reference vectors for our coordinate system.
+    static vec3 ref_up;
+    static vec3 ref_left;
+    static vec3 ref_forward;
+
+    vec3 GetUp();   //Returns the local vector pointing up.
 
     int material_slot[4] = {};
 

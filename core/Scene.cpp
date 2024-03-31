@@ -22,9 +22,6 @@ void Scene::SetupShipExample(){
 
     Object* ship = new Object();
     ship->SetMesh(mesh_ship);
-
-    //ship->SetRotation((rand()%100) / 10.0f);
-    ship->SetRotationSpeed(rand()%100 * 0.0001f);
     ship->SetPosition(vec3(0.5,0.5,0.0));
 
     ship->material_slot[0] = 0;
@@ -62,10 +59,7 @@ void Scene::SetupExample(){
         cube = new Object();
         cube->SetMesh(cube_mesh);
         renderer->objects.push_back(cube);
-        //cube->SetRotation((rand()%100) / 10.0f);
-        cube->SetRotationSpeed(rand()%100 * 0.0001f);
         cube->SetPosition(vec3(0.5,0.5,0.0));
-
         cube->material_slot[0] = i%2;
         cube->material_slot[1] = i%2;
     }
@@ -75,8 +69,6 @@ void Scene::SetupExample(){
         cube = new Object();
         cube->SetMesh(sphere_mesh);
         renderer->objects.push_back(cube);
-        //cube->SetRotation((rand()%100) / 10.0f);
-        cube->SetRotationSpeed(rand()%100 * 0.0001f);
         cube->SetPosition(vec3(-0.5,0.5,0.0));
         cube->material_slot[0] = i%2;
         cube->material_slot[1] = i%2;

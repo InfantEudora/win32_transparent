@@ -133,6 +133,8 @@ vec4 CalcPBRLighting(){
     vec4 final;
 
     vec3 light = CalcDirectionalPBRLight(vec3(-10,10,10),vec3(1,1,1),5.0);
+    vec3 ambient = vec3(0.05);
+    light += ambient;
     float alpha = GetTransparency();
     final = vec4(light,alpha);
 

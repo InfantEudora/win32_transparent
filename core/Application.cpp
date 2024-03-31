@@ -220,21 +220,10 @@ void Application::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
-    Object* target = renderer->objects.at(1);
-
-    if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-        target->RotateAroundAxis(vec3(0,0,1),-0.01);
-    }
-    if (input->IsKeyDown(INPUT_TURN_LEFT)){
-        target->RotateAroundAxis(vec3(0,0,1),0.01);
-    }
-
     for (Object* object:renderer->objects){
         if (object == camera){
             object->UpdatePhysicsState();
             continue;
         }
-
-        //object->Rotate();
     }
 }

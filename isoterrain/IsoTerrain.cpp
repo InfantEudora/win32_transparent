@@ -11,6 +11,8 @@ void IsoTerrain::CreateTerrain(int w, int d){
     width = w;
     depth = d;
 
+    vec3 centre_offset = vec3(-w/2.0f + 0.5f,0,-d/2.0f + 0.5f);
+
     //If the terrain is 1x1, a cell of size 1 cell is at the origin, from -0.5 to 0.5.
     for (int z = 0;z<depth;z++){
         for (int x = 0;x<width;x++){
@@ -18,7 +20,7 @@ void IsoTerrain::CreateTerrain(int w, int d){
 
             //Object* tile= new Object();
             c->SetMesh(OBJLoader::ParseOBJFile("isoterrain/data/tile_terrain.obj"));
-            c->SetPosition(vec3(x,0,z));
+            c->SetPosition(vec3(x,0,z) + centre_offset);
             AttachChild(c);
         }
     }

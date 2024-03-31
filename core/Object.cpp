@@ -4,12 +4,14 @@
 static Debugger* debug = new Debugger("Object",DEBUG_WARN);
 
 objectid_t Object::object_ids = 0;
+vec3 Object::ref_up = vec3(0,1,0);
+vec3 Object::ref_left = vec3(1,0,0);
+vec3 Object::ref_forward = vec3(0,0,1);
 
 Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
     state_physics.rotation.identity();
-    state_physics.mat_rotation.identity();
 }
 
 void Object::GenerateUniqueID(){
@@ -60,21 +62,29 @@ void Object::RotateAroundAxis(const vec3& target_axis,float by,bool f_lookat){
     //We multiply by the current object rotation
     quat nq = r * state_physics.rotation;
     state_physics.rotation = nq;
-
     //state_physics.mat_rotation.set_rotation(target_axis,state_physics.rotation);
 }
 
-//Move to new position, optionally change lookat as well
-void Object::SetPosition(const vec3& newpos){
+//Update objects rotation with supplied quaternion.
+void Object::SetRotation(const quat& q){
+    state_physics.f_was_transformed = true;
+    state_physics.rotation = q;
+}
+
+//Move to new position, optionally change lookat as well.
+//If lookat is changed along with position, the up,left and forward stays the same.
+void Object::SetPosition(const vec3& newpos, bool f_lookat){
     state_physics.f_was_transformed = true;
     vec3 delta = state_physics.position - newpos;
     state_physics.position = newpos;
-    SetLookat(lookat-delta);
+    if (f_lookat){
+        SetLookat(state_physics.lookat - delta,NULL);
+    }
 }
 
-//Set the new lookat position
-void Object::SetLookat(const vec3& target){
-    lookat = target;
+//Set the new lookat position. Optional up can be supplied, otherwise will use ref_up.
+void Object::SetLookat(const vec3& target, vec3* up){
+    state_physics.lookat = target;
 }
 
 //Move object by a vector
@@ -82,16 +92,15 @@ void Object::MoveBy(const vec3& delta){
     SetPosition(state_physics.position + delta);
 }
 
+//Rotate on forward axis
+void Object::RollBy(float by){
+    //RotateAroundAxis(forward,by);
+}
+
 //The size of the object in 3 dimensions
 void Object::SetScale(const vec3& newscale){
     scale = newscale;
     state_physics.f_was_transformed = true;
-}
-
-
-
-void Object::SetRotationSpeed(float newspeed){
-    state_physics.rot_speed = newspeed;
 }
 
 //Copies physics state over to this state.
@@ -126,8 +135,6 @@ void Object::UpdatePhysicsState(){
 
     //Dont know where to put this one yet.
     //state_physics.f_was_transformed = false;
-
-
 }
 
 bool Object::PhysicsCompleted(){
@@ -136,6 +143,14 @@ bool Object::PhysicsCompleted(){
 
 vec3& Object::GetPosition(){
     return state.position;
+}
+
+vec3& Object::GetLookat(){
+    return state.lookat;
+}
+
+vec3 Object::GetUp(){
+    return state.rotation * ref_up;
 }
 
 bool Object::IsHovered(){
@@ -155,7 +170,6 @@ void Object::UpdateTransformMatrix(){
 
     fmat4 rotation_matrix;
     //Compute the rotation matrix from the rotation quaternion
-    //rotation_matrix.rotationmatrix(state.mat_rotation);
     rotation_matrix = state.rotation.tofmat4();
 
     world_transform_scale_matrix = world_transform_scale_matrix * rotation_matrix;
@@ -169,8 +183,6 @@ fmat4& Object::GetWorldTransformScaleMatrix(){
         //Update local transform matrices
         UpdateTransformMatrix();
     }
-
-
 	return world_transform_scale_matrix;
 }
 

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+#include "type_helpers.h"
 struct vec3;
 
 struct vec3{
@@ -30,6 +31,7 @@ struct vec3{
     vec3&  	normalize();
 	float  	dot(const vec3& vec) const;                     // dot product
     vec3   	cross(const vec3& vec) const;                   // cross product
+    bool   	equal(const vec3& vec) const;                   // compare with epsilon
 
     vec3   	operator-() const;                              // unary operator (negate)
     vec3   	operator-(const vec3& rhs) const;               // subtract rhs
@@ -106,6 +108,10 @@ inline vec3 vec3::operator*(const float a) const {
 
 inline vec3& vec3::operator*=(const float a) {
 	x *= a; y *= a; z *= a; return *this;
+}
+
+inline bool vec3::equal(const vec3& rhs) const {
+    return fabs(x - rhs.x) < FT_EPSILON && fabs(y - rhs.y) < FT_EPSILON && fabs(z - rhs.z) < FT_EPSILON;
 }
 
 inline void vec3::print(){
