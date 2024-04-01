@@ -20,6 +20,8 @@ Application::Application(){
 
     //TODO: This only needs to be done once.
     Window::RegisterWindowClasses();
+
+    tmr_physics = new PerfTimer("Physics Time"); //Physics loop time
 };
 
 int2 Application::GetDisplaySettings(){
@@ -168,8 +170,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     }
 
     while (app->main_window->f_should_quit == false){
-        //Should only modify the object, and we should be able to move this to a seperate thread.
-        app->main_scene->HandleInput();
+
 
         //Tell ImGui to start a new frame
         app->main_window->ImGuiNewFrame();
@@ -204,6 +205,7 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
         Sleep(5);
         timeEndPeriod(1);
         if (app->main_scene){
+            app->main_scene->HandleInput();
             app->RunLogic();
             app->main_scene->UpdatePhysics();
             app->main_scene->inputcontroller->Tick();
@@ -219,11 +221,4 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
 void Application::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
-
-    for (Object* object:renderer->objects){
-        if (object == camera){
-            object->UpdatePhysicsState();
-            continue;
-        }
-    }
 }

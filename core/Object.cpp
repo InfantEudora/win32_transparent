@@ -1,7 +1,7 @@
 #include "Object.h"
 #include "Debug.h"
 
-static Debugger* debug = new Debugger("Object",DEBUG_WARN);
+static Debugger* debug = new Debugger("Object",DEBUG_ALL);
 
 objectid_t Object::object_ids = 0;
 vec3 Object::ref_up = vec3(0,1,0);
@@ -71,25 +71,37 @@ void Object::SetRotation(const quat& q){
     state_physics.rotation = q;
 }
 
-//Move to new position, optionally change lookat as well.
-//If lookat is changed along with position, the up,left and forward stays the same.
-void Object::SetPosition(const vec3& newpos, bool f_lookat){
+//Move to new position. This preserves rotation. When f_keep_lookat=true, the rotation will update to
+//look at the old location
+void Object::SetPosition(const vec3& newpos, bool f_keep_lookat){
     state_physics.f_was_transformed = true;
     vec3 delta = state_physics.position - newpos;
     state_physics.position = newpos;
-    if (f_lookat){
-        SetLookat(state_physics.lookat - delta,NULL);
+    if (f_keep_lookat){
+        //SetLookat(getlookat - delta,NULL);
     }
 }
 
-//Set the new lookat position. Optional up can be supplied, otherwise will use ref_up.
-void Object::SetLookat(const vec3& target, vec3* up){
-    state_physics.lookat = target;
+//Look at target from current position. Optional up can be supplied, otherwise will use ref_up.
+//Target is in local space.
+void Object::SetLookAt(const vec3& target, vec3* optional_up){
+    vec3 up;
+    if (optional_up){
+        up = *optional_up;
+    }else{
+        up = ref_up;
+    }
+    state_physics.rotation = quat::getquat(target,state_physics.position,up);
 }
 
 //Move object by a vector
 void Object::MoveBy(const vec3& delta){
     SetPosition(state_physics.position + delta);
+}
+
+void Object::MoveForwardBy(float delta){
+    vec3 d = GetForward() * delta;
+    MoveBy(d);
 }
 
 //Rotate on forward axis
@@ -131,6 +143,7 @@ void Object::UpdatePhysicsState(){
         state_physics_prev = state_physics;
         state_physics_prev_completed = true;
         state_physics_completed = 0;
+        state_physics.f_was_transformed = false;
     }
 
     //Dont know where to put this one yet.
@@ -142,15 +155,20 @@ bool Object::PhysicsCompleted(){
 }
 
 vec3& Object::GetPosition(){
-    return state.position;
+    //debug->Info("Get Position on %s. state_physics.f_was_transformed = %i\n",name.c_str(),state_physics.f_was_transformed);
+    return state_physics.position;
 }
 
-vec3& Object::GetLookat(){
-    return state.lookat;
+vec3 Object::GetForward(){
+    return state_physics.rotation * ref_forward;
 }
 
 vec3 Object::GetUp(){
-    return state.rotation * ref_up;
+    return state_physics.rotation * ref_up;
+}
+
+vec3 Object::GetLeft(){
+    return state_physics.rotation * ref_left;
 }
 
 bool Object::IsHovered(){

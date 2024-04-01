@@ -8,6 +8,7 @@ class Renderer;
 #include "Texture.h"
 #include "Material.h"
 #include "InputController.h"
+#include "PerfTimer.h"
 
 //This should have the same layout as in the shader
 #define NUM_MATERIAL_SLOTS  4
@@ -100,6 +101,9 @@ class Renderer{
 
     int aa_samples = 1;
     int pipeline = PIPELINE_MSAA;   //Which pipeline to initialise
+
+    //Counters/Timers
+    PerfTimer* tmr_frame = NULL;
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes

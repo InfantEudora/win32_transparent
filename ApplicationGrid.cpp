@@ -45,8 +45,9 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //Either we put thigs in the scene, or we make a scene extension class....
     Scene* scene = app->main_scene;
     scene->camera = new Camera();
+    scene->camera->name = "Main Camera";
     scene->camera->SetPosition(vec3(5,5,8));
-    scene->camera->SetLookat(vec3());
+    scene->camera->SetLookAt(vec3());
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
     scene->renderer->objects.push_back(scene->camera);
 
@@ -102,9 +103,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     }
 
     while (app->main_window->f_should_quit == false){
-        //Should only modify the object, and we should be able to move this to a seperate thread.
-        app->main_scene->HandleInput();
-
         //Tell ImGui to start a new frame
         app->main_window->ImGuiNewFrame();
 
@@ -122,7 +120,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     debug->Info("FrameThreadFunction terminated\n");
     return 1;
 }
-
 
 void ApplicationGrid::Run(void){
     //Create a main window
@@ -177,6 +174,12 @@ void ApplicationGrid::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
+    tmr_physics->Stop();
+    tmr_physics->Restart();
+
+    //Testing. TODO: Make a slider with more accurate intervals than sleep.
+    Sleep(20);
+
     //Check if we selected a tile
     objectid_t objid = input->GetHoveredObjectID();
 
@@ -185,22 +188,36 @@ void ApplicationGrid::RunLogic(){
         //If we move left/right, we rotate the camera around the origin.
         int dx = input->GetDelta(INPUT_MOUSE_X);
         int dy = input->GetDelta(INPUT_MOUSE_Y);
+        debug->Info("Mouse dY = %i\n",dy);
 
-        float dist = camera->GetPosition().length();
+
         vec3 p = camera->GetPosition();
-        vec3 ax = p.normalize().cross(camera->GetUp());
-        quat q;
+        vec3 axis = camera->GetLeft();
 
         //Get the axis towards the camera.
-        q.set_rotation(ax,-dy/50.0f);
-        p = q * p * dist;
+        quat qy(axis,-dy/50.0f);
+        //quat qx(vec3(0,1,0),-dx/50.0f);
 
-        //debug->Info("Mouse dX = %i\n",dx);
-        vec3 d = vec3(dx / 20.0f,dy / 20.0f,0);
+        quat q = qy;
 
-        //We update the position, without changing the lookat.
-        //This should update the UP vector.
+        //Rotate the camera position around the origin
+        p = q * p;
+        //We update the position
         camera->SetPosition(p);
+
+        //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
+        vec3 up = camera->GetUp();
+        //up = vec3(0,1,0);
+        camera->SetLookAt(vec3(),&up);
+
+        p = camera->GetPosition();
+    }
+
+    static float mouse_delta_sum = 0;
+    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
+    if (mouse_delta_sum != 0){
+        camera->MoveForwardBy(-mouse_delta_sum / 10.0f);
+        mouse_delta_sum /= 1.1;
     }
 
     //Iterate over all the rendered objects
@@ -215,16 +232,7 @@ void ApplicationGrid::RunLogic(){
             object->material_slot[0] = object->material_slot[1];
         }
     }
-
-    for (Object* object:renderer->objects){
-        if (object == camera){
-            object->UpdatePhysicsState();
-            continue;
-        }
-    }
 }
-
-
 
 void ApplicationGrid::UpdateUI(){
     //UI
@@ -275,8 +283,17 @@ void ApplicationGrid::UpdateUI(){
         object->SetRotation(q);
     }
     if (ImGui::CollapsingHeader("Material")){
+        ImGui::Text("Renderer Materials: %i",renderer->materials.size());
+        ImGui::Separator();
+
         ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,10);
         ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,10);
+        ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,10);
     }
+    if (ImGui::CollapsingHeader("Performance")){
+        ImGui::Text("Frame Rate   : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
+        ImGui::Text("Physics Rate : %.2f TPS (%.2f ms)", 1000000.0f / tmr_physics->avg,tmr_physics->avg/1000.0f );
+    }
+
     ImGui::End();
 }

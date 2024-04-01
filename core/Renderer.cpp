@@ -50,6 +50,8 @@ bool Renderer::Init(){
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
     glDebugMessageCallback(opengl_message_callback, nullptr);
+
+    tmr_frame = new PerfTimer("Frame Time");
     return true;
 }
 
@@ -297,6 +299,12 @@ void Renderer::SSAOPass(Camera* camera){
 }
 
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
+    if (tmr_frame){
+        tmr_frame->Stop();
+        double dt = tmr_frame->GetdtUs();
+        tmr_frame->Restart();
+    }
+
     //Select the mutisampled framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 

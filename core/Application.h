@@ -7,6 +7,8 @@
 #include "Renderer.h"
 #include "Shader.h"
 #include "Scene.h"
+#include "PerfTimer.h"
+
 /*
     The thing that ties everything together.
 
@@ -33,6 +35,8 @@ public:
     Renderer* renderer = NULL;
     Shader* default_shader = NULL;
     Scene* main_scene = NULL;
+
+    PerfTimer* tmr_physics = NULL;
 
     virtual void RunLogic();
 

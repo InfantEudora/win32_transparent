@@ -41,7 +41,7 @@ void Camera::SetType(int _type){
 	}
 }
 
-//Update lookat
+//Update lookat. Called before rendering a new frame.
 void Camera::CalculateLookatMatrix(){
 	//Recalculate all the things.
 	viewport.aspect = viewport.width / viewport.height;
@@ -50,6 +50,6 @@ void Camera::CalculateLookatMatrix(){
 	}else{
 		mat_frus.perspectivematrix(viewport.fov,viewport.aspect, viewport.znear, viewport.zfar);
 	}
-	mat_look.lookatmatrix(state.position,GetLookat(),GetUp());
+	mat_look.lookatmatrix(state.position,state.rotation * ref_forward,state.rotation * ref_up);
 	mat_cam = mat_look * mat_frus;
 }

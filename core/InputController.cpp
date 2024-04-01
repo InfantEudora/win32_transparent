@@ -141,7 +141,7 @@ objectid_t InputController::GetHoveredObjectID(){
 void InputController::Tick(){
     for (KeyMap& km:keymap){
         km.state->f_was_released = false;
-        //km.state->delta = 0;
+        km.state->delta = 0;
     }
 }
 

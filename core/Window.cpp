@@ -234,7 +234,7 @@ void Window::ImGuiDrawFrame(){
 //Simply copies buffer to backbuffer
 void Window::DrawFrame(){
     if (f_is_layered){
-        SwapBuffers(hDC);
+        SwapBuffers(hDC); //Just so that frame sync occurs
         CopyBufferToImage();
 
         // Finally we update our layered window with our scene.

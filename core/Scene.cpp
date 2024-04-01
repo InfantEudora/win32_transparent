@@ -16,7 +16,7 @@ void Scene::SetupShipExample(){
 
     camera = new Camera();
     camera->SetPosition(vec3(0,0.5,8));
-    camera->SetLookat(vec3());
+    camera->SetLookAt(vec3());
     camera->SetupPerspective(renderer->width,renderer->height,45,0.1,100);
     renderer->objects.push_back(camera);
 
@@ -76,7 +76,7 @@ void Scene::SetupExample(){
 
     camera = new Camera();
     camera->SetPosition(vec3(0,0.5,8));
-    camera->SetLookat(vec3());
+    camera->SetLookAt(vec3());
     camera->SetupPerspective(renderer->width,renderer->height,45,0.1,100);
     renderer->objects.push_back(camera);
 

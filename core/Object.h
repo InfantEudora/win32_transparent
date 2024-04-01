@@ -13,15 +13,15 @@ class Object;
 typedef uint32_t objectid_t;
 #define OBJECTID_INVALID 0xFFFFFFFF
 
+//All variables that affect the object's appearance, which are modified/read by different threads
 struct ObjectState{
     bool f_was_transformed = false;
     vec3 position = vec3(0,0,0);
-    vec3 lookat = vec3(0,0,0);
     quat rotation;
 };
 
-//All Set functions may only be set from physics
-//All Get functions may be read from DrawThread and get the current state
+//All Set/Get functions may only be set from physics. And update the state_physics.
+//Render thread will only read ObjectState state.
 class Object{
     public:
     Object();
@@ -40,18 +40,18 @@ class Object{
     fmat4& GetWorldTransformScaleMatrix();
 
     void MoveBy(const vec3& delta);
+    void MoveForwardBy(float delta);
     void RollBy(float by);
 
     void SetScale(const vec3& newscale);
     void SetRotation(const quat& q);
-    void SetPosition(const vec3& newpos,bool f_lookat=false);
-    void SetLookat(const vec3& newpos, vec3* up=NULL);
+    void SetPosition(const vec3& newpos,bool f_lookat = false);
+    void SetLookAt(const vec3& newpos, vec3* optional_up = NULL);
     void UpdateDirections();
 
-    void RotateAroundAxis(const vec3& target_axis,float by, bool f_lookat=false);
+    void RotateAroundAxis(const vec3& target_axis,float by, bool f_lookat = false);
 
     vec3& GetPosition();
-    vec3& GetLookat();
     bool IsHovered();
 
     void UpdateState(); //Called from render thread before rendering
@@ -68,7 +68,9 @@ class Object{
     static vec3 ref_left;
     static vec3 ref_forward;
 
-    vec3 GetUp();   //Returns the local vector pointing up.
+    vec3 GetUp();       //Returns the local vector pointing up.
+    vec3 GetForward();  //Returns the forward or normalized lookat direction
+    vec3 GetLeft();     //Return the vector pointing left
 
     int material_slot[4] = {};
 
