@@ -9,3 +9,4 @@ imgui.ini
 *.blend1
 *.blend
 *.a
+BinaryAssetMemory.cpp

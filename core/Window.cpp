@@ -1,6 +1,7 @@
 #include "Window.h"
 #include "Debug.h"
 #include "glad.h"
+#include "File.h"
 
 static Debugger* debug = new Debugger("Window",DEBUG_INFO);
 
@@ -210,8 +211,12 @@ bool Window::InitImGui(){
     config.OversampleH = 2;
     config.OversampleV = 2;
     config.GlyphExtraSpacing.x = 0.0f;
-    //TODO: This can be loaded with our own file loading mechanism.
-    ImFont* font = io.Fonts->AddFontFromFileTTF("fonts/consola.ttf", 13, &config);
+
+    size_t size = 0;
+    uint8_t* data = LoadFile("fonts/consola.ttf",&size);
+    if (data){
+        ImFont* font = io.Fonts->AddFontFromMemoryTTF(data,size, 13, &config);
+    }
     const char* glsl_version = "#version 430";
 
     // Setup Platform/Renderer backends

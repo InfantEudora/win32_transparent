@@ -4,9 +4,11 @@ CC = g++
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
-#This is a two stage process
-COMPILE_ASSETS = 0#Set when all assets need to be compiled into the application binary.
-DUMP_ASSETS = 0#Set when all assets need to be dumped to a file.
+#This is a two stage process:
+##First make with DUMP then with COMPILE
+DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
+COMPILE_BINARYASSETS = 1#Set when all assets need to be compiled into the application binary.
+
 
 CFLAGS = -Llibs/ -limgui -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
@@ -35,17 +37,17 @@ SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_win32.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_opengl3.cpp
 OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
 
-ifeq ($(COMPILE_ASSETS), 1)
-	SRCS += AssetMemory.cpp
+ifeq ($(COMPILE_BINARYASSETS), 1)
+	SRCS += BinaryAssetMemory.cpp
 else
-	SRCS += AssetMemoryEmpty.cpp
+	SRCS += BinaryAssetMemoryEmpty.cpp
 endif
 
 #Application
 SRCS += ApplicationGrid.cpp
 
-ifeq ($(DUMP_ASSETS), 1)
-CFLAGS += -DDUMP_ASSETS
+ifeq ($(DUMP_BINARYASSETS), 1)
+CFLAGS += -DDUMP_BINARYASSETS
 endif
 
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
