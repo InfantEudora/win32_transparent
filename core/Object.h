@@ -45,6 +45,7 @@ class Object{
 
     void SetScale(const vec3& newscale);
     void SetRotation(const quat& q);
+    void RotateBy(const quat& q);
     void SetPosition(const vec3& newpos,bool f_lookat = false);
     void SetLookAt(const vec3& newpos, vec3* optional_up = NULL);
     void UpdateDirections();

@@ -16,7 +16,7 @@ All code in this repository is supplied with the same copyright.
 
 It should kind of look like this:
 
-![screenshot](example_desktop.png)
+![screenshot](data/example_desktop.png)
 
 ### Folder structure
 `/core`         Contains all core files for this 'Engine'.

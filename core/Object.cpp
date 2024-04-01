@@ -71,6 +71,12 @@ void Object::SetRotation(const quat& q){
     state_physics.rotation = q;
 }
 
+//TODO: Test this function
+void Object::RotateBy(const quat& r){
+    quat nq = r * state_physics.rotation;
+    SetRotation(nq);
+}
+
 //Move to new position. This preserves rotation. When f_keep_lookat=true, the rotation will update to
 //look at the old location
 void Object::SetPosition(const vec3& newpos, bool f_keep_lookat){

@@ -188,17 +188,12 @@ void ApplicationGrid::RunLogic(){
         //If we move left/right, we rotate the camera around the origin.
         int dx = input->GetDelta(INPUT_MOUSE_X);
         int dy = input->GetDelta(INPUT_MOUSE_Y);
-        debug->Info("Mouse dY = %i\n",dy);
-
 
         vec3 p = camera->GetPosition();
         vec3 axis = camera->GetLeft();
 
         //Get the axis towards the camera.
-        quat qy(axis,-dy/50.0f);
-        //quat qx(vec3(0,1,0),-dx/50.0f);
-
-        quat q = qy;
+        quat q(axis,-dy/50.0f);
 
         //Rotate the camera position around the origin
         p = q * p;
@@ -210,7 +205,16 @@ void ApplicationGrid::RunLogic(){
         //up = vec3(0,1,0);
         camera->SetLookAt(vec3(),&up);
 
+        //Now we rotate around the Y-axis
         p = camera->GetPosition();
+        axis = vec3(0,1,0);
+        q.set_rotation(axis,-dx/50.0f);
+        p = q * p;
+        camera->SetPosition(p);
+        //The lookat should make the same rotation around the y axis
+        camera->RotateBy(q);
+
+
     }
 
     static float mouse_delta_sum = 0;
