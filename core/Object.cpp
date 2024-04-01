@@ -173,7 +173,7 @@ bool Object::PhysicsCompleted(){
     return !!state_physics_prev_completed;
 }
 
-vec3& Object::GetPosition(){
+vec3 Object::GetPosition(){
     return state_physics.position;
 }
 

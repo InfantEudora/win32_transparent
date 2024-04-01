@@ -4,17 +4,17 @@
 static Debugger *debug = new Debugger("OBJLoader", DEBUG_INFO);
 
 //Static function.
-Mesh* OBJLoader::ParseOBJFile(const char* filename){
+Mesh* OBJLoader::ParseOBJFile(const char* filename, std::vector<Material>*optional_mat_list_out){
     size_t size = 0;
     uint8_t* data = LoadFile(filename,&size);
     if (data){
-        return ParseOBJFileData(data,size,filename);
+        return ParseOBJFileData(data,size,filename,optional_mat_list_out);
     }
     return NULL;
 }
 
 //Static function. Filename is required so be can extract the base path from it.
-Mesh* OBJLoader::ParseOBJFileData(uint8_t* data, size_t size, const char* filename){
+Mesh* OBJLoader::ParseOBJFileData(uint8_t* data, size_t size, const char* filename, std::vector<Material>*optional_mat_list_out){
     StringView sv = {.count = size, .data = data};
 
     OBJLoader loader;
@@ -57,6 +57,9 @@ Mesh* OBJLoader::ParseOBJFileData(uint8_t* data, size_t size, const char* filena
     debug->Info("Object has %i faces, %i vertices.\n",
     loader.face_vertexindexlist.size(),loader.face_vertexlist.size());
 
+    if (optional_mat_list_out){
+        optional_mat_list_out->insert(optional_mat_list_out->end(),loader.materials.begin(),loader.materials.end());
+    }
     return loader.BuildMesh();
 }
 
@@ -201,7 +204,7 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                 debug->Ok("Found new material: [%s]\n",matname);
                 Material m;
                 m.name = matname;
-                m.glsl_material = new material_t;
+                m.glsl_material = {};
                 materials.push_back(m);
                 SwitchMaterialByName(matname);
             }else{
@@ -213,7 +216,7 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
             if (sscanf(line.c_str()+3,"%f %f %f",&f.x,&f.y,&f.z) == 3){
                 debug->Info(" diffuse color : %.2f %.2f %.2f\n",f.x,f.y,f.z);
                 if (current_material){
-                    current_material->glsl_material->color = vec4(f,1.0);
+                    current_material->glsl_material.color = vec4(f,1.0);
                 }else{
                     debug->Err("No current material while parsing diffuse value.\n");
                 }
@@ -224,7 +227,7 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
             if (sscanf(line.c_str()+2,"%f",&alpha) == 1){
                 debug->Info(" alpha value   : %.2f\n",alpha);
                 if (current_material){
-                    current_material->glsl_material->color.w = alpha;
+                    current_material->glsl_material.color.w = alpha;
                 }else{
                     debug->Err("No current material while parsing diffuse value.\n");
                 }

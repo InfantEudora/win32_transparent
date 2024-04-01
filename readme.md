@@ -30,12 +30,12 @@ It should kind of look like this:
 `/3rdparty/*`   Contains external libraries source code, either as an entire repo or single files.
 
 ### Doing:
-- [ ] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
+- [x] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
 - [x] Set a camera's initial position and lookat to something. It should have an up vector change.
 
 ### ToDo's
 - [ ] Share the texture across contexts?
-- [ ] Assign different materials to objects by storing their material index in a sperate VAO.
+- [x] Assign different materials to objects by storing their material index in a sperate VAO.
 - [ ] Make OBJ file not require UV to be present.
 - [ ] Scale window and framebuffers
 - [x] Attempt to put ImGui in and keep the crazy overlay going.
@@ -44,11 +44,11 @@ It should kind of look like this:
 - [ ] Since we want deferred rendering for SSAO, it will solve the ID selection problem.
 - [ ] Continue testing things on Intel IGPs
 - [ ] Some visual properties, like material etc. Are they updated on phsysics?
-- [ ] Different test scene's with different behaviours require an application, that ties all the logic together.
+- [x] Different test scene's with different behaviours require an application, that ties all the logic together.
 - [ ] Resize full screen and back to something small
-- [ ] Textures. Will bindless work on Intel? Should be nice.
-- [ ] Test a model imported from Blender with Materials in OBJ .mat file.
-- [ ] Use header stb lib to load png/jpg with/without Alpha.
+- [x] Textures. Will bindless work on Intel? Should be nice.
+- [x] Test a model imported from Blender with Materials in OBJ .mat file.
+- [x] Use header stb lib to load png/jpg with/without Alpha.
 - [ ] Figure out how to do sound?
 - [ ] Some kind of project structure, where different games/applications can exist and you can build one or more of them.
 - [ ] Maybe have some kind of test / example thing.

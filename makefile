@@ -7,8 +7,7 @@ FNOCONSOLE = -Wl,-subsystem,windows
 #This is a two stage process:
 ##First make with DUMP then with COMPILE
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
-COMPILE_BINARYASSETS = 1#Set when all assets need to be compiled into the application binary.
-
+COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
 
 CFLAGS = -Llibs/ -limgui -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections

@@ -24,6 +24,7 @@ void IsoTerrain::CreateTerrain(int w, int d){
             assetmanager->GetObjectFromAsset("grid_cell",c);
             c->SetPosition(vec3(x,0,z) + centre_offset);
             c->name = "IsoCell " + std::to_string(x) + "," + std::to_string(z);
+            c->material_slot[0] = 4;
             AttachChild(c);
         }
     }

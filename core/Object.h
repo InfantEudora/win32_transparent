@@ -78,7 +78,7 @@ class Object{
     static vec3 ref_left;
     static vec3 ref_forward;
 
-    vec3& GetPosition();
+    vec3 GetPosition();
     vec3 GetUp();       //Returns the local vector pointing up.
     vec3 GetForward();  //Returns the forward or normalized lookat direction
     vec3 GetLeft();     //Return the vector pointing left

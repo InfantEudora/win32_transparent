@@ -2,13 +2,11 @@
 #include "Debug.h"
 #include "OBJLoader.h"
 
-
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
 
 ApplicationGrid::ApplicationGrid():Application(){
     debug->Info("Created new application.\n");
 };
-
 
 //Function for rendering the frame to a window
 DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
@@ -67,10 +65,20 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //Test arrows to test all this quaternion madness.
     Object* arrows = new Object();
-    arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj"));
+    std::vector<Material>loaded_materials;
+    arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj",&loaded_materials));
     arrows->name = "Axis Arrows";
     app->selected_object = arrows;
     scene->renderer->objects.push_back(arrows);
+    //Add materials that were loaded
+    for (Material mat:loaded_materials){
+        scene->renderer->materials.push_back(mat.glsl_material);
+    }
+    //Manually assign materials
+    arrows->material_slot[0] = 0;
+    arrows->material_slot[1] = 1;
+    arrows->material_slot[2] = 2;
+    arrows->material_slot[3] = 3;
 
     app->main_scene->UpdatePhysics();
 
@@ -129,7 +137,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(1024,768,&Window::wcs.at(0));
+    main_window = Window::CreateNewLayeredWindow(1024,768,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -187,7 +195,10 @@ void ApplicationGrid::RunLogic(){
     Sleep(5);
 
     //Check if we selected a tile
-    objectid_t objid = input->GetHoveredObjectID();
+    objectid_t objid = OBJECTID_INVALID;
+    if (!ImGui::GetIO().WantCaptureMouse){
+        objid = input->GetHoveredObjectID();
+    }
 
     //Camera rotation moving
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
@@ -238,12 +249,13 @@ void ApplicationGrid::RunLogic(){
         if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == objid)){
             vec3 p = object->GetPosition();
             debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",objid,p.x,p.y,p.z);
-            object->material_slot[1] = 1;
+            //object->material_slot[1] = 1;
             selected_object = object;
         }else if (object->GetID() == objid){
-            object->material_slot[0] = 2;
+            //On hover
+            //object->material_slot[0] = 2;
         }else{
-            object->material_slot[0] = object->material_slot[1];
+            //object->material_slot[0] = object->material_slot[1];
         }
     }
 }
@@ -282,6 +294,15 @@ void ApplicationGrid::UpdateUI(){
             ImGui::Text(" num_references : %lu",mesh->num_references);
         }
 
+        if (ImGui::CollapsingHeader("Position")){
+            vec3 delta = {0,0,0};
+            ImGui::DragFloat3("Move Position", (float*)&delta, 0.01f, -1.0f, 1.0f);
+            object->MoveBy(delta);
+            ImGui::BeginDisabled();
+            vec3 pos = object->GetPosition();
+            ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
+            ImGui::EndDisabled();
+        }
         if (ImGui::CollapsingHeader("Rotation")){
             static int option = 0;
             ImGui::Text("Input By:");
@@ -322,6 +343,7 @@ void ApplicationGrid::UpdateUI(){
             ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,10);
             ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,10);
             ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,10);
+            ImGui::DragInt("Material Slot 3",&object->material_slot[3],1,-1,10);
         }
     }
 

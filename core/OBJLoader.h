@@ -22,8 +22,8 @@
 */
 class OBJLoader{
 public:
-    static Mesh* ParseOBJFile(const char* filename);
-    static Mesh* ParseOBJFileData(uint8_t* data, size_t size, const char* filename);
+    static Mesh* ParseOBJFile(const char* filename,std::vector<Material>*optional_mat_list_out=NULL);
+    static Mesh* ParseOBJFileData(uint8_t* data, size_t size, const char* filename, std::vector<Material>*optional_mat_list_out=NULL);
     bool ParseOBJLine(const char* line);
 
     void ParseOBJMatFile(const char* filename);
