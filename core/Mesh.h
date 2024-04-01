@@ -27,15 +27,15 @@ public:
     void GenerateUniqueID();
     meshid_t GetID();
 
-
     void LoadUnitCube();
     void SetMeshData(vertex* verts, int vertex_count);
 
     uint32_t num_vertices = 0;
+    int     num_materials = 0;
+    int     num_references = 0; //Or... maybe use shared_ptr?
 
     int32_t batch_index = -1;
     int32_t batch_num_instances = 0;
-
 private:
     std::vector<vertex>vertices;
     static meshid_t mesh_ids;   //Total amount of different meshes.

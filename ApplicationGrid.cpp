@@ -1,7 +1,7 @@
 #include "ApplicationGrid.h"
 #include "Debug.h"
 #include "OBJLoader.h"
-#include "IsoTerrain.h"
+
 
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
 
@@ -51,22 +51,28 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
     scene->renderer->objects.push_back(scene->camera);
 
+    //We make an assetmanager which we use to load/build all assets from:
+    app->assetmanager = new AssetManager();
+    Object* grid_cell = new Object();
+    grid_cell->SetMesh(OBJLoader::ParseOBJFile("isoterrain/data/tile_terrain.obj"));
+    app->assetmanager->AddNewAsset("grid_cell",grid_cell);
+    delete grid_cell;
+
+
     //We now generate a terrain, and load that in.
-    IsoTerrain* terrain = new IsoTerrain();
-    terrain->CreateTerrain(5,5);
-    scene->renderer->objects.push_back(terrain);
+    app->terrain = new IsoTerrain();
+    app->terrain->assetmanager = app->assetmanager;
+    app->terrain->CreateTerrain(5,5);
+    scene->renderer->objects.push_back(app->terrain);
 
     //Test arrows to test all this quaternion madness.
-    app->arrows = new Object();
-    app->arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj"));
-    scene->renderer->objects.push_back(app->arrows);
+    Object* arrows = new Object();
+    arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj"));
+    arrows->name = "Axis Arrows";
+    app->selected_object = arrows;
+    scene->renderer->objects.push_back(arrows);
 
     app->main_scene->UpdatePhysics();
-
-    for (Object* child:terrain->children){
-        vec3 p = child->GetPosition();
-        //debug->Info("Terrain Child ID, Pos: %3i,  %.2f %.2f %.2f\n",child->GetID(), p.x,p.y,p.z);
-    }
 
     //Create a material
     material_t m;
@@ -84,7 +90,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     m.texture_unit = 0;
     scene->renderer->materials.push_back(m);
 
-    Asset::DumpAssets();
+    BinaryAsset::DumpBinaryAssets();
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -233,6 +239,7 @@ void ApplicationGrid::RunLogic(){
             vec3 p = object->GetPosition();
             debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",objid,p.x,p.y,p.z);
             object->material_slot[1] = 1;
+            selected_object = object;
         }else if (object->GetID() == objid){
             object->material_slot[0] = 2;
         }else{
@@ -261,50 +268,63 @@ void ApplicationGrid::UpdateUI(){
         ImGui::EndDisabled();
     }
 
-    object = arrows;
+    object = selected_object;
 
-    //Material slots
-    if (ImGui::CollapsingHeader("Rotation")){
-        static int option = 0;
-        ImGui::Text("Input By:");
-        ImGui::RadioButton("Vector + Rotation", &option, 0); ImGui::SameLine();
-        ImGui::RadioButton("Target, Position, Up", &option, 1);
-        ImGui::Separator();
-        quat q;
-        if (option == 0){
-            static vec3 quatinp = {0,0,0};
-            ImGui::DragFloat3("Quat Input Vector", (float*)&quatinp, 0.01f, -1.0f, 1.0f);
-            static float quatroll = 0.0f;
-            ImGui::DragFloat("Quat Roll", (float*)&quatroll, 0.01f, -TYPE_PI, TYPE_PI);
-            ImGui::BeginDisabled();
-            vec3 quatn = quatinp;
-            quatn.normalize();
-            ImGui::DragFloat3("Quat Normalized Vector", (float*)&quatn, 0.01f, -1.0f, 1.0f);
-            q = quat(quatn,quatroll);
-            ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
-            ImGui::EndDisabled();
-        }else{
-            static vec3 target = {0,0,-1};
-            ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f);
-            static vec3 position = {0,0,0};
-            ImGui::DragFloat3("Position", (float*)&position, 0.01f, -5.0f, 5.0f);
-            static vec3 worldup = {0,1,0};
-            ImGui::DragFloat3("World Up", (float*)&worldup, 0.01f, -1.0f, 1.0f);
-            ImGui::BeginDisabled();
-            q = quat::getquat(target,position,worldup);
-            ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
-            ImGui::EndDisabled();
+    if (!object){
+        ImGui::Text("No Object Selected");
+    }else{
+        ImGui::Text("Selected Object: %s",object->name.c_str());
+        if (object->GetMesh() && ImGui::CollapsingHeader("Mesh")){
+            Mesh* mesh = object->GetMesh();
+            ImGui::Text(" ID             : %lu",mesh->GetID());
+            ImGui::Text(" num_vertices   : %lu",mesh->num_vertices);
+            ImGui::Text(" num_materials  : %lu",mesh->num_materials);
+            ImGui::Text(" num_references : %lu",mesh->num_references);
         }
-        object->SetRotation(q);
-    }
-    if (ImGui::CollapsingHeader("Material")){
-        ImGui::Text("Renderer Materials: %i",renderer->materials.size());
-        ImGui::Separator();
 
-        ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,10);
-        ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,10);
-        ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,10);
+        if (ImGui::CollapsingHeader("Rotation")){
+            static int option = 0;
+            ImGui::Text("Input By:");
+            ImGui::RadioButton("Vector + Rotation", &option, 0); ImGui::SameLine();
+            ImGui::RadioButton("Target, Position, Up", &option, 1);
+            ImGui::Separator();
+            quat q;
+            if (option == 0){
+                static vec3 quatinp = {0,0,0};
+                ImGui::DragFloat3("Quat Input Vector", (float*)&quatinp, 0.01f, -1.0f, 1.0f);
+                static float quatroll = 0.0f;
+                ImGui::DragFloat("Quat Roll", (float*)&quatroll, 0.01f, -TYPE_PI, TYPE_PI);
+                ImGui::BeginDisabled();
+                vec3 quatn = quatinp;
+                quatn.normalize();
+                ImGui::DragFloat3("Quat Normalized Vector", (float*)&quatn, 0.01f, -1.0f, 1.0f);
+                q = quat(quatn,quatroll);
+                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+            }else{
+                static vec3 target = {0,0,-1};
+                ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f);
+                static vec3 position = {0,0,0};
+                ImGui::DragFloat3("Position", (float*)&position, 0.01f, -5.0f, 5.0f);
+                static vec3 worldup = {0,1,0};
+                ImGui::DragFloat3("World Up", (float*)&worldup, 0.01f, -1.0f, 1.0f);
+                ImGui::BeginDisabled();
+                q = quat::getquat(target,position,worldup);
+                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+            }
+            object->SetRotation(q);
+        }
+        if (ImGui::CollapsingHeader("Material")){
+            ImGui::Text("Renderer Materials: %i",renderer->materials.size());
+            ImGui::Separator();
+
+            ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,10);
+            ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,10);
+            ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,10);
+        }
     }
+
     if (ImGui::CollapsingHeader("Performance")){
         ImGui::Text("Frame Rate   : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
         ImGui::Text("Physics Rate : %.2f TPS (%.2f ms)", 1000000.0f / tmr_physics->avg,tmr_physics->avg/1000.0f );

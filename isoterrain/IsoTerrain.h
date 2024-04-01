@@ -1,6 +1,7 @@
 #ifndef _ISO_TERRAIN_H_
 #define _ISO_TERRAIN_H_
 #include "IsoCell.h"
+#include "AssetManager.h"
 
 /*
     It's a square cell in a larger grid.
@@ -18,8 +19,9 @@ public:
     int cell_count = -1; //= width * depth
     std::vector<IsoCell*> cells;     //An array of width*depth cells
 
-    void CreateTerrain(int w, int d);
+    AssetManager* assetmanager = NULL;  //Used to load assets from file.
 
+    void CreateTerrain(int w, int d);
 };
 
 

@@ -149,7 +149,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     app->main_scene->shader = app->default_shader;
     app->main_scene->SetupShipExample();
 
-    Asset::DumpAssets();
+    BinaryAsset::DumpBinaryAssets();
 
     app->main_scene->UpdatePhysics();
 

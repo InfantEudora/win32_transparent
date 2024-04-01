@@ -2,7 +2,7 @@
 #define _APPLICATION_GRID_H_
 
 #include "Application.h"
-
+#include "IsoTerrain.h"
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
@@ -13,7 +13,8 @@ public:
     void Run(void) override;
     void RunLogic() override;
 
-    Object* arrows = NULL;
+    IsoTerrain* terrain = NULL;
+    Object* selected_object = NULL;
 
 private:
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);

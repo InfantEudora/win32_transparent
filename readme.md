@@ -5,6 +5,11 @@ The copyright is included in `copyright.md`
 
 All code in this repository is supplied with the same copyright.
 
+- It should be Unity-like, just with a load where your coffe is still hot when it's finally done.
+- Without an account.
+- Have the same amount of supplied content: Nothing.
+- Without the scripting.
+
 ### Changes
 - This builds on MinGW instead of VS2010 with the supplied makefile, and builds a relatively small executable.
 - Simple shader instead of fixed pipeline.
@@ -25,17 +30,17 @@ It should kind of look like this:
 `/3rdparty/*`   Contains external libraries source code, either as an entire repo or single files.
 
 ### Doing:
-
-Set a camera's initial position and lookat to something. It should have an up vector change.
+- [ ] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
+- [x] Set a camera's initial position and lookat to something. It should have an up vector change.
 
 ### ToDo's
-
 - [ ] Share the texture across contexts?
 - [ ] Assign different materials to objects by storing their material index in a sperate VAO.
+- [ ] Make OBJ file not require UV to be present.
 - [ ] Scale window and framebuffers
 - [x] Attempt to put ImGui in and keep the crazy overlay going.
 - [x] Compile ImGUI once to a library.
-- [ ] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
+- [x] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
 - [ ] Since we want deferred rendering for SSAO, it will solve the ID selection problem.
 - [ ] Continue testing things on Intel IGPs
 - [ ] Some visual properties, like material etc. Are they updated on phsysics?
@@ -49,7 +54,6 @@ Set a camera's initial position and lookat to something. It should have an up ve
 - [ ] Maybe have some kind of test / example thing.
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
 - [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array.
-- [ ] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
 
 ### Done's
 - [x] Multisampling to a seperate FBO

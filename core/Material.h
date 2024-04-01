@@ -19,6 +19,7 @@
 
 */
 //GLSL really wants things to be padded to 16 bytes
+//material_t matches layout in shader
 typedef struct {
     vec4 color;
     int texture_unit;   //The OpenGL texture unit the material is bound to
@@ -26,5 +27,12 @@ typedef struct {
     //Texture unit
     //Texture index within that unit
 }material_t;
+
+//We want to know more about the material that GLSL
+typedef struct{
+    material_t* glsl_material = NULL;
+    std::string name;
+    std::string diff_texture;
+}Material;
 
 #endif

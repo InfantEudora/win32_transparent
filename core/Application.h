@@ -8,6 +8,7 @@
 #include "Shader.h"
 #include "Scene.h"
 #include "PerfTimer.h"
+#include "AssetManager.h"
 
 /*
     The thing that ties everything together.
@@ -35,6 +36,7 @@ public:
     Renderer* renderer = NULL;
     Shader* default_shader = NULL;
     Scene* main_scene = NULL;
+    AssetManager* assetmanager = NULL;
 
     PerfTimer* tmr_physics = NULL;
 

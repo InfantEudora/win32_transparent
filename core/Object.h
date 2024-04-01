@@ -25,14 +25,20 @@ struct ObjectState{
 class Object{
     public:
     Object();
+    ~Object();
     void GenerateUniqueID();
 
     meshid_t GetMeshID();
     objectid_t GetID();
-    Mesh* GetMesh();
+
+    //Mesh
     void SetMesh(Mesh* mesh);
+    Mesh* GetMesh();
+    void DeleteMesh();
+
     void SetMeshBatchIndex(int32_t batch_index);
     int32_t GetMeshBatchIndex();
+
     bool WouldRender();
     void MarkForRender();
 

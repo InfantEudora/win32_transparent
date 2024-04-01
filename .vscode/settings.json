@@ -58,6 +58,11 @@
         "codecvt": "cpp",
         "iomanip": "cpp",
         "iostream": "cpp",
-        "list": "cpp"
+        "list": "cpp",
+        "charconv": "cpp",
+        "chrono": "cpp",
+        "format": "cpp",
+        "span": "cpp",
+        "variant": "cpp"
     }
 }

@@ -26,6 +26,7 @@ struct vec4{
 
 	vec4() : x(0), y(0), z(0), w(0) {}
     vec4(float x, float y, float z,float w) : x(x), y(y), z(z), w(w){}
+    vec4(const vec3& a, float w) : x(a.x), y(a.y), z(a.z), w(w){};
 
     void    print();
     void    set(float x, float y, float z, float w);

@@ -66,6 +66,7 @@ meshid_t Mesh::GetID(){
     return id;
 };
 
+//TODO: This might now be broken because materials.
 void Mesh::LoadUnitCube(){
     GenerateUniqueID();
     InitVBOVAO();

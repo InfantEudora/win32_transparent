@@ -5,14 +5,7 @@
 #include <vector>
 #include <crtdbg.h>
 
-#include "Application.h"
 #include "Debug.h"
-#include "Window.h"
-#include "Shader.h"
-#include "Renderer.h"
-#include "Scene.h"
-#include "Asset.h"
-#include "glad.h"
 
 //Would be the name of the application
 #include "ApplicationGrid.h"

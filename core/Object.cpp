@@ -14,6 +14,22 @@ Object::Object(){
     state_physics.rotation.identity();
 }
 
+Object::~Object(){
+    debug->Info("Destroyed Object %p\n",this);
+    DeleteMesh();
+}
+
+void Object::DeleteMesh(){
+    if (mesh){
+        debug->Info("DeleteMesh: num_references=%i\n",mesh->num_references);
+        mesh->num_references--;
+        if (mesh->num_references == 0){
+            delete mesh;
+        }
+    }
+    mesh = NULL;
+}
+
 void Object::GenerateUniqueID(){
     id = object_ids++;
 }
@@ -35,6 +51,7 @@ Mesh* Object::GetMesh(){
 
 void Object::SetMesh(Mesh* _mesh){
     mesh = _mesh;
+    mesh->num_references++;
 }
 
 int32_t Object::GetMeshBatchIndex(){
@@ -51,7 +68,6 @@ void Object::SetMeshBatchIndex(int32_t index){
     }
 }
 
-//TODO: Remove me. We need a quaternion to represent object orientation....?
 void Object::RotateAroundAxis(const vec3& target_axis,float by){
     RotateBy(quat(target_axis,by));
 }
@@ -62,7 +78,6 @@ void Object::SetRotation(const quat& q){
     state_physics.rotation = q;
 }
 
-//TODO: Test this function
 void Object::RotateBy(const quat& r){
     quat nq = r * state_physics.rotation;
     SetRotation(nq);
