@@ -36,7 +36,8 @@ typedef enum{
     INPUT_MOUSE_WHEEL,
     INPUT_CLICK_LEFT,
     INPUT_CLICK_MIDDLE,
-    INPUT_CLICK_RIGHT
+    INPUT_CLICK_RIGHT,
+    INPUT_SHIFT,
 }keycode_t;
 
 struct KeyState{
@@ -44,7 +45,8 @@ struct KeyState{
     bool                    f_was_released = false;
     int32_t                 value = 0;
     float                   fvalue = 0.0f;
-    std::atomic<int32_t>    delta = 0;          //Delta value this tick
+    std::atomic<int32_t>    delta = 0;          // Delta value this tick
+    int                     num_mappings = 1;   // Amount of keys that are mapped to this state.
     void                    Down();
     void                    Up();
 };

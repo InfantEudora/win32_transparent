@@ -178,43 +178,46 @@ void ApplicationGrid::RunLogic(){
     tmr_physics->Restart();
 
     //Testing. TODO: Make a slider with more accurate intervals than sleep.
-    Sleep(20);
+    Sleep(5);
 
     //Check if we selected a tile
     objectid_t objid = input->GetHoveredObjectID();
 
     //Camera rotation moving
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
-        //If we move left/right, we rotate the camera around the origin.
         int dx = input->GetDelta(INPUT_MOUSE_X);
         int dy = input->GetDelta(INPUT_MOUSE_Y);
+        if (input->IsKeyDown(INPUT_SHIFT)){
+            //Move the camera
+            camera->MoveSidewaysBy(-dx/100.0f);
+            camera->MoveUpBy(dy/100.0f);
+        }else{
+            //If we move left/right, we rotate the camera around the origin.
+            vec3 p = camera->GetPosition();
+            vec3 axis = camera->GetLeft();
 
-        vec3 p = camera->GetPosition();
-        vec3 axis = camera->GetLeft();
+            //Get the axis towards the camera.
+            quat q(axis,-dy/50.0f);
 
-        //Get the axis towards the camera.
-        quat q(axis,-dy/50.0f);
+            //Rotate the camera position around the origin
+            p = q * p;
+            //We update the position
+            camera->SetPosition(p);
 
-        //Rotate the camera position around the origin
-        p = q * p;
-        //We update the position
-        camera->SetPosition(p);
+            //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
+            vec3 up = camera->GetUp();
+            //up = vec3(0,1,0);
+            camera->SetLookAt(vec3(),&up);
 
-        //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
-        vec3 up = camera->GetUp();
-        //up = vec3(0,1,0);
-        camera->SetLookAt(vec3(),&up);
-
-        //Now we rotate around the Y-axis
-        p = camera->GetPosition();
-        axis = vec3(0,1,0);
-        q.set_rotation(axis,-dx/50.0f);
-        p = q * p;
-        camera->SetPosition(p);
-        //The lookat should make the same rotation around the y axis
-        camera->RotateBy(q);
-
-
+            //Now we rotate around the Y-axis
+            p = camera->GetPosition();
+            axis = vec3(0,1,0);
+            q.set_rotation(axis,-dx/50.0f);
+            p = q * p;
+            camera->SetPosition(p);
+            //The lookat should make the same rotation around the y axis
+            camera->RotateBy(q);
+        }
     }
 
     static float mouse_delta_sum = 0;
@@ -244,10 +247,18 @@ void ApplicationGrid::UpdateUI(){
     ImGui::Text("Behold, a grid of tiles.");
 
     Object* object = main_scene->camera;
-    static float roll = 0;
-    if (ImGui::DragFloat("Camera Roll",&roll,0.01,-1,1)){
-        object->RollBy(roll);
-        roll = 0;
+    if (ImGui::CollapsingHeader("Main Camera Controls")){
+        float roll = 0;
+        if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
+            object->RollBy(roll);
+        }
+
+        vec3 up = object->GetUp();
+        vec3 forward = object->GetForward();
+        ImGui::BeginDisabled();
+        ImGui::DragFloat3("Forward Vector", (float*)&forward, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
     }
 
     object = arrows;

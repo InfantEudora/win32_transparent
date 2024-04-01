@@ -52,17 +52,8 @@ void Object::SetMeshBatchIndex(int32_t index){
 }
 
 //TODO: Remove me. We need a quaternion to represent object orientation....?
-void Object::RotateAroundAxis(const vec3& target_axis,float by,bool f_lookat){
-    state_physics.f_was_transformed = true;
-
-    //We get the quaternion representing this rotation:
-    quat r;
-    r.set_rotation(target_axis,by);
-
-    //We multiply by the current object rotation
-    quat nq = r * state_physics.rotation;
-    state_physics.rotation = nq;
-    //state_physics.mat_rotation.set_rotation(target_axis,state_physics.rotation);
+void Object::RotateAroundAxis(const vec3& target_axis,float by){
+    RotateBy(quat(target_axis,by));
 }
 
 //Update objects rotation with supplied quaternion.
@@ -79,13 +70,10 @@ void Object::RotateBy(const quat& r){
 
 //Move to new position. This preserves rotation. When f_keep_lookat=true, the rotation will update to
 //look at the old location
-void Object::SetPosition(const vec3& newpos, bool f_keep_lookat){
+void Object::SetPosition(const vec3& newpos){
     state_physics.f_was_transformed = true;
     vec3 delta = state_physics.position - newpos;
     state_physics.position = newpos;
-    if (f_keep_lookat){
-        //SetLookat(getlookat - delta,NULL);
-    }
 }
 
 //Look at target from current position. Optional up can be supplied, otherwise will use ref_up.
@@ -110,9 +98,19 @@ void Object::MoveForwardBy(float delta){
     MoveBy(d);
 }
 
+void Object::MoveSidewaysBy(float delta){
+    vec3 d = GetLeft() * delta;
+    MoveBy(d);
+}
+
+void Object::MoveUpBy(float delta){
+    vec3 d = GetUp() * delta;
+    MoveBy(d);
+}
+
 //Rotate on forward axis
 void Object::RollBy(float by){
-    //RotateAroundAxis(forward,by);
+    RotateAroundAxis(GetForward(),by);
 }
 
 //The size of the object in 3 dimensions
@@ -161,7 +159,6 @@ bool Object::PhysicsCompleted(){
 }
 
 vec3& Object::GetPosition(){
-    //debug->Info("Get Position on %s. state_physics.f_was_transformed = %i\n",name.c_str(),state_physics.f_was_transformed);
     return state_physics.position;
 }
 

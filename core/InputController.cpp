@@ -14,7 +14,7 @@ void KeyState::Down(){
 }
 
 InputController::InputController(){
-    //Let's always map the mouse.
+    //Mouse mapping is handled different from keys, but are read in the same way once mapped.
     AddKeyMap(0,INPUT_MOUSE_X);
     AddKeyMap(0,INPUT_MOUSE_Y);
     AddKeyMap(0,INPUT_MOUSE_WHEEL);
@@ -32,14 +32,32 @@ InputController::InputController(){
     AddKeyMap(VK_LBUTTON,INPUT_CLICK_LEFT);
     AddKeyMap(VK_MBUTTON,INPUT_CLICK_MIDDLE);
     AddKeyMap(VK_RBUTTON,INPUT_CLICK_RIGHT);
+
+    //TODO: Make multiple mappings work by somehow orring the up/down together.
+    AddKeyMap(VK_LSHIFT,INPUT_SHIFT);
+    //AddKeyMap(VK_RSHIFT,INPUT_SHIFT);
 }
 
 KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
-    KeyMap m = {
-        .system_keycode = syskey,
-        .mapped_keycode = mapped,
-        .state = new KeyState()
-    };
+    bool new_mapping = true;
+    KeyMap* same_map = NULL;
+    for (KeyMap& map: keymap){
+        if (map.mapped_keycode == mapped){
+            //Alread have a mapping for it.
+            new_mapping = false;
+            same_map = &map;
+            break;
+        }
+    }
+    KeyMap m;
+    m.system_keycode = syskey;
+    m.mapped_keycode = mapped;
+    if (new_mapping){
+        m.state = new KeyState();
+    }else{
+        m.state = same_map->state;
+        same_map->state->num_mappings++;
+    }
     keymap.push_back(m);
     return &keymap.back();
 }

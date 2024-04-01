@@ -39,20 +39,23 @@ class Object{
     void UpdateTransformMatrix();
     fmat4& GetWorldTransformScaleMatrix();
 
+    //Modify postition
+    void SetPosition(const vec3& newpos);
     void MoveBy(const vec3& delta);
     void MoveForwardBy(float delta);
+    void MoveUpBy(float delta);
+    void MoveSidewaysBy(float delta);
+
+    //Modify size
+    void SetScale(const vec3& newscale);
+
+    //Modify rotation
+    void SetLookAt(const vec3& newpos, vec3* optional_up = NULL);
+    void SetRotation(const quat& q);
+    void RotateAroundAxis(const vec3& target_axis,float by);
+    void RotateBy(const quat& q);
     void RollBy(float by);
 
-    void SetScale(const vec3& newscale);
-    void SetRotation(const quat& q);
-    void RotateBy(const quat& q);
-    void SetPosition(const vec3& newpos,bool f_lookat = false);
-    void SetLookAt(const vec3& newpos, vec3* optional_up = NULL);
-    void UpdateDirections();
-
-    void RotateAroundAxis(const vec3& target_axis,float by, bool f_lookat = false);
-
-    vec3& GetPosition();
     bool IsHovered();
 
     void UpdateState(); //Called from render thread before rendering
@@ -69,6 +72,7 @@ class Object{
     static vec3 ref_left;
     static vec3 ref_forward;
 
+    vec3& GetPosition();
     vec3 GetUp();       //Returns the local vector pointing up.
     vec3 GetForward();  //Returns the forward or normalized lookat direction
     vec3 GetLeft();     //Return the vector pointing left
