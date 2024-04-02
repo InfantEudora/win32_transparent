@@ -34,6 +34,7 @@ It should kind of look like this:
 - [x] Set a camera's initial position and lookat to something. It should have an up vector change.
 
 ### ToDo's
+- [ ] eye_position setting is not working on AMD...?
 - [ ] Share the texture across contexts?
 - [x] Assign different materials to objects by storing their material index in a sperate VAO.
 - [ ] Make OBJ file not require UV to be present.

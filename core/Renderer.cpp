@@ -317,7 +317,8 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     if (shader && camera){
         shader->Use();
-        shader->Setvec3("eye_position",camera->GetPosition());
+        vec3 p = camera->GetPosition();
+        //shader->Setvec3("eye_position",p);
         shader->Setmat4("mat_worldcam",camera->mat_cam);
     }
 

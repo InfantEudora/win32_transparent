@@ -1,13 +1,13 @@
-#include "ApplicationUI.h"
+#include "ApplicationCANUI.h"
 #include "Debug.h"
 
-static Debugger *debug = new Debugger("ApplicationUI", DEBUG_ALL);
+static Debugger *debug = new Debugger("ApplicationCANUI", DEBUG_ALL);
 
-ApplicationUI::ApplicationUI():Application(){
+ApplicationCANUI::ApplicationCANUI():Application(){
     debug->Info("Created new application.\n");
 };
 
-void ApplicationUI::Run(void){
+void ApplicationCANUI::Run(void){
     int2 dimensions = GetDisplaySettings();
 
     //Create a main window
@@ -31,6 +31,10 @@ void ApplicationUI::Run(void){
     //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
     renderer->Init();
+
+    //Init can interface
+    pcan_reader = new PCANReader();
+    pcan_reader->name = "USB1";
 
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
@@ -61,13 +65,32 @@ void ApplicationUI::Run(void){
 }
 
 //Called before update physics
-void ApplicationUI::RunLogic(){
+void ApplicationCANUI::RunLogic(){
 
 }
 
-void ApplicationUI::UpdateUI(){
+void ApplicationCANUI::UpdateUI(){
     //UI
     ImGui::Begin("Hi there!");
-    ImGui::Text("This application only renders a window.");
+    ImGui::Text("A CAN UI Application");
+    if (ImGui::Button("Connect CAN-USB interface\n")){
+        pcan_reader->Connect();
+    }
+
+    ImVec4 red = ImVec4(1,0,0,1);
+    ImVec4 green = ImVec4(0,1,0,1);
+    ImVec4 yellow = ImVec4(1,1,0,1);
+
+    ImGui::SameLine();
+    if (!pcan_reader->connected){
+        ImGui::TextColored(red,"Disconnected");
+    }else{
+        ImGui::TextColored(green,"Connected");
+    }
     ImGui::End();
+
+    //InfyPower interface
+    ImGui::Begin("InfyPower Control Interface");
+    ImGui::End();
+
 }

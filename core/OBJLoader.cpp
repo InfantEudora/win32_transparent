@@ -1,7 +1,7 @@
 #include "OBJLoader.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("OBJLoader", DEBUG_INFO);
+static Debugger *debug = new Debugger("OBJLoader", DEBUG_TRACE);
 
 //Static function.
 Mesh* OBJLoader::ParseOBJFile(const char* filename, std::vector<Material>*optional_mat_list_out){
@@ -36,6 +36,10 @@ Mesh* OBJLoader::ParseOBJFileData(uint8_t* data, size_t size, const char* filena
 			    path.append("/");
             }
             path.append(mtlfilename);
+            if (path.back() == '\r'){
+                path.pop_back();
+                debug->Info("Thanks GIT! for randomly adding \\r's everywhere!\n");
+            }
             loader.ParseOBJMatFile(path.c_str());
             debug->Info(".mat file contains %i different materials\n",loader.materials.size());
             continue;

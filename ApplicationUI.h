@@ -1,5 +1,5 @@
-#ifndef _APPLICATION_GRID_H_
-#define _APPLICATION_GRID_H_
+#ifndef _APPLICATION_UI_H_
+#define _APPLICATION_UI_H_
 
 #include "Application.h"
 

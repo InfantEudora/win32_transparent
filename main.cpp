@@ -8,7 +8,7 @@
 #include "Debug.h"
 
 //Would be the name of the application
-#include "ApplicationGrid.h"
+#include "ApplicationCANUI.h"
 
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
@@ -18,7 +18,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug->Info("WinMain hInstance = %lu\n",hInstance);
     debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
 
-    Application* main_app = new ApplicationGrid();
+    Application* main_app = new ApplicationCANUI();
     main_app->Run();
     return main_app->Exit();
 }

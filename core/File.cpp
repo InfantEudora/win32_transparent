@@ -53,7 +53,7 @@ uint8_t* LoadFile(const char* filename, size_t* size){
 
 	file = fopen(filename, "rb");
 	if(!file){
-		debug->Fatal("LoadFile [%s] failed.\n",filename);
+		debug->Fatal("LoadFile failed to load: [%s]\n",filename);
 		return NULL;
 	}
 
