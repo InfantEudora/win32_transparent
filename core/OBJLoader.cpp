@@ -1,7 +1,7 @@
 #include "OBJLoader.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("OBJLoader", DEBUG_TRACE);
+static Debugger *debug = new Debugger("OBJLoader", DEBUG_INFO);
 
 //Static function.
 Mesh* OBJLoader::ParseOBJFile(const char* filename, std::vector<Material>*optional_mat_list_out){

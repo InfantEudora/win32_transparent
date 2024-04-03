@@ -67,36 +67,47 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     Object* arrows = new Object();
     std::vector<Material>loaded_materials;
     arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj",&loaded_materials));
+    scene->renderer->AddMaterials(loaded_materials);
+    arrows->PickMaterials(loaded_materials,scene->renderer->materials);
+
     arrows->name = "Axis Arrows";
+    arrows->SetPosition(vec3(-2,0,0));
     app->selected_object = arrows;
     scene->renderer->objects.push_back(arrows);
-    //Add materials that were loaded
-    for (Material mat:loaded_materials){
-        scene->renderer->materials.push_back(mat.glsl_material);
-    }
-    //Manually assign materials
-    arrows->material_slot[0] = 0;
-    arrows->material_slot[1] = 1;
-    arrows->material_slot[2] = 2;
-    arrows->material_slot[3] = 3;
+
+
+    loaded_materials.clear();
+    Object* cone = new Object();
+    cone->SetMesh(OBJLoader::ParseOBJFile("data/cone.obj",&loaded_materials));
+    cone->name = "Axis Cone";
+    scene->renderer->AddMaterials(loaded_materials);
+    cone->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->renderer->objects.push_back(cone);
+
 
     app->main_scene->UpdatePhysics();
 
     //Create a material
-    material_t m;
-    m.color = vec4(1,1,1,1);
-    m.texture_unit = 0;
-    scene->renderer->materials.push_back(m);
+    Material mat;
+    mat.glsl_material.color = vec4(1,1,1,1);
+    mat.glsl_material.texture_unit = 0;
+    mat.name = "Default Textured Material";
+    scene->renderer->AddMaterial(mat);
 
     //A material with a texture.
     Texture* texture = new Texture();
     texture->LoadFromFile("data/textures/test_texture_4096.png");
     glBindTextureUnit(0, texture->texture_id);
 
+    mat.glsl_material.color = vec4(1,0.2,0.2,0.9);
+    mat.name = "Colored Textured Material";
+    scene->renderer->AddMaterial(mat);
 
-    m.color = vec4(1,0.2,0.2,0.9);
-    m.texture_unit = 0;
-    scene->renderer->materials.push_back(m);
+    //Now we can assign materials to all the tiles.
+    int matindex = app->renderer->FindMaterialIndex("Default Textured Material");
+    for (IsoCell* cell:app->terrain->cells){
+        cell->material_slot[0] = matindex;
+    }
 
     BinaryAsset::DumpBinaryAssets();
 

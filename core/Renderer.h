@@ -55,8 +55,6 @@ class Renderer{
     void DrawObjects();
 
     void UpdateReadbackBuffer();
-    void UploadMaterials();
-    material_t* GetMaterial(int index);
     void RenderUniqueMeshes();
 
     void DeferredPass(Camera* camera);
@@ -74,6 +72,12 @@ class Renderer{
     void ResolveAA();
 
     static void SetVSync(bool enable);
+
+    void UploadMaterials();
+    Material* GetMaterial(int index);
+    int FindMaterialIndex(const char* name);
+    void AddMaterial(Material& newmat);
+    void AddMaterials(std::vector<Material>& list);
 
     //We'll have one multisampled framebuffer with a single color and depth buffer.
     //And a resolve buffer, where the mutisampling is resolved to.
@@ -109,8 +113,10 @@ class Renderer{
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
     std::vector<Object*>renderable_objects;         // All objects we will render this frame
     std::vector<std::vector<objectid_t>*>batch_ids; // An array of arrays containing the object id's per unique mesh, these form batches
-    std::vector<instancedata_t>instancedata;          // Object data per unique mesh instance
-    std::vector<material_t>materials;                 // List of all known materials
+    std::vector<instancedata_t>instancedata;        // Object data per unique mesh instance
+    std::vector<material_t>glsl_materials;          // List of all materials for direct upload to SSBO
+    std::vector<Material>materials;                 // List of all materials
+
     readback_buffer_t readbackbuffer;               //A single buffer for reading back data from shader
 
     std::vector<Object*>objects;                    //All known objects

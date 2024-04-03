@@ -211,23 +211,6 @@ void Renderer::RenderUniqueMeshes(){
     }
 }
 
-//This for now just uploads all the known materials to a SSBO... each frame.
-//Might only need to do this once.
-void Renderer::UploadMaterials(){
-    if (materials.size() > 0){
-        glInvalidateBufferData(materialdata_ssbo);
-        glNamedBufferData(materialdata_ssbo,materials.size()*sizeof(material_t) , &materials.at(0),GL_DYNAMIC_DRAW);
-    }
-}
-
-material_t* Renderer::GetMaterial(int index){
-    if ((index >= materials.size()) || (index < 0) || (materials.size() == 0)){
-        //Return an invalid material
-        return NULL;
-    }
-    return &materials.at(index);
-}
-
 //Set's the SSBO that will be used for reading back data
 void Renderer::UpdateReadbackBuffer(){
     readbackbuffer.data_out[0] = -1;
@@ -318,7 +301,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     if (shader && camera){
         shader->Use();
         vec3 p = camera->GetPosition();
-        //shader->Setvec3("eye_position",p);
+        shader->Setvec3("eye_position",p);
         shader->Setmat4("mat_worldcam",camera->mat_cam);
     }
 
@@ -558,4 +541,59 @@ void Renderer::SetVSync(bool enable){
             debug->Ok("VSync: Disabled\n");
         }
     }
+}
+
+//Add's materials to global list, omitting duplicates by name.
+void Renderer::AddMaterial(Material& newmat){
+    bool isnew = true;
+    for (Material& mat:materials){
+        if (newmat.name.compare(mat.name) == 0){
+            debug->Info("Already have material %s\n",mat.name.c_str());
+            isnew = false;
+            break;
+        }
+    }
+    if (isnew){
+        materials.push_back(newmat);
+    }
+}
+
+//Add's materials to global list, omitting duplicates by name.
+void Renderer::AddMaterials(std::vector<Material>& list){
+    for (Material& newmat:list){
+        AddMaterial(newmat);
+    }
+}
+
+//This for now just uploads all the known materials to a SSBO... each frame.
+//Might only need to do this once.
+void Renderer::UploadMaterials(){
+    glsl_materials.clear();
+    for (Material& mat:materials){
+        glsl_materials.push_back(mat.glsl_material);
+    }
+
+    if (glsl_materials.size() > 0){
+        glInvalidateBufferData(materialdata_ssbo);
+        glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_DYNAMIC_DRAW);
+    }
+}
+
+Material* Renderer::GetMaterial(int index){
+    if ((index >= materials.size()) || (index < 0) || (materials.size() == 0)){
+        //Return an invalid material
+        return NULL;
+    }
+    return &materials.at(index);
+}
+
+//Returns the material index in material list based on supplied name
+int Renderer::FindMaterialIndex(const char* name){
+    for (int index=0;index<materials.size();index++){
+        Material& mat = materials.at(index);
+        if (mat.name.compare(name) == 0){
+            return index;
+        }
+    }
+    return -1;
 }

@@ -30,6 +30,7 @@ void Scene::SetupShipExample(){
     renderer->objects.push_back(ship);
 
     //Create a material
+    /* TODO FIX or remove
     material_t m;
     m.color = vec4(0.8,0.8,1,1);
     m.texture_unit = -1;
@@ -42,6 +43,7 @@ void Scene::SetupShipExample(){
     m.color = vec4(0.8,0.0,0.1,1);
     m.texture_unit = -1;
     renderer->materials.push_back(m);
+    */
 
     debug->Info("We have %i materials\n",renderer->materials.size());
 }
@@ -107,6 +109,7 @@ void Scene::SetupExample(){
     glBindTextureUnit(1, tex_2->texture_id);
 
     //Create a material
+    /* TODO FIX or remove
     material_t m;
     m.color = vec4(0,1,0,1);
     m.texture_unit = -1;
@@ -119,6 +122,7 @@ void Scene::SetupExample(){
     m.color = vec4(0,0.5,1,1);
     m.texture_unit = 1;
     renderer->materials.push_back(m);
+    */
 
     debug->Info("We have %i materials\n",renderer->materials.size());
 

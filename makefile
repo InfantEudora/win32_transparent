@@ -43,11 +43,11 @@ else
 endif
 
 #Application
-SRCS += ApplicationCANUI.cpp
-SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces))
+#SRCS += ApplicationCANUI.cpp
+#SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces))
 
 #ApplicationGrid
-
+SRCS += ApplicationGrid.cpp
 
 ifeq ($(DUMP_BINARYASSETS), 1)
 CFLAGS += -DDUMP_BINARYASSETS

@@ -1,7 +1,7 @@
 #include "Object.h"
 #include "Debug.h"
 
-static Debugger* debug = new Debugger("Object",DEBUG_ALL);
+static Debugger* debug = new Debugger("Object",DEBUG_INFO);
 
 objectid_t Object::object_ids = 0;
 vec3 Object::ref_up = vec3(0,1,0);
@@ -246,17 +246,17 @@ void Object::GetAllSubObjects(std::vector<Object*>*objects){
 }
 
 bool Object::AttachChild(Object* newchild){
-    debug->Info("Attaching child %p\n",newchild);
+    debug->Trace("Attaching child %p\n",newchild);
     if (!newchild){
         debug->Err("Unable to attach NULL as child.\n");
         return false;
     }
-    debug->Info("Attaching child newchild->parent %p\n",newchild->parent);
+    debug->Trace("Attaching child newchild->parent %p\n",newchild->parent);
     //If the child had a parent before, detach it.
     if (newchild->parent){
         newchild->parent->DetachChild(newchild);
     }
-    debug->Info("Attaching child children.size()=%i\n",children.size());
+    debug->Trace("Attaching child children.size()=%i\n",children.size());
     //newchild->child_index = children.size();
     children.push_back(newchild);
     newchild->parent = this;
@@ -264,22 +264,36 @@ bool Object::AttachChild(Object* newchild){
     //Has the benefit of auto rendering if you add siblings
     //Or we add them here to objrenderer, where we need to also seperately delete them
     //We'll do the tree
-    debug->Ok("Done Attaching child. children.size()=%i\n",children.size());
+    debug->Trace("Done Attaching child. children.size()=%i\n",children.size());
     return true;
 }
 
 //Removes child from array.
 void Object::DetachChild(Object* targetchild){
-    debug->Info("Child already has a parent, detaching\n");
+    debug->Trace("Child already has a parent, detaching\n");
 
     std::list<Object*>::iterator it;
-    for (it = children.begin();it != children.end();it++) {
-
+    for (it = children.begin();it != children.end();it++){
         if (*it == targetchild) {
             it = children.erase(it);
-            debug->Ok("Detached child\n");
+            debug->Trace("Detached child\n");
             return;
         }
     }
     debug->Fatal("Unable to detach child object id=%i from parent. %p from %p\n",targetchild->id, this, parent);
+}
+
+//Find materials from list in global list, and assign them to the material slots as they are ordered in the list
+void Object::PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list){
+    for (int index=0;index<min((size_t)NUM_MATERIAL_SLOTS,list.size());index++){
+        Material& mat = list.at(index);
+        for (int global_index=0;global_index<global_list.size();global_index++){
+            Material& global_mat = global_list.at(global_index);
+            if (mat.name.compare(global_mat.name) == 0){
+                material_slot[index] = global_index;
+                debug->Info("Picking material %s %i -> %i\n",mat.name.c_str(),index,global_index);
+                break;
+            }
+        }
+    }
 }
