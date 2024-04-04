@@ -84,6 +84,16 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     cone->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->renderer->objects.push_back(cone);
 
+    //A test thing with 4 new textures that should auto load and display:
+    loaded_materials.clear();
+    Object* testcube  = new Object();
+    testcube->SetMesh(OBJLoader::ParseOBJFile("data/test_cube.obj",&loaded_materials));
+    testcube->name = "Test Cube";
+    testcube->SetPosition(vec3(0,0.5,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    testcube->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->renderer->objects.push_back(testcube);
+
 
     app->main_scene->UpdatePhysics();
 
@@ -93,11 +103,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     mat.glsl_material.texture_unit = 0;
     mat.name = "Default Textured Material";
     scene->renderer->AddMaterial(mat);
-
-    //A material with a texture.
-    Texture* texture = new Texture();
-    texture->LoadFromFile("data/textures/test_texture_4096.png");
-    glBindTextureUnit(0, texture->texture_id);
+    scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
 
     mat.glsl_material.color = vec4(1,0.2,0.2,0.9);
     mat.name = "Colored Textured Material";
@@ -148,7 +154,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewLayeredWindow(1024,768,&Window::wcs.at(0));
+    main_window = Window::CreateNewLayeredWindow(1536,768,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }

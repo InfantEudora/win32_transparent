@@ -597,3 +597,12 @@ int Renderer::FindMaterialIndex(const char* name){
     }
     return -1;
 }
+
+//Load a texture from file, and returns the OpenGL handle/id-thing
+Texture* Renderer::LoadTexture(const char* filename){
+    //A material with a texture.
+    Texture* texture = new Texture();
+    texture->LoadFromFile("data/textures/test_texture_4096.png");
+    glBindTextureUnit(0, texture->texture_id);
+    return texture;
+}

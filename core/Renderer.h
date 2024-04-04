@@ -79,6 +79,8 @@ class Renderer{
     void AddMaterial(Material& newmat);
     void AddMaterials(std::vector<Material>& list);
 
+    Texture* LoadTexture(const char* filename);
+
     //We'll have one multisampled framebuffer with a single color and depth buffer.
     //And a resolve buffer, where the mutisampling is resolved to.
     GLuint msaa_fbo_id = -1; //Main FBO consisting of:
@@ -116,6 +118,7 @@ class Renderer{
     std::vector<instancedata_t>instancedata;        // Object data per unique mesh instance
     std::vector<material_t>glsl_materials;          // List of all materials for direct upload to SSBO
     std::vector<Material>materials;                 // List of all materials
+    std::vector<Texture*>textures;                   // List of all textures
 
     readback_buffer_t readbackbuffer;               //A single buffer for reading back data from shader
 

@@ -5,7 +5,7 @@
 #include <string>
 #include "glad.h"
 #include "type_vec4.h"
-
+#include "Texture.h"
 /*
     Material should be something the shaders can access and modify.
     Each mesh will have an material id associated per vertex.
@@ -32,7 +32,7 @@ typedef struct {
 typedef struct{
     material_t glsl_material;
     std::string name;
-    std::string diff_texture;
+    Texture* diff_texture = NULL;   //Optional diffuse texture
 }Material;
 
 #endif

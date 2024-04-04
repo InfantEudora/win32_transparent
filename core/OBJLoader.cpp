@@ -214,6 +214,19 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
             }else{
                 debug->Warn(".mat file contains duplicate material names: [%s]\n",matname);
             }
+        }else if (line.find("map_Kd") != std::string::npos){
+            char* diff_name = (char*)line.c_str()+7;
+		    debug->Trace("Found diffuse texture: %s\n",diff_name);
+            if (current_material){
+                std::string whole_path = "data/" + std::string(diff_name);
+                current_material->diff_texture = new Texture();
+                current_material->diff_texture->name = whole_path;
+                current_material->diff_texture->LoadFromFile(whole_path.c_str());
+
+                //TODO: Load the texture...
+            }else{
+                debug->Err("No current material while parsing diffuse value.\n");
+            }
         }else if (line.find("Kd") != std::string::npos){
             debug->Trace("Found diffuse value: %s\n",line.c_str()+3);
             vec3 f;
@@ -235,15 +248,6 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                 }else{
                     debug->Err("No current material while parsing diffuse value.\n");
                 }
-            }
-        }else if (line.find("map_Kd") != std::string::npos){
-            char* diff_name = (char*)line.c_str()+7;
-		    debug->Trace("Found diffuse texture: %s\n",diff_name);
-            if (current_material){
-                current_material->diff_texture = diff_name;
-                //TODO: Load the texture...
-            }else{
-                debug->Err("No current material while parsing diffuse value.\n");
             }
         }
     }

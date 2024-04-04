@@ -32,7 +32,8 @@ It should kind of look like this:
 ### Doing:
 - [x] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
 - [x] Set a camera's initial position and lookat to something. It should have an up vector change.
-- [ ] Automatically merge different materials based on name. And auto assign to an object on mesh load from OBJ.
+- [x] Automatically merge different materials based on name. And auto assign to an object on mesh load from OBJ.
+- [ ] Auto load texture data from .mat file.
 
 ### ToDo's
 - [ ] eye_position setting is not working on AMD...?

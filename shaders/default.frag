@@ -20,7 +20,7 @@ layout (location = 4)  flat in int vobjid;      //ObjectID from vertex shader
 
 //We force the two texture to be bound to GL_TEXTURE0+0
 //It's set with glBindTextureUnit
-layout (binding = 0) uniform sampler2D material_texture[2];   //Input texture
+layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
 
 struct Material{
 	vec4 color;
@@ -118,6 +118,8 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     // add to outgoing radiance Lo
     float NdotL = max(dot(N, L), 0.0);
     Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+    //Ambient
+    Lo += 0.10 * albedo;
     return Lo;
 }
 
@@ -133,8 +135,7 @@ vec4 CalcPBRLighting(){
     vec4 final;
 
     vec3 light = CalcDirectionalPBRLight(vec3(-10,10,10),vec3(1,1,1),5.0);
-    vec3 ambient = vec3(0.05);
-    light += ambient;
+
     float alpha = GetTransparency();
     final = vec4(light,alpha);
 
