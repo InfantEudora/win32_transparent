@@ -1,4 +1,4 @@
-#version 430 core
+#version 460 core
 //In version 330 core we only have textures or uniform arrays as an arbitrary data input.
 
 //Multiple of 4 for padding
@@ -21,11 +21,9 @@ struct InstanceData{
 
 //A material index comes in from a vertex, which matches a material specified in the OBJ file.
 //This matches our material slot, which looks up the global index.
-
 layout (std430, binding = 0) buffer InstanceDataBuffer{
 	InstanceData instance_data[];
 };
-
 
 //Output
 layout (location = 0) out vec3 vposition; //Vertex position in world space, used for lighting

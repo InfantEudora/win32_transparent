@@ -52,7 +52,14 @@ void Texture::LoadFromFile(const char* filename){
     }else{
         format = GL_RGB;
     }
-    debug->Info("Uploading data\n");
+
     glTextureSubImage2D(texture_id,0,0,0,w,h,format,GL_UNSIGNED_BYTE,img);
     glGenerateTextureMipmap(texture_id);
+
+    texture_handle = glGetTextureHandleARB(texture_id);
+    if (texture_handle == 0){
+        debug->Fatal("Unable to get texture handle from texture ID.\n");
+    }
+    debug->Info("Uploading data. Texture Handle: %llu\n",texture_handle);
+    glMakeTextureHandleResidentARB(texture_handle);
 }

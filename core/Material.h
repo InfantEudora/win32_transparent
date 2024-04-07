@@ -22,10 +22,10 @@
 //material_t matches layout in shader
 typedef struct {
     vec4 color = {0,1,1,1};
-    int texture_unit = -1;   //The OpenGL texture unit the material is bound to
+    int texture_unit = -1;       // The OpenGL texture unit the material is bound to
     int pad[3];
-    //Texture unit
-    //Texture index within that unit
+    uint64_t texture_handle = 0; // The texture handle for OpenGL Bindless Textures
+    int pad2[2];
 }material_t;
 
 //We want to know more about the material that GLSL

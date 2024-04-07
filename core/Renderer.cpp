@@ -430,6 +430,15 @@ bool Renderer::InitFBO(){
 
     SetNumAASamples(16);
 
+    //Get some info
+    int r = 0;
+
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &r);
+    debug->Info("GL_MAX_TEXTURE_SIZE = %i\n",r);
+
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &r);
+    debug->Info("GL_MAX_TEXTURE_IMAGE_UNITS = %i\n",r);
+
     //Setup buffers:
     //Mutisampled color 16bit float
     glNamedRenderbufferStorageMultisample(color_rbo_id, aa_samples, GL_RGBA16F, width, height);

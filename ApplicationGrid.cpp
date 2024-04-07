@@ -102,8 +102,11 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     mat.glsl_material.color = vec4(1,1,1,1);
     mat.glsl_material.texture_unit = 0;
     mat.name = "Default Textured Material";
+    Texture* tex = scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
+    mat.glsl_material.texture_handle = tex->texture_handle;
     scene->renderer->AddMaterial(mat);
-    scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
+
+
 
     mat.glsl_material.color = vec4(1,0.2,0.2,0.9);
     mat.name = "Colored Textured Material";
@@ -154,7 +157,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewLayeredWindow(1536,768,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1536,768,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }

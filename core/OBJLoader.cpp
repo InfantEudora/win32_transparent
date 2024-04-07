@@ -222,6 +222,11 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                 current_material->diff_texture = new Texture();
                 current_material->diff_texture->name = whole_path;
                 current_material->diff_texture->LoadFromFile(whole_path.c_str());
+                if (current_material->diff_texture){
+                    current_material->glsl_material.texture_unit = 0;
+                    current_material->glsl_material.texture_handle = current_material->diff_texture->texture_handle;
+                }
+
 
                 //TODO: Load the texture...
             }else{

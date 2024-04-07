@@ -13,7 +13,6 @@ PFNWGLGETPIXELFORMATATTRIBIVARBPROC wglGetPixelFormatAttribivARB = NULL;
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
 
-
 PFNGLCREATEFRAMEBUFFERSPROC glCreateFramebuffers;
 PFNGLCREATERENDERBUFFERSPROC glCreateRenderbuffers;
 PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus = NULL;
@@ -72,6 +71,10 @@ PFNGLBINDTEXTUREUNITPROC glBindTextureUnit = NULL;
 PFNGLBINDIMAGETEXTUREPROC glBindImageTexture = NULL;
 PFNGLGENERATETEXTUREMIPMAPPROC glGenerateTextureMipmap = NULL;
 PFNGLMEMORYBARRIERPROC glMemoryBarrier = NULL;
+
+PFNGLGETTEXTUREHANDLEARBPROC glGetTextureHandleARB = NULL;
+PFNGLMAKETEXTUREHANDLERESIDENTARBPROC glMakeTextureHandleResidentARB = NULL;
+PFNGLMAKETEXTUREHANDLENONRESIDENTARBPROC glMakeTextureHandleNonResidentARB = NULL;
 
 PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = NULL;
 PFNGLUNIFORM1IPROC glUniform1i = NULL;
@@ -157,6 +160,10 @@ bool InitGLExtensions(void){
     glBindImageTexture = (PFNGLBINDIMAGETEXTUREPROC)wglGetProcAddress("glBindImageTexture");
     glGenerateTextureMipmap = (PFNGLGENERATETEXTUREMIPMAPPROC)wglGetProcAddress("glGenerateTextureMipmap");
     glMemoryBarrier = (PFNGLMEMORYBARRIERPROC)wglGetProcAddress("glMemoryBarrier");
+
+    glGetTextureHandleARB = (PFNGLGETTEXTUREHANDLEARBPROC)wglGetProcAddress("glGetTextureHandleARB");
+    glMakeTextureHandleResidentARB = (PFNGLMAKETEXTUREHANDLERESIDENTARBPROC)wglGetProcAddress("glMakeTextureHandleResidentARB");
+    glMakeTextureHandleNonResidentARB = (PFNGLMAKETEXTUREHANDLENONRESIDENTARBPROC)wglGetProcAddress("glMakeTextureHandleNonResidentARB");
 
     glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
     glUniform1i = (PFNGLUNIFORM1IPROC)wglGetProcAddress("glUniform1i");

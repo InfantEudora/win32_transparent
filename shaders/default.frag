@@ -1,4 +1,6 @@
-#version 430 core
+#version 460 core
+
+#extension GL_ARB_bindless_texture : require
 
 //We get info from the deferred stage. When the fragment has full MSAA coverage, it's in the GBUFFEr.
 //Else, it's in a sperate buffer and we have to run code here. The edges cannot be looked up in the gbuffer.
@@ -18,16 +20,15 @@ layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
 layout (location = 3)  flat in int vmatindex;   //Material index
 layout (location = 4)  flat in int vobjid;      //ObjectID from vertex shader
 
-//We force the two texture to be bound to GL_TEXTURE0+0
-//It's set with glBindTextureUnit
-layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
-
 struct Material{
 	vec4 color;
     int texture_unit;
     int pad1;
     int pad2;
     int pad3;
+    sampler2D texture_handle;
+    int pad4;
+    int pad5;
 };
 
 #define PI 	3.14159265359
@@ -82,7 +83,10 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 
     vec3 albedo;
     if (m.texture_unit >= 0){
-        albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
+        //albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
+
+        albedo = texture(m.texture_handle,vuv).xyz;// * m.color.xyz;
+        //albedo = m.color.xyz;
     }else{
         albedo = m.color.xyz;
     }
@@ -126,7 +130,8 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 float GetTransparency(){
     Material m = materials[vmatindex];
     if (m.texture_unit >= 0){
-        return texture(material_texture[m.texture_unit], vuv).w;
+        return texture(m.texture_handle,vuv).w;
+        //return texture(material_texture[m.texture_unit], vuv).w;
     }
     return m.color.w;
 }

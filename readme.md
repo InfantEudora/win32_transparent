@@ -56,7 +56,7 @@ It should kind of look like this:
 - [ ] Some kind of project structure, where different games/applications can exist and you can build one or more of them.
 - [ ] Maybe have some kind of test / example thing.
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
-- [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array.
+- [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array. https://ktstephano.github.io/rendering/opengl/bindless
 
 ### Done's
 - [x] Multisampling to a seperate FBO
