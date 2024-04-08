@@ -75,15 +75,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->selected_object = arrows;
     scene->renderer->objects.push_back(arrows);
 
-
-    loaded_materials.clear();
-    Object* cone = new Object();
-    cone->SetMesh(OBJLoader::ParseOBJFile("data/cone.obj",&loaded_materials));
-    cone->name = "Axis Cone";
-    scene->renderer->AddMaterials(loaded_materials);
-    cone->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->renderer->objects.push_back(cone);
-
     //A test thing with 4 new textures that should auto load and display:
     loaded_materials.clear();
     Object* testcube  = new Object();
@@ -94,6 +85,24 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     testcube->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->renderer->objects.push_back(testcube);
 
+    loaded_materials.clear();
+    Object* tree  = new Object();
+    tree->SetMesh(OBJLoader::ParseOBJFile("data/tree_001.obj",&loaded_materials));
+    tree->name = "Tree 001";
+    tree->SetPosition(vec3(0.5,0,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    tree->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->renderer->objects.push_back(tree);
+
+    loaded_materials.clear();
+    Object* wall  = new Object();
+    wall->SetMesh(OBJLoader::ParseOBJFile("data/wall_segment.obj",&loaded_materials));
+    wall->name = "Wall 001";
+    wall->SetPosition(vec3(0.5,0,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    wall->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->renderer->objects.push_back(wall);
+
 
     app->main_scene->UpdatePhysics();
 
@@ -103,7 +112,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     mat.glsl_material.texture_unit = 0;
     mat.name = "Default Textured Material";
     Texture* tex = scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
-    mat.glsl_material.texture_handle = tex->texture_handle;
+    mat.glsl_material.handle_diffuse = tex->texture_handle;
     scene->renderer->AddMaterial(mat);
 
 

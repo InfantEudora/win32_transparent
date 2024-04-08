@@ -24,8 +24,8 @@ typedef struct {
     vec4 color = {0,1,1,1};
     int texture_unit = -1;       // The OpenGL texture unit the material is bound to
     int pad[3];
-    uint64_t texture_handle = 0; // The texture handle for OpenGL Bindless Textures
-    int pad2[2];
+    uint64_t handle_diffuse = 0; // The texture handle for OpenGL Bindless Textures
+    uint64_t handle_normal = 0; // The texture handle for OpenGL Bindless Textures
 }material_t;
 
 //We want to know more about the material that GLSL

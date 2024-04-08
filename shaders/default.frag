@@ -26,9 +26,8 @@ struct Material{
     int pad1;
     int pad2;
     int pad3;
-    sampler2D texture_handle;
-    int pad4;
-    int pad5;
+    sampler2D handle_diffuse;
+    sampler2D handle_normal;
 };
 
 #define PI 	3.14159265359
@@ -85,7 +84,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     if (m.texture_unit >= 0){
         //albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
 
-        albedo = texture(m.texture_handle,vuv).xyz;// * m.color.xyz;
+        albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
         //albedo = m.color.xyz;
     }else{
         albedo = m.color.xyz;
@@ -130,7 +129,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 float GetTransparency(){
     Material m = materials[vmatindex];
     if (m.texture_unit >= 0){
-        return texture(m.texture_handle,vuv).w;
+        return texture(m.handle_diffuse,vuv).w;
         //return texture(material_texture[m.texture_unit], vuv).w;
     }
     return m.color.w;
