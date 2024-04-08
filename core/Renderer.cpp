@@ -11,9 +11,8 @@ Renderer::Renderer(int w, int h){
 void Renderer::SetState(){
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
-    glDisable(GL_CULL_FACE);
-    //glEnable(GL_CULL_FACE);
-    //glCullFace(GL_FRONT);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
 
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_BLEND);
@@ -210,6 +209,10 @@ void Renderer::RenderUniqueMeshes(){
         mesh->RenderInstances(mesh->batch_num_instances);
         mesh->batch_num_instances = 0;
     }
+}
+
+void Renderer::RenderDebugLines(){
+
 }
 
 //Set's the SSBO that will be used for reading back data

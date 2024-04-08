@@ -8,7 +8,9 @@
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec2 uv;
-layout (location = 3) in int matindex;
+layout (location = 3) in vec3 tangent;
+layout (location = 4) in int matindex;
+
 
 struct InstanceData{
 	mat4 mat_transformscale;
@@ -29,8 +31,9 @@ layout (std430, binding = 0) buffer InstanceDataBuffer{
 layout (location = 0) out vec3 vposition; //Vertex position in world space, used for lighting
 layout (location = 1) out vec3 vnormal;	//Normals
 layout (location = 2) out vec2 vuv;		//Texture UV coordinates
-layout (location = 3) flat out int vmatindex;	//Material index
-layout (location = 4) flat out int vobjid;	//gl_InstanceID
+layout (location = 3) out vec3 vtangent;	//For normalmapping
+layout (location = 4) flat out int vmatindex;	//Material index
+layout (location = 5) flat out int vobjid;	//gl_InstanceID
 
 //Matrix for world camera.
 layout(location = 0) uniform mat4 mat_worldcam = mat4(
@@ -57,9 +60,13 @@ void main(){
 
 	vnormal = (mat_rotate * normal);
 
+	//Calculated the TBN matrix for normal mapping..
+	//TODO: Maybe this can be done in a Geometry Shader.
+
 	vmatindex =  instance_data[gl_InstanceID].material_slot[matindex];
 
 	vuv = uv;
+	vtangent = mat_rotate * tangent;
 
 	vobjid = instance_data[gl_InstanceID].objectid;
 

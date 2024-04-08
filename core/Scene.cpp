@@ -49,9 +49,10 @@ void Scene::SetupShipExample(){
 }
 
 void Scene::SetupExample(){
+    //TODO Fix clean
     //A single mesh
-    Mesh* cube_mesh = new Mesh();
-    cube_mesh->LoadUnitCube();
+    //Mesh* cube_mesh = new Mesh();
+    //cube_mesh->LoadUnitCube();
 
     Mesh* sphere_mesh = OBJLoader::ParseOBJFile("sphere.obj");
     //Mesh* char_mesh = OBJLoader::ParseOBJFile("chara.obj");
@@ -59,7 +60,7 @@ void Scene::SetupExample(){
     //Make a bunch of objects
     for (int i = 0;i<5;i++){
         cube = new Object();
-        cube->SetMesh(cube_mesh);
+        //cube->SetMesh(cube_mesh);
         renderer->objects.push_back(cube);
         cube->SetPosition(vec3(0.5,0.5,0.0));
         cube->material_slot[0] = i%2;

@@ -10,4 +10,4 @@ Ni 1.450000
 d 1.000000
 illum 3
 map_Kd textures/brickwall.jpg
-map_Bump -bm 2.000000 textures/brickwall_normal.jpg
+map_Bump -bm 1.000000 textures/brickwall_normal.jpg

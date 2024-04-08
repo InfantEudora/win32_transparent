@@ -17,13 +17,14 @@ layout (location = 0) out vec4 color;
 layout (location = 0)  in vec3 vposition;       //Vertex position in world space, now fragment position in worldspace.
 layout (location = 1)  in vec3 vnormal;         //Vertex normals
 layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
-layout (location = 3)  flat in int vmatindex;   //Material index
-layout (location = 4)  flat in int vobjid;      //ObjectID from vertex shader
+layout (location = 3)  in vec3 vtangent;        //Tangent to normals
+layout (location = 4)  flat in int vmatindex;   //Material index
+layout (location = 5)  flat in int vobjid;      //ObjectID from vertex shader
 
 struct Material{
 	vec4 color;
-    int texture_unit;
-    int pad1;
+    int diffuse_texture;
+    int normal_texture;
     int pad2;
     int pad3;
     sampler2D handle_diffuse;
@@ -76,22 +77,48 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0){
     return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
+vec3 GetNormalMapNormal(){
+    vec3 normal = texture(materials[vmatindex].handle_normal,vuv).rgb;
+
+    normal = (2.0 * normal) - 1.0;
+    return normal;
+}
+
 //Returns the light intensity from a single directional light
 vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     Material m = materials[vmatindex];
 
     vec3 albedo;
-    if (m.texture_unit >= 0){
+    if (m.diffuse_texture >= 0){
         //albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
-
         albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
+        //albedo = texture(m.handle_normal,vuv).xyz;// * m.color.xyz;
         //albedo = m.color.xyz;
     }else{
         albedo = m.color.xyz;
     }
 
-    vec3 N = vnormal;
-    vec3 V = normalize(eye_position - vposition);
+    vec3 N;
+    vec3 V;
+    vec3 L;
+    if (m.normal_texture >= 0){
+        vec3 T = vtangent;
+        vec3 B = normalize(cross(vnormal, T));
+        mat3 TBN = mat3(T, B, vnormal);
+
+        N = GetNormalMapNormal();
+        N = normalize(TBN * N);
+
+        mat3 iTBN = transpose(TBN);
+
+        V = normalize(iTBN * (eye_position - vposition));
+        L = normalize(iTBN * (lightpos - vposition));
+
+    }else{
+        N = vnormal;
+        V = normalize(eye_position - vposition);
+        L = normalize(lightpos - vposition);
+    }
 
     vec3 F0 = vec3(0.04); //Fresnell factor
     F0 = mix(F0, albedo, metallic);
@@ -100,7 +127,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     vec3 Lo = vec3(0.0);
 
     // calculate per-light radiance
-    vec3 L = normalize(lightpos);
+    //vec3 L = normalize(lightpos - vposition);
     vec3 H = normalize(V + L);
 
     vec3 radiance     = color * brightness;
@@ -128,7 +155,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 
 float GetTransparency(){
     Material m = materials[vmatindex];
-    if (m.texture_unit >= 0){
+    if (m.diffuse_texture >= 0){
         return texture(m.handle_diffuse,vuv).w;
         //return texture(material_texture[m.texture_unit], vuv).w;
     }

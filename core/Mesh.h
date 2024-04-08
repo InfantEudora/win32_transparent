@@ -9,7 +9,8 @@ class Mesh;
 #define ATTRIB_VERTEX   0
 #define ATTRIB_NORMAL   1
 #define ATTRIB_UVCOORD  2
-#define ATTRIB_MATINDEX 3
+#define ATTRIB_TANGENT  3
+#define ATTRIB_MATINDEX 4
 
 #define MESHID_INVALID 0xFFFFFFFF
 

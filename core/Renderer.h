@@ -57,6 +57,8 @@ class Renderer{
     void UpdateReadbackBuffer();
     void RenderUniqueMeshes();
 
+    void RenderDebugLines();
+
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
     void DrawFrame(Camera* camera, Shader* shader, InputController* input);
@@ -119,6 +121,8 @@ class Renderer{
     std::vector<material_t>glsl_materials;          // List of all materials for direct upload to SSBO
     std::vector<Material>materials;                 // List of all materials
     std::vector<Texture*>textures;                   // List of all textures
+
+    std::vector<line>debug_lines;
 
     readback_buffer_t readbackbuffer;               //A single buffer for reading back data from shader
 

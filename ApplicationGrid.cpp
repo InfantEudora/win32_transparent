@@ -109,7 +109,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //Create a material
     Material mat;
     mat.glsl_material.color = vec4(1,1,1,1);
-    mat.glsl_material.texture_unit = 0;
+    mat.glsl_material.diffuse_texture = 0;
     mat.name = "Default Textured Material";
     Texture* tex = scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
     mat.glsl_material.handle_diffuse = tex->texture_handle;
