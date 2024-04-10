@@ -57,6 +57,8 @@ It should kind of look like this:
 - [ ] Maybe have some kind of test / example thing.
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
 - [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array. https://ktstephano.github.io/rendering/opengl/bindless
+- [ ] Switch between bindless and non-bindless?
+- [ ] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 
 ### Done's
 - [x] Multisampling to a seperate FBO

@@ -44,20 +44,20 @@ bool Mesh::InitVBOVAO(){
 
     glEnableVertexArrayAttrib(vao,ATTRIB_VERTEX);
     glEnableVertexArrayAttrib(vao,ATTRIB_NORMAL);
-    glEnableVertexArrayAttrib(vao,ATTRIB_UVCOORD);
     glEnableVertexArrayAttrib(vao,ATTRIB_TANGENT);
+    glEnableVertexArrayAttrib(vao,ATTRIB_UVCOORD);
     glEnableVertexArrayAttrib(vao,ATTRIB_MATINDEX);
 
     glVertexArrayAttribFormat(vao, ATTRIB_VERTEX, 3, GL_FLOAT, GL_FALSE, 0*sizeof(float));
     glVertexArrayAttribFormat(vao, ATTRIB_NORMAL, 3, GL_FLOAT, GL_TRUE , 3*sizeof(float));
-    glVertexArrayAttribFormat(vao, ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, 6*sizeof(float));
-    glVertexArrayAttribFormat(vao, ATTRIB_TANGENT, 3, GL_FLOAT, GL_TRUE, 8*sizeof(float));
+    glVertexArrayAttribFormat(vao, ATTRIB_TANGENT, 3, GL_FLOAT, GL_TRUE, 6*sizeof(float));
+    glVertexArrayAttribFormat(vao, ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, 9*sizeof(float));
     glVertexArrayAttribIFormat(vao, ATTRIB_MATINDEX, 1, GL_INT, 11*sizeof(float));
 
     glVertexArrayAttribBinding(vao, ATTRIB_VERTEX, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_NORMAL, 0);
-    glVertexArrayAttribBinding(vao, ATTRIB_UVCOORD, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_TANGENT, 0);
+    glVertexArrayAttribBinding(vao, ATTRIB_UVCOORD, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_MATINDEX, 0);
 
     return true;

@@ -13,8 +13,8 @@ struct vertex;
 struct vertex{
     vec3    pos;
     vec3    normal;
-    vec2    uv;
     vec3    tangent;
+    vec2    uv;
     int32_t matid;
     vertex(){};
 };

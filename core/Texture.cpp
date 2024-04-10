@@ -56,10 +56,12 @@ void Texture::LoadFromFile(const char* filename){
     glTextureSubImage2D(texture_id,0,0,0,w,h,format,GL_UNSIGNED_BYTE,img);
     glGenerateTextureMipmap(texture_id);
 
+    #ifdef BINDLESS_TEXTURES
     texture_handle = glGetTextureHandleARB(texture_id);
     if (texture_handle == 0){
         debug->Fatal("Unable to get texture handle from texture ID.\n");
     }
     debug->Info("Uploading data. Texture Handle: %llu\n",texture_handle);
     glMakeTextureHandleResidentARB(texture_handle);
+    #endif
 }

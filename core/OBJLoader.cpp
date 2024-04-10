@@ -183,10 +183,7 @@ Mesh* OBJLoader::BuildMesh(){
         vec2 deltaUV2 = vert3.uv - vert1.uv;
 
         float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-
-        vert1.tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
-        vert1.tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
-        vert1.tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+        vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
         vert1.tangent.normalize();
         vert2.tangent = vert1.tangent;
         vert3.tangent = vert1.tangent;

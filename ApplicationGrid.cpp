@@ -103,18 +103,17 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     wall->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->renderer->objects.push_back(wall);
 
-
     app->main_scene->UpdatePhysics();
 
     //Create a material
-    Material mat;
+    Material mat = {};
     mat.glsl_material.color = vec4(1,1,1,1);
     mat.glsl_material.diffuse_texture = 0;
-    mat.name = "Default Textured Material";
+    mat.name = "Custom Loaded Textured Material";
     Texture* tex = scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
     mat.glsl_material.handle_diffuse = tex->texture_handle;
-    scene->renderer->AddMaterial(mat);
-
+    mat.diff_texture = tex;
+    int matindex = scene->renderer->AddMaterial(mat);
 
 
     mat.glsl_material.color = vec4(1,0.2,0.2,0.9);
@@ -122,7 +121,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->renderer->AddMaterial(mat);
 
     //Now we can assign materials to all the tiles.
-    int matindex = app->renderer->FindMaterialIndex("Default Textured Material");
     for (IsoCell* cell:app->terrain->cells){
         cell->material_slot[0] = matindex;
     }
@@ -379,6 +377,12 @@ void ApplicationGrid::UpdateUI(){
     if (ImGui::CollapsingHeader("Performance")){
         ImGui::Text("Frame Rate   : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
         ImGui::Text("Physics Rate : %.2f TPS (%.2f ms)", 1000000.0f / tmr_physics->avg,tmr_physics->avg/1000.0f );
+    }
+
+    if (ImGui::CollapsingHeader("Renderer")){
+        ImGui::Text(    "Num Materials  : %i", renderer->GetNumMaterials());
+        ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
+        ImGui::Checkbox("##1", &renderer->f_normal_mapping);
     }
 
     ImGui::End();

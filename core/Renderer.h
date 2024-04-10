@@ -78,8 +78,9 @@ class Renderer{
     void UploadMaterials();
     Material* GetMaterial(int index);
     int FindMaterialIndex(const char* name);
-    void AddMaterial(Material& newmat);
+    int AddMaterial(Material& newmat);
     void AddMaterials(std::vector<Material>& list);
+    int GetNumMaterials();
 
     Texture* LoadTexture(const char* filename);
 
@@ -107,8 +108,10 @@ class Renderer{
     Shader* deferred_shader = NULL;     //Shader that outputs data to textures
     Shader* ssao_compute_shader = NULL;
 
+    //Settings
     int aa_samples = 1;
     int pipeline = PIPELINE_MSAA;   //Which pipeline to initialise
+    bool f_normal_mapping = true;   //Enable/disable normal mapping
 
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;

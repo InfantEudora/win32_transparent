@@ -1,6 +1,7 @@
-#version 460 core
+#version 430 core
 
-#extension GL_ARB_bindless_texture : require
+//#version 460 core
+//#extension GL_ARB_bindless_texture : require
 
 //We get info from the deferred stage. When the fragment has full MSAA coverage, it's in the GBUFFEr.
 //Else, it's in a sperate buffer and we have to run code here. The edges cannot be looked up in the gbuffer.
@@ -16,10 +17,13 @@ layout (location = 0) out vec4 color;
 //Passed from vertex shader.
 layout (location = 0)  in vec3 vposition;       //Vertex position in world space, now fragment position in worldspace.
 layout (location = 1)  in vec3 vnormal;         //Vertex normals
-layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
-layout (location = 3)  in vec3 vtangent;        //Tangent to normals
+layout (location = 2)  in vec3 vtangent;        //Tangent to normals
+layout (location = 3)  in vec2 vuv;             //Texture UV coordinates
 layout (location = 4)  flat in int vmatindex;   //Material index
 layout (location = 5)  flat in int vobjid;      //ObjectID from vertex shader
+
+//It's set with glBindTextureUnit
+layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
 
 struct Material{
 	vec4 color;
@@ -27,8 +31,10 @@ struct Material{
     int normal_texture;
     int pad2;
     int pad3;
-    sampler2D handle_diffuse;
-    sampler2D handle_normal;
+    //sampler2D handle_diffuse;
+    //sampler2D handle_normal;
+    uvec2 handle_diffuse;
+    uvec2 handle_normal;
 };
 
 #define PI 	3.14159265359
@@ -36,6 +42,7 @@ struct Material{
 float metallic = 0.5f;
 float roughness = 0.5f;
 uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
+uniform int f_normal_mapping = 1;
 
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
@@ -78,8 +85,12 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0){
 }
 
 vec3 GetNormalMapNormal(){
-    vec3 normal = texture(materials[vmatindex].handle_normal,vuv).rgb;
-
+    Material m = materials[vmatindex];
+    //Bindless
+    //vec3 normal = texture(m.handle_normal,vuv).rgb;
+    //Default
+    vec3 normal = texture(material_texture[m.normal_texture],vuv).rgb;
+    normal = vec3(normal.r, normal.b,normal.g);
     normal = (2.0 * normal) - 1.0;
     return normal;
 }
@@ -90,10 +101,11 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 
     vec3 albedo;
     if (m.diffuse_texture >= 0){
-        //albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
-        albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
+        //Bindless
+        //albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
         //albedo = texture(m.handle_normal,vuv).xyz;// * m.color.xyz;
-        //albedo = m.color.xyz;
+        //Default
+        albedo = texture(material_texture[m.diffuse_texture], vuv).xyz;
     }else{
         albedo = m.color.xyz;
     }
@@ -101,7 +113,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     vec3 N;
     vec3 V;
     vec3 L;
-    if (m.normal_texture >= 0){
+    if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
         vec3 T = vtangent;
         vec3 B = normalize(cross(vnormal, T));
         mat3 TBN = mat3(T, B, vnormal);
@@ -155,9 +167,12 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 
 float GetTransparency(){
     Material m = materials[vmatindex];
+    return 1;
     if (m.diffuse_texture >= 0){
-        return texture(m.handle_diffuse,vuv).w;
-        //return texture(material_texture[m.texture_unit], vuv).w;
+        //Bindless
+        //return texture(m.handle_diffuse,vuv).w;
+        //Default
+        return texture(material_texture[m.diffuse_texture], vuv).w;
     }
     return m.color.w;
 }

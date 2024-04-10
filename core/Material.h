@@ -22,7 +22,7 @@
 //material_t matches layout in shader
 typedef struct {
     vec4 color = {0,1,1,1};
-    int diffuse_texture = -1;       // The OpenGL texture unit the material is bound to
+    int diffuse_texture = -1;       // The OpenGL texture unit the material is bound to. 0 to 32 typically.
     int normal_texture = -1;       // The OpenGL texture unit the material is bound to
     int pad[2];
     uint64_t handle_diffuse = 0; // The texture handle for OpenGL Bindless Textures

@@ -7,8 +7,8 @@
 //Input variables
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
-layout (location = 2) in vec2 uv;
-layout (location = 3) in vec3 tangent;
+layout (location = 2) in vec3 tangent;
+layout (location = 3) in vec2 uv;
 layout (location = 4) in int matindex;
 
 
@@ -30,8 +30,8 @@ layout (std430, binding = 0) buffer InstanceDataBuffer{
 //Output
 layout (location = 0) out vec3 vposition; //Vertex position in world space, used for lighting
 layout (location = 1) out vec3 vnormal;	//Normals
-layout (location = 2) out vec2 vuv;		//Texture UV coordinates
-layout (location = 3) out vec3 vtangent;	//For normalmapping
+layout (location = 2) out vec3 vtangent;	//For normalmapping
+layout (location = 3) out vec2 vuv;		//Texture UV coordinates
 layout (location = 4) flat out int vmatindex;	//Material index
 layout (location = 5) flat out int vobjid;	//gl_InstanceID
 
