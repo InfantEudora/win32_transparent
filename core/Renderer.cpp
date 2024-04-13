@@ -590,13 +590,13 @@ void Renderer::UploadMaterials(){
     glsl_materials.clear();
     for (Material& mat:materials){
         if (mat.diff_texture){;
-            debug->Ok("Material has diffuse Texture: Binding to Unit %i\n",texture_unit);
+            //debug->Trace("Material has diffuse Texture: Binding to Unit %i\n",texture_unit);
             mat.glsl_material.diffuse_texture = texture_unit;
             glBindTextureUnit(texture_unit, mat.diff_texture->texture_id);
             texture_unit++;
         }
         if (mat.norm_texture){;
-            debug->Ok("Material has normal Texture: Binding to Unit %i\n",texture_unit);
+            //debug->Trace("Material has normal Texture: Binding to Unit %i\n",texture_unit);
             mat.glsl_material.normal_texture = texture_unit;
             glBindTextureUnit(texture_unit, mat.norm_texture->texture_id);
             texture_unit++;

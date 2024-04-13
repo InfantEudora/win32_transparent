@@ -19,8 +19,10 @@ layout (location = 0)  in vec3 vposition;       //Vertex position in world space
 layout (location = 1)  in vec3 vnormal;         //Vertex normals
 layout (location = 2)  in vec3 vtangent;        //Tangent to normals
 layout (location = 3)  in vec2 vuv;             //Texture UV coordinates
-layout (location = 4)  flat in int vmatindex;   //Material index
-layout (location = 5)  flat in int vobjid;      //ObjectID from vertex shader
+layout (location = 4)  in mat3 TBN;			    //Normal mapping matrix
+
+layout (location = 7)  flat in int vmatindex;   //Material index
+layout (location = 8)  flat in int vobjid;      //ObjectID from vertex shader
 
 //It's set with glBindTextureUnit
 layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
@@ -90,9 +92,9 @@ vec3 GetNormalMapNormal(){
     //vec3 normal = texture(m.handle_normal,vuv).rgb;
     //Default
     vec3 normal = texture(material_texture[m.normal_texture],vuv).rgb;
-    normal = vec3(normal.r, normal.b,normal.g);
+    normal = vec3(normal.r, normal.g,normal.b);
     normal = (2.0 * normal) - 1.0;
-    return normal;
+    return normalize(normal);
 }
 
 //Returns the light intensity from a single directional light
@@ -114,18 +116,13 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     vec3 V;
     vec3 L;
     if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
-        vec3 T = vtangent;
-        vec3 B = normalize(cross(vnormal, T));
-        mat3 TBN = mat3(T, B, vnormal);
-
         N = GetNormalMapNormal();
-        N = normalize(TBN * N);
 
         mat3 iTBN = transpose(TBN);
+        //N = normalize(TBN * N);
 
         V = normalize(iTBN * (eye_position - vposition));
         L = normalize(iTBN * (lightpos - vposition));
-
     }else{
         N = vnormal;
         V = normalize(eye_position - vposition);

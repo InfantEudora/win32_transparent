@@ -188,6 +188,8 @@ Mesh* OBJLoader::BuildMesh(){
         vert2.tangent = vert1.tangent;
         vert3.tangent = vert1.tangent;
 
+        //vec3 bitangent = vert1.normal.cross(vert1.tangent);
+
         verts.push_back(vert1);
         verts.push_back(vert2);
         verts.push_back(vert3);

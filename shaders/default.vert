@@ -21,19 +21,40 @@ struct InstanceData{
 	int pad3;
 };
 
+struct Material{
+	vec4 color;
+    int diffuse_texture;
+    int normal_texture;
+    int pad2;
+    int pad3;
+    //sampler2D handle_diffuse;
+    //sampler2D handle_normal;
+    uvec2 handle_diffuse;
+    uvec2 handle_normal;
+};
+
 //A material index comes in from a vertex, which matches a material specified in the OBJ file.
 //This matches our material slot, which looks up the global index.
 layout (std430, binding = 0) buffer InstanceDataBuffer{
 	InstanceData instance_data[];
 };
 
+layout (std430, binding = 1) buffer MaterialBuffer{
+	Material materials[];
+};
+
 //Output
-layout (location = 0) out vec3 vposition; //Vertex position in world space, used for lighting
-layout (location = 1) out vec3 vnormal;	//Normals
+layout (location = 0) out vec3 vposition; 	//Vertex position in world space, used for lighting
+layout (location = 1) out vec3 vnormal;		//Normals
 layout (location = 2) out vec3 vtangent;	//For normalmapping
-layout (location = 3) out vec2 vuv;		//Texture UV coordinates
-layout (location = 4) flat out int vmatindex;	//Material index
-layout (location = 5) flat out int vobjid;	//gl_InstanceID
+layout (location = 3) out vec2 vuv;			//Texture UV coordinates
+layout (location = 4) out mat3 TBN;			//Normal mapping matrix
+
+layout (location = 7) flat out int vmatindex;	//Material index
+layout (location = 8) flat out int vobjid;	//gl_InstanceID
+
+//Settings
+uniform int f_normal_mapping = 1;
 
 //Matrix for world camera.
 layout(location = 0) uniform mat4 mat_worldcam = mat4(
@@ -60,10 +81,25 @@ void main(){
 
 	vnormal = (mat_rotate * normal);
 
+	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
+
+	Material m = materials[matindex_out];
+	if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
+		vec3 T = vtangent;
+		vec3 B = normalize(cross(vnormal, T));
+		TBN = mat3(T, B, vnormal);
+	}else{
+		TBN = mat3(
+			1		,0		,0,
+			0		,1		,0,
+			0		,0		,1
+		);
+	}
+
 	//Calculated the TBN matrix for normal mapping..
 	//TODO: Maybe this can be done in a Geometry Shader.
 
-	vmatindex =  instance_data[gl_InstanceID].material_slot[matindex];
+	vmatindex = matindex_out;
 
 	vuv = uv;
 	vtangent = mat_rotate * tangent;
