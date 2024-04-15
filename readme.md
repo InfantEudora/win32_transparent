@@ -33,7 +33,8 @@ It should kind of look like this:
 - [x] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
 - [x] Set a camera's initial position and lookat to something. It should have an up vector change.
 - [x] Automatically merge different materials based on name. And auto assign to an object on mesh load from OBJ.
-- [ ] Auto load texture data from .mat file.
+- [x] Auto load texture data from .mat file.
+- [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 
 ### ToDo's
 - [ ] eye_position setting is not working on AMD...?
@@ -58,7 +59,8 @@ It should kind of look like this:
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
 - [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array. https://ktstephano.github.io/rendering/opengl/bindless
 - [ ] Switch between bindless and non-bindless?
-- [ ] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
+- [ ] Switch on/off backface culling for leaves and other thin things with transparency... although.... viewing it from above might not make a difference.
+
 
 ### Done's
 - [x] Multisampling to a seperate FBO

@@ -306,6 +306,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         shader->Setvec3("eye_position",p);
         shader->Setmat4("mat_worldcam",camera->mat_cam);
         shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+
     }
 
     if (input){
@@ -635,7 +636,7 @@ int Renderer::FindMaterialIndex(const char* name){
 Texture* Renderer::LoadTexture(const char* filename){
     //A material with a texture.
     Texture* texture = new Texture();
-    texture->LoadFromFile("data/textures/test_texture_4096.png");
+    texture->LoadFromFile(filename);
     glBindTextureUnit(0, texture->texture_id);
     return texture;
 }

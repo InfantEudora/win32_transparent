@@ -112,6 +112,7 @@ class Renderer{
     int aa_samples = 1;
     int pipeline = PIPELINE_MSAA;   //Which pipeline to initialise
     bool f_normal_mapping = true;   //Enable/disable normal mapping
+    bool f_backface_culling = true;   //Enable/disable normal mapping
 
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;

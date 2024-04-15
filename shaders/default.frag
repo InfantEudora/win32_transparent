@@ -17,12 +17,11 @@ layout (location = 0) out vec4 color;
 //Passed from vertex shader.
 layout (location = 0)  in vec3 vposition;       //Vertex position in world space, now fragment position in worldspace.
 layout (location = 1)  in vec3 vnormal;         //Vertex normals
-layout (location = 2)  in vec3 vtangent;        //Tangent to normals
-layout (location = 3)  in vec2 vuv;             //Texture UV coordinates
-layout (location = 4)  in mat3 TBN;			    //Normal mapping matrix
+layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
+layout (location = 3)  in mat3 TBN;			    //Normal mapping matrix
 
-layout (location = 7)  flat in int vmatindex;   //Material index
-layout (location = 8)  flat in int vobjid;      //ObjectID from vertex shader
+layout (location = 6)  flat in int vmatindex;   //Material index
+layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
 //It's set with glBindTextureUnit
 layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
@@ -42,13 +41,17 @@ struct Material{
 #define PI 	3.14159265359
 
 float metallic = 0.5f;
-float roughness = 0.5f;
+float roughness = 0.75f;
 uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 uniform int f_normal_mapping = 1;
+uniform float alpha_clip = 0.5f;
 
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
 };
+
+//The material we pick from buffer, or set our selves
+Material m;
 
 layout (std430, binding = 2) buffer ReadbackBuffer{
 	int data_in[4];
@@ -92,15 +95,13 @@ vec3 GetNormalMapNormal(){
     //vec3 normal = texture(m.handle_normal,vuv).rgb;
     //Default
     vec3 normal = texture(material_texture[m.normal_texture],vuv).rgb;
-    normal = vec3(normal.r, normal.g,normal.b);
+
     normal = (2.0 * normal) - 1.0;
     return normalize(normal);
 }
 
 //Returns the light intensity from a single directional light
 vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
-    Material m = materials[vmatindex];
-
     vec3 albedo;
     if (m.diffuse_texture >= 0){
         //Bindless
@@ -117,10 +118,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     vec3 L;
     if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
         N = GetNormalMapNormal();
-
         mat3 iTBN = transpose(TBN);
-        //N = normalize(TBN * N);
-
         V = normalize(iTBN * (eye_position - vposition));
         L = normalize(iTBN * (lightpos - vposition));
     }else{
@@ -136,7 +134,6 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
     vec3 Lo = vec3(0.0);
 
     // calculate per-light radiance
-    //vec3 L = normalize(lightpos - vposition);
     vec3 H = normalize(V + L);
 
     vec3 radiance     = color * brightness;
@@ -156,6 +153,9 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 
     // add to outgoing radiance Lo
     float NdotL = max(dot(N, L), 0.0);
+    //Use the original object normal to completely shadow back faces
+    //NdotL = min(dot(vnormal, normalize(lightpos - vposition)),NdotL );
+
     Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     //Ambient
     Lo += 0.10 * albedo;
@@ -163,8 +163,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
 }
 
 float GetTransparency(){
-    Material m = materials[vmatindex];
-    return 1;
+
     if (m.diffuse_texture >= 0){
         //Bindless
         //return texture(m.handle_diffuse,vuv).w;
@@ -177,15 +176,28 @@ float GetTransparency(){
 vec4 CalcPBRLighting(){
     vec4 final;
 
-    vec3 light = CalcDirectionalPBRLight(vec3(-10,10,10),vec3(1,1,1),5.0);
+    vec3 light = CalcDirectionalPBRLight(vec3(-10,10,10),vec3(1,.8,.6),5.0);
 
     float alpha = GetTransparency();
+    if (alpha < alpha_clip){
+        discard;
+    }
     final = vec4(light,alpha);
 
     return final;
 }
 
 void main(){
+    //Select/Set the current material
+    if (vmatindex > -1){
+        m = materials[vmatindex];
+    }else{
+        //Default invalid material
+        m.diffuse_texture = -1;
+        m.normal_texture = -1;
+        m.color = vec4(0.2,0.1,0.1,1.0);
+    }
+
     vec4 final = CalcPBRLighting();
 
     ivec2 mouse_coord = ivec2(data_in[0],data_in[1]);

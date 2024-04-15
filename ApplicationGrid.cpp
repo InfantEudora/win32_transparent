@@ -51,10 +51,19 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
-    Object* grid_cell = new Object();
-    grid_cell->SetMesh(OBJLoader::ParseOBJFile("isoterrain/data/tile_terrain.obj"));
-    app->assetmanager->AddNewAsset("grid_cell",grid_cell);
-    delete grid_cell;
+    std::vector<Material>loaded_materials;
+
+    Object* temp = new Object();
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_001.obj",&loaded_materials));
+    scene->renderer->AddMaterials(loaded_materials);
+    app->assetmanager->AddNewAsset("tile_001",temp);
+
+    loaded_materials.clear();
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/border_rock.obj",&loaded_materials));
+    scene->renderer->AddMaterials(loaded_materials);
+    app->assetmanager->AddNewAsset("border_rock",temp);
+
+    delete temp;
 
 
     //We now generate a terrain, and load that in.
@@ -65,7 +74,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //Test arrows to test all this quaternion madness.
     Object* arrows = new Object();
-    std::vector<Material>loaded_materials;
+    loaded_materials.clear();
     arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj",&loaded_materials));
     scene->renderer->AddMaterials(loaded_materials);
     arrows->PickMaterials(loaded_materials,scene->renderer->materials);
@@ -103,6 +112,8 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     wall->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->renderer->objects.push_back(wall);
 
+
+
     app->main_scene->UpdatePhysics();
 
     //Create a material
@@ -126,6 +137,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     }
 
     BinaryAsset::DumpBinaryAssets();
+    app->assetmanager->ListAssets();
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -288,11 +300,39 @@ void ApplicationGrid::RunLogic(){
 }
 
 void ApplicationGrid::UpdateUI(){
-    //UI
+    Object* object = main_scene->camera;
+
+
+    IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
+    //UI for GridCells
     ImGui::Begin("Grid UI");
     ImGui::Text("Behold, a grid of tiles.");
+    if (!cell){
+        ImGui::Text("No Object of type Cell is selected.");
+    }else{
+        ImGui::Text("Coordinate   : %i x %i",cell->coordinate.x,cell->coordinate.y);
+        ImGui::Text("Terrain Type ");
+        if (ImGui::Button("Set None")){
+            cell->SetTerrainType(CELL_TERRAIN_NONE);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Set Empty")){
+            cell->SetTerrainType(CELL_TERRAIN_EMPTY);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Set Grass")){
+            cell->SetTerrainType(CELL_TERRAIN_GRASS);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Set Rock")){
+            cell->SetTerrainType(CELL_TERRAIN_ROCK);
+        }
 
-    Object* object = main_scene->camera;
+    }
+    ImGui::End();
+
+    //For generic Objects and parameters
+    ImGui::Begin("Generic Object UI");
     if (ImGui::CollapsingHeader("Main Camera Controls")){
         float roll = 0;
         if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
@@ -362,6 +402,12 @@ void ApplicationGrid::UpdateUI(){
                 ImGui::EndDisabled();
             }
             object->SetRotation(q);
+        }
+        if (ImGui::CollapsingHeader("Scale")){
+            vec3 scale = object->GetScale();
+            if (ImGui::DragFloat3("Scale Vector", (float*)&scale, 0.01f, 0.01f, 10.0f)){
+                object->SetScale(scale);
+            }
         }
         if (ImGui::CollapsingHeader("Material")){
             ImGui::Text("Renderer Materials: %i",renderer->materials.size());

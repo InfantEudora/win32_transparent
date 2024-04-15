@@ -130,8 +130,12 @@ void Object::RollBy(float by){
 
 //The size of the object in 3 dimensions
 void Object::SetScale(const vec3& newscale){
-    scale = newscale;
+    state_physics.scale = newscale;
     state_physics.f_was_transformed = true;
+}
+
+vec3 Object::GetScale(){
+    return state_physics.scale;
 }
 
 //Copies physics state over to this state.
@@ -200,9 +204,9 @@ void Object::UpdateTransformMatrix(){
     float size = 1.0;
 
     world_transform_scale_matrix.identity();
-    world_transform_scale_matrix.vertex[0].x *= size * scale.x;
-    world_transform_scale_matrix.vertex[1].y *= size * scale.y;
-    world_transform_scale_matrix.vertex[2].z *= size * scale.z;
+    world_transform_scale_matrix.vertex[0].x *= size * state.scale.x;
+    world_transform_scale_matrix.vertex[1].y *= size * state.scale.y;
+    world_transform_scale_matrix.vertex[2].z *= size * state.scale.z;
 
     fmat4 rotation_matrix;
     //Compute the rotation matrix from the rotation quaternion

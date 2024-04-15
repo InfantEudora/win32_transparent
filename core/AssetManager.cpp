@@ -41,3 +41,10 @@ Object* AssetManager::GetObjectFromAsset(const char* asset_name, Object* optiona
     }
     return NULL;
 }
+
+void AssetManager::ListAssets(){
+    debug->Info("List of Assets:\n");
+    for (Asset* asset:assets){
+        debug->Info(" - %s\n",asset->name.c_str());
+    }
+}

@@ -21,6 +21,7 @@ struct ObjectState{
     bool f_was_transformed = false;
     vec3 position = vec3(0,0,0);
     quat rotation;
+    vec3 scale = vec3(1,1,1);
 };
 
 //All Set/Get functions may only be set from physics. And update the state_physics.
@@ -28,7 +29,7 @@ struct ObjectState{
 class Object{
     public:
     Object();
-    ~Object();
+    virtual ~Object();
     void GenerateUniqueID();
 
     meshid_t GetMeshID();
@@ -57,6 +58,7 @@ class Object{
 
     //Modify size
     void SetScale(const vec3& newscale);
+    vec3 GetScale();
 
     //Modify rotation
     void SetLookAt(const vec3& newpos, vec3* optional_up = NULL);
@@ -73,8 +75,6 @@ class Object{
     std::string name;
     fmat4 local_transform_scale_matrix;
     fmat4 world_transform_scale_matrix;
-
-    vec3 scale = vec3(1,1,1);
 
     //The reference vectors for our coordinate system.
     static vec3 ref_up;
