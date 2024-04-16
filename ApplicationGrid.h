@@ -13,8 +13,12 @@ public:
     void Run(void) override;
     void RunLogic() override;
 
+    vec3 camera_target = {};
+
     IsoTerrain* terrain = NULL;
     Object* selected_object = NULL;
+
+
 
 private:
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);

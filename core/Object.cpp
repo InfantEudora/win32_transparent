@@ -108,19 +108,23 @@ void Object::MoveBy(const vec3& delta){
     SetPosition(state_physics.position + delta);
 }
 
-void Object::MoveForwardBy(float delta){
+//Returns the vector by which is was moved.
+vec3 Object::MoveForwardBy(float delta){
     vec3 d = GetForward() * delta;
     MoveBy(d);
+    return d;
 }
 
-void Object::MoveSidewaysBy(float delta){
+vec3 Object::MoveSidewaysBy(float delta){
     vec3 d = GetLeft() * delta;
     MoveBy(d);
+    return d;
 }
 
-void Object::MoveUpBy(float delta){
+vec3 Object::MoveUpBy(float delta){
     vec3 d = GetUp() * delta;
     MoveBy(d);
+    return d;
 }
 
 //Rotate on forward axis

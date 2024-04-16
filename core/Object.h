@@ -52,9 +52,9 @@ class Object{
     //Modify postition
     void SetPosition(const vec3& newpos);
     void MoveBy(const vec3& delta);
-    void MoveForwardBy(float delta);
-    void MoveUpBy(float delta);
-    void MoveSidewaysBy(float delta);
+    vec3 MoveForwardBy(float delta);
+    vec3 MoveUpBy(float delta);
+    vec3 MoveSidewaysBy(float delta);
 
     //Modify size
     void SetScale(const vec3& newscale);

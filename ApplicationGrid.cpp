@@ -245,32 +245,33 @@ void ApplicationGrid::RunLogic(){
         int dy = input->GetDelta(INPUT_MOUSE_Y);
         if (input->IsKeyDown(INPUT_SHIFT)){
             //Move the camera
-            camera->MoveSidewaysBy(-dx/100.0f);
-            camera->MoveUpBy(dy/100.0f);
+            vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
+            d += camera->MoveUpBy(dy/100.0f);
+            camera_target += d;
         }else{
-            //If we move left/right, we rotate the camera around the origin.
-            vec3 p = camera->GetPosition();
+            //If we move left/right, we rotate the camera around the camera target.
+            vec3 p = camera->GetPosition() - camera_target;
             vec3 axis = camera->GetLeft();
 
             //Get the axis towards the camera.
             quat q(axis,-dy/50.0f);
 
-            //Rotate the camera position around the origin
+            //Rotate the camera position around the camera target
             p = q * p;
             //We update the position
-            camera->SetPosition(p);
+            camera->SetPosition(p+camera_target);
 
             //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
             vec3 up = camera->GetUp();
             //up = vec3(0,1,0);
-            camera->SetLookAt(vec3(),&up);
+            camera->SetLookAt(camera_target,&up);
 
             //Now we rotate around the Y-axis
-            p = camera->GetPosition();
+            p = camera->GetPosition()-camera_target;
             axis = vec3(0,1,0);
             q.set_rotation(axis,-dx/50.0f);
             p = q * p;
-            camera->SetPosition(p);
+            camera->SetPosition(p+camera_target);
             //The lookat should make the same rotation around the y axis
             camera->RotateBy(q);
         }
@@ -334,6 +335,9 @@ void ApplicationGrid::UpdateUI(){
     //For generic Objects and parameters
     ImGui::Begin("Generic Object UI");
     if (ImGui::CollapsingHeader("Main Camera Controls")){
+
+
+
         float roll = 0;
         if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
             object->RollBy(roll);
@@ -341,7 +345,9 @@ void ApplicationGrid::UpdateUI(){
 
         vec3 up = object->GetUp();
         vec3 forward = object->GetForward();
+        ImGui::DragFloat3("Target", (float*)&camera_target, 0.01f, -1.0f, 1.0f);
         ImGui::BeginDisabled();
+
         ImGui::DragFloat3("Forward Vector", (float*)&forward, 0.01f, -1.0f, 1.0f);
         ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
         ImGui::EndDisabled();
