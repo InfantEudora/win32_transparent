@@ -37,7 +37,7 @@ It should kind of look like this:
 - [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 
 ### ToDo's
-- [ ] eye_position setting is not working on AMD...?
+- [ ] eye_position setting is not working on AMD...? It doesn't like glUniform3fv to uniforms that arent an array?
 - [ ] Share the texture across contexts?
 - [x] Assign different materials to objects by storing their material index in a sperate VAO.
 - [ ] Make OBJ file not require UV to be present so it only uses color.

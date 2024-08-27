@@ -178,18 +178,33 @@ void ApplicationCANUI::UpdateUI(){
 
     ImGui::Button("Enable Device");
 
-    ImGui::Text("Ouput Voltage: %.2f Volts",infy->output_voltage);
-    ImGui::Text("Ouput Current: %.2f Amps",infy->output_current);
+    if (ImGui::Button("Broadcast Set Dial Mode")){
+        can_frame_t frame;
+        infy->BroadcastSetDialMode(frame);
+        pcan_reader->WriteCanFrame(&frame);
+    }
+
+    if (infy->enabled){
+        ImGui::TextColored(green,"Output              : Enabled");
+    }else{
+        ImGui::Text("Output              : Disabled");
+    }
+
+    ImGui::Text("Input Voltage       : %.2f Volts",infy->input_voltage);
+    ImGui::Text("Ouput Voltage       : %.2f Volts",infy->output_voltage);
+    ImGui::Text("External Voltage    : %.2f Volts",infy->external_voltage);
+    ImGui::Text("Ouput Current       : %.2f Amps",infy->output_current);
+    ImGui::Text("Available Current   : %.2f Amps",infy->available_current);
+    ImGui::Text("Ouput Power         : %.1f Watts",infy->external_voltage * infy->output_current);
+
+    ImGui::Text("Ambient Temperature : %.1f Deg C",infy->ambient_temperature);
 
     CANMessage msg;
     while (infy_queue.pop(msg)){
         debug->Info("Infy Message: %X\n",msg.frame.can_id);
         infy->HandleCANMessage(&msg.frame);
     }
-
     ImGui::End();
-
-
 
     //CAB Sensor Interface
     ImGui::Begin("CAB 500 Current Sensor");

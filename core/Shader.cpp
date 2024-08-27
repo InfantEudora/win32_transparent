@@ -191,8 +191,11 @@ void Shader::Setvec3(const char* name, const vec3& value){
 	if (fid == -1){
 		debug->Warn("Could not set %i's vec3 %s\n",progid,name);
 		return;
+	}else{
+		//debug->Info("Uniform %s at location %i\n",name,fid);
 	}
 	glUniform3fv(fid,1,(GLfloat*)&value);
+	//glUniform3f(fid,value.x,value.y,value.z);
 }
 
 void Shader::Setmat3(const char* name, const fmat3& matrix){
