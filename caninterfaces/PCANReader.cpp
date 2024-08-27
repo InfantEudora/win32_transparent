@@ -45,6 +45,7 @@ HINSTANCE PCANReader::hdll = NULL;
 
 PCANReader::PCANReader(){
     debug->SetLevel(DEBUG_ALL);
+    //Init(PCAN_BAUD_125K);
     Init(PCAN_BAUD_500K);
 }
 
@@ -129,7 +130,7 @@ void PCANReader::ReadMessages(void){
     }
     TPCANStatus canstatus;
     TPCANMsg rx_msg;
-    while(1){
+    if(1){
         //Transmit any pending messages
         CANMessage msg;
         if (out_queue.pop(msg)){
@@ -147,7 +148,7 @@ void PCANReader::ReadMessages(void){
             timeBeginPeriod(1);
             Sleep(1);
             timeEndPeriod(1);
-            continue;
+            //continue;
         }else if (canstatus == PCAN_ERROR_BUSHEAVY){
             //debug->Warn("BUSHEAVY\n");
 

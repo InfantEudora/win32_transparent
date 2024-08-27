@@ -18,7 +18,12 @@ public:
     PCANReader* pcan_reader = NULL;
     InfyPower* infy = NULL;
 
+    ThreadSafeQueue<CANMessage> infy_queue;
+    ThreadSafeQueue<CANMessage> vector_queue;
+    ThreadSafeQueue<CANMessage> cab500_queue;
+
 private:
+    static DWORD WINAPI CANReadThreadFunction(LPVOID lpParameter);
     void UpdateUI();
 };
 

@@ -45,6 +45,7 @@ endif
 #Application
 SRCS += ApplicationCANUI.cpp
 SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces))
+SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces/controllers))
 
 #ApplicationGrid
 
