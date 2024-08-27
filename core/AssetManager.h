@@ -35,6 +35,8 @@ public:
 
     void AddNewAsset(const char* asset_name, Object* object);
 
+    void ListAssets();
+
     Asset* GetAsset(const char* asset_name);
     Object* GetObjectFromAsset(const char* asset_name, Object* optional_target=NULL);
 };

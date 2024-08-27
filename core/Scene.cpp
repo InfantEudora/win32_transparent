@@ -30,6 +30,7 @@ void Scene::SetupShipExample(){
     renderer->objects.push_back(ship);
 
     //Create a material
+    /* TODO FIX or remove
     material_t m;
     m.color = vec4(0.8,0.8,1,1);
     m.texture_unit = -1;
@@ -42,14 +43,16 @@ void Scene::SetupShipExample(){
     m.color = vec4(0.8,0.0,0.1,1);
     m.texture_unit = -1;
     renderer->materials.push_back(m);
+    */
 
     debug->Info("We have %i materials\n",renderer->materials.size());
 }
 
 void Scene::SetupExample(){
+    //TODO Fix clean
     //A single mesh
-    Mesh* cube_mesh = new Mesh();
-    cube_mesh->LoadUnitCube();
+    //Mesh* cube_mesh = new Mesh();
+    //cube_mesh->LoadUnitCube();
 
     Mesh* sphere_mesh = OBJLoader::ParseOBJFile("sphere.obj");
     //Mesh* char_mesh = OBJLoader::ParseOBJFile("chara.obj");
@@ -57,7 +60,7 @@ void Scene::SetupExample(){
     //Make a bunch of objects
     for (int i = 0;i<5;i++){
         cube = new Object();
-        cube->SetMesh(cube_mesh);
+        //cube->SetMesh(cube_mesh);
         renderer->objects.push_back(cube);
         cube->SetPosition(vec3(0.5,0.5,0.0));
         cube->material_slot[0] = i%2;
@@ -107,6 +110,7 @@ void Scene::SetupExample(){
     glBindTextureUnit(1, tex_2->texture_id);
 
     //Create a material
+    /* TODO FIX or remove
     material_t m;
     m.color = vec4(0,1,0,1);
     m.texture_unit = -1;
@@ -119,6 +123,7 @@ void Scene::SetupExample(){
     m.color = vec4(0,0.5,1,1);
     m.texture_unit = 1;
     renderer->materials.push_back(m);
+    */
 
     debug->Info("We have %i materials\n",renderer->materials.size());
 

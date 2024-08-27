@@ -1,7 +1,7 @@
 #include "OBJLoader.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("OBJLoader", DEBUG_TRACE);
+static Debugger *debug = new Debugger("OBJLoader", DEBUG_INFO);
 
 //Static function.
 Mesh* OBJLoader::ParseOBJFile(const char* filename, std::vector<Material>*optional_mat_list_out){
@@ -158,22 +158,41 @@ Mesh* OBJLoader::BuildMesh(){
         int3 v = face_vertexindexlist.at(i);
         int3 n = face_normalindexlist.at(i);
         int3 u = face_uvindexlist.at(i);
-        vertex vert;
-        vert.pos = face_vertexlist.at(v.z-1);
-        vert.normal = face_normallist.at(n.z-1);
-        vert.uv = face_uvlist.at(u.z-1);
-        vert.matid = face_matlist.at(i);
-        verts.push_back(vert);
-        vert.pos = face_vertexlist.at(v.y-1);
-        vert.normal = face_normallist.at(n.y-1);
-        vert.uv = face_uvlist.at(u.y-1);
-        vert.matid = face_matlist.at(i);
-        verts.push_back(vert);
-        vert.pos = face_vertexlist.at(v.x-1);
-        vert.normal = face_normallist.at(n.x-1);
-        vert.uv = face_uvlist.at(u.x-1);
-        vert.matid = face_matlist.at(i);
-        verts.push_back(vert);
+        vertex vert1;
+        vertex vert2;
+        vertex vert3;
+        vert1.pos = face_vertexlist.at(v.x-1);
+        vert1.normal = face_normallist.at(n.x-1);
+        vert1.uv = face_uvlist.at(u.x-1);
+        vert1.matid = face_matlist.at(i);
+
+        vert2.pos = face_vertexlist.at(v.y-1);
+        vert2.normal = face_normallist.at(n.y-1);
+        vert2.uv = face_uvlist.at(u.y-1);
+        vert2.matid = face_matlist.at(i);
+
+        vert3.pos = face_vertexlist.at(v.z-1);
+        vert3.normal = face_normallist.at(n.z-1);
+        vert3.uv = face_uvlist.at(u.z-1);
+        vert3.matid = face_matlist.at(i);
+
+        //Tangent calculation
+        vec3 edge1 = vert2.pos - vert1.pos;
+        vec3 edge2 = vert3.pos - vert1.pos;
+        vec2 deltaUV1 = vert2.uv - vert1.uv;
+        vec2 deltaUV2 = vert3.uv - vert1.uv;
+
+        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+        vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
+        vert1.tangent.normalize();
+        vert2.tangent = vert1.tangent;
+        vert3.tangent = vert1.tangent;
+
+        //vec3 bitangent = vert1.normal.cross(vert1.tangent);
+
+        verts.push_back(vert1);
+        verts.push_back(vert2);
+        verts.push_back(vert3);
     }
     debug->Info("Generated %i vertices\n",verts.size());
     Mesh* mesh = new Mesh();
@@ -214,6 +233,21 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
             }else{
                 debug->Warn(".mat file contains duplicate material names: [%s]\n",matname);
             }
+        }else if (line.find("map_Kd") != std::string::npos){
+            char* diff_name = (char*)line.c_str()+7;
+		    debug->Trace("Found diffuse texture: %s\n",diff_name);
+            if (current_material){
+                std::string whole_path = "data/" + std::string(diff_name);
+                current_material->diff_texture = new Texture();
+                current_material->diff_texture->name = whole_path;
+                current_material->diff_texture->LoadFromFile(whole_path.c_str());
+                if (current_material->diff_texture){
+                    current_material->glsl_material.diffuse_texture = 0;
+                    current_material->glsl_material.handle_diffuse = current_material->diff_texture->texture_handle;
+                }
+            }else{
+                debug->Err("No current material while parsing diffuse value.\n");
+            }
         }else if (line.find("Kd") != std::string::npos){
             debug->Trace("Found diffuse value: %s\n",line.c_str()+3);
             vec3 f;
@@ -225,6 +259,29 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                     debug->Err("No current material while parsing diffuse value.\n");
                 }
             }
+        }else if (line.find("map_Bump") != std::string::npos){
+            char* argument = (char*)line.c_str()+9;
+		    debug->Trace("Line map_Bump: %s\n",argument);
+
+            float value = 0;
+            char filename[128];
+            if (sscanf_s(argument,"-bm %f %s",&value,filename,128) != 2){
+                //debug->Trace("Parsed Normal Line: Gain: %.1f [%s]\n",value,filename);
+                debug->Err("Unable to parse Normal Texture Line\n");
+                break;
+            }
+            if (current_material){
+                std::string whole_path = "data/" + std::string(filename);
+                current_material->norm_texture = new Texture();
+                current_material->norm_texture->name = whole_path;
+                current_material->norm_texture->LoadFromFile(whole_path.c_str());
+                if (current_material->norm_texture){
+                    current_material->glsl_material.normal_texture = 0;
+                    current_material->glsl_material.handle_normal = current_material->norm_texture->texture_handle;
+                }
+            }else{
+                debug->Err("No current material while parsing diffuse value.\n");
+            }
         }else if (line.find("d") != std::string::npos){
             debug->Trace("Found alpha value: %s\n",line.c_str()+2);
             float alpha = 1.0;
@@ -235,15 +292,6 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                 }else{
                     debug->Err("No current material while parsing diffuse value.\n");
                 }
-            }
-        }else if (line.find("map_Kd") != std::string::npos){
-            char* diff_name = (char*)line.c_str()+7;
-		    debug->Trace("Found diffuse texture: %s\n",diff_name);
-            if (current_material){
-                current_material->diff_texture = diff_name;
-                //TODO: Load the texture...
-            }else{
-                debug->Err("No current material while parsing diffuse value.\n");
             }
         }
     }

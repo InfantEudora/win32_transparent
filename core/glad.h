@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include <GL/gl.h>
+#include <stdint.h>
 
 /*
     This named glad, because it might have been... but it isn't
@@ -138,6 +139,7 @@
 
 //Textures
 #define GL_MIRRORED_REPEAT 0x8370
+#define GL_MAX_TEXTURE_IMAGE_UNITS 0x8872
 
 //SSBO
 #define GL_SHADER_STORAGE_BUFFER 0x90D2
@@ -198,7 +200,8 @@ bool InitGLExtensions(void);
 #define GLAPI extern
 
 typedef signed long long int GLsizeiptr;
-typedef intptr_t GLintptr;
+typedef intptr_t    GLintptr;
+typedef uint64_t    GLuint64;
 
 typedef GLenum (APIENTRYP PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
 typedef void (APIENTRYP PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
@@ -342,6 +345,14 @@ typedef void (APIENTRYP PFNGLGENERATETEXTUREMIPMAPPROC)(GLuint texture);
 GLAPI PFNGLGENERATETEXTUREMIPMAPPROC glGenerateTextureMipmap;
 typedef void (APIENTRYP PFNGLMEMORYBARRIERPROC)(GLbitfield barriers);
 GLAPI PFNGLMEMORYBARRIERPROC glMemoryBarrier;
+
+//Bindless Textures
+typedef GLuint64 (APIENTRYP PFNGLGETTEXTUREHANDLEARBPROC)(GLuint texture);
+GLAPI PFNGLGETTEXTUREHANDLEARBPROC glGetTextureHandleARB;
+typedef void (APIENTRYP PFNGLMAKETEXTUREHANDLERESIDENTARBPROC)(GLuint64 handle);
+GLAPI PFNGLMAKETEXTUREHANDLERESIDENTARBPROC glMakeTextureHandleResidentARB;
+typedef void (APIENTRYP PFNGLMAKETEXTUREHANDLENONRESIDENTARBPROC)(GLuint64 handle);
+GLAPI PFNGLMAKETEXTUREHANDLENONRESIDENTARBPROC glMakeTextureHandleNonResidentARB;
 
 //Debug
 typedef void (APIENTRY *GLDEBUGPROC)(GLenum source,GLenum type,GLuint id,GLenum severity,GLsizei length,const char *message,const void *userParam);

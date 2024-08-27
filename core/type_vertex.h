@@ -13,18 +13,16 @@ struct vertex;
 struct vertex{
     vec3    pos;
     vec3    normal;
+    vec3    tangent;
     vec2    uv;
     int32_t matid;
-
     vertex(){};
-    vertex(float a,float b,float c,float d,float e,float f,float g,float h);
 };
 
-inline vertex::vertex(float a,float b,float c,float d,float e,float f,float g,float h){
-    pos.set(a,b,c);
-    normal.set(d,e,f);
-    uv.set(g,h);
-    matid = 0;
+struct line{
+    vec3 from;
+    vec3 to;
+    line(){};
 };
 
 #endif

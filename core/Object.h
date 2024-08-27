@@ -1,23 +1,27 @@
 #ifndef _OBJECT_H_
 #define _OBJECT_H_
 class Object;
+#include <string>
+#include <atomic>
+#include <list>
+
 #include "Mesh.h"
 #include "type_fmat3.h"
 #include "type_fmat4.h"
 #include "type_vec3.h"
 #include "type_quat.h"
-#include <string>
-#include <atomic>
-#include <list>
+#include "Material.h"
 
 typedef uint32_t objectid_t;
-#define OBJECTID_INVALID 0xFFFFFFFF
+#define OBJECTID_INVALID    0xFFFFFFFF
+#define NUM_MATERIAL_SLOTS  4
 
 //All variables that affect the object's appearance, which are modified/read by different threads
 struct ObjectState{
     bool f_was_transformed = false;
     vec3 position = vec3(0,0,0);
     quat rotation;
+    vec3 scale = vec3(1,1,1);
 };
 
 //All Set/Get functions may only be set from physics. And update the state_physics.
@@ -25,7 +29,7 @@ struct ObjectState{
 class Object{
     public:
     Object();
-    ~Object();
+    virtual ~Object();
     void GenerateUniqueID();
 
     meshid_t GetMeshID();
@@ -48,12 +52,13 @@ class Object{
     //Modify postition
     void SetPosition(const vec3& newpos);
     void MoveBy(const vec3& delta);
-    void MoveForwardBy(float delta);
-    void MoveUpBy(float delta);
-    void MoveSidewaysBy(float delta);
+    vec3 MoveForwardBy(float delta);
+    vec3 MoveUpBy(float delta);
+    vec3 MoveSidewaysBy(float delta);
 
     //Modify size
     void SetScale(const vec3& newscale);
+    vec3 GetScale();
 
     //Modify rotation
     void SetLookAt(const vec3& newpos, vec3* optional_up = NULL);
@@ -71,8 +76,6 @@ class Object{
     fmat4 local_transform_scale_matrix;
     fmat4 world_transform_scale_matrix;
 
-    vec3 scale = vec3(1,1,1);
-
     //The reference vectors for our coordinate system.
     static vec3 ref_up;
     static vec3 ref_left;
@@ -83,7 +86,8 @@ class Object{
     vec3 GetForward();  //Returns the forward or normalized lookat direction
     vec3 GetLeft();     //Return the vector pointing left
 
-    int material_slot[4] = {};
+    void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
+    int material_slot[NUM_MATERIAL_SLOTS] = {};
 
     //For checking if the state_physics_prev is complete
     bool PhysicsCompleted();

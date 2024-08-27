@@ -32,7 +32,7 @@ void Texture::LoadFromFile(const char* filename){
     int w;
 	int h;
 	int channels;
-    stbi_set_flip_vertically_on_load(true);
+    stbi_set_flip_vertically_on_load(false);
     uint8_t* img  = stbi_load_from_memory(img_data,img_data_sz,&w,&h,&channels,0);
     debug->Info("Loaded image file: %i x %i %i channels\n",w,h,channels);
 
@@ -52,7 +52,16 @@ void Texture::LoadFromFile(const char* filename){
     }else{
         format = GL_RGB;
     }
-    debug->Info("Uploading data\n");
+
     glTextureSubImage2D(texture_id,0,0,0,w,h,format,GL_UNSIGNED_BYTE,img);
     glGenerateTextureMipmap(texture_id);
+
+    #ifdef BINDLESS_TEXTURES
+    texture_handle = glGetTextureHandleARB(texture_id);
+    if (texture_handle == 0){
+        debug->Fatal("Unable to get texture handle from texture ID.\n");
+    }
+    debug->Info("Uploading data. Texture Handle: %llu\n",texture_handle);
+    glMakeTextureHandleResidentARB(texture_handle);
+    #endif
 }

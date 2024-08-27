@@ -32,12 +32,15 @@ It should kind of look like this:
 ### Doing:
 - [x] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.
 - [x] Set a camera's initial position and lookat to something. It should have an up vector change.
+- [x] Automatically merge different materials based on name. And auto assign to an object on mesh load from OBJ.
+- [x] Auto load texture data from .mat file.
+- [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 
 ### ToDo's
 - [ ] eye_position setting is not working on AMD...?
 - [ ] Share the texture across contexts?
 - [x] Assign different materials to objects by storing their material index in a sperate VAO.
-- [ ] Make OBJ file not require UV to be present.
+- [ ] Make OBJ file not require UV to be present so it only uses color.
 - [ ] Scale window and framebuffers
 - [x] Attempt to put ImGui in and keep the crazy overlay going.
 - [x] Compile ImGUI once to a library.
@@ -54,7 +57,10 @@ It should kind of look like this:
 - [ ] Some kind of project structure, where different games/applications can exist and you can build one or more of them.
 - [ ] Maybe have some kind of test / example thing.
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
-- [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array.
+- [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array. https://ktstephano.github.io/rendering/opengl/bindless
+- [ ] Switch between bindless and non-bindless?
+- [ ] Switch on/off backface culling for leaves and other thin things with transparency... although.... viewing it from above might not make a difference.
+
 
 ### Done's
 - [x] Multisampling to a seperate FBO
@@ -118,6 +124,15 @@ Physics will always attempt to run at set rate, so it makes sense to couple inpu
 Some input, like which object is selected or settings from a UI, are only gatherd after a frame was completed. Let's say in the UI we get an object ID that we've selected, and we move the object by one in Z direction. These 2 inputs, the object id and the move command need to be queued as an input, and processed next time the input gathers it's information.
 
 Networking: You'd ideally just submit which buttons were pressed. If the other client is running at 10FPS and you are at 60FPS but both physics are at 50FPS, the input from the other client with respect to object selection will not be as fast. But replaying you input will still happen at 50Hz. And the fact that his UI is lagging does not mean anything for you, since it's keyboard and mouse can still be polled at 50Hz. Although he won't see them with the same speed as you.
+
+### Materials
+
+A .OBJ file has an associated .MAT file with it. Let's say object A has 3 materials, and object B has 3, but the first one is the same as one in A.
+
+A: grass, rock, dirt
+B: metal, rock, concrete
+
+Globally, rocks gets index 1 assigned.
 
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.

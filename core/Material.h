@@ -5,7 +5,7 @@
 #include <string>
 #include "glad.h"
 #include "type_vec4.h"
-
+#include "Texture.h"
 /*
     Material should be something the shaders can access and modify.
     Each mesh will have an material id associated per vertex.
@@ -22,17 +22,19 @@
 //material_t matches layout in shader
 typedef struct {
     vec4 color = {0,1,1,1};
-    int texture_unit = -1;   //The OpenGL texture unit the material is bound to
-    int pad[3];
-    //Texture unit
-    //Texture index within that unit
+    int diffuse_texture = -1;       // The OpenGL texture unit the material is bound to. 0 to 32 typically.
+    int normal_texture = -1;       // The OpenGL texture unit the material is bound to
+    int pad[2];
+    uint64_t handle_diffuse = 0; // The texture handle for OpenGL Bindless Textures
+    uint64_t handle_normal = 0; // The texture handle for OpenGL Bindless Textures
 }material_t;
 
 //We want to know more about the material that GLSL
 typedef struct{
     material_t glsl_material;
     std::string name;
-    std::string diff_texture;
+    Texture* diff_texture = NULL;   //Optional diffuse texture
+    Texture* norm_texture = NULL;   //Optional normal map texture
 }Material;
 
 #endif

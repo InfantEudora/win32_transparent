@@ -21,11 +21,14 @@ void IsoTerrain::CreateTerrain(int w, int d){
     for (int z = 0;z<depth;z++){
         for (int x = 0;x<width;x++){
             IsoCell* c = new IsoCell();
-            assetmanager->GetObjectFromAsset("grid_cell",c);
+            c->coordinate.x = x;
+            c->coordinate.y = z;
+            assetmanager->GetObjectFromAsset("tile_001",c);
             c->SetPosition(vec3(x,0,z) + centre_offset);
             c->name = "IsoCell " + std::to_string(x) + "," + std::to_string(z);
-            c->material_slot[0] = 4;
+            //These two lists should know/update when a cell/or child gets destroyed... somehow
             AttachChild(c);
+            cells.push_back(c);
         }
     }
 }

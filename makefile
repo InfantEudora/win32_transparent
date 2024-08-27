@@ -48,7 +48,7 @@ SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces))
 SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces/controllers))
 
 #ApplicationGrid
-
+SRCS += ApplicationGrid.cpp
 
 ifeq ($(DUMP_BINARYASSETS), 1)
 CFLAGS += -DDUMP_BINARYASSETS

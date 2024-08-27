@@ -2,7 +2,7 @@
 #include "AssetManager.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("AssetManager", DEBUG_ALL);
+static Debugger *debug = new Debugger("AssetManager", DEBUG_INFO);
 
 //We copy some data from the object and store that as an asset.
 void AssetManager::AddNewAsset(const char* asset_name, Object* object){
@@ -36,8 +36,15 @@ Object* AssetManager::GetObjectFromAsset(const char* asset_name, Object* optiona
             object = new Object();
         }
         object->SetMesh(asset->mesh);
-        debug->Info("Got existing Asset: %s\n",asset_name);
+        debug->Trace("Got existing Asset: %s\n",asset_name);
         return object;
     }
     return NULL;
+}
+
+void AssetManager::ListAssets(){
+    debug->Info("List of Assets:\n");
+    for (Asset* asset:assets){
+        debug->Info(" - %s\n",asset->name.c_str());
+    }
 }

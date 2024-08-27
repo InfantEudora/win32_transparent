@@ -51,10 +51,19 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
-    Object* grid_cell = new Object();
-    grid_cell->SetMesh(OBJLoader::ParseOBJFile("isoterrain/data/tile_terrain.obj"));
-    app->assetmanager->AddNewAsset("grid_cell",grid_cell);
-    delete grid_cell;
+    std::vector<Material>loaded_materials;
+
+    Object* temp = new Object();
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_001.obj",&loaded_materials));
+    scene->renderer->AddMaterials(loaded_materials);
+    app->assetmanager->AddNewAsset("tile_001",temp);
+
+    loaded_materials.clear();
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/border_rock.obj",&loaded_materials));
+    scene->renderer->AddMaterials(loaded_materials);
+    app->assetmanager->AddNewAsset("border_rock",temp);
+
+    delete temp;
 
 
     //We now generate a terrain, and load that in.
@@ -65,40 +74,70 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //Test arrows to test all this quaternion madness.
     Object* arrows = new Object();
-    std::vector<Material>loaded_materials;
+    loaded_materials.clear();
     arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj",&loaded_materials));
+    scene->renderer->AddMaterials(loaded_materials);
+    arrows->PickMaterials(loaded_materials,scene->renderer->materials);
+
     arrows->name = "Axis Arrows";
+    arrows->SetPosition(vec3(-2,0,0));
     app->selected_object = arrows;
     scene->renderer->objects.push_back(arrows);
-    //Add materials that were loaded
-    for (Material mat:loaded_materials){
-        scene->renderer->materials.push_back(mat.glsl_material);
-    }
-    //Manually assign materials
-    arrows->material_slot[0] = 0;
-    arrows->material_slot[1] = 1;
-    arrows->material_slot[2] = 2;
-    arrows->material_slot[3] = 3;
+
+    //A test thing with 4 new textures that should auto load and display:
+    loaded_materials.clear();
+    Object* testcube  = new Object();
+    testcube->SetMesh(OBJLoader::ParseOBJFile("data/test_cube.obj",&loaded_materials));
+    testcube->name = "Test Cube";
+    testcube->SetPosition(vec3(0,0.5,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    testcube->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->renderer->objects.push_back(testcube);
+
+    loaded_materials.clear();
+    Object* tree  = new Object();
+    tree->SetMesh(OBJLoader::ParseOBJFile("data/tree_001.obj",&loaded_materials));
+    tree->name = "Tree 001";
+    tree->SetPosition(vec3(0.5,0,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    tree->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->renderer->objects.push_back(tree);
+
+    loaded_materials.clear();
+    Object* wall  = new Object();
+    wall->SetMesh(OBJLoader::ParseOBJFile("data/wall_segment.obj",&loaded_materials));
+    wall->name = "Wall 001";
+    wall->SetPosition(vec3(0.5,0,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    wall->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->renderer->objects.push_back(wall);
+
+
 
     app->main_scene->UpdatePhysics();
 
     //Create a material
-    material_t m;
-    m.color = vec4(1,1,1,1);
-    m.texture_unit = 0;
-    scene->renderer->materials.push_back(m);
+    Material mat = {};
+    mat.glsl_material.color = vec4(1,1,1,1);
+    mat.glsl_material.diffuse_texture = 0;
+    mat.name = "Custom Loaded Textured Material";
+    Texture* tex = scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
+    mat.glsl_material.handle_diffuse = tex->texture_handle;
+    mat.diff_texture = tex;
+    int matindex = scene->renderer->AddMaterial(mat);
 
-    //A material with a texture.
-    Texture* texture = new Texture();
-    texture->LoadFromFile("data/textures/test_texture_4096.png");
-    glBindTextureUnit(0, texture->texture_id);
 
+    mat.glsl_material.color = vec4(1,0.2,0.2,0.9);
+    mat.name = "Colored Textured Material";
+    scene->renderer->AddMaterial(mat);
 
-    m.color = vec4(1,0.2,0.2,0.9);
-    m.texture_unit = 0;
-    scene->renderer->materials.push_back(m);
+    //Now we can assign materials to all the tiles.
+    for (IsoCell* cell:app->terrain->cells){
+        cell->material_slot[0] = matindex;
+    }
 
     BinaryAsset::DumpBinaryAssets();
+    app->assetmanager->ListAssets();
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -137,7 +176,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewLayeredWindow(1024,768,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1536,768,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -206,32 +245,33 @@ void ApplicationGrid::RunLogic(){
         int dy = input->GetDelta(INPUT_MOUSE_Y);
         if (input->IsKeyDown(INPUT_SHIFT)){
             //Move the camera
-            camera->MoveSidewaysBy(-dx/100.0f);
-            camera->MoveUpBy(dy/100.0f);
+            vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
+            d += camera->MoveUpBy(dy/100.0f);
+            camera_target += d;
         }else{
-            //If we move left/right, we rotate the camera around the origin.
-            vec3 p = camera->GetPosition();
+            //If we move left/right, we rotate the camera around the camera target.
+            vec3 p = camera->GetPosition() - camera_target;
             vec3 axis = camera->GetLeft();
 
             //Get the axis towards the camera.
             quat q(axis,-dy/50.0f);
 
-            //Rotate the camera position around the origin
+            //Rotate the camera position around the camera target
             p = q * p;
             //We update the position
-            camera->SetPosition(p);
+            camera->SetPosition(p+camera_target);
 
             //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
             vec3 up = camera->GetUp();
             //up = vec3(0,1,0);
-            camera->SetLookAt(vec3(),&up);
+            camera->SetLookAt(camera_target,&up);
 
             //Now we rotate around the Y-axis
-            p = camera->GetPosition();
+            p = camera->GetPosition()-camera_target;
             axis = vec3(0,1,0);
             q.set_rotation(axis,-dx/50.0f);
             p = q * p;
-            camera->SetPosition(p);
+            camera->SetPosition(p+camera_target);
             //The lookat should make the same rotation around the y axis
             camera->RotateBy(q);
         }
@@ -261,12 +301,43 @@ void ApplicationGrid::RunLogic(){
 }
 
 void ApplicationGrid::UpdateUI(){
-    //UI
+    Object* object = main_scene->camera;
+
+
+    IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
+    //UI for GridCells
     ImGui::Begin("Grid UI");
     ImGui::Text("Behold, a grid of tiles.");
+    if (!cell){
+        ImGui::Text("No Object of type Cell is selected.");
+    }else{
+        ImGui::Text("Coordinate   : %i x %i",cell->coordinate.x,cell->coordinate.y);
+        ImGui::Text("Terrain Type ");
+        if (ImGui::Button("Set None")){
+            cell->SetTerrainType(CELL_TERRAIN_NONE);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Set Empty")){
+            cell->SetTerrainType(CELL_TERRAIN_EMPTY);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Set Grass")){
+            cell->SetTerrainType(CELL_TERRAIN_GRASS);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Set Rock")){
+            cell->SetTerrainType(CELL_TERRAIN_ROCK);
+        }
 
-    Object* object = main_scene->camera;
+    }
+    ImGui::End();
+
+    //For generic Objects and parameters
+    ImGui::Begin("Generic Object UI");
     if (ImGui::CollapsingHeader("Main Camera Controls")){
+
+
+
         float roll = 0;
         if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
             object->RollBy(roll);
@@ -274,7 +345,9 @@ void ApplicationGrid::UpdateUI(){
 
         vec3 up = object->GetUp();
         vec3 forward = object->GetForward();
+        ImGui::DragFloat3("Target", (float*)&camera_target, 0.01f, -1.0f, 1.0f);
         ImGui::BeginDisabled();
+
         ImGui::DragFloat3("Forward Vector", (float*)&forward, 0.01f, -1.0f, 1.0f);
         ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
         ImGui::EndDisabled();
@@ -336,6 +409,12 @@ void ApplicationGrid::UpdateUI(){
             }
             object->SetRotation(q);
         }
+        if (ImGui::CollapsingHeader("Scale")){
+            vec3 scale = object->GetScale();
+            if (ImGui::DragFloat3("Scale Vector", (float*)&scale, 0.01f, 0.01f, 10.0f)){
+                object->SetScale(scale);
+            }
+        }
         if (ImGui::CollapsingHeader("Material")){
             ImGui::Text("Renderer Materials: %i",renderer->materials.size());
             ImGui::Separator();
@@ -350,6 +429,12 @@ void ApplicationGrid::UpdateUI(){
     if (ImGui::CollapsingHeader("Performance")){
         ImGui::Text("Frame Rate   : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
         ImGui::Text("Physics Rate : %.2f TPS (%.2f ms)", 1000000.0f / tmr_physics->avg,tmr_physics->avg/1000.0f );
+    }
+
+    if (ImGui::CollapsingHeader("Renderer")){
+        ImGui::Text(    "Num Materials  : %i", renderer->GetNumMaterials());
+        ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
+        ImGui::Checkbox("##1", &renderer->f_normal_mapping);
     }
 
     ImGui::End();

@@ -12,7 +12,7 @@ void Renderer::SetState(){
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
+    glCullFace(GL_BACK);
 
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_BLEND);
@@ -196,8 +196,6 @@ void Renderer::RenderUniqueMeshes(){
             }
             data.objectindex = object_index;
 
-
-
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
             instancedata.push_back(data);
@@ -211,21 +209,8 @@ void Renderer::RenderUniqueMeshes(){
     }
 }
 
-//This for now just uploads all the known materials to a SSBO... each frame.
-//Might only need to do this once.
-void Renderer::UploadMaterials(){
-    if (materials.size() > 0){
-        glInvalidateBufferData(materialdata_ssbo);
-        glNamedBufferData(materialdata_ssbo,materials.size()*sizeof(material_t) , &materials.at(0),GL_DYNAMIC_DRAW);
-    }
-}
+void Renderer::RenderDebugLines(){
 
-material_t* Renderer::GetMaterial(int index){
-    if ((index >= materials.size()) || (index < 0) || (materials.size() == 0)){
-        //Return an invalid material
-        return NULL;
-    }
-    return &materials.at(index);
 }
 
 //Set's the SSBO that will be used for reading back data
@@ -318,8 +303,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     if (shader && camera){
         shader->Use();
         vec3 p = camera->GetPosition();
-        //shader->Setvec3("eye_position",p);
+        shader->Setvec3("eye_position",p);
         shader->Setmat4("mat_worldcam",camera->mat_cam);
+        shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+
     }
 
     if (input){
@@ -447,6 +434,15 @@ bool Renderer::InitFBO(){
 
     SetNumAASamples(16);
 
+    //Get some info
+    int r = 0;
+
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &r);
+    debug->Info("GL_MAX_TEXTURE_SIZE = %i\n",r);
+
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &r);
+    debug->Info("GL_MAX_TEXTURE_IMAGE_UNITS = %i\n",r);
+
     //Setup buffers:
     //Mutisampled color 16bit float
     glNamedRenderbufferStorageMultisample(color_rbo_id, aa_samples, GL_RGBA16F, width, height);
@@ -558,4 +554,89 @@ void Renderer::SetVSync(bool enable){
             debug->Ok("VSync: Disabled\n");
         }
     }
+}
+
+//Add's materials to global list, omitting duplicates by name. Returns the index where the material was added.
+int Renderer::AddMaterial(Material& newmat){
+    bool isnew = true;
+    for (Material& mat:materials){
+        if (newmat.name.compare(mat.name) == 0){
+            debug->Info("Already have material %s\n",mat.name.c_str());
+            isnew = false;
+            break;
+        }
+    }
+    if (isnew){
+        materials.push_back(newmat);
+    }
+    return materials.size() - 1;
+}
+
+//Add's materials to global list, omitting duplicates by name.
+void Renderer::AddMaterials(std::vector<Material>& list){
+    for (Material& newmat:list){
+        int index = AddMaterial(newmat);
+    }
+}
+
+int Renderer::GetNumMaterials(){
+    return materials.size();
+}
+
+//This for now just uploads all the known materials to a SSBO... each frame.
+//Might only need to do this once.
+void Renderer::UploadMaterials(){
+    int texture_unit = 0;
+
+    glsl_materials.clear();
+    for (Material& mat:materials){
+        if (mat.diff_texture){;
+            //debug->Trace("Material has diffuse Texture: Binding to Unit %i\n",texture_unit);
+            mat.glsl_material.diffuse_texture = texture_unit;
+            glBindTextureUnit(texture_unit, mat.diff_texture->texture_id);
+            texture_unit++;
+        }
+        if (mat.norm_texture){;
+            //debug->Trace("Material has normal Texture: Binding to Unit %i\n",texture_unit);
+            mat.glsl_material.normal_texture = texture_unit;
+            glBindTextureUnit(texture_unit, mat.norm_texture->texture_id);
+            texture_unit++;
+        }
+        glsl_materials.push_back(mat.glsl_material);
+    }
+
+    if (glsl_materials.size() > 0){
+        glInvalidateBufferData(materialdata_ssbo);
+        glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_DYNAMIC_DRAW);
+    }
+
+
+}
+
+Material* Renderer::GetMaterial(int index){
+    if ((index >= materials.size()) || (index < 0) || (materials.size() == 0)){
+        //Return an invalid material
+        return NULL;
+    }
+    return &materials.at(index);
+}
+
+//Returns the material index in material list based on supplied name
+int Renderer::FindMaterialIndex(const char* name){
+    for (int index=0;index<materials.size();index++){
+        Material& mat = materials.at(index);
+        if (mat.name.compare(name) == 0){
+            return index;
+        }
+    }
+    return -1;
+}
+
+//Load a texture from file, and returns the OpenGL handle/id-thing
+Texture* Renderer::LoadTexture(const char* filename){
+    //A material with a texture.
+    Texture* texture = new Texture();
+    texture->LoadFromFile(filename);
+    glBindTextureUnit(0, texture->texture_id);
+    return texture;
 }

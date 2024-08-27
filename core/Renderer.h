@@ -55,9 +55,9 @@ class Renderer{
     void DrawObjects();
 
     void UpdateReadbackBuffer();
-    void UploadMaterials();
-    material_t* GetMaterial(int index);
     void RenderUniqueMeshes();
+
+    void RenderDebugLines();
 
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
@@ -74,6 +74,15 @@ class Renderer{
     void ResolveAA();
 
     static void SetVSync(bool enable);
+
+    void UploadMaterials();
+    Material* GetMaterial(int index);
+    int FindMaterialIndex(const char* name);
+    int AddMaterial(Material& newmat);
+    void AddMaterials(std::vector<Material>& list);
+    int GetNumMaterials();
+
+    Texture* LoadTexture(const char* filename);
 
     //We'll have one multisampled framebuffer with a single color and depth buffer.
     //And a resolve buffer, where the mutisampling is resolved to.
@@ -99,8 +108,11 @@ class Renderer{
     Shader* deferred_shader = NULL;     //Shader that outputs data to textures
     Shader* ssao_compute_shader = NULL;
 
+    //Settings
     int aa_samples = 1;
     int pipeline = PIPELINE_MSAA;   //Which pipeline to initialise
+    bool f_normal_mapping = true;   //Enable/disable normal mapping
+    bool f_backface_culling = true;   //Enable/disable normal mapping
 
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;
@@ -109,8 +121,13 @@ class Renderer{
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
     std::vector<Object*>renderable_objects;         // All objects we will render this frame
     std::vector<std::vector<objectid_t>*>batch_ids; // An array of arrays containing the object id's per unique mesh, these form batches
-    std::vector<instancedata_t>instancedata;          // Object data per unique mesh instance
-    std::vector<material_t>materials;                 // List of all known materials
+    std::vector<instancedata_t>instancedata;        // Object data per unique mesh instance
+    std::vector<material_t>glsl_materials;          // List of all materials for direct upload to SSBO
+    std::vector<Material>materials;                 // List of all materials
+    std::vector<Texture*>textures;                   // List of all textures
+
+    std::vector<line>debug_lines;
+
     readback_buffer_t readbackbuffer;               //A single buffer for reading back data from shader
 
     std::vector<Object*>objects;                    //All known objects
