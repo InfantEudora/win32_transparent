@@ -39,6 +39,7 @@ void ApplicationCANUI::Run(void){
 
     //Create hardware
     infy = new InfyPower();
+    delta = new DeltaSM15K();
 
     //And do all render calls from a seperate thread:
     HANDLE hThread = NULL;
@@ -166,6 +167,19 @@ void ApplicationCANUI::UpdateUI(){
     }
     ImGui::End();
 
+
+    //Delta Interface
+    ImGui::Begin("Delta SM15K Control Interface");
+    ImGui::InputInt4("IP Address",delta->ipv4);
+    ImGui::NewLine();
+
+    if (ImGui::Button("Connect")){
+        delta->Connect();
+    };
+
+    ImGui::End();
+
+
     //InfyPower interface
     ImGui::Begin("InfyPower Control Interface");
     ImGui::Text("Num Queued Msgs: %i",infy_queue.size());
@@ -206,32 +220,6 @@ void ApplicationCANUI::UpdateUI(){
     }
     ImGui::End();
 
-    //CAB Sensor Interface
-    ImGui::Begin("CAB 500 Current Sensor");
-    ImGui::Text("Num Queued Msgs: %i",cab500_queue.size());
-    int32_t current_ma = 0;
-    while (cab500_queue.pop(msg)){
-        debug->Info("CAB Message: %X\n",msg.frame.can_id);
 
-        if (msg.frame.can_id = 0x3C2){
-
-            memcpy(&current_ma,&msg.frame.data[0],4);
-
-            current_ma = byteswap_i32(current_ma);
-
-        }
-        //infy->HandleCANMessage(&msg.frame);
-    }
-    //current_ma = 0x7ffffffe;
-    if (current_ma & 0x80000000){
-        current_ma &= 0x7FFFFFFF;
-    }else{
-        current_ma -= 0x7FFFFFFF;
-    }
-
-    ImGui::Text("CAB Current 0x%08X",current_ma);
-    ImGui::Text("CAB Current %12li mA (%.2f Amps)", current_ma,(float)current_ma / 1000.0f);
-
-    ImGui::End();
 
 }
