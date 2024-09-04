@@ -4,79 +4,121 @@
 #include "Debug.h"
 static Debugger *debug = new Debugger("DeltaSM15K", DEBUG_ALL);
 
-int DeltaSM15K::TCPInit(){
-    /* Initialise Windows Socket API */
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        debug->Err("WSAStartup() returned error code %d\n", (unsigned int) GetLastError());
-        errno = EIO;
-        return -1;
-    }
-    return 0;
+DeltaSM15K::DeltaSM15K(){
+
 }
 
-int DeltaSM15K::Connect(){
-    TCPInit();
-    int iResult;
-
-    SOCKET ConnectSocket = INVALID_SOCKET;
-
-    struct addrinfo *result = NULL;
-    struct addrinfo *ptr = NULL;
-    struct addrinfo hints;
-
-    ZeroMemory( &hints, sizeof(hints) );
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-
-    std::string ipstring = "192.168.0.104";
+void DeltaSM15K::Connect(){
+    std::string ipstring = "192.168.0." + std::to_string(ipv4[3]);
     std::string portstring = "8462";
-
-    // Resolve the server address and port
-    iResult = getaddrinfo(ipstring.c_str(), portstring.c_str(), &hints, &result);
-    if ( iResult != 0 ) {
-        debug->Err("getaddrinfo failed with error: %d\n", iResult);
-        WSACleanup();
-        return 1;
-    }
-
-    debug->Info("Connecting to %s:%s\n",ipstring.c_str(),portstring.c_str());
-
-    // Attempt to connect to an address until one succeeds
-    for(ptr=result; ptr != NULL ;ptr=ptr->ai_next) {
-
-        // Create a SOCKET for connecting to server
-        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype,
-            ptr->ai_protocol);
-        if (ConnectSocket == INVALID_SOCKET) {
-            debug->Err("socket failed with error: %ld\n", WSAGetLastError());
-            WSACleanup();
-            return 1;
-        }
-
-        // Connect to server.
-        iResult = connect( ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
-        if (iResult == SOCKET_ERROR) {
-            closesocket(ConnectSocket);
-            ConnectSocket = INVALID_SOCKET;
-            continue;
-        }
-        break;
-    }
-
-    freeaddrinfo(result);
-
-    if (ConnectSocket == INVALID_SOCKET) {
-        debug->Err("Unable to connect to server!\n");
-        WSACleanup();
-        return 1;
-    }
-
-    debug->Ok("Connected to Delta\n");
-
-
-
-
-    return 0;
+    socket.Connect(ipstring, portstring);
 }
+
+bool DeltaSM15K::IsConnected(){
+    return socket.IsConnected();
+}
+
+void DeltaSM15K::SendDeltaMessage(){
+    //Socket should be in connected state...
+
+    std::string query = "*IDN?\n";
+    socket.SendString(query);
+}
+
+void DeltaSM15K::SetOutputVoltage(float voltage){
+    std::string query = "SOURce:VOLtage " + std::to_string(voltage) + "\n";
+    socket.SendString(query);
+
+    query = "MEASure:VOLtage?\n";
+    socket.SendString(query);
+}
+
+void DeltaSM15K::SetOutputCurrent(float current){
+    std::string query = "SOURce:CURrent " + std::to_string(current) + "\n";
+    socket.SendString(query);
+
+    query = "MEASure:CURrent?\n";
+    socket.SendString(query);
+}
+
+void DeltaSM15K::EnableOutput(bool enable){
+    std::string query = "OUTPut " + std::to_string((int)enable) + "\n";
+    socket.SendString(query);
+}
+
+//Empty read
+void DeltaSM15K::Flush(){
+    //Socket should be in connected state...
+    char rsp[256] = {};
+    size_t rspsz = 256;
+
+    int res = socket.Receive(rsp,rspsz);
+    if (res > 0){
+        debug->Info("Flushed %i bytes\n");
+    }else{
+        debug->Info("No data was flushed\n");
+    }
+}
+
+void DeltaSM15K::ReadDeltaMessage(){
+    char rsp[256];
+    size_t rspsz = 256;
+
+    int res = socket.Receive(rsp,rspsz);
+    if (res > 0){
+        debug->Info("Res = %i | Response: %s",res, rsp);
+        if (query_state == 1){
+            try{
+                output_voltage = std::stof(rsp);
+            }catch(...)
+            {}
+        }else if (query_state == 3){
+            try{
+                output_current = std::stof(rsp);
+            }catch(...)
+            {}
+        }
+    }else{
+        debug->Info("No response res == %i\n",res);
+    }
+}
+
+void DeltaSM15K::SetRemoteState(){
+    std::string query = "SYSTem:REMote:CV:STAtus Ethernet\n";
+    socket.SendString(query);
+
+    query = "SYSTem:REMote:CV:STAtus?\n";
+    socket.SendString(query);
+
+    query = "SYSTem:REMote:CC:STAtus Ethernet\n";
+    socket.SendString(query);
+}
+
+void DeltaSM15K::UpdateDevice(){
+
+    if (query_state == 0){
+        //Set and read output voltage
+        Flush();
+        SetOutputVoltage(output_voltage_set);
+        query_state++;
+    }else if (query_state == 1){
+        ReadDeltaMessage();
+        query_state++;
+    }else if (query_state == 2){
+        Flush();
+        SetOutputCurrent(output_current_set);
+        query_state++;
+    }else if (query_state == 3){
+        ReadDeltaMessage();
+        query_state++;
+    }else{
+        query_state = 0;
+    }
+
+}
+
+/*
+    SYSTem:REMote:CV:STAtus Ethernet
+    SYSTem:REMote:CV:STAtus?
+
+*/

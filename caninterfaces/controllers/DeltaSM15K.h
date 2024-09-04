@@ -6,20 +6,43 @@
 #include <vector>
 #include <string>
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "Socket.h"
+#include "Window.h"
 
 class DeltaSM15K;
 
 class DeltaSM15K{
 public:
 
+    DeltaSM15K();
+
 
     int ipv4[4];
     std::string name;
 
-    int TCPInit();
-    int Connect();
+    bool  output_enable = false;
+    float output_voltage = 0;
+    float output_current = 0;
+    float output_voltage_set = 0;
+    float output_current_set = 0;
+
+    int query_state = 0;
+
+    Socket socket;
+
+
+    void Connect();
+    bool IsConnected();
+    void SendDeltaMessage();
+    void ReadDeltaMessage();
+    void Flush();
+    void SetOutputVoltage(float voltage);
+    void SetOutputCurrent(float current);
+    void EnableOutput(bool enable);
+    void SetRemoteState();
+
+    void UpdateDevice();
+
 };
 
 #endif

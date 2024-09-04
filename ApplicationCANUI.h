@@ -26,6 +26,7 @@ public:
 
 private:
     static DWORD WINAPI CANReadThreadFunction(LPVOID lpParameter);
+    static DWORD WINAPI DeltaReadThread(LPVOID lpParameter);
     void UpdateUI();
 };
 

@@ -45,8 +45,8 @@ HINSTANCE PCANReader::hdll = NULL;
 
 PCANReader::PCANReader(){
     debug->SetLevel(DEBUG_ALL);
-    //Init(PCAN_BAUD_125K);
-    Init(PCAN_BAUD_500K);
+    Init(PCAN_BAUD_125K);
+    //Init(PCAN_BAUD_500K);
 }
 
 PCANReader::~PCANReader(){
@@ -77,15 +77,36 @@ int PCANReader::Init(uint32_t _baudrate){
 
 void PCANReader::Connect(){
     TPCANStatus CANStatus;
+
+    //Get the current status
+    CANStatus = g_CAN_GetStatus(channel);
+    debug->Info("PCAN initial status was: %i\n",CANStatus);
+    if (CANStatus == PCAN_ERROR_OK){
+        debug->Info("Already connected\n");
+        connected = true;
+        return;
+    }
+
     // Init of PCANBasic Driver
     CANStatus = g_CAN_Initialize(channel, baudrate, 0, 0, 0);
-    if(CANStatus!=PCAN_ERROR_OK){
+    if(CANStatus != PCAN_ERROR_OK){
         debug->Err("Error initialising CAN interface: 0x%x. Maybe it's busy? Turn it off and on again?\n",CANStatus);
         connected = false;
         return;
     }
     debug->Ok("Channel initialized\n");
     connected = true;
+}
+
+void PCANReader::Reset(){
+    TPCANStatus CANStatus;
+    CANStatus = g_CAN_Reset(channel);
+
+    if (CANStatus != PCAN_ERROR_OK){
+        debug->Warn("PCAN connection was not reset\n");
+    }else{
+        debug->Info("PCAN connection was reset\n");
+    }
 }
 
 bool canframetoPCAN(can_frame_t* frame_in, TPCANMsg* pcanmsg_out){
@@ -100,7 +121,11 @@ bool canframetoPCAN(can_frame_t* frame_in, TPCANMsg* pcanmsg_out){
     memcpy(pcanmsg_out->DATA,frame_in->data,8);
     pcanmsg_out->LEN = frame_in->can_dlc;
     pcanmsg_out->ID = frame_in->can_id;
-    pcanmsg_out->MSGTYPE = PCAN_MESSAGE_STANDARD;
+    if (frame_in->can_id > 0x7FF){
+        pcanmsg_out->MSGTYPE = PCAN_MESSAGE_EXTENDED;
+    }else{
+        pcanmsg_out->MSGTYPE = PCAN_MESSAGE_STANDARD;
+    }
 
     return true;
 }
@@ -134,6 +159,7 @@ void PCANReader::ReadMessages(void){
         //Transmit any pending messages
         CANMessage msg;
         if (out_queue.pop(msg)){
+            debug->Info("Writing CAN message\n");
             TPCANMsg pcanmsg;
             canframetoPCAN(&msg.frame,&pcanmsg);
             WriteMessage(&pcanmsg);

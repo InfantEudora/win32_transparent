@@ -32,17 +32,19 @@ bool InfyPower::HandleCANMessage(can_frame_t* frame){
         //For DC/DC, only the first 16 bits are used.
         uint16_t v = ParseU16(&frame->data[0]);
         input_voltage = (float)v * 0.1f;
-
     }else if (header.command_no == 0x0C){
         uint16_t v = ParseU16(&frame->data[0]);
         external_voltage = (float)v * 0.1f;
         v = ParseU16(&frame->data[2]);
         available_current = (float)v * 0.1f;
+    }else if (header.command_no == 0x1A){
+        output_enabled_read = !frame->data[0];
+    }else if (header.command_no == 0x1C){
+        vout_setmv_read = ParseU32(&frame->data[0]);
+        iout_setma_read = ParseU32(&frame->data[4]);
     }
-
     return false;
 };
-
 
 //Fill the Queue with some predetermined test messages
 void InfyPower::GenerateTestMessages(){
@@ -68,10 +70,22 @@ void InfyPower::GenerateTestMessages(){
         .can_dlc = 8,
         .data = {0x13, 0x58, 0x01, 0x66, 0x00, 0x00, 0x00, 0x00}
     };
+    can_frame_t frame_1A = { //Output is enabled
+        .can_id =0x029AF000,
+        .can_dlc = 8,
+        .data = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+    };
+    can_frame_t frame_1C = { //Set output to 200V 5A
+        .can_id =0x029CF000,
+        .can_dlc = 8,
+        .data = {0x00, 0x03, 0x0D, 0x40, 0x00, 0x00, 0x13, 0x88}
+    };
     HandleCANMessage(&frame_03);
     HandleCANMessage(&frame_04);
     HandleCANMessage(&frame_06);
     HandleCANMessage(&frame_0C);
+    HandleCANMessage(&frame_1A);
+    HandleCANMessage(&frame_1C);
 }
 
 //Parse float data from a CAN frame
@@ -83,6 +97,26 @@ float InfyPower::ParseFloat(uint8_t* data){
     ap[2] = data[1];
     ap[3] = data[0];
     return a;
+}
+
+//Parse float data from a CAN frame
+uint32_t InfyPower::ParseU32(uint8_t* data){
+    uint32_t a = 0;
+    uint8_t* ap = (uint8_t*)&a;
+    ap[0] = data[3];
+    ap[1] = data[2];
+    ap[2] = data[1];
+    ap[3] = data[0];
+    return a;
+}
+
+void InfyPower::WriteU32(uint8_t* data,uint32_t value){
+    uint32_t a = value;
+    uint8_t* ap = (uint8_t*)&a;
+    data[3] = ap[0];
+    data[2] = ap[1];
+    data[1] = ap[2];
+    data[0] = ap[3];
 }
 
 uint16_t InfyPower::ParseU16(uint8_t* data){
@@ -105,3 +139,89 @@ void InfyPower::BroadcastSetDialMode(can_frame_t& frame){
     frame.data[6] = 0;
     frame.data[7] = 0;
 }
+
+void InfyPower::ReadNrSystemModules(can_frame_t& frame){
+    frame.can_dlc = 8;
+    frame.can_id = 0x02823FF0;
+    frame.data[0] = 0;
+    frame.data[1] = 0;
+    frame.data[2] = 0;
+    frame.data[3] = 0;
+    frame.data[4] = 0;
+    frame.data[5] = 0;
+    frame.data[6] = 0;
+    frame.data[7] = 0;
+}
+
+//Generate a request 0
+void InfyPower::QueryDevice(can_frame_t& frame, uint8_t command_no){
+    frame.can_dlc = 8;
+    frame.can_id = 0x028001F0;
+    frame.can_id |= (uint32_t)command_no << 16;
+    frame.data[0] = 0;
+    frame.data[1] = 0;
+    frame.data[2] = 0;
+    frame.data[3] = 0;
+    frame.data[4] = 0;
+    frame.data[5] = 0;
+    frame.data[6] = 0;
+    frame.data[7] = 0;
+}
+
+//Set output voltagecurrent
+void InfyPower::SetOutput(can_frame_t& frame, uint32_t voltage_mv, uint32_t current_ma){
+    frame.can_dlc = 8;
+    frame.can_id = 0x028001F0;
+    frame.can_id |= (uint32_t)0x1C << 16;
+    WriteU32(&frame.data[0],voltage_mv);
+    WriteU32(&frame.data[4],current_ma);
+}
+
+//Set output voltagecurrent
+void InfyPower::EnableOutput(can_frame_t& frame, bool enabled){
+    frame.can_dlc = 8;
+    frame.can_id = 0x028001F0;
+    frame.can_id |= (uint32_t)0x1A << 16;
+    frame.data[0] = !enabled;
+    frame.data[1] = 0;
+    frame.data[2] = 0;
+    frame.data[3] = 0;
+    frame.data[4] = 0;
+    frame.data[5] = 0;
+    frame.data[6] = 0;
+    frame.data[7] = 0;
+}
+
+bool InfyPower::UpdateDevice(can_frame_t& frame){
+    if (message_state == 0){
+        QueryDevice(frame,3);
+        message_state = 3;
+        return true;
+    }else if (message_state == 3){
+        QueryDevice(frame,4);
+        message_state = 4;
+        return true;
+    }else if (message_state == 4){
+        QueryDevice(frame,6);
+
+        message_state = 6;
+        return true;
+    }else if (message_state == 6){
+        QueryDevice(frame,0x0C);
+        message_state = 0x0C;
+        return true;
+    }else if (message_state == 0x0C){
+        EnableOutput(frame,output_enabled);
+        message_state = 0x1A;
+        return true;
+    }else if (message_state == 0x1A){
+        SetOutput(frame,vout_setmv,iout_setma);
+        message_state = 0x1C;
+        return true;
+    }else{
+        message_state = 0;
+        return false;
+    }
+    return false;
+}
+

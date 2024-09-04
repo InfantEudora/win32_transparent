@@ -33,6 +33,7 @@ public:
     virtual void ReadMessages();
     virtual void Connect();
     virtual void Disconnect();
+    virtual void Reset();
     bool GetCanMessage(CANMessage& message); //Return message from internal queue
 };
 

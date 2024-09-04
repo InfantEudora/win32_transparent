@@ -3,7 +3,7 @@
 #include "glad.h"
 #include "File.h"
 
-static Debugger* debug = new Debugger("Window",DEBUG_INFO);
+static Debugger* debug = new Debugger("Window",DEBUG_ALL);
 
 std::vector<Window*>Window::windows; //A list of windows to match handles to
 std::vector<WNDCLASSEXA>Window::wcs;      //Different types of window classes
@@ -512,10 +512,8 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         case WM_PAINT:
             debug->Info("WM_PAINT received\n");
         break;
-
-
         default:
-            //ebug->Info("Window Message %lu\n",msg);
+            //debug->Info("Window Message %lu\n",msg);
             break;
     }
 

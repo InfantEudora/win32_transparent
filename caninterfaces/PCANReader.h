@@ -20,6 +20,7 @@ public:
 
     int Init(uint32_t baudrate);
     void Connect() override;
+    void Reset();
 
     //Functions for reading/writing
     void ReadMessages();

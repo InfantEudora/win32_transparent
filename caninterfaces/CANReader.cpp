@@ -48,3 +48,7 @@ void CANReader::Connect(){
 void CANReader::Disconnect(){
     connected = false;
 }
+
+void CANReader::Reset(){
+
+}
