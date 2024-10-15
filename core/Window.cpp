@@ -3,7 +3,7 @@
 #include "glad.h"
 #include "File.h"
 
-static Debugger* debug = new Debugger("Window",DEBUG_ALL);
+static Debugger* debug = new Debugger("Window",DEBUG_INFO);
 
 std::vector<Window*>Window::windows; //A list of windows to match handles to
 std::vector<WNDCLASSEXA>Window::wcs;      //Different types of window classes
@@ -511,6 +511,31 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         break;
         case WM_PAINT:
             debug->Info("WM_PAINT received\n");
+        break;
+        case WM_SIZE:
+            debug->Info("WM_SIZE received\n");
+            if(wParam == SIZE_MINIMIZED){
+                debug->Info("Window Minimized.\n");
+            }else{
+                if (wnd){
+                    long w = LOWORD(lParam);
+                    long h = HIWORD(lParam);
+                    if ((wnd->width == w) && (wnd->height == h)){
+                        debug->Info("Window Restored.\n");
+                    }else{
+                        wnd->width = w;
+                        wnd->height = h;
+                        debug->Info("Resize to %lu x %lu px\n",wnd->width,wnd->height);
+                        wnd->f_resized = true;
+
+                        if (!(wnd->f_istogglingfullscreen || wnd->f_fullscreen)){
+                            wnd->width_windowed = wnd->width;
+                            wnd->height_windowed = wnd->height;
+                        }
+                    }
+                }
+            }
+            break;
         break;
         default:
             //debug->Info("Window Message %lu\n",msg);

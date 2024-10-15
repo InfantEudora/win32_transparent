@@ -53,3 +53,23 @@ void Camera::CalculateLookatMatrix(){
 	mat_look.lookatmatrix(state.position,state.position - (state.rotation * ref_forward),state.rotation * ref_up);
 	mat_cam = mat_look * mat_frus;
 }
+
+//Returns a ray from the center of the camera.
+ray Camera::GetRay(){
+	ray r;
+	r.origin = GetPosition();
+	r.direction = GetForward();
+	return r;
+}
+//Returns a ray from the center of the camera at pixel posiion
+ray Camera::GetPixelRay(int2& px_coord){
+	ray r = GetRay();
+	//Convert the pixel coord to a -1/1 space
+	float w = (px_coord.x - (viewport.width * 0.5)) / (viewport.width * viewport.znear);
+	float h = (px_coord.y - (viewport.height * 0.5)) / (viewport.height * viewport.znear);
+	r.origin += viewport.znear * r.direction;
+	r.origin += GetUp() * -h;
+	r.origin += GetLeft() * w * (viewport.aspect);
+
+	return r;
+}

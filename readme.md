@@ -37,6 +37,9 @@ It should kind of look like this:
 - [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 
 ### ToDo's
+
+- [ ] Project camera and cursor throught the camera, in order to figure out where in the grid you are.
+- [ ] Camera isometric / perspective.
 - [ ] eye_position setting is not working on AMD...? It doesn't like glUniform3fv to uniforms that arent an array?
 - [ ] Share the texture across contexts?
 - [x] Assign different materials to objects by storing their material index in a sperate VAO.
@@ -60,6 +63,10 @@ It should kind of look like this:
 - [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array. https://ktstephano.github.io/rendering/opengl/bindless
 - [ ] Switch between bindless and non-bindless?
 - [ ] Switch on/off backface culling for leaves and other thin things with transparency... although.... viewing it from above might not make a difference.
+
+
+### Todos Game Specific
+- [ ] Have a grid with layers, where the mouse + inverser of camera get's converted back to a coordinate. Maybe use some kind of overlay shader to draw a grid with the current camera settings first. Needs an ability to overlay shaders for a specific program.
 
 
 ### Done's
@@ -144,3 +151,10 @@ Video Cards:
  - AMD FirePro M4000 (Elitebook 8570W)
 
 Fragment shader writes ObjectID to a SSBO when the fragment at mouse position is being rendered. This has some problems with Z testing.
+
+
+### Spite Sheet Tools
+
+SpiteSheet Packer
+Aseprite
+Tiled

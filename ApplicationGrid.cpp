@@ -63,6 +63,9 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->renderer->AddMaterials(loaded_materials);
     app->assetmanager->AddNewAsset("border_rock",temp);
 
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_gate.obj",&loaded_materials));
+    app->assetmanager->AddNewAsset("tile_gate",temp);
+
     delete temp;
 
 
@@ -112,7 +115,12 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     wall->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->renderer->objects.push_back(wall);
 
+    wall = app->assetmanager->GetObjectFromAsset("tile_gate");
+    wall->name  = "Gate Tile";
+    scene->renderer->objects.push_back(wall);
 
+    app->projection_plane.pos = {};
+    app->projection_plane.normal = vec3(0,1,0);
 
     app->main_scene->UpdatePhysics();
 
@@ -176,7 +184,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(960,640,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1280,640,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -303,7 +311,6 @@ void ApplicationGrid::RunLogic(){
 void ApplicationGrid::UpdateUI(){
     Object* object = main_scene->camera;
 
-
     IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
     //UI for GridCells
     ImGui::Begin("Grid UI");
@@ -328,15 +335,17 @@ void ApplicationGrid::UpdateUI(){
         if (ImGui::Button("Set Rock")){
             cell->SetTerrainType(CELL_TERRAIN_ROCK);
         }
-
     }
     ImGui::End();
 
     //For generic Objects and parameters
     ImGui::Begin("Generic Object UI");
     if (ImGui::CollapsingHeader("Main Camera Controls")){
+        float znear = main_scene->camera->viewport.znear;
 
+        if (ImGui::DragFloat("Camera ZNear",&znear,0.01,-1,1)){
 
+        }
 
         float roll = 0;
         if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
@@ -436,6 +445,55 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
         ImGui::Checkbox("##1", &renderer->f_normal_mapping);
     }
+
+    if (ImGui::CollapsingHeader("Window")){
+        ImGui::Text(    "Current Size   : %i x %i", main_window->width,main_window->height);
+    }
+
+    if (ImGui::CollapsingHeader("Assets")){
+        for (Asset* asset: assetmanager->assets){
+            ImGui::Text("Asset  : %s", asset->name.c_str());
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Materials")){
+        for (Material& material: renderer->materials){
+            ImGui::Text("Material  : %s", material.name.c_str());
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Ray - Plane Intersection")){
+        plane& p = projection_plane;
+
+        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+        ray r = main_scene->camera->GetPixelRay(px);
+        ImGui::BeginDisabled();
+        ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Origin", (float*)&r.origin, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Direction", (float*)&r.direction, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        ImGui::Separator();
+
+
+        ImGui::DragFloat3("Plane Origin", (float*)&p.pos, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Plane Normal", (float*)&p.normal, 0.01f, -1.0f, 1.0f);
+
+        vec3 at = {};
+        bool intersect = r.intersects_plane(p,at);
+        if (intersect){
+            ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
+            //Move the object there?
+            if (selected_object){
+                selected_object->SetPosition(at);
+            }
+        }else{
+            ImGui::Text("No intersection");
+        }
+        //
+    }
+
+
+
 
     ImGui::End();
 }

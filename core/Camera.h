@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 #include "Object.h"
+#include "type_ray.h"
+#include "type_int2.h"
 
 typedef int camera_t;
 #define CAMERA_TYPE_PERSPECTIVE		0
@@ -16,6 +18,8 @@ public:
 	void SetupPerspective(float width, float height, float fov, float znear, float zfar);
 	void SetupOrthographic(float width, float height, float fov, float znear, float zfar);
 	void CalculateLookatMatrix();
+	ray  GetRay();
+	ray  GetPixelRay(int2& px_coord);
 
 	camera_t 		type;		//Camera type: CAMERA_TYPE_PERSPECTIVE or CAMERA_TYPE_ORTHOGONAL
 

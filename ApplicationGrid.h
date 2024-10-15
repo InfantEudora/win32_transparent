@@ -3,6 +3,8 @@
 
 #include "Application.h"
 #include "IsoTerrain.h"
+#include "type_plane.h"
+#include "type_ray.h"
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
@@ -17,6 +19,8 @@ public:
 
     IsoTerrain* terrain = NULL;
     Object* selected_object = NULL;
+
+    plane projection_plane;
 
 
 
