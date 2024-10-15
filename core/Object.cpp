@@ -186,7 +186,7 @@ vec3 Object::GetPosition(){
 }
 
 vec3 Object::GetForward(){
-    return state_physics.rotation * ref_forward;
+    return state_physics.rotation * -ref_forward;
 }
 
 vec3 Object::GetUp(){

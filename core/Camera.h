@@ -41,4 +41,6 @@ private:
 	fmat4		mat_look;
 };
 
+//http://www.lighthouse3d.com/tutorials/view-frustum-culling/view-frustums-shape/
+
 #endif

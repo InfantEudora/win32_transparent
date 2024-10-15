@@ -44,7 +44,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     Scene* scene = app->main_scene;
     scene->camera = new Camera();
     scene->camera->name = "Main Camera";
-    scene->camera->SetPosition(vec3(5,5,8));
+    scene->camera->SetPosition(vec3(5,5,5));
     scene->camera->SetLookAt(vec3());
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
     scene->renderer->objects.push_back(scene->camera);
@@ -184,7 +184,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(1280,640,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1152,768,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -285,6 +285,10 @@ void ApplicationGrid::RunLogic(){
         }
     }
 
+    if (input->IsKeyDown(INPUT_MOVE_UP)){
+        camera->MoveForwardBy(0.1f);
+    }
+
     static float mouse_delta_sum = 0;
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     if (mouse_delta_sum != 0){
@@ -342,9 +346,9 @@ void ApplicationGrid::UpdateUI(){
     ImGui::Begin("Generic Object UI");
     if (ImGui::CollapsingHeader("Main Camera Controls")){
         float znear = main_scene->camera->viewport.znear;
-
-        if (ImGui::DragFloat("Camera ZNear",&znear,0.01,-1,1)){
-
+        if (ImGui::DragFloat("Camera ZNear",&znear,0.01,0.0,10.0)){
+            main_scene->camera->viewport.znear = znear;
+            main_scene->camera->CalculateLookatMatrix();
         }
 
         float roll = 0;
@@ -354,11 +358,15 @@ void ApplicationGrid::UpdateUI(){
 
         vec3 up = object->GetUp();
         vec3 forward = object->GetForward();
+        vec3 left = object->GetLeft();
+        vec3 camera_position = main_scene->camera->GetPosition();
+        ImGui::DragFloat3("Cam Position", (float*)&camera_position, 0.01f, -1.0f, 1.0f);
         ImGui::DragFloat3("Target", (float*)&camera_target, 0.01f, -1.0f, 1.0f);
         ImGui::BeginDisabled();
 
         ImGui::DragFloat3("Forward Vector", (float*)&forward, 0.01f, -1.0f, 1.0f);
         ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Left Vector", (float*)&left, 0.01f, -1.0f, 1.0f);
         ImGui::EndDisabled();
     }
 
@@ -466,6 +474,7 @@ void ApplicationGrid::UpdateUI(){
         plane& p = projection_plane;
 
         int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+
         ray r = main_scene->camera->GetPixelRay(px);
         ImGui::BeginDisabled();
         ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
@@ -480,6 +489,7 @@ void ApplicationGrid::UpdateUI(){
 
         vec3 at = {};
         bool intersect = r.intersects_plane(p,at);
+
         if (intersect){
             ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
             //Move the object there?
@@ -491,9 +501,6 @@ void ApplicationGrid::UpdateUI(){
         }
         //
     }
-
-
-
 
     ImGui::End();
 }

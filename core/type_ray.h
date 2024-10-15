@@ -20,7 +20,7 @@ struct ray{
 //TODO
 inline bool ray::intersects_plane(const plane& p, vec3& at){
 
-    float d = p.normal.dot(-direction);
+    float d = p.normal.dot(direction);
     //printf("Intersect test %.3f\n",d);
 
     if (abs(d) > FT_EPSILON){
@@ -29,7 +29,7 @@ inline bool ray::intersects_plane(const plane& p, vec3& at){
         //printf("Dist = %.3f\n",dist);
 
 
-        vec3 result = -direction * dist;
+        vec3 result = direction * dist;
         result += origin;
         at = result;
 

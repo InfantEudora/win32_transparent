@@ -63,13 +63,20 @@ ray Camera::GetRay(){
 }
 //Returns a ray from the center of the camera at pixel posiion
 ray Camera::GetPixelRay(int2& px_coord){
-	ray r = GetRay();
-	//Convert the pixel coord to a -1/1 space
-	float w = (px_coord.x - (viewport.width * 0.5)) / (viewport.width * viewport.znear);
-	float h = (px_coord.y - (viewport.height * 0.5)) / (viewport.height * viewport.znear);
-	r.origin += viewport.znear * r.direction;
-	r.origin += GetUp() * -h;
-	r.origin += GetLeft() * w * (viewport.aspect);
+	ray r;
+	//The end of the ray is on the far clipping plane
+	//Convert the pixel coord to a -0.5/0.5 space
+	float w = (px_coord.x - (viewport.width * 0.5)) / (viewport.width * 0.5);
+	float h = (viewport.height-px_coord.y - (viewport.height * 0.5)) / (viewport.height * 0.5);
 
+	//Compute the near and far plane dimensions
+	float hfar = 2 * tan(toradians(viewport.fov) / 2) * viewport.zfar;
+	float wfar = hfar * viewport.aspect;
+
+	vec3 far_center = GetPosition() + (GetForward() * viewport.zfar);
+	vec3 far_point = far_center + (GetUp() * h * (hfar / 2.0)) + (GetLeft() * w * (wfar/2.0));
+
+	r.origin = GetPosition();
+	r.direction = (far_point - r.origin).normalize();
 	return r;
 }
