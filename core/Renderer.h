@@ -67,7 +67,9 @@ class Renderer{
     bool Init();
     void SetState();
     void SetNumAASamples(int desired);
-    bool InitFBO();
+    bool Resize(int new_width, int new_height);
+    bool RebuildMSAAFBO();
+
     bool InitDeferredFBO();
 
     bool InitSSBO();

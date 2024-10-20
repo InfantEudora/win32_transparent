@@ -73,12 +73,14 @@ void main(){
 	mat_rotate[1] = instance_data[gl_InstanceID].mat_transformscale[1].xyz;
 	mat_rotate[2] = instance_data[gl_InstanceID].mat_transformscale[2].xyz;
 
+
 	vec3 objpos = instance_data[gl_InstanceID].mat_transformscale[3].xyz;
 
 	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(position,1); //In world space
 	vposition = transpos.xyz;
 
 	vnormal = (mat_rotate * normal);
+	vnormal = normalize(vnormal);
 
 	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
 

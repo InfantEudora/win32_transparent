@@ -1,4 +1,4 @@
-This repository was built on:
+    This repository was built on:
 Initial running example from https://www.dhpoware.com/demos/glLayeredWindows.html<br>
 Example is from 2010 and uses uses PBuffer and the old GL pipeline.
 The copyright is included in `copyright.md`
@@ -38,7 +38,11 @@ It should kind of look like this:
 
 ### ToDo's
 
+- [ ] The Mat3 rotation used to also rotate normals in the vertex shader needs to be renormalised. Why?
 - [ ] Project camera and cursor throught the camera, in order to figure out where in the grid you are.
+- [ ] Have a grid that isn't several objects...
+- [ ] Grid tiles should have a module system, as a seperate standalone system that let's you connect things like roads, bricks etc. with
+      some wave-function collapse type deal.
 - [ ] Camera isometric / perspective.
 - [ ] eye_position setting is not working on AMD...? It doesn't like glUniform3fv to uniforms that arent an array?
 - [ ] Share the texture across contexts?

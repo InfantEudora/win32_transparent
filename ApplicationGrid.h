@@ -19,8 +19,15 @@ public:
 
     IsoTerrain* terrain = NULL;
     Object* selected_object = NULL;
+    Object* selection_tile = NULL;
 
     plane projection_plane;
+    struct{
+        int grid_level = 0;
+        int tile_number = 1;
+        bool f_place = true;    // Place on left click
+        bool f_delete = true;   // Delete on right click
+    }grid_settings;
 
 
 

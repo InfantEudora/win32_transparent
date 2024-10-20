@@ -6,7 +6,7 @@ static Debugger* debug = new Debugger("Object",DEBUG_INFO);
 objectid_t Object::object_ids = 0;
 vec3 Object::ref_up = vec3(0,1,0);
 vec3 Object::ref_left = vec3(1,0,0);
-vec3 Object::ref_forward = vec3(0,0,1);
+vec3 Object::ref_forward = vec3(0,0,-1);
 
 Object::Object(){
     GenerateUniqueID();
@@ -28,6 +28,10 @@ void Object::DeleteMesh(){
         }
     }
     mesh = NULL;
+}
+
+void Object::Destroy(){
+    f_is_destroyed = true;
 }
 
 void Object::GenerateUniqueID(){
@@ -186,7 +190,7 @@ vec3 Object::GetPosition(){
 }
 
 vec3 Object::GetForward(){
-    return state_physics.rotation * -ref_forward;
+    return state_physics.rotation * ref_forward;
 }
 
 vec3 Object::GetUp(){

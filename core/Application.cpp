@@ -3,7 +3,7 @@
 
 #include "Application.h"
 #include "OBJLoader.h"
-#include "Debug.h"
+
 #include "Window.h"
 #include "Renderer.h"
 
@@ -198,6 +198,9 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
         debug->Err("No application was supplied to FrameThread\n");
         return 0;
     }
+
+    //Setup debugging to run from this thread:
+    app->debug_physics = new Debugger("AppPhysics", DEBUG_ALL);
 
     uint32_t physics_ticks = 0;
     while (1){

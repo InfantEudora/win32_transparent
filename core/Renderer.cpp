@@ -22,7 +22,19 @@ void Renderer::SetState(){
 }
 
 bool Renderer::Init(){
-    if (!InitFBO()){
+    SetNumAASamples(16);
+
+    //Get some info
+    int r = 0;
+
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &r);
+    debug->Info("GL_MAX_TEXTURE_SIZE = %i\n",r);
+
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &r);
+    debug->Info("GL_MAX_TEXTURE_IMAGE_UNITS = %i\n",r);
+
+
+    if (!RebuildMSAAFBO()){
         return false;
     }
 
@@ -55,9 +67,23 @@ bool Renderer::Init(){
     return true;
 }
 
+//Called when a window is resized
+bool Renderer::Resize(int new_width, int new_height){
+    width = new_width;
+    height = new_height;
+    if (!RebuildMSAAFBO()){
+        return false;
+    }
+    return true;
+}
+
 //Put's all children and it's childrens children etc into a list
 void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects){
     if (!object){
+        return;
+    }
+
+    if (object->IsDestroyed()){
         return;
     }
 
@@ -362,7 +388,6 @@ bool Renderer::InitSSBO(){
     //glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, readback_ssbo);
 
-
     return true;
 }
 
@@ -419,29 +444,26 @@ bool Renderer::InitDeferredFBO(){
     return true;
 }
 
+
+
 //Create all the frame and renderbuffers for mulisampling
-bool Renderer::InitFBO(){
-    glCreateFramebuffers(1, &msaa_fbo_id);
-    glCreateRenderbuffers(1, &color_rbo_id);
-    glCreateRenderbuffers(1, &depth_rbo_id);
-
-    glCreateFramebuffers(1, &resolve_fbo_id);
-    //glCreateRenderbuffers(1, &resolve_rbo_id);
-
+// A multisampled color and depth buffer, and a resolve buffer.
+bool Renderer::RebuildMSAAFBO(){
+    if (msaa_fbo_id == -1){
+        glCreateFramebuffers(1, &msaa_fbo_id);
+    }
+    if (color_rbo_id == -1){
+        glCreateRenderbuffers(1, &color_rbo_id);
+    }
+    if (depth_rbo_id == -1){
+        glCreateRenderbuffers(1, &depth_rbo_id);
+    }
+    if (resolve_fbo_id == -1){
+        glCreateFramebuffers(1, &resolve_fbo_id);
+    }
     if (msaa_fbo_id == -1){
         return false;
     }
-
-    SetNumAASamples(16);
-
-    //Get some info
-    int r = 0;
-
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &r);
-    debug->Info("GL_MAX_TEXTURE_SIZE = %i\n",r);
-
-    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &r);
-    debug->Info("GL_MAX_TEXTURE_IMAGE_UNITS = %i\n",r);
 
     //Setup buffers:
     //Mutisampled color 16bit float
@@ -455,7 +477,12 @@ bool Renderer::InitFBO(){
     CheckFrameBuffer();
 
     //The resolve buffer is texture backed
-    glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
+    if (resolve_tex_id == -1){
+        glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
+    }else{
+        glDeleteTextures(1, &resolve_tex_id);
+        glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
+    }
     glTextureStorage2D(resolve_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);

@@ -17,11 +17,13 @@ public:
     int depth = -1; //X
 
     int cell_count = -1; //= width * depth
+    vec3 center_offset = {};
     std::vector<IsoCell*> cells;     //An array of width*depth cells
 
     AssetManager* assetmanager = NULL;  //Used to load assets from file.
 
     void CreateTerrain(int w, int d);
+    IsoCell* FindCellByWorldPosition(vec3& at);
 };
 
 

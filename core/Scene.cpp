@@ -196,6 +196,8 @@ void Scene::UpdatePhysics(){
 
 void Scene::DrawFrame(){
     if (camera){
+        camera->viewport.width = renderer->width;
+        camera->viewport.height = renderer->height;
         camera->CalculateLookatMatrix();
     }
 
@@ -207,3 +209,9 @@ void Scene::DrawFrame(){
     glBindTextureUnit(1, tex_2->texture_id);
     renderer->DrawFrame(camera, shader,inputcontroller);
 };
+
+void Scene::AddObject(Object* object){
+    if (object && renderer){
+        renderer->objects.push_back(object);
+    }
+}

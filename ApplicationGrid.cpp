@@ -47,7 +47,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->camera->SetPosition(vec3(5,5,5));
     scene->camera->SetLookAt(vec3());
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
-    scene->renderer->objects.push_back(scene->camera);
+    scene->AddObject(scene->camera);
 
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
@@ -55,8 +55,10 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     Object* temp = new Object();
     temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_001.obj",&loaded_materials));
-    scene->renderer->AddMaterials(loaded_materials);
     app->assetmanager->AddNewAsset("tile_001",temp);
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_002.obj",&loaded_materials));
+    app->assetmanager->AddNewAsset("tile_002",temp);
+    scene->renderer->AddMaterials(loaded_materials);
 
     loaded_materials.clear();
     temp->SetMesh(OBJLoader::ParseOBJFile("data/border_rock.obj",&loaded_materials));
@@ -73,7 +75,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->terrain = new IsoTerrain();
     app->terrain->assetmanager = app->assetmanager;
     app->terrain->CreateTerrain(5,5);
-    scene->renderer->objects.push_back(app->terrain);
+    scene->AddObject(app->terrain);
 
     //Test arrows to test all this quaternion madness.
     Object* arrows = new Object();
@@ -85,7 +87,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     arrows->name = "Axis Arrows";
     arrows->SetPosition(vec3(-2,0,0));
     app->selected_object = arrows;
-    scene->renderer->objects.push_back(arrows);
+    scene->AddObject(arrows);
 
     //A test thing with 4 new textures that should auto load and display:
     loaded_materials.clear();
@@ -95,7 +97,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     testcube->SetPosition(vec3(0,0.5,0));
     scene->renderer->AddMaterials(loaded_materials);
     testcube->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->renderer->objects.push_back(testcube);
+    scene->AddObject(testcube);
 
     loaded_materials.clear();
     Object* tree  = new Object();
@@ -104,7 +106,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     tree->SetPosition(vec3(0.5,0,0));
     scene->renderer->AddMaterials(loaded_materials);
     tree->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->renderer->objects.push_back(tree);
+    scene->AddObject(tree);
 
     loaded_materials.clear();
     Object* wall  = new Object();
@@ -113,14 +115,26 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     wall->SetPosition(vec3(0.5,0,0));
     scene->renderer->AddMaterials(loaded_materials);
     wall->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->renderer->objects.push_back(wall);
+    scene->AddObject(wall);
 
     wall = app->assetmanager->GetObjectFromAsset("tile_gate");
     wall->name  = "Gate Tile";
-    scene->renderer->objects.push_back(wall);
+    scene->AddObject(wall);
 
     app->projection_plane.pos = {};
     app->projection_plane.normal = vec3(0,1,0);
+
+    //Construct a selection tile that we will somehow turn into a transparent grid.
+    loaded_materials.clear();
+    app->selection_tile = new Object();
+    app->selection_tile->SetMesh(OBJLoader::ParseOBJFile("data/selection_tile.obj",&loaded_materials));
+    app->selection_tile->name = "Selection Tile";
+    app->selection_tile->SetPosition(vec3(0,3,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    app->selection_tile->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->AddObject(app->selection_tile);
+
+
 
     app->main_scene->UpdatePhysics();
 
@@ -164,6 +178,11 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     }
 
     while (app->main_window->f_should_quit == false){
+        if (app->main_window->f_resized){
+            app->main_window->f_resized = false;
+            app->renderer->Resize(app->main_window->width,app->main_window->height);
+        }
+
         //Tell ImGui to start a new frame
         app->main_window->ImGuiNewFrame();
 
@@ -184,7 +203,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(1152,768,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1440,720,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -286,28 +305,96 @@ void ApplicationGrid::RunLogic(){
     }
 
     if (input->IsKeyDown(INPUT_MOVE_UP)){
-        camera->MoveForwardBy(0.1f);
+        vec3 d = camera->MoveForwardBy(0.1f);
+        camera_target += d;
     }
 
     static float mouse_delta_sum = 0;
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     if (mouse_delta_sum != 0){
-        camera->MoveForwardBy(-mouse_delta_sum / 10.0f);
+        camera->MoveForwardBy(mouse_delta_sum / 10.0f);
         mouse_delta_sum /= 1.1;
     }
 
     //Iterate over all the rendered objects
+    bool clicked_empty = false;
+    bool left_clicked = false;
+    bool right_clicked = false;
+    if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
+        clicked_empty = true;
+        left_clicked = true;
+    }
+    if (input->WasKeyReleased(INPUT_CLICK_RIGHT)){
+        right_clicked = true;
+    }
+
+    //When a terrain cell gets destroyed, we should remove it from renderer and terrain.
+    //Either we use a shared pointer, or we keep track of the number of references.
+
+
     for (Object* object:renderer->renderable_objects){
+        if (object->IsDestroyed()){
+            //TODO: Remove it... here?
+        }
+
+
         if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == objid)){
             vec3 p = object->GetPosition();
             debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",objid,p.x,p.y,p.z);
             //object->material_slot[1] = 1;
             selected_object = object;
+            clicked_empty = false;
         }else if (object->GetID() == objid){
             //On hover
             //object->material_slot[0] = 2;
         }else{
             //object->material_slot[0] = object->material_slot[1];
+        }
+    }
+
+    //Grid stuffies
+    int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+    ray r = main_scene->camera->GetPixelRay(px);
+
+    vec3 at = {};
+    bool intersect = r.intersects_plane(projection_plane,at);
+    if (intersect){
+        //We snap the selection tile to a grid.
+        if (selection_tile){
+            at.round();
+            selection_tile->SetPosition(at);
+
+            //Cell is the object the mouse is over, which can be different from our mouse grid coordinate
+            IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
+            IsoCell* terraincell = terrain->FindCellByWorldPosition(at);
+            if (clicked_empty || (cell && left_clicked)){
+                //Request the cell at the current coordinate from the grid:
+
+                if (terraincell){
+                    debug_physics->Info("Already IsoCell at %.1f x %.1f : Cell %ix%i\n",at.x,at.z,terraincell->coordinate.x,terraincell->coordinate.y);
+                }else{
+                    if (cell && (cell->GetPosition().x == at.x) && (cell->GetPosition().z == at.z)){
+                        debug_physics->Info("Already IsoCell at %.1f x %.1f : Cell %ix%i\n",at.x,at.z,cell->coordinate.x,cell->coordinate.y);
+                    }else{
+                        IsoCell* c = new IsoCell();
+                        std::string name = "tile_00" + std::to_string(grid_settings.tile_number);
+                        if (assetmanager->GetObjectFromAsset(name.c_str(),c)){
+                            c->SetPosition(at);
+                            c->name = "Floating IsoCell";
+                            main_scene->AddObject(c);
+                            debug_physics->Info("Spawned a new IsoCell at %.1f x %.1f\n",at.x,at.z);
+                        }else{
+                            debug_physics->Err("Unable to instantiate object %sat %.1f x %.1f\n",name.c_str(),at.x,at.z);
+                        }
+                    }
+                }
+            }else if (right_clicked){
+                debug_physics->Info("Clickerdy clackerdy.\n");
+                if (cell){
+                    debug_physics->Info("That was a Cell we selected.\n");
+                    cell->Destroy();
+                }
+            }
         }
     }
 }
@@ -318,7 +405,12 @@ void ApplicationGrid::UpdateUI(){
     IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
     //UI for GridCells
     ImGui::Begin("Grid UI");
-    ImGui::Text("Behold, a grid of tiles.");
+    if (ImGui::CollapsingHeader("Grid Settings")){
+        ImGui::Checkbox("Place New Tiles (Left Click)",&grid_settings.f_place);
+        ImGui::DragInt("Tile Number",&grid_settings.tile_number,1,1,5);
+        ImGui::Checkbox("Delete Tiles (Right Click)",&grid_settings.f_delete);
+        ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
+    }
     if (!cell){
         ImGui::Text("No Object of type Cell is selected.");
     }else{

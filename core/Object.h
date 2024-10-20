@@ -31,6 +31,8 @@ class Object{
     Object();
     virtual ~Object();
     void GenerateUniqueID();
+    void Destroy();
+    bool IsDestroyed(){return f_is_destroyed;};
 
     meshid_t GetMeshID();
     objectid_t GetID();
@@ -109,7 +111,8 @@ class Object{
     void GetAllSubObjects(std::vector<Object*>*objects); //Add's all objects attached to this object into a vector.
 
 protected:
-    bool f_mouse_over = false;      //This is set after frame complete.
+    bool f_mouse_over = false;      // This is set after frame complete.
+    bool f_is_destroyed = false;    // Someone should clean it up.
 
     ObjectState state;              //<- State that may be rendered this frame
     ObjectState state_physics;      //<- State physics may update.

@@ -12,6 +12,7 @@
 #include "Scene.h"
 #include "PerfTimer.h"
 #include "AssetManager.h"
+#include "Debug.h"
 
 /*
     The thing that ties everything together.
@@ -46,6 +47,9 @@ public:
     virtual void RunLogic();
 
     int2 GetDisplaySettings();
+
+    Debugger *debug_physics = NULL;
+    Debugger *debug_frame = NULL;
 
 protected:
     static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);

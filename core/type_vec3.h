@@ -32,6 +32,7 @@ struct vec3{
 	float  	dot(const vec3& vec) const;                     // dot product
     vec3   	cross(const vec3& vec) const;                   // cross product
     bool   	equal(const vec3& vec) const;                   // compare with epsilon
+    vec3&   round();
 
     vec3   	operator-() const;                              // unary operator (negate)
     vec3   	operator-(const vec3& rhs) const;               // subtract rhs
@@ -63,6 +64,13 @@ inline vec3& vec3::normalize(){
 	}
 	s = sqrt(s);
 	x/=s; y/=s;z/=s;
+	return *this;
+}
+
+inline vec3& vec3::round(){
+    x = floor(x + 0.5);
+    y = floor(y + 0.5);
+    z = floor(z + 0.5);
 	return *this;
 }
 

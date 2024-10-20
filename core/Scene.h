@@ -30,6 +30,8 @@ public:
     void UpdatePhysics();
     void DrawFrame();
 
+    void AddObject(Object* object);
+
     bool f_paused = false;
 
     //Our example objects and thigs that definitely need to be in their own class
