@@ -19,6 +19,8 @@ class Scene{
 public:
     Scene();
 
+    std::string name;
+
     InputController* inputcontroller = NULL;
     Renderer* renderer = NULL;
     Shader* shader = NULL;
@@ -42,7 +44,6 @@ public:
     Texture* tex_2 = NULL;
 
     uint64_t physics_ticks = 0;
-
 };
 
 #endif

@@ -11,6 +11,7 @@ Scene::Scene(){
 };
 
 void Scene::SetupShipExample(){
+    //TODO: Remove and/or move to own project.
     debug->Info("Setup Ship Example\n");
     Mesh* mesh_ship = OBJLoader::ParseOBJFile("data/ship_003.obj");
 

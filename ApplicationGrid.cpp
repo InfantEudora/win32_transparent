@@ -36,11 +36,12 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
     app->main_scene = new Scene();
+    app->main_scene->name = "Grid Main Scene";
     app->main_scene->renderer = app->renderer;
     app->main_scene->inputcontroller = app->main_window->inputcontroller;
     app->main_scene->shader = app->default_shader;
 
-    //Either we put thigs in the scene, or we make a scene extension class....
+    //Either we put things in the scene, or we make a scene extension class....
     Scene* scene = app->main_scene;
     scene->camera = new Camera();
     scene->camera->name = "Main Camera";
@@ -62,11 +63,16 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     loaded_materials.clear();
     temp->SetMesh(OBJLoader::ParseOBJFile("data/border_rock.obj",&loaded_materials));
-    scene->renderer->AddMaterials(loaded_materials);
+
     app->assetmanager->AddNewAsset("border_rock",temp);
+
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/editor_camera.obj",&loaded_materials));
+    app->assetmanager->AddNewAsset("editor_camera",temp);
 
     temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_gate.obj",&loaded_materials));
     app->assetmanager->AddNewAsset("tile_gate",temp);
+
+    scene->renderer->AddMaterials(loaded_materials);
 
     delete temp;
 
@@ -261,9 +267,9 @@ void ApplicationGrid::RunLogic(){
     Sleep(5);
 
     //Check if we selected a tile
-    objectid_t objid = OBJECTID_INVALID;
+    objectid_t hovered_objid = OBJECTID_INVALID;
     if (!ImGui::GetIO().WantCaptureMouse){
-        objid = input->GetHoveredObjectID();
+        hovered_objid = input->GetHoveredObjectID();
     }
 
     //Camera rotation moving
@@ -330,7 +336,7 @@ void ApplicationGrid::RunLogic(){
 
     //When a terrain cell gets destroyed, we should remove it from renderer and terrain.
     //Either we use a shared pointer, or we keep track of the number of references.
-
+     Object* hovered_object = NULL;
 
     for (Object* object:renderer->renderable_objects){
         if (object->IsDestroyed()){
@@ -338,17 +344,14 @@ void ApplicationGrid::RunLogic(){
         }
 
 
-        if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == objid)){
+        if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == hovered_objid)){
             vec3 p = object->GetPosition();
-            debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",objid,p.x,p.y,p.z);
+            debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",hovered_objid,p.x,p.y,p.z);
             //object->material_slot[1] = 1;
             selected_object = object;
             clicked_empty = false;
-        }else if (object->GetID() == objid){
-            //On hover
-            //object->material_slot[0] = 2;
-        }else{
-            //object->material_slot[0] = object->material_slot[1];
+        }else if (object->GetID() == hovered_objid){
+            hovered_object = object;
         }
     }
 
@@ -358,7 +361,8 @@ void ApplicationGrid::RunLogic(){
 
     vec3 at = {};
     bool intersect = r.intersects_plane(projection_plane,at);
-    if (intersect){
+
+    if (!ImGui::GetIO().WantCaptureMouse && intersect){
         //We snap the selection tile to a grid.
         if (selection_tile){
             at.round();
@@ -367,7 +371,7 @@ void ApplicationGrid::RunLogic(){
             //Cell is the object the mouse is over, which can be different from our mouse grid coordinate
             IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
             IsoCell* terraincell = terrain->FindCellByWorldPosition(at);
-            if (clicked_empty || (cell && left_clicked)){
+            if (grid_settings.f_place && (clicked_empty || (cell && left_clicked))){
                 //Request the cell at the current coordinate from the grid:
 
                 if (terraincell){
@@ -388,13 +392,80 @@ void ApplicationGrid::RunLogic(){
                         }
                     }
                 }
-            }else if (right_clicked){
+            }else if (grid_settings.f_delete && right_clicked){
                 debug_physics->Info("Clickerdy clackerdy.\n");
-                if (cell){
-                    debug_physics->Info("That was a Cell we selected.\n");
-                    cell->Destroy();
+                IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
+                if (hovered_cell){
+                    debug_physics->Info("That was a Cell we hovered.\n");
+                    hovered_cell->Destroy();
                 }
             }
+        }
+    }
+}
+
+void ApplicationGrid::UpdateUISceneObjectTree(){
+    if (ImGui::TreeNode("Scene Root")){
+        for (Object* object:main_scene->renderer->objects){
+            UpdateUISceneObjectTreeNode(object,NULL);
+        }
+        ImGui::TreePop();
+    }
+}
+
+
+void ApplicationGrid::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked){
+    objectid_t id = object->GetID();
+    if (ImGui::TreeNodeEx((void*)id,ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_Leaf, "Object #%i - %s",id,object->name.c_str())){
+        ImGui::TreePop();
+        if (ImGui::IsItemClicked()){
+            selected_object = object;
+            debug->Info("Selected %s\n",object->name.c_str());
+        }
+    }
+}
+
+void ApplicationGrid::UpdateUICameraControls(Camera* camera,int id){
+    if (!camera){
+        return;
+    }
+
+    std::string title = camera->name + "##" + std::to_string(id) +   " Controls";
+
+    if (ImGui::CollapsingHeader(title.c_str())){
+        float znear = main_scene->camera->viewport.znear;
+        if (ImGui::DragFloat("Camera ZNear",&znear,0.01,0.0,10.0)){
+            camera->viewport.znear = znear;
+            camera->CalculateLookatMatrix();
+        }
+
+        float roll = 0;
+        if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
+            camera->RollBy(roll);
+        }
+
+        vec3 up = camera->GetUp();
+        vec3 forward = camera->GetForward();
+        vec3 left = camera->GetLeft();
+        vec3 camera_position = camera->GetPosition();
+        if (ImGui::DragFloat3("Cam Position", (float*)&camera_position, 0.01f, -10.0f, 10.0f)){
+            camera->SetPosition(camera_position);
+            camera->CalculateLookatMatrix();
+        }
+
+        static vec3 target;
+        if (ImGui::DragFloat3("Target", (float*)&target, 0.01f, -10.0f, 10.0f)){
+            camera->SetLookAt(target);
+        }
+        ImGui::BeginDisabled();
+        ImGui::DragFloat3("Forward Vector", (float*)&forward, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Left Vector", (float*)&left, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        if (ImGui::Button("Switch Camera")){
+            main_scene->camera->Show();
+            main_scene->camera = camera;
+            main_scene->camera->Hide();
         }
     }
 }
@@ -436,38 +507,39 @@ void ApplicationGrid::UpdateUI(){
 
     //For generic Objects and parameters
     ImGui::Begin("Generic Object UI");
-    if (ImGui::CollapsingHeader("Main Camera Controls")){
-        float znear = main_scene->camera->viewport.znear;
-        if (ImGui::DragFloat("Camera ZNear",&znear,0.01,0.0,10.0)){
-            main_scene->camera->viewport.znear = znear;
-            main_scene->camera->CalculateLookatMatrix();
+    if (ImGui::CollapsingHeader("Scene")){
+        Scene* scene = main_scene;
+        ImGui::Text("Main Scene             : %s",scene->name.c_str());
+        UpdateUISceneObjectTree();
+        if (ImGui::Button("Add Camera")){
+            Camera* camera = new Camera();
+            camera->name = "New Camera";
+            if (assetmanager->GetObjectFromAsset("editor_camera",camera)){
+                camera->SetPosition(vec3(1,2,1));
+                camera->material_slot[0] = 3;
+                camera->SetLookAt(vec3());
+                camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+                scene->AddObject(camera);
+            }
         }
-
-        float roll = 0;
-        if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
-            object->RollBy(roll);
-        }
-
-        vec3 up = object->GetUp();
-        vec3 forward = object->GetForward();
-        vec3 left = object->GetLeft();
-        vec3 camera_position = main_scene->camera->GetPosition();
-        ImGui::DragFloat3("Cam Position", (float*)&camera_position, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Target", (float*)&camera_target, 0.01f, -1.0f, 1.0f);
-        ImGui::BeginDisabled();
-
-        ImGui::DragFloat3("Forward Vector", (float*)&forward, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Left Vector", (float*)&left, 0.01f, -1.0f, 1.0f);
-        ImGui::EndDisabled();
     }
 
-    object = selected_object;
+    //So the same camera panel has a different ImGUI ID.
+    int ui_camid = 0;
+    UpdateUICameraControls(main_scene->camera ,ui_camid);
 
+    object = selected_object;
     if (!object){
         ImGui::Text("No Object Selected");
     }else{
         ImGui::Text("Selected Object: %s",object->name.c_str());
+    }
+    if (object){
+        Camera* cam = dynamic_cast<Camera*>(object);
+        if (cam){
+            ui_camid++;
+            UpdateUICameraControls(cam,ui_camid);
+        }
         if (object->GetMesh() && ImGui::CollapsingHeader("Mesh")){
             Mesh* mesh = object->GetMesh();
             ImGui::Text(" ID             : %lu",mesh->GetID());
@@ -488,11 +560,17 @@ void ApplicationGrid::UpdateUI(){
         if (ImGui::CollapsingHeader("Rotation")){
             static int option = 0;
             ImGui::Text("Input By:");
-            ImGui::RadioButton("Vector + Rotation", &option, 0); ImGui::SameLine();
-            ImGui::RadioButton("Target, Position, Up", &option, 1);
+            ImGui::RadioButton("None", &option, 0); ImGui::SameLine();
+            ImGui::RadioButton("Vector + Rotation", &option, 1); ImGui::SameLine();
+            ImGui::RadioButton("Target, Position, Up", &option, 2);
             ImGui::Separator();
-            quat q;
-            if (option == 0){
+
+            ImGui::BeginDisabled();
+            quat q = object->GetRotation();
+            ImGui::DragFloat4("Current Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+            ImGui::EndDisabled();
+
+            if (option == 1){
                 static vec3 quatinp = {0,0,0};
                 ImGui::DragFloat3("Quat Input Vector", (float*)&quatinp, 0.01f, -1.0f, 1.0f);
                 static float quatroll = 0.0f;
@@ -504,7 +582,8 @@ void ApplicationGrid::UpdateUI(){
                 q = quat(quatn,quatroll);
                 ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
                 ImGui::EndDisabled();
-            }else{
+                object->SetRotation(q);
+            }else if (option == 2){
                 static vec3 target = {0,0,-1};
                 ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f);
                 static vec3 position = {0,0,0};
@@ -515,8 +594,8 @@ void ApplicationGrid::UpdateUI(){
                 q = quat::getquat(target,position,worldup);
                 ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
                 ImGui::EndDisabled();
+                object->SetRotation(q);
             }
-            object->SetRotation(q);
         }
         if (ImGui::CollapsingHeader("Scale")){
             vec3 scale = object->GetScale();

@@ -102,7 +102,9 @@ void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Obje
 void Renderer::CullObjects(){
     renderable_objects.clear();
     for (Object* object:objects){
-        GetAllRenderableVisableSubObjects(object,renderable_objects);
+        if (object->IsVisible()){
+            GetAllRenderableVisableSubObjects(object,renderable_objects);
+        }
     }
 }
 

@@ -29,11 +29,13 @@ public:
         bool f_delete = true;   // Delete on right click
     }grid_settings;
 
-
-
 private:
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
+
     void UpdateUI();
+    void UpdateUISceneObjectTree();
+    void UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked);
+    void UpdateUICameraControls(Camera* camera, int id);
 };
 
 #endif

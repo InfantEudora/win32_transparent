@@ -22,6 +22,7 @@ struct quat{
     void    print();
     void    identity();
     void    set_rotation(const vec3& axis, float angle);
+    quat&   normalize();
 
     fmat4   tofmat4() const;
 
@@ -54,6 +55,19 @@ inline void quat::set_rotation(const vec3& axis, float angle){
     x = v.x * sine;
     y = v.y * sine;
     z = v.z * sine;
+}
+
+// Normalize the quaternion
+inline quat& quat::normalize(){
+    float d = x*x + y*y + z*z + w*w;
+    float invLength = 1.0f / sqrt(d);
+
+    // Check if the length is not equal to zero
+    if(d < FT_EPSILON)
+        return *this; // do nothing if it is zero
+
+    x *= invLength;  y *= invLength;  z *= invLength; w *= invLength;
+    return *this;
 }
 
 inline quat quat::operator*(const quat& rhs) const{

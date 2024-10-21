@@ -33,6 +33,10 @@ class Object{
     void GenerateUniqueID();
     void Destroy();
     bool IsDestroyed(){return f_is_destroyed;};
+    void Hide(){f_visible = false;};
+    void Show(){f_visible = true;};
+    bool IsVisible(){return f_visible;};
+
 
     meshid_t GetMeshID();
     objectid_t GetID();
@@ -87,6 +91,7 @@ class Object{
     vec3 GetUp();       //Returns the local vector pointing up.
     vec3 GetForward();  //Returns the forward or normalized lookat direction
     vec3 GetLeft();     //Return the vector pointing left
+    quat GetRotation(); //Returns a copy of the rotation
 
     void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
     int material_slot[NUM_MATERIAL_SLOTS] = {};
@@ -112,6 +117,7 @@ class Object{
 
 protected:
     bool f_mouse_over = false;      // This is set after frame complete.
+    bool f_visible = true;          // If the mesh should be rendered or not
     bool f_is_destroyed = false;    // Someone should clean it up.
 
     ObjectState state;              //<- State that may be rendered this frame

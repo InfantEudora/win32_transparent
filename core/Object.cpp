@@ -12,6 +12,7 @@ Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
     state_physics.rotation.identity();
+    state.rotation.identity();
 }
 
 Object::~Object(){
@@ -104,7 +105,9 @@ void Object::SetLookAt(const vec3& target, vec3* optional_up){
     }else{
         up = ref_up;
     }
-    state_physics.rotation = quat::getquat(target,state_physics.position,up);
+    quat lq = quat::getquat(target,state_physics.position,up);
+    lq.normalize();
+    SetRotation(lq);
 }
 
 //Move object by a vector
@@ -199,6 +202,10 @@ vec3 Object::GetUp(){
 
 vec3 Object::GetLeft(){
     return state_physics.rotation * ref_left;
+}
+
+quat Object::GetRotation(){
+    return state_physics.rotation;
 }
 
 bool Object::IsHovered(){
