@@ -3,6 +3,7 @@
 #include "Object.h"
 #include "type_int2.h"
 #include "AssetManager.h"
+#include <map>
 
 /*
     It's a square cell in a larger grid.
@@ -28,6 +29,8 @@ public:
     int terrain_type = CELL_TERRAIN_NONE;
     void SetTerrainType(int newtype);
     void ApplyPreset(int preset);
+
+    static std::map<int,int> terrain_material_map;
 };
 
 

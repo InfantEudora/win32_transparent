@@ -1,7 +1,7 @@
-# Blender 4.0.1 MTL File: 'None'
+# Blender 4.0.1 MTL File: 'grid_tiling_system.blend'
 # www.blender.org
 
-newmtl selection_material
+newmtl selection
 Ns 250.000000
 Ka 1.000000 1.000000 1.000000
 Ks 0.500000 0.500000 0.500000

@@ -41,7 +41,7 @@ typedef enum{
 }keycode_t;
 
 struct KeyState{
-    bool                    f_isdown = false;
+    int                     f_isdown = 0;
     bool                    f_was_released = false;
     int32_t                 value = 0;
     float                   fvalue = 0.0f;
@@ -80,6 +80,8 @@ class InputController{
     void    Tick();
     void    SetHoveredObjectID(objectid_t id);
     objectid_t GetHoveredObjectID();
+    void    SetHoveredNormal(vec3 normal);
+    vec3    GetHoveredNormal();
 
     //There needs to be at least some form of feedback from UI which object was selected/hovered.
 
@@ -92,7 +94,7 @@ protected:
     int2 window_position;   //Stored here seperately
 
     std::atomic<objectid_t>hovered_object = OBJECTID_INVALID;
-
+    vec3 hovered_normal = vec3(); //TODO: How to atomicise this? Doest it need to be?
 };
 
 #endif

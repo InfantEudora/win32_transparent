@@ -46,6 +46,9 @@ uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 uniform int f_normal_mapping = 1;
 uniform float alpha_clip = 0.5f;
 
+//This gets set when lighting calculation is done, and is this fragments resulting normal.
+vec3 sampled_normal = vec3(0,0,0);
+
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
 };
@@ -126,6 +129,8 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
         V = normalize(eye_position - vposition);
         L = normalize(lightpos - vposition);
     }
+
+    sampled_normal = vnormal;
 
     vec3 F0 = vec3(0.04); //Fresnell factor
     F0 = mix(F0, albedo, metallic);
@@ -226,6 +231,9 @@ void main(){
             data_out[1] = gl_NumSamples;
 
             fdata_out[0] = z;
+            fdata_out[1] = sampled_normal.x;
+            fdata_out[2] = sampled_normal.y;
+            fdata_out[3] = sampled_normal.z;
         }
     }
 }

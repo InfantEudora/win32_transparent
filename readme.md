@@ -132,7 +132,7 @@ Physics can be slower, in which case the same frame will be drawn multiple times
 
 Physics will always attempt to run at set rate, so it makes sense to couple input and networking to the Physics rate.
 
-Some input, like which object is selected or settings from a UI, are only gatherd after a frame was completed. Let's say in the UI we get an object ID that we've selected, and we move the object by one in Z direction. These 2 inputs, the object id and the move command need to be queued as an input, and processed next time the input gathers it's information.
+Some input, like which object is selected or settings from a UI, are only gatherd after a frame was completed. Let's say in the UI we get an object ID that we've selected, and we move the object by one in Z direction. These 2 inputs, the object id and the move command need to be queued as an input, and processed next time the input gathers it's information. TODO.
 
 Networking: You'd ideally just submit which buttons were pressed. If the other client is running at 10FPS and you are at 60FPS but both physics are at 50FPS, the input from the other client with respect to object selection will not be as fast. But replaying you input will still happen at 50Hz. And the fact that his UI is lagging does not mean anything for you, since it's keyboard and mouse can still be polled at 50Hz. Although he won't see them with the same speed as you.
 
@@ -145,6 +145,8 @@ B: metal, rock, concrete
 
 Globally, rocks gets index 1 assigned.
 
+Both meshes get 3 material slots, which map to the 3 materials. Using PickMaterials the three slots pick the corresponding material from the total loaded materials.
+
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
 
@@ -156,9 +158,7 @@ Video Cards:
 
 Fragment shader writes ObjectID to a SSBO when the fragment at mouse position is being rendered. This has some problems with Z testing.
 
-
 ### Spite Sheet Tools
-
 SpiteSheet Packer
 Aseprite
 Tiled

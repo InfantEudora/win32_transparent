@@ -29,6 +29,7 @@ void IsoTerrain::CreateTerrain(int w, int d){
             //These two lists should know/update when a cell/or child gets destroyed... somehow
             AttachChild(c);
             cells.push_back(c);
+
         }
     }
 }

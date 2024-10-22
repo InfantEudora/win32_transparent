@@ -3,14 +3,15 @@
 static Debugger* debug = new Debugger("Input",DEBUG_INFO);
 
 void KeyState::Up(){
-    if (f_isdown){
+    if (f_isdown == 1){
         f_was_released = true;
     }
-    f_isdown = false;
+    if (f_isdown > 0)
+        f_isdown--;
 }
 
 void KeyState::Down(){
-    f_isdown = true;
+    f_isdown = num_mappings;
 }
 
 InputController::InputController(){
@@ -24,7 +25,9 @@ InputController::InputController(){
     AddKeyMap(VK_LEFT,INPUT_MOVE_LEFT);
     AddKeyMap(VK_RIGHT,INPUT_MOVE_RIGHT);
 
+    AddKeyMap('W',INPUT_TURN_UP);
     AddKeyMap('A',INPUT_TURN_LEFT);
+    AddKeyMap('S',INPUT_TURN_DOWN);
     AddKeyMap('D',INPUT_TURN_RIGHT);
 
     AddKeyMap(VK_PAUSE,INPUT_PAUSE);
@@ -35,7 +38,7 @@ InputController::InputController(){
 
     //TODO: Make multiple mappings work by somehow orring the up/down together.
     AddKeyMap(VK_LSHIFT,INPUT_SHIFT);
-    //AddKeyMap(VK_RSHIFT,INPUT_SHIFT);
+    AddKeyMap(VK_RSHIFT,INPUT_SHIFT);
 }
 
 KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
@@ -117,7 +120,7 @@ bool InputController::IsKeyDown(uint32_t mapped){
     if (!m){
         return false;
     }
-    return m->state->f_isdown;
+    return !!m->state->f_isdown;
 }
 
 bool InputController::WasKeyReleased(uint32_t mapped){
@@ -153,6 +156,14 @@ void InputController::SetHoveredObjectID(objectid_t id){
 
 objectid_t InputController::GetHoveredObjectID(){
     return hovered_object;
+}
+
+void InputController::SetHoveredNormal(vec3 normal){
+    hovered_normal = normal;
+}
+
+vec3 InputController::GetHoveredNormal(){
+    return hovered_normal;
 }
 
 //Clears the button and input transition flags

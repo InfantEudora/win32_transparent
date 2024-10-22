@@ -35,7 +35,10 @@ class Object{
     bool IsDestroyed(){return f_is_destroyed;};
     void Hide(){f_visible = false;};
     void Show(){f_visible = true;};
+    void SetVisibility(bool flag);
+    void SetPickability(bool flag);
     bool IsVisible(){return f_visible;};
+    bool IsPickable(){return f_pickable;};
 
 
     meshid_t GetMeshID();
@@ -72,8 +75,6 @@ class Object{
     void RotateAroundAxis(const vec3& target_axis,float by);
     void RotateBy(const quat& q);
     void RollBy(float by);
-
-    bool IsHovered();
 
     void UpdateState(); //Called from render thread before rendering
     void UpdatePhysicsState();
@@ -116,8 +117,8 @@ class Object{
     void GetAllSubObjects(std::vector<Object*>*objects); //Add's all objects attached to this object into a vector.
 
 protected:
-    bool f_mouse_over = false;      // This is set after frame complete.
     bool f_visible = true;          // If the mesh should be rendered or not
+    bool f_pickable = true;         // If the mesh should output it's id and is thus pickable
     bool f_is_destroyed = false;    // Someone should clean it up.
 
     ObjectState state;              //<- State that may be rendered this frame

@@ -87,6 +87,10 @@ void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Obje
         return;
     }
 
+    if (!object->IsVisible()){
+        return;
+    }
+
     //This object is renderable
     if (object->GetMesh() != NULL){
         objects.push_back(object);
@@ -222,7 +226,12 @@ void Renderer::RenderUniqueMeshes(){
             for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
                 data.material_slot[i] = object->material_slot[i];
             }
-            data.objectindex = object_index;
+            if (object->IsPickable()){
+                data.objectindex = object_index;
+            }else{
+                //TODO: This will overwrite any objects below the non-pickable object.
+                data.objectindex = OBJECTID_INVALID;
+            }
 
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
@@ -359,8 +368,11 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
             //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
             int index = readbackbuffer.data_out[0];
             input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
+            //debug->Info("Normal at mouse = %.3f, %.3f, %.3f\n",readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]);
+            input->SetHoveredNormal(vec3(readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]));
         }else{
             input->SetHoveredObjectID(OBJECTID_INVALID);
+            input->SetHoveredNormal(vec3());
         }
     }
 

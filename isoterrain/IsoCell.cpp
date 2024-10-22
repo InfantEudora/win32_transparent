@@ -3,6 +3,7 @@
 #include "Debug.h"
 static Debugger* debug = new Debugger("IsoCell", DEBUG_INFO);
 
+std::map<int,int> IsoCell::terrain_material_map;
 
 IsoCell::IsoCell():Object(){
     SetScale(vec3(0.5,0.5,0.5));
@@ -19,9 +20,7 @@ void IsoCell::ApplyPreset(int preset){
 }
 
 void IsoCell::SetTerrainType(int newtype){
-    if (newtype == CELL_TERRAIN_NONE){
-        material_slot[0] = -1;
-    }else if (newtype == CELL_TERRAIN_GRASS){
-        //TODO: Somehow get the proper material from renderer:
-    }
+
+    material_slot[0] = terrain_material_map[newtype];
+    terrain_type = newtype;
 }

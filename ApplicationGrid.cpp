@@ -59,28 +59,20 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->assetmanager->AddNewAsset("tile_001",temp);
     temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_002.obj",&loaded_materials));
     app->assetmanager->AddNewAsset("tile_002",temp);
-    scene->renderer->AddMaterials(loaded_materials);
-
-    loaded_materials.clear();
     temp->SetMesh(OBJLoader::ParseOBJFile("data/border_rock.obj",&loaded_materials));
-
     app->assetmanager->AddNewAsset("border_rock",temp);
-
     temp->SetMesh(OBJLoader::ParseOBJFile("data/editor_camera.obj",&loaded_materials));
     app->assetmanager->AddNewAsset("editor_camera",temp);
-
     temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_gate.obj",&loaded_materials));
     app->assetmanager->AddNewAsset("tile_gate",temp);
-
     scene->renderer->AddMaterials(loaded_materials);
-
     delete temp;
-
 
     //We now generate a terrain, and load that in.
     app->terrain = new IsoTerrain();
+    app->terrain->name = "Iso Terrain";
     app->terrain->assetmanager = app->assetmanager;
-    app->terrain->CreateTerrain(5,5);
+    app->terrain->CreateTerrain(7,7);
     scene->AddObject(app->terrain);
 
     //Test arrows to test all this quaternion madness.
@@ -125,6 +117,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     wall = app->assetmanager->GetObjectFromAsset("tile_gate");
     wall->name  = "Gate Tile";
+    wall->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->AddObject(wall);
 
     app->projection_plane.pos = {};
@@ -136,15 +129,14 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->selection_tile->SetMesh(OBJLoader::ParseOBJFile("data/selection_tile.obj",&loaded_materials));
     app->selection_tile->name = "Selection Tile";
     app->selection_tile->SetPosition(vec3(0,3,0));
+    app->selection_tile->SetPickability(false);
     scene->renderer->AddMaterials(loaded_materials);
     app->selection_tile->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->AddObject(app->selection_tile);
 
-
-
     app->main_scene->UpdatePhysics();
 
-    //Create a material
+    //Manually createa and add materials
     Material mat = {};
     mat.glsl_material.color = vec4(1,1,1,1);
     mat.glsl_material.diffuse_texture = 0;
@@ -154,7 +146,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     mat.diff_texture = tex;
     int matindex = scene->renderer->AddMaterial(mat);
 
-
     mat.glsl_material.color = vec4(1,0.2,0.2,0.9);
     mat.name = "Colored Textured Material";
     scene->renderer->AddMaterial(mat);
@@ -163,6 +154,13 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     for (IsoCell* cell:app->terrain->cells){
         cell->material_slot[0] = matindex;
     }
+
+    //And update the map for terrain types
+    IsoCell::terrain_material_map[CELL_TERRAIN_NONE] = -1;
+    IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = app->renderer->FindMaterialIndex("grass");
+    IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
+
+
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
@@ -315,6 +313,15 @@ void ApplicationGrid::RunLogic(){
         camera_target += d;
     }
 
+    if (input->WasKeyReleased(INPUT_TURN_UP)){
+        grid_settings.grid_level++;
+        projection_plane.pos.y = grid_settings.grid_level;
+    }
+    if (input->WasKeyReleased(INPUT_TURN_DOWN)){
+        grid_settings.grid_level--;
+        projection_plane.pos.y = grid_settings.grid_level;
+    }
+
     static float mouse_delta_sum = 0;
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     if (mouse_delta_sum != 0){
@@ -336,7 +343,7 @@ void ApplicationGrid::RunLogic(){
 
     //When a terrain cell gets destroyed, we should remove it from renderer and terrain.
     //Either we use a shared pointer, or we keep track of the number of references.
-     Object* hovered_object = NULL;
+    Object* hovered_object = NULL;
 
     for (Object* object:renderer->renderable_objects){
         if (object->IsDestroyed()){
@@ -375,10 +382,12 @@ void ApplicationGrid::RunLogic(){
                 //Request the cell at the current coordinate from the grid:
 
                 if (terraincell){
-                    debug_physics->Info("Already IsoCell at %.1f x %.1f : Cell %ix%i\n",at.x,at.z,terraincell->coordinate.x,terraincell->coordinate.y);
+                    debug_physics->Info("Already IsoCell at %.1f x %.1f : terraincell %ix%i\n",at.x,at.z,terraincell->coordinate.x,terraincell->coordinate.y);
+                    terraincell->Show();
                 }else{
                     if (cell && (cell->GetPosition().x == at.x) && (cell->GetPosition().z == at.z)){
-                        debug_physics->Info("Already IsoCell at %.1f x %.1f : Cell %ix%i\n",at.x,at.z,cell->coordinate.x,cell->coordinate.y);
+                        debug_physics->Info("Already IsoCell at %.1f x %.1f : cell %ix%i\n",at.x,at.z,cell->coordinate.x,cell->coordinate.y);
+                        cell->Show();
                     }else{
                         IsoCell* c = new IsoCell();
                         std::string name = "tile_00" + std::to_string(grid_settings.tile_number);
@@ -394,10 +403,14 @@ void ApplicationGrid::RunLogic(){
                 }
             }else if (grid_settings.f_delete && right_clicked){
                 debug_physics->Info("Clickerdy clackerdy.\n");
-                IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
-                if (hovered_cell){
-                    debug_physics->Info("That was a Cell we hovered.\n");
-                    hovered_cell->Destroy();
+                if (!hovered_object){
+                    selected_object = NULL;
+                }else{
+                    IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
+                    if (hovered_cell){
+                        debug_physics->Info("That was a Cell we hovered.\n");
+                        hovered_cell->Hide();
+                    }
                 }
             }
         }
@@ -482,11 +495,13 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Checkbox("Delete Tiles (Right Click)",&grid_settings.f_delete);
         ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
     }
+    vec3 normal = main_scene->inputcontroller->GetHoveredNormal();
+    ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",normal.x,normal.y,normal.z);
     if (!cell){
         ImGui::Text("No Object of type Cell is selected.");
     }else{
         ImGui::Text("Coordinate   : %i x %i",cell->coordinate.x,cell->coordinate.y);
-        ImGui::Text("Terrain Type ");
+        ImGui::Text("Terrain Type : %i",cell->terrain_type);
         if (ImGui::Button("Set None")){
             cell->SetTerrainType(CELL_TERRAIN_NONE);
         }
@@ -533,6 +548,10 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Text("No Object Selected");
     }else{
         ImGui::Text("Selected Object: %s",object->name.c_str());
+        bool obj_visible = object->IsVisible();
+        if (ImGui::Checkbox("Visible",&obj_visible)){
+            object->SetVisibility(obj_visible);
+        }
     }
     if (object){
         Camera* cam = dynamic_cast<Camera*>(object);
@@ -563,12 +582,16 @@ void ApplicationGrid::UpdateUI(){
             ImGui::RadioButton("None", &option, 0); ImGui::SameLine();
             ImGui::RadioButton("Vector + Rotation", &option, 1); ImGui::SameLine();
             ImGui::RadioButton("Target, Position, Up", &option, 2);
+            ImGui::RadioButton("Axis Degrees", &option, 3);
             ImGui::Separator();
 
             ImGui::BeginDisabled();
             quat q = object->GetRotation();
             ImGui::DragFloat4("Current Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
             ImGui::EndDisabled();
+
+            bool apply_rotation = false;
+
 
             if (option == 1){
                 static vec3 quatinp = {0,0,0};
@@ -582,18 +605,44 @@ void ApplicationGrid::UpdateUI(){
                 q = quat(quatn,quatroll);
                 ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
                 ImGui::EndDisabled();
-                object->SetRotation(q);
+
             }else if (option == 2){
                 static vec3 target = {0,0,-1};
-                ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f);
+                if (ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f)){
+                    apply_rotation = true;
+                }
                 static vec3 position = {0,0,0};
-                ImGui::DragFloat3("Position", (float*)&position, 0.01f, -5.0f, 5.0f);
+                if (ImGui::DragFloat3("Position", (float*)&position, 0.01f, -5.0f, 5.0f)){
+                    apply_rotation = true;
+                }
                 static vec3 worldup = {0,1,0};
-                ImGui::DragFloat3("World Up", (float*)&worldup, 0.01f, -1.0f, 1.0f);
+                if (ImGui::DragFloat3("World Up", (float*)&worldup, 0.01f, -1.0f, 1.0f)){
+                    apply_rotation = true;
+                }
                 ImGui::BeginDisabled();
                 q = quat::getquat(target,position,worldup);
                 ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
                 ImGui::EndDisabled();
+            }else if (option == 3){
+                static vec3 axis_degrees = {0,0,0};
+                if (ImGui::DragFloat3("Axis Degrees", (float*)&axis_degrees, 1.0f, -180.0f, 180.0f)){
+                    apply_rotation = true;
+                }
+                ImGui::BeginDisabled();
+                //Let's do them in order?
+                quat q1; q1.set_rotation(vec3(1,0,0),toradians(axis_degrees.x));
+                quat q2; q2.set_rotation(vec3(0,1,0),toradians(axis_degrees.y));
+                quat q3; q3.set_rotation(vec3(0,0,1),toradians(axis_degrees.z));
+
+                q = q1 * q2 * q3;
+                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+            }
+
+            if (ImGui::Button("Apply Rotation")){
+                apply_rotation = true;
+            }
+            if (apply_rotation){
                 object->SetRotation(q);
             }
         }

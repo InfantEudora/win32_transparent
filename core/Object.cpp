@@ -35,6 +35,14 @@ void Object::Destroy(){
     f_is_destroyed = true;
 }
 
+void Object::SetVisibility(bool flag){
+    f_visible = flag;
+}
+
+void Object::SetPickability(bool flag){
+    f_pickable = flag;
+}
+
 void Object::GenerateUniqueID(){
     id = object_ids++;
 }
@@ -206,10 +214,6 @@ vec3 Object::GetLeft(){
 
 quat Object::GetRotation(){
     return state_physics.rotation;
-}
-
-bool Object::IsHovered(){
-    return f_mouse_over;
 }
 
 //Calculate the single transformation matrix for rendering
