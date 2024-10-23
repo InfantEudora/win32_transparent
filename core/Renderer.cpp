@@ -77,6 +77,23 @@ bool Renderer::Resize(int new_width, int new_height){
     return true;
 }
 
+//TODO: This should iterate over sub objects as well.
+void Renderer::GetAllVisibleSubLights(Light* light,std::vector<Light*>&lights){
+    if (!light){
+        return;
+    }
+    if (light->IsDestroyed()){
+        return;
+    }
+
+    if (!light->IsVisible()){
+        return;
+    }
+
+    lights.push_back(light);
+    //Lights don't get to have lights as children...
+}
+
 //Put's all children and it's childrens children etc into a list
 void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects){
     if (!object){
@@ -102,12 +119,23 @@ void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Obje
     }
 }
 
-//For now, we simple render all objects.
+//For now all objects are rendered when visible
 void Renderer::CullObjects(){
     renderable_objects.clear();
     for (Object* object:objects){
         if (object->IsVisible()){
             GetAllRenderableVisableSubObjects(object,renderable_objects);
+        }
+    }
+}
+
+//For now, we simple render all objects.
+void Renderer::CullLights(){
+    visible_lights.clear();
+    for (Object* object:objects){
+        Light* light = dynamic_cast<Light*>(object);
+        if (light){
+            GetAllVisibleSubLights(light,visible_lights);
         }
     }
 }
@@ -262,12 +290,14 @@ void Renderer::DrawObjects(){
     //Then we make a list of all objects that need to be rendered.
     //Of those objects, we make a list for each unique mesh with object attributes and object ids.
     CullObjects();
+    CullLights();
     UpdateState();
 
     RebuildUniqueMeshList();
     ClearBatches();
     FillBactches();
     UploadMaterials();
+    UploadLights();
     RenderUniqueMeshes();
 }
 
@@ -395,12 +425,16 @@ bool Renderer::InitSSBO(){
     glNamedBufferData(materialdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, materialdata_ssbo);
 
-    //A buffer where we read back data from, mainly the object id at mouse coordinate.
+    //A buffer for all the lights
+    glCreateBuffers(1, (GLuint*)&lights_ssbo);
+    glNamedBufferData(lights_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, lights_ssbo);
 
+    //A buffer where we read back data from, mainly the object id at mouse coordinate.
     glCreateBuffers(1, (GLuint*)&readback_ssbo);
     glNamedBufferData(readback_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
     //glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, readback_ssbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, readback_ssbo);
 
     return true;
 }
@@ -650,8 +684,37 @@ void Renderer::UploadMaterials(){
         glInvalidateBufferData(materialdata_ssbo);
         glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_DYNAMIC_DRAW);
     }
+}
 
+//Convert all the active lights in the scene to a list
+void Renderer::UploadLights(){
+    glsl_lights.clear();
+    for (Light* l:visible_lights){
+        light_t light;
+        DirectionalLight* directional_light = dynamic_cast<DirectionalLight*>(l);
+        if (directional_light){
+            light.direction = directional_light->GetForward();
+            light.position = directional_light->GetPosition();
+            light.color = directional_light->color;
+            light.brightness = directional_light->brightness;
+            glsl_lights.push_back(light);
+            continue;
+        }
+        PointLight* point_light = dynamic_cast<PointLight*>(l);
+        if (point_light){
+            light.direction = vec3(0,0,0);
+            light.position = point_light->GetPosition();
+            light.color = point_light->color;
+            light.brightness = point_light->brightness;
+            glsl_lights.push_back(light);
+            continue;
+        }
+    }
 
+    if (glsl_lights.size() > 0){
+        glInvalidateBufferData(lights_ssbo);
+        glNamedBufferData(lights_ssbo,glsl_lights.size()*sizeof(light_t) , &glsl_lights.at(0),GL_DYNAMIC_DRAW);
+    }
 }
 
 Material* Renderer::GetMaterial(int index){

@@ -31,7 +31,7 @@ layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
 };
 
-layout (std430, binding = 2) buffer ReadbackBuffer{
+layout (std430, binding = 3) buffer ReadbackBuffer{
 	int data_in[4];
     int data_out[4];
     float fdata_out[4];

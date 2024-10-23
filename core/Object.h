@@ -100,6 +100,9 @@ class Object{
     //For checking if the state_physics_prev is complete
     bool PhysicsCompleted();
 
+    //Lighting properties
+
+
     //Maybe we want some place for the current object transforms, that may be rendered.
     //And some place where the new ones are calculated.
     //They can be moved to a 'front' buffer, so the next frame may get them.

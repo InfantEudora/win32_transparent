@@ -30,12 +30,22 @@ struct Material{
 	vec4 color;
     int diffuse_texture;
     int normal_texture;
-    int pad2;
+    float brightness;
     int pad3;
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;
     uvec2 handle_diffuse;
     uvec2 handle_normal;
+};
+
+//All the light types fall together into a single light struct
+struct Light{
+    vec3    position;
+    int     shadow;     // Set if the the light produces a shadow
+    vec3    direction;	// Direction of 0 means its a point light
+    float   brightness;
+    vec3    color;
+    float   cos_angle; 	// 0 means its a point light, else it becomes a cone light
 };
 
 #define PI 	3.14159265359
@@ -53,10 +63,14 @@ layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
 };
 
+layout (std430, binding = 2) buffer LightBuffer{
+	Light lights[];
+};
+
 //The material we pick from buffer, or set our selves
 Material m;
 
-layout (std430, binding = 2) buffer ReadbackBuffer{
+layout (std430, binding = 3) buffer ReadbackBuffer{
 	int data_in[4];
     int data_out[4];
     float fdata_out[4];
@@ -104,7 +118,7 @@ vec3 GetNormalMapNormal(){
 }
 
 //Returns the light intensity from a single directional light
-vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
+vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
     vec3 albedo;
     if (m.diffuse_texture >= 0){
         //Bindless
@@ -123,11 +137,11 @@ vec3 CalcDirectionalPBRLight(vec3 lightpos, vec3 color, float brightness){
         N = GetNormalMapNormal();
         mat3 iTBN = transpose(TBN);
         V = normalize(iTBN * (eye_position - vposition));
-        L = normalize(iTBN * (lightpos - vposition));
+        L = normalize(iTBN * (lightdirection));
     }else{
         N = vnormal;
         V = normalize(eye_position - vposition);
-        L = normalize(lightpos - vposition);
+        L = normalize(lightdirection);
     }
 
     sampled_normal = vnormal;
@@ -181,13 +195,24 @@ float GetTransparency(){
 vec4 CalcPBRLighting(){
     vec4 final;
 
-    vec3 light = CalcDirectionalPBRLight(vec3(-10,10,10),vec3(1,.8,.6),5.0);
+    vec3 total_light = vec3(0,0,0);
+
+    for (int i = 0; i < lights.length(); i++){
+        vec3 lightdirection = lights[i].direction;
+        if (lights[i].direction.length() == 0){
+            //Makes it a point light instead of direction
+            lightdirection = lights[i].position - vposition;
+        }
+        vec3 light = CalcDirectionalPBRLight(lights[i].position,lights[i].color,lights[i].brightness);
+        total_light += light;
+    }
+
 
     float alpha = GetTransparency();
     if (alpha < alpha_clip){
         discard;
     }
-    final = vec4(light,alpha);
+    final = vec4(total_light,alpha);
 
     return final;
 }

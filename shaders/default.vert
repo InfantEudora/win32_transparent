@@ -25,7 +25,7 @@ struct Material{
 	vec4 color;
     int diffuse_texture;
     int normal_texture;
-    int pad2;
+    float brightness;
     int pad3;
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;

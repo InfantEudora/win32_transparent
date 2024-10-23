@@ -1,6 +1,7 @@
 #include "ApplicationGrid.h"
 #include "Debug.h"
 #include "OBJLoader.h"
+#include "Light.h"
 
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
 
@@ -49,6 +50,15 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->camera->SetLookAt(vec3());
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
     scene->AddObject(scene->camera);
+
+    //Make a sun
+    DirectionalLight* sun = new DirectionalLight();
+    sun->name = "Directional Light (Sun)";
+    sun->SetPosition(vec3(-10,10,10));
+    sun->color = vec3(1,0.8,0.6);
+    sun->brightness = 5.0;
+    sun->SetLookAt(vec3());
+    scene->AddObject(sun);
 
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
@@ -343,13 +353,12 @@ void ApplicationGrid::RunLogic(){
 
     //When a terrain cell gets destroyed, we should remove it from renderer and terrain.
     //Either we use a shared pointer, or we keep track of the number of references.
-    Object* hovered_object = NULL;
+    hovered_object = NULL;
 
     for (Object* object:renderer->renderable_objects){
         if (object->IsDestroyed()){
             //TODO: Remove it... here?
         }
-
 
         if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == hovered_objid)){
             vec3 p = object->GetPosition();
@@ -443,7 +452,7 @@ void ApplicationGrid::UpdateUICameraControls(Camera* camera,int id){
         return;
     }
 
-    std::string title = camera->name + "##" + std::to_string(id) +   " Controls";
+    std::string title = camera->name + "##" + std::to_string(id) +   " Camera Controls";
 
     if (ImGui::CollapsingHeader(title.c_str())){
         float znear = main_scene->camera->viewport.znear;
@@ -495,12 +504,20 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Checkbox("Delete Tiles (Right Click)",&grid_settings.f_delete);
         ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
     }
-    vec3 normal = main_scene->inputcontroller->GetHoveredNormal();
-    ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",normal.x,normal.y,normal.z);
+    vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
+    ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
+
+    IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
+    if (!hovered_cell){
+        ImGui::Text("No Hovered Cell");
+    }else{
+        ImGui::Text("Hovered Cell Coordinate   : %i x %i",hovered_cell->coordinate.x,hovered_cell->coordinate.y);
+    }
+
     if (!cell){
         ImGui::Text("No Object of type Cell is selected.");
     }else{
-        ImGui::Text("Coordinate   : %i x %i",cell->coordinate.x,cell->coordinate.y);
+        ImGui::Text("Cell Coordinate   : %i x %i",cell->coordinate.x,cell->coordinate.y);
         ImGui::Text("Terrain Type : %i",cell->terrain_type);
         if (ImGui::Button("Set None")){
             cell->SetTerrainType(CELL_TERRAIN_NONE);
@@ -537,6 +554,17 @@ void ApplicationGrid::UpdateUI(){
                 scene->AddObject(camera);
             }
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Directional Light")){
+            DirectionalLight* l = new DirectionalLight();
+            l->name = "Directional Light";
+            scene->AddObject(l);
+        }
+        if (ImGui::Button("Add Point Light")){
+            PointLight* l = new PointLight();
+            l->name = "Point Light";
+            scene->AddObject(l);
+        }
     }
 
     //So the same camera panel has a different ImGUI ID.
@@ -559,6 +587,18 @@ void ApplicationGrid::UpdateUI(){
             ui_camid++;
             UpdateUICameraControls(cam,ui_camid);
         }
+
+        Light* light = dynamic_cast<Light*>(object);
+        if (light && ImGui::CollapsingHeader("Light Properties")){
+            vec3 pos = object->GetPosition();
+            ImGui::BeginDisabled();
+            ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
+            ImGui::EndDisabled();
+            ImGui::DragFloat3("Color", (float*)&light->color, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Brightness", (float*)&light->brightness, 0.01f, 0.0f, 10.0f);
+        }
+
+
         if (object->GetMesh() && ImGui::CollapsingHeader("Mesh")){
             Mesh* mesh = object->GetMesh();
             ImGui::Text(" ID             : %lu",mesh->GetID());
@@ -661,6 +701,8 @@ void ApplicationGrid::UpdateUI(){
             ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,10);
             ImGui::DragInt("Material Slot 3",&object->material_slot[3],1,-1,10);
         }
+
+
     }
 
     if (ImGui::CollapsingHeader("Performance")){

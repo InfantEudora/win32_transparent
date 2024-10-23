@@ -10,7 +10,7 @@ typedef int camera_t;
 #define CAMERA_TYPE_PERSPECTIVE		0
 #define CAMERA_TYPE_ORTHOGRAPHIC	1
 
-class Camera : public Object{
+class Camera : public virtual Object{
 public:
 	Camera();
 

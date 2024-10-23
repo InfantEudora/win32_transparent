@@ -5,6 +5,7 @@
 #include "IsoTerrain.h"
 #include "type_plane.h"
 #include "type_ray.h"
+
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
@@ -18,7 +19,9 @@ public:
     vec3 camera_target = {};
 
     IsoTerrain* terrain = NULL;
+
     Object* selected_object = NULL;
+    Object* hovered_object = NULL;
     Object* selection_tile = NULL;
 
     plane projection_plane;

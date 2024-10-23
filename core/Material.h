@@ -23,10 +23,11 @@
 typedef struct {
     vec4 color = {0,1,1,1};
     int diffuse_texture = -1;       // The OpenGL texture unit the material is bound to. 0 to 32 typically.
-    int normal_texture = -1;       // The OpenGL texture unit the material is bound to
-    int pad[2];
-    uint64_t handle_diffuse = 0; // The texture handle for OpenGL Bindless Textures
-    uint64_t handle_normal = 0; // The texture handle for OpenGL Bindless Textures
+    int normal_texture = -1;        // The OpenGL texture unit the material is bound to
+    float brightness = 1;           // Values above 1 automatically make the object emissive. (Maybe: Seperate into a seperate flag.)
+    int pad[1];
+    uint64_t handle_diffuse = 0;    // The texture handle for OpenGL Bindless Textures
+    uint64_t handle_normal = 0;     // The texture handle for OpenGL Bindless Textures
 }material_t;
 
 //We want to know more about the material that GLSL

@@ -35,6 +35,7 @@ It should kind of look like this:
 - [x] Automatically merge different materials based on name. And auto assign to an object on mesh load from OBJ.
 - [x] Auto load texture data from .mat file.
 - [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
+- [ ] Make sperate light calculation for directional and point lights.
 
 ### ToDo's
 

@@ -7,6 +7,7 @@ class Renderer;
 #include "Camera.h"
 #include "Texture.h"
 #include "Material.h"
+#include "Light.h"
 #include "InputController.h"
 #include "PerfTimer.h"
 
@@ -47,7 +48,9 @@ class Renderer{
     int height = 1;
 
     void CullObjects();
+    void CullLights();
     void GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects);
+    void GetAllVisibleSubLights(Light* light,std::vector<Light*>&lights);
     void UpdateState();
     void RebuildUniqueMeshList();
     void ClearBatches();
@@ -78,6 +81,7 @@ class Renderer{
     static void SetVSync(bool enable);
 
     void UploadMaterials();
+    void UploadLights();
     Material* GetMaterial(int index);
     int FindMaterialIndex(const char* name);
     int AddMaterial(Material& newmat);
@@ -98,6 +102,7 @@ class Renderer{
 
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
+    GLuint lights_ssbo = -1;  //Shader Storage Buffer holding all different lights
     GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
 
     //Deferred stuff: Non-MSAA?
@@ -122,9 +127,11 @@ class Renderer{
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
     std::vector<Object*>renderable_objects;         // All objects we will render this frame
+    std::vector<Light*>visible_lights;              // All lights we will use this frame
     std::vector<std::vector<objectid_t>*>batch_ids; // An array of arrays containing the object id's per unique mesh, these form batches
     std::vector<instancedata_t>instancedata;        // Object data per unique mesh instance
     std::vector<material_t>glsl_materials;          // List of all materials for direct upload to SSBO
+    std::vector<light_t>glsl_lights;                // List of all active lights for direct upload to SSBO
     std::vector<Material>materials;                 // List of all materials
     std::vector<Texture*>textures;                   // List of all textures
 
