@@ -240,7 +240,7 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                 std::string whole_path = "data/" + std::string(diff_name);
                 current_material->diff_texture = new Texture();
                 current_material->diff_texture->name = whole_path;
-                current_material->diff_texture->LoadFromFile(whole_path.c_str());
+                current_material->diff_texture->LoadFromFile(whole_path.c_str(),GL_TEXTURE_2D,1);
                 if (current_material->diff_texture){
                     current_material->glsl_material.diffuse_texture = 0;
                     current_material->glsl_material.handle_diffuse = current_material->diff_texture->texture_handle;
@@ -274,7 +274,7 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                 std::string whole_path = "data/" + std::string(filename);
                 current_material->norm_texture = new Texture();
                 current_material->norm_texture->name = whole_path;
-                current_material->norm_texture->LoadFromFile(whole_path.c_str());
+                current_material->norm_texture->LoadFromFile(whole_path.c_str(),GL_TEXTURE_2D,1);
                 if (current_material->norm_texture){
                     current_material->glsl_material.normal_texture = 0;
                     current_material->glsl_material.handle_normal = current_material->norm_texture->texture_handle;

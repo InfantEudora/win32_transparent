@@ -1,7 +1,7 @@
 #ifndef _ISO_TERRAIN_CELL_H_
 #define _ISO_TERRAIN_CELL_H_
 #include "Object.h"
-#include "type_int2.h"
+#include "type_int3.h"
 #include "AssetManager.h"
 #include <map>
 
@@ -25,7 +25,7 @@ public:
     IsoCell();
     ~IsoCell();
 
-    int2 coordinate;
+    int3 coordinate;
     int terrain_type = CELL_TERRAIN_NONE;
     void SetTerrainType(int newtype);
     void ApplyPreset(int preset);

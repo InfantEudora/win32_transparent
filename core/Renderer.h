@@ -5,7 +5,7 @@ class Renderer;
 #include "glad.h"
 #include "Object.h"
 #include "Camera.h"
-#include "Texture.h"
+#include "CubeMap.h"
 #include "Material.h"
 #include "Light.h"
 #include "InputController.h"
@@ -15,16 +15,16 @@ class Renderer;
 #define NUM_MATERIAL_SLOTS  4
 
 typedef struct {
-    fmat4 mat_transformscale;               // Matrix holding object rotation, scale and translation
-    int material_slot[NUM_MATERIAL_SLOTS];  // We could do that each instance has a material assigned to a fixed number of slots
-    int objectindex;                           // The Object's index it was rendered with this frame. (So not object->id)
+    fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
+    int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
+    int objectindex;                            // The Object's index it was rendered with this frame. (So not object->id)
     int pad1[3];
 }instancedata_t;
 
 typedef struct{
-    int data_in[4];     //Stored pixel coordinates of mouse
-    int data_out[4];    //Holds objid
-    float fdata_out[4];    //Holds ztest
+    int data_in[4];         // Stored pixel coordinates of mouse
+    int data_out[4];        // Holds objid
+    float fdata_out[4];     // Holds ztest
 }readback_buffer_t;
 
 //A callback for debugging
@@ -33,7 +33,6 @@ void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum sever
 #define PIPELINE_NONE       0
 #define PIPELINE_MSAA       1
 #define PIPELINE_DEFERRED   2
-
 
 /*
     A class responsible of managing the OpenGL state and pipeline.
@@ -56,6 +55,7 @@ class Renderer{
     void ClearBatches();
     void FillBactches();
     void DrawObjects();
+    void DrawSkyBox(Camera* camera);
 
     void UpdateReadbackBuffer();
     void RenderUniqueMeshes();
@@ -82,13 +82,15 @@ class Renderer{
 
     void UploadMaterials();
     void UploadLights();
+    void UploadCubeMap(CubeMap* cubemap);
+
     Material* GetMaterial(int index);
     int FindMaterialIndex(const char* name);
     int AddMaterial(Material& newmat);
     void AddMaterials(std::vector<Material>& list);
     int GetNumMaterials();
 
-    Texture* LoadTexture(const char* filename);
+    Texture* LoadTexture(const char* filename,int target = GL_TEXTURE_2D, int depth = 1);
 
     //We'll have one multisampled framebuffer with a single color and depth buffer.
     //And a resolve buffer, where the mutisampling is resolved to.
@@ -115,6 +117,10 @@ class Renderer{
     Shader* deferred_shader = NULL;     //Shader that outputs data to textures
     Shader* ssao_compute_shader = NULL;
 
+    Shader* skybox_shader = NULL;
+    CubeMap* skybox = NULL;
+    Mesh* skybox_mesh = NULL;
+
     //Settings
     int aa_samples = 1;
     int pipeline = PIPELINE_MSAA;   //Which pipeline to initialise
@@ -123,6 +129,7 @@ class Renderer{
 
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;
+    int last_texture_unit = 0;
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;               // An array of unique meshes
@@ -133,7 +140,7 @@ class Renderer{
     std::vector<material_t>glsl_materials;          // List of all materials for direct upload to SSBO
     std::vector<light_t>glsl_lights;                // List of all active lights for direct upload to SSBO
     std::vector<Material>materials;                 // List of all materials
-    std::vector<Texture*>textures;                   // List of all textures
+    std::vector<Texture*>textures;                  // List of all textures
 
     std::vector<line>debug_lines;
 

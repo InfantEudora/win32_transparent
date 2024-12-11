@@ -15,11 +15,13 @@ public:
 
     int width = 0;
     int height = 0;
+    int depth = 0;      // Index in a Cube Map
 
     std::string name;   //When loaded from file, it's filename.
 
-    void Create2D(int width, int height, UINT format);    //Creates a 2D openGL texture
-    void LoadFromFile(const char* filename);
+    void Create2D(int width, int height, UINT formatm, int target, int depth_in);    //Creates a 2D openGL texture
+    void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);
+    void LoadFromFile(const char* filename, int target, int depth_in);
 };
 
 #endif

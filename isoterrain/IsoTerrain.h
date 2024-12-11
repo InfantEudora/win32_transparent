@@ -15,14 +15,16 @@ class IsoTerrain : public Object{
 public:
     int width = -1; //Y
     int depth = -1; //X
+    int height = -1;
 
-    int cell_count = -1; //= width * depth
+
+    int cell_count = -1; //= width * depth * height
     vec3 center_offset = {};
     std::vector<IsoCell*> cells;     //An array of width*depth cells
 
     AssetManager* assetmanager = NULL;  //Used to load assets from file.
 
-    void CreateTerrain(int w, int d);
+    void CreateTerrain(int w, int d, int h);
     IsoCell* FindCellByWorldPosition(vec3& at);
 };
 

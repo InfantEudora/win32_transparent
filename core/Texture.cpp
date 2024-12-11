@@ -7,11 +7,11 @@
 
 static Debugger *debug = new Debugger("Texture", DEBUG_ALL);
 
-void Texture::Create2D(int w, int h, UINT format){
+void Texture::Create2D(int w, int h, UINT format, int target, int depth){
     width = w;
     height = h;
 
-    glCreateTextures(GL_TEXTURE_2D, 1, &texture_id);
+    glCreateTextures(target, 1, &texture_id);
 
     glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -22,7 +22,22 @@ void Texture::Create2D(int w, int h, UINT format){
     glTextureStorage2D(texture_id, 1, format, width, height);
 }
 
-void Texture::LoadFromFile(const char* filename){
+//Uses the first cubemap file to create an image. The second one uses the main image handle.
+void Texture::LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map){
+    if (depth_in > 0){
+        if (!first_map){
+            debug->Fatal("Specify a first map for loading CubeMaps\n");
+        }
+        texture_id = first_map->texture_id;
+        LoadFromFile(filename,GL_TEXTURE_CUBE_MAP,depth_in);
+    }else{
+        LoadFromFile(filename,GL_TEXTURE_CUBE_MAP,depth_in);
+    }
+}
+
+//Target specifies the texture target GL_TEXTURE_1D, GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_1D_ARRAY, GL_TEXTURE_2D_ARRAY, GL_TEXTURE_RECTANGLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_BUFFER, GL_TEXTURE_2D_MULTISAMPLE or GL_TEXTURE_2D_MULTISAMPLE_ARRAY.
+void Texture::LoadFromFile(const char* filename, int target, int depth_in){
+    depth = depth_in;
     size_t img_data_sz = 0;
     uint8_t* img_data = LoadFile(filename,&img_data_sz);
     if (!img_data){
@@ -45,7 +60,13 @@ void Texture::LoadFromFile(const char* filename){
         debug->Err("Unsupported number of color channels.\n");
         return;
     }
-    Create2D(w,h,format);
+    //Code for loading new image or adding to a cube map
+    if ((target != GL_TEXTURE_CUBE_MAP) || (depth == 0)){
+        debug->Info("Create2D new Image Handle\n");
+        Create2D(w,h,format,target,depth);
+    }else{
+        debug->Info("Re-Using Image Handle for CubeMap\n");
+    }
 
     if (channels == 4){
         format = GL_RGBA;
@@ -53,8 +74,12 @@ void Texture::LoadFromFile(const char* filename){
         format = GL_RGB;
     }
 
-    glTextureSubImage2D(texture_id,0,0,0,w,h,format,GL_UNSIGNED_BYTE,img);
-    glGenerateTextureMipmap(texture_id);
+    if (target == GL_TEXTURE_CUBE_MAP){
+        glTextureSubImage3D(texture_id,0,0,0,depth,w,h,1,format,GL_UNSIGNED_BYTE,img);
+    }else{
+        glTextureSubImage2D(texture_id,0,0,0,w,h,format,GL_UNSIGNED_BYTE,img);
+        glGenerateTextureMipmap(texture_id);
+    }
 
     #ifdef BINDLESS_TEXTURES
     texture_handle = glGetTextureHandleARB(texture_id);

@@ -16,6 +16,7 @@ struct fmat4{
     void    print();
     void    clear();
     fmat4&  identity();  //Set's this matrix to identity.
+	fmat4   rotationmatrix(); //Returns a new matrix from this one with only rotation
     fmat4&  rotationmatrix(const fmat3& mr);
     fmat4&  rotationmatrix(const vec3& axis, float angle);
     fmat4&  perspectivematrix(float fov, float aspect, float znear, float zfar);
@@ -39,6 +40,19 @@ inline fmat4& fmat4::identity(){
 	vertex[2].z = 1;
     vertex[3].w = 1;
 	return *this;
+}
+
+inline fmat4 fmat4::rotationmatrix(){
+	fmat4 r;
+	r = *this;
+	r.vertex[0].w = 0;
+	r.vertex[1].w = 0;
+	r.vertex[2].w = 0;
+	r.vertex[3].x = 0;
+	r.vertex[3].y = 0;
+	r.vertex[3].z = 0;
+	r.vertex[3].w = 1;
+	return r;
 }
 
 //Set this matrix to be a rotation matrix, the same as specified rotation matrix

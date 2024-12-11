@@ -67,6 +67,8 @@ PFNGLCREATETEXTURESPROC glCreateTextures = NULL;
 PFNGLTEXTUREPARAMETERIPROC glTextureParameteri = NULL;
 PFNGLTEXTURESTORAGE2DPROC glTextureStorage2D = NULL;
 PFNGLTEXTURESUBIMAGE2DPROC glTextureSubImage2D = NULL;
+PFNGLTEXTURESTORAGE3DPROC glTextureStorage3D = NULL;
+PFNGLTEXTURESUBIMAGE3DPROC glTextureSubImage3D = NULL;
 PFNGLBINDTEXTUREUNITPROC glBindTextureUnit = NULL;
 PFNGLBINDIMAGETEXTUREPROC glBindImageTexture = NULL;
 PFNGLGENERATETEXTUREMIPMAPPROC glGenerateTextureMipmap = NULL;
@@ -157,6 +159,8 @@ bool InitGLExtensions(void){
     glTextureParameteri = (PFNGLTEXTUREPARAMETERIPROC)wglGetProcAddress("glTextureParameteri");
     glTextureStorage2D = (PFNGLTEXTURESTORAGE2DPROC)wglGetProcAddress("glTextureStorage2D");
     glTextureSubImage2D = (PFNGLTEXTURESUBIMAGE2DPROC)wglGetProcAddress("glTextureSubImage2D");
+    glTextureStorage3D = (PFNGLTEXTURESTORAGE3DPROC)wglGetProcAddress("glTextureStorage3D");
+    glTextureSubImage3D = (PFNGLTEXTURESUBIMAGE3DPROC)wglGetProcAddress("glTextureSubImage3D");
     glBindTextureUnit = (PFNGLBINDTEXTUREUNITPROC)wglGetProcAddress("glBindTextureUnit");
     glBindImageTexture = (PFNGLBINDIMAGETEXTUREPROC)wglGetProcAddress("glBindImageTexture");
     glGenerateTextureMipmap = (PFNGLGENERATETEXTUREMIPMAPPROC)wglGetProcAddress("glGenerateTextureMipmap");

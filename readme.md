@@ -36,6 +36,7 @@ It should kind of look like this:
 - [x] Auto load texture data from .mat file.
 - [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 - [ ] Make sperate light calculation for directional and point lights.
+- [ ] Cubemaps
 
 ### ToDo's
 

@@ -285,6 +285,15 @@ void Renderer::UpdateReadbackBuffer(){
     glNamedBufferData(readback_ssbo,sizeof(readback_buffer_t), &readbackbuffer,GL_DYNAMIC_DRAW);
 }
 
+//Requires a skybox shader and skybox to have been set.
+void Renderer::DrawSkyBox(Camera* camera){
+    if (skybox && skybox_shader && skybox_mesh){
+        skybox_shader->Use();
+        skybox_shader->Setmat4("mat_worldcam",camera->mat_cam.rotationmatrix());
+        skybox_mesh->RenderInstances(1);
+    }
+}
+
 void Renderer::DrawObjects(){
     //First, we cull all objects we are sure of are not visible.
     //Then we make a list of all objects that need to be rendered.
@@ -367,6 +376,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
 
+    //Skybox
+    DrawSkyBox(camera);
+
     if (shader && camera){
         shader->Use();
         vec3 p = camera->GetPosition();
@@ -386,6 +398,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         readbackbuffer.fdata_out[0] = 1.0f;
         UpdateReadbackBuffer();
     }
+
 
     DrawObjects();
     ResolveAA();
@@ -661,21 +674,21 @@ int Renderer::GetNumMaterials(){
 //This for now just uploads all the known materials to a SSBO... each frame.
 //Might only need to do this once.
 void Renderer::UploadMaterials(){
-    int texture_unit = 0;
+    last_texture_unit = 0;
 
     glsl_materials.clear();
     for (Material& mat:materials){
         if (mat.diff_texture){;
             //debug->Trace("Material has diffuse Texture: Binding to Unit %i\n",texture_unit);
-            mat.glsl_material.diffuse_texture = texture_unit;
-            glBindTextureUnit(texture_unit, mat.diff_texture->texture_id);
-            texture_unit++;
+            mat.glsl_material.diffuse_texture = last_texture_unit;
+            glBindTextureUnit(last_texture_unit, mat.diff_texture->texture_id);
+            last_texture_unit++;
         }
         if (mat.norm_texture){;
             //debug->Trace("Material has normal Texture: Binding to Unit %i\n",texture_unit);
-            mat.glsl_material.normal_texture = texture_unit;
-            glBindTextureUnit(texture_unit, mat.norm_texture->texture_id);
-            texture_unit++;
+            mat.glsl_material.normal_texture = last_texture_unit;
+            glBindTextureUnit(last_texture_unit, mat.norm_texture->texture_id);
+            last_texture_unit++;
         }
         glsl_materials.push_back(mat.glsl_material);
     }
@@ -683,6 +696,17 @@ void Renderer::UploadMaterials(){
     if (glsl_materials.size() > 0){
         glInvalidateBufferData(materialdata_ssbo);
         glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_DYNAMIC_DRAW);
+    }
+}
+
+void Renderer::UploadCubeMap(CubeMap* cubemap){
+    //We upload each of the
+    for (int i = 0;i<6;i++){
+        if (cubemap->texture[i]){
+            debug->Info("Loading CubeMap %i/6 : %s to texture_unit %i\n",i,cubemap->texture[0]->name.c_str(),last_texture_unit);
+            glBindTextureUnit(last_texture_unit, cubemap->texture[i]->texture_id);
+            last_texture_unit++;
+        }
     }
 }
 
@@ -737,10 +761,10 @@ int Renderer::FindMaterialIndex(const char* name){
 }
 
 //Load a texture from file, and returns the OpenGL handle/id-thing
-Texture* Renderer::LoadTexture(const char* filename){
+Texture* Renderer::LoadTexture(const char* filename, int target, int depth){
     //A material with a texture.
     Texture* texture = new Texture();
-    texture->LoadFromFile(filename);
-    glBindTextureUnit(0, texture->texture_id);
+    texture->LoadFromFile(filename,target,depth);
+    //glBindTextureUnit(0, texture->texture_id);
     return texture;
 }

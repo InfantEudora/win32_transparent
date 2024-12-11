@@ -2,6 +2,7 @@
 #include "Debug.h"
 #include "OBJLoader.h"
 #include "Light.h"
+#include "CubeMap.h"
 
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
 
@@ -82,7 +83,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->terrain = new IsoTerrain();
     app->terrain->name = "Iso Terrain";
     app->terrain->assetmanager = app->assetmanager;
-    app->terrain->CreateTerrain(7,7);
+    app->terrain->CreateTerrain(11,11,3);
     scene->AddObject(app->terrain);
 
     //Test arrows to test all this quaternion madness.
@@ -125,10 +126,11 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     wall->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->AddObject(wall);
 
-    wall = app->assetmanager->GetObjectFromAsset("tile_gate");
-    wall->name  = "Gate Tile";
-    wall->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->AddObject(wall);
+    Object* gate = new Object();
+    gate = app->assetmanager->GetObjectFromAsset("tile_gate");
+    gate->name  = "Gate Tile";
+    gate->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->AddObject(gate);
 
     app->projection_plane.pos = {};
     app->projection_plane.normal = vec3(0,1,0);
@@ -160,6 +162,18 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     mat.name = "Colored Textured Material";
     scene->renderer->AddMaterial(mat);
 
+    //We attempt to load a cubemap for the skybox.
+
+    CubeMap* skybox = new CubeMap();
+    skybox->LoadFromFile("data/textures/skybox/right.jpg",0);
+    skybox->LoadFromFile("data/textures/skybox/left.jpg",1);
+    skybox->LoadFromFile("data/textures/skybox/top.jpg",2);
+    scene->renderer->UploadCubeMap(skybox);
+
+    scene->renderer->skybox = skybox;
+    scene->renderer->skybox_shader = new Shader("shaders/skybox.vert","shaders/skybox.frag");
+    scene->renderer->skybox_mesh = wall->GetMesh();
+
     //Now we can assign materials to all the tiles.
     for (IsoCell* cell:app->terrain->cells){
         cell->material_slot[0] = matindex;
@@ -169,8 +183,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     IsoCell::terrain_material_map[CELL_TERRAIN_NONE] = -1;
     IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = app->renderer->FindMaterialIndex("grass");
     IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
-
-
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
@@ -378,51 +390,84 @@ void ApplicationGrid::RunLogic(){
     vec3 at = {};
     bool intersect = r.intersects_plane(projection_plane,at);
 
-    if (!ImGui::GetIO().WantCaptureMouse && intersect){
+    //Selection tile on side of hovered cell by normal
+    if (!ImGui::GetIO().WantCaptureMouse && hovered_object && selection_tile){
+        //Check if the hovered object is a cell and select a side based on normal.
+        IsoCell* cell = dynamic_cast<IsoCell*>(hovered_object);
+        if (cell){
+            vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
+            vec3 dir;
+            //Get the closest value of xyz
+            if (hov_normal.x >.8){
+                dir = vec3(1,0,0);
+            }
+            if (hov_normal.x <-0.8){
+                dir = vec3(-1,0,0);
+            }
+            if (hov_normal.y >.8){
+                dir = vec3(0,1,0);
+            }
+            if (hov_normal.y <-0.8){
+                dir = vec3(0,-1,0);
+            }
+            if (hov_normal.z >.8){
+                dir = vec3(0,0,1);
+            }
+            if (hov_normal.z <-0.8){
+                dir = vec3(0,0,-1);
+            }
+
+            vec3 p = cell->GetPosition();
+            p += dir;
+            selection_tile->SetPosition(p);
+        }
+    }
+
+    //Selection tile on a plane
+    if (0 && !ImGui::GetIO().WantCaptureMouse && intersect && selection_tile){
         //We snap the selection tile to a grid.
-        if (selection_tile){
-            at.round();
-            selection_tile->SetPosition(at);
+        at.round();
+        selection_tile->SetPosition(at);
 
-            //Cell is the object the mouse is over, which can be different from our mouse grid coordinate
-            IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
-            IsoCell* terraincell = terrain->FindCellByWorldPosition(at);
-            if (grid_settings.f_place && (clicked_empty || (cell && left_clicked))){
-                //Request the cell at the current coordinate from the grid:
+        //Cell is the object the mouse is over, which can be different from our mouse grid coordinate
+        IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
+        IsoCell* terraincell = terrain->FindCellByWorldPosition(at);
+        if (grid_settings.f_place && (clicked_empty || (cell && left_clicked))){
+            //Request the cell at the current coordinate from the grid:
 
-                if (terraincell){
-                    debug_physics->Info("Already IsoCell at %.1f x %.1f : terraincell %ix%i\n",at.x,at.z,terraincell->coordinate.x,terraincell->coordinate.y);
-                    terraincell->Show();
+            if (terraincell){
+                debug_physics->Info("Already IsoCell at %.1f x %.1f : terraincell %ix%i\n",at.x,at.z,terraincell->coordinate.x,terraincell->coordinate.y);
+                terraincell->Show();
+            }else{
+                if (cell && (cell->GetPosition().x == at.x) && (cell->GetPosition().z == at.z)){
+                    debug_physics->Info("Already IsoCell at %.1f x %.1f : cell %ix%i\n",at.x,at.z,cell->coordinate.x,cell->coordinate.y);
+                    cell->Show();
                 }else{
-                    if (cell && (cell->GetPosition().x == at.x) && (cell->GetPosition().z == at.z)){
-                        debug_physics->Info("Already IsoCell at %.1f x %.1f : cell %ix%i\n",at.x,at.z,cell->coordinate.x,cell->coordinate.y);
-                        cell->Show();
+                    IsoCell* c = new IsoCell();
+                    std::string name = "tile_00" + std::to_string(grid_settings.tile_number);
+                    if (assetmanager->GetObjectFromAsset(name.c_str(),c)){
+                        c->SetPosition(at);
+                        c->name = "Floating IsoCell";
+                        main_scene->AddObject(c);
+                        debug_physics->Info("Spawned a new IsoCell at %.1f x %.1f\n",at.x,at.z);
                     }else{
-                        IsoCell* c = new IsoCell();
-                        std::string name = "tile_00" + std::to_string(grid_settings.tile_number);
-                        if (assetmanager->GetObjectFromAsset(name.c_str(),c)){
-                            c->SetPosition(at);
-                            c->name = "Floating IsoCell";
-                            main_scene->AddObject(c);
-                            debug_physics->Info("Spawned a new IsoCell at %.1f x %.1f\n",at.x,at.z);
-                        }else{
-                            debug_physics->Err("Unable to instantiate object %sat %.1f x %.1f\n",name.c_str(),at.x,at.z);
-                        }
-                    }
-                }
-            }else if (grid_settings.f_delete && right_clicked){
-                debug_physics->Info("Clickerdy clackerdy.\n");
-                if (!hovered_object){
-                    selected_object = NULL;
-                }else{
-                    IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
-                    if (hovered_cell){
-                        debug_physics->Info("That was a Cell we hovered.\n");
-                        hovered_cell->Hide();
+                        debug_physics->Err("Unable to instantiate object %sat %.1f x %.1f\n",name.c_str(),at.x,at.z);
                     }
                 }
             }
+        }else if (grid_settings.f_delete && right_clicked){
+            debug_physics->Info("Clickerdy clackerdy.\n");
+            if (!hovered_object){
+                selected_object = NULL;
+            }else{
+                IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
+                if (hovered_cell){
+                    debug_physics->Info("That was a Cell we hovered.\n");
+                    hovered_cell->Hide();
+                }
+            }
         }
+
     }
 }
 

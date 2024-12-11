@@ -86,7 +86,7 @@ void Scene::SetupExample(){
 
     // Create a texture
     tex_1 = new Texture();
-    tex_1->Create2D(128,128,GL_RGBA8);
+    tex_1->Create2D(128,128,GL_RGBA8,GL_TEXTURE_2D,1);
 
     //Create a compute shader that will massage the texture.
     Shader* comp_shader = new Shader();
@@ -100,7 +100,7 @@ void Scene::SetupExample(){
 
     //A second texture
     tex_2 = new Texture();
-    tex_2->Create2D(128,128,GL_RGBA8);
+    tex_2->Create2D(128,128,GL_RGBA8,GL_TEXTURE_2D,1);
     comp_shader->Setint("pattern",1);
     //glBindImageTexture(0, texture_2->texture_id, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
     glBindImageTexture(1, tex_2->texture_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
