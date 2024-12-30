@@ -25,7 +25,11 @@ float fscurve5(float a){
     float a4 = a3 * a;
     float a5 = a4 * a;
     return (6.0 * a5) - (15.0 * a4) + (10.0 * a3);
-  }
+}
+
+float fract(float in){
+    return in - floorf(in);
+}
 
 
 // Clamps a float between min/max

@@ -58,8 +58,6 @@ static double noise2d(double x, double y, int seed){
     return result/256;
 }
 
-
-
 //Based on https://gist.github.com/nowl/828013
 //Returns a perlin noise thing...
 float PerlinNoise::GetValue2D(float x, float y){

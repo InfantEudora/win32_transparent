@@ -17,6 +17,7 @@ struct vec2{
     };
 
 	vec2() : x(0), y(0) {}
+    vec2(float f) : x(f), y(f){}
     vec2(float x, float y) : x(x), y(y){}
 
     void    print();
@@ -25,12 +26,15 @@ struct vec2{
 	float   distance(const vec2& vec) const;     // distance between two vectors
     vec2&  	normalize();
 	float  	dot(const vec2& vec) const;          // dot product
+    vec2&   floor();
 
-    vec2   	operator-() const;                   // unary operator (negate)
-    vec2   	operator-(const vec2& rhs) const;    // subtract rhs
-    vec2&  	operator-=(const vec2& rhs);         // subtract rhs and update this object
-    vec2   	operator+(const vec2& rhs) const;    // add rhs
-    vec2&  	operator+=(const vec2& rhs);         // add rhs and update this object
+    vec2   	operator-() const;                              // unary operator (negate)
+    vec2   	operator-(const vec2& rhs) const;               // subtract rhs
+    vec2&  	operator-=(const vec2& rhs);                    // subtract rhs and update this object
+    vec2   	operator+(const vec2& rhs) const;               // add rhs
+    vec2&  	operator+=(const vec2& rhs);                    // add rhs and update this object
+    vec2  	operator*(const float scale) const;             // scale
+    friend vec2 operator*(const float a, const vec2 vec);   // scale
 };
 
 inline vec2& vec2::set(float x, float y) {
@@ -63,6 +67,12 @@ inline float vec2::dot(const vec2& rhs) const{
 	return (float)r;
 }
 
+inline vec2& vec2::floor(){
+	x = floorf(x);
+    y = floorf(y);
+	return *this;
+}
+
 inline vec2 vec2::operator-() const {
     return vec2(-x, -y);
 }
@@ -81,6 +91,14 @@ inline vec2 vec2::operator+(const vec2& rhs) const {
 
 inline vec2& vec2::operator+=(const vec2& rhs) {
     x += rhs.x; y += rhs.y; return *this;
+}
+
+inline vec2 vec2::operator*(const float a) const {
+	return vec2(x*a, y*a);
+}
+
+inline vec2 operator*(const float a, const vec2 vec) {
+    return vec2(a*vec.x, a*vec.y);
 }
 
 inline void vec2::print(){

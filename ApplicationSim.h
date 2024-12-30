@@ -4,6 +4,7 @@
 #include "Application.h"
 #include "RRandom.h"
 #include "PerlinNoise.h"
+#include "WorleyNoise.h"
 /*
     An attempt at an application that overrides the default, and shows a UI only.
 */
@@ -15,7 +16,8 @@ public:
     void RunLogic() override;
 
     RRandom rrand;
-    PerlinNoise noise;
+    PerlinNoise pnoise;
+    WorleyNoise wnoise;
     Texture* noise_texture = NULL;
 
 

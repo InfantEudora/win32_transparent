@@ -12,6 +12,8 @@ const float FT_EPSILON = 0.0000000125f;
 float flerp(float a, float b, float k);
 
 float clamp(float in, float min, float max);
+float fract(float in);
+
 float fscurve3 (float a);
 float fscurve5(float a);
 

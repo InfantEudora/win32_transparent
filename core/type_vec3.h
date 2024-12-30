@@ -22,6 +22,7 @@ struct vec3{
     };
 
 	vec3() : x(0), y(0), z(0) {}
+    vec3(float f) : x(f), y(f), z(f){}
     vec3(float x, float y, float z) : x(x), y(y), z(z){}
 
     void    print();
@@ -32,7 +33,9 @@ struct vec3{
 	float  	dot(const vec3& vec) const;                     // dot product
     vec3   	cross(const vec3& vec) const;                   // cross product
     bool   	equal(const vec3& vec) const;                   // compare with epsilon
-    vec3&   round();
+    vec3&   floor();                                        // round down
+    vec3&   fract();                                        // returns the non-integer part
+    vec3&   round();                                        // round to nearest
 
     vec3   	operator-() const;                              // unary operator (negate)
     vec3   	operator-(const vec3& rhs) const;               // subtract rhs
@@ -68,9 +71,25 @@ inline vec3& vec3::normalize(){
 }
 
 inline vec3& vec3::round(){
-    x = floor(x + 0.5);
-    y = floor(y + 0.5);
-    z = floor(z + 0.5);
+    x = floorf(x + 0.5);
+    y = floorf(y + 0.5);
+    z = floorf(z + 0.5);
+	return *this;
+}
+
+inline vec3& vec3::floor(){
+    x = floorf(x);
+    y = floorf(y);
+    z = floorf(z);
+	return *this;
+}
+
+inline vec3& vec3::fract(){
+    vec3 f = *this;
+    f.floor();
+    x = x-f.x;
+    y = y-f.y;
+    z = z-f.z;
 	return *this;
 }
 

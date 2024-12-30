@@ -158,46 +158,60 @@ void ApplicationSim::RenderRandTestWindow(){
 
 void ApplicationSim::RenderNoiseTestWindow(){
     ImGui::Begin("Perlin (and Others) Noise Test Suite");
+    static bool regenerate = true;
 
-    bool regenerate = false;
+    int texw = 512;
+    int texh = 512;
 
-    if (ImGui::DragInt("Noise Seed",&noise.seed,1,0,3200))regenerate = true;
-    if (ImGui::DragFloat("Noise Frequency",&noise.frequency,0.001f,0.0,10.0))regenerate = true;
-    if (ImGui::DragFloat2("Noise Center Coord",(float*)&noise.coord,0.1f,-100.0,100.0))regenerate = true;
-    if (ImGui::DragFloat("Noise Persistence",&noise.persistence,0.01f,0.0,10.0))regenerate = true;
-    if (ImGui::DragFloat("Noise Lacunarity",&noise.lacunarity,0.01f,0.0,10.0))regenerate = true;
-    if (ImGui::DragInt("Noise Num Octaves",&noise.num_octaves,1,1,10))regenerate = true;
-    if (ImGui::DragFloat("Noise Offset",&noise.offset,1,0,256))regenerate = true;
-    if (ImGui::DragFloat("Noise Scale",&noise.scale,0.01f,0,10.0))regenerate = true;
+    if (ImGui::CollapsingHeader("Perlin Noise")){
+        if (ImGui::DragInt("Noise Seed",&pnoise.seed,1,0,3200))regenerate = true;
+        if (ImGui::DragFloat("Noise Frequency",&pnoise.frequency,0.001f,0.0,10.0))regenerate = true;
+        if (ImGui::DragFloat2("Noise Center Coord",(float*)&pnoise.coord,0.1f,-100.0,100.0))regenerate = true;
+        if (ImGui::DragFloat("Noise Persistence",&pnoise.persistence,0.01f,0.0,10.0))regenerate = true;
+        if (ImGui::DragFloat("Noise Lacunarity",&pnoise.lacunarity,0.01f,0.0,10.0))regenerate = true;
+        if (ImGui::DragInt("Noise Num Octaves",&pnoise.num_octaves,1,1,10))regenerate = true;
+        if (ImGui::DragFloat("Noise Offset",&pnoise.offset,1,0,256))regenerate = true;
+        if (ImGui::DragFloat("Noise Scale",&pnoise.scale,0.01f,0,10.0))regenerate = true;
 
-    if (ImGui::Button("Generate Noise"))regenerate = true;
+        if (ImGui::Button("Generate Noise"))regenerate = true;
 
-    if (regenerate){
-        if(!noise_texture){
-            noise_texture = new Texture();
-            noise_texture->Create2D(512,512,GL_RGB8,GL_TEXTURE_2D,1);
-            //Allocate data for it
-            noise_texture->img_data_sz = 512*512*3;
-            noise_texture->img_data = (uint8_t*)malloc(noise_texture->img_data_sz);
-            noise_texture->UploadTexture();
-        }else{
-            debug->Info("Generated a noise texture\n");
+        if (regenerate && noise_texture){
+            //debug->Info("Generated a noise texture\n");
             int index = 0;
-            for (int y=0;y<512;y++){
-                for (int x=0;x<512;x++){
-                    float f = noise.GetValue2D(x,y);
+            for (int y=0;y<texh;y++){
+                for (int x=0;x<texw;x++){
+                    float f = pnoise.GetValue2D(x,y);
                     noise_texture->img_data[index + 0] = f;
                     noise_texture->img_data[index + 1] = f;
                     noise_texture->img_data[index + 2] = f;
                     index+=3;
                 }
             }
-
-            noise_texture->UploadTexture();
         }
-
-
     }
+
+    if (ImGui::CollapsingHeader("Worley Noise")){
+        if (ImGui::DragInt("Grid Sizes",&wnoise.grid_size,1,1,64))regenerate = true;
+
+        if (ImGui::DragFloat("Noise Scale",&wnoise.scale,0.1f,0,255.0))regenerate = true;
+
+        if (ImGui::Button("Generate Noise"))regenerate = true;
+
+        if (regenerate && noise_texture){
+            //debug->Info("Generated a noise texture\n");
+            int index = 0;
+            for (int y=0;y<texh;y++){
+                for (int x=0;x<texw;x++){
+                    float f = wnoise.GetValue2D(x,y);
+                    noise_texture->img_data[index + 0] = f;
+                    noise_texture->img_data[index + 1] = f;
+                    noise_texture->img_data[index + 2] = f;
+                    index+=3;
+                }
+            }
+        }
+    }
+
     if (!noise_texture){
         ImGui::Text("Image not loaded yet");
     }else{
@@ -205,6 +219,21 @@ void ApplicationSim::RenderNoiseTestWindow(){
     }
 
     ImGui::End();
+
+    if (regenerate){
+        regenerate = false;
+        //Build the noise texture.
+        if(!noise_texture){
+            noise_texture = new Texture();
+            noise_texture->Create2D(texw,texh,GL_RGB8,GL_TEXTURE_2D,1);
+            //Allocate data for it
+            noise_texture->img_data_sz = texw*texh*3;
+            noise_texture->img_data = (uint8_t*)malloc(noise_texture->img_data_sz);
+            noise_texture->UploadTexture();
+        }else{
+            noise_texture->UploadTexture();
+        }
+    }
 }
 
 void ApplicationSim::UpdateUI(){
