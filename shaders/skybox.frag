@@ -17,10 +17,10 @@ layout (location = 6)  flat in int vmatindex;   //Material index
 layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
 //It's set with glBindTextureUnit
-layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
+uniform samplerCube skybox;
 
 void main(){
 
-    color = vec4(1,0,0,1);
-
+    //color = vec4(1,0,0,1);
+    color = texture(skybox, vposition);
 }

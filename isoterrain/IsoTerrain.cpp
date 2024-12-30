@@ -44,8 +44,6 @@ void IsoTerrain::CreateTerrain(int w, int d, int h){
 //This maps a world position to a cell coordinate. Doest not accounf for rotation and scaling.
 //So just 1x1 sized grid cells.
 IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
-    IsoCell* cell = NULL;
-
     vec3 coord = at - center_offset;
     if ((coord.x < 0) || (coord.z < 0)){
         return NULL;
@@ -58,5 +56,5 @@ IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
     if (index < cells.size()){
         return cells.at(index);
     }
-    return cell;
+    return NULL;
 }

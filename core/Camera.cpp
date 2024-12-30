@@ -41,6 +41,21 @@ void Camera::SetType(int _type){
 	}
 }
 
+//Returns the lookat without position (for skybox)
+fmat4 Camera::GetPositionlessMatrix(){
+	fmat4 m;
+
+	viewport.aspect = viewport.width / viewport.height;
+	if (type == CAMERA_TYPE_ORTHOGRAPHIC){
+		//mfrus = matrix_ortho(-viewport.zoom*viewport.aspect,viewport.zoom*viewport.aspect,-viewport.zoom,viewport.zoom,viewport.znear,viewport.zfar);
+	}else{
+		mat_frus.perspectivematrix(viewport.fov,viewport.aspect, viewport.znear, viewport.zfar);
+	}
+	m.lookatmatrix(vec3(),state.rotation * ref_forward,state.rotation * ref_up);
+	m = m * mat_frus;
+	return m;
+}
+
 //Update lookat. Called before rendering a new frame.
 void Camera::CalculateLookatMatrix(){
 	//Recalculate all the things.

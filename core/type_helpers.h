@@ -10,7 +10,10 @@ const float FT_EPSILON = 0.0000000125f;
 
 //Linear interpolation of a and b by factor k
 float flerp(float a, float b, float k);
+
 float clamp(float in, float min, float max);
+float fscurve3 (float a);
+float fscurve5(float a);
 
 template <class T>
 const T &max(const T &a, const T &b) {

@@ -83,7 +83,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->terrain = new IsoTerrain();
     app->terrain->name = "Iso Terrain";
     app->terrain->assetmanager = app->assetmanager;
-    app->terrain->CreateTerrain(11,11,3);
+    app->terrain->CreateTerrain(63,63,3);
     scene->AddObject(app->terrain);
 
     //Test arrows to test all this quaternion madness.
@@ -158,25 +158,29 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     mat.diff_texture = tex;
     int matindex = scene->renderer->AddMaterial(mat);
 
-    mat.glsl_material.color = vec4(1,0.2,0.2,0.9);
-    mat.name = "Colored Textured Material";
-    scene->renderer->AddMaterial(mat);
-
     //We attempt to load a cubemap for the skybox.
-
     CubeMap* skybox = new CubeMap();
-    skybox->LoadFromFile("data/textures/skybox/right.jpg",0);
-    skybox->LoadFromFile("data/textures/skybox/left.jpg",1);
-    skybox->LoadFromFile("data/textures/skybox/top.jpg",2);
+    //skybox->LoadFromFile("data/textures/skybox/right.jpg",0);
+    //skybox->LoadFromFile("data/textures/skybox/left.jpg",1);
+    //skybox->LoadFromFile("data/textures/skybox/top.jpg",2);
+    //skybox->LoadFromFile("data/textures/skybox/bottom.jpg",3);
+    //skybox->LoadFromFile("data/textures/skybox/front.jpg",4);
+    //skybox->LoadFromFile("data/textures/skybox/back.jpg",5);
+    skybox->LoadFromFile("data/textures/skybox/px.jpg",0);
+    skybox->LoadFromFile("data/textures/skybox/nx.jpg",1);
+    skybox->LoadFromFile("data/textures/skybox/py.jpg",2);
+    skybox->LoadFromFile("data/textures/skybox/ny.jpg",3);
+    skybox->LoadFromFile("data/textures/skybox/pz.jpg",4);
+    skybox->LoadFromFile("data/textures/skybox/nz.jpg",5);
     scene->renderer->UploadCubeMap(skybox);
 
     scene->renderer->skybox = skybox;
     scene->renderer->skybox_shader = new Shader("shaders/skybox.vert","shaders/skybox.frag");
-    scene->renderer->skybox_mesh = wall->GetMesh();
+    scene->renderer->skybox_mesh = OBJLoader::ParseOBJFile("data/unit_cube.obj");
 
     //Now we can assign materials to all the tiles.
     for (IsoCell* cell:app->terrain->cells){
-        cell->material_slot[0] = matindex;
+        //cell->material_slot[0] = matindex;
     }
 
     //And update the map for terrain types
@@ -420,6 +424,20 @@ void ApplicationGrid::RunLogic(){
             vec3 p = cell->GetPosition();
             p += dir;
             selection_tile->SetPosition(p);
+        }
+    }
+
+    if (!ImGui::GetIO().WantCaptureMouse && selection_tile){
+        vec3 p = selection_tile->GetPosition();
+        IsoCell* terraincell = terrain->FindCellByWorldPosition(p);
+
+        if (grid_settings.f_place && left_clicked){
+            if (terraincell){
+                terraincell->SetVisibility(true);
+            }else{
+                debug->Warn("Unable to spawn cell there\n");
+            }
+
         }
     }
 

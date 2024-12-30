@@ -37,6 +37,15 @@ void Object::Destroy(){
 
 void Object::SetVisibility(bool flag){
     f_visible = flag;
+    state_physics.f_was_transformed = true;
+}
+
+void Object::Hide(){
+    SetVisibility(false);
+}
+
+void Object::Show(){
+    SetVisibility(true);
 }
 
 void Object::SetPickability(bool flag){

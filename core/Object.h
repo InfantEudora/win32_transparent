@@ -33,8 +33,8 @@ class Object{
     void GenerateUniqueID();
     void Destroy();
     bool IsDestroyed(){return f_is_destroyed;};
-    void Hide(){f_visible = false;};
-    void Show(){f_visible = true;};
+    void Hide();
+    void Show();
     void SetVisibility(bool flag);
     void SetPickability(bool flag);
     bool IsVisible(){return f_visible;};

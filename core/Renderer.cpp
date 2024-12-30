@@ -289,8 +289,12 @@ void Renderer::UpdateReadbackBuffer(){
 void Renderer::DrawSkyBox(Camera* camera){
     if (skybox && skybox_shader && skybox_mesh){
         skybox_shader->Use();
-        skybox_shader->Setmat4("mat_worldcam",camera->mat_cam.rotationmatrix());
+        skybox_shader->Setmat4("mat_worldcam",camera->GetPositionlessMatrix());
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
         skybox_mesh->RenderInstances(1);
+        glDepthMask(GL_TRUE);
+        glEnable(GL_CULL_FACE);
     }
 }
 

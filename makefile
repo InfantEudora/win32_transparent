@@ -16,15 +16,12 @@ CFLAGS = -Llibs/ -limgui -lopengl32 -lgdi32 -lwinmm -lws2_32 -Wl,-Bstatic -stati
 PROJECT = wind
 
 DIR_SRC += ./core
-DIR_SRC += ./isoterrain
 IPATHS += -Icore/
-IPATHS += -Iisoterrain/
 
 IPATHS += -I3rdparty/imgui/
 IPATHS += -I3rdparty/
 
 SRCS += main.cpp
-SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 
 #ImGUI
 SRC_LIBIMGUI += 3rdparty/imgui/imgui.cpp
@@ -48,10 +45,19 @@ endif
 #SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces/controllers))
 
 #ApplicationGrid
-SRCS += ApplicationGrid.cpp
+#SRCS += ApplicationGrid.cpp
+#IPATHS += -Iisoterrain/
+#DIR_SRC += ./isoterrain
 
 #ApplicationTileset
 #SRCS += ApplicationTileset.cpp
+
+#ApplicationSim
+IPATHS += -Igalaxy/
+DIR_SRC += ./galaxy
+SRCS += ApplicationSim.cpp
+
+SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 
 ifeq ($(DUMP_BINARYASSETS), 1)
 CFLAGS += -DDUMP_BINARYASSETS

@@ -14,15 +14,6 @@ meshid_t Mesh::GetID(){
     return id;
 };
 
-//TODO: This might now be broken because materials.
-/*
-void Mesh::LoadUnitCube(){
-    GenerateUniqueID();
-    InitVBOVAO();
-    glNamedBufferData(vbo, sizeof(g_cube), (float*)g_cube, GL_STATIC_DRAW);
-    num_vertices = 36;
-}*/
-
 void Mesh::SetMeshData(vertex* verts, int vertex_count){
     //Copy the data in
     vertices.clear();
@@ -38,7 +29,6 @@ void Mesh::SetMeshData(vertex* verts, int vertex_count){
 
 bool Mesh::InitVBOVAO(){
     glCreateBuffers(1, (GLuint*)&vbo);
-    //glNamedBufferStorage(vbo, sizeof(g_cube), (float*)g_cube, GL_DYNAMIC_STORAGE_BIT);
     glCreateVertexArrays(1, (GLuint*)&vao);
     glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(vertex));
 

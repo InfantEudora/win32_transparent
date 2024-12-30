@@ -16,7 +16,7 @@ struct fmat4{
     void    print();
     void    clear();
     fmat4&  identity();  //Set's this matrix to identity.
-	fmat4   rotationmatrix(); //Returns a new matrix from this one with only rotation
+	fmat4   rotationmatrix(); //Returns a new matrix from this one with only rotation. TODO: Test/Check
     fmat4&  rotationmatrix(const fmat3& mr);
     fmat4&  rotationmatrix(const vec3& axis, float angle);
     fmat4&  perspectivematrix(float fov, float aspect, float znear, float zfar);

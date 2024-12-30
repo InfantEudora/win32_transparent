@@ -36,7 +36,7 @@ It should kind of look like this:
 - [x] Auto load texture data from .mat file.
 - [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 - [ ] Make sperate light calculation for directional and point lights.
-- [ ] Cubemaps
+- [ ] Cubemaps. Can be merged in the main shader.
 
 ### ToDo's
 
@@ -74,6 +74,15 @@ It should kind of look like this:
 ### Todos Game Specific
 - [ ] Have a grid with layers, where the mouse + inverser of camera get's converted back to a coordinate. Maybe use some kind of overlay shader to draw a grid with the current camera settings first. Needs an ability to overlay shaders for a specific program.
 
+
+### TODOs Space Sim Specific
+
+- Goal of the game? Become a Type II civilication? Wipe out all other forms of life? Become the biggest?
+
+We need a sort of reproducable random and normal distribution generator that works the same in code, accross machines and perhaps even in shaders.
+We use a single 1k texture as a uniform noise where all our randomness comes from. The 'seed' value is just the starting index in this texture.
+
+- Now we can generate a star system with some stars and planets normally distributed according... to science?
 
 ### Done's
 - [x] Multisampling to a seperate FBO
