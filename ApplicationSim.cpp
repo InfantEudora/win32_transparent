@@ -13,7 +13,7 @@ void ApplicationSim::Run(void){
     int2 dimensions = GetDisplaySettings();
 
     //Create a main window
-    main_window = Window::CreateNewWindow(1280,720,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1280,1280,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -34,7 +34,16 @@ void ApplicationSim::Run(void){
     renderer = new Renderer(main_window->width,main_window->height);
     renderer->Init();
 
-
+    //Manualy create a texture that matches the resolve buffer texture
+    Texture* resolve_texture = new Texture();
+    resolve_texture->texture_id = renderer->resolve_tex_id;
+    resolve_texture->storage_format = GL_RGBA16F;
+    resolve_texture->image_format = GL_RGB;
+    //Allocate data for it
+    resolve_texture->width = 1280;
+    resolve_texture->height = 1280;
+    resolve_texture->img_data_sz = 1280*1280*3;
+    resolve_texture->img_data = (uint8_t*)malloc(resolve_texture->img_data_sz);
 
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
@@ -46,11 +55,30 @@ void ApplicationSim::Run(void){
             DispatchMessage(&msg);
         }
 
+        if (main_window->f_resized){
+            main_window->f_resized = false;
+            renderer->Resize(main_window->width,main_window->height);
+        }
+
         main_window->inputcontroller->UpdateKeyState();
 
         RunLogic();
 
-        renderer->DrawFrame(NULL,NULL,NULL);
+        //We'd like to simply blit a texture to the screen.
+        int index = 0;
+        for (int y=0;y<resolve_texture->height;y++){
+            for (int x=0;x<resolve_texture->width;x++){
+                resolve_texture->img_data[index + 0] = 255;
+                resolve_texture->img_data[index + 1] = 0;
+                resolve_texture->img_data[index + 2] = 0;
+                index+=3;
+            }
+        }
+
+        resolve_texture->UploadTexture(GL_RGB);
+        renderer->RenderResolveTextureOnly();
+
+        //renderer->DrawFrame(NULL,NULL,NULL);
 
         //Tell ImGui to start a new frame
         main_window->ImGuiNewFrame();
@@ -194,6 +222,7 @@ void ApplicationSim::RenderNoiseTestWindow(){
         if (ImGui::DragInt("Grid Sizes",&wnoise.grid_size,1,1,64))regenerate = true;
 
         if (ImGui::DragFloat("Noise Scale",&wnoise.scale,0.1f,0,255.0))regenerate = true;
+        if (ImGui::DragFloat("Max Dist",&wnoise.max_dist,0.1f,0,16.0f))regenerate = true;
 
         if (ImGui::Button("Generate Noise"))regenerate = true;
 

@@ -22,6 +22,7 @@ float hash12(vec2 p){
 
 float WorleyNoise::GetValue2D(float x, float y){
     float value = 0.0f;
+
     vec2 inp = {x,y};
     vec2 p = inp * (1.0/grid_size);
 
@@ -30,6 +31,7 @@ float WorleyNoise::GetValue2D(float x, float y){
 
     value = (cell-p).length();
 
+    //Show grid lines
     if ((int)x % grid_size == 0){
         value += 255;
     }
@@ -37,12 +39,19 @@ float WorleyNoise::GetValue2D(float x, float y){
         value += 255;
     }
 
-    //value = hash12(cell);
+    float dist = max_dist; //Some initial value
+    for (int x = -1;x<=1;x++){
+        for (int y = -1;y<=1;y++){
+            vec2 sample_cell = cell + vec2(x,y);
 
-    vec2 worley_dif = vec2(hash12(cell)) + cell - p;
-    float dist = worley_dif.length();
+            //value = hash12(cell);
+
+            vec2 worley_dif = vec2(hash12(sample_cell)) + sample_cell - p;
+            dist = min(dist,worley_dif.length());
+
+        }
+    }
     value = dist;
-
 
     value *= scale;
     value = clamp(value,0,255);

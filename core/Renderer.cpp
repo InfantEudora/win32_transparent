@@ -509,8 +509,6 @@ bool Renderer::InitDeferredFBO(){
     return true;
 }
 
-
-
 //Create all the frame and renderbuffers for mulisampling
 // A multisampled color and depth buffer, and a resolve buffer.
 bool Renderer::RebuildMSAAFBO(){
@@ -771,4 +769,10 @@ Texture* Renderer::LoadTexture(const char* filename, int target, int depth){
     texture->LoadFromFile(filename,target,depth);
     //glBindTextureUnit(0, texture->texture_id);
     return texture;
+}
+
+//A Test for only rendering a texture to screen which we can upload first.
+void Renderer::RenderResolveTextureOnly(){
+    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
+    glFinish();
 }

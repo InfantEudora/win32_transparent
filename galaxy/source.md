@@ -9,6 +9,11 @@ https://adrianb.io/2014/08/09/perlinnoise.html
 and
 C++ Noise
 https://www.youtube.com/watch?v=kCIaHqb60Cw
-
 https://libnoise.sourceforge.net/
 
+
+Using some noise textures allows us to create a map of different regions with different densities.
+
+For instance the likelyhood of a star spawning within a certain region.
+
+ - [ ]

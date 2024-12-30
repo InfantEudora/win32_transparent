@@ -77,6 +77,7 @@ class Renderer{
 
     bool InitSSBO();
     void ResolveAA();
+    void RenderResolveTextureOnly();
 
     static void SetVSync(bool enable);
 
