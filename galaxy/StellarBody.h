@@ -59,13 +59,6 @@ class Structure{
     void Progress(std::vector<ResourceSlot>& production_slots,std::vector<ResourceSlot>& consumption_slots);
 };
 
-class Ship{
-    public:
-
-    Population population;
-    std::vector<ResourceSlot>resource_slots;
-};
-
 class Contract{
 public:
     ResourceSlot resource_slot;
@@ -101,7 +94,8 @@ typedef enum {
     BODY_INVALID = -1,
     BODY_STAR = 0,
     BODY_PLANET = 1,
-    BODY_ASTEROID = 2
+    BODY_ASTEROID = 2,
+    BODY_SHIP = 3
 }stellarbody_type;
 
 class StellarBody;
@@ -113,10 +107,26 @@ public:
     stellarbody_type type;
 
     vec2 coordinate;
-    float likelyhood = 0; //How big was the chance it spawned?
+    float likelyhood = 0;   // How big was the chance it spawned?
+
+    Colony* colony = NULL;  // Some may have a single colony.
 };
 
-class StellarObject;
+class Route;
+class Route{
+    public:
+    Route(){};
+    ~Route(){};
+
+    void Setup(StellarBody* start, StellarBody* end);
+
+    StellarBody* start = NULL;
+    StellarBody* end = NULL;
+
+    void Update();
+
+};
+
 class StellarObject : public Object{
 public:
     StellarObject(){};
@@ -124,10 +134,11 @@ public:
     ~StellarObject(){};
 
     StellarBody* stellarbody = NULL;
+    void UpdatePosition();
 
     static StellarObject* CreateNewStar(AssetManager* assetmanager);
+    static StellarObject* CreateNewShip(AssetManager* assetmanager);
 };
-
 
 
 #endif

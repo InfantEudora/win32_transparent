@@ -1,4 +1,5 @@
 #include "StellarBody.h"
+#include <string>
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("Population", DEBUG_ALL);
@@ -183,6 +184,54 @@ void Contract::UpdateContract(){
     }
 }
 
+//Should be based on some properties of the thing they are on. Planet... star, station asteroid?
+Colony* GenerateNewStarColony(){
+    //For now, each colony gets to have a farm.
+    Colony* colony = new Colony();
+
+    //Setup initial conditions
+    Resource food = {
+        .type = RESOURCE_FOOD
+    };
+    ResourceSlot foodslot = {
+        .resource = food,
+        .amount = 10
+    };
+    AddResourceToSlots(colony->resource_slots,foodslot);
+    colony->population.amount = 1000;
+
+    Structure farm;
+    farm.name = "Farm";
+    foodslot.amount = 2;
+    AddResourceToSlots(farm.productionrate_slots,foodslot);
+    colony->structures.push_back(farm);
+
+    Contract contract;
+    contract.resource_slot.AddResource(food,5);
+    contract.delivery_time = 10;
+    contract.markup = 1.1;
+    colony->contracts.push_back(contract);
+    return colony;
+}
+
+Colony* GenerateNewShipColony(){
+    //For now, each colony gets to have a farm.
+    Colony* colony = new Colony();
+
+    //Setup initial conditions
+    Resource food = {
+        .type = RESOURCE_FOOD
+    };
+    ResourceSlot foodslot = {
+        .resource = food,
+        .amount = 100
+    };
+    AddResourceToSlots(colony->resource_slots,foodslot);
+    colony->population.amount = 10;
+
+    return colony;
+}
+
 StellarObject* StellarObject::CreateNewStar(AssetManager* assetmanager){
     if (!assetmanager){
         debug->Fatal("StellarObject::CreateNewStar with no assetmanager\n");
@@ -195,6 +244,32 @@ StellarObject* StellarObject::CreateNewStar(AssetManager* assetmanager){
     star->stellarbody = new StellarBody();
     star->stellarbody->type = BODY_STAR;
     star->stellarbody->likelyhood = 1.0;
-
+    star->stellarbody->colony = GenerateNewStarColony();
+    star->stellarbody->colony->name = "Star Colony " + std::to_string(star->GetID());
     return star;
+}
+
+StellarObject* StellarObject::CreateNewShip(AssetManager* assetmanager){
+    if (!assetmanager){
+        debug->Fatal("StellarObject::CreateNewShip with no assetmanager\n");
+    }
+    StellarObject* ship = new StellarObject();
+    assetmanager->GetObjectFromAsset("ship",ship);
+    ship->stellarbody = new StellarBody();
+    ship->stellarbody->type = BODY_SHIP;
+    ship->stellarbody->colony = GenerateNewShipColony();
+    ship->stellarbody->colony->name = "Ship Colony " + std::to_string(ship->GetID());
+    return ship;
+}
+
+void StellarObject::UpdatePosition(){
+    if (stellarbody){
+        vec3 p = GetPosition();
+        stellarbody->coordinate = vec2(p.x,p.z);
+    }
+}
+
+void Route::Setup(StellarBody* _start, StellarBody* _end){
+    start = _start;
+    end = _end;
 }

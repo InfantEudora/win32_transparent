@@ -69,15 +69,24 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     //Load stuff here. At some point, this should be in a loading screen... far in the future.
     app->assetmanager->AddNewAsset("sphere","galaxy/data/meshes/sphere.obj");
     app->assetmanager->AddNewAsset("sunhighlight","galaxy/data/meshes/sunhighlight.obj");
+    app->assetmanager->AddNewAsset("ship","galaxy/data/meshes/ship.obj");
 
     scene->renderer->AddMaterials(app->assetmanager->loaded_materials);
 
     //We make two stars
     StellarObject* star = StellarObject::CreateNewStar(app->assetmanager);
     scene->AddObject(star);
+    app->stellarobjects.push_back(star);
+
     star = StellarObject::CreateNewStar(app->assetmanager);
     star->SetPosition(vec3(vec3(4,0,4)));
+    app->stellarobjects.push_back(star);
     scene->AddObject(star);
+
+    StellarObject* ship = StellarObject::CreateNewShip(app->assetmanager);
+    ship->SetPosition(vec3(vec3(2,0,2)));
+    app->stellarobjects.push_back(ship);
+    scene->AddObject(ship);
 
     app->assetmanager->ListAssets();
     //Before starting anything
@@ -172,7 +181,6 @@ void ApplicationSim::Run(void){
 }
 
 static int popticks = -1;
-static Colony colony;
 
 //Called before update physics
 void ApplicationSim::RunLogic(){
@@ -203,43 +211,19 @@ void ApplicationSim::RunLogic(){
         camera->MoveBy(delta);
     }
 
-
-    if (popticks == -1){
-        //Setup initial conditions
-        colony.name = "Main Colony";
-        Resource food = {
-            .type = RESOURCE_FOOD
-        };
-        ResourceSlot foodslot = {
-            .resource = food,
-            .amount = 10
-        };
-        AddResourceToSlots(colony.resource_slots,foodslot);
-        colony.population.amount = 1000;
-
-        Structure farm;
-        farm.name = "Farm";
-        foodslot.amount = 2;
-        AddResourceToSlots(farm.productionrate_slots,foodslot);
-        colony.structures.push_back(farm);
-
-        Contract contract;
-        contract.resource_slot.AddResource(food,5);
-        contract.delivery_time = 10;
-        contract.markup = 1.1;
-        colony.contracts.push_back(contract);
-
-    }
     popticks++;
     if (popticks > simulation_interval){
         popticks = 0;
-
-        for (Structure& structure:colony.structures){
-            structure.Progress(colony.resource_slots,colony.resource_slots);
+        for (StellarObject* stellarobject:stellarobjects){
+            if (stellarobject->stellarbody && stellarobject->stellarbody->colony){
+                stellarobject->UpdatePosition();
+                Colony* colony = stellarobject->stellarbody->colony;
+                for (Structure& structure:colony->structures){
+                    structure.Progress(colony->resource_slots,colony->resource_slots);
+                }
+                PopulationProgress(colony->population,colony->resource_slots);
+            }
         }
-        PopulationProgress(colony.population,colony.resource_slots);
-
-
     }
 }
 
@@ -456,15 +440,29 @@ void ApplicationSim::RenderNoiseTestWindow(){
 
 void ApplicationSim::RenderPopulationOverview(){
     ImGui::Begin("Population and Stuff");
-
     ImGui::DragInt("Simulation Interval",&simulation_interval,1,1,360);
 
-    ImGui::Text("Colony - %s",colony.name.c_str());
+    //Figure out which colony is selected
+    StellarObject* selected_stellarobject = dynamic_cast<StellarObject*>(selected_object);
+    Colony* selected_colony = NULL;
+    if (selected_stellarobject && selected_stellarobject->stellarbody){
+        selected_colony = selected_stellarobject->stellarbody->colony;
+    }
 
-    ImGui::Text(" Credits    : %i",colony.credits);
-    ImGui::Text(" Population : %i",colony.population.amount);
+    Colony* colony = selected_colony;
 
-    ResourceSlot* foodslot = FindResourceInSlots(colony.resource_slots,RESOURCE_FOOD);
+    if (!colony){
+        ImGui::Text("No Colony Selected");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Colony - %s",colony->name.c_str());
+
+    ImGui::Text(" Credits    : %i",colony->credits);
+    ImGui::Text(" Population : %i",colony->population.amount);
+
+    ResourceSlot* foodslot = FindResourceInSlots(colony->resource_slots,RESOURCE_FOOD);
     if (foodslot){
         ImGui::Text(" Food: %i",foodslot->amount);
     }else{
@@ -472,7 +470,7 @@ void ApplicationSim::RenderPopulationOverview(){
     }
 
 
-    for (Structure& structure:colony.structures){
+    for (Structure& structure:colony->structures){
         ImGui::Text(" Structure: %s",structure.name.c_str());
         for (ResourceSlot& slot:structure.productionrate_slots){
             ImGui::Text("  Production: %s at rate of %i",ResourceNameByType(slot.resource.type),slot.amount);
@@ -483,7 +481,7 @@ void ApplicationSim::RenderPopulationOverview(){
         ImGui::Spacing();
         if (ImGui::BeginTable("Contracts", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders)){
             int index = 0;
-            for (Contract& contract:colony.contracts){
+            for (Contract& contract:colony->contracts){
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("Contract %i", index);
@@ -499,10 +497,10 @@ void ApplicationSim::RenderPopulationOverview(){
                 if (!contract.fulfilled){
                     if (ImGui::SmallButton("Fulfill")){
                         contract.fulfilled = true;
-                        AddResourceToSlots(colony.resource_slots,contract.resource_slot);
+                        AddResourceToSlots(colony->resource_slots,contract.resource_slot);
                         int price = contract.resource_slot.amount * contract.markup * ResourceBasePriceByType(contract.resource_slot.resource.type);
                         debug->Info("Fulfilled contract for total price: %i\n",price);
-                        colony.credits -= price;
+                        colony->credits -= price;
                     }
                 }
                 index++;
