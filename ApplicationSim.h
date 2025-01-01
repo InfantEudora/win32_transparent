@@ -10,6 +10,9 @@
 /*
     An attempt at an application that overrides the default, and shows a UI only.
 */
+
+
+
 class ApplicationSim : public Application{
 public:
     ApplicationSim();
@@ -25,7 +28,7 @@ public:
     std::vector<StellarBody>stellarbodies;
     bool create_stellarbodies = false;
 
-private:
+    static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
     void RenderPopulationOverview();
     void RenderRandTestWindow();
     void RenderNoiseTestWindow();

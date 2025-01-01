@@ -220,8 +220,12 @@ bool Window::InitImGui(){
     const char* glsl_version = "#version 430";
 
     // Setup Platform/Renderer backends
-    ImGui_ImplWin32_Init(hWnd);
-    ImGui_ImplOpenGL3_Init(glsl_version);
+    if (!ImGui_ImplWin32_Init(hWnd)){
+        return false;
+    };
+    if (!ImGui_ImplOpenGL3_Init(glsl_version)){
+        return false;
+    }
     return true;
 }
 

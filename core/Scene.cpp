@@ -10,45 +10,6 @@ Scene::Scene(){
 
 };
 
-void Scene::SetupShipExample(){
-    //TODO: Remove and/or move to own project.
-    debug->Info("Setup Ship Example\n");
-    Mesh* mesh_ship = OBJLoader::ParseOBJFile("data/ship_003.obj");
-
-    camera = new Camera();
-    camera->SetPosition(vec3(0,0.5,8));
-    camera->SetLookAt(vec3());
-    camera->SetupPerspective(renderer->width,renderer->height,45,0.1,100);
-    renderer->objects.push_back(camera);
-
-    Object* ship = new Object();
-    ship->SetMesh(mesh_ship);
-    ship->SetPosition(vec3(0.5,0.5,0.0));
-
-    ship->material_slot[0] = 0;
-    ship->material_slot[1] = 0;
-
-    renderer->objects.push_back(ship);
-
-    //Create a material
-    /* TODO FIX or remove
-    material_t m;
-    m.color = vec4(0.8,0.8,1,1);
-    m.texture_unit = -1;
-    renderer->materials.push_back(m);
-
-    m.color = vec4(0.8,0.0,0.1,1);
-    m.texture_unit = -1;
-    renderer->materials.push_back(m);
-
-    m.color = vec4(0.8,0.0,0.1,1);
-    m.texture_unit = -1;
-    renderer->materials.push_back(m);
-    */
-
-    debug->Info("We have %i materials\n",renderer->materials.size());
-}
-
 void Scene::SetupExample(){
     //TODO Fix clean
     //A single mesh

@@ -9,6 +9,75 @@ ApplicationSim::ApplicationSim():Application(){
     debug->Info("Created new application.\n");
 };
 
+//Function for rendering the frame to a window
+DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
+    ApplicationSim* app = static_cast<ApplicationSim*>(lpParameter);
+    if (!app){
+        debug->Fatal("No application was supplied to FrameThread\n");
+        return 0;
+    }
+
+    app->thread_id_render = GetCurrentThreadId();
+    debug->Info("FrameFunction ThreadID: %lu\n",app->thread_id_render);
+
+    //We make the window's context current to this thread
+    if (!wglMakeCurrent(app->main_window->hDC, app->main_window->hRC)){
+        debug->Err("FrameFunction Thread unable to get context by wglMakeCurrent\n");
+        return 0;
+    }
+
+    if (!app->main_window->InitImGui()){
+        debug->Fatal("Failed to setup ImGui on Window\n");
+    }
+
+    //Create a renderer and attach to this window
+    app->renderer = new Renderer(app->main_window->width,app->main_window->height);
+    app->renderer->Init();
+
+    Scene* scene = new Scene();
+    app->main_scene = scene;
+
+    scene->name = "Star Scene";
+    scene->inputcontroller = app->main_window->inputcontroller;
+    scene->UpdatePhysics();
+
+    //Catch all input and window related messages in this thread:
+    MSG msg = {0};
+    while (app->main_window->f_should_quit == false){
+        if (app->main_window->f_resized){
+            app->main_window->f_resized = false;
+
+            //Allows for texture packing GL_PACK_ALIGNMENT 4
+            app->main_window->width -= app->main_window->width % 4;
+            app->main_window->height -= app->main_window->height % 4;
+
+            app->renderer->Resize(app->main_window->width,app->main_window->height);
+        }
+
+        //Physics. TODO: Move to a seperate thread PhysicsThreadFunction in Application::
+        if (app->main_scene){
+            app->main_scene->HandleInput();
+            app->RunLogic();
+            app->main_scene->UpdatePhysics();
+            app->main_scene->inputcontroller->Tick();
+        }
+        //Tell ImGui to start a new frame
+        app->main_window->ImGuiNewFrame();
+
+        app->renderer->DrawFrame(NULL,NULL,NULL);
+
+        app->UpdateUI();
+
+        app->main_window->ImGuiDrawFrame();
+
+        //Copy to screen and finish
+        app->main_window->DrawFrame();
+    }
+
+    debug->Info("FrameThreadFunction terminated\n");
+    return 1;
+}
+
 void ApplicationSim::Run(void){
     int2 dimensions = GetDisplaySettings();
 
@@ -26,13 +95,24 @@ void ApplicationSim::Run(void){
     //Setup renderer
     Renderer::SetVSync(true);
 
-    if (!main_window->InitImGui()){
-        debug->Fatal("Failed to setup ImGui on Window\n");
-    }
+    //We release the window's context from this thread
+    wglMakeCurrent(main_window->hDC, NULL);
 
-    //Create a renderer for this window
-    renderer = new Renderer(main_window->width,main_window->height);
-    renderer->Init();
+    //And do all render calls from a seperate thread:
+    HANDLE hThread = NULL;
+
+    // Create a new thread which will get this one's render context
+    hThread = CreateThread(
+        NULL,    // Thread attributes
+        0,       // Stack size (0 = use default)
+        FrameThreadFunction, // Thread start address
+        this,    // Parameter to pass to the thread
+        0,       // Creation flags
+        &thread_id_render);   // Thread id
+
+    if (hThread == NULL){
+        debug->Fatal("Unable to FrameFunction thread\n");
+    }
 
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
@@ -42,35 +122,9 @@ void ApplicationSim::Run(void){
                 break;
             TranslateMessage(&msg);
             DispatchMessage(&msg);
+        }else{
+            Sleep(1);
         }
-
-        if (main_window->f_resized){
-            main_window->f_resized = false;
-
-            //Allows for texture packing GL_PACK_ALIGNMENT 4
-            main_window->width -= main_window->width % 4;
-            main_window->height -= main_window->height % 4;
-
-            renderer->Resize(main_window->width,main_window->height);
-
-
-        }
-
-        main_window->inputcontroller->UpdateKeyState();
-
-        RunLogic();
-
-        renderer->DrawFrame(NULL,NULL,NULL);
-
-        //Tell ImGui to start a new frame
-        main_window->ImGuiNewFrame();
-
-        UpdateUI();
-
-        main_window->ImGuiDrawFrame();
-
-        //Copy to screen and finish
-        main_window->DrawFrame();
     }
 }
 
@@ -81,6 +135,7 @@ static Colony colony;
 void ApplicationSim::RunLogic(){
     if (popticks == -1){
         //Setup initial conditions
+        colony.name = "Main Colony";
         Resource food = {
             .type = RESOURCE_FOOD
         };
@@ -330,7 +385,7 @@ void ApplicationSim::RenderNoiseTestWindow(){
 
 void ApplicationSim::RenderPopulationOverview(){
     ImGui::Begin("Population and Stuff");
-    ImGui::Text("Colony");
+    ImGui::Text("Colony - %s",colony.name.c_str());
 
     ImGui::Text(" Credits    : %i",colony.credits);
     ImGui::Text(" Population : %i",colony.population.amount);

@@ -79,7 +79,7 @@ public:
 //Colony
 class Colony{
     public:
-
+    std::string name;
     int credits = 1000;
 
     Population population;

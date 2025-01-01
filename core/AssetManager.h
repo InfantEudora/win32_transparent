@@ -16,8 +16,7 @@
      - Make sure meshes are instanced.
      - All materials are unique and loaded properly.
      - Stuff is grouped somehow? I.e., you can create a group "Rocks" and load a random asset from it.
-     - Later on, assets can be desribed in a JSON file.
-
+     - Later on, assets can be desribed in a JSON file, or they can be auto loaded from a folder.
 */
 
 class Asset;
