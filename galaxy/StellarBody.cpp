@@ -182,3 +182,19 @@ void Contract::UpdateContract(){
         }
     }
 }
+
+StellarObject* StellarObject::CreateNewStar(AssetManager* assetmanager){
+    if (!assetmanager){
+        debug->Fatal("StellarObject::CreateNewStar with no assetmanager\n");
+    }
+    StellarObject* star = new StellarObject();
+    assetmanager->GetObjectFromAsset("sphere",star);
+    Object* highlight = assetmanager->GetObjectFromAsset("sunhighlight");
+    highlight->material_slot[0] = 1;
+    star->AttachChild(highlight);
+    star->stellarbody = new StellarBody();
+    star->stellarbody->type = BODY_STAR;
+    star->stellarbody->likelyhood = 1.0;
+
+    return star;
+}

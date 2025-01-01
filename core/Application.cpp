@@ -225,3 +225,336 @@ void Application::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 }
+
+
+void Application::UpdateUICameraControls(Camera* camera,int id){
+    if (!camera){
+        return;
+    }
+
+    std::string title = camera->name + "##" + std::to_string(id) +   " Camera Controls";
+
+    if (ImGui::CollapsingHeader(title.c_str())){
+        float znear = main_scene->camera->viewport.znear;
+        if (ImGui::DragFloat("Camera ZNear",&znear,0.01,0.0,10.0)){
+            camera->viewport.znear = znear;
+            camera->CalculateLookatMatrix();
+        }
+
+        float roll = 0;
+        if (ImGui::DragFloat("Drag to Roll Camera",&roll,0.01,-1,1)){
+            camera->RollBy(roll);
+        }
+
+        vec3 up = camera->GetUp();
+        vec3 forward = camera->GetForward();
+        vec3 left = camera->GetLeft();
+        vec3 camera_position = camera->GetPosition();
+        if (ImGui::DragFloat3("Cam Position", (float*)&camera_position, 0.01f, -10.0f, 10.0f)){
+            camera->SetPosition(camera_position);
+            camera->CalculateLookatMatrix();
+        }
+
+        static vec3 target;
+        if (ImGui::DragFloat3("Target", (float*)&target, 0.01f, -10.0f, 10.0f)){
+            camera->SetLookAt(target);
+        }
+        ImGui::BeginDisabled();
+        ImGui::DragFloat3("Forward Vector", (float*)&forward, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Left Vector", (float*)&left, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        if (ImGui::Button("Switch Camera")){
+            main_scene->camera->Show();
+            main_scene->camera = camera;
+            main_scene->camera->Hide();
+        }
+    }
+}
+
+void Application::UpdateUISceneObjectTree(){
+    if (ImGui::TreeNode("Scene Root")){
+        for (Object* object:main_scene->renderer->objects){
+            UpdateUISceneObjectTreeNode(object,NULL);
+        }
+        ImGui::TreePop();
+    }
+}
+
+
+void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked){
+    objectid_t id = object->GetID();
+    long long p = id; //To suppress warning from 32-bit pointer
+    if (ImGui::TreeNodeEx((void*)p,ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_Leaf, "Object #%i - %s",id,object->name.c_str())){
+        ImGui::TreePop();
+        if (ImGui::IsItemClicked()){
+            selected_object = object;
+            debug->Info("Selected %s\n",object->name.c_str());
+        }
+    }
+}
+
+void Application::RenderGenericObjectUI(){
+    //For generic Objects and parameters
+    ImGui::Begin("Generic Object UI");
+    if (ImGui::CollapsingHeader("Scene")){
+        Scene* scene = main_scene;
+        ImGui::Text("Main Scene             : %s",scene->name.c_str());
+        UpdateUISceneObjectTree();
+        if (ImGui::Button("Add Camera")){
+            Camera* camera = new Camera();
+            camera->name = "New Camera";
+            if (assetmanager->GetObjectFromAsset("editor_camera",camera)){
+                camera->SetPosition(vec3(1,2,1));
+                camera->material_slot[0] = 3;
+                camera->SetLookAt(vec3());
+                camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+                scene->AddObject(camera);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Directional Light")){
+            DirectionalLight* l = new DirectionalLight();
+            l->name = "Directional Light";
+            scene->AddObject(l);
+        }
+        if (ImGui::Button("Add Point Light")){
+            PointLight* l = new PointLight();
+            l->name = "Point Light";
+            scene->AddObject(l);
+        }
+    }
+
+    //So the same camera panel has a different ImGUI ID.
+    int ui_camid = 0;
+    UpdateUICameraControls(main_scene->camera ,ui_camid);
+
+    Object* object = selected_object;
+    if (!object){
+        ImGui::Text("No Object Selected");
+    }else{
+        ImGui::Text("Selected Object: %s",object->name.c_str());
+        bool obj_visible = object->IsVisible();
+        if (ImGui::Checkbox("Visible",&obj_visible)){
+            object->SetVisibility(obj_visible);
+        }
+    }
+    if (object){
+        Camera* cam = dynamic_cast<Camera*>(object);
+        if (cam){
+            ui_camid++;
+            UpdateUICameraControls(cam,ui_camid);
+        }
+
+        Light* light = dynamic_cast<Light*>(object);
+        if (light && ImGui::CollapsingHeader("Light Properties")){
+            vec3 pos = object->GetPosition();
+            ImGui::BeginDisabled();
+            ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
+            ImGui::EndDisabled();
+            ImGui::DragFloat3("Color", (float*)&light->color, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Brightness", (float*)&light->brightness, 0.01f, 0.0f, 10.0f);
+        }
+
+
+        if (object->GetMesh() && ImGui::CollapsingHeader("Mesh")){
+            Mesh* mesh = object->GetMesh();
+            ImGui::Text(" ID             : %lu",mesh->GetID());
+            ImGui::Text(" num_vertices   : %lu",mesh->num_vertices);
+            ImGui::Text(" num_materials  : %lu",mesh->num_materials);
+            ImGui::Text(" num_references : %lu",mesh->num_references);
+        }
+
+        if (ImGui::CollapsingHeader("Position")){
+            vec3 delta = {0,0,0};
+            ImGui::DragFloat3("Move Position", (float*)&delta, 0.01f, -1.0f, 1.0f);
+            object->MoveBy(delta);
+            ImGui::BeginDisabled();
+            vec3 pos = object->GetPosition();
+            ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
+            ImGui::EndDisabled();
+        }
+        if (ImGui::CollapsingHeader("Rotation")){
+            static int option = 0;
+            ImGui::Text("Input By:");
+            ImGui::RadioButton("None", &option, 0); ImGui::SameLine();
+            ImGui::RadioButton("Vector + Rotation", &option, 1); ImGui::SameLine();
+            ImGui::RadioButton("Target, Position, Up", &option, 2);
+            ImGui::RadioButton("Axis Degrees", &option, 3);
+            ImGui::Separator();
+
+            ImGui::BeginDisabled();
+            quat q = object->GetRotation();
+            ImGui::DragFloat4("Current Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+            ImGui::EndDisabled();
+
+            bool apply_rotation = false;
+
+
+            if (option == 1){
+                static vec3 quatinp = {0,0,0};
+                ImGui::DragFloat3("Quat Input Vector", (float*)&quatinp, 0.01f, -1.0f, 1.0f);
+                static float quatroll = 0.0f;
+                ImGui::DragFloat("Quat Roll", (float*)&quatroll, 0.01f, -TYPE_PI, TYPE_PI);
+                ImGui::BeginDisabled();
+                vec3 quatn = quatinp;
+                quatn.normalize();
+                ImGui::DragFloat3("Quat Normalized Vector", (float*)&quatn, 0.01f, -1.0f, 1.0f);
+                q = quat(quatn,quatroll);
+                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+
+            }else if (option == 2){
+                static vec3 target = {0,0,-1};
+                if (ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f)){
+                    apply_rotation = true;
+                }
+                static vec3 position = {0,0,0};
+                if (ImGui::DragFloat3("Position", (float*)&position, 0.01f, -5.0f, 5.0f)){
+                    apply_rotation = true;
+                }
+                static vec3 worldup = {0,1,0};
+                if (ImGui::DragFloat3("World Up", (float*)&worldup, 0.01f, -1.0f, 1.0f)){
+                    apply_rotation = true;
+                }
+                ImGui::BeginDisabled();
+                q = quat::getquat(target,position,worldup);
+                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+            }else if (option == 3){
+                static vec3 axis_degrees = {0,0,0};
+                if (ImGui::DragFloat3("Axis Degrees", (float*)&axis_degrees, 1.0f, -180.0f, 180.0f)){
+                    apply_rotation = true;
+                }
+                ImGui::BeginDisabled();
+                //Let's do them in order?
+                quat q1; q1.set_rotation(vec3(1,0,0),toradians(axis_degrees.x));
+                quat q2; q2.set_rotation(vec3(0,1,0),toradians(axis_degrees.y));
+                quat q3; q3.set_rotation(vec3(0,0,1),toradians(axis_degrees.z));
+
+                q = q1 * q2 * q3;
+                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+            }
+
+            if (ImGui::Button("Apply Rotation")){
+                apply_rotation = true;
+            }
+            if (apply_rotation){
+                object->SetRotation(q);
+            }
+        }
+        if (ImGui::CollapsingHeader("Scale")){
+            vec3 scale = object->GetScale();
+            if (ImGui::DragFloat3("Scale Vector", (float*)&scale, 0.01f, 0.01f, 10.0f)){
+                object->SetScale(scale);
+            }
+        }
+        if (ImGui::CollapsingHeader("Material")){
+            ImGui::Text("Renderer Materials: %i",renderer->materials.size());
+            ImGui::Separator();
+
+            ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,10);
+            ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,10);
+            ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,10);
+            ImGui::DragInt("Material Slot 3",&object->material_slot[3],1,-1,10);
+        }
+
+
+    }
+
+    if (ImGui::CollapsingHeader("Performance")){
+        ImGui::Text("Frame Rate   : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
+        ImGui::Text("Physics Rate : %.2f TPS (%.2f ms)", 1000000.0f / tmr_physics->avg,tmr_physics->avg/1000.0f );
+    }
+
+    if (ImGui::CollapsingHeader("Renderer")){
+        ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
+        ImGui::Checkbox("##1", &renderer->f_normal_mapping);
+    }
+
+    if (ImGui::CollapsingHeader("Window")){
+        ImGui::Text(    "Current Size   : %i x %i", main_window->width,main_window->height);
+    }
+
+    if (ImGui::CollapsingHeader("Assets")){
+        for (Asset* asset: assetmanager->assets){
+            ImGui::Text("Asset  : %s", asset->name.c_str());
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Materials")){
+        ImGui::Text(    "Num Materials  : %i", renderer->GetNumMaterials());
+        int n =0;
+        for (Material& material: renderer->materials){
+            ImGui::Text("Material  : %s", material.name.c_str());
+            ImGui::Text("GLSL Material Properties");
+            //ImGui::Text(" Metallic",material.glsl_material.color);
+
+            ImGui::PushID(n++);
+            ImGui::ColorEdit4(" GLSL Color", (float*)&material.glsl_material.color, ImGuiColorEditFlags_DisplayRGB);
+            ImGui::PopID();
+
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Ray - Plane Intersection")){
+        plane& p = projection_plane;
+
+        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+
+        ray r = main_scene->camera->GetPixelRay(px);
+        ImGui::BeginDisabled();
+        ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Origin", (float*)&r.origin, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Direction", (float*)&r.direction, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        ImGui::Separator();
+
+
+        ImGui::DragFloat3("Plane Origin", (float*)&p.pos, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Plane Normal", (float*)&p.normal, 0.01f, -1.0f, 1.0f);
+
+        vec3 at = {};
+        bool intersect = r.intersects_plane(p,at);
+
+        if (intersect){
+            ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
+            //Move the object there?
+            if (selected_object){
+                selected_object->SetPosition(at);
+            }
+        }else{
+            ImGui::Text("No intersection");
+        }
+        //
+    }
+
+    ImGui::End();
+}
+
+void Application::CheckObjectSelection(){
+    hovered_object = NULL;
+    InputController* input = main_scene->inputcontroller;
+
+    //Check if we selected a tile
+    objectid_t hovered_objid = OBJECTID_INVALID;
+    if (!ImGui::GetIO().WantCaptureMouse){
+        hovered_objid = input->GetHoveredObjectID();
+    }
+
+    for (Object* object:renderer->renderable_objects){
+        if (object->IsDestroyed()){
+            //TODO: Remove it... here?
+        }
+
+        if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == hovered_objid)){
+            vec3 p = object->GetPosition();
+            debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",hovered_objid,p.x,p.y,p.z);
+            selected_object = object;
+            //clicked_empty = false;
+        }else if (object->GetID() == hovered_objid){
+            hovered_object = object;
+        }
+    }
+}

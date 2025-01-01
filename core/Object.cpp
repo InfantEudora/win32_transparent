@@ -11,6 +11,7 @@ vec3 Object::ref_forward = vec3(0,0,-1);
 Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
+    local_transform_scale_matrix.identity();
     state_physics.rotation.identity();
     state.rotation.identity();
 }
@@ -231,18 +232,18 @@ void Object::UpdateTransformMatrix(){
     //scale, rotate, translate
     float size = 1.0;
 
-    world_transform_scale_matrix.identity();
-    world_transform_scale_matrix.vertex[0].x *= size * state.scale.x;
-    world_transform_scale_matrix.vertex[1].y *= size * state.scale.y;
-    world_transform_scale_matrix.vertex[2].z *= size * state.scale.z;
+    local_transform_scale_matrix.identity();
+    local_transform_scale_matrix.vertex[0].x *= size * state.scale.x;
+    local_transform_scale_matrix.vertex[1].y *= size * state.scale.y;
+    local_transform_scale_matrix.vertex[2].z *= size * state.scale.z;
 
     fmat4 rotation_matrix;
     //Compute the rotation matrix from the rotation quaternion
     rotation_matrix = state.rotation.tofmat4();
 
-    world_transform_scale_matrix = world_transform_scale_matrix * rotation_matrix;
+    local_transform_scale_matrix = local_transform_scale_matrix * rotation_matrix;
 
-    world_transform_scale_matrix.set_position(state.position);
+    local_transform_scale_matrix.set_position(state.position);
 }
 
 //Returns the total transformation matrix in world space for this frame
@@ -250,6 +251,14 @@ fmat4& Object::GetWorldTransformScaleMatrix(){
     if (state.f_was_transformed){
         //Update local transform matrices
         UpdateTransformMatrix();
+    }
+    if (parent){
+        //We take the parents transform matrix, and we need to apply that.. in reverse order:
+        fmat4 pwtsm = parent->GetWorldTransformScaleMatrix();
+        world_transform_scale_matrix = local_transform_scale_matrix * pwtsm;
+    }else{
+        //The top parent in the chain will return it's own transform_scale_matrix
+        world_transform_scale_matrix = local_transform_scale_matrix;
     }
 	return world_transform_scale_matrix;
 }

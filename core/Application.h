@@ -44,6 +44,11 @@ public:
 
     PerfTimer* tmr_physics = NULL;
 
+    //Generic Object placement and selection
+    Object* selected_object = NULL;
+    Object* hovered_object = NULL;
+    plane projection_plane;
+
     virtual void RunLogic();
 
     int2 GetDisplaySettings();
@@ -53,10 +58,18 @@ public:
 
 protected:
     static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);
+    void CheckObjectSelection();
+    //UI
+    void UpdateUICameraControls(Camera* camera, int id);
+    void RenderGenericObjectUI();
 private:
     bool SetupConsole();
     static bool WINAPI ConsoleHandler(DWORD console_event);
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
+
+    //UI
+    void UpdateUISceneObjectTree();
+    void UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked);
 };
 
 #endif

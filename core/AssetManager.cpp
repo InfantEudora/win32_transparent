@@ -5,15 +5,31 @@
 static Debugger *debug = new Debugger("AssetManager", DEBUG_INFO);
 
 //We copy some data from the object and store that as an asset.
-void AssetManager::AddNewAsset(const char* asset_name, Object* object){
+Asset* AssetManager::AddNewAsset(const char* asset_name, Object* object){
     Asset* asset = new Asset();
     asset->name = asset_name;
     if (object){
         asset->mesh = object->GetMesh();
         asset->mesh->num_references++;
-        debug->Info("Added new Asset: %s\n",asset_name);
     }
+    debug->Info("Added new Asset: %s\n",asset_name);
     assets.push_back(asset);
+    return asset;
+}
+
+Asset* AssetManager::AddNewAsset(const char* asset_name, const char* file_name){
+    Asset* asset = new Asset();
+    asset->name = asset_name;
+    Object* object = new Object();
+    object->SetMesh(OBJLoader::ParseOBJFile(file_name,&loaded_materials));
+    if (object){
+        asset->mesh = object->GetMesh();
+        asset->mesh->num_references++;
+        delete object;
+    }
+    debug->Info("Added new Asset: %s\n",asset_name);
+    assets.push_back(asset);
+    return asset;
 }
 
 Asset* AssetManager::GetAsset(const char* asset_name){

@@ -47,8 +47,9 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
 
     scene->camera = new Camera();
     scene->camera->name = "Main Camera";
-    scene->camera->SetPosition(vec3(5,5,5));
-    scene->camera->SetLookAt(vec3());
+    scene->camera->SetPosition(vec3(0,5,0));
+    vec3 up = vec3(0,0,1);
+    scene->camera->SetLookAt(vec3(),&up);
     //scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
     scene->camera->SetupOrthographic(scene->renderer->width,scene->renderer->height,20,0.1,100);
     scene->AddObject(scene->camera);
@@ -62,28 +63,21 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
-    //Make an actual sun, that is an object...
-    debug->Warn("Class size of StellarBody without wrapping: %i\n",sizeof(StellarBody));
-
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
-    std::vector<Material>loaded_materials;
 
     //Load stuff here. At some point, this should be in a loading screen... far in the future.
-    Object* temp = new Object();
-    temp->SetMesh(OBJLoader::ParseOBJFile("galaxy/data/meshes/sphere.obj",&loaded_materials));
-    app->assetmanager->AddNewAsset("sphere",temp);
-    temp->SetMesh(OBJLoader::ParseOBJFile("galaxy/data/meshes/sunhighlight.obj",&loaded_materials));
-    app->assetmanager->AddNewAsset("sunhighlight",temp);
-    scene->renderer->AddMaterials(loaded_materials);
-    delete temp;
+    app->assetmanager->AddNewAsset("sphere","galaxy/data/meshes/sphere.obj");
+    app->assetmanager->AddNewAsset("sunhighlight","galaxy/data/meshes/sunhighlight.obj");
 
-    StellarObject* star = new StellarObject();
-    app->assetmanager->GetObjectFromAsset("sphere",star);
-    Object* highlight = app->assetmanager->GetObjectFromAsset("sunhighlight");
-    star->AttachChild(highlight);
+    scene->renderer->AddMaterials(app->assetmanager->loaded_materials);
+
+    //We make two stars
+    StellarObject* star = StellarObject::CreateNewStar(app->assetmanager);
     scene->AddObject(star);
-
+    star = StellarObject::CreateNewStar(app->assetmanager);
+    star->SetPosition(vec3(vec3(4,0,4)));
+    scene->AddObject(star);
 
     app->assetmanager->ListAssets();
     //Before starting anything
@@ -182,6 +176,34 @@ static Colony colony;
 
 //Called before update physics
 void ApplicationSim::RunLogic(){
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+
+    tmr_physics->Stop();
+    tmr_physics->Restart();
+
+    CheckObjectSelection();
+
+    //Mouse zoom
+    static float mouse_delta_sum = 0;
+    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
+    if (mouse_delta_sum != 0){
+        camera->viewport.zoom -= mouse_delta_sum / 10.0f;
+        mouse_delta_sum /= 1.1;
+        camera->viewport.zoom = clamp(camera->viewport.zoom,2,50);
+    }
+
+    //Camera rotation moving
+    if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+        int dx = input->GetDelta(INPUT_MOUSE_X);
+        int dy = input->GetDelta(INPUT_MOUSE_Y);
+
+        //Camera movement in the xz plane.
+        vec3 delta = vec3((float)dx / 10.0f,0,(float)dy/10.0f);
+        camera->MoveBy(delta);
+    }
+
+
     if (popticks == -1){
         //Setup initial conditions
         colony.name = "Main Colony";
@@ -501,6 +523,7 @@ void ApplicationSim::UpdateUI(){
     RenderRandTestWindow();
     RenderNoiseTestWindow();
     RenderPopulationOverview();
+    RenderGenericObjectUI();
 
     ImGui::ShowDemoWindow();
 }

@@ -20,11 +20,9 @@ public:
 
     IsoTerrain* terrain = NULL;
 
-    Object* selected_object = NULL;
-    Object* hovered_object = NULL;
     Object* selection_tile = NULL;
 
-    plane projection_plane;
+
     struct{
         int grid_level = 0;
         int tile_number = 1;
@@ -34,11 +32,7 @@ public:
 
 private:
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
-
     void UpdateUI();
-    void UpdateUISceneObjectTree();
-    void UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked);
-    void UpdateUICameraControls(Camera* camera, int id);
 };
 
 #endif

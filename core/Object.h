@@ -40,7 +40,6 @@ class Object{
     bool IsVisible(){return f_visible;};
     bool IsPickable(){return f_pickable;};
 
-
     meshid_t GetMeshID();
     objectid_t GetID();
 

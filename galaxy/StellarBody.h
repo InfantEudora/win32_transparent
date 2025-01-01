@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include "Object.h"
+#include "AssetManager.h"
 
 struct Population{
     int amount = 0;
@@ -56,8 +57,6 @@ class Structure{
     std::vector<ResourceSlot>productionrate_slots;
     std::vector<ResourceSlot>consumptionrate_slots;
     void Progress(std::vector<ResourceSlot>& production_slots,std::vector<ResourceSlot>& consumption_slots);
-
-
 };
 
 class Ship{
@@ -125,6 +124,8 @@ public:
     ~StellarObject(){};
 
     StellarBody* stellarbody = NULL;
+
+    static StellarObject* CreateNewStar(AssetManager* assetmanager);
 };
 
 
