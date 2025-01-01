@@ -1,7 +1,7 @@
 #include "ApplicationSim.h"
 #include "Debug.h"
 #include <stdlib.h>
-
+#include <string>
 
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
 
@@ -34,17 +34,6 @@ void ApplicationSim::Run(void){
     renderer = new Renderer(main_window->width,main_window->height);
     renderer->Init();
 
-    //Manualy create a texture that matches the resolve buffer texture
-    Texture* resolve_texture = new Texture();
-    resolve_texture->texture_id = renderer->resolve_tex_id;
-    resolve_texture->storage_format = GL_RGBA16F;
-    resolve_texture->image_format = GL_RGB;
-    //Allocate data for it
-    resolve_texture->width = 1280;
-    resolve_texture->height = 1280;
-    resolve_texture->img_data_sz = 1280*1280*3;
-    resolve_texture->img_data = (uint8_t*)malloc(resolve_texture->img_data_sz);
-
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
     while (main_window->f_should_quit == false){
@@ -57,28 +46,21 @@ void ApplicationSim::Run(void){
 
         if (main_window->f_resized){
             main_window->f_resized = false;
+
+            //Allows for texture packing GL_PACK_ALIGNMENT 4
+            main_window->width -= main_window->width % 4;
+            main_window->height -= main_window->height % 4;
+
             renderer->Resize(main_window->width,main_window->height);
+
+
         }
 
         main_window->inputcontroller->UpdateKeyState();
 
         RunLogic();
 
-        //We'd like to simply blit a texture to the screen.
-        int index = 0;
-        for (int y=0;y<resolve_texture->height;y++){
-            for (int x=0;x<resolve_texture->width;x++){
-                resolve_texture->img_data[index + 0] = 255;
-                resolve_texture->img_data[index + 1] = 0;
-                resolve_texture->img_data[index + 2] = 0;
-                index+=3;
-            }
-        }
-
-        resolve_texture->UploadTexture(GL_RGB);
-        renderer->RenderResolveTextureOnly();
-
-        //renderer->DrawFrame(NULL,NULL,NULL);
+        renderer->DrawFrame(NULL,NULL,NULL);
 
         //Tell ImGui to start a new frame
         main_window->ImGuiNewFrame();
@@ -92,14 +74,48 @@ void ApplicationSim::Run(void){
     }
 }
 
-
-
+static int popticks = -1;
+static Colony colony;
 
 //Called before update physics
 void ApplicationSim::RunLogic(){
+    if (popticks == -1){
+        //Setup initial conditions
+        Resource food = {
+            .type = RESOURCE_FOOD
+        };
+        ResourceSlot foodslot = {
+            .resource = food,
+            .amount = 10
+        };
+        AddResourceToSlots(colony.resource_slots,foodslot);
+        colony.population.amount = 1000;
 
+        Structure farm;
+        farm.name = "Farm";
+        foodslot.amount = 2;
+        AddResourceToSlots(farm.productionrate_slots,foodslot);
+        colony.structures.push_back(farm);
+
+        Contract contract;
+        contract.resource_slot.AddResource(food,5);
+        contract.delivery_time = 10;
+        contract.markup = 1.1;
+        colony.contracts.push_back(contract);
+
+    }
+    popticks++;
+    if (popticks > 12){
+        popticks = 0;
+
+        for (Structure& structure:colony.structures){
+            structure.Progress(colony.resource_slots,colony.resource_slots);
+        }
+        PopulationProgress(colony.population,colony.resource_slots);
+
+
+    }
 }
-
 
 void ApplicationSim::RenderRandTestWindow(){
     static float arr[256];
@@ -223,6 +239,7 @@ void ApplicationSim::RenderNoiseTestWindow(){
 
         if (ImGui::DragFloat("Noise Scale",&wnoise.scale,0.1f,0,255.0))regenerate = true;
         if (ImGui::DragFloat("Max Dist",&wnoise.max_dist,0.1f,0,16.0f))regenerate = true;
+        if (ImGui::DragFloat("Min Dist",&wnoise.min_dist,0.01f,0,1.0f))regenerate = true;
 
         if (ImGui::Button("Generate Noise"))regenerate = true;
 
@@ -247,6 +264,51 @@ void ApplicationSim::RenderNoiseTestWindow(){
         ImGui::Image((ImTextureID)(intptr_t)noise_texture->texture_id, ImVec2(noise_texture->width,noise_texture->height));
     }
 
+    static int max_stars = 500;
+    static int max_rerolls = 500;
+    ImGui::DragInt("Max Stars",&max_stars,1,1,1000);
+    ImGui::DragInt("Max Re-Rolls",&max_rerolls,1,1,10000);
+
+    if (ImGui::Button("Generate Starfield")){
+        if (noise_texture){
+
+            //The map that we sample from a texture is the likelyhood of a star spawning at that location.
+            //Dark areas are super unlikely.
+            //Bright ones are super likely.
+
+            //Let's just
+            int reroll_limit = 10000;
+            int rerolls = 0;
+            stellarbodies.clear();
+            for (int s=0;s<max_stars;s++){
+                //Pick a random point, sample that point.
+
+                vec2 p = vec2(rrand.GetFloat(0,1),rrand.GetFloat(0,1));
+                float chance = noise_texture->GetValueAt(p.x,p.y).x / 255.0f;
+
+                //debug->Info("Sampling at %.2f,%.2f -> Likelyhood: %.0f %%\n",p.x,p.y,chance * 100.0);
+                if (rrand.Roll(chance)){
+                    //debug->Ok(" Spawned!\n");
+                    StellarBody star;
+                    star.type = BODY_STAR;
+                    star.coordinate = p;
+                    star.likelyhood = chance;
+                    stellarbodies.push_back(star);
+                }else{
+                    //debug->Warn(" Didn't Spawn\n");
+                    s--;
+                    rerolls++;
+                }
+
+                if ((rerolls > max_rerolls) || (rerolls > reroll_limit)){
+                    break;
+                }
+            }
+        }
+    }
+
+    ImGui::Text("Number of Stars Generated: %i",stellarbodies.size());
+
     ImGui::End();
 
     if (regenerate){
@@ -265,10 +327,73 @@ void ApplicationSim::RenderNoiseTestWindow(){
     }
 }
 
+
+void ApplicationSim::RenderPopulationOverview(){
+    ImGui::Begin("Population and Stuff");
+    ImGui::Text("Colony");
+
+    ImGui::Text(" Credits    : %i",colony.credits);
+    ImGui::Text(" Population : %i",colony.population.amount);
+
+    ResourceSlot* foodslot = FindResourceInSlots(colony.resource_slots,RESOURCE_FOOD);
+    if (foodslot){
+        ImGui::Text(" Food: %i",foodslot->amount);
+    }else{
+        ImGui::Text(" No food!");
+    }
+
+
+    for (Structure& structure:colony.structures){
+        ImGui::Text(" Structure: %s",structure.name.c_str());
+        for (ResourceSlot& slot:structure.productionrate_slots){
+            ImGui::Text("  Production: %s at rate of %i",ResourceNameByType(slot.resource.type),slot.amount);
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Offered Contracts",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::Spacing();
+        if (ImGui::BeginTable("Contracts", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders)){
+            int index = 0;
+            for (Contract& contract:colony.contracts){
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Contract %i", index);
+                //ImGui::Selectable(label, &selected[i], ImGuiSelectableFlags_SpanAllColumns);
+                ImGui::TableNextColumn();
+
+                std::string name = contract.buy ? "Buy ":"Sell ";
+                name += ResourceNameByType(contract.resource_slot.resource.type);
+                ImGui::Text(name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%i",contract.resource_slot.amount);
+                ImGui::TableNextColumn();
+                if (!contract.fulfilled){
+                    if (ImGui::SmallButton("Fulfill")){
+                        contract.fulfilled = true;
+                        AddResourceToSlots(colony.resource_slots,contract.resource_slot);
+                        int price = contract.resource_slot.amount * contract.markup * ResourceBasePriceByType(contract.resource_slot.resource.type);
+                        debug->Info("Fulfilled contract for total price: %i\n",price);
+                        colony.credits -= price;
+                    }
+                }
+                index++;
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    if (ImGui::Button("Add Food to Colony")){
+        foodslot->IncrementResource(20);
+    };
+
+
+    ImGui::End();
+}
+
 void ApplicationSim::UpdateUI(){
     RenderRandTestWindow();
-
     RenderNoiseTestWindow();
+    RenderPopulationOverview();
 
     ImGui::ShowDemoWindow();
 }

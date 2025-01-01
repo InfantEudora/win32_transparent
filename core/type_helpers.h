@@ -13,6 +13,7 @@ float flerp(float a, float b, float k);
 
 float clamp(float in, float min, float max);
 float fract(float in);
+float fround(float a); //Round to nearest
 
 float fscurve3 (float a);
 float fscurve5(float a);

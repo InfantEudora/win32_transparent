@@ -102,7 +102,7 @@ bool RRandom::Roll(float chance){
     }
     int imax = 10000;
     int draw = GetInt(0,imax);
-    if (draw >= (chance * imax)){
+    if (draw <= (chance * imax)){
         return true;
     }
     return false;

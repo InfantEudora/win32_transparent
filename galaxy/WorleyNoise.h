@@ -15,6 +15,7 @@ public:
     int grid_size = 24;
     float scale = 16.0f;
     float max_dist = 9.0f;
+    float min_dist = 0.1f;
 
 };
 

@@ -5,6 +5,8 @@
 #include "RRandom.h"
 #include "PerlinNoise.h"
 #include "WorleyNoise.h"
+#include "StellarBody.h"
+#include <vector>
 /*
     An attempt at an application that overrides the default, and shows a UI only.
 */
@@ -20,8 +22,11 @@ public:
     WorleyNoise wnoise;
     Texture* noise_texture = NULL;
 
+    std::vector<StellarBody>stellarbodies;
+    bool create_stellarbodies = false;
 
 private:
+    void RenderPopulationOverview();
     void RenderRandTestWindow();
     void RenderNoiseTestWindow();
     void UpdateUI();

@@ -546,6 +546,7 @@ bool Renderer::RebuildMSAAFBO(){
         glDeleteTextures(1, &resolve_tex_id);
         glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
     }
+    debug->Info("Resolve Texture ID: %i\n",resolve_tex_id);
     glTextureStorage2D(resolve_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);

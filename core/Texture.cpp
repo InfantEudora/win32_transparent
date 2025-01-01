@@ -115,3 +115,23 @@ void Texture::LoadFromFile(const char* filename, int target, int depth_in){
     glMakeTextureHandleResidentARB(texture_handle);
     #endif
 }
+
+//CPU interpolation time!
+vec3 Texture::GetValueAt(float x, float y){
+    vec3 p = vec3(x,y,0);
+
+    int row = (float)height * y;
+    int ypixel_index = row * width * 3;
+    float pixel_index = ((float)width * x * 3) + ypixel_index;
+
+    int index = pixel_index;
+    //debug->Info("Getting data from pixel index %i\n",pixel_index);
+    p = vec3(img_data[index + 0],img_data[index + 1],img_data[index + 2]);
+
+
+    //Clamp output range
+    p.x = clamp(p.x ,0,255);
+    p.y = clamp(p.y ,0,255);
+    p.z = clamp(p.z ,0,255);
+    return p;
+} //Returns the pixel value at 0 ... 1 interval.

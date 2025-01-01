@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include "glad.h"
+#include "type_vec3.h"
 
 class Texture{
 public:
@@ -35,6 +36,8 @@ public:
 
     void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);
     void LoadFromFile(const char* filename, int target, int depth_in);
+
+    vec3 GetValueAt(float x, float y); //Returns the pixel value at 0 ... 1 interval.
 };
 
 #endif

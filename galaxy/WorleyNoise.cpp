@@ -48,10 +48,13 @@ float WorleyNoise::GetValue2D(float x, float y){
 
             vec2 worley_dif = vec2(hash12(sample_cell)) + sample_cell - p;
             dist = min(dist,worley_dif.length());
-
         }
     }
     value = dist;
+    if (dist < min_dist){
+        value = 0;
+    }
+
 
     value *= scale;
     value = clamp(value,0,255);
