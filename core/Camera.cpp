@@ -16,29 +16,25 @@ void Camera::SetupPerspective(float _width, float _height, float _fov, float _zn
 	viewport.zoom 	= 10;
 	viewport.znear	= _znear;
 	viewport.zfar	= _zfar;
-	SetType(CAMERA_TYPE_PERSPECTIVE);
+	type = CAMERA_TYPE_PERSPECTIVE;
 	CalculateLookatMatrix();
 }
 
-void Camera::SetupOrthographic(float _width, float _height, float _fov, float _znear, float _zfar){
+void Camera::SetupOrthographic(float _width, float _height, float _zoom, float _znear, float _zfar){
 	viewport.width 	= _width;
 	viewport.height = _height;
-	viewport.fov 	= _fov;
-	viewport.zoom 	= 40;
+	viewport.fov 	= 90;
+	viewport.zoom 	= _zoom;
 	viewport.znear	= _znear;
 	viewport.zfar	= _zfar;
-	SetType(CAMERA_TYPE_ORTHOGRAPHIC);
+	type = CAMERA_TYPE_ORTHOGRAPHIC;
 	CalculateLookatMatrix();
 }
 
 void Camera::SetType(int _type){
 	type = _type;
 	//Update the camera
-	if (type == CAMERA_TYPE_ORTHOGRAPHIC){
-		//mat_frus = matrix_ortho(-viewport.width/2,viewport.width/2,-viewport.height/2,viewport.height/2,viewport.znear,viewport.zfar);
-	}else{
-		mat_frus.perspectivematrix(viewport.fov,viewport.aspect,viewport.znear, viewport.zfar);
-	}
+	CalculateLookatMatrix();
 }
 
 //Returns the lookat without position (for skybox)
@@ -61,7 +57,7 @@ void Camera::CalculateLookatMatrix(){
 	//Recalculate all the things.
 	viewport.aspect = viewport.width / viewport.height;
 	if (type == CAMERA_TYPE_ORTHOGRAPHIC){
-		//mfrus = matrix_ortho(-viewport.zoom*viewport.aspect,viewport.zoom*viewport.aspect,-viewport.zoom,viewport.zoom,viewport.znear,viewport.zfar);
+		mat_frus.orthographic_matrix(-viewport.zoom*viewport.aspect,viewport.zoom*viewport.aspect,-viewport.zoom,viewport.zoom,viewport.znear,viewport.zfar);
 	}else{
 		mat_frus.perspectivematrix(viewport.fov,viewport.aspect, viewport.znear, viewport.zfar);
 	}

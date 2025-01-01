@@ -25,6 +25,10 @@ StellarBody::~StellarBody(){
 
 }
 
+StellarObject::StellarObject(StellarBody* body){
+    stellarbody = body;
+}
+
 const char* ResourceNameByType(int type){
     if (type <= RESOURCE_INVALID){
         return "Invalid";

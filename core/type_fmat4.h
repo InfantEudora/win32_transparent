@@ -20,6 +20,7 @@ struct fmat4{
     fmat4&  rotationmatrix(const fmat3& mr);
     fmat4&  rotationmatrix(const vec3& axis, float angle);
     fmat4&  perspectivematrix(float fov, float aspect, float znear, float zfar);
+	fmat4&  orthographic_matrix(float left, float right, float bottom, float top, float znear, float zfar);
     fmat4&  lookatmatrix(const vec3& pos, const vec3& target, const vec3& up);
     fmat4&  set_position(const vec3& pos);
 
@@ -138,6 +139,29 @@ inline fmat4& fmat4::perspectivematrix(float fov, float aspect, float znear, flo
     vertex[3].y = 0;
 	vertex[3].z = (2 * zfar * znear)/(znear-zfar);
     vertex[3].w = 0;
+	return *this;
+}
+
+inline fmat4& fmat4::orthographic_matrix(float left, float right, float bottom, float top, float znear, float zfar){
+	vertex[0].x = 2 / (right - left);
+    vertex[0].y = 0;
+	vertex[0].z = 0;
+	vertex[0].w = 0;
+
+	vertex[1].x = 0;
+	vertex[1].y = 2 / (top - bottom);
+	vertex[1].z = 0;
+	vertex[1].w = 0;
+
+	vertex[2].x = 0;
+	vertex[2].y = 0;
+	vertex[2].z = -2 / (zfar - znear);
+	vertex[2].w = 0;
+
+	vertex[3].w = 1;
+	vertex[3].x = -1 * ((right + left) / (right - left));
+	vertex[3].y = -1 * ((top + bottom) / (top - bottom));
+	vertex[3].z = -1 * ((zfar + znear) / (zfar - znear));
 	return *this;
 }
 

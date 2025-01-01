@@ -4,6 +4,7 @@
 #include "type_vec2.h"
 #include <vector>
 #include <string>
+#include "Object.h"
 
 struct Population{
     int amount = 0;
@@ -105,7 +106,7 @@ typedef enum {
 }stellarbody_type;
 
 class StellarBody;
-class StellarBody{
+class StellarBody {
 public:
     StellarBody();
     ~StellarBody();
@@ -115,6 +116,17 @@ public:
     vec2 coordinate;
     float likelyhood = 0; //How big was the chance it spawned?
 };
+
+class StellarObject;
+class StellarObject : public Object{
+public:
+    StellarObject(){};
+    StellarObject(StellarBody* body);
+    ~StellarObject(){};
+
+    StellarBody* stellarbody = NULL;
+};
+
 
 
 #endif

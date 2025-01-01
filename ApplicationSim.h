@@ -25,8 +25,9 @@ public:
     WorleyNoise wnoise;
     Texture* noise_texture = NULL;
 
-    std::vector<StellarBody>stellarbodies;
+    std::vector<StellarBody*>stellarbodies;
     bool create_stellarbodies = false;
+    int simulation_interval = 30;
 
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
     void RenderPopulationOverview();

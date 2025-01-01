@@ -1,8 +1,9 @@
 #include "ApplicationSim.h"
-#include "Debug.h"
+#include "OBJLoader.h"
 #include <stdlib.h>
 #include <string>
 
+#include "Debug.h"
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
 
 ApplicationSim::ApplicationSim():Application(){
@@ -34,11 +35,58 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     app->renderer = new Renderer(app->main_window->width,app->main_window->height);
     app->renderer->Init();
 
+    //Create and setup new scene
     Scene* scene = new Scene();
     app->main_scene = scene;
-
     scene->name = "Star Scene";
+    scene->renderer = app->renderer;
     scene->inputcontroller = app->main_window->inputcontroller;
+
+    app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+    scene->shader = app->default_shader;
+
+    scene->camera = new Camera();
+    scene->camera->name = "Main Camera";
+    scene->camera->SetPosition(vec3(5,5,5));
+    scene->camera->SetLookAt(vec3());
+    //scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    scene->camera->SetupOrthographic(scene->renderer->width,scene->renderer->height,20,0.1,100);
+    scene->AddObject(scene->camera);
+
+    //Make a light that behaves as a sun
+    DirectionalLight* sun = new DirectionalLight();
+    sun->name = "Directional Light (Sun)";
+    sun->SetPosition(vec3(-10,10,10));
+    sun->color = vec3(1,0.8,0.6);
+    sun->brightness = 5.0;
+    sun->SetLookAt(vec3());
+    scene->AddObject(sun);
+
+    //Make an actual sun, that is an object...
+    debug->Warn("Class size of StellarBody without wrapping: %i\n",sizeof(StellarBody));
+
+    //We make an assetmanager which we use to load/build all assets from:
+    app->assetmanager = new AssetManager();
+    std::vector<Material>loaded_materials;
+
+    //Load stuff here. At some point, this should be in a loading screen... far in the future.
+    Object* temp = new Object();
+    temp->SetMesh(OBJLoader::ParseOBJFile("galaxy/data/meshes/sphere.obj",&loaded_materials));
+    app->assetmanager->AddNewAsset("sphere",temp);
+    temp->SetMesh(OBJLoader::ParseOBJFile("galaxy/data/meshes/sunhighlight.obj",&loaded_materials));
+    app->assetmanager->AddNewAsset("sunhighlight",temp);
+    scene->renderer->AddMaterials(loaded_materials);
+    delete temp;
+
+    StellarObject* star = new StellarObject();
+    app->assetmanager->GetObjectFromAsset("sphere",star);
+    Object* highlight = app->assetmanager->GetObjectFromAsset("sunhighlight");
+    star->AttachChild(highlight);
+    scene->AddObject(star);
+
+
+    app->assetmanager->ListAssets();
+    //Before starting anything
     scene->UpdatePhysics();
 
     //Catch all input and window related messages in this thread:
@@ -64,7 +112,7 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
         //Tell ImGui to start a new frame
         app->main_window->ImGuiNewFrame();
 
-        app->renderer->DrawFrame(NULL,NULL,NULL);
+        app->main_scene->DrawFrame();
 
         app->UpdateUI();
 
@@ -82,7 +130,7 @@ void ApplicationSim::Run(void){
     int2 dimensions = GetDisplaySettings();
 
     //Create a main window
-    main_window = Window::CreateNewWindow(1280,1280,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1280,720,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -114,7 +162,8 @@ void ApplicationSim::Run(void){
         debug->Fatal("Unable to FrameFunction thread\n");
     }
 
-    //Catch all input and window related messages in this thread:
+    //Catch all input and window related messages in this thread.
+    //The thread that creates the window automagically gets messages sent to it.
     MSG msg = {0};
     while (main_window->f_should_quit == false){
         if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
@@ -160,7 +209,7 @@ void ApplicationSim::RunLogic(){
 
     }
     popticks++;
-    if (popticks > 12){
+    if (popticks > simulation_interval){
         popticks = 0;
 
         for (Structure& structure:colony.structures){
@@ -344,10 +393,10 @@ void ApplicationSim::RenderNoiseTestWindow(){
                 //debug->Info("Sampling at %.2f,%.2f -> Likelyhood: %.0f %%\n",p.x,p.y,chance * 100.0);
                 if (rrand.Roll(chance)){
                     //debug->Ok(" Spawned!\n");
-                    StellarBody star;
-                    star.type = BODY_STAR;
-                    star.coordinate = p;
-                    star.likelyhood = chance;
+                    StellarBody* star = new StellarBody();
+                    star->type = BODY_STAR;
+                    star->coordinate = p;
+                    star->likelyhood = chance;
                     stellarbodies.push_back(star);
                 }else{
                     //debug->Warn(" Didn't Spawn\n");
@@ -385,6 +434,9 @@ void ApplicationSim::RenderNoiseTestWindow(){
 
 void ApplicationSim::RenderPopulationOverview(){
     ImGui::Begin("Population and Stuff");
+
+    ImGui::DragInt("Simulation Interval",&simulation_interval,1,1,360);
+
     ImGui::Text("Colony - %s",colony.name.c_str());
 
     ImGui::Text(" Credits    : %i",colony.credits);

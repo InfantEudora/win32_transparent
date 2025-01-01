@@ -16,13 +16,12 @@ public:
 
 	void SetType(int _type);
 	void SetupPerspective(float width, float height, float fov, float znear, float zfar);
-	void SetupOrthographic(float width, float height, float fov, float znear, float zfar);
+	void SetupOrthographic(float width, float height, float zoom, float znear, float zfar);
 	void CalculateLookatMatrix();
 	fmat4 GetPositionlessMatrix();
 
 	ray  GetRay();
 	ray  GetPixelRay(int2& px_coord);
-
 
 	camera_t 		type;		//Camera type: CAMERA_TYPE_PERSPECTIVE or CAMERA_TYPE_ORTHOGONAL
 
