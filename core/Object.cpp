@@ -206,6 +206,7 @@ bool Object::PhysicsCompleted(){
     return !!state_physics_prev_completed;
 }
 
+//Returns world position
 vec3 Object::GetPosition(){
     return state_physics.position;
 }
@@ -284,6 +285,21 @@ void Object::GetAllSubObjects(std::vector<Object*>*objects){
         objects->push_back(child);
         child->GetAllSubObjects(objects);
     }
+}
+
+//Returns the specified child if there is one.
+Object* Object::GetChild(int index){
+    std::list<Object*>::iterator it = children.begin();
+    int cnt = 0;
+    for ( ; it != children.end(); ) {
+        Object* child = *it;
+        if (cnt == index){
+            return child;
+        }
+        cnt++;
+        ++it;
+    }
+    return NULL;
 }
 
 bool Object::AttachChild(Object* newchild){

@@ -38,6 +38,7 @@ typedef enum{
     INPUT_CLICK_MIDDLE,
     INPUT_CLICK_RIGHT,
     INPUT_SHIFT,
+    INPUT_LAST
 }keycode_t;
 
 struct KeyState{

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+#include "type_helpers.h"
 struct vec2;
 
 struct vec2{
@@ -23,10 +24,12 @@ struct vec2{
     void    print();
     vec2&   set(float x, float y);
     float   length() const;
-	float   distance(const vec2& vec) const;     // distance between two vectors
+	float   distance(const vec2& vec) const;                // distance between two vectors
     vec2&  	normalize();
-	float  	dot(const vec2& vec) const;          // dot product
+	float  	dot(const vec2& vec) const;                     // dot product
     vec2&   floor();
+    vec2    lerp(const vec2& b, float k);                   // Linear interpolation by factor k from this to b
+    float   angle();                                        // Returns the direction in -PI ... PI interval
 
     vec2   	operator-() const;                              // unary operator (negate)
     vec2   	operator-(const vec2& rhs) const;               // subtract rhs
@@ -103,6 +106,16 @@ inline vec2 operator*(const float a, const vec2 vec) {
 
 inline void vec2::print(){
     printf("vec2: %7.2f | %7.2f\n",x,y);
+}
+
+inline vec2 vec2::lerp(const vec2& b, float k){
+    vec2 diff = b - *this;
+    k = clamp(k,0.0f,1.0f);
+    return *this + (b * k);
+}
+
+inline float vec2::angle(){
+    return atan2(y,x);
 }
 
 #endif

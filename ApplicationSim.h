@@ -28,6 +28,8 @@ public:
     std::vector<StellarBody*>stellarbodies;
 
     std::vector<StellarObject*>stellarobjects;
+    std::vector<RouteObject*>routeobjects;
+
     bool create_stellarbodies = false;
     int simulation_interval = 30;
 

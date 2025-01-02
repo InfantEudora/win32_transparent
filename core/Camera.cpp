@@ -73,6 +73,7 @@ ray Camera::GetRay(){
 	return r;
 }
 //Returns a ray from the center of the camera at pixel posiion
+//TODO: Fix this for Orthographic projection
 ray Camera::GetPixelRay(int2& px_coord){
 	ray r;
 	//The end of the ray is on the far clipping plane

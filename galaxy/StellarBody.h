@@ -6,6 +6,7 @@
 #include <string>
 #include "Object.h"
 #include "AssetManager.h"
+#include "Bezier2D.h"
 
 struct Population{
     int amount = 0;
@@ -99,6 +100,26 @@ typedef enum {
 }stellarbody_type;
 
 class StellarBody;
+class Route;
+
+class Route{
+    public:
+    Route(){};
+    ~Route(){};
+
+    void Setup(StellarBody* start, StellarBody* end);
+
+    StellarBody* start = NULL;
+    StellarBody* end = NULL;
+
+    float GetDistance();
+};
+
+//Storage decoupled from object, so it can be run in simulation.
+//Ships will follow routes and get delayed or get off track randomly.
+//This would then update the object when you view them.
+//When viewing and interacting, object manipulates this data.
+
 class StellarBody {
 public:
     StellarBody();
@@ -110,23 +131,13 @@ public:
     float likelyhood = 0;   // How big was the chance it spawned?
 
     Colony* colony = NULL;  // Some may have a single colony.
+    Route* route = NULL;    // A route it should be able to follow.
+
+    void UpdateRouteInfo();
+    void PlaceOnRoute(Route* route);
 };
 
-class Route;
-class Route{
-    public:
-    Route(){};
-    ~Route(){};
-
-    void Setup(StellarBody* start, StellarBody* end);
-
-    StellarBody* start = NULL;
-    StellarBody* end = NULL;
-
-    void Update();
-
-};
-
+class RouteObject;
 class StellarObject : public Object{
 public:
     StellarObject(){};
@@ -135,10 +146,23 @@ public:
 
     StellarBody* stellarbody = NULL;
     void UpdatePosition();
+    void PlaceOnRoute(RouteObject* route);
 
     static StellarObject* CreateNewStar(AssetManager* assetmanager);
     static StellarObject* CreateNewShip(AssetManager* assetmanager);
 };
 
+//We build a route for a ship to follow. Uses a 2D spline limited to a linear one for now.
+class RouteObject : public Object{
+public:
+    RouteObject(){};
+    ~RouteObject(){};
+
+    Route* route = NULL;
+    Bezier2D curve = Bezier2D(2);
+
+    void SetupNewRoute(StellarObject* from, StellarObject* to, AssetManager* assetmanager);
+    void UpdateRoute();
+};
 
 #endif

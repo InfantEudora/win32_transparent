@@ -6,6 +6,8 @@
 #include "Debug.h"
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
 
+#define INPUT_M INPUT_LAST+1
+
 ApplicationSim::ApplicationSim():Application(){
     debug->Info("Created new application.\n");
 };
@@ -42,16 +44,19 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     scene->renderer = app->renderer;
     scene->inputcontroller = app->main_window->inputcontroller;
 
+    scene->inputcontroller->AddKeyMap('M',INPUT_M);
+
     app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
     scene->shader = app->default_shader;
 
     scene->camera = new Camera();
     scene->camera->name = "Main Camera";
-    scene->camera->SetPosition(vec3(0,5,0));
+    scene->camera->SetPosition(vec3(0,30,0));
     vec3 up = vec3(0,0,1);
     scene->camera->SetLookAt(vec3(),&up);
-    //scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
-    scene->camera->SetupOrthographic(scene->renderer->width,scene->renderer->height,20,0.1,100);
+    scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    //scene->camera->SetupOrthographic(scene->renderer->width,scene->renderer->height,20,0.1,100);
+
     scene->AddObject(scene->camera);
 
     //Make a light that behaves as a sun
@@ -70,23 +75,38 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     app->assetmanager->AddNewAsset("sphere","galaxy/data/meshes/sphere.obj");
     app->assetmanager->AddNewAsset("sunhighlight","galaxy/data/meshes/sunhighlight.obj");
     app->assetmanager->AddNewAsset("ship","galaxy/data/meshes/ship.obj");
+    app->assetmanager->AddNewAsset("plane","galaxy/data/meshes/plane.obj");
 
     scene->renderer->AddMaterials(app->assetmanager->loaded_materials);
 
     //We make two stars
-    StellarObject* star = StellarObject::CreateNewStar(app->assetmanager);
-    scene->AddObject(star);
-    app->stellarobjects.push_back(star);
+    StellarObject* stara = StellarObject::CreateNewStar(app->assetmanager);
+    scene->AddObject(stara);
+    stara->SetPosition(vec3(vec3(-3,0,3)));
+    stara->UpdatePosition();
+    stara->name = "Star A";
+    app->stellarobjects.push_back(stara);
 
-    star = StellarObject::CreateNewStar(app->assetmanager);
-    star->SetPosition(vec3(vec3(4,0,4)));
-    app->stellarobjects.push_back(star);
-    scene->AddObject(star);
+    StellarObject* starb = StellarObject::CreateNewStar(app->assetmanager);
+    starb->SetPosition(vec3(vec3(7,0,7)));
+    starb->UpdatePosition();
+    app->stellarobjects.push_back(starb);
+    starb->name = "Star B";
+    scene->AddObject(starb);
 
     StellarObject* ship = StellarObject::CreateNewShip(app->assetmanager);
     ship->SetPosition(vec3(vec3(2,0,2)));
+    ship->UpdatePosition();
     app->stellarobjects.push_back(ship);
+    ship->name = "Ship";
     scene->AddObject(ship);
+
+    RouteObject* route = new RouteObject();
+    route->SetupNewRoute(stara,starb,app->assetmanager);
+    app->routeobjects.push_back(route);
+    scene->AddObject(route);
+
+    ship->PlaceOnRoute(route);
 
     app->assetmanager->ListAssets();
     //Before starting anything
@@ -196,19 +216,42 @@ void ApplicationSim::RunLogic(){
     static float mouse_delta_sum = 0;
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     if (mouse_delta_sum != 0){
-        camera->viewport.zoom -= mouse_delta_sum / 10.0f;
-        mouse_delta_sum /= 1.1;
-        camera->viewport.zoom = clamp(camera->viewport.zoom,2,50);
+        if (camera->type == CAMERA_TYPE_ORTHOGRAPHIC){
+            camera->viewport.zoom -= mouse_delta_sum / 10.0f;
+            mouse_delta_sum /= 1.1;
+            camera->viewport.zoom = clamp(camera->viewport.zoom,2,50);
+        }else{
+            camera->MoveForwardBy(mouse_delta_sum / 10.0f);
+            mouse_delta_sum /= 1.1;
+        }
     }
 
     //Camera rotation moving
+    int dx = input->GetDelta(INPUT_MOUSE_X);
+    int dy = input->GetDelta(INPUT_MOUSE_Y);
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
-        int dx = input->GetDelta(INPUT_MOUSE_X);
-        int dy = input->GetDelta(INPUT_MOUSE_Y);
-
         //Camera movement in the xz plane.
         vec3 delta = vec3((float)dx / 10.0f,0,(float)dy/10.0f);
         camera->MoveBy(delta);
+    }
+
+    StellarObject* selected_stellarobject = dynamic_cast<StellarObject*>(selected_object);
+    if (input->IsKeyDown(INPUT_M) && selected_stellarobject){
+        vec3 delta = vec3((float)-dx / 20.0f,0,(float)-dy/20.0f);
+        selected_stellarobject->MoveBy(delta);
+    }
+
+    //Update each tick
+    for (StellarObject* stellarobject:stellarobjects){
+        if (stellarobject->stellarbody && stellarobject->stellarbody->colony){
+            stellarobject->UpdatePosition();
+            stellarobject->stellarbody->UpdateRouteInfo();
+        }
+    }
+
+    //Again, with updated positions
+    for (RouteObject* routeobject:routeobjects){
+        routeobject->UpdateRoute();
     }
 
     popticks++;
@@ -216,7 +259,6 @@ void ApplicationSim::RunLogic(){
         popticks = 0;
         for (StellarObject* stellarobject:stellarobjects){
             if (stellarobject->stellarbody && stellarobject->stellarbody->colony){
-                stellarobject->UpdatePosition();
                 Colony* colony = stellarobject->stellarbody->colony;
                 for (Structure& structure:colony->structures){
                     structure.Progress(colony->resource_slots,colony->resource_slots);
@@ -445,74 +487,80 @@ void ApplicationSim::RenderPopulationOverview(){
     //Figure out which colony is selected
     StellarObject* selected_stellarobject = dynamic_cast<StellarObject*>(selected_object);
     Colony* selected_colony = NULL;
+    StellarBody* body = NULL;
     if (selected_stellarobject && selected_stellarobject->stellarbody){
         selected_colony = selected_stellarobject->stellarbody->colony;
+        body = selected_stellarobject->stellarbody;
     }
 
     Colony* colony = selected_colony;
 
+
     if (!colony){
         ImGui::Text("No Colony Selected");
-        ImGui::End();
-        return;
-    }
-
-    ImGui::Text("Colony - %s",colony->name.c_str());
-
-    ImGui::Text(" Credits    : %i",colony->credits);
-    ImGui::Text(" Population : %i",colony->population.amount);
-
-    ResourceSlot* foodslot = FindResourceInSlots(colony->resource_slots,RESOURCE_FOOD);
-    if (foodslot){
-        ImGui::Text(" Food: %i",foodslot->amount);
     }else{
-        ImGui::Text(" No food!");
-    }
+        ImGui::Text("Colony - %s",colony->name.c_str());
+        ImGui::Text(" Coordinate : %.2f, %.2f",body->coordinate.x,body->coordinate.y);
+        ImGui::Text(" Credits    : %i",colony->credits);
+        ImGui::Text(" Population : %i",colony->population.amount);
 
-
-    for (Structure& structure:colony->structures){
-        ImGui::Text(" Structure: %s",structure.name.c_str());
-        for (ResourceSlot& slot:structure.productionrate_slots){
-            ImGui::Text("  Production: %s at rate of %i",ResourceNameByType(slot.resource.type),slot.amount);
+        ResourceSlot* foodslot = FindResourceInSlots(colony->resource_slots,RESOURCE_FOOD);
+        if (foodslot){
+            ImGui::Text(" Food: %i",foodslot->amount);
+        }else{
+            ImGui::Text(" No food!");
         }
-    }
 
-    if (ImGui::CollapsingHeader("Offered Contracts",ImGuiTreeNodeFlags_DefaultOpen)){
-        ImGui::Spacing();
-        if (ImGui::BeginTable("Contracts", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders)){
-            int index = 0;
-            for (Contract& contract:colony->contracts){
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("Contract %i", index);
-                //ImGui::Selectable(label, &selected[i], ImGuiSelectableFlags_SpanAllColumns);
-                ImGui::TableNextColumn();
-
-                std::string name = contract.buy ? "Buy ":"Sell ";
-                name += ResourceNameByType(contract.resource_slot.resource.type);
-                ImGui::Text(name.c_str());
-                ImGui::TableNextColumn();
-                ImGui::Text("%i",contract.resource_slot.amount);
-                ImGui::TableNextColumn();
-                if (!contract.fulfilled){
-                    if (ImGui::SmallButton("Fulfill")){
-                        contract.fulfilled = true;
-                        AddResourceToSlots(colony->resource_slots,contract.resource_slot);
-                        int price = contract.resource_slot.amount * contract.markup * ResourceBasePriceByType(contract.resource_slot.resource.type);
-                        debug->Info("Fulfilled contract for total price: %i\n",price);
-                        colony->credits -= price;
-                    }
-                }
-                index++;
+        for (Structure& structure:colony->structures){
+            ImGui::Text(" Structure: %s",structure.name.c_str());
+            for (ResourceSlot& slot:structure.productionrate_slots){
+                ImGui::Text("  Production: %s at rate of %i",ResourceNameByType(slot.resource.type),slot.amount);
             }
-            ImGui::EndTable();
         }
+
+        if (ImGui::CollapsingHeader("Offered Contracts",ImGuiTreeNodeFlags_DefaultOpen)){
+            ImGui::Spacing();
+            if (ImGui::BeginTable("Contracts", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders)){
+                int index = 0;
+                for (Contract& contract:colony->contracts){
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("Contract %i", index);
+                    //ImGui::Selectable(label, &selected[i], ImGuiSelectableFlags_SpanAllColumns);
+                    ImGui::TableNextColumn();
+
+                    std::string name = contract.buy ? "Buy ":"Sell ";
+                    name += ResourceNameByType(contract.resource_slot.resource.type);
+                    ImGui::Text(name.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%i",contract.resource_slot.amount);
+                    ImGui::TableNextColumn();
+                    if (!contract.fulfilled){
+                        if (ImGui::SmallButton("Fulfill")){
+                            contract.fulfilled = true;
+                            AddResourceToSlots(colony->resource_slots,contract.resource_slot);
+                            int price = contract.resource_slot.amount * contract.markup * ResourceBasePriceByType(contract.resource_slot.resource.type);
+                            debug->Info("Fulfilled contract for total price: %i\n",price);
+                            colony->credits -= price;
+                        }
+                    }
+                    index++;
+                }
+                ImGui::EndTable();
+            }
+        }
+
+        if (ImGui::Button("Add Food to Colony")){
+            foodslot->IncrementResource(20);
+        };
     }
 
-    if (ImGui::Button("Add Food to Colony")){
-        foodslot->IncrementResource(20);
+    vec2 at;
+    if (ImGui::Button("Create Star")){
+
     };
 
+    ImGui::Text("Hold M to move selected object");
 
     ImGui::End();
 }

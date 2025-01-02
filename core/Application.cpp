@@ -541,6 +541,11 @@ void Application::CheckObjectSelection(){
     objectid_t hovered_objid = OBJECTID_INVALID;
     if (!ImGui::GetIO().WantCaptureMouse){
         hovered_objid = input->GetHoveredObjectID();
+
+        if ((hovered_objid == OBJECTID_INVALID) && input->WasKeyReleased(INPUT_CLICK_LEFT)){
+            selected_object = NULL;
+            return;
+        }
     }
 
     for (Object* object:renderer->renderable_objects){

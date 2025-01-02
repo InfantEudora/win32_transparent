@@ -114,10 +114,10 @@ class Object{
     Object* parent = NULL;              //Object we are a child of.
     std::list<Object*>children;
 
-    bool AttachChild(Object* newchild); //Attaches an object as a child.
-    void DetachChild(Object* targetchild);
-    void GetAllSubObjects(std::vector<Object*>*objects); //Add's all objects attached to this object into a vector.
-
+    bool    AttachChild(Object* newchild); //Attaches an object as a child.
+    void    DetachChild(Object* targetchild);
+    void    GetAllSubObjects(std::vector<Object*>*objects); //Add's all objects attached to this object into a vector.
+    Object* GetChild(int index);
 protected:
     bool f_visible = true;          // If the mesh should be rendered or not
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable
