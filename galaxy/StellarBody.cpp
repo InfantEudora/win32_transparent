@@ -269,6 +269,10 @@ void StellarObject::UpdatePosition(){
             vec2 c = stellarbody->coordinate;
             vec3 p = vec3(c.x,0,c.y);
             SetPosition(p);
+            //Update rotation from heading
+            float theta = stellarbody->heading.angle();
+            quat q; q.set_rotation(vec3(0,-1,0),theta + TYPE_PI/2);
+            SetRotation(q);
         }else{
             vec3 p = GetPosition();
             stellarbody->coordinate = vec2(p.x,p.z);
@@ -361,10 +365,9 @@ void StellarBody::PlaceOnRoute(Route* _route){
     UpdateRouteInfo();
 }
 
+//If this is a ship, with a route.. Follow the route
 void StellarBody::UpdateRouteInfo(){
-    if (!route){
-        return;
-    }
+    if (!route) return;
 
     //It'd be nice to find the closest point on the route
     //TODO: Reuse the bezier?
@@ -380,8 +383,20 @@ void StellarBody::UpdateRouteInfo(){
     if (dist > 4.0f){
         //debug->Info(" -Snapped to route.\n");
         //Let's move ourselves to that nextuh spottuh.
-        coordinate = clostest_point;
+        //coordinate = clostest_point;
         //We need to know that the underlying data (coordinate) was modified to the visulas don't override.
-        f_updatevisual = true;
+        //f_updatevisual = true;
     }
+}
+
+//Just going to move to the endpoint at some speed
+void StellarBody::FollowRoute(){
+    if (!route) return;
+
+    vec2 end = route->end->coordinate;          // Target
+    vec2 dir = (end-coordinate).normalize();    // Heading
+    heading = dir;
+    vec2 d = 0.01f * dir; //Some speed increment
+    coordinate += d;
+    f_updatevisual = true;
 }

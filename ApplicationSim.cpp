@@ -94,19 +94,27 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     starb->name = "Star B";
     scene->AddObject(starb);
 
-    StellarObject* ship = StellarObject::CreateNewShip(app->assetmanager);
-    ship->SetPosition(vec3(vec3(2,0,2)));
-    ship->UpdatePosition();
-    app->stellarobjects.push_back(ship);
-    ship->name = "Ship";
-    scene->AddObject(ship);
+    StellarObject* ship1 = StellarObject::CreateNewShip(app->assetmanager);
+    ship1->SetPosition(vec3(vec3(2,0,2)));
+    ship1->UpdatePosition();
+    app->stellarobjects.push_back(ship1);
+    ship1->name = "Ship 1";
+    scene->AddObject(ship1);
+
+    StellarObject* ship2 = StellarObject::CreateNewShip(app->assetmanager);
+    ship2->SetPosition(vec3(vec3(-8,0,9)));
+    ship2->UpdatePosition();
+    app->stellarobjects.push_back(ship2);
+    ship2->name = "Ship 2";
+    scene->AddObject(ship2);
 
     RouteObject* route = new RouteObject();
     route->SetupNewRoute(stara,starb,app->assetmanager);
     app->routeobjects.push_back(route);
     scene->AddObject(route);
 
-    ship->PlaceOnRoute(route);
+    ship1->PlaceOnRoute(route);
+    ship2->PlaceOnRoute(route);
 
     app->assetmanager->ListAssets();
     //Before starting anything
@@ -246,6 +254,7 @@ void ApplicationSim::RunLogic(){
         if (stellarobject->stellarbody && stellarobject->stellarbody->colony){
             stellarobject->UpdatePosition();
             stellarobject->stellarbody->UpdateRouteInfo();
+            stellarobject->stellarbody->FollowRoute();
         }
     }
 

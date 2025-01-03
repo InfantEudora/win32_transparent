@@ -128,6 +128,7 @@ public:
     stellarbody_type type;
 
     vec2 coordinate;
+    vec2 heading = vec2();
     float likelyhood = 0;   // How big was the chance it spawned?
 
     Colony* colony = NULL;  // Some may have a single colony.
@@ -137,6 +138,7 @@ public:
 
     void UpdateRouteInfo();
     void PlaceOnRoute(Route* route);
+    void FollowRoute();
 
 
 };
