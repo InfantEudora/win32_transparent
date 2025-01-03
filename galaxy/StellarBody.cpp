@@ -265,8 +265,16 @@ StellarObject* StellarObject::CreateNewShip(AssetManager* assetmanager){
 
 void StellarObject::UpdatePosition(){
     if (stellarbody){
-        vec3 p = GetPosition();
-        stellarbody->coordinate = vec2(p.x,p.z);
+        if (stellarbody->f_updatevisual){
+            vec2 c = stellarbody->coordinate;
+            vec3 p = vec3(c.x,0,c.y);
+            SetPosition(p);
+        }else{
+            vec3 p = GetPosition();
+            stellarbody->coordinate = vec2(p.x,p.z);
+        }
+        stellarbody->f_updatevisual = false;
+
     }
 }
 
@@ -364,9 +372,16 @@ void StellarBody::UpdateRouteInfo(){
     b.AddNewPoint(route->start->coordinate);
     b.AddNewPoint(route->end->coordinate);
 
-    vec2 clostest_point = b.FindClosest(coordinate);
+    vec2 clostest_point = b.FindClosest(coordinate,20);
     //debug->Info("clostest_point = %.2f, %.2f\n",clostest_point.x,clostest_point.y);
 
     float dist = coordinate.distance(clostest_point);
-    debug->Info("Updating route. Off Route Dist = %.2f\n",dist);
+    //debug->Info("Updating route. Off Route Dist = %.2f\n",dist);
+    if (dist > 4.0f){
+        //debug->Info(" -Snapped to route.\n");
+        //Let's move ourselves to that nextuh spottuh.
+        coordinate = clostest_point;
+        //We need to know that the underlying data (coordinate) was modified to the visulas don't override.
+        f_updatevisual = true;
+    }
 }

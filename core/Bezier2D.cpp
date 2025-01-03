@@ -107,9 +107,10 @@ vec2 Bezier2D::FindClosest(vec2 point, int steps){
     vec2 closest = *first;
 
     for (int i=0;i<steps;i++){
-        float k = (float)i / (float)steps;
+        float k = (float)i / (float)(steps-1);
         vec2 p = Lerp(k);
-        float dist = p.distance(point);
+        float dist = point.distance(p);
+        //printf("FindClosest: %2i: from %.2f,%.2f -> p = %.2f, %.2f k=%.3f d=%.3f\n",i,point.x,point.y,p.x,p.y,k,dist);
         if (dist < mindist){
             closest = p;
             mindist = dist;

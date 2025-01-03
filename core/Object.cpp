@@ -108,6 +108,7 @@ void Object::RotateBy(const quat& r){
 
 //Move to new position. This preserves rotation. When f_keep_lookat=true, the rotation will update to
 //look at the old location
+//TODO: This should set worldposition?
 void Object::SetPosition(const vec3& newpos){
     state_physics.f_was_transformed = true;
     vec3 delta = state_physics.position - newpos;

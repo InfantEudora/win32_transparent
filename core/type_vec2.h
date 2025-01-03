@@ -109,9 +109,9 @@ inline void vec2::print(){
 }
 
 inline vec2 vec2::lerp(const vec2& b, float k){
-    vec2 diff = b - *this;
+    vec2 diff = b - *this ;
     k = clamp(k,0.0f,1.0f);
-    return *this + (b * k);
+    return *this + (diff * k);
 }
 
 inline float vec2::angle(){

@@ -133,8 +133,12 @@ public:
     Colony* colony = NULL;  // Some may have a single colony.
     Route* route = NULL;    // A route it should be able to follow.
 
+    bool f_updatevisual = false;    // When data is modified and visuals need updating.
+
     void UpdateRouteInfo();
     void PlaceOnRoute(Route* route);
+
+
 };
 
 class RouteObject;
