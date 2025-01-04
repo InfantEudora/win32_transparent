@@ -23,12 +23,12 @@ typedef enum {
     RESOURCE_WATER = 0,
     RESOURCE_FOOD = 1,
     RESOURCE_MEDICINE = 2,
-    RESOURCE_METALS = 3
+    RESOURCE_METAL = 3
 }resource_id;
 
 
 struct Resource{
-    int type = -1;  //Reference resource_types
+    int type = RESOURCE_INVALID;  //Reference resource_types
     int weight = 1;
     int aquired_price = 0;
 };
@@ -36,10 +36,11 @@ struct Resource{
 //Can hold any unique resource.
 struct ResourceSlot{
     Resource resource;
-    int amount;
+    int amount = 0;
     bool AddResource(Resource& r, int amount);
     bool IncrementResource(int count);
-    int TakeResource(int amount);
+    int TakeResourceAmount(int amount);
+    ResourceSlot TakeResource(int count);
 };
 
 int             GetTotalPopulation(Population& population);
@@ -82,11 +83,17 @@ public:
 };
 
 
+//Stuff that it overproduced will be put on the market at an increasingly cheap price.
+//It will be moved out of colony storage and put in market storage.
+//Rates can be determined like 100, 1000, 10k etc.
 class Market;
 class Market{
     public:
+    std::vector<ResourceSlot>sell_slots;  // The resources that it has in storage and wants to sell off.
+    std::vector<ResourceSlot>buy_slots;   // The resources that we want to buy, but don't have.
 
-
+    ResourceSlot BuyFromMarket(int resource_type,int amount);
+    int SellToMarket(ResourceSlot* resource_slot, int amount);
 };
 
 //Colony
@@ -98,6 +105,7 @@ class Colony{
     Population population;
     std::vector<ResourceSlot>resource_slots;
     std::vector<Structure>structures;
+    Market* market = NULL;
 
     //When we run out of a resource that we need,
     //we need to request that it get delivered via a contract.
@@ -161,6 +169,7 @@ public:
     float likelyhood = 0;   // How big was the chance it spawned?
 
     Colony* colony = NULL;  // Some may have a single colony.
+
     Route* route = NULL;    // A route it should be able to follow.
 
     bool f_updatevisual = false;    // When data is modified and visuals need updating.
@@ -211,7 +220,7 @@ public:
     these should be placed on the open market for an increasingly cheap price.
 
     The ships need to have some incentive to go do something, which is transport food mainly.
-    - [ ] The food consumption rate should have factions by taking a single item from supply, and tracking it's fraction.
+    - [x] The food consumption rate should have factions by taking a single item from supply, and tracking it's fraction.
 
     Objectives:
     - [ ] Buy item at Market A and transport to Market B.

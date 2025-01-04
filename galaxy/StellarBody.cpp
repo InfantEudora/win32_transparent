@@ -58,7 +58,7 @@ bool ResourceSlot::IncrementResource(int count){
     return true;
 }
 
-int ResourceSlot::TakeResource(int count){
+int ResourceSlot::TakeResourceAmount(int count){
     if (resource.type == RESOURCE_INVALID){
         return 0;
     }
@@ -67,6 +67,14 @@ int ResourceSlot::TakeResource(int count){
     }
     amount-= count;
     return count;
+}
+
+ResourceSlot ResourceSlot::TakeResource(int count){
+    ResourceSlot r;
+    r.resource = resource;
+    int taken = TakeResourceAmount(count);
+    r.amount = taken;
+    return r;
 }
 
 bool ResourceSlot::AddResource(Resource& r, int count){
@@ -81,6 +89,9 @@ bool ResourceSlot::AddResource(Resource& r, int count){
 }
 
 bool AddResourceToSlots(std::vector<ResourceSlot>& resource_slots, ResourceSlot slot){
+    if (slot.resource.type == RESOURCE_INVALID){
+        return false;
+    }
     ResourceSlot* same = FindResourceInSlots(resource_slots,slot.resource.type);
     if (same){
         same->AddResource(slot.resource,slot.amount);
@@ -95,6 +106,9 @@ bool AddResourceToSlots(std::vector<ResourceSlot>& resource_slots, ResourceSlot 
 
 //Returns a pointer to the slot or null
 ResourceSlot* FindResourceInSlots(std::vector<ResourceSlot>& resource_slots, int type){
+    if (type == RESOURCE_INVALID){
+        return NULL;
+    }
     for (ResourceSlot& slot:resource_slots){
         if (slot.resource.type == type){
             return &slot;
@@ -103,6 +117,28 @@ ResourceSlot* FindResourceInSlots(std::vector<ResourceSlot>& resource_slots, int
     return NULL;
 }
 
+//Returns the amount you bought, or invalid resource.
+ResourceSlot Market::BuyFromMarket(int resource_type,int amount){
+    ResourceSlot r;
+    ResourceSlot* slot = FindResourceInSlots(sell_slots,resource_type);
+    if (slot){
+        r = slot->TakeResource(amount);
+    }
+    return r;
+}
+
+//Sell resources in slot which market will decrement. Returns the amount sold.
+int Market::SellToMarket(ResourceSlot* resource_slot, int amount){
+    if (!resource_slot) return 0;
+    ResourceSlot* buyorder = FindResourceInSlots(buy_slots,resource_slot->resource.type);
+    if (buyorder){
+        int buymax = min(amount,buyorder->amount);
+        ResourceSlot t = resource_slot->TakeResource(buymax);
+        debug->Info("Sold %i %s to market\n",t.amount,ResourceNameByType(t.resource.type));
+        AddResourceToSlots(sell_slots,t);
+    }
+    return 0;
+}
 
 
 void Colony::Progress(){
@@ -133,9 +169,53 @@ void Colony::Progress(){
     ResourceSlot* foodslot = FindResourceInSlots(resource_slots,RESOURCE_FOOD);
     if (foodslot){
         if (foodpackets > 0){
-            int taken = foodslot->TakeResource(foodpackets);
+            int taken = foodslot->TakeResourceAmount(foodpackets);
             food_reserves += 1000 * taken;
             debug->Info(" Opened %i/%i food packets to replenish reserves.\n",taken,foodpackets);
+        }
+
+        //If we have a super super store of food, we can dump some on the local market.
+        //Or... we can get it from the local market in case we have an incoming shortage
+        int yearsupply = (population.amount * 12)/1000 + 1;
+
+        if (market){
+            if (foodslot->amount > yearsupply){
+                int dump = foodslot->amount - yearsupply;
+                debug->Info("We have %i food available. Only need %i for a years supply. Dump %i on market\n",foodslot->amount,yearsupply,dump);
+                ResourceSlot taken = foodslot->TakeResource(dump);
+                AddResourceToSlots(market->sell_slots,taken);
+                debug->Info(" Dumped %i food on open market.\n",taken.amount);
+                ResourceSlot* marketbuyslot = FindResourceInSlots(market->buy_slots,RESOURCE_FOOD);
+                if (marketbuyslot){
+                    marketbuyslot->amount = 0;
+                }
+            }else{
+                int request = yearsupply - foodslot->amount;
+                debug->Info("We only have %i food available for our years supply of %i. Request %i on market\n",foodslot->amount,yearsupply,request);
+                ResourceSlot* marketbuyslot = FindResourceInSlots(market->buy_slots,RESOURCE_FOOD);
+                if (marketbuyslot){
+                    marketbuyslot->amount = request;
+                }else{
+                    ResourceSlot buyorder;
+                    buyorder.resource.type = RESOURCE_FOOD;
+                    buyorder.amount = request;
+                    AddResourceToSlots(market->buy_slots,buyorder);
+                }
+            }
+
+            //Check buy/sell order
+            ResourceSlot* marketbuyslot = FindResourceInSlots(market->buy_slots,RESOURCE_FOOD);
+            ResourceSlot* marketsellslot = FindResourceInSlots(market->sell_slots,RESOURCE_FOOD);
+            if (marketbuyslot && marketsellslot){
+                if ((marketbuyslot->amount > 0) && (marketsellslot->amount > 0)){
+                    //We can take some from market
+                    ResourceSlot food = market->BuyFromMarket(RESOURCE_FOOD,marketbuyslot->amount);
+                    if (food.resource.type == RESOURCE_FOOD){
+                        debug->Info(" Bought %i from own market.\n",food.amount);
+                        AddResourceToSlots(resource_slots,food);
+                    }
+                }
+            }
         }
     }
 
@@ -228,6 +308,14 @@ Colony* GenerateNewStarColony(){
     };
     AddResourceToSlots(colony->resource_slots,foodslot);
     colony->population.amount = 1000;
+
+    colony->market = new Market();
+
+    ResourceSlot metalslot;
+    metalslot.resource.type = RESOURCE_METAL;
+    metalslot.amount = 100;
+    AddResourceToSlots(colony->market->buy_slots,metalslot);
+    //AddResourceToSlots(colony->market->sell_slots,foodslot);
 
     Structure farm;
     farm.name = "Farm";
@@ -450,26 +538,37 @@ void StellarBody::FollowRoute(){
 
     float dist = route->end->coordinate.distance(coordinate);
     if (dist < 0.1f){
-        //Maybe create a buy order or something.
+        //Pick it up without paying for it...
         ResourceSlot order;
         order.resource.type = RESOURCE_FOOD;
-        order.amount = 20;
-
+        order.amount = 1;
         PickupResource(order,route->end);
 
-        Contract c = route->end->colony->GetContract(RESOURCE_FOOD, 20, BUY_CONTRACT);
-        //c.Fulfill();
+        //Check the local market:
+        if (route->end->colony && route->end->colony->market){
+            Market* market = route->end->colony->market;
+            ResourceSlot bought = market->BuyFromMarket(RESOURCE_FOOD,20);
+            if (bought.resource.type != RESOURCE_INVALID){
+                debug->Info("Bought %i Food at remote market!\n",bought.amount);
+                AddResourceToSlots(colony->resource_slots,bought);
+            }
 
-       // Contract c;
-        c.offer.resource.type = RESOURCE_FOOD;
-        c.offer.amount = 20;
+            ResourceSlot* foodslot = FindResourceInSlots(colony->resource_slots,RESOURCE_FOOD);
+            if (foodslot){
+                market->SellToMarket(foodslot,20);
+            }
 
+
+        }
+
+
+        debug->Info("Reversing route!\n");
         route->Reverse();
     }
 
 }
 
-//Pickup resource from another stellar object.
+//Pickup resource from another stellar body and store in our store.
 void StellarBody::PickupResource(ResourceSlot& order, StellarBody* target){
     if (!colony) return;
 
@@ -480,7 +579,7 @@ void StellarBody::PickupResource(ResourceSlot& order, StellarBody* target){
         return;
     }
 
-    int taken = slot->TakeResource(order.amount);
+    int taken = slot->TakeResourceAmount(order.amount);
     debug->Info("Picked up %i resource\n",taken);
     order.amount = taken;
 

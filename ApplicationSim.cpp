@@ -560,7 +560,8 @@ void ApplicationSim::RenderPopulationOverview(){
         }
         ImGui::Text(" Food Reserves : %i",colony->food_reserves);
         if (colony->population.food_shortage){
-            ImGui::Text(" Food Shortage!");
+            ImGui::SameLine();
+            ImGui::Text(" Shortage!");
         }
 
         for (Structure& structure:colony->structures){
@@ -570,7 +571,7 @@ void ApplicationSim::RenderPopulationOverview(){
             }
         }
 
-        if (ImGui::CollapsingHeader("Offered Contracts",ImGuiTreeNodeFlags_DefaultOpen)){
+        /*if (ImGui::CollapsingHeader("Offered Contracts",ImGuiTreeNodeFlags_DefaultOpen)){
             ImGui::Spacing();
             if (ImGui::BeginTable("Contracts", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders)){
                 int index = 0;
@@ -596,6 +597,44 @@ void ApplicationSim::RenderPopulationOverview(){
                             colony->credits -= price;
                         }
                     }
+                    index++;
+                }
+                ImGui::EndTable();
+            }
+        }*/
+
+        Market* market = colony->market;
+        if (market){
+            //We make a table of the items for sale, the amount and the price.
+            ImGui::Text("Market Buys:");
+            if (ImGui::BeginTable("Market Buys", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders)){
+                int index = 0;
+                for (ResourceSlot& slot:market->buy_slots){
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", ResourceNameByType(slot.resource.type));
+                    //ImGui::Selectable(label, &selected[i], ImGuiSelectableFlags_SpanAllColumns);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%i",slot.amount);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("Some Price");
+                    index++;
+                }
+                ImGui::EndTable();
+            }
+
+            ImGui::Text("Market Sells:");
+            if (ImGui::BeginTable("Market Sells", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_Borders)){
+                int index = 0;
+                for (ResourceSlot& slot:market->sell_slots){
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", ResourceNameByType(slot.resource.type));
+                    //ImGui::Selectable(label, &selected[i], ImGuiSelectableFlags_SpanAllColumns);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%i",slot.amount);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("Some Price");
                     index++;
                 }
                 ImGui::EndTable();
