@@ -26,12 +26,15 @@ public:
     Texture* noise_texture = NULL;
 
     std::vector<StellarBody*>stellarbodies;
-
     std::vector<StellarObject*>stellarobjects;
     std::vector<RouteObject*>routeobjects;
 
     bool create_stellarbodies = false;
     int simulation_interval = 30;
+
+    vec3 target_position = vec3();
+
+    void StoreStellarObject(StellarObject* object);
 
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
     void RenderPopulationOverview();

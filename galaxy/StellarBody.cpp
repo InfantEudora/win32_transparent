@@ -58,6 +58,17 @@ bool ResourceSlot::IncrementResource(int count){
     return true;
 }
 
+int ResourceSlot::TakeResource(int count){
+    if (resource.type == RESOURCE_INVALID){
+        return 0;
+    }
+    if (amount <= count){
+        count = amount;
+    }
+    amount-= count;
+    return count;
+}
+
 bool ResourceSlot::AddResource(Resource& r, int count){
     //Initial placement
     if (resource.type == RESOURCE_INVALID){
@@ -73,16 +84,16 @@ bool AddResourceToSlots(std::vector<ResourceSlot>& resource_slots, ResourceSlot 
     ResourceSlot* same = FindResourceInSlots(resource_slots,slot.resource.type);
     if (same){
         same->AddResource(slot.resource,slot.amount);
-        debug->Info("Stacked resource %s in existing slot\n",ResourceNameByType(same->resource.type));
+        //debug->Info("Stacked resource %s in existing slot\n",ResourceNameByType(same->resource.type));
         return true;
     }
     //Add to slots
     resource_slots.push_back(slot);
-    debug->Info("Added new resouce slot\n");
+    //debug->Info("Added new resouce slot\n");
     return true;
 }
 
-
+//Returns a pointer to the slot or null
 ResourceSlot* FindResourceInSlots(std::vector<ResourceSlot>& resource_slots, int type){
     for (ResourceSlot& slot:resource_slots){
         if (slot.resource.type == type){
@@ -95,19 +106,19 @@ ResourceSlot* FindResourceInSlots(std::vector<ResourceSlot>& resource_slots, int
 //
 bool ConsumeResource(ResourceSlot* slot, int amount){
     if (!slot){
-        debug->Err("Cannot consume NULL resource\n");
+        //debug->Err("Cannot consume NULL resource\n");
         return false;
     }
     if (slot->resource.type == RESOURCE_INVALID){
-        debug->Err("Cannot consume Invalid Resource\n");
+        //debug->Err("Cannot consume Invalid Resource\n");
         return false;
     }
     if (slot->amount > amount){
         slot->amount -= amount;
-        debug->Info("Consumed %i %s resouce\n",amount,resource_types.at(slot->resource.type).c_str());
+        //debug->Info("Consumed %i %s resouce\n",amount,resource_types.at(slot->resource.type).c_str());
         return true;
     }
-    debug->Warn("Consumed all remaining (%i) %s resouces\n",slot->amount,resource_types.at(slot->resource.type).c_str());
+    //debug->Warn("Consumed all remaining (%i) %s resouces\n",slot->amount,resource_types.at(slot->resource.type).c_str());
     slot->amount = 0;
     return false;
 }
@@ -116,7 +127,7 @@ bool ConsumeResource(ResourceSlot* slot, int amount){
 //
 void PopulationProgress(Population& population,std::vector<ResourceSlot>& resource_slots){
     if (population.amount < 1){
-        debug->Warn("No population left!\n");
+        //debug->Warn("No population left!\n");
         return;
     }
 
@@ -127,12 +138,12 @@ void PopulationProgress(Population& population,std::vector<ResourceSlot>& resour
         float consumption = (population.amount / 1000) + 1;
         consumption = roundf(consumption);
         if (!ConsumeResource(foodslot,consumption)){
-            debug->Warn("No more food to consume!\n");
+            //debug->Warn("No more food to consume!\n");
             growth_allowed = false;
             population.food_shortage = true;
         }
     }else{
-        debug->Warn("No food found in any resouce slots!\n");
+        //debug->Warn("No food found in any resouce slots!\n");
         growth_allowed = false;
         population.food_shortage = true;
     }
@@ -141,7 +152,7 @@ void PopulationProgress(Population& population,std::vector<ResourceSlot>& resour
         //Growth rate is allowed to be negative.
         float rate = (population.base_growth - 1);
         int gain = roundf((float)population.amount * rate);
-        debug->Info("Population %i Gained + %i at %.2f%% population growth\n",population.amount,gain,rate*100);
+        //debug->Info("Population %i Gained + %i at %.2f%% population growth\n",population.amount,gain,rate*100);
         if (gain > 0){
             population.amount += gain;
         }else if (population.amount > abs(gain)){
@@ -158,11 +169,11 @@ void PopulationProgress(Population& population,std::vector<ResourceSlot>& resour
     if (population.food_shortage){
         float rate = (population.food_decline - 1);
         int decline = abs(ceilf((float)population.amount * rate));
-        debug->Info("Population %i : %i Died due to food shortage at %.2f%% rate\n",population.amount,decline,rate*100);
+        //debug->Info("Population %i : %i Died due to food shortage at %.2f%% rate\n",population.amount,decline,rate*100);
         if (population.amount > decline){
             population.amount -= decline;
         }else{
-            debug->Warn("All population died\n");
+            //debug->Warn("All population died\n");
             population.amount  = 0;
         }
     }
@@ -175,6 +186,17 @@ void Structure::Progress(std::vector<ResourceSlot>& production_slots,std::vector
     }
 }
 
+//Make one agains base price.
+Contract Colony::GetContract(int resource_type, int amount, int contract_type){
+    Contract contract;
+    contract.target = this;
+    contract.contract_type = contract_type;
+    contract.offer.amount = amount;
+    contract.offer.resource.type = resource_type;
+
+    return contract;
+}
+
 void Contract::UpdateContract(){
     if (delivery_time > 0){
         delivery_time--;
@@ -182,6 +204,16 @@ void Contract::UpdateContract(){
             debug->Info("Contract was voided.\n");
         }
     }
+}
+
+//Does the transaction from/to the specified slot
+void Contract::Fulfill(ResourceSlot* slot){
+
+
+
+
+    AddResourceToSlots(target->resource_slots,offer);
+    fulfilled = true;
 }
 
 //Should be based on some properties of the thing they are on. Planet... star, station asteroid?
@@ -207,7 +239,7 @@ Colony* GenerateNewStarColony(){
     colony->structures.push_back(farm);
 
     Contract contract;
-    contract.resource_slot.AddResource(food,5);
+    contract.offer.AddResource(food,5);
     contract.delivery_time = 10;
     contract.markup = 1.1;
     colony->contracts.push_back(contract);
@@ -278,7 +310,6 @@ void StellarObject::UpdatePosition(){
             stellarbody->coordinate = vec2(p.x,p.z);
         }
         stellarbody->f_updatevisual = false;
-
     }
 }
 
@@ -291,6 +322,12 @@ float Route::GetDistance(){
     if ((!start) || (!end))
         return 0;
     return (end->coordinate - start->coordinate).length();
+}
+
+void Route::Reverse(){
+    StellarBody* t = end;
+    end = start;
+    start = t;
 }
 
 //Creates a route from a to b. Adding sufficient path pieces to cover the path.
@@ -361,13 +398,16 @@ void StellarObject::PlaceOnRoute(RouteObject* object_route){
 }
 
 void StellarBody::PlaceOnRoute(Route* _route){
-    route = _route;
+    route = new Route(_route);
     UpdateRouteInfo();
 }
 
 //If this is a ship, with a route.. Follow the route
+//This function really doesnt do anything.
 void StellarBody::UpdateRouteInfo(){
     if (!route) return;
+    if (!route->start) return;
+    if (!route->end) return;
 
     //It'd be nice to find the closest point on the route
     //TODO: Reuse the bezier?
@@ -392,6 +432,7 @@ void StellarBody::UpdateRouteInfo(){
 //Just going to move to the endpoint at some speed
 void StellarBody::FollowRoute(){
     if (!route) return;
+    if (!route->end) return;
 
     vec2 end = route->end->coordinate;          // Target
     vec2 dir = (end-coordinate).normalize();    // Heading
@@ -399,4 +440,61 @@ void StellarBody::FollowRoute(){
     vec2 d = 0.01f * dir; //Some speed increment
     coordinate += d;
     f_updatevisual = true;
+
+    float dist = route->end->coordinate.distance(coordinate);
+    if (dist < 0.1f){
+        //Maybe create a buy order or something.
+        ResourceSlot order;
+        order.resource.type = RESOURCE_FOOD;
+        order.amount = 20;
+
+        PickupResource(order,route->end);
+
+        Contract c = route->end->colony->GetContract(RESOURCE_FOOD, 20, BUY_CONTRACT);
+        //c.Fulfill();
+
+       // Contract c;
+        c.offer.resource.type = RESOURCE_FOOD;
+        c.offer.amount = 20;
+
+        route->Reverse();
+    }
+
+}
+
+//Pickup resource from another stellar object.
+void StellarBody::PickupResource(ResourceSlot& order, StellarBody* target){
+    if (!colony) return;
+
+    //First find the resource in the target colony.
+    ResourceSlot* slot = FindResourceInSlots(target->colony->resource_slots,order.resource.type);
+    if (!slot){
+        debug->Err("Failed to pickup resource.\n");
+        return;
+    }
+
+    int taken = slot->TakeResource(order.amount);
+    debug->Info("Picked up %i resource\n",taken);
+    order.amount = taken;
+
+    AddResourceToSlots(colony->resource_slots,order);
+}
+
+StellarBody* StellarBody::FindClosest(std::vector<StellarBody*>&list, int target_type){
+    float mindist = 9999;
+    StellarBody* closest = NULL;
+    for (StellarBody* body:list){
+        if (body == this){
+            continue;
+        }
+        if (body->type != target_type){
+            continue;
+        }
+        float dist = coordinate.distance(body->coordinate);
+        if (dist < mindist){
+            closest = body;
+            mindist = dist;
+        }
+    }
+    return closest;
 }

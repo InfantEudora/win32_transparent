@@ -39,6 +39,7 @@ struct ResourceSlot{
     int amount;
     bool AddResource(Resource& r, int amount);
     bool IncrementResource(int count);
+    int TakeResource(int amount);
 };
 
 int             GetTotalPopulation(Population& population);
@@ -60,14 +61,33 @@ class Structure{
     void Progress(std::vector<ResourceSlot>& production_slots,std::vector<ResourceSlot>& consumption_slots);
 };
 
+typedef enum {
+    VOID_CONTRACT = -1,
+    BUY_CONTRACT = 0,
+    SELL_CONTRACT = 1
+}contract_type_id;
+
+class Colony;
 class Contract{
 public:
-    ResourceSlot resource_slot;
+    ResourceSlot offer;
     int delivery_time = 1;
-    bool buy = true; //If not, it's a sell contract.
+    int contract_type = VOID_CONTRACT;
     float markup = 1.0; //Price compared to base price.
     bool fulfilled = false;
+    //Target market where the contract should be fulfilled.
+    Colony* target = NULL;
+
     void UpdateContract();
+    void Fulfill(ResourceSlot* source);
+};
+
+
+class Market;
+class Market{
+    public:
+
+
 };
 
 //Colony
@@ -87,10 +107,13 @@ class Colony{
     //Statistics?
     int food_consumed = 0;
     int food_gained = 0;
+
+    Contract GetContract(int resource_type, int amount, int contract_type);
 };
 
-//Stellar bodies can be a sun, or a planet, or a space station.
 
+
+//Stellar bodies can be a sun, or a planet, or a space station.
 typedef enum {
     BODY_INVALID = -1,
     BODY_STAR = 0,
@@ -105,9 +128,14 @@ class Route;
 class Route{
     public:
     Route(){};
+    Route(Route* route){
+        start = route->start;
+        end = route->end;
+    };
     ~Route(){};
 
     void Setup(StellarBody* start, StellarBody* end);
+    void Reverse();
 
     StellarBody* start = NULL;
     StellarBody* end = NULL;
@@ -139,8 +167,8 @@ public:
     void UpdateRouteInfo();
     void PlaceOnRoute(Route* route);
     void FollowRoute();
-
-
+    void PickupResource(ResourceSlot& order, StellarBody* target);
+    StellarBody* FindClosest(std::vector<StellarBody*>&list, int type); //Find closest body to this one from a list.
 };
 
 class RouteObject;
@@ -172,3 +200,17 @@ public:
 };
 
 #endif
+
+/*
+    Colonies generate and consume food.
+    When there is overproduction, the food supply increases and above a certain threshold
+    these should be placed on the open market for an increasingly cheap price.
+
+    The ships need to have some incentive to go do something, which is transport food mainly.
+    - [ ] The food consumption rate should have factions by taking a single item from supply, and tracking it's fraction.
+
+    Objectives:
+    - [ ] Buy item at Market A and transport to Market B.
+    - [ ] Goto Market A and stay docked.
+    - [ ] Transport People from A to B. (Which may as well be items...)
+*/

@@ -12,6 +12,15 @@ ApplicationSim::ApplicationSim():Application(){
     debug->Info("Created new application.\n");
 };
 
+void ApplicationSim::StoreStellarObject(StellarObject* object){
+    if (!object->stellarbody){
+        debug->Warn("Stellar Object has no body!\n");
+        return;
+    }
+    stellarobjects.push_back(object);
+    stellarbodies.push_back(object->stellarbody);
+}
+
 //Function for rendering the frame to a window
 DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     ApplicationSim* app = static_cast<ApplicationSim*>(lpParameter);
@@ -81,32 +90,34 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
 
     //We make two stars
     StellarObject* stara = StellarObject::CreateNewStar(app->assetmanager);
-    scene->AddObject(stara);
-    stara->SetPosition(vec3(vec3(-3,0,3)));
+    stara->SetPosition(vec3(-3,0,3));
     stara->UpdatePosition();
     stara->name = "Star A";
-    app->stellarobjects.push_back(stara);
+    scene->AddObject(stara);
+    app->StoreStellarObject(stara);
 
     StellarObject* starb = StellarObject::CreateNewStar(app->assetmanager);
-    starb->SetPosition(vec3(vec3(7,0,7)));
+    starb->SetPosition(vec3(7,0,7));
     starb->UpdatePosition();
-    app->stellarobjects.push_back(starb);
     starb->name = "Star B";
+    starb->stellarbody->colony->structures[0].productionrate_slots[0].amount = 5;
+    starb->stellarbody->colony->population.base_growth = 1.001;
     scene->AddObject(starb);
+    app->StoreStellarObject(starb);
 
     StellarObject* ship1 = StellarObject::CreateNewShip(app->assetmanager);
-    ship1->SetPosition(vec3(vec3(2,0,2)));
+    ship1->SetPosition(vec3(2,0,2));
     ship1->UpdatePosition();
-    app->stellarobjects.push_back(ship1);
     ship1->name = "Ship 1";
     scene->AddObject(ship1);
+    app->StoreStellarObject(ship1);
 
     StellarObject* ship2 = StellarObject::CreateNewShip(app->assetmanager);
-    ship2->SetPosition(vec3(vec3(-8,0,9)));
+    ship2->SetPosition(vec3(-8,0,9));
     ship2->UpdatePosition();
-    app->stellarobjects.push_back(ship2);
     ship2->name = "Ship 2";
     scene->AddObject(ship2);
+    app->StoreStellarObject(ship2);
 
     RouteObject* route = new RouteObject();
     route->SetupNewRoute(stara,starb,app->assetmanager);
@@ -241,6 +252,18 @@ void ApplicationSim::RunLogic(){
         //Camera movement in the xz plane.
         vec3 delta = vec3((float)dx / 10.0f,0,(float)dy/10.0f);
         camera->MoveBy(delta);
+    }
+
+    if ((!ImGui::GetIO().WantCaptureMouse) && (input->WasKeyReleased(INPUT_CLICK_LEFT))){
+        //Store the clicked position on the plane.
+        plane p; p.normal = vec3(0,1,0);
+        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+        ray r = main_scene->camera->GetPixelRay(px);
+        vec3 at = vec3();
+        bool intersect = r.intersects_plane(p,at);
+        if (intersect){
+            target_position = at;
+        }
     }
 
     StellarObject* selected_stellarobject = dynamic_cast<StellarObject*>(selected_object);
@@ -509,15 +532,16 @@ void ApplicationSim::RenderPopulationOverview(){
         ImGui::Text("No Colony Selected");
     }else{
         ImGui::Text("Colony - %s",colony->name.c_str());
-        ImGui::Text(" Coordinate : %.2f, %.2f",body->coordinate.x,body->coordinate.y);
-        ImGui::Text(" Credits    : %i",colony->credits);
-        ImGui::Text(" Population : %i",colony->population.amount);
+        ImGui::Text(" Coordinate  : %.2f, %.2f",body->coordinate.x,body->coordinate.y);
+        ImGui::Text(" Credits     : %i",colony->credits);
+        ImGui::Text(" Population  : %i",colony->population.amount);
+        ImGui::Text(" Growth Rate : %.1f%%",(colony->population.base_growth - 1.0f)*100.0f);
 
         ResourceSlot* foodslot = FindResourceInSlots(colony->resource_slots,RESOURCE_FOOD);
         if (foodslot){
-            ImGui::Text(" Food: %i",foodslot->amount);
+            ImGui::Text(" Food Stock  : %i",foodslot->amount);
         }else{
-            ImGui::Text(" No food!");
+            ImGui::Text(" Food Stock  : No food!");
         }
 
         for (Structure& structure:colony->structures){
@@ -538,17 +562,18 @@ void ApplicationSim::RenderPopulationOverview(){
                     //ImGui::Selectable(label, &selected[i], ImGuiSelectableFlags_SpanAllColumns);
                     ImGui::TableNextColumn();
 
-                    std::string name = contract.buy ? "Buy ":"Sell ";
-                    name += ResourceNameByType(contract.resource_slot.resource.type);
+                    std::string name = contract.contract_type == BUY_CONTRACT ? "BUY ":"SELL ";
+                    name += ResourceNameByType(contract.offer.resource.type);
                     ImGui::Text(name.c_str());
                     ImGui::TableNextColumn();
-                    ImGui::Text("%i",contract.resource_slot.amount);
+                    ImGui::Text("%i",contract.offer.amount);
                     ImGui::TableNextColumn();
                     if (!contract.fulfilled){
                         if (ImGui::SmallButton("Fulfill")){
+
                             contract.fulfilled = true;
-                            AddResourceToSlots(colony->resource_slots,contract.resource_slot);
-                            int price = contract.resource_slot.amount * contract.markup * ResourceBasePriceByType(contract.resource_slot.resource.type);
+                            AddResourceToSlots(colony->resource_slots,contract.offer);
+                            int price = contract.offer.amount * contract.markup * ResourceBasePriceByType(contract.offer.resource.type);
                             debug->Info("Fulfilled contract for total price: %i\n",price);
                             colony->credits -= price;
                         }
@@ -562,12 +587,47 @@ void ApplicationSim::RenderPopulationOverview(){
         if (ImGui::Button("Add Food to Colony")){
             foodslot->IncrementResource(20);
         };
+
+        if (body->type == BODY_SHIP){
+            if (ImGui::Button("Re-route to Nearest Star")){
+                //We cancel the current route.
+                body->route = new Route();
+                StellarBody* closest = body->FindClosest(stellarbodies,BODY_STAR);
+                if (closest){
+                    body->route->Setup(NULL,closest);
+                    debug->Info("Routing to nearest Star at %.2f,%.2f\n",closest->coordinate.x,closest->coordinate.y);
+                }
+
+
+            };
+        }
     }
 
-    vec2 at;
-    if (ImGui::Button("Create Star")){
+    vec2 at = vec2(target_position.x,target_position.z);
 
+    ImGui::Text("Target Location = %.2f, %.2f",at.x,at.y);
+    if (ImGui::Button("Create Star")){
+        StellarObject* star = StellarObject::CreateNewStar(assetmanager);
+        main_scene->AddObject(star);
+        star->SetPosition(target_position);
+        star->UpdatePosition();
+        star->name = "New Star " + std::to_string(star->GetID());
+        StoreStellarObject(star);
     };
+    ImGui::SameLine();
+    if (ImGui::Button("Create Ship")){
+        StellarObject* ship = StellarObject::CreateNewShip(assetmanager);
+        ship->stellarbody->colony->population.amount = rrand.GetInt(10,15);
+        ship->stellarbody->colony->population.base_growth = 1.0;
+        ship->stellarbody->colony->credits = rrand.GetInt(500,1000);
+
+        main_scene->AddObject(ship);
+        ship->SetPosition(target_position);
+        ship->UpdatePosition();
+        ship->name = "New Ship " + std::to_string(ship->GetID());
+        StoreStellarObject(ship);
+    };
+
 
     ImGui::Text("Hold M to move selected object");
 
