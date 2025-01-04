@@ -272,6 +272,21 @@ void ApplicationSim::RunLogic(){
         selected_stellarobject->MoveBy(delta);
     }
 
+    if (controlling_ship && (!ImGui::GetIO().WantCaptureMouse)){
+        StellarObject* ship = controlling_ship;
+
+        //Todo: Prevent auto-route following.
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            ship->stellarbody->MoveForward(0.025f);
+        }
+        if (input->IsKeyDown(INPUT_TURN_LEFT)){
+            ship->stellarbody->Turn(-0.025f);
+        }
+        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+            ship->stellarbody->Turn(0.025f);
+        }
+    }
+
     //Update each tick
     for (StellarObject* stellarobject:stellarobjects){
         if (stellarobject->stellarbody && stellarobject->stellarbody->colony){
@@ -295,7 +310,8 @@ void ApplicationSim::RunLogic(){
                 for (Structure& structure:colony->structures){
                     structure.Progress(colony->resource_slots,colony->resource_slots);
                 }
-                PopulationProgress(colony->population,colony->resource_slots);
+                //PopulationProgress(colony->population,colony->resource_slots);
+                colony->Progress();
             }
         }
     }
@@ -511,7 +527,6 @@ void ApplicationSim::RenderNoiseTestWindow(){
     }
 }
 
-
 void ApplicationSim::RenderPopulationOverview(){
     ImGui::Begin("Population and Stuff");
     ImGui::DragInt("Simulation Interval",&simulation_interval,1,1,360);
@@ -543,6 +558,10 @@ void ApplicationSim::RenderPopulationOverview(){
         }else{
             ImGui::Text(" Food Stock  : No food!");
         }
+        ImGui::Text(" Food Reserves : %i",colony->food_reserves);
+        if (colony->population.food_shortage){
+            ImGui::Text(" Food Shortage!");
+        }
 
         for (Structure& structure:colony->structures){
             ImGui::Text(" Structure: %s",structure.name.c_str());
@@ -570,7 +589,6 @@ void ApplicationSim::RenderPopulationOverview(){
                     ImGui::TableNextColumn();
                     if (!contract.fulfilled){
                         if (ImGui::SmallButton("Fulfill")){
-
                             contract.fulfilled = true;
                             AddResourceToSlots(colony->resource_slots,contract.offer);
                             int price = contract.offer.amount * contract.markup * ResourceBasePriceByType(contract.offer.resource.type);
@@ -597,9 +615,11 @@ void ApplicationSim::RenderPopulationOverview(){
                     body->route->Setup(NULL,closest);
                     debug->Info("Routing to nearest Star at %.2f,%.2f\n",closest->coordinate.x,closest->coordinate.y);
                 }
-
-
             };
+            ImGui::SameLine();
+            if (ImGui::Button("Take Control")){
+                SetControllingShip(body);
+            }
         }
     }
 
@@ -628,9 +648,7 @@ void ApplicationSim::RenderPopulationOverview(){
         StoreStellarObject(ship);
     };
 
-
     ImGui::Text("Hold M to move selected object");
-
     ImGui::End();
 }
 
@@ -639,6 +657,17 @@ void ApplicationSim::UpdateUI(){
     RenderNoiseTestWindow();
     RenderPopulationOverview();
     RenderGenericObjectUI();
-
     ImGui::ShowDemoWindow();
+}
+
+void ApplicationSim::SetControllingShip(StellarBody* body){
+    //First, we find the StellarObject that has this
+    StellarObject* shipobject = NULL;
+    for (StellarObject* object:stellarobjects){
+        if (object->stellarbody == body){
+            shipobject = object;
+            break;
+        }
+    }
+    controlling_ship = shipobject;
 }

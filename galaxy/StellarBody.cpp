@@ -103,53 +103,56 @@ ResourceSlot* FindResourceInSlots(std::vector<ResourceSlot>& resource_slots, int
     return NULL;
 }
 
-//
-bool ConsumeResource(ResourceSlot* slot, int amount){
-    if (!slot){
-        //debug->Err("Cannot consume NULL resource\n");
-        return false;
-    }
-    if (slot->resource.type == RESOURCE_INVALID){
-        //debug->Err("Cannot consume Invalid Resource\n");
-        return false;
-    }
-    if (slot->amount > amount){
-        slot->amount -= amount;
-        //debug->Info("Consumed %i %s resouce\n",amount,resource_types.at(slot->resource.type).c_str());
-        return true;
-    }
-    //debug->Warn("Consumed all remaining (%i) %s resouces\n",slot->amount,resource_types.at(slot->resource.type).c_str());
-    slot->amount = 0;
-    return false;
-}
 
-// Function that will consume resources and grow population. Each tick should be a month or so.
-//
-void PopulationProgress(Population& population,std::vector<ResourceSlot>& resource_slots){
+
+void Colony::Progress(){
     if (population.amount < 1){
         //debug->Warn("No population left!\n");
         return;
     }
 
-    bool growth_allowed = true;
-
-    ResourceSlot* foodslot = FindResourceInSlots(resource_slots,RESOURCE_FOOD);
-    if (foodslot){
-        float consumption = (population.amount / 1000) + 1;
-        consumption = roundf(consumption);
-        if (!ConsumeResource(foodslot,consumption)){
-            //debug->Warn("No more food to consume!\n");
-            growth_allowed = false;
-            population.food_shortage = true;
-        }
+    int unfed_people = population.amount;
+    int shortage = 0;
+    int foodfromsupplies = 0;
+    int foodreserve_target = population.amount + 1000;
+    if (food_reserves > unfed_people){
+        debug->Info("Population of %i consumed %i food from reserves\n",population.amount,unfed_people);
+        //We just consume from the reserves:
+        food_reserves -= unfed_people;
+        unfed_people = 0;
     }else{
-        //debug->Warn("No food found in any resouce slots!\n");
-        growth_allowed = false;
-        population.food_shortage = true;
+        debug->Info("Population of %i consumed %i remaining food reserves\n",population.amount,food_reserves);
+        //We consume all reserves, and leave some consumption remaining.
+        unfed_people -= food_reserves;
+        food_reserves = 0;
     }
 
-    if (growth_allowed){
+    //Consumption remaining is the amount of unfed people.
+    int foodpackets = (foodreserve_target + unfed_people - food_reserves) / 1000;
+    debug->Info("Open %i food packets to replenish reserves.\n",foodpackets);
+    ResourceSlot* foodslot = FindResourceInSlots(resource_slots,RESOURCE_FOOD);
+    if (foodslot){
+        if (foodpackets > 0){
+            int taken = foodslot->TakeResource(foodpackets);
+            food_reserves += 1000 * taken;
+            debug->Info(" Opened %i/%i food packets to replenish reserves.\n",taken,foodpackets);
+        }
+    }
+
+    if (food_reserves > unfed_people){
+        //Remaining pop consumes from reserves.
+        food_reserves -= unfed_people;
+        unfed_people = 0;
+    }else{
+        //We consume all reserves, and leave some consumption remaining.
+        unfed_people -= food_reserves;
+        food_reserves = 0;
+    }
+
+    //Population is allowed to grow
+    if (unfed_people == 0){
         //Growth rate is allowed to be negative.
+        population.food_shortage = false;
         float rate = (population.base_growth - 1);
         int gain = roundf((float)population.amount * rate);
         //debug->Info("Population %i Gained + %i at %.2f%% population growth\n",population.amount,gain,rate*100);
@@ -162,14 +165,11 @@ void PopulationProgress(Population& population,std::vector<ResourceSlot>& resour
             debug->Warn("All population died\n");
             population.amount  = 0;
         }
-        return;
-    }
-
-    //Decrement
-    if (population.food_shortage){
-        float rate = (population.food_decline - 1);
-        int decline = abs(ceilf((float)population.amount * rate));
-        //debug->Info("Population %i : %i Died due to food shortage at %.2f%% rate\n",population.amount,decline,rate*100);
+    }else{
+        //Decrement
+        population.food_shortage = true;
+        int decline = (unfed_people * population.food_decline) + 1; //+ One because someone always nibbles on someone's leg.
+        debug->Warn("Population %i : %i was left unfed and %i died.\n",population.amount,unfed_people,decline);
         if (population.amount > decline){
             population.amount -= decline;
         }else{
@@ -178,6 +178,7 @@ void PopulationProgress(Population& population,std::vector<ResourceSlot>& resour
         }
     }
 }
+
 
 void Structure::Progress(std::vector<ResourceSlot>& production_slots,std::vector<ResourceSlot>& consumption_slots){
     //Production
@@ -208,10 +209,6 @@ void Contract::UpdateContract(){
 
 //Does the transaction from/to the specified slot
 void Contract::Fulfill(ResourceSlot* slot){
-
-
-
-
     AddResourceToSlots(target->resource_slots,offer);
     fulfilled = true;
 }
@@ -429,6 +426,18 @@ void StellarBody::UpdateRouteInfo(){
     }
 }
 
+void StellarBody::MoveForward(float delta){
+    vec2 d = delta * heading;
+    coordinate += d;
+    f_updatevisual = true;
+}
+
+void StellarBody::Turn(float delta){
+    heading.rotate(delta);
+    f_updatevisual = true;
+}
+
+
 //Just going to move to the endpoint at some speed
 void StellarBody::FollowRoute(){
     if (!route) return;
@@ -437,9 +446,7 @@ void StellarBody::FollowRoute(){
     vec2 end = route->end->coordinate;          // Target
     vec2 dir = (end-coordinate).normalize();    // Heading
     heading = dir;
-    vec2 d = 0.01f * dir; //Some speed increment
-    coordinate += d;
-    f_updatevisual = true;
+    MoveForward(0.01f);
 
     float dist = route->end->coordinate.distance(coordinate);
     if (dist < 0.1f){

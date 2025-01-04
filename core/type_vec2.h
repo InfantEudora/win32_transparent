@@ -30,6 +30,7 @@ struct vec2{
     vec2&   floor();
     vec2    lerp(const vec2& b, float k);                   // Linear interpolation by factor k from this to b
     float   angle();                                        // Returns the direction in -PI ... PI interval
+    vec2&   rotate(float theta);                            // Rotate by theta radians
 
     vec2   	operator-() const;                              // unary operator (negate)
     vec2   	operator-(const vec2& rhs) const;               // subtract rhs
@@ -116,6 +117,14 @@ inline vec2 vec2::lerp(const vec2& b, float k){
 
 inline float vec2::angle(){
     return atan2(y,x);
+}
+
+inline vec2& vec2::rotate(float theta){
+    float xt = x*cosf(theta) - y*sinf(theta);
+    float yt = x*sinf(theta) + y*cosf(theta);
+    x = xt;
+    y = yt;
+    return *this;
 }
 
 #endif

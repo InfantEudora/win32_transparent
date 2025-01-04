@@ -34,7 +34,10 @@ public:
 
     vec3 target_position = vec3();
 
+    StellarObject* controlling_ship = NULL; //The ship that we control.
+
     void StoreStellarObject(StellarObject* object);
+    void SetControllingShip(StellarBody* body);
 
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
     void RenderPopulationOverview();

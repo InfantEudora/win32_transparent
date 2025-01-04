@@ -14,7 +14,7 @@ struct Population{
     //Modifiers
     bool food_shortage = false;
     bool water_shortage = false;
-    float food_decline = 0.95;
+    float food_decline = 0.75;
     float water_decline = 0.9;
 };
 
@@ -44,7 +44,6 @@ struct ResourceSlot{
 
 int             GetTotalPopulation(Population& population);
 int             GetTotalResources(std::vector<ResourceSlot>& resource_slots, int type);
-void            PopulationProgress(Population& population,std::vector<ResourceSlot>& resource_slots);
 
 bool            AddResourceToSlots(std::vector<ResourceSlot>& resource_slots, ResourceSlot slot);
 ResourceSlot*   FindResourceInSlots(std::vector<ResourceSlot>& resource_slots, int id);
@@ -104,10 +103,12 @@ class Colony{
     //we need to request that it get delivered via a contract.
     std::vector<Contract>contracts;
 
-    //Statistics?
+    //Statistics/settings?
+    int food_reserves = 1000;  //Amount of food packets that are in reserve to feed the population
     int food_consumed = 0;
     int food_gained = 0;
 
+    void Progress();
     Contract GetContract(int resource_type, int amount, int contract_type);
 };
 
@@ -156,13 +157,16 @@ public:
     stellarbody_type type;
 
     vec2 coordinate;
-    vec2 heading = vec2();
+    vec2 heading = vec2(0,1);
     float likelyhood = 0;   // How big was the chance it spawned?
 
     Colony* colony = NULL;  // Some may have a single colony.
     Route* route = NULL;    // A route it should be able to follow.
 
     bool f_updatevisual = false;    // When data is modified and visuals need updating.
+
+    void MoveForward(float delta);
+    void Turn(float delta);
 
     void UpdateRouteInfo();
     void PlaceOnRoute(Route* route);

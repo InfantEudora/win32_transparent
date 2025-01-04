@@ -539,7 +539,30 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
                     }
                 }
             }
-            break;
+        break;
+        case WM_SYSKEYDOWN:{
+            if (wParam == VK_RETURN && (lParam & 0x60000000) == 0x20000000){
+                // Implements the classic ALT+ENTER fullscreen toggle
+                if (wnd->f_fullscreen){
+                    wnd->f_istogglingfullscreen = true;
+                    SetWindowLongPtr(hWnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+                    wnd->f_istogglingfullscreen = false;
+                    SetWindowLongPtr(hWnd, GWL_EXSTYLE, 0);
+                    SetWindowPos(hWnd, HWND_TOP, 0, 0, wnd->width_windowed, wnd->height_windowed, SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                    wnd->f_fullscreen = false;
+                    ShowWindow(hWnd, SW_SHOWNORMAL);
+                }else{
+                    wnd->f_istogglingfullscreen = true;
+                    SetWindowLongPtr(hWnd, GWL_EXSTYLE, WS_EX_TOPMOST);
+                    SetWindowLongPtr(hWnd, GWL_STYLE, WS_POPUP);
+                    SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
+                    wnd->f_istogglingfullscreen = false;
+                    wnd->f_fullscreen = true;
+                    ShowWindow(hWnd, SW_SHOWMAXIMIZED);
+                }
+            }
+        }
         break;
         default:
             //debug->Info("Window Message %lu\n",msg);
