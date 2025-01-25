@@ -170,8 +170,6 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     }
 
     while (app->main_window->f_should_quit == false){
-
-
         //Tell ImGui to start a new frame
         app->main_window->ImGuiNewFrame();
 
@@ -226,7 +224,6 @@ void Application::RunLogic(){
     InputController* input = main_scene->inputcontroller;
 }
 
-
 void Application::UpdateUICameraControls(Camera* camera,int id){
     if (!camera){
         return;
@@ -264,6 +261,22 @@ void Application::UpdateUICameraControls(Camera* camera,int id){
         ImGui::DragFloat3("Up Vector", (float*)&up, 0.01f, -1.0f, 1.0f);
         ImGui::DragFloat3("Left Vector", (float*)&left, 0.01f, -1.0f, 1.0f);
         ImGui::EndDisabled();
+        if (camera->type == CAMERA_TYPE_PERSPECTIVE){
+            if (ImGui::DragFloat("FOV", (float*)&camera->viewport.fov, 0.1f, 0.0f, 180.0f)){
+                camera->CalculateLookatMatrix();
+            }
+            if (ImGui::Button("Swith to Orthographic")){
+                camera->SetType(CAMERA_TYPE_ORTHOGRAPHIC);
+            }
+        }else{
+            if (ImGui::DragFloat("Zoom", (float*)&camera->viewport.zoom, 0.1f, 0.0f, 100.0f)){
+                camera->CalculateLookatMatrix();
+            }
+            if (ImGui::Button("Swith to Perspective")){
+                camera->SetType(CAMERA_TYPE_PERSPECTIVE);
+            }
+        }
+
         if (ImGui::Button("Switch Camera")){
             main_scene->camera->Show();
             main_scene->camera = camera;

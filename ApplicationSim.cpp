@@ -2,11 +2,13 @@
 #include "OBJLoader.h"
 #include <stdlib.h>
 #include <string>
+#include "imgooey.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
 
 #define INPUT_M INPUT_LAST+1
+#define INPUT_R INPUT_LAST+2
 
 ApplicationSim::ApplicationSim():Application(){
     debug->Info("Created new application.\n");
@@ -19,6 +21,27 @@ void ApplicationSim::StoreStellarObject(StellarObject* object){
     }
     stellarobjects.push_back(object);
     stellarbodies.push_back(object->stellarbody);
+}
+
+std::vector<Component>components;
+void InitComponents(){
+    Component cpu1;
+    cpu1.name = "CPU1";
+    cpu1.AddState("Operational",0,ImGooyStatusFlag_Ok);
+
+    Component cpu2;
+    cpu2.name = "CPU2";
+    cpu2.AddState("Operational",0,ImGooyStatusFlag_Ok);
+
+    Component cpu3;
+    cpu3.name = "CPU3";
+    cpu3.AddState("Offline",0,ImGooyStatusFlag_Fail);
+    cpu3.AddState("Conflict",10,ImGooyStatusFlag_Fail);
+    cpu3.AddState("Error",10,ImGooyStatusFlag_Fail);
+
+    components.push_back(cpu1);
+    components.push_back(cpu2);
+    components.push_back(cpu3);
 }
 
 //Function for rendering the frame to a window
@@ -54,6 +77,7 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     scene->inputcontroller = app->main_window->inputcontroller;
 
     scene->inputcontroller->AddKeyMap('M',INPUT_M);
+    scene->inputcontroller->AddKeyMap('R',INPUT_R);
 
     app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
     scene->shader = app->default_shader;
@@ -130,6 +154,8 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     app->assetmanager->ListAssets();
     //Before starting anything
     scene->UpdatePhysics();
+
+    InitComponents();
 
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
@@ -254,6 +280,19 @@ void ApplicationSim::RunLogic(){
         camera->MoveBy(delta);
     }
 
+    StellarObject* selected_stellarobject = dynamic_cast<StellarObject*>(selected_object);
+    if (input->IsKeyDown(INPUT_M) && selected_stellarobject){
+        vec3 delta = vec3((float)-dx / 20.0f,0,(float)-dy/20.0f);
+        selected_stellarobject->MoveBy(delta);
+        selected_stellarobject->UpdatePosition();
+    }
+    if (input->WasKeyReleased(INPUT_R) && selected_stellarobject && target_beacon){
+        RouteObject* route = new RouteObject();
+        route->SetupNewRoute(selected_stellarobject,target_beacon,assetmanager);
+        routeobjects.push_back(route);
+        main_scene->AddObject(route);
+    }
+
     if ((!ImGui::GetIO().WantCaptureMouse) && (input->WasKeyReleased(INPUT_CLICK_LEFT))){
         //Store the clicked position on the plane.
         plane p; p.normal = vec3(0,1,0);
@@ -263,13 +302,18 @@ void ApplicationSim::RunLogic(){
         bool intersect = r.intersects_plane(p,at);
         if (intersect){
             target_position = at;
+            if (!selected_stellarobject){
+                if (!target_beacon){
+                    target_beacon = StellarObject::CreateNewBeacon(assetmanager);
+                    target_beacon->name = "Target Beacon";
+                    main_scene->AddObject(target_beacon);
+                }
+                if (target_beacon){
+                    target_beacon->SetPosition(target_position);
+                    target_beacon->UpdatePosition();
+                }
+            }
         }
-    }
-
-    StellarObject* selected_stellarobject = dynamic_cast<StellarObject*>(selected_object);
-    if (input->IsKeyDown(INPUT_M) && selected_stellarobject){
-        vec3 delta = vec3((float)-dx / 20.0f,0,(float)-dy/20.0f);
-        selected_stellarobject->MoveBy(delta);
     }
 
     if (controlling_ship && (!ImGui::GetIO().WantCaptureMouse)){
@@ -301,7 +345,8 @@ void ApplicationSim::RunLogic(){
         routeobject->UpdateRoute();
     }
 
-    popticks++;
+    //popticks++;
+    //TODO: Popticks to pause
     if (popticks > simulation_interval){
         popticks = 0;
         for (StellarObject* stellarobject:stellarobjects){
@@ -688,15 +733,169 @@ void ApplicationSim::RenderPopulationOverview(){
     };
 
     ImGui::Text("Hold M to move selected object");
+    ImGui::Text("Press R to create a route from current object to target");
     ImGui::End();
 }
 
+
+/*
+    The Idea being that making a UI takes forever, and ImGui is soo good...
+    That maybe it's best to adapt it...
+*/
+void ApplicationSim::RenderSuperCustomUI(){
+
+    //First stype we want is a button, with a half corner at left missing.
+    ImGuiWindowFlags window_flags =  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
+    ImGooey::Begin("Popup UI Test Thing",NULL,window_flags);
+    ImGui::Text("IM_DRAWLIST_ARCFAST_TABLE_SIZE: %lu",IM_DRAWLIST_ARCFAST_TABLE_SIZE);
+
+    ImGui::Button("YES");
+    ImGui::SameLine();
+    ImGooey::CustomButton("NO ABORT",ImVec2(0,0),ImGooyItemFlag_Corner);
+
+    ImGui::Spacing();
+
+    ImVec2 btnsz = ImVec2(100,0);
+
+
+    ImGooey::CustomButton("SENSORS",btnsz,ImGooyItemFlag_Greyed);
+    ImGooey::CustomButton("SHIELDS",btnsz,ImGooyItemFlag_Greyed);
+    ImGooey::CustomButton("ENGINES",btnsz,ImGooyItemFlag_Greyed);
+
+    ImGooey::CustomButton("AUXILIARY",btnsz);
+    ImGooey::StatusLabel("DEPLETED",btnsz,ImGooyStatusFlag_Ok);
+
+    ImGooey::CustomButton("ANYTHING",btnsz,ImGooyItemFlag_Greyed);
+
+
+
+
+    ImGooey::CustomButton("CPU1",btnsz,ImGooyItemFlag_Greyed);
+    ImGooey::CustomButton("CPU2",btnsz,ImGooyItemFlag_Greyed|ImGooyItemFlag_Fail);
+    ImGooey::CustomButton("CPU2",btnsz,ImGooyItemFlag_Fail);
+    ImGui::End();
+
+
+    ImGooey::Begin("CPU PRIMARY DECISION TREE",NULL,window_flags);
+
+    static int selected_index = -1;
+    //Get current selected item if any
+    Component* prev_component = NULL;
+    if ((selected_index >= 0) && (selected_index < components.size())){
+        prev_component = &components.at(selected_index);
+    }
+
+
+    if (ImGui::IsKeyReleased(ImGuiKey_UpArrow)){
+        selected_index--;
+        if (prev_component){
+            prev_component->expanded = false;
+
+        }
+    }
+    if (ImGui::IsKeyReleased(ImGuiKey_DownArrow)){
+        selected_index++;
+        if (prev_component){
+            prev_component->expanded = false;
+
+        }
+    }
+    if (selected_index < -1){
+        selected_index = -1;
+    }
+
+    Component* current_component = NULL;
+    if ((selected_index >= 0) && (selected_index < components.size())){
+        current_component = &components.at(selected_index);
+    }
+
+    if (current_component != prev_component){
+        debug->Info("Selected new current_component\n");
+    }
+
+
+    if (ImGui::IsKeyReleased(ImGuiKey_RightArrow)){
+        if (current_component){
+            current_component->expanded = true;
+        }
+        if (prev_component && prev_component != current_component){
+            prev_component->expanded = false;
+        }
+    }
+    if (ImGui::IsKeyReleased(ImGuiKey_LeftArrow)){
+        if (current_component){
+            current_component->expanded = false;
+        }
+    }
+
+    ImGui::Text("Selected Index: %i",selected_index);
+
+    ImGui::BeginGroup();
+    {
+        int index = 0;
+        for (Component component:components){
+            ImGooyItemFlags flags = ImGooyItemFlag_None;
+
+            ComponentState* s = component.GetMainState();
+            if (s && (s->status == ImGooyStatusFlag_Fail)){
+                flags |= ImGooyItemFlag_Fail;
+            }
+            if (index != selected_index){
+                flags |= ImGooyItemFlag_Greyed;
+            }
+            ImGooey::CustomButton(component.name.c_str(),btnsz,flags);
+
+            //Show the main state in small under the item?
+            if (s && (index == selected_index)){
+                if (component.expanded){
+                    ImGui::SameLine();
+                    ImGooey::CustomButton(" > ",ImVec2(0,0),ImGooyItemFlag_Greyed);
+                }
+                ImGooey::StatusLabel(s->string.c_str(),btnsz,s->status);
+            }
+            index++;
+        }
+        ImGui::EndGroup();
+    }
+    // Capture the group size and create widgets using the same size
+    ImVec2 size = ImGui::GetItemRectSize();
+
+
+    if (current_component && current_component->expanded){
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        {
+            ImGooey::CustomButton("Operation A",ImVec2(0,0),ImGooyItemFlag_Greyed);
+            ImGooey::CustomButton("Operation B",ImVec2(0,0),ImGooyItemFlag_Greyed);
+            ImGooey::CustomButton("Operation Gamma",ImVec2(0,0),ImGooyItemFlag_Greyed);
+            ImGui::EndGroup();
+        }
+    }
+    //ImGui::Button("REACTION", ImVec2((size.x - ImGui::GetStyle().ItemSpacing.x) * 0.5f, size.y));
+    ImGuiContext& g = *GImGui;
+    ImGuiWindow* window = g.CurrentWindow;
+    ImVec2 cursorpos = ImGui::GetCursorPos();
+
+    float dy = window->SizeFull.y - ImGui::GetFrameHeight() - cursorpos.y;
+    ImGui::Dummy(ImVec2(200,dy));
+
+    ImGui::Text("ID 0-5604832.1 REF 0xA");
+    ImGui::Text("window->SizeFull(x,y): %.0f, %.0f",window->SizeFull.x,window->SizeFull.y);
+    ImGui::Text("window->DC.CursorPos: %.0f, %.0f",cursorpos.x,cursorpos.y);
+
+
+    ImGui::End();
+}
+
+
 void ApplicationSim::UpdateUI(){
-    RenderRandTestWindow();
-    RenderNoiseTestWindow();
+    //RenderRandTestWindow();
+    //RenderNoiseTestWindow();
     RenderPopulationOverview();
     RenderGenericObjectUI();
     ImGui::ShowDemoWindow();
+
+    RenderSuperCustomUI();
 }
 
 void ApplicationSim::SetControllingShip(StellarBody* body){
@@ -709,4 +908,7 @@ void ApplicationSim::SetControllingShip(StellarBody* body){
         }
     }
     controlling_ship = shipobject;
+    if (shipobject){
+        shipobject->stellarbody->route = NULL;
+    }
 }

@@ -120,15 +120,14 @@ class Colony{
     Contract GetContract(int resource_type, int amount, int contract_type);
 };
 
-
-
 //Stellar bodies can be a sun, or a planet, or a space station.
 typedef enum {
     BODY_INVALID = -1,
     BODY_STAR = 0,
     BODY_PLANET = 1,
     BODY_ASTEROID = 2,
-    BODY_SHIP = 3
+    BODY_SHIP = 3,
+    BODY_BEACON = 4
 }stellarbody_type;
 
 class StellarBody;
@@ -197,6 +196,7 @@ public:
 
     static StellarObject* CreateNewStar(AssetManager* assetmanager);
     static StellarObject* CreateNewShip(AssetManager* assetmanager);
+    static StellarObject* CreateNewBeacon(AssetManager* assetmanager);
 };
 
 //We build a route for a ship to follow. Uses a 2D spline limited to a linear one for now.

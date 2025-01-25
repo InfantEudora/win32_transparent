@@ -56,6 +56,7 @@ endif
 IPATHS += -Igalaxy/
 DIR_SRC += ./galaxy
 SRCS += ApplicationSim.cpp
+SRCS += imgooey.cpp
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 

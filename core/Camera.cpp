@@ -73,13 +73,19 @@ ray Camera::GetRay(){
 	return r;
 }
 //Returns a ray from the center of the camera at pixel posiion
-//TODO: Fix this for Orthographic projection
 ray Camera::GetPixelRay(int2& px_coord){
 	ray r;
 	//The end of the ray is on the far clipping plane
 	//Convert the pixel coord to a -0.5/0.5 space
 	float w = (px_coord.x - (viewport.width * 0.5)) / (viewport.width * 0.5);
 	float h = (viewport.height-px_coord.y - (viewport.height * 0.5)) / (viewport.height * 0.5);
+
+	if (type == CAMERA_TYPE_ORTHOGRAPHIC){
+		//TODO: Take rotation and camera direction into account
+		r.origin = GetPosition() + vec3(-w*viewport.zoom * viewport.aspect,0,h*viewport.zoom);
+		r.direction = GetForward();
+		return r;
+	}
 
 	//Compute the near and far plane dimensions
 	float hfar = 2 * tan(toradians(viewport.fov) / 2) * viewport.zfar;

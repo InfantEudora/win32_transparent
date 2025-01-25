@@ -380,6 +380,19 @@ StellarObject* StellarObject::CreateNewShip(AssetManager* assetmanager){
     return ship;
 }
 
+StellarObject* StellarObject::CreateNewBeacon(AssetManager* assetmanager){
+    if (!assetmanager){
+        debug->Fatal("StellarObject::CreateNewBeacon with no assetmanager\n");
+    }
+    StellarObject* beacon = new StellarObject();
+    assetmanager->GetObjectFromAsset("sphere",beacon);
+    beacon->SetScale(vec3(0.5,0.5,0.5));
+    beacon->material_slot[0] = 2;
+    beacon->stellarbody = new StellarBody();
+    beacon->stellarbody->type = BODY_BEACON;
+    return beacon;
+}
+
 void StellarObject::UpdatePosition(){
     if (stellarbody){
         if (stellarbody->f_updatevisual){
@@ -462,7 +475,7 @@ void RouteObject::UpdateRoute(){
         }
         float k = float(s) / (float)num_segments;
 
-        segment->SetScale(vec3(0.4,1,0.15));
+        segment->SetScale(vec3(0.4,1,0.12));
         vec2 p  = b.Lerp(k);
         segment->SetPosition(vec3(p.x,0,p.y));
 
@@ -557,11 +570,7 @@ void StellarBody::FollowRoute(){
             if (foodslot){
                 market->SellToMarket(foodslot,20);
             }
-
-
         }
-
-
         debug->Info("Reversing route!\n");
         route->Reverse();
     }

@@ -34,7 +34,8 @@ public:
 
     vec3 target_position = vec3();
 
-    StellarObject* controlling_ship = NULL; //The ship that we control.
+    StellarObject* controlling_ship = NULL;     // The ship that we control.
+    StellarObject* target_beacon = NULL;        // The location we've selected.
 
     void StoreStellarObject(StellarObject* object);
     void SetControllingShip(StellarBody* body);
@@ -43,6 +44,7 @@ public:
     void RenderPopulationOverview();
     void RenderRandTestWindow();
     void RenderNoiseTestWindow();
+    void RenderSuperCustomUI();
     void UpdateUI();
 };
 
