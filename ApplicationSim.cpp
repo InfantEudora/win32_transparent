@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string>
 #include "imgooey.h"
+#include "Sound.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
@@ -23,7 +24,10 @@ void ApplicationSim::StoreStellarObject(StellarObject* object){
     stellarbodies.push_back(object->stellarbody);
 }
 
+//For UI testing
 std::vector<Component>components;
+std::vector<Operation>operations; //Should get regenerated upon opening a CPU.
+
 void InitComponents(){
     Component cpu1;
     cpu1.name = "CPU1";
@@ -42,6 +46,19 @@ void InitComponents(){
     components.push_back(cpu1);
     components.push_back(cpu2);
     components.push_back(cpu3);
+}
+
+void GenerateComponentOperations(Component* component){
+    operations.clear();
+    if (component->HasStatus(ImGooyStatusFlag_Ok)){
+        Operation operation;
+        operation.name = "Offline";
+        operations.push_back(operation);
+    }else if (component->HasStatus(ImGooyStatusFlag_Fail)){
+        Operation operation;
+        operation.name = "Operational";
+        operations.push_back(operation);
+    }
 }
 
 //Function for rendering the frame to a window
@@ -157,6 +174,9 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
 
     InitComponents();
 
+    SoundSystem* sound = new SoundSystem();
+    sound->Initialise();
+
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
     while (app->main_window->f_should_quit == false){
@@ -198,7 +218,7 @@ void ApplicationSim::Run(void){
     int2 dimensions = GetDisplaySettings();
 
     //Create a main window
-    main_window = Window::CreateNewWindow(1280,720,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1600,900,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -773,10 +793,14 @@ void ApplicationSim::RenderSuperCustomUI(){
     ImGooey::CustomButton("CPU1",btnsz,ImGooyItemFlag_Greyed);
     ImGooey::CustomButton("CPU2",btnsz,ImGooyItemFlag_Greyed|ImGooyItemFlag_Fail);
     ImGooey::CustomButton("CPU2",btnsz,ImGooyItemFlag_Fail);
+
+    btnsz.y = 40;
+    ImGooey::StatusLabel("OFFLINE",btnsz,ImGooyStatusFlag_Fail);
     ImGui::End();
 
 
     ImGooey::Begin("CPU PRIMARY DECISION TREE",NULL,window_flags);
+    btnsz = ImVec2(100,0);
 
     static int selected_index = -1;
     //Get current selected item if any
@@ -800,8 +824,12 @@ void ApplicationSim::RenderSuperCustomUI(){
 
         }
     }
+    //Limit to out of bounds 1
     if (selected_index < -1){
         selected_index = -1;
+    }
+    if (selected_index > (int)components.size()){
+        selected_index = components.size();
     }
 
     Component* current_component = NULL;
@@ -809,10 +837,11 @@ void ApplicationSim::RenderSuperCustomUI(){
         current_component = &components.at(selected_index);
     }
 
-    if (current_component != prev_component){
+    if (current_component && (current_component != prev_component)){
         debug->Info("Selected new current_component\n");
+        current_component->animation = 10;
+        GenerateComponentOperations(current_component);
     }
-
 
     if (ImGui::IsKeyReleased(ImGuiKey_RightArrow)){
         if (current_component){
@@ -828,12 +857,14 @@ void ApplicationSim::RenderSuperCustomUI(){
         }
     }
 
-    ImGui::Text("Selected Index: %i",selected_index);
+    //ImGui::Text("Selected index %i",selected_index);
+
+    ImVec2 arrowcoord;
 
     ImGui::BeginGroup();
     {
         int index = 0;
-        for (Component component:components){
+        for (Component& component:components){
             ImGooyItemFlags flags = ImGooyItemFlag_None;
 
             ComponentState* s = component.GetMainState();
@@ -849,9 +880,17 @@ void ApplicationSim::RenderSuperCustomUI(){
             if (s && (index == selected_index)){
                 if (component.expanded){
                     ImGui::SameLine();
+
                     ImGooey::CustomButton(" > ",ImVec2(0,0),ImGooyItemFlag_Greyed);
+                    arrowcoord = ImGui::GetCursorPos();
                 }
-                ImGooey::StatusLabel(s->string.c_str(),btnsz,s->status);
+                float offset = 0;
+                if (component.animation > 0){
+                    component.animation -= 1;
+                    offset = component.animation;
+                }
+
+                ImGooey::StatusLabel(s->name.c_str(),btnsz,s->status,offset);
             }
             index++;
         }
@@ -863,11 +902,40 @@ void ApplicationSim::RenderSuperCustomUI(){
 
     if (current_component && current_component->expanded){
         ImGui::SameLine();
+
         ImGui::BeginGroup();
         {
-            ImGooey::CustomButton("Operation A",ImVec2(0,0),ImGooyItemFlag_Greyed);
-            ImGooey::CustomButton("Operation B",ImVec2(0,0),ImGooyItemFlag_Greyed);
-            ImGooey::CustomButton("Operation Gamma",ImVec2(0,0),ImGooyItemFlag_Greyed);
+            if (arrowcoord.y > 62)
+            ImGui::Dummy(ImVec2(100,arrowcoord.y - 62));
+            ImGooey::StatusLabel("STATE",ImVec2(100,40),ImGooyStatusFlag_None);
+            std::vector<ComponentState>& current_states = current_component->states;
+            for (ComponentState& s:current_states){
+                ImGooyItemFlags flags = ImGooyItemFlag_None;
+                if (s.status == ImGooyStatusFlag_Fail){
+                    flags |= ImGooyItemFlag_Fail;
+                }
+                ImGooey::CustomButton(s.name.c_str(),btnsz,flags);
+            }
+            ImGui::EndGroup();
+        }
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        {
+            if (arrowcoord.y > 62)
+                ImGui::Dummy(ImVec2(24,arrowcoord.y - 62));
+            ImGooey::CustomButton(" > ",ImVec2(0,0),ImGooyItemFlag_Greyed);
+            ImGui::EndGroup();
+        }
+
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        {
+            if (arrowcoord.y > 62)
+            ImGui::Dummy(ImVec2(100,arrowcoord.y - 62));
+            for (Operation& operation:operations){
+                ImGooey::CustomButton(operation.name.c_str(),ImVec2(0,0),ImGooyItemFlag_Greyed);
+            }
+
             ImGui::EndGroup();
         }
     }
@@ -882,6 +950,7 @@ void ApplicationSim::RenderSuperCustomUI(){
     ImGui::Text("ID 0-5604832.1 REF 0xA");
     ImGui::Text("window->SizeFull(x,y): %.0f, %.0f",window->SizeFull.x,window->SizeFull.y);
     ImGui::Text("window->DC.CursorPos: %.0f, %.0f",cursorpos.x,cursorpos.y);
+    ImGui::Text("arrowcoord: %.0f, %.0f",arrowcoord.x,arrowcoord.y);
 
 
     ImGui::End();

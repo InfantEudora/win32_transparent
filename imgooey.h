@@ -28,9 +28,10 @@ enum ImGooyStatus_
     ImGooyStatusFlag_Fail = 3,
 };
 
+
 namespace ImGooey{
     IMGUI_API bool CustomButton(const char* label, const ImVec2& size_arg = ImVec2(0, 0), ImGooyItemFlags gflags = 0, ImGuiButtonFlags bflags = 0, ImGuiItemFlags iflags = 0);
-    IMGUI_API bool StatusLabel(const char* label,const ImVec2& size_arg, ImGooyStatus status);
+    IMGUI_API bool StatusLabel(const char* label,const ImVec2& size_arg, ImGooyStatus status, float animation = 0.0f);
     IMGUI_API bool Begin(const char* name, bool* p_open, ImGuiWindowFlags flags);
 };
 
@@ -39,23 +40,27 @@ namespace ImGooey{
 
 struct ComponentState{
     ImGooyStatus status;
-    std::string string;
+    std::string name;
     float percentage;
+};
+
+struct Operation{
+    std::string name;
+    float animation = 0;
 };
 
 struct Component{
     std::string name;
     std::vector<ComponentState>states;
     bool expanded = false; //If selected for a new operation
+    float animation = 0;
 
     void AddState(const char* string, float perc, ImGooyStatus status);
+    bool HasStatus(ImGooyStatus status);
     ComponentState* GetMainState();
     std::vector<ComponentState>& GetStates();
     int NumStates();
 };
-
-
-
 
 //Tree state thing as exampled in ui example:
 

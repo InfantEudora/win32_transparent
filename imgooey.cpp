@@ -87,7 +87,7 @@ namespace ImGooey{
     }
 
     //Will use text so not selectable or anything.
-    IMGUI_API bool StatusLabel(const char* label,const ImVec2& size_arg, ImGooyStatus status){
+    IMGUI_API bool StatusLabel(const char* label,const ImVec2& size_arg, ImGooyStatus status, float animation){
         ImGuiWindow* window = ImGui::GetCurrentWindow();
         if (window->SkipItems)
             return false;
@@ -98,7 +98,7 @@ namespace ImGooey{
         const ImVec2 label_size = ImGui::CalcTextSize(label, NULL, true);
 
         ImVec2 pos = window->DC.CursorPos;
-        pos.x += 3;
+        pos.x += 3 + animation;
         //if ((buttonflags & ImGuiButtonFlags_AlignTextBaseLine) && style.FramePadding.y < window->DC.CurrLineTextBaseOffset) // Try to vertically align buttons that are smaller/have no padding so that text baseline matches (bit hacky, since it shouldn't be a flag)
         //    pos.y += window->DC.CurrLineTextBaseOffset - style.FramePadding.y;
         ImVec2 size = ImGui::CalcItemSize(size_arg, label_size.x + style.FramePadding.x * 2.0f, label_size.y + style.FramePadding.y * 2.0f);
@@ -148,13 +148,11 @@ namespace ImGooey{
         if (!res)
             return false;
 
-        StatusLabel(name,ImVec2(160,0),ImGooyStatusFlag_None);
+        StatusLabel(name,ImVec2(240,0),ImGooyStatusFlag_None);
         ImGui::Separator();
         return res;
     }
-
 }
-
 
 ComponentState* Component::GetMainState(){
     if (states.size() > 0){
@@ -165,10 +163,20 @@ ComponentState* Component::GetMainState(){
 
 void Component::AddState(const char* string, float perc, ImGooyStatus status){
     ComponentState s;
-    s.string = string;
+    s.name = string;
     s.percentage = perc;
     s.status = status;
     states.push_back(s);
+}
+
+//Returns true if one of the components states have matching status.
+bool Component::HasStatus(ImGooyStatus status){
+    for (ComponentState s:states){
+        if (s.status == status){
+            return true;
+        }
+    }
+    return false;
 }
 
 int Component::NumStates(){

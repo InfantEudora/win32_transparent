@@ -62,11 +62,11 @@ protected:
     //UI
     void UpdateUICameraControls(Camera* camera, int id);
     void RenderGenericObjectUI();
+
 private:
     bool SetupConsole();
     static bool WINAPI ConsoleHandler(DWORD console_event);
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
-
     //UI
     void UpdateUISceneObjectTree();
     void UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked);

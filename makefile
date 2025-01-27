@@ -20,7 +20,7 @@ IPATHS += -Icore/
 
 IPATHS += -I3rdparty/imgui/
 IPATHS += -I3rdparty/
-
+IPATHS += -I3rdparty/openal-soft/
 SRCS += main.cpp
 
 #ImGUI
