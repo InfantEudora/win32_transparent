@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string>
 #include "imgooey.h"
-#include "Sound.h"
+
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
@@ -12,7 +12,8 @@ static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
 #define INPUT_R INPUT_LAST+2
 
 ApplicationSim::ApplicationSim():Application(){
-    debug->Info("Created new application.\n");
+    debug->Info("Created new ApplicationSim.\n");
+
 };
 
 void ApplicationSim::StoreStellarObject(StellarObject* object){
@@ -68,6 +69,8 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
         debug->Fatal("No application was supplied to FrameThread\n");
         return 0;
     }
+
+
 
     app->thread_id_render = GetCurrentThreadId();
     debug->Info("FrameFunction ThreadID: %lu\n",app->thread_id_render);
@@ -174,9 +177,6 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
 
     InitComponents();
 
-    SoundSystem* sound = new SoundSystem();
-    sound->Initialise();
-
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
     while (app->main_window->f_should_quit == false){
@@ -208,6 +208,8 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
 
         //Copy to screen and finish
         app->main_window->DrawFrame();
+
+        Sleep(1);
     }
 
     debug->Info("FrameThreadFunction terminated\n");
@@ -236,6 +238,11 @@ void ApplicationSim::Run(void){
 
     //And do all render calls from a seperate thread:
     HANDLE hThread = NULL;
+
+    //Sounddd
+    soundsystem = new SoundSystem();
+    soundsystem->Initialise();
+    soundsystem->AppendFile("data/sound/floop.wav","floop");
 
     // Create a new thread which will get this one's render context
     hThread = CreateThread(
@@ -841,11 +848,13 @@ void ApplicationSim::RenderSuperCustomUI(){
         debug->Info("Selected new current_component\n");
         current_component->animation = 10;
         GenerateComponentOperations(current_component);
+        soundsystem->Play("click");
     }
 
     if (ImGui::IsKeyReleased(ImGuiKey_RightArrow)){
         if (current_component){
             current_component->expanded = true;
+            soundsystem->Play("floop");
         }
         if (prev_component && prev_component != current_component){
             prev_component->expanded = false;

@@ -1,6 +1,8 @@
-#include <windows.h>
-#include "Sound.h"
+
+#include "SoundSystem.h"
 #include "WaveFile.h"
+
+
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("SoundSystem", DEBUG_ALL);
@@ -66,8 +68,6 @@ bool GetALFunctions(HINSTANCE hdll){
 }
 
 void SoundSystem::Initialise(){
-    HINSTANCE hdll = NULL;
-
     const char* dllname = "soft_oal.dll";
 
     hdll = LoadLibrary(dllname);
@@ -86,10 +86,10 @@ void SoundSystem::Initialise(){
     }
 
     debug->Info("Initialising sound device with OpenAL\n");
-    ALCdevice* default_device = alcOpenDevice(NULL);
+    default_device = alcOpenDevice(NULL);
     if (default_device){
         debug->Ok("Got default device.\n");
-        ALCcontext* ctx = alcCreateContext(default_device,NULL);
+        ctx = alcCreateContext(default_device,NULL);
         if (!ctx){
             debug->Err("Could not get context.\n");
         }
@@ -98,20 +98,15 @@ void SoundSystem::Initialise(){
         alcMakeContextCurrent(ctx);
 
         // Generate Buffers
-
-
-        #define  NUM_BUFFERS 8
-        ALuint buffers[NUM_BUFFERS];
         ALenum error = alGetError(); // clear error code
         debug->Ok("alGetError : %08X\n", error);
-        alGenBuffers((ALsizei)NUM_BUFFERS, buffers);
+        alGenBuffers((ALsizei)NUM_AL_BUFFERS, buffers);
         if ((error = alGetError()) != AL_NO_ERROR){
             debug->Err("alGenBuffers : %08X\n", error);
             return;
         }else{
-            debug->Ok("alGenBuffers : Generated %lu buffers\n", NUM_BUFFERS);
+            debug->Ok("alGenBuffers : Generated %lu buffers\n", NUM_AL_BUFFERS);
         }
-
 
         // Check for EAX 2.0 support
         bool ext_EAX = alIsExtensionPresent("EAX2.0");
@@ -122,9 +117,16 @@ void SoundSystem::Initialise(){
         //sound* bleep = load_wav("data/sound/bleep.wav",1);
 
         WaveFile wav;
-        wav.LoadWaveFile("data/sound/bleep.wav");
+        wav.LoadWaveFile("data/sound/click.wav");
 
-        alBufferData(buffers[0],AL_FORMAT_STEREO16,wav.wav_data,wav.GetDataLength(),44100);
+        ALenum format;
+        if (wav.GetNumChannels() == 1){
+            format = AL_FORMAT_MONO16;
+        }else{
+            format = AL_FORMAT_STEREO16;
+        }
+
+        alBufferData(buffers[0],AL_FORMAT_STEREO16,wav.wav_data,wav.GetDataLength(),wav.GetSampleRate());
 
         if ((error = alGetError()) != AL_NO_ERROR){
             debug->Err("alGenBuffers : %08X\n", error);
@@ -134,56 +136,44 @@ void SoundSystem::Initialise(){
         }
 
         //create a source
-        ALuint source;
-        alGenSources(1, &source);
-        debug->Info("Source = %lu\n",source);
 
-        alSourcei(source, AL_BUFFER, buffers[0]);
+        alGenSources(NUM_AL_BUFFERS, sources);
+        debug->Info("Generated %i sources\n",NUM_AL_BUFFERS);
+
+        alSourcei(sources[0], AL_BUFFER, buffers[0]);
         //alSourcei(source,AL_LOOPING,AL_TRUE);
 
-        alSourcePlay(source);
-
-        /*
-        // Generate Buffers
-        alGetError(); // clear error code
-        alGenBuffers(NUM_BUFFERS, g_Buffers);
-        if ((error = alGetError()) != AL_NO_ERROR)
-        {
-        DisplayALError("alGenBuffers :", error);
-        return;
-        }
-        // Load test.wav
-        loadWAVFile("test.wav",&format,&data,&size,&freq,&loop);
-        if ((error = alGetError()) != AL_NO_ERROR)
-        {
-        DisplayALError("alutLoadWAVFile test.wav : ", error);
-        alDeleteBuffers(NUM_BUFFERS, g_Buffers);
-        return;
-        }
-        // Copy test.wav data into AL Buffer 0
-        alBufferData(g_Buffers[0],format,data,size,freq);
-        if ((error = alGetError()) != AL_NO_ERROR)
-        {
-        DisplayALError("alBufferData buffer 0 : ", error);
-        alDeleteBuffers(NUM_BUFFERS, g_Buffers);
-        return;
-        }
-        // Unload test.wav
-        unloadWAV(format,data,size,freq);
-        if ((error = alGetError()) != AL_NO_ERROR)
-        {
-        DisplayALError("alutUnloadWAV : ", error);
-        alDeleteBuffers(NUM_BUFFERS, g_Buffers);
-        return;
-        }
-        // Generate Sources
-        alGenSources(1,source);
-        if ((error = alGetError()) != AL_NO_ERROR)
-        {
-        DisplayALError("alGenSources 1 : ", error);
-        r
-        */
-
+        buffer_index++;
 
     }
+}
+
+//Loads file into memory and stores it by handle.
+void SoundSystem::AppendFile(const char* filename, const char* handle_name){
+    if (buffer_index >= NUM_AL_BUFFERS){
+        debug->Fatal("I'm lazy: no more sound buffers\n");
+    }
+
+    WaveFile wav;
+    if (wav.LoadWaveFile(filename)){
+        ALenum format;
+        if (wav.GetNumChannels() == 1){
+            format = AL_FORMAT_MONO16;
+        }else{
+            format = AL_FORMAT_STEREO16;
+        }
+        //Load into buffer
+        alBufferData(buffers[buffer_index],AL_FORMAT_STEREO16,wav.wav_data,wav.GetDataLength(),wav.GetSampleRate());
+
+        map_handles[handle_name] = buffer_index;
+
+        buffer_index++;
+    }
+}
+
+void SoundSystem::Play(const char* handle_name){
+    int handle = map_handles[handle_name];
+    debug->Info("Lookup handle %s -> %i\n",handle_name,handle);
+    alSourcei(sources[handle], AL_BUFFER, buffers[handle]);
+    alSourcePlay(sources[handle]);
 }

@@ -32,9 +32,12 @@ public:
     uint8_t* file_data = NULL;
     uint8_t* wav_data = NULL;
     size_t file_size = 0;
+    wavefile_header_t* header = NULL;
     bool LoadWaveFile(const char* filename);    //Load file into memory.
 
     long GetDataLength();
+    long GetSampleRate();
+    int GetNumChannels();
 
 };
 

@@ -6,6 +6,7 @@
 #include "PerlinNoise.h"
 #include "WorleyNoise.h"
 #include "StellarBody.h"
+#include "SoundSystem.h"
 #include <vector>
 /*
     An attempt at an application that overrides the default, and shows a UI only.
@@ -36,6 +37,8 @@ public:
 
     StellarObject* controlling_ship = NULL;     // The ship that we control.
     StellarObject* target_beacon = NULL;        // The location we've selected.
+
+    SoundSystem* soundsystem = NULL;
 
     void StoreStellarObject(StellarObject* object);
     void SetControllingShip(StellarBody* body);
