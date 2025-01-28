@@ -35,7 +35,7 @@ public:
     void UploadTexture(UINT _format = GL_RGB, int target = GL_TEXTURE_2D);
 
     void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);
-    void LoadFromFile(const char* filename, int target, int depth_in);
+    void LoadFromFile(const char* filename, int target = GL_TEXTURE_2D, int depth_in = 0);
 
     vec3 GetValueAt(float x, float y); //Returns the pixel value at 0 ... 1 interval.
 };

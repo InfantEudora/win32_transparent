@@ -4,7 +4,6 @@
 #include <string>
 #include "imgooey.h"
 
-
 #include "Debug.h"
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
 
@@ -29,6 +28,8 @@ void ApplicationSim::StoreStellarObject(StellarObject* object){
 std::vector<Component>components;
 std::vector<Operation>operations; //Should get regenerated upon opening a CPU.
 
+Texture* icon = NULL;
+
 void InitComponents(){
     Component cpu1;
     cpu1.name = "CPU1";
@@ -47,6 +48,11 @@ void InitComponents(){
     components.push_back(cpu1);
     components.push_back(cpu2);
     components.push_back(cpu3);
+
+    //Load the waste icon
+    //TODO: Compile them into a single big texture.
+    icon = new Texture();
+    icon->LoadFromFile("data/icons/waste.png");
 }
 
 void GenerateComponentOperations(Component* component){
@@ -960,11 +966,99 @@ void ApplicationSim::RenderSuperCustomUI(){
     ImGui::Text("window->SizeFull(x,y): %.0f, %.0f",window->SizeFull.x,window->SizeFull.y);
     ImGui::Text("window->DC.CursorPos: %.0f, %.0f",cursorpos.x,cursorpos.y);
     ImGui::Text("arrowcoord: %.0f, %.0f",arrowcoord.x,arrowcoord.y);
+    ImGui::End();
 
+    //Drag and drop interface
+    ImGooey::Begin("CARGO INTERFACE",NULL,window_flags);
+        float my_tex_w = (float)icon->width;
+        float my_tex_h = (float)icon->height;
+        //glBindTextureUnit(2,icon->texture_id);
+        //glBindTexture(GL_TEXTURE_2D, icon->texture_id);
+
+
+
+
+        for (int i = 0; i < 8; i++) {
+            // UV coordinates are often (0.0f, 0.0f) and (1.0f, 1.0f) to display an entire textures.
+            // Here are trying to display only a 32x32 pixels area of the texture, hence the UV computation.
+            // Read about UV coordinates here: https://github.com/ocornut/imgui/wiki/Image-Loading-and-Displaying-Examples
+            ImGui::PushID(i);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1,1));
+            ImVec2 size = ImVec2(96.0f, 96.0f);                         // Size of the image we want to make visible
+            ImVec2 uv0 = ImVec2(0.0f, 0.0f);                            // UV coordinates for lower-left
+            ImVec2 uv1 = ImVec2(96.0f / my_tex_w, 96.0f / my_tex_h);    // UV coordinates for (32,32) in our texture
+            ImVec4 bg_col = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);             // Black background
+            ImVec4 tint_col = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);           // No tint
+            //ImGui::BeginDragDropSource();
+            //ImGui::SetDragDropPayload("BONANZA", NULL, 0);
+
+
+            if (ImGui::ImageButton("", (ImTextureID)(intptr_t)icon->texture_id, size, uv0, uv1, bg_col, tint_col)){
+
+            }
+
+             // Our buttons are both drag sources and drag targets here!
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+            {
+                // Set payload to carry the index of our item (could be anything)
+                ImGui::SetDragDropPayload("STACKS", &i, sizeof(int));
+
+                // Display preview (could be anything, e.g. when dragging an image we could decide to display
+                // the filename and a small preview of the image, etc.)
+                ImGui::Text("Move Stacks");
+                ImGui::PushID(i);
+                if (ImGui::ImageButton("", (ImTextureID)(intptr_t)icon->texture_id, size, uv0, uv1, bg_col, tint_col)){
+
+                }
+                ImGui::PopID();
+
+                ImGui::EndDragDropSource();
+            }
+
+
+            ImGui::PopStyleVar();
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+        ImGui::NewLine();
+
+
+        for (int i = 8; i < 16; i++) {
+            // UV coordinates are often (0.0f, 0.0f) and (1.0f, 1.0f) to display an entire textures.
+            // Here are trying to display only a 32x32 pixels area of the texture, hence the UV computation.
+            // Read about UV coordinates here: https://github.com/ocornut/imgui/wiki/Image-Loading-and-Displaying-Examples
+            ImGui::PushID(i);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1,1));
+
+            ImVec2 size = ImVec2(96.0f, 96.0f);                         // Size of the image we want to make visible
+            ImVec2 uv0 = ImVec2(0.0f, 0.0f);                            // UV coordinates for lower-left
+            ImVec2 uv1 = ImVec2(96.0f / my_tex_w, 96.0f / my_tex_h);    // UV coordinates for (32,32) in our texture
+            ImVec4 bg_col = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);             // Black background
+            ImVec4 tint_col = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);           // No tint
+
+            if (ImGui::Button("", size)){
+
+            }
+
+            if (ImGui::BeginDragDropTarget()){
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("STACKS",ImGuiDragDropFlags_SourceAllowNullID)){
+                    debug->Info("Dropped some fat stacks on ID %i\n",i);
+                    int* data = (int*)payload->Data;
+                    debug->Info(" payload->DataSize: %i\n",payload->DataSize);
+                    debug->Info(" payload->data: %i\n",*data);
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            ImGui::PopStyleVar();
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
 
     ImGui::End();
 }
-
 
 void ApplicationSim::UpdateUI(){
     //RenderRandTestWindow();

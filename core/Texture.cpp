@@ -18,6 +18,7 @@ void Texture::Create2D(int w, int h, UINT _format, int target, int depth){
     storage_format = _format;
 
     glCreateTextures(target, 1, &texture_id);
+    debug->Info("Create2D: %s texture_id: %li\n",name.c_str(),texture_id);
 
     glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -52,7 +53,11 @@ void Texture::UploadTexture(UINT _format, int target){
     }
 }
 
-//Target specifies the texture target GL_TEXTURE_1D, GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_1D_ARRAY, GL_TEXTURE_2D_ARRAY, GL_TEXTURE_RECTANGLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_BUFFER, GL_TEXTURE_2D_MULTISAMPLE or GL_TEXTURE_2D_MULTISAMPLE_ARRAY.
+/*
+    Filename;
+    Target: Specifies the texture target GL_TEXTURE_1D, GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_1D_ARRAY, GL_TEXTURE_2D_ARRAY, GL_TEXTURE_RECTANGLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_BUFFER, GL_TEXTURE_2D_MULTISAMPLE or GL_TEXTURE_2D_MULTISAMPLE_ARRAY.
+    Depth: -1 will not be uploaded to GPU, GL_TEXTURE_CUBE_MAP (0-6): Face index,
+*/
 void Texture::LoadFromFile(const char* filename, int target, int depth_in){
     depth = depth_in;
     file_data_sz = 0;
@@ -67,6 +72,7 @@ void Texture::LoadFromFile(const char* filename, int target, int depth_in){
     stbi_set_flip_vertically_on_load(false);
     img_data = stbi_load_from_memory(file_data,file_data_sz,&w,&h,&channels,0);
     debug->Info("Loaded image file: %i x %i %i channels\n",w,h,channels);
+    name = filename;
     //TODO: Free file data. This may not be possible when it was packed in?
 
     //Compute image data size
@@ -89,7 +95,6 @@ void Texture::LoadFromFile(const char* filename, int target, int depth_in){
     }
 
     if ((target != GL_TEXTURE_CUBE_MAP) || (depth == 0)){
-        debug->Info("Create2D new Image Handle\n");
         Create2D(w,h,format,target,depth);
     }else{
         debug->Info("Re-Using Image Handle for CubeMap\n");
