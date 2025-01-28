@@ -6,11 +6,15 @@
 #include <vector>
 #include <string>
 #include "glad.h"
+#include "type_int2.h"
 #include "type_vec3.h"
+
+#define TEXTURE_DONT_UPLOAD -1
 
 class Texture{
 public:
-    Texture(){};
+    Texture();
+    ~Texture();
     GLuint texture_id = -1;         // OpenGL ID of the texture
     GLuint64 texture_handle = 0;    // OpenGL Bindless Texture Handle
 
@@ -31,13 +35,19 @@ public:
     //Target as specified in glCreateTextures
     //target must be one of GL_TEXTURE_1D, GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_1D_ARRAY, GL_TEXTURE_2D_ARRAY, GL_TEXTURE_RECTANGLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_BUFFER, GL_TEXTURE_2D_MULTISAMPLE or GL_TEXTURE_2D_MULTISAMPLE_ARRAY.
 
-    void Create2D(int width, int height, UINT formatm, int target = GL_TEXTURE_2D, int depth_in = 1);    //Creates a 2D openGL texture, but does not transfer any data
+    bool IsEmpty();
+
+    void Create2D(int target = GL_TEXTURE_2D, int depth_in = 1);    //Creates a 2D openGL texture, but does not transfer any data
     void UploadTexture(UINT _format = GL_RGB, int target = GL_TEXTURE_2D);
 
     void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);
     void LoadFromFile(const char* filename, int target = GL_TEXTURE_2D, int depth_in = 0);
 
     vec3 GetValueAt(float x, float y); //Returns the pixel value at 0 ... 1 interval.
+
+    //Compile texture
+    void AppendTexture(Texture* texture, int2 pos);
+    void CopyLine(uint8_t* line, int num_pixels, uint8_t* out, int num_color_channels);
 };
 
 #endif

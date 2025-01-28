@@ -1,4 +1,5 @@
 #include "OBJLoader.h"
+#include "StringView.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("OBJLoader", DEBUG_INFO);

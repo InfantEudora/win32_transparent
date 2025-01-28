@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string>
 #include "imgooey.h"
+#include "Directory.h"
+#include "SpriteSheet.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("ApplicationSim", DEBUG_ALL);
@@ -27,8 +29,7 @@ void ApplicationSim::StoreStellarObject(StellarObject* object){
 //For UI testing
 std::vector<Component>components;
 std::vector<Operation>operations; //Should get regenerated upon opening a CPU.
-
-Texture* icon = NULL;
+SpriteSheet* icon_sprites;
 
 void InitComponents(){
     Component cpu1;
@@ -49,10 +50,18 @@ void InitComponents(){
     components.push_back(cpu2);
     components.push_back(cpu3);
 
-    //Load the waste icon
-    //TODO: Compile them into a single big texture.
-    icon = new Texture();
-    icon->LoadFromFile("data/icons/waste.png");
+    // Load all the icons from the icon folder by extension:
+    std::vector<std::string>filenames = Directory::GetFiles("data/icons","*.png");
+
+    icon_sprites = new SpriteSheet();
+
+    Texture temp_texture;
+    for (std::string& filename: filenames){
+        debug->Info("Got filename: %s\n",filename.c_str());
+        temp_texture.LoadFromFile(filename.c_str(),GL_TEXTURE_2D,TEXTURE_DONT_UPLOAD);
+        icon_sprites->AddSpriteFromTexture(&temp_texture,filename.c_str());
+    }
+    icon_sprites->Upload();
 }
 
 void GenerateComponentOperations(Component* component){
@@ -594,7 +603,8 @@ void ApplicationSim::RenderNoiseTestWindow(){
         //Build the noise texture.
         if(!noise_texture){
             noise_texture = new Texture();
-            noise_texture->Create2D(texw,texh,GL_RGB8,GL_TEXTURE_2D,1);
+            //noise_texture->Create2D(texw,texh,GL_RGB8,GL_TEXTURE_2D,1);
+            //TODO: Fix this thing in its entirity.
             //Allocate data for it
             noise_texture->img_data_sz = texw*texh*3;
             noise_texture->img_data = (uint8_t*)malloc(noise_texture->img_data_sz);
@@ -970,13 +980,10 @@ void ApplicationSim::RenderSuperCustomUI(){
 
     //Drag and drop interface
     ImGooey::Begin("CARGO INTERFACE",NULL,window_flags);
-        float my_tex_w = (float)icon->width;
-        float my_tex_h = (float)icon->height;
+        float my_tex_w = 96;
+        float my_tex_h = 96;
         //glBindTextureUnit(2,icon->texture_id);
         //glBindTexture(GL_TEXTURE_2D, icon->texture_id);
-
-
-
 
         for (int i = 0; i < 8; i++) {
             // UV coordinates are often (0.0f, 0.0f) and (1.0f, 1.0f) to display an entire textures.
@@ -993,8 +1000,18 @@ void ApplicationSim::RenderSuperCustomUI(){
             //ImGui::BeginDragDropSource();
             //ImGui::SetDragDropPayload("BONANZA", NULL, 0);
 
+            int sprite_index = i % icon_sprites->Count();
+            Sprite* sprite = icon_sprites->GetSprite(sprite_index);
+            if (!sprite){
+                debug->Fatal("Unable to get sprite index %i from SpriteSheet.\n",sprite_index);
+            }
 
-            if (ImGui::ImageButton("", (ImTextureID)(intptr_t)icon->texture_id, size, uv0, uv1, bg_col, tint_col)){
+            uv0.x = sprite->uv0.x;
+            uv0.y = sprite->uv0.y;
+            uv1.x = sprite->uv1.x;
+            uv1.y = sprite->uv1.y;
+
+            if (ImGui::ImageButton("", (ImTextureID)(intptr_t)icon_sprites->texture->texture_id, size, uv0, uv1, bg_col, tint_col)){
 
             }
 
@@ -1008,7 +1025,7 @@ void ApplicationSim::RenderSuperCustomUI(){
                 // the filename and a small preview of the image, etc.)
                 ImGui::Text("Move Stacks");
                 ImGui::PushID(i);
-                if (ImGui::ImageButton("", (ImTextureID)(intptr_t)icon->texture_id, size, uv0, uv1, bg_col, tint_col)){
+                if (ImGui::ImageButton("", (ImTextureID)(intptr_t)icon_sprites->texture->texture_id, size, uv0, uv1, bg_col, tint_col)){
 
                 }
                 ImGui::PopID();
@@ -1055,6 +1072,12 @@ void ApplicationSim::RenderSuperCustomUI(){
             ImGui::PopStyleVar();
             ImGui::PopID();
             ImGui::SameLine();
+        }
+
+        ImGui::NewLine();
+
+        if (ImGui::ImageButton("Le Debug Button", (ImTextureID)(intptr_t)icon_sprites->texture->texture_id, ImVec2(icon_sprites->texture->width, icon_sprites->texture->height), ImVec2(0,0), ImVec2(1,1),  ImVec4(0.0f, 0.0f, 0.0f, 1.0f), ImVec4(1.0f, 1.0f, 1.0f, 1.0f))){
+
         }
 
     ImGui::End();

@@ -62,7 +62,8 @@ It should kind of look like this:
 - [x] Textures. Will bindless work on Intel? Should be nice.
 - [x] Test a model imported from Blender with Materials in OBJ .mat file.
 - [x] Use header stb lib to load png/jpg with/without Alpha.
-- [ ] Figure out how to do sound?
+- [x] Figure out how to do sound?
+- [ ] LoadFile may load an asset from memory. The returned data may not be freed? Check and Fix.
 - [ ] Some kind of project structure, where different games/applications can exist and you can build one or more of them.
 - [ ] Maybe have some kind of test / example thing.
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
