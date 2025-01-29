@@ -167,9 +167,10 @@ void Texture::CopyLine(uint8_t* line, int num_pixels, uint8_t* out, int num_colo
 }
 
 void Texture::AppendTexture(Texture* target, int2 at){
+    debug->Info("Adding texture of size (%i x %i) at texture (%i,%i)\n",target->width,target->height, at.x,at.y);
     //At would provide the top left of where you want to put it.
-    int new_image_width  = at.x + target->width;
-    int new_image_height = at.y + target->height;
+    int new_image_width  = max(at.x + target->width,width);
+    int new_image_height = max(at.y + target->height,height);
 
     if (IsEmpty()){
         //Just take in the image format
@@ -178,7 +179,7 @@ void Texture::AppendTexture(Texture* target, int2 at){
     }
 
     int num_channels = (image_format == GL_RGB) ? 3 : 4;
-    int new_image_data_sz = new_image_width * new_image_height * num_channels;
+    size_t new_image_data_sz = new_image_width * new_image_height * num_channels;
 
     debug->Info("New image size = %i x %i: sz: %zu\n",new_image_width, new_image_height, new_image_data_sz);
     uint8_t* new_img_data = (uint8_t*)malloc(new_image_data_sz);
@@ -191,7 +192,7 @@ void Texture::AppendTexture(Texture* target, int2 at){
     int current_line_length = width;
     int line_length_inc = new_image_width - width;
 
-    uint8_t* empty_line = (uint8_t*)calloc(line_length_inc * num_channels,1);
+    uint8_t* empty_line = (uint8_t*)calloc(new_image_width * num_channels,1);
 
     //Now we scan the old image into the new image first:
     for (int l=0;l<num_lines;l++){
@@ -214,9 +215,15 @@ void Texture::AppendTexture(Texture* target, int2 at){
         //Increment pointer with x offset
         write_ptr   += at.x * num_channels;
 
-        //debug->Info("Copy 1st Line %i Linewidth = %i\n",l,width);
+
         CopyLine(second_data,target->width,write_ptr,num_channels);
         second_data += target->width * num_channels;
+        write_ptr   += target->width * num_channels;
+
+        int remain = new_image_width - target->width - at.x;
+
+        //Perhaps we fill this line with some more emptyness?
+        CopyLine(empty_line,remain,write_ptr,num_channels);
     }
 
 
@@ -226,7 +233,10 @@ void Texture::AppendTexture(Texture* target, int2 at){
     //Image format should already match or be set.
     //Free any existing data
     free(img_data);
+    img_data = NULL;
     free(file_data);
+    file_data = NULL;
+    file_data_sz = 0;
     free(empty_line);
     img_data = new_img_data;
     img_data_sz = new_image_data_sz;

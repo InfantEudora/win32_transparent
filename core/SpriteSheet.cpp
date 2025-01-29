@@ -48,8 +48,18 @@ void SpriteSheet::AddSpriteFromTexture(Texture* sprite_texture,  const char* nam
     //We'd like to place this sprite after the last sprite
     int2 at = int2(0,0);
     Sprite* last_sprite = GetLastSprite();
+    int max_num_horizontal_sprites = 3;
     if (last_sprite){
-        at.x = last_sprite->x + last_sprite->width;
+        int x = last_sprite->x + last_sprite->width;
+
+        if (x >= (max_num_horizontal_sprites * sprite_texture->width)) {
+            //Start at a new line
+            at.y = last_sprite->y + last_sprite->height;
+            at.x = 0;
+        }else{
+            at.y = last_sprite->y;
+            at.x = x;
+        }
     }
 
     //Build the sprite
