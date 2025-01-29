@@ -18,6 +18,7 @@ public:
 
 	void AddSpriteFromTexture(Texture* texture,  const char* name);  // Add a sprite to this sheet using the entire target texture
 	Sprite* GetSprite(int index);               // Return sprite by index.
+	Sprite* GetLastSprite();
     Sprite* GetSprite(const char* name);        // Lookup sprite by name.
 
     void Upload();  // Upload to GPU

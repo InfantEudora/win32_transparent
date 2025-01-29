@@ -166,67 +166,69 @@ void Texture::CopyLine(uint8_t* line, int num_pixels, uint8_t* out, int num_colo
     memcpy(out,line,num_pixels * num_color_channels);
 }
 
-//Appends the target texture to this one at position.
 void Texture::AppendTexture(Texture* target, int2 at){
-    //First, compare the 2 texture data types:
-    debug->Info("AppendTexture: image_format %i vs %i\n",image_format,target->image_format);
-    debug->Info("AppendTexture: img_data_sz  %i vs %i\n",img_data_sz,target->img_data_sz);
+    //At would provide the top left of where you want to put it.
+    int new_image_width  = at.x + target->width;
+    int new_image_height = at.y + target->height;
 
     if (IsEmpty()){
+        //Just take in the image format
         image_format = target->image_format;
         storage_format = target->storage_format;
     }
 
-    //We need the size for the new image + the old image.
-    //We can only add from 0,0 onward, where 0,0 would overwrite the current image.
-    at.x = width;
-    at.y = 0;
-
-    Texture new_image;
-    new_image.image_format = image_format;
-    new_image.width = width + target->width;
-    new_image.height = max(height,target->height);
     int num_channels = (image_format == GL_RGB) ? 3 : 4;
-    new_image.img_data_sz = new_image.width * new_image.height * num_channels;
+    int new_image_data_sz = new_image_width * new_image_height * num_channels;
 
-    debug->Info("New image size = %i x %i: sz: %zu\n",new_image.width, new_image.height, new_image.img_data_sz);
-    uint8_t* new_img_data = (uint8_t*)malloc(new_image.img_data_sz);
-
-    int num_lines = new_image.height;
-
-    int first_line_data_len = width * num_channels;
-    int second_line_data_len = target->width * num_channels;
+    debug->Info("New image size = %i x %i: sz: %zu\n",new_image_width, new_image_height, new_image_data_sz);
+    uint8_t* new_img_data = (uint8_t*)malloc(new_image_data_sz);
 
     uint8_t* write_ptr = new_img_data;
     uint8_t* first_data = img_data;
     uint8_t* second_data = target->img_data;
+    int num_lines = new_image_height;
 
-    //Concaternate line by line:
+    int current_line_length = width;
+    int line_length_inc = new_image_width - width;
+
+    uint8_t* empty_line = (uint8_t*)calloc(line_length_inc * num_channels,1);
+
+    //Now we scan the old image into the new image first:
     for (int l=0;l<num_lines;l++){
-        //Copy line from first image, or generate an empty line?
-        //TODO
-
         //debug->Info("Copy 1st Line %i Linewidth = %i\n",l,width);
         CopyLine(first_data,width,write_ptr,num_channels);
         write_ptr   += width * num_channels;
-        //debug->Info("Copy 2nd Line %i Linewidth = %i\n",l,target->width);
-        CopyLine(second_data,target->width,write_ptr,num_channels);
-        first_data  += first_line_data_len;
-        second_data += second_line_data_len;
-        write_ptr   += target->width * num_channels;
+        first_data  += width * num_channels;
+
+        //Add empty line
+        CopyLine(empty_line,line_length_inc,write_ptr,num_channels);
+        write_ptr   += line_length_inc * num_channels;
     }
 
-    //We are the new image, copy some parameters
-    width = new_image.width;
-    height = new_image.height;
+    //Then we overwrite with the new image.
+    //Scan the line from at.y to at.y + target->height
+    for (int l=at.y;l<at.y+target->height;l++){
+        write_ptr = new_img_data;
+        write_ptr += l * new_image_width * num_channels; //start of current line
+
+        //Increment pointer with x offset
+        write_ptr   += at.x * num_channels;
+
+        //debug->Info("Copy 1st Line %i Linewidth = %i\n",l,width);
+        CopyLine(second_data,target->width,write_ptr,num_channels);
+        second_data += target->width * num_channels;
+    }
+
+
+    //Finalise
+    width = new_image_width;
+    height = new_image_height;
     //Image format should already match or be set.
     //Free any existing data
-    if (img_data){
-        free(img_data);
-    }
-    if (file_data){
-        free(file_data);
-    }
+    free(img_data);
+    free(file_data);
+    free(empty_line);
     img_data = new_img_data;
-    img_data_sz = new_image.img_data_sz;
+    img_data_sz = new_image_data_sz;
+
 }

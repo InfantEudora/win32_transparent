@@ -46,7 +46,8 @@ public:
     vec3 GetValueAt(float x, float y); //Returns the pixel value at 0 ... 1 interval.
 
     //Compile texture
-    void AppendTexture(Texture* texture, int2 pos);
+    void AppendTexture(Texture* target, int2 at);
+    void AppendTexture(Texture* texture, int2 pos, int max_width);
     void CopyLine(uint8_t* line, int num_pixels, uint8_t* out, int num_color_channels);
 };
 

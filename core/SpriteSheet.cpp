@@ -18,6 +18,13 @@ Sprite* SpriteSheet::GetSprite(int index){
 	return NULL;
 }
 
+Sprite* SpriteSheet::GetLastSprite(){
+	if (!sprites.empty()){
+		return &sprites.back();
+	}
+	return NULL;
+}
+
 void SpriteSheet::Upload(){
     if (texture){
         texture->Create2D();
@@ -31,15 +38,29 @@ void SpriteSheet::AddSpriteFromTexture(Texture* sprite_texture,  const char* nam
         texture = new Texture();
     }
 
+    //Because of lazyness... we only allow for sprites of the same size to be added.
+    if (sprites.size() > 0){
+        if ((sprites.at(0).width != sprite_texture->width) || (sprites.at(0).height != sprite_texture->height)){
+            debug->Fatal("AddSpriteFromTexture: Adding sprite's with different sizes/widths is super extra not supported.\n");
+        }
+    }
+
+    //We'd like to place this sprite after the last sprite
+    int2 at = int2(0,0);
+    Sprite* last_sprite = GetLastSprite();
+    if (last_sprite){
+        at.x = last_sprite->x + last_sprite->width;
+    }
+
+    //Build the sprite
     Sprite s;
     s.atlas = texture;
     s.width = sprite_texture->width;
     s.height = sprite_texture->height;
-    s.x = texture->width;
-    s.y = 0;
+    s.x = at.x;
+    s.y = at.y;
 
-    //Depending on things... its gets appended
-    texture->AppendTexture(sprite_texture,int2(0,0));
+    texture->AppendTexture(sprite_texture,at);
 
     sprites.push_back(s);
     //Recalculate all.

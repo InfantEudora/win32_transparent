@@ -52,9 +52,7 @@ void InitComponents(){
 
     // Load all the icons from the icon folder by extension:
     std::vector<std::string>filenames = Directory::GetFiles("data/icons","*.png");
-
     icon_sprites = new SpriteSheet();
-
     Texture temp_texture;
     for (std::string& filename: filenames){
         debug->Info("Got filename: %s\n",filename.c_str());
