@@ -18,8 +18,12 @@ PROJECT = wind
 DIR_SRC += ./core
 IPATHS += -Icore/
 
+SRCS += ./3rdparty/stb_image/stb_image.cpp
+SRCS += ./3rdparty/tinygltf/tiny_gltf.cpp
+
 IPATHS += -I3rdparty/imgui/
 IPATHS += -I3rdparty/
+IPATHS += -I3rdparty/stb_image/
 IPATHS += -I3rdparty/openal-soft/
 SRCS += main.cpp
 
@@ -45,18 +49,18 @@ endif
 #SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces/controllers))
 
 #ApplicationGrid
-#SRCS += ApplicationGrid.cpp
-#IPATHS += -Iisoterrain/
-#DIR_SRC += ./isoterrain
+SRCS += ApplicationGrid.cpp
+IPATHS += -Iisoterrain/
+DIR_SRC += ./isoterrain
 
 #ApplicationTileset
 #SRCS += ApplicationTileset.cpp
 
 #ApplicationSim
-IPATHS += -Igalaxy/
-DIR_SRC += ./galaxy
-SRCS += ApplicationSim.cpp
-SRCS += imgooey.cpp
+#IPATHS += -Igalaxy/
+#DIR_SRC += ./galaxy
+#SRCS += ApplicationSim.cpp
+#SRCS += imgooey.cpp
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 
@@ -67,7 +71,7 @@ endif
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #03 highest optimisation #-s to strip symbols
 
-CFLAGS += $(DFLAGS)
+CFLAGS += $(RFLAGS)
 
 OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 
@@ -85,6 +89,8 @@ imgui: $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
 	mkdir -p libs
 	@echo "Linking IMGui into static Library imgui.a"
 	ar q libs/libimgui.a $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
+
+
 
 all: default
 

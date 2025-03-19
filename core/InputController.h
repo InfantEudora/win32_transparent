@@ -44,6 +44,7 @@ typedef enum{
 struct KeyState{
     int                     f_isdown = 0;
     bool                    f_was_released = false;
+    bool                    f_processed = false;  // If the input was processed
     int32_t                 value = 0;
     float                   fvalue = 0.0f;
     std::atomic<int32_t>    delta = 0;          // Delta value this tick

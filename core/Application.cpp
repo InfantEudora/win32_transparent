@@ -342,7 +342,14 @@ void Application::RenderGenericObjectUI(){
     int ui_camid = 0;
     UpdateUICameraControls(main_scene->camera ,ui_camid);
 
-    Object* object = selected_object;
+    Object* object = hovered_object;
+    if (!object){
+        ImGui::Text("No Object Hovered");
+    }else{
+        ImGui::Text("Hovered Object: %s",object->name.c_str());
+    }
+
+    object = selected_object;
     if (!object){
         ImGui::Text("No Object Selected");
     }else{

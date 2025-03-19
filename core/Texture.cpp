@@ -2,8 +2,7 @@
 #include "Debug.h"
 #include "File.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image\stb_image.h"
+#include "stb_image/stb_image.h"
 
 static Debugger *debug = new Debugger("Texture", DEBUG_ALL);
 
@@ -215,7 +214,6 @@ void Texture::AppendTexture(Texture* target, int2 at){
         //Increment pointer with x offset
         write_ptr   += at.x * num_channels;
 
-
         CopyLine(second_data,target->width,write_ptr,num_channels);
         second_data += target->width * num_channels;
         write_ptr   += target->width * num_channels;
@@ -225,7 +223,6 @@ void Texture::AppendTexture(Texture* target, int2 at){
         //Perhaps we fill this line with some more emptyness?
         CopyLine(empty_line,remain,write_ptr,num_channels);
     }
-
 
     //Finalise
     width = new_image_width;
@@ -240,5 +237,4 @@ void Texture::AppendTexture(Texture* target, int2 at){
     free(empty_line);
     img_data = new_img_data;
     img_data_sz = new_image_data_sz;
-
 }

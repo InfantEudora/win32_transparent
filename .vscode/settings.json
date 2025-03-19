@@ -63,7 +63,10 @@
         "chrono": "cpp",
         "format": "cpp",
         "span": "cpp",
-        "variant": "cpp"
+        "variant": "cpp",
+        "forward_list": "cpp",
+        "fstream": "cpp",
+        "valarray": "cpp"
     },
     "terminal.integrated.profiles.osx": {
         "bash": {

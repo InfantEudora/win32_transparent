@@ -1,6 +1,10 @@
 #include "imgooey.h"
 
 namespace ImGooey{
+    //Collection of modded ImGui stuff.
+
+
+
     // Render a rectangle shaped with optional rounding and borders
     void RenderFrameCorner(ImVec2 p_min, ImVec2 p_max, ImU32 fill_col, bool border, ImGooyItemFlags gflags){
         ImDrawFlags flags = ImDrawFlags_None;
@@ -140,6 +144,40 @@ namespace ImGooey{
 
         IMGUI_TEST_ENGINE_ITEM_INFO(id, label, g.LastItemData.StatusFlags);
         return true;
+    }
+
+    // ImageButton() is flawed as 'id' is always derived from 'texture_id' (see #2464 #1390)
+    // We provide this internal helper to write your own variant while we figure out how to redesign the public ImageButton() API.
+    bool StorageButton(ImGuiID id, ImTextureID texture_id, const ImVec2& image_size, const ImVec2& uv0, const ImVec2& uv1, const ImVec4& bg_col, const ImVec4& tint_col, ImGuiButtonFlags flags){
+        ImGuiContext& g = *GImGui;
+        const ImGuiStyle& style = g.Style;
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        if (window->SkipItems)
+            return false;
+
+        const char* label = "Items!";
+
+        const ImVec2 padding = g.Style.FramePadding;
+        const ImRect bb(window->DC.CursorPos, window->DC.CursorPos + image_size + padding * 2.0f);
+        ImGui::ItemSize(bb);
+        if (!ImGui::ItemAdd(bb, id))
+            return false;
+
+        bool hovered, held;
+        bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held, flags);
+
+        // Render
+        const ImU32 col = ImGui::GetColorU32((held && hovered) ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+        ImGui::RenderNavHighlight(bb, id);
+        ImGui::RenderFrame(bb.Min, bb.Max, col, true, ImClamp((float)ImMin(padding.x, padding.y), 0.0f, g.Style.FrameRounding));
+        if (bg_col.w > 0.0f)
+            window->DrawList->AddRectFilled(bb.Min + padding, bb.Max - padding, ImGui::GetColorU32(bg_col));
+        window->DrawList->AddImage(texture_id, bb.Min + padding, bb.Max - padding, uv0, uv1, ImGui::GetColorU32(tint_col));
+
+        //We want the text displayed in a corner, to show the numer of items.
+        ImGui::RenderText(bb.Min + style.FramePadding, label, NULL);
+
+        return pressed;
     }
 
     //Starts our window with some default mangled stuff, mainly the titlebar

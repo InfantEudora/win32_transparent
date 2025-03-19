@@ -10,7 +10,7 @@
 #include "Debug.h"
 
 //Would be the name of the application
-#include "ApplicationSim.h"
+#include "ApplicationGrid.h"
 
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
@@ -20,7 +20,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug->Info("WinMain hInstance = %lu\n",hInstance);
     debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
 
-    Application* main_app = new ApplicationSim();
+    Application* main_app = new ApplicationGrid();
     main_app->Run();
     return main_app->Exit();
 }

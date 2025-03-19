@@ -1009,7 +1009,7 @@ void ApplicationSim::RenderSuperCustomUI(){
             uv1.x = sprite->uv1.x;
             uv1.y = sprite->uv1.y;
 
-            if (ImGui::ImageButton("", (ImTextureID)(intptr_t)icon_sprites->texture->texture_id, size, uv0, uv1, bg_col, tint_col)){
+            if (ImGooey::StorageButton(1, (ImTextureID)(intptr_t)icon_sprites->texture->texture_id, size, uv0, uv1, bg_col, tint_col)){
 
             }
 

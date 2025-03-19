@@ -4,6 +4,8 @@
 #include "Light.h"
 #include "CubeMap.h"
 
+#include "tinygltf/tiny_gltf.h"
+
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
 
 ApplicationGrid::ApplicationGrid():Application(){
@@ -83,7 +85,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->terrain = new IsoTerrain();
     app->terrain->name = "Iso Terrain";
     app->terrain->assetmanager = app->assetmanager;
-    app->terrain->CreateTerrain(63,63,3);
+    app->terrain->CreateTerrain(31,31,2);
     scene->AddObject(app->terrain);
 
     //Test arrows to test all this quaternion madness.
@@ -188,8 +190,57 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = app->renderer->FindMaterialIndex("grass");
     IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
 
+
+
+    //Try gLTF header thing
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err;
+    std::string warn;
+    std::string input_filename = "data/test.glb"; //There are binary and ascii files, assume binary
+
+    size_t file_data_sz = 0;
+    uint8_t* file_data = NULL;  // Data loaded from disk
+    file_data = LoadFile(input_filename.c_str(),&file_data_sz);
+
+    //std::string ext = tinygltf::GetFilePathExtension(input_filename);
+
+    bool ret = false;
+    //ret = loader.LoadBinaryFromFile(&model, &err, &warn, input_filename.c_str());
+    ret = loader.LoadBinaryFromMemory(&model,&err,&warn,file_data,file_data_sz);
+
+    if (!warn.empty()) {
+        debug->Warn("%s\n", warn.c_str());
+    }
+    if (!err.empty()) {
+        debug->Err("%s\n", err.c_str());
+    }
+    if (!ret) {
+        debug->Err("Failed to load .glTF : %s\n", input_filename.c_str());
+    }else{
+        debug->Ok("Loaded .glTF : %s\n", input_filename.c_str());
+    }
+
+    // Check file structure
+    debug->Info("Model has %i scenes\n",model.scenes.size());
+    for (int scene_index=0;scene_index<model.scenes.size();scene_index++){
+        debug->Info("Model.scenes[%i].name : %s\n",scene_index, model.scenes[scene_index].name.c_str());
+    }
+    debug->Info("Model has %i nodes\n",model.nodes.size());
+    for (int node_index=0;node_index<model.nodes.size();node_index++){
+        debug->Info("Model.nodes[%i].name : %s\n",node_index, model.nodes[node_index].name.c_str());
+        debug->Info("Model.nodes[%i].mesh : %i\n",node_index, model.nodes[node_index].mesh);
+    }
+    debug->Info("Model has %i meshes\n",model.meshes.size());
+    for (int mesh_index=0;mesh_index<model.meshes.size();mesh_index++){
+        debug->Info("Model.meshes[%i].name : %s\n",mesh_index, model.meshes[mesh_index].name.c_str());
+    }
+
+    debug->Info("More info!!!\n");
+
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
+
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -290,6 +341,8 @@ void ApplicationGrid::RunLogic(){
     //Testing. TODO: Make a slider with more accurate intervals than sleep.
     Sleep(5);
 
+    CheckObjectSelection();
+
     //Camera rotation moving
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
         int dx = input->GetDelta(INPUT_MOUSE_X);
@@ -343,6 +396,7 @@ void ApplicationGrid::RunLogic(){
     }
 
     static float mouse_delta_sum = 0;
+    //debug->Info("Mouse Delta: %.2f\n",mouse_delta_sum);
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     if (mouse_delta_sum != 0){
         camera->MoveForwardBy(mouse_delta_sum / 10.0f);
@@ -474,11 +528,16 @@ void ApplicationGrid::UpdateUI(){
     IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
     //UI for GridCells
     ImGui::Begin("Grid UI");
+    ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
+
+
     if (ImGui::CollapsingHeader("Grid Settings")){
         ImGui::Checkbox("Place New Tiles (Left Click)",&grid_settings.f_place);
         ImGui::DragInt("Tile Number",&grid_settings.tile_number,1,1,5);
         ImGui::Checkbox("Delete Tiles (Right Click)",&grid_settings.f_delete);
         ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
+
+
     }
     vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
     ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);

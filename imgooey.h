@@ -33,6 +33,7 @@ namespace ImGooey{
     IMGUI_API bool CustomButton(const char* label, const ImVec2& size_arg = ImVec2(0, 0), ImGooyItemFlags gflags = 0, ImGuiButtonFlags bflags = 0, ImGuiItemFlags iflags = 0);
     IMGUI_API bool StatusLabel(const char* label,const ImVec2& size_arg, ImGooyStatus status, float animation = 0.0f);
     IMGUI_API bool Begin(const char* name, bool* p_open, ImGuiWindowFlags flags);
+    IMGUI_API bool StorageButton(ImGuiID id, ImTextureID texture_id, const ImVec2& image_size, const ImVec2& uv0, const ImVec2& uv1, const ImVec4& bg_col, const ImVec4& tint_col, ImGuiButtonFlags flags = 0);
 };
 
 #include <string>

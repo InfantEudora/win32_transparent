@@ -85,6 +85,11 @@ We use a single 1k texture as a uniform noise where all our randomness comes fro
 
 - Now we can generate a star system with some stars and planets normally distributed according... to science?
 
+
+### Isometric RPG Thing
+
+- Rooms, levels. Have a menu pop up when clicking a tile: Add walls, door or window to 4 directions. Make it detect area's like rooms and highlight them.
+
 ### Done's
 - [x] Multisampling to a seperate FBO
 - [x] Resolve the multisample to a FBO.

@@ -79,11 +79,13 @@ void InputController::UpdateKeyState(){
         if (mousepoint_valid && (map.mapped_keycode == INPUT_MOUSE_X)){
             map.state->delta = p.x - map.state->value;
             map.state->value = p.x;
+            map.state->f_processed = false;
             continue;
         }
         if (mousepoint_valid && (map.mapped_keycode == INPUT_MOUSE_Y)){
             map.state->delta = p.y - map.state->value;
             map.state->value = p.y;
+            map.state->f_processed = false;
             continue;
         }
         SHORT s = GetAsyncKeyState(map.system_keycode);
@@ -139,6 +141,7 @@ int32_t InputController::GetDelta(uint32_t mapped, KeyMap** map_out){
     if (map_out){
         *map_out = m;
     }
+    m->state->f_processed = true;
     return m->state->delta;
 }
 
@@ -168,9 +171,14 @@ vec3 InputController::GetHoveredNormal(){
 
 //Clears the button and input transition flags
 void InputController::Tick(){
+    //debug->Info("Input Controller Tick\n");
     for (KeyMap& km:keymap){
         km.state->f_was_released = false;
-        km.state->delta = 0;
+
+        if (km.state->f_processed){
+            km.state->delta = 0;
+            km.state->f_processed = false;
+        }
     }
 }
 
@@ -196,6 +204,7 @@ void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
         if (m){
             m->state->value += d;
             m->state->delta += d;
+            m->state->f_processed = false;
         }
     }else if (msg == WM_NCMOUSELEAVE){
     }else if (msg == WM_SETCURSOR){
