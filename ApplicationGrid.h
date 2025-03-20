@@ -6,6 +6,7 @@
 #include "type_plane.h"
 #include "type_ray.h"
 
+#include "GLTFLoader.h"
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
@@ -21,6 +22,8 @@ public:
     IsoTerrain* terrain = NULL;
 
     Object* selection_tile = NULL;
+
+    GLTFLoader gltfloader;
 
 
     struct{

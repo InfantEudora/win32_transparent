@@ -376,13 +376,18 @@ void Application::RenderGenericObjectUI(){
             ImGui::DragFloat("Brightness", (float*)&light->brightness, 0.01f, 0.0f, 10.0f);
         }
 
-
-        if (object->GetMesh() && ImGui::CollapsingHeader("Mesh")){
-            Mesh* mesh = object->GetMesh();
-            ImGui::Text(" ID             : %lu",mesh->GetID());
-            ImGui::Text(" num_vertices   : %lu",mesh->num_vertices);
-            ImGui::Text(" num_materials  : %lu",mesh->num_materials);
-            ImGui::Text(" num_references : %lu",mesh->num_references);
+        if (object->GetMesh()){
+            if (ImGui::CollapsingHeader("Mesh")){
+                Mesh* mesh = object->GetMesh();
+                ImGui::Text(" ID             : %lu",mesh->GetID());
+                ImGui::Text(" num_vertices   : %lu",mesh->num_vertices);
+                ImGui::Text(" num_materials  : %lu",mesh->num_materials);
+                ImGui::Text(" num_references : %lu",mesh->num_references);
+            }
+        }else{
+            ImGui::BeginDisabled();
+            ImGui::CollapsingHeader("No Mesh");
+            ImGui::EndDisabled();
         }
 
         if (ImGui::CollapsingHeader("Position")){

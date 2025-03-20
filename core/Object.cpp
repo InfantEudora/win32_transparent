@@ -73,6 +73,9 @@ Mesh* Object::GetMesh(){
 }
 
 void Object::SetMesh(Mesh* _mesh){
+    if (!_mesh){
+        return;
+    }
     mesh = _mesh;
     mesh->num_references++;
 }

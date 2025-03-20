@@ -4,8 +4,6 @@
 #include "Light.h"
 #include "CubeMap.h"
 
-#include "tinygltf/tiny_gltf.h"
-
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
 
 ApplicationGrid::ApplicationGrid():Application(){
@@ -190,57 +188,18 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = app->renderer->FindMaterialIndex("grass");
     IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
 
+    //Load the model into something....
+    app->gltfloader.LoadGTLFFile("data/trees.glb");
+    Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("Tree");
+    Object* gltf_object = new Object();
+    gltf_object->name = "GLTF Object";
+    gltf_object->SetMesh(gltfmesh);
+    scene->AddObject(gltf_object);
 
 
-    //Try gLTF header thing
-    tinygltf::Model model;
-    tinygltf::TinyGLTF loader;
-    std::string err;
-    std::string warn;
-    std::string input_filename = "data/test.glb"; //There are binary and ascii files, assume binary
-
-    size_t file_data_sz = 0;
-    uint8_t* file_data = NULL;  // Data loaded from disk
-    file_data = LoadFile(input_filename.c_str(),&file_data_sz);
-
-    //std::string ext = tinygltf::GetFilePathExtension(input_filename);
-
-    bool ret = false;
-    //ret = loader.LoadBinaryFromFile(&model, &err, &warn, input_filename.c_str());
-    ret = loader.LoadBinaryFromMemory(&model,&err,&warn,file_data,file_data_sz);
-
-    if (!warn.empty()) {
-        debug->Warn("%s\n", warn.c_str());
-    }
-    if (!err.empty()) {
-        debug->Err("%s\n", err.c_str());
-    }
-    if (!ret) {
-        debug->Err("Failed to load .glTF : %s\n", input_filename.c_str());
-    }else{
-        debug->Ok("Loaded .glTF : %s\n", input_filename.c_str());
-    }
-
-    // Check file structure
-    debug->Info("Model has %i scenes\n",model.scenes.size());
-    for (int scene_index=0;scene_index<model.scenes.size();scene_index++){
-        debug->Info("Model.scenes[%i].name : %s\n",scene_index, model.scenes[scene_index].name.c_str());
-    }
-    debug->Info("Model has %i nodes\n",model.nodes.size());
-    for (int node_index=0;node_index<model.nodes.size();node_index++){
-        debug->Info("Model.nodes[%i].name : %s\n",node_index, model.nodes[node_index].name.c_str());
-        debug->Info("Model.nodes[%i].mesh : %i\n",node_index, model.nodes[node_index].mesh);
-    }
-    debug->Info("Model has %i meshes\n",model.meshes.size());
-    for (int mesh_index=0;mesh_index<model.meshes.size();mesh_index++){
-        debug->Info("Model.meshes[%i].name : %s\n",mesh_index, model.meshes[mesh_index].name.c_str());
-    }
-
-    debug->Info("More info!!!\n");
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
-
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
