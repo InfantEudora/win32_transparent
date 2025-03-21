@@ -30,6 +30,8 @@ private:
 
     vertex           GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index);
 
+    std::vector<Material> materials;    //Material list we load from a single file.
+
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;
 };

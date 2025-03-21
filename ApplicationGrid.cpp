@@ -4,6 +4,9 @@
 #include "Light.h"
 #include "CubeMap.h"
 
+#define INPUT_H INPUT_LAST+1
+
+
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
 
 ApplicationGrid::ApplicationGrid():Application(){
@@ -51,6 +54,9 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->camera->SetLookAt(vec3());
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
     scene->AddObject(scene->camera);
+
+    //Add input to input controller
+    scene->inputcontroller->AddKeyMap('H',INPUT_H);
 
     //Make a sun
     DirectionalLight* sun = new DirectionalLight();
@@ -191,25 +197,37 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //Load the model into something....
     loaded_materials.clear();
     app->gltfloader.LoadGLTFFile("data/trees.glb");
-    Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("Tree",&loaded_materials);
+    Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("tree.001",&loaded_materials);
     Object* gltf_object = new Object();
     gltf_object->name = "GLTF Object Tree";
     gltf_object->SetMesh(gltfmesh);
+    scene->renderer->AddMaterials(loaded_materials);
+    gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
 
-    Mesh* gltfmesh2 = app->gltfloader.GetMeshFromNode("WallSegment",&loaded_materials);
+    loaded_materials.clear();
+    Mesh* gltfmesh2 = app->gltfloader.GetMeshFromNode("wall_concrete.001",&loaded_materials);
     Object* gltf_object2 = new Object();
     gltf_object2->name = "GLTF Object Wall";
     gltf_object2->SetMesh(gltfmesh2);
-
     scene->renderer->AddMaterials(loaded_materials);
-    gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
     gltf_object2->PickMaterials(loaded_materials,scene->renderer->materials);
+
+    loaded_materials.clear();
+    Mesh* gltfmesh3 = app->gltfloader.GetMeshFromNode("tile_floor.001",&loaded_materials);
+    Object* gltf_object3 = new Object();
+    gltf_object3->name = "GLTF Object Floor";
+    gltf_object3->SetMesh(gltfmesh3);
+    scene->renderer->AddMaterials(loaded_materials);
+    gltf_object3->PickMaterials(loaded_materials,scene->renderer->materials);
 
     scene->AddObject(gltf_object);
     scene->AddObject(gltf_object2);
+    scene->AddObject(gltf_object3);
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
+
+    app->grid_settings.f_place = false;
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -253,7 +271,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(1440,720,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1680,960,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -424,7 +442,13 @@ void ApplicationGrid::RunLogic(){
 
             vec3 p = cell->GetPosition();
             p += dir;
-            selection_tile->SetPosition(p);
+
+            if (grid_settings.f_selection){
+                selection_tile->SetPosition(p);
+                selection_tile->Show();
+            }else{
+                selection_tile->Hide();
+            }
         }
     }
 
@@ -442,6 +466,13 @@ void ApplicationGrid::RunLogic(){
         }
     }
 
+    //Modify active object
+    if (selected_object){
+        if (input->WasKeyReleased(INPUT_H)){
+            selected_object->Hide();
+        }
+    }
+
     //Selection tile on a plane
     if (0 && !ImGui::GetIO().WantCaptureMouse && intersect && selection_tile){
         //We snap the selection tile to a grid.
@@ -453,7 +484,6 @@ void ApplicationGrid::RunLogic(){
         IsoCell* terraincell = terrain->FindCellByWorldPosition(at);
         if (grid_settings.f_place && (clicked_empty || (cell && left_clicked))){
             //Request the cell at the current coordinate from the grid:
-
             if (terraincell){
                 debug_physics->Info("Already IsoCell at %.1f x %.1f : terraincell %ix%i\n",at.x,at.z,terraincell->coordinate.x,terraincell->coordinate.y);
                 terraincell->Show();

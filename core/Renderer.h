@@ -69,7 +69,7 @@ class Renderer{
     bool CheckFrameBuffer();
     bool Init();
     void SetState();
-    void SetNumAASamples(int desired);
+    bool SetNumAASamples(int desired);
     bool Resize(int new_width, int new_height);
     bool RebuildMSAAFBO();
 

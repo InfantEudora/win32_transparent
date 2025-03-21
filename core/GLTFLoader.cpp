@@ -106,7 +106,11 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     for (int material_index=0;material_index<model.materials.size();material_index++){
         debug->Info("Model.materials[%i].name                       : %s\n",material_index, model.materials[material_index].name.c_str());
         debug->Info("Model.materials[%i].pbr.baseColorTexture.index : %i\n",material_index, model.materials[material_index].pbrMetallicRoughness.baseColorTexture.index);
-
+        debug->Info("Model.materials[%i].pbr.baseColorFactor        : %.1f %.1f %.1f %.1f\n",material_index
+        , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(0)
+        , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(1)
+        , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(2)
+        , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(3));
 
     }
     debug->Info("Model has %i buffers\n",model.buffers.size());
@@ -287,7 +291,6 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         return NULL;
     }
 
-    std::vector<Material> materials;
 
     //Now we expect there to be a NORMAL, POSITION and maybe a TEXCOORD_0
     //TODO: Parse a mesh without UVs
@@ -297,6 +300,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     //This should be such that at least the materials in this Mesh can be looked up later on.
     int material_index = primitive.material;
     int diff_texture_index = -1;
+    materials.clear();
 
     tinygltf::Material* gltfmaterial = NULL;
     if (material_index > -1){
@@ -305,34 +309,43 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         Material m;
         m.name = gltfmaterial->name;
 
+
         //If the material has a diffuse texture, we load that here
         if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
             //This material uses texture with index
             diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
+
+            Texture* diff_texture = new Texture();
+            //Get the memory offset.
+
+            tinygltf::Image& image = model.images.at(diff_texture_index);
+            if (image.bufferView == -1){
+                debug->Fatal("Probably external image file needs to be loaded.\n");
+            }
+
+            tinygltf::BufferView& bufferview = model.bufferViews.at(image.bufferView);
+            tinygltf::Buffer& buffer = model.buffers.at(bufferview.buffer);
+
+            int offset = bufferview.byteOffset;
+
+            uint8_t* image_data = &buffer.data.at(offset);
+            size_t data_len = bufferview.byteLength;
+            diff_texture->LoadFromMemory(image_data,data_len,GL_TEXTURE_2D,1);
+            diff_texture->name = image.name;
+
+            m.diff_texture = diff_texture;
+            debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+        }else{
+            //We just load the base color
+            m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
+            m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
+            m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
+            m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
         }
-
-        Texture* diff_texture = new Texture();
-        //Get the memory offset.
-
-        tinygltf::Image& image = model.images.at(diff_texture_index);
-        if (image.bufferView == -1){
-            debug->Fatal("Probably external image file needs to be loaded.\n");
-        }
-
-        tinygltf::BufferView& bufferview = model.bufferViews.at(image.bufferView);
-        tinygltf::Buffer& buffer = model.buffers.at(bufferview.buffer);
-
-        int offset = bufferview.byteOffset;
-
-        uint8_t* image_data = &buffer.data.at(offset);
-        size_t data_len = bufferview.byteLength;
-        diff_texture->LoadFromMemory(image_data,data_len,GL_TEXTURE_2D,1);
-        diff_texture->name = image.name;
-
-        m.diff_texture = diff_texture;
-        debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
         materials.push_back(m);
     }
+
+    int material_id = materials.size() - 1;
 
     std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
     std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
@@ -401,10 +414,10 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         vert2.tangent = vert1.tangent;
         vert3.tangent = vert1.tangent;
 
-        //We use the material index from this file.
-        vert1.matid = material_index;
-        vert2.matid = material_index;
-        vert3.matid = material_index;
+        //We use the last material we loaded.
+        vert1.matid = material_id;
+        vert2.matid = material_id;
+        vert3.matid = material_id;
 
         verts.push_back(vert1);
         verts.push_back(vert2);

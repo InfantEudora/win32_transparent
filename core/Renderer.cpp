@@ -22,8 +22,6 @@ void Renderer::SetState(){
 }
 
 bool Renderer::Init(){
-    SetNumAASamples(16);
-
     //Get some info
     int r = 0;
 
@@ -33,10 +31,11 @@ bool Renderer::Init(){
     glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &r);
     debug->Info("GL_MAX_TEXTURE_IMAGE_UNITS = %i\n",r);
 
-
-    if (!RebuildMSAAFBO()){
+    if (!SetNumAASamples(16)){
         return false;
     }
+
+
 
     if ((pipeline == PIPELINE_DEFERRED) && !InitDeferredFBO()){
         return false;
@@ -456,7 +455,7 @@ bool Renderer::InitSSBO(){
     return true;
 }
 
-void Renderer::SetNumAASamples(int desired){
+bool Renderer::SetNumAASamples(int desired){
     int max_samples;
 	glGetIntegerv(GL_MAX_SAMPLES, &max_samples);
     debug->Info("GL_MAX_SAMPLES=%i\n",max_samples);
@@ -468,6 +467,12 @@ void Renderer::SetNumAASamples(int desired){
     }else{
          debug->Info("Number of AA Samples set to %i\n",aa_samples);
     }
+
+    //After this, we need some buffers rebuilt:
+    if (!RebuildMSAAFBO()){
+        return false;
+    }
+    return true;
 }
 
 bool Renderer::InitDeferredFBO(){

@@ -496,6 +496,11 @@ void Application::RenderGenericObjectUI(){
     if (ImGui::CollapsingHeader("Renderer")){
         ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
         ImGui::Checkbox("##1", &renderer->f_normal_mapping);
+
+        int num_samples = renderer->aa_samples;
+        if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
+            renderer->SetNumAASamples(num_samples);
+        }
     }
 
     if (ImGui::CollapsingHeader("Window")){
@@ -514,7 +519,7 @@ void Application::RenderGenericObjectUI(){
         for (Material& material: renderer->materials){
             ImGui::Text("Material  : %s", material.name.c_str());
             ImGui::Text("GLSL Material Properties");
-            //ImGui::Text(" Metallic",material.glsl_material.color);
+            ImGui::Text(" diffuse_texture  : %i", material.glsl_material.diffuse_texture);
 
             ImGui::PushID(n++);
             ImGui::ColorEdit4(" GLSL Color", (float*)&material.glsl_material.color, ImGuiColorEditFlags_DisplayRGB);
