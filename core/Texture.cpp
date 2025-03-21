@@ -29,10 +29,10 @@ void Texture::Create2D(int target, int depth){
     glCreateTextures(target, 1, &texture_id);
     debug->Info("Create2D: %s texture_id: %li\n",name.c_str(),texture_id);
 
-    glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+    glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
     //Allocates storage in GPU, but no data is transferred
     glTextureStorage2D(texture_id, 1, storage_format, width, height);
@@ -61,32 +61,17 @@ void Texture::UploadTexture(UINT _format, int target){
     }
 }
 
-/*
-    Filename;
-    Target: Specifies the texture target GL_TEXTURE_1D, GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_1D_ARRAY, GL_TEXTURE_2D_ARRAY, GL_TEXTURE_RECTANGLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_BUFFER, GL_TEXTURE_2D_MULTISAMPLE or GL_TEXTURE_2D_MULTISAMPLE_ARRAY.
-    Depth: -1 will not be uploaded to GPU, GL_TEXTURE_CUBE_MAP (0-6): Face index,
-*/
-void Texture::LoadFromFile(const char* filename, int target, int depth_in){
+//Load a decoded (PNG, JPG etc. from memory.)
+void Texture::LoadFromMemory(uint8_t* data, size_t length, int target, int depth_in){
     depth = depth_in;
-
-    if (file_data_sz > 0){
-        debug->Info("LoadFromFile: Overwriting existing file data\n");
-        free(file_data);
-    }
-
-    file_data_sz = 0;
-    file_data = LoadFile(filename,&file_data_sz);
-    if (!file_data){
-        debug->Err("Unable to load Image File %s\n",filename);
-    }
 
     int w;
 	int h;
 	int channels;
     stbi_set_flip_vertically_on_load(false);
-    img_data = stbi_load_from_memory(file_data,file_data_sz,&w,&h,&channels,0);
+    img_data = stbi_load_from_memory(data,length,&w,&h,&channels,0);
     debug->Info("Loaded image file: %i x %i %i channels\n",w,h,channels);
-    name = filename;
+
     //TODO: Free file data. This may not be possible when it was packed in?
 
     //Compute image data size
@@ -134,6 +119,28 @@ void Texture::LoadFromFile(const char* filename, int target, int depth_in){
     debug->Info("Uploading data. Texture Handle: %llu\n",texture_handle);
     glMakeTextureHandleResidentARB(texture_handle);
     #endif
+}
+
+/*
+    Filename;
+    Target: Specifies the texture target GL_TEXTURE_1D, GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_1D_ARRAY, GL_TEXTURE_2D_ARRAY, GL_TEXTURE_RECTANGLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_BUFFER, GL_TEXTURE_2D_MULTISAMPLE or GL_TEXTURE_2D_MULTISAMPLE_ARRAY.
+    Depth: -1 will not be uploaded to GPU, GL_TEXTURE_CUBE_MAP (0-6): Face index,
+*/
+void Texture::LoadFromFile(const char* filename, int target, int depth_in){
+    if (file_data_sz > 0){
+        debug->Info("LoadFromFile: Overwriting existing file data\n");
+        free(file_data);
+    }
+
+    file_data_sz = 0;
+    file_data = LoadFile(filename,&file_data_sz);
+    if (!file_data){
+        debug->Err("Unable to load Image File %s\n",filename);
+        return;
+    }
+
+    name = filename;
+    LoadFromMemory(file_data,file_data_sz,target,depth_in);
 }
 
 //CPU interpolation time!

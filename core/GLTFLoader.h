@@ -19,8 +19,8 @@
 */
 class GLTFLoader{
 public:
-    void    LoadGTLFFile(const char* filename);
-    Mesh*   GetMeshFromNode(const char* node_name); //This creates a mesh
+    void    LoadGLTFFile(const char* filename);
+    Mesh*   GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
 private:
     tinygltf::Node*  FindNode(std::string node_name);
 

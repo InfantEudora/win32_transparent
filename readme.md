@@ -164,6 +164,9 @@ Globally, rocks gets index 1 assigned.
 
 Both meshes get 3 material slots, which map to the 3 materials. Using PickMaterials the three slots pick the corresponding material from the total loaded materials.
 
+Vertices and thus meshes have a material index, these refer to the material slots.
+In an object, each slot can be assigned a different material, while having the same mesh.
+
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
 

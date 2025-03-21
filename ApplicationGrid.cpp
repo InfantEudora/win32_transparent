@@ -189,14 +189,24 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
 
     //Load the model into something....
-    app->gltfloader.LoadGTLFFile("data/trees.glb");
-    Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("Tree");
+    loaded_materials.clear();
+    app->gltfloader.LoadGLTFFile("data/trees.glb");
+    Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("Tree",&loaded_materials);
     Object* gltf_object = new Object();
-    gltf_object->name = "GLTF Object";
+    gltf_object->name = "GLTF Object Tree";
     gltf_object->SetMesh(gltfmesh);
+
+    Mesh* gltfmesh2 = app->gltfloader.GetMeshFromNode("WallSegment",&loaded_materials);
+    Object* gltf_object2 = new Object();
+    gltf_object2->name = "GLTF Object Wall";
+    gltf_object2->SetMesh(gltfmesh2);
+
+    scene->renderer->AddMaterials(loaded_materials);
+    gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+    gltf_object2->PickMaterials(loaded_materials,scene->renderer->materials);
+
     scene->AddObject(gltf_object);
-
-
+    scene->AddObject(gltf_object2);
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
