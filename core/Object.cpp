@@ -171,6 +171,28 @@ vec3 Object::GetScale(){
     return state_physics.scale;
 }
 
+//Looks up material_names in a list and updates material_slots
+void Object::UpdateMaterials(std::vector<Material>& global_list){
+    if (!f_update_materials){
+        return;
+    }
+    int index = 0;
+    for (std::string& mat_name:material_names){
+        if (index >= NUM_MATERIAL_SLOTS){
+            return;
+        }
+        for (int global_index=0;global_index<global_list.size();global_index++){
+            Material& global_mat = global_list.at(global_index);
+            if (mat_name.compare(global_mat.name) == 0){
+                material_slot[index] = global_index;
+                //debug->Info("Picking material %s %i -> %i\n",mat.name.c_str(),index,global_index);
+                break;
+            }
+        }
+        index++;
+    }
+}
+
 //Copies physics state over to this state.
 void Object::UpdateState(){
     state = state_physics_prev;
@@ -357,5 +379,17 @@ void Object::PickMaterials(std::vector<Material>& list, std::vector<Material>& g
                 break;
             }
         }
+    }
+}
+
+//Stores names of a supplied list of materials.
+void Object::TakeMaterialNames(std::vector<Material>& list){
+    int index = 0;
+    for (Material& newmat:list){
+        if (index >= NUM_MATERIAL_SLOTS){
+            return;
+        }
+        material_names[index] = newmat.name;
+        index++;
     }
 }

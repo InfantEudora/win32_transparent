@@ -23,10 +23,15 @@ struct int3{
     int3(int x, int y, int z) : x(x), y(y), z(z){}
 
     bool operator==(const int3& rhs) const;
+	int3 operator+(const int3& rhs) const;
 };
 
 inline bool int3::operator==(const int3& rhs) const {
     return (x == rhs.x) && (y == rhs.y) && (z == rhs.z);
+}
+
+inline int3 int3::operator+(const int3& rhs) const {
+    return int3(x+rhs.x, y+rhs.y, z+rhs.z);
 }
 
 #endif

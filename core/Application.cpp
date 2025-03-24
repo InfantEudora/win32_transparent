@@ -487,13 +487,16 @@ void Application::RenderGenericObjectUI(){
             ImGui::Text("Renderer Materials: %i",renderer->materials.size());
             ImGui::Separator();
 
-            ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,10);
-            ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,10);
-            ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,10);
-            ImGui::DragInt("Material Slot 3",&object->material_slot[3],1,-1,10);
+            ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,20);
+            ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,20);
+            ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,20);
+            ImGui::DragInt("Material Slot 3",&object->material_slot[3],1,-1,20);
+
+            ImGui::Text("Material Name 0 : %s",object->material_names[0].c_str());
+            ImGui::Text("Material Name 1 : %s",object->material_names[1].c_str());
+            ImGui::Text("Material Name 2 : %s",object->material_names[2].c_str());
+            ImGui::Text("Material Name 3 : %s",object->material_names[3].c_str());
         }
-
-
     }
 
     if (ImGui::CollapsingHeader("Performance")){
@@ -504,6 +507,8 @@ void Application::RenderGenericObjectUI(){
     if (ImGui::CollapsingHeader("Renderer")){
         ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
         ImGui::Checkbox("##1", &renderer->f_normal_mapping);
+        ImGui::Text(    "Render Skybox  :");ImGui::SameLine();
+        ImGui::Checkbox("##2", &renderer->f_render_skybox);
 
         int num_samples = renderer->aa_samples;
         if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
@@ -577,9 +582,10 @@ void Application::CheckObjectSelection(){
 
     //Check if we selected a tile
     objectid_t hovered_objid = OBJECTID_INVALID;
+
+
     if (!ImGui::GetIO().WantCaptureMouse){
         hovered_objid = input->GetHoveredObjectID();
-
         if ((hovered_objid == OBJECTID_INVALID) && input->WasKeyReleased(INPUT_CLICK_LEFT)){
             selected_object = NULL;
             return;

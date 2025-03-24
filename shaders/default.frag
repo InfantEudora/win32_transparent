@@ -54,7 +54,7 @@ float metallic = 0.5f;
 float roughness = 0.75f;
 uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 uniform int f_normal_mapping = 1;
-uniform float alpha_clip = 0.5f;
+uniform float alpha_clip = 1.0f;
 
 //This gets set when lighting calculation is done, and is this fragments resulting normal.
 vec3 sampled_normal = vec3(0,0,0);
@@ -139,12 +139,12 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
         V = normalize(iTBN * (eye_position - vposition));
         L = normalize(iTBN * (lightdirection));
     }else{
-        N = vnormal;
+        N = normalize(vnormal);
         V = normalize(eye_position - vposition);
         L = normalize(lightdirection);
     }
 
-    sampled_normal = vnormal;
+    sampled_normal = normalize(vnormal);
 
     vec3 F0 = vec3(0.04); //Fresnell factor
     F0 = mix(F0, albedo, metallic);
@@ -158,8 +158,8 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
     vec3 radiance     = color * brightness;
 
     // cook-torrance brdf
-    float NDF = DistributionGGX(N, H, roughness + 0.001); //Some base roughness to prevent /0
-    float G   = GeometrySmith(N, V, L, roughness + 0.001);
+    float NDF = DistributionGGX(N, H, roughness + 0.0001); //Some base roughness to prevent /0
+    float G   = GeometrySmith(N, V, L, roughness + 0.0001);
     vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     vec3 kS = F;
@@ -167,7 +167,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
     kD *= 1.0 - metallic;
 
     vec3 numerator    = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.001;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
     vec3 specular     = numerator / denominator;
 
     // add to outgoing radiance Lo

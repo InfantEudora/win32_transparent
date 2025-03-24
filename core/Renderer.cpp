@@ -35,8 +35,6 @@ bool Renderer::Init(){
         return false;
     }
 
-
-
     if ((pipeline == PIPELINE_DEFERRED) && !InitDeferredFBO()){
         return false;
     }
@@ -125,6 +123,13 @@ void Renderer::CullObjects(){
         if (object->IsVisible()){
             GetAllRenderableVisableSubObjects(object,renderable_objects);
         }
+    }
+}
+
+//Updates all the materials that need to be picked from the objects that need to be rendered.
+void Renderer::UpdateObjectMaterials(){
+    for (Object* object:renderable_objects){
+        object->UpdateMaterials(materials);
     }
 }
 
@@ -286,7 +291,7 @@ void Renderer::UpdateReadbackBuffer(){
 
 //Requires a skybox shader and skybox to have been set.
 void Renderer::DrawSkyBox(Camera* camera){
-    if (skybox && skybox_shader && skybox_mesh){
+    if (f_render_skybox && skybox && skybox_shader && skybox_mesh){
         skybox_shader->Use();
         skybox_shader->Setmat4("mat_worldcam",camera->GetPositionlessMatrix());
         glDepthMask(GL_FALSE);
@@ -304,6 +309,7 @@ void Renderer::DrawObjects(){
     CullObjects();
     CullLights();
     UpdateState();
+    UpdateObjectMaterials();
 
     RebuildUniqueMeshList();
     ClearBatches();
@@ -758,7 +764,7 @@ Material* Renderer::GetMaterial(int index){
 }
 
 //Returns the material index in material list based on supplied name
-int Renderer::FindMaterialIndex(const char* name){
+int Renderer::FindMaterialIndex(const std::string& name){
     for (int index=0;index<materials.size();index++){
         Material& mat = materials.at(index);
         if (mat.name.compare(name) == 0){

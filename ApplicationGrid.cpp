@@ -13,6 +13,110 @@ ApplicationGrid::ApplicationGrid():Application(){
     debug->Info("Created new application.\n");
 };
 
+
+Scene* ApplicationGrid::CreateTestScene(){
+    test_scene = new Scene();
+    Scene* scene = test_scene;
+    scene->name = "Grid Test Scene";
+
+    //Create a renderer for this scene...
+    scene->renderer = new Renderer(main_window->width,main_window->height);
+    //scene->renderer->Init();
+
+    //scene->renderer = renderer;
+    scene->inputcontroller = main_window->inputcontroller;
+    scene->shader = default_shader;
+
+    scene->camera = new Camera();
+    scene->camera->name = "TestScene Camera";
+    scene->camera->SetPosition(vec3(5,5,5));
+    scene->camera->SetLookAt(vec3());
+    scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    scene->AddObject(scene->camera);
+
+    //Make a sun
+    DirectionalLight* sun = new DirectionalLight();
+    sun->name = "TestScene Directional Light (Sun)";
+    sun->SetPosition(vec3(-10,10,10));
+    sun->color = vec3(1,0.8,0.6);
+    sun->brightness = 5.0;
+    sun->SetLookAt(vec3());
+    scene->AddObject(sun);
+
+    std::vector<Material>loaded_materials;
+    //Build assets
+    Object* temp = new Object();
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_001.obj",&loaded_materials));
+    assetmanager->AddNewAsset("tile_001",temp);
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_002.obj",&loaded_materials));
+    assetmanager->AddNewAsset("tile_002",temp);
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/border_rock.obj",&loaded_materials));
+    assetmanager->AddNewAsset("border_rock",temp);
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/editor_camera.obj",&loaded_materials));
+    assetmanager->AddNewAsset("editor_camera",temp);
+    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_gate.obj",&loaded_materials));
+    assetmanager->AddNewAsset("tile_gate",temp);
+    scene->renderer->AddMaterials(loaded_materials);
+    delete temp;
+
+    //Test arrows to test all this quaternion madness.
+    Object* arrows = new Object();
+    loaded_materials.clear();
+    arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj",&loaded_materials));
+    scene->renderer->AddMaterials(loaded_materials);
+    arrows->PickMaterials(loaded_materials,scene->renderer->materials);
+
+    arrows->name = "Axis Arrows";
+    arrows->SetPosition(vec3(-2,0,0));
+    scene->AddObject(arrows);
+
+    //A test thing with 4 new textures that should auto load and display:
+    loaded_materials.clear();
+    Object* testcube  = new Object();
+    testcube->SetMesh(OBJLoader::ParseOBJFile("data/test_cube.obj",&loaded_materials));
+    testcube->name = "Test Cube";
+    testcube->SetPosition(vec3(0,0.5,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    testcube->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->AddObject(testcube);
+
+    loaded_materials.clear();
+    Object* tree  = new Object();
+    tree->SetMesh(OBJLoader::ParseOBJFile("data/tree_001.obj",&loaded_materials));
+    tree->name = "Tree 001";
+    tree->SetPosition(vec3(0.5,0,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    tree->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->AddObject(tree);
+
+    loaded_materials.clear();
+    Object* wall  = new Object();
+    wall->SetMesh(OBJLoader::ParseOBJFile("data/wall_segment.obj",&loaded_materials));
+    wall->name = "Wall 001";
+    wall->SetPosition(vec3(0.5,0,0));
+    scene->renderer->AddMaterials(loaded_materials);
+    wall->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->AddObject(wall);
+
+    Object* gate = new Object();
+    gate = assetmanager->GetObjectFromAsset("tile_gate");
+    gate->name  = "Gate Tile";
+    gate->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->AddObject(gate);
+
+    //Manually create and add materials
+    Material mat = {};
+    mat.glsl_material.color = vec4(1,1,1,1);
+    mat.glsl_material.diffuse_texture = 0;
+    mat.name = "Custom Loaded Textured Material";
+    Texture* tex = scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
+    mat.glsl_material.handle_diffuse = tex->texture_handle;
+    mat.diff_texture = tex;
+    int matindex = scene->renderer->AddMaterial(mat);
+
+    return test_scene;
+}
+
 //Function for rendering the frame to a window
 DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     ApplicationGrid* app = static_cast<ApplicationGrid*>(lpParameter);
@@ -69,23 +173,11 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
+
+    //Currently not testing, but should be working.
+    app->test_scene = app->CreateTestScene();
+
     std::vector<Material>loaded_materials;
-
-    //Build assets
-    Object* temp = new Object();
-    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_001.obj",&loaded_materials));
-    app->assetmanager->AddNewAsset("tile_001",temp);
-    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_002.obj",&loaded_materials));
-    app->assetmanager->AddNewAsset("tile_002",temp);
-    temp->SetMesh(OBJLoader::ParseOBJFile("data/border_rock.obj",&loaded_materials));
-    app->assetmanager->AddNewAsset("border_rock",temp);
-    temp->SetMesh(OBJLoader::ParseOBJFile("data/editor_camera.obj",&loaded_materials));
-    app->assetmanager->AddNewAsset("editor_camera",temp);
-    temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_gate.obj",&loaded_materials));
-    app->assetmanager->AddNewAsset("tile_gate",temp);
-    scene->renderer->AddMaterials(loaded_materials);
-    delete temp;
-
     //Load from a GLTF file and build assets.
     std::vector<std::string>node_names;
     node_names.push_back("tree.001");
@@ -106,6 +198,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         gltf_object->name = "GLTF Object " + node_name;
         gltf_object->SetMesh(gltfmesh);
         scene->renderer->AddMaterials(loaded_materials);
+        gltf_object->TakeMaterialNames(loaded_materials);
         gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
         scene->AddObject(gltf_object);
 
@@ -115,60 +208,17 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         if (node_name.compare("tile_floor.001") == 0){
             app->assetmanager->AddNewAsset("tile_floor.001",gltf_object);
         }
+        if (node_name.compare("tree.001") == 0){
+            app->assetmanager->AddNewAsset("tree.001",gltf_object);
+        }
     }
 
     //We now generate a terrain, and load that in.
     app->terrain = new IsoTerrain();
     app->terrain->name = "Iso Terrain";
     app->terrain->assetmanager = app->assetmanager;
-    app->terrain->CreateTerrain(3,3,2);
+    app->terrain->CreateTerrain(5,5,2);
     scene->AddObject(app->terrain);
-
-    //Test arrows to test all this quaternion madness.
-    Object* arrows = new Object();
-    loaded_materials.clear();
-    arrows->SetMesh(OBJLoader::ParseOBJFile("data/arrows.obj",&loaded_materials));
-    scene->renderer->AddMaterials(loaded_materials);
-    arrows->PickMaterials(loaded_materials,scene->renderer->materials);
-
-    arrows->name = "Axis Arrows";
-    arrows->SetPosition(vec3(-2,0,0));
-    app->selected_object = arrows;
-    scene->AddObject(arrows);
-
-    //A test thing with 4 new textures that should auto load and display:
-    loaded_materials.clear();
-    Object* testcube  = new Object();
-    testcube->SetMesh(OBJLoader::ParseOBJFile("data/test_cube.obj",&loaded_materials));
-    testcube->name = "Test Cube";
-    testcube->SetPosition(vec3(0,0.5,0));
-    scene->renderer->AddMaterials(loaded_materials);
-    testcube->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->AddObject(testcube);
-
-    loaded_materials.clear();
-    Object* tree  = new Object();
-    tree->SetMesh(OBJLoader::ParseOBJFile("data/tree_001.obj",&loaded_materials));
-    tree->name = "Tree 001";
-    tree->SetPosition(vec3(0.5,0,0));
-    scene->renderer->AddMaterials(loaded_materials);
-    tree->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->AddObject(tree);
-
-    loaded_materials.clear();
-    Object* wall  = new Object();
-    wall->SetMesh(OBJLoader::ParseOBJFile("data/wall_segment.obj",&loaded_materials));
-    wall->name = "Wall 001";
-    wall->SetPosition(vec3(0.5,0,0));
-    scene->renderer->AddMaterials(loaded_materials);
-    wall->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->AddObject(wall);
-
-    Object* gate = new Object();
-    gate = app->assetmanager->GetObjectFromAsset("tile_gate");
-    gate->name  = "Gate Tile";
-    gate->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->AddObject(gate);
 
     app->projection_plane.pos = {};
     app->projection_plane.normal = vec3(0,1,0);
@@ -185,16 +235,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->AddObject(app->selection_tile);
 
     app->main_scene->UpdatePhysics();
-
-    //Manually createa and add materials
-    Material mat = {};
-    mat.glsl_material.color = vec4(1,1,1,1);
-    mat.glsl_material.diffuse_texture = 0;
-    mat.name = "Custom Loaded Textured Material";
-    Texture* tex = scene->renderer->LoadTexture("data/textures/test_texture_4096.png");
-    mat.glsl_material.handle_diffuse = tex->texture_handle;
-    mat.diff_texture = tex;
-    int matindex = scene->renderer->AddMaterial(mat);
 
     //We attempt to load a cubemap for the skybox.
     CubeMap* skybox = new CubeMap();
@@ -226,15 +266,12 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = app->renderer->FindMaterialIndex("grass");
     IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
 
-
-
-
-
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
 
     app->grid_settings.f_place = false;
-    app->grid_settings.f_place_prop = true;
+    app->grid_settings.f_place_prop = false;
+    app->grid_settings.f_delete = false;
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -339,6 +376,7 @@ void ApplicationGrid::RunLogic(){
 
     //Camera rotation moving
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+        f_show_rightclick_menu = false;
         int dx = input->GetDelta(INPUT_MOUSE_X);
         int dy = input->GetDelta(INPUT_MOUSE_Y);
         if (input->IsKeyDown(INPUT_SHIFT)){
@@ -389,14 +427,6 @@ void ApplicationGrid::RunLogic(){
         projection_plane.pos.y = grid_settings.grid_level;
     }
 
-    static float mouse_delta_sum = 0;
-    //debug->Info("Mouse Delta: %.2f\n",mouse_delta_sum);
-    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
-    if (mouse_delta_sum != 0){
-        camera->MoveForwardBy(mouse_delta_sum / 10.0f);
-        mouse_delta_sum /= 1.1;
-    }
-
     //Iterate over all the rendered objects
     bool clicked_empty = false;
     bool left_clicked = false;
@@ -412,61 +442,77 @@ void ApplicationGrid::RunLogic(){
     //When a terrain cell gets destroyed, we should remove it from renderer and terrain.
     //Either we use a shared pointer, or we keep track of the number of references.
 
-
     //Grid stuffies
     int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
     ray r = main_scene->camera->GetPixelRay(px);
-
     vec3 at = {};
     bool intersect = r.intersects_plane(projection_plane,at);
 
     IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
 
+    static float mouse_delta_sum = 0;
+    if (mouse_delta_sum != 0){
+        camera->MoveForwardBy(mouse_delta_sum / 10.0f);
+        mouse_delta_sum /= 1.1;
+    }
+
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        //Clear mouse delta
+        input->GetDelta(INPUT_MOUSE_WHEEL);
+        return;
+    }
+
+    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
+
+    if (right_clicked){
+        f_show_rightclick_menu = true;
+        rightclick_menu_coord = px;
+        rightclick_menu_object = hovered_object;
+    }
+    if (left_clicked){
+        f_show_rightclick_menu = false;
+    }
+
     //Selection tile on side of hovered cell by normal
-    if (!ImGui::GetIO().WantCaptureMouse && hovered_object && selection_tile){
+    if (hovered_cell && selection_tile){
         //Check if the hovered object is a cell and select a different cell side based on normal.
-        if (hovered_cell){
-            vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
-            vec3 dir;
-            //Get the closest value of xyz
-            if (hov_normal.x >.8){
-                dir = vec3(1,0,0);
-            }
-            if (hov_normal.x <-0.8){
-                dir = vec3(-1,0,0);
-            }
-            if (hov_normal.y >.8){
-                dir = vec3(0,1,0);
-            }
-            if (hov_normal.y <-0.8){
-                dir = vec3(0,-1,0);
-            }
-            if (hov_normal.z >.8){
-                dir = vec3(0,0,1);
-            }
-            if (hov_normal.z <-0.8){
-                dir = vec3(0,0,-1);
-            }
+        vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
+        vec3 dir;
+        //Get the closest value of xyz
+        if (hov_normal.x >.8){
+            dir = vec3(1,0,0);
+        }
+        if (hov_normal.x <-0.8){
+            dir = vec3(-1,0,0);
+        }
+        if (hov_normal.y >.8){
+            dir = vec3(0,1,0);
+        }
+        if (hov_normal.y <-0.8){
+            dir = vec3(0,-1,0);
+        }
+        if (hov_normal.z >.8){
+            dir = vec3(0,0,1);
+        }
+        if (hov_normal.z <-0.8){
+            dir = vec3(0,0,-1);
+        }
 
-            vec3 p = hovered_cell->GetPosition();
-            p += dir;
+        vec3 p = hovered_cell->GetPosition();
+        p += dir;
 
-            if (grid_settings.f_selection){
-                selection_tile->SetPosition(p);
-                selection_tile->Show();
-            }else{
-                selection_tile->SetPosition(p);
-                selection_tile->Hide();
-            }
+        if (grid_settings.f_selection){
+            selection_tile->SetPosition(p);
+            selection_tile->Show();
+        }else{
+            selection_tile->SetPosition(p);
+            selection_tile->Hide();
         }
     }
 
-
-
-    if (!ImGui::GetIO().WantCaptureMouse && selection_tile){
+    if (selection_tile){
         vec3 p = selection_tile->GetPosition();
-
-
         if (left_clicked){
             if (grid_settings.f_place){
                 IsoCell* terrain_cell = terrain->FindCellByWorldPosition(p);
@@ -488,9 +534,7 @@ void ApplicationGrid::RunLogic(){
             }
         }
 
-
         if (grid_settings.f_delete && right_clicked){
-
             if (hovered_cell){
                 debug_physics->Info("That was a Cell we hovered.\n");
                 hovered_cell->Hide();
@@ -506,7 +550,7 @@ void ApplicationGrid::RunLogic(){
     }
 
     //Selection tile on a plane
-    if (0 && !ImGui::GetIO().WantCaptureMouse && intersect && selection_tile){
+    if (0 && intersect && selection_tile){
         //We snap the selection tile to a grid.
         at.round();
         selection_tile->SetPosition(at);
@@ -552,15 +596,80 @@ void ApplicationGrid::RunLogic(){
     }
 }
 
+void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
+    ImVec2 window_pos, window_pos_pivot;
+    window_pos_pivot.x = 0.0f;
+    window_pos_pivot.y = 0.0f;
+    int2 p  = rightclick_menu_coord; //Pixel position of the menu
+    window_pos.x = p.x;
+    window_pos.y = p.y;
+    ImGui::SetNextWindowBgAlpha(0.65f); // Transparent background
+    ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("Interaction Menu", NULL, window_flags)){
+        //TODO: All the making of objects should be done through some thread safe message thing.
+        if (ImGui::Button("Place North Wall")){
+            hovered_cell->PlaceWall(DIRECTION_NORTH);
+            f_show_rightclick_menu = false;
+        }
+        if (ImGui::Button("Place East Wall")){
+            hovered_cell->PlaceWall(DIRECTION_EAST);
+            f_show_rightclick_menu = false;
+        }
+        if (ImGui::Button("Place South Wall")){
+            hovered_cell->PlaceWall(DIRECTION_SOUTH);
+            f_show_rightclick_menu = false;
+        }
+        if (ImGui::Button("Place West Wall")){
+            hovered_cell->PlaceWall(DIRECTION_WEST);
+            f_show_rightclick_menu = false;
+        }
+        if (ImGui::Button("Place Tree")){
+            hovered_cell->PlaceTree();
+            f_show_rightclick_menu = false;
+        }
+    }
+    ImGui::End();
+}
+
+void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
+    ImVec2 window_pos, window_pos_pivot;
+    window_pos_pivot.x = 0.0f;
+    window_pos_pivot.y = 0.0f;
+    int2 p  = rightclick_menu_coord; //Pixel position of the menu
+    window_pos.x = p.x;
+    window_pos.y = p.y;
+    ImGui::SetNextWindowBgAlpha(0.65f); // Transparent background
+    ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("Interaction Menu", NULL, window_flags)){
+        if (ImGui::Button("Imma Wall Biatch!")){
+
+        }
+    }
+    ImGui::End();
+}
+
+void ApplicationGrid::RenderRightClickMenu(){
+    IsoCell* hovered_cell = dynamic_cast<IsoCell*>(rightclick_menu_object);
+    if (hovered_cell){
+        return RenderRightClickMenu_IsoCell(hovered_cell);
+    }
+
+    IsoWall* hovered_wall = dynamic_cast<IsoWall*>(rightclick_menu_object);
+    if (hovered_wall){
+        return RenderRightClickMenu_IsoWall(hovered_wall);
+    }
+}
+
 
 void ApplicationGrid::UpdateUI(){
     Object* object = main_scene->camera;
 
-    IsoCell* cell = dynamic_cast<IsoCell*>(selected_object);
+    IsoCell* selected_cell = dynamic_cast<IsoCell*>(selected_object);
     //UI for GridCells
     ImGui::Begin("Grid UI");
     ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
-
 
     if (ImGui::CollapsingHeader("Grid Settings")){
         ImGui::Checkbox("Place New Tiles (Left Click)",&grid_settings.f_place);
@@ -568,8 +677,6 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Checkbox("Delete Tiles (Right Click)",&grid_settings.f_delete);
         ImGui::Checkbox("Show Selection Tile",&grid_settings.f_selection);
         ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
-
-
     }
     vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
     ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
@@ -581,28 +688,32 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Text("Hovered Cell Coordinate   : %i x %i",hovered_cell->coordinate.x,hovered_cell->coordinate.y);
     }
 
-    if (!cell){
+    if (!selected_cell){
         ImGui::Text("No Object of type Cell is selected.");
     }else{
-        ImGui::Text("Cell Coordinate   : %i x %i",cell->coordinate.x,cell->coordinate.y);
-        ImGui::Text("Terrain Type : %i",cell->terrain_type);
+        ImGui::Text("Cell Coordinate   : %i x %i",selected_cell->coordinate.x,selected_cell->coordinate.y);
+        ImGui::Text("Terrain Type : %i",selected_cell->terrain_type);
         if (ImGui::Button("Set None")){
-            cell->SetTerrainType(CELL_TERRAIN_NONE);
+            selected_cell->SetTerrainType(CELL_TERRAIN_NONE);
         }
         ImGui::SameLine();
         if (ImGui::Button("Set Empty")){
-            cell->SetTerrainType(CELL_TERRAIN_EMPTY);
+            selected_cell->SetTerrainType(CELL_TERRAIN_EMPTY);
         }
         ImGui::SameLine();
         if (ImGui::Button("Set Grass")){
-            cell->SetTerrainType(CELL_TERRAIN_GRASS);
+            selected_cell->SetTerrainType(CELL_TERRAIN_GRASS);
         }
         ImGui::SameLine();
         if (ImGui::Button("Set Rock")){
-            cell->SetTerrainType(CELL_TERRAIN_ROCK);
+            selected_cell->SetTerrainType(CELL_TERRAIN_ROCK);
         }
     }
     ImGui::End();
 
     RenderGenericObjectUI();
+
+    if (f_show_rightclick_menu){
+        RenderRightClickMenu();
+    }
 }

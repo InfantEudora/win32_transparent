@@ -86,10 +86,11 @@ class Renderer{
     void UploadCubeMap(CubeMap* cubemap);
 
     Material* GetMaterial(int index);
-    int FindMaterialIndex(const char* name);
+    int FindMaterialIndex(const std::string &name);
     int AddMaterial(Material& newmat);
     void AddMaterials(std::vector<Material>& list);
     int GetNumMaterials();
+    void UpdateObjectMaterials();
 
     Texture* LoadTexture(const char* filename,int target = GL_TEXTURE_2D, int depth = 1);
 
@@ -124,9 +125,10 @@ class Renderer{
 
     //Settings
     int aa_samples = 1;
-    int pipeline = PIPELINE_MSAA;   //Which pipeline to initialise
-    bool f_normal_mapping = true;   //Enable/disable normal mapping
-    bool f_backface_culling = true;   //Enable/disable normal mapping
+    int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
+    bool f_normal_mapping = true;     // Enable/disable normal mapping
+    bool f_render_skybox = true;      // Enable/disable skybox rendering
+    bool f_backface_culling = true;   // Enable/disable normal mapping
 
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;

@@ -6,6 +6,10 @@
 #include <map>
 #include <array>
 
+class IsoCell;
+#include "IsoWall.h"
+#include "IsoTerrain.h"
+
 /*
     It's a square cell in a larger grid.
     We should probably render the entire grid as a single mesh.
@@ -19,15 +23,9 @@
 #define CELL_TERRAIN_ROCK    4
 #define CELL_TERRAIN_WATER   5
 
-#define DIRECTION_NONE      -1
-#define DIRECTION_NORTH      0
-#define DIRECTION_EAST       1
-#define DIRECTION_SOUTH      2
-#define DIRECTION_WEST       3
-
 bool DirectionIsValid(int direction);
 
-class IsoCell;
+
 
 class IsoCell : public virtual Object{
 public:
@@ -39,6 +37,7 @@ public:
     void SetTerrainType(int newtype);
     void ApplyPreset(int preset);
 
+    IsoTerrain* terrain = NULL;
     AssetManager* assetmanager = NULL;
 
     static std::map<int,int> terrain_material_map;
@@ -47,9 +46,15 @@ public:
     // Since children are generic objects, we can only add/remove those via the following functions.
     // TODO: Maybe lock adding via generic Add/Remove child functions somehow.
 
-    std::array<int,4>wall_indices = {-1};
+    std::array<int,4>wall_indices = {-1,-1,-1,-1};
 
-    Object* PlaceWall(int direction);
+    //We can have one prop smack bang in the middle.
+    int prop_index = -1;
+
+    IsoCell* GetNeighbour(int direction);
+
+    IsoWall* PlaceWall(int direction);
+    Object* PlaceTree();
 };
 
 

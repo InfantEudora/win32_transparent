@@ -1,6 +1,6 @@
 #ifndef _ISO_TERRAIN_H_
 #define _ISO_TERRAIN_H_
-#include "IsoCell.h"
+
 #include "AssetManager.h"
 
 /*
@@ -10,6 +10,7 @@
 */
 
 class IsoTerrain;
+#include "IsoCell.h"
 
 class IsoTerrain : public Object{
 public:
@@ -26,6 +27,7 @@ public:
 
     void CreateTerrain(int w, int d, int h);
     IsoCell* FindCellByWorldPosition(vec3& at);
+    IsoCell* GetCellByCoordinate(int3 coord);
 };
 
 

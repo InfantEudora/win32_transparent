@@ -27,6 +27,7 @@ void IsoTerrain::CreateTerrain(int w, int d, int h){
                 c->coordinate.y = z;
                 c->coordinate.z = y;
                 c->assetmanager = assetmanager;
+                c->terrain = this;
                 assetmanager->GetObjectFromAsset("tile_floor.001",c);
                 c->SetPosition(vec3(x,y,z) + center_offset);
                 c->name = "IsoCell " + std::to_string(x) + "," + std::to_string(z);
@@ -35,14 +36,14 @@ void IsoTerrain::CreateTerrain(int w, int d, int h){
                 if (y != 0){
                     c->SetVisibility(false);
                 }
-
+                c->material_slot[0] = 3;
                 cells.push_back(c);
             }
         }
     }
 }
 
-//This maps a world position to a cell coordinate. Doest not accounf for rotation and scaling.
+//This maps a world position to a cell coordinate. Doest not account for rotation and scaling.
 //So just 1x1 sized grid cells.
 IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
     vec3 coord = at - center_offset;
@@ -56,6 +57,17 @@ IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
     int index = (coord.y * width * depth) +  (coord.z * width) + coord.x;
     if (index < cells.size()){
         return cells.at(index);
+    }
+    return NULL;
+}
+
+IsoCell* IsoTerrain::GetCellByCoordinate(int3 coord){
+    //TODO: Less lazy lookup
+    debug->Info("GetCellByCoordinate %i,%i\n",coord.x,coord.y);
+    for (IsoCell* cell : cells){
+        if (coord == cell->coordinate){
+            return cell;
+        }
     }
     return NULL;
 }

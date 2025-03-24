@@ -4,6 +4,7 @@ class Object;
 #include <string>
 #include <atomic>
 #include <list>
+#include <array>
 
 #include "Mesh.h"
 #include "type_fmat3.h"
@@ -95,6 +96,10 @@ class Object{
 
     void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
     int material_slot[NUM_MATERIAL_SLOTS] = {};
+    void TakeMaterialNames(std::vector<Material>& list);
+    std::array<std::string,NUM_MATERIAL_SLOTS>material_names; // List of material names the object should pick into it's material slots.
+    bool f_update_materials = false; //In this render cycle, lookup materials from names and place them in slots.
+    void UpdateMaterials(std::vector<Material>& global_list);
 
     //For checking if the state_physics_prev is complete
     bool PhysicsCompleted();

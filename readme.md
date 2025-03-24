@@ -150,7 +150,20 @@ Physics can be slower, in which case the same frame will be drawn multiple times
 
 Physics will always attempt to run at set rate, so it makes sense to couple input and networking to the Physics rate.
 
-Some input, like which object is selected or settings from a UI, are only gatherd after a frame was completed. Let's say in the UI we get an object ID that we've selected, and we move the object by one in Z direction. These 2 inputs, the object id and the move command need to be queued as an input, and processed next time the input gathers it's information. TODO.
+Some input, like which object is selected or settings from a UI, are only gatherd after a frame was completed. Let's say in the UI we get an object ID that we've selected, and we move the object by one in Z direction. These 2 inputs, the object id and the move command need to be queued as an input, and processed next time the input gathers it's information.
+
+Render Thread will do:
+ - Render Scene
+ - Render UI
+
+Physics Thread will do:
+ - Input Handling
+ - Custom Logic
+ - Physics
+
+Objects that need to be added, or removed can only be done when both threads are not using them. This needs to
+be synced.
+
 
 Networking: You'd ideally just submit which buttons were pressed. If the other client is running at 10FPS and you are at 60FPS but both physics are at 50FPS, the input from the other client with respect to object selection will not be as fast. But replaying you input will still happen at 50Hz. And the fact that his UI is lagging does not mean anything for you, since it's keyboard and mouse can still be polled at 50Hz. Although he won't see them with the same speed as you.
 

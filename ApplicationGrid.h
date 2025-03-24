@@ -25,6 +25,9 @@ public:
 
     GLTFLoader gltfloader;
 
+    bool f_show_rightclick_menu = false;
+    int2 rightclick_menu_coord;
+    Object* rightclick_menu_object = NULL;
 
     struct{
         int grid_level = 0;
@@ -36,7 +39,15 @@ public:
     }grid_settings;
 
 private:
+    //Test scene, so we can load stuff and not see it.
+    Scene* test_scene = NULL;
+    Scene* CreateTestScene();
+
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
+
+    void RenderRightClickMenu_IsoCell(IsoCell* cell);
+    void RenderRightClickMenu_IsoWall(IsoWall* wall);
+    void RenderRightClickMenu();
     void UpdateUI();
 };
 
