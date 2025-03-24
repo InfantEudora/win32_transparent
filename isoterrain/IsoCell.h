@@ -4,6 +4,7 @@
 #include "type_int3.h"
 #include "AssetManager.h"
 #include <map>
+#include <array>
 
 /*
     It's a square cell in a larger grid.
@@ -18,6 +19,14 @@
 #define CELL_TERRAIN_ROCK    4
 #define CELL_TERRAIN_WATER   5
 
+#define DIRECTION_NONE      -1
+#define DIRECTION_NORTH      0
+#define DIRECTION_EAST       1
+#define DIRECTION_SOUTH      2
+#define DIRECTION_WEST       3
+
+bool DirectionIsValid(int direction);
+
 class IsoCell;
 
 class IsoCell : public virtual Object{
@@ -30,7 +39,17 @@ public:
     void SetTerrainType(int newtype);
     void ApplyPreset(int preset);
 
+    AssetManager* assetmanager = NULL;
+
     static std::map<int,int> terrain_material_map;
+
+    // We may have one or more props. These are also our children.
+    // Since children are generic objects, we can only add/remove those via the following functions.
+    // TODO: Maybe lock adding via generic Add/Remove child functions somehow.
+
+    std::array<int,4>wall_indices = {-1};
+
+    Object* PlaceWall(int direction);
 };
 
 

@@ -74,6 +74,7 @@ It should kind of look like this:
 
 ### Todos Game Specific
 - [ ] Have a grid with layers, where the mouse + inverser of camera get's converted back to a coordinate. Maybe use some kind of overlay shader to draw a grid with the current camera settings first. Needs an ability to overlay shaders for a specific program.
+- [ ] A menu when right clicking to place walls on a tile, or hold and drag.
 
 
 ### TODOs Space Sim Specific

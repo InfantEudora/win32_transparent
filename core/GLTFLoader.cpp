@@ -44,8 +44,15 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     }
     debug->Info("Model has %i nodes\n",model.nodes.size());
     for (int node_index=0;node_index<model.nodes.size();node_index++){
-        debug->Info("Model.nodes[%i].name : %s\n",node_index, model.nodes[node_index].name.c_str());
-        debug->Info("Model.nodes[%i].mesh : %i\n",node_index, model.nodes[node_index].mesh);
+        debug->Info("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
+        debug->Info("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
+        debug->Info("Model.nodes[%i].children : %i\n",node_index, model.nodes[node_index].children.size());
+
+        for (int i=0;i<model.nodes[node_index].children.size();i++){
+            int child_index = model.nodes[node_index].children.at(i);
+            tinygltf::Node& child = model.nodes.at(child_index);
+            debug->Info(" - Child[%i] -> model.nodes[%i].name : %s\n",i,child_index, child.name.c_str());
+        }
     }
     debug->Info("Model has %i meshes\n",model.meshes.size());
     for (int mesh_index=0;mesh_index<model.meshes.size();mesh_index++){
@@ -251,12 +258,7 @@ vertex GLTFLoader::GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb,
     v.normal = Getvec3(&normal_buffer.data.at(0),byte_offset_normal);
     v.uv = Getvec2(&uv_buffer.data.at(0),byte_offset_uv);
 
-
-
-
     v.matid = 0;
-
-
     return v;
 }
 
@@ -295,134 +297,141 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     //Now we expect there to be a NORMAL, POSITION and maybe a TEXCOORD_0
     //TODO: Parse a mesh without UVs
     //Parse multiple primitives, one primitive may have one material
-    tinygltf::Primitive &primitive = nodemesh.primitives.at(0);
 
-    //This should be such that at least the materials in this Mesh can be looked up later on.
-    int material_index = primitive.material;
-    int diff_texture_index = -1;
+    //All vertices loaded from this node.
+    std::vector<vertex>verts;
     materials.clear();
 
-    tinygltf::Material* gltfmaterial = NULL;
-    if (material_index > -1){
-        gltfmaterial = &model.materials.at(material_index);
+    debug->Info("Node has %i primitives\n",nodemesh.primitives.size());
 
-        Material m;
-        m.name = gltfmaterial->name;
+    for (tinygltf::Primitive &primitive : nodemesh.primitives){
+        //This should be such that at least the materials in this Mesh can be looked up later on.
+        int material_index = primitive.material;
+        int diff_texture_index = -1;
 
 
-        //If the material has a diffuse texture, we load that here
-        if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
-            //This material uses texture with index
-            diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
+        tinygltf::Material* gltfmaterial = NULL;
+        if (material_index > -1){
+            gltfmaterial = &model.materials.at(material_index);
 
-            Texture* diff_texture = new Texture();
-            //Get the memory offset.
+            Material m;
+            m.name = gltfmaterial->name;
 
-            tinygltf::Image& image = model.images.at(diff_texture_index);
-            if (image.bufferView == -1){
-                debug->Fatal("Probably external image file needs to be loaded.\n");
+
+            //If the material has a diffuse texture, we load that here
+            if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
+                //This material uses texture with index
+                diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
+
+                Texture* diff_texture = new Texture();
+                //Get the memory offset.
+
+                tinygltf::Image& image = model.images.at(diff_texture_index);
+                if (image.bufferView == -1){
+                    debug->Fatal("Probably external image file needs to be loaded.\n");
+                }
+
+                tinygltf::BufferView& bufferview = model.bufferViews.at(image.bufferView);
+                tinygltf::Buffer& buffer = model.buffers.at(bufferview.buffer);
+
+                int offset = bufferview.byteOffset;
+
+                uint8_t* image_data = &buffer.data.at(offset);
+                size_t data_len = bufferview.byteLength;
+                diff_texture->LoadFromMemory(image_data,data_len,GL_TEXTURE_2D,1);
+                diff_texture->name = image.name;
+
+                m.diff_texture = diff_texture;
+                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+            }else{
+                //We just load the base color
+                m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
+                m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
+                m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
+                m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
+            }
+            materials.push_back(m);
+        }
+
+
+        int material_id = materials.size() - 1;
+
+        std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
+        std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
+
+        const tinygltf::Accessor &indexAccessor = model.accessors[primitive.indices];
+
+        tinygltf::BufferView* normal_bufferview = NULL;
+        tinygltf::BufferView* position_bufferview = NULL;
+        tinygltf::BufferView* uv_bufferview = NULL;
+
+
+        //Iterate over the accessors for each attribute.
+        //Set the appropriate buffer views.
+        //The we loop over the indices fetching the normals and postions for those
+
+        for (; it != itEnd; it++) {
+            //it->first is NORMAL, POSITION and maybe a TEXCOORD_0
+
+            const tinygltf::Accessor &accessor = model.accessors[it->second];
+            int size = 1;
+            if (accessor.type == TINYGLTF_TYPE_SCALAR) {
+                size = 1;
+            } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
+                size = 2;
+            } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
+                size = 3;
+            } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
+                size = 4;
+            } else {
+                debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
             }
 
-            tinygltf::BufferView& bufferview = model.bufferViews.at(image.bufferView);
-            tinygltf::Buffer& buffer = model.buffers.at(bufferview.buffer);
+            debug->Info("Accessor Size = %i\n",size);
 
-            int offset = bufferview.byteOffset;
+            if (it->first.compare("NORMAL") == 0){
+                normal_bufferview = &model.bufferViews[accessor.bufferView];
+            }else if (it->first.compare("POSITION") == 0){
+                position_bufferview = &model.bufferViews[accessor.bufferView];
+            }else if (it->first.compare("TEXCOORD_0") == 0){
+                uv_bufferview = &model.bufferViews[accessor.bufferView];
+            }
 
-            uint8_t* image_data = &buffer.data.at(offset);
-            size_t data_len = bufferview.byteLength;
-            diff_texture->LoadFromMemory(image_data,data_len,GL_TEXTURE_2D,1);
-            diff_texture->name = image.name;
-
-            m.diff_texture = diff_texture;
-            debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
-        }else{
-            //We just load the base color
-            m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
-            m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
-            m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
-            m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
-        }
-        materials.push_back(m);
-    }
-
-    int material_id = materials.size() - 1;
-
-    std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
-    std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
-
-    const tinygltf::Accessor &indexAccessor = model.accessors[primitive.indices];
-
-    tinygltf::BufferView* normal_bufferview = NULL;
-    tinygltf::BufferView* position_bufferview = NULL;
-    tinygltf::BufferView* uv_bufferview = NULL;
-
-
-    //Iterate over the accessors for each attribute.
-    //Set the appropriate buffer views.
-    //The we loop over the indices fetching the normals and postions for those
-
-    for (; it != itEnd; it++) {
-        //it->first is NORMAL, POSITION and maybe a TEXCOORD_0
-
-        const tinygltf::Accessor &accessor = model.accessors[it->second];
-        int size = 1;
-        if (accessor.type == TINYGLTF_TYPE_SCALAR) {
-            size = 1;
-        } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
-            size = 2;
-        } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
-            size = 3;
-        } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
-            size = 4;
-        } else {
-            debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
         }
 
-        debug->Info("Accessor Size = %i\n",size);
+        int vertex_count = indexAccessor.count;
+        debug->Info("indexAccessor.count = %i\n",vertex_count);
+        int triangle_count = vertex_count / 3;
 
-        if (it->first.compare("NORMAL") == 0){
-            normal_bufferview = &model.bufferViews[accessor.bufferView];
-        }else if (it->first.compare("POSITION") == 0){
-            position_bufferview = &model.bufferViews[accessor.bufferView];
-        }else if (it->first.compare("TEXCOORD_0") == 0){
-            uv_bufferview = &model.bufferViews[accessor.bufferView];
+        //Assemble the triangles:
+        int vertex_index = 0;
+        for (int t=0;t<triangle_count;t++){
+            vertex vert1 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 0));
+            vertex vert2 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 1));
+            vertex vert3 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor, vertex_index + 2));
+
+            //Tangent calculation
+            vec3 edge1 = vert2.pos - vert1.pos;
+            vec3 edge2 = vert3.pos - vert1.pos;
+            vec2 deltaUV1 = vert2.uv - vert1.uv;
+            vec2 deltaUV2 = vert3.uv - vert1.uv;
+
+            float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+            vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
+            vert1.tangent.normalize();
+            vert2.tangent = vert1.tangent;
+            vert3.tangent = vert1.tangent;
+
+            //We use the last material we loaded.
+            vert1.matid = material_id;
+            vert2.matid = material_id;
+            vert3.matid = material_id;
+
+            verts.push_back(vert1);
+            verts.push_back(vert2);
+            verts.push_back(vert3);
+            vertex_index += 3;
         }
-
-    }
-
-    int vertex_count = indexAccessor.count;
-    debug->Info("indexAccessor.count = %i\n",vertex_count);
-    int triangle_count = vertex_count / 3;
-
-    //Assemble the triangles:
-    std::vector<vertex>verts;
-    int vertex_index = 0;
-    for (int t=0;t<triangle_count;t++){
-        vertex vert1 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 0));
-        vertex vert2 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 1));
-        vertex vert3 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor, vertex_index + 2));
-
-        //Tangent calculation
-        vec3 edge1 = vert2.pos - vert1.pos;
-        vec3 edge2 = vert3.pos - vert1.pos;
-        vec2 deltaUV1 = vert2.uv - vert1.uv;
-        vec2 deltaUV2 = vert3.uv - vert1.uv;
-
-        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-        vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
-        vert1.tangent.normalize();
-        vert2.tangent = vert1.tangent;
-        vert3.tangent = vert1.tangent;
-
-        //We use the last material we loaded.
-        vert1.matid = material_id;
-        vert2.matid = material_id;
-        vert3.matid = material_id;
-
-        verts.push_back(vert1);
-        verts.push_back(vert2);
-        verts.push_back(vert3);
-        vertex_index += 3;
     }
 
     if (optional_mat_list_out){

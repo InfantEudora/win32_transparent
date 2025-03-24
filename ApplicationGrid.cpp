@@ -71,6 +71,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->assetmanager = new AssetManager();
     std::vector<Material>loaded_materials;
 
+    //Build assets
     Object* temp = new Object();
     temp->SetMesh(OBJLoader::ParseOBJFile("data/tile_001.obj",&loaded_materials));
     app->assetmanager->AddNewAsset("tile_001",temp);
@@ -85,11 +86,42 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->renderer->AddMaterials(loaded_materials);
     delete temp;
 
+    //Load from a GLTF file and build assets.
+    std::vector<std::string>node_names;
+    node_names.push_back("tree.001");
+    node_names.push_back("wall_concrete.001");
+    node_names.push_back("tile_floor.001");
+    node_names.push_back("wall_full.001");
+    node_names.push_back("wall_full_cutout.001");
+
+
+    app->gltfloader.LoadGLTFFile("data/trees.glb");
+    for (std::string& node_name:node_names){
+        loaded_materials.clear();
+        Mesh* gltfmesh = app->gltfloader.GetMeshFromNode(node_name.c_str(),&loaded_materials);
+        if (!gltfmesh){
+            continue;
+        }
+        Object* gltf_object = new Object();
+        gltf_object->name = "GLTF Object " + node_name;
+        gltf_object->SetMesh(gltfmesh);
+        scene->renderer->AddMaterials(loaded_materials);
+        gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+        scene->AddObject(gltf_object);
+
+        if (node_name.compare("wall_full.001") == 0){
+            app->assetmanager->AddNewAsset("wall_full.001",gltf_object);
+        }
+        if (node_name.compare("tile_floor.001") == 0){
+            app->assetmanager->AddNewAsset("tile_floor.001",gltf_object);
+        }
+    }
+
     //We now generate a terrain, and load that in.
     app->terrain = new IsoTerrain();
     app->terrain->name = "Iso Terrain";
     app->terrain->assetmanager = app->assetmanager;
-    app->terrain->CreateTerrain(31,31,2);
+    app->terrain->CreateTerrain(3,3,2);
     scene->AddObject(app->terrain);
 
     //Test arrows to test all this quaternion madness.
@@ -194,40 +226,15 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = app->renderer->FindMaterialIndex("grass");
     IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
 
-    //Load the model into something....
-    loaded_materials.clear();
-    app->gltfloader.LoadGLTFFile("data/trees.glb");
-    Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("tree.001",&loaded_materials);
-    Object* gltf_object = new Object();
-    gltf_object->name = "GLTF Object Tree";
-    gltf_object->SetMesh(gltfmesh);
-    scene->renderer->AddMaterials(loaded_materials);
-    gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
 
-    loaded_materials.clear();
-    Mesh* gltfmesh2 = app->gltfloader.GetMeshFromNode("wall_concrete.001",&loaded_materials);
-    Object* gltf_object2 = new Object();
-    gltf_object2->name = "GLTF Object Wall";
-    gltf_object2->SetMesh(gltfmesh2);
-    scene->renderer->AddMaterials(loaded_materials);
-    gltf_object2->PickMaterials(loaded_materials,scene->renderer->materials);
 
-    loaded_materials.clear();
-    Mesh* gltfmesh3 = app->gltfloader.GetMeshFromNode("tile_floor.001",&loaded_materials);
-    Object* gltf_object3 = new Object();
-    gltf_object3->name = "GLTF Object Floor";
-    gltf_object3->SetMesh(gltfmesh3);
-    scene->renderer->AddMaterials(loaded_materials);
-    gltf_object3->PickMaterials(loaded_materials,scene->renderer->materials);
 
-    scene->AddObject(gltf_object);
-    scene->AddObject(gltf_object2);
-    scene->AddObject(gltf_object3);
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
 
     app->grid_settings.f_place = false;
+    app->grid_settings.f_place_prop = true;
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -413,11 +420,12 @@ void ApplicationGrid::RunLogic(){
     vec3 at = {};
     bool intersect = r.intersects_plane(projection_plane,at);
 
+    IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
+
     //Selection tile on side of hovered cell by normal
     if (!ImGui::GetIO().WantCaptureMouse && hovered_object && selection_tile){
-        //Check if the hovered object is a cell and select a side based on normal.
-        IsoCell* cell = dynamic_cast<IsoCell*>(hovered_object);
-        if (cell){
+        //Check if the hovered object is a cell and select a different cell side based on normal.
+        if (hovered_cell){
             vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
             vec3 dir;
             //Get the closest value of xyz
@@ -440,29 +448,53 @@ void ApplicationGrid::RunLogic(){
                 dir = vec3(0,0,-1);
             }
 
-            vec3 p = cell->GetPosition();
+            vec3 p = hovered_cell->GetPosition();
             p += dir;
 
             if (grid_settings.f_selection){
                 selection_tile->SetPosition(p);
                 selection_tile->Show();
             }else{
+                selection_tile->SetPosition(p);
                 selection_tile->Hide();
             }
         }
     }
 
+
+
     if (!ImGui::GetIO().WantCaptureMouse && selection_tile){
         vec3 p = selection_tile->GetPosition();
-        IsoCell* terraincell = terrain->FindCellByWorldPosition(p);
 
-        if (grid_settings.f_place && left_clicked){
-            if (terraincell){
-                terraincell->SetVisibility(true);
-            }else{
-                debug->Warn("Unable to spawn cell there\n");
+
+        if (left_clicked){
+            if (grid_settings.f_place){
+                IsoCell* terrain_cell = terrain->FindCellByWorldPosition(p);
+                if (terrain_cell){
+                    terrain_cell->SetVisibility(true);
+                }else{
+                    debug->Warn("Unable to spawn cell there\n");
+                }
+            }else if (grid_settings.f_place_prop){
+                if (hovered_cell == NULL){
+                    debug->Info("Not a terrain cell\n");
+                }
+
+                if (hovered_cell && hovered_cell->PlaceWall(DIRECTION_NORTH)){
+                    debug->Info("Placed a new wall there\n");
+                }else{
+                    debug->Warn("Unable to place wall there\n");
+                }
             }
+        }
 
+
+        if (grid_settings.f_delete && right_clicked){
+
+            if (hovered_cell){
+                debug_physics->Info("That was a Cell we hovered.\n");
+                hovered_cell->Hide();
+            }
         }
     }
 
@@ -534,6 +566,7 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Checkbox("Place New Tiles (Left Click)",&grid_settings.f_place);
         ImGui::DragInt("Tile Number",&grid_settings.tile_number,1,1,5);
         ImGui::Checkbox("Delete Tiles (Right Click)",&grid_settings.f_delete);
+        ImGui::Checkbox("Show Selection Tile",&grid_settings.f_selection);
         ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
 
 

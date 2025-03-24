@@ -203,7 +203,7 @@ void Object::UpdatePhysicsState(){
     }
 
     //Dont know where to put this one yet.
-    //state_physics.f_was_transformed = false;
+    state_physics.f_was_transformed = true;
 }
 
 bool Object::PhysicsCompleted(){
@@ -321,6 +321,7 @@ bool Object::AttachChild(Object* newchild){
     //newchild->child_index = children.size();
     children.push_back(newchild);
     newchild->parent = this;
+
     //Either we alway need to traverse a tree to find renderable objects from root.
     //Has the benefit of auto rendering if you add siblings
     //Or we add them here to objrenderer, where we need to also seperately delete them

@@ -23,6 +23,7 @@
 class Asset;
 class AssetManager;
 
+// Class for storing data like meshes, materials etc. in prebuild configurations.
 class Asset{
     public:
     std::string name;
@@ -41,6 +42,7 @@ public:
 
     Asset* GetAsset(const char* asset_name);
     Object* GetObjectFromAsset(const char* asset_name, Object* optional_target=NULL);
+    Asset* FindAssetInGroup(std::string& asset_name, std::string& group_name);
 };
 
 #endif

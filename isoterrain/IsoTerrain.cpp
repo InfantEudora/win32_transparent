@@ -26,7 +26,8 @@ void IsoTerrain::CreateTerrain(int w, int d, int h){
                 c->coordinate.x = x;
                 c->coordinate.y = z;
                 c->coordinate.z = y;
-                assetmanager->GetObjectFromAsset("tile_001",c);
+                c->assetmanager = assetmanager;
+                assetmanager->GetObjectFromAsset("tile_floor.001",c);
                 c->SetPosition(vec3(x,y,z) + center_offset);
                 c->name = "IsoCell " + std::to_string(x) + "," + std::to_string(z);
                 //These two lists should know/update when a cell/or child gets destroyed... somehow

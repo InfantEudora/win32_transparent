@@ -29,9 +29,10 @@ public:
     struct{
         int grid_level = 0;
         int tile_number = 1;
-        bool f_place = true;        // Place on left click
+        bool f_place = true;        // Place new tile on left click
         bool f_selection = false;   // Show and move selection tile
         bool f_delete = true;       // Delete on right click
+        bool f_place_prop = true;   // Place a prop on tile
     }grid_settings;
 
 private:

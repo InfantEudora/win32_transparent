@@ -151,6 +151,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
 
     BinaryAsset::DumpBinaryAssets();
 
+    //Just so the current items show on the first frame...?
     app->main_scene->UpdatePhysics();
 
     //Now that all the setup is done, we create another thread for physics.
@@ -299,11 +300,18 @@ void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicke
     objectid_t id = object->GetID();
     long long p = id; //To suppress warning from 32-bit pointer
     if (ImGui::TreeNodeEx((void*)p,ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_Leaf, "Object #%i - %s",id,object->name.c_str())){
-        ImGui::TreePop();
-        if (ImGui::IsItemClicked()){
+        if (ImGui::IsItemClicked() && (lastclicked == NULL)){
             selected_object = object;
-            debug->Info("Selected %s\n",object->name.c_str());
+            lastclicked = object;
+            debug->Info("Tree -> Selected %s\n",object->name.c_str());
         }
+
+
+        for (Object* child:object->children){
+            UpdateUISceneObjectTreeNode(child,lastclicked);
+        }
+        ImGui::TreePop();
+
     }
 }
 
@@ -583,13 +591,14 @@ void Application::CheckObjectSelection(){
             //TODO: Remove it... here?
         }
 
+        if (object->GetID() == hovered_objid){
+            hovered_object = object;
+        }
         if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == hovered_objid)){
             vec3 p = object->GetPosition();
             debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",hovered_objid,p.x,p.y,p.z);
             selected_object = object;
             //clicked_empty = false;
-        }else if (object->GetID() == hovered_objid){
-            hovered_object = object;
         }
     }
 }
