@@ -40,8 +40,10 @@ private:
     int              GetIndex(const tinygltf::Accessor& index_accessor, int offset);
     vec2             Getvec2(unsigned char* data, int byte_offset);
     vec3             Getvec3(unsigned char* data, int byte_offset);
+    vec4             Getvec4(unsigned char* data, int byte_offset);
 
     vertex           GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index);
+    skinned_vertex   GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, tinygltf::BufferView* bb, tinygltf::BufferView* wb,int index);
 
     std::vector<Material> materials;    //Material list we load from a single file.
 

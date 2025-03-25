@@ -169,10 +169,10 @@ void Scene::DrawFrame(){
 
     int2 m = inputcontroller->GetRelativeMousePosition();
 
-    if (tex_1)
-    glBindTextureUnit(0, tex_1->texture_id);
-    if (tex_2)
-    glBindTextureUnit(1, tex_2->texture_id);
+    //if (tex_1)
+    //    glBindTextureUnit(0, tex_1->texture_id);
+    //if (tex_2)
+    //glBindTextureUnit(1, tex_2->texture_id);
     renderer->DrawFrame(camera, shader,inputcontroller);
 };
 

@@ -7,6 +7,7 @@ class Object;
 #include <array>
 
 #include "Mesh.h"
+#include "SkinnedMesh.h"
 #include "type_fmat3.h"
 #include "type_fmat4.h"
 #include "type_vec3.h"
@@ -46,13 +47,15 @@ class Object{
 
     //Mesh
     void SetMesh(Mesh* mesh);
+    void SetSkinnedMesh(SkinnedMesh* mesh);
     Mesh* GetMesh();
+    SkinnedMesh* GetSkinnedMesh();
     void DeleteMesh();
 
     void SetMeshBatchIndex(int32_t batch_index);
     int32_t GetMeshBatchIndex();
 
-    bool WouldRender();
+
     void MarkForRender();
 
     void UpdateTransformMatrix();
@@ -136,8 +139,9 @@ protected:
     std::atomic<int>state_physics_completed = 0;
     std::atomic<int>state_physics_prev_completed = 0;
 
-    Mesh* mesh = NULL;
-    objectid_t id = OBJECTID_INVALID;
+    Mesh*           mesh            = NULL;
+    SkinnedMesh*    skinned_mesh    = NULL;
+    objectid_t      id              = OBJECTID_INVALID;
     static objectid_t object_ids;
 };
 

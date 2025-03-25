@@ -181,6 +181,20 @@ Both meshes get 3 material slots, which map to the 3 materials. Using PickMateri
 Vertices and thus meshes have a material index, these refer to the material slots.
 In an object, each slot can be assigned a different material, while having the same mesh.
 
+In a GLB file all data can be packed into a single file, but the output is the same.
+
+### Skinned Meshes / Armatures / Bones
+
+A skinned mesh is different from a normal mesh, in that each vertex has a list of bones that can influence it and an equally long list of weights or factors that influence it.
+
+When we want to batch skinned meshes, we'd want to play different animation frames or even interpolated frames on each instance of a mesh. They may have the same bones, but each object needs a copy of this bone data.
+Therefore it works the same as materials.
+A vertex get's a bone index. This index references a list in an armature with which it was created.
+
+All used bones get
+
+
+
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
 

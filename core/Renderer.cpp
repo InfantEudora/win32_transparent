@@ -109,6 +109,9 @@ void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Obje
     if (object->GetMesh() != NULL){
         objects.push_back(object);
     }
+    if (object->GetSkinnedMesh() != NULL){
+        objects.push_back(object);
+    }
 
     //We check all the children
     for (Object* child:object->children){
@@ -181,6 +184,11 @@ void Renderer::RebuildUniqueMeshList(){
 
     debug->Trace("Rebuilding unique list. batch_ids.size() = %i unique_mesh.size()=%i\n",batch_ids.size(),unique_meshes.size());
     for (Object* object:renderable_objects){
+        //Object may have been added with a SkinnedMesh
+        if (!object->GetMesh()){
+            continue;
+        }
+
         bool new_mesh = true;
         for (Mesh* mesh:unique_meshes){
             if (mesh->GetID() == object->GetMeshID()){
@@ -193,7 +201,10 @@ void Renderer::RebuildUniqueMeshList(){
         //Add this new mesh to our unique list.
         if (new_mesh){
             object->SetMeshBatchIndex(unique_meshes.size()); //Store the index in this array
-            unique_meshes.push_back(object->GetMesh());
+            Mesh* mesh = object->GetMesh();
+            if (mesh){
+                unique_meshes.push_back(mesh);
+            }
             if (batch_ids.size() < (object->GetMeshBatchIndex()+1)){
                 batch_ids.push_back(new std::vector<objectid_t>());
             }
@@ -220,7 +231,7 @@ void Renderer::FillBactches(){
 
     for (int32_t object_index=0;object_index<renderable_objects.size();object_index++){
         Object* object = renderable_objects.at(object_index);
-        if (object->WouldRender()){
+        if (object->GetMesh()){
             object->MarkForRender();
             num_rendered_objects++;
             //It can only be rendered if it has a mesh
@@ -228,9 +239,9 @@ void Renderer::FillBactches(){
             debug->Trace("batch_ids.at(mesh_index=%i) mesh_id = %lu\n",mesh_index,object->GetMeshID());
             int32_t id = object_index;
             batch_ids.at(mesh_index)->push_back(id);
-        }else{
+        }/*else{
             debug->Err("Object '%s' did not render while it should have.\n",object->name.c_str());
-        }
+        }*/
     }
     debug->Trace("num_rendered_objects = %i\n",num_rendered_objects);
     if (num_rendered_objects == 0){
@@ -245,6 +256,9 @@ void Renderer::RenderUniqueMeshes(){
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
         Mesh* mesh = unique_meshes.at(i);
+        if (!mesh){
+            debug->Fatal("Attempting to render a mesh that's NULL\n");
+        }
         int batch_index = unique_meshes.at(i)->batch_index;
         if (batch_ids.at(batch_index)->size() == 0){
             debug->Fatal("No batches for meshindex %i\n",batch_index);
@@ -278,6 +292,48 @@ void Renderer::RenderUniqueMeshes(){
     }
 }
 
+
+//We are lazy and for now we only render a single skinned mesh, which is the first object that has one.
+void Renderer::RenderUniqueSkinnedMeshes(){
+    uint32_t object_index = -1;
+    for (Object* object:renderable_objects){
+        object_index++;
+        SkinnedMesh* skinned_mesh = object->GetSkinnedMesh();
+        if (!skinned_mesh){
+            continue;
+        }
+        //We have one
+        debug->Trace("Rendering the first skinned mesh we found in object: %s\n",object->name.c_str());
+        skinned_mesh->batch_num_instances = 1; //We render just one.
+
+        instancedata.clear();
+
+        instancedata_t data;
+        data.mat_transformscale = object->GetWorldTransformScaleMatrix();
+        for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
+            data.material_slot[i] = object->material_slot[i];
+        }
+        if (object->IsPickable()){
+            data.objectindex = object_index; //Index in array renderable_objects
+        }else{
+            //TODO: This will overwrite any objects below the non-pickable object.
+            data.objectindex = OBJECTID_INVALID;
+        }
+        instancedata.push_back(data);
+        glInvalidateBufferData(instdata_ssbo);
+        glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_DYNAMIC_DRAW);
+
+        //Now we build a buffer holding all the bone data for this mesh
+
+        //And render all the shize
+        debug->Trace("Rendering %i instances of skinned_mesh->id %i\n",skinned_mesh->batch_num_instances,skinned_mesh->GetID());
+        skinned_mesh->RenderInstances(skinned_mesh->batch_num_instances);
+        skinned_mesh->batch_num_instances = 0;
+
+        break;
+    }
+}
+
 void Renderer::RenderDebugLines(){
 
 }
@@ -302,7 +358,7 @@ void Renderer::DrawSkyBox(Camera* camera){
     }
 }
 
-void Renderer::DrawObjects(){
+void Renderer::DrawStaticObjects(){
     //First, we cull all objects we are sure of are not visible.
     //Then we make a list of all objects that need to be rendered.
     //Of those objects, we make a list for each unique mesh with object attributes and object ids.
@@ -317,6 +373,12 @@ void Renderer::DrawObjects(){
     UploadMaterials();
     UploadLights();
     RenderUniqueMeshes();
+}
+
+//We'll be using a seperate shader
+void Renderer::DrawSkinnedObjects(){
+    //Now we want to render all the objects that have skinned meshes
+    RenderUniqueSkinnedMeshes();
 }
 
 void Renderer::DeferredPass(Camera* camera){
@@ -341,7 +403,7 @@ void Renderer::DeferredPass(Camera* camera){
 
     //UpdateReadbackBuffer();
 
-    DrawObjects();
+    DrawStaticObjects();
 
     //glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
     //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
@@ -394,7 +456,6 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         shader->Setvec3("eye_position",p);
         shader->Setmat4("mat_worldcam",camera->mat_cam);
         shader->Setint("f_normal_mapping",(int)f_normal_mapping);
-
     }
 
     if (input){
@@ -408,8 +469,19 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         UpdateReadbackBuffer();
     }
 
+    DrawStaticObjects();
 
-    DrawObjects();
+    if (skinned_shader && camera){
+        skinned_shader->Use();
+        vec3 p = camera->GetPosition();
+        skinned_shader->Setvec3("eye_position",p);
+        skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
+        skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+        DrawSkinnedObjects();
+    }
+
+
+
     ResolveAA();
 
     if (input){
@@ -457,6 +529,11 @@ bool Renderer::InitSSBO(){
     glNamedBufferData(readback_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
     //glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, readback_ssbo);
+
+    //A buffer for storing all the bone data for skinned meshes
+    glCreateBuffers(1, (GLuint*)&bonedata_ssbo);
+    glNamedBufferData(bonedata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, bonedata_ssbo);
 
     return true;
 }

@@ -141,6 +141,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //Create a renderer for this window
     app->renderer = new Renderer(app->main_window->width,app->main_window->height);
     app->renderer->Init();
+    app->renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 
     app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
@@ -200,6 +201,9 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //We load a skeleton from the same file
     //Need asset manager to load mesh for bone debugging
     Skeleton* skeleton = app->gltfloader.GetSkeleton("character_armature",app->assetmanager);
+    SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character");
+    skeleton->SetSkinnedMesh(skinned_mesh);
+
     scene->AddObject(skeleton);
 
     //We now generate a terrain, and load that in.

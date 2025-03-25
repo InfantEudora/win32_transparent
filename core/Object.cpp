@@ -72,12 +72,28 @@ Mesh* Object::GetMesh(){
     return mesh;
 }
 
+SkinnedMesh* Object::GetSkinnedMesh(){
+    return skinned_mesh;
+}
+
 void Object::SetMesh(Mesh* _mesh){
     if (!_mesh){
         return;
     }
     mesh = _mesh;
     mesh->num_references++;
+}
+
+void Object::SetSkinnedMesh(SkinnedMesh* _mesh){
+    if (!_mesh){
+        return;
+    }
+    if (mesh){
+        debug->Warn("Object cannot have both mesh and skinned mesh\n");
+        return;
+    }
+    skinned_mesh = _mesh;
+    skinned_mesh->num_references++;
 }
 
 int32_t Object::GetMeshBatchIndex(){
@@ -289,15 +305,6 @@ fmat4& Object::GetWorldTransformScaleMatrix(){
         world_transform_scale_matrix = local_transform_scale_matrix;
     }
 	return world_transform_scale_matrix;
-}
-
-//Returns if this object would render in a certain state.
-//Empty objects don't render.
-bool Object::WouldRender(){
-    if (!mesh){
-        return false;
-    }
-    return true;
 }
 
 void Object::MarkForRender(){

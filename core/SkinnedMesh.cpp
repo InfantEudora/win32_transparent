@@ -23,14 +23,14 @@ void SkinnedMesh::SetMeshData(skinned_vertex* verts, int vertex_count){
 
     GenerateUniqueID();
     InitVBOVAO();
-    glNamedBufferData(vbo, sizeof(vertex) * vertex_count, (float*)&vertices.at(0), GL_STATIC_DRAW);
+    glNamedBufferData(vbo, sizeof(skinned_vertex) * vertex_count, (float*)&vertices.at(0), GL_STATIC_DRAW);
     num_vertices = vertex_count;
 }
 
 bool SkinnedMesh::InitVBOVAO(){
     glCreateBuffers(1, (GLuint*)&vbo);
     glCreateVertexArrays(1, (GLuint*)&vao);
-    glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(vertex));
+    glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(skinned_vertex));
 
     glEnableVertexArrayAttrib(vao,SKINNED_ATTRIB_VERTEX);
     glEnableVertexArrayAttrib(vao,SKINNED_ATTRIB_NORMAL);
@@ -60,5 +60,6 @@ bool SkinnedMesh::InitVBOVAO(){
 
 void SkinnedMesh::RenderInstances(int num_instances){
     glBindVertexArray(vao);
+
     glDrawArraysInstanced(GL_TRIANGLES, 0, num_vertices,num_instances);
 }

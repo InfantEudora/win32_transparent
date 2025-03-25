@@ -17,9 +17,13 @@ class Renderer;
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
     int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
-    int objectindex;                            // The Object's index it was rendered with this frame. (So not object->id)
+    int objectindex;                            // The object's index in a batch it was rendered with this frame. (So not object->id)
     int pad1[3];
 }instancedata_t;
+
+typedef struct {
+    fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation for a single bone
+}bonedata_t;
 
 typedef struct{
     int data_in[4];         // Stored pixel coordinates of mouse
@@ -54,11 +58,13 @@ class Renderer{
     void RebuildUniqueMeshList();
     void ClearBatches();
     void FillBactches();
-    void DrawObjects();
+    void DrawStaticObjects();
+    void DrawSkinnedObjects();
     void DrawSkyBox(Camera* camera);
 
     void UpdateReadbackBuffer();
     void RenderUniqueMeshes();
+    void RenderUniqueSkinnedMeshes();
 
     void RenderDebugLines();
 
@@ -108,6 +114,7 @@ class Renderer{
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
     GLuint lights_ssbo = -1;  //Shader Storage Buffer holding all different lights
     GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
+    GLuint bonedata_ssbo = -1;  //Shader Storage Buffer for bone data
 
     //Deferred stuff: Non-MSAA?
     GLuint deferred_fbo_id = -1; //Deferred FBO consisting of:
@@ -123,6 +130,9 @@ class Renderer{
     CubeMap* skybox = NULL;
     Mesh* skybox_mesh = NULL;
 
+    Shader* skinned_shader = NULL;
+
+
     //Settings
     int aa_samples = 1;
     int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
@@ -135,21 +145,22 @@ class Renderer{
     int last_texture_unit = 0;
 
     //These will differ per frame
-    std::vector<Mesh*> unique_meshes;               // An array of unique meshes
-    std::vector<Object*>renderable_objects;         // All objects we will render this frame
-    std::vector<Light*>visible_lights;              // All lights we will use this frame
-    std::vector<std::vector<objectid_t>*>batch_ids; // An array of arrays containing the object id's per unique mesh, these form batches
-    std::vector<instancedata_t>instancedata;        // Object data per unique mesh instance
-    std::vector<material_t>glsl_materials;          // List of all materials for direct upload to SSBO
-    std::vector<light_t>glsl_lights;                // List of all active lights for direct upload to SSBO
-    std::vector<Material>materials;                 // List of all materials
-    std::vector<Texture*>textures;                  // List of all textures
+    std::vector<Mesh*> unique_meshes;                   // An array of unique meshes
+    std::vector<SkinnedMesh*> unique_skinned_meshes;    // An array of unique skinned meshes
+    std::vector<Object*>renderable_objects;             // All objects we will render this frame
+    std::vector<Light*>visible_lights;                  // All lights we will use this frame
+    std::vector<std::vector<objectid_t>*>batch_ids;     // An array of arrays containing the object id's per unique mesh, these form batches
+    std::vector<instancedata_t>instancedata;            // Object data per unique mesh instance
+    std::vector<material_t>glsl_materials;              // List of all materials for direct upload to SSBO
+    std::vector<light_t>glsl_lights;                    // List of all active lights for direct upload to SSBO
+    std::vector<Material>materials;                     // List of all materials
+    std::vector<Texture*>textures;                      // List of all textures
 
     std::vector<line>debug_lines;
 
-    readback_buffer_t readbackbuffer;               //A single buffer for reading back data from shader
+    readback_buffer_t readbackbuffer;                   //A single buffer for reading back data from shader
 
-    std::vector<Object*>objects;                    //All known objects
+    std::vector<Object*>objects;                        //All known objects
 };
 
 

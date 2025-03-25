@@ -374,6 +374,15 @@ void Application::RenderGenericObjectUI(){
             UpdateUICameraControls(cam,ui_camid);
         }
 
+        if (ImGui::CollapsingHeader("Node Hierarchy")){
+            if (object->parent){
+                ImGui::Text("Parent             : %s",object->parent->name.c_str());
+            }else{
+                ImGui::Text("Parent             : Has No Parent");
+            }
+                ImGui::Text("Children           : %i",object->children.size());
+        }
+
         Light* light = dynamic_cast<Light*>(object);
         if (light && ImGui::CollapsingHeader("Light Properties")){
             vec3 pos = object->GetPosition();
@@ -395,6 +404,20 @@ void Application::RenderGenericObjectUI(){
         }else{
             ImGui::BeginDisabled();
             ImGui::CollapsingHeader("No Mesh");
+            ImGui::EndDisabled();
+        }
+
+        if (object->GetSkinnedMesh()){
+            if (ImGui::CollapsingHeader("Skinned Mesh")){
+                SkinnedMesh* skinned_mesh = object->GetSkinnedMesh();
+                ImGui::Text(" ID             : %lu",skinned_mesh->GetID());
+                ImGui::Text(" num_vertices   : %lu",skinned_mesh->num_vertices);
+                ImGui::Text(" num_materials  : %lu",skinned_mesh->num_materials);
+                ImGui::Text(" num_references : %lu",skinned_mesh->num_references);
+            }
+        }else{
+            ImGui::BeginDisabled();
+            ImGui::CollapsingHeader("No Skinned Mesh");
             ImGui::EndDisabled();
         }
 

@@ -250,6 +250,12 @@ vec3 GLTFLoader::Getvec3(unsigned char* data, int byte_offset){
     return v;
 }
 
+vec4 GLTFLoader::Getvec4(unsigned char* data, int byte_offset){
+    vec4 v;
+    memcpy(&v,data+byte_offset,sizeof(vec4));
+    return v;
+}
+
 vertex GLTFLoader::GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index){
     vertex v = {};
     //Kind of going to assume the correct accessor will be used for this:
@@ -284,6 +290,62 @@ vertex GLTFLoader::GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb,
     return v;
 }
 
+skinned_vertex GLTFLoader::GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, tinygltf::BufferView* bb, tinygltf::BufferView* wb,int index){
+    skinned_vertex v = {};
+    //Kind of going to assume the correct accessor will be used for this:
+    //I.e. FLOAT data with either VEC2 or VEC3.
+    if (!pb){
+        debug->Err("No bufferview for position data\n");
+        return v;
+    }
+    if (!nb){
+        debug->Err("No bufferview for normal data\n");
+        return v;
+    }
+    if (!ub){
+        debug->Err("No bufferview for uv data\n");
+        return v;
+    }
+    if (!bb){
+        debug->Err("No bufferview for uv bone ids\n");
+        return v;
+    }
+    if (!wb){
+        debug->Err("No bufferview for uv weights\n");
+        return v;
+    }
+
+    int byte_offset_position = pb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
+    int byte_offset_normal = nb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
+    int byte_offset_uv = ub->byteOffset + (index * 2 * sizeof(float)); //FLOAT * VEC2 * index
+    int byte_offset_bones = bb->byteOffset + (index * 4 * sizeof(float)); //FLOAT * VEC4 * index
+    int byte_offset_weights = wb->byteOffset + (index * 4 * sizeof(float)); //FLOAT * VEC4 * index
+
+    //This is guaranteed to exist... when the file is ok.
+    tinygltf::Buffer& position_buffer = model.buffers[pb->buffer];
+    tinygltf::Buffer& normal_buffer = model.buffers[nb->buffer];
+    tinygltf::Buffer& uv_buffer = model.buffers[ub->buffer];
+    tinygltf::Buffer& bones_buffer = model.buffers[bb->buffer];
+    tinygltf::Buffer& weights_buffer = model.buffers[wb->buffer];
+
+    v.pos = Getvec3(&position_buffer.data.at(0),byte_offset_position);
+    v.normal = Getvec3(&normal_buffer.data.at(0),byte_offset_normal);
+    v.uv = Getvec2(&uv_buffer.data.at(0),byte_offset_uv);
+    vec4 v_bone_ids = Getvec4(&bones_buffer.data.at(0),byte_offset_bones);
+    vec4 v_bone_weights = Getvec4(&weights_buffer.data.at(0),byte_offset_weights);
+
+    //We only store 3 bones because that how we roll.
+    v.bones.x = v_bone_ids.x;
+    v.bones.y = v_bone_ids.y;
+    v.bones.z = v_bone_ids.z;
+    v.weights.x = v_bone_weights.x;
+    v.weights.y = v_bone_weights.y;
+    v.weights.z = v_bone_weights.z;
+
+    v.matid = 0;
+    return v;
+}
+
 Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
     //First, we lookup the node.
     tinygltf::Node* node = FindNode(node_name);
@@ -300,7 +362,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     }
 
     if (node->mesh < 0){
-        debug->Info("Node %s does not contain a mesh\n",node_name);
+        debug->Warn("GetMeshFromNode: Node %s does not contain a mesh\n",node_name);
         return NULL;
     }
 
@@ -413,7 +475,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
             }
 
-            debug->Info("Accessor Size = %i\n",size);
+            debug->Info("Accessor Size = %i for %s\n",size,it->first.c_str());
 
             if (it->first.compare("NORMAL") == 0){
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
@@ -480,7 +542,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
 }
 
 // Basically the same as get mesh, only it returns a skinned mesh
-Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
+SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
     //First, we lookup the node.
     tinygltf::Node* node = FindNode(node_name);
     if (!node){
@@ -489,14 +551,15 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
     }
 
     //A node can contain a single mesh (or none)
-    debug->Info("Found Node %s for you.\n",node_name);
+    debug->Info("GetSkinnedMeshFromNode: Found Node %s for you.\n",node_name);
 
-    if (node->skin > -1){
-        debug->Info("Node %s contains a skin!\n",node_name);
+    if (node->skin == -1){
+        debug->Err("GetSkinnedMeshFromNode: Node %s does not contain a skin!\n",node_name);
+        return NULL;
     }
 
     if (node->mesh < 0){
-        debug->Info("Node %s does not contain a mesh\n",node_name);
+        debug->Warn("GetSkinnedMeshFromNode: Node %s does not contain a mesh\n",node_name);
         return NULL;
     }
 
@@ -521,7 +584,7 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
     //Parse multiple primitives, one primitive may have one material
 
     //All vertices loaded from this node.
-    std::vector<vertex>verts;
+    std::vector<skinned_vertex>verts;
     materials.clear();
 
     debug->Info("Node has %i primitives\n",nodemesh.primitives.size());
@@ -586,6 +649,8 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
         tinygltf::BufferView* normal_bufferview = NULL;
         tinygltf::BufferView* position_bufferview = NULL;
         tinygltf::BufferView* uv_bufferview = NULL;
+        tinygltf::BufferView* bones_bufferview = NULL;
+        tinygltf::BufferView* weights_bufferview = NULL;
 
 
         //Iterate over the accessors for each attribute.
@@ -609,7 +674,7 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
                 debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
             }
 
-            debug->Info("Accessor Size = %i\n",size);
+            debug->Info("Accessor Size = %i for %s\n",size,it->first.c_str());
 
             if (it->first.compare("NORMAL") == 0){
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
@@ -618,10 +683,9 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
             }else if (it->first.compare("TEXCOORD_0") == 0){
                 uv_bufferview = &model.bufferViews[accessor.bufferView];
             }else if (it->first.compare("JOINTS_0") == 0){
-                //Skinning
-                debug->Warn("Loading a skinned mesh as normal mesh\n");
+                bones_bufferview = &model.bufferViews[accessor.bufferView];
             }else if (it->first.compare("WEIGHTS_0") == 0){
-                //Skinning
+                weights_bufferview = &model.bufferViews[accessor.bufferView];
             }
         }
 
@@ -636,9 +700,9 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
         //Assemble the triangles:
         int vertex_index = 0;
         for (int t=0;t<triangle_count;t++){
-            vertex vert1 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 0));
-            vertex vert2 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 1));
-            vertex vert3 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor, vertex_index + 2));
+            skinned_vertex vert1 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor,vertex_index + 0));
+            skinned_vertex vert2 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor,vertex_index + 1));
+            skinned_vertex vert3 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor, vertex_index + 2));
 
             //Tangent calculation
             vec3 edge1 = vert2.pos - vert1.pos;
@@ -668,16 +732,12 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
         optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
     }
 
-    debug->Info("Generated %i vertices. Loaded %i materials\n",verts.size(),materials.size());
-    Mesh* mesh = new Mesh();
+    debug->Info("Generated %i skinned vertices. Loaded %i materials\n",verts.size(),materials.size());
+    SkinnedMesh* mesh = new SkinnedMesh();
     mesh->SetMeshData(&verts.at(0),verts.size());
     mesh->num_materials = materials.size();
     return mesh;
 }
-
-
-
-
 
 Bone* GLTFLoader::GetBone(int node_index, AssetManager* assetmanager){
     tinygltf::Node& node = model.nodes.at(node_index);
