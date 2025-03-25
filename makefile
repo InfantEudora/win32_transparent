@@ -16,6 +16,7 @@ CFLAGS = -Llibs/ -limgui -luser32 -lopengl32 -lgdi32 -lwinmm -lws2_32 -Wl,-Bstat
 PROJECT = wind
 
 DIR_SRC += ./core
+DIR_SRC += ./core/skeleton
 IPATHS += -Icore/
 
 SRCS += ./3rdparty/stb_image/stb_image.cpp

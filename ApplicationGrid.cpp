@@ -178,6 +178,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->test_scene = app->CreateTestScene();
 
     std::vector<Material>loaded_materials;
+
     //Load from a GLTF file and build assets.
     app->gltfloader.LoadGLTFFile("data/trees.glb");
     for (std::string& node_name:app->gltfloader.node_names){
@@ -195,6 +196,11 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         scene->AddObject(gltf_object);
         app->assetmanager->AddNewAsset(node_name.c_str(),gltf_object);
     }
+
+    //We load a skeleton from the same file
+    //Need asset manager to load mesh for bone debugging
+    Skeleton* skeleton = app->gltfloader.GetSkeleton("character_armature",app->assetmanager);
+    scene->AddObject(skeleton);
 
     //We now generate a terrain, and load that in.
     app->terrain = new IsoTerrain();

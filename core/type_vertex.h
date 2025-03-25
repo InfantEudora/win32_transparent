@@ -7,6 +7,7 @@
 #include <math.h>
 #include "type_vec2.h"
 #include "type_vec3.h"
+#include "type_int3.h"
 
 struct vertex;
 
@@ -17,6 +18,19 @@ struct vertex{
     vec2    uv;
     int32_t matid;
     vertex(){};
+};
+
+struct skinned_vertex;
+
+struct skinned_vertex{
+    vec3    pos;
+    vec3    normal;
+    vec3    tangent;
+    vec2    uv;
+    int3    bones;      // Bone ids that infuence this vertex
+    vec3    weights;    // Bone weights
+    int32_t matid;
+    skinned_vertex(){};
 };
 
 struct line{

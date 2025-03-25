@@ -32,6 +32,7 @@ Object* IsoCell::PlaceTree(){
             prop_index = children.size() - 1;
             debug->Ok("Placed a new tree\n");
             prop->material_names[0] = "Tree_tex";
+            prop->f_update_materials = true;
             vec3 s = vec3(0.5);
             prop->SetScale(s);
             prop->name = "Tree @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);

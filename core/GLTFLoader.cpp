@@ -62,9 +62,9 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     for (int skin_index=0;skin_index<model.skins.size();skin_index++){
         debug->Info("Model.skins[%i].name                : %s\n",skin_index, model.skins[skin_index].name.c_str());
         debug->Info("Model.skins[%i].inverseBindMatrices : in accessor [%i]\n",skin_index, model.skins[skin_index].inverseBindMatrices);
+        debug->Info("Model.skins[%i].skeleton            : %i\n",skin_index, model.skins[skin_index].skeleton);
         debug->Info("Model.skins[%i].joints              : %i\n",skin_index, model.skins[skin_index].joints.size());
     }
-
 
     debug->Info("Model has %i meshes\n",model.meshes.size());
     for (int mesh_index=0;mesh_index<model.meshes.size();mesh_index++){
@@ -190,6 +190,16 @@ tinygltf::Node*  GLTFLoader::FindNode(std::string node_name){
     for (int node_index=0;node_index<model.nodes.size();node_index++){
         if (node_name.compare(model.nodes[node_index].name) == 0){
             return &model.nodes[node_index];
+        }
+    }
+    return NULL;
+}
+
+//Returns a pointer to node if found, or NULL
+tinygltf::Skin*  GLTFLoader::FindSkin(std::string skin_name){
+    for (int skin_index=0;skin_index<model.skins.size();skin_index++){
+        if (skin_name.compare(model.skins[skin_index].name) == 0){
+            return &model.skins[skin_index];
         }
     }
     return NULL;
@@ -411,8 +421,16 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 position_bufferview = &model.bufferViews[accessor.bufferView];
             }else if (it->first.compare("TEXCOORD_0") == 0){
                 uv_bufferview = &model.bufferViews[accessor.bufferView];
+            }else if (it->first.compare("JOINTS_0") == 0){
+                //Skinning
+                debug->Warn("Loading a skinned mesh as normal mesh\n");
+            }else if (it->first.compare("WEIGHTS_0") == 0){
+                //Skinning
             }
+        }
 
+        if (uv_bufferview == NULL){
+            debug->Fatal("No uv_bufferview for Mesh\n");
         }
 
         int vertex_count = indexAccessor.count;
@@ -459,4 +477,289 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     mesh->SetMeshData(&verts.at(0),verts.size());
     mesh->num_materials = materials.size();
     return mesh;
+}
+
+// Basically the same as get mesh, only it returns a skinned mesh
+Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
+    //First, we lookup the node.
+    tinygltf::Node* node = FindNode(node_name);
+    if (!node){
+        debug->Warn("Unable to find Node %s for you.\n",node_name);
+        return NULL;
+    }
+
+    //A node can contain a single mesh (or none)
+    debug->Info("Found Node %s for you.\n",node_name);
+
+    if (node->skin > -1){
+        debug->Info("Node %s contains a skin!\n",node_name);
+    }
+
+    if (node->mesh < 0){
+        debug->Info("Node %s does not contain a mesh\n",node_name);
+        return NULL;
+    }
+
+    tinygltf::Mesh& nodemesh = model.meshes.at(node->mesh);
+    debug->Info(" -> Mesh name : %s\n",nodemesh.name.c_str());
+
+    //A Mesh can have multiple primitives, like points, lines and triangles ... but not quads
+    //We'll be parsing it only when it has seperate triangles for now
+    if (nodemesh.primitives.size() < 1){
+        debug->Err("Mesh has no primitives.\n");
+        return NULL;
+    }
+
+    if (nodemesh.primitives.at(0).mode != TINYGLTF_MODE_TRIANGLES){
+        debug->Err("Unable to parse primitive[0].mode %i\n",nodemesh.primitives.at(0).mode);
+        return NULL;
+    }
+
+
+    //Now we expect there to be a NORMAL, POSITION and maybe a TEXCOORD_0
+    //TODO: Parse a mesh without UVs
+    //Parse multiple primitives, one primitive may have one material
+
+    //All vertices loaded from this node.
+    std::vector<vertex>verts;
+    materials.clear();
+
+    debug->Info("Node has %i primitives\n",nodemesh.primitives.size());
+
+    for (tinygltf::Primitive &primitive : nodemesh.primitives){
+        //This should be such that at least the materials in this Mesh can be looked up later on.
+        int material_index = primitive.material;
+        int diff_texture_index = -1;
+
+
+        tinygltf::Material* gltfmaterial = NULL;
+        if (material_index > -1){
+            gltfmaterial = &model.materials.at(material_index);
+
+            Material m;
+            m.name = gltfmaterial->name;
+
+
+            //If the material has a diffuse texture, we load that here
+            if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
+                //This material uses texture with index
+                diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
+
+                Texture* diff_texture = new Texture();
+                //Get the memory offset.
+
+                tinygltf::Image& image = model.images.at(diff_texture_index);
+                if (image.bufferView == -1){
+                    debug->Fatal("Probably external image file needs to be loaded.\n");
+                }
+
+                tinygltf::BufferView& bufferview = model.bufferViews.at(image.bufferView);
+                tinygltf::Buffer& buffer = model.buffers.at(bufferview.buffer);
+
+                int offset = bufferview.byteOffset;
+
+                uint8_t* image_data = &buffer.data.at(offset);
+                size_t data_len = bufferview.byteLength;
+                diff_texture->LoadFromMemory(image_data,data_len,GL_TEXTURE_2D,1);
+                diff_texture->name = image.name;
+
+                m.diff_texture = diff_texture;
+                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+            }else{
+                //We just load the base color
+                m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
+                m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
+                m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
+                m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
+            }
+            materials.push_back(m);
+        }
+
+
+        int material_id = materials.size() - 1;
+
+        std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
+        std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
+
+        const tinygltf::Accessor &indexAccessor = model.accessors[primitive.indices];
+
+        tinygltf::BufferView* normal_bufferview = NULL;
+        tinygltf::BufferView* position_bufferview = NULL;
+        tinygltf::BufferView* uv_bufferview = NULL;
+
+
+        //Iterate over the accessors for each attribute.
+        //Set the appropriate buffer views.
+        //The we loop over the indices fetching the normals and postions for those
+
+        for (; it != itEnd; it++) {
+            //it->first is NORMAL, POSITION and maybe a TEXCOORD_0
+
+            const tinygltf::Accessor &accessor = model.accessors[it->second];
+            int size = 1;
+            if (accessor.type == TINYGLTF_TYPE_SCALAR) {
+                size = 1;
+            } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
+                size = 2;
+            } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
+                size = 3;
+            } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
+                size = 4;
+            } else {
+                debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
+            }
+
+            debug->Info("Accessor Size = %i\n",size);
+
+            if (it->first.compare("NORMAL") == 0){
+                normal_bufferview = &model.bufferViews[accessor.bufferView];
+            }else if (it->first.compare("POSITION") == 0){
+                position_bufferview = &model.bufferViews[accessor.bufferView];
+            }else if (it->first.compare("TEXCOORD_0") == 0){
+                uv_bufferview = &model.bufferViews[accessor.bufferView];
+            }else if (it->first.compare("JOINTS_0") == 0){
+                //Skinning
+                debug->Warn("Loading a skinned mesh as normal mesh\n");
+            }else if (it->first.compare("WEIGHTS_0") == 0){
+                //Skinning
+            }
+        }
+
+        if (uv_bufferview == NULL){
+            debug->Fatal("No uv_bufferview for Mesh\n");
+        }
+
+        int vertex_count = indexAccessor.count;
+        debug->Info("indexAccessor.count = %i\n",vertex_count);
+        int triangle_count = vertex_count / 3;
+
+        //Assemble the triangles:
+        int vertex_index = 0;
+        for (int t=0;t<triangle_count;t++){
+            vertex vert1 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 0));
+            vertex vert2 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 1));
+            vertex vert3 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor, vertex_index + 2));
+
+            //Tangent calculation
+            vec3 edge1 = vert2.pos - vert1.pos;
+            vec3 edge2 = vert3.pos - vert1.pos;
+            vec2 deltaUV1 = vert2.uv - vert1.uv;
+            vec2 deltaUV2 = vert3.uv - vert1.uv;
+
+            float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+            vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
+            vert1.tangent.normalize();
+            vert2.tangent = vert1.tangent;
+            vert3.tangent = vert1.tangent;
+
+            //We use the last material we loaded.
+            vert1.matid = material_id;
+            vert2.matid = material_id;
+            vert3.matid = material_id;
+
+            verts.push_back(vert1);
+            verts.push_back(vert2);
+            verts.push_back(vert3);
+            vertex_index += 3;
+        }
+    }
+
+    if (optional_mat_list_out){
+        optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
+    }
+
+    debug->Info("Generated %i vertices. Loaded %i materials\n",verts.size(),materials.size());
+    Mesh* mesh = new Mesh();
+    mesh->SetMeshData(&verts.at(0),verts.size());
+    mesh->num_materials = materials.size();
+    return mesh;
+}
+
+
+
+
+
+Bone* GLTFLoader::GetBone(int node_index, AssetManager* assetmanager){
+    tinygltf::Node& node = model.nodes.at(node_index);
+    Bone* bone = new Bone();
+    bone->name = node.name;
+    if (node.translation.size() == 3){
+        vec3 translation = vec3(node.translation[0],node.translation[1],node.translation[2]);
+        bone->SetPosition(translation);
+    }
+    if (node.rotation.size() == 4){
+        quat rotation = quat(node.rotation[0],node.rotation[1],node.rotation[2],node.rotation[3]);
+        bone->SetRotation(rotation);
+    }
+
+    if (assetmanager){
+        //Load mesh into bone
+        assetmanager->GetObjectFromAsset("bone_mesh",bone);
+    }
+
+    //Traverse nodes until no more nodes have children.
+    for (int node_index : node.children){
+        Bone* child_bone = GetBone(node_index,assetmanager);
+        bone->AttachChild(child_bone);
+        debug->Info("Attaching Bone %s onto %s\n",child_bone->name.c_str(),bone->name.c_str());
+    }
+    return bone;
+}
+
+//In blender, this would be an armature in here we look up a skin.
+//Asset manager for getting a bone mesh.
+Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* assetmanager){
+    Skeleton* skeleton = new Skeleton();
+    skeleton->name = skeleton_name;
+
+    tinygltf::Skin* skin = FindSkin(skeleton_name);
+    if (!skin){
+        debug->Err("Unable to find skeleton (skin) %s for you\n",skeleton_name);
+        return NULL;
+    }
+
+    // A skin contains a root node (which won't have a parent) and a list of all the skeleton nodes.
+    debug->Info("Found skeleton %s for you.\n",skeleton_name);
+
+    int accessor_invbindmatrices = skin->inverseBindMatrices;
+    if (accessor_invbindmatrices == -1){
+        debug->Fatal("No accessor to get inverseBindMatrices from skin\n");
+    }
+
+    //Apparently, we dont have a skeleton as root node.
+
+    std::vector<fmat4>inv_binds;
+    LoadInverseBindMatrices(inv_binds,accessor_invbindmatrices);
+
+    //The first one should be a root bone, and reference all the subsequent bones in some way.
+    if (skin->joints.size() < 1){
+        debug->Err("No bones in skeleton.\n");
+        return NULL;
+    }
+
+    //Let's just list all the nodes
+    for (int node_index : skin->joints){
+        tinygltf::Node& node = model.nodes.at(node_index);
+        debug->Info("Loading Node[%i] - %s as bone\n",node_index,node.name.c_str());
+        debug->Info(" -> Node mesh, skin       : %i, %i\n",node.mesh,node.skin);
+        debug->Info(" -> Node translation.size : %i\n",node.translation.size());
+        debug->Info(" -> Node rotation.size    : %i\n",node.rotation.size());
+        debug->Info(" -> Node matrix.size      : %i\n",node.matrix.size());
+        debug->Info(" -> Node children.size    : %i\n",node.children.size());
+    }
+
+    //Recursively get everything
+    Bone* root_bone = GetBone(skin->joints.at(0),assetmanager);
+    skeleton->AttachChild(root_bone);
+    return skeleton;
+}
+
+void GLTFLoader::LoadInverseBindMatrices(std::vector<fmat4>& matrices, int accesor_index){
+    const tinygltf::Accessor &accessor = model.accessors[accesor_index];
+    if (accessor.type != TINYGLTF_TYPE_MAT4){
+        debug->Fatal("Expected accessor.type TINYGLTF_TYPE_MAT4 but got %i\n",accessor.type);
+    }
+    debug->Info("Loading %i inverse Bind Matrices from Bufferview %i\n",accessor.count,accessor.bufferView);
+
+    const tinygltf::BufferView &buffer_view = model.bufferViews[accessor.bufferView];
 }

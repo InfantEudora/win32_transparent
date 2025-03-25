@@ -6,12 +6,16 @@
 #include <vector>
 #include "File.h"
 #include "Mesh.h"
+#include "SkinnedMesh.h"
 #include "type_int3.h"
 #include "type_vec2.h"
 #include "type_vec3.h"
 #include "Material.h"
 #include <string>
 #include <vector>
+
+#include "skeleton/Skeleton.h"
+#include "AssetManager.h"
 
 #include "tinygltf/tiny_gltf.h"
 /*
@@ -20,13 +24,18 @@
 */
 class GLTFLoader{
 public:
-    void    LoadGLTFFile(const char* filename);
-    Mesh*   GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
+    void            LoadGLTFFile(const char* filename);
+    Mesh*           GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
+    SkinnedMesh*    GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
+    Skeleton*       GetSkeleton(const char* skeleton_name, AssetManager* assetmanager);
+    Bone*           GetBone(int node_index, AssetManager* assetmanager = NULL);
 
     //Loaded node names from file
     std::vector<std::string>node_names;
 private:
     tinygltf::Node*  FindNode(std::string node_name);
+    tinygltf::Skin*  FindSkin(std::string skin_name);
+    void             LoadInverseBindMatrices(std::vector<fmat4>& matrices, int accesor_index);
 
     int              GetIndex(const tinygltf::Accessor& index_accessor, int offset);
     vec2             Getvec2(unsigned char* data, int byte_offset);
