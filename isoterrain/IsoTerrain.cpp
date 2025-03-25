@@ -36,7 +36,8 @@ void IsoTerrain::CreateTerrain(int w, int d, int h){
                 if (y != 0){
                     c->SetVisibility(false);
                 }
-                c->material_slot[0] = 3;
+                c->material_names[0] = "dirt";
+                c->f_update_materials = true;
                 cells.push_back(c);
             }
         }

@@ -25,8 +25,6 @@ class IsoCell;
 
 bool DirectionIsValid(int direction);
 
-
-
 class IsoCell : public virtual Object{
 public:
     IsoCell();
@@ -55,6 +53,7 @@ public:
 
     IsoWall* PlaceWall(int direction);
     Object* PlaceTree();
+    Object* PlaceStairs(int direction);
 };
 
 

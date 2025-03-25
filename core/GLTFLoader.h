@@ -11,6 +11,7 @@
 #include "type_vec3.h"
 #include "Material.h"
 #include <string>
+#include <vector>
 
 #include "tinygltf/tiny_gltf.h"
 /*
@@ -21,6 +22,9 @@ class GLTFLoader{
 public:
     void    LoadGLTFFile(const char* filename);
     Mesh*   GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
+
+    //Loaded node names from file
+    std::vector<std::string>node_names;
 private:
     tinygltf::Node*  FindNode(std::string node_name);
 

@@ -5,13 +5,6 @@ static Debugger* debug = new Debugger("IsoCell", DEBUG_INFO);
 
 std::map<int,int> IsoCell::terrain_material_map;
 
-bool DirectionIsValid(int direction){
-    if ((direction > DIRECTION_NONE) && (direction <= DIRECTION_WEST)){
-        return true;
-    }
-    return false;
-}
-
 IsoCell::IsoCell():Object(){
     //SetScale(vec3(0.5,0.5,0.5));
 }
@@ -67,8 +60,27 @@ IsoCell* IsoCell::GetNeighbour(int direction){
 }
 
 //Place a wall at one of the 4 coordinates.
+Object* IsoCell::PlaceStairs(int direction){
+    if (!IsoDirection::DirectionIsValid(direction)){
+        return NULL;
+    }
+
+    Object* prop = NULL;
+    if (prop_index == -1){
+        prop = assetmanager->GetObjectFromAsset("stairs.001");
+        if (prop && AttachChild(prop)){
+            prop_index = children.size() - 1;
+            debug->Ok("Placed some stairs\n");
+            prop->material_names[0] = "metal_001";
+            prop->name = "Stairs @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
+        }
+    }
+    return prop;
+}
+
+//Place a wall at one of the 4 coordinates.
 IsoWall* IsoCell::PlaceWall(int direction){
-    if (!DirectionIsValid(direction)){
+    if (!IsoDirection::DirectionIsValid(direction)){
         return NULL;
     }
     if (wall_indices[direction] == -1){
@@ -86,7 +98,6 @@ IsoWall* IsoCell::PlaceWall(int direction){
             return dynamic_cast<IsoWall*>(child);
         }
 
-
         //Create a new one.
         IsoWall* wall = new IsoWall();
 
@@ -94,6 +105,7 @@ IsoWall* IsoCell::PlaceWall(int direction){
             wall->material_names[0] = "Bricks";
             wall->material_names[1] = "Concrete";
             wall->f_update_materials = true;
+            wall->cell = this;
             //The last one if the index.
             int child_index = children.size() - 1;
             wall_indices[direction] = child_index;

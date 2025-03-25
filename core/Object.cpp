@@ -176,6 +176,7 @@ void Object::UpdateMaterials(std::vector<Material>& global_list){
     if (!f_update_materials){
         return;
     }
+    f_update_materials = false;
     int index = 0;
     for (std::string& mat_name:material_names){
         if (index >= NUM_MATERIAL_SLOTS){

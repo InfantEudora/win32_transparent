@@ -43,6 +43,7 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         debug->Info("Model.scenes[%i].name : %s\n",scene_index, model.scenes[scene_index].name.c_str());
     }
     debug->Info("Model has %i nodes\n",model.nodes.size());
+    node_names.clear();
     for (int node_index=0;node_index<model.nodes.size();node_index++){
         debug->Info("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
         debug->Info("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
@@ -53,7 +54,18 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
             tinygltf::Node& child = model.nodes.at(child_index);
             debug->Info(" - Child[%i] -> model.nodes[%i].name : %s\n",i,child_index, child.name.c_str());
         }
+        node_names.push_back(model.nodes[node_index].name);
     }
+
+    debug->Info("Model has %i skins\n",model.skins.size());
+
+    for (int skin_index=0;skin_index<model.skins.size();skin_index++){
+        debug->Info("Model.skins[%i].name                : %s\n",skin_index, model.skins[skin_index].name.c_str());
+        debug->Info("Model.skins[%i].inverseBindMatrices : in accessor [%i]\n",skin_index, model.skins[skin_index].inverseBindMatrices);
+        debug->Info("Model.skins[%i].joints              : %i\n",skin_index, model.skins[skin_index].joints.size());
+    }
+
+
     debug->Info("Model has %i meshes\n",model.meshes.size());
     for (int mesh_index=0;mesh_index<model.meshes.size();mesh_index++){
         debug->Info("Model.meshes[%i].name       : %s\n",mesh_index, model.meshes[mesh_index].name.c_str());
@@ -272,6 +284,10 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
 
     //A node can contain a single mesh (or none)
     debug->Info("Found Node %s for you.\n",node_name);
+
+    if (node->skin > -1){
+        debug->Info("Node %s contains a skin!\n",node_name);
+    }
 
     if (node->mesh < 0){
         debug->Info("Node %s does not contain a mesh\n",node_name);

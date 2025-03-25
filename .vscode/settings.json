@@ -97,5 +97,6 @@
             "icon": "terminal-powershell"
         }
     },
-    "terminal.integrated.automationProfile.windows": {}
+    "terminal.integrated.automationProfile.windows": {},
+    "terminal.integrated.scrollback": 8000
 }

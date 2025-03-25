@@ -27,6 +27,7 @@ public:
 
     bool f_show_rightclick_menu = false;
     int2 rightclick_menu_coord;
+    vec3 rightclick_menu_normal;    //Normal under cursor at the time of clicking
     Object* rightclick_menu_object = NULL;
 
     struct{

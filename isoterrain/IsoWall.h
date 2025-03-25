@@ -5,13 +5,7 @@
 #include "AssetManager.h"
 #include <map>
 #include <array>
-
-
-#define DIRECTION_NONE      -1
-#define DIRECTION_NORTH      0
-#define DIRECTION_EAST       1
-#define DIRECTION_SOUTH      2
-#define DIRECTION_WEST       3
+#include "IsoDirection.h"
 
 /*
     IsoWalls placed on IsoCells. There can be 4 walls on a single tile.
@@ -28,8 +22,12 @@ public:
 
     //Reference to the cell its on
     IsoCell* cell = NULL;
-
     int direction = DIRECTION_NONE;
+
+    void Lower();
+    Object* PlaceStairs(int direction);
+
+
 };
 
 

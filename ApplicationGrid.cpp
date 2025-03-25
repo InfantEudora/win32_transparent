@@ -179,16 +179,8 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     std::vector<Material>loaded_materials;
     //Load from a GLTF file and build assets.
-    std::vector<std::string>node_names;
-    node_names.push_back("tree.001");
-    node_names.push_back("wall_concrete.001");
-    node_names.push_back("tile_floor.001");
-    node_names.push_back("wall_full.001");
-    node_names.push_back("wall_full_cutout.001");
-
-
     app->gltfloader.LoadGLTFFile("data/trees.glb");
-    for (std::string& node_name:node_names){
+    for (std::string& node_name:app->gltfloader.node_names){
         loaded_materials.clear();
         Mesh* gltfmesh = app->gltfloader.GetMeshFromNode(node_name.c_str(),&loaded_materials);
         if (!gltfmesh){
@@ -201,16 +193,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         gltf_object->TakeMaterialNames(loaded_materials);
         gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
         scene->AddObject(gltf_object);
-
-        if (node_name.compare("wall_full.001") == 0){
-            app->assetmanager->AddNewAsset("wall_full.001",gltf_object);
-        }
-        if (node_name.compare("tile_floor.001") == 0){
-            app->assetmanager->AddNewAsset("tile_floor.001",gltf_object);
-        }
-        if (node_name.compare("tree.001") == 0){
-            app->assetmanager->AddNewAsset("tree.001",gltf_object);
-        }
+        app->assetmanager->AddNewAsset(node_name.c_str(),gltf_object);
     }
 
     //We now generate a terrain, and load that in.
@@ -468,6 +451,7 @@ void ApplicationGrid::RunLogic(){
     if (right_clicked){
         f_show_rightclick_menu = true;
         rightclick_menu_coord = px;
+        rightclick_menu_normal = main_scene->inputcontroller->GetHoveredNormal();
         rightclick_menu_object = hovered_object;
     }
     if (left_clicked){
@@ -643,8 +627,16 @@ void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
     ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("Interaction Menu", NULL, window_flags)){
-        if (ImGui::Button("Imma Wall Biatch!")){
-
+        ImGui::Text("Imma Wall Biatch!");
+        if (ImGui::Button("Lower")){
+            hovered_wall->Lower();
+            f_show_rightclick_menu = false;
+        }
+        if (ImGui::Button("Place Stairs")){
+            int normal_dir = IsoDirection::NormalToDirection(rightclick_menu_normal);
+            debug->Info("Would place stairs in direcion %i from normal %.2f,%.2f,%.2f\n",normal_dir,rightclick_menu_normal.x,rightclick_menu_normal.y,rightclick_menu_normal.z);
+            hovered_wall->PlaceStairs(normal_dir);
+            f_show_rightclick_menu = false;
         }
     }
     ImGui::End();
