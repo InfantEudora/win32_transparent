@@ -306,6 +306,13 @@ void Renderer::RenderUniqueSkinnedMeshes(){
         debug->Trace("Rendering the first skinned mesh we found in object: %s\n",object->name.c_str());
         skinned_mesh->batch_num_instances = 1; //We render just one.
 
+        //We are probably a skeleton then
+        Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
+        if (!skeleton){
+            debug->Warn("Skinned mesh does not appear to be a skeleton...\n");
+            continue;
+        }
+        debug->Trace("Skeleton contains %i bones\n",skeleton->num_bones);
         instancedata.clear();
 
         instancedata_t data;
@@ -324,6 +331,25 @@ void Renderer::RenderUniqueSkinnedMeshes(){
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_DYNAMIC_DRAW);
 
         //Now we build a buffer holding all the bone data for this mesh
+        boneinstancedata.clear();
+        bonedata_t bonedata;
+        bonedata.mat_transformscale = fmat4().identity();
+
+        std::vector<Bone*>bones;
+        skeleton->GetAllBones(skeleton,bones);
+        if (bones.size() != skeleton->num_bones){
+            debug->Err("skeleton->GetAllBones() did not yield expected number of bones (%i vs %i)\n",bones.size(),skeleton->num_bones);
+        }
+
+        //We add however many bones we want / have
+        int num_bones = skeleton->num_bones;
+        for (int i=0;i<num_bones;i++){
+            bonedata.mat_transformscale = skeleton->GetWorldTransformScaleMatrix().inverse_transform() * bones.at(i)->GetWorldTransformScaleMatrix() * bones.at(i)->inverse_bind_matrix;
+            bones.at(i)->bone_unpacked_index = i;
+            boneinstancedata.push_back(bonedata);
+        }
+        glInvalidateBufferData(boneinstdata_ssbo);
+        glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_DYNAMIC_DRAW);
 
         //And render all the shize
         debug->Trace("Rendering %i instances of skinned_mesh->id %i\n",skinned_mesh->batch_num_instances,skinned_mesh->GetID());
@@ -531,9 +557,9 @@ bool Renderer::InitSSBO(){
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, readback_ssbo);
 
     //A buffer for storing all the bone data for skinned meshes
-    glCreateBuffers(1, (GLuint*)&bonedata_ssbo);
-    glNamedBufferData(bonedata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, bonedata_ssbo);
+    glCreateBuffers(1, (GLuint*)&boneinstdata_ssbo);
+    glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, boneinstdata_ssbo);
 
     return true;
 }

@@ -4,6 +4,7 @@ class Renderer;
 #include "Shader.h"
 #include "glad.h"
 #include "Object.h"
+#include "skeleton/Skeleton.h"
 #include "Camera.h"
 #include "CubeMap.h"
 #include "Material.h"
@@ -114,7 +115,7 @@ class Renderer{
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
     GLuint lights_ssbo = -1;  //Shader Storage Buffer holding all different lights
     GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
-    GLuint bonedata_ssbo = -1;  //Shader Storage Buffer for bone data
+    GLuint boneinstdata_ssbo = -1;  //Shader Storage Buffer for bone data
 
     //Deferred stuff: Non-MSAA?
     GLuint deferred_fbo_id = -1; //Deferred FBO consisting of:
@@ -151,6 +152,7 @@ class Renderer{
     std::vector<Light*>visible_lights;                  // All lights we will use this frame
     std::vector<std::vector<objectid_t>*>batch_ids;     // An array of arrays containing the object id's per unique mesh, these form batches
     std::vector<instancedata_t>instancedata;            // Object data per unique mesh instance
+    std::vector<bonedata_t>boneinstancedata;            // Bone data per unique mesh instance
     std::vector<material_t>glsl_materials;              // List of all materials for direct upload to SSBO
     std::vector<light_t>glsl_lights;                    // List of all active lights for direct upload to SSBO
     std::vector<Material>materials;                     // List of all materials

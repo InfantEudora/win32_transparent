@@ -9,6 +9,10 @@
 class Bone : public virtual Object{
 public:
     Bone();
+    int bone_index = -1;
+    int bone_unpacked_index = -1;
+    int node_index = -1;
+    fmat4 inverse_bind_matrix;
 
     // The mesh of a bone is only to visualise the bone when editing poses.
 };

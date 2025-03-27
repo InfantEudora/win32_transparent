@@ -288,6 +288,16 @@ void Object::UpdateTransformMatrix(){
     local_transform_scale_matrix = local_transform_scale_matrix * rotation_matrix;
 
     local_transform_scale_matrix.set_position(state.position);
+
+    state.f_was_transformed = false;
+}
+
+fmat4& Object::GetLocalTransformScaleMatrix(){
+    if (state.f_was_transformed){
+        //Update local transform matrices
+        UpdateTransformMatrix();
+    }
+    return local_transform_scale_matrix;
 }
 
 //Returns the total transformation matrix in world space for this frame

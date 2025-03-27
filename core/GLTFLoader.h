@@ -28,7 +28,7 @@ public:
     Mesh*           GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
     SkinnedMesh*    GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
     Skeleton*       GetSkeleton(const char* skeleton_name, AssetManager* assetmanager);
-    Bone*           GetBone(int node_index, AssetManager* assetmanager = NULL);
+    Bone*           GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
 
     //Loaded node names from file
     std::vector<std::string>node_names;
@@ -41,6 +41,8 @@ private:
     vec2             Getvec2(unsigned char* data, int byte_offset);
     vec3             Getvec3(unsigned char* data, int byte_offset);
     vec4             Getvec4(unsigned char* data, int byte_offset);
+    fmat4            Getfmat4(unsigned char* data, int byte_offset);
+    int3             Getint3_uint8_4(unsigned char* data, int byte_offset);
 
     vertex           GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index);
     skinned_vertex   GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, tinygltf::BufferView* bb, tinygltf::BufferView* wb,int index);

@@ -44,7 +44,7 @@ bool SkinnedMesh::InitVBOVAO(){
     glVertexArrayAttribFormat(vao, SKINNED_ATTRIB_NORMAL, 3, GL_FLOAT, GL_TRUE , 3*sizeof(float));
     glVertexArrayAttribFormat(vao, SKINNED_ATTRIB_TANGENT, 3, GL_FLOAT, GL_TRUE, 6*sizeof(float));
     glVertexArrayAttribFormat(vao, SKINNED_ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, 9*sizeof(float));
-    glVertexArrayAttribFormat(vao, SKINNED_ATTRIB_BONES, 3, GL_INT, GL_FALSE, 11*sizeof(int));
+    glVertexArrayAttribIFormat(vao, SKINNED_ATTRIB_BONES, 3, GL_INT, 11*sizeof(int));
     glVertexArrayAttribFormat(vao, SKINNED_ATTRIB_WEIGHTS, 3, GL_FLOAT, GL_TRUE, 14*sizeof(float));
     glVertexArrayAttribIFormat(vao, SKINNED_ATTRIB_MATINDEX, 1, GL_INT, 17*sizeof(int));
 

@@ -256,6 +256,20 @@ vec4 GLTFLoader::Getvec4(unsigned char* data, int byte_offset){
     return v;
 }
 
+fmat4 GLTFLoader::Getfmat4(unsigned char* data, int byte_offset){
+    fmat4 v;
+    memcpy(&v,data+byte_offset,sizeof(fmat4));
+    return v;
+}
+
+//This gets 4 uint8_t's and stores the first 3 in an int3
+int3 GLTFLoader::Getint3_uint8_4(unsigned char* data, int byte_offset){
+    uint8_t n[4];
+    memcpy(n,data+byte_offset,sizeof(uint8_t) * 4);
+    int3 v = int3(n[0],n[1],n[2]);
+    return v;
+}
+
 vertex GLTFLoader::GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index){
     vertex v = {};
     //Kind of going to assume the correct accessor will be used for this:
@@ -318,7 +332,7 @@ skinned_vertex GLTFLoader::GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::
     int byte_offset_position = pb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
     int byte_offset_normal = nb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
     int byte_offset_uv = ub->byteOffset + (index * 2 * sizeof(float)); //FLOAT * VEC2 * index
-    int byte_offset_bones = bb->byteOffset + (index * 4 * sizeof(float)); //FLOAT * VEC4 * index
+    int byte_offset_bones = bb->byteOffset + (index * 4 * sizeof(uint8_t)); //FLOAT * UINT8 * index
     int byte_offset_weights = wb->byteOffset + (index * 4 * sizeof(float)); //FLOAT * VEC4 * index
 
     //This is guaranteed to exist... when the file is ok.
@@ -331,13 +345,10 @@ skinned_vertex GLTFLoader::GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::
     v.pos = Getvec3(&position_buffer.data.at(0),byte_offset_position);
     v.normal = Getvec3(&normal_buffer.data.at(0),byte_offset_normal);
     v.uv = Getvec2(&uv_buffer.data.at(0),byte_offset_uv);
-    vec4 v_bone_ids = Getvec4(&bones_buffer.data.at(0),byte_offset_bones);
+    v.bones = Getint3_uint8_4(&bones_buffer.data.at(0),byte_offset_bones);
     vec4 v_bone_weights = Getvec4(&weights_buffer.data.at(0),byte_offset_weights);
 
     //We only store 3 bones because that how we roll.
-    v.bones.x = v_bone_ids.x;
-    v.bones.y = v_bone_ids.y;
-    v.bones.z = v_bone_ids.z;
     v.weights.x = v_bone_weights.x;
     v.weights.y = v_bone_weights.y;
     v.weights.z = v_bone_weights.z;
@@ -391,20 +402,21 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     materials.clear();
 
     debug->Info("Node has %i primitives\n",nodemesh.primitives.size());
-
+    int primitive_count = -1;
     for (tinygltf::Primitive &primitive : nodemesh.primitives){
         //This should be such that at least the materials in this Mesh can be looked up later on.
+        primitive_count++;
         int material_index = primitive.material;
         int diff_texture_index = -1;
-
+        debug->Info("Primitive %i material_index = %i\n",primitive_count, material_index);
 
         tinygltf::Material* gltfmaterial = NULL;
+        int material_id = 0;
         if (material_index > -1){
             gltfmaterial = &model.materials.at(material_index);
 
             Material m;
             m.name = gltfmaterial->name;
-
 
             //If the material has a diffuse texture, we load that here
             if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
@@ -439,10 +451,12 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
             }
             materials.push_back(m);
+            //Vertex parameter
+            material_id = materials.size() - 1;
+        }else{
+            //Primitive has no material defined. We use material slot 0 anyway, so we can load some kind of default material
+            material_id = 0;
         }
-
-
-        int material_id = materials.size() - 1;
 
         std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
         std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
@@ -674,7 +688,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
                 debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
             }
 
-            debug->Info("Accessor Size = %i for %s\n",size,it->first.c_str());
+            debug->Info("Accessor Size = %i for %s component_type = %i\n",size,it->first.c_str(),accessor.componentType);
 
             if (it->first.compare("NORMAL") == 0){
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
@@ -739,10 +753,17 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
     return mesh;
 }
 
-Bone* GLTFLoader::GetBone(int node_index, AssetManager* assetmanager){
+Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager){
     tinygltf::Node& node = model.nodes.at(node_index);
     Bone* bone = new Bone();
     bone->name = node.name;
+    bone->bone_index = bone_count;
+    bone->node_index = node_index;
+    bone->material_names[0] = "bone_mat";
+    bone->f_update_materials = true;
+    bone->inverse_bind_matrix = invbinmatrices.at(bone->bone_index);
+    bone_count++;
+
     if (node.translation.size() == 3){
         vec3 translation = vec3(node.translation[0],node.translation[1],node.translation[2]);
         bone->SetPosition(translation);
@@ -759,7 +780,7 @@ Bone* GLTFLoader::GetBone(int node_index, AssetManager* assetmanager){
 
     //Traverse nodes until no more nodes have children.
     for (int node_index : node.children){
-        Bone* child_bone = GetBone(node_index,assetmanager);
+        Bone* child_bone = GetBone(node_index,bone_count,invbinmatrices,assetmanager);
         bone->AttachChild(child_bone);
         debug->Info("Attaching Bone %s onto %s\n",child_bone->name.c_str(),bone->name.c_str());
     }
@@ -788,6 +809,7 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
 
     //Apparently, we dont have a skeleton as root node.
 
+    //We expect the same number of matrices as bones.
     std::vector<fmat4>inv_binds;
     LoadInverseBindMatrices(inv_binds,accessor_invbindmatrices);
 
@@ -809,8 +831,11 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
     }
 
     //Recursively get everything
-    Bone* root_bone = GetBone(skin->joints.at(0),assetmanager);
+    int bone_count = 0;
+    Bone* root_bone = GetBone(skin->joints.at(0),bone_count,inv_binds,assetmanager);
     skeleton->AttachChild(root_bone);
+    skeleton->num_bones = bone_count;
+    debug->Info("Loaded %i bones into skeleton\n",bone_count);
     return skeleton;
 }
 
@@ -821,5 +846,12 @@ void GLTFLoader::LoadInverseBindMatrices(std::vector<fmat4>& matrices, int acces
     }
     debug->Info("Loading %i inverse Bind Matrices from Bufferview %i\n",accessor.count,accessor.bufferView);
 
-    const tinygltf::BufferView &buffer_view = model.bufferViews[accessor.bufferView];
+    tinygltf::BufferView &buffer_view = model.bufferViews[accessor.bufferView];
+    tinygltf::Buffer &buffer = model.buffers[buffer_view.buffer];
+
+    for (int index = 0;index<accessor.count;index++){
+        int byte_offset = buffer_view.byteOffset + (index * 4 * sizeof(vec4)); //VEC4 * 4 * index
+        fmat4 matrix = Getfmat4(&buffer.data.at(0),byte_offset);
+        matrices.push_back(matrix);
+    }
 }

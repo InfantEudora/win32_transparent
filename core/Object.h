@@ -59,6 +59,7 @@ class Object{
     void MarkForRender();
 
     void UpdateTransformMatrix();
+    fmat4& GetLocalTransformScaleMatrix();
     fmat4& GetWorldTransformScaleMatrix();
 
     //Modify postition
@@ -135,9 +136,9 @@ protected:
     ObjectState state_physics;      //<- State physics may update.
     ObjectState state_physics_prev; //<- Last complete state the physics has calculated.
 
-    std::atomic<int>state_completed = 0;  //If this state is completed.
-    std::atomic<int>state_physics_completed = 0;
-    std::atomic<int>state_physics_prev_completed = 0;
+    std::atomic<int>state_completed = {0};  //If this state is completed.
+    std::atomic<int>state_physics_completed = {0};
+    std::atomic<int>state_physics_prev_completed = {0};
 
     Mesh*           mesh            = NULL;
     SkinnedMesh*    skinned_mesh    = NULL;

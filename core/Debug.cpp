@@ -116,7 +116,7 @@ void Debugger::Trace(const char *format, ...) {
     if (level >= DEBUG_TRACE) {
         return;
     }
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(DEBUG_TRACE, format, arglist);
@@ -127,7 +127,7 @@ void Debugger::Debug(const char *format, ...) {
     if (level >= DEBUG_DEBUG) {
         return;
     }
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(DEBUG_DEBUG, format, arglist);
@@ -138,7 +138,7 @@ void Debugger::Info(const char *format, ...) {
     if (level >= DEBUG_INFO) {
         return;
     }
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(DEBUG_INFO, format, arglist);
@@ -149,7 +149,7 @@ void Debugger::Ok(const char *format, ...) {
     if (level >= DEBUG_OK) {
         return;
     }
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(DEBUG_OK, format, arglist);
@@ -160,7 +160,7 @@ void Debugger::Warn(const char *format, ...) {
     if (level >= DEBUG_WARN) {
         return;
     }
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(DEBUG_WARN, format, arglist);
@@ -171,7 +171,7 @@ void Debugger::Err(const char *format, ...) {
     if (level >= DEBUG_ERROR) {
         return;
     }
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(DEBUG_ERROR, format, arglist);

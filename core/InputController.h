@@ -47,7 +47,7 @@ struct KeyState{
     bool                    f_processed = false;  // If the input was processed
     int32_t                 value = 0;
     float                   fvalue = 0.0f;
-    std::atomic<int32_t>    delta = 0;          // Delta value this tick
+    std::atomic<int32_t>    delta = {0};          // Delta value this tick
     int                     num_mappings = 1;   // Amount of keys that are mapped to this state.
     void                    Down();
     void                    Up();
@@ -95,7 +95,7 @@ protected:
     int2 mouse_position;
     int2 window_position;   //Stored here seperately
 
-    std::atomic<objectid_t>hovered_object = OBJECTID_INVALID;
+    std::atomic<objectid_t>hovered_object = {OBJECTID_INVALID};
     vec3 hovered_normal = vec3(); //TODO: How to atomicise this? Doest it need to be?
 };
 

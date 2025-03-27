@@ -183,6 +183,9 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //Load from a GLTF file and build assets.
     app->gltfloader.LoadGLTFFile("data/trees.glb");
     for (std::string& node_name:app->gltfloader.node_names){
+        if (node_name.compare("bone_mesh") != 0){
+            continue;
+        }
         loaded_materials.clear();
         Mesh* gltfmesh = app->gltfloader.GetMeshFromNode(node_name.c_str(),&loaded_materials);
         if (!gltfmesh){
@@ -200,7 +203,14 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //We load a skeleton from the same file
     //Need asset manager to load mesh for bone debugging
+    Material bone_mat;
+    bone_mat.name = "bone_mat";
+    bone_mat.glsl_material.color = vec4(1,1,1,1);
+    scene->renderer->AddMaterial(bone_mat);
+
     Skeleton* skeleton = app->gltfloader.GetSkeleton("character_armature",app->assetmanager);
+    //Move the root bone back so we can view the skinned mesh
+    //skeleton->GetChild(0)->SetPosition(vec3(0,0,-1));
     SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character");
     skeleton->SetSkinnedMesh(skinned_mesh);
 

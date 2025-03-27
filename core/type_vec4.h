@@ -31,6 +31,7 @@ struct vec4{
     void    print();
     void    set(float x, float y, float z, float w);
     void    clear();
+    float  	dot(const vec4& vec) const;                     // dot product
     vec4&  	normalize();
 };
 
@@ -51,6 +52,15 @@ inline vec4& vec4::normalize(){
 	s = sqrt(s);
 	x/=s; y/=s; z/=s; w/=s;
 	return *this;
+}
+
+inline float vec4::dot(const vec4& rhs) const{
+	double r = 0;
+	r += (x*rhs.x);
+	r += (y*rhs.y);
+	r += (z*rhs.z);
+    r += (w*rhs.w);
+	return (float)r;
 }
 
 inline void vec4::print(){

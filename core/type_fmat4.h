@@ -11,7 +11,6 @@ struct fmat4;
 
 struct fmat4{
 	vec4 vertex[4];
-
     //Functions
     void    print();
     void    clear();
@@ -23,6 +22,7 @@ struct fmat4{
 	fmat4&  orthographic_matrix(float left, float right, float bottom, float top, float znear, float zfar);
     fmat4&  lookatmatrix(const vec3& pos, const vec3& target, const vec3& up);
     fmat4&  set_position(const vec3& pos);
+	fmat4&  inverse_transform();	// Assumes this is a transform matrix, and inverses it.
 
     fmat4   operator*(const fmat4& rhs) const;
 };
@@ -232,6 +232,40 @@ inline void fmat4::print(){
     vertex[1].print();
     vertex[2].print();
     vertex[3].print();
+}
+
+// Assumes this is a transform matrix, and inverses it.
+// https://graphics.stanford.edu/courses/cs248-98-fall/Final/q4.html
+inline fmat4& fmat4::inverse_transform(){
+	fmat4 m;
+	//m.vertex[0].x
+
+	float d1 = -vertex[0].dot(vertex[3]);
+	float d2 = -vertex[1].dot(vertex[3]);
+	float d3 = -vertex[2].dot(vertex[3]);
+
+	m.vertex[0].x = vertex[0].x;
+	m.vertex[1].x = vertex[0].y;
+	m.vertex[2].x = vertex[0].z;
+	m.vertex[3].x = d1;
+
+	m.vertex[0].y = vertex[1].x;
+	m.vertex[1].y = vertex[1].y;
+	m.vertex[2].y = vertex[1].z;
+	m.vertex[3].y = d2;
+
+	m.vertex[0].z = vertex[2].x;
+	m.vertex[1].z = vertex[2].y;
+	m.vertex[2].z = vertex[2].z;
+	m.vertex[3].z = d3;
+
+	m.vertex[0].w = 0;
+	m.vertex[1].w = 0;
+	m.vertex[2].w = 0;
+	m.vertex[3].w = 1;
+
+	*this = m;
+	return *this;
 }
 
 #endif

@@ -377,6 +377,13 @@ void Application::RenderGenericObjectUI(){
         if (ImGui::CollapsingHeader("Node Hierarchy")){
             if (object->parent){
                 ImGui::Text("Parent             : %s",object->parent->name.c_str());
+                if (ImGui::Button("Select Root Node")){
+                    Object* o = object->parent;
+                    while(o->parent){
+                        o = o->parent;
+                    }
+                    selected_object = o;
+                }
             }else{
                 ImGui::Text("Parent             : Has No Parent");
             }
@@ -419,6 +426,38 @@ void Application::RenderGenericObjectUI(){
             ImGui::BeginDisabled();
             ImGui::CollapsingHeader("No Skinned Mesh");
             ImGui::EndDisabled();
+        }
+
+        Bone* bone = dynamic_cast<Bone*>(object);
+        if (bone){
+            if (ImGui::CollapsingHeader("Bone")){
+                ImGui::Text("bone_index          : %i",bone->bone_index);
+                ImGui::Text("bone_unpacked_index : %i",bone->bone_unpacked_index);
+                ImGui::Text("node_index          : %i",bone->node_index);
+                ImGui::Text("inverse_bind_matrix : ");
+                ImGui::BeginDisabled();
+                ImGui::DragFloat4("V1", (float*)&bone->inverse_bind_matrix.vertex[0], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V2", (float*)&bone->inverse_bind_matrix.vertex[1], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V3", (float*)&bone->inverse_bind_matrix.vertex[2], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V4", (float*)&bone->inverse_bind_matrix.vertex[3], 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+                fmat4 m = bone->GetWorldTransformScaleMatrix();
+                ImGui::Text("world_transform_scale_matrix : ");
+                ImGui::BeginDisabled();
+                ImGui::DragFloat4("V1", (float*)&m.vertex[0], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V2", (float*)&m.vertex[1], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V3", (float*)&m.vertex[2], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V4", (float*)&m.vertex[3], 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+                m.inverse_transform();
+                ImGui::Text("world_transform_scale_matrix.inverse_transform() : ");
+                ImGui::BeginDisabled();
+                ImGui::DragFloat4("V1", (float*)&m.vertex[0], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V2", (float*)&m.vertex[1], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V3", (float*)&m.vertex[2], 0.01f, -1.0f, 1.0f);
+                ImGui::DragFloat4("V4", (float*)&m.vertex[3], 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+            }
         }
 
         if (ImGui::CollapsingHeader("Position")){

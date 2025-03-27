@@ -62,6 +62,8 @@ layout (location = 3) out mat3 TBN;			//Normal mapping matrix
 layout (location = 6) flat out int vmatindex;	//Material index
 layout (location = 7) flat out int vobjid;	//gl_InstanceID
 
+
+
 //Settings
 uniform int f_normal_mapping = 1;
 
@@ -86,6 +88,7 @@ void main(){
 
 	vec3 objpos = instance_data[gl_InstanceID].mat_transformscale[3].xyz;
 
+	//This may need to happen only on bone matrix
 	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(position,1); //In world space
 	vposition = transpos.xyz;
 
@@ -115,7 +118,8 @@ void main(){
 	*/
 
 	//Compute the bone index in the data list for this instance.
-	int bone_count = 10;
+	int bone_count = 24;
+
 
 	mat4 skin_matrix =
         weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale +
@@ -125,6 +129,7 @@ void main(){
 	//Calculated the TBN matrix for normal mapping..
 	//TODO: Maybe this can be done in a Geometry Shader.
 
+
 	vmatindex = matindex_out;
 
 	vuv = uv;
@@ -132,5 +137,5 @@ void main(){
 
 	vobjid = instance_data[gl_InstanceID].objectid;
 
-	gl_Position = (mat_worldcam * transpos);
+	gl_Position = (mat_worldcam  * skin_matrix * vec4(position,1) );
 }
