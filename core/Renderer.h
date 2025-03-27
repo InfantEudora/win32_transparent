@@ -24,6 +24,7 @@ typedef struct {
 
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation for a single bone
+    fmat4 mat_inversebind;
 }bonedata_t;
 
 typedef struct{

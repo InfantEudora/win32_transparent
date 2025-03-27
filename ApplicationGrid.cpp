@@ -211,7 +211,9 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     Skeleton* skeleton = app->gltfloader.GetSkeleton("character_armature",app->assetmanager);
     //Move the root bone back so we can view the skinned mesh
     //skeleton->GetChild(0)->SetPosition(vec3(0,0,-1));
-    SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character");
+    loaded_materials.clear();
+    SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
+    scene->renderer->AddMaterials(loaded_materials);
     skeleton->SetSkinnedMesh(skinned_mesh);
 
     scene->AddObject(skeleton);
@@ -221,7 +223,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->terrain->name = "Iso Terrain";
     app->terrain->assetmanager = app->assetmanager;
     app->terrain->CreateTerrain(5,5,2);
-    scene->AddObject(app->terrain);
+    //scene->AddObject(app->terrain);
 
     app->projection_plane.pos = {};
     app->projection_plane.normal = vec3(0,1,0);
@@ -236,6 +238,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->renderer->AddMaterials(loaded_materials);
     app->selection_tile->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->AddObject(app->selection_tile);
+    app->selection_tile->Hide();
 
     app->main_scene->UpdatePhysics();
 
@@ -259,10 +262,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->renderer->skybox_shader = new Shader("shaders/skybox.vert","shaders/skybox.frag");
     scene->renderer->skybox_mesh = OBJLoader::ParseOBJFile("data/unit_cube.obj");
 
-    //Now we can assign materials to all the tiles.
-    for (IsoCell* cell:app->terrain->cells){
-        //cell->material_slot[0] = matindex;
-    }
+
 
     //And update the map for terrain types
     IsoCell::terrain_material_map[CELL_TERRAIN_NONE] = -1;

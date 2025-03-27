@@ -37,6 +37,7 @@ struct Material{
 
 struct Bone{
 	mat4 mat_transformscale;
+	mat4 inv_bindmatrix;
 };
 
 //A material index comes in from a vertex, which matches a material specified in the OBJ file.
@@ -79,6 +80,55 @@ void main(){
 	//Only object rotation. We want to decompose this from the mat_trans for light calculations
 	mat3 mat_rotate;
 
+
+
+	//HERE
+	/*
+		An instance mesh with bones has maybe 10 bones. Each instance has the same amount.
+		There will be bone_data of bone_count * bone_size * instances.
+		So each instance may have different bone data, i.e. can play a different animation on the same mesh.
+	*/
+
+	//Compute the bone index in the data list for this instance.
+	int bone_count = 24;
+
+	//A vertex is in the local space of the root node, the skeleton.
+	//The bone weights are
+
+
+
+
+	mat4 skin_matrix =
+        weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].inv_bindmatrix +
+        weights.y * bone_data[(gl_InstanceID * bone_count) + bones.y].inv_bindmatrix +
+        weights.z * bone_data[(gl_InstanceID * bone_count) + bones.z].inv_bindmatrix;
+
+	//Global transform of the current vertex
+	mat4 joint_matrix = skin_matrix;
+
+	mat4 global_transform_matrix = bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale;
+
+	mat4 final_transform_matrix = global_transform_matrix * joint_matrix;
+
+	vec4 world_position = final_transform_matrix * vec4(position,1) ;
+
+	//Calculated the TBN matrix for normal mapping..
+	//TODO: Maybe this can be done in a Geometry Shader.
+
+
+
+
+	vuv = uv;
+	//vtangent = mat_rotate * tangent;
+
+	vobjid = instance_data[gl_InstanceID].objectid;
+
+	vposition = world_position.xyz;
+
+	gl_Position = (mat_worldcam  * world_position);
+
+
+
 	//We need to decompose the matrix into a rotation only, used to compute normals.
 	//Zero out the translation and scale.
 	mat_rotate[0] = instance_data[gl_InstanceID].mat_transformscale[0].xyz;
@@ -86,16 +136,17 @@ void main(){
 	mat_rotate[2] = instance_data[gl_InstanceID].mat_transformscale[2].xyz;
 
 
-	vec3 objpos = instance_data[gl_InstanceID].mat_transformscale[3].xyz;
+	//vec3 objpos = final_transform_matrix[3].xyz;
 
 	//This may need to happen only on bone matrix
-	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(position,1); //In world space
-	vposition = transpos.xyz;
+	//vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(position,1); //In world space
+	//vposition = transpos.xyz;
 
 	vnormal = (mat_rotate * normal);
 	vnormal = normalize(vnormal);
 
 	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
+	vmatindex = matindex_out;
 
 	Material m = materials[matindex_out];
 	if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
@@ -109,33 +160,4 @@ void main(){
 			0		,0		,1
 		);
 	}
-
-	//HERE
-	/*
-		An instance mesh with bones has maybe 10 bones. Each instance has the same amount.
-		There will be bone_data of bone_count * bone_size * instances.
-		So each instance may have different bone data, i.e. can play a different animation on the same mesh.
-	*/
-
-	//Compute the bone index in the data list for this instance.
-	int bone_count = 24;
-
-
-	mat4 skin_matrix =
-        weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale +
-        weights.y * bone_data[(gl_InstanceID * bone_count) + bones.y].mat_transformscale +
-        weights.z * bone_data[(gl_InstanceID * bone_count) + bones.z].mat_transformscale;
-
-	//Calculated the TBN matrix for normal mapping..
-	//TODO: Maybe this can be done in a Geometry Shader.
-
-
-	vmatindex = matindex_out;
-
-	vuv = uv;
-	//vtangent = mat_rotate * tangent;
-
-	vobjid = instance_data[gl_InstanceID].objectid;
-
-	gl_Position = (mat_worldcam  * skin_matrix * vec4(position,1) );
 }

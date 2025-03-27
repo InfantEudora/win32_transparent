@@ -344,7 +344,9 @@ void Renderer::RenderUniqueSkinnedMeshes(){
         //We add however many bones we want / have
         int num_bones = skeleton->num_bones;
         for (int i=0;i<num_bones;i++){
-            bonedata.mat_transformscale = skeleton->GetWorldTransformScaleMatrix().inverse_transform() * bones.at(i)->GetWorldTransformScaleMatrix() * bones.at(i)->inverse_bind_matrix;
+            bonedata.mat_inversebind = bones.at(i)->inverse_bind_matrix;
+            bonedata.mat_transformscale = bones.at(i)->GetWorldTransformScaleMatrix();
+
             bones.at(i)->bone_unpacked_index = i;
             boneinstancedata.push_back(bonedata);
         }

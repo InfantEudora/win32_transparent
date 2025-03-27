@@ -772,6 +772,11 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
         quat rotation = quat(node.rotation[0],node.rotation[1],node.rotation[2],node.rotation[3]);
         bone->SetRotation(rotation);
     }
+    if (node.scale.size() == 3){
+        vec3 scale = vec3(node.scale[0],node.scale[1],node.scale[2]);
+        bone->SetScale(scale);
+        debug->Info(" Bone scale %.2f %.2f %.2f\n",scale.x,scale.y,scale.z);
+    }
 
     if (assetmanager){
         //Load mesh into bone
@@ -826,6 +831,7 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
         debug->Info(" -> Node mesh, skin       : %i, %i\n",node.mesh,node.skin);
         debug->Info(" -> Node translation.size : %i\n",node.translation.size());
         debug->Info(" -> Node rotation.size    : %i\n",node.rotation.size());
+        debug->Info(" -> Node scale.size       : %i\n",node.scale.size());
         debug->Info(" -> Node matrix.size      : %i\n",node.matrix.size());
         debug->Info(" -> Node children.size    : %i\n",node.children.size());
     }

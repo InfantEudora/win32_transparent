@@ -289,7 +289,7 @@ void Object::UpdateTransformMatrix(){
 
     local_transform_scale_matrix.set_position(state.position);
 
-    state.f_was_transformed = false;
+    //state.f_was_transformed = false;
 }
 
 fmat4& Object::GetLocalTransformScaleMatrix(){
