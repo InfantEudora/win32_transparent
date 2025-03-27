@@ -14,6 +14,7 @@ public:
     // The bones are the children
 
     void GetAllBones(Object* child, std::vector<Bone*>&bones);
+    Bone* FindBone(const std::string name);
 
 };
 

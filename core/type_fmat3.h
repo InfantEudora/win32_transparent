@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+
 struct fmat3;
 #include "type_vec3.h"
 

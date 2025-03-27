@@ -21,3 +21,14 @@ void Skeleton::GetAllBones(Object* object, std::vector<Bone*>&bones){
         GetAllBones(child,bones);
     }
 }
+
+Bone* Skeleton::FindBone(const std::string name){
+    std::vector<Bone*>bones;
+    GetAllBones(this,bones);
+    for (Bone* bone:bones){
+        if (bone->name.compare(name) == 0){
+            return bone;
+        }
+    }
+    return NULL;
+}

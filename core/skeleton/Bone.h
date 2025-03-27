@@ -13,6 +13,7 @@ public:
     int bone_unpacked_index = -1;
     int node_index = -1;
     fmat4 inverse_bind_matrix;
+    float initial_length = 0.0f;
 
     // The mesh of a bone is only to visualise the bone when editing poses.
 };

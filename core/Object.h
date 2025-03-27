@@ -74,11 +74,17 @@ class Object{
     vec3 GetScale();
 
     //Modify rotation
-    void SetLookAt(const vec3& newpos, vec3* optional_up = NULL);
+    void SetLookAt(const vec3& newpos, const vec3* optional_up = NULL);
+    void SetWorldLookat(const vec3& target,const vec3& world_up);
+
     void SetRotation(const quat& q);
     void RotateAroundAxis(const vec3& target_axis,float by);
     void RotateBy(const quat& q);
+
     void RollBy(float by);
+    void PitchBy(float by);
+    void YawBy(float by);
+
 
     void UpdateState(); //Called from render thread before rendering
     void UpdatePhysicsState();
@@ -93,10 +99,14 @@ class Object{
     static vec3 ref_forward;
 
     vec3 GetPosition();
-    vec3 GetUp();       //Returns the local vector pointing up.
-    vec3 GetForward();  //Returns the forward or normalized lookat direction
-    vec3 GetLeft();     //Return the vector pointing left
-    quat GetRotation(); //Returns a copy of the rotation
+    vec3 GetWorldPosition();
+
+    vec3 GetUp();               // Returns the local vector pointing up.
+    vec3 GetWorldUp();          //
+    vec3 GetForward();          // Returns the forward or normalized lookat direction
+    vec3 GetLeft();             // Return the vector pointing left
+    quat GetRotation();         // Returns a copy of the rotation
+    quat GetWorldRotation();    // Calculates and returns world rotation
 
     void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
     int material_slot[NUM_MATERIAL_SLOTS] = {};

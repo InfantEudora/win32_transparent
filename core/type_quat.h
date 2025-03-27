@@ -22,15 +22,24 @@ struct quat{
     void    print();
     void    identity();
     void    set_rotation(const vec3& axis, float angle);
+    float   get_pitch() const;
+    float   get_roll() const;
+    float   get_yaw() const;
+    float   dot (const quat& rkQ) const;
+
     quat&   normalize();
 
     fmat4   tofmat4() const;
 
-    vec3    operator*(const vec3& rhs) const; // rotate a vector
-    quat    operator*(const quat& rhs) const; // multiplication
+    quat    operator-() const;                 // unary operator (negate)
+    quat    operator+(const quat& rhs) const;  // addition
+    quat    operator*(float a) const;          // scalar multiplication
+    vec3    operator*(const vec3& rhs) const;  // rotate a vector
+    quat    operator*(const quat& rhs) const;  // multiplication
 
     static quat getquat(const vec3& v1, const vec3& v2);
     static quat getquat(const vec3& target, const vec3& position, const vec3& worldup);
+    static quat slerp (const quat& rkP, const quat& rkQ,float fT, bool shortestPath);
 };
 
 inline quat::quat(const vec3& axis, float angle){
@@ -42,6 +51,25 @@ inline void quat::identity(){
     y = 0;
     z = 0;
     w = 1;
+}
+
+//Returns the pitch in radians
+inline float quat::get_pitch() const{
+    const float EPSILON = 0.00001f;
+    float qy = (2) * (y * z + w * x);
+    float qx = w * w - x * x - y * y + z * z;
+
+    if (abs(abs(qx) -abs(qy)) < EPSILON)
+        return ((2) * atan2(x, w));
+
+    return atan2(qy, qx);
+}
+inline float quat::get_roll() const{
+    return atan2((2) * (x * y + w * z), w * w + x * x - y * y - z * z);
+}
+
+inline float quat::get_yaw() const{
+    return asin(clamp((-2.0f) * (x * z - w * y), (-1.0f), (1.0f)));
 }
 
 inline void quat::set_rotation(const vec3& axis, float angle){
@@ -68,6 +96,18 @@ inline quat& quat::normalize(){
 
     x *= invLength;  y *= invLength;  z *= invLength; w *= invLength;
     return *this;
+}
+
+inline quat quat::operator-() const{
+    return quat(-x, -y, -z,-w);
+}
+
+inline quat quat::operator+(const quat& rhs) const{
+    return quat(x + rhs.x, y + rhs.y, z + rhs.z, w + rhs.w);
+}
+
+inline quat quat::operator*(float a) const{
+    return quat(a*x, a*y, a*z,a*w);
 }
 
 inline quat quat::operator*(const quat& rhs) const{
@@ -198,6 +238,45 @@ inline quat quat::getquat(const vec3& target, const vec3& position, const vec3& 
         }
     }
     return q;
+}
+
+inline float quat::dot (const quat& rkQ) const{
+    return w*rkQ.w+x*rkQ.x+y*rkQ.y+z*rkQ.z;
+}
+
+inline quat quat::slerp (const quat& rkP, const quat& rkQ,float fT, bool shortestPath){
+    float fCos = rkP.dot(rkQ);
+    quat rkT;
+
+    // Do we need to invert rotation?
+    if (fCos < 0.0f && shortestPath){
+        fCos = -fCos;
+        rkT = -rkQ;
+    }else{
+        rkT = rkQ;
+    }
+    float msEpsilon = 1e-6;
+    if (abs(fCos) < 1 - msEpsilon){
+        // Standard case (slerp)
+        float fSin = sqrt(1 - (fCos*fCos));
+        float fAngle = atan2(fSin, fCos);
+        float fInvSin = 1.0f / fSin;
+        float fCoeff0 = sinf((1.0f - fT) * fAngle) * fInvSin;
+        float fCoeff1 = sinf(fT * fAngle) * fInvSin;
+        return (rkP * fCoeff0) + (rkT * fCoeff1);
+    }else{
+
+        // There are two situations:
+        // 1. "rkP" and "rkQ" are very close (fCos ~= +1), so we can do a linear
+        //    interpolation safely.
+        // 2. "rkP" and "rkQ" are almost inverse of each other (fCos ~= -1), there
+        //    are an infinite number of possibilities interpolation. but we haven't
+        //    have method to fix this case, so just use linear interpolation here.
+        quat t =  rkP *(1.0f - fT) + (rkT*fT);
+        // taking the complement requires renormalisation
+        t.normalize();
+        return t;
+    }
 }
 
 inline void quat::print(){

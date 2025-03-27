@@ -136,7 +136,7 @@ void Object::SetPosition(const vec3& newpos){
 
 //Look at target from current position. Optional up can be supplied, otherwise will use ref_up.
 //Target is in local space.
-void Object::SetLookAt(const vec3& target, vec3* optional_up){
+void Object::SetLookAt(const vec3& target, const vec3* optional_up){
     vec3 up;
     if (optional_up){
         up = *optional_up;
@@ -146,6 +146,23 @@ void Object::SetLookAt(const vec3& target, vec3* optional_up){
     quat lq = quat::getquat(target,state_physics.position,up);
     lq.normalize();
     SetRotation(lq);
+}
+
+//Look at position in world space
+void Object::SetWorldLookat(const vec3& target,const vec3& world_up){
+    if (!parent){
+        SetLookAt(target,&world_up);
+        return;
+    }
+     //Compute the target in world coordinates.
+    vec3 delta = GetWorldPosition() - target ;
+
+    //Rotate by the inverse of our current world rotation
+    fmat4 r = parent->GetWorldTransformScaleMatrix().inverse_transform().rotationmatrix();
+    delta = r * delta;
+    vec3 rotated_up = r * world_up;
+
+    SetLookAt(delta,&rotated_up);
 }
 
 //Move object by a vector
@@ -172,9 +189,19 @@ vec3 Object::MoveUpBy(float delta){
     return d;
 }
 
-//Rotate on forward axis
+//Rotate on forward axis argument in radians
 void Object::RollBy(float by){
     RotateAroundAxis(GetForward(),by);
+}
+
+//Rotate on up axis argument in radians
+void Object::YawBy(float by){
+    RotateAroundAxis(GetUp(),by);
+}
+
+//Rotate on left axis argument in radians
+void Object::PitchBy(float by){
+    RotateAroundAxis(GetLeft(),by);
 }
 
 //The size of the object in 3 dimensions
@@ -254,6 +281,12 @@ vec3 Object::GetPosition(){
     return state_physics.position;
 }
 
+//Computes and gets the world position
+vec3 Object::GetWorldPosition(){
+    fmat4 wt = GetWorldTransformScaleMatrix();
+    return world_transform_scale_matrix.vertex[3].xyz();
+}
+
 vec3 Object::GetForward(){
     return state_physics.rotation * ref_forward;
 }
@@ -262,10 +295,16 @@ vec3 Object::GetUp(){
     return state_physics.rotation * ref_up;
 }
 
+vec3 Object::GetWorldUp(){
+    //TODO
+    return vec3();
+}
+
 vec3 Object::GetLeft(){
     return state_physics.rotation * ref_left;
 }
 
+//Returns the local rotation
 quat Object::GetRotation(){
     return state_physics.rotation;
 }
@@ -316,6 +355,21 @@ fmat4& Object::GetWorldTransformScaleMatrix(){
     }
 	return world_transform_scale_matrix;
 }
+
+//Same as with matrices, rotate in reverse order
+quat Object::GetWorldRotation(){
+    if (!parent){
+        return GetRotation();
+    }
+
+    //We have a parent. Get it's rotation and apply in reverse order
+    //TODO CHECK
+    quat parent_rotation = parent->GetWorldRotation();
+    quat world_rotation = GetRotation() * parent_rotation;
+    return world_rotation;
+}
+
+
 
 void Object::MarkForRender(){
     if (mesh){

@@ -215,8 +215,22 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
     scene->renderer->AddMaterials(loaded_materials);
     skeleton->SetSkinnedMesh(skinned_mesh);
-
     scene->AddObject(skeleton);
+
+    {
+        loaded_materials.clear();
+        Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("target_vis",&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = "target_vis";
+            gltf_object->SetMesh(gltfmesh);
+            scene->renderer->AddMaterials(loaded_materials);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+            scene->AddObject(gltf_object);
+            app->assetmanager->AddNewAsset("target_vis",gltf_object);
+        }
+    }
 
     //We now generate a terrain, and load that in.
     app->terrain = new IsoTerrain();
@@ -423,11 +437,11 @@ void ApplicationGrid::RunLogic(){
 
     if (input->WasKeyReleased(INPUT_TURN_UP)){
         grid_settings.grid_level++;
-        projection_plane.pos.y = grid_settings.grid_level;
+        projection_plane.pos.y += 0.1;
     }
     if (input->WasKeyReleased(INPUT_TURN_DOWN)){
         grid_settings.grid_level--;
-        projection_plane.pos.y = grid_settings.grid_level;
+        projection_plane.pos.y -= 0.1;
     }
 
     //Iterate over all the rendered objects
@@ -598,7 +612,63 @@ void ApplicationGrid::RunLogic(){
         }
 
     }
+
+    if (f_track_cursor){
+        const std::string target_name = "character_armature";
+        Skeleton* skeleton = FindSkeletonInScene(main_scene,target_name);
+        if (!skeleton){
+            return;
+        }
+
+        Bone* bone_hips = skeleton->FindBone("Hips");
+        if (bone_hips){
+            quat q = bone_hips->GetRotation();
+            bone_hips->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_hips->GetRotation();
+            quat r = q.slerp(q,qn,0.005,true);
+            bone_hips->SetRotation(r);
+        }
+
+        Bone* bone_abdomen = skeleton->FindBone("Abdomen");
+        if (bone_abdomen){
+            quat q = bone_abdomen->GetRotation();
+            bone_abdomen->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_abdomen->GetRotation();
+            quat r = q.slerp(q,qn,0.02,true);
+            bone_abdomen->SetRotation(r);
+        }
+
+        Bone* bone_torso = skeleton->FindBone("Torso");
+        if (bone_torso){
+            quat q = bone_torso->GetRotation();
+            bone_torso->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_torso->GetRotation();
+            quat r = q.slerp(q,qn,0.02,true);
+            bone_torso->SetRotation(r);
+        }
+
+        Bone* bone_head = skeleton->FindBone("Head");
+        if (bone_head){
+            quat q = bone_head->GetRotation();
+            quat wr = bone_head->GetWorldRotation();
+            //vec3 head_up = wr * bone_head->ref_up;
+
+            bone_head->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_head->GetRotation();
+            quat r = q.slerp(q,qn,0.03,true);
+            bone_head->SetRotation(r);
+        }
+
+        Object* target = main_scene->FindObject("target_vis");
+        if (target){
+            vec3 p = target->GetPosition();
+            p = p.lerp(at,0.05);
+            target->SetPosition(p);
+        }
+    }
 }
+
+//TODO: GetWorldUp, using GetWorldRotation
 
 void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
     ImVec2 window_pos, window_pos_pivot;
@@ -674,6 +744,135 @@ void ApplicationGrid::RenderRightClickMenu(){
     }
 }
 
+Skeleton* FindSkeletonInScene(Scene* scene, const std::string& name){
+    if (!scene && !scene->renderer){
+        return NULL;
+    }
+    Skeleton* skeleton = NULL;
+    for (Object* object:scene->renderer->objects){
+        skeleton = dynamic_cast<Skeleton*>(object);
+        if (skeleton && (skeleton->name.compare(name) == 0)){
+            return skeleton;
+        }
+    }
+    return NULL;
+}
+
+void ApplicationGrid::RenderBoneModifierHeader(Bone* bone, int id){
+    if (!bone){
+        return;
+    }
+
+    if (ImGui::CollapsingHeader(bone->name.c_str())){
+        bool apply_rotation = false;
+        quat q = bone->GetRotation();
+        static vec3 axis_degrees = {0,0,0};
+
+        std::string title;
+        //std::string title = "Get Current Angles ##" + std::to_string(id);
+        //if (ImGui::Button(title.c_str())){
+            axis_degrees.x = todegrees(q.get_pitch());
+            axis_degrees.z = todegrees(q.get_roll());
+            axis_degrees.y = todegrees(q.get_yaw());
+        //}
+
+        title = "Axis Degrees ##" + std::to_string(id);
+        if (ImGui::DragFloat3(title.c_str(), (float*)&axis_degrees, 1.0f, -180.0f, 180.0f)){
+            apply_rotation = true;
+        }
+        ImGui::BeginDisabled();
+        //Let's do them in order?
+        quat q1; q1.set_rotation(vec3(1,0,0),toradians(axis_degrees.x));
+        quat q2; q2.set_rotation(vec3(0,1,0),toradians(axis_degrees.y));
+        quat q3; q3.set_rotation(vec3(0,0,1),toradians(axis_degrees.z));
+
+        q = q1 * q2 * q3;
+        ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        if (apply_rotation){
+            bone->SetRotation(q);
+        }
+
+        float roll_by = 0;
+        if (ImGui::DragFloat("Roll By", (float*)&roll_by, 0.01f, -1.0f, 1.0f)){
+            bone->RollBy(roll_by);
+        }
+        float pitch_by = 0;
+        if (ImGui::DragFloat("Pitch By", (float*)&pitch_by, 0.01f, -1.0f, 1.0f)){
+            bone->PitchBy(pitch_by);
+        }
+        float yaw_by = 0;
+        if (ImGui::DragFloat("Yaw By", (float*)&yaw_by, 0.01f, -1.0f, 1.0f)){
+            bone->YawBy(yaw_by);
+        }
+
+        float forward_by = 0;
+        if (ImGui::DragFloat("Forward By", (float*)&forward_by, 0.01f, -1.0f, 1.0f)){
+            bone->MoveUpBy(forward_by);
+        }
+    }
+}
+
+void ApplicationGrid::RenderSkeletonUI(){
+    ImGui::Begin("Skeleton UI");
+    const std::string target_name = "character_armature";
+
+    Skeleton* skeleton = FindSkeletonInScene(main_scene,target_name);
+    if (!skeleton){
+        ImGui::Text("Unable to find skeleton %s\n",target_name.c_str());
+    }
+
+    Object* bones = skeleton->GetChild(0);
+
+    bool obj_visible = bones->IsVisible();
+    if (ImGui::Checkbox("Show Skeleton Bones",&obj_visible)){
+        bones->SetVisibility(obj_visible);
+    }
+
+
+    if (ImGui::Checkbox("Track Cursor",&f_track_cursor)){
+
+    }
+
+    vec3 at = {};
+    plane& p = projection_plane;
+    int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+    ray r = main_scene->camera->GetPixelRay(px);
+    bool intersect = r.intersects_plane(p,at);
+
+    if (f_track_cursor){
+        ImGui::BeginDisabled();
+        ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Origin", (float*)&r.origin, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Direction", (float*)&r.direction, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        ImGui::Separator();
+
+
+        ImGui::DragFloat3("Plane Origin", (float*)&p.pos, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Plane Normal", (float*)&p.normal, 0.01f, -1.0f, 1.0f);
+
+        if (intersect){
+            ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
+        }else{
+            ImGui::Text("No intersection");
+        }
+    }
+
+    Bone* bone_head = skeleton->FindBone("Head");
+    RenderBoneModifierHeader(bone_head, 0);
+
+    Bone* bone_neck = skeleton->FindBone("Neck");
+    RenderBoneModifierHeader(bone_neck, 1);
+
+    Bone* bone_foot_r = skeleton->FindBone("Foot.R");
+    RenderBoneModifierHeader(bone_foot_r, 1);
+
+    ImGui::End();
+
+
+
+}
 
 void ApplicationGrid::UpdateUI(){
     Object* object = main_scene->camera;
@@ -728,4 +927,6 @@ void ApplicationGrid::UpdateUI(){
     if (f_show_rightclick_menu){
         RenderRightClickMenu();
     }
+
+    RenderSkeletonUI();
 }

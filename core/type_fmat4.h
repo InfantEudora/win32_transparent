@@ -3,10 +3,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+
 struct fmat4;
+#include "type_vec3.h"
 #include "type_helpers.h"
 #include "type_fmat3.h"
-#include "type_vec3.h"
 #include "type_vec4.h"
 
 struct fmat4{
@@ -25,7 +26,18 @@ struct fmat4{
 	fmat4&  inverse_transform();	// Assumes this is a transform matrix, and inverses it.
 
     fmat4   operator*(const fmat4& rhs) const;
+	vec3 	operator*(const vec3& rhs) const;
 };
+
+
+inline vec3 fmat4::operator*(const vec3& rhs) const{
+	vec3 res;
+	res.x = (this->vertex[0].x * rhs.x)+ (this->vertex[1].x * rhs.y) + (this->vertex[2].x * rhs.z) + (this->vertex[3].x * 1);
+	res.y = (this->vertex[0].y * rhs.x)+ (this->vertex[1].y * rhs.y) + (this->vertex[2].y * rhs.z) + (this->vertex[3].y * 1);
+	res.z = (this->vertex[0].z * rhs.x)+ (this->vertex[1].z * rhs.y) + (this->vertex[2].z * rhs.z) + (this->vertex[3].z * 1);
+	return res;
+}
+
 
 inline void fmat4::clear(){
     vertex[0].clear();

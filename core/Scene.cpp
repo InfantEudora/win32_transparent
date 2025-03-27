@@ -181,3 +181,16 @@ void Scene::AddObject(Object* object){
         renderer->objects.push_back(object);
     }
 }
+
+Object* Scene::FindObject(const std::string& name){
+    if (!renderer){
+        return NULL;
+    }
+
+    for (Object* object:renderer->objects){
+        if(object->name.compare(name) == 0){
+            return object;
+        }
+    }
+    return NULL;
+}

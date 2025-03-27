@@ -434,6 +434,7 @@ void Application::RenderGenericObjectUI(){
                 ImGui::Text("bone_index          : %i",bone->bone_index);
                 ImGui::Text("bone_unpacked_index : %i",bone->bone_unpacked_index);
                 ImGui::Text("node_index          : %i",bone->node_index);
+                ImGui::Text("initial_length      : %.2f",bone->initial_length);
                 ImGui::Text("inverse_bind_matrix : ");
                 ImGui::BeginDisabled();
                 ImGui::DragFloat4("V1", (float*)&bone->inverse_bind_matrix.vertex[0], 0.01f, -1.0f, 1.0f);
@@ -484,6 +485,19 @@ void Application::RenderGenericObjectUI(){
             ImGui::EndDisabled();
 
             bool apply_rotation = false;
+
+            float roll_by = 0;
+            if (ImGui::DragFloat("Roll By", (float*)&roll_by, 0.01f, -1.0f, 1.0f)){
+                object->RollBy(roll_by);
+            }
+            float pitch_by = 0;
+            if (ImGui::DragFloat("Pitch By", (float*)&pitch_by, 0.01f, -1.0f, 1.0f)){
+                object->PitchBy(pitch_by);
+            }
+            float yaw_by = 0;
+            if (ImGui::DragFloat("Yaw By", (float*)&yaw_by, 0.01f, -1.0f, 1.0f)){
+                object->YawBy(yaw_by);
+            }
 
 
             if (option == 1){

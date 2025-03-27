@@ -778,6 +778,9 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
         debug->Info(" Bone scale %.2f %.2f %.2f\n",scale.x,scale.y,scale.z);
     }
 
+    //Store the initial length
+    bone->initial_length = bone->GetPosition().length();
+
     if (assetmanager){
         //Load mesh into bone
         assetmanager->GetObjectFromAsset("bone_mesh",bone);

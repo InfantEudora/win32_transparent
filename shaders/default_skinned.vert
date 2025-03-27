@@ -99,16 +99,16 @@ void main(){
 
 
 	mat4 skin_matrix =
-        weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].inv_bindmatrix +
-        weights.y * bone_data[(gl_InstanceID * bone_count) + bones.y].inv_bindmatrix +
-        weights.z * bone_data[(gl_InstanceID * bone_count) + bones.z].inv_bindmatrix;
+        weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale * bone_data[(gl_InstanceID * bone_count) + bones.x].inv_bindmatrix +
+        weights.y * bone_data[(gl_InstanceID * bone_count) + bones.y].mat_transformscale * bone_data[(gl_InstanceID * bone_count) + bones.y].inv_bindmatrix +
+        weights.z * bone_data[(gl_InstanceID * bone_count) + bones.z].mat_transformscale * bone_data[(gl_InstanceID * bone_count) + bones.z].inv_bindmatrix;
 
 	//Global transform of the current vertex
 	mat4 joint_matrix = skin_matrix;
 
-	mat4 global_transform_matrix = bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale;
+	//mat4 global_transform_matrix = bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale;
 
-	mat4 final_transform_matrix = global_transform_matrix * joint_matrix;
+	mat4 final_transform_matrix = /*global_transform_matrix * */joint_matrix;
 
 	vec4 world_position = final_transform_matrix * vec4(position,1) ;
 

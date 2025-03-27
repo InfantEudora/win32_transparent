@@ -33,6 +33,8 @@ public:
 
     void AddObject(Object* object);
 
+    Object* FindObject(const std::string& name);
+
     bool f_paused = false;
 
     //Our example objects and thigs that definitely need to be in their own class

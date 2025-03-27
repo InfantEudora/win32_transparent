@@ -10,6 +10,9 @@
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
+
+Skeleton* FindSkeletonInScene(Scene* scene, const std::string& name);
+
 class ApplicationGrid : public Application{
 public:
     ApplicationGrid();
@@ -39,6 +42,10 @@ public:
         bool f_place_prop = true;   // Place a prop on tile
     }grid_settings;
 
+
+    bool f_track_cursor = false;
+
+
 private:
     //Test scene, so we can load stuff and not see it.
     Scene* test_scene = NULL;
@@ -49,6 +56,10 @@ private:
     void RenderRightClickMenu_IsoCell(IsoCell* cell);
     void RenderRightClickMenu_IsoWall(IsoWall* wall);
     void RenderRightClickMenu();
+
+    void RenderBoneModifierHeader(Bone* bone, int id);
+    void RenderSkeletonUI();
+
     void UpdateUI();
 };
 

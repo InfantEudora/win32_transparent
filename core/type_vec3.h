@@ -4,8 +4,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
-#include "type_helpers.h"
+
 struct vec3;
+#include "type_helpers.h"
 
 struct vec3{
     union{
@@ -36,6 +37,7 @@ struct vec3{
     vec3&   floor();                                        // round down
     vec3&   fract();                                        // returns the non-integer part
     vec3&   round();                                        // round to nearest
+    vec3    lerp(const vec3& rhs, float s) const;           // Does linear interpolation between this and target vector by a factor s
 
     vec3   	operator-() const;                              // unary operator (negate)
     vec3   	operator-(const vec3& rhs) const;               // subtract rhs
@@ -45,7 +47,17 @@ struct vec3{
     vec3  	operator*(const float scale) const;             // scale
     vec3& 	operator*=(const float scale);                  // scale and update this object
     friend vec3 operator*(const float a, const vec3 vec);   // scale
+
+
+
+    //vec3    operator*(const fmat4& rhs);               // Multiply with a 4x4 matrix (as if we have a w=1)
 };
+
+inline vec3 vec3::lerp(const vec3& rhs, float s) const {
+    vec3 diff = rhs - *this;
+    s = clamp(s,0.0f,1.0f);
+    return *this + (diff * s);
+}
 
 inline vec3& vec3::set(float x, float y, float z) {
     this->x = x; this->y = y; this->z = z; return *this;

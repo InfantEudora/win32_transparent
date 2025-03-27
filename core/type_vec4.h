@@ -4,7 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+
 struct vec4;
+#include "type_vec3.h"
+
 
 struct vec4{
     union{
@@ -33,6 +36,7 @@ struct vec4{
     void    clear();
     float  	dot(const vec4& vec) const;                     // dot product
     vec4&  	normalize();
+	vec3 	xyz() const;	//Returns the xyz components
 };
 
 inline void vec4::set(float x, float y, float z, float w){
@@ -61,6 +65,10 @@ inline float vec4::dot(const vec4& rhs) const{
 	r += (z*rhs.z);
     r += (w*rhs.w);
 	return (float)r;
+}
+
+inline vec3 vec4::xyz() const{
+	return vec3(x,y,z);
 }
 
 inline void vec4::print(){
