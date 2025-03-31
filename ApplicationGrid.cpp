@@ -5,14 +5,15 @@
 #include "CubeMap.h"
 
 #define INPUT_H INPUT_LAST+1
-
+#define INPUT_E INPUT_LAST+2
 
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
+
+const char* MySequence::SequencerItemTypeNames[5] = { "Camera","Music", "ScreenEffect", "FadeIn", "Animation" };
 
 ApplicationGrid::ApplicationGrid():Application(){
     debug->Info("Created new application.\n");
 };
-
 
 Scene* ApplicationGrid::CreateTestScene(){
     test_scene = new Scene();
@@ -162,6 +163,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //Add input to input controller
     scene->inputcontroller->AddKeyMap('H',INPUT_H);
+    scene->inputcontroller->AddKeyMap('E',INPUT_E);
 
     //Make a sun
     DirectionalLight* sun = new DirectionalLight();
@@ -213,9 +215,24 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //skeleton->GetChild(0)->SetPosition(vec3(0,0,-1));
     loaded_materials.clear();
     SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
+
     scene->renderer->AddMaterials(loaded_materials);
     skeleton->SetSkinnedMesh(skinned_mesh);
+    skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
     scene->AddObject(skeleton);
+
+    // sequence with default values
+
+    app->mySequence.mFrameMin = -100;
+    app->mySequence.mFrameMax = 1000;
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 0, 10, 30, false });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 1, 20, 30, true });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 3, 12, 60, false });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 2, 61, 90, false });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 4, 90, 99, false });
+
+    app->selected_animation = app->gltfloader.LoadAnimation("WalkCopy");
+    app->selected_animation->LinkObjects(skeleton);
 
     {
         loaded_materials.clear();
@@ -229,6 +246,21 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
             gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
             scene->AddObject(gltf_object);
             app->assetmanager->AddNewAsset("target_vis",gltf_object);
+        }
+    }
+
+    {
+        loaded_materials.clear();
+        Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("floor",&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = "floor";
+            gltf_object->SetMesh(gltfmesh);
+            scene->renderer->AddMaterials(loaded_materials);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+            scene->AddObject(gltf_object);
+            app->assetmanager->AddNewAsset("floor",gltf_object);
         }
     }
 
@@ -560,10 +592,38 @@ void ApplicationGrid::RunLogic(){
         }
     }
 
-    //Modify active object
+    //Hide selected object
     if (selected_object){
         if (input->WasKeyReleased(INPUT_H)){
             selected_object->Hide();
+        }
+    }
+
+    //Track leg to point
+    if (input->WasKeyReleased(INPUT_E)){
+        //A for loop so we can break
+        for (;;){
+            debug->Info("IKing\n");
+            const std::string target_name = "character_armature";
+            Skeleton* skeleton = FindSkeletonInScene(main_scene,target_name);
+            if (!skeleton){
+                break;
+            }
+
+            //Get the target Vis
+            Object* target = main_scene->FindObject("target_vis");
+            if (!target){
+                break;
+            }
+            //We target the left foot
+            Bone* foot_right = skeleton->FindBone("Foot.R");
+            if (!foot_right){
+                break;
+            }
+
+            foot_right->IKExtend(target->GetPosition(),2,1.0f);
+
+            break;
         }
     }
 
@@ -769,12 +829,22 @@ void ApplicationGrid::RenderBoneModifierHeader(Bone* bone, int id){
         static vec3 axis_degrees = {0,0,0};
 
         std::string title;
-        //std::string title = "Get Current Angles ##" + std::to_string(id);
-        //if (ImGui::Button(title.c_str())){
-            axis_degrees.x = todegrees(q.get_pitch());
-            axis_degrees.z = todegrees(q.get_roll());
-            axis_degrees.y = todegrees(q.get_yaw());
-        //}
+
+        std::string parent_name = "NULL";
+        std::string child_name = "NULL";
+        if (bone->parent_bone){
+            parent_name = bone->parent_bone->name;
+        }
+        if (bone->child_bone){
+            child_name = bone->child_bone->name;
+        }
+        ImGui::Text("Parent Bone     : %s\n",parent_name.c_str());
+        ImGui::Text("Child Bone [0]  : %s\n",child_name.c_str());
+
+
+        axis_degrees.x = todegrees(q.get_pitch());
+        axis_degrees.z = todegrees(q.get_roll());
+        axis_degrees.y = todegrees(q.get_yaw());
 
         title = "Axis Degrees ##" + std::to_string(id);
         if (ImGui::DragFloat3(title.c_str(), (float*)&axis_degrees, 1.0f, -180.0f, 180.0f)){
@@ -793,9 +863,17 @@ void ApplicationGrid::RenderBoneModifierHeader(Bone* bone, int id){
             bone->SetRotation(q);
         }
 
+        static float modify_parent = 0.0f;
+        if (ImGui::DragFloat("Parent Depth = 1", (float*)&modify_parent, 0.01f, 0.0f, 1.0f)){
+
+        }
+
         float roll_by = 0;
         if (ImGui::DragFloat("Roll By", (float*)&roll_by, 0.01f, -1.0f, 1.0f)){
             bone->RollBy(roll_by);
+            if (bone->parent_bone && (modify_parent > 0.0f)){
+                bone->parent_bone->RollBy(roll_by * modify_parent);
+            }
         }
         float pitch_by = 0;
         if (ImGui::DragFloat("Pitch By", (float*)&pitch_by, 0.01f, -1.0f, 1.0f)){
@@ -859,19 +937,33 @@ void ApplicationGrid::RenderSkeletonUI(){
         }
     }
 
-    Bone* bone_head = skeleton->FindBone("Head");
-    RenderBoneModifierHeader(bone_head, 0);
+    std::vector<std::string>bone_list;
+    bone_list.push_back("Head");
+    bone_list.push_back("Neck");
+    bone_list.push_back("Shoulders");
 
-    Bone* bone_neck = skeleton->FindBone("Neck");
-    RenderBoneModifierHeader(bone_neck, 1);
+    bone_list.push_back("Torso");
+    bone_list.push_back("Abdomen");
+    bone_list.push_back("Hips");
 
-    Bone* bone_foot_r = skeleton->FindBone("Foot.R");
-    RenderBoneModifierHeader(bone_foot_r, 1);
+    bone_list.push_back("Waist.R");
+    bone_list.push_back("UpperLeg.R");
+    bone_list.push_back("LowerLeg.R");
+    bone_list.push_back("Foot.R");
 
+    bone_list.push_back("Shoulders");
+    bone_list.push_back("UpperArm.R");
+    bone_list.push_back("LowerArm.R");
+    bone_list.push_back("Hand.R");
+
+
+    int index = -1;
+    for (std::string& name:bone_list){
+        index++;
+        Bone* bone = skeleton->FindBone(name);
+        RenderBoneModifierHeader(bone, 0);
+    }
     ImGui::End();
-
-
-
 }
 
 void ApplicationGrid::UpdateUI(){
@@ -929,4 +1021,54 @@ void ApplicationGrid::UpdateUI(){
     }
 
     RenderSkeletonUI();
+    RenderAnimationUI();
+}
+
+
+void ApplicationGrid::RenderAnimationUI(){
+    ImGui::Begin("Sequencer UI");
+
+    static float time_index = 0.0f;
+
+    if (selected_animation){
+        if (ImGui::CollapsingHeader("Animation")){
+
+            if (ImGui::DragFloat("Time Index", (float*)&time_index, 0.01f, 0.0f, 2.0f)){
+
+            }
+
+            if (ImGui::Button("Apply Interval")){
+                selected_animation->ApplyInterval(time_index);
+            }
+        }
+
+    }else{
+        ImGui::Text("No animation selected\n");
+    }
+
+    if (ImGui::CollapsingHeader("Sequencer"))
+      {
+         // let's create the sequencer
+         static int selectedEntry = -1;
+         static int firstFrame = 0;
+         static bool expanded = true;
+         static int currentFrame = 100;
+
+         ImGui::PushItemWidth(130);
+         ImGui::InputInt("Frame Min", &mySequence.mFrameMin);
+         ImGui::SameLine();
+         ImGui::InputInt("Frame ", &currentFrame);
+         ImGui::SameLine();
+         ImGui::InputInt("Frame Max", &mySequence.mFrameMax);
+         ImGui::PopItemWidth();
+         Sequencer(&mySequence, &currentFrame, &expanded, &selectedEntry, &firstFrame, ImSequencer::SEQUENCER_EDIT_STARTEND | ImSequencer::SEQUENCER_ADD | ImSequencer::SEQUENCER_DEL | ImSequencer::SEQUENCER_COPYPASTE | ImSequencer::SEQUENCER_CHANGE_FRAME);
+         // add a UI to edit that particular item
+         if (selectedEntry != -1)
+         {
+           const MySequence::MySequenceItem &item = mySequence.myItems[selectedEntry];
+           ImGui::Text("I am a %s, please edit me", MySequence::SequencerItemTypeNames[item.mType]);
+           // switch (type) ....
+         }
+    }
+    ImGui::End();
 }

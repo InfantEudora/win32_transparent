@@ -111,7 +111,7 @@ void Object::SetMeshBatchIndex(int32_t index){
 }
 
 void Object::RotateAroundAxis(const vec3& target_axis,float by){
-    RotateBy(quat(target_axis,by));
+    RotateBy(quat(target_axis,by).normalize());
 }
 
 //Update objects rotation with supplied quaternion.
@@ -369,8 +369,6 @@ quat Object::GetWorldRotation(){
     return world_rotation;
 }
 
-
-
 void Object::MarkForRender(){
     if (mesh){
         mesh->batch_num_instances++;
@@ -378,9 +376,9 @@ void Object::MarkForRender(){
 }
 
 //Put's all children and it's childrens children etc into a list
-void Object::GetAllSubObjects(std::vector<Object*>*objects){
+void Object::GetAllSubObjects(std::vector<Object*>& objects){
+    objects.push_back(this);
     for (Object* child:children){
-        objects->push_back(child);
         child->GetAllSubObjects(objects);
     }
 }

@@ -16,28 +16,40 @@
 
 #include "skeleton/Skeleton.h"
 #include "AssetManager.h"
+#include "ObjectAnimation.h"
 
 #include "tinygltf/tiny_gltf.h"
 /*
     Loader uses tinygltf to parse file. It can load a single file.
     List the Models (nodes) which can be loaded as a mesh.
 */
+
+#define ANIM_TARGET_PATH_NONE         -1
+#define ANIM_TARGET_PATH_SCALE        0
+#define ANIM_TARGET_PATH_ROTATION     1
+#define ANIM_TARGET_PATH_TRANSLATION  2
+
 class GLTFLoader{
 public:
-    void            LoadGLTFFile(const char* filename);
-    Mesh*           GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
-    SkinnedMesh*    GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
-    Skeleton*       GetSkeleton(const char* skeleton_name, AssetManager* assetmanager);
-    Bone*           GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
+    void                LoadGLTFFile(const char* filename);
+    Mesh*               GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
+    SkinnedMesh*        GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
+    Skeleton*           GetSkeleton(const char* skeleton_name, AssetManager* assetmanager);
+    Bone*               GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
+    Animation*          LoadAnimation(const char* animation_name);
 
     //Loaded node names from file
     std::vector<std::string>node_names;
 private:
-    tinygltf::Node*  FindNode(std::string node_name);
-    tinygltf::Skin*  FindSkin(std::string skin_name);
-    void             LoadInverseBindMatrices(std::vector<fmat4>& matrices, int accesor_index);
+    int                     GetAccesorComponentTypeSize(const tinygltf::Accessor& accessor);
+    int                     GetAccesorTypeSize(const tinygltf::Accessor& accessor);
+    tinygltf::Node*         FindNode(std::string node_name);
+    tinygltf::Skin*         FindSkin(std::string skin_name);
+    tinygltf::Animation*    FindAnimation(std::string skin_name);
+    void                    LoadInverseBindMatrices(std::vector<fmat4>& matrices, int accesor_index);
 
     int              GetIndex(const tinygltf::Accessor& index_accessor, int offset);
+    float            Getfloat(unsigned char* data, int byte_offset);
     vec2             Getvec2(unsigned char* data, int byte_offset);
     vec3             Getvec3(unsigned char* data, int byte_offset);
     vec4             Getvec4(unsigned char* data, int byte_offset);

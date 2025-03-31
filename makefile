@@ -55,6 +55,9 @@ SRCS += ApplicationGrid.cpp
 IPATHS += -Iisoterrain/
 DIR_SRC += ./isoterrain
 
+SRCS += ImCurveEdit.cpp
+SRCS += ImSequencer.cpp
+
 #ApplicationTileset
 #SRCS += ApplicationTileset.cpp
 

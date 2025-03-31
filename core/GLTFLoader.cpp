@@ -173,14 +173,24 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         }
 
     }
+
     debug->Info("Model has %i accessors\n",model.accessors.size());
     for (int accessor_index=0;accessor_index<model.accessors.size();accessor_index++){
-        debug->Info("Model.accessors[%i].name          : %s\n",accessor_index, model.accessors[accessor_index].name.c_str());
-        debug->Info("Model.accessors[%i].bufferView    : %i\n",accessor_index, model.accessors[accessor_index].bufferView);
-        debug->Info("Model.accessors[%i].byteOffset    : %i\n",accessor_index, model.accessors[accessor_index].byteOffset);
-        debug->Info("Model.accessors[%i].componentType : %i\n",accessor_index, model.accessors[accessor_index].componentType);
-        debug->Info("Model.accessors[%i].count         : %i\n",accessor_index, model.accessors[accessor_index].count);
+        debug->Trace("Model.accessors[%i].name          : %s\n",accessor_index, model.accessors[accessor_index].name.c_str());
+        debug->Trace("Model.accessors[%i].bufferView    : %i\n",accessor_index, model.accessors[accessor_index].bufferView);
+        debug->Trace("Model.accessors[%i].byteOffset    : %i\n",accessor_index, model.accessors[accessor_index].byteOffset);
+        debug->Trace("Model.accessors[%i].componentType : %i\n",accessor_index, model.accessors[accessor_index].componentType);
+        debug->Trace("Model.accessors[%i].count         : %i\n",accessor_index, model.accessors[accessor_index].count);
     }
+
+    debug->Info("Model has %i animations\n",model.animations.size());
+    for (int animation_index=0;animation_index<model.animations.size();animation_index++){
+        debug->Info("Model.animations[%i].name         : %s\n",animation_index, model.animations[animation_index].name.c_str());
+        debug->Info("Model.channels[%i].channels.size  : %i\n",animation_index, model.animations[animation_index].channels.size());
+        debug->Info("Model.samplers[%i].samplers.size  : %i\n",animation_index, model.animations[animation_index].samplers.size());
+    }
+
+
 
     debug->Info("More info!!!\n");
 }
@@ -205,10 +215,18 @@ tinygltf::Skin*  GLTFLoader::FindSkin(std::string skin_name){
     return NULL;
 }
 
-//Returns the index located at position offset
-int GLTFLoader::GetIndex(const tinygltf::Accessor& accessor, int offset){
-    int index = 0;
+//Returns a pointer to node if found, or NULL
+tinygltf::Animation*  GLTFLoader::FindAnimation(std::string animation_name){
+    for (int animation_index=0;animation_index<model.animations.size();animation_index++){
+        if (animation_name.compare(model.animations[animation_index].name) == 0){
+            return &model.animations[animation_index];
+        }
+    }
+    return NULL;
+}
 
+//Based on the component type, return the bytesize of the data we are trying to access.
+int GLTFLoader::GetAccesorComponentTypeSize(const tinygltf::Accessor& accessor){
     int size = 1;
     if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
         size = 2;
@@ -217,6 +235,30 @@ int GLTFLoader::GetIndex(const tinygltf::Accessor& accessor, int offset){
     } else {
         debug->Fatal("Invalid accessor.componentType: %i\n",accessor.componentType);
     }
+    return size;
+}
+
+int GLTFLoader::GetAccesorTypeSize(const tinygltf::Accessor& accessor){
+    int size = 1;
+    if (accessor.type == TINYGLTF_TYPE_SCALAR) {
+        size = 1;
+    } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
+        size = 2;
+    } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
+        size = 3;
+    } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
+        size = 4;
+    } else {
+        debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
+    }
+    return size;
+}
+
+//Returns the index located at position offset
+int GLTFLoader::GetIndex(const tinygltf::Accessor& accessor, int offset){
+    int index = 0;
+
+    int size = GetAccesorComponentTypeSize(accessor);
 
     tinygltf::BufferView& bufferview = model.bufferViews[accessor.bufferView];
     tinygltf::Buffer& buffer = model.buffers[bufferview.buffer];
@@ -236,6 +278,12 @@ int GLTFLoader::GetIndex(const tinygltf::Accessor& accessor, int offset){
     }
 
     return index;
+}
+
+float GLTFLoader::Getfloat(unsigned char* data, int byte_offset){
+    float v;
+    memcpy(&v,data+byte_offset,sizeof(float));
+    return v;
 }
 
 vec2 GLTFLoader::Getvec2(unsigned char* data, int byte_offset){
@@ -675,18 +723,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
             //it->first is NORMAL, POSITION and maybe a TEXCOORD_0
 
             const tinygltf::Accessor &accessor = model.accessors[it->second];
-            int size = 1;
-            if (accessor.type == TINYGLTF_TYPE_SCALAR) {
-                size = 1;
-            } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
-                size = 2;
-            } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
-                size = 3;
-            } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
-                size = 4;
-            } else {
-                debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
-            }
+            int size = GetAccesorTypeSize(accessor);
 
             debug->Info("Accessor Size = %i for %s component_type = %i\n",size,it->first.c_str(),accessor.componentType);
 
@@ -753,6 +790,119 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
     return mesh;
 }
 
+//Somehow load an animation somewhere
+Animation* GLTFLoader::LoadAnimation(const char* animation_name){
+    //First, we lookup the node.
+    tinygltf::Animation* gltf_animation = FindAnimation(animation_name);
+    if (!gltf_animation){
+        debug->Warn("Unable to find Animation %s for you.\n",animation_name);
+        return NULL;
+    }
+
+    //A node can contain a single mesh (or none)
+    debug->Info("LoadAnimation: Found Animation %s for you.\n",animation_name);
+
+    if (gltf_animation->channels.size() == 0){
+        debug->Err("LoadAnimation: Animations has no channels.\n",animation_name);
+        return NULL;
+    }
+
+    if (gltf_animation->samplers.size() == 0){
+        debug->Warn("LoadAnimation: Animation has no samplers\n",animation_name);
+        return NULL;
+    }
+
+    Animation* animation = new Animation();
+    animation->name = animation_name;
+
+    int channel_index = -1;
+    for (tinygltf::AnimationChannel& channel: gltf_animation->channels){
+        channel_index++;
+        tinygltf::Node& target_node = model.nodes.at(channel.target_node);
+        debug->Info("Channel %2i : sampler = %i node = %i (%s) target_path=%s\n",channel_index,channel.sampler,channel.target_node,target_node.name.c_str()
+                                                                                ,channel.target_path.c_str());
+
+        int target_path = ANIM_TARGET_PATH_NONE;
+        if (channel.target_path.compare("scale") == 0){
+            target_path = ANIM_TARGET_PATH_SCALE;
+        }else if (channel.target_path.compare("rotation") == 0){
+            target_path = ANIM_TARGET_PATH_ROTATION;
+        }else if (channel.target_path.compare("translation") == 0){
+            target_path = ANIM_TARGET_PATH_TRANSLATION;
+        }else{
+            debug->Warn("Unknown animation target path %s\n",channel.target_path.c_str());
+        }
+
+
+        //Find the ObjectAnimation that may already contain this node_name
+        ObjectAnimation* object_animation = animation->FindObjectAnimation(target_node.name);
+        if (!object_animation){
+            debug->Info("Creating new ObjectAnimation\n");
+            object_animation = new ObjectAnimation();
+            object_animation->target_name = target_node.name;
+            animation->AddObjectAnimation(object_animation);
+        }else{
+            debug->Info("Updating Existing ObjectAnimation\n");
+        }
+
+        tinygltf::AnimationSampler& sampler = gltf_animation->samplers.at(channel.sampler);
+        tinygltf::Accessor& input_accessor = model.accessors.at(sampler.input);
+        tinygltf::Accessor& output_accessor = model.accessors.at(sampler.output);
+        debug->Info(" -> Sampler input (accessor Time) = %3i type_size = %i byte_stride = %i\n",sampler.input,GetAccesorTypeSize(input_accessor),input_accessor.ByteStride(model.bufferViews[input_accessor.bufferView]));
+        debug->Info(" -> Sampler output (accessor ?)   = %3i type_size = %i byte_stride = %i\n",sampler.output,GetAccesorTypeSize(output_accessor),output_accessor.ByteStride(model.bufferViews[output_accessor.bufferView]));
+        debug->Info(" -> Interpolation Type: %s\n",sampler.interpolation.c_str());
+
+
+        //Display number of time slots for each input accessor
+        debug->Info(" -> Input  Accesor has %2i frames in BufferView %i\n",input_accessor.count,input_accessor.bufferView);
+        debug->Info(" -> Output Accesor has %2i frames in BufferView %i\n",output_accessor.count,output_accessor.bufferView);
+
+        tinygltf::BufferView &input_buffer_view = model.bufferViews[input_accessor.bufferView];
+        tinygltf::Buffer &input_buffer = model.buffers[input_buffer_view.buffer];
+
+        tinygltf::BufferView &output_buffer_view = model.bufferViews[output_accessor.bufferView];
+        tinygltf::Buffer &output_buffer = model.buffers[output_buffer_view.buffer];
+
+        for (int index = 0;index<input_accessor.count;index++){
+            int byte_offset = input_accessor.byteOffset + input_buffer_view.byteOffset + (index * sizeof(float));
+            float frame_time = Getfloat(&input_buffer.data.at(0),byte_offset);
+            debug->Info("    -> Frame Time [%i] = %.4f\n",index, frame_time);
+            ObjectAnimationKeyFrame* keyframe = object_animation->FindKeyframeAtTime(frame_time);
+            if (!keyframe){
+                debug->Info("Creating new keyframe at time index %.4f\n",frame_time);
+                keyframe = new ObjectAnimationKeyFrame();
+                keyframe->time = frame_time;
+            }else{
+                debug->Info("Updating existing keyframe at time index %.4f\n",frame_time);
+            }
+
+
+            if (target_path == ANIM_TARGET_PATH_ROTATION){
+                //In CUBICSPLINE there seems to be 3 values, the middle one the actual value.
+
+                int byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + sizeof(vec4) + (index * sizeof(vec4) * 3);
+                vec4 r = Getvec4(&output_buffer.data.at(0),byte_offset);
+
+                debug->Info("    -> Target Rotation [%i] = %.2f %.2f %.2f %.2f\n",index, r.x,r.y,r.z,r.w);
+                if(keyframe->f_rotation == true){
+                    debug->Err("Rotation for this keyframe is already set.\n");
+                }
+                keyframe->f_rotation = true;
+                keyframe->rotation = quat(r.x,r.y,r.z,r.w);
+            }
+
+            object_animation->AddKeyframe(keyframe);
+        }
+    }
+
+    debug->Info("Done loading animation %s. References %i different objects\n",animation->name.c_str(),animation->object_animations.size());
+
+    for (ObjectAnimation* object_animation:animation->object_animations){
+        debug->Info(" -> target_name : %s\n",object_animation->target_name.c_str());
+    }
+    return animation;
+}
+
 Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager){
     tinygltf::Node& node = model.nodes.at(node_index);
     Bone* bone = new Bone();
@@ -778,9 +928,6 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
         debug->Info(" Bone scale %.2f %.2f %.2f\n",scale.x,scale.y,scale.z);
     }
 
-    //Store the initial length
-    bone->initial_length = bone->GetPosition().length();
-
     if (assetmanager){
         //Load mesh into bone
         assetmanager->GetObjectFromAsset("bone_mesh",bone);
@@ -790,8 +937,11 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
     for (int node_index : node.children){
         Bone* child_bone = GetBone(node_index,bone_count,invbinmatrices,assetmanager);
         bone->AttachChild(child_bone);
+        child_bone->SetReferences();
+        bone->SetReferences();
         debug->Info("Attaching Bone %s onto %s\n",child_bone->name.c_str(),bone->name.c_str());
     }
+    bone->SetReferences();
     return bone;
 }
 
