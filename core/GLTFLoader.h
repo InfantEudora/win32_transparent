@@ -24,10 +24,15 @@
     List the Models (nodes) which can be loaded as a mesh.
 */
 
-#define ANIM_TARGET_PATH_NONE         -1
-#define ANIM_TARGET_PATH_SCALE        0
-#define ANIM_TARGET_PATH_ROTATION     1
-#define ANIM_TARGET_PATH_TRANSLATION  2
+#define ANIM_TARGET_PATH_NONE                       -1
+#define ANIM_TARGET_PATH_SCALE                      0
+#define ANIM_TARGET_PATH_ROTATION                   1
+#define ANIM_TARGET_PATH_TRANSLATION                2
+
+#define ANIMSAMPLER_INTERPOLATION_TYPE_NONE         -1
+#define ANIMSAMPLER_INTERPOLATION_TYPE_LINEAR       0
+#define ANIMSAMPLER_INTERPOLATION_TYPE_STEP         1
+#define ANIMSAMPLER_INTERPOLATION_TYPE_CUBICSPLINE  2
 
 class GLTFLoader{
 public:

@@ -28,6 +28,8 @@ class Animation{
     //A list of ObjectAnimations that this animation will animate.
     std::vector<ObjectAnimation*>object_animations;
 
+    float duration = 0.0f;  //Value of last keyframe.
+
     //Apply the animation at supplied interval
     void LinkObjects(Object* root);
     void ApplyInterval(float interval);
@@ -43,10 +45,10 @@ class ObjectAnimation{
     std::string target_name;    // The name of the target this was intended for.
 
 
-    //The will be a list of keyframes.
+    //The will be a list of keyframes, sorted by time
     //Each keyframe modifies an object (bone) at a certain time.
 
-    std::vector<ObjectAnimationKeyFrame*>keyframes;
+    std::list<ObjectAnimationKeyFrame*>keyframes;
 
     bool f_enabled = true;
     bool f_looping = false;

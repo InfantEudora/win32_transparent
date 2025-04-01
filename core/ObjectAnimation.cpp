@@ -40,12 +40,23 @@ void Animation::ApplyInterval(float interval){
             continue;
         }
         Object* target = object_animation->target;
-        debug->Info("Animation: Applying target %s\n",target->name.c_str());
+        debug->Info("Animation: Applying target %s at interval %.3f\n",target->name.c_str(),interval);
 
-        ObjectAnimationKeyFrame* keyframe = object_animation->keyframes.at(0);
-        if (keyframe->f_rotation){
-            target->SetRotation(keyframe->rotation);
+        //We find the firstkeyframe. They are stored in order.
+        for (ObjectAnimationKeyFrame* keyframe : object_animation->keyframes){
+
+
+            if (keyframe->time > interval){
+                if (keyframe->f_rotation){
+                    target->SetRotation(keyframe->rotation);
+                }
+                if (keyframe->f_position){
+                    target->SetPosition(keyframe->position);
+                }
+                break;
+            }
         }
+
     }
 }
 
@@ -58,11 +69,15 @@ ObjectAnimation* Animation::FindObjectAnimation(std::string& target_name){
     return NULL;
 }
 
+//Returns a keyframe at the exact specified time
 ObjectAnimationKeyFrame* ObjectAnimation::FindKeyframeAtTime(float time){
-    for (int index=0;index<keyframes.size();index++){
-        if (keyframes.at(index)->time == time){
-            return keyframes.at(index);
+    std::list<ObjectAnimationKeyFrame*>::iterator it = keyframes.begin();
+    for ( ; it != keyframes.end(); ) {
+        ObjectAnimationKeyFrame* keyframe = *it;
+        if (keyframe->time == time){
+            return keyframe;
         }
+        ++it;
     }
     return NULL;
 }
@@ -74,9 +89,23 @@ void Animation::AddObjectAnimation(ObjectAnimation* object_animation){
     object_animations.push_back(object_animation);
 }
 
-void ObjectAnimation::AddKeyframe(ObjectAnimationKeyFrame* keyframe){
-    if (!keyframe){
+//Add's the keyframe in the correct order in the list.
+void ObjectAnimation::AddKeyframe(ObjectAnimationKeyFrame* new_keyframe){
+    if (!new_keyframe){
         return;
     }
-    keyframes.push_back(keyframe);
+
+    std::list<ObjectAnimationKeyFrame*>::iterator it = keyframes.begin();
+    for ( ; it != keyframes.end(); ) {
+        ObjectAnimationKeyFrame* keyframe = *it;
+        if (keyframe->time > new_keyframe->time){
+            //Insert before this one.
+            keyframes.insert(it,new_keyframe);
+            return;
+        }
+        ++it;
+    }
+
+    //Nothing, insert this as last.
+    keyframes.push_back(new_keyframe);
 }

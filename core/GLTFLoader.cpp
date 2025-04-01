@@ -2,7 +2,7 @@
 #include "File.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("GLTFLoader", DEBUG_INFO);
+static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
 
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
@@ -815,6 +815,8 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
     Animation* animation = new Animation();
     animation->name = animation_name;
 
+    float largest_frame_time = 0.0f;
+
     int channel_index = -1;
     for (tinygltf::AnimationChannel& channel: gltf_animation->channels){
         channel_index++;
@@ -830,9 +832,8 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         }else if (channel.target_path.compare("translation") == 0){
             target_path = ANIM_TARGET_PATH_TRANSLATION;
         }else{
-            debug->Warn("Unknown animation target path %s\n",channel.target_path.c_str());
+            debug->Fatal("Unknown animation target path %s\n",channel.target_path.c_str());
         }
-
 
         //Find the ObjectAnimation that may already contain this node_name
         ObjectAnimation* object_animation = animation->FindObjectAnimation(target_node.name);
@@ -852,10 +853,20 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         debug->Info(" -> Sampler output (accessor ?)   = %3i type_size = %i byte_stride = %i\n",sampler.output,GetAccesorTypeSize(output_accessor),output_accessor.ByteStride(model.bufferViews[output_accessor.bufferView]));
         debug->Info(" -> Interpolation Type: %s\n",sampler.interpolation.c_str());
 
-
         //Display number of time slots for each input accessor
         debug->Info(" -> Input  Accesor has %2i frames in BufferView %i\n",input_accessor.count,input_accessor.bufferView);
         debug->Info(" -> Output Accesor has %2i frames in BufferView %i\n",output_accessor.count,output_accessor.bufferView);
+
+        int interpolation_type = ANIMSAMPLER_INTERPOLATION_TYPE_NONE;
+        if (sampler.interpolation.compare("LINEAR") == 0){
+            interpolation_type = ANIMSAMPLER_INTERPOLATION_TYPE_LINEAR;
+        }else if (sampler.interpolation.compare("STEP") == 0){
+            interpolation_type = ANIMSAMPLER_INTERPOLATION_TYPE_STEP;
+        }else if (sampler.interpolation.compare("CUBICSPLINE") == 0){
+            interpolation_type = ANIMSAMPLER_INTERPOLATION_TYPE_CUBICSPLINE;
+        }else{
+            debug->Fatal("Unknown animationsampler interpolation type %s\n",sampler.interpolation.c_str());
+        }
 
         tinygltf::BufferView &input_buffer_view = model.bufferViews[input_accessor.bufferView];
         tinygltf::Buffer &input_buffer = model.buffers[input_buffer_view.buffer];
@@ -864,14 +875,20 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         tinygltf::Buffer &output_buffer = model.buffers[output_buffer_view.buffer];
 
         for (int index = 0;index<input_accessor.count;index++){
-            int byte_offset = input_accessor.byteOffset + input_buffer_view.byteOffset + (index * sizeof(float));
-            float frame_time = Getfloat(&input_buffer.data.at(0),byte_offset);
+            int input_byte_offset = input_accessor.byteOffset + input_buffer_view.byteOffset + (index * sizeof(float));
+            float frame_time = Getfloat(&input_buffer.data.at(0),input_byte_offset);
             debug->Info("    -> Frame Time [%i] = %.4f\n",index, frame_time);
+
+            //TODO: The keyframes need to be inserted in a list
             ObjectAnimationKeyFrame* keyframe = object_animation->FindKeyframeAtTime(frame_time);
             if (!keyframe){
                 debug->Info("Creating new keyframe at time index %.4f\n",frame_time);
                 keyframe = new ObjectAnimationKeyFrame();
                 keyframe->time = frame_time;
+                object_animation->AddKeyframe(keyframe);
+                if (frame_time > largest_frame_time){
+                    largest_frame_time = frame_time;
+                }
             }else{
                 debug->Info("Updating existing keyframe at time index %.4f\n",frame_time);
             }
@@ -879,27 +896,52 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
 
             if (target_path == ANIM_TARGET_PATH_ROTATION){
                 //In CUBICSPLINE there seems to be 3 values, the middle one the actual value.
-
-                int byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + sizeof(vec4) + (index * sizeof(vec4) * 3);
-                vec4 r = Getvec4(&output_buffer.data.at(0),byte_offset);
-
+                int output_byte_offset = 0;
+                if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_LINEAR){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + (index * sizeof(vec4));
+                }else if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_STEP){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + (index * sizeof(vec4));
+                }else if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_CUBICSPLINE){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + sizeof(vec4) + (index * sizeof(vec4) * 3);
+                }else{
+                    debug->Fatal("Invalid interpolation type %i\n",interpolation_type);
+                }
+                vec4 r = Getvec4(&output_buffer.data.at(0),output_byte_offset);
                 debug->Info("    -> Target Rotation [%i] = %.2f %.2f %.2f %.2f\n",index, r.x,r.y,r.z,r.w);
                 if(keyframe->f_rotation == true){
                     debug->Err("Rotation for this keyframe is already set.\n");
                 }
                 keyframe->f_rotation = true;
                 keyframe->rotation = quat(r.x,r.y,r.z,r.w);
+            }else if (target_path == ANIM_TARGET_PATH_TRANSLATION){
+                int output_byte_offset = 0;
+                if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_LINEAR){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + (index * sizeof(vec3));
+                }else if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_STEP){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + (index * sizeof(vec3));
+                }else if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_CUBICSPLINE){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + sizeof(vec3) + (index * sizeof(vec3) * 3);
+                }else{
+                    debug->Fatal("Invalid interpolation type %i\n",interpolation_type);
+                }
+                vec3 t = Getvec3(&output_buffer.data.at(0),output_byte_offset);
+                debug->Info("    -> Target Translation [%i] = %.2f %.2f %.2ff\n",index, t.x,t.y,t.z);
+                if(keyframe->f_rotation == true){
+                    debug->Err("Translation for this keyframe is already set.\n");
+                }
+                keyframe->f_position = true;
+                keyframe->position = t;
             }
-
-            object_animation->AddKeyframe(keyframe);
         }
     }
 
-    debug->Info("Done loading animation %s. References %i different objects\n",animation->name.c_str(),animation->object_animations.size());
+    debug->Info("Done loading animation %s. References %i different objects. Frame time %.4f \n",animation->name.c_str(),animation->object_animations.size(),largest_frame_time);
 
     for (ObjectAnimation* object_animation:animation->object_animations){
         debug->Info(" -> target_name : %s\n",object_animation->target_name.c_str());
     }
+
+    animation->duration = largest_frame_time;
     return animation;
 }
 

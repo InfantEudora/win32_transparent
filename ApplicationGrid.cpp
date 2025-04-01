@@ -211,18 +211,24 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     scene->renderer->AddMaterial(bone_mat);
 
     Skeleton* skeleton = app->gltfloader.GetSkeleton("character_armature",app->assetmanager);
-    //Move the root bone back so we can view the skinned mesh
-    //skeleton->GetChild(0)->SetPosition(vec3(0,0,-1));
-    loaded_materials.clear();
-    SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
+    if (skeleton){
+        //Move the root bone back so we can view the skinned mesh
+        //skeleton->GetChild(0)->SetPosition(vec3(0,0,-1));
+        loaded_materials.clear();
+        SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
 
-    scene->renderer->AddMaterials(loaded_materials);
-    skeleton->SetSkinnedMesh(skinned_mesh);
-    skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->AddObject(skeleton);
+        scene->renderer->AddMaterials(loaded_materials);
+        skeleton->SetSkinnedMesh(skinned_mesh);
+        skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
+        scene->AddObject(skeleton);
+
+        app->selected_animation = app->gltfloader.LoadAnimation("Swoop");
+        if (app->selected_animation){
+            app->selected_animation->LinkObjects(skeleton);
+        }
+    }
 
     // sequence with default values
-
     app->mySequence.mFrameMin = -100;
     app->mySequence.mFrameMax = 1000;
     app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 0, 10, 30, false });
@@ -230,9 +236,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 3, 12, 60, false });
     app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 2, 61, 90, false });
     app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 4, 90, 99, false });
-
-    app->selected_animation = app->gltfloader.LoadAnimation("WalkCopy");
-    app->selected_animation->LinkObjects(skeleton);
 
     {
         loaded_materials.clear();
@@ -364,7 +367,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(1680,960,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1920,1080,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -898,6 +901,7 @@ void ApplicationGrid::RenderSkeletonUI(){
     Skeleton* skeleton = FindSkeletonInScene(main_scene,target_name);
     if (!skeleton){
         ImGui::Text("Unable to find skeleton %s\n",target_name.c_str());
+        return;
     }
 
     Object* bones = skeleton->GetChild(0);
@@ -1033,12 +1037,12 @@ void ApplicationGrid::RenderAnimationUI(){
     if (selected_animation){
         if (ImGui::CollapsingHeader("Animation")){
 
-            if (ImGui::DragFloat("Time Index", (float*)&time_index, 0.01f, 0.0f, 2.0f)){
-
+            if (ImGui::DragFloat("Time Index", (float*)&time_index, 0.002f, 0.0f, 4.0f)){
+                selected_animation->ApplyInterval(time_index);
             }
 
             if (ImGui::Button("Apply Interval")){
-                selected_animation->ApplyInterval(time_index);
+
             }
         }
 
