@@ -76,21 +76,28 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
         return;
     }
 
-    std::vector<ObjectAnimation*>list;
+
 
     for (int i=0;i<object_animations.size();i++){
         ObjectAnimation* this_object_animation = object_animations.at(i);
         ObjectAnimation* target_object_animation = target->object_animations.at(i);
 
-        ObjectAnimation* new_object_animation = new ObjectAnimation();
-        list.push_back(new_object_animation);
+        ObjectAnimationKeyFrame* start_keyframe = this_object_animation->GetClosestKeyframe(this_interval);
+        ObjectAnimationKeyFrame* end_keyframe = target_object_animation->GetClosestKeyframe(target_interval);
 
-        ObjectAnimationKeyFrame* start_keyframe = new ObjectAnimationKeyFrame(this_object_animation->GetClosestKeyframe(this_interval));
-        ObjectAnimationKeyFrame* end_keyframe = new ObjectAnimationKeyFrame(target_object_animation->GetClosestKeyframe(target_interval));
-        start_keyframe->time = 0;
-        end_keyframe->time = 1;
-        new_object_animation->AddKeyframe(start_keyframe);
-        new_object_animation->AddKeyframe(end_keyframe);
+        //Apply the Lerp value
+        if (start_keyframe->f_position && end_keyframe->f_position){
+            vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
+            if (this_object_animation->target){
+                this_object_animation->target->SetPosition(pos);
+            }
+        }
+        if (start_keyframe->f_rotation && end_keyframe->f_rotation){
+            quat rot = quat::slerp(start_keyframe->rotation,end_keyframe->rotation,factor);
+            if (this_object_animation->target){
+                this_object_animation->target->SetRotation(rot);
+            }
+        }
     }
 
 
