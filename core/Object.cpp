@@ -238,6 +238,7 @@ void Object::UpdateMaterials(std::vector<Material>& global_list){
 }
 
 //Copies physics state over to this state.
+//Called by rendering
 void Object::UpdateState(){
     state = state_physics_prev;
 
@@ -249,6 +250,7 @@ void Object::UpdateState(){
     }
 }
 
+//Called by Physics
 void Object::UpdatePhysicsState(){
     //Massages all the physics things.
     //HERE

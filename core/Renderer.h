@@ -11,6 +11,7 @@ class Renderer;
 #include "Light.h"
 #include "InputController.h"
 #include "PerfTimer.h"
+#include <mutex>
 
 //This should have the same layout as in the shader
 #define NUM_MATERIAL_SLOTS  4
@@ -48,6 +49,8 @@ void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum sever
 class Renderer{
     public:
     Renderer(int w, int h);
+
+    std::mutex state_mutex;     //Makes sure all object states are updated, not just one.
 
     int width = 1;
     int height = 1;

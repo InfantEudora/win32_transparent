@@ -208,8 +208,10 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
         timeEndPeriod(1);
         if (app->main_scene){
             app->main_scene->HandleInput();
+            app->renderer->state_mutex.lock();
             app->RunLogic();
             app->main_scene->UpdatePhysics();
+            app->renderer->state_mutex.unlock();
             app->main_scene->inputcontroller->Tick();
         }
         //debug->Ok("Physics Loop %lu completed\n",physics_ticks);

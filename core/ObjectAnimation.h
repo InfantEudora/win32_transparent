@@ -1,24 +1,17 @@
 #ifndef _OBJECT_ANIMATION_H_
 #define _OBJECT_ANIMATION_H_
-
 #include "Object.h"
-
-
-/*
-
-How to structure?
-1: skeleton->animation
-
-animation->skeleton
-
-
-skeleton->aplyanimation(animation,start_frame);
-
-*/
-
+class AnimationSequence;
 class Animation;
 class ObjectAnimation;
 class ObjectAnimationKeyFrame;
+
+
+class AnimationSequence{
+    public:
+    AnimationSequence();
+    //Defines what animations may follow other ones.
+};
 
 class Animation{
     public:
@@ -33,8 +26,14 @@ class Animation{
     //Apply the animation at supplied interval
     void LinkObjects(Object* root);
     void ApplyInterval(float interval);
+    void ApplyIntervalOnto(ObjectAnimation* object_animation, Object* object, float interval);
+    void SetPositionUpdates(ObjectAnimation* object_animation, bool flag);
     void AddObjectAnimation(ObjectAnimation* object_animation);
-    ObjectAnimation* FindObjectAnimation(std::string& target_name);
+    ObjectAnimation* FindObjectAnimation(const std::string& target_name);
+
+    //Lerp this animation at specified interval towards target animation at target interval.
+    //The intermediate state is applied as if called with ApplyInterval
+    void Lerp(Animation* target,float this_interval, float target_interval, float factor);
 };
 
 
@@ -54,6 +53,8 @@ class ObjectAnimation{
     bool f_looping = false;
 
     ObjectAnimationKeyFrame* FindKeyframeAtTime(float time);
+    ObjectAnimationKeyFrame* GetFirstKeyframe();
+    ObjectAnimationKeyFrame* GetLastKeyframe();
     void AddKeyframe(ObjectAnimationKeyFrame* keyframe);
 };
 

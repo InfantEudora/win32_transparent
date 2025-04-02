@@ -989,8 +989,13 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
 
 //In blender, this would be an armature in here we look up a skin.
 //Asset manager for getting a bone mesh.
-Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* assetmanager){
-    Skeleton* skeleton = new Skeleton();
+Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* assetmanager,Skeleton* optional_target){
+    Skeleton* skeleton;
+    if (optional_target){
+        skeleton = optional_target;
+    }else{
+        skeleton = new Skeleton();
+    }
     skeleton->name = skeleton_name;
 
     tinygltf::Skin* skin = FindSkin(skeleton_name);

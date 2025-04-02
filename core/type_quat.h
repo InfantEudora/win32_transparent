@@ -39,7 +39,7 @@ struct quat{
 
     static quat getquat(const vec3& v1, const vec3& v2);
     static quat getquat(const vec3& target, const vec3& position, const vec3& worldup);
-    static quat slerp (const quat& rkP, const quat& rkQ,float fT, bool shortestPath);
+    static quat slerp (const quat& rkP, const quat& rkQ,float fT, bool shortestPath = true);
 };
 
 inline quat::quat(const vec3& axis, float angle){

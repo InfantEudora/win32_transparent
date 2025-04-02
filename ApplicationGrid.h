@@ -5,6 +5,7 @@
 #include "IsoTerrain.h"
 #include "type_plane.h"
 #include "type_ray.h"
+#include "IsoCharacter.h"
 
 #include "GLTFLoader.h"
 /*
@@ -238,15 +239,19 @@ public:
     struct{
         int grid_level = 0;
         int tile_number = 1;
-        bool f_place = true;        // Place new tile on left click
-        bool f_selection = false;   // Show and move selection tile
-        bool f_delete = true;       // Delete on right click
-        bool f_place_prop = true;   // Place a prop on tile
+        bool f_place = true;              // Place new tile on left click
+        bool f_selection = false;         // Show and move selection tile
+        bool f_delete = true;             // Delete on right click
+        bool f_place_prop = true;         // Place a prop on tile
+        bool f_camera_control = false;
     }grid_settings;
 
 
     bool f_track_cursor = false;
     Animation* selected_animation = NULL;
+
+    IsoCharacter* character = NULL;
+
 
     MySequence mySequence;
 

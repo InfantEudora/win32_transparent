@@ -148,6 +148,10 @@ void Scene::UpdatePhysics(){
     */
 
     //debug->Info("Updating object phyics for tick %llu\n",physics_ticks++);
+    /*
+        This would copy over all physics_states for a current render frame.
+
+    */
     for (Object* object:renderer->objects){
         //debug->Info("Updating physics for obj->id %i\n",object->GetID());
         if (object == camera){

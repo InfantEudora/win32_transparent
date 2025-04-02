@@ -87,7 +87,7 @@ class Object{
 
 
     void UpdateState(); //Called from render thread before rendering
-    void UpdatePhysicsState();
+    virtual void UpdatePhysicsState();
 
     std::string name;
     fmat4 local_transform_scale_matrix;

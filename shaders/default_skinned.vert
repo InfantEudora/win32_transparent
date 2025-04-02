@@ -131,9 +131,9 @@ void main(){
 
 	//We need to decompose the matrix into a rotation only, used to compute normals.
 	//Zero out the translation and scale.
-	mat_rotate[0] = instance_data[gl_InstanceID].mat_transformscale[0].xyz;
-	mat_rotate[1] = instance_data[gl_InstanceID].mat_transformscale[1].xyz;
-	mat_rotate[2] = instance_data[gl_InstanceID].mat_transformscale[2].xyz;
+	mat_rotate[0] = final_transform_matrix[0].xyz;
+	mat_rotate[1] = final_transform_matrix[1].xyz;
+	mat_rotate[2] = final_transform_matrix[2].xyz;
 
 
 	//vec3 objpos = final_transform_matrix[3].xyz;

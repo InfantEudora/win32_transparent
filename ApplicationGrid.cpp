@@ -203,40 +203,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         app->assetmanager->AddNewAsset(node_name.c_str(),gltf_object);
     }
 
-    //We load a skeleton from the same file
-    //Need asset manager to load mesh for bone debugging
-    Material bone_mat;
-    bone_mat.name = "bone_mat";
-    bone_mat.glsl_material.color = vec4(1,1,1,1);
-    scene->renderer->AddMaterial(bone_mat);
-
-    Skeleton* skeleton = app->gltfloader.GetSkeleton("character_armature",app->assetmanager);
-    if (skeleton){
-        //Move the root bone back so we can view the skinned mesh
-        //skeleton->GetChild(0)->SetPosition(vec3(0,0,-1));
-        loaded_materials.clear();
-        SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
-
-        scene->renderer->AddMaterials(loaded_materials);
-        skeleton->SetSkinnedMesh(skinned_mesh);
-        skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
-        scene->AddObject(skeleton);
-
-        app->selected_animation = app->gltfloader.LoadAnimation("Swoop");
-        if (app->selected_animation){
-            app->selected_animation->LinkObjects(skeleton);
-        }
-    }
-
-    // sequence with default values
-    app->mySequence.mFrameMin = -100;
-    app->mySequence.mFrameMax = 1000;
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 0, 10, 30, false });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 1, 20, 30, true });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 3, 12, 60, false });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 2, 61, 90, false });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 4, 90, 99, false });
-
     {
         loaded_materials.clear();
         Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("target_vis",&loaded_materials);
@@ -266,6 +232,60 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
             app->assetmanager->AddNewAsset("floor",gltf_object);
         }
     }
+
+    //We load a skeleton from the same file
+    //Need asset manager to load mesh for bone debugging
+    Material bone_mat;
+    bone_mat.name = "bone_mat";
+    bone_mat.glsl_material.color = vec4(1,1,1,1);
+    scene->renderer->AddMaterial(bone_mat);
+
+    app->character = new IsoCharacter();
+    Skeleton* skeleton = dynamic_cast<Skeleton*>(app->character);
+    app->gltfloader.GetSkeleton("character_armature",app->assetmanager,skeleton);
+
+    if (skeleton){
+        Object* bones = skeleton->GetChild(0);
+        if (bones){
+            bones->SetVisibility(false);
+        }
+
+        loaded_materials.clear();
+        SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
+
+        scene->renderer->AddMaterials(loaded_materials);
+        skeleton->SetSkinnedMesh(skinned_mesh);
+        skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
+        scene->AddObject(app->character);
+
+        app->gltfloader.LoadGLTFFile("data/animations.glb");
+
+        std::vector<std::string>animation_names;
+        animation_names.push_back("Swoop");
+        animation_names.push_back("ToHanging");
+        animation_names.push_back("Idle");
+        animation_names.push_back("Walking");
+        animation_names.push_back("TurnLeft");
+        animation_names.push_back("TurnRight");
+
+        for (std::string& name:animation_names){
+            app->selected_animation = app->gltfloader.LoadAnimation(name.c_str());
+            if (app->selected_animation){
+                app->character->AddAnimation(app->selected_animation);
+            }
+        }
+    }
+
+    // sequence with default values
+    app->mySequence.mFrameMin = -100;
+    app->mySequence.mFrameMax = 1000;
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 0, 10, 30, false });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 1, 20, 30, true });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 3, 12, 60, false });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 2, 61, 90, false });
+    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 4, 90, 99, false });
+
+
 
     //We now generate a terrain, and load that in.
     app->terrain = new IsoTerrain();
@@ -332,7 +352,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     hThread = CreateThread(
         NULL,    // Thread attributes
         0,       // Stack size (0 = use default)
-        PhysicsThreadFunction, // Thread start address
+        PhysicsThreadFunction, // Thread start address in Application base class
         app,    // Parameter to pass to the thread
         0,       // Creation flags
         &app->thread_id_physics);   // Thread id
@@ -351,9 +371,16 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         app->main_window->ImGuiNewFrame();
 
         //This should render the frame only.
-        app->main_scene->DrawFrame();
+        app->main_scene->DrawFrame(); // This renders state, not state_physics
 
-        app->UpdateUI();
+        app->renderer->state_mutex.lock();
+        app->UpdateUI(); //This right now modifies state_physics... but
+        app->renderer->state_mutex.unlock();
+        //RunLogic() at a completely different time interval also modifies state_physics.
+        //When done, copies that over to prev_state.
+
+        //In Renderer, that get's called
+
 
         app->main_window->ImGuiDrawFrame();
 
@@ -465,10 +492,26 @@ void ApplicationGrid::RunLogic(){
         }
     }
 
-    if (input->IsKeyDown(INPUT_MOVE_UP)){
-        vec3 d = camera->MoveForwardBy(0.1f);
-        camera_target += d;
+    if (grid_settings.f_camera_control){
+        if (input->IsKeyDown(INPUT_MOVE_UP)){
+            vec3 d = camera->MoveForwardBy(0.1f);
+            camera_target += d;
+        }
+        if (input->IsKeyDown(INPUT_MOVE_DOWN)){
+            vec3 d = camera->MoveForwardBy(-0.1f);
+            camera_target += d;
+        }
+    }else{
+        if (character){
+            if (input->IsKeyDown(INPUT_MOVE_UP)){
+                character->MoveForward();
+            }
+            if (input->IsKeyDown(INPUT_MOVE_DOWN)){
+                character->MoveBackward();
+            }
+        }
     }
+
 
     if (input->WasKeyReleased(INPUT_TURN_UP)){
         grid_settings.grid_level++;
@@ -984,6 +1027,7 @@ void ApplicationGrid::UpdateUI(){
         ImGui::Checkbox("Delete Tiles (Right Click)",&grid_settings.f_delete);
         ImGui::Checkbox("Show Selection Tile",&grid_settings.f_selection);
         ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
+        ImGui::Checkbox("Arrows control camera",&grid_settings.f_camera_control);
     }
     vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
     ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
@@ -1030,19 +1074,77 @@ void ApplicationGrid::UpdateUI(){
 
 
 void ApplicationGrid::RenderAnimationUI(){
-    ImGui::Begin("Sequencer UI");
+    ImGui::Begin("Character Animation Sequence UI");
+
+    if (!character){
+        ImGui::Text("No character");
+        ImGui::End();
+        return;
+    }
 
     static float time_index = 0.0f;
+    static float lerp = 0.0f;
+    static bool f_ondrag = false;
+    static bool f_update_hip_pos = false;
+
+    static Animation* animation_lerp_start = NULL;
+    static Animation* animation_lerp_end = NULL;
+    static float interval_lerp_start = 0.0f;
+    static float interval_lerp_end = 0.0f;
+
+    if (ImGui::CollapsingHeader("Animations")){
+        for (Animation* animation:character->animations){
+            if (ImGui::Button(animation->name.c_str())){
+                selected_animation = animation;
+            }
+        }
+    }
+
+    if (ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override)){
+
+    }
 
     if (selected_animation){
-        if (ImGui::CollapsingHeader("Animation")){
+        if (ImGui::CollapsingHeader("Selected Animation")){
+            float animation_duration = selected_animation->duration;
+            ImGui::Text("Duration: %.2f",selected_animation->duration);
 
-            if (ImGui::DragFloat("Time Index", (float*)&time_index, 0.002f, 0.0f, 4.0f)){
+            ImGui::Checkbox("Modify on Drag",&f_ondrag);
+
+            if (ImGui::DragFloat("Time Index", (float*)&time_index, 0.005f, 0.0f, selected_animation->duration)){
+                if (f_ondrag){
+                    selected_animation->ApplyInterval(time_index);
+                }
+            }
+
+            if (ImGui::Button("Apply Interval on All")){
                 selected_animation->ApplyInterval(time_index);
             }
 
-            if (ImGui::Button("Apply Interval")){
+            ObjectAnimation* hips_animation = selected_animation->FindObjectAnimation("Hips");
+            if (hips_animation){
+                if (ImGui::Button("Apply Interval on Hips")){
+                    selected_animation->ApplyIntervalOnto(hips_animation, hips_animation->target,time_index);
+                }
+                if (ImGui::Checkbox("Toggle Position Update on Hips",&f_update_hip_pos)){
+                    selected_animation->SetPositionUpdates(hips_animation,f_update_hip_pos);
+                }
+            }
 
+            if (ImGui::Button("Set as start Lerp animation")){
+                animation_lerp_start = selected_animation;
+                interval_lerp_start = time_index;
+            }
+            if (ImGui::Button("Set as end Lerp animation")){
+                animation_lerp_end = selected_animation;
+                interval_lerp_end = time_index;
+            }
+
+            if (animation_lerp_start && animation_lerp_end){
+                ImGui::Text("Lerp between animation %s at interval %.2f to animation %s at interval %.2f",animation_lerp_start->name.c_str(),interval_lerp_start,animation_lerp_end->name.c_str(),interval_lerp_end);
+                if (ImGui::DragFloat("Lerp", (float*)&lerp, 0.005f, 0.0f, 1.0f)){
+
+                }
             }
         }
 
@@ -1050,6 +1152,7 @@ void ApplicationGrid::RenderAnimationUI(){
         ImGui::Text("No animation selected\n");
     }
 
+    /* Seems to work, don't know if itl be used.
     if (ImGui::CollapsingHeader("Sequencer"))
       {
          // let's create the sequencer
@@ -1074,5 +1177,6 @@ void ApplicationGrid::RenderAnimationUI(){
            // switch (type) ....
          }
     }
+    */
     ImGui::End();
 }
