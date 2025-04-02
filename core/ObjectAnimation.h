@@ -55,6 +55,7 @@ class ObjectAnimation{
     ObjectAnimationKeyFrame* FindKeyframeAtTime(float time);
     ObjectAnimationKeyFrame* GetFirstKeyframe();
     ObjectAnimationKeyFrame* GetLastKeyframe();
+    ObjectAnimationKeyFrame* GetClosestKeyframe(float time);
     void AddKeyframe(ObjectAnimationKeyFrame* keyframe);
 };
 
@@ -65,9 +66,10 @@ class ObjectAnimation{
 class ObjectAnimationKeyFrame{
 public:
     ObjectAnimationKeyFrame();
+    ObjectAnimationKeyFrame(ObjectAnimationKeyFrame* target); //Copy constructor
     //A frame is stored within a parent animation, typically a skeleton.
     //A frame references a property that it can animate.
-    float time = 0.0f;      //At what time interface within the animation
+    float time = 0.0f;      //At what time within the animation
     vec3 position;
     quat rotation;
     vec3 scale;
@@ -76,8 +78,6 @@ public:
     bool f_position = false;
     bool f_rotation = false;
     bool f_scale = false;
-
-
 };
 
 #endif

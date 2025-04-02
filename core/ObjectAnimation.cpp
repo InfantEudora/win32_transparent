@@ -8,6 +8,16 @@ ObjectAnimationKeyFrame::ObjectAnimationKeyFrame(){
 
 }
 
+ObjectAnimationKeyFrame::ObjectAnimationKeyFrame(ObjectAnimationKeyFrame* target){
+    time = target->time;
+    position = target->position;
+    rotation = target->rotation;
+    scale = target->scale;
+
+    f_position = target->f_position;
+    f_rotation = target->f_rotation;
+    f_scale = target->f_scale;
+}
 
 ObjectAnimation::ObjectAnimation(){
 
@@ -44,17 +54,15 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
     }
     //debug->Info("Animation: Applying target %s at interval %.3f\n",target->name.c_str(),interval);
 
-    //We find the firstkeyframe. They are stored in order.
-    for (ObjectAnimationKeyFrame* keyframe : object_animation->keyframes){
-        if (keyframe->time > interval){
-            if (keyframe->f_rotation){
-                target->SetRotation(keyframe->rotation);
-            }
-            if (keyframe->f_position){
-                target->SetPosition(keyframe->position);
-            }
-            break;
-        }
+    ObjectAnimationKeyFrame* keyframe = object_animation->GetClosestKeyframe(interval);
+    if (!keyframe){
+        return;
+    }
+    if (keyframe->f_rotation){
+        target->SetRotation(keyframe->rotation);
+    }
+    if (keyframe->f_position){
+        target->SetPosition(keyframe->position);
     }
 }
 
@@ -62,10 +70,30 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
     if (!target){
         return;
     }
-    //What we do is for each object we make a new animation, with start and end keyframe.
+
     if (target->object_animations.size() != object_animations.size()){
-        debug->Err("Lerp on these animations are incompatible (%s - %s)\n",name.c_str(),target->name.c_str());
+        debug->Err("Lerp on these animations are incompatible (%s -> %s)\n",name.c_str(),target->name.c_str());
+        return;
     }
+
+    std::vector<ObjectAnimation*>list;
+
+    for (int i=0;i<object_animations.size();i++){
+        ObjectAnimation* this_object_animation = object_animations.at(i);
+        ObjectAnimation* target_object_animation = target->object_animations.at(i);
+
+        ObjectAnimation* new_object_animation = new ObjectAnimation();
+        list.push_back(new_object_animation);
+
+        ObjectAnimationKeyFrame* start_keyframe = new ObjectAnimationKeyFrame(this_object_animation->GetClosestKeyframe(this_interval));
+        ObjectAnimationKeyFrame* end_keyframe = new ObjectAnimationKeyFrame(target_object_animation->GetClosestKeyframe(target_interval));
+        start_keyframe->time = 0;
+        end_keyframe->time = 1;
+        new_object_animation->AddKeyframe(start_keyframe);
+        new_object_animation->AddKeyframe(end_keyframe);
+    }
+
+
 
 }
 
@@ -109,6 +137,17 @@ ObjectAnimationKeyFrame* ObjectAnimation::FindKeyframeAtTime(float time){
             return keyframe;
         }
         ++it;
+    }
+    return NULL;
+}
+
+//Todo, look back and find closest
+ObjectAnimationKeyFrame* ObjectAnimation::GetClosestKeyframe(float time){
+    //Keyframes are stored in order.
+    for (ObjectAnimationKeyFrame* keyframe : keyframes){
+        if (keyframe->time > time){
+            return keyframe;
+        }
     }
     return NULL;
 }
