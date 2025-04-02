@@ -76,14 +76,21 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
         return;
     }
 
-
-
     for (int i=0;i<object_animations.size();i++){
         ObjectAnimation* this_object_animation = object_animations.at(i);
         ObjectAnimation* target_object_animation = target->object_animations.at(i);
 
         ObjectAnimationKeyFrame* start_keyframe = this_object_animation->GetClosestKeyframe(this_interval);
         ObjectAnimationKeyFrame* end_keyframe = target_object_animation->GetClosestKeyframe(target_interval);
+
+        if (!start_keyframe){
+            debug->Err("Failed to get start_keyframe for %s at %.3f\n",name.c_str(),this_interval);
+            continue;
+        }
+        if (!end_keyframe){
+            debug->Err("Failed to get end_keyframe for %s\n",target->name.c_str(),target_interval);
+            continue;
+        }
 
         //Apply the Lerp value
         if (start_keyframe->f_position && end_keyframe->f_position){
@@ -99,9 +106,6 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
             }
         }
     }
-
-
-
 }
 
 //Apply complete animation to all objects in chain at interval
@@ -152,11 +156,12 @@ ObjectAnimationKeyFrame* ObjectAnimation::FindKeyframeAtTime(float time){
 ObjectAnimationKeyFrame* ObjectAnimation::GetClosestKeyframe(float time){
     //Keyframes are stored in order.
     for (ObjectAnimationKeyFrame* keyframe : keyframes){
-        if (keyframe->time > time){
+        if (keyframe->time >= time){
             return keyframe;
         }
     }
-    return NULL;
+    //Nothing? Return the last one.
+    return keyframes.back();
 }
 
 ObjectAnimationKeyFrame* ObjectAnimation::GetFirstKeyframe(){

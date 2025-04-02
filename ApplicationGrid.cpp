@@ -260,18 +260,27 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
         app->gltfloader.LoadGLTFFile("data/animations.glb");
 
-        std::vector<std::string>animation_names;
-        animation_names.push_back("Swoop");
-        animation_names.push_back("ToHanging");
-        animation_names.push_back("Idle");
-        animation_names.push_back("Walking");
-        animation_names.push_back("TurnLeft");
-        animation_names.push_back("TurnRight");
+        std::vector<std::string>looping_animations;
+        looping_animations.push_back("Idle");
+        looping_animations.push_back("Walking");
+        std::vector<std::string>non_looping_animations;
+        non_looping_animations.push_back("Swoop");
+        non_looping_animations.push_back("ToHanging");
+        non_looping_animations.push_back("TurnLeft");
+        non_looping_animations.push_back("TurnRight");
 
-        for (std::string& name:animation_names){
+        for (std::string& name:looping_animations){
             app->selected_animation = app->gltfloader.LoadAnimation(name.c_str());
             if (app->selected_animation){
                 app->character->AddAnimation(app->selected_animation);
+                app->selected_animation->looped = true;
+            }
+        }
+        for (std::string& name:non_looping_animations){
+            app->selected_animation = app->gltfloader.LoadAnimation(name.c_str());
+            if (app->selected_animation){
+                app->character->AddAnimation(app->selected_animation);
+                app->selected_animation->looped = false;
             }
         }
     }
@@ -508,6 +517,12 @@ void ApplicationGrid::RunLogic(){
             }
             if (input->IsKeyDown(INPUT_MOVE_DOWN)){
                 character->MoveBackward();
+            }
+            if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
+                character->TurnRight();
+            }
+            if (input->IsKeyDown(INPUT_MOVE_LEFT)){
+                character->TurnLeft();
             }
         }
     }
@@ -1091,6 +1106,17 @@ void ApplicationGrid::RenderAnimationUI(){
     static Animation* animation_lerp_end = NULL;
     static float interval_lerp_start = 0.0f;
     static float interval_lerp_end = 0.0f;
+
+    if (ImGui::CollapsingHeader("Auto Animation")){
+        if (character->current_animation){
+            ImGui::Text("Current Animation: %s @ %.2f / %.2f",character->current_animation->name.c_str(),character->current_animation_time,character->current_animation->duration);
+        }
+        if (character->next_animation){
+            ImGui::Text("Next Animation   : %s @ 0 / %.2f",character->next_animation->name.c_str(),character->next_animation->duration);
+        }else{
+            ImGui::Text("Next Animation   : NULL");
+        }
+    }
 
     if (ImGui::CollapsingHeader("Animations")){
         for (Animation* animation:character->animations){

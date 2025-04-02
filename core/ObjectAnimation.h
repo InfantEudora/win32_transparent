@@ -22,6 +22,7 @@ class Animation{
     std::vector<ObjectAnimation*>object_animations;
 
     float duration = 0.0f;  //Value of last keyframe.
+    bool looped = true;
 
     //Apply the animation at supplied interval
     void LinkObjects(Object* root);
