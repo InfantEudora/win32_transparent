@@ -38,7 +38,11 @@ class IsoCharacter : public virtual Skeleton{
     float transition_time_max = 0.25f;
 
     float idle_time = 0.0f;
+    float idle_time_max = 3.0f;
+
     bool f_animation_override = false;
+    bool f_manual_animation_time = false;
+    float manual_animation_time = 0.02f;
     bool f_switch_now = false;
 
     void AddAnimation(Animation* animation);
@@ -48,7 +52,7 @@ class IsoCharacter : public virtual Skeleton{
     void CheckSwitchAnimation(); //Whenever the current one is finished
     void SwitchAnimationNow(); //Now
     void SetNextAnimation(const std::string& name); //Set next one to wait until this one is completed.
-    void ReplayCurrentAnimation();
+    void TransitionAnimation();
 
 
     //There also needs to be a list, or a tree linked list thing with all allowed actions from a current one.

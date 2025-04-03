@@ -263,6 +263,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         std::vector<std::string>looping_animations;
         looping_animations.push_back("Idle");
         looping_animations.push_back("Walking");
+        looping_animations.push_back("CatwalkForward");
         std::vector<std::string>non_looping_animations;
         non_looping_animations.push_back("Swoop");
         non_looping_animations.push_back("ToHanging");
@@ -1107,6 +1108,8 @@ void ApplicationGrid::RenderAnimationUI(){
     static float interval_lerp_start = 0.0f;
     static float interval_lerp_end = 0.0f;
 
+    static float manual_time = 0.1;
+
     if (ImGui::CollapsingHeader("Auto Animation")){
         if (character->current_animation){
             ImGui::Text("Current Animation: %s @ %.2f / %.2f",character->current_animation->name.c_str(),character->current_animation_time,character->current_animation->duration);
@@ -1115,6 +1118,27 @@ void ApplicationGrid::RenderAnimationUI(){
             ImGui::Text("Next Animation   : %s @ 0 / %.2f",character->next_animation->name.c_str(),character->next_animation->duration);
         }else{
             ImGui::Text("Next Animation   : NULL");
+        }
+
+        if (ImGui::Checkbox("Enable Manual Animation Time",&character->f_manual_animation_time)){
+
+        }
+
+        if (ImGui::DragFloat("Idle Time Max", (float*)&character->idle_time_max, 0.01f, 0.0f, 10.0f)){
+
+        }
+        if (ImGui::DragFloat("Transition Time Max", (float*)&character->transition_time_max, 0.01f, 0.0f, 10.0f)){
+
+        }
+
+        if (character->f_manual_animation_time){
+            if (ImGui::DragFloat("Manual Animation Time", (float*)&manual_time, 0.02f, -0.5f, 0.5f)){
+
+            }
+
+            if (ImGui::Button("Forward")){
+                character->manual_animation_time = manual_time;
+            }
         }
     }
 

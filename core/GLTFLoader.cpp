@@ -2,7 +2,7 @@
 #include "File.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
+static Debugger *debug = new Debugger("GLTFLoader", DEBUG_INFO);
 
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
@@ -38,59 +38,59 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     }
 
     // Check file structure
-    debug->Info("Model has %i scenes\n",model.scenes.size());
+    debug->Trace("Model has %i scenes\n",model.scenes.size());
     for (int scene_index=0;scene_index<model.scenes.size();scene_index++){
-        debug->Info("Model.scenes[%i].name : %s\n",scene_index, model.scenes[scene_index].name.c_str());
+        debug->Trace("Model.scenes[%i].name : %s\n",scene_index, model.scenes[scene_index].name.c_str());
     }
-    debug->Info("Model has %i nodes\n",model.nodes.size());
+    debug->Trace("Model has %i nodes\n",model.nodes.size());
     node_names.clear();
     for (int node_index=0;node_index<model.nodes.size();node_index++){
-        debug->Info("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
-        debug->Info("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
-        debug->Info("Model.nodes[%i].children : %i\n",node_index, model.nodes[node_index].children.size());
+        debug->Trace("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
+        debug->Trace("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
+        debug->Trace("Model.nodes[%i].children : %i\n",node_index, model.nodes[node_index].children.size());
 
         for (int i=0;i<model.nodes[node_index].children.size();i++){
             int child_index = model.nodes[node_index].children.at(i);
             tinygltf::Node& child = model.nodes.at(child_index);
-            debug->Info(" - Child[%i] -> model.nodes[%i].name : %s\n",i,child_index, child.name.c_str());
+            debug->Trace(" - Child[%i] -> model.nodes[%i].name : %s\n",i,child_index, child.name.c_str());
         }
         node_names.push_back(model.nodes[node_index].name);
     }
 
-    debug->Info("Model has %i skins\n",model.skins.size());
+    debug->Trace("Model has %i skins\n",model.skins.size());
 
     for (int skin_index=0;skin_index<model.skins.size();skin_index++){
-        debug->Info("Model.skins[%i].name                : %s\n",skin_index, model.skins[skin_index].name.c_str());
-        debug->Info("Model.skins[%i].inverseBindMatrices : in accessor [%i]\n",skin_index, model.skins[skin_index].inverseBindMatrices);
-        debug->Info("Model.skins[%i].skeleton            : %i\n",skin_index, model.skins[skin_index].skeleton);
-        debug->Info("Model.skins[%i].joints              : %i\n",skin_index, model.skins[skin_index].joints.size());
+        debug->Trace("Model.skins[%i].name                : %s\n",skin_index, model.skins[skin_index].name.c_str());
+        debug->Trace("Model.skins[%i].inverseBindMatrices : in accessor [%i]\n",skin_index, model.skins[skin_index].inverseBindMatrices);
+        debug->Trace("Model.skins[%i].skeleton            : %i\n",skin_index, model.skins[skin_index].skeleton);
+        debug->Trace("Model.skins[%i].joints              : %i\n",skin_index, model.skins[skin_index].joints.size());
     }
 
-    debug->Info("Model has %i meshes\n",model.meshes.size());
+    debug->Trace("Model has %i meshes\n",model.meshes.size());
     for (int mesh_index=0;mesh_index<model.meshes.size();mesh_index++){
-        debug->Info("Model.meshes[%i].name       : %s\n",mesh_index, model.meshes[mesh_index].name.c_str());
-        debug->Info("Model.meshes[%i].primitives : %i\n",mesh_index, model.meshes[mesh_index].primitives.size());
+        debug->Trace("Model.meshes[%i].name       : %s\n",mesh_index, model.meshes[mesh_index].name.c_str());
+        debug->Trace("Model.meshes[%i].primitives : %i\n",mesh_index, model.meshes[mesh_index].primitives.size());
 
         //List primitives
         tinygltf::Mesh& mesh = model.meshes[mesh_index];
         for (size_t i = 0; i < mesh.primitives.size(); i++){
             tinygltf::Primitive &primitive = mesh.primitives[i];
-            debug->Info("Model.meshes[%i].primitive[%i].indices  : contained in accessor[%i]\n",mesh_index, i,primitive.indices);
+            debug->Trace("Model.meshes[%i].primitive[%i].indices  : contained in accessor[%i]\n",mesh_index, i,primitive.indices);
 
             //If indices are -1 ... it could be points or lines
             if (primitive.indices < 0) {
                 continue;
             }
 
-            debug->Info("Model.meshes[%i].primitive[%i].mode     : %s(%i)\n",mesh_index, i, mode_strings[primitive.mode].c_str(), primitive.mode);
-            debug->Info("Model.meshes[%i].primitive[%i].material : %i\n",mesh_index, i, primitive.material);
+            debug->Trace("Model.meshes[%i].primitive[%i].mode     : %s(%i)\n",mesh_index, i, mode_strings[primitive.mode].c_str(), primitive.mode);
+            debug->Trace("Model.meshes[%i].primitive[%i].material : %i\n",mesh_index, i, primitive.material);
 
             std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
             std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
 
             int attrib_index = 0;
             for (; it != itEnd; it++) {
-                debug->Info("Model.meshes[%i].primitive[%i].attributes[%i] : %s -> accessor: %i\n",mesh_index, i,attrib_index, it->first.c_str(),it->second);
+                debug->Trace("Model.meshes[%i].primitive[%i].attributes[%i] : %s -> accessor: %i\n",mesh_index, i,attrib_index, it->first.c_str(),it->second);
                 attrib_index++;
 
                 const tinygltf::Accessor &accessor = model.accessors[it->second];
@@ -110,40 +110,40 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         }
 
     }
-    debug->Info("Model has %i textures\n",model.textures.size());
+    debug->Trace("Model has %i textures\n",model.textures.size());
     for (int texture_index=0;texture_index<model.textures.size();texture_index++){
-        debug->Info("Model.textures[%i].name : %s\n",texture_index, model.textures[texture_index].name.c_str());
+        debug->Trace("Model.textures[%i].name : %s\n",texture_index, model.textures[texture_index].name.c_str());
     }
-    debug->Info("Model has %i images\n",model.textures.size());
+    debug->Trace("Model has %i images\n",model.textures.size());
     for (int image_index=0;image_index<model.images.size();image_index++){
-        debug->Info("Model.images[%i].name       : %s\n",image_index, model.images[image_index].name.c_str());
-        debug->Info("Model.images[%i].mime_type  : %s\n",image_index, model.images[image_index].mimeType.c_str());
-        debug->Info("Model.images[%i].bufferView : %i\n",image_index, model.images[image_index].bufferView);
-        debug->Info("Model.images[%i].uri        : %s\n",image_index, model.images[image_index].uri.c_str());
+        debug->Trace("Model.images[%i].name       : %s\n",image_index, model.images[image_index].name.c_str());
+        debug->Trace("Model.images[%i].mime_type  : %s\n",image_index, model.images[image_index].mimeType.c_str());
+        debug->Trace("Model.images[%i].bufferView : %i\n",image_index, model.images[image_index].bufferView);
+        debug->Trace("Model.images[%i].uri        : %s\n",image_index, model.images[image_index].uri.c_str());
     }
-    debug->Info("Model has %i materials\n",model.materials.size());
+    debug->Trace("Model has %i materials\n",model.materials.size());
     for (int material_index=0;material_index<model.materials.size();material_index++){
-        debug->Info("Model.materials[%i].name                       : %s\n",material_index, model.materials[material_index].name.c_str());
-        debug->Info("Model.materials[%i].pbr.baseColorTexture.index : %i\n",material_index, model.materials[material_index].pbrMetallicRoughness.baseColorTexture.index);
-        debug->Info("Model.materials[%i].pbr.baseColorFactor        : %.1f %.1f %.1f %.1f\n",material_index
+        debug->Trace("Model.materials[%i].name                       : %s\n",material_index, model.materials[material_index].name.c_str());
+        debug->Trace("Model.materials[%i].pbr.baseColorTexture.index : %i\n",material_index, model.materials[material_index].pbrMetallicRoughness.baseColorTexture.index);
+        debug->Trace("Model.materials[%i].pbr.baseColorFactor        : %.1f %.1f %.1f %.1f\n",material_index
         , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(0)
         , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(1)
         , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(2)
         , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(3));
 
     }
-    debug->Info("Model has %i buffers\n",model.buffers.size());
+    debug->Trace("Model has %i buffers\n",model.buffers.size());
     for (int buffer_index=0;buffer_index<model.buffers.size();buffer_index++){
-        debug->Info("Model.buffers[%i].name : %s\n",buffer_index, model.buffers[buffer_index].name.c_str());
+        debug->Trace("Model.buffers[%i].name : %s\n",buffer_index, model.buffers[buffer_index].name.c_str());
     }
-    debug->Info("Model has %i bufferViews\n",model.bufferViews.size());
+    debug->Trace("Model has %i bufferViews\n",model.bufferViews.size());
     for (int bufferview_index=0;bufferview_index<model.bufferViews.size();bufferview_index++){
-        debug->Info("Model.bufferViews[%i].name       : %s\n",bufferview_index, model.bufferViews[bufferview_index].name.c_str());
-        debug->Info("Model.bufferViews[%i].buffer     : %i\n",bufferview_index, model.bufferViews[bufferview_index].buffer);
-        debug->Info("Model.bufferViews[%i].byteOffset : %i\n",bufferview_index, model.bufferViews[bufferview_index].byteOffset);
-        debug->Info("Model.bufferViews[%i].byteLength : %i\n",bufferview_index, model.bufferViews[bufferview_index].byteLength);
-        debug->Info("Model.bufferViews[%i].byteStride : %i\n",bufferview_index, model.bufferViews[bufferview_index].byteStride);
-        debug->Info("Model.bufferViews[%i].target     : %i\n",bufferview_index, model.bufferViews[bufferview_index].target);
+        debug->Trace("Model.bufferViews[%i].name       : %s\n",bufferview_index, model.bufferViews[bufferview_index].name.c_str());
+        debug->Trace("Model.bufferViews[%i].buffer     : %i\n",bufferview_index, model.bufferViews[bufferview_index].buffer);
+        debug->Trace("Model.bufferViews[%i].byteOffset : %i\n",bufferview_index, model.bufferViews[bufferview_index].byteOffset);
+        debug->Trace("Model.bufferViews[%i].byteLength : %i\n",bufferview_index, model.bufferViews[bufferview_index].byteLength);
+        debug->Trace("Model.bufferViews[%i].byteStride : %i\n",bufferview_index, model.bufferViews[bufferview_index].byteStride);
+        debug->Trace("Model.bufferViews[%i].target     : %i\n",bufferview_index, model.bufferViews[bufferview_index].target);
 
         //Now list all the accessors the use this bufferView
         bool accessor_found = false;
@@ -151,7 +151,7 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         for (size_t a_i = 0; a_i < model.accessors.size(); ++a_i){
             tinygltf::Accessor& accessor = model.accessors[a_i];
             if (accessor.bufferView == bufferview_index){
-                debug->Info("Model.accessors[%i] uses this bufferView\n",a_i);
+                debug->Trace("Model.accessors[%i] uses this bufferView\n",a_i);
                 accessor_found = true;
                 if (accessor.sparse.isSparse){
                     debug->Warn("Accessor is sparse...\n");
@@ -169,12 +169,12 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
 
         //Ie, could be image data or other data
         if (!accessor_found){
-            debug->Info("No accessors use this bufferView\n");
+            debug->Trace("No accessors use this bufferView\n");
         }
 
     }
 
-    debug->Info("Model has %i accessors\n",model.accessors.size());
+    debug->Trace("Model has %i accessors\n",model.accessors.size());
     for (int accessor_index=0;accessor_index<model.accessors.size();accessor_index++){
         debug->Trace("Model.accessors[%i].name          : %s\n",accessor_index, model.accessors[accessor_index].name.c_str());
         debug->Trace("Model.accessors[%i].bufferView    : %i\n",accessor_index, model.accessors[accessor_index].bufferView);
@@ -190,9 +190,7 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         debug->Info("Model.samplers[%i].samplers.size  : %i\n",animation_index, model.animations[animation_index].samplers.size());
     }
 
-
-
-    debug->Info("More info!!!\n");
+    debug->Trace("More info!!!\n");
 }
 
 //Returns a pointer to node if found, or NULL
@@ -414,10 +412,10 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     }
 
     //A node can contain a single mesh (or none)
-    debug->Info("Found Node %s for you.\n",node_name);
+    debug->Trace("Found Node %s for you.\n",node_name);
 
     if (node->skin > -1){
-        debug->Info("Node %s contains a skin!\n",node_name);
+        debug->Trace("Node %s contains a skin!\n",node_name);
     }
 
     if (node->mesh < 0){
@@ -426,7 +424,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     }
 
     tinygltf::Mesh& nodemesh = model.meshes.at(node->mesh);
-    debug->Info(" -> Mesh name : %s\n",nodemesh.name.c_str());
+    debug->Trace(" -> Mesh name : %s\n",nodemesh.name.c_str());
 
     //A Mesh can have multiple primitives, like points, lines and triangles ... but not quads
     //We'll be parsing it only when it has seperate triangles for now
@@ -449,14 +447,14 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     std::vector<vertex>verts;
     materials.clear();
 
-    debug->Info("Node has %i primitives\n",nodemesh.primitives.size());
+    debug->Trace("Node has %i primitives\n",nodemesh.primitives.size());
     int primitive_count = -1;
     for (tinygltf::Primitive &primitive : nodemesh.primitives){
         //This should be such that at least the materials in this Mesh can be looked up later on.
         primitive_count++;
         int material_index = primitive.material;
         int diff_texture_index = -1;
-        debug->Info("Primitive %i material_index = %i\n",primitive_count, material_index);
+        debug->Trace("Primitive %i material_index = %i\n",primitive_count, material_index);
 
         tinygltf::Material* gltfmaterial = NULL;
         int material_id = 0;
@@ -490,7 +488,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 diff_texture->name = image.name;
 
                 m.diff_texture = diff_texture;
-                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+                debug->Trace("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
             }else{
                 //We just load the base color
                 m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
@@ -537,7 +535,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
             }
 
-            debug->Info("Accessor Size = %i for %s\n",size,it->first.c_str());
+            debug->Trace("Accessor Size = %i for %s\n",size,it->first.c_str());
 
             if (it->first.compare("NORMAL") == 0){
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
@@ -558,7 +556,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         }
 
         int vertex_count = indexAccessor.count;
-        debug->Info("indexAccessor.count = %i\n",vertex_count);
+        debug->Trace("indexAccessor.count = %i\n",vertex_count);
         int triangle_count = vertex_count / 3;
 
         //Assemble the triangles:
@@ -596,7 +594,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
     }
 
-    debug->Info("Generated %i vertices. Loaded %i materials\n",verts.size(),materials.size());
+    debug->Trace("Generated %i vertices. Loaded %i materials\n",verts.size(),materials.size());
     Mesh* mesh = new Mesh();
     mesh->SetMeshData(&verts.at(0),verts.size());
     mesh->num_materials = materials.size();
@@ -613,7 +611,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
     }
 
     //A node can contain a single mesh (or none)
-    debug->Info("GetSkinnedMeshFromNode: Found Node %s for you.\n",node_name);
+    debug->Trace("GetSkinnedMeshFromNode: Found Node %s for you.\n",node_name);
 
     if (node->skin == -1){
         debug->Err("GetSkinnedMeshFromNode: Node %s does not contain a skin!\n",node_name);
@@ -626,7 +624,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
     }
 
     tinygltf::Mesh& nodemesh = model.meshes.at(node->mesh);
-    debug->Info(" -> Mesh name : %s\n",nodemesh.name.c_str());
+    debug->Trace(" -> Mesh name : %s\n",nodemesh.name.c_str());
 
     //A Mesh can have multiple primitives, like points, lines and triangles ... but not quads
     //We'll be parsing it only when it has seperate triangles for now
@@ -649,7 +647,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
     std::vector<skinned_vertex>verts;
     materials.clear();
 
-    debug->Info("Node has %i primitives\n",nodemesh.primitives.size());
+    debug->Trace("Node has %i primitives\n",nodemesh.primitives.size());
 
     for (tinygltf::Primitive &primitive : nodemesh.primitives){
         //This should be such that at least the materials in this Mesh can be looked up later on.
@@ -689,7 +687,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
                 diff_texture->name = image.name;
 
                 m.diff_texture = diff_texture;
-                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+                debug->Trace("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
             }else{
                 //We just load the base color
                 m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
@@ -725,7 +723,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
             const tinygltf::Accessor &accessor = model.accessors[it->second];
             int size = GetAccesorTypeSize(accessor);
 
-            debug->Info("Accessor Size = %i for %s component_type = %i\n",size,it->first.c_str(),accessor.componentType);
+            debug->Trace("Accessor Size = %i for %s component_type = %i\n",size,it->first.c_str(),accessor.componentType);
 
             if (it->first.compare("NORMAL") == 0){
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
@@ -745,7 +743,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
         }
 
         int vertex_count = indexAccessor.count;
-        debug->Info("indexAccessor.count = %i\n",vertex_count);
+        debug->Trace("indexAccessor.count = %i\n",vertex_count);
         int triangle_count = vertex_count / 3;
 
         //Assemble the triangles:
@@ -783,7 +781,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
         optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
     }
 
-    debug->Info("Generated %i skinned vertices. Loaded %i materials\n",verts.size(),materials.size());
+    debug->Trace("Generated %i skinned vertices. Loaded %i materials\n",verts.size(),materials.size());
     SkinnedMesh* mesh = new SkinnedMesh();
     mesh->SetMeshData(&verts.at(0),verts.size());
     mesh->num_materials = materials.size();
@@ -800,7 +798,7 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
     }
 
     //A node can contain a single mesh (or none)
-    debug->Info("LoadAnimation: Found Animation %s for you.\n",animation_name);
+    debug->Trace("LoadAnimation: Found Animation %s for you.\n",animation_name);
 
     if (gltf_animation->channels.size() == 0){
         debug->Err("LoadAnimation: Animations has no channels.\n",animation_name);
@@ -821,7 +819,7 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
     for (tinygltf::AnimationChannel& channel: gltf_animation->channels){
         channel_index++;
         tinygltf::Node& target_node = model.nodes.at(channel.target_node);
-        debug->Info("Channel %2i : sampler = %i node = %i (%s) target_path=%s\n",channel_index,channel.sampler,channel.target_node,target_node.name.c_str()
+        debug->Trace("Channel %2i : sampler = %i node = %i (%s) target_path=%s\n",channel_index,channel.sampler,channel.target_node,target_node.name.c_str()
                                                                                 ,channel.target_path.c_str());
 
         int target_path = ANIM_TARGET_PATH_NONE;
@@ -838,24 +836,24 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         //Find the ObjectAnimation that may already contain this node_name
         ObjectAnimation* object_animation = animation->FindObjectAnimation(target_node.name);
         if (!object_animation){
-            debug->Info("Creating new ObjectAnimation\n");
+            debug->Trace("Creating new ObjectAnimation\n");
             object_animation = new ObjectAnimation();
             object_animation->target_name = target_node.name;
             animation->AddObjectAnimation(object_animation);
         }else{
-            debug->Info("Updating Existing ObjectAnimation\n");
+            debug->Trace("Updating Existing ObjectAnimation\n");
         }
 
         tinygltf::AnimationSampler& sampler = gltf_animation->samplers.at(channel.sampler);
         tinygltf::Accessor& input_accessor = model.accessors.at(sampler.input);
         tinygltf::Accessor& output_accessor = model.accessors.at(sampler.output);
-        debug->Info(" -> Sampler input (accessor Time) = %3i type_size = %i byte_stride = %i\n",sampler.input,GetAccesorTypeSize(input_accessor),input_accessor.ByteStride(model.bufferViews[input_accessor.bufferView]));
-        debug->Info(" -> Sampler output (accessor ?)   = %3i type_size = %i byte_stride = %i\n",sampler.output,GetAccesorTypeSize(output_accessor),output_accessor.ByteStride(model.bufferViews[output_accessor.bufferView]));
-        debug->Info(" -> Interpolation Type: %s\n",sampler.interpolation.c_str());
+        debug->Trace(" -> Sampler input (accessor Time) = %3i type_size = %i byte_stride = %i\n",sampler.input,GetAccesorTypeSize(input_accessor),input_accessor.ByteStride(model.bufferViews[input_accessor.bufferView]));
+        debug->Trace(" -> Sampler output (accessor ?)   = %3i type_size = %i byte_stride = %i\n",sampler.output,GetAccesorTypeSize(output_accessor),output_accessor.ByteStride(model.bufferViews[output_accessor.bufferView]));
+        debug->Trace(" -> Interpolation Type: %s\n",sampler.interpolation.c_str());
 
         //Display number of time slots for each input accessor
-        debug->Info(" -> Input  Accesor has %2i frames in BufferView %i\n",input_accessor.count,input_accessor.bufferView);
-        debug->Info(" -> Output Accesor has %2i frames in BufferView %i\n",output_accessor.count,output_accessor.bufferView);
+        debug->Trace(" -> Input  Accesor has %2i frames in BufferView %i\n",input_accessor.count,input_accessor.bufferView);
+        debug->Trace(" -> Output Accesor has %2i frames in BufferView %i\n",output_accessor.count,output_accessor.bufferView);
 
         int interpolation_type = ANIMSAMPLER_INTERPOLATION_TYPE_NONE;
         if (sampler.interpolation.compare("LINEAR") == 0){
@@ -877,12 +875,12 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         for (int index = 0;index<input_accessor.count;index++){
             int input_byte_offset = input_accessor.byteOffset + input_buffer_view.byteOffset + (index * sizeof(float));
             float frame_time = Getfloat(&input_buffer.data.at(0),input_byte_offset);
-            debug->Info("    -> Frame Time [%i] = %.4f\n",index, frame_time);
+            debug->Trace("    -> Frame Time [%i] = %.4f\n",index, frame_time);
 
             //TODO: The keyframes need to be inserted in a list
             ObjectAnimationKeyFrame* keyframe = object_animation->FindKeyframeAtTime(frame_time);
             if (!keyframe){
-                debug->Info("Creating new keyframe at time index %.4f\n",frame_time);
+                debug->Trace("Creating new keyframe at time index %.4f\n",frame_time);
                 keyframe = new ObjectAnimationKeyFrame();
                 keyframe->time = frame_time;
                 object_animation->AddKeyframe(keyframe);
@@ -890,7 +888,7 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
                     largest_frame_time = frame_time;
                 }
             }else{
-                debug->Info("Updating existing keyframe at time index %.4f\n",frame_time);
+                debug->Trace("Updating existing keyframe at time index %.4f\n",frame_time);
             }
 
 
@@ -907,7 +905,7 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
                     debug->Fatal("Invalid interpolation type %i\n",interpolation_type);
                 }
                 vec4 r = Getvec4(&output_buffer.data.at(0),output_byte_offset);
-                debug->Info("    -> Target Rotation [%i] = %.2f %.2f %.2f %.2f\n",index, r.x,r.y,r.z,r.w);
+                debug->Trace("    -> Target Rotation [%i] = %.2f %.2f %.2f %.2f\n",index, r.x,r.y,r.z,r.w);
                 if(keyframe->f_rotation == true){
                     debug->Err("Rotation for this keyframe is already set.\n");
                 }
@@ -925,7 +923,7 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
                     debug->Fatal("Invalid interpolation type %i\n",interpolation_type);
                 }
                 vec3 t = Getvec3(&output_buffer.data.at(0),output_byte_offset);
-                debug->Info("    -> Target Translation [%i] = %.2f %.2f %.2ff\n",index, t.x,t.y,t.z);
+                debug->Trace("    -> Target Translation [%i] = %.2f %.2f %.2ff\n",index, t.x,t.y,t.z);
                 if(keyframe->f_rotation == true){
                     debug->Err("Translation for this keyframe is already set.\n");
                 }
@@ -935,10 +933,10 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         }
     }
 
-    debug->Info("Done loading animation %s. References %i different objects. Frame time %.4f \n",animation->name.c_str(),animation->object_animations.size(),largest_frame_time);
+    debug->Trace("Done loading animation %s. References %i different objects. Frame time %.4f \n",animation->name.c_str(),animation->object_animations.size(),largest_frame_time);
 
     for (ObjectAnimation* object_animation:animation->object_animations){
-        debug->Info(" -> target_name : %s\n",object_animation->target_name.c_str());
+        debug->Trace(" -> target_name : %s\n",object_animation->target_name.c_str());
     }
 
     animation->duration = largest_frame_time;
@@ -967,7 +965,7 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
     if (node.scale.size() == 3){
         vec3 scale = vec3(node.scale[0],node.scale[1],node.scale[2]);
         bone->SetScale(scale);
-        debug->Info(" Bone scale %.2f %.2f %.2f\n",scale.x,scale.y,scale.z);
+        debug->Trace(" Bone scale %.2f %.2f %.2f\n",scale.x,scale.y,scale.z);
     }
 
     if (assetmanager){
@@ -981,7 +979,7 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
         bone->AttachChild(child_bone);
         child_bone->SetReferences();
         bone->SetReferences();
-        debug->Info("Attaching Bone %s onto %s\n",child_bone->name.c_str(),bone->name.c_str());
+        debug->Trace("Attaching Bone %s onto %s\n",child_bone->name.c_str(),bone->name.c_str());
     }
     bone->SetReferences();
     return bone;
@@ -1005,7 +1003,7 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
     }
 
     // A skin contains a root node (which won't have a parent) and a list of all the skeleton nodes.
-    debug->Info("Found skeleton %s for you.\n",skeleton_name);
+    debug->Trace("Found skeleton %s for you.\n",skeleton_name);
 
     int accessor_invbindmatrices = skin->inverseBindMatrices;
     if (accessor_invbindmatrices == -1){
@@ -1027,13 +1025,13 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
     //Let's just list all the nodes
     for (int node_index : skin->joints){
         tinygltf::Node& node = model.nodes.at(node_index);
-        debug->Info("Loading Node[%i] - %s as bone\n",node_index,node.name.c_str());
-        debug->Info(" -> Node mesh, skin       : %i, %i\n",node.mesh,node.skin);
-        debug->Info(" -> Node translation.size : %i\n",node.translation.size());
-        debug->Info(" -> Node rotation.size    : %i\n",node.rotation.size());
-        debug->Info(" -> Node scale.size       : %i\n",node.scale.size());
-        debug->Info(" -> Node matrix.size      : %i\n",node.matrix.size());
-        debug->Info(" -> Node children.size    : %i\n",node.children.size());
+        debug->Trace("Loading Node[%i] - %s as bone\n",node_index,node.name.c_str());
+        debug->Trace(" -> Node mesh, skin       : %i, %i\n",node.mesh,node.skin);
+        debug->Trace(" -> Node translation.size : %i\n",node.translation.size());
+        debug->Trace(" -> Node rotation.size    : %i\n",node.rotation.size());
+        debug->Trace(" -> Node scale.size       : %i\n",node.scale.size());
+        debug->Trace(" -> Node matrix.size      : %i\n",node.matrix.size());
+        debug->Trace(" -> Node children.size    : %i\n",node.children.size());
     }
 
     //Recursively get everything
@@ -1041,7 +1039,7 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
     Bone* root_bone = GetBone(skin->joints.at(0),bone_count,inv_binds,assetmanager);
     skeleton->AttachChild(root_bone);
     skeleton->num_bones = bone_count;
-    debug->Info("Loaded %i bones into skeleton\n",bone_count);
+    debug->Trace("Loaded %i bones into skeleton\n",bone_count);
     return skeleton;
 }
 
@@ -1050,7 +1048,7 @@ void GLTFLoader::LoadInverseBindMatrices(std::vector<fmat4>& matrices, int acces
     if (accessor.type != TINYGLTF_TYPE_MAT4){
         debug->Fatal("Expected accessor.type TINYGLTF_TYPE_MAT4 but got %i\n",accessor.type);
     }
-    debug->Info("Loading %i inverse Bind Matrices from Bufferview %i\n",accessor.count,accessor.bufferView);
+    debug->Trace("Loading %i inverse Bind Matrices from Bufferview %i\n",accessor.count,accessor.bufferView);
 
     tinygltf::BufferView &buffer_view = model.bufferViews[accessor.bufferView];
     tinygltf::Buffer &buffer = model.buffers[buffer_view.buffer];

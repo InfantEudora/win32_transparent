@@ -92,7 +92,7 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
             continue;
         }
 
-        //Apply the Lerp value
+        //Apply the Lerp value.
         if (start_keyframe->f_position && end_keyframe->f_position){
             vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
             if (this_object_animation->target){
