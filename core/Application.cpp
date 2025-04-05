@@ -465,12 +465,26 @@ void Application::RenderGenericObjectUI(){
 
         if (ImGui::CollapsingHeader("Position")){
             vec3 delta = {0,0,0};
-            ImGui::DragFloat3("Move Position", (float*)&delta, 0.01f, -1.0f, 1.0f);
-            object->MoveBy(delta);
+            if (ImGui::DragFloat3("Move Position", (float*)&delta, 0.01f, -1.0f, 1.0f)){
+                object->MoveBy(delta);
+            }
             ImGui::BeginDisabled();
             vec3 pos = object->GetPosition();
             ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
             ImGui::EndDisabled();
+
+            float forward = 0.0f;
+            if (ImGui::DragFloat("Move Forward/Backward", (float*)&forward, 0.01f, -1.0f, 1.0f)){
+                object->MoveForwardBy(forward);
+            }
+            float left = 0.0f;
+            if (ImGui::DragFloat("Move Left/Right", (float*)&left, 0.01f, -1.0f, 1.0f)){
+                object->MoveSidewaysBy(left);
+            }
+            float up = 0.0f;
+            if (ImGui::DragFloat("Move Up/Down", (float*)&up, 0.01f, -1.0f, 1.0f)){
+                object->MoveUpBy(up);
+            }
         }
         if (ImGui::CollapsingHeader("Rotation")){
             static int option = 0;

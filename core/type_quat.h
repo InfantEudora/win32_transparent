@@ -32,6 +32,7 @@ struct quat{
     fmat4   tofmat4() const;
 
     quat    operator-() const;                 // unary operator (negate)
+    quat    operator-(const quat& rhs) const;  // subtraction
     quat    operator+(const quat& rhs) const;  // addition
     quat    operator*(float a) const;          // scalar multiplication
     vec3    operator*(const vec3& rhs) const;  // rotate a vector
@@ -100,6 +101,10 @@ inline quat& quat::normalize(){
 
 inline quat quat::operator-() const{
     return quat(-x, -y, -z,-w);
+}
+
+inline quat quat::operator-(const quat& rhs) const{
+    return quat(x - rhs.x, y - rhs.y, z - rhs.z, w - rhs.w);
 }
 
 inline quat quat::operator+(const quat& rhs) const{

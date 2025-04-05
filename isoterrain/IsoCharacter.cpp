@@ -47,7 +47,6 @@ void IsoCharacter::UpdatePhysicsState(){
         if (manual_animation_time > 0){
             physics_delta = manual_animation_time;
             manual_animation_time = 0;
-
         }
     }
 
@@ -59,24 +58,41 @@ void IsoCharacter::UpdatePhysicsState(){
             debug->Fatal("Could not find hip bone.\n");
         }
         vec3 hippos_start = hip_bone->GetPosition();
+        vec3 hip_forward_start = hip_bone->GetForward();
+
+
         previous_animation->Lerp(current_animation,previous_animation_time,current_animation_time,transition_time / transition_time_max);
         vec3 hippos_end = hip_bone->GetPosition();
+
         //How much has the hip moved?
         vec3 d = hippos_start - hippos_end;
         debug->Info("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
-
-
-
         d.y = 0;
-        MoveBy(d);
+        MoveForwardBy(-d.z);
 
+        vec3 hip_forward_end = hip_bone->GetForward();
+
+        //Flatten the forward in the XZ plane
+        hip_forward_start.y = 0;
+        hip_forward_start.normalize();
+        hip_forward_end.y = 0;
+        hip_forward_end.normalize();
+        d = hip_forward_end - hip_forward_start;
+
+        float angle_start = atan2(hip_forward_start.z, hip_forward_start.x);
+        float angle_end = atan2(hip_forward_end.z, hip_forward_end.x);
+        float delta = angle_end - angle_start;
+
+        debug->Info("Hips Forward rotated by %.2f\n",todegrees(delta));
+        quat q = quat(vec3(0,1,0),delta);
+        RotateBy(q);
     }else if (current_animation){
-        current_animation_time += physics_delta;
+
         if (f_switch_now || (current_animation_time >= current_animation->duration)){
             TransitionAnimation();
         }
+        current_animation_time += physics_delta;
         current_animation->ApplyInterval(current_animation_time);
-
     }else{
         //We should find idle.
         SetNextAnimation("Idle");
@@ -176,7 +192,7 @@ void IsoCharacter::TransitionAnimation(){
     }else{
         //This replays it, so we insta correct for hip position
         current_animation_time = 0;
-        MoveBy(delta);
+        MoveForwardBy(-delta.z);
     }
 
 }
