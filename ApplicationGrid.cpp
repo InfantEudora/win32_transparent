@@ -262,6 +262,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
         std::vector<std::string>looping_animations;
         looping_animations.push_back("Idle");
+        looping_animations.push_back("IdleBored");
         looping_animations.push_back("Walking");
         looping_animations.push_back("CatwalkForward");
         std::vector<std::string>non_looping_animations;
@@ -285,6 +286,8 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
             }
         }
     }
+
+    app->character->SetNextAnimation("IdleBored");
 
     // sequence with default values
     app->mySequence.mFrameMin = -100;
@@ -404,7 +407,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
 void ApplicationGrid::Run(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(1920,1080,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1920,960,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -1112,17 +1115,25 @@ void ApplicationGrid::RenderAnimationUI(){
 
     if (ImGui::CollapsingHeader("Auto Animation")){
         if (character->current_animation){
-            ImGui::Text("Current Animation: %s @ %.2f / %.2f",character->current_animation->name.c_str(),character->current_animation_time,character->current_animation->duration);
+            ImGui::Text("Current Animation: %s @ %.2f / %.2f",character->current_animation->name.c_str(),character->current_animation->time_index,character->current_animation->duration);
         }
         if (character->next_animation){
-            ImGui::Text("Next Animation   : %s @ 0 / %.2f",character->next_animation->name.c_str(),character->next_animation->duration);
+            ImGui::Text("Next Animation   : %s @ %.2f / %.2f",character->next_animation->name.c_str(),character->next_animation->time_index,character->next_animation->duration);
         }else{
             ImGui::Text("Next Animation   : NULL");
         }
 
-        if (ImGui::Checkbox("Enable Manual Animation Time",&character->f_manual_animation_time)){
-
+        if (selected_animation){
+            ImGui::Text("Selected Animation   : %s",selected_animation->name.c_str());
+            if (ImGui::Button("Set as Next")){
+                character->SetNextAnimation(selected_animation);
+            }
+            if (ImGui::Button("Proceed to Next")){
+                character->ProceedToNextAnimation();
+            }
         }
+
+
 
         if (ImGui::DragFloat("Idle Time Max", (float*)&character->idle_time_max, 0.01f, 0.0f, 10.0f)){
 
@@ -1130,15 +1141,8 @@ void ApplicationGrid::RenderAnimationUI(){
         if (ImGui::DragFloat("Transition Time Max", (float*)&character->transition_time_max, 0.01f, 0.0f, 10.0f)){
 
         }
+        if (ImGui::DragFloat("Animation Time Delta", (float*)&character->animation_time_delta, 0.005f, -1.0f, 1.0f)){
 
-        if (character->f_manual_animation_time){
-            if (ImGui::DragFloat("Manual Animation Time", (float*)&manual_time, 0.02f, -0.5f, 0.5f)){
-
-            }
-
-            if (ImGui::Button("Forward")){
-                character->manual_animation_time = manual_time;
-            }
         }
     }
 

@@ -1,17 +1,10 @@
 #ifndef _OBJECT_ANIMATION_H_
 #define _OBJECT_ANIMATION_H_
 #include "Object.h"
-class AnimationSequence;
+
 class Animation;
 class ObjectAnimation;
 class ObjectAnimationKeyFrame;
-
-
-class AnimationSequence{
-    public:
-    AnimationSequence();
-    //Defines what animations may follow other ones.
-};
 
 class Animation{
     public:
@@ -21,7 +14,8 @@ class Animation{
     //A list of ObjectAnimations that this animation will animate.
     std::vector<ObjectAnimation*>object_animations;
 
-    float duration = 0.0f;  //Value of last keyframe.
+    float duration = 0.0f;      // Value of last keyframe.
+    float time_index = 0.0f;    // When playing
     bool looped = true;
 
     //Apply the animation at supplied interval
@@ -36,7 +30,6 @@ class Animation{
     //The intermediate state is applied as if called with ApplyInterval
     void Lerp(Animation* target,float this_interval, float target_interval, float factor);
 };
-
 
 class ObjectAnimation{
     public:
@@ -59,7 +52,6 @@ class ObjectAnimation{
     ObjectAnimationKeyFrame* GetClosestKeyframe(float time);
     void AddKeyframe(ObjectAnimationKeyFrame* keyframe);
 };
-
 
 /*
     Animation data from a GLTF file contains time delta's at which certain Nodes(Objects) should be in what orientation, size, position.

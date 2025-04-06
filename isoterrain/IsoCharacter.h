@@ -12,9 +12,13 @@
      The animation can be done in place, but it makes more sence to get the animation with position changes.
 
      When lerping to a different animation, that may be in place we'd need to move the root, or hip from local transform to parent.
-
-
 */
+
+#define ANIMATION_STATE_PAUSED      0
+#define ANIMATION_STATE_LOOPING     1
+#define ANIMATION_STATE_TRANSITION  2
+
+
 class IsoCharacter;
 
 class IsoCharacter : public virtual Skeleton{
@@ -31,28 +35,32 @@ class IsoCharacter : public virtual Skeleton{
     Animation* previous_animation = NULL;
     Animation* current_animation = NULL;
     Animation* next_animation = NULL;
-    float previous_animation_time = 0.0f;
-    float current_animation_time = 0.0f;
 
     float transition_time = 0.0f;
     float transition_time_max = 0.25f;
 
+    int state = ANIMATION_STATE_LOOPING;
+    vec3 hippos_start = {};
+
+
+    void ApplyAnimation(float delta);
+
+
     float idle_time = 0.0f;
     float idle_time_max = 3.0f;
-
     bool f_animation_override = false;
-    bool f_manual_animation_time = false;
-    float manual_animation_time = 0.02f;
+    float animation_time_delta = 0.02f;
     bool f_switch_now = false;
 
     void AddAnimation(Animation* animation);
-    void SetAnimation(Animation* animation);
     Animation* FindAnimation(const std::string& name); //Finds it by name
-
-    void CheckSwitchAnimation(); //Whenever the current one is finished
-    void SwitchAnimationNow(); //Now
+    void ProceedToNextAnimation();
+    void SetNextAnimation(Animation* animation);
     void SetNextAnimation(const std::string& name); //Set next one to wait until this one is completed.
-    void TransitionAnimation();
+
+    void SetAnimation(Animation* animation);
+    void CheckSwitchAnimation(); //Whenever the current one is finished
+
 
 
     //There also needs to be a list, or a tree linked list thing with all allowed actions from a current one.

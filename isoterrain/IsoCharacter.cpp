@@ -4,14 +4,6 @@
 static Debugger* debug = new Debugger("IsoCharacter",DEBUG_INFO);
 
 IsoCharacter::IsoCharacter():Object(){
-    // Setup allowed animation transitions:
-    //AnimationSequence sequence;
-
-    //sequence.start = "Idle";
-    //sequence.Add("Sitting","Standup");
-    //sequence.Add("Sitting","LayDown", "Situp");
-    //sequence.Add("Walking");
-
     transition_time_max = 0.2;
 }
 
@@ -26,14 +18,121 @@ void IsoCharacter::AddAnimation(Animation* animation){
     }
 }
 
-void IsoCharacter::SetAnimation(Animation* animation){
-    current_animation = animation;
-    if (!current_animation){
-        return;
-    }
-    current_animation_time = 0.0f;
+
+void IsoCharacter::SetNextAnimation(const std::string& name){
+    SetNextAnimation(FindAnimation(name));
 }
 
+void IsoCharacter::UpdatePhysicsState(){
+    if (f_animation_override){
+        Object::UpdatePhysicsState();
+        return;
+    }
+
+    ApplyAnimation(animation_time_delta);
+
+    Object::UpdatePhysicsState();
+}
+
+void IsoCharacter::SetNextAnimation(Animation* animation){
+    if (!animation){
+        return;
+    }
+    //If this is a new one, we reset it to 0. Otherwise, leave it.
+    if (next_animation != animation){
+        next_animation = animation;
+        next_animation->time_index = 0;
+    }
+}
+
+void IsoCharacter::ApplyAnimation(float time_delta){
+    if (!current_animation){
+        current_animation = next_animation;
+        next_animation = NULL;
+    }
+    if (!current_animation){
+        debug->Warn("AnimationSampler: No current animation to play.\n");
+        return;
+    }
+
+    Bone* hip_bone = FindBone("Hips");
+    if (!hip_bone){
+        debug->Fatal("Could not find hip bone.\n");
+    }
+
+    if (state == ANIMATION_STATE_LOOPING){
+        bool update_hippos = false;
+
+
+        //Loop the same animation
+        current_animation->time_index += time_delta;
+        if (current_animation->time_index > current_animation->duration){
+            current_animation->time_index -= current_animation->duration;
+            //We need to correct the body postion and orientation from what is currently displayed,
+            //to what will be displayed.
+            update_hippos = true;
+            hippos_start = hip_bone->GetPosition();
+        }
+        current_animation->ApplyInterval(current_animation->time_index);
+
+        if (update_hippos){
+            vec3 hippos_end = hip_bone->GetPosition();
+            //How much has the hip moved?
+            vec3 d = hippos_start - hippos_end;
+            debug->Info("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
+            d.y = 0;
+            MoveForwardBy(-d.z);
+        }
+    }else if (state == ANIMATION_STATE_TRANSITION){
+        //If there is no next animation, we can't proceed.
+        if (!next_animation){
+            debug->Warn("AnimationSampler: Transition to next = NULL\n");
+            state = ANIMATION_STATE_LOOPING;
+            return;
+        }
+        if (next_animation == current_animation){
+            debug->Warn("AnimationSampler: Next is identical to current\n");
+            state = ANIMATION_STATE_LOOPING;
+            return;
+        }
+
+        //We need to play the current and the next animation
+        //Loop the same animation
+        current_animation->time_index += time_delta;
+        if (current_animation->time_index > current_animation->duration){
+            current_animation->time_index -= current_animation->duration;
+        }
+
+        next_animation->time_index += time_delta;
+        if (next_animation->time_index > next_animation->duration){
+            next_animation->time_index -= next_animation->duration;
+        }
+
+        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,transition_time / transition_time_max);
+
+        transition_time += time_delta;
+        if (transition_time > transition_time_max){
+            transition_time = transition_time;
+            current_animation = next_animation;
+            state = ANIMATION_STATE_LOOPING;
+        }
+    }
+}
+
+void IsoCharacter::ProceedToNextAnimation(){
+    if (next_animation == current_animation){
+        //No need.
+        return;
+    }
+    if (state != ANIMATION_STATE_TRANSITION){
+        state = ANIMATION_STATE_TRANSITION;
+        transition_time = 0;
+    }
+}
+
+
+
+/*
 void IsoCharacter::UpdatePhysicsState(){
     if (f_animation_override){
         Object::UpdatePhysicsState();
@@ -113,7 +212,7 @@ void IsoCharacter::UpdatePhysicsState(){
     CheckSwitchAnimation();
 
     Object::UpdatePhysicsState();
-}
+}*/
 
 Animation* IsoCharacter::FindAnimation(const std::string& name){
     for (Animation* animation:animations){
@@ -124,6 +223,7 @@ Animation* IsoCharacter::FindAnimation(const std::string& name){
     return NULL;
 }
 
+/*
 void IsoCharacter::SwitchAnimationNow(){
     if (next_animation != current_animation){
         f_switch_now = true;
@@ -152,14 +252,12 @@ void IsoCharacter::CheckSwitchAnimation(){
         }
         f_switch_now = false;
     }
-}
+}*/
 
-void IsoCharacter::SetNextAnimation(const std::string& name){
-    next_animation = FindAnimation(name);
-}
 
+
+/*
 void IsoCharacter::TransitionAnimation(){
-
     //We need to know how far the hip has moved between the first and last frame.
     ObjectAnimationKeyFrame* keyframe_start;
     ObjectAnimationKeyFrame* keyframe_end;
@@ -194,36 +292,32 @@ void IsoCharacter::TransitionAnimation(){
         current_animation_time = 0;
         MoveForwardBy(-delta.z);
     }
-
 }
+*/
 
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::MoveForward(){
-    if (current_animation){
-        debug->Info("MoveForward: Current animation %s : %.2f\n",current_animation->name.c_str(),current_animation_time);
-    }
     //Load the move forward animation
     SetNextAnimation("CatwalkForward");
-    SwitchAnimationNow();
+    ProceedToNextAnimation();
     idle_time = 0;
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::MoveBackward(){
+    SetNextAnimation("Idle");
+    ProceedToNextAnimation();
     idle_time = 0;
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::TurnRight(){
     idle_time = 0;
-    if (current_animation){
-        debug->Info("TurnRight: Current animation %s : %.2f\n",current_animation->name.c_str(),current_animation_time);
-    }
     SetNextAnimation("TurnRight");
-    SwitchAnimationNow();
-
+    ProceedToNextAnimation();
 }
 
 void IsoCharacter::TurnLeft(){
     idle_time = 0;
+    SetNextAnimation("TurnLeft");
 }
