@@ -1197,7 +1197,7 @@ void ApplicationGrid::RenderAnimationUI(){
             if (animation_lerp_start && animation_lerp_end){
                 ImGui::Text("Lerp between animation %s at interval %.2f to animation %s at interval %.2f",animation_lerp_start->name.c_str(),interval_lerp_start,animation_lerp_end->name.c_str(),interval_lerp_end);
                 if (ImGui::DragFloat("Lerp", (float*)&lerp, 0.005f, 0.0f, 1.0f)){
-                    animation_lerp_start->Lerp(animation_lerp_end,interval_lerp_start,interval_lerp_end,lerp);
+                    animation_lerp_start->Lerp(animation_lerp_end,interval_lerp_start,interval_lerp_end,lerp,vec3());
                 }
             }
         }

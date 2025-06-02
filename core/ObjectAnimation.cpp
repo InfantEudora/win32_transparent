@@ -66,7 +66,7 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
     }
 }
 
-void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor){
+void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3 initial_hip_pos){
     if (!target){
         return;
     }
@@ -92,11 +92,27 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
             continue;
         }
 
+        //If we are lerping hips towards something more off zero, we do that.
+
         //Apply the Lerp value.
         if (start_keyframe->f_position && end_keyframe->f_position){
-            vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
-            if (this_object_animation->target){
-                this_object_animation->target->SetPosition(pos);
+            if (this_object_animation->target_name.compare("Hips") == 0){
+                if (end_keyframe->position.length() > start_keyframe->position.length()){
+                    vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
+                    if (this_object_animation->target){
+                        this_object_animation->target->SetPosition(pos);
+                    }
+                }else{
+                    if (this_object_animation->target){
+                        this_object_animation->target->SetPosition(start_keyframe->position);
+                    }
+                }
+
+            }else{
+                vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
+                if (this_object_animation->target){
+                    this_object_animation->target->SetPosition(pos);
+                }
             }
         }
         if (start_keyframe->f_rotation && end_keyframe->f_rotation){

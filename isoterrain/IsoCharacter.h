@@ -40,7 +40,9 @@ class IsoCharacter : public virtual Skeleton{
     float transition_time_max = 0.25f;
 
     int state = ANIMATION_STATE_LOOPING;
+    bool update_hippos = false;
     vec3 hippos_start = {};
+    vec3 hipfwd_start = {};
 
 
     void ApplyAnimation(float delta);

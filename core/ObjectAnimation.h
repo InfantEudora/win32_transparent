@@ -28,7 +28,7 @@ class Animation{
 
     //Lerp this animation at specified interval towards target animation at target interval.
     //The intermediate state is applied as if called with ApplyInterval
-    void Lerp(Animation* target,float this_interval, float target_interval, float factor);
+    void Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3 inital_hip_pos);
 };
 
 class ObjectAnimation{

@@ -61,7 +61,6 @@ void IsoCharacter::ApplyAnimation(float time_delta){
     }
 
     if (state == ANIMATION_STATE_LOOPING){
-        bool update_hippos = false;
 
 
         //Loop the same animation
@@ -80,8 +79,9 @@ void IsoCharacter::ApplyAnimation(float time_delta){
             //How much has the hip moved?
             vec3 d = hippos_start - hippos_end;
             debug->Info("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
-            d.y = 0;
+            //d.y = 0;
             MoveForwardBy(-d.z);
+            update_hippos = false;
         }
     }else if (state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
@@ -101,6 +101,8 @@ void IsoCharacter::ApplyAnimation(float time_delta){
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
             current_animation->time_index -= current_animation->duration;
+            update_hippos = true;
+            hippos_start = hip_bone->GetPosition();
         }
 
         next_animation->time_index += time_delta;
@@ -108,13 +110,25 @@ void IsoCharacter::ApplyAnimation(float time_delta){
             next_animation->time_index -= next_animation->duration;
         }
 
-        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,transition_time / transition_time_max);
+        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,transition_time / transition_time_max, vec3());
+
+        if (update_hippos){
+            vec3 hippos_end = hip_bone->GetPosition();
+            //How much has the hip moved?
+            vec3 d = hippos_start - hippos_end;
+            debug->Info("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
+            //d.y = 0;
+            MoveForwardBy(-d.z);
+            update_hippos = false;
+        }
 
         transition_time += time_delta;
         if (transition_time > transition_time_max){
-            transition_time = transition_time;
+            transition_time = transition_time_max;
             current_animation = next_animation;
             state = ANIMATION_STATE_LOOPING;
+            update_hippos = true;
+            hippos_start = hip_bone->GetPosition();
         }
     }
 }
@@ -305,9 +319,12 @@ void IsoCharacter::MoveForward(){
 
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::MoveBackward(){
-    SetNextAnimation("Idle");
-    ProceedToNextAnimation();
+    if (state == ANIMATION_STATE_LOOPING){
+        SetNextAnimation("Idle");
+        ProceedToNextAnimation();
+    }
     idle_time = 0;
+
 }
 
 //Going to play a move forward animation based on whatever animation its in.
