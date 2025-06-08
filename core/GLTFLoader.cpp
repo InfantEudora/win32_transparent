@@ -2,7 +2,7 @@
 #include "File.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("GLTFLoader", DEBUG_INFO);
+static Debugger *debug = new Debugger("GLTFLoader", DEBUG_TRACE);
 
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
@@ -191,6 +191,22 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     }
 
     debug->Trace("More info!!!\n");
+}
+
+void GLTFLoader::ListNodes(){
+    debug->Info("Model has %i nodes\n",model.nodes.size());
+
+    for (int node_index=0;node_index<model.nodes.size();node_index++){
+        debug->Info("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
+        debug->Info("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
+        debug->Info("Model.nodes[%i].children : %i\n",node_index, model.nodes[node_index].children.size());
+
+        for (int i=0;i<model.nodes[node_index].children.size();i++){
+            int child_index = model.nodes[node_index].children.at(i);
+            tinygltf::Node& child = model.nodes.at(child_index);
+            debug->Info(" - Child[%i] -> model.nodes[%i].name : %s\n",i,child_index, child.name.c_str());
+        }
+    }
 }
 
 //Returns a pointer to node if found, or NULL

@@ -320,6 +320,20 @@ void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicke
 void Application::RenderGenericObjectUI(){
     //For generic Objects and parameters
     ImGui::Begin("Generic Object UI");
+    if (ImGui::CollapsingHeader("Application")){
+        if (main_scene){
+            ImGui::Text("Main Scene             : %s",main_scene->name.c_str());
+        }else{
+            ImGui::Text("Main Scene             : NULL");
+        }
+        ImGui::Separator();
+        ImGui::Text("Scenes");
+        for (Scene* scene:scenes){
+            ImGui::Text("Scene             : %s",scene->name.c_str());
+        }
+
+    }
+
     if (ImGui::CollapsingHeader("Scene")){
         Scene* scene = main_scene;
         ImGui::Text("Main Scene             : %s",scene->name.c_str());
@@ -351,6 +365,11 @@ void Application::RenderGenericObjectUI(){
     //So the same camera panel has a different ImGUI ID.
     int ui_camid = 0;
     UpdateUICameraControls(main_scene->camera ,ui_camid);
+
+    ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
+
+    vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
+    ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
 
     Object* object = hovered_object;
     if (!object){
@@ -606,6 +625,10 @@ void Application::RenderGenericObjectUI(){
         if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
             renderer->SetNumAASamples(num_samples);
         }
+
+        if (ImGui::SliderFloat("Alpha Clip     : ",&renderer->alpha_clip,0.0f,1.0f)){
+
+        }
     }
 
     if (ImGui::CollapsingHeader("Window")){
@@ -699,4 +722,15 @@ void Application::CheckObjectSelection(){
             //clicked_empty = false;
         }
     }
+}
+
+Scene* Application::CreateNewScene(const std::string& name){
+    Scene* scene = new Scene();
+    scene->name = name;
+    scene->renderer = renderer;
+    scene->inputcontroller = main_window->inputcontroller;
+    scene->shader = default_shader;
+
+    scenes.push_back(scene);
+    return scene;
 }

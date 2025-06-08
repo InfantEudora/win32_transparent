@@ -43,6 +43,9 @@ public:
     Bone*               GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
     Animation*          LoadAnimation(const char* animation_name);
 
+    //Info
+    void                ListNodes();
+
     //Loaded node names from file
     std::vector<std::string>node_names;
 private:

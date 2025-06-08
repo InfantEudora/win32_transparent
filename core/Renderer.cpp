@@ -484,6 +484,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         shader->Setvec3("eye_position",p);
         shader->Setmat4("mat_worldcam",camera->mat_cam);
         shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+        shader->Setfloat("alpha_clip",alpha_clip);
     }
 
     if (input){
@@ -837,7 +838,7 @@ void Renderer::UploadLights(){
         DirectionalLight* directional_light = dynamic_cast<DirectionalLight*>(l);
         if (directional_light){
             light.direction = directional_light->GetForward();
-            light.position = directional_light->GetPosition();
+            light.position = directional_light->GetWorldPosition();
             light.color = directional_light->color;
             light.brightness = directional_light->brightness;
             glsl_lights.push_back(light);
@@ -846,7 +847,7 @@ void Renderer::UploadLights(){
         PointLight* point_light = dynamic_cast<PointLight*>(l);
         if (point_light){
             light.direction = vec3(0,0,0);
-            light.position = point_light->GetPosition();
+            light.position = point_light->GetWorldPosition();
             light.color = point_light->color;
             light.brightness = point_light->brightness;
             glsl_lights.push_back(light);

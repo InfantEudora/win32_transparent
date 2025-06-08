@@ -4,8 +4,15 @@ CC = g++
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
+#Building
+##ImGui can be compiled from source into a static library first. Again, to save on compile time.
+##TODO: Add more stuff that barely changes in to a static librar.
+
 #This is a two stage process:
 ##First make with DUMP then with COMPILE
+##All loaded assets will get dumped in a single C file.
+##There can be no space after a 0 or 1 in a makefile... for some reason.
+##Then, recompile with the comile flag on... and all files will get loaded from the executable!
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
 COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
 
@@ -55,8 +62,8 @@ SRCS += ApplicationGrid.cpp
 IPATHS += -Iisoterrain/
 DIR_SRC += ./isoterrain
 
-SRCS += ImCurveEdit.cpp
-SRCS += ImSequencer.cpp
+#SRCS += ImCurveEdit.cpp
+#SRCS += ImSequencer.cpp
 
 #ApplicationTileset
 #SRCS += ApplicationTileset.cpp
@@ -94,8 +101,6 @@ imgui: $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
 	mkdir -p libs
 	@echo "Linking IMGui into static Library imgui.a"
 	ar q libs/libimgui.a $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
-
-
 
 all: default
 

@@ -140,6 +140,7 @@ class Renderer{
 
     //Settings
     int aa_samples = 1;
+    float alpha_clip = 1.0f;         // At what value pixels with alpha will get discarded in fragment shader
     int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering

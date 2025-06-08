@@ -39,7 +39,8 @@ public:
     Window* main_window = NULL;
     Renderer* renderer = NULL;
     Shader* default_shader = NULL;
-    Scene* main_scene = NULL;
+    std::vector<Scene*> scenes;         // List of different scenes this application owns.
+    Scene* main_scene = NULL;           // Currently active scene.
     AssetManager* assetmanager = NULL;
 
     PerfTimer* tmr_physics = NULL;
@@ -55,6 +56,8 @@ public:
 
     Debugger *debug_physics = NULL;
     Debugger *debug_frame = NULL;
+
+    Scene* CreateNewScene(const std::string& name);    // Creates a new scene, with some defaults.
 
 protected:
     static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);

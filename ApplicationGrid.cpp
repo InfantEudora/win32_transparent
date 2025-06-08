@@ -4,29 +4,140 @@
 #include "Light.h"
 #include "CubeMap.h"
 
-#define INPUT_H INPUT_LAST+1
-#define INPUT_E INPUT_LAST+2
+#define INPUT_H     INPUT_LAST+1
+#define INPUT_E     INPUT_LAST+2
+#define INPUT_FOCUS INPUT_LAST+3
 
 static Debugger *debug = new Debugger("ApplicationGrid", DEBUG_ALL);
-
-const char* MySequence::SequencerItemTypeNames[5] = { "Camera","Music", "ScreenEffect", "FadeIn", "Animation" };
 
 ApplicationGrid::ApplicationGrid():Application(){
     debug->Info("Created new application.\n");
 };
 
+Scene* ApplicationGrid::CreateEmptyScene(){
+    Scene* scene = CreateNewScene("Empty Test Scene");
+
+    //Setup light and camera
+    scene->camera = new Camera();
+    scene->camera->name = "Main Camera";
+    scene->camera->SetPosition(vec3(5,5,5));
+    scene->camera->SetLookAt(vec3());
+    scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    scene->AddObject(scene->camera);
+
+    //Add input to input controller
+    scene->inputcontroller->AddKeyMap('H',INPUT_H);
+    scene->inputcontroller->AddKeyMap('E',INPUT_E);
+
+    //Make a sun
+    DirectionalLight* sun = new DirectionalLight();
+    sun->name = "Directional Light (Sun)";
+    sun->SetPosition(vec3(-10,10,10));
+    sun->color = vec3(1,0.8,0.6);
+    sun->brightness = 5.0;
+    sun->SetLookAt(vec3());
+    scene->AddObject(sun);
+
+    return scene;
+}
+
+Scene* ApplicationGrid::CreateHandTestScene(){
+    Scene* scene = CreateNewScene("Hand Animation Test Scene");
+
+    //Setup light and camera
+    scene->camera = new Camera();
+    scene->camera->name = "Main Camera";
+    scene->camera->SetPosition(vec3(5,5,5));
+    scene->camera->SetLookAt(vec3());
+    scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    scene->AddObject(scene->camera);
+
+    //Add input to input controller
+    scene->inputcontroller->AddKeyMap('H',INPUT_H);
+    scene->inputcontroller->AddKeyMap('E',INPUT_E);
+    scene->inputcontroller->AddKeyMap(VK_DECIMAL,INPUT_FOCUS);
+
+    //Make a sun
+    DirectionalLight* sun = new DirectionalLight();
+    sun->name = "Directional Light (Sun)";
+    sun->SetPosition(vec3(-10,10,10));
+    sun->color = vec3(1,0.8,0.6);
+    sun->brightness = 5.0;
+    sun->SetLookAt(vec3());
+    scene->AddObject(sun);
+
+    //Add a point light
+    PointLight* lamp = new PointLight();
+    lamp->name = "Point Light Red";
+    lamp->SetPosition(vec3(0,1,00));
+    lamp->color = vec3(1.0,0.1,0.0);
+    lamp->brightness = 2.0;
+    scene->AddObject(lamp);
+
+    std::vector<Material>loaded_materials;
+
+    //Load from a GLTF file and build assets.
+    gltfloader.LoadGLTFFile("data/hand.glb");
+
+    character = new IsoCharacter();
+    Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
+    gltfloader.GetSkeleton("HandArmature",assetmanager,skeleton);
+    if (skeleton){
+        //Change name
+        skeleton->name = "character_armature";
+        character->root_bone_name = "Palm";
+
+        Object* bones = skeleton->GetChild(0);
+        if (bones){
+            bones->SetVisibility(false);
+        }
+
+        loaded_materials.clear();
+        SkinnedMesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("Hand",&loaded_materials);
+
+        scene->renderer->AddMaterials(loaded_materials);
+        skeleton->SetSkinnedMesh(skinned_mesh);
+        skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
+        scene->AddObject(character);
+
+        //gltfloader.LoadGLTFFile("data/animations.glb");
+
+        std::vector<std::string>looping_animations;
+        looping_animations.push_back("IdleStanding");
+        looping_animations.push_back("CatwalkForward");
+
+        for (std::string& name:looping_animations){
+            selected_animation = gltfloader.LoadAnimation(name.c_str());
+            if (selected_animation){
+                character->AddAnimation(selected_animation);
+                selected_animation->looped = true;
+            }
+        }
+    }
+
+    character->SetNextAnimation("IdleStanding");
+
+    //The scenery to make it look pretty
+    Mesh* gltfmesh = gltfloader.GetMeshFromNode("Scenery",&loaded_materials);
+    if (gltfmesh){
+        Object* gltf_object = new Object();
+        gltf_object->name = "Scenery";
+        gltf_object->SetMesh(gltfmesh);
+        scene->renderer->AddMaterials(loaded_materials);
+        gltf_object->TakeMaterialNames(loaded_materials);
+        gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+        scene->AddObject(gltf_object);
+        assetmanager->AddNewAsset("Scenery",gltf_object);
+    }
+
+    return scene;
+}
+
 Scene* ApplicationGrid::CreateTestScene(){
-    test_scene = new Scene();
-    Scene* scene = test_scene;
-    scene->name = "Grid Test Scene";
+    Scene* scene = CreateNewScene("Grid Test Scene");
 
     //Create a renderer for this scene...
-    scene->renderer = new Renderer(main_window->width,main_window->height);
-    //scene->renderer->Init();
-
-    //scene->renderer = renderer;
-    scene->inputcontroller = main_window->inputcontroller;
-    scene->shader = default_shader;
+    //scene->renderer = new Renderer(main_window->width,main_window->height);
 
     scene->camera = new Camera();
     scene->camera->name = "TestScene Camera";
@@ -115,7 +226,238 @@ Scene* ApplicationGrid::CreateTestScene(){
     mat.diff_texture = tex;
     int matindex = scene->renderer->AddMaterial(mat);
 
-    return test_scene;
+    /* //We attempt to load a cubemap for the skybox.
+    CubeMap* skybox = new CubeMap();
+    //skybox->LoadFromFile("data/textures/skybox/right.jpg",0);
+    //skybox->LoadFromFile("data/textures/skybox/left.jpg",1);
+    //skybox->LoadFromFile("data/textures/skybox/top.jpg",2);
+    //skybox->LoadFromFile("data/textures/skybox/bottom.jpg",3);
+    //skybox->LoadFromFile("data/textures/skybox/front.jpg",4);
+    //skybox->LoadFromFile("data/textures/skybox/back.jpg",5);
+    skybox->LoadFromFile("data/textures/skybox/px.jpg",0);
+    skybox->LoadFromFile("data/textures/skybox/nx.jpg",1);
+    skybox->LoadFromFile("data/textures/skybox/py.jpg",2);
+    skybox->LoadFromFile("data/textures/skybox/ny.jpg",3);
+    skybox->LoadFromFile("data/textures/skybox/pz.jpg",4);
+    skybox->LoadFromFile("data/textures/skybox/nz.jpg",5);
+    scene->renderer->UploadCubeMap(skybox);
+
+    scene->renderer->skybox = skybox;
+    scene->renderer->skybox_shader = new Shader("shaders/skybox.vert","shaders/skybox.frag");
+    scene->renderer->skybox_mesh = OBJLoader::ParseOBJFile("data/unit_cube.obj");
+    */
+
+    //And update the map for terrain types
+    IsoCell::terrain_material_map[CELL_TERRAIN_NONE] = -1;
+    IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = renderer->FindMaterialIndex("grass");
+    IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = renderer->FindMaterialIndex("stone_surface_001");
+
+    return scene;
+}
+
+Scene* ApplicationGrid::CreateBoneTestScene(){
+    Scene* scene = CreateNewScene("Bone Test Scene");
+
+    //Setup light and camera
+    scene->camera = new Camera();
+    scene->camera->name = "Main Camera";
+    scene->camera->SetPosition(vec3(5,5,5));
+    scene->camera->SetLookAt(vec3());
+    scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    scene->AddObject(scene->camera);
+
+    //Add input to input controller
+    scene->inputcontroller->AddKeyMap('H',INPUT_H);
+    scene->inputcontroller->AddKeyMap('E',INPUT_E);
+
+    //Make a sun
+    DirectionalLight* sun = new DirectionalLight();
+    sun->name = "Directional Light (Sun)";
+    sun->SetPosition(vec3(-10,10,10));
+    sun->color = vec3(1,0.8,0.6);
+    sun->brightness = 5.0;
+    sun->SetLookAt(vec3());
+    scene->AddObject(sun);
+
+    //Create a renderer for this scene...
+    //scene->renderer = new Renderer(main_window->width,main_window->height);
+    //scene->renderer->Init();
+
+    std::vector<Material>loaded_materials;
+
+    //Load from a GLTF file and build assets.
+    gltfloader.LoadGLTFFile("data/trees.glb");
+    for (std::string& node_name:gltfloader.node_names){
+        if (node_name.compare("bone_mesh") != 0){
+            continue;
+        }
+        loaded_materials.clear();
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode(node_name.c_str(),&loaded_materials);
+        if (!gltfmesh){
+            continue;
+        }
+        Object* gltf_object = new Object();
+        gltf_object->name = "GLTF Object " + node_name;
+        gltf_object->SetMesh(gltfmesh);
+        scene->renderer->AddMaterials(loaded_materials);
+        gltf_object->TakeMaterialNames(loaded_materials);
+        gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+        scene->AddObject(gltf_object);
+        assetmanager->AddNewAsset(node_name.c_str(),gltf_object);
+    }
+
+    {
+        loaded_materials.clear();
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode("target_vis",&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = "target_vis";
+            gltf_object->SetMesh(gltfmesh);
+            scene->renderer->AddMaterials(loaded_materials);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+            scene->AddObject(gltf_object);
+            assetmanager->AddNewAsset("target_vis",gltf_object);
+        }
+    }
+
+    {
+        loaded_materials.clear();
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode("floor",&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = "floor";
+            gltf_object->SetMesh(gltfmesh);
+            scene->renderer->AddMaterials(loaded_materials);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+            scene->AddObject(gltf_object);
+            assetmanager->AddNewAsset("floor",gltf_object);
+        }
+    }
+
+    //We load a skeleton from the same file
+    //Need asset manager to load mesh for bone debugging
+    Material bone_mat;
+    bone_mat.name = "bone_mat";
+    bone_mat.glsl_material.color = vec4(1,1,1,1);
+    scene->renderer->AddMaterial(bone_mat);
+
+    character = new IsoCharacter();
+    Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
+    gltfloader.GetSkeleton("character_armature",assetmanager,skeleton);
+
+    if (skeleton){
+        Object* bones = skeleton->GetChild(0);
+        if (bones){
+            bones->SetVisibility(false);
+        }
+
+        loaded_materials.clear();
+        SkinnedMesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
+
+        scene->renderer->AddMaterials(loaded_materials);
+        skeleton->SetSkinnedMesh(skinned_mesh);
+        skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
+        scene->AddObject(character);
+
+        gltfloader.LoadGLTFFile("data/animations.glb");
+
+        std::vector<std::string>looping_animations;
+        looping_animations.push_back("Idle");
+        looping_animations.push_back("IdleBored");
+        looping_animations.push_back("Walking");
+        looping_animations.push_back("CatwalkForward");
+        std::vector<std::string>non_looping_animations;
+        non_looping_animations.push_back("Swoop");
+        non_looping_animations.push_back("ToHanging");
+        non_looping_animations.push_back("TurnLeft");
+        non_looping_animations.push_back("TurnRight");
+
+        for (std::string& name:looping_animations){
+            selected_animation = gltfloader.LoadAnimation(name.c_str());
+            if (selected_animation){
+                character->AddAnimation(selected_animation);
+                selected_animation->looped = true;
+            }
+        }
+        for (std::string& name:non_looping_animations){
+            selected_animation = gltfloader.LoadAnimation(name.c_str());
+            if (selected_animation){
+                character->AddAnimation(selected_animation);
+                selected_animation->looped = false;
+            }
+        }
+    }
+
+    character->SetNextAnimation("IdleBored");
+
+
+
+    //Load Elf Mesh
+    gltfloader.LoadGLTFFile("data/elf.glb");
+    {
+        loaded_materials.clear();
+        gltfloader.ListNodes();
+
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode("Elf",&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = "Elf";
+            gltf_object->SetMesh(gltfmesh);
+            scene->renderer->AddMaterials(loaded_materials);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+            scene->AddObject(gltf_object);
+            assetmanager->AddNewAsset("Elf",gltf_object);
+        }
+    }
+
+    //Load a bunch of palm trees
+    gltfloader.LoadGLTFFile("data/palmtree.glb");
+    {
+        loaded_materials.clear();
+        gltfloader.ListNodes();
+
+        for (int index = 1;index<4;index++){
+            std::string name = "Palm" + std::to_string(index);
+            Mesh* gltfmesh = gltfloader.GetMeshFromNode(name.c_str(),&loaded_materials);
+            if (gltfmesh){
+                Object* gltf_object = new Object();
+                gltf_object->name = name;
+                gltf_object->SetMesh(gltfmesh);
+                scene->renderer->AddMaterials(loaded_materials);
+                gltf_object->TakeMaterialNames(loaded_materials);
+                gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
+                scene->AddObject(gltf_object);
+                assetmanager->AddNewAsset(name.c_str(),gltf_object);
+            }
+        }
+    }
+
+    //We now generate a terrain, and load that in.
+    terrain = new IsoTerrain();
+    terrain->name = "Iso Terrain";
+    terrain->assetmanager = assetmanager;
+    terrain->CreateTerrain(5,5,2);
+    //scene->AddObject(terrain);
+
+    projection_plane.pos = {};
+    projection_plane.normal = vec3(0,1,0);
+
+    //Construct a selection tile that we will somehow turn into a transparent grid.
+    loaded_materials.clear();
+    selection_tile = new Object();
+    selection_tile->SetMesh(OBJLoader::ParseOBJFile("data/selection_tile.obj",&loaded_materials));
+    selection_tile->name = "Selection Tile";
+    selection_tile->SetPosition(vec3(0,3,0));
+    selection_tile->SetPickability(false);
+    scene->renderer->AddMaterials(loaded_materials);
+    selection_tile->PickMaterials(loaded_materials,scene->renderer->materials);
+    scene->AddObject(selection_tile);
+    selection_tile->Hide();
+
+    return scene;
 }
 
 //Function for rendering the frame to a window
@@ -144,212 +486,23 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     app->renderer->Init();
     app->renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 
+    //Renderer settings
+    app->renderer->alpha_clip = 0.5f;
+    app->renderer->f_render_skybox = false;
+
     app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
-
-    app->main_scene = new Scene();
-    app->main_scene->name = "Grid Main Scene";
-    app->main_scene->renderer = app->renderer;
-    app->main_scene->inputcontroller = app->main_window->inputcontroller;
-    app->main_scene->shader = app->default_shader;
-
-    //Either we put things in the scene, or we make a scene extension class....
-    Scene* scene = app->main_scene;
-    scene->camera = new Camera();
-    scene->camera->name = "Main Camera";
-    scene->camera->SetPosition(vec3(5,5,5));
-    scene->camera->SetLookAt(vec3());
-    scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
-    scene->AddObject(scene->camera);
-
-    //Add input to input controller
-    scene->inputcontroller->AddKeyMap('H',INPUT_H);
-    scene->inputcontroller->AddKeyMap('E',INPUT_E);
-
-    //Make a sun
-    DirectionalLight* sun = new DirectionalLight();
-    sun->name = "Directional Light (Sun)";
-    sun->SetPosition(vec3(-10,10,10));
-    sun->color = vec3(1,0.8,0.6);
-    sun->brightness = 5.0;
-    sun->SetLookAt(vec3());
-    scene->AddObject(sun);
 
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
 
-    //Currently not testing, but should be working.
-    app->test_scene = app->CreateTestScene();
-
-    std::vector<Material>loaded_materials;
-
-    //Load from a GLTF file and build assets.
-    app->gltfloader.LoadGLTFFile("data/trees.glb");
-    for (std::string& node_name:app->gltfloader.node_names){
-        if (node_name.compare("bone_mesh") != 0){
-            continue;
-        }
-        loaded_materials.clear();
-        Mesh* gltfmesh = app->gltfloader.GetMeshFromNode(node_name.c_str(),&loaded_materials);
-        if (!gltfmesh){
-            continue;
-        }
-        Object* gltf_object = new Object();
-        gltf_object->name = "GLTF Object " + node_name;
-        gltf_object->SetMesh(gltfmesh);
-        scene->renderer->AddMaterials(loaded_materials);
-        gltf_object->TakeMaterialNames(loaded_materials);
-        gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
-        scene->AddObject(gltf_object);
-        app->assetmanager->AddNewAsset(node_name.c_str(),gltf_object);
-    }
-
-    {
-        loaded_materials.clear();
-        Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("target_vis",&loaded_materials);
-        if (gltfmesh){
-            Object* gltf_object = new Object();
-            gltf_object->name = "target_vis";
-            gltf_object->SetMesh(gltfmesh);
-            scene->renderer->AddMaterials(loaded_materials);
-            gltf_object->TakeMaterialNames(loaded_materials);
-            gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
-            scene->AddObject(gltf_object);
-            app->assetmanager->AddNewAsset("target_vis",gltf_object);
-        }
-    }
-
-    {
-        loaded_materials.clear();
-        Mesh* gltfmesh = app->gltfloader.GetMeshFromNode("floor",&loaded_materials);
-        if (gltfmesh){
-            Object* gltf_object = new Object();
-            gltf_object->name = "floor";
-            gltf_object->SetMesh(gltfmesh);
-            scene->renderer->AddMaterials(loaded_materials);
-            gltf_object->TakeMaterialNames(loaded_materials);
-            gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
-            scene->AddObject(gltf_object);
-            app->assetmanager->AddNewAsset("floor",gltf_object);
-        }
-    }
-
-    //We load a skeleton from the same file
-    //Need asset manager to load mesh for bone debugging
-    Material bone_mat;
-    bone_mat.name = "bone_mat";
-    bone_mat.glsl_material.color = vec4(1,1,1,1);
-    scene->renderer->AddMaterial(bone_mat);
-
-    app->character = new IsoCharacter();
-    Skeleton* skeleton = dynamic_cast<Skeleton*>(app->character);
-    app->gltfloader.GetSkeleton("character_armature",app->assetmanager,skeleton);
-
-    if (skeleton){
-        Object* bones = skeleton->GetChild(0);
-        if (bones){
-            bones->SetVisibility(false);
-        }
-
-        loaded_materials.clear();
-        SkinnedMesh* skinned_mesh = app->gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
-
-        scene->renderer->AddMaterials(loaded_materials);
-        skeleton->SetSkinnedMesh(skinned_mesh);
-        skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
-        scene->AddObject(app->character);
-
-        app->gltfloader.LoadGLTFFile("data/animations.glb");
-
-        std::vector<std::string>looping_animations;
-        looping_animations.push_back("Idle");
-        looping_animations.push_back("IdleBored");
-        looping_animations.push_back("Walking");
-        looping_animations.push_back("CatwalkForward");
-        std::vector<std::string>non_looping_animations;
-        non_looping_animations.push_back("Swoop");
-        non_looping_animations.push_back("ToHanging");
-        non_looping_animations.push_back("TurnLeft");
-        non_looping_animations.push_back("TurnRight");
-
-        for (std::string& name:looping_animations){
-            app->selected_animation = app->gltfloader.LoadAnimation(name.c_str());
-            if (app->selected_animation){
-                app->character->AddAnimation(app->selected_animation);
-                app->selected_animation->looped = true;
-            }
-        }
-        for (std::string& name:non_looping_animations){
-            app->selected_animation = app->gltfloader.LoadAnimation(name.c_str());
-            if (app->selected_animation){
-                app->character->AddAnimation(app->selected_animation);
-                app->selected_animation->looped = false;
-            }
-        }
-    }
-
-    app->character->SetNextAnimation("IdleBored");
-
-    // sequence with default values
-    app->mySequence.mFrameMin = -100;
-    app->mySequence.mFrameMax = 1000;
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 0, 10, 30, false });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 1, 20, 30, true });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 3, 12, 60, false });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 2, 61, 90, false });
-    app->mySequence.myItems.push_back(MySequence::MySequenceItem{ 4, 90, 99, false });
-
-
-
-    //We now generate a terrain, and load that in.
-    app->terrain = new IsoTerrain();
-    app->terrain->name = "Iso Terrain";
-    app->terrain->assetmanager = app->assetmanager;
-    app->terrain->CreateTerrain(5,5,2);
-    //scene->AddObject(app->terrain);
-
-    app->projection_plane.pos = {};
-    app->projection_plane.normal = vec3(0,1,0);
-
-    //Construct a selection tile that we will somehow turn into a transparent grid.
-    loaded_materials.clear();
-    app->selection_tile = new Object();
-    app->selection_tile->SetMesh(OBJLoader::ParseOBJFile("data/selection_tile.obj",&loaded_materials));
-    app->selection_tile->name = "Selection Tile";
-    app->selection_tile->SetPosition(vec3(0,3,0));
-    app->selection_tile->SetPickability(false);
-    scene->renderer->AddMaterials(loaded_materials);
-    app->selection_tile->PickMaterials(loaded_materials,scene->renderer->materials);
-    scene->AddObject(app->selection_tile);
-    app->selection_tile->Hide();
+    //Comment in/out a test scene.
+    //app->test_scene = app->CreateEmptyScene();
+    //app->test_scene = app->CreateTestScene();
+    //app->test_scene = app->CreateBoneTestScene();
+    app->test_scene = app->CreateHandTestScene();
+    app->main_scene = app->test_scene;
 
     app->main_scene->UpdatePhysics();
-
-    //We attempt to load a cubemap for the skybox.
-    CubeMap* skybox = new CubeMap();
-    //skybox->LoadFromFile("data/textures/skybox/right.jpg",0);
-    //skybox->LoadFromFile("data/textures/skybox/left.jpg",1);
-    //skybox->LoadFromFile("data/textures/skybox/top.jpg",2);
-    //skybox->LoadFromFile("data/textures/skybox/bottom.jpg",3);
-    //skybox->LoadFromFile("data/textures/skybox/front.jpg",4);
-    //skybox->LoadFromFile("data/textures/skybox/back.jpg",5);
-    skybox->LoadFromFile("data/textures/skybox/px.jpg",0);
-    skybox->LoadFromFile("data/textures/skybox/nx.jpg",1);
-    skybox->LoadFromFile("data/textures/skybox/py.jpg",2);
-    skybox->LoadFromFile("data/textures/skybox/ny.jpg",3);
-    skybox->LoadFromFile("data/textures/skybox/pz.jpg",4);
-    skybox->LoadFromFile("data/textures/skybox/nz.jpg",5);
-    scene->renderer->UploadCubeMap(skybox);
-
-    scene->renderer->skybox = skybox;
-    scene->renderer->skybox_shader = new Shader("shaders/skybox.vert","shaders/skybox.frag");
-    scene->renderer->skybox_mesh = OBJLoader::ParseOBJFile("data/unit_cube.obj");
-
-
-
-    //And update the map for terrain types
-    IsoCell::terrain_material_map[CELL_TERRAIN_NONE] = -1;
-    IsoCell::terrain_material_map[CELL_TERRAIN_GRASS] = app->renderer->FindMaterialIndex("grass");
-    IsoCell::terrain_material_map[CELL_TERRAIN_ROCK] = app->renderer->FindMaterialIndex("stone_surface_001");
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
@@ -393,8 +546,6 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
         //When done, copies that over to prev_state.
 
         //In Renderer, that get's called
-
-
         app->main_window->ImGuiDrawFrame();
 
         //Copy to screen and finish
@@ -692,6 +843,16 @@ void ApplicationGrid::RunLogic(){
         }
     }
 
+    if (input->WasKeyReleased(INPUT_FOCUS)){
+        //We center and track the camera onto the selected object
+        if (selected_object){
+            camera_target = selected_object->GetWorldPosition();
+            vec3 up = up = vec3(0,1,0);
+            camera->SetLookAt(camera_target,&up);
+        }
+
+    }
+
     //Selection tile on a plane
     if (0 && intersect && selection_tile){
         //We snap the selection tile to a grid.
@@ -963,6 +1124,7 @@ void ApplicationGrid::RenderSkeletonUI(){
     Skeleton* skeleton = FindSkeletonInScene(main_scene,target_name);
     if (!skeleton){
         ImGui::Text("Unable to find skeleton %s\n",target_name.c_str());
+        ImGui::End();
         return;
     }
 
@@ -1033,12 +1195,24 @@ void ApplicationGrid::RenderSkeletonUI(){
 }
 
 void ApplicationGrid::UpdateUI(){
+    //RenderGridUI();
+    RenderGenericObjectUI();
+
+    if (f_show_rightclick_menu){
+        RenderRightClickMenu();
+    }
+
+    //RenderSkeletonUI();
+    RenderAnimationUI();
+}
+
+void ApplicationGrid::RenderGridUI(){
     Object* object = main_scene->camera;
 
     IsoCell* selected_cell = dynamic_cast<IsoCell*>(selected_object);
     //UI for GridCells
     ImGui::Begin("Grid UI");
-    ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
+
 
     if (ImGui::CollapsingHeader("Grid Settings")){
         ImGui::Checkbox("Place New Tiles (Left Click)",&grid_settings.f_place);
@@ -1048,8 +1222,7 @@ void ApplicationGrid::UpdateUI(){
         ImGui::DragInt("Grid Level",&grid_settings.grid_level,1,0,5);
         ImGui::Checkbox("Arrows control camera",&grid_settings.f_camera_control);
     }
-    vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
-    ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
+
 
     IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
     if (!hovered_cell){
@@ -1081,14 +1254,7 @@ void ApplicationGrid::UpdateUI(){
     }
     ImGui::End();
 
-    RenderGenericObjectUI();
 
-    if (f_show_rightclick_menu){
-        RenderRightClickMenu();
-    }
-
-    RenderSkeletonUI();
-    RenderAnimationUI();
 }
 
 
@@ -1206,31 +1372,6 @@ void ApplicationGrid::RenderAnimationUI(){
         ImGui::Text("No animation selected\n");
     }
 
-    /* Seems to work, don't know if itl be used.
-    if (ImGui::CollapsingHeader("Sequencer"))
-      {
-         // let's create the sequencer
-         static int selectedEntry = -1;
-         static int firstFrame = 0;
-         static bool expanded = true;
-         static int currentFrame = 100;
 
-         ImGui::PushItemWidth(130);
-         ImGui::InputInt("Frame Min", &mySequence.mFrameMin);
-         ImGui::SameLine();
-         ImGui::InputInt("Frame ", &currentFrame);
-         ImGui::SameLine();
-         ImGui::InputInt("Frame Max", &mySequence.mFrameMax);
-         ImGui::PopItemWidth();
-         Sequencer(&mySequence, &currentFrame, &expanded, &selectedEntry, &firstFrame, ImSequencer::SEQUENCER_EDIT_STARTEND | ImSequencer::SEQUENCER_ADD | ImSequencer::SEQUENCER_DEL | ImSequencer::SEQUENCER_COPYPASTE | ImSequencer::SEQUENCER_CHANGE_FRAME);
-         // add a UI to edit that particular item
-         if (selectedEntry != -1)
-         {
-           const MySequence::MySequenceItem &item = mySequence.myItems[selectedEntry];
-           ImGui::Text("I am a %s, please edit me", MySequence::SequencerItemTypeNames[item.mType]);
-           // switch (type) ....
-         }
-    }
-    */
     ImGui::End();
 }

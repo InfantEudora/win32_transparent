@@ -289,6 +289,8 @@ typedef GLint (APIENTRYP PFNGLGETUNIFORMLOCATIONPROC)(GLuint program, const char
 GLAPI PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation;
 typedef void (APIENTRYP PFNGLUNIFORM1IPROC)(GLint location, GLint v0);
 GLAPI PFNGLUNIFORM1IPROC glUniform1i;
+typedef void (APIENTRYP PFNGLUNIFORM1FVPROC)(GLint location, GLsizei count, const GLfloat *value);
+GLAPI PFNGLUNIFORM1FVPROC glUniform1fv;
 typedef void (APIENTRYP PFNGLUNIFORM3FPROC)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
 GLAPI PFNGLUNIFORM3FPROC glUniform3f;
 typedef void (APIENTRYP PFNGLUNIFORM3FVPROC)(GLint location, GLsizei count, const GLfloat *value);

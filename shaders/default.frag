@@ -117,7 +117,7 @@ vec3 GetNormalMapNormal(){
     return normalize(normal);
 }
 
-//Returns the light intensity from a single directional light
+//Returns the light intensity from a single directional light such as the sun
 vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
     vec3 albedo;
     if (m.diffuse_texture >= 0){
@@ -198,12 +198,25 @@ vec4 CalcPBRLighting(){
     vec3 total_light = vec3(0,0,0);
 
     for (int i = 0; i < lights.length(); i++){
-        vec3 lightdirection = lights[i].direction;
-        if (lights[i].direction.length() == 0){
+        vec3 lightdirection = lights[i].position;
+        vec3 light = lightdirection;
+        float direction_len = dot(lights[i].direction,lights[i].direction);
+        float falloff = 1.0f;
+
+        if (direction_len < 0.1){
             //Makes it a point light instead of direction
             lightdirection = lights[i].position - vposition;
+
+            float dist  = length(lights[i].position - vposition);
+
+            if (dist > (1.0 * lights[i].brightness)){
+                continue;
+            }
+            falloff = (dist* lights[i].brightness) / lights[i].brightness;
         }
-        vec3 light = CalcDirectionalPBRLight(lights[i].position,lights[i].color,lights[i].brightness);
+
+        light = falloff * CalcDirectionalPBRLight(lightdirection,lights[i].color,lights[i].brightness);
+
         total_light += light;
     }
 

@@ -40,6 +40,7 @@ It should kind of look like this:
 
 ### ToDo's
 
+- [ ] Load Spherical skyboxes from a .pbr file (should work with stb_image) and use them... view them... or cubemap them.
 - [ ] The Mat3 rotation used to also rotate normals in the vertex shader needs to be renormalised. Why?
 - [ ] Project camera and cursor throught the camera, in order to figure out where in the grid you are.
 - [ ] Have a grid that isn't several objects...
@@ -69,13 +70,12 @@ It should kind of look like this:
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
 - [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array. https://ktstephano.github.io/rendering/opengl/bindless
 - [ ] Switch between bindless and non-bindless?
-- [ ] Switch on/off backface culling for leaves and other thin things with transparency... although.... viewing it from above might not make a difference.
+- [ ] Switch on/off backface culling for leaves and other thin things with transparency... although.... viewing it from above might not make a difference. Now we discard fragments on an opacity threshold... which is easy and not totaly horrible.
 
 
 ### Todos Game Specific
 - [ ] Have a grid with layers, where the mouse + inverser of camera get's converted back to a coordinate. Maybe use some kind of overlay shader to draw a grid with the current camera settings first. Needs an ability to overlay shaders for a specific program.
 - [ ] A menu when right clicking to place walls on a tile, or hold and drag.
-
 
 ### TODOs Space Sim Specific
 
@@ -142,6 +142,12 @@ Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... wha
 
 ImGui: ImGui_ImplWin32_EnableAlphaCompositing needs to be commented out. It's a Windows 7 feature.
 
+### Header only libraries
+
+Since we dont have any include hierarchy thing which tells us what file to recompile, header only files are horrible.
+So, we un-header only them and split them into a source and actual header file... which... makes more sense anyway.
+Primarily for compile time reasons. If I want to wait for things, I'll use Unity.
+
 ### Rendering / Input / Physics
 
 Physics, input and rendering can be completely decouplped, but they have to talk to each other at some point.
@@ -191,9 +197,9 @@ When we want to batch skinned meshes, we'd want to play different animation fram
 Therefore it works the same as materials.
 A vertex get's a bone index. This index references a list in an armature with which it was created.
 
-All used bones get
+### Animation
 
-
+Skeletal animation might be easiest when all the animations are in place. With complex animations however, it's nice to have the position 'encoded' in the bone position.
 
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.

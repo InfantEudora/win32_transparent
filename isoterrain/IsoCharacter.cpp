@@ -55,12 +55,12 @@ void IsoCharacter::ApplyAnimation(float time_delta){
         return;
     }
 
-    Bone* hip_bone = FindBone("Hips");
+    Bone* hip_bone = FindBone(root_bone_name);
     if (!hip_bone){
-        debug->Fatal("Could not find hip bone.\n");
+        debug->Fatal("Could not find root/hip bone '%s;.\n",root_bone_name.c_str());
     }
 
-    if (state == ANIMATION_STATE_LOOPING){
+    if (animation_state == ANIMATION_STATE_LOOPING){
 
 
         //Loop the same animation
@@ -83,16 +83,16 @@ void IsoCharacter::ApplyAnimation(float time_delta){
             MoveForwardBy(-d.z);
             update_hippos = false;
         }
-    }else if (state == ANIMATION_STATE_TRANSITION){
+    }else if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
         if (!next_animation){
             debug->Warn("AnimationSampler: Transition to next = NULL\n");
-            state = ANIMATION_STATE_LOOPING;
+            animation_state = ANIMATION_STATE_LOOPING;
             return;
         }
         if (next_animation == current_animation){
             debug->Warn("AnimationSampler: Next is identical to current\n");
-            state = ANIMATION_STATE_LOOPING;
+            animation_state = ANIMATION_STATE_LOOPING;
             return;
         }
 
@@ -126,7 +126,7 @@ void IsoCharacter::ApplyAnimation(float time_delta){
         if (transition_time > transition_time_max){
             transition_time = transition_time_max;
             current_animation = next_animation;
-            state = ANIMATION_STATE_LOOPING;
+            animation_state = ANIMATION_STATE_LOOPING;
             update_hippos = true;
             hippos_start = hip_bone->GetPosition();
         }
@@ -138,8 +138,8 @@ void IsoCharacter::ProceedToNextAnimation(){
         //No need.
         return;
     }
-    if (state != ANIMATION_STATE_TRANSITION){
-        state = ANIMATION_STATE_TRANSITION;
+    if (animation_state != ANIMATION_STATE_TRANSITION){
+        animation_state = ANIMATION_STATE_TRANSITION;
         transition_time = 0;
     }
 }
@@ -319,8 +319,9 @@ void IsoCharacter::MoveForward(){
 
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::MoveBackward(){
-    if (state == ANIMATION_STATE_LOOPING){
-        SetNextAnimation("Idle");
+    debug->Info("Current animation state : %i\n",animation_state);
+    if (animation_state == ANIMATION_STATE_LOOPING){
+        SetNextAnimation("IdleStanding");
         ProceedToNextAnimation();
     }
     idle_time = 0;
@@ -329,12 +330,28 @@ void IsoCharacter::MoveBackward(){
 
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::TurnRight(){
-    idle_time = 0;
-    SetNextAnimation("TurnRight");
-    ProceedToNextAnimation();
+    if (f_rotation_animation){
+        //Pick an animation that will rotate us.
+        idle_time = 0;
+        SetNextAnimation("TurnRight");
+        ProceedToNextAnimation();
+    }else{
+        //We rotate within current animation
+        float delta = -0.05f;
+        quat q = quat(vec3(0,1,0),delta);
+        RotateBy(q);
+    }
 }
 
 void IsoCharacter::TurnLeft(){
-    idle_time = 0;
-    SetNextAnimation("TurnLeft");
+    if (f_rotation_animation){
+        idle_time = 0;
+        SetNextAnimation("TurnLeft");
+        ProceedToNextAnimation();
+    }else{
+        //We rotate within current animation
+        float delta = 0.05f;
+        quat q = quat(vec3(0,1,0),delta);
+        RotateBy(q);
+    }
 }
