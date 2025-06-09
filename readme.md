@@ -40,6 +40,7 @@ It should kind of look like this:
 
 ### ToDo's
 
+- [ ] GLTF and material loading loads and then afterwards checks for duplicates. It should do it beforehand... somehow.
 - [ ] Load Spherical skyboxes from a .pbr file (should work with stb_image) and use them... view them... or cubemap them.
 - [ ] The Mat3 rotation used to also rotate normals in the vertex shader needs to be renormalised. Why?
 - [ ] Project camera and cursor throught the camera, in order to figure out where in the grid you are.
@@ -59,7 +60,7 @@ It should kind of look like this:
 - [ ] Continue testing things on Intel IGPs
 - [ ] Some visual properties, like material etc. Are they updated on phsysics?
 - [x] Different test scene's with different behaviours require an application, that ties all the logic together.
-- [ ] Resize full screen and back to something small
+- [x] Resize full screen and back to something small
 - [x] Textures. Will bindless work on Intel? Should be nice.
 - [x] Test a model imported from Blender with Materials in OBJ .mat file.
 - [x] Use header stb lib to load png/jpg with/without Alpha.
@@ -76,6 +77,9 @@ It should kind of look like this:
 ### Todos Game Specific
 - [ ] Have a grid with layers, where the mouse + inverser of camera get's converted back to a coordinate. Maybe use some kind of overlay shader to draw a grid with the current camera settings first. Needs an ability to overlay shaders for a specific program.
 - [ ] A menu when right clicking to place walls on a tile, or hold and drag.
+- [ ] An animated hand that you can move around.
+- [ ] Hand should be able to climb a staircase with an animation for it. Does it require simple physics with colliders?
+- [ ]
 
 ### TODOs Space Sim Specific
 

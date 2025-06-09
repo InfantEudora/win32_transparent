@@ -11,14 +11,6 @@ IsoCharacter::~IsoCharacter(){
 
 }
 
-void IsoCharacter::AddAnimation(Animation* animation){
-    if (animation){
-        animations.push_back(animation);
-        animation->LinkObjects(this);
-    }
-}
-
-
 void IsoCharacter::SetNextAnimation(const std::string& name){
     SetNextAnimation(FindAnimation(name));
 }
@@ -61,8 +53,6 @@ void IsoCharacter::ApplyAnimation(float time_delta){
     }
 
     if (animation_state == ANIMATION_STATE_LOOPING){
-
-
         //Loop the same animation
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){

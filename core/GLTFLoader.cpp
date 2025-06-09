@@ -2,7 +2,7 @@
 #include "File.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("GLTFLoader", DEBUG_TRACE);
+static Debugger *debug = new Debugger("GLTFLoader", DEBUG_INFO);
 
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
@@ -419,6 +419,30 @@ skinned_vertex GLTFLoader::GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::
     return v;
 }
 
+vec3 GLTFLoader::GetNodePosition(const char* node_name){
+    //First, we lookup the node.
+    tinygltf::Node* node = FindNode(node_name);
+    if (!node){
+        debug->Warn("Unable to find Node %s for you.\n",node_name);
+        return vec3(0,0,0);
+    }
+
+    //A node can contain a single mesh (or none)
+    debug->Trace("Found Node %s for you.\n",node_name);
+
+    if (node->translation.size() == 0){
+        return vec3(0,0,0);
+    }else if (node->translation.size() != 3){
+        debug->Fatal("GLTF Node %s contains invalid translation\n");
+    }
+
+    vec3 pos;
+    pos.x = node->translation.at(0);
+    pos.y = node->translation.at(1);
+    pos.z = node->translation.at(2);
+    return pos;
+}
+
 Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
     //First, we lookup the node.
     tinygltf::Node* node = FindNode(node_name);
@@ -481,6 +505,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
             m.name = gltfmaterial->name;
 
             //If the material has a diffuse texture, we load that here
+            //TODO: We might already have previously loaded the image.
             if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
                 //This material uses texture with index
                 diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
@@ -504,7 +529,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 diff_texture->name = image.name;
 
                 m.diff_texture = diff_texture;
-                debug->Trace("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
             }else{
                 //We just load the base color
                 m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
@@ -703,7 +728,7 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
                 diff_texture->name = image.name;
 
                 m.diff_texture = diff_texture;
-                debug->Trace("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
             }else{
                 //We just load the base color
                 m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
@@ -984,10 +1009,10 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
         debug->Trace(" Bone scale %.2f %.2f %.2f\n",scale.x,scale.y,scale.z);
     }
 
-    if (assetmanager){
-        //Load mesh into bone
+    //For debugging, we make the bone object have a mesh that we can see.
+    /*if (assetmanager){
         assetmanager->GetObjectFromAsset("bone_mesh",bone);
-    }
+    }*/
 
     //Traverse nodes until no more nodes have children.
     for (int node_index : node.children){

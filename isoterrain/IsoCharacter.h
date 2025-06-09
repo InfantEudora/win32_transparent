@@ -1,6 +1,5 @@
 #ifndef _ISO_CHARACTER_H_
 #define _ISO_CHARACTER_H_
-#include "ObjectAnimation.h"
 #include "skeleton/Skeleton.h"
 /*
     A character that you control.
@@ -14,11 +13,6 @@
      When lerping to a different animation, that may be in place we'd need to move the root, or hip from local transform to parent.
 */
 
-#define ANIMATION_STATE_PAUSED      0
-#define ANIMATION_STATE_LOOPING     1
-#define ANIMATION_STATE_TRANSITION  2
-
-
 class IsoCharacter;
 
 class IsoCharacter : public virtual Skeleton{
@@ -30,24 +24,16 @@ class IsoCharacter : public virtual Skeleton{
 
     //Does each character need a copy of all animations?
     //It does when you don't want to lookup the objects every single time.
-    std::vector<Animation*>animations;
     std::string root_bone_name;
-
-    Animation* previous_animation = NULL;
-    Animation* current_animation = NULL;
-    Animation* next_animation = NULL;
 
     float transition_time = 0.0f;
     float transition_time_max = 0.25f;
 
-    int animation_state = ANIMATION_STATE_LOOPING;
     bool update_hippos = false;
     vec3 hippos_start = {};
     vec3 hipfwd_start = {};
 
-
     void ApplyAnimation(float delta);
-
 
     float idle_time = 0.0f;
     float idle_time_max = 3.0f;
@@ -56,8 +42,6 @@ class IsoCharacter : public virtual Skeleton{
     bool f_switch_now = false;
     bool f_rotation_animation = false;
 
-
-    void AddAnimation(Animation* animation);
     Animation* FindAnimation(const std::string& name); //Finds it by name
     void ProceedToNextAnimation();
     void SetNextAnimation(Animation* animation);

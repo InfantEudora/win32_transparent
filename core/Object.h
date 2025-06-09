@@ -13,10 +13,15 @@ class Object;
 #include "type_vec3.h"
 #include "type_quat.h"
 #include "Material.h"
+#include "ObjectAnimation.h"
 
 typedef uint32_t objectid_t;
 #define OBJECTID_INVALID    0xFFFFFFFF
 #define NUM_MATERIAL_SLOTS  4
+
+#define ANIMATION_STATE_PAUSED      0
+#define ANIMATION_STATE_LOOPING     1
+#define ANIMATION_STATE_TRANSITION  2
 
 //All variables that affect the object's appearance, which are modified/read by different threads
 struct ObjectState{
@@ -119,6 +124,14 @@ class Object{
     bool PhysicsCompleted();
 
     //Lighting properties
+
+    //Animation
+    std::vector<Animation*>animations;
+    Animation* previous_animation = NULL;
+    Animation* current_animation = NULL;
+    Animation* next_animation = NULL;
+    int animation_state = ANIMATION_STATE_LOOPING;
+    void AddAnimation(Animation* animation);
 
 
     //Maybe we want some place for the current object transforms, that may be rendered.

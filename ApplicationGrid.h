@@ -62,6 +62,9 @@ private:
     Scene* CreateBoneTestScene();
     Scene* CreateHandTestScene();
 
+    //Quick things
+    Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);
+
 
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
 

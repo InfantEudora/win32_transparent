@@ -83,7 +83,7 @@ endif
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #03 highest optimisation #-s to strip symbols
 
-CFLAGS += $(DFLAGS)
+CFLAGS += $(RFLAGS)
 
 OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 

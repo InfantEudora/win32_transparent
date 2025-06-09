@@ -1,10 +1,12 @@
 #ifndef _OBJECT_ANIMATION_H_
 #define _OBJECT_ANIMATION_H_
-#include "Object.h"
+
 
 class Animation;
 class ObjectAnimation;
 class ObjectAnimationKeyFrame;
+
+#include "Object.h"
 
 class Animation{
     public:

@@ -465,3 +465,10 @@ void Object::TakeMaterialNames(std::vector<Material>& list){
         index++;
     }
 }
+
+void Object::AddAnimation(Animation* animation){
+    if (animation){
+        animations.push_back(animation);
+        animation->LinkObjects(this);
+    }
+}

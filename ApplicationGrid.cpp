@@ -118,20 +118,44 @@ Scene* ApplicationGrid::CreateHandTestScene(){
     character->SetNextAnimation("IdleStanding");
 
     //The scenery to make it look pretty
-    Mesh* gltfmesh = gltfloader.GetMeshFromNode("Scenery",&loaded_materials);
-    if (gltfmesh){
-        Object* gltf_object = new Object();
-        gltf_object->name = "Scenery";
-        gltf_object->SetMesh(gltfmesh);
-        scene->renderer->AddMaterials(loaded_materials);
-        gltf_object->TakeMaterialNames(loaded_materials);
-        gltf_object->PickMaterials(loaded_materials,scene->renderer->materials);
-        scene->AddObject(gltf_object);
-        assetmanager->AddNewAsset("Scenery",gltf_object);
+    CreateNewObjectFromGLTF("Scenery",scene);
+
+    //An object with a more simple animation, without skinning.
+    Object* cog_object = CreateNewObjectFromGLTF("Cog",scene);
+
+    selected_animation = gltfloader.LoadAnimation("CogRotation");
+    if (selected_animation){
+        debug->Ok("Loaded Cog Animation from file.\n");
     }
+    if (selected_animation && cog_object){
+        cog_object->AddAnimation(selected_animation);
+    }
+
 
     return scene;
 }
+
+
+//This loads it, makes an asset from it... and sets up all the things.
+Object* ApplicationGrid::CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene){
+    std::vector<Material>loaded_materials;
+    loaded_materials.clear();
+    Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
+    if (gltfmesh){
+        Object* gltf_object = new Object();
+        gltf_object->SetPosition(gltfloader.GetNodePosition(nodename.c_str()));
+        gltf_object->name = nodename.c_str();
+        gltf_object->SetMesh(gltfmesh);
+        target_scene->renderer->AddMaterials(loaded_materials);
+        gltf_object->TakeMaterialNames(loaded_materials);
+        gltf_object->PickMaterials(loaded_materials,target_scene->renderer->materials);
+        target_scene->AddObject(gltf_object);
+        assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
+        return gltf_object;
+    }
+    return NULL;
+}
+
 
 Scene* ApplicationGrid::CreateTestScene(){
     Scene* scene = CreateNewScene("Grid Test Scene");
