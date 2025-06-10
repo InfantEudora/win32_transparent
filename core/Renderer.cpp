@@ -254,7 +254,7 @@ void Renderer::FillBactches(){
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
 void Renderer::RenderUniqueMeshes(){
-    //dadebug->Info("Rendering Meshes\n");
+    //debug->Info("Rendering Meshes\n");
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
         Mesh* mesh = unique_meshes.at(i);
@@ -297,6 +297,9 @@ void Renderer::RenderUniqueMeshes(){
 
 //We are lazy and for now we only render a single skinned mesh, which is the first object that has one.
 void Renderer::RenderUniqueSkinnedMeshes(){
+
+    debug->Info("Rendering %i Skinned Meshes\n",unique_skinned_meshes.size());
+
     uint32_t object_index = -1;
     for (Object* object:renderable_objects){
         //TODO: Have mulltiple skinned meshes render at different animation states.
@@ -509,6 +512,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         skinned_shader->Setvec3("eye_position",p);
         skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
         skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+        shader->Setfloat("alpha_clip",alpha_clip);
         DrawSkinnedObjects();
     }
 

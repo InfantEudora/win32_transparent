@@ -9,6 +9,15 @@
 #include "type_vec3.h"
 #include "type_int3.h"
 
+//Mush be matched with a vertex, to describe alternate positions and normals...
+struct morph_vertex;
+
+struct morph_vertex{
+    vec3    pos;
+    vec3    normal;
+    morph_vertex(){};
+};
+
 struct vertex;
 
 struct vertex{

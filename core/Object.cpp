@@ -387,6 +387,9 @@ void Object::MarkForRender(){
     if (mesh){
         mesh->batch_num_instances++;
     }
+    if (skinned_mesh){
+        skinned_mesh->batch_num_instances++;
+    }
 }
 
 //Put's all children and it's childrens children etc into a list

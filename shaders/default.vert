@@ -33,6 +33,10 @@ struct Material{
     uvec2 handle_normal;
 };
 
+//If would be nice, if we could fetch all data per instance for different mesh data layouts.
+//Ie, one mesh would have 1 morph target, another maybe 8.
+//One can be a skinned mesh,
+
 //A material index comes in from a vertex, which matches a material specified in the OBJ file.
 //This matches our material slot, which looks up the global index.
 layout (std430, binding = 0) buffer InstanceDataBuffer{
