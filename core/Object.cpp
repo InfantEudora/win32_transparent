@@ -8,12 +8,22 @@ vec3 Object::ref_up = vec3(0,1,0);
 vec3 Object::ref_left = vec3(1,0,0);
 vec3 Object::ref_forward = vec3(0,0,-1);
 
+//Constructor
 Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
     local_transform_scale_matrix.identity();
     state_physics.rotation.identity();
     state.rotation.identity();
+}
+
+//Duplication constructor
+Object::Object(Object* object):Object(){
+    debug->Info("Duplicating object Object %p into this %p\n",object,this);
+    SetMesh(object->GetMesh());
+    SetSkinnedMesh(object->GetSkinnedMesh());
+    name = object->name + "+1";
+
 }
 
 Object::~Object(){
@@ -253,7 +263,9 @@ void Object::UpdateState(){
 //Called by Physics
 void Object::UpdatePhysicsState(){
     //Massages all the physics things.
-    //HERE
+    if (!f_animation_override){
+        ApplyAnimation(animation_time_delta);
+    }
 
     for (Object* child:children) {
         child->UpdatePhysicsState();
@@ -470,5 +482,48 @@ void Object::AddAnimation(Animation* animation){
     if (animation){
         animations.push_back(animation);
         animation->LinkObjects(this);
+    }
+}
+
+void Object::SetNextAnimation(const std::string& name){
+    SetNextAnimation(FindAnimation(name));
+}
+
+void Object::SetNextAnimation(Animation* animation){
+    if (!animation){
+        return;
+    }
+    //If this is a new one, we reset it to 0. Otherwise, leave it.
+    if (next_animation != animation){
+        next_animation = animation;
+        next_animation->time_index = 0;
+    }
+}
+
+Animation* Object::FindAnimation(const std::string& name){
+    for (Animation* animation:animations){
+        if (animation->name.compare(name) == 0){
+            return animation;
+        }
+    }
+    return NULL;
+}
+
+void Object::ApplyAnimation(float time_delta){
+    if (!current_animation){
+        current_animation = next_animation;
+        next_animation = NULL;
+    }
+    if (!current_animation){
+        return;
+    }
+
+    if (animation_state == ANIMATION_STATE_LOOPING){
+        current_animation->time_index += time_delta;
+        if (current_animation->time_index > current_animation->duration){
+            current_animation->time_index -= current_animation->duration;
+            //TODO: We the animation ends, we need to keep the last position... either by nesting object.. or something sinister
+        }
+        current_animation->ApplyInterval(current_animation->time_index);
     }
 }

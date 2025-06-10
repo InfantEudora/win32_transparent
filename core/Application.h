@@ -64,6 +64,7 @@ protected:
     void CheckObjectSelection();
     //UI
     void UpdateUICameraControls(Camera* camera, int id);
+    void RenderDebugMenuBar();
     void RenderGenericObjectUI();
 
 private:

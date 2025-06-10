@@ -181,34 +181,36 @@ void Renderer::UpdateState(){
 
 void Renderer::RebuildUniqueMeshList(){
     unique_meshes.clear();
+    unique_skinned_meshes.clear();
 
-    debug->Trace("Rebuilding unique list. batch_ids.size() = %i unique_mesh.size()=%i\n",batch_ids.size(),unique_meshes.size());
+    debug->Trace("Rebuilding unique list. unique_mesh_batches.size() = %i unique_mesh.size()=%i\n",unique_mesh_batches.size(),unique_meshes.size());
     for (Object* object:renderable_objects){
-        //Object may have been added with a SkinnedMesh
-        if (!object->GetMesh()){
-            continue;
+        if (object->GetMesh()){
+            bool new_mesh = true;
+            for (Mesh* mesh:unique_meshes){
+                if (mesh->GetID() == object->GetMeshID()){
+                    //We already have this same mesh.
+                    object->SetMeshBatchIndex(mesh->batch_index); //Copy the index from the already batched mesh.
+                    new_mesh = false;
+                    break;
+                }
+            }
+            //Add this new mesh to our unique list.
+            if (new_mesh){
+                object->SetMeshBatchIndex(unique_meshes.size()); //Store the index in this array
+                Mesh* mesh = object->GetMesh();
+                if (mesh){
+                    unique_meshes.push_back(mesh);
+                }
+                if (unique_mesh_batches.size() < (object->GetMeshBatchIndex()+1)){
+                    unique_mesh_batches.push_back(new std::vector<objectid_t>());
+                }
+            }
+        }
+        if (object->GetSkinnedMesh()){
+
         }
 
-        bool new_mesh = true;
-        for (Mesh* mesh:unique_meshes){
-            if (mesh->GetID() == object->GetMeshID()){
-                //We already have this same mesh.
-                object->SetMeshBatchIndex(mesh->batch_index); //Copy the index from the already batched mesh.
-                new_mesh = false;
-                break;
-            }
-        }
-        //Add this new mesh to our unique list.
-        if (new_mesh){
-            object->SetMeshBatchIndex(unique_meshes.size()); //Store the index in this array
-            Mesh* mesh = object->GetMesh();
-            if (mesh){
-                unique_meshes.push_back(mesh);
-            }
-            if (batch_ids.size() < (object->GetMeshBatchIndex()+1)){
-                batch_ids.push_back(new std::vector<objectid_t>());
-            }
-        }
     }
 
 }
@@ -216,14 +218,14 @@ void Renderer::RebuildUniqueMeshList(){
 //Clear all previous batches
 void Renderer::ClearBatches(){
     for (int i = 0;i<unique_meshes.size();i++){
-        batch_ids.at(i)->clear();
+        unique_mesh_batches.at(i)->clear();
     }
 }
 
 void Renderer::FillBactches(){
     //This should mark all meshes that need to for render, and have uploaded their data.
     debug->Trace("objects.size() = %i\n",objects.size());
-    debug->Trace("batch_ids.size() = %i\n",batch_ids.size());
+    debug->Trace("unique_mesh_batches.size() = %i\n",unique_mesh_batches.size());
 
     //Reset stats
     int num_rendered_objects = 0;
@@ -236,9 +238,9 @@ void Renderer::FillBactches(){
             num_rendered_objects++;
             //It can only be rendered if it has a mesh
             int32_t mesh_index = object->GetMeshBatchIndex();
-            debug->Trace("batch_ids.at(mesh_index=%i) mesh_id = %lu\n",mesh_index,object->GetMeshID());
+            debug->Trace("unique_mesh_batches.at(mesh_index=%i) mesh_id = %lu\n",mesh_index,object->GetMeshID());
             int32_t id = object_index;
-            batch_ids.at(mesh_index)->push_back(id);
+            unique_mesh_batches.at(mesh_index)->push_back(id);
         }/*else{
             debug->Err("Object '%s' did not render while it should have.\n",object->name.c_str());
         }*/
@@ -260,10 +262,10 @@ void Renderer::RenderUniqueMeshes(){
             debug->Fatal("Attempting to render a mesh that's NULL\n");
         }
         int batch_index = unique_meshes.at(i)->batch_index;
-        if (batch_ids.at(batch_index)->size() == 0){
+        if (unique_mesh_batches.at(batch_index)->size() == 0){
             debug->Fatal("No batches for meshindex %i\n",batch_index);
         }
-        for (uint32_t object_index : *batch_ids.at(batch_index)){
+        for (uint32_t object_index : *unique_mesh_batches.at(batch_index)){
             Object* object = renderable_objects.at(object_index);
             debug->Trace("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
 
@@ -275,7 +277,7 @@ void Renderer::RenderUniqueMeshes(){
             if (object->IsPickable()){
                 data.objectindex = object_index;
             }else{
-                //TODO: This will overwrite any objects below the non-pickable object.
+                //TODO: This will overwrite in the ID buffer any objects below the non-pickable object.
                 data.objectindex = OBJECTID_INVALID;
             }
 
@@ -297,6 +299,7 @@ void Renderer::RenderUniqueMeshes(){
 void Renderer::RenderUniqueSkinnedMeshes(){
     uint32_t object_index = -1;
     for (Object* object:renderable_objects){
+        //TODO: Have mulltiple skinned meshes render at different animation states.
         object_index++;
         SkinnedMesh* skinned_mesh = object->GetSkinnedMesh();
         if (!skinned_mesh){

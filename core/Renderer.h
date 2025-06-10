@@ -151,17 +151,20 @@ class Renderer{
     int last_texture_unit = 0;
 
     //These will differ per frame
-    std::vector<Mesh*> unique_meshes;                   // An array of unique meshes
-    std::vector<SkinnedMesh*> unique_skinned_meshes;    // An array of unique skinned meshes
-    std::vector<Object*>renderable_objects;             // All objects we will render this frame
-    std::vector<Light*>visible_lights;                  // All lights we will use this frame
-    std::vector<std::vector<objectid_t>*>batch_ids;     // An array of arrays containing the object id's per unique mesh, these form batches
-    std::vector<instancedata_t>instancedata;            // Object data per unique mesh instance
-    std::vector<bonedata_t>boneinstancedata;            // Bone data per unique mesh instance
-    std::vector<material_t>glsl_materials;              // List of all materials for direct upload to SSBO
-    std::vector<light_t>glsl_lights;                    // List of all active lights for direct upload to SSBO
-    std::vector<Material>materials;                     // List of all materials
-    std::vector<Texture*>textures;                      // List of all textures
+    std::vector<Mesh*> unique_meshes;                           // An array of unique meshes
+    std::vector<std::vector<objectid_t>*>unique_mesh_batches;   // An array of arrays containing the object id's per unique mesh, these form batches
+
+    std::vector<SkinnedMesh*> unique_skinned_meshes;            // An array of unique skinned meshes
+
+    std::vector<Object*>renderable_objects;                     // All objects we will render this frame
+    std::vector<Light*>visible_lights;                          // All lights we will use this frame
+
+    std::vector<instancedata_t>instancedata;                    // Object data per unique mesh instance
+    std::vector<bonedata_t>boneinstancedata;                    // Bone data per unique mesh instance. Holds number of bones * number of instances
+    std::vector<material_t>glsl_materials;                      // List of all materials for direct upload to SSBO
+    std::vector<light_t>glsl_lights;                            // List of all active lights for direct upload to SSBO
+    std::vector<Material>materials;                             // List of all materials
+    std::vector<Texture*>textures;                              // List of all textures
 
     std::vector<line>debug_lines;
 

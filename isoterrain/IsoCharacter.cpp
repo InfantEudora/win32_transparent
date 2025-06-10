@@ -11,32 +11,6 @@ IsoCharacter::~IsoCharacter(){
 
 }
 
-void IsoCharacter::SetNextAnimation(const std::string& name){
-    SetNextAnimation(FindAnimation(name));
-}
-
-void IsoCharacter::UpdatePhysicsState(){
-    if (f_animation_override){
-        Object::UpdatePhysicsState();
-        return;
-    }
-
-    ApplyAnimation(animation_time_delta);
-
-    Object::UpdatePhysicsState();
-}
-
-void IsoCharacter::SetNextAnimation(Animation* animation){
-    if (!animation){
-        return;
-    }
-    //If this is a new one, we reset it to 0. Otherwise, leave it.
-    if (next_animation != animation){
-        next_animation = animation;
-        next_animation->time_index = 0;
-    }
-}
-
 void IsoCharacter::ApplyAnimation(float time_delta){
     if (!current_animation){
         current_animation = next_animation;
@@ -68,7 +42,7 @@ void IsoCharacter::ApplyAnimation(float time_delta){
             vec3 hippos_end = hip_bone->GetPosition();
             //How much has the hip moved?
             vec3 d = hippos_start - hippos_end;
-            debug->Info("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
+            debug->Trace("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
             //d.y = 0;
             MoveForwardBy(-d.z);
             update_hippos = false;
@@ -106,7 +80,7 @@ void IsoCharacter::ApplyAnimation(float time_delta){
             vec3 hippos_end = hip_bone->GetPosition();
             //How much has the hip moved?
             vec3 d = hippos_start - hippos_end;
-            debug->Info("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
+            debug->Trace("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
             //d.y = 0;
             MoveForwardBy(-d.z);
             update_hippos = false;
@@ -218,14 +192,7 @@ void IsoCharacter::UpdatePhysicsState(){
     Object::UpdatePhysicsState();
 }*/
 
-Animation* IsoCharacter::FindAnimation(const std::string& name){
-    for (Animation* animation:animations){
-        if (animation->name.compare(name) == 0){
-            return animation;
-        }
-    }
-    return NULL;
-}
+
 
 /*
 void IsoCharacter::SwitchAnimationNow(){

@@ -36,6 +36,7 @@ struct ObjectState{
 class Object{
     public:
     Object();
+    Object(Object* object);
     virtual ~Object();
     void GenerateUniqueID();
     void Destroy();
@@ -131,7 +132,14 @@ class Object{
     Animation* current_animation = NULL;
     Animation* next_animation = NULL;
     int animation_state = ANIMATION_STATE_LOOPING;
+    bool f_animation_override = false;
+    float animation_time_delta = 0.02f;
     void AddAnimation(Animation* animation);
+    //void SetAnimation(Animation* animation);
+    Animation* FindAnimation(const std::string& name); //Finds it by name
+    void SetNextAnimation(Animation* animation);
+    void SetNextAnimation(const std::string& name); //Set next one to wait until this one is completed.
+    virtual void ApplyAnimation(float time_delta);
 
 
     //Maybe we want some place for the current object transforms, that may be rendered.

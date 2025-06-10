@@ -28,6 +28,7 @@
 #define ANIM_TARGET_PATH_SCALE                      0
 #define ANIM_TARGET_PATH_ROTATION                   1
 #define ANIM_TARGET_PATH_TRANSLATION                2
+#define ANIM_TARGET_PATH_WEIGHTS                    3
 
 #define ANIMSAMPLER_INTERPOLATION_TYPE_NONE         -1
 #define ANIMSAMPLER_INTERPOLATION_TYPE_LINEAR       0
@@ -44,6 +45,7 @@ public:
     Animation*          LoadAnimation(const char* animation_name);
 
     vec3                GetNodePosition(const char* node_name);
+    quat                GetNodeRotation(const char* node_name);
 
 
     //Info
@@ -70,6 +72,7 @@ private:
     vertex           GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index);
     skinned_vertex   GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, tinygltf::BufferView* bb, tinygltf::BufferView* wb,int index);
 
+    std::vector<Texture*> textures;     //All the different textures that we have loaded.
     std::vector<Material> materials;    //Material list we load from a single file.
 
     tinygltf::Model model;

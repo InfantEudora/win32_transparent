@@ -317,6 +317,57 @@ void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicke
     }
 }
 
+
+void Application::RenderDebugMenuBar(){
+    if (ImGui::BeginMainMenuBar()){
+        if (main_scene && ImGui::BeginMenu("Add Object")){
+            if (ImGui::MenuItem("Empty")){
+                Object* empty = new Object();
+                main_scene->AddObject(empty);
+            }
+            if (ImGui::MenuItem("Camera")){
+                Camera* camera = new Camera();
+                camera->name = "New Camera";
+                main_scene->AddObject(camera);
+
+                if (assetmanager->GetObjectFromAsset("editor_camera",camera)){
+                    camera->SetPosition(vec3(1,2,1));
+                    camera->material_slot[0] = 3;
+                    camera->SetLookAt(vec3());
+                    camera->SetupPerspective(main_scene->renderer->width,main_scene->renderer->height,45,0.1,100);
+                }
+            }
+            if (ImGui::MenuItem("DirectionalLight")){
+                DirectionalLight* l = new DirectionalLight();
+                l->name = "Directional Light";
+                main_scene->AddObject(l);
+            }
+            if (ImGui::MenuItem("PointLight")){
+                PointLight* l = new PointLight();
+                l->name = "Point Light";
+                main_scene->AddObject(l);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Debug")){
+            std::map<std::string, Debugger*>* handles = debug->GetHandles();
+            std::map<std::string,Debugger*>::iterator it = handles->begin();
+            for (int i=0;i<handles->size();i++){
+                 if (ImGui::BeginMenu(it->first.c_str())){
+                    static bool enabled = true;
+                    ImGui::MenuItem("Enabled", "", &enabled);
+                    ImGui::InputInt("Input", &it->second->level, 1);
+                    ImGui::EndMenu();
+                }
+                it++;
+            }
+            ImGui::EndMenu();
+        }
+         ImGui::EndMainMenuBar();
+    }
+
+}
+
 void Application::RenderGenericObjectUI(){
     //For generic Objects and parameters
     ImGui::Begin("Generic Object UI");
@@ -338,28 +389,7 @@ void Application::RenderGenericObjectUI(){
         Scene* scene = main_scene;
         ImGui::Text("Main Scene             : %s",scene->name.c_str());
         UpdateUISceneObjectTree();
-        if (ImGui::Button("Add Camera")){
-            Camera* camera = new Camera();
-            camera->name = "New Camera";
-            if (assetmanager->GetObjectFromAsset("editor_camera",camera)){
-                camera->SetPosition(vec3(1,2,1));
-                camera->material_slot[0] = 3;
-                camera->SetLookAt(vec3());
-                camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
-                scene->AddObject(camera);
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Add Directional Light")){
-            DirectionalLight* l = new DirectionalLight();
-            l->name = "Directional Light";
-            scene->AddObject(l);
-        }
-        if (ImGui::Button("Add Point Light")){
-            PointLight* l = new PointLight();
-            l->name = "Point Light";
-            scene->AddObject(l);
-        }
+
     }
 
     //So the same camera panel has a different ImGUI ID.
@@ -386,6 +416,10 @@ void Application::RenderGenericObjectUI(){
         bool obj_visible = object->IsVisible();
         if (ImGui::Checkbox("Visible",&obj_visible)){
             object->SetVisibility(obj_visible);
+        }
+        if (ImGui::Button("Duplicate(Linked)")){
+            Object* duplicated = new Object(object);
+            main_scene->AddObject(duplicated);
         }
     }
     if (object){
@@ -607,6 +641,30 @@ void Application::RenderGenericObjectUI(){
             ImGui::Text("Material Name 1 : %s",object->material_names[1].c_str());
             ImGui::Text("Material Name 2 : %s",object->material_names[2].c_str());
             ImGui::Text("Material Name 3 : %s",object->material_names[3].c_str());
+        }
+
+        if (ImGui::CollapsingHeader("Animations")){
+            if (object->animations.size() == 0){
+                ImGui::Text("Object has no animations");
+            }else{
+                for (Animation* animation:object->animations){
+                    if (ImGui::Button(animation->name.c_str())){
+
+                    }
+                }
+
+                if (object->current_animation){
+                    ImGui::Text("Current Animation : %s @ %.2f / %.2f",object->current_animation->name.c_str(),object->current_animation->time_index,object->current_animation->duration);
+                }else{
+                    ImGui::Text("Current Animation : NULL");
+                }
+                if (object->next_animation){
+                    ImGui::Text("Next Animation    : %s @ %.2f / %.2f",object->next_animation->name.c_str(),object->next_animation->time_index,object->next_animation->duration);
+                }else{
+                    ImGui::Text("Next Animation    : NULL");
+                }
+                ImGui::Text("Current Animation State : %i\n",object->animation_state);
+            }
         }
     }
 

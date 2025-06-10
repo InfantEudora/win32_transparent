@@ -97,6 +97,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
 
         scene->renderer->AddMaterials(loaded_materials);
         skeleton->SetSkinnedMesh(skinned_mesh);
+        skeleton->TakeMaterialNames(loaded_materials);
         skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
         scene->AddObject(character);
 
@@ -129,6 +130,16 @@ Scene* ApplicationGrid::CreateHandTestScene(){
     }
     if (selected_animation && cog_object){
         cog_object->AddAnimation(selected_animation);
+        selected_animation->looped = true;
+        cog_object->SetNextAnimation("CogRotation");
+    }
+
+    // A character with Morphh targets and animations.
+    Object* eyeplant_object = CreateNewObjectFromGLTF("EyePlant",scene);
+
+    selected_animation = gltfloader.LoadAnimation("KeyAction");
+    if (selected_animation){
+        debug->Ok("Loaded KeyAction Animation from file.\n");
     }
 
 
@@ -144,6 +155,7 @@ Object* ApplicationGrid::CreateNewObjectFromGLTF(const std::string& nodename, Sc
     if (gltfmesh){
         Object* gltf_object = new Object();
         gltf_object->SetPosition(gltfloader.GetNodePosition(nodename.c_str()));
+        gltf_object->SetRotation(gltfloader.GetNodeRotation(nodename.c_str()));
         gltf_object->name = nodename.c_str();
         gltf_object->SetMesh(gltfmesh);
         target_scene->renderer->AddMaterials(loaded_materials);
@@ -716,6 +728,13 @@ void ApplicationGrid::RunLogic(){
         projection_plane.pos.y -= 0.1;
     }
 
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        //Clear mouse delta
+        input->GetDelta(INPUT_MOUSE_WHEEL);
+        return;
+    }
+
     //Iterate over all the rendered objects
     bool clicked_empty = false;
     bool left_clicked = false;
@@ -745,12 +764,7 @@ void ApplicationGrid::RunLogic(){
         mouse_delta_sum /= 1.1;
     }
 
-    //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
-        //Clear mouse delta
-        input->GetDelta(INPUT_MOUSE_WHEEL);
-        return;
-    }
+
 
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 
@@ -1220,6 +1234,7 @@ void ApplicationGrid::RenderSkeletonUI(){
 
 void ApplicationGrid::UpdateUI(){
     //RenderGridUI();
+    RenderDebugMenuBar();
     RenderGenericObjectUI();
 
     if (f_show_rightclick_menu){
@@ -1304,14 +1319,7 @@ void ApplicationGrid::RenderAnimationUI(){
     static float manual_time = 0.1;
 
     if (ImGui::CollapsingHeader("Auto Animation")){
-        if (character->current_animation){
-            ImGui::Text("Current Animation: %s @ %.2f / %.2f",character->current_animation->name.c_str(),character->current_animation->time_index,character->current_animation->duration);
-        }
-        if (character->next_animation){
-            ImGui::Text("Next Animation   : %s @ %.2f / %.2f",character->next_animation->name.c_str(),character->next_animation->time_index,character->next_animation->duration);
-        }else{
-            ImGui::Text("Next Animation   : NULL");
-        }
+
 
         if (selected_animation){
             ImGui::Text("Selected Animation   : %s",selected_animation->name.c_str());
@@ -1336,13 +1344,7 @@ void ApplicationGrid::RenderAnimationUI(){
         }
     }
 
-    if (ImGui::CollapsingHeader("Animations")){
-        for (Animation* animation:character->animations){
-            if (ImGui::Button(animation->name.c_str())){
-                selected_animation = animation;
-            }
-        }
-    }
+
 
     if (ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override)){
 

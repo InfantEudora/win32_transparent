@@ -20,7 +20,7 @@ struct quat{
 
     //Functions
     void    print();
-    void    identity();
+    quat&   identity();
     void    set_rotation(const vec3& axis, float angle);
     float   get_pitch() const;
     float   get_roll() const;
@@ -47,11 +47,12 @@ inline quat::quat(const vec3& axis, float angle){
     set_rotation(axis, angle);
 }
 
-inline void quat::identity(){
+inline quat& quat::identity(){
     x = 0;
     y = 0;
     z = 0;
     w = 1;
+    return *this;
 }
 
 //Returns the pitch in radians

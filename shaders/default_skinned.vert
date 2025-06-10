@@ -63,10 +63,9 @@ layout (location = 3) out mat3 TBN;			//Normal mapping matrix
 layout (location = 6) flat out int vmatindex;	//Material index
 layout (location = 7) flat out int vobjid;	//gl_InstanceID
 
-
-
 //Settings
 uniform int f_normal_mapping = 1;
+uniform int bone_count = 24;
 
 //Matrix for world camera.
 layout(location = 0) uniform mat4 mat_worldcam = mat4(
@@ -80,8 +79,6 @@ void main(){
 	//Only object rotation. We want to decompose this from the mat_trans for light calculations
 	mat3 mat_rotate;
 
-
-
 	//HERE
 	/*
 		An instance mesh with bones has maybe 10 bones. Each instance has the same amount.
@@ -90,13 +87,8 @@ void main(){
 	*/
 
 	//Compute the bone index in the data list for this instance.
-	int bone_count = 24;
-
 	//A vertex is in the local space of the root node, the skeleton.
-	//The bone weights are
-
-
-
+	//The bone weights are ...
 
 	mat4 skin_matrix =
         weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale * bone_data[(gl_InstanceID * bone_count) + bones.x].inv_bindmatrix +
@@ -114,10 +106,6 @@ void main(){
 
 	//Calculated the TBN matrix for normal mapping..
 	//TODO: Maybe this can be done in a Geometry Shader.
-
-
-
-
 	vuv = uv;
 	//vtangent = mat_rotate * tangent;
 
@@ -126,8 +114,6 @@ void main(){
 	vposition = world_position.xyz;
 
 	gl_Position = (mat_worldcam  * world_position);
-
-
 
 	//We need to decompose the matrix into a rotation only, used to compute normals.
 	//Zero out the translation and scale.

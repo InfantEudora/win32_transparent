@@ -48,6 +48,7 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         debug->Trace("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
         debug->Trace("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
         debug->Trace("Model.nodes[%i].children : %i\n",node_index, model.nodes[node_index].children.size());
+        debug->Trace("Model.nodes[%i].weights  : %i\n",node_index, model.nodes[node_index].weights.size());
 
         for (int i=0;i<model.nodes[node_index].children.size();i++){
             int child_index = model.nodes[node_index].children.at(i);
@@ -55,6 +56,8 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
             debug->Trace(" - Child[%i] -> model.nodes[%i].name : %s\n",i,child_index, child.name.c_str());
         }
         node_names.push_back(model.nodes[node_index].name);
+
+
     }
 
     debug->Trace("Model has %i skins\n",model.skins.size());
@@ -66,31 +69,38 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         debug->Trace("Model.skins[%i].joints              : %i\n",skin_index, model.skins[skin_index].joints.size());
     }
 
-    debug->Trace("Model has %i meshes\n",model.meshes.size());
+    debug->Info("Model has %i meshes\n",model.meshes.size());
     for (int mesh_index=0;mesh_index<model.meshes.size();mesh_index++){
-        debug->Trace("Model.meshes[%i].name       : %s\n",mesh_index, model.meshes[mesh_index].name.c_str());
-        debug->Trace("Model.meshes[%i].primitives : %i\n",mesh_index, model.meshes[mesh_index].primitives.size());
+        debug->Info("Model.meshes[%i].name       : %s\n",mesh_index, model.meshes[mesh_index].name.c_str());
+        debug->Info("Model.meshes[%i].primitives : %i\n",mesh_index, model.meshes[mesh_index].primitives.size());
+        debug->Info("Model.meshes[%i].weights    : %i\n",mesh_index, model.meshes[mesh_index].weights.size());
+
+        //Default weights per morph target
+        for (int i=0;i<model.meshes[mesh_index].weights.size();i++){
+            double weight = model.meshes[mesh_index].weights.at(i);
+            debug->Trace("Model.meshes[%i].weights[%i] : %.3f\n",i, weight);
+        }
 
         //List primitives
         tinygltf::Mesh& mesh = model.meshes[mesh_index];
         for (size_t i = 0; i < mesh.primitives.size(); i++){
             tinygltf::Primitive &primitive = mesh.primitives[i];
-            debug->Trace("Model.meshes[%i].primitive[%i].indices  : contained in accessor[%i]\n",mesh_index, i,primitive.indices);
+            debug->Info("Model.meshes[%i].primitive[%i].indices  : contained in accessor[%i]\n",mesh_index, i,primitive.indices);
 
             //If indices are -1 ... it could be points or lines
             if (primitive.indices < 0) {
                 continue;
             }
 
-            debug->Trace("Model.meshes[%i].primitive[%i].mode     : %s(%i)\n",mesh_index, i, mode_strings[primitive.mode].c_str(), primitive.mode);
-            debug->Trace("Model.meshes[%i].primitive[%i].material : %i\n",mesh_index, i, primitive.material);
+            debug->Info("Model.meshes[%i].primitive[%i].mode     : %s(%i)\n",mesh_index, i, mode_strings[primitive.mode].c_str(), primitive.mode);
+            debug->Info("Model.meshes[%i].primitive[%i].material : %i\n",mesh_index, i, primitive.material);
 
             std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
             std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
 
             int attrib_index = 0;
             for (; it != itEnd; it++) {
-                debug->Trace("Model.meshes[%i].primitive[%i].attributes[%i] : %s -> accessor: %i\n",mesh_index, i,attrib_index, it->first.c_str(),it->second);
+                debug->Info("Model.meshes[%i].primitive[%i].attributes[%i] : %s -> accessor: %i\n",mesh_index, i,attrib_index, it->first.c_str(),it->second);
                 attrib_index++;
 
                 const tinygltf::Accessor &accessor = model.accessors[it->second];
@@ -107,8 +117,36 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
                     debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
                 }
             }
-        }
 
+            //List morph targets
+            for (size_t mt_i = 0; mt_i < primitive.targets.size(); mt_i++){
+                std::map<std::string, int>& morph_target = primitive.targets.at(mt_i);
+                debug->Info("Model.meshes[%i].primitive[%i].targets[%i].size() = %i\n",mesh_index, i,mt_i,morph_target.size());
+
+                std::map<std::string, int>::const_iterator it(morph_target.begin());
+                std::map<std::string, int>::const_iterator itEnd(morph_target.end());
+
+                int attrib_index = 0;
+                for (; it != itEnd; it++) {
+                    debug->Info("Model.meshes[%i].primitive[%i].targets[%i] : %s -> accessor: %i\n",mesh_index, i,mt_i, it->first.c_str(),it->second);
+                    attrib_index++;
+
+                    const tinygltf::Accessor &accessor = model.accessors[it->second];
+                    int size = 1;
+                    if (accessor.type == TINYGLTF_TYPE_SCALAR) {
+                        size = 1;
+                    } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
+                        size = 2;
+                    } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
+                        size = 3;
+                    } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
+                        size = 4;
+                    } else {
+                        debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
+                    }
+                }
+            }
+        }
     }
     debug->Trace("Model has %i textures\n",model.textures.size());
     for (int texture_index=0;texture_index<model.textures.size();texture_index++){
@@ -443,6 +481,31 @@ vec3 GLTFLoader::GetNodePosition(const char* node_name){
     return pos;
 }
 
+quat GLTFLoader::GetNodeRotation(const char* node_name){
+    //First, we lookup the node.
+    tinygltf::Node* node = FindNode(node_name);
+    if (!node){
+        debug->Warn("Unable to find Node %s for you.\n",node_name);
+        return quat().identity();
+    }
+
+    //A node can contain a single mesh (or none)
+    debug->Trace("Found Node %s for you.\n",node_name);
+
+    if (node->rotation.size() == 0){
+         return quat().identity();
+    }else if (node->rotation.size() != 4){
+        debug->Fatal("GLTF Node %s contains invalid rotation\n");
+    }
+
+    quat q;
+    q.x = node->rotation.at(0);
+    q.y = node->rotation.at(1);
+    q.z = node->rotation.at(2);
+    q.w = node->rotation.at(3);
+    return q;
+}
+
 Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
     //First, we lookup the node.
     tinygltf::Node* node = FindNode(node_name);
@@ -487,7 +550,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     std::vector<vertex>verts;
     materials.clear();
 
-    debug->Trace("Node has %i primitives\n",nodemesh.primitives.size());
+    debug->Info("Node %s has %i primitives\n",node_name, nodemesh.primitives.size());
     int primitive_count = -1;
     for (tinygltf::Primitive &primitive : nodemesh.primitives){
         //This should be such that at least the materials in this Mesh can be looked up later on.
@@ -529,7 +592,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 diff_texture->name = image.name;
 
                 m.diff_texture = diff_texture;
-                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
+                debug->Info("Loaded diffuse texture %s from GLTF File using Bufferview %i\n",diff_texture->name.c_str(),image.bufferView);
             }else{
                 //We just load the base color
                 m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
@@ -576,7 +639,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
             }
 
-            debug->Trace("Accessor Size = %i for %s\n",size,it->first.c_str());
+            debug->Info("Accessor Size = %i for %s\n",size,it->first.c_str());
 
             if (it->first.compare("NORMAL") == 0){
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
@@ -709,6 +772,8 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
                 //This material uses texture with index
                 diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
 
+                //Get texture by name and store/lookup in textures vector... TODO
+
                 Texture* diff_texture = new Texture();
                 //Get the memory offset.
 
@@ -738,8 +803,6 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
             }
             materials.push_back(m);
         }
-
-
         int material_id = materials.size() - 1;
 
         std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
@@ -869,6 +932,8 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         }else if (channel.target_path.compare("rotation") == 0){
             target_path = ANIM_TARGET_PATH_ROTATION;
         }else if (channel.target_path.compare("translation") == 0){
+            target_path = ANIM_TARGET_PATH_TRANSLATION;
+        }else if (channel.target_path.compare("weights") == 0){
             target_path = ANIM_TARGET_PATH_TRANSLATION;
         }else{
             debug->Fatal("Unknown animation target path %s\n",channel.target_path.c_str());
