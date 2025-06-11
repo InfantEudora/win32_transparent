@@ -459,6 +459,7 @@ void Application::RenderGenericObjectUI(){
             if (ImGui::CollapsingHeader("Mesh")){
                 Mesh* mesh = object->GetMesh();
                 ImGui::Text(" ID             : %lu",mesh->GetID());
+                mesh->IsSkinnedMesh() ? ImGui::Text(" IsSkinned      : Yes") : ImGui::Text(" IsSkinned      : No");
                 ImGui::Text(" num_vertices   : %lu",mesh->num_vertices);
                 ImGui::Text(" num_materials  : %lu",mesh->num_materials);
                 ImGui::Text(" num_references : %lu",mesh->num_references);
@@ -466,20 +467,6 @@ void Application::RenderGenericObjectUI(){
         }else{
             ImGui::BeginDisabled();
             ImGui::CollapsingHeader("No Mesh");
-            ImGui::EndDisabled();
-        }
-
-        if (object->GetSkinnedMesh()){
-            if (ImGui::CollapsingHeader("Skinned Mesh")){
-                SkinnedMesh* skinned_mesh = object->GetSkinnedMesh();
-                ImGui::Text(" ID             : %lu",skinned_mesh->GetID());
-                ImGui::Text(" num_vertices   : %lu",skinned_mesh->num_vertices);
-                ImGui::Text(" num_materials  : %lu",skinned_mesh->num_materials);
-                ImGui::Text(" num_references : %lu",skinned_mesh->num_references);
-            }
-        }else{
-            ImGui::BeginDisabled();
-            ImGui::CollapsingHeader("No Skinned Mesh");
             ImGui::EndDisabled();
         }
 

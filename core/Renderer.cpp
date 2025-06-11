@@ -109,9 +109,6 @@ void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Obje
     if (object->GetMesh() != NULL){
         objects.push_back(object);
     }
-    if (object->GetSkinnedMesh() != NULL){
-        objects.push_back(object);
-    }
 
     //We check all the children
     for (Object* child:object->children){
@@ -181,7 +178,6 @@ void Renderer::UpdateState(){
 
 void Renderer::RebuildUniqueMeshList(){
     unique_meshes.clear();
-    unique_skinned_meshes.clear();
 
     debug->Trace("Rebuilding unique list. unique_mesh_batches.size() = %i unique_mesh.size()=%i\n",unique_mesh_batches.size(),unique_meshes.size());
     for (Object* object:renderable_objects){
@@ -206,9 +202,6 @@ void Renderer::RebuildUniqueMeshList(){
                     unique_mesh_batches.push_back(new std::vector<objectid_t>());
                 }
             }
-        }
-        if (object->GetSkinnedMesh()){
-
         }
 
     }
@@ -253,14 +246,27 @@ void Renderer::FillBactches(){
 }
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
-void Renderer::RenderUniqueMeshes(){
+void Renderer::RenderUniqueMeshes(int normal_or_skinned){
     //debug->Info("Rendering Meshes\n");
+    if (normal_or_skinned == 1){
+        //debug->Info("Rendering Skinned Meshes\n");
+    }
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
+        boneinstancedata.clear();
+
         Mesh* mesh = unique_meshes.at(i);
         if (!mesh){
             debug->Fatal("Attempting to render a mesh that's NULL\n");
         }
+        if ((normal_or_skinned == 0) && (mesh->IsSkinnedMesh())){
+            continue;
+        }
+        if ((normal_or_skinned == 1) && (mesh->IsNormalMesh())){
+            continue;
+        }
+
+
         int batch_index = unique_meshes.at(i)->batch_index;
         if (unique_mesh_batches.at(batch_index)->size() == 0){
             debug->Fatal("No batches for meshindex %i\n",batch_index);
@@ -283,17 +289,54 @@ void Renderer::RenderUniqueMeshes(){
 
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
+
+
+            if (normal_or_skinned == 1){ //Skinned mode
+                bonedata_t bonedata;
+                bonedata.mat_transformscale = fmat4().identity();
+
+                //It has been previously established we are skinned mesh
+                Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
+                if (!skeleton){
+                    debug->Warn("Skinned mesh does not appear to be a skeleton...\n");
+                    continue;
+                }
+
+                std::vector<Bone*>bones;
+                skeleton->GetAllBones(skeleton,bones);
+                if (bones.size() != skeleton->num_bones){
+                    debug->Err("skeleton->GetAllBones() did not yield expected number of bones (%i vs %i)\n",bones.size(),skeleton->num_bones);
+                }
+
+                //We add however many bones we want / have
+                int num_bones = skeleton->num_bones;
+                for (int i=0;i<num_bones;i++){
+                    bonedata.mat_inversebind = bones.at(i)->inverse_bind_matrix;
+                    bonedata.mat_transformscale = bones.at(i)->GetWorldTransformScaleMatrix();
+
+                    bones.at(i)->bone_unpacked_index = i;
+                    boneinstancedata.push_back(bonedata);
+                }
+                data.num_bones = num_bones;
+            }
+
             instancedata.push_back(data);
+
         }
         glInvalidateBufferData(instdata_ssbo);
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_DYNAMIC_DRAW);
+
+        if (normal_or_skinned == 1){ //Skinned mode
+            glInvalidateBufferData(boneinstdata_ssbo);
+            glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_DYNAMIC_DRAW);
+        }
 
         debug->Trace("Rendering %i instances of mesh->id %i\n",mesh->batch_num_instances,mesh->GetID());
         mesh->RenderInstances(mesh->batch_num_instances);
         mesh->batch_num_instances = 0;
     }
 }
-
+/*
 
 //We are lazy and for now we only render a single skinned mesh, which is the first object that has one.
 void Renderer::RenderUniqueSkinnedMeshes(){
@@ -366,7 +409,7 @@ void Renderer::RenderUniqueSkinnedMeshes(){
 
         break;
     }
-}
+}*/
 
 void Renderer::RenderDebugLines(){
 
@@ -406,13 +449,13 @@ void Renderer::DrawStaticObjects(){
     FillBactches();
     UploadMaterials();
     UploadLights();
-    RenderUniqueMeshes();
+    RenderUniqueMeshes(0);
 }
 
 //We'll be using a seperate shader
 void Renderer::DrawSkinnedObjects(){
     //Now we want to render all the objects that have skinned meshes
-    RenderUniqueSkinnedMeshes();
+    RenderUniqueMeshes(1);
 }
 
 void Renderer::DeferredPass(Camera* camera){

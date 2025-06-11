@@ -5,12 +5,17 @@ class Mesh;
 #include "glad.h"
 #include "stdint.h"
 #include "type_vertex.h"
-
+//Basic
 #define ATTRIB_VERTEX   0
 #define ATTRIB_NORMAL   1
 #define ATTRIB_TANGENT  2
+//UVs
 #define ATTRIB_UVCOORD  3
 #define ATTRIB_MATINDEX 4
+//Skinning
+#define ATTRIB_BONES    5
+#define ATTRIB_WEIGHTS  6
+//More nonsense
 
 #define MESHID_INVALID 0xFFFFFFFF
 
@@ -20,6 +25,7 @@ class Mesh{
 public:
     Mesh();
     bool InitVBOVAO();
+    bool InitSkinnedVBOVAO();
 
     GLuint vbo = -1;
     GLuint vao = -1;
@@ -28,8 +34,11 @@ public:
     void GenerateUniqueID();
     meshid_t GetID();
 
-    void LoadUnitCube();
     void SetMeshData(vertex* verts, int vertex_count);
+    void SetSkinnedMeshData(skinned_vertex* verts, int vertex_count);
+
+    bool IsNormalMesh();
+    bool IsSkinnedMesh();
 
     uint32_t num_vertices = 0;
     int     num_materials = 0;
@@ -39,6 +48,7 @@ public:
     int32_t batch_num_instances = 0;
 private:
     std::vector<vertex>vertices;
+    std::vector<skinned_vertex>skinned_vertices;
     static meshid_t mesh_ids;   //Total amount of different meshes.
     meshid_t id = MESHID_INVALID;
 };

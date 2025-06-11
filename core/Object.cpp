@@ -21,9 +21,7 @@ Object::Object(){
 Object::Object(Object* object):Object(){
     debug->Info("Duplicating object Object %p into this %p\n",object,this);
     SetMesh(object->GetMesh());
-    SetSkinnedMesh(object->GetSkinnedMesh());
     name = object->name + "+1";
-
 }
 
 Object::~Object(){
@@ -82,8 +80,11 @@ Mesh* Object::GetMesh(){
     return mesh;
 }
 
-SkinnedMesh* Object::GetSkinnedMesh(){
-    return skinned_mesh;
+int32_t Object::GetMeshBatchIndex(){
+    if (mesh){
+        return mesh->batch_index;
+    }
+    return -1;
 }
 
 void Object::SetMesh(Mesh* _mesh){
@@ -92,25 +93,6 @@ void Object::SetMesh(Mesh* _mesh){
     }
     mesh = _mesh;
     mesh->num_references++;
-}
-
-void Object::SetSkinnedMesh(SkinnedMesh* _mesh){
-    if (!_mesh){
-        return;
-    }
-    if (mesh){
-        debug->Warn("Object cannot have both mesh and skinned mesh\n");
-        return;
-    }
-    skinned_mesh = _mesh;
-    skinned_mesh->num_references++;
-}
-
-int32_t Object::GetMeshBatchIndex(){
-    if (mesh){
-        return mesh->batch_index;
-    }
-    return -1;
 }
 
 //Set's this object's mesh index when batched
@@ -386,9 +368,6 @@ quat Object::GetWorldRotation(){
 void Object::MarkForRender(){
     if (mesh){
         mesh->batch_num_instances++;
-    }
-    if (skinned_mesh){
-        skinned_mesh->batch_num_instances++;
     }
 }
 

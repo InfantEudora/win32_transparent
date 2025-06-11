@@ -41,7 +41,7 @@ void Animation::LinkObjects(Object* root){
             }
         }
     }
-    debug->Info("Animation: Linked %i objects to animation\n",count);
+    debug->Info("Animation: Linked %i objects from %s to animation %s\n",count,root->name.c_str(),name.c_str());
 }
 
 //Note that animation can now have a different target object.

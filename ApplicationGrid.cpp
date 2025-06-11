@@ -93,10 +93,10 @@ Scene* ApplicationGrid::CreateHandTestScene(){
         }
 
         loaded_materials.clear();
-        SkinnedMesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("Hand",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("Hand",&loaded_materials);
 
         scene->renderer->AddMaterials(loaded_materials);
-        skeleton->SetSkinnedMesh(skinned_mesh);
+        skeleton->SetMesh(skinned_mesh);
         skeleton->TakeMaterialNames(loaded_materials);
         skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
         scene->AddObject(character);
@@ -115,8 +115,50 @@ Scene* ApplicationGrid::CreateHandTestScene(){
             }
         }
     }
-
     character->SetNextAnimation("IdleStanding");
+    character->SetPosition(vec3(0,0,1));
+
+    //Load another hand, that uses the same mesh... preferably.
+    {
+        IsoCharacter* character = new IsoCharacter();
+        Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
+        gltfloader.GetSkeleton("HandArmature",assetmanager,skeleton);
+        if (skeleton){
+            //Change name
+            skeleton->name = "Second Character Armature";
+            character->root_bone_name = "Palm";
+
+            Object* bones = skeleton->GetChild(0);
+            if (bones){
+                bones->SetVisibility(false);
+            }
+
+            loaded_materials.clear();
+            Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("Hand",&loaded_materials);
+
+            scene->renderer->AddMaterials(loaded_materials);
+            skeleton->SetMesh(skinned_mesh);
+            skeleton->TakeMaterialNames(loaded_materials);
+            skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
+            scene->AddObject(character);
+
+            //gltfloader.LoadGLTFFile("data/animations.glb");
+
+            std::vector<std::string>looping_animations;
+            looping_animations.push_back("IdleStanding");
+            looping_animations.push_back("CatwalkForward");
+
+            for (std::string& name:looping_animations){
+                selected_animation = gltfloader.LoadAnimation(name.c_str());
+                if (selected_animation){
+                    character->AddAnimation(selected_animation);
+                    selected_animation->looped = true;
+                }
+            }
+        }
+        character->SetNextAnimation("IdleStanding");
+    }
+
 
     //The scenery to make it look pretty
     CreateNewObjectFromGLTF("Scenery",scene);
@@ -390,10 +432,10 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
         }
 
         loaded_materials.clear();
-        SkinnedMesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
 
         scene->renderer->AddMaterials(loaded_materials);
-        skeleton->SetSkinnedMesh(skinned_mesh);
+        skeleton->SetMesh(skinned_mesh);
         skeleton->PickMaterials(loaded_materials,scene->renderer->materials);
         scene->AddObject(character);
 

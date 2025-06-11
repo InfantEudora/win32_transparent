@@ -9,16 +9,17 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
 layout (location = 3) in vec2 uv;
-layout (location = 4) in ivec3 bones;
-layout (location = 5) in vec3 weights;
-layout (location = 6) in int matindex;
+layout (location = 4) in int matindex;
+layout (location = 5) in ivec3 bones;
+layout (location = 6) in vec3 weights;
+
 
 
 struct InstanceData{
 	mat4 mat_transformscale;
 	int material_slot[NUM_MATERIAL_SLOTS];
 	int objectid;
-	int pad1;
+	int num_bones; //Number of bones in this unique mesh, same data per instance
 	int pad2;
 	int pad3;
 };
@@ -65,7 +66,6 @@ layout (location = 7) flat out int vobjid;	//gl_InstanceID
 
 //Settings
 uniform int f_normal_mapping = 1;
-uniform int bone_count = 24;
 
 //Matrix for world camera.
 layout(location = 0) uniform mat4 mat_worldcam = mat4(
@@ -89,7 +89,7 @@ void main(){
 	//Compute the bone index in the data list for this instance.
 	//A vertex is in the local space of the root node, the skeleton.
 	//The bone weights are ...
-
+	int bone_count = instance_data[gl_InstanceID].num_bones;
 	mat4 skin_matrix =
         weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale * bone_data[(gl_InstanceID * bone_count) + bones.x].inv_bindmatrix +
         weights.y * bone_data[(gl_InstanceID * bone_count) + bones.y].mat_transformscale * bone_data[(gl_InstanceID * bone_count) + bones.y].inv_bindmatrix +

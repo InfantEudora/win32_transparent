@@ -20,7 +20,8 @@ typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
     int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
     int objectindex;                            // The object's index in a batch it was rendered with this frame. (So not object->id)
-    int pad1[3];
+    int num_bones;                              // Number of bones. Duplicate info for each instance... because it's mehs info
+    int pad1[2];
 }instancedata_t;
 
 typedef struct {
@@ -68,8 +69,7 @@ class Renderer{
     void DrawSkyBox(Camera* camera);
 
     void UpdateReadbackBuffer();
-    void RenderUniqueMeshes();
-    void RenderUniqueSkinnedMeshes();
+    void RenderUniqueMeshes(int normal_or_skinned); //0 renders norma meshes, 1 renders only skinned meshes.
 
     void RenderDebugLines();
 
@@ -153,8 +153,6 @@ class Renderer{
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;                           // An array of unique meshes
     std::vector<std::vector<objectid_t>*>unique_mesh_batches;   // An array of arrays containing the object id's per unique mesh, these form batches
-
-    std::vector<SkinnedMesh*> unique_skinned_meshes;            // An array of unique skinned meshes
 
     std::vector<Object*>renderable_objects;                     // All objects we will render this frame
     std::vector<Light*>visible_lights;                          // All lights we will use this frame

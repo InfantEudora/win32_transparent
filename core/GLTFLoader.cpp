@@ -705,8 +705,9 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     return mesh;
 }
 
+//TODO: Merge with getmesh and switch by argument on returned mesh type.
 // Basically the same as get mesh, only it returns a skinned mesh
-SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
+Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
     //First, we lookup the node.
     tinygltf::Node* node = FindNode(node_name);
     if (!node){
@@ -886,8 +887,8 @@ SkinnedMesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vect
     }
 
     debug->Trace("Generated %i skinned vertices. Loaded %i materials\n",verts.size(),materials.size());
-    SkinnedMesh* mesh = new SkinnedMesh();
-    mesh->SetMeshData(&verts.at(0),verts.size());
+    Mesh* mesh = new Mesh();
+    mesh->SetSkinnedMeshData(&verts.at(0),verts.size());
     mesh->num_materials = materials.size();
     return mesh;
 }

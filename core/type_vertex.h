@@ -36,9 +36,10 @@ struct skinned_vertex{
     vec3    normal;
     vec3    tangent;
     vec2    uv;
+    int32_t matid;
     int3    bones;      // Bone ids that infuence this vertex
     vec3    weights;    // Bone weights
-    int32_t matid;
+
     skinned_vertex(){};
 };
 

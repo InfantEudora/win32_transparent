@@ -6,7 +6,6 @@
 #include <vector>
 #include "File.h"
 #include "Mesh.h"
-#include "SkinnedMesh.h"
 #include "type_int3.h"
 #include "type_vec2.h"
 #include "type_vec3.h"
@@ -39,7 +38,7 @@ class GLTFLoader{
 public:
     void                LoadGLTFFile(const char* filename);
     Mesh*               GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
-    SkinnedMesh*        GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
+    Mesh*        GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
     Skeleton*           GetSkeleton(const char* skeleton_name, AssetManager* assetmanager, Skeleton* optional_target = NULL);
     Bone*               GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
     Animation*          LoadAnimation(const char* animation_name);
