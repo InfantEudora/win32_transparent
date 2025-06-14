@@ -64,6 +64,15 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
     if (keyframe->f_position){
         target->SetPosition(keyframe->position);
     }
+    if (keyframe->f_scale){
+        debug->Fatal("TODO: Implement animation scaling\n");
+    }
+    if (keyframe->f_shapekeys){
+        //TODO:HERE
+        //We can either reupload the entire mesh.
+        //Or we upload all mesh data, plus morphs
+        debug->Info("Would apply shapekey here\n");
+    }
 }
 
 void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3 initial_hip_pos){

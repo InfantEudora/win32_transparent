@@ -5,7 +5,8 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "C:/msys64/usr/include/**",
-                "${workspaceFolder}/3rdparty/openal-soft/"
+                "${workspaceFolder}/3rdparty/openal-soft/",
+                "${workspaceFolder}/3rdparty/miniz/"
             ],
             "cStandard": "c17",
             "cppStandard": "c++17",

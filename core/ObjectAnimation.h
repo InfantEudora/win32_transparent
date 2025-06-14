@@ -68,11 +68,14 @@ public:
     vec3 position;
     quat rotation;
     vec3 scale;
+    std::vector<float>shapekey_weights;
+    int num_shapekeys = 0;                  //The amount of shapekeys referenced, and the stride of the weights vector
 
     //If these are enabled
     bool f_position = false;
     bool f_rotation = false;
     bool f_scale = false;
+    bool f_shapekeys = false;
 };
 
 #endif

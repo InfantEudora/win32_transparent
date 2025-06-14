@@ -458,11 +458,12 @@ void Application::RenderGenericObjectUI(){
         if (object->GetMesh()){
             if (ImGui::CollapsingHeader("Mesh")){
                 Mesh* mesh = object->GetMesh();
-                ImGui::Text(" ID             : %lu",mesh->GetID());
-                mesh->IsSkinnedMesh() ? ImGui::Text(" IsSkinned      : Yes") : ImGui::Text(" IsSkinned      : No");
-                ImGui::Text(" num_vertices   : %lu",mesh->num_vertices);
-                ImGui::Text(" num_materials  : %lu",mesh->num_materials);
-                ImGui::Text(" num_references : %lu",mesh->num_references);
+                ImGui::Text(" ID                : %lu",mesh->GetID());
+                mesh->IsSkinnedMesh() ? ImGui::Text(" IsSkinned         : Yes") : ImGui::Text(" IsSkinned         : No");
+                ImGui::Text(" num_vertices      : %lu",mesh->num_vertices);
+                ImGui::Text(" num_materials     : %lu",mesh->num_materials);
+                ImGui::Text(" num_references    : %lu",mesh->num_references);
+                ImGui::Text(" num_morph_targets : %lu",mesh->num_morph_targets);
             }
         }else{
             ImGui::BeginDisabled();
@@ -631,12 +632,19 @@ void Application::RenderGenericObjectUI(){
         }
 
         if (ImGui::CollapsingHeader("Animations")){
+            ImGui::Text("Morph Factors");
+            ImGui::DragFloat("Target 1",&object->morph_factors[0],0.01,0,1);
+            ImGui::DragFloat("Target 2",&object->morph_factors[1],0.01,0,1);
+            ImGui::DragFloat("Target 3",&object->morph_factors[2],0.01,0,1);
+            ImGui::DragFloat("Target 4",&object->morph_factors[3],0.01,0,1);
+
             if (object->animations.size() == 0){
                 ImGui::Text("Object has no animations");
             }else{
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
-
+                        object->SetNextAnimation(animation);
+                        //object->ProceedToNextAnimation();
                     }
                 }
 
@@ -735,6 +743,115 @@ void Application::RenderGenericObjectUI(){
 
     ImGui::End();
 }
+
+
+/*
+void ApplicationGrid::RenderAnimationUI(){
+    ImGui::Begin("Character Animation Sequence UI");
+
+    if (!character){
+        ImGui::Text("No character");
+        ImGui::End();
+        return;
+    }
+
+    static float time_index = 0.0f;
+    static float lerp = 0.0f;
+    static bool f_ondrag = false;
+    static bool f_update_hip_pos = false;
+
+    static Animation* animation_lerp_start = NULL;
+    static Animation* animation_lerp_end = NULL;
+    static float interval_lerp_start = 0.0f;
+    static float interval_lerp_end = 0.0f;
+
+    static float manual_time = 0.1;
+
+    if (ImGui::CollapsingHeader("Auto Animation")){
+
+
+        if (selected_animation){
+            ImGui::Text("Selected Animation   : %s",selected_animation->name.c_str());
+            if (ImGui::Button("Set as Next")){
+                character->SetNextAnimation(selected_animation);
+            }
+            if (ImGui::Button("Proceed to Next")){
+                character->ProceedToNextAnimation();
+            }
+        }
+
+
+
+        if (ImGui::DragFloat("Idle Time Max", (float*)&character->idle_time_max, 0.01f, 0.0f, 10.0f)){
+
+        }
+        if (ImGui::DragFloat("Transition Time Max", (float*)&character->transition_time_max, 0.01f, 0.0f, 10.0f)){
+
+        }
+        if (ImGui::DragFloat("Animation Time Delta", (float*)&character->animation_time_delta, 0.005f, -1.0f, 1.0f)){
+
+        }
+    }
+
+
+
+    if (ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override)){
+
+    }
+
+    if (selected_animation){
+        if (ImGui::CollapsingHeader("Selected Animation")){
+            float animation_duration = selected_animation->duration;
+            ImGui::Text("Duration: %.2f",selected_animation->duration);
+
+            ImGui::Checkbox("Modify on Drag",&f_ondrag);
+
+            if (ImGui::DragFloat("Time Index", (float*)&time_index, 0.005f, 0.0f, selected_animation->duration)){
+                if (f_ondrag){
+                    selected_animation->ApplyInterval(time_index);
+                }
+            }
+
+            if (ImGui::Button("Apply Interval on All")){
+                selected_animation->ApplyInterval(time_index);
+            }
+
+            ObjectAnimation* hips_animation = selected_animation->FindObjectAnimation("Hips");
+            if (hips_animation){
+                if (ImGui::Button("Apply Interval on Hips")){
+                    selected_animation->ApplyIntervalOnto(hips_animation, hips_animation->target,time_index);
+                }
+                if (ImGui::Checkbox("Toggle Position Update on Hips",&f_update_hip_pos)){
+                    selected_animation->SetPositionUpdates(hips_animation,f_update_hip_pos);
+                }
+            }
+
+            if (ImGui::Button("Set as start Lerp animation")){
+                animation_lerp_start = selected_animation;
+                interval_lerp_start = time_index;
+            }
+            if (ImGui::Button("Set as end Lerp animation")){
+                animation_lerp_end = selected_animation;
+                interval_lerp_end = time_index;
+            }
+
+            if (animation_lerp_start && animation_lerp_end){
+                ImGui::Text("Lerp between animation %s at interval %.2f to animation %s at interval %.2f",animation_lerp_start->name.c_str(),interval_lerp_start,animation_lerp_end->name.c_str(),interval_lerp_end);
+                if (ImGui::DragFloat("Lerp", (float*)&lerp, 0.005f, 0.0f, 1.0f)){
+                    animation_lerp_start->Lerp(animation_lerp_end,interval_lerp_start,interval_lerp_end,lerp,vec3());
+                }
+            }
+        }
+
+    }else{
+        ImGui::Text("No animation selected\n");
+    }
+
+
+    ImGui::End();
+}
+
+*/
 
 void Application::CheckObjectSelection(){
     hovered_object = NULL;

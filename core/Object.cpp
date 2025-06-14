@@ -102,6 +102,12 @@ void Object::SetMeshBatchIndex(int32_t index){
     }
 }
 
+void Object::SetShapekey(int index, float factor){
+    if (mesh){
+        //TODO
+    }
+}
+
 void Object::RotateAroundAxis(const vec3& target_axis,float by){
     RotateBy(quat(target_axis,by).normalize());
 }

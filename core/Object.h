@@ -17,6 +17,7 @@ class Object;
 typedef uint32_t objectid_t;
 #define OBJECTID_INVALID    0xFFFFFFFF
 #define NUM_MATERIAL_SLOTS  4
+#define NUM_MORPH_FACTOR_SLOTS  4
 
 #define ANIMATION_STATE_PAUSED      0
 #define ANIMATION_STATE_LOOPING     1
@@ -54,13 +55,13 @@ class Object{
     void SetMesh(Mesh* mesh);
     Mesh* GetMesh();
     void DeleteMesh();
-
     void SetMeshBatchIndex(int32_t batch_index);
     int32_t GetMeshBatchIndex();
+    //Mesh Animation
+    void SetShapekey(int index, float factor);
 
-
+    //Rendering
     void MarkForRender();
-
     void UpdateTransformMatrix();
     fmat4& GetLocalTransformScaleMatrix();
     fmat4& GetWorldTransformScaleMatrix();
@@ -88,7 +89,7 @@ class Object{
     void PitchBy(float by);
     void YawBy(float by);
 
-
+    //Physics/state
     void UpdateState(); //Called from render thread before rendering
     virtual void UpdatePhysicsState();
 
@@ -111,6 +112,7 @@ class Object{
     quat GetRotation();         // Returns a copy of the rotation
     quat GetWorldRotation();    // Calculates and returns world rotation
 
+    //Materials
     void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
     int material_slot[NUM_MATERIAL_SLOTS] = {};
     void TakeMaterialNames(std::vector<Material>& list);
@@ -124,6 +126,7 @@ class Object{
     //Lighting properties
 
     //Animation
+    float morph_factors[NUM_MORPH_FACTOR_SLOTS] = {};
     std::vector<Animation*>animations;
     Animation* previous_animation = NULL;
     Animation* current_animation = NULL;
@@ -137,7 +140,6 @@ class Object{
     void SetNextAnimation(Animation* animation);
     void SetNextAnimation(const std::string& name); //Set next one to wait until this one is completed.
     virtual void ApplyAnimation(float time_delta);
-
 
     //Maybe we want some place for the current object transforms, that may be rendered.
     //And some place where the new ones are calculated.

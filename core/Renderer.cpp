@@ -287,6 +287,14 @@ void Renderer::RenderUniqueMeshes(int normal_or_skinned){
                 data.objectindex = OBJECTID_INVALID;
             }
 
+            data.num_vertices = mesh->num_vertices;
+            data.num_morph_targets = mesh->num_morph_targets;
+            for (int i=0;i<NUM_MORPH_FACTOR_SLOTS;i++){
+                data.morph_factors[i] = object->morph_factors[i];
+            }
+
+
+
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
 
@@ -613,6 +621,8 @@ bool Renderer::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&boneinstdata_ssbo);
     glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, boneinstdata_ssbo);
+
+    //Each mesh can use buffer base 5 for morph targets
 
     return true;
 }

@@ -15,13 +15,16 @@ class Renderer;
 
 //This should have the same layout as in the shader
 #define NUM_MATERIAL_SLOTS  4
+#define NUM_MORPH_FACTOR_SLOTS	4
 
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
     int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
+    float morph_factors[NUM_MORPH_FACTOR_SLOTS];      // Amount each morph target should add to final mesh
     int objectindex;                            // The object's index in a batch it was rendered with this frame. (So not object->id)
     int num_bones;                              // Number of bones. Duplicate info for each instance... because it's mehs info
-    int pad1[2];
+    int num_vertices;
+    int num_morph_targets;
 }instancedata_t;
 
 typedef struct {

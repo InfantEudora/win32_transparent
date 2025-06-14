@@ -370,6 +370,30 @@ int3 GLTFLoader::Getint3_uint8_4(unsigned char* data, int byte_offset){
     return v;
 }
 
+morph_vertex GLTFLoader::GetMorphVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, int index){
+    morph_vertex v = {};
+    //Kind of going to assume the correct accessor will be used for this:
+    //I.e. FLOAT data with either VEC2 or VEC3.
+    if (!pb){
+        debug->Err("No bufferview for position data\n");
+        return v;
+    }
+    if (!nb){
+        debug->Err("No bufferview for normal data\n");
+        return v;
+    }
+    int byte_offset_position = pb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
+    int byte_offset_normal = nb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
+
+    //This is guaranteed to exist... when the file is ok.
+    tinygltf::Buffer& position_buffer = model.buffers[pb->buffer];
+    tinygltf::Buffer& normal_buffer = model.buffers[nb->buffer];
+
+    v.pos = Getvec3(&position_buffer.data.at(0),byte_offset_position);
+    v.normal = Getvec3(&normal_buffer.data.at(0),byte_offset_normal);
+    return v;
+}
+
 vertex GLTFLoader::GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index){
     vertex v = {};
     //Kind of going to assume the correct accessor will be used for this:
@@ -541,13 +565,13 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         return NULL;
     }
 
-
     //Now we expect there to be a NORMAL, POSITION and maybe a TEXCOORD_0
     //TODO: Parse a mesh without UVs
     //Parse multiple primitives, one primitive may have one material
 
     //All vertices loaded from this node.
     std::vector<vertex>verts;
+    std::vector<morph_vertex>morph_verts;
     materials.clear();
 
     debug->Info("Node %s has %i primitives\n",node_name, nodemesh.primitives.size());
@@ -617,14 +641,12 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         tinygltf::BufferView* position_bufferview = NULL;
         tinygltf::BufferView* uv_bufferview = NULL;
 
-
         //Iterate over the accessors for each attribute.
         //Set the appropriate buffer views.
         //The we loop over the indices fetching the normals and postions for those
 
         for (; it != itEnd; it++) {
             //it->first is NORMAL, POSITION and maybe a TEXCOORD_0
-
             const tinygltf::Accessor &accessor = model.accessors[it->second];
             int size = 1;
             if (accessor.type == TINYGLTF_TYPE_SCALAR) {
@@ -645,6 +667,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
             }else if (it->first.compare("POSITION") == 0){
                 position_bufferview = &model.bufferViews[accessor.bufferView];
+                debug->Info("Position accessor.bufferView.count = %i\n",accessor.count);
             }else if (it->first.compare("TEXCOORD_0") == 0){
                 uv_bufferview = &model.bufferViews[accessor.bufferView];
             }else if (it->first.compare("JOINTS_0") == 0){
@@ -660,7 +683,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         }
 
         int vertex_count = indexAccessor.count;
-        debug->Trace("indexAccessor.count = %i\n",vertex_count);
+        debug->Info("indexAccessor.count = %i\n",vertex_count);
         int triangle_count = vertex_count / 3;
 
         //Assemble the triangles:
@@ -692,15 +715,88 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
             verts.push_back(vert3);
             vertex_index += 3;
         }
+
+        //In addition to attibutes, it has 'targets' which are effectively the same, they form meshes.
+        //This is done per primitive. I.e. a single mesh, with two materials can have 2 primitives. Each with an
+        // asociated list of morph targets
+        //For morph targets == shapekeys
+        //Reset
+
+        normal_bufferview = NULL;
+        position_bufferview = NULL;
+        uv_bufferview = NULL;
+
+        //List morph targets
+        for (size_t mt_i = 0; mt_i < primitive.targets.size(); mt_i++){
+            std::map<std::string, int>& morph_target = primitive.targets.at(mt_i);
+            debug->Info("targets[%i].size() = %i\n",mt_i,morph_target.size());
+
+            std::map<std::string, int>::const_iterator it(morph_target.begin());
+            std::map<std::string, int>::const_iterator itEnd(morph_target.end());
+
+            int attrib_index = 0;
+            for (; it != itEnd; it++) {
+                debug->Info("targets[%i] : %s -> accessor: %i\n",mt_i, it->first.c_str(),it->second);
+                attrib_index++;
+
+                //We expect a morph target to consist of positions and normals, for a morph_vertex
+                const tinygltf::Accessor &accessor = model.accessors[it->second];
+                int size = 1;
+                if (accessor.type == TINYGLTF_TYPE_SCALAR) {
+                    size = 1;
+                } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
+                    size = 2;
+                } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
+                    size = 3;
+                } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
+                    size = 4;
+                } else {
+                    debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
+                }
+
+                if (it->first.compare("NORMAL") == 0){
+                    normal_bufferview = &model.bufferViews[accessor.bufferView];
+                }else if (it->first.compare("POSITION") == 0){
+                    position_bufferview = &model.bufferViews[accessor.bufferView];
+                }else{
+                    debug->Err("Unknown Morph Target accessor %s\n",it->first);
+                }
+            }
+
+            //We have to read these in using the same indices the base mesh was loaded with.
+            //Assemble the triangles:
+            int vertex_index = 0;
+            for (int t=0;t<triangle_count;t++){
+                morph_vertex vert1 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 0));
+                morph_vertex vert2 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 1));
+                morph_vertex vert3 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 2));
+
+                morph_verts.push_back(vert1);
+                morph_verts.push_back(vert2);
+                morph_verts.push_back(vert3);
+                vertex_index += 3;
+            }
+        }
     }
 
     if (optional_mat_list_out){
         optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
     }
 
-    debug->Trace("Generated %i vertices. Loaded %i materials\n",verts.size(),materials.size());
+    debug->Info("Loaded %i vertices. Loaded %i materials\n",verts.size(),materials.size());
+    debug->Info("Loaded %i associated morph_target vertices.\n",morph_verts.size());
+
+    int num_morph_targets = morph_verts.size() / verts.size();
+    //Check if they are whole multiples
+    if (num_morph_targets * verts.size() != morph_verts.size()){
+        debug->Fatal("Loaded a fractional numper of morph vertices.\n");
+    }
+
     Mesh* mesh = new Mesh();
     mesh->SetMeshData(&verts.at(0),verts.size());
+    if (morph_verts.size() > 0){
+        mesh->SetMorphMeshData(&morph_verts.at(0),morph_verts.size());
+    }
     mesh->num_materials = materials.size();
     return mesh;
 }
@@ -935,7 +1031,7 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
         }else if (channel.target_path.compare("translation") == 0){
             target_path = ANIM_TARGET_PATH_TRANSLATION;
         }else if (channel.target_path.compare("weights") == 0){
-            target_path = ANIM_TARGET_PATH_TRANSLATION;
+            target_path = ANIM_TARGET_PATH_WEIGHTS;
         }else{
             debug->Fatal("Unknown animation target path %s\n",channel.target_path.c_str());
         }
@@ -1031,11 +1127,32 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
                 }
                 vec3 t = Getvec3(&output_buffer.data.at(0),output_byte_offset);
                 debug->Trace("    -> Target Translation [%i] = %.2f %.2f %.2ff\n",index, t.x,t.y,t.z);
-                if(keyframe->f_rotation == true){
+                if(keyframe->f_position == true){
                     debug->Err("Translation for this keyframe is already set.\n");
                 }
                 keyframe->f_position = true;
                 keyframe->position = t;
+            }else if (target_path == ANIM_TARGET_PATH_WEIGHTS){
+                int num_weights = output_accessor.count / input_accessor.count;
+                int sizeof_frame = sizeof(float) * num_weights;
+                int output_byte_offset = 0;
+                if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_LINEAR){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + (index * sizeof_frame);
+                }else if (interpolation_type == ANIMSAMPLER_INTERPOLATION_TYPE_STEP){
+                    output_byte_offset = output_accessor.byteOffset +  output_buffer_view.byteOffset + (index * sizeof_frame);
+                }else{
+                    debug->Fatal("Invalid interpolation type %i\n",interpolation_type);
+                }
+                keyframe->num_shapekeys = num_weights;
+                for (int i =0;i<num_weights;i++){
+                    float t = Getfloat(&output_buffer.data.at(0),output_byte_offset);
+                    output_byte_offset += sizeof(float);
+                    keyframe->shapekey_weights.push_back(t);
+                }
+                if(keyframe->f_shapekeys == true){
+                    debug->Err("Translation for this keyframe is already set.\n");
+                }
+                keyframe->f_shapekeys = true;
             }
         }
     }

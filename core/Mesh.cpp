@@ -27,6 +27,27 @@ void Mesh::SetMeshData(vertex* verts, int vertex_count){
     num_vertices = vertex_count;
 }
 
+void Mesh::SetMorphMeshData(morph_vertex* verts, int vertex_count){
+    //Copy the data in
+    morph_vertices.clear();
+    for (int i=0;i<vertex_count;i++){
+        morph_vertices.push_back(verts[i]);
+    }
+    //These must be whole multiples
+    num_morph_targets = num_vertices / vertex_count;
+
+    //We'll store these in a Shader Storage Buffer since these can be a random amount.
+    InitSSBO();
+    glNamedBufferData(ssbo, sizeof(morph_vertex) * vertex_count, (float*)&morph_vertices.at(0), GL_STATIC_DRAW);
+}
+
+bool Mesh::InitSSBO(){
+    glCreateBuffers(1, (GLuint*)&ssbo);
+    glNamedBufferData(ssbo, 0 , NULL, GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, ssbo);
+    return true;
+}
+
 bool Mesh::InitVBOVAO(){
     glCreateBuffers(1, (GLuint*)&vbo);
     glCreateVertexArrays(1, (GLuint*)&vao);

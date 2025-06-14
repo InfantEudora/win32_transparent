@@ -29,11 +29,13 @@ IPATHS += -Icore/
 
 SRCS += ./3rdparty/stb_image/stb_image.cpp
 SRCS += ./3rdparty/tinygltf/tiny_gltf.cpp
+#DIR_SRC += ./3rdparty/miniz
 
 IPATHS += -I3rdparty/imgui/
 IPATHS += -I3rdparty/
 IPATHS += -I3rdparty/stb_image/
 IPATHS += -I3rdparty/openal-soft/
+#IPATHS += -I3rdparty/miniz/
 SRCS += main.cpp
 
 #ImGUI

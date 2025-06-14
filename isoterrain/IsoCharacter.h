@@ -39,14 +39,7 @@ class IsoCharacter : public virtual Skeleton{
     bool f_switch_now = false;
     bool f_rotation_animation = false;
 
-
     void ProceedToNextAnimation();
-
-
-
-    void CheckSwitchAnimation(); //Whenever the current one is finished
-
-
 
     //There also needs to be a list, or a tree linked list thing with all allowed actions from a current one.
     //eg. When haning of a ledge, you can't transistion to a walking animation. You first need climb up

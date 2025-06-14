@@ -26,9 +26,11 @@ public:
     Mesh();
     bool InitVBOVAO();
     bool InitSkinnedVBOVAO();
+    bool InitSSBO();
 
-    GLuint vbo = -1;
-    GLuint vao = -1;
+    GLuint vbo = -1;    //Vertex Buffer
+    GLuint vao = -1;    //Attribute Buffer
+    GLuint ssbo = -1;   //Shader Storage used for Morph Targets
 
     void RenderInstances(int num_instances);
     void GenerateUniqueID();
@@ -36,6 +38,7 @@ public:
 
     void SetMeshData(vertex* verts, int vertex_count);
     void SetSkinnedMeshData(skinned_vertex* verts, int vertex_count);
+    void SetMorphMeshData(morph_vertex* verts, int vertex_count);
 
     bool IsNormalMesh();
     bool IsSkinnedMesh();
@@ -43,12 +46,14 @@ public:
     uint32_t num_vertices = 0;
     int     num_materials = 0;
     int     num_references = 0; //Or... maybe use shared_ptr?
+    int     num_morph_targets = 0;
 
     int32_t batch_index = -1;
     int32_t batch_num_instances = 0;
 private:
     std::vector<vertex>vertices;
     std::vector<skinned_vertex>skinned_vertices;
+    std::vector<morph_vertex>morph_vertices;
     static meshid_t mesh_ids;   //Total amount of different meshes.
     meshid_t id = MESHID_INVALID;
 };

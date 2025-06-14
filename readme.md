@@ -40,7 +40,7 @@ It should kind of look like this:
 
 ### ToDo's
 
-- [ ] It'd be nice if the packed data can be zipped and unzipped.
+- [ ] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
 - [ ] Implement GLTF Morph Targets == Blender Shape Keys. A list of weights per mesh vertex, with modifiers.
 - [ ] GLTF and material loading loads and then afterwards checks for duplicates. It should do it beforehand... somehow.
 - [ ] Load Spherical skyboxes from a .pbr file (should work with stb_image) and use them... view them... or cubemap them.

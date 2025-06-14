@@ -38,7 +38,7 @@ class GLTFLoader{
 public:
     void                LoadGLTFFile(const char* filename);
     Mesh*               GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a mesh
-    Mesh*        GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
+    Mesh*               GetSkinnedMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL); //This creates a skinnedmesh
     Skeleton*           GetSkeleton(const char* skeleton_name, AssetManager* assetmanager, Skeleton* optional_target = NULL);
     Bone*               GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
     Animation*          LoadAnimation(const char* animation_name);
@@ -68,6 +68,7 @@ private:
     fmat4            Getfmat4(unsigned char* data, int byte_offset);
     int3             Getint3_uint8_4(unsigned char* data, int byte_offset);
 
+    morph_vertex     GetMorphVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, int index);
     vertex           GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index);
     skinned_vertex   GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, tinygltf::BufferView* bb, tinygltf::BufferView* wb,int index);
 

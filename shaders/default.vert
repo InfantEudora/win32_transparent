@@ -3,6 +3,7 @@
 
 //Multiple of 4 for padding
 #define NUM_MATERIAL_SLOTS  4
+#define MAX_MORPH_TARGETS	4
 
 //Input variables
 layout (location = 0) in vec3 position;
@@ -15,10 +16,11 @@ layout (location = 4) in int matindex;
 struct InstanceData{
 	mat4 mat_transformscale;
 	int material_slot[NUM_MATERIAL_SLOTS];
+	float morph_factors[MAX_MORPH_TARGETS];
 	int objectid;
-	int pad1;
-	int pad2;
-	int pad3;
+	int num_bones;
+	int vertex_count;
+	int num_morph_targets;
 };
 
 struct Material{
@@ -33,6 +35,13 @@ struct Material{
     uvec2 handle_normal;
 };
 
+struct morph_vertex{
+	vec3 position;
+	float pad1;
+	vec3 normal;
+	float pad2;
+};
+
 //If would be nice, if we could fetch all data per instance for different mesh data layouts.
 //Ie, one mesh would have 1 morph target, another maybe 8.
 //One can be a skinned mesh,
@@ -45,6 +54,10 @@ layout (std430, binding = 0) buffer InstanceDataBuffer{
 
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
+};
+
+layout (std430, binding = 5) buffer MorphBuffer{
+	morph_vertex morph_vertices[];
 };
 
 //Output
@@ -80,7 +93,14 @@ void main(){
 
 	vec3 objpos = instance_data[gl_InstanceID].mat_transformscale[3].xyz;
 
-	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(position,1); //In world space
+	//Calculate position when using morph targets
+	vec3 pos = position;
+	if (instance_data[gl_InstanceID].num_morph_targets == 1){
+		pos = position + (morph_vertices[gl_VertexID].position * instance_data[gl_InstanceID].morph_factors[0]);
+	}
+
+
+	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(pos,1); //In world space
 	vposition = transpos.xyz;
 
 	vnormal = (mat_rotate * normal);
