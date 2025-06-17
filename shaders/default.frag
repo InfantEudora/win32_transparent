@@ -202,20 +202,22 @@ vec4 CalcPBRLighting(){
         vec3 light = lightdirection;
         float direction_len = dot(lights[i].direction,lights[i].direction);
         float falloff = 1.0f;
+        float light_value = 1.0;
 
         if (direction_len < 0.1){
             //Makes it a point light instead of direction
             lightdirection = lights[i].position - vposition;
 
             float dist  = length(lights[i].position - vposition);
+            float brightness = lights[i].brightness / pow(dist,falloff);
 
-            if (dist > (1.0 * lights[i].brightness)){
+            if (brightness < 0.01){
                 continue;
             }
-            falloff = (dist* lights[i].brightness) / lights[i].brightness;
+            light_value = brightness;
         }
 
-        light = falloff * CalcDirectionalPBRLight(lightdirection,lights[i].color,lights[i].brightness);
+        light = light_value * CalcDirectionalPBRLight(lightdirection,lights[i].color,lights[i].brightness);
 
         total_light += light;
     }
@@ -250,28 +252,30 @@ void main(){
     float dist = length(frag_coord - mouse_coord);
     if (dist < 5){
         color = vec4(1,0,0,1);
+
+        //We do another Z-Test
+        if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y) /*&& (gl_SampleID == (gl_NumSamples-1))*/){
+            //Z-Value 0 ... 1
+            float z = gl_FragCoord.z;
+            if (fdata_out[0] > z){
+                data_out[0] = vobjid;
+
+                data_out[1] = gl_NumSamples;
+
+                fdata_out[0] = z;
+                fdata_out[1] += sampled_normal.x;
+                fdata_out[2] += sampled_normal.y;
+                fdata_out[3] += sampled_normal.z;
+            }
+        }
     }
 
-    uint m = (1 << gl_SampleID);
-    m = gl_SampleMaskIn[0] & m;
+    //uint m = (1 << gl_SampleID);
+    //m = gl_SampleMaskIn[0] & m;
 
     //gl_SampleMaskIn[0]
     //gl_NumSamples
     //gl_SampleID
 
-    //We do another Z-Test
-    if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y) && (gl_SampleID == (gl_NumSamples-1))){
-        //Z-Value 0 ... 1
-        float z = gl_FragCoord.z;
-        if (fdata_out[0] > z){
-            data_out[0] = vobjid;
 
-            data_out[1] = gl_NumSamples;
-
-            fdata_out[0] = z;
-            fdata_out[1] = sampled_normal.x;
-            fdata_out[2] = sampled_normal.y;
-            fdata_out[3] = sampled_normal.z;
-        }
-    }
 }

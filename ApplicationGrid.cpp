@@ -181,14 +181,22 @@ Scene* ApplicationGrid::CreateHandTestScene(){
 
     debug->SetLevel("GLTFLoader",DEBUG_TRACE);
     selected_animation = gltfloader.LoadAnimation("Blink");
+
     if (selected_animation){
         debug->Ok("Loaded Blink Animation from file.\n");
         if (eyeplant_object){
             eyeplant_object->AddAnimation(selected_animation);
         }
     }
-    debug->SetLevel("GLTFLoader",DEBUG_INFO);
+    GetAllAssetsFromGLTF();
 
+    selection_tile = assetmanager->GetObjectFromAsset("TileSelection");
+    selection_tile->SetPickability(false);
+    selection_tile->name = "Selection Tile";
+    selection_tile->Hide();
+    scene->AddObject(selection_tile);
+
+    debug->SetLevel("GLTFLoader",DEBUG_INFO);
     return scene;
 }
 
@@ -208,10 +216,47 @@ Object* ApplicationGrid::CreateNewObjectFromGLTF(const std::string& nodename, Sc
         gltf_object->TakeMaterialNames(loaded_materials);
         gltf_object->PickMaterials(loaded_materials,target_scene->renderer->materials);
         target_scene->AddObject(gltf_object);
-        assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
+        Asset* asset = assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
         return gltf_object;
     }
     return NULL;
+}
+
+//Get's the currently loaded GLTF file, and imports everyting that wasn't imported.
+void ApplicationGrid::GetAllAssetsFromGLTF(){
+    if (!assetmanager){
+        debug->Err("No assetmanager to load assets into.\n");
+    }
+
+    debug->Info("GetAllAssetsFromGLTF\n");
+    //Iterate through all nodes that have a mesh, check if we have no asset with that name and load.
+    for (std::string& nodename:gltfloader.node_names){
+        debug->Info("GetAllAssetsFromGLTF: Node %s\n",nodename.c_str());
+
+        bool already_loaded = false;
+
+        for (Asset* asset:assetmanager->assets){
+            if (asset->name.compare(nodename) == 0){
+                debug->Info(" -> Already loaded\n");
+                already_loaded = true;
+                break;
+            }
+        }
+
+        if (already_loaded){
+            continue;
+        }
+
+        std::vector<Material>loaded_materials;
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = nodename.c_str();
+            gltf_object->SetMesh(gltfmesh);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
+        }
+    }
 }
 
 
@@ -426,8 +471,10 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
     scene->renderer->AddMaterial(bone_mat);
 
     character = new IsoCharacter();
+    character->root_bone_name = "Hips";
     Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
     gltfloader.GetSkeleton("character_armature",assetmanager,skeleton);
+
 
     if (skeleton){
         Object* bones = skeleton->GetChild(0);
@@ -582,6 +629,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
     //app->test_scene = app->CreateTestScene();
     //app->test_scene = app->CreateBoneTestScene();
     app->test_scene = app->CreateHandTestScene();
+
     app->main_scene = app->test_scene;
 
     app->main_scene->UpdatePhysics();
@@ -696,6 +744,11 @@ void ApplicationGrid::RunLogic(){
 
     //Testing. TODO: Make a slider with more accurate intervals than sleep.
     Sleep(5);
+
+    //Only when in focus
+    if (!main_window->f_has_focus){
+        return;
+    }
 
     CheckObjectSelection();
 
@@ -829,6 +882,7 @@ void ApplicationGrid::RunLogic(){
         //Check if the hovered object is a cell and select a different cell side based on normal.
         vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
         vec3 dir;
+        float height_factor = hovered_cell->terrain->height_factor;
         //Get the closest value of xyz
         if (hov_normal.x >.8){
             dir = vec3(1,0,0);
@@ -837,10 +891,10 @@ void ApplicationGrid::RunLogic(){
             dir = vec3(-1,0,0);
         }
         if (hov_normal.y >.8){
-            dir = vec3(0,1,0);
+            dir = vec3(0,1*height_factor,0);
         }
         if (hov_normal.y <-0.8){
-            dir = vec3(0,-1,0);
+            dir = vec3(0,-1*height_factor,0);
         }
         if (hov_normal.z >.8){
             dir = vec3(0,0,1);
@@ -850,7 +904,7 @@ void ApplicationGrid::RunLogic(){
         }
 
         vec3 p = hovered_cell->GetPosition();
-        p += dir;
+        p += dir ;
 
         if (grid_settings.f_selection){
             selection_tile->SetPosition(p);
@@ -876,7 +930,7 @@ void ApplicationGrid::RunLogic(){
                     debug->Info("Not a terrain cell\n");
                 }
 
-                if (hovered_cell && hovered_cell->PlaceWall(DIRECTION_NORTH)){
+                if (hovered_cell && hovered_cell->PlaceWall("Pallisade",DIRECTION_NORTH)){
                     debug->Info("Placed a new wall there\n");
                 }else{
                     debug->Warn("Unable to place wall there\n");
@@ -1052,24 +1106,32 @@ void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("Interaction Menu", NULL, window_flags)){
         //TODO: All the making of objects should be done through some thread safe message thing.
+        if (ImGui::Button("Raise Terrain")){
+            hovered_cell->RaiseTerrain();
+            f_show_rightclick_menu = false;
+        }
         if (ImGui::Button("Place North Wall")){
-            hovered_cell->PlaceWall(DIRECTION_NORTH);
+            hovered_cell->PlaceWall("Pallisade",DIRECTION_NORTH);
             f_show_rightclick_menu = false;
         }
         if (ImGui::Button("Place East Wall")){
-            hovered_cell->PlaceWall(DIRECTION_EAST);
+            hovered_cell->PlaceWall("Pallisade",DIRECTION_EAST);
             f_show_rightclick_menu = false;
         }
         if (ImGui::Button("Place South Wall")){
-            hovered_cell->PlaceWall(DIRECTION_SOUTH);
+            hovered_cell->PlaceWall("Pallisade",DIRECTION_SOUTH);
             f_show_rightclick_menu = false;
         }
         if (ImGui::Button("Place West Wall")){
-            hovered_cell->PlaceWall(DIRECTION_WEST);
+            hovered_cell->PlaceWall("Pallisade",DIRECTION_WEST);
             f_show_rightclick_menu = false;
         }
         if (ImGui::Button("Place Tree")){
-            hovered_cell->PlaceTree();
+            hovered_cell->PlaceTree("Tree.1");
+            f_show_rightclick_menu = false;
+        }
+        if (ImGui::Button("Place Stairs")){
+            hovered_cell->PlaceStairs("Stairs",DIRECTION_NORTH);
             f_show_rightclick_menu = false;
         }
     }
@@ -1095,7 +1157,7 @@ void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
         if (ImGui::Button("Place Stairs")){
             int normal_dir = IsoDirection::NormalToDirection(rightclick_menu_normal);
             debug->Info("Would place stairs in direcion %i from normal %.2f,%.2f,%.2f\n",normal_dir,rightclick_menu_normal.x,rightclick_menu_normal.y,rightclick_menu_normal.z);
-            hovered_wall->PlaceStairs(normal_dir);
+            //hovered_wall->PlaceStairs(normal_dir);
             f_show_rightclick_menu = false;
         }
     }
@@ -1279,7 +1341,7 @@ void ApplicationGrid::RenderSkeletonUI(){
 }
 
 void ApplicationGrid::UpdateUI(){
-    //RenderGridUI();
+    RenderGridUI();
     RenderDebugMenuBar();
     RenderGenericObjectUI();
 
@@ -1297,6 +1359,21 @@ void ApplicationGrid::RenderGridUI(){
     IsoCell* selected_cell = dynamic_cast<IsoCell*>(selected_object);
     //UI for GridCells
     ImGui::Begin("Grid UI");
+
+    if (!terrain){
+        ImGui::Text("No terrain.");
+        if (ImGui::Button("Create New Terrain")){
+            terrain = new IsoTerrain();
+            terrain->name = "Iso Terrain";
+            terrain->assetmanager = assetmanager;
+            //Now, tell it what the base tile asset should look like?
+            terrain->base_tile = "Tile.1111";
+            terrain->wall_tile = "Pallisade";
+
+            terrain->CreateTerrain(5,5,3);
+            main_scene->AddObject(terrain);
+        }
+    }
 
 
     if (ImGui::CollapsingHeader("Grid Settings")){

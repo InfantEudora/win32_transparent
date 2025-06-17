@@ -552,6 +552,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         readbackbuffer.data_in[0] = mouse.x;
         readbackbuffer.data_in[1] = height - mouse.y;
         readbackbuffer.fdata_out[0] = 1.0f;
+        readbackbuffer.fdata_out[1] = 0.0f;
+        readbackbuffer.fdata_out[2] = 0.0f;
+        readbackbuffer.fdata_out[3] = 0.0f;
+
         UpdateReadbackBuffer();
     }
 
@@ -580,7 +584,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
             int index = readbackbuffer.data_out[0];
             input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
             //debug->Info("Normal at mouse = %.3f, %.3f, %.3f\n",readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]);
-            input->SetHoveredNormal(vec3(readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]));
+            vec3 n = vec3(readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]);
+            input->SetHoveredNormal(n.normalize());
+            //TODO: Make this less noisy and work better
         }else{
             input->SetHoveredObjectID(OBJECTID_INVALID);
             input->SetHoveredNormal(vec3());

@@ -34,7 +34,7 @@ void Mesh::SetMorphMeshData(morph_vertex* verts, int vertex_count){
         morph_vertices.push_back(verts[i]);
     }
     //These must be whole multiples
-    num_morph_targets = num_vertices / vertex_count;
+    num_morph_targets = vertex_count / num_vertices;
 
     //We'll store these in a Shader Storage Buffer since these can be a random amount.
     InitSSBO();

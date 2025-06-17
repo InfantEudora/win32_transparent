@@ -95,10 +95,10 @@ void main(){
 
 	//Calculate position when using morph targets
 	vec3 pos = position;
-	if (instance_data[gl_InstanceID].num_morph_targets == 1){
-		pos = position + (morph_vertices[gl_VertexID].position * instance_data[gl_InstanceID].morph_factors[0]);
+	int voffset = instance_data[gl_InstanceID].vertex_count;
+	for (int i=0;i<instance_data[gl_InstanceID].num_morph_targets;i++){
+		pos += (morph_vertices[(i*voffset) + gl_VertexID].position * instance_data[gl_InstanceID].morph_factors[i]);
 	}
-
 
 	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(pos,1); //In world space
 	vposition = transpos.xyz;

@@ -134,12 +134,15 @@ class Object{
     int animation_state = ANIMATION_STATE_LOOPING;
     bool f_animation_override = false;
     float animation_time_delta = 0.02f;
+    float animation_transition_time = 0.0f;
+    float animation_transition_time_max = 0.25f;
     void AddAnimation(Animation* animation);
     //void SetAnimation(Animation* animation);
     Animation* FindAnimation(const std::string& name); //Finds it by name
     void SetNextAnimation(Animation* animation);
-    void SetNextAnimation(const std::string& name); //Set next one to wait until this one is completed.
+    void SetNextAnimation(const std::string& name); // Set next one to wait until this one is completed.
     virtual void ApplyAnimation(float time_delta);
+    void ProceedToNextAnimation();                  // Flags that we can blend into the next animation
 
     //Maybe we want some place for the current object transforms, that may be rendered.
     //And some place where the new ones are calculated.

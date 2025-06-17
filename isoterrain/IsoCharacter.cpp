@@ -4,7 +4,7 @@
 static Debugger* debug = new Debugger("IsoCharacter",DEBUG_INFO);
 
 IsoCharacter::IsoCharacter():Object(){
-    transition_time_max = 0.2;
+    animation_transition_time_max = 0.2;
 }
 
 IsoCharacter::~IsoCharacter(){
@@ -74,7 +74,7 @@ void IsoCharacter::ApplyAnimation(float time_delta){
             next_animation->time_index -= next_animation->duration;
         }
 
-        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,transition_time / transition_time_max, vec3());
+        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_time / animation_transition_time_max, vec3());
 
         if (update_hippos){
             vec3 hippos_end = hip_bone->GetPosition();
@@ -86,9 +86,9 @@ void IsoCharacter::ApplyAnimation(float time_delta){
             update_hippos = false;
         }
 
-        transition_time += time_delta;
-        if (transition_time > transition_time_max){
-            transition_time = transition_time_max;
+        animation_transition_time += time_delta;
+        if (animation_transition_time > animation_transition_time_max){
+            animation_transition_time = animation_transition_time;
             current_animation = next_animation;
             animation_state = ANIMATION_STATE_LOOPING;
             update_hippos = true;
@@ -96,19 +96,6 @@ void IsoCharacter::ApplyAnimation(float time_delta){
         }
     }
 }
-
-void IsoCharacter::ProceedToNextAnimation(){
-    if (next_animation == current_animation){
-        //No need.
-        return;
-    }
-    if (animation_state != ANIMATION_STATE_TRANSITION){
-        animation_state = ANIMATION_STATE_TRANSITION;
-        transition_time = 0;
-    }
-}
-
-
 
 /*
 void IsoCharacter::UpdatePhysicsState(){

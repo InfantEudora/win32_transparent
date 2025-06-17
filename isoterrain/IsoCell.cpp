@@ -24,10 +24,10 @@ void IsoCell::SetTerrainType(int newtype){
     terrain_type = newtype;
 }
 
-Object* IsoCell::PlaceTree(){
+Object* IsoCell::PlaceTree(const std::string& asset_name){
     Object* prop = NULL;
     if (prop_index == -1){
-        prop = assetmanager->GetObjectFromAsset("tree.001");
+        prop = assetmanager->GetObjectFromAsset(asset_name.c_str());
         if (prop && AttachChild(prop)){
             prop_index = children.size() - 1;
             debug->Ok("Placed a new tree\n");
@@ -60,27 +60,48 @@ IsoCell* IsoCell::GetNeighbour(int direction){
     return terrain->GetCellByCoordinate(coordinate + add);
 }
 
-//Place a wall at one of the 4 coordinates.
-Object* IsoCell::PlaceStairs(int direction){
-    if (!IsoDirection::DirectionIsValid(direction)){
+Object* IsoCell::RaiseTerrain(){
+    if (!terrain){
+        return NULL;
+    }
+    IsoCell* neighbour_up = terrain->GetCellByCoordinate(coordinate + int3(0,0,1));
+    if (!neighbour_up){
         return NULL;
     }
 
-    Object* prop = NULL;
-    if (prop_index == -1){
-        prop = assetmanager->GetObjectFromAsset("stairs.001");
-        if (prop && AttachChild(prop)){
-            prop_index = children.size() - 1;
-            debug->Ok("Placed some stairs\n");
-            prop->material_names[0] = "metal_001";
-            prop->name = "Stairs @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
-        }
+    //Replace the up neighbour's mesh
+    Object* n = assetmanager->GetObjectFromAsset(terrain->base_tile.c_str(),neighbour_up);
+    if (n){
+        debug->Ok("Raied terrain\n");
+        n->SetVisibility(true);
     }
-    return prop;
+    return n;
+}
+
+//Stairs to go 1 up in terrain height
+Object* IsoCell::PlaceStairs(const std::string& asset_name,int direction){
+    if (!IsoDirection::DirectionIsValid(direction)){
+        return NULL;
+    }
+    if (!terrain){
+        return NULL;
+    }
+    IsoCell* neighbour_up = terrain->GetCellByCoordinate(coordinate + int3(0,0,1));
+    if (!neighbour_up){
+        return NULL;
+    }
+
+    //Replace the up neighbour's mesh
+    Object* n = assetmanager->GetObjectFromAsset(asset_name.c_str(),neighbour_up);
+    if (n){
+        debug->Ok("Placed some stairs\n");
+        n->SetVisibility(true);
+    }
+    return n;
 }
 
 //Place a wall at one of the 4 coordinates.
-IsoWall* IsoCell::PlaceWall(int direction){
+IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
     if (!IsoDirection::DirectionIsValid(direction)){
         return NULL;
     }
@@ -102,7 +123,7 @@ IsoWall* IsoCell::PlaceWall(int direction){
         //Create a new one.
         IsoWall* wall = new IsoWall();
 
-        if (assetmanager->GetObjectFromAsset("wall_full.001",wall) && AttachChild(wall)){
+        if (assetmanager->GetObjectFromAsset(asset_name.c_str(),wall) && AttachChild(wall)){
             wall->material_names[0] = "Bricks";
             wall->material_names[1] = "Concrete";
             wall->f_update_materials = true;
@@ -129,6 +150,7 @@ IsoWall* IsoCell::PlaceWall(int direction){
         }else{
             debug->Ok("Unable to place new wall\n");
         }
+        wall->UpdatePhysicsState();
         return wall;
     }else{
         debug->Warn("Already a prop at that location\n");

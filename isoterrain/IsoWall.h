@@ -25,7 +25,7 @@ public:
     int direction = DIRECTION_NONE;
 
     void Lower();
-    Object* PlaceStairs(int direction);
+
 };
 
 

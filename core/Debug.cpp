@@ -288,6 +288,8 @@ void Debugger::PrintLineva(debug_t type, const char *format, va_list arglist) {
         exit(1);
     }
     lines_buffered++;
+    Flush();
+    return;
     if (enable_buffering && (boffset > DEBUG_IO_HIGHWM)) {
         Flush();
     } else if (!enable_buffering) {

@@ -641,6 +641,10 @@ void Application::RenderGenericObjectUI(){
             if (object->animations.size() == 0){
                 ImGui::Text("Object has no animations");
             }else{
+                if (ImGui::Button("NULL")){
+                    object->SetNextAnimation(NULL);
+                    object->ProceedToNextAnimation();
+                }
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
                         object->SetNextAnimation(animation);

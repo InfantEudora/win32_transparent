@@ -42,11 +42,11 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     for (int scene_index=0;scene_index<model.scenes.size();scene_index++){
         debug->Trace("Model.scenes[%i].name : %s\n",scene_index, model.scenes[scene_index].name.c_str());
     }
-    debug->Trace("Model has %i nodes\n",model.nodes.size());
+    debug->Info("Model has %i nodes\n",model.nodes.size());
     node_names.clear();
     for (int node_index=0;node_index<model.nodes.size();node_index++){
-        debug->Trace("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
-        debug->Trace("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
+        debug->Info("Model.nodes[%i].name     : %s\n",node_index, model.nodes[node_index].name.c_str());
+        debug->Info("Model.nodes[%i].mesh     : %i\n",node_index, model.nodes[node_index].mesh);
         debug->Trace("Model.nodes[%i].children : %i\n",node_index, model.nodes[node_index].children.size());
         debug->Trace("Model.nodes[%i].weights  : %i\n",node_index, model.nodes[node_index].weights.size());
 
@@ -56,8 +56,6 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
             debug->Trace(" - Child[%i] -> model.nodes[%i].name : %s\n",i,child_index, child.name.c_str());
         }
         node_names.push_back(model.nodes[node_index].name);
-
-
     }
 
     debug->Trace("Model has %i skins\n",model.skins.size());
@@ -148,13 +146,13 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
             }
         }
     }
-    debug->Trace("Model has %i textures\n",model.textures.size());
+    debug->Info("Model has %i textures\n",model.textures.size());
     for (int texture_index=0;texture_index<model.textures.size();texture_index++){
-        debug->Trace("Model.textures[%i].name : %s\n",texture_index, model.textures[texture_index].name.c_str());
+        debug->Info("Model.textures[%i].name : %s\n",texture_index, model.textures[texture_index].name.c_str());
     }
-    debug->Trace("Model has %i images\n",model.textures.size());
+    debug->Info("Model has %i images\n",model.images.size());
     for (int image_index=0;image_index<model.images.size();image_index++){
-        debug->Trace("Model.images[%i].name       : %s\n",image_index, model.images[image_index].name.c_str());
+        debug->Info("Model.images[%i].name       : %s\n",image_index, model.images[image_index].name.c_str());
         debug->Trace("Model.images[%i].mime_type  : %s\n",image_index, model.images[image_index].mimeType.c_str());
         debug->Trace("Model.images[%i].bufferView : %i\n",image_index, model.images[image_index].bufferView);
         debug->Trace("Model.images[%i].uri        : %s\n",image_index, model.images[image_index].uri.c_str());
@@ -596,11 +594,17 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
             if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
                 //This material uses texture with index
                 diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
+                if (diff_texture_index == -1){
+                    debug->Fatal("diff_texture_index == -1\n");
+                }
+                debug->Info("diff_texture_index = %i\n",diff_texture_index);
 
                 Texture* diff_texture = new Texture();
                 //Get the memory offset.
+                tinygltf::Texture& texture = model.textures.at(diff_texture_index);
 
-                tinygltf::Image& image = model.images.at(diff_texture_index);
+                int image_index = texture.source;
+                tinygltf::Image& image = model.images.at(image_index);
                 if (image.bufferView == -1){
                     debug->Fatal("Probably external image file needs to be loaded.\n");
                 }
@@ -873,8 +877,10 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
 
                 Texture* diff_texture = new Texture();
                 //Get the memory offset.
+                tinygltf::Texture& texture = model.textures.at(diff_texture_index);
 
-                tinygltf::Image& image = model.images.at(diff_texture_index);
+                int image_index = texture.source;
+                tinygltf::Image& image = model.images.at(image_index);
                 if (image.bufferView == -1){
                     debug->Fatal("Probably external image file needs to be loaded.\n");
                 }

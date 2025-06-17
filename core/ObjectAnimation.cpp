@@ -68,10 +68,11 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
         debug->Fatal("TODO: Implement animation scaling\n");
     }
     if (keyframe->f_shapekeys){
-        //TODO:HERE
-        //We can either reupload the entire mesh.
-        //Or we upload all mesh data, plus morphs
-        debug->Info("Would apply shapekey here\n");
+        int index = 0;
+        for (float weight:keyframe->shapekey_weights){
+            target->SetShapekey(index,weight);
+            index++;
+        }
     }
 }
 

@@ -64,6 +64,7 @@ private:
 
     //Quick things
     Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);
+    void GetAllAssetsFromGLTF();
 
 
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);

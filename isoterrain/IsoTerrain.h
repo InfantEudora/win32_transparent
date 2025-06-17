@@ -7,6 +7,11 @@
     It's a square cell in a larger grid.
     We should probably render the entire grid as a single mesh.
     Maybe later on we can construct it from this.
+
+    You must be able to specify a list of assets that will be tilable together.
+
+    I.e., a ground floor can be as simple as a square. And maybe that can fit 4 walls, multiple props.
+    It might be able to tile next to another floor type, or maybe not...
 */
 
 class IsoTerrain;
@@ -20,8 +25,13 @@ public:
 
 
     int cell_count = -1; //= width * depth * height
+    //Settings
     vec3 center_offset = {};
+    float height_factor = 0.5f;
+
     std::vector<IsoCell*> cells;     //An array of width*depth cells
+    std::string base_tile = "tile_floor.001";
+    std::string wall_tile = "wall_full.001";
 
     AssetManager* assetmanager = NULL;  //Used to load assets from file.
 

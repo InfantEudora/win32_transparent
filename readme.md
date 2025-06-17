@@ -41,7 +41,7 @@ It should kind of look like this:
 ### ToDo's
 
 - [ ] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
-- [ ] Implement GLTF Morph Targets == Blender Shape Keys. A list of weights per mesh vertex, with modifiers.
+- [x] Implement GLTF Morph Targets == Blender Shape Keys. A list of weights per mesh vertex, with modifiers.
 - [ ] GLTF and material loading loads and then afterwards checks for duplicates. It should do it beforehand... somehow.
 - [ ] Load Spherical skyboxes from a .pbr file (should work with stb_image) and use them... view them... or cubemap them.
 - [ ] The Mat3 rotation used to also rotate normals in the vertex shader needs to be renormalised. Why?
@@ -96,6 +96,7 @@ We use a single 1k texture as a uniform noise where all our randomness comes fro
 ### Isometric RPG Thing
 
 - Rooms, levels. Have a menu pop up when clicking a tile: Add walls, door or window to 4 directions. Make it detect area's like rooms and highlight them.
+- We want to be able to use IsoGrid as a generic grid tiling thing. We need to tell it what assets to use, and how they can tile together.
 
 ### Done's
 - [x] Multisampling to a seperate FBO

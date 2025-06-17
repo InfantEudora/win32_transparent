@@ -103,8 +103,8 @@ void Object::SetMeshBatchIndex(int32_t index){
 }
 
 void Object::SetShapekey(int index, float factor){
-    if (mesh){
-        //TODO
+    if ((index >= 0) && (index < NUM_MORPH_FACTOR_SLOTS)){
+        morph_factors[index] = factor;
     }
 }
 
@@ -479,6 +479,7 @@ void Object::SetNextAnimation(const std::string& name){
 
 void Object::SetNextAnimation(Animation* animation){
     if (!animation){
+        next_animation = NULL;
         return;
     }
     //If this is a new one, we reset it to 0. Otherwise, leave it.
@@ -497,10 +498,20 @@ Animation* Object::FindAnimation(const std::string& name){
     return NULL;
 }
 
+void Object::ProceedToNextAnimation(){
+    if (next_animation == current_animation){
+        return;
+    }
+    if (animation_state != ANIMATION_STATE_TRANSITION){
+        animation_state = ANIMATION_STATE_TRANSITION;
+        animation_transition_time = 0.0f;
+    }
+}
+
 void Object::ApplyAnimation(float time_delta){
     if (!current_animation){
         current_animation = next_animation;
-        next_animation = NULL;
+
     }
     if (!current_animation){
         return;
@@ -513,5 +524,14 @@ void Object::ApplyAnimation(float time_delta){
             //TODO: We the animation ends, we need to keep the last position... either by nesting object.. or something sinister
         }
         current_animation->ApplyInterval(current_animation->time_index);
+    }else if (animation_state == ANIMATION_STATE_TRANSITION){
+        animation_transition_time += time_delta;
+        if (animation_transition_time > animation_transition_time_max){
+            animation_transition_time = animation_transition_time;
+            current_animation = next_animation;
+            animation_state = ANIMATION_STATE_LOOPING;
+        }
+
+
     }
 }

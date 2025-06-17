@@ -4,6 +4,17 @@
 #include "Debug.h"
 static Debugger* debug = new Debugger("IsoTerrain",DEBUG_INFO);
 
+/*Coordinate mapping
+
+
+X=WIDTH
+Z=DEPTH
+Y=UP=Height
+
+But OpenGL is XYZ
+Z=Height
+*/
+
 //Generates the tile that make up the terrain
 void IsoTerrain::CreateTerrain(int w, int d, int h){
     if (!assetmanager){
@@ -28,18 +39,20 @@ void IsoTerrain::CreateTerrain(int w, int d, int h){
                 c->coordinate.z = y;
                 c->assetmanager = assetmanager;
                 c->terrain = this;
-                if (!assetmanager->GetObjectFromAsset("tile_floor.001",c)){
-                    return;
-                }
-                c->SetPosition(vec3(x,y,z) + center_offset);
+
+                c->SetPosition(vec3(x,y * height_factor,z) + center_offset);
                 c->name = "IsoCell " + std::to_string(x) + "," + std::to_string(z);
                 //These two lists should know/update when a cell/or child gets destroyed... somehow
                 AttachChild(c);
                 if (y != 0){
-                    c->SetVisibility(false);
+                    //c->SetVisibility(false);
                 }
-                c->material_names[0] = "dirt";
+                //c->material_names[0] = "dirt";
                 c->f_update_materials = true;
+
+                assetmanager->GetObjectFromAsset(base_tile.c_str(),c);
+
+
                 cells.push_back(c);
             }
         }
@@ -57,7 +70,7 @@ IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
         return NULL;
     }
 
-    int index = (coord.y * width * depth) +  (coord.z * width) + coord.x;
+    int index = (1/height_factor * coord.y * width * depth) +  (coord.z * width) + coord.x;
     if (index < cells.size()){
         return cells.at(index);
     }

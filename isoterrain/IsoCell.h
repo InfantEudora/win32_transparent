@@ -51,9 +51,10 @@ public:
 
     IsoCell* GetNeighbour(int direction);
 
-    IsoWall* PlaceWall(int direction);
-    Object* PlaceTree();
-    Object* PlaceStairs(int direction);
+    IsoWall* PlaceWall(const std::string& asset_name,int direction);
+    Object* PlaceTree(const std::string& asset_name);
+    Object* PlaceStairs(const std::string& asset_name,int direction);
+    Object* RaiseTerrain();
 };
 
 

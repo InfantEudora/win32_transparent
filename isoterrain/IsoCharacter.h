@@ -24,8 +24,8 @@ class IsoCharacter : public virtual Skeleton{
     //It does when you don't want to lookup the objects every single time.
     std::string root_bone_name;
 
-    float transition_time = 0.0f;
-    float transition_time_max = 0.25f;
+
+
 
     bool update_hippos = false;
     vec3 hippos_start = {};
@@ -39,7 +39,7 @@ class IsoCharacter : public virtual Skeleton{
     bool f_switch_now = false;
     bool f_rotation_animation = false;
 
-    void ProceedToNextAnimation();
+
 
     //There also needs to be a list, or a tree linked list thing with all allowed actions from a current one.
     //eg. When haning of a ledge, you can't transistion to a walking animation. You first need climb up

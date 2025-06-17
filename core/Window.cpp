@@ -487,9 +487,11 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
             break;
         case WM_ACTIVATE:
             if(LOWORD(wParam) == WA_INACTIVE ){
-                wnd->f_has_focus = true;
-            }else{
                 wnd->f_has_focus = false;
+                //debug->Info("WM_ACTIVATE: Inactive\n");
+            }else{
+                wnd->f_has_focus = true;
+                //debug->Info("WM_ACTIVATE: Active\n");
             }
             break;
         case WM_MOVE:
@@ -509,9 +511,11 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         break;
         case WM_SETFOCUS:
             wnd->f_has_focus = true;
+            //debug->Info("WM_SETFOCUS\n");
         break ;
         case WM_KILLFOCUS:
             wnd->f_has_focus = false;
+            //debug->Info("WM_KILLFOCUS\n");
         break;
         case WM_PAINT:
             debug->Info("WM_PAINT received\n");
