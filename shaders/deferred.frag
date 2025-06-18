@@ -8,17 +8,22 @@ layout (location = 1) out vec4 dnormal;
 layout (location = 0)  in vec3 vposition;       //Vertex position in world space, now fragment position in worldspace.
 layout (location = 1)  in vec3 vnormal;         //Vertex normals
 layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
-layout (location = 3)  flat in int vmatindex;   //Material index
-layout (location = 4)  flat in int vobjid;      //ObjectID from vertex shader
 
-layout (binding = 0) uniform sampler2D material_texture[2];   //Input texture
+layout (location = 6)  flat in int vmatindex;   //Material index
+layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
+
+layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
 
 struct Material{
 	vec4 color;
-    int texture_unit;
-    int pad1;
-    int pad2;
+    int diffuse_texture;
+    int normal_texture;
+    float brightness;
     int pad3;
+    //sampler2D handle_diffuse;
+    //sampler2D handle_normal;
+    uvec2 handle_diffuse;
+    uvec2 handle_normal;
 };
 
 #define PI 	3.14159265359
@@ -39,8 +44,8 @@ layout (std430, binding = 3) buffer ReadbackBuffer{
 
 float GetTransparency(){
     Material m = materials[vmatindex];
-    if (m.texture_unit >= 0){
-        return texture(material_texture[m.texture_unit], vuv).w;
+    if (m.diffuse_texture >= 0){
+        return texture(material_texture[m.diffuse_texture], vuv).w;
     }
     return m.color.w;
 }
@@ -49,8 +54,8 @@ void main(){
 
     Material m = materials[vmatindex];
     vec3 albedo;
-    if (m.texture_unit >= 0){
-        albedo = texture(material_texture[m.texture_unit], vuv).xyz * m.color.xyz;
+    if (m.diffuse_texture >= 0){
+        albedo = texture(material_texture[m.diffuse_texture], vuv).xyz * m.color.xyz;
     }else{
         albedo = m.color.xyz;
     }

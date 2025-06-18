@@ -124,7 +124,7 @@
 /* If MINIZ_NO_TIME is specified then the ZIP archive functions will not be able to get the current time, or */
 /* get/set file times, and the C run-time funcs that get/set times won't be called. */
 /* The current downside is the times written to your archives will be from 1979. */
-/*#define MINIZ_NO_TIME */
+#define MINIZ_NO_TIME
 
 /* Define MINIZ_NO_DEFLATE_APIS to disable all compression API's. */
 /*#define MINIZ_NO_DEFLATE_APIS */
@@ -133,16 +133,16 @@
 /*#define MINIZ_NO_INFLATE_APIS */
 
 /* Define MINIZ_NO_ARCHIVE_APIS to disable all ZIP archive API's. */
-/*#define MINIZ_NO_ARCHIVE_APIS */
+#define MINIZ_NO_ARCHIVE_APIS
 
 /* Define MINIZ_NO_ARCHIVE_WRITING_APIS to disable all writing related ZIP archive API's. */
-/*#define MINIZ_NO_ARCHIVE_WRITING_APIS */
+#define MINIZ_NO_ARCHIVE_WRITING_APIS
 
 /* Define MINIZ_NO_ZLIB_APIS to remove all ZLIB-style compression/decompression API's. */
-/*#define MINIZ_NO_ZLIB_APIS */
+#define MINIZ_NO_ZLIB_APIS
 
 /* Define MINIZ_NO_ZLIB_COMPATIBLE_NAME to disable zlib names, to prevent conflicts against stock zlib. */
-/*#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES */
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 
 /* Define MINIZ_NO_MALLOC to disable all calls to malloc, free, and realloc.
    Note if MINIZ_NO_MALLOC is defined then the user must always provide custom user alloc/free/realloc

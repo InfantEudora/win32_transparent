@@ -149,6 +149,9 @@ Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... wha
 
 ImGui: ImGui_ImplWin32_EnableAlphaCompositing needs to be commented out. It's a Windows 7 feature.
 
+### More OpenGL 4.5 Madness
+Changed glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_STREAM_DRAW); from GL_DYNAMIC_DRAW.
+
 ### Header only libraries
 
 Since we dont have any include hierarchy thing which tells us what file to recompile, header only files are horrible.

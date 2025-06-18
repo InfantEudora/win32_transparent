@@ -612,6 +612,7 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //Create a renderer for this window
     app->renderer = new Renderer(app->main_window->width,app->main_window->height);
+
     app->renderer->Init();
     app->renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 

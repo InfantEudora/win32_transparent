@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#include "miniz.h"
 
 class BinaryAsset;
 
@@ -14,9 +15,15 @@ class BinaryAsset;
 class BinaryAsset{
 public:
     std::string name;
+    bool iscompressed = false;
+
     size_t size = 0;
-    size_t offset = 0;
+    size_t offset = 0;  //Data offset when loaded in a contiguous memory block
     uint8_t* data = NULL;
+
+    size_t compressed_size = 0;
+    size_t compressed_offset = 0;
+    uint8_t* compressed_data = NULL;
 
     static int num_memory_assets;
     static BinaryAsset assets[];
@@ -26,6 +33,8 @@ public:
     static void ListBinaryAssets();
     static void DumpBinaryAssets();
     static BinaryAsset* GetBinaryAsset(const char* filename);
+
+    void Uncompress();
 };
 
 #endif

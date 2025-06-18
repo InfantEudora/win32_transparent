@@ -331,12 +331,12 @@ void Renderer::RenderUniqueMeshes(int normal_or_skinned){
             instancedata.push_back(data);
 
         }
-        glInvalidateBufferData(instdata_ssbo);
-        glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_DYNAMIC_DRAW);
+        //glInvalidateBufferData(instdata_ssbo);
+        glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_STREAM_DRAW);
 
         if (normal_or_skinned == 1){ //Skinned mode
-            glInvalidateBufferData(boneinstdata_ssbo);
-            glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_DYNAMIC_DRAW);
+            //glInvalidateBufferData(boneinstdata_ssbo);
+            glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_STREAM_DRAW);
         }
 
         debug->Trace("Rendering %i instances of mesh->id %i\n",mesh->batch_num_instances,mesh->GetID());
@@ -426,8 +426,8 @@ void Renderer::RenderDebugLines(){
 //Set's the SSBO that will be used for reading back data
 void Renderer::UpdateReadbackBuffer(){
     readbackbuffer.data_out[0] = -1;
-    glInvalidateBufferData(readback_ssbo);
-    glNamedBufferData(readback_ssbo,sizeof(readback_buffer_t), &readbackbuffer,GL_DYNAMIC_DRAW);
+    //glInvalidateBufferData(readback_ssbo);
+    glNamedBufferData(readback_ssbo,sizeof(readback_buffer_t), &readbackbuffer,GL_STREAM_DRAW);
 }
 
 //Requires a skybox shader and skybox to have been set.
@@ -571,8 +571,6 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         DrawSkinnedObjects();
     }
 
-
-
     ResolveAA();
 
     if (input){
@@ -604,28 +602,28 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 bool Renderer::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&instdata_ssbo);
     //glNamedBufferStorage(instdata_ssbo, 0 , NULL, GL_DYNAMIC_STORAGE_BIT);
-    glNamedBufferData(instdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glNamedBufferData(instdata_ssbo, 0 , NULL, GL_STREAM_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, instdata_ssbo);
 
     //A buffer for the materials
     glCreateBuffers(1, (GLuint*)&materialdata_ssbo);
-    glNamedBufferData(materialdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glNamedBufferData(materialdata_ssbo, 0 , NULL, GL_STREAM_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, materialdata_ssbo);
 
     //A buffer for all the lights
     glCreateBuffers(1, (GLuint*)&lights_ssbo);
-    glNamedBufferData(lights_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glNamedBufferData(lights_ssbo, 0 , NULL, GL_STREAM_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, lights_ssbo);
 
     //A buffer where we read back data from, mainly the object id at mouse coordinate.
     glCreateBuffers(1, (GLuint*)&readback_ssbo);
-    glNamedBufferData(readback_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glNamedBufferData(readback_ssbo, 0 , NULL, GL_STREAM_DRAW);
     //glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, readback_ssbo);
 
     //A buffer for storing all the bone data for skinned meshes
     glCreateBuffers(1, (GLuint*)&boneinstdata_ssbo);
-    glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_DYNAMIC_DRAW);
+    glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_STREAM_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, boneinstdata_ssbo);
 
     //Each mesh can use buffer base 5 for morph targets
@@ -880,8 +878,8 @@ void Renderer::UploadMaterials(){
     }
 
     if (glsl_materials.size() > 0){
-        glInvalidateBufferData(materialdata_ssbo);
-        glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_DYNAMIC_DRAW);
+        //glInvalidateBufferData(materialdata_ssbo);
+        glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_STREAM_DRAW);
     }
 }
 
@@ -922,8 +920,8 @@ void Renderer::UploadLights(){
     }
 
     if (glsl_lights.size() > 0){
-        glInvalidateBufferData(lights_ssbo);
-        glNamedBufferData(lights_ssbo,glsl_lights.size()*sizeof(light_t) , &glsl_lights.at(0),GL_DYNAMIC_DRAW);
+        //glInvalidateBufferData(lights_ssbo);
+        glNamedBufferData(lights_ssbo,glsl_lights.size()*sizeof(light_t) , &glsl_lights.at(0),GL_STREAM_DRAW);
     }
 }
 
