@@ -2,6 +2,7 @@
 
 layout (location = 0) out vec4 dposition;
 layout (location = 1) out vec4 dnormal;
+layout (location = 2) out int dobjectid;
 //layout (location = 2) out vec4 dalbedo
 
 //Passed from vertex shader.
@@ -62,6 +63,7 @@ void main(){
     float alpha = GetTransparency();
     dposition = vec4(vposition,alpha);
     dnormal = vec4(vnormal,1);
+    dobjectid = vobjid;
     data_out[0] = vobjid;
     float z = gl_FragCoord.z;
     fdata_out[0] = z;

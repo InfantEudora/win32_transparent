@@ -220,7 +220,8 @@ Video Cards:
  - NVidia RTX 2070
  - AMD FirePro M4000 (Elitebook 8570W)
 
-Fragment shader writes ObjectID to a SSBO when the fragment at mouse position is being rendered. This has some problems with Z testing.
+Fragment shader writes ObjectID to a SSBO when the fragment at mouse position is being rendered. This has some problems with Z testing. Best solution seems to be using a seperate stage that we might want anyway to render object ID and normals to a texture, and use readpixels.
+
 
 ### Spite Sheet Tools
 SpiteSheet Packer

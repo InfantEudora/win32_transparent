@@ -81,7 +81,7 @@ class Renderer{
     void DrawFrame(Camera* camera, Shader* shader, InputController* input);
 
     bool CheckFrameBuffer();
-    bool Init();
+    bool Init(int pipeline = PIPELINE_MSAA);
     void SetState();
     bool SetNumAASamples(int desired);
     bool Resize(int new_width, int new_height);
@@ -93,7 +93,8 @@ class Renderer{
     void ResolveAA();
     void RenderResolveTextureOnly();
 
-    static void SetVSync(bool enable);
+    void SetVSync(bool enable);
+    bool GetVSync();
 
     void UploadMaterials();
     void UploadLights();
@@ -113,10 +114,11 @@ class Renderer{
     GLuint msaa_fbo_id = -1; //Main FBO consisting of:
     GLuint color_rbo_id = -1; // Main color
     GLuint depth_rbo_id = -1; // Main depth
+    //GLuint objectid_rbo_id = -1; // Main Object-ID color buffer in INT32
 
     GLuint resolve_fbo_id = -1;  //Resolve frame buffer
     GLuint resolve_tex_id = -1;  //Resolves into a texture
-    //GLuint resolve_rbo_id = -1;  //Corresponding render buffer
+    //GLuint resolve_rbo_id = -1;  //Resolve buffer for Object ID so we don't need a seperate pass.
 
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
@@ -129,6 +131,7 @@ class Renderer{
     GLuint deferred_depth_tex_id = -1; // Main depth buffer
     GLuint deferred_position_tex_id = -1; // Position of objects
     GLuint deferred_normal_tex_id = -1; // Normals of objects
+    GLuint deferred_objectid_tex_id = -1; // Object IDs of objects for selection
     GLuint ssao_tex_id = -1; // SSAO output texture
 
     Shader* deferred_shader = NULL;     //Shader that outputs data to textures
@@ -148,6 +151,7 @@ class Renderer{
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering
     bool f_backface_culling = true;   // Enable/disable normal mapping
+
 
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;
@@ -172,6 +176,10 @@ class Renderer{
     readback_buffer_t readbackbuffer;                   //A single buffer for reading back data from shader
 
     std::vector<Object*>objects;                        //All known objects
+
+    private:
+    //Settings
+    bool f_vsync = false;
 };
 
 

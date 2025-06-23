@@ -223,10 +223,10 @@ vec4 CalcPBRLighting(){
     }
 
 
-    float alpha = GetTransparency();
-    if (alpha < alpha_clip){
-        discard;
-    }
+    float alpha = 1 - step(GetTransparency(),alpha_clip);
+    //if (alpha < alpha_clip){
+    //    discard;
+    //}
     final = vec4(total_light,alpha);
 
     return final;
@@ -249,26 +249,31 @@ void main(){
     ivec2 frag_coord = ivec2(gl_FragCoord.xy);
     color = final;
 
+    //This is quite slow.
+    /*
     float dist = length(frag_coord - mouse_coord);
-    if (dist < 5){
+    if (dist < 4){
         color = vec4(1,0,0,1);
 
         //We do another Z-Test
-        if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y) /*&& (gl_SampleID == (gl_NumSamples-1))*/){
+        //if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y)){ // && (gl_SampleID == (gl_NumSamples-1))){
             //Z-Value 0 ... 1
             float z = gl_FragCoord.z;
-            if (fdata_out[0] > z){
+            //if (fdata_out[0] > z){
                 data_out[0] = vobjid;
 
-                data_out[1] = gl_NumSamples;
+                //atomicCounterIncrement(zcount);
+
+                //data_out[1] += 1;//gl_NumSamples;
 
                 fdata_out[0] = z;
-                fdata_out[1] += sampled_normal.x;
-                fdata_out[2] += sampled_normal.y;
-                fdata_out[3] += sampled_normal.z;
-            }
-        }
-    }
+                fdata_out[1] = sampled_normal.x;
+                fdata_out[2] = sampled_normal.y;
+                fdata_out[3] = sampled_normal.z;
+            //}
+        //}
+    }*/
+
 
     //uint m = (1 << gl_SampleID);
     //m = gl_SampleMaskIn[0] & m;

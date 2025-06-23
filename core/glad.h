@@ -93,6 +93,7 @@
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #define GL_COLOR_ATTACHMENT1 0x8CE1
 #define GL_COLOR_ATTACHMENT2 0x8CE2
+#define GL_COLOR_ATTACHMENT3 0x8CE3
 #define GL_DEPTH_ATTACHMENT 0x8D00
 
 #define GL_DRAW_BUFFER0 0x8825
@@ -102,7 +103,10 @@
 #define GL_RGBA16F 0x881A
 #define GL_RGBA32F 0x8814
 #define GL_RGB32F 0x8815
+#define GL_R32I 0x8235
+#define GL_R32UI 0x8236
 #define GL_DEPTH_COMPONENT32F 0x8CAC
+#define GL_RED_INTEGER 0x8D94
 
 #define GL_READ_FRAMEBUFFER 0x8CA8
 #define GL_DRAW_FRAMEBUFFER 0x8CA9
@@ -245,6 +249,8 @@ typedef void (APIENTRYP PFNGLBLITFRAMEBUFFERPROC)(GLint srcX0, GLint srcY0, GLin
 GLAPI PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer;
 typedef void (APIENTRYP PFNGLCLEARNAMEDFRAMEBUFFERFVPROC)(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value);
 GLAPI PFNGLCLEARNAMEDFRAMEBUFFERFVPROC glClearNamedFramebufferfv;
+typedef void (APIENTRYP PFNGLCLEARNAMEDFRAMEBUFFERIVPROC)(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLint *value);
+GLAPI PFNGLCLEARNAMEDFRAMEBUFFERIVPROC glClearNamedFramebufferiv;
 typedef void (APIENTRYP PFNGLFRAMEBUFFERTEXTURE2DPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
 GLAPI PFNGLFRAMEBUFFERTEXTURE2DPROC glFramebufferTexture2D;
 typedef void (APIENTRYP PFNGLNAMEDFRAMEBUFFERDRAWBUFFERSPROC)(GLuint framebuffer, GLsizei n, const GLenum *bufs);

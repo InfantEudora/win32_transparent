@@ -612,8 +612,8 @@ DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
 
     //Create a renderer for this window
     app->renderer = new Renderer(app->main_window->width,app->main_window->height);
-
-    app->renderer->Init();
+    app->renderer->Init(PIPELINE_DEFERRED);
+    app->renderer->SetVSync(true);
     app->renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 
     //Renderer settings
@@ -700,7 +700,7 @@ void ApplicationGrid::Run(void){
     main_window->Show(SW_SHOWDEFAULT);
 
     //Setup renderer
-    Renderer::SetVSync(true);
+    //Renderer::SetVSync(true);
 
     //We release the window's context from this thread
     wglMakeCurrent(main_window->hDC, NULL);

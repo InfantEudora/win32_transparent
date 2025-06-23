@@ -125,9 +125,11 @@ bool Window::Init(){
         return false;
     }
 
-    if (!ImageCreate(&g_image, width, height)){
+    if (f_is_layered && !ImageCreate(&g_image, width, height)){
         return false;
     }
+
+    RegisterDropFiles();
 
     return true;
 }
@@ -568,6 +570,28 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
             }
         }
         break;
+        case WM_DROPFILES:
+            {
+                HDROP hDrop = (HDROP)wParam;
+                debug->Ok("Dropped a file! hDrop = %lu\n",hDrop);
+                UINT res = DragQueryFileA(hDrop,0xFFFFFFFF,NULL,0); //Query the amount of files.
+                debug->Info(" Number of dropped files: %u\n",res);
+                if (res < 1){
+                    break;
+                }
+                int num_dropped_files = res;
+                TCHAR string[256] = {0};
+                for (int i =0;i<num_dropped_files;i++){
+                    res = DragQueryFileA(hDrop,i,string,255); //Query the amount of files.
+                    if (res > 0){
+                        debug->Info("File name: %s\n",string);
+                        //wnd->dropped_files.push(string);
+                    }
+                }
+
+
+            }
+        break;
         default:
             //debug->Info("Window Message %lu\n",msg);
             break;
@@ -579,3 +603,6 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
+void Window::RegisterDropFiles(){
+    DragAcceptFiles(hWnd,true);
+}

@@ -94,6 +94,7 @@ public:
     void Resize(int width, int height);
     void Move(int x, int y);
     void SetTitle(std::string);
+    void RegisterDropFiles();
     void Close(void);
     static HWND _FindWindow(std::string title);
     static std::vector<WNDCLASSEXA>wcs;      //Different types of window classes

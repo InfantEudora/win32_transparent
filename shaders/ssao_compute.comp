@@ -39,7 +39,9 @@ vec2 hash(vec2 p){
 //This reads the texture in, and outputs to the texture out.
 void main(){
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
-    vec2 uv = vec2(texelCoord) / 512.0;
+    vec2 uv = vec2(texelCoord);
+    uv.x /= 1920;
+    uv.y /= 960;
 
     vec3 fragPos = texture(positiontexture, uv).xyz;
     vec3 normal    = texture(normaltexture, uv).xyz;

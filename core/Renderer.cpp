@@ -21,7 +21,8 @@ void Renderer::SetState(){
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 }
 
-bool Renderer::Init(){
+bool Renderer::Init(int _pipeline){
+    pipeline = _pipeline;
     //Get some info
     int r = 0;
 
@@ -426,6 +427,7 @@ void Renderer::RenderDebugLines(){
 //Set's the SSBO that will be used for reading back data
 void Renderer::UpdateReadbackBuffer(){
     readbackbuffer.data_out[0] = -1;
+    readbackbuffer.data_out[1] = 0;
     //glInvalidateBufferData(readback_ssbo);
     glNamedBufferData(readback_ssbo,sizeof(readback_buffer_t), &readbackbuffer,GL_STREAM_DRAW);
 }
@@ -467,14 +469,17 @@ void Renderer::DrawSkinnedObjects(){
 }
 
 void Renderer::DeferredPass(Camera* camera){
+    if (pipeline != PIPELINE_DEFERRED){
+        debug->Fatal("Called Deffered pass. Pipeline must be PIPELINE_DEFERRED\n");
+    }
     //Select the deferred framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, deferred_fbo_id);
 
     deferred_shader->Use();
     deferred_shader->Setmat4("mat_worldcam",camera->mat_cam);
 
-    unsigned int attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-    glNamedFramebufferDrawBuffers(deferred_fbo_id,2, attachments);
+    unsigned int attachments[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,GL_COLOR_ATTACHMENT3};
+    glNamedFramebufferDrawBuffers(deferred_fbo_id,3, attachments);
 
     //Viewport and clear
     glViewport(0, 0, width, height);
@@ -485,6 +490,8 @@ void Renderer::DeferredPass(Camera* camera){
     clr_clear = vec4(1,0,0,0);
     glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,1,(float*)&clr_clear);
     glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,2,(float*)&clr_clear);
+    GLint int_clear[4] = {-1,-1,-1,-1};
+    glClearNamedFramebufferiv(deferred_fbo_id,GL_COLOR,3,(GLint*)&int_clear);
 
     //UpdateReadbackBuffer();
 
@@ -493,7 +500,7 @@ void Renderer::DeferredPass(Camera* camera){
     //glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
     //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
 
-    glFinish();
+    //glFinish();
     //We have deferred bound...
 }
 
@@ -504,6 +511,7 @@ void Renderer::SSAOPass(Camera* camera){
     glBindTextureUnit(0, deferred_position_tex_id);
     glBindTextureUnit(1, deferred_normal_tex_id);
     glBindTextureUnit(2, resolve_tex_id);
+
 
     ssao_compute_shader->Setmat4("mat_worldcam",camera->mat_cam);
 
@@ -517,8 +525,6 @@ void Renderer::SSAOPass(Camera* camera){
 
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
     if (tmr_frame){
-        tmr_frame->Stop();
-        double dt = tmr_frame->GetdtUs();
         tmr_frame->Restart();
     }
 
@@ -544,7 +550,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         shader->Setfloat("alpha_clip",alpha_clip);
     }
 
-    if (input){
+    if (0 && input){
         int2 mouse = {-1,-1};
         if (input){
             mouse = input->GetRelativeMousePosition();
@@ -567,13 +573,13 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         skinned_shader->Setvec3("eye_position",p);
         skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
         skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
-        shader->Setfloat("alpha_clip",alpha_clip);
+        skinned_shader->Setfloat("alpha_clip",alpha_clip);
         DrawSkinnedObjects();
     }
 
     ResolveAA();
 
-    if (input){
+    if (0 && input){
         //Read back buffer contents
         glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
         //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
@@ -583,6 +589,8 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
             input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
             //debug->Info("Normal at mouse = %.3f, %.3f, %.3f\n",readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]);
             vec3 n = vec3(readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]);
+            //debug->Info("Read back %i samples at location\n",readbackbuffer.data_out[1]);
+
             input->SetHoveredNormal(n.normalize());
             //TODO: Make this less noisy and work better
         }else{
@@ -591,11 +599,51 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         }
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
-    glFinish();
+    //Do a simple but seperate pass for object picking.
 
-    //DeferredPass(camera);
+    //glFinish();
+
+    //TODO: These passes need to be fixed... do we even want them?
+    DeferredPass(camera);
+
+    //Now we can read the normal and object ID:
+    if (pipeline == PIPELINE_DEFERRED){
+        glReadBuffer(GL_COLOR_ATTACHMENT3);
+        int32_t id_pixeldata[4] = {-1,-1,-1,-1};
+        float  normal_pixeldata[4] = {0,0,0,0};
+        int2 mouse = {-1,-1};
+        if (input){
+            mouse = input->GetRelativeMousePosition();
+        }
+        glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RED_INTEGER, GL_INT, id_pixeldata);
+        glReadBuffer(GL_COLOR_ATTACHMENT1);
+        glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RGB, GL_FLOAT, normal_pixeldata);
+
+        //Somehow, -1 reads back as 3F800000
+        if ((id_pixeldata[0] != 0x3F800000) && (id_pixeldata[0] != -1)){
+            int index = id_pixeldata[0];
+            input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
+            vec3 n = vec3(normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
+            input->SetHoveredNormal(n.normalize());
+        }else{
+            input->SetHoveredObjectID(OBJECTID_INVALID);
+            input->SetHoveredNormal(vec3());
+        }
+
+        //debug->Info("Pixel data: %08X %08X %08X %08X\n",id_pixeldata[0],id_pixeldata[1],id_pixeldata[2],id_pixeldata[3]);
+        //debug->Info("Normal data: %.3f %.3f %.3f\n",normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
+        //glReadPixels(x,  window->height - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixelData);
+    }
+
+
+
+    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
     //SSAOPass(camera);
+
+    if (tmr_frame){
+        tmr_frame->Stop();
+        double dt = tmr_frame->GetdtUs();
+    }
 }
 
 //Create the required Shader Storage Buffer
@@ -685,6 +733,14 @@ bool Renderer::InitDeferredFBO(){
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT2, ssao_tex_id, 0);
+    CheckFrameBuffer();
+
+    //ObjectID buffer
+    glCreateTextures(GL_TEXTURE_2D, 1, &deferred_objectid_tex_id);
+    glTextureStorage2D(deferred_objectid_tex_id, 1, GL_R32I, width, height);
+    glTextureParameteri(deferred_objectid_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(deferred_objectid_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(deferred_fbo_id, GL_COLOR_ATTACHMENT3, deferred_objectid_tex_id, 0);
     CheckFrameBuffer();
 
     return true;
@@ -822,10 +878,16 @@ void Renderer::SetVSync(bool enable){
         wglSwapIntervalEXT(enable);
         if (enable){
             debug->Ok("VSync: Enabled\n");
+            f_vsync = true;
         }else{
             debug->Ok("VSync: Disabled\n");
+            f_vsync = false;
         }
     }
+}
+
+bool Renderer::GetVSync(){
+    return f_vsync;
 }
 
 //Add's materials to global list, omitting duplicates by name. Returns the index where the material was added.
@@ -956,5 +1018,5 @@ Texture* Renderer::LoadTexture(const char* filename, int target, int depth){
 //A Test for only rendering a texture to screen which we can upload first.
 void Renderer::RenderResolveTextureOnly(){
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
-    glFinish();
+    //glFinish();
 }

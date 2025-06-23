@@ -59,7 +59,7 @@ void Application::Run(void){
     main_window->Show(SW_SHOWDEFAULT);
 
     //Setup renderer
-    Renderer::SetVSync(true);
+    //Renderer::SetVSync(true);
 
     //We release the window's context from this thread
     wglMakeCurrent(main_window->hDC, NULL);
@@ -141,6 +141,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     //Create a renderer for this window
     app->renderer = new Renderer(app->main_window->width,app->main_window->height);
     app->renderer->Init();
+    app->renderer->SetVSync(true);
 
     app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
@@ -297,23 +298,33 @@ void Application::UpdateUISceneObjectTree(){
     }
 }
 
-
 void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked){
     objectid_t id = object->GetID();
     long long p = id; //To suppress warning from 32-bit pointer
-    if (ImGui::TreeNodeEx((void*)p,ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_Leaf, "Object #%i - %s",id,object->name.c_str())){
-        if (ImGui::IsItemClicked() && (lastclicked == NULL)){
-            selected_object = object;
-            lastclicked = object;
-            debug->Info("Tree -> Selected %s\n",object->name.c_str());
+    Object* child = object->GetChild(0);
+    if (child){
+        if (ImGui::TreeNodeEx((void*)p,0 , "Object #%i - %s",id,object->name.c_str())){
+            if (ImGui::IsItemClicked() && (lastclicked == NULL)){
+                selected_object = object;
+                lastclicked = object;
+                debug->Info("Tree -> Selected %s\n",object->name.c_str());
+            }
+            for (Object* child:object->children){
+                UpdateUISceneObjectTreeNode(child,lastclicked);
+            }
+            ImGui::TreePop();
         }
 
+    }else{
 
-        for (Object* child:object->children){
-            UpdateUISceneObjectTreeNode(child,lastclicked);
+        if (ImGui::TreeNodeEx((void*)p,ImGuiTreeNodeFlags_Bullet , "Object #%i - %s",id,object->name.c_str())){
+            if (ImGui::IsItemClicked() && (lastclicked == NULL)){
+                selected_object = object;
+                lastclicked = object;
+                debug->Info("Tree -> Selected %s\n",object->name.c_str());
+            }
+            ImGui::TreePop();
         }
-        ImGui::TreePop();
-
     }
 }
 
@@ -346,6 +357,16 @@ void Application::RenderDebugMenuBar(){
                 PointLight* l = new PointLight();
                 l->name = "Point Light";
                 main_scene->AddObject(l);
+            }
+            if (ImGui::BeginMenu("From Assets")){
+                for (Asset* asset:assetmanager->assets){
+
+                    if (ImGui::MenuItem(asset->name.c_str())){
+                        Object* object = assetmanager->GetObjectFromAsset(asset->name.c_str());
+                        main_scene->AddObject(object);
+                    }
+                }
+                ImGui::EndMenu();
             }
             ImGui::EndMenu();
         }
@@ -612,6 +633,11 @@ void Application::RenderGenericObjectUI(){
         }
         if (ImGui::CollapsingHeader("Scale")){
             vec3 scale = object->GetScale();
+            float scale_all = 1.0f;
+            if (ImGui::DragFloat("Scale All", (float*)&scale_all, 0.01f, 0.01f, 10.0f)){
+                object->SetScale(scale * scale_all);
+            }
+
             if (ImGui::DragFloat3("Scale Vector", (float*)&scale, 0.01f, 0.01f, 10.0f)){
                 object->SetScale(scale);
             }
@@ -668,6 +694,10 @@ void Application::RenderGenericObjectUI(){
     }
 
     if (ImGui::CollapsingHeader("Performance")){
+        bool sync = renderer->GetVSync();
+        if (ImGui::Checkbox("V-Sync", &sync)){
+            renderer->SetVSync(sync);
+        }
         ImGui::Text("Frame Rate   : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
         ImGui::Text("Physics Rate : %.2f TPS (%.2f ms)", 1000000.0f / tmr_physics->avg,tmr_physics->avg/1000.0f );
     }
