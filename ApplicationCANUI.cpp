@@ -22,9 +22,6 @@ void ApplicationCANUI::Run(void){
 
     main_window->Show(SW_SHOWDEFAULT);
 
-    //Setup renderer
-    Renderer::SetVSync(true);
-
     if (!main_window->InitImGui()){
         debug->Fatal("Failed to setup ImGui on Window\n");
     }
@@ -32,6 +29,7 @@ void ApplicationCANUI::Run(void){
     //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
     renderer->Init();
+    renderer->SetVSync(true);
 
     //Init can interface
     pcan_reader = new PCANReader();

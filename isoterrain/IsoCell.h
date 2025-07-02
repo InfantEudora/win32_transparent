@@ -55,6 +55,7 @@ public:
     Object* PlaceTree(const std::string& asset_name);
     Object* PlaceStairs(const std::string& asset_name,int direction);
     Object* RaiseTerrain();
+    void    WaterTerrain();
 };
 
 

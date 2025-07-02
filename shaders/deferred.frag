@@ -64,7 +64,7 @@ void main(){
     dposition = vec4(vposition,alpha);
     dnormal = vec4(vnormal,1);
     dobjectid = vobjid;
-    data_out[0] = vobjid;
+    //data_out[0] = vobjid;
     float z = gl_FragCoord.z;
-    fdata_out[0] = z;
+    //fdata_out[0] = z;
 }

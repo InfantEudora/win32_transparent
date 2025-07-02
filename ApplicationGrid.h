@@ -6,6 +6,7 @@
 #include "type_plane.h"
 #include "type_ray.h"
 #include "IsoCharacter.h"
+#include "IsoRoom.h"
 
 #include "GLTFLoader.h"
 /*
@@ -27,6 +28,7 @@ public:
     vec3 camera_target = {};
 
     IsoTerrain* terrain = NULL;
+    std::vector<IsoRoom*>rooms;
 
     Object* selection_tile = NULL;
 
@@ -61,6 +63,10 @@ private:
     Scene* CreateTestScene();
     Scene* CreateBoneTestScene();
     Scene* CreateHandTestScene();
+
+    //Rooms
+    IsoRoom* FindRoomByCell(IsoCell* cell); // Returns if supplied cell belongs to a room.
+    void CreateRoom(IsoCell* center, int size_x, int size_y);
 
     //Quick things
     Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);

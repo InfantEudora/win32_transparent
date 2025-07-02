@@ -31,10 +31,9 @@ Object* IsoCell::PlaceTree(const std::string& asset_name){
         if (prop && AttachChild(prop)){
             prop_index = children.size() - 1;
             debug->Ok("Placed a new tree\n");
-            prop->material_names[0] = "Tree_tex";
             prop->f_update_materials = true;
             vec3 s = vec3(0.5);
-            prop->SetScale(s);
+            //prop->SetScale(s);
             prop->name = "Tree @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
         }
     }
@@ -58,6 +57,12 @@ IsoCell* IsoCell::GetNeighbour(int direction){
     }
 
     return terrain->GetCellByCoordinate(coordinate + add);
+}
+
+//Turns the selected cell into water
+void IsoCell::WaterTerrain(){
+    //Right now, just change the material
+    material_slot[0] = 1;
 }
 
 Object* IsoCell::RaiseTerrain(){

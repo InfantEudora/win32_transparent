@@ -161,10 +161,12 @@ Scene* ApplicationGrid::CreateHandTestScene(){
 
 
     //The scenery to make it look pretty
-    CreateNewObjectFromGLTF("Scenery",scene);
+    Object* scenery = CreateNewObjectFromGLTF("Scenery",scene);
+    scenery->MoveBy(vec3(-3,0,-3));
 
     //An object with a more simple animation, without skinning.
     Object* cog_object = CreateNewObjectFromGLTF("Cog",scene);
+    cog_object->MoveBy(vec3(-3,0,-3));
 
     selected_animation = gltfloader.LoadAnimation("CogRotation");
     if (selected_animation){
@@ -1093,8 +1095,17 @@ void ApplicationGrid::RunLogic(){
     }
 }
 
-//TODO: GetWorldUp, using GetWorldRotation
 
+IsoRoom* ApplicationGrid::FindRoomByCell(IsoCell* cell){
+    for (IsoRoom* room:rooms){
+        if (room->IsCellInRoom(cell)){
+            return room;
+        }
+    }
+    return NULL;
+}
+
+//TODO: GetWorldUp, using GetWorldRotation
 void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
     ImVec2 window_pos, window_pos_pivot;
     window_pos_pivot.x = 0.0f;
@@ -1107,8 +1118,22 @@ void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("Interaction Menu", NULL, window_flags)){
         //TODO: All the making of objects should be done through some thread safe message thing.
+        IsoRoom* room = FindRoomByCell(hovered_cell);
+        if (room){
+            ImGui::Text("Cell is in room : %s",room->name.c_str());
+        }else{
+            if (ImGui::Button("Create New Room")){
+                CreateRoom(hovered_cell,1,1);
+                f_show_rightclick_menu = false;
+            }
+        }
+        ImGui::Separator();
         if (ImGui::Button("Raise Terrain")){
             hovered_cell->RaiseTerrain();
+            f_show_rightclick_menu = false;
+        }
+        if (ImGui::Button("Water Terrain")){
+            hovered_cell->WaterTerrain();
             f_show_rightclick_menu = false;
         }
         if (ImGui::Button("Place North Wall")){
@@ -1151,6 +1176,10 @@ void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("Interaction Menu", NULL, window_flags)){
         ImGui::Text("Imma Wall Biatch!");
+        if (ImGui::Button("Hide")){
+            hovered_wall->Hide();
+            f_show_rightclick_menu = false;
+        }
         if (ImGui::Button("Lower")){
             hovered_wall->Lower();
             f_show_rightclick_menu = false;
@@ -1371,8 +1400,17 @@ void ApplicationGrid::RenderGridUI(){
             terrain->base_tile = "Tile.1111";
             terrain->wall_tile = "Pallisade";
 
-            terrain->CreateTerrain(5,5,3);
+            terrain->CreateTerrain(9,9,2);
             main_scene->AddObject(terrain);
+
+            //Only show the first layer
+            for (IsoCell* cell:terrain->cells){
+                if (cell->coordinate.z > 0){
+                    cell->Hide();
+                }else{
+                    cell->Show();
+                }
+            }
         }
     }
 
@@ -1391,13 +1429,19 @@ void ApplicationGrid::RenderGridUI(){
     if (!hovered_cell){
         ImGui::Text("No Hovered Cell");
     }else{
-        ImGui::Text("Hovered Cell Coordinate   : %i x %i",hovered_cell->coordinate.x,hovered_cell->coordinate.y);
+        ImGui::Text("Hovered Cell Coordinate   : %i x %i Height: %i",hovered_cell->coordinate.x,hovered_cell->coordinate.y,hovered_cell->coordinate.z);
     }
 
     if (!selected_cell){
         ImGui::Text("No Object of type Cell is selected.");
     }else{
-        ImGui::Text("Cell Coordinate   : %i x %i",selected_cell->coordinate.x,selected_cell->coordinate.y);
+        ImGui::Text("Selected Cell");
+        ImGui::Separator();
+        ImGui::Text("Cell Coordinate   : %i x %i Height: %i",selected_cell->coordinate.x,selected_cell->coordinate.y,selected_cell->coordinate.z);
+        IsoRoom* room = FindRoomByCell(selected_cell);
+        if (room){
+            ImGui::Text("Cell is in room : %s",room->name.c_str());
+        }
         ImGui::Text("Terrain Type : %i",selected_cell->terrain_type);
         if (ImGui::Button("Set None")){
             selected_cell->SetTerrainType(CELL_TERRAIN_NONE);
@@ -1415,7 +1459,103 @@ void ApplicationGrid::RenderGridUI(){
             selected_cell->SetTerrainType(CELL_TERRAIN_ROCK);
         }
     }
+
+    if (terrain){
+        if (ImGui::Button("Show Layer 1")){
+            for (IsoCell* cell:terrain->cells){
+                if (cell->coordinate.z > 0){
+                    cell->Hide();
+                }else{
+                    cell->Show();
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Show Layer 2")){
+            for (IsoCell* cell:terrain->cells){
+                if (cell->coordinate.z > 1){
+                    cell->Hide();
+                }else{
+                    cell->Show();
+                }
+            }
+        }
+        ImGui::Separator();
+
+        static int2 room_size = {1,1};
+        static int3 room_center  {1,1,0};
+        ImGui::SliderInt2("Room Size",(int*)&room_size,1,5);
+        ImGui::SliderInt3("Room Center",(int*)&room_center,0,6);
+        if (ImGui::Button("Generate Room")){
+            debug->Info("Generating Room %i x %i\n",room_size.x,room_size.y);
+            IsoCell* center_cell = terrain->GetCellByCoordinate(room_center);
+            if (!center_cell){
+                debug->Fatal("Unable to find center cell ???\n");
+            }
+
+            CreateRoom(center_cell,room_size.x,room_size.y);
+
+
+
+        }
+    }
     ImGui::End();
-
-
 }
+
+void ApplicationGrid::CreateRoom(IsoCell* center_cell, int size_x, int size_y){
+    //Make sure the center is not already in a room
+    IsoRoom* room = FindRoomByCell(center_cell);
+    if (room){
+        debug->Err("Center cell is already in a room\n");
+        return;
+    }
+
+    int3 room_center = center_cell->coordinate;
+
+    room = new IsoRoom();
+    room->name = "Generated Room " + std::to_string(rooms.size());
+    rooms.push_back(room);
+
+
+    //Now we add all cells that are around it, in a square that arent in a room to the room.
+    int cx = room_center.x;
+    int cy = room_center.y;
+    int xmin = cx - size_x / 2;
+    int xmax = cx + size_x / 2;
+    int ymin = cy - size_y / 2;
+    int ymax = cy + size_y / 2;
+
+    debug->Ok("Room Generated\n");
+    int3 coord = room_center;
+
+    for (int y=ymin;y<=ymax;y++){
+        for (int x=xmin;x<=xmax;x++){
+            coord.x = x;
+            coord.y = y;
+            IsoCell* cell = terrain->GetCellByCoordinate(coord);
+            if (cell){
+                //Check that this is not in a room already
+                if (FindRoomByCell(cell)){
+                    debug->Info("Skipping cell that's already in a room\n");
+                }else{
+                    room->AddCell(cell);
+                    cell->PlaceTree("Flagstones");
+                }
+            }
+        }
+    }
+
+    //Now that all the floor tiles are added, we can place walls.
+    for (IsoCell* cell:room->cells){
+        //Figure out if this cell has a neighbour in the same room for each edge:
+        for (int direction = DIRECTION_NORTH;direction<=DIRECTION_WEST;direction++){
+            IsoCell* n = cell->GetNeighbour(direction);
+            if (n && room->IsCellInRoom(n)){
+                //We don't place a wall.
+            }else{
+                cell->PlaceWall("StoneWall",direction);
+            }
+        }
+    }
+}
+
