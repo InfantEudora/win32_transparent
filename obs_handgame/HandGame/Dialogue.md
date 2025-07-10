@@ -145,3 +145,7 @@ Gears? I don't know of any gears. I've seen a room with some gear in it. What do
 Lots of doors, I know... Seems you need a key... I'm also missing some keys... The white ones, and the black ones. They all sound different: Ahh.. Ieeh  Aaaah!
 Would you like to borrow this one? I think it's called C.
 See... if it helps.
+
+---
+
+Sometimes, I think I may be dead.

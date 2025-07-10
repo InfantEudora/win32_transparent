@@ -3,6 +3,7 @@
 
 //Multiple of 4 for padding
 #define NUM_MATERIAL_SLOTS  4
+#define MAX_MORPH_TARGETS	4
 
 //Input variables
 layout (location = 0) in vec3 position;
@@ -18,10 +19,11 @@ layout (location = 6) in vec3 weights;
 struct InstanceData{
 	mat4 mat_transformscale;
 	int material_slot[NUM_MATERIAL_SLOTS];
+	float morph_factors[MAX_MORPH_TARGETS];
 	int objectid;
-	int num_bones; //Number of bones in this unique mesh, same data per instance
-	int pad2;
-	int pad3;
+	int num_bones;
+	int vertex_count;
+	int num_morph_targets;
 };
 
 struct Material{

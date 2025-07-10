@@ -135,6 +135,7 @@ class Renderer{
     GLuint ssao_tex_id = -1; // SSAO output texture
 
     Shader* deferred_shader = NULL;     //Shader that outputs data to textures
+    Shader* deferred_shader_skinned = NULL;     //Shader that outputs data to textures
     Shader* ssao_compute_shader = NULL;
 
     Shader* skybox_shader = NULL;

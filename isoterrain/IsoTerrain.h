@@ -29,7 +29,8 @@ public:
     vec3 center_offset = {};
     float height_factor = 0.5f;
 
-    std::vector<IsoCell*> cells;     //An array of width*depth cells
+    std::vector<IsoCell*> cells;     // An array of width*depth cells
+    std::vector<IsoWall*> pillars;   // In the X-Y direction on extra for cells.
     std::string base_tile = "tile_floor.001";
     std::string wall_tile = "wall_full.001";
 
@@ -38,6 +39,9 @@ public:
     void CreateTerrain(int w, int d, int h);
     IsoCell* FindCellByWorldPosition(vec3& at);
     IsoCell* GetCellByCoordinate(int3 coord);
+
+    void    GetPillarsByCellCoordinate(int3 cell_coord, std::array<IsoWall*,4>&walls);
+    IsoWall* GetPillarByCoordinate(int3 coord);
 };
 
 

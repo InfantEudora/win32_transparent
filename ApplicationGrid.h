@@ -78,6 +78,7 @@ private:
     void RenderRightClickMenu_IsoCell(IsoCell* cell);
     void RenderRightClickMenu_IsoWall(IsoWall* wall);
     void RenderRightClickMenu();
+    int  MenuQueryDirection();
 
     void RenderBoneModifierHeader(Bone* bone, int id);
     void RenderGridUI();

@@ -11,7 +11,7 @@
 
 char Debugger::buffer[DEBUG_IO_BUFFERSIZE] = {0};
 int Debugger::boffset = 0;
-int Debugger::lines_buffered = 0;
+int Debugger::lines_buffered = 1;
 // HANDLE Debugger::writemutex = NULL;
 
 std::mutex Debugger::mutex;

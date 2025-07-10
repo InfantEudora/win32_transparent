@@ -46,6 +46,7 @@ bool Renderer::Init(int _pipeline){
 
     if (pipeline == PIPELINE_DEFERRED){
         deferred_shader = new Shader("shaders/default.vert","shaders/deferred.frag");
+        deferred_shader_skinned = new Shader("shaders/default_skinned.vert","shaders/deferred.frag");
         ssao_compute_shader = new Shader();
         ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
     }
@@ -294,11 +295,8 @@ void Renderer::RenderUniqueMeshes(int normal_or_skinned){
                 data.morph_factors[i] = object->morph_factors[i];
             }
 
-
-
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
-
 
             if (normal_or_skinned == 1){ //Skinned mode
                 bonedata_t bonedata;
@@ -496,6 +494,16 @@ void Renderer::DeferredPass(Camera* camera){
     //UpdateReadbackBuffer();
 
     DrawStaticObjects();
+
+    if (deferred_shader_skinned && camera){
+        deferred_shader_skinned->Use();
+        //vec3 p = camera->GetPosition();
+        //deferred_shader_skinned->Setvec3("eye_position",p);
+        deferred_shader_skinned->Setmat4("mat_worldcam",camera->mat_cam);
+        deferred_shader_skinned->Setint("f_normal_mapping",(int)f_normal_mapping);
+        //deferred_shader_skinned->Setfloat("alpha_clip",alpha_clip);
+        DrawSkinnedObjects();
+    }
 
     //glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
     //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);

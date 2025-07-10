@@ -8,6 +8,7 @@
 
 class IsoCell;
 #include "IsoWall.h"
+#include "IsoStairs.h"
 #include "IsoTerrain.h"
 
 /*
@@ -44,18 +45,33 @@ public:
     // Since children are generic objects, we can only add/remove those via the following functions.
     // TODO: Maybe lock adding via generic Add/Remove child functions somehow.
 
-    std::array<int,4>wall_indices = {-1,-1,-1,-1};
+    // How to store things?
+    // Floor tiles, child. But reference as a seperate floor object.
+    Object* object_floor = NULL;
+
+    std::array<int,4>wall_indices = {-1,-1,-1,-1}; //Used to keep track which child is which wall.
 
     //We can have one prop smack bang in the middle.
     int prop_index = -1;
 
     IsoCell* GetNeighbour(int direction);
+    int GetWallDirection(IsoWall* wall);
 
     IsoWall* PlaceWall(const std::string& asset_name,int direction);
+    IsoWall* PlaceDoor(const std::string& asset_name,int direction);
+    IsoWall* PlacePillar(const std::string& asset_name,int direction); // Direction is on the left side of the wall segment.
+    IsoWall* PlacePillars(const std::string& asset_name); //Places one in each corner
+
     Object* PlaceTree(const std::string& asset_name);
-    Object* PlaceStairs(const std::string& asset_name,int direction);
+    Object* PlaceFloor(const std::string& asset_name);
+    IsoStairs* PlaceStairs(const std::string& asset_name,int direction);
     Object* RaiseTerrain();
-    void    WaterTerrain();
+
+    /*
+        Walls and pillars might as well be stored in the terrain, so they can be queried easier.
+        So we can simply look up the pillar by coordinate. But then who owns the wall?
+
+    */
 };
 
 

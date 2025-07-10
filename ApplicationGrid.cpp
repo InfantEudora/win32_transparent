@@ -1133,35 +1133,76 @@ void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
             f_show_rightclick_menu = false;
         }
         if (ImGui::Button("Water Terrain")){
-            hovered_cell->WaterTerrain();
+            hovered_cell->SetTerrainType(CELL_TERRAIN_WATER);
             f_show_rightclick_menu = false;
         }
-        if (ImGui::Button("Place North Wall")){
-            hovered_cell->PlaceWall("Pallisade",DIRECTION_NORTH);
-            f_show_rightclick_menu = false;
+
+        if (ImGui::BeginMenu("Grass Corner")){
+            int direction = MenuQueryDirection();
+            if (direction != DIRECTION_NONE){
+                hovered_cell->SetTerrainType(CELL_TERRAIN_GRASS);
+                assetmanager->GetObjectFromAsset("Tile.1111.Grass.Corner",hovered_cell);
+                f_show_rightclick_menu = false;
+            }
+            ImGui::EndMenu();
         }
-        if (ImGui::Button("Place East Wall")){
-            hovered_cell->PlaceWall("Pallisade",DIRECTION_EAST);
-            f_show_rightclick_menu = false;
+        if (ImGui::BeginMenu("Place Stone Wall")){
+            int direction = MenuQueryDirection();
+            if (direction != DIRECTION_NONE){
+                hovered_cell->PlaceWall("StoneWall",direction);
+                f_show_rightclick_menu = false;
+            }
+            ImGui::EndMenu();
         }
-        if (ImGui::Button("Place South Wall")){
-            hovered_cell->PlaceWall("Pallisade",DIRECTION_SOUTH);
-            f_show_rightclick_menu = false;
+        if (ImGui::BeginMenu("Place Pallisade Wall")){
+            int direction = MenuQueryDirection();
+            if (direction != DIRECTION_NONE){
+                hovered_cell->PlaceWall("Pallisade",direction);
+                f_show_rightclick_menu = false;
+            }
+            ImGui::EndMenu();
         }
-        if (ImGui::Button("Place West Wall")){
-            hovered_cell->PlaceWall("Pallisade",DIRECTION_WEST);
-            f_show_rightclick_menu = false;
+        if (ImGui::BeginMenu("Place Stone Pillar")){
+            int direction = MenuQueryDirection();
+            if (direction != DIRECTION_NONE){
+                hovered_cell->PlacePillar("PillarStone",direction);
+                f_show_rightclick_menu = false;
+            }
+            ImGui::EndMenu();
         }
+
         if (ImGui::Button("Place Tree")){
             hovered_cell->PlaceTree("Tree.1");
             f_show_rightclick_menu = false;
         }
-        if (ImGui::Button("Place Stairs")){
-            hovered_cell->PlaceStairs("Stairs",DIRECTION_NORTH);
-            f_show_rightclick_menu = false;
+
+        if (ImGui::BeginMenu("Place Stairs")){
+            int direction = MenuQueryDirection();
+            if (direction != DIRECTION_NONE){
+                hovered_cell->PlaceStairs("Stairs",direction);
+                f_show_rightclick_menu = false;
+            }
+            ImGui::EndMenu();
         }
     }
     ImGui::End();
+}
+
+// Renders a menu with the 4 directions
+int ApplicationGrid::MenuQueryDirection(){
+    if (ImGui::MenuItem("North")){
+        return DIRECTION_NORTH;
+    }
+    if (ImGui::MenuItem("East")){
+        return DIRECTION_EAST;
+    }
+    if (ImGui::MenuItem("South")){
+        return DIRECTION_SOUTH;
+    }
+    if (ImGui::MenuItem("West")){
+        return DIRECTION_WEST;
+    }
+    return DIRECTION_NONE;
 }
 
 void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
@@ -1190,20 +1231,40 @@ void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
             //hovered_wall->PlaceStairs(normal_dir);
             f_show_rightclick_menu = false;
         }
+        if (ImGui::Button("Door Me!")){
+            IsoCell* cell = hovered_wall->cell;
+            if (cell){
+                //HERE TODO:Lookup what direction this wall is.
+                int direction = cell->GetWallDirection(hovered_wall);
+                cell->PlaceDoor("WallArch",direction);
+            }
+
+            f_show_rightclick_menu = false;
+        }
     }
     ImGui::End();
 }
 
 void ApplicationGrid::RenderRightClickMenu(){
-    IsoCell* hovered_cell = dynamic_cast<IsoCell*>(rightclick_menu_object);
-    if (hovered_cell){
-        return RenderRightClickMenu_IsoCell(hovered_cell);
-    }
-
     IsoWall* hovered_wall = dynamic_cast<IsoWall*>(rightclick_menu_object);
     if (hovered_wall){
         return RenderRightClickMenu_IsoWall(hovered_wall);
     }
+
+    IsoCell* clicked_cell = dynamic_cast<IsoCell*>(rightclick_menu_object);
+    IsoStairs* clicked_stairs = dynamic_cast<IsoStairs*>(rightclick_menu_object);
+    if (clicked_stairs){
+        clicked_cell = dynamic_cast<IsoCell*>(clicked_stairs->parent);
+    }
+    //Still nothing?
+    if (!clicked_cell && rightclick_menu_object && rightclick_menu_object->parent){
+        clicked_cell = dynamic_cast<IsoCell*>(rightclick_menu_object->parent);
+    }
+    if (clicked_cell){
+        return RenderRightClickMenu_IsoCell(clicked_cell);
+    }
+
+
 }
 
 Skeleton* FindSkeletonInScene(Scene* scene, const std::string& name){
@@ -1424,8 +1485,17 @@ void ApplicationGrid::RenderGridUI(){
         ImGui::Checkbox("Arrows control camera",&grid_settings.f_camera_control);
     }
 
-
     IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
+    IsoStairs* hovered_stairs = dynamic_cast<IsoStairs*>(hovered_object);
+    if (hovered_stairs){
+        ImGui::Text("Hovered Stairs");
+        hovered_cell = dynamic_cast<IsoCell*>(hovered_stairs->parent);
+    }
+    //Still nothing?
+    if (!hovered_cell && hovered_object && hovered_object->parent){
+        hovered_cell = dynamic_cast<IsoCell*>(hovered_object->parent);
+    }
+
     if (!hovered_cell){
         ImGui::Text("No Hovered Cell");
     }else{
@@ -1442,22 +1512,25 @@ void ApplicationGrid::RenderGridUI(){
         if (room){
             ImGui::Text("Cell is in room : %s",room->name.c_str());
         }
-        ImGui::Text("Terrain Type : %i",selected_cell->terrain_type);
-        if (ImGui::Button("Set None")){
+
+        if (!selected_cell->object_floor){
+            ImGui::Text("No Floor Decoration");
+        }else{
+            ImGui::Text("Floor Decoration : %s",selected_cell->object_floor->name.c_str());
+            if (ImGui::Button("Hide")){
+                selected_cell->object_floor->Hide();
+            }
+        }
+        if (ImGui::Button("Default Terrain")){
             selected_cell->SetTerrainType(CELL_TERRAIN_NONE);
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Set Empty")){
-            selected_cell->SetTerrainType(CELL_TERRAIN_EMPTY);
+        if (ImGui::Button("Water")){
+            selected_cell->SetTerrainType(CELL_TERRAIN_WATER);
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Set Grass")){
+        if (ImGui::Button("Grass Terrain")){
             selected_cell->SetTerrainType(CELL_TERRAIN_GRASS);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Set Rock")){
-            selected_cell->SetTerrainType(CELL_TERRAIN_ROCK);
-        }
     }
 
     if (terrain){
@@ -1485,7 +1558,7 @@ void ApplicationGrid::RenderGridUI(){
         static int2 room_size = {1,1};
         static int3 room_center  {1,1,0};
         ImGui::SliderInt2("Room Size",(int*)&room_size,1,5);
-        ImGui::SliderInt3("Room Center",(int*)&room_center,0,6);
+        ImGui::SliderInt3("Room Center",(int*)&room_center,0,8);
         if (ImGui::Button("Generate Room")){
             debug->Info("Generating Room %i x %i\n",room_size.x,room_size.y);
             IsoCell* center_cell = terrain->GetCellByCoordinate(room_center);
@@ -1520,10 +1593,12 @@ void ApplicationGrid::CreateRoom(IsoCell* center_cell, int size_x, int size_y){
     //Now we add all cells that are around it, in a square that arent in a room to the room.
     int cx = room_center.x;
     int cy = room_center.y;
-    int xmin = cx - size_x / 2;
-    int xmax = cx + size_x / 2;
-    int ymin = cy - size_y / 2;
-    int ymax = cy + size_y / 2;
+
+
+    int xmin = cx - floor(size_x / 2.0f) + (size_x+1) % 2;
+    int xmax = cx + floor(size_x / 2.0f);
+    int ymin = cy - floor(size_y / 2.0f) + (size_y+1) % 2;
+    int ymax = cy + floor(size_y / 2.0f);
 
     debug->Ok("Room Generated\n");
     int3 coord = room_center;
@@ -1539,7 +1614,7 @@ void ApplicationGrid::CreateRoom(IsoCell* center_cell, int size_x, int size_y){
                     debug->Info("Skipping cell that's already in a room\n");
                 }else{
                     room->AddCell(cell);
-                    cell->PlaceTree("Flagstones");
+                    cell->PlaceFloor("Flagstones");
                 }
             }
         }
@@ -1553,7 +1628,11 @@ void ApplicationGrid::CreateRoom(IsoCell* center_cell, int size_x, int size_y){
             if (n && room->IsCellInRoom(n)){
                 //We don't place a wall.
             }else{
-                cell->PlaceWall("StoneWall",direction);
+                IsoWall* wall = cell->PlaceWall("StoneWall",direction);
+                if (wall){
+                    cell->PlacePillar("PillarStone",direction);
+                    cell->PlacePillar("PillarStone",(direction+1) % 4);
+                }
             }
         }
     }

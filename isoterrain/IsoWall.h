@@ -15,6 +15,10 @@
 class IsoWall;
 #include "IsoCell.h"
 
+#define PILLAR_NONE             -1
+#define PILLAR_UNINITIALISED    0
+#define PILLAR_VALID            1
+
 class IsoWall : public virtual Object{
 public:
     IsoWall();
@@ -23,9 +27,10 @@ public:
     //Reference to the cell its on
     IsoCell* cell = NULL;
     int direction = DIRECTION_NONE;
+    int pillar = PILLAR_NONE;       // Pillar none means it a wall
+    int3 coordinate = {};           // Pillar / Wall coordinates are identical?
 
     void Lower();
-
 };
 
 

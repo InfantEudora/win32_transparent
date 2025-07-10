@@ -91,6 +91,9 @@ void Object::SetMesh(Mesh* _mesh){
     if (!_mesh){
         return;
     }
+    if (mesh){
+        mesh->num_references--;
+    }
     mesh = _mesh;
     mesh->num_references++;
 }

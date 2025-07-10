@@ -59,13 +59,13 @@ void main(){
     float occlusion = 0.0;
     float radius = 0.5;
     float bias = 0.025;
-    int kernelSize = 64;
+    int kernelSize = 8;
     for(int i = 0; i < kernelSize; ++i){
         // get sample in unit sphere
-        vec3 sampl = hashwithoutsine33(tangent +  vec3(float(i)));
+        vec3 sampl = hashwithoutsine33(tangent +  vec3(float(i*3.1415)));
         sampl.z = abs(sampl.z);
         sampl = normalize(sampl);
-        float scale = float(i) / 64.0;
+        float scale = float(i) / float(kernelSize);
         scale   = mix(0.1f, 1.0f, scale * scale); //mix = lerp
         sampl *= scale;
 

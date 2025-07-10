@@ -44,16 +44,26 @@ void IsoTerrain::CreateTerrain(int w, int d, int h){
                 c->name = "IsoCell " + std::to_string(x) + "," + std::to_string(z);
                 //These two lists should know/update when a cell/or child gets destroyed... somehow
                 AttachChild(c);
-                if (y != 0){
-                    //c->SetVisibility(false);
-                }
-                //c->material_names[0] = "dirt";
+
                 c->f_update_materials = true;
-
                 assetmanager->GetObjectFromAsset(base_tile.c_str(),c);
-
-
                 cells.push_back(c);
+            }
+        }
+    }
+
+    //We also allocate an array for the sides and corners, or if this were a quad, the vertices and edges.
+    for (int y = 0;y<height;y++){
+        for (int z = 0;z<depth+1;z++){
+            for (int x = 0;x<width+1;x++){
+                IsoWall* pillar = new IsoWall();
+                pillar->pillar = PILLAR_UNINITIALISED;
+                pillar->coordinate.x = x;
+                pillar->coordinate.y = z;
+                pillar->coordinate.z = y;
+                pillars.push_back(pillar);
+                //We just pre-allocate them.
+                //TODO: Would be nice if they were created only when a wall is actually there.
             }
         }
     }
@@ -86,4 +96,29 @@ IsoCell* IsoTerrain::GetCellByCoordinate(int3 coord){
         }
     }
     return NULL;
+}
+
+IsoWall* IsoTerrain::GetPillarByCoordinate(int3 coord){
+    //TODO: Less lazy lookup
+    debug->Info("GetPillarCoordinate %i,%i\n",coord.x,coord.y);
+    for (IsoWall* pillar : pillars){
+        if (coord == pillar->coordinate){
+            return pillar;
+        }
+    }
+    return NULL;
+}
+
+void IsoTerrain::GetPillarsByCellCoordinate(int3 cell_coord, std::array<IsoWall*,4>&pillars){
+    std::array<int3,4>pillar_coords;
+    pillar_coords.at(0) = cell_coord;
+    pillar_coords.at(1) = cell_coord + int3(1,0,0);
+    pillar_coords.at(3) = cell_coord + int3(0,1,0);
+    pillar_coords.at(2) = cell_coord + int3(1,1,0);
+
+    for (int i =0;i<4;i++){
+        int3 c = pillar_coords.at(i);
+        IsoWall* pillar = GetPillarByCoordinate(c);
+        pillars.at(i) = pillar;
+    }
 }

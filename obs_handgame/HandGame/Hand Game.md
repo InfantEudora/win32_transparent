@@ -36,6 +36,9 @@ Using that with Laura.
 
 Also has some sounds and can generate them.
 
+Actually also: You can describe a character: https://agnai.chat/chat/2541402a-fd6d-4fc2-b978-8f8756ca750a
+And simply chat with it!
+
 ### Level
 
 Before any of this shit can happen, we need a way to generate, edit and store castle/dungeon layouts.
