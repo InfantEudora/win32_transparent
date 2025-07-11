@@ -36,7 +36,7 @@ bool Renderer::Init(int _pipeline){
         return false;
     }
 
-    if ((pipeline == PIPELINE_DEFERRED) && !InitDeferredFBO()){
+    if ((pipeline == PIPELINE_DEFERRED) && !RebuildDeferredFBO()){
         return false;
     }
 
@@ -71,6 +71,9 @@ bool Renderer::Resize(int new_width, int new_height){
     width = new_width;
     height = new_height;
     if (!RebuildMSAAFBO()){
+        return false;
+    }
+    if ((pipeline == PIPELINE_DEFERRED) && !RebuildDeferredFBO()){
         return false;
     }
     return true;
@@ -707,12 +710,22 @@ bool Renderer::SetNumAASamples(int desired){
     return true;
 }
 
-bool Renderer::InitDeferredFBO(){
-    debug->Info("Creating buffers for deferred stage\n");
-    glCreateFramebuffers(1, &deferred_fbo_id);
+bool Renderer::RebuildDeferredFBO(){
+    debug->Info("Re-Creating buffers for deferred stage\n");
+    if (deferred_fbo_id == -1){
+        glCreateFramebuffers(1, &deferred_fbo_id);
+    }
+
+    if (deferred_fbo_id == -1){
+        return false;
+    }
 
     //Color buffer for object position 32-bit... 16?
+    if (deferred_position_tex_id != -1){
+        glDeleteTextures(1, &deferred_position_tex_id);
+    }
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_position_tex_id);
+
     glTextureStorage2D(deferred_position_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_position_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -720,7 +733,12 @@ bool Renderer::InitDeferredFBO(){
     CheckFrameBuffer();
 
     //Normals for objects.
+    if (deferred_normal_tex_id != -1){
+        glDeleteTextures(1, &deferred_normal_tex_id);
+    }
+
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_normal_tex_id);
+
     glTextureStorage2D(deferred_normal_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(deferred_normal_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_normal_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -728,7 +746,11 @@ bool Renderer::InitDeferredFBO(){
     CheckFrameBuffer();
 
     //32-bit depth
+    if (deferred_depth_tex_id != -1){
+        glDeleteTextures(1, &deferred_depth_tex_id);
+    }
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_depth_tex_id);
+
     glTextureStorage2D(deferred_depth_tex_id, 1, GL_DEPTH_COMPONENT32F, width, height);
     glTextureParameteri(deferred_depth_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_depth_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -736,7 +758,11 @@ bool Renderer::InitDeferredFBO(){
     CheckFrameBuffer();
 
     //We also generate a texture for the SSAO output, and attach it to the deferred FBO.
+    if (ssao_tex_id != -1){
+        glDeleteTextures(1, &ssao_tex_id);
+    }
     glCreateTextures(GL_TEXTURE_2D, 1, &ssao_tex_id);
+
     glTextureStorage2D(ssao_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(ssao_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -744,7 +770,11 @@ bool Renderer::InitDeferredFBO(){
     CheckFrameBuffer();
 
     //ObjectID buffer
+    if (deferred_objectid_tex_id != -1){
+        glDeleteTextures(1, &deferred_objectid_tex_id);
+    }
     glCreateTextures(GL_TEXTURE_2D, 1, &deferred_objectid_tex_id);
+
     glTextureStorage2D(deferred_objectid_tex_id, 1, GL_R32I, width, height);
     glTextureParameteri(deferred_objectid_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(deferred_objectid_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -753,6 +783,7 @@ bool Renderer::InitDeferredFBO(){
 
     return true;
 }
+
 
 //Create all the frame and renderbuffers for mulisampling
 // A multisampled color and depth buffer, and a resolve buffer.
@@ -785,12 +816,11 @@ bool Renderer::RebuildMSAAFBO(){
     CheckFrameBuffer();
 
     //The resolve buffer is texture backed
-    if (resolve_tex_id == -1){
-        glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
-    }else{
+    if (resolve_tex_id != -1){
         glDeleteTextures(1, &resolve_tex_id);
-        glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
     }
+    glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
+
     debug->Info("Resolve Texture ID: %i\n",resolve_tex_id);
     glTextureStorage2D(resolve_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);

@@ -87,7 +87,7 @@ class Renderer{
     bool Resize(int new_width, int new_height);
     bool RebuildMSAAFBO();
 
-    bool InitDeferredFBO();
+    bool RebuildDeferredFBO();
 
     bool InitSSBO();
     void ResolveAA();

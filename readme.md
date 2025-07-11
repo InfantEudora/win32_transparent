@@ -78,10 +78,12 @@ It should kind of look like this:
 
 ### Todos Game Specific
 - [ ] Have a grid with layers, where the mouse + inverser of camera get's converted back to a coordinate. Maybe use some kind of overlay shader to draw a grid with the current camera settings first. Needs an ability to overlay shaders for a specific program.
-- [ ] A menu when right clicking to place walls on a tile, or hold and drag.
-- [ ] An animated hand that you can move around.
+- [x] A menu when right clicking to place walls on a tile
+- [ ] Hold and drag to place rooms and grass.
+- [ ] Grass that moves with a seperate vertex shader or when you move through it.
+- [x] An animated hand that you can move around.
 - [ ] Hand should be able to climb a staircase with an animation for it. Does it require simple physics with colliders?
-- [ ]
+- [ ] Add simple colliders with physics for wall and doors. You've going to knock on doors, or punch them open. First thing is to give the hand a capsule collider to make it move up/down stairs, slopes and collide with walls and doors that have hinges.
 
 ### TODOs Space Sim Specific
 

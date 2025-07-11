@@ -66,6 +66,8 @@ protected:
     void UpdateUICameraControls(Camera* camera, int id);
     void RenderDebugMenuBar();
     void RenderGenericObjectUI();
+    void UpdateUIWorldPhysics(PhysicsWorld* physics_world);
+    void UpdateUIPhysics(Physics* world_physics);
 
 private:
     bool SetupConsole();

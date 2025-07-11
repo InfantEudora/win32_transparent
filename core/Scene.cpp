@@ -103,54 +103,24 @@ void Scene::HandleInput(){
 };
 
 void Scene::UpdatePhysics(){
-
-    if (!inputcontroller){
-        return;
-    }
+    //We need a renderer because that's were we store our objects that need to be rendered.
     if (!renderer){
         return;
     }
-
-    if (inputcontroller->WasKeyReleased(INPUT_PAUSE)){
+    if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
         f_paused = !f_paused;
     }
-
     if (f_paused){
         return;
     }
 
-    /*
-    if (renderer->objects.size() > 0){
-        Object* obj = renderer->objects.at(0);
-        if (inputcontroller->IsKeyDown(INPUT_MOVE_UP)){
-            obj->MoveBy(vec3(0,0.05,0));
-        }
-        if (inputcontroller->IsKeyDown(INPUT_MOVE_DOWN)){
-            obj->MoveBy(vec3(0,-0.05,0));
-        }
-        if (inputcontroller->IsKeyDown(INPUT_MOVE_LEFT)){
-            obj->MoveBy(vec3(-0.05,0,0));
-
-        }
-        if (inputcontroller->IsKeyDown(INPUT_MOVE_RIGHT)){
-            obj->MoveBy(vec3(0.05,0,0));
-        }
-        KeyMap* m = NULL;
-        int32_t delta = inputcontroller->GetDelta(INPUT_MOUSE_WHEEL,&m);
-        if (m){
-            camera->MoveBy(vec3(0,0,delta*-0.25));
-
-            //We reset the delta here.
-            //debug->Info("Mouse wheel delta: %i\n",delta);
-            m->state->delta = 0;
-        }
+    if (physics_world){
+        physics_world->Update(1.0/50.0);
     }
-    */
 
     //debug->Info("Updating object phyics for tick %llu\n",physics_ticks++);
     /*
         This would copy over all physics_states for a current render frame.
-
     */
     for (Object* object:renderer->objects){
         //debug->Info("Updating physics for obj->id %i\n",object->GetID());

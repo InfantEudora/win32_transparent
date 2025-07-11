@@ -13,6 +13,8 @@
 #include "Renderer.h"
 #include "Shader.h"
 
+#include "PhysicsWorld.h"
+
 #include "imgui.h"
 
 class Scene{
@@ -24,6 +26,8 @@ public:
     InputController* inputcontroller = NULL;
     Renderer* renderer = NULL;
     Shader* shader = NULL;
+
+    PhysicsWorld* physics_world = NULL;
 
     void SetupExample();
 

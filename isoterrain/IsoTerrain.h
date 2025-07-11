@@ -36,7 +36,7 @@ public:
 
     AssetManager* assetmanager = NULL;  //Used to load assets from file.
 
-    void CreateTerrain(int w, int d, int h);
+    void CreateTerrain(PhysicsWorld* physicsworld, int w, int d, int h);
     IsoCell* FindCellByWorldPosition(vec3& at);
     IsoCell* GetCellByCoordinate(int3 coord);
 

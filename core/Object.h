@@ -13,6 +13,7 @@ class Object;
 #include "type_quat.h"
 #include "Material.h"
 #include "ObjectAnimation.h"
+#include "Physics.h"
 
 typedef uint32_t objectid_t;
 #define OBJECTID_INVALID    0xFFFFFFFF
@@ -152,6 +153,10 @@ class Object{
     // So, one render function will iterate over all objects... see if all their last physics states are completed.
     // And copy them over. During this time, physics will have to wait.
 
+    //Physics
+    Physics* GetPhysics();
+    void AddPhysics(PhysicsWorld* world);
+
     //Hierarchy
     Object* parent = NULL;              //Object we are a child of.
     std::list<Object*>children;
@@ -164,6 +169,8 @@ protected:
     bool f_visible = true;          // If the mesh should be rendered or not
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable
     bool f_is_destroyed = false;    // Someone should clean it up.
+
+    Physics* physics = NULL;
 
     ObjectState state;              //<- State that may be rendered this frame
     ObjectState state_physics;      //<- State physics may update.

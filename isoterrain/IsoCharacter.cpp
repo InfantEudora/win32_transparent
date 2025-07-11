@@ -259,17 +259,18 @@ void IsoCharacter::MoveForward(){
     SetNextAnimation("CatwalkForward");
     ProceedToNextAnimation();
     idle_time = 0;
+    MoveForwardBy(0.025f);
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::MoveBackward(){
-    debug->Info("Current animation state : %i\n",animation_state);
+    //debug->Info("Current animation state : %i\n",animation_state);
     if (animation_state == ANIMATION_STATE_LOOPING){
         SetNextAnimation("IdleStanding");
         ProceedToNextAnimation();
     }
     idle_time = 0;
-
+    MoveForwardBy(-0.01f);
 }
 
 //Going to play a move forward animation based on whatever animation its in.

@@ -6,6 +6,7 @@
 #include <math.h>
 struct quat;
 #include "type_vec3.h"
+#include "type_fmat4.h"
 
 struct quat{
     float x;

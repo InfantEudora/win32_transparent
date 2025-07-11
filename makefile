@@ -16,11 +16,11 @@ FNOCONSOLE = -Wl,-subsystem,windows
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
 COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
 
-CFLAGS = -std=c++17 -Llibs/ -limgui -luser32 -lopengl32 -lgdi32 -lwinmm -lws2_32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
+CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d -limgui -luser32 -lopengl32 -lgdi32 -lwinmm -lws2_32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 #CFLAGS += -std=c++11
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 #CFLAGS += $(FNOCONSOLE)
-CFLAGS += -fno-exceptions
+CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
 
 
 PROJECT = wind
@@ -38,6 +38,9 @@ IPATHS += -I3rdparty/
 IPATHS += -I3rdparty/stb_image/
 IPATHS += -I3rdparty/openal-soft/
 IPATHS += -I3rdparty/miniz/
+IPATHS += -I3rdparty/reactphysics3d/
+
+
 SRCS += main.cpp
 
 #ImGUI

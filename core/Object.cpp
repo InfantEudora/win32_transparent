@@ -80,6 +80,23 @@ Mesh* Object::GetMesh(){
     return mesh;
 }
 
+void Object::AddPhysics(PhysicsWorld* world){
+    if (!world){
+        return;
+    }
+    if (!physics){
+        physics = new Physics(world);
+        //We set the worldposition in the physics engine from local position
+        physics->SetBodyWorldPosition(GetPosition());
+        physics->SetStatic(true);
+        physics->SetGravityEnabled(false);
+    }
+}
+
+Physics* Object::GetPhysics(){
+    return physics;
+}
+
 int32_t Object::GetMeshBatchIndex(){
     if (mesh){
         return mesh->batch_index;
@@ -128,12 +145,16 @@ void Object::RotateBy(const quat& r){
 
 //Move to new position. This preserves rotation. When f_keep_lookat=true, the rotation will update to
 //look at the old location
-//TODO: This should set worldposition?
 void Object::SetPosition(const vec3& newpos){
     state_physics.f_was_transformed = true;
-    vec3 delta = state_physics.position - newpos;
+    //vec3 delta = state_physics.position - newpos;
     state_physics.position = newpos;
 }
+
+//TODO: This should set worldposition
+/*
+void Object::SetWorldPosition();
+*/
 
 //Look at target from current position. Optional up can be supplied, otherwise will use ref_up.
 //Target is in local space.
@@ -254,6 +275,15 @@ void Object::UpdateState(){
 //Called by Physics
 void Object::UpdatePhysicsState(){
     //Massages all the physics things.
+
+    //If physics from colliders etc. was updated:
+    if (physics){
+        vec3 physics_wp = physics->GetBodyWorldPosition();
+        //We set the local position
+        SetPosition(physics_wp);
+    }
+
+
     if (!f_animation_override){
         ApplyAnimation(animation_time_delta);
     }

@@ -298,6 +298,32 @@ void Application::UpdateUISceneObjectTree(){
     }
 }
 
+//Renders all things related to world physics
+void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
+    if (!physics_world){
+        ImGui::BeginDisabled();
+        ImGui::CollapsingHeader("No World Physics");
+        ImGui::EndDisabled();
+        return;
+    }
+
+    if (ImGui::CollapsingHeader("World Physics")){
+        static bool ph_debug_render = false;
+        if (ImGui::Checkbox("Render Colliders",&ph_debug_render)){
+            physics_world->SetDebugRendering(ph_debug_render);
+        }
+        vec3 gravity = physics_world->GetGravity();
+        if (ImGui::DragFloat3("Gravity (m/s^2)",(float*)&gravity,0.1f,-20,20)){
+            physics_world->SetGravity(gravity);
+        }
+    }
+
+}
+//Renders all things related to world physics
+void Application::UpdateUIPhysics(Physics* physics){
+
+}
+
 void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked){
     objectid_t id = object->GetID();
     long long p = id; //To suppress warning from 32-bit pointer
@@ -406,16 +432,16 @@ void Application::RenderGenericObjectUI(){
 
     }
 
+    //So the same camera panel has a different ImGUI ID.
+    int ui_camid = 0;
+
     if (ImGui::CollapsingHeader("Scene")){
         Scene* scene = main_scene;
         ImGui::Text("Main Scene             : %s",scene->name.c_str());
         UpdateUISceneObjectTree();
-
+        UpdateUICameraControls(scene->camera ,ui_camid);
+        UpdateUIWorldPhysics(scene->physics_world);
     }
-
-    //So the same camera panel has a different ImGUI ID.
-    int ui_camid = 0;
-    UpdateUICameraControls(main_scene->camera ,ui_camid);
 
     ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
 
@@ -642,6 +668,19 @@ void Application::RenderGenericObjectUI(){
                 object->SetScale(scale);
             }
         }
+
+        if (object->GetPhysics()){
+            if (ImGui::CollapsingHeader("Physics")){
+                Physics* physics = object->GetPhysics();
+
+            }
+        }else{
+            ImGui::BeginDisabled();
+            ImGui::CollapsingHeader("No Physics");
+            ImGui::EndDisabled();
+        }
+
+
         if (ImGui::CollapsingHeader("Material")){
             ImGui::Text("Renderer Materials: %i",renderer->materials.size());
             ImGui::Separator();

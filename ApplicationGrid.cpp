@@ -57,6 +57,10 @@ Scene* ApplicationGrid::CreateHandTestScene(){
     scene->inputcontroller->AddKeyMap('E',INPUT_E);
     scene->inputcontroller->AddKeyMap(VK_DECIMAL,INPUT_FOCUS);
 
+    //Add phyics
+    scene->physics_world = new PhysicsWorld();
+    scene->physics_world->SetGravity(vec3(0,-9.81,0));
+
     //Make a sun
     DirectionalLight* sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
@@ -570,7 +574,7 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
     terrain = new IsoTerrain();
     terrain->name = "Iso Terrain";
     terrain->assetmanager = assetmanager;
-    terrain->CreateTerrain(5,5,2);
+    terrain->CreateTerrain(NULL,5,5,2);
     //scene->AddObject(terrain);
 
     projection_plane.pos = {};
@@ -1171,8 +1175,13 @@ void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
             ImGui::EndMenu();
         }
 
-        if (ImGui::Button("Place Tree")){
-            hovered_cell->PlaceTree("Tree.1");
+        if (ImGui::Button("Place Tree.001")){
+            hovered_cell->PlaceTree("Tree.001");
+            f_show_rightclick_menu = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Place Tree.002")){
+            hovered_cell->PlaceTree("Tree.002");
             f_show_rightclick_menu = false;
         }
 
@@ -1461,7 +1470,7 @@ void ApplicationGrid::RenderGridUI(){
             terrain->base_tile = "Tile.1111";
             terrain->wall_tile = "Pallisade";
 
-            terrain->CreateTerrain(9,9,2);
+            terrain->CreateTerrain(main_scene->physics_world, 9,9,2);
             main_scene->AddObject(terrain);
 
             //Only show the first layer
