@@ -56,9 +56,37 @@ void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, int w, int d, int h){
                 c->f_update_materials = true;
                 assetmanager->GetObjectFromAsset(base_tile.c_str(),c);
                 cells.push_back(c);
+
+                //Each cell will lookup walls like this
+                std::array<int3,4>wall_coords;
+
+                //This works. It's logical. And it's magic.
+                int3 cell_coord = c->coordinate;
+                int3 c2 = int3(cell_coord.y*2,cell_coord.x*2,cell_coord.z);
+                wall_coords.at(0) = c2 + int3(0,1,0);
+                wall_coords.at(1) = c2 + int3(1,2,0);
+                wall_coords.at(2) = c2 + int3(2,1,0);
+                wall_coords.at(3) = c2 + int3(1,0,0);
+
+                for (int i =0;i<4;i++){
+                    int3 c = wall_coords.at(i);
+
+                    IsoWall* wall = GetWallByCoordinate(c);
+                    if (!wall){
+                        IsoWall* wall = new IsoWall();
+                        wall->pillar = WALL_UNINITIALISED;
+                        wall->coordinate.x = c.x;
+                        wall->coordinate.y = c.y;
+                        wall->coordinate.z = c.z;
+                        walls.push_back(wall);
+                    }
+
+                }
             }
         }
     }
+
+
 
     //We also allocate an array for the sides and corners, or if this were a quad, the vertices and edges.
     for (int y = 0;y<height;y++){
@@ -106,6 +134,17 @@ IsoCell* IsoTerrain::GetCellByCoordinate(int3 coord){
     return NULL;
 }
 
+IsoWall* IsoTerrain::GetWallByCoordinate(int3 coord){
+    //TODO: Less lazy lookup
+    debug->Info("GetWallByCoordinate %i,%i\n",coord.x,coord.y);
+    for (IsoWall* wall : walls){
+        if (coord == wall->coordinate){
+            return wall;
+        }
+    }
+    return NULL;
+}
+
 IsoWall* IsoTerrain::GetPillarByCoordinate(int3 coord){
     //TODO: Less lazy lookup
     debug->Info("GetPillarCoordinate %i,%i\n",coord.x,coord.y);
@@ -115,6 +154,23 @@ IsoWall* IsoTerrain::GetPillarByCoordinate(int3 coord){
         }
     }
     return NULL;
+}
+
+void IsoTerrain::GetWallsByCellCoordinate(int3 cell_coord, std::array<IsoWall*,4>&walls){
+    std::array<int3,4>wall_coords;
+
+    //This works. It's logical. And it's magic.
+    int3 c2 = int3(cell_coord.y*2,cell_coord.x*2,cell_coord.z);
+    wall_coords.at(0) = c2 + int3(0,1,0);
+    wall_coords.at(1) = c2 + int3(1,2,0);
+    wall_coords.at(2) = c2 + int3(2,1,0);
+    wall_coords.at(3) = c2 + int3(1,0,0);
+
+    for (int i =0;i<4;i++){
+        int3 c = wall_coords.at(i);
+        IsoWall* wall = GetWallByCoordinate(c);
+        walls.at(i) = wall;
+    }
 }
 
 void IsoTerrain::GetPillarsByCellCoordinate(int3 cell_coord, std::array<IsoWall*,4>&pillars){

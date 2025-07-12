@@ -49,7 +49,7 @@ public:
     // Floor tiles, child. But reference as a seperate floor object.
     Object* object_floor = NULL;
 
-    std::array<int,4>wall_indices = {-1,-1,-1,-1}; //Used to keep track which child is which wall.
+    //std::array<int,4>wall_indices = {-1,-1,-1,-1}; //Used to keep track which child is which wall.
 
     //We can have one prop smack bang in the middle.
     int prop_index = -1;
@@ -60,7 +60,7 @@ public:
     IsoWall* PlaceWall(const std::string& asset_name,int direction);
     IsoWall* PlaceDoor(const std::string& asset_name,int direction);
     IsoWall* PlacePillar(const std::string& asset_name,int direction); // Direction is on the left side of the wall segment.
-    IsoWall* PlacePillars(const std::string& asset_name); //Places one in each corner
+
 
     Object* PlaceTree(const std::string& asset_name);
     Object* PlaceFloor(const std::string& asset_name);

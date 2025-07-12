@@ -29,9 +29,9 @@ public:
     vec3 center_offset = {};
     float height_factor = 0.5f;
 
-    std::vector<IsoCell*> cells;     // An array of width*depth cells
-    std::vector<IsoWall*> walls;   // In the X-Y direction one extra for cells.
-    std::vector<IsoWall*> pillars;   // In the X-Y direction one extra for cells.
+    std::vector<IsoCell*> cells;     // An array of width*depth cells. A quad.
+    std::vector<IsoWall*> walls;     // The edges per quad.
+    std::vector<IsoWall*> pillars;   // In the X-Y direction one extra for cells. The vertices of a quad
     std::string base_tile = "tile_floor.001";
     std::string wall_tile = "wall_full.001";
 
@@ -42,8 +42,13 @@ public:
     IsoCell* FindCellByWorldPosition(vec3& at);
     IsoCell* GetCellByCoordinate(int3 coord);
 
+    void    GetWallsByCellCoordinate(int3 cell_coord, std::array<IsoWall*,4>&walls);
+    IsoWall* GetWallByCoordinate(int3 coord);
+
     void    GetPillarsByCellCoordinate(int3 cell_coord, std::array<IsoWall*,4>&walls);
     IsoWall* GetPillarByCoordinate(int3 coord);
+
+
 };
 
 

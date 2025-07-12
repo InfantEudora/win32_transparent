@@ -123,7 +123,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
         character->AddPhysics(scene->physics_world);
         Physics* physics = character->GetPhysics();
         if (physics){
-            physics->AddBoxCollider(vec3(0.25,0.25,0.2),vec3(0,0,0),quat().identity());
+            physics->AddBoxCollider(vec3(0.25,0.25,0.25),vec3(0,0.25,0),quat().identity());
             physics->SetStatic(true);
         }
     }

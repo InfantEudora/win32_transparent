@@ -172,40 +172,9 @@ IsoWall* IsoCell::PlacePillar(const std::string& asset_name,int direction){
     return pillar;
 }
 
-// Adds pillars to all four corners. They are added as seperate wall objects to the terrain, not the tile.
-IsoWall* IsoCell::PlacePillars(const std::string& asset_name){
-
-    // We need to query the terrain where our 4 pillars are stored.
-    std::array<IsoWall*,4>pillars = {NULL,NULL,NULL,NULL};
-    terrain->GetPillarsByCellCoordinate(coordinate,pillars);
-
-    for (int i=0;i<4;i++){
-        IsoWall* pillar = pillars.at(i);
-        if (!pillar){
-            debug->Warn("No pillar for cell\n");
-            return NULL;
-        }
-
-        if (pillar->pillar == PILLAR_UNINITIALISED){
-            debug->Info("Setup pillar for cell\n");
-            //Use our assetmanager to setup pillar
-            assetmanager->GetObjectFromAsset(asset_name.c_str(),pillar);
-            pillar->f_update_materials = true;
-            pillar->name = "Pillar " + std::to_string(pillar->coordinate.x) + "," + std::to_string(pillar->coordinate.y);
-
-            pillar->SetPosition(vec3(pillar->coordinate.x - 0.5f,pillar->coordinate.z * terrain->height_factor,pillar->coordinate.y - 0.5f) + terrain->center_offset);
-            terrain->AttachChild(pillar);
-            pillar->pillar = PILLAR_VALID;
-        }else{
-            debug->Info("Pillar already set up\n");
-        }
-    }
-    return NULL;
-}
-
-
 // Place a wall at one of the 4 coordinates.
 IsoWall* IsoCell::PlaceDoor(const std::string& asset_name,int direction){
+    /*
     if (!IsoDirection::DirectionIsValid(direction)){
         debug->Err("Invalid direction for door placement.\n");
         return NULL;
@@ -264,6 +233,7 @@ IsoWall* IsoCell::PlaceDoor(const std::string& asset_name,int direction){
         child->Show();
         return dynamic_cast<IsoWall*>(child);
     }
+    */
     return NULL;
 }
 
@@ -277,6 +247,70 @@ IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
     if (!IsoDirection::DirectionIsValid(direction)){
         return NULL;
     }
+
+    // We need to query the terrain where our 4 pillars are stored.
+    std::array<IsoWall*,4>walls = {NULL,NULL,NULL,NULL};
+    terrain->GetWallsByCellCoordinate(coordinate,walls);
+
+    IsoWall* wall = walls.at(direction);
+    if (!wall){
+        debug->Warn("No wall for cell\n");
+        return NULL;
+    }
+
+    if (wall->pillar == WALL_UNINITIALISED){
+        debug->Info("Setup wall for cell\n");
+        //Use our assetmanager to setup pillar
+        assetmanager->GetObjectFromAsset(asset_name.c_str(),wall);
+        wall->f_update_materials = true;
+        wall->name = "Wall " + std::to_string(wall->coordinate.x) + "," + std::to_string(wall->coordinate.y);
+
+        //Add a collider to the wall:
+        wall->AddPhysics(terrain->physicsworld);
+        Physics* physics = wall->GetPhysics();
+        if (physics){
+            physics->AddBoxCollider(vec3(0.5,0.3,0.03),vec3(0,0.3,0),quat().identity());
+            physics->SetStatic(true);
+        }
+
+        vec3 pos_offset = vec3();
+        quat orientation = quat().identity();
+
+        if (direction == DIRECTION_NORTH){
+            //wall->SetPosition(vec3(0,0,-0.5));
+            pos_offset = vec3(0,0,-0.5);
+        }else if (direction == DIRECTION_EAST){
+            //wall->SetPosition(vec3(0.5,0,0));
+            pos_offset = vec3(0.5,0,0);
+            //quat q; q.set_rotation(ref_up,toradians(90));
+            //wall->SetRotation(q);
+            orientation.set_rotation(ref_up,toradians(90));
+        }else if (direction == DIRECTION_SOUTH){
+            //wall->SetPosition(vec3(0,0,0.5));
+            pos_offset = vec3(0.0,0,0.5);
+        }else if (direction == DIRECTION_WEST){
+            //wall->SetPosition(vec3(-0.5,0,0));
+            pos_offset = vec3(-0.5,0,0);
+            //quat q; q.set_rotation(ref_up,toradians(-90));
+            //wall->SetRotation(q);
+            orientation.set_rotation(ref_up,toradians(-90));
+        }
+
+        wall->SetPosition(pos_offset + vec3(coordinate.x,coordinate.z * terrain->height_factor,coordinate.y) + terrain->center_offset);
+        wall->SetRotation(orientation);
+
+        terrain->AttachChild(wall);
+        wall->pillar = WALL_VALID;
+    }else if (wall->pillar == WALL_VALID){
+        debug->Info("Wall already set up direction %i from %i x %i x %i\n",direction,coordinate.x,coordinate.y,coordinate.z);
+        assetmanager->GetObjectFromAsset(asset_name.c_str(),wall);
+        wall->Show();
+    }else{
+        debug->Err("Wall not setup as a wall...?\n");
+    }
+    return wall;
+
+/*
     if (wall_indices[direction] == -1){
         int n_dir = (direction + 2) % 4;
         //If adjacent cell has a wall, we cant place one.
@@ -341,4 +375,5 @@ IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
         return dynamic_cast<IsoWall*>(child);
     }
     return NULL;
+    */
 }

@@ -18,6 +18,8 @@ class IsoWall;
 #define PILLAR_NONE             -1
 #define PILLAR_UNINITIALISED    0
 #define PILLAR_VALID            1
+#define WALL_UNINITIALISED      2
+#define WALL_VALID              3
 
 class IsoWall : public virtual Object{
 public:
