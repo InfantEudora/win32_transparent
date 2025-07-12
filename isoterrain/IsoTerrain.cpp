@@ -16,7 +16,7 @@ Z=Height
 */
 
 //Generates the tile that make up the terrain
-void IsoTerrain::CreateTerrain(PhysicsWorld*world, int w, int d, int h){
+void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, int w, int d, int h){
     if (!assetmanager){
         debug->Err("IsoTerrain requires an asset manager\n");
         return;
@@ -26,6 +26,8 @@ void IsoTerrain::CreateTerrain(PhysicsWorld*world, int w, int d, int h){
     width = w;
     depth = d;
     height = h;
+
+    physicsworld = world_in;
 
     center_offset = vec3(-w/2.0f + 0.5f,0,-d/2.0f + 0.5f);
 
@@ -40,7 +42,12 @@ void IsoTerrain::CreateTerrain(PhysicsWorld*world, int w, int d, int h){
                 c->assetmanager = assetmanager;
                 c->terrain = this;
                 c->SetPosition(vec3(x,y * height_factor,z) + center_offset);
-                c->AddPhysics(world);
+                c->AddPhysics(world_in);
+                Physics* physics = c->GetPhysics();
+                if (physics){
+                    physics->AddBoxCollider(vec3(0.5,0.25,0.5),vec3(0,-0.25,0),quat().identity());
+                    physics->SetStatic(true);
+                }
 
                 c->name = "IsoCell " + std::to_string(x) + "," + std::to_string(z);
                 //These two lists should know/update when a cell/or child gets destroyed... somehow

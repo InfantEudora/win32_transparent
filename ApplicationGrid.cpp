@@ -118,6 +118,14 @@ Scene* ApplicationGrid::CreateHandTestScene(){
                 selected_animation->looped = true;
             }
         }
+
+        //Add a collider
+        character->AddPhysics(scene->physics_world);
+        Physics* physics = character->GetPhysics();
+        if (physics){
+            physics->AddBoxCollider(vec3(0.25,0.25,0.2),vec3(0,0,0),quat().identity());
+            physics->SetStatic(true);
+        }
     }
     character->SetNextAnimation("IdleStanding");
     character->SetPosition(vec3(0,0,1));
@@ -1173,6 +1181,10 @@ void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
                 f_show_rightclick_menu = false;
             }
             ImGui::EndMenu();
+        }
+        if (ImGui::Button("Place Floor Flagstones")){
+            hovered_cell->PlaceFloor("Flagstones");
+            f_show_rightclick_menu = false;
         }
 
         if (ImGui::Button("Place Tree.001")){

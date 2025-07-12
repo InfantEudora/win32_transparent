@@ -68,7 +68,7 @@ class Object{
     fmat4& GetWorldTransformScaleMatrix();
 
     //Modify postition
-    void SetPosition(const vec3& newpos);
+    void SetPosition(const vec3& newpos,bool f_write_physics=true); //If the position change needs to be written to the physics engine
     void MoveBy(const vec3& delta);
     vec3 MoveForwardBy(float delta);
     vec3 MoveUpBy(float delta);
@@ -82,7 +82,7 @@ class Object{
     void SetLookAt(const vec3& newpos, const vec3* optional_up = NULL);
     void SetWorldLookat(const vec3& target,const vec3& world_up);
 
-    void SetRotation(const quat& q);
+    void SetRotation(const quat& q,bool f_write_physics=true);
     void RotateAroundAxis(const vec3& target_axis,float by);
     void RotateBy(const quat& q);
 

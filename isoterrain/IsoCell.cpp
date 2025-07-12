@@ -306,6 +306,14 @@ IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
             debug->Ok("Placed a new wall\n");
             wall->name = "Wall @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
 
+            //Add a collider to the wall:
+            wall->AddPhysics(terrain->physicsworld);
+            Physics* physics = wall->GetPhysics();
+            if (physics){
+                physics->AddBoxCollider(vec3(0.5,0.3,0.03),vec3(0,0,0),quat().identity());
+                physics->SetStatic(true);
+            }
+
             if (direction == DIRECTION_NORTH){
                 wall->SetPosition(vec3(0,0,-0.5));
             }else if (direction == DIRECTION_EAST){
@@ -319,6 +327,8 @@ IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
                 quat q; q.set_rotation(ref_up,toradians(-90));
                 wall->SetRotation(q);
             }
+
+
         }else{
             debug->Ok("Unable to place new wall\n");
         }

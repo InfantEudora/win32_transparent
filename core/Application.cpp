@@ -670,9 +670,22 @@ void Application::RenderGenericObjectUI(){
         }
 
         if (object->GetPhysics()){
-            if (ImGui::CollapsingHeader("Physics")){
+            if (ImGui::CollapsingHeader("Physics",ImGuiTreeNodeFlags_DefaultOpen)){
                 Physics* physics = object->GetPhysics();
-
+                bool f_static = physics->IsStatic();
+                if (ImGui::Checkbox("Static", &f_static)){
+                    physics->SetStatic(f_static);
+                }
+                bool f_gravity = physics->IsGravityEnabled();
+                if (ImGui::Checkbox("Reacts to Grativy", &f_gravity)){
+                    physics->SetGravityEnabled(f_gravity);
+                }
+                bool f_active = physics->IsActive();
+                if (ImGui::Checkbox("Active", &f_active)){
+                    physics->SetActive(f_active);
+                }
+                int num_colliders = physics->GetNumColliders();
+                ImGui::Text("Number of colliders: %lu",num_colliders);
             }
         }else{
             ImGui::BeginDisabled();

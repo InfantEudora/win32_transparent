@@ -51,10 +51,16 @@ void Object::SetVisibility(bool flag){
 
 void Object::Hide(){
     SetVisibility(false);
+    if (physics){
+        physics->SetActive(false);
+    }
 }
 
 void Object::Show(){
     SetVisibility(true);
+    if (physics){
+        physics->SetActive(true);
+    }
 }
 
 void Object::SetPickability(bool flag){
@@ -133,9 +139,12 @@ void Object::RotateAroundAxis(const vec3& target_axis,float by){
 }
 
 //Update objects rotation with supplied quaternion.
-void Object::SetRotation(const quat& q){
+void Object::SetRotation(const quat& q, bool f_write_physics){
     state_physics.f_was_transformed = true;
     state_physics.rotation = q;
+    if (f_write_physics && physics){
+        physics->SetBodyWorldOrientation(q);
+    }
 }
 
 void Object::RotateBy(const quat& r){
@@ -145,10 +154,13 @@ void Object::RotateBy(const quat& r){
 
 //Move to new position. This preserves rotation. When f_keep_lookat=true, the rotation will update to
 //look at the old location
-void Object::SetPosition(const vec3& newpos){
+void Object::SetPosition(const vec3& newpos,bool f_write_physics){
     state_physics.f_was_transformed = true;
     //vec3 delta = state_physics.position - newpos;
     state_physics.position = newpos;
+    if (f_write_physics && physics){
+        physics->SetBodyWorldPosition(GetPosition());
+    }
 }
 
 //TODO: This should set worldposition
@@ -280,7 +292,10 @@ void Object::UpdatePhysicsState(){
     if (physics){
         vec3 physics_wp = physics->GetBodyWorldPosition();
         //We set the local position
-        SetPosition(physics_wp);
+        SetPosition(physics_wp,false);
+        quat physics_q = physics->GetBodyWorldOrientation();
+        //We set the local position
+        SetRotation(physics_q,false);
     }
 
 

@@ -30,11 +30,13 @@ public:
     float height_factor = 0.5f;
 
     std::vector<IsoCell*> cells;     // An array of width*depth cells
-    std::vector<IsoWall*> pillars;   // In the X-Y direction on extra for cells.
+    std::vector<IsoWall*> walls;   // In the X-Y direction one extra for cells.
+    std::vector<IsoWall*> pillars;   // In the X-Y direction one extra for cells.
     std::string base_tile = "tile_floor.001";
     std::string wall_tile = "wall_full.001";
 
     AssetManager* assetmanager = NULL;  //Used to load assets from file.
+    PhysicsWorld* physicsworld = NULL;
 
     void CreateTerrain(PhysicsWorld* physicsworld, int w, int d, int h);
     IsoCell* FindCellByWorldPosition(vec3& at);

@@ -19,7 +19,6 @@ Physics::~Physics(){
 
 }
 
-
 void Physics::SetBodyWorldPosition(const vec3& wp){
 	reactphysics3d::Transform t = body->rigidbody->getTransform();
 	reactphysics3d::Vector3 p = reactphysics3d::Vector3(wp.x,wp.y,wp.z);
@@ -38,6 +37,13 @@ quat Physics::GetBodyWorldOrientation(){
 	return (quat&)t.getOrientation();
 }
 
+void Physics::SetBodyWorldOrientation(const quat& q){
+	reactphysics3d::Transform t = body->rigidbody->getTransform();
+	t.setOrientation(reactphysics3d::Quaternion(q.x,q.y,q.z,q.w));
+	body->rigidbody->setTransform(t);
+	world->WakeUpEveryone();
+}
+
 //Toggles the body to be either static or dynamic
 void Physics::SetStatic(bool _static){
 	if (_static){
@@ -45,6 +51,27 @@ void Physics::SetStatic(bool _static){
 	}else{
 		body->rigidbody->setType(reactphysics3d::BodyType::DYNAMIC);
 	}
+}
+
+bool Physics::IsStatic(){
+	reactphysics3d::BodyType type = body->rigidbody->getType();
+	if (type == reactphysics3d::BodyType::STATIC){
+		return true;
+	}
+	return false;
+}
+
+void Physics::SetActive(bool active){
+	body->rigidbody->setIsActive(active);
+	WakeUp();
+}
+
+bool Physics::IsActive(){
+	return body->rigidbody->isActive();
+}
+
+uint32_t Physics::GetNumColliders(){
+	return body->rigidbody->getNbColliders();
 }
 
 // If gravity is applied to this body.

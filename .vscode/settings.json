@@ -99,5 +99,6 @@
         }
     },
     "terminal.integrated.automationProfile.windows": {},
-    "terminal.integrated.scrollback": 8000
+    "terminal.integrated.scrollback": 8000,
+    "cmake.ignoreCMakeListsMissing": true
 }

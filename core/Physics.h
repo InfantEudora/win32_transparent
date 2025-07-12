@@ -22,6 +22,10 @@ public:
     bool IsGravityEnabled();
     void WakeUp();
     void SetStatic(bool _static);
+    bool IsStatic();
+
+    void SetActive(bool active);    // ou'd think this completely disables it.
+    bool IsActive();
 
     vec3 GetBodyWorldPosition();
     quat GetBodyWorldOrientation();
