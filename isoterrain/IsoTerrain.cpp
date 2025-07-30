@@ -86,8 +86,6 @@ void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, int w, int d, int h){
         }
     }
 
-
-
     //We also allocate an array for the sides and corners, or if this were a quad, the vertices and edges.
     for (int y = 0;y<height;y++){
         for (int z = 0;z<depth+1;z++){
@@ -185,4 +183,27 @@ void IsoTerrain::GetPillarsByCellCoordinate(int3 cell_coord, std::array<IsoWall*
         IsoWall* pillar = GetPillarByCoordinate(c);
         pillars.at(i) = pillar;
     }
+}
+
+IsoStairs* IsoTerrain::GetStairsByCellCoordinate(int3 cell_coordinate){
+    for (IsoStairs* stair : stairs){
+        if (!stair->cell){
+            debug->Warn("Stairs is missing a cell reference\n");
+            continue;
+        }
+        if (cell_coordinate == stair->cell->coordinate){
+            return stair;
+        }
+    }
+    return NULL;
+}
+
+void IsoTerrain::PlaceStairs(IsoStairs* stair, IsoCell* cell){
+    if (!stair || !cell){
+        return;
+    }
+    stair->cell = cell;
+    stairs.push_back(stair);
+    stair->SetPosition(cell->GetPosition());
+    AttachChild(stair);
 }

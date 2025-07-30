@@ -12,13 +12,10 @@ IsoWall::~IsoWall(){
 
 }
 
-void IsoWall::Lower(){
-    if (cell && cell->assetmanager){
-        if (cell->assetmanager->GetObjectFromAsset("wall_half.001",this)){
-            debug->Ok("Wall was lowered\n");
-        }else{
-            debug->Err("Unable to lower wall\n");
+void IsoWall::ChangeToDoor(AssetManager* assetmanager, const std::string& asset_name){
+    if (assetmanager){
+        if (assetmanager->GetObjectFromAsset(asset_name.c_str(),this)){
+            debug->Info("Changed to door...\n");
         }
     }
 }
-

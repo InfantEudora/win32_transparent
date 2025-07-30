@@ -30,7 +30,7 @@ typedef struct {
     uint64_t handle_normal = 0;     // The texture handle for OpenGL Bindless Textures
 }material_t;
 
-//We want to know more about the material that GLSL
+//We want to know more about the material than GLSL
 typedef struct{
     material_t glsl_material;
     std::string name;

@@ -11,6 +11,7 @@ Asset* AssetManager::AddNewAsset(const char* asset_name, Object* object){
     if (object){
         asset->mesh = object->GetMesh();
         asset->mesh->num_references++;
+        asset->material_names = object->material_names;
     }
     debug->Info("Added new Asset: %s\n",asset_name);
     assets.push_back(asset);
@@ -52,6 +53,8 @@ Object* AssetManager::GetObjectFromAsset(const char* asset_name, Object* optiona
             object = new Object();
         }
         object->SetMesh(asset->mesh);
+        object->material_names = asset->material_names;
+
         debug->Trace("Got existing Asset: %s\n",asset_name);
         return object;
     }

@@ -13,6 +13,7 @@
 #include "PerfTimer.h"
 #include "AssetManager.h"
 #include "Debug.h"
+#include "GLTFLoader.h"
 
 /*
     The thing that ties everything together.
@@ -42,6 +43,7 @@ public:
     std::vector<Scene*> scenes;         // List of different scenes this application owns.
     Scene* main_scene = NULL;           // Currently active scene.
     AssetManager* assetmanager = NULL;
+    GLTFLoader gltfloader;              // We can only have a single GLTF loader for now
 
     PerfTimer* tmr_physics = NULL;
 
@@ -58,6 +60,7 @@ public:
     Debugger *debug_frame = NULL;
 
     Scene* CreateNewScene(const std::string& name);    // Creates a new scene, with some defaults.
+    void GetAllAssetsFromGLTF();
 
 protected:
     static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);

@@ -86,9 +86,9 @@ Mesh* Object::GetMesh(){
     return mesh;
 }
 
-void Object::AddPhysics(PhysicsWorld* world){
+Physics* Object::AddPhysics(PhysicsWorld* world){
     if (!world){
-        return;
+        return NULL;
     }
     if (!physics){
         physics = new Physics(world);
@@ -96,11 +96,20 @@ void Object::AddPhysics(PhysicsWorld* world){
         physics->SetBodyWorldPosition(GetPosition());
         physics->SetStatic(true);
         physics->SetGravityEnabled(false);
+        return physics;
     }
+    return NULL;
 }
 
 Physics* Object::GetPhysics(){
     return physics;
+}
+
+void Object::ResetPhysics(){
+    if (physics){
+        physics->SetVelocity(vec3());
+        physics->SetAngularVelocity(vec3());
+    }
 }
 
 int32_t Object::GetMeshBatchIndex(){

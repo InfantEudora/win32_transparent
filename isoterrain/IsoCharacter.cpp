@@ -256,10 +256,13 @@ void IsoCharacter::TransitionAnimation(){
 //Going to play a move forward animation based on whatever animation its in.
 void IsoCharacter::MoveForward(){
     //Load the move forward animation
-    SetNextAnimation("CatwalkForward");
-    ProceedToNextAnimation();
+    //SetNextAnimation("CatwalkForward");
+    //ProceedToNextAnimation();
     idle_time = 0;
-    MoveForwardBy(0.025f);
+    //MoveForwardBy(0.025f);
+    if (physics){
+        physics->AddLocalForce(vec3(0,0,-1));
+    }
 }
 
 //Going to play a move forward animation based on whatever animation its in.

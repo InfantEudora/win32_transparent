@@ -535,6 +535,12 @@ void Renderer::SSAOPass(Camera* camera){
 }
 
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
+    if (!camera){
+        debug->Fatal("DrawFrame called without camera.\n");
+    }
+    if (!shader){
+        debug->Fatal("DrawFrame called without shader.\n");
+    }
     if (tmr_frame){
         tmr_frame->Restart();
     }
@@ -618,7 +624,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     DeferredPass(camera);
 
     //Now we can read the normal and object ID:
-    if (pipeline == PIPELINE_DEFERRED){
+    if ((pipeline == PIPELINE_DEFERRED && input)){
         glReadBuffer(GL_COLOR_ATTACHMENT3);
         int32_t id_pixeldata[4] = {-1,-1,-1,-1};
         float  normal_pixeldata[4] = {0,0,0,0};

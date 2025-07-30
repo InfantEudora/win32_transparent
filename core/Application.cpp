@@ -389,6 +389,7 @@ void Application::RenderDebugMenuBar(){
 
                     if (ImGui::MenuItem(asset->name.c_str())){
                         Object* object = assetmanager->GetObjectFromAsset(asset->name.c_str());
+                        object->name = asset->name;
                         main_scene->AddObject(object);
                     }
                 }
@@ -684,6 +685,10 @@ void Application::RenderGenericObjectUI(){
                 if (ImGui::Checkbox("Active", &f_active)){
                     physics->SetActive(f_active);
                 }
+                bool f_sleeping = physics->IsSleeping();
+                if (ImGui::Checkbox("Sleeping", &f_sleeping)){
+                    physics->WakeUp();
+                }
                 int num_colliders = physics->GetNumColliders();
                 ImGui::Text("Number of colliders: %lu",num_colliders);
             }
@@ -726,7 +731,7 @@ void Application::RenderGenericObjectUI(){
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
                         object->SetNextAnimation(animation);
-                        //object->ProceedToNextAnimation();
+                        object->ProceedToNextAnimation();
                     }
                 }
 
@@ -981,4 +986,43 @@ Scene* Application::CreateNewScene(const std::string& name){
 
     scenes.push_back(scene);
     return scene;
+}
+
+//Get's the currently loaded GLTF file, and imports everyting that wasn't imported.
+void Application::GetAllAssetsFromGLTF(){
+    if (!assetmanager){
+        debug->Err("No assetmanager to load assets into.\n");
+    }
+
+    debug->Info("GetAllAssetsFromGLTF: Loading %i nodes\n",gltfloader.node_names.size());
+    //Iterate through all nodes that have a mesh, check if we have no asset with that name and load.
+    for (std::string& nodename:gltfloader.node_names){
+        debug->Info("GetAllAssetsFromGLTF: Node %s\n",nodename.c_str());
+
+        bool already_loaded = false;
+
+        for (Asset* asset:assetmanager->assets){
+            if (asset->name.compare(nodename) == 0){
+                debug->Info(" -> Already loaded\n");
+                already_loaded = true;
+                break;
+            }
+        }
+
+        if (already_loaded){
+            continue;
+        }
+
+        std::vector<Material>loaded_materials;
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = nodename.c_str();
+            gltf_object->SetMesh(gltfmesh);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
+        }
+    }
+
+    //TODO: We also need to make sure all materials are loaded.
 }

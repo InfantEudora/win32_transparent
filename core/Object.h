@@ -154,8 +154,9 @@ class Object{
     // And copy them over. During this time, physics will have to wait.
 
     //Physics
-    Physics* GetPhysics();
-    void AddPhysics(PhysicsWorld* world);
+    Physics*    GetPhysics();
+    Physics*    AddPhysics(PhysicsWorld* world);
+    void        ResetPhysics();
 
     //Hierarchy
     Object* parent = NULL;              //Object we are a child of.

@@ -7,8 +7,6 @@
 #include "type_ray.h"
 #include "IsoCharacter.h"
 #include "IsoRoom.h"
-
-#include "GLTFLoader.h"
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
@@ -31,8 +29,6 @@ public:
     std::vector<IsoRoom*>rooms;
 
     Object* selection_tile = NULL;
-
-    GLTFLoader gltfloader;
 
     bool f_show_rightclick_menu = false;
     int2 rightclick_menu_coord;

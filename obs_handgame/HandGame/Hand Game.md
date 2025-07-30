@@ -53,6 +53,7 @@ As a basis, it will use a terrain with simple square grids. But it'll be possibl
 ### Todo's
 
 - [ ] All objects with colliders need to be placed relative to map origin.
+- [ ] Stairs and levels? Ramp collider for getting up stairs?
 - [ ] Generate a room with walls and a door.
 - [ ] Add a single light source in that room.
 - [ ] Be able play an animation to open and close the door by clicking it.

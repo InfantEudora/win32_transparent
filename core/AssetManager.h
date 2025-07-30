@@ -23,11 +23,12 @@
 class Asset;
 class AssetManager;
 
-// Class for storing data like meshes, materials etc. in prebuild configurations.
+// Class for storing data like meshes, materials etc. in prebuild configurations. A small subset from Object
 class Asset{
     public:
     std::string name;
     Mesh* mesh = NULL;
+    std::array<std::string,NUM_MATERIAL_SLOTS>material_names;
 };
 
 class AssetManager{

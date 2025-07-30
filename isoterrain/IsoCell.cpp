@@ -94,7 +94,7 @@ Object* IsoCell::RaiseTerrain(){
     Object* n = assetmanager->GetObjectFromAsset(terrain->base_tile.c_str(),neighbour_up);
     if (n){
         debug->Ok("Raied terrain\n");
-        n->SetVisibility(true);
+        n->Show();
     }
     return n;
 }
@@ -111,13 +111,22 @@ IsoStairs* IsoCell::PlaceStairs(const std::string& asset_name,int direction){
     //There should be a level above us.
     IsoCell* neighbour_up = terrain->GetCellByCoordinate(coordinate + int3(0,0,1));
     if (!neighbour_up){
+        debug->Warn("Cannot place stairs on topmost level\n");
         return NULL;
     }
 
-    //Replace the up neighbour's mesh
-    IsoStairs* stairs = new IsoStairs();
-    if (assetmanager->GetObjectFromAsset(asset_name.c_str(),stairs)){
-        AttachChild(stairs);
+    //We need to place the stairs in the terrian, and make sure no stairs at the same coordinate exists:
+
+    IsoStairs* stairs = terrain->GetStairsByCellCoordinate(coordinate);
+    if (!stairs){
+        stairs = new IsoStairs();
+    }else{
+        debug->Warn("Already stairs there\n");
+        stairs->Show();
+    }
+
+    if (stairs && assetmanager->GetObjectFromAsset(asset_name.c_str(),stairs)){
+        terrain->PlaceStairs(stairs,this);
         if (direction == DIRECTION_NORTH){
             quat q; q.set_rotation(ref_up,toradians(0));
             stairs->SetRotation(q);
@@ -174,6 +183,8 @@ IsoWall* IsoCell::PlacePillar(const std::string& asset_name,int direction){
 
 // Place a wall at one of the 4 coordinates.
 IsoWall* IsoCell::PlaceDoor(const std::string& asset_name,int direction){
+    //This should do place wall with the wall being a door.
+
     /*
     if (!IsoDirection::DirectionIsValid(direction)){
         debug->Err("Invalid direction for door placement.\n");

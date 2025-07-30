@@ -110,6 +110,8 @@ Scene* ApplicationGrid::CreateHandTestScene(){
         std::vector<std::string>looping_animations;
         looping_animations.push_back("IdleStanding");
         looping_animations.push_back("CatwalkForward");
+        looping_animations.push_back("Jumping");
+        looping_animations.push_back("Stairs");
 
         for (std::string& name:looping_animations){
             selected_animation = gltfloader.LoadAnimation(name.c_str());
@@ -128,7 +130,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
         }
     }
     character->SetNextAnimation("IdleStanding");
-    character->SetPosition(vec3(0,0,1));
+    character->SetPosition(vec3(0,0,0));
 
     //Load another hand, that uses the same mesh... preferably.
     {
@@ -169,6 +171,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
             }
         }
         character->SetNextAnimation("IdleStanding");
+         character->SetPosition(vec3(0,0,2));
     }
 
 
@@ -235,44 +238,6 @@ Object* ApplicationGrid::CreateNewObjectFromGLTF(const std::string& nodename, Sc
     }
     return NULL;
 }
-
-//Get's the currently loaded GLTF file, and imports everyting that wasn't imported.
-void ApplicationGrid::GetAllAssetsFromGLTF(){
-    if (!assetmanager){
-        debug->Err("No assetmanager to load assets into.\n");
-    }
-
-    debug->Info("GetAllAssetsFromGLTF\n");
-    //Iterate through all nodes that have a mesh, check if we have no asset with that name and load.
-    for (std::string& nodename:gltfloader.node_names){
-        debug->Info("GetAllAssetsFromGLTF: Node %s\n",nodename.c_str());
-
-        bool already_loaded = false;
-
-        for (Asset* asset:assetmanager->assets){
-            if (asset->name.compare(nodename) == 0){
-                debug->Info(" -> Already loaded\n");
-                already_loaded = true;
-                break;
-            }
-        }
-
-        if (already_loaded){
-            continue;
-        }
-
-        std::vector<Material>loaded_materials;
-        Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
-        if (gltfmesh){
-            Object* gltf_object = new Object();
-            gltf_object->name = nodename.c_str();
-            gltf_object->SetMesh(gltfmesh);
-            gltf_object->TakeMaterialNames(loaded_materials);
-            assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
-        }
-    }
-}
-
 
 Scene* ApplicationGrid::CreateTestScene(){
     Scene* scene = CreateNewScene("Grid Test Scene");
@@ -936,7 +901,7 @@ void ApplicationGrid::RunLogic(){
             if (grid_settings.f_place){
                 IsoCell* terrain_cell = terrain->FindCellByWorldPosition(p);
                 if (terrain_cell){
-                    terrain_cell->SetVisibility(true);
+                    terrain_cell->Show();
                 }else{
                     debug->Warn("Unable to spawn cell there\n");
                 }
@@ -1242,10 +1207,6 @@ void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
             hovered_wall->Hide();
             f_show_rightclick_menu = false;
         }
-        if (ImGui::Button("Lower")){
-            hovered_wall->Lower();
-            f_show_rightclick_menu = false;
-        }
         if (ImGui::Button("Place Stairs")){
             int normal_dir = IsoDirection::NormalToDirection(rightclick_menu_normal);
             debug->Info("Would place stairs in direcion %i from normal %.2f,%.2f,%.2f\n",normal_dir,rightclick_menu_normal.x,rightclick_menu_normal.y,rightclick_menu_normal.z);
@@ -1253,13 +1214,7 @@ void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
             f_show_rightclick_menu = false;
         }
         if (ImGui::Button("Door Me!")){
-            IsoCell* cell = hovered_wall->cell;
-            if (cell){
-                //HERE TODO:Lookup what direction this wall is.
-                int direction = cell->GetWallDirection(hovered_wall);
-                cell->PlaceDoor("WallArch",direction);
-            }
-
+            hovered_wall->ChangeToDoor(assetmanager, "WallArch");
             f_show_rightclick_menu = false;
         }
     }
@@ -1580,16 +1535,33 @@ void ApplicationGrid::RenderGridUI(){
         static int3 room_center  {1,1,0};
         ImGui::SliderInt2("Room Size",(int*)&room_size,1,5);
         ImGui::SliderInt3("Room Center",(int*)&room_center,0,8);
+
+        if (ImGui::Button("Reset Character")){
+            character->SetPosition(vec3(0,0,0));
+            character->SetRotation(quat().identity());
+            character->ResetPhysics();
+        }
         if (ImGui::Button("Generate Room")){
             debug->Info("Generating Room %i x %i\n",room_size.x,room_size.y);
             IsoCell* center_cell = terrain->GetCellByCoordinate(room_center);
             if (!center_cell){
                 debug->Fatal("Unable to find center cell ???\n");
             }
-
             CreateRoom(center_cell,room_size.x,room_size.y);
+        }
+        if (ImGui::Button("Drop Ball")){
+            debug->Info("Dropping le Ball\n");
+            Object* ball = assetmanager->GetObjectFromAsset("Icosphere");
+            Physics* physics = ball->AddPhysics(main_scene->physics_world);
+            if (physics){
+                physics->AddSphereCollider(0.1,vec3(),quat().identity());
+                physics->SetGravityEnabled(true);
+                physics->SetStatic(false);
+            }
 
-
+            ball->SetPosition(vec3(0,1,0));
+            ball->SetScale(vec3(0.2));
+            main_scene->AddObject(ball);
 
         }
     }

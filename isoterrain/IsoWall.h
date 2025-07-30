@@ -32,7 +32,7 @@ public:
     int pillar = PILLAR_NONE;       // Pillar none means it a wall
     int3 coordinate = {};           // Pillar / Wall coordinates are identical?
 
-    void Lower();
+    void ChangeToDoor(AssetManager* manager, const std::string& asset_name);
 };
 
 

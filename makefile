@@ -65,9 +65,12 @@ endif
 #SRCS += $(wildcard $(addsuffix /*.cpp, ./caninterfaces/controllers))
 
 #ApplicationGrid
-SRCS += ApplicationGrid.cpp
-IPATHS += -Iisoterrain/
-DIR_SRC += ./isoterrain
+#SRCS += ApplicationGrid.cpp
+#IPATHS += -Iisoterrain/
+#DIR_SRC += ./isoterrain
+
+#ApplicationDozer
+SRCS += ApplicationDozer.cpp
 
 #SRCS += ImCurveEdit.cpp
 #SRCS += ImSequencer.cpp

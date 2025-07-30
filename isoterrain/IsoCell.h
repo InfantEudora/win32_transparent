@@ -61,7 +61,6 @@ public:
     IsoWall* PlaceDoor(const std::string& asset_name,int direction);
     IsoWall* PlacePillar(const std::string& asset_name,int direction); // Direction is on the left side of the wall segment.
 
-
     Object* PlaceTree(const std::string& asset_name);
     Object* PlaceFloor(const std::string& asset_name);
     IsoStairs* PlaceStairs(const std::string& asset_name,int direction);
@@ -70,7 +69,6 @@ public:
     /*
         Walls and pillars might as well be stored in the terrain, so they can be queried easier.
         So we can simply look up the pillar by coordinate. But then who owns the wall?
-
     */
 };
 

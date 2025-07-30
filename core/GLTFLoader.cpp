@@ -758,6 +758,11 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                     debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
                 }
 
+                if (accessor.sparse.isSparse){
+                    debug->Fatal("We don't support sparse accessors in GLB files yet.\n");
+                    //TODO: Make it do
+                }
+
                 if (it->first.compare("NORMAL") == 0){
                     normal_bufferview = &model.bufferViews[accessor.bufferView];
                 }else if (it->first.compare("POSITION") == 0){

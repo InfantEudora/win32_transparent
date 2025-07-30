@@ -84,6 +84,10 @@ bool Physics::IsGravityEnabled(){
 	return body->rigidbody->isGravityEnabled();
 }
 
+bool Physics::IsSleeping(){
+	return body->rigidbody->isSleeping();
+}
+
 void Physics::WakeUp(){
 	body->rigidbody->setIsSleeping(false);
 }
@@ -93,11 +97,42 @@ void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orienta
 	reactphysics3d::Transform t = reactphysics3d::Transform::identity();
 	t.setPosition((reactphysics3d::Vector3&)pos);
 	t.setOrientation((reactphysics3d::Quaternion&)orientation);
-	body->collision_shape = boxShape;
+	//body->collision_shape = boxShape;
 	if (body->rigidbody){
-		body->collider = body->rigidbody->addCollider(body->collision_shape, t);
+		body->collider = body->rigidbody->addCollider(boxShape, t);
 		body->collider->getMaterial().setMassDensity(1.0);
 		body->rigidbody->updateMassPropertiesFromColliders();
 	}
-	debug->Info("Box collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+	debug->Info("Box Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+}
+
+//Creates a Sphere collision shape of size
+void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& orientation){
+    reactphysics3d::SphereShape* sphereShape = PhysicsWorld::physicsCommon.createSphereShape(size);
+	reactphysics3d::Transform t = reactphysics3d::Transform::identity();
+	t.setPosition((reactphysics3d::Vector3&)pos);
+	t.setOrientation((reactphysics3d::Quaternion&)orientation);
+	//body->collision_shape = sphereShape;
+	if (body->rigidbody){
+		body->collider = body->rigidbody->addCollider(sphereShape, t);
+		body->collider->getMaterial().setMassDensity(1.0);
+		//body_collider->getMaterial().setFrictionCoefficient(2);
+		//body_collider->getMaterial().setBounciness(0);
+		body->rigidbody->updateMassPropertiesFromColliders();
+	}
+	debug->Info("Sphere Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+}
+
+//Add local force at centre of mass
+void Physics::AddLocalForce(const vec3& force){
+	reactphysics3d::Vector3 f(force.x,force.y,force.z);
+	body->rigidbody->applyLocalForceAtCenterOfMass(f);
+}
+
+void Physics::SetVelocity(const vec3& v){
+	body->rigidbody->setLinearVelocity(reactphysics3d::Vector3(v.x,v.y,v.z));
+}
+
+void Physics::SetAngularVelocity(const vec3& v){
+	body->rigidbody->setAngularVelocity(reactphysics3d::Vector3(v.x,v.y,v.z));
 }
