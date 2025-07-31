@@ -71,6 +71,8 @@ endif
 
 #ApplicationDozer
 SRCS += ApplicationDozer.cpp
+IPATHS += -Idozer/
+DIR_SRC += ./dozer
 
 #SRCS += ImCurveEdit.cpp
 #SRCS += ImSequencer.cpp

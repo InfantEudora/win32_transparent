@@ -60,6 +60,9 @@ public:
     Debugger *debug_frame = NULL;
 
     Scene* CreateNewScene(const std::string& name);    // Creates a new scene, with some defaults.
+
+    //One liners that do many things
+    Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);
     void GetAllAssetsFromGLTF();
 
 protected:

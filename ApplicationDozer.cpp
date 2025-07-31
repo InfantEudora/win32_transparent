@@ -3,10 +3,13 @@
 
 static Debugger *debug = new Debugger("ApplicationDozer", DEBUG_ALL);
 
+#define INPUT_H     INPUT_LAST+1
+#define INPUT_E     INPUT_LAST+2
+#define INPUT_FOCUS INPUT_LAST+3
+
 ApplicationDozer::ApplicationDozer():Application(){
     debug->Info("Created new application.\n");
 };
-
 
 //Function for rendering the frame to a window
 DWORD WINAPI ApplicationDozer::FrameThreadFunction(LPVOID lpParameter){
@@ -99,7 +102,7 @@ void ApplicationDozer::Run(void){
     int2 dimensions = GetDisplaySettings();
 
     //Create a main window
-    main_window = Window::CreateNewWindow(800,600,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1280,800,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -145,6 +148,102 @@ void ApplicationDozer::Run(void){
 
 //Called before update physics
 void ApplicationDozer::RunLogic(){
+    //Camera pivot around point
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+
+    tmr_physics->Stop();
+    tmr_physics->Restart();
+    Sleep(5);
+
+    //Only when in focus
+    if (!main_window->f_has_focus){
+        return;
+    }
+
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        //Clear mouse delta
+        input->GetDelta(INPUT_MOUSE_WHEEL);
+        return;
+    }
+
+    CheckObjectSelection();
+
+    //Camera rotation moving
+    if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+
+        int dx = input->GetDelta(INPUT_MOUSE_X);
+        int dy = input->GetDelta(INPUT_MOUSE_Y);
+        if (input->IsKeyDown(INPUT_SHIFT)){
+            //Move the camera
+            vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
+            d += camera->MoveUpBy(dy/100.0f);
+            camera_target += d;
+        }else{
+            //If we move left/right, we rotate the camera around the camera target.
+            vec3 p = camera->GetPosition() - camera_target;
+            vec3 axis = camera->GetLeft();
+
+            //Get the axis towards the camera.
+            quat q(axis,-dy/50.0f);
+
+            //Rotate the camera position around the camera target
+            p = q * p;
+            //We update the position
+            camera->SetPosition(p+camera_target);
+
+            //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
+            vec3 up = camera->GetUp();
+            //up = vec3(0,1,0);
+            camera->SetLookAt(camera_target,&up);
+
+            //Now we rotate around the Y-axis
+            p = camera->GetPosition()-camera_target;
+            axis = vec3(0,1,0);
+            q.set_rotation(axis,-dx/50.0f);
+            p = q * p;
+            camera->SetPosition(p+camera_target);
+            //The lookat should make the same rotation around the y axis
+            camera->RotateBy(q);
+        }
+    }
+
+    static float mouse_delta_sum = 0;
+    if (mouse_delta_sum != 0){
+        camera->MoveForwardBy(mouse_delta_sum / 10.0f);
+        mouse_delta_sum /= 1.1;
+    }
+    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
+
+    //Hide selected object
+    if (selected_object){
+        if (input->WasKeyReleased(INPUT_H)){
+            selected_object->Hide();
+        }
+    }
+
+    //character
+    if (dozer){
+        if (input->IsKeyDown(INPUT_MOVE_UP)){
+            dozer->MoveForward();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_DOWN)){
+            dozer->MoveBackward();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
+            dozer->TurnRight();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_LEFT)){
+            dozer->TurnLeft();
+        }
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            dozer->ArmUp();
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            dozer->ArmDown();
+        }
+    }
 
 }
 
@@ -161,6 +260,11 @@ void ApplicationDozer::UpdateUI(){
 Scene* ApplicationDozer::CreateMainScene(){
     Scene* scene = CreateNewScene("Dozer Test Scene");
 
+    //Add input to input controller
+    scene->inputcontroller->AddKeyMap('H',INPUT_H);
+    scene->inputcontroller->AddKeyMap('E',INPUT_E);
+    scene->inputcontroller->AddKeyMap(VK_DECIMAL,INPUT_FOCUS);
+
     //Setup light and camera
     DirectionalLight* sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
@@ -170,7 +274,6 @@ Scene* ApplicationDozer::CreateMainScene(){
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
-
     scene->camera = new Camera();
     scene->camera->name = "Main Camera";
     scene->camera->SetPosition(vec3(5,5,5));
@@ -178,10 +281,26 @@ Scene* ApplicationDozer::CreateMainScene(){
     scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
     scene->AddObject(scene->camera);
 
-    //Load from a GLTF file and build assets.
-    gltfloader.LoadGLTFFile("data/dozer.glb");
+    //Add phyics
+    scene->physics_world = new PhysicsWorld();
+    scene->physics_world->SetGravity(vec3(0,-9.81,0));
 
+    //Load from a GLTF file and build assets.
+    gltfloader.LoadGLTFFile("dozer/data/dozer.glb");
+
+    Object* floor = CreateNewObjectFromGLTF("Floor",scene);
+    //Add's all remaining unloaded objects
     GetAllAssetsFromGLTF();
+
+    dozer = new DozerCharacter(assetmanager,scene->physics_world);
+    scene->AddObject(dozer);
+
+    Animation* animation = gltfloader.LoadAnimation("EngineIdle");
+
+    if (animation){
+        debug->Ok("Loaded EngineIdle Animation from file.\n");
+        dozer->AddAnimation(animation);
+    }
 
 
     return scene;

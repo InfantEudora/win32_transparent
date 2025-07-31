@@ -217,28 +217,6 @@ Scene* ApplicationGrid::CreateHandTestScene(){
     return scene;
 }
 
-
-//This loads it, makes an asset from it... and sets up all the things.
-Object* ApplicationGrid::CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene){
-    std::vector<Material>loaded_materials;
-    loaded_materials.clear();
-    Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
-    if (gltfmesh){
-        Object* gltf_object = new Object();
-        gltf_object->SetPosition(gltfloader.GetNodePosition(nodename.c_str()));
-        gltf_object->SetRotation(gltfloader.GetNodeRotation(nodename.c_str()));
-        gltf_object->name = nodename.c_str();
-        gltf_object->SetMesh(gltfmesh);
-        target_scene->renderer->AddMaterials(loaded_materials);
-        gltf_object->TakeMaterialNames(loaded_materials);
-        gltf_object->PickMaterials(loaded_materials,target_scene->renderer->materials);
-        target_scene->AddObject(gltf_object);
-        Asset* asset = assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
-        return gltf_object;
-    }
-    return NULL;
-}
-
 Scene* ApplicationGrid::CreateTestScene(){
     Scene* scene = CreateNewScene("Grid Test Scene");
 
@@ -554,6 +532,7 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
     projection_plane.normal = vec3(0,1,0);
 
     //Construct a selection tile that we will somehow turn into a transparent grid.
+    //TODO: remove from OBJ loader
     loaded_materials.clear();
     selection_tile = new Object();
     selection_tile->SetMesh(OBJLoader::ParseOBJFile("data/selection_tile.obj",&loaded_materials));

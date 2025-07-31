@@ -2,6 +2,7 @@
 #define _APPLICATION_UI_H_
 
 #include "Application.h"
+#include "DozerCharacter.h"
 
 /*
     An attempt at an application that overrides the default, and shows a UI only.
@@ -13,7 +14,9 @@ public:
     void Run(void) override;
     void RunLogic() override;
 
+    vec3 camera_target = {};
     Scene* CreateMainScene();
+    DozerCharacter* dozer = NULL;
 
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
 

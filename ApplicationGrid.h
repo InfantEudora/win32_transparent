@@ -64,11 +64,6 @@ private:
     IsoRoom* FindRoomByCell(IsoCell* cell); // Returns if supplied cell belongs to a room.
     void CreateRoom(IsoCell* center, int size_x, int size_y);
 
-    //Quick things
-    Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);
-    void GetAllAssetsFromGLTF();
-
-
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
 
     void RenderRightClickMenu_IsoCell(IsoCell* cell);
