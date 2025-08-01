@@ -19,13 +19,21 @@ class Mesh;
 
 #define MESHID_INVALID 0xFFFFFFFF
 
+//Mode is set based on vertex type which the renderer may choose to render differently.
+#define MESH_MODE_INVALID -1
+#define MESH_MODE_NORMAL  0
+#define MESH_MODE_SKINNED 1
+#define MESH_MODE_LINE    2
+
 typedef uint32_t meshid_t;
 
 class Mesh{
 public:
     Mesh();
     bool InitVBOVAO();
+    bool InitLineVBOVAO();
     bool InitSkinnedVBOVAO();
+
     bool InitSSBO();
 
     GLuint vbo = -1;    //Vertex Buffer
@@ -37,22 +45,26 @@ public:
     meshid_t GetID();
 
     void SetMeshData(vertex* verts, int vertex_count);
+    void SetLineMeshData(line_vertex* verts, int vertex_count);
     void SetSkinnedMeshData(skinned_vertex* verts, int vertex_count);
     void SetMorphMeshData(morph_vertex* verts, int vertex_count);
 
     bool IsNormalMesh();
     bool IsSkinnedMesh();
+    bool IsLineMesh();
 
     uint32_t num_vertices = 0;
     int     num_materials = 0;
     int     num_references = 0; //Or... maybe use shared_ptr?
     int     num_morph_targets = 0;
+    int     mesh_mode = MESH_MODE_INVALID;
 
     int32_t batch_index = -1;
     int32_t batch_num_instances = 0;
 private:
     std::vector<vertex>vertices;
     std::vector<skinned_vertex>skinned_vertices;
+    std::vector<line_vertex>line_vertices;
     std::vector<morph_vertex>morph_vertices;
     static meshid_t mesh_ids;   //Total amount of different meshes.
     meshid_t id = MESHID_INVALID;

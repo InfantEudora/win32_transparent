@@ -14,7 +14,7 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     AddPhysics(physicsworld);
 
     if (physics){
-        physics->AddBoxCollider(vec3(1.0,1.0,1.0),vec3(0,0.0,0),quat().identity());
+        physics->AddBoxCollider(vec3(1.0,1.0,1.0),vec3(0,1,0),quat().identity());
         physics->SetStatic(false);
     }
 
@@ -22,9 +22,9 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     armobject->SetPosition(vec3(0,1,0));
     AttachChild(armobject);
     armobject->name = "Arm";
-    Object* exhaust = assetmanager->GetObjectFromAsset("Exhaust");
-    AttachChild(exhaust);
-    exhaust->name = "Exhaust";
+    //Object* exhaust = assetmanager->GetObjectFromAsset("Exhaust");
+    //AttachChild(exhaust);
+    //exhaust->name = "Exhaust";
 }
 
 DozerCharacter::~DozerCharacter(){
@@ -33,14 +33,14 @@ DozerCharacter::~DozerCharacter(){
 
 void DozerCharacter::MoveForward(){
     if (physics){
-        physics->AddLocalForce(vec3(0,0,10));
+        physics->AddLocalForce(vec3(0,0,100));
     }
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void DozerCharacter::MoveBackward(){
     if (physics){
-        physics->AddLocalForce(vec3(0,0,-10));
+        physics->AddLocalForce(vec3(0,0,-100));
     }
 }
 

@@ -765,6 +765,13 @@ void Application::RenderGenericObjectUI(){
         ImGui::Text(    "Render Skybox  :");ImGui::SameLine();
         ImGui::Checkbox("##2", &renderer->f_render_skybox);
 
+        if (main_scene && main_scene->physics_world){
+            bool physics_debug = main_scene->physics_world->IsDebugRenderingEnabled();
+            if (ImGui::Checkbox("Debug Render Colliders", &physics_debug)){
+                main_scene->physics_world->SetDebugRendering(physics_debug);
+            }
+        }
+
         int num_samples = renderer->aa_samples;
         if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
             renderer->SetNumAASamples(num_samples);

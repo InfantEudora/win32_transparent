@@ -13,6 +13,7 @@ Physics::Physics(PhysicsWorld* _world){
 	//Create a body for this dude.
 	body->collider = NULL;
 	body->rigidbody = world->rp_world->createRigidBody(reactphysics3d::Transform::identity());
+
 }
 
 Physics::~Physics(){

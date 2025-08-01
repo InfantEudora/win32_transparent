@@ -14,7 +14,11 @@ reactphysics3d::PhysicsCommon PhysicsWorld::physicsCommon;
 
 PhysicsWorld::PhysicsWorld(){
     rp_world = physicsCommon.createPhysicsWorld();
-	rp_world->setIsDebugRenderingEnabled(false);
+	debug_renderer = &rp_world->getDebugRenderer();
+	rp_world->setIsDebugRenderingEnabled(true);
+	debug_renderer->setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLISION_SHAPE,true);
+	debug_renderer->setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLIDER_AABB,true);
+
 };
 
 //Wakeup every sleeping body in the world.

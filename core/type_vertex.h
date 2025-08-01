@@ -32,6 +32,12 @@ struct vertex{
     vertex(){};
 };
 
+struct line_vertex{
+    vec3    pos;
+    uint32_t color;
+    line_vertex(){};
+};
+
 struct skinned_vertex;
 
 struct skinned_vertex{

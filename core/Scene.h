@@ -20,16 +20,12 @@
 class Scene{
 public:
     Scene();
-
     std::string name;
-
     InputController* inputcontroller = NULL;
     Renderer* renderer = NULL;
     Shader* shader = NULL;
 
     PhysicsWorld* physics_world = NULL;
-
-    void SetupExample();
 
     void HandleInput();
     void UpdatePhysics();
@@ -41,14 +37,10 @@ public:
 
     bool f_paused = false;
 
-    //Our example objects and thigs that definitely need to be in their own class
-    Object* cube = NULL;
-    Camera* camera = NULL;
-    //The textures we want to use as material
-    Texture* tex_1 = NULL;
-    Texture* tex_2 = NULL;
-
     uint64_t physics_ticks = 0;
+
+    //Do we always need a handle to a single camera?
+    Camera* camera = NULL;
 };
 
 #endif

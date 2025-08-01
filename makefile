@@ -27,7 +27,9 @@ PROJECT = wind
 
 DIR_SRC += ./core
 DIR_SRC += ./core/skeleton
+DIR_SRC += ./core/physics
 IPATHS += -Icore/
+IPATHS += -Icore/physics
 
 SRCS += ./3rdparty/stb_image/stb_image.cpp
 SRCS += ./3rdparty/tinygltf/tiny_gltf.cpp

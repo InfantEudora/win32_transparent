@@ -251,11 +251,8 @@ void Renderer::FillBactches(){
 }
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
-void Renderer::RenderUniqueMeshes(int normal_or_skinned){
+void Renderer::RenderUniqueMeshes(int rendering_mode){
     //debug->Info("Rendering Meshes\n");
-    if (normal_or_skinned == 1){
-        //debug->Info("Rendering Skinned Meshes\n");
-    }
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
         boneinstancedata.clear();
@@ -264,13 +261,15 @@ void Renderer::RenderUniqueMeshes(int normal_or_skinned){
         if (!mesh){
             debug->Fatal("Attempting to render a mesh that's NULL\n");
         }
-        if ((normal_or_skinned == 0) && (mesh->IsSkinnedMesh())){
+        if ((rendering_mode == MESH_MODE_NORMAL) && (!mesh->IsNormalMesh())){
             continue;
         }
-        if ((normal_or_skinned == 1) && (mesh->IsNormalMesh())){
+        if ((rendering_mode == MESH_MODE_SKINNED) && (!mesh->IsSkinnedMesh())){
             continue;
         }
-
+        if ((rendering_mode == MESH_MODE_LINE) && (!mesh->IsLineMesh())){
+            continue;
+        }
 
         int batch_index = unique_meshes.at(i)->batch_index;
         if (unique_mesh_batches.at(batch_index)->size() == 0){
@@ -301,7 +300,7 @@ void Renderer::RenderUniqueMeshes(int normal_or_skinned){
             //object->mat_rotation.print();
             //data.mat_transformscale.print();
 
-            if (normal_or_skinned == 1){ //Skinned mode
+            if (rendering_mode == MESH_MODE_SKINNED){
                 bonedata_t bonedata;
                 bonedata.mat_transformscale = fmat4().identity();
 
@@ -336,7 +335,7 @@ void Renderer::RenderUniqueMeshes(int normal_or_skinned){
         //glInvalidateBufferData(instdata_ssbo);
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_STREAM_DRAW);
 
-        if (normal_or_skinned == 1){ //Skinned mode
+        if (rendering_mode == MESH_MODE_SKINNED){
             //glInvalidateBufferData(boneinstdata_ssbo);
             glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_STREAM_DRAW);
         }
@@ -460,13 +459,16 @@ void Renderer::DrawStaticObjects(){
     FillBactches();
     UploadMaterials();
     UploadLights();
-    RenderUniqueMeshes(0);
+    RenderUniqueMeshes(MESH_MODE_NORMAL);
 }
 
-//We'll be using a seperate shader
+// We'll be using a seperate shader for skinned meshes, should be called after drawstatic.
 void Renderer::DrawSkinnedObjects(){
-    //Now we want to render all the objects that have skinned meshes
-    RenderUniqueMeshes(1);
+    RenderUniqueMeshes(MESH_MODE_SKINNED);
+}
+
+void Renderer::DrawLineObjects(){
+    RenderUniqueMeshes(MESH_MODE_LINE);
 }
 
 void Renderer::DeferredPass(Camera* camera){
@@ -583,6 +585,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     }
 
     DrawStaticObjects();
+    shader->Setint("f_materialindex_is_color",1);
+    DrawLineObjects();
+    shader->Setint("f_materialindex_is_color",0);
 
     if (skinned_shader && camera){
         skinned_shader->Use();
@@ -616,10 +621,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         }
     }
 
-    //Do a simple but seperate pass for object picking.
-
-    //glFinish();
-
+    //We use a deferred pass for object ID, amongst many other things.
     //TODO: These passes need to be fixed... do we even want them?
     DeferredPass(camera);
 

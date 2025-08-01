@@ -69,6 +69,7 @@ class Renderer{
     void FillBactches();
     void DrawStaticObjects();
     void DrawSkinnedObjects();
+    void DrawLineObjects();
     void DrawSkyBox(Camera* camera);
 
     void UpdateReadbackBuffer();
@@ -134,9 +135,10 @@ class Renderer{
     GLuint deferred_objectid_tex_id = -1; // Object IDs of objects for selection
     GLuint ssao_tex_id = -1; // SSAO output texture
 
-    Shader* deferred_shader = NULL;     //Shader that outputs data to textures
-    Shader* deferred_shader_skinned = NULL;     //Shader that outputs data to textures
+    Shader* deferred_shader = NULL;         // Shader that outputs data to textures
+    Shader* deferred_shader_skinned = NULL; // Shader that outputs data to textures
     Shader* ssao_compute_shader = NULL;
+    Shader* line_shader = NULL;             // Seperate shader for rendering line meshes.
 
     Shader* skybox_shader = NULL;
     CubeMap* skybox = NULL;

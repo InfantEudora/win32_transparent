@@ -14,8 +14,6 @@ layout (location = 4) in int matindex;
 layout (location = 5) in ivec3 bones;
 layout (location = 6) in vec3 weights;
 
-
-
 struct InstanceData{
 	mat4 mat_transformscale;
 	int material_slot[NUM_MATERIAL_SLOTS];

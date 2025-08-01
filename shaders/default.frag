@@ -54,6 +54,7 @@ float metallic = 0.5f;
 float roughness = 0.75f;
 uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 uniform int f_normal_mapping = 1;
+uniform int f_materialindex_is_color = 0;
 uniform float alpha_clip = 1.0f;
 
 //This gets set when lighting calculation is done, and is this fragments resulting normal.
@@ -234,19 +235,24 @@ vec4 CalcPBRLighting(){
 
 void main(){
     //Select/Set the current material
-    if (vmatindex > -1){
-        m = materials[vmatindex];
+    if (f_materialindex_is_color > 0){
+       color = vec4(1,1,1,1);
+       return;
     }else{
-        //Default invalid material
-        m.diffuse_texture = -1;
-        m.normal_texture = -1;
-        m.color = vec4(0.2,0.1,0.1,1.0);
+        if (vmatindex > -1){
+            m = materials[vmatindex];
+        }else{
+            //Default invalid material
+            m.diffuse_texture = -1;
+            m.normal_texture = -1;
+            m.color = vec4(0.9,0.0,0.5,1.0);
+        }
     }
 
     vec4 final = CalcPBRLighting();
 
-    ivec2 mouse_coord = ivec2(data_in[0],data_in[1]);
-    ivec2 frag_coord = ivec2(gl_FragCoord.xy);
+    //ivec2 mouse_coord = ivec2(data_in[0],data_in[1]);
+    //ivec2 frag_coord = ivec2(gl_FragCoord.xy);
     color = final;
 
     //This is quite slow.

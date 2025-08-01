@@ -289,6 +289,14 @@ Scene* ApplicationDozer::CreateMainScene(){
     gltfloader.LoadGLTFFile("dozer/data/dozer.glb");
 
     Object* floor = CreateNewObjectFromGLTF("Floor",scene);
+    floor->AddPhysics(scene->physics_world);
+
+    if (Physics* physics = floor->GetPhysics()){
+        physics->AddBoxCollider(vec3(4.0,0.4,4.0),vec3(0,0,0),quat().identity());
+        physics->SetStatic(true);
+    }
+
+
     //Add's all remaining unloaded objects
     GetAllAssetsFromGLTF();
 

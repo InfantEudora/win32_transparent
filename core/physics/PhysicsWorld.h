@@ -35,6 +35,7 @@ public:
     vec3 GetGravity();
 
     reactphysics3d::PhysicsWorld* rp_world = NULL;
+    reactphysics3d::DebugRenderer* debug_renderer = NULL;
 
     //Static stuff
     static reactphysics3d::PhysicsCommon physicsCommon;     //Static because it's a singleton. It can create multiple worlds
