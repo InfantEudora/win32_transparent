@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include "reactphysics3d.h"
+#include "configuration.h"
 
 #include "type_vec3.h"
 #include "type_quat.h"
@@ -38,7 +39,7 @@ public:
     reactphysics3d::DebugRenderer* debug_renderer = NULL;
 
     //Static stuff
-    static reactphysics3d::PhysicsCommon physicsCommon;     //Static because it's a singleton. It can create multiple worlds
+    static reactphysics3d::PhysicsCommon* physicsCommon;     //Static because it's a singleton. It can create multiple worlds
 };
 
 

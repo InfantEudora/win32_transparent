@@ -8,12 +8,14 @@ static Debugger *debug = new Debugger("Physics", DEBUG_ALL);
 
 Physics::Physics(PhysicsWorld* _world){
 	debug->Info("New Physics from world %p\n",_world);
+	debug->Info("Using ReactPhysics Version %s\n",reactphysics3d::RP3D_VERSION.c_str());
 	world = _world;
 	body = new PhysicsBody();
 	//Create a body for this dude.
 	body->collider = NULL;
 	body->rigidbody = world->rp_world->createRigidBody(reactphysics3d::Transform::identity());
-
+	//This only works on 10.0
+	//body->rigidbody->setIsDebugEnabled(true);
 }
 
 Physics::~Physics(){
@@ -94,7 +96,7 @@ void Physics::WakeUp(){
 }
 
 void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation){
-    reactphysics3d::BoxShape* boxShape = PhysicsWorld::physicsCommon.createBoxShape((reactphysics3d::Vector3&)box);
+    reactphysics3d::BoxShape* boxShape = PhysicsWorld::physicsCommon->createBoxShape((reactphysics3d::Vector3&)box);
 	reactphysics3d::Transform t = reactphysics3d::Transform::identity();
 	t.setPosition((reactphysics3d::Vector3&)pos);
 	t.setOrientation((reactphysics3d::Quaternion&)orientation);
@@ -102,14 +104,16 @@ void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orienta
 	if (body->rigidbody){
 		body->collider = body->rigidbody->addCollider(boxShape, t);
 		body->collider->getMaterial().setMassDensity(1.0);
+		body->collider->getMaterial().setFrictionCoefficient(1.0);
 		body->rigidbody->updateMassPropertiesFromColliders();
+
 	}
 	debug->Info("Box Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
 
 //Creates a Sphere collision shape of size
 void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& orientation){
-    reactphysics3d::SphereShape* sphereShape = PhysicsWorld::physicsCommon.createSphereShape(size);
+    reactphysics3d::SphereShape* sphereShape = PhysicsWorld::physicsCommon->createSphereShape(size);
 	reactphysics3d::Transform t = reactphysics3d::Transform::identity();
 	t.setPosition((reactphysics3d::Vector3&)pos);
 	t.setOrientation((reactphysics3d::Quaternion&)orientation);
@@ -136,4 +140,50 @@ void Physics::SetVelocity(const vec3& v){
 
 void Physics::SetAngularVelocity(const vec3& v){
 	body->rigidbody->setAngularVelocity(reactphysics3d::Vector3(v.x,v.y,v.z));
+}
+
+//Return the velocity
+vec3 Physics::GetVelocity(){
+	reactphysics3d::Vector3 v = body->rigidbody->getLinearVelocity();
+	return vec3(v.x,v.y,v.z);
+}
+
+vec3 Physics::GetForce(){
+	reactphysics3d::Vector3 v = body->rigidbody->getForce();
+	return vec3(v.x,v.y,v.z);
+}
+
+vec3 Physics::GetCenterofMass(){
+	reactphysics3d::Vector3 v = body->rigidbody->getLocalCenterOfMass();
+	return vec3(v.x,v.y,v.z);
+}
+
+void Physics::SetFrictionCoefficient(float f){
+	if (f < 0){
+		f = 0;
+	}
+	if (body->collider){
+		body->collider->getMaterial().setFrictionCoefficient(f);
+	}
+}
+
+float Physics::GetFrictionCoefficient(){
+	if (body->collider){
+		return body->collider->getMaterial().getFrictionCoefficient();
+	}
+	return 0;
+}
+
+void Physics::SetBounciness(float f){
+	f = clamp(f,0.0,1.0);
+	if (body->collider){
+		body->collider->getMaterial().setBounciness(f);
+	}
+}
+
+float Physics::GetBounciness(){
+	if (body->collider){
+		return body->collider->getMaterial().getBounciness();
+	}
+	return 0;
 }

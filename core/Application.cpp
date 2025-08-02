@@ -557,10 +557,12 @@ void Application::RenderGenericObjectUI(){
             if (ImGui::DragFloat3("Move Position", (float*)&delta, 0.01f, -1.0f, 1.0f)){
                 object->MoveBy(delta);
             }
-            ImGui::BeginDisabled();
+
             vec3 pos = object->GetPosition();
-            ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
-            ImGui::EndDisabled();
+            if (ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f)){
+                object->SetPosition(pos);
+            }
+
 
             float forward = 0.0f;
             if (ImGui::DragFloat("Move Forward/Backward", (float*)&forward, 0.01f, -1.0f, 1.0f)){
@@ -690,7 +692,25 @@ void Application::RenderGenericObjectUI(){
                     physics->WakeUp();
                 }
                 int num_colliders = physics->GetNumColliders();
-                ImGui::Text("Number of colliders: %lu",num_colliders);
+                ImGui::Text("Number of colliders : %lu",num_colliders);
+                vec3 v = physics->GetVelocity();
+                if (v.length() > 0){
+                    v.normalize();
+                }
+                ImGui::BeginDisabled();
+                ImGui::DragFloat3("Velocity", (float*)&v, 0.01f, -1.0f, 1.0f);
+                ImGui::EndDisabled();
+
+                float collider_friction = physics->GetFrictionCoefficient();
+                if (ImGui::DragFloat("Friction Coefficient", (float*)&collider_friction, 0.01f, 0.0f, 2.0f)){
+                    physics->SetFrictionCoefficient(collider_friction);
+                }
+
+                float collider_bounciness = physics->GetBounciness();
+                if (ImGui::DragFloat("Bounciness", (float*)&collider_bounciness, 0.01f, 0.0f, 1.0f)){
+                    physics->SetBounciness(collider_bounciness);
+                }
+
             }
         }else{
             ImGui::BeginDisabled();

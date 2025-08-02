@@ -44,8 +44,15 @@ public:
 
     //Force, acceleration velocity etc.
     void AddLocalForce(const vec3& force);
+    vec3 GetForce();
     void SetVelocity(const vec3& v);
+    vec3 GetVelocity();
     void SetAngularVelocity(const vec3& v);
+    vec3 GetCenterofMass();
+    float GetFrictionCoefficient();
+    void SetFrictionCoefficient(float v);
+    float GetBounciness();
+    void SetBounciness(float v);
 };
 
 

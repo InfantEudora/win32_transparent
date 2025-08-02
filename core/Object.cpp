@@ -161,11 +161,8 @@ void Object::RotateBy(const quat& r){
     SetRotation(nq);
 }
 
-//Move to new position. This preserves rotation. When f_keep_lookat=true, the rotation will update to
-//look at the old location
 void Object::SetPosition(const vec3& newpos,bool f_write_physics){
     state_physics.f_was_transformed = true;
-    //vec3 delta = state_physics.position - newpos;
     state_physics.position = newpos;
     if (f_write_physics && physics){
         physics->SetBodyWorldPosition(GetPosition());
@@ -251,6 +248,10 @@ void Object::PitchBy(float by){
 void Object::SetScale(const vec3& newscale){
     state_physics.scale = newscale;
     state_physics.f_was_transformed = true;
+    //Maybe we should also scale the collider
+    if (physics){
+        //TODO
+    }
 }
 
 vec3 Object::GetScale(){

@@ -20,11 +20,16 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
 
     armobject = assetmanager->GetObjectFromAsset("Arm");
     armobject->SetPosition(vec3(0,1,0));
-    AttachChild(armobject);
+    //AttachChild(armobject);
     armobject->name = "Arm";
-    //Object* exhaust = assetmanager->GetObjectFromAsset("Exhaust");
-    //AttachChild(exhaust);
-    //exhaust->name = "Exhaust";
+    //armobject->AddPhysics(physicsworld);
+    //if (Physics* p = armobject->GetPhysics()){
+    //    p->AddBoxCollider(vec3(1.0,1.0,1.0),vec3(0,1,0),quat().identity());
+    //    p->SetStatic(false);
+    //}
+    Object* exhaust = assetmanager->GetObjectFromAsset("Exhaust");
+    AttachChild(exhaust);
+    exhaust->name = "Exhaust";
 }
 
 DozerCharacter::~DozerCharacter(){
@@ -33,7 +38,17 @@ DozerCharacter::~DozerCharacter(){
 
 void DozerCharacter::MoveForward(){
     if (physics){
-        physics->AddLocalForce(vec3(0,0,100));
+        vec3 lf = vec3(0,0,100);
+        physics->AddLocalForce(lf);
+        vec3 f = physics->GetForce();
+        debug->Info("Force applied: %.1f, %.1f, %.1f Newton\n",f.x,f.y,f.z);
+
+        quat q = GetRotation();
+        vec3 rf = q * lf;
+        debug->Info("Result manual: %.1f, %.1f, %.1f Newton\n",rf.x,rf.y,rf.z);
+
+        vec3 fwd = GetForward();
+        debug->Info("Forward : %.3f, %.3f, %.3f \n",fwd.x,fwd.y,fwd.z);
     }
 }
 
@@ -41,6 +56,7 @@ void DozerCharacter::MoveForward(){
 void DozerCharacter::MoveBackward(){
     if (physics){
         physics->AddLocalForce(vec3(0,0,-100));
+
     }
 }
 

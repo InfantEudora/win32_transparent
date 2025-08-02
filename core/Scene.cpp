@@ -32,8 +32,6 @@ void Scene::UpdatePhysics(){
     if (physics_world){
         physics_world->Update(1.0/50.0);
     }
-
-    debug->Info("Updating object phyics for tick %llu\n",physics_ticks++);
     /*
         This would copy over all physics_states for a current render frame.
     */
@@ -64,7 +62,7 @@ void Scene::DrawFrame(){
         reactphysics3d::DebugRenderer* dbr = physics_world->debug_renderer;
         uint32_t num_tris = dbr->getNbTriangles();
         //debug->Info("Number of debug lines: %lu\n",dbr->getNbLines());
-        debug->Info("Number of debug triangles: %lu\n",dbr->getNbTriangles());
+        //debug->Info("Number of debug triangles: %lu\n",dbr->getNbTriangles());
         if (num_tris > 0){
             const reactphysics3d::DebugRenderer::DebugTriangle* trilist = dbr->getTrianglesArray();
             std::vector<line_vertex>line_vertices;

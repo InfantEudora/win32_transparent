@@ -151,6 +151,13 @@ Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... wha
 
 ImGui: ImGui_ImplWin32_EnableAlphaCompositing needs to be commented out. It's a Windows 7 feature.
 
+### Reactphysics
+Ignore documentation for building and run:
+```mkdir build; cmake -G"MSYS Makefiles" -B build;cd build;make```
+
+It defaults to making some kind of ninja file, and assumes that Windows means Visual Studio.
+Version 0.9.0 seems to work a lot better than 0.10.2. This is asserting on basically everything.
+
 ### More OpenGL 4.5 Madness
 Changed glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_STREAM_DRAW); from GL_DYNAMIC_DRAW.
 
