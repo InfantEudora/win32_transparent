@@ -6,6 +6,8 @@ static Debugger *debug = new Debugger("ApplicationDozer", DEBUG_ALL);
 #define INPUT_H     INPUT_LAST+1
 #define INPUT_E     INPUT_LAST+2
 #define INPUT_FOCUS INPUT_LAST+3
+#define INPUT_B     INPUT_LAST+4
+#define INPUT_T     INPUT_LAST+5
 
 ApplicationDozer::ApplicationDozer():Application(){
     debug->Info("Created new application.\n");
@@ -38,6 +40,12 @@ DWORD WINAPI ApplicationDozer::FrameThreadFunction(LPVOID lpParameter){
     app->renderer->SetVSync(true);
     app->renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 
+    //Randomise the randomiser
+    app->rrand = new RRandom();
+    debug->Info("Polulating RRandom\n");
+    app->rrand->Generate(512,512);
+
+
     //Renderer settings
     app->renderer->alpha_clip = 0.5f;
     app->renderer->f_render_skybox = false;
@@ -47,11 +55,23 @@ DWORD WINAPI ApplicationDozer::FrameThreadFunction(LPVOID lpParameter){
     //We make an assetmanager which we use to load/build all assets from:
     app->assetmanager = new AssetManager();
 
+    app->soundsystem = new SoundSystem();
+    app->soundsystem->Initialise();
+    app->soundsystem->AppendFile("dozer/data/engine_start_2.wav","engine_start");
+    app->soundsystem->AppendFile("dozer/data/arm_up.wav","arm_up");
+    app->soundsystem->AppendFile("dozer/data/engine_idle.wav","engine_idle");
+    app->soundsystem->AppendFile("dozer/data/engine_revup.wav","engine_revup");
+    app->soundsystem->AppendFile("dozer/data/engine_stop.wav","engine_stop");
+
     app->main_scene = app->CreateMainScene();
     app->main_scene->UpdatePhysics();
 
     BinaryAsset::DumpBinaryAssets();
     app->assetmanager->ListAssets();
+
+
+
+
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -84,7 +104,6 @@ DWORD WINAPI ApplicationDozer::FrameThreadFunction(LPVOID lpParameter){
         app->renderer->state_mutex.lock();
         app->UpdateUI(); //This right now modifies state_physics... but
         app->renderer->state_mutex.unlock();
-        //RunLogic() at a completely different time interval also modifies state_physics.
         //When done, copies that over to prev_state.
 
         //In Renderer, that get's called
@@ -146,15 +165,13 @@ void ApplicationDozer::Run(void){
     }
 }
 
-//Called before update physics
+//Called before update physics from the physics Thread
 void ApplicationDozer::RunLogic(){
     //Camera pivot around point
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
-    tmr_physics->Stop();
-    tmr_physics->Restart();
-    Sleep(5);
+
 
     //Only when in focus
     if (!main_window->f_has_focus){
@@ -169,6 +186,12 @@ void ApplicationDozer::RunLogic(){
     }
 
     CheckObjectSelection();
+
+    if (dozer_camera_tracking){
+        camera_target = dozer->GetPosition();
+        vec3 up = vec3(0,1,0);
+        camera->SetLookAt(camera_target,&up);
+    }
 
     //Camera rotation moving
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
@@ -245,16 +268,66 @@ void ApplicationDozer::RunLogic(){
         }
     }
 
+    if (input->WasKeyReleased(INPUT_B)){
+        for (int i=0;i<10;i++){
+        int r = rand()%3;
+        if (r == 0)
+            SpawnAssetAt("Box", vec3(0,5,0));
+        if (r == 1)
+            SpawnAssetAt("Crate", vec3(0,5,0));
+        if (r == 2)
+            SpawnAssetAt("Barrel", vec3(0,5,0));
+        }
+    }
+
+    if (input->WasKeyReleased(INPUT_E)){
+        dozer->StartEngine();
+    }
+
+    if (input->WasKeyReleased(INPUT_T)){
+        dozer_camera_tracking = !dozer_camera_tracking;
+    }
+}
+
+void ApplicationDozer::SpawnAssetAt(const std::string& name, const vec3& wpos){
+    Object* asset = assetmanager->GetObjectFromAsset(name.c_str());
+    if (!asset){
+        return;
+    }
+    asset->SetPosition(wpos);
+    asset->AddPhysics(main_scene->physics_world);
+    Physics* physics = asset->GetPhysics();
+    if (physics){
+        vec3 extents = asset->GetMesh()->GetExtents();
+
+        physics->AddBoxCollider(extents*0.5f,vec3(0,0.0,0),quat().identity());
+        physics->SetStatic(false);
+        physics->SetGravityEnabled(true);
+    }
+
+    main_scene->AddObject(asset);
+    debug->Info("Spwaned in %s\n",name.c_str());
+
+    //Give it some defaults
 }
 
 void ApplicationDozer::UpdateUI(){
     //UI
     ImGui::Begin("Hi there!");
-    ImGui::Text("This application has a ImGUI window.");
+
+    ImGui::Text("Press 'B' to drop some boxes\n");
+    ImGui::Text("Press 'E' to start the engine\n");
+    ImGui::Text("Press 'W/A' to move the arm up or down\n");
+    std::string str_camera_tracking;
+    dozer_camera_tracking ? str_camera_tracking = "ENABLED" : str_camera_tracking = "DISABLED";
+    ImGui::Text("Press 'T' to enable camera tracking (Currently %s)\n",str_camera_tracking.c_str());
+
+
     ImGui::End();
 
     RenderDebugMenuBar();
     RenderGenericObjectUI();
+    RenderRandTestWindow();
 }
 
 Scene* ApplicationDozer::CreateMainScene(){
@@ -263,6 +336,8 @@ Scene* ApplicationDozer::CreateMainScene(){
     //Add input to input controller
     scene->inputcontroller->AddKeyMap('H',INPUT_H);
     scene->inputcontroller->AddKeyMap('E',INPUT_E);
+    scene->inputcontroller->AddKeyMap('B',INPUT_B);
+    scene->inputcontroller->AddKeyMap('T',INPUT_T);
     scene->inputcontroller->AddKeyMap(VK_DECIMAL,INPUT_FOCUS);
 
     //Setup light and camera
@@ -290,18 +365,26 @@ Scene* ApplicationDozer::CreateMainScene(){
 
     Object* floor = CreateNewObjectFromGLTF("Floor",scene);
     floor->AddPhysics(scene->physics_world);
-
     if (Physics* physics = floor->GetPhysics()){
         physics->AddBoxCollider(vec3(4.0,0.4,4.0),vec3(0,0,0),quat().identity());
         physics->SetStatic(true);
     }
+    //Create a copy
+    floor = new Object(floor);
+    floor->SetPosition(vec3(2,0,0)) ;
+
+    scene->AddObject(floor);
 
 
     //Add's all remaining unloaded objects
     GetAllAssetsFromGLTF();
 
-    dozer = new DozerCharacter(assetmanager,scene->physics_world);
+    dozer = new DozerCharacter(assetmanager,scene->physics_world,scene,rrand);
+    dozer->soundsystem = soundsystem;
     scene->AddObject(dozer);
+    if (dozer->armobject){
+        scene->AddObject(dozer->armobject);
+    }
 
     Animation* animation = gltfloader.LoadAnimation("EngineIdle");
 

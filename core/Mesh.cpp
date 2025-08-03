@@ -1,4 +1,6 @@
 #include "Mesh.h"
+#include "Debug.h"
+static Debugger* debug = new Debugger("Mesh",DEBUG_INFO);
 
 meshid_t Mesh::mesh_ids = 0;
 
@@ -16,11 +18,37 @@ meshid_t Mesh::GetID(){
 };
 
 void Mesh::SetMeshData(vertex* verts, int vertex_count){
+    vec3 fmin = {};
+    vec3 fmax = {};
+    if (vertex_count > 0){
+        fmin = verts[0].pos;
+        fmax = verts[0].pos;
+    }
+
     //Copy the data in
     vertices.clear();
     for (int i=0;i<vertex_count;i++){
         vertices.push_back(verts[i]);
+        if (verts[i].pos.x > fmax.x){
+            fmax.x = verts[i].pos.x;
+        }
+        if (verts[i].pos.x < fmin.x){
+            fmin.x = verts[i].pos.x;
+        }
+        if (verts[i].pos.y > fmax.y){
+            fmax.y = verts[i].pos.y;
+        }
+        if (verts[i].pos.y < fmin.y){
+            fmin.y = verts[i].pos.y;
+        }
+        if (verts[i].pos.z > fmax.z){
+            fmax.z = verts[i].pos.z;
+        }
+        if (verts[i].pos.z < fmin.z){
+            fmin.z = verts[i].pos.z;
+        }
     }
+    extents = fmax - fmin;
 
     GenerateUniqueID();
     InitVBOVAO();
@@ -43,6 +71,7 @@ void Mesh::SetLineMeshData(line_vertex* verts, int vertex_count){
 
 //When mesh is in normal mode, you can add morph meshes (meshes of the same size)
 void Mesh::SetMorphMeshData(morph_vertex* verts, int vertex_count){
+
     if (mesh_mode != MESH_MODE_NORMAL){
         return;
     }
@@ -56,18 +85,16 @@ void Mesh::SetMorphMeshData(morph_vertex* verts, int vertex_count){
 
     //We'll store these in a Shader Storage Buffer since these can be a random amount.
     InitSSBO();
-    glNamedBufferData(ssbo, sizeof(morph_vertex) * vertex_count, (float*)&morph_vertices.at(0), GL_STATIC_DRAW);
+    glNamedBufferStorage(ssbo, sizeof(morph_vertex) * vertex_count, (float*)&morph_vertices.at(0),0);
 }
 
 bool Mesh::InitSSBO(){
     glCreateBuffers(1, (GLuint*)&ssbo);
-    glNamedBufferData(ssbo, 0 , NULL, GL_STATIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, ssbo);
     return true;
 }
 
 bool Mesh::InitVBOVAO(){
-    if (vbo == -1){
+    if (vbo == 0){
         glCreateBuffers(1, (GLuint*)&vbo);
         glCreateVertexArrays(1, (GLuint*)&vao);
         glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(vertex));
@@ -108,7 +135,7 @@ void Mesh::SetSkinnedMeshData(skinned_vertex* verts, int vertex_count){
 }
 
 bool Mesh::InitLineVBOVAO(){
-    if (vbo == -1){
+    if (vbo == 0){
         glCreateBuffers(1, (GLuint*)&vbo);
         glCreateVertexArrays(1, (GLuint*)&vao);
         glVertexArrayVertexBuffer(vao, 0, vbo, 0, sizeof(line_vertex));
@@ -161,6 +188,9 @@ bool Mesh::InitSkinnedVBOVAO(){
 
 void Mesh::RenderInstances(int num_instances){
     glBindVertexArray(vao);
+    if (ssbo > 0){
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, ssbo);
+    }
     if (mesh_mode == MESH_MODE_LINE){
         glDrawArraysInstanced(GL_LINES, 0, num_vertices,num_instances);
     }else{
@@ -178,4 +208,8 @@ bool Mesh::IsSkinnedMesh(){
 
 bool Mesh::IsLineMesh(){
     return (mesh_mode == MESH_MODE_LINE);
+}
+
+vec3 Mesh::GetExtents(){
+    return extents;
 }

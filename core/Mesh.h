@@ -36,9 +36,9 @@ public:
 
     bool InitSSBO();
 
-    GLuint vbo = -1;    //Vertex Buffer
-    GLuint vao = -1;    //Attribute Buffer
-    GLuint ssbo = -1;   //Shader Storage used for Morph Targets
+    GLuint vbo = 0;    //Vertex Buffer
+    GLuint vao = 0;    //Attribute Buffer
+    GLuint ssbo = 0;   //Shader Storage used for Morph Targets
 
     void RenderInstances(int num_instances);
     void GenerateUniqueID();
@@ -53,6 +53,8 @@ public:
     bool IsSkinnedMesh();
     bool IsLineMesh();
 
+    vec3 GetExtents();
+
     uint32_t num_vertices = 0;
     int     num_materials = 0;
     int     num_references = 0; //Or... maybe use shared_ptr?
@@ -61,6 +63,7 @@ public:
 
     int32_t batch_index = -1;
     int32_t batch_num_instances = 0;
+
 private:
     std::vector<vertex>vertices;
     std::vector<skinned_vertex>skinned_vertices;
@@ -68,6 +71,7 @@ private:
     std::vector<morph_vertex>morph_vertices;
     static meshid_t mesh_ids;   //Total amount of different meshes.
     meshid_t id = MESHID_INVALID;
+    vec3    extents; //The size an AABB should be to encompass the mesh
 };
 
 #endif

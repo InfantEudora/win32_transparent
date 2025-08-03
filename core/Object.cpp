@@ -17,11 +17,20 @@ Object::Object(){
     state.rotation.identity();
 }
 
-//Duplication constructor
+//Object object object object object ... I mean it makes sense to me: Duplication constructor
 Object::Object(Object* object):Object(){
     debug->Info("Duplicating object Object %p into this %p\n",object,this);
     SetMesh(object->GetMesh());
     name = object->name + "+1";
+    Physics* p = object->GetPhysics();
+    if (p){
+        AddPhysics(p->world);
+        rp3d::CollisionShape* shape =  p->body->collider->getCollisionShape();
+        reactphysics3d::Transform t = reactphysics3d::Transform::identity();
+        physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
+        physics->body->rigidbody->updateMassPropertiesFromColliders();
+
+    }
 }
 
 Object::~Object(){
@@ -103,6 +112,13 @@ Physics* Object::AddPhysics(PhysicsWorld* world){
 
 Physics* Object::GetPhysics(){
     return physics;
+}
+
+rp3d::RigidBody* Object::GetRigidBody(){
+    if (physics && physics->body){
+        return physics->body->rigidbody;
+    }
+    return NULL;
 }
 
 void Object::ResetPhysics(){
@@ -307,7 +323,6 @@ void Object::UpdatePhysicsState(){
         //We set the local position
         SetRotation(physics_q,false);
     }
-
 
     if (!f_animation_override){
         ApplyAnimation(animation_time_delta);

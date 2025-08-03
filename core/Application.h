@@ -14,6 +14,7 @@
 #include "AssetManager.h"
 #include "Debug.h"
 #include "GLTFLoader.h"
+#include "RRandom.h"
 
 /*
     The thing that ties everything together.
@@ -45,7 +46,12 @@ public:
     AssetManager* assetmanager = NULL;
     GLTFLoader gltfloader;              // We can only have a single GLTF loader for now
 
-    PerfTimer* tmr_physics = NULL;
+    PerfTimer* tmr_physics = NULL;          // Used for timing how long the physics calculations take
+    PerfTimer* tmr_physics_loop = NULL;     // Time an entire physics loop took (sleeping+calculating+overhead)
+    PerfTimer* tmr_physics_sleep = NULL;    // Time physics took sleeping in order to achieve desired rate
+
+    RRandom* rrand = NULL;
+
 
     //Generic Object placement and selection
     Object* selected_object = NULL;
@@ -71,6 +77,7 @@ protected:
     //UI
     void UpdateUICameraControls(Camera* camera, int id);
     void RenderDebugMenuBar();
+    void RenderRandTestWindow();
     void RenderGenericObjectUI();
     void UpdateUIWorldPhysics(PhysicsWorld* physics_world);
     void UpdateUIPhysics(Physics* world_physics);

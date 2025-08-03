@@ -8,6 +8,9 @@ class RRandom{
 public:
 	RRandom();
 
+	void LoadFromTexture(const std::string& filename);
+	void Generate(int w, int h);
+
 	void SetSeed(uint32_t value);
 	uint8_t Get_uint8();
 	int GetInt();

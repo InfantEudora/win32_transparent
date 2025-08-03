@@ -133,7 +133,7 @@ class PhysicsWorld {
                 defaultTimeBeforeSleep = 1.0f;
                 defaultSleepLinearVelocity = decimal(0.02);
                 defaultSleepAngularVelocity = decimal(3.0) * (PI_RP3D / decimal(180.0));
-                cosAngleSimilarContactManifold = decimal(0.95);
+                cosAngleSimilarContactManifold = decimal(1.0); //0.95 default
             }
 
             ~WorldSettings() = default;

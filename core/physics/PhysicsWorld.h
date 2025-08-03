@@ -10,6 +10,8 @@
 
 #include "type_vec3.h"
 #include "type_quat.h"
+
+namespace rp3d  = reactphysics3d;
 /*
     We're encapsulating reactphysics, so the interfaces will look/match that.
     Ideally. The rest of the codebase can interface with our types and whatnot to whatever logic

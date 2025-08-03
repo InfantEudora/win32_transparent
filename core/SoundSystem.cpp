@@ -5,7 +5,7 @@
 
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("SoundSystem", DEBUG_ALL);
+static Debugger *debug = new Debugger("SoundSystem", DEBUG_INFO);
 
 //Funtion pointers that we load from DLL
 LPALCCREATECONTEXT alcCreateContext;
@@ -18,7 +18,11 @@ LPALBUFFERDATA alBufferData;
 
 LPALGENSOURCES alGenSources;
 LPALSOURCEI alSourcei;
+LPALGETSOURCEI alGetSourcei;
+
 LPALSOURCEPLAY alSourcePlay;
+LPALSOURCEPAUSE alSourcePause;
+LPALSOURCEREWIND alSourceRewind;
 
 bool GetALFunctions(HINSTANCE hdll){
     if (hdll == NULL)
@@ -59,8 +63,17 @@ bool GetALFunctions(HINSTANCE hdll){
     alSourcei = (LPALSOURCEI)GetProcAddress(hdll, "alSourcei");
     if (alSourcei == NULL)
         return false;
+    alGetSourcei = (LPALGETSOURCEI)GetProcAddress(hdll, "alGetSourcei");
+    if (alGetSourcei == NULL)
+        return false;
     alSourcePlay = (LPALSOURCEPLAY)GetProcAddress(hdll, "alSourcePlay");
     if (alSourcePlay == NULL)
+        return false;
+    alSourcePause = (LPALSOURCEPAUSE)GetProcAddress(hdll, "alSourcePause");
+    if (alSourcePause == NULL)
+        return false;
+    alSourceRewind = (LPALSOURCEREWIND)GetProcAddress(hdll, "alSourceRewind");
+    if (alSourceRewind == NULL)
         return false;
 
 
@@ -114,36 +127,16 @@ void SoundSystem::Initialise(){
             debug->Ok("EAX 2.0 support\n");
         }
 
-        //sound* bleep = load_wav("data/sound/bleep.wav",1);
-
-        WaveFile wav;
-        wav.LoadWaveFile("data/sound/click.wav");
-
-        ALenum format;
-        if (wav.GetNumChannels() == 1){
-            format = AL_FORMAT_MONO16;
-        }else{
-            format = AL_FORMAT_STEREO16;
-        }
-
-        alBufferData(buffers[0],AL_FORMAT_STEREO16,wav.wav_data,wav.GetDataLength(),wav.GetSampleRate());
-
-        if ((error = alGetError()) != AL_NO_ERROR){
-            debug->Err("alGenBuffers : %08X\n", error);
-            return;
-        }else{
-            debug->Ok("alBufferData : Loaded\n");
-        }
 
         //create a source
 
         alGenSources(NUM_AL_BUFFERS, sources);
         debug->Info("Generated %i sources\n",NUM_AL_BUFFERS);
 
-        alSourcei(sources[0], AL_BUFFER, buffers[0]);
-        //alSourcei(source,AL_LOOPING,AL_TRUE);
+        //alSourcei(sources[0], AL_BUFFER, buffers[0]);
+        //alSourcei(sources[0],AL_LOOPING,AL_TRUE);
 
-        buffer_index++;
+        //buffer_index++;
 
     }
 }
@@ -171,9 +164,33 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
     }
 }
 
-void SoundSystem::Play(const char* handle_name){
+void SoundSystem::Play(const char* handle_name, bool looping){
     int handle = map_handles[handle_name];
-    debug->Info("Lookup handle %s -> %i\n",handle_name,handle);
+    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
     alSourcei(sources[handle], AL_BUFFER, buffers[handle]);
+
+    alSourcei(sources[handle],AL_LOOPING,looping);
     alSourcePlay(sources[handle]);
+}
+
+void SoundSystem::Pause(const char* handle_name){
+    int handle = map_handles[handle_name];
+    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
+    alSourcePause(sources[handle]);
+}
+void SoundSystem::Rewind(const char* handle_name){
+    int handle = map_handles[handle_name];
+    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
+    alSourceRewind(sources[handle]);
+}
+
+bool SoundSystem::FinishedPlaying(const char* handle_name){
+    int handle = map_handles[handle_name];
+    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
+    int state = 0;
+    alGetSourcei(sources[handle],AL_SOURCE_STATE,&state);
+    if (state != AL_PLAYING){
+        return true;
+    }
+    return false;
 }

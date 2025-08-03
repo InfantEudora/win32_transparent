@@ -57,7 +57,7 @@ void Scene::DrawFrame(){
     int2 m = inputcontroller->GetRelativeMousePosition();
 
     //Update mesh for physics debugging
-    if (physics_world->IsDebugRenderingEnabled()){
+    if (physics_world && physics_world->IsDebugRenderingEnabled()){
         renderer->state_mutex.lock();
         reactphysics3d::DebugRenderer* dbr = physics_world->debug_renderer;
         uint32_t num_tris = dbr->getNbTriangles();
@@ -100,6 +100,7 @@ void Scene::DrawFrame(){
                 debugobject->UpdatePhysicsState();
                 debug->Info("Created new PhysicsDebugObject\n");
             }
+            debugobject->SetVisibility(true);
             Mesh* debugmesh = debugobject->GetMesh();
             if (!debugmesh){
                 debug->Info("Created new PhysicsDebugObject Mesh\n");
@@ -110,6 +111,11 @@ void Scene::DrawFrame(){
             debugobject->SetPickability(false);
         }
         renderer->state_mutex.unlock();
+    }else{
+        Object* debugobject = FindObject("PhysicsDebugObject");
+        if (debugobject){
+            debugobject->SetVisibility(false);
+        }
     }
 
     //if (tex_1)

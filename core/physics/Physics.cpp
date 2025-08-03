@@ -105,6 +105,8 @@ void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orienta
 		body->collider = body->rigidbody->addCollider(boxShape, t);
 		body->collider->getMaterial().setMassDensity(1.0);
 		body->collider->getMaterial().setFrictionCoefficient(1.0);
+		body->rigidbody->setAngularDamping(0.5);
+		body->rigidbody->setLinearDamping(0.5);
 		body->rigidbody->updateMassPropertiesFromColliders();
 
 	}
@@ -113,10 +115,10 @@ void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orienta
 
 //Creates a Sphere collision shape of size
 void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& orientation){
-    reactphysics3d::SphereShape* sphereShape = PhysicsWorld::physicsCommon->createSphereShape(size);
-	reactphysics3d::Transform t = reactphysics3d::Transform::identity();
-	t.setPosition((reactphysics3d::Vector3&)pos);
-	t.setOrientation((reactphysics3d::Quaternion&)orientation);
+    rp3d::SphereShape* sphereShape = PhysicsWorld::physicsCommon->createSphereShape(size);
+	rp3d::Transform t = rp3d::Transform::identity();
+	t.setPosition((rp3d::Vector3&)pos);
+	t.setOrientation((rp3d::Quaternion&)orientation);
 	//body->collision_shape = sphereShape;
 	if (body->rigidbody){
 		body->collider = body->rigidbody->addCollider(sphereShape, t);
@@ -128,34 +130,68 @@ void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& ori
 	debug->Info("Sphere Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
 
+
+void Physics::AddCapsuleCollider(const float radius, const float height,const vec3& pos,const quat& orientation){
+    rp3d::CapsuleShape* capsuleShape = PhysicsWorld::physicsCommon->createCapsuleShape(radius,height);
+	rp3d::Transform t = rp3d::Transform::identity();
+	t.setPosition((rp3d::Vector3&)pos);
+	t.setOrientation((rp3d::Quaternion&)orientation);
+	if (body->rigidbody){
+		body->collider = body->rigidbody->addCollider(capsuleShape, t);
+		body->collider->getMaterial().setMassDensity(1.0);
+		//body_collider->getMaterial().setFrictionCoefficient(2);
+		//body_collider->getMaterial().setBounciness(0);
+		body->rigidbody->updateMassPropertiesFromColliders();
+	}
+	debug->Info("Capsule Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+}
+
 //Add local force at centre of mass
 void Physics::AddLocalForce(const vec3& force){
-	reactphysics3d::Vector3 f(force.x,force.y,force.z);
+	rp3d::Vector3 f(force.x,force.y,force.z);
 	body->rigidbody->applyLocalForceAtCenterOfMass(f);
 }
 
+//Add a world force add a world point
+void Physics::AddWorldForceAt(const vec3& force, const vec3& point){
+	rp3d::Vector3 f(force.x,force.y,force.z);
+	body->rigidbody->applyWorldForceAtWorldPosition((rp3d::Vector3&)f,(rp3d::Vector3&)point);
+}
+
 void Physics::SetVelocity(const vec3& v){
-	body->rigidbody->setLinearVelocity(reactphysics3d::Vector3(v.x,v.y,v.z));
+	body->rigidbody->setLinearVelocity(rp3d::Vector3(v.x,v.y,v.z));
 }
 
 void Physics::SetAngularVelocity(const vec3& v){
-	body->rigidbody->setAngularVelocity(reactphysics3d::Vector3(v.x,v.y,v.z));
+	body->rigidbody->setAngularVelocity(rp3d::Vector3(v.x,v.y,v.z));
 }
 
 //Return the velocity
 vec3 Physics::GetVelocity(){
-	reactphysics3d::Vector3 v = body->rigidbody->getLinearVelocity();
+	rp3d::Vector3 v = body->rigidbody->getLinearVelocity();
 	return vec3(v.x,v.y,v.z);
 }
 
 vec3 Physics::GetForce(){
-	reactphysics3d::Vector3 v = body->rigidbody->getForce();
+	rp3d::Vector3 v = body->rigidbody->getForce();
 	return vec3(v.x,v.y,v.z);
 }
 
 vec3 Physics::GetCenterofMass(){
-	reactphysics3d::Vector3 v = body->rigidbody->getLocalCenterOfMass();
+	rp3d::Vector3 v = body->rigidbody->getLocalCenterOfMass();
 	return vec3(v.x,v.y,v.z);
+}
+
+//Add local torque at centre of mass
+void Physics::AddLocalTorque(const vec3& torque){
+	reactphysics3d::Vector3 f(torque.x,torque.y,torque.z);
+	body->rigidbody->applyLocalTorque(f);
+}
+
+//Add world torque at centre of mass
+void Physics::AddWorldTorque(const vec3& torque){
+	reactphysics3d::Vector3 f(torque.x,torque.y,torque.z);
+	body->rigidbody->applyWorldTorque(f);
 }
 
 void Physics::SetFrictionCoefficient(float f){

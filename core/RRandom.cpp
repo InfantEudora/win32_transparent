@@ -12,9 +12,26 @@ Texture* RRandom::rnd_texture = NULL;
 
 //Initialize static texture where we can sample from
 RRandom::RRandom(){
+
+}
+
+void RRandom::LoadFromTexture(const std::string& filename){
     if (rnd_texture == NULL){
         rnd_texture = new Texture();
         rnd_texture->LoadFromFile("data/textures/noise.png",GL_TEXTURE_2D,-1);
+    }
+}
+
+//We generate a texture we will be sampling for each random call.
+//It's a texture because we can use it in video memory, and we can network it.
+void RRandom::Generate(int w, int h){
+    if (rnd_texture == NULL){
+        rnd_texture = new Texture();
+        rnd_texture->img_data_sz = w * h;
+        rnd_texture->img_data = (uint8_t*)malloc(rnd_texture->img_data_sz);
+        for (int i=0;i<rnd_texture->img_data_sz;i++){
+            rnd_texture->img_data[i] = (uint8_t)(rand() % 255);
+        }
     }
 }
 

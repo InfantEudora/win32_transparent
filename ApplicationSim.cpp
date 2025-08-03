@@ -100,7 +100,8 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
 
     //Create a renderer and attach to this window
     app->renderer = new Renderer(app->main_window->width,app->main_window->height);
-    app->renderer->Init();
+    app->renderer->Init(PIPELINE_DEFERRED);
+    app->renderer->SetVSync(true);
 
     //Create and setup new scene
     Scene* scene = new Scene();
@@ -242,9 +243,6 @@ void ApplicationSim::Run(void){
     }
 
     main_window->Show(SW_SHOWDEFAULT);
-
-    //Setup renderer
-    Renderer::SetVSync(true);
 
     //We release the window's context from this thread
     wglMakeCurrent(main_window->hDC, NULL);
@@ -400,89 +398,6 @@ void ApplicationSim::RunLogic(){
             }
         }
     }
-}
-
-void ApplicationSim::RenderRandTestWindow(){
-    static float arr[256];
-    static int count = 0;
-
-
-    uint8_t r = rrand.Get_uint8();
-    float f = 0;
-    int s = 1;
-    for (int i = 0;i<s;i++){
-        f += rrand.Get_uint8();
-    }
-    f/= s;
-
-    arr[count++] = f;//rand() % 256;
-
-    count = count % 256;
-    //UI
-    ImGui::Begin("Random Test Suite");
-    ImGui::Text("This is for testing our own random functions. Neat?");
-    ImGui::PlotHistogram("Histogram", arr, IM_ARRAYSIZE(arr), 0, NULL, 0.0f, 255.0f, ImVec2(0, 80.0f));
-
-    static int rand_int = 0;
-    if (ImGui::Button("Get Random Int")){
-        rand_int = rrand.GetInt();
-    }
-    ImGui::SameLine();
-    ImGui::Text("Random Int: %i",rand_int);
-
-    static int rand_limit = 0;
-    static int minmax[2] = {0,1};
-    ImGui::SliderInt2("Int Min / Max",minmax,-100,100);
-    if (ImGui::Button("Get Random Int Between")){
-        rand_limit = rrand.GetInt(minmax[0],minmax[1]);
-    }
-    ImGui::SameLine();
-    ImGui::Text("Random Int: %i",rand_limit);
-
-    static float rand_float = 0;
-    static float fminmax[2] = {0,1};
-    ImGui::SliderFloat2("Float Min / Max",fminmax,-100,100);
-    if (ImGui::Button("Get Random Float Between")){
-        rand_float = rrand.GetFloat(fminmax[0],fminmax[1]);
-    }
-    ImGui::SameLine();
-    ImGui::Text("Random Float: %.3f",rand_float);
-
-    //Normal distribution
-    int num_bins = 50;
-    static float bins[50] = {};
-    int bin_start = -25;
-    int bin_size = 1;
-
-    //We sample from our normal distribution and see if they fall in a bin
-    int num_samples = 10000;
-    float smax = 0;
-    static float bmax = 50;
-    if (ImGui::Button("Sample Distribution")){
-        memset(bins,0,sizeof(float)*num_bins);
-        bmax = 50;
-        for (int s =0;s<num_samples;s++){
-            //float sample = rrand.GetFloat(-10,10);
-            float sample = rrand.GetNormalFloat(0,4);
-            if (sample > smax){
-                smax = sample;
-            }
-            for (int i=0;i<num_bins;i++){
-                //Check if sample is in this bin
-                if ((sample > (bin_start + i)) && (sample < (bin_start + i + bin_size))){
-                    bins[i]+=1;
-                    if (bins[i] > bmax){
-                        bmax = bins[i];
-                    }
-                    break;
-                }
-            }
-        }
-        bmax *= 1.1f;
-    }
-
-    ImGui::PlotHistogram("Sampled Floats", bins, IM_ARRAYSIZE(bins), 0, NULL, 0.0f, bmax, ImVec2(0, 80.0f));
-    ImGui::End();
 }
 
 void ApplicationSim::RenderNoiseTestWindow(){
@@ -1082,11 +997,11 @@ void ApplicationSim::RenderSuperCustomUI(){
 }
 
 void ApplicationSim::UpdateUI(){
-    //RenderRandTestWindow();
+    RenderRandTestWindow();
     //RenderNoiseTestWindow();
     RenderPopulationOverview();
     RenderGenericObjectUI();
-    ImGui::ShowDemoWindow();
+    //ImGui::ShowDemoWindow();
 
     RenderSuperCustomUI();
 }

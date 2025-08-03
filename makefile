@@ -21,6 +21,7 @@ CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d -limgui -luser32 -lopengl32 -lgdi32
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 #CFLAGS += $(FNOCONSOLE)
 CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
+#CFLAGS += -Wcast-align=strict
 
 
 PROJECT = wind
@@ -98,6 +99,7 @@ DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation 
 RFLAGS = -DRELEASE -O3 -s #03 highest optimisation #-s to strip symbols
 
 CFLAGS += $(DFLAGS)
+CFLAGS += -DAPPCLASS=$(APPCLASS)
 
 OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 

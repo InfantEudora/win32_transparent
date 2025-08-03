@@ -22,7 +22,9 @@ Application::Application(){
     //TODO: This only needs to be done once.
     Window::RegisterWindowClasses();
 
-    tmr_physics = new PerfTimer("Physics Time"); //Physics loop time
+    tmr_physics = new PerfTimer("Physics Time");
+    tmr_physics_loop = new PerfTimer("Physics Loop Time");
+    tmr_physics_sleep = new PerfTimer("Physics Sleep Time");
 };
 
 int2 Application::GetDisplaySettings(){
@@ -202,18 +204,41 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     app->debug_physics = new Debugger("AppPhysics", DEBUG_ALL);
 
     uint32_t physics_ticks = 0;
+    double us_looptime_desired = 20000;
+    double last_sleep = 0;
     while (1){
-        //debug->Info("Physics Loop %lu\n",physics_ticks);
-        timeBeginPeriod(1);
-        Sleep(5);
-        timeEndPeriod(1);
         if (app->main_scene){
             app->main_scene->HandleInput();
+
+            //Time spent on aquiring a lock
             app->renderer->state_mutex.lock();
+
+            //Time spent on logic + physics
+            app->tmr_physics->Restart();
             app->RunLogic();
             app->main_scene->UpdatePhysics();
+            app->tmr_physics->Stop();
             app->renderer->state_mutex.unlock();
+
+            double us_loop = app->tmr_physics_loop->Stop();
+            app->tmr_physics_loop->Restart();
+            //debug->Info("Physics Looptime was %f us including %f sleeping\n",us_loop,last_sleep);
+            double us_sleep = us_looptime_desired - us_loop;
+
+            double newsleep = clamp(last_sleep + us_sleep,0,us_looptime_desired);
+            //debug->Info("Sleeping for additional %f us totalling %f\n",us_sleep,newsleep);
+
+            app->tmr_physics_sleep->Restart();
+            timeBeginPeriod(1);
+            Sleep(newsleep / 1000.0f);
+            timeEndPeriod(1);
+            last_sleep = app->tmr_physics_sleep->Stop();
+
             app->main_scene->inputcontroller->Tick();
+        }else{
+            timeBeginPeriod(1);
+            Sleep(5);
+            timeEndPeriod(1);
         }
         //debug->Ok("Physics Loop %lu completed\n",physics_ticks);
         physics_ticks++;
@@ -704,12 +729,16 @@ void Application::RenderGenericObjectUI(){
                 float collider_friction = physics->GetFrictionCoefficient();
                 if (ImGui::DragFloat("Friction Coefficient", (float*)&collider_friction, 0.01f, 0.0f, 2.0f)){
                     physics->SetFrictionCoefficient(collider_friction);
+                    main_scene->physics_world->WakeUpEveryone();
                 }
 
                 float collider_bounciness = physics->GetBounciness();
                 if (ImGui::DragFloat("Bounciness", (float*)&collider_bounciness, 0.01f, 0.0f, 1.0f)){
                     physics->SetBounciness(collider_bounciness);
                 }
+
+                rp3d::Collider* collider = NULL;
+
 
             }
         }else{
@@ -775,8 +804,10 @@ void Application::RenderGenericObjectUI(){
         if (ImGui::Checkbox("V-Sync", &sync)){
             renderer->SetVSync(sync);
         }
-        ImGui::Text("Frame Rate   : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
-        ImGui::Text("Physics Rate : %.2f TPS (%.2f ms)", 1000000.0f / tmr_physics->avg,tmr_physics->avg/1000.0f );
+        ImGui::Text("Frame Rate    : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
+        ImGui::Text("Physics Loop  : %.2f TPS (%.2f ms)", 1000000.0f/tmr_physics_loop->avg,tmr_physics_loop->avg/1000.0f );
+        ImGui::Text("Physics Sleep : %.1f us (%.2f ms)", tmr_physics_sleep->avg,tmr_physics_sleep->avg/1000.0f );
+        ImGui::Text("Physics Time  : %.1f us (%.2f ms)", tmr_physics->avg,tmr_physics->avg/1000.0f );
     }
 
     if (ImGui::CollapsingHeader("Renderer")){
@@ -859,6 +890,103 @@ void Application::RenderGenericObjectUI(){
         //
     }
 
+    ImGui::End();
+}
+
+//For showing how RRandom would work.
+void Application::RenderRandTestWindow(){
+    static float histogram_arr[256];
+    static int histogram_count = 0;
+
+    ImGui::Begin("Random Test Suite");
+    ImGui::Text("This is for testing our own random functions. Neat?");
+    if (rrand == NULL){
+        ImGui::Text("rrand has not been initialised\n");
+        if (ImGui::Button("Generate 512x512")){
+            rrand = new RRandom();
+            rrand->Generate(512,512);
+        }
+        ImGui::End();
+        return;
+    }
+
+
+
+    uint8_t r = rrand->Get_uint8();
+    float f = 0;
+    int s = 1;
+    for (int i = 0;i<s;i++){
+        f += rrand->Get_uint8();
+    }
+    f/= s;
+
+    histogram_arr[histogram_count++] = f;//rand() % 256;
+
+    histogram_count = histogram_count % 256;
+    //UI
+
+
+    ImGui::PlotHistogram("Histogram", histogram_arr, IM_ARRAYSIZE(histogram_arr), 0, NULL, 0.0f, 255.0f, ImVec2(0, 80.0f));
+
+    static int rand_int = 0;
+    if (ImGui::Button("Get Random Int")){
+        rand_int = rrand->GetInt();
+    }
+    ImGui::SameLine();
+    ImGui::Text("Random Int: %i",rand_int);
+
+    static int rand_limit = 0;
+    static int minmax[2] = {0,1};
+    ImGui::SliderInt2("Int Min / Max",minmax,-100,100);
+    if (ImGui::Button("Get Random Int Between")){
+        rand_limit = rrand->GetInt(minmax[0],minmax[1]);
+    }
+    ImGui::SameLine();
+    ImGui::Text("Random Int: %i",rand_limit);
+
+    static float rand_float = 0;
+    static float fminmax[2] = {0,1};
+    ImGui::SliderFloat2("Float Min / Max",fminmax,-100,100);
+    if (ImGui::Button("Get Random Float Between")){
+        rand_float = rrand->GetFloat(fminmax[0],fminmax[1]);
+    }
+    ImGui::SameLine();
+    ImGui::Text("Random Float: %.3f",rand_float);
+
+    //Normal distribution
+    int num_bins = 50;
+    static float bins[50] = {};
+    int bin_start = -25;
+    int bin_size = 1;
+
+    //We sample from our normal distribution and see if they fall in a bin
+    int num_samples = 10000;
+    float smax = 0;
+    static float bmax = 50;
+    if (ImGui::Button("Sample Distribution")){
+        memset(bins,0,sizeof(float)*num_bins);
+        bmax = 50;
+        for (int s =0;s<num_samples;s++){
+            //float sample = rrand->GetFloat(-10,10);
+            float sample = rrand->GetNormalFloat(0,4);
+            if (sample > smax){
+                smax = sample;
+            }
+            for (int i=0;i<num_bins;i++){
+                //Check if sample is in this bin
+                if ((sample > (bin_start + i)) && (sample < (bin_start + i + bin_size))){
+                    bins[i]+=1;
+                    if (bins[i] > bmax){
+                        bmax = bins[i];
+                    }
+                    break;
+                }
+            }
+        }
+        bmax *= 1.1f;
+    }
+
+    ImGui::PlotHistogram("Sampled Floats", bins, IM_ARRAYSIZE(bins), 0, NULL, 0.0f, bmax, ImVec2(0, 80.0f));
     ImGui::End();
 }
 

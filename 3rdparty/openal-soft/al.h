@@ -599,7 +599,7 @@ AL_API void AL_APIENTRY alSourceiv(ALuint source, ALenum param, const ALint *val
 AL_API void AL_APIENTRY alGetSourcef(ALuint source, ALenum param, ALfloat *value) AL_API_NOEXCEPT;
 AL_API void AL_APIENTRY alGetSource3f(ALuint source, ALenum param, ALfloat *value1, ALfloat *value2, ALfloat *value3) AL_API_NOEXCEPT;
 AL_API void AL_APIENTRY alGetSourcefv(ALuint source, ALenum param, ALfloat *values) AL_API_NOEXCEPT;
-AL_API void AL_APIENTRY alGetSourcei(ALuint source,  ALenum param, ALint *value) AL_API_NOEXCEPT;
+extern  LPALGETSOURCEI alGetSourcei;
 AL_API void AL_APIENTRY alGetSource3i(ALuint source, ALenum param, ALint *value1, ALint *value2, ALint *value3) AL_API_NOEXCEPT;
 AL_API void AL_APIENTRY alGetSourceiv(ALuint source,  ALenum param, ALint *values) AL_API_NOEXCEPT;
 
@@ -610,9 +610,9 @@ extern LPALSOURCEPLAY alSourcePlay;
 /** Stop a source, setting its state to AL_STOPPED if playing or paused. */
 AL_API void AL_APIENTRY alSourceStop(ALuint source) AL_API_NOEXCEPT;
 /** Rewind a source, setting its state to AL_INITIAL. */
-AL_API void AL_APIENTRY alSourceRewind(ALuint source) AL_API_NOEXCEPT;
+extern LPALSOURCEREWIND alSourceRewind;
 /** Pause a source, setting its state to AL_PAUSED if playing. */
-AL_API void AL_APIENTRY alSourcePause(ALuint source) AL_API_NOEXCEPT;
+extern LPALSOURCEPAUSE alSourcePause;
 
 /** Play, restart, or resume a list of sources atomically. */
 AL_API void AL_APIENTRY alSourcePlayv(ALsizei n, const ALuint *sources) AL_API_NOEXCEPT;

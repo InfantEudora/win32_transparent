@@ -18,6 +18,8 @@ PhysicsWorld::PhysicsWorld(){
 		physicsCommon = new reactphysics3d::PhysicsCommon();
 	}
     rp_world = physicsCommon->createPhysicsWorld();
+	rp_world->setNbIterationsPositionSolver(5);
+	rp_world->setNbIterationsVelocitySolver(8);
 	debug_renderer = &rp_world->getDebugRenderer();
 	rp_world->setIsDebugRenderingEnabled(true);
 	debug_renderer->setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLISION_SHAPE,true);

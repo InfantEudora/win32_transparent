@@ -154,9 +154,10 @@ class Object{
     // And copy them over. During this time, physics will have to wait.
 
     //Physics
-    Physics*    GetPhysics();
-    Physics*    AddPhysics(PhysicsWorld* world);
-    void        ResetPhysics();
+    Physics*            GetPhysics();
+    Physics*            AddPhysics(PhysicsWorld* world);
+    void                ResetPhysics();
+    rp3d::RigidBody*    GetRigidBody();
 
     //Hierarchy
     Object* parent = NULL;              //Object we are a child of.

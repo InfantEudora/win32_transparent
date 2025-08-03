@@ -45,7 +45,10 @@ public:
     void Initialise();
 
     void AppendFile(const char* filename, const char* handle);
-    void Play(const char* handle);
+    void Play(const char* handle_name, bool looping = false);
+    void Pause(const char* handle_name);
+    void Rewind(const char* handle_name);
+    bool FinishedPlaying(const char* handle_name);
 };
 
 #endif
