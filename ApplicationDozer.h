@@ -12,20 +12,24 @@ class ApplicationDozer : public Application{
 public:
     ApplicationDozer();
 
-    void Run(void) override;
-    void RunLogic() override;
+    void Start(void) override;
+    void Init(void) override;
+
+    void RunLogic(void) override;
+    void DrawImGuiUI(void) override;
 
     vec3 camera_target = {};
     Scene* CreateMainScene();
     DozerCharacter* dozer = NULL;
+    void ResetDozer();
     bool dozer_camera_tracking = true;
     void SpawnAssetAt(const std::string& name, const vec3& wpos);
     SoundSystem* soundsystem = NULL;
 
-    static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
+
 
 private:
-    void UpdateUI();
+
 };
 
 #endif

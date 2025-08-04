@@ -13,6 +13,7 @@ static Debugger *debug = new Debugger("PhysicsWorld", DEBUG_ALL);
 reactphysics3d::PhysicsCommon* PhysicsWorld::physicsCommon = NULL;
 
 PhysicsWorld::PhysicsWorld(){
+	debug->Info("Using ReactPhysics Version %s\n",reactphysics3d::RP3D_VERSION.c_str());
 	if (!physicsCommon){
 		//Create once
 		physicsCommon = new reactphysics3d::PhysicsCommon();
@@ -21,7 +22,7 @@ PhysicsWorld::PhysicsWorld(){
 	rp_world->setNbIterationsPositionSolver(5);
 	rp_world->setNbIterationsVelocitySolver(8);
 	debug_renderer = &rp_world->getDebugRenderer();
-	rp_world->setIsDebugRenderingEnabled(true);
+	rp_world->setIsDebugRenderingEnabled(false);
 	debug_renderer->setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLISION_SHAPE,true);
 	debug_renderer->setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::CONTACT_POINT,true);
 };

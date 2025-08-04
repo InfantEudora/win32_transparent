@@ -21,6 +21,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
 
     Application* main_app = new ApplicationDozer();
-    main_app->Run();
+    main_app->Start();
     return main_app->Exit();
 }

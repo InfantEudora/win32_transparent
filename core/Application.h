@@ -16,6 +16,7 @@
 #include "GLTFLoader.h"
 #include "RRandom.h"
 
+
 /*
     The thing that ties everything together.
 
@@ -26,12 +27,37 @@
 
     We'd also like an application that isn't so much a game, but only a UI from maybe ImGui or the default windows one.
 
+    The basic order of things:
+    Start:
+     Creates a thread for frame rendering and one for physics. The idea being that Window Messages and input
+     are sent to the thread that makes the window, but we want input to be coupled to physics.
+
+     - Main thread only gathers window input
+     - Frame thread actually draws frames.
+     - Physics thread handles input to change state of things.
+
+    When physics is paused, you do want to be able to move the camera, so you do need input...
+    And since the camera is a physics objects... because everything is an object....?
+
 */
 class Application{
 public:
     Application();
 
-    virtual void Run(void);
+    //Main functions an application can implement by overriding.
+    virtual void Start(void);   // Creates 2 threads
+    virtual void Init(void);    // Called from Frame Thread
+
+    //Physics thread
+    virtual void UpdateInput(void);
+    virtual void RunLogic(void);
+    virtual void UpdatePhysics(void);
+    virtual void NextInput(void);
+
+    //Frame thread
+    virtual void DrawFrame(void);
+    virtual void DrawImGuiUI(void);
+
     int Exit(void);
 
     DWORD thread_id_main = -1;
@@ -46,19 +72,19 @@ public:
     AssetManager* assetmanager = NULL;
     GLTFLoader gltfloader;              // We can only have a single GLTF loader for now
 
+    //Performance timers
     PerfTimer* tmr_physics = NULL;          // Used for timing how long the physics calculations take
     PerfTimer* tmr_physics_loop = NULL;     // Time an entire physics loop took (sleeping+calculating+overhead)
     PerfTimer* tmr_physics_sleep = NULL;    // Time physics took sleeping in order to achieve desired rate
 
-    RRandom* rrand = NULL;
+    PerfTimer* tmr_render_loop = NULL;      // Used for timing how long the entire render loop costs, should yield FPS.
 
+    RRandom* rrand = NULL;
 
     //Generic Object placement and selection
     Object* selected_object = NULL;
     Object* hovered_object = NULL;
     plane projection_plane;
-
-    virtual void RunLogic();
 
     int2 GetDisplaySettings();
 
@@ -72,22 +98,25 @@ public:
     void GetAllAssetsFromGLTF();
 
 protected:
+    // Two main threads
+    static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
     static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);
+
     void CheckObjectSelection();
     //UI
     void UpdateUICameraControls(Camera* camera, int id);
     void RenderDebugMenuBar();
     void RenderRandTestWindow();
-    void RenderGenericObjectUI();
+    void RenderApplicationUI();
+    void RenderSelectedObjectUI(Object* objec, int ui_camera_id);
+
     void UpdateUIWorldPhysics(PhysicsWorld* physics_world);
     void UpdateUIPhysics(Physics* world_physics);
-
 private:
     bool SetupConsole();
     static bool WINAPI ConsoleHandler(DWORD console_event);
-    static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
     //UI
-    void UpdateUISceneObjectTree();
+    void UpdateUISceneObjectTree(Scene* scene);
     void UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked);
 };
 

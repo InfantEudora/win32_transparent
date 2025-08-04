@@ -40,6 +40,7 @@ It should kind of look like this:
 
 ### ToDo's
 
+- [ ] Will we be using OBJLoader ever again? Maybe remove it.
 - [ ] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
 - [x] Implement GLTF Morph Targets == Blender Shape Keys. A list of weights per mesh vertex, with modifiers.
 - [ ] GLTF and material loading loads and then afterwards checks for duplicates. It should do it beforehand... somehow.
@@ -158,6 +159,8 @@ Ignore documentation for building and run:
 It defaults to making some kind of ninja file, and assumes that Windows means Visual Studio.
 Version 0.9.0 seems to work a lot better than 0.10.2. This is asserting on basically everything.
 
+Apparently, friction is like not done properly in any physics engine just by the way they solve things.
+
 ### More OpenGL 4.5 Madness
 Changed glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_STREAM_DRAW); from GL_DYNAMIC_DRAW.
 
@@ -236,3 +239,18 @@ Fragment shader writes ObjectID to a SSBO when the fragment at mouse position is
 SpiteSheet Packer
 Aseprite
 Tiled
+
+### Audio
+
+Currently we play Wav files with OpenAL. It'd be nice to handle opus file format.
+It's currently loaded in with a dll. It would be nice to also compile it as a static library.
+
+### Debugging
+
+We're using GDB in MSYS2. Start like:
+
+```gdb wind```
+
+`catch throw` to catch those pesky throws.
+
+Type start

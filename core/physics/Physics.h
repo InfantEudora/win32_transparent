@@ -39,15 +39,16 @@ public:
 
     //Colliders
     uint32_t GetNumColliders();
-    void AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation);
-    void AddCapsuleCollider(const float radius, const float v,const vec3& pos,const quat& orientation);
-    void AddSphereCollider(const float size,const vec3& pos,const quat& orientation);
+    void AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation, float density = 1.0f);
+    void AddCapsuleCollider(const float radius, const float v,const vec3& pos,const quat& orientation,float density = 1.0f);
+    void AddSphereCollider(const float size,const vec3& pos,const quat& orientation,float density = 1.0f);
 
     //Force, acceleration velocity etc.
     void AddLocalForce(const vec3& force);
     void AddWorldForceAt(const vec3& force, const vec3& point);
     void AddLocalTorque(const vec3& torque);
     void AddWorldTorque(const vec3& torque);
+    float GetMass();
     vec3 GetForce();
     void SetVelocity(const vec3& v);
     vec3 GetVelocity();

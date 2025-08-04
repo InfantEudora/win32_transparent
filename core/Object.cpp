@@ -29,8 +29,18 @@ Object::Object(Object* object):Object(){
         reactphysics3d::Transform t = reactphysics3d::Transform::identity();
         physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
-
     }
+    SetCollisionCategoryBits(object->collision_category_bits);
+    SetCollideWithMaskBits(object->collide_with_bits);
+
+    material_names[0] = object->material_names[0];
+    material_names[1] = object->material_names[1];
+    material_names[2] = object->material_names[2];
+    material_names[3] = object->material_names[3];
+    material_slot[0] = object->material_slot[0];
+    material_slot[1] = object->material_slot[1];
+    material_slot[2] = object->material_slot[2];
+    material_slot[3] = object->material_slot[3];
 }
 
 Object::~Object(){
@@ -53,8 +63,26 @@ void Object::Destroy(){
     f_is_destroyed = true;
 }
 
+void Object::DeleteDestroyedChildren(){
+    //This is now responsible for destroying objects...
+    std::list<Object*>::iterator it = children.begin();
+    for ( ; it != children.end(); ) {
+        Object* child = *it;
+        if (child->IsDestroyed()){
+            //We should destroy it.
+            it = children.erase(it);
+            //Destroy object
+            debug->Info("Child object %lu is about to be destroyed\n",child->GetID());
+            delete child;
+        }else{
+            child->DeleteDestroyedChildren();
+            ++it;
+        }
+    }
+}
+
 void Object::SetVisibility(bool flag){
-    f_visible = flag;
+    state_physics.f_visible = flag;
     state_physics.f_was_transformed = true;
 }
 
@@ -351,13 +379,16 @@ bool Object::PhysicsCompleted(){
     return !!state_physics_prev_completed;
 }
 
-//Returns world position
-vec3 Object::GetPosition(){
-    return state_physics.position;
+//Returns local position (within parent)
+vec3 Object::GetPosition(ObjectStateAccessType t){
+    if (t == STATE_ACCESS_PHYSICS)
+        return state_physics.position;
+    //if (t == STATE_ACCESS_RENDERER)
+    return state.position;
 }
 
-//Computes and gets the world position
-vec3 Object::GetWorldPosition(){
+//Computes and gets the world position. Currently always reads from render state
+vec3 Object::GetWorldPosition(ObjectStateAccessType t){
     fmat4 wt = GetWorldTransformScaleMatrix();
     return world_transform_scale_matrix.vertex[3].xyz();
 }
@@ -604,7 +635,57 @@ void Object::ApplyAnimation(float time_delta){
             current_animation = next_animation;
             animation_state = ANIMATION_STATE_LOOPING;
         }
-
-
     }
+}
+
+//This sets the category that this object belongs to.
+void Object::SetCollisionCategoryBits(uint32_t bits){
+    if (!physics){
+        return;
+    }
+    for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
+        physics->body->rigidbody->getCollider(i)->setCollisionCategoryBits(bits);
+    }
+    collision_category_bits = bits;
+}
+
+//This sets all categories that this object can collide with
+void Object::SetCollideWithMaskBits(uint32_t bits){
+    if (!physics){
+        return;
+    }
+    for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
+        physics->body->rigidbody->getCollider(i)->setCollideWithMaskBits(bits);
+    }
+    collide_with_bits = bits;
+}
+
+void Object::SetMass(float mass){
+    if (!physics){
+        return;
+    }
+    physics->body->rigidbody->setMass(mass);
+}
+
+float Object::GetMass(){
+    if (!physics){
+        return 0.0f;
+    }
+    return physics->body->rigidbody->getMass();
+}
+
+vec3 Object::GetVelocity(){
+    if (!physics){
+        return vec3();
+    }
+	rp3d::Vector3 v = physics->body->rigidbody->getLinearVelocity();
+	return vec3(v.x,v.y,v.z);
+}
+
+void Object::SetVelocity(const vec3& newvel){
+    if (!physics){
+        return;
+    }
+    rp3d::Vector3 v = (rp3d::Vector3&)newvel;
+	physics->body->rigidbody->setLinearVelocity(v);
 }

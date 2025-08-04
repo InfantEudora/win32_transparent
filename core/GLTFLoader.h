@@ -46,6 +46,7 @@ public:
     vec3                GetNodePosition(const char* node_name);
     quat                GetNodeRotation(const char* node_name);
 
+    std::vector<Material>&      GetAllUniqueLoadedMaterials(){return loaded_materials;};
 
     //Info
     void                ListNodes();
@@ -73,7 +74,10 @@ private:
     skinned_vertex   GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, tinygltf::BufferView* bb, tinygltf::BufferView* wb,int index);
 
     std::vector<Texture*> textures;     //All the different textures that we have loaded.
-    std::vector<Material> materials;    //Material list we load from a single file.
+    std::vector<Material> loaded_materials;    //Material list we load from a single file.
+
+    Material*                   LookupLoadedMaterial(const std::string& material_name); // Returns the material or NULL
+
 
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;

@@ -13,113 +13,8 @@ ApplicationDozer::ApplicationDozer():Application(){
     debug->Info("Created new application.\n");
 };
 
-//Function for rendering the frame to a window
-DWORD WINAPI ApplicationDozer::FrameThreadFunction(LPVOID lpParameter){
-    ApplicationDozer* app = static_cast<ApplicationDozer*>(lpParameter);
-    if (!app){
-        debug->Err("No application was supplied to FrameThread\n");
-        return 0;
-    }
-
-    app->thread_id_render = GetCurrentThreadId();
-    debug->Info("FrameFunction ThreadID: %lu\n",app->thread_id_render);
-
-    //We make the window's context current to this thread
-    if (!wglMakeCurrent(app->main_window->hDC, app->main_window->hRC)){
-        debug->Err("FrameFunction Thread unable to get context by wglMakeCurrent\n");
-        return 0;
-    }
-
-    if (!app->main_window->InitImGui()){
-        debug->Fatal("Failed to setup ImGui on Window\n");
-    }
-
-    //Create a renderer for this window
-    app->renderer = new Renderer(app->main_window->width,app->main_window->height);
-    app->renderer->Init(PIPELINE_DEFERRED);
-    app->renderer->SetVSync(true);
-    app->renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
-
-    //Randomise the randomiser
-    app->rrand = new RRandom();
-    debug->Info("Polulating RRandom\n");
-    app->rrand->Generate(512,512);
-
-
-    //Renderer settings
-    app->renderer->alpha_clip = 0.5f;
-    app->renderer->f_render_skybox = false;
-
-    app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
-
-    //We make an assetmanager which we use to load/build all assets from:
-    app->assetmanager = new AssetManager();
-
-    app->soundsystem = new SoundSystem();
-    app->soundsystem->Initialise();
-    app->soundsystem->AppendFile("dozer/data/engine_start_2.wav","engine_start");
-    app->soundsystem->AppendFile("dozer/data/arm_up.wav","arm_up");
-    app->soundsystem->AppendFile("dozer/data/engine_idle.wav","engine_idle");
-    app->soundsystem->AppendFile("dozer/data/engine_revup.wav","engine_revup");
-    app->soundsystem->AppendFile("dozer/data/engine_stop.wav","engine_stop");
-
-    app->main_scene = app->CreateMainScene();
-    app->main_scene->UpdatePhysics();
-
-    BinaryAsset::DumpBinaryAssets();
-    app->assetmanager->ListAssets();
-
-
-
-
-
-    //Now that all the setup is done, we create another thread for physics.
-    HANDLE hThread = NULL;
-    DWORD thread_id;
-    // Create a new thread which will get it's own render context
-    hThread = CreateThread(
-        NULL,    // Thread attributes
-        0,       // Stack size (0 = use default)
-        PhysicsThreadFunction, // Thread start address in Application base class
-        app,    // Parameter to pass to the thread
-        0,       // Creation flags
-        &app->thread_id_physics);   // Thread id
-
-    if (hThread == NULL){
-        debug->Fatal("Unable to create thread\n");
-    }
-
-    while (app->main_window->f_should_quit == false){
-        if (app->main_window->f_resized){
-            app->main_window->f_resized = false;
-            app->renderer->Resize(app->main_window->width,app->main_window->height);
-        }
-
-        //Tell ImGui to start a new frame
-        app->main_window->ImGuiNewFrame();
-
-        //This should render the frame only.
-        app->main_scene->DrawFrame(); // This renders state, not state_physics
-
-        app->renderer->state_mutex.lock();
-        app->UpdateUI(); //This right now modifies state_physics... but
-        app->renderer->state_mutex.unlock();
-        //When done, copies that over to prev_state.
-
-        //In Renderer, that get's called
-        app->main_window->ImGuiDrawFrame();
-
-        //Copy to screen and finish
-        app->main_window->DrawFrame();
-    }
-
-    debug->Info("FrameThreadFunction terminated\n");
-    return 1;
-}
-
-void ApplicationDozer::Run(void){
-    int2 dimensions = GetDisplaySettings();
-
+//We need to overwrite default start so we call the threadfunctions local to this class.
+void ApplicationDozer::Start(void){
     //Create a main window
     main_window = Window::CreateNewWindow(1280,800,&Window::wcs.at(0));
     if (!main_window){
@@ -141,7 +36,7 @@ void ApplicationDozer::Run(void){
     hThread = CreateThread(
         NULL,    // Thread attributes
         0,       // Stack size (0 = use default)
-        FrameThreadFunction, // Thread start address
+        FrameThreadFunction, // Thread start address from this class, not the base class
         this,    // Parameter to pass to the thread
         0,       // Creation flags
         &thread_id_render);   // Thread id
@@ -149,7 +44,6 @@ void ApplicationDozer::Run(void){
     if (hThread == NULL){
         debug->Fatal("Unable to FrameFunction thread\n");
     }
-
 
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
@@ -165,13 +59,49 @@ void ApplicationDozer::Run(void){
     }
 }
 
+void ApplicationDozer::Init(){
+    //Create a renderer for this window
+    renderer = new Renderer(main_window->width,main_window->height);
+    renderer->Init(PIPELINE_DEFERRED);
+    renderer->SetVSync(true);
+    renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
+
+    //Randomise the randomiser
+    rrand = new RRandom();
+    debug->Info("Polulating RRandom\n");
+    rrand->Generate(512,512);
+
+
+    //Renderer settings
+    renderer->alpha_clip = 0.5f;
+    renderer->f_render_skybox = false;
+
+    default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+
+    //We make an assetmanager which we use to load/build all assets from:
+    assetmanager = new AssetManager();
+
+    soundsystem = new SoundSystem();
+    soundsystem->Initialise();
+    soundsystem->AppendFile("dozer/data/engine_start_2.wav","engine_start");
+    soundsystem->AppendFile("dozer/data/arm_up.wav","arm_up");
+    soundsystem->AppendFile("dozer/data/engine_idle.wav","engine_idle");
+    soundsystem->AppendFile("dozer/data/engine_revup.wav","engine_revup");
+    soundsystem->AppendFile("dozer/data/engine_revup_long.wav","engine_revup_long");
+    soundsystem->AppendFile("dozer/data/engine_stop.wav","engine_stop");
+
+    main_scene = CreateMainScene();
+    main_scene->UpdatePhysics();
+
+    BinaryAsset::DumpBinaryAssets();
+    assetmanager->ListAssets();
+}
+
 //Called before update physics from the physics Thread
 void ApplicationDozer::RunLogic(){
     //Camera pivot around point
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
-
-
 
     //Only when in focus
     if (!main_window->f_has_focus){
@@ -188,9 +118,21 @@ void ApplicationDozer::RunLogic(){
     CheckObjectSelection();
 
     if (dozer_camera_tracking){
-        camera_target = dozer->GetPosition();
+        vec3 new_camera_target = dozer->GetPosition();
+
+        vec3 camera_lerp = camera_target.lerp(new_camera_target,0.15f);
+
         vec3 up = vec3(0,1,0);
-        camera->SetLookAt(camera_target,&up);
+        camera->SetLookAt(camera_lerp,&up);
+        camera_target = camera_lerp;
+
+        vec3 dist = camera->GetPosition() - new_camera_target;
+        if (dist.length() < 20.0f){
+            camera->MoveForwardBy(-0.1f);
+        }
+        if (dist.length() > 25.0f){
+            camera->MoveForwardBy(0.1f);
+        }
     }
 
     //Camera rotation moving
@@ -269,7 +211,7 @@ void ApplicationDozer::RunLogic(){
     }
 
     if (input->WasKeyReleased(INPUT_B)){
-        for (int i=0;i<10;i++){
+        for (int i=0;i<50;i++){
         int r = rand()%3;
         if (r == 0)
             SpawnAssetAt("Box", vec3(0,5,0));
@@ -287,6 +229,25 @@ void ApplicationDozer::RunLogic(){
     if (input->WasKeyReleased(INPUT_T)){
         dozer_camera_tracking = !dozer_camera_tracking;
     }
+
+    //Check that all objects havent fallen to their doom
+    for (Object* object:renderer->objects){
+        vec3 pos = object->GetPosition();
+        if (pos.y < -50){
+            //This one is lost to the void... for sure.
+            if (object != dozer){
+                object->Destroy();
+            }else{
+                ResetDozer();
+            }
+        }
+    }
+}
+
+void ApplicationDozer::ResetDozer(){
+    dozer->SetPosition(vec3(0,2,0));
+    dozer->SetRotation(quat().identity());
+    dozer->SetVelocity(vec3());
 }
 
 void ApplicationDozer::SpawnAssetAt(const std::string& name, const vec3& wpos){
@@ -304,14 +265,14 @@ void ApplicationDozer::SpawnAssetAt(const std::string& name, const vec3& wpos){
         physics->SetStatic(false);
         physics->SetGravityEnabled(true);
     }
+    asset->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
+    asset->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS|COLLISION_CATEGORY_FLOOR);
 
     main_scene->AddObject(asset);
-    debug->Info("Spwaned in %s\n",name.c_str());
-
-    //Give it some defaults
+    //debug->Info("Spwaned in %s\n",name.c_str());
 }
 
-void ApplicationDozer::UpdateUI(){
+void ApplicationDozer::DrawImGuiUI(){
     //UI
     ImGui::Begin("Hi there!");
 
@@ -322,11 +283,10 @@ void ApplicationDozer::UpdateUI(){
     dozer_camera_tracking ? str_camera_tracking = "ENABLED" : str_camera_tracking = "DISABLED";
     ImGui::Text("Press 'T' to enable camera tracking (Currently %s)\n",str_camera_tracking.c_str());
 
-
     ImGui::End();
 
     RenderDebugMenuBar();
-    RenderGenericObjectUI();
+    RenderApplicationUI();
     RenderRandTestWindow();
 }
 
@@ -344,8 +304,8 @@ Scene* ApplicationDozer::CreateMainScene(){
     DirectionalLight* sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
     sun->SetPosition(vec3(-10,10,10));
-    sun->color = vec3(1,0.8,0.6);
-    sun->brightness = 5.0;
+    sun->color = vec3(1,0.85,0.7);
+    sun->brightness = 8.5;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
@@ -359,25 +319,54 @@ Scene* ApplicationDozer::CreateMainScene(){
     //Add phyics
     scene->physics_world = new PhysicsWorld();
     scene->physics_world->SetGravity(vec3(0,-9.81,0));
+    scene->physics_world->SetDebugRendering(false);
 
     //Load from a GLTF file and build assets.
     gltfloader.LoadGLTFFile("dozer/data/dozer.glb");
 
-    Object* floor = CreateNewObjectFromGLTF("Floor",scene);
-    floor->AddPhysics(scene->physics_world);
-    if (Physics* physics = floor->GetPhysics()){
-        physics->AddBoxCollider(vec3(4.0,0.4,4.0),vec3(0,0,0),quat().identity());
-        physics->SetStatic(true);
+    {//FLOOR
+        Object* floor = CreateNewObjectFromGLTF("FloorConcrete",scene);
+        if (!floor){
+            debug->Fatal("No Floor was found\n");
+        }
+        floor->SetPosition(vec3(0,-1,0));
+        floor->AddPhysics(scene->physics_world);
+        if (Physics* physics = floor->GetPhysics()){
+            physics->AddBoxCollider(vec3(4.0,0.4,4.0),vec3(0,0,0),quat().identity());
+            physics->SetStatic(true);
+            floor->SetCollisionCategoryBits(COLLISION_CATEGORY_FLOOR);
+            floor->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS|COLLISION_CATEGORY_SMOKE);
+        }
+        //Create a copy
+        floor = new Object(floor);
+        floor->SetPosition(vec3(-8,-8,0));
+        scene->AddObject(floor);
+        floor = new Object(floor);
+        floor->SetPosition(vec3(0,-8,0));
+        scene->AddObject(floor);
     }
-    //Create a copy
-    floor = new Object(floor);
-    floor->SetPosition(vec3(2,0,0)) ;
 
-    scene->AddObject(floor);
-
+    {//Walls
+        Object* wall = CreateNewObjectFromGLTF("Wall",scene);
+        if (!wall){
+            debug->Fatal("No wall was found\n");
+        }
+        wall->AddPhysics(scene->physics_world);
+        if (Physics* physics = wall->GetPhysics()){
+            vec3 extent = wall->GetMesh()->GetExtents()*0.5f;
+            physics->AddBoxCollider(extent,vec3(0,extent.y,0),quat().identity());
+            physics->SetStatic(false);
+            physics->SetGravityEnabled(true);
+            physics->SetBounciness(0);
+            wall->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
+            wall->SetCollideWithMaskBits(COLLISION_CATEGORY_FLOOR|COLLISION_CATEGORY_OBJECTS);
+            wall->SetMass(20);
+        }
+    }
 
     //Add's all remaining unloaded objects
     GetAllAssetsFromGLTF();
+    scene->renderer->AddMaterials(gltfloader.GetAllUniqueLoadedMaterials());
 
     dozer = new DozerCharacter(assetmanager,scene->physics_world,scene,rrand);
     dozer->soundsystem = soundsystem;

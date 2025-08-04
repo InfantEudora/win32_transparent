@@ -7,19 +7,22 @@
 static Debugger *debug = new Debugger("Physics", DEBUG_ALL);
 
 Physics::Physics(PhysicsWorld* _world){
-	debug->Info("New Physics from world %p\n",_world);
-	debug->Info("Using ReactPhysics Version %s\n",reactphysics3d::RP3D_VERSION.c_str());
+	//debug->Info("New Physics from world %p\n",_world);
 	world = _world;
 	body = new PhysicsBody();
 	//Create a body for this dude.
 	body->collider = NULL;
 	body->rigidbody = world->rp_world->createRigidBody(reactphysics3d::Transform::identity());
-	//This only works on 10.0
+	//This only works on > 0.9.0
 	//body->rigidbody->setIsDebugEnabled(true);
 }
 
 Physics::~Physics(){
 
+}
+
+float Physics::GetMass(){
+	return body->rigidbody->getMass();
 }
 
 void Physics::SetBodyWorldPosition(const vec3& wp){
@@ -95,7 +98,7 @@ void Physics::WakeUp(){
 	body->rigidbody->setIsSleeping(false);
 }
 
-void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation){
+void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation,float density){
     reactphysics3d::BoxShape* boxShape = PhysicsWorld::physicsCommon->createBoxShape((reactphysics3d::Vector3&)box);
 	reactphysics3d::Transform t = reactphysics3d::Transform::identity();
 	t.setPosition((reactphysics3d::Vector3&)pos);
@@ -103,18 +106,18 @@ void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orienta
 	//body->collision_shape = boxShape;
 	if (body->rigidbody){
 		body->collider = body->rigidbody->addCollider(boxShape, t);
-		body->collider->getMaterial().setMassDensity(1.0);
+		body->collider->getMaterial().setMassDensity(density);
 		body->collider->getMaterial().setFrictionCoefficient(1.0);
 		body->rigidbody->setAngularDamping(0.5);
 		body->rigidbody->setLinearDamping(0.5);
 		body->rigidbody->updateMassPropertiesFromColliders();
 
 	}
-	debug->Info("Box Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+	//debug->Info("Box Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
 
 //Creates a Sphere collision shape of size
-void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& orientation){
+void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& orientation,float density){
     rp3d::SphereShape* sphereShape = PhysicsWorld::physicsCommon->createSphereShape(size);
 	rp3d::Transform t = rp3d::Transform::identity();
 	t.setPosition((rp3d::Vector3&)pos);
@@ -122,28 +125,28 @@ void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& ori
 	//body->collision_shape = sphereShape;
 	if (body->rigidbody){
 		body->collider = body->rigidbody->addCollider(sphereShape, t);
-		body->collider->getMaterial().setMassDensity(1.0);
+		body->collider->getMaterial().setMassDensity(density);
 		//body_collider->getMaterial().setFrictionCoefficient(2);
 		//body_collider->getMaterial().setBounciness(0);
 		body->rigidbody->updateMassPropertiesFromColliders();
 	}
-	debug->Info("Sphere Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+	//debug->Info("Sphere Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
 
 
-void Physics::AddCapsuleCollider(const float radius, const float height,const vec3& pos,const quat& orientation){
+void Physics::AddCapsuleCollider(const float radius, const float height,const vec3& pos,const quat& orientation,float density){
     rp3d::CapsuleShape* capsuleShape = PhysicsWorld::physicsCommon->createCapsuleShape(radius,height);
 	rp3d::Transform t = rp3d::Transform::identity();
 	t.setPosition((rp3d::Vector3&)pos);
 	t.setOrientation((rp3d::Quaternion&)orientation);
 	if (body->rigidbody){
 		body->collider = body->rigidbody->addCollider(capsuleShape, t);
-		body->collider->getMaterial().setMassDensity(1.0);
+		body->collider->getMaterial().setMassDensity(density);
 		//body_collider->getMaterial().setFrictionCoefficient(2);
 		//body_collider->getMaterial().setBounciness(0);
 		body->rigidbody->updateMassPropertiesFromColliders();
 	}
-	debug->Info("Capsule Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+	//debug->Info("Capsule Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
 
 //Add local force at centre of mass

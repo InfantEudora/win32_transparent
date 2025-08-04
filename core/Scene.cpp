@@ -10,7 +10,7 @@ Scene::Scene(){
 
 };
 
-void Scene::HandleInput(){
+void Scene::UpdateInput(){
     if (!inputcontroller){
         return;
     }
@@ -23,8 +23,14 @@ void Scene::UpdatePhysics(){
         return;
     }
     if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
-        f_paused = !f_paused;
+        PausePhysics(!f_paused);
     }
+
+    //We do allow for camera updates on the main camera.
+    if (camera){
+        camera->UpdatePhysicsState();
+    }
+
     if (f_paused){
         return;
     }
@@ -32,16 +38,14 @@ void Scene::UpdatePhysics(){
     if (physics_world){
         physics_world->Update(1.0/50.0);
     }
-    /*
-        This would copy over all physics_states for a current render frame.
-    */
+
+    //Update all objects stored in the renderer.
     for (Object* object:renderer->objects){
         //debug->Info("Updating physics for obj->id %i\n",object->GetID());
         if (object == camera){
-            object->UpdatePhysicsState();
+            //debug->Info("Skipping already handled camera update physics for obj->id %i\n",object->GetID());
             continue;
         }
-
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();
     }
@@ -58,7 +62,7 @@ void Scene::DrawFrame(){
 
     //Update mesh for physics debugging
     if (physics_world && physics_world->IsDebugRenderingEnabled()){
-        renderer->state_mutex.lock();
+        renderer->physics_mutex.lock();
         reactphysics3d::DebugRenderer* dbr = physics_world->debug_renderer;
         uint32_t num_tris = dbr->getNbTriangles();
         //debug->Info("Number of debug lines: %lu\n",dbr->getNbLines());
@@ -110,7 +114,7 @@ void Scene::DrawFrame(){
             debugmesh->SetLineMeshData(&line_vertices.at(0),line_vertices.size());
             debugobject->SetPickability(false);
         }
-        renderer->state_mutex.unlock();
+        renderer->physics_mutex.unlock();
     }else{
         Object* debugobject = FindObject("PhysicsDebugObject");
         if (debugobject){
@@ -118,10 +122,6 @@ void Scene::DrawFrame(){
         }
     }
 
-    //if (tex_1)
-    //    glBindTextureUnit(0, tex_1->texture_id);
-    //if (tex_2)
-    //glBindTextureUnit(1, tex_2->texture_id);
     renderer->DrawFrame(camera, shader,inputcontroller);
 };
 

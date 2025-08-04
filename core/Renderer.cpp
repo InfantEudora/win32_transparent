@@ -8,7 +8,7 @@ Renderer::Renderer(int w, int h){
     height = h;
 }
 
-void Renderer::SetState(){
+void Renderer::SetOpenGLState(){
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
@@ -51,7 +51,7 @@ bool Renderer::Init(int _pipeline){
         ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
     }
 
-    SetState();
+    SetOpenGLState();
 
     //We make intel happy with an empty VAO
     GLuint empty_vao = -1;
@@ -162,10 +162,11 @@ void Renderer::UpdateState(){
 
     if (!all_completed){
         //debug->Warn("Not all objects have complete state_physics_prev\n");
+
         //Physics is still modifying the current and/or previous state.
         //We are rendering faster than physics.
         //Draw the current state.
-        return;
+        //return;
     }
 
     //We take the completed state, copy it over and mark it as incomplete.
@@ -173,7 +174,7 @@ void Renderer::UpdateState(){
     for (Object* object:objects){
         //This was previously tested, and it's now broken....?
         if (!object->PhysicsCompleted()){
-            debug->Fatal("Previously set complete state now incomplete.\n");
+            //debug->Fatal("Previously set complete state now incomplete.\n");
         }
         //Copies object state and invalidates physics state
         object->UpdateState();
@@ -562,7 +563,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     if (shader && camera){
         shader->Use();
-        vec3 p = camera->GetPosition();
+        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
         shader->Setvec3("eye_position",p);
         shader->Setmat4("mat_worldcam",camera->mat_cam);
         shader->Setint("f_normal_mapping",(int)f_normal_mapping);
@@ -591,7 +592,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     if (skinned_shader && camera){
         skinned_shader->Use();
-        vec3 p = camera->GetPosition();
+        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
         skinned_shader->Setvec3("eye_position",p);
         skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
         skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
@@ -661,7 +662,6 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     if (tmr_frame){
         tmr_frame->Stop();
-        double dt = tmr_frame->GetdtUs();
     }
 }
 
@@ -954,6 +954,7 @@ int Renderer::AddMaterial(Material& newmat){
 
 //Add's materials to global list, omitting duplicates by name.
 void Renderer::AddMaterials(std::vector<Material>& list){
+    debug->Info("Adding %i materials from list\n",list.size());
     for (Material& newmat:list){
         int index = AddMaterial(newmat);
     }
@@ -1065,4 +1066,24 @@ Texture* Renderer::LoadTexture(const char* filename, int target, int depth){
 void Renderer::RenderResolveTextureOnly(){
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
     //glFinish();
+}
+
+//Should be called when physics is done, before rendering.
+//It deletes them from the list, and actually deletes them.
+//This is now responsible for destroying objects... until something better comes to mind.
+void Renderer::DeleteDestroyedObjects(){
+    std::vector<Object*>::iterator it = objects.begin();
+    for ( ; it != objects.end(); ) {
+        Object* object = *it;
+        if (object->IsDestroyed()){
+            //We should destroy it.
+            it = objects.erase(it);
+            //Destroy object
+            debug->Info("Object %lu is about to be destroyed\n",object->GetID());
+            delete object;
+        }else{
+            object->DeleteDestroyedChildren();
+            ++it;
+        }
+    }
 }

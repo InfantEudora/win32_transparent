@@ -34,10 +34,10 @@ class Asset{
 class AssetManager{
 public:
     std::vector<Asset*>assets;
-    std::vector<Material>loaded_materials;
+    std::vector<Material>loaded_materials; //Only for OBJ?
 
     Asset* AddNewAsset(const char* asset_name, Object* object);
-    Asset* AddNewAsset(const char* asset_name, const char* file_name);
+    Asset* AddNewAssetFromOBJFile(const char* asset_name, const char* file_name);
 
     void ListAssets();
 

@@ -24,9 +24,15 @@ typedef uint32_t objectid_t;
 #define ANIMATION_STATE_LOOPING     1
 #define ANIMATION_STATE_TRANSITION  2
 
+typedef enum ObjectStateAccess{
+    STATE_ACCESS_PHYSICS = 1,
+    STATE_ACCESS_RENDERER = 2
+}ObjectStateAccessType;
+
 //All variables that affect the object's appearance, which are modified/read by different threads
 struct ObjectState{
     bool f_was_transformed = false;
+    bool f_visible = true;
     vec3 position = vec3(0,0,0);
     quat rotation;
     vec3 scale = vec3(1,1,1);
@@ -39,14 +45,15 @@ class Object{
     Object();
     Object(Object* object);
     virtual ~Object();
+    void DeleteDestroyedChildren();
     void GenerateUniqueID();
-    void Destroy();
+    void Destroy(); //Marks it for deletion at a later time.
     bool IsDestroyed(){return f_is_destroyed;};
     void Hide();
     void Show();
     void SetVisibility(bool flag);
     void SetPickability(bool flag);
-    bool IsVisible(){return f_visible;};
+    bool IsVisible(){return state_physics.f_visible;};
     bool IsPickable(){return f_pickable;};
 
     meshid_t GetMeshID();
@@ -103,8 +110,8 @@ class Object{
     static vec3 ref_left;
     static vec3 ref_forward;
 
-    vec3 GetPosition();
-    vec3 GetWorldPosition();
+    vec3 GetPosition(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);
+    vec3 GetWorldPosition(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
 
     vec3 GetUp();               // Returns the local vector pointing up.
     vec3 GetWorldUp();          //
@@ -118,8 +125,8 @@ class Object{
     int material_slot[NUM_MATERIAL_SLOTS] = {};
     void TakeMaterialNames(std::vector<Material>& list);
     std::array<std::string,NUM_MATERIAL_SLOTS>material_names; // List of material names the object should pick into it's material slots.
-    bool f_update_materials = false; //In this render cycle, lookup materials from names and place them in slots.
-    void UpdateMaterials(std::vector<Material>& global_list);
+    bool f_update_materials = true; //In this render cycle, lookup materials from names and place them in slots.
+    void UpdateMaterials(std::vector<Material>& global_list); // Set material ID's by looking up name in the supplied list
 
     //For checking if the state_physics_prev is complete
     bool PhysicsCompleted();
@@ -153,11 +160,20 @@ class Object{
     // So, one render function will iterate over all objects... see if all their last physics states are completed.
     // And copy them over. During this time, physics will have to wait.
 
-    //Physics
+    //Physics & Collision
     Physics*            GetPhysics();
     Physics*            AddPhysics(PhysicsWorld* world);
     void                ResetPhysics();
     rp3d::RigidBody*    GetRigidBody();
+    void                SetCollisionCategoryBits(uint32_t bits);
+    void                SetCollideWithMaskBits(uint32_t bits);
+
+    void                SetMass(float mass);
+    float               GetMass();
+    vec3                GetVelocity();
+    void                SetVelocity(const vec3& newvel);
+    uint32_t collide_with_bits = 0; //Bits for the whole object that get applied to each collider.
+    uint32_t collision_category_bits = 0;
 
     //Hierarchy
     Object* parent = NULL;              //Object we are a child of.
@@ -168,7 +184,6 @@ class Object{
     void    GetAllSubObjects(std::vector<Object*>& objects); //Add's all objects attached to this object into a vector.
     Object* GetChild(int index);
 protected:
-    bool f_visible = true;          // If the mesh should be rendered or not
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable
     bool f_is_destroyed = false;    // Someone should clean it up.
 

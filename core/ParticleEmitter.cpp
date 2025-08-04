@@ -20,31 +20,28 @@ void ParticleEmitter::AddParticleType(Particle* particle){
 }
 
 void ParticleEmitter::SetParticle(Particle* particle){
-    //TODO: Make random things easily accessible
-    vec3 p = {};
-    p.x = (rand()%10)/10.0;
-    p.y = (rand()%10)/100.0;
-    p.z = (rand()%10)/10.0;
-
-    float s = (rand()%100) / 100.0;
+    vec3 p;
+    p.x = rrand->GetFloat(-0.1,0.1);
+    p.y = rrand->GetFloat(-0.1,0.1);
+    p.z = rrand->GetFloat(-0.1,0.1);
 
     particle->SetPosition(GetWorldPosition() + p);
-    particle->SetScale(0.5 + s);
+    particle->SetScale(rrand->GetFloat(0.5,1.5));
 
-    s = ((rand()%100) / 50.0) + 0.5;
-
-    vec3 v = vec3(0,s,0);
+    vec3 v;
+    v.x = rrand->GetFloat(-0.5,0.5);
+    v.y = rrand->GetFloat(0.5,2.5);
+    v.z = rrand->GetFloat(-0.5,0.5);
     particle->GetPhysics()->SetStatic(false);
     particle->GetPhysics()->SetVelocity(v);
-
-    float l = (rand()%100 / 100.0f )+ 0.5f;
-    particle->lifetime = l;
+    particle->GetPhysics()->SetActive(true);
+    particle->lifetime = rrand->GetFloat(0.5,2.0);
 }
 
 void ParticleEmitter::EmitParticles(int amount){
-    debug->Info("Would emit %i particles into target scene %p\n",amount,target_scene);
+    //debug->Info("Would emit %i particles into target scene %p\n",amount,target_scene);
     if (rrand == NULL){
-
+        debug->Fatal("No RRandom was supplied to particle emitter. And it really wants one.\n");
     }
 
     int amount_extra = amount;
@@ -52,7 +49,10 @@ void ParticleEmitter::EmitParticles(int amount){
     for (Particle* particle:emitted_particles){
         if (particle->IsVisible() == false){
             particle->Show();
+            particle->UpdatePhysicsState();
             SetParticle(particle);
+            //Extra step...
+
             amount_extra--;
         }
 

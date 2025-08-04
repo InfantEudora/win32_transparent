@@ -27,7 +27,7 @@ public:
 
     PhysicsWorld* physics_world = NULL;
 
-    void HandleInput();
+    void UpdateInput();
     void UpdatePhysics();
     void DrawFrame();
 
@@ -35,12 +35,14 @@ public:
 
     Object* FindObject(const std::string& name);
 
-    bool f_paused = false;
-
-    uint64_t physics_ticks = 0;
+    bool IsPhysicsPaused(){return f_paused;}
+    void PausePhysics(bool paused){f_paused = paused;}
 
     //Do we always need a handle to a single camera?
     Camera* camera = NULL;
+private:
+    uint64_t physics_ticks = 0;
+    bool f_paused = false;
 };
 
 #endif

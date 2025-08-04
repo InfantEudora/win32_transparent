@@ -54,7 +54,7 @@ class Renderer{
     public:
     Renderer(int w, int h);
 
-    std::mutex state_mutex;     //Makes sure all object states are updated, not just one.
+    std::mutex physics_mutex;     //Makes sure all object states are updated, not just one.
 
     int width = 1;
     int height = 1;
@@ -83,7 +83,7 @@ class Renderer{
 
     bool CheckFrameBuffer();
     bool Init(int pipeline = PIPELINE_MSAA);
-    void SetState();
+    void SetOpenGLState();
     bool SetNumAASamples(int desired);
     bool Resize(int new_width, int new_height);
     bool RebuildMSAAFBO();
@@ -107,6 +107,7 @@ class Renderer{
     void AddMaterials(std::vector<Material>& list);
     int GetNumMaterials();
     void UpdateObjectMaterials();
+    void DeleteDestroyedObjects();
 
     Texture* LoadTexture(const char* filename,int target = GL_TEXTURE_2D, int depth = 1);
 

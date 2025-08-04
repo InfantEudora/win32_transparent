@@ -25,6 +25,7 @@ Application::Application(){
     tmr_physics = new PerfTimer("Physics Time");
     tmr_physics_loop = new PerfTimer("Physics Loop Time");
     tmr_physics_sleep = new PerfTimer("Physics Sleep Time");
+    tmr_render_loop = new PerfTimer("Render Loop Time");
 };
 
 int2 Application::GetDisplaySettings(){
@@ -48,9 +49,9 @@ int2 Application::GetDisplaySettings(){
     return dimensions;
 }
 
-void Application::Run(void){
+void Application::Start(void){
     //Create a main window
-    main_window = Window::CreateNewLayeredWindow(512,512,&Window::wcs.at(0));
+    main_window = Window::CreateNewWindow(1280,800,&Window::wcs.at(0));
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -59,9 +60,6 @@ void Application::Run(void){
     }
 
     main_window->Show(SW_SHOWDEFAULT);
-
-    //Setup renderer
-    //Renderer::SetVSync(true);
 
     //We release the window's context from this thread
     wglMakeCurrent(main_window->hDC, NULL);
@@ -96,6 +94,13 @@ void Application::Run(void){
     }
 }
 
+void Application::UpdateInput(){
+    if (!main_scene){
+        return;
+    }
+    main_scene->UpdateInput();
+}
+
 int Application::Exit(void){
     return 1;
 }
@@ -119,6 +124,29 @@ bool WINAPI Application::ConsoleHandler(DWORD console_event){
     return true;
 }
 
+void Application::Init(){
+     //Create a renderer for this window
+    renderer = new Renderer(main_window->width,main_window->height);
+    renderer->Init();
+    renderer->SetVSync(true);
+
+    default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+
+    main_scene = new Scene();
+    main_scene->renderer = renderer;
+    main_scene->inputcontroller = main_window->inputcontroller;
+    main_scene->shader = default_shader;
+
+    BinaryAsset::DumpBinaryAssets();
+
+    //Just so the current items show on the first frame...?
+    main_scene->UpdatePhysics();
+}
+
+void Application::DrawImGuiUI(){
+    return;
+}
+
 //Function for rendering the frame to a window
 DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     Application* app = static_cast<Application*>(lpParameter);
@@ -140,22 +168,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
         debug->Fatal("Failed to setup ImGui on Window\n");
     }
 
-    //Create a renderer for this window
-    app->renderer = new Renderer(app->main_window->width,app->main_window->height);
-    app->renderer->Init();
-    app->renderer->SetVSync(true);
-
-    app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
-
-    app->main_scene = new Scene();
-    app->main_scene->renderer = app->renderer;
-    app->main_scene->inputcontroller = app->main_window->inputcontroller;
-    app->main_scene->shader = app->default_shader;
-
-    BinaryAsset::DumpBinaryAssets();
-
-    //Just so the current items show on the first frame...?
-    app->main_scene->UpdatePhysics();
+    app->Init();
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
@@ -174,20 +187,39 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     }
 
     while (app->main_window->f_should_quit == false){
-        //Tell ImGui to start a new frame
-        app->main_window->ImGuiNewFrame();
-
-        //This should render the frame only.
-        app->main_scene->DrawFrame();
-
-        app->main_window->ImGuiDrawFrame();
-
-        //Copy to screen and finish
-        app->main_window->DrawFrame();
+        app->tmr_render_loop->Stop();
+        app->tmr_render_loop->Restart();
+        if (app->main_window->f_resized){
+            app->main_window->f_resized = false;
+            app->renderer->Resize(app->main_window->width,app->main_window->height);
+        }
+        app->DrawFrame();
     }
 
     debug->Info("FrameThreadFunction terminated\n");
     return 1;
+}
+
+void Application::DrawFrame(){
+    //Tell ImGui to start a new frame
+    main_window->ImGuiNewFrame();
+
+    //This should render the objects and whatever it wants
+    if (main_scene){
+        main_scene->DrawFrame();
+    }
+
+    //Overlay ImGui
+    //This will access and modify physics, globally... all over the place.
+    renderer->physics_mutex.lock();
+    DrawImGuiUI();
+    renderer->physics_mutex.unlock();
+
+    //Finish ImGui
+    main_window->ImGuiDrawFrame();
+
+    //Copy to screen and finish
+    main_window->DrawFrame();
 }
 
 DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
@@ -208,17 +240,17 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     double last_sleep = 0;
     while (1){
         if (app->main_scene){
-            app->main_scene->HandleInput();
+            app->UpdateInput();
 
             //Time spent on aquiring a lock
-            app->renderer->state_mutex.lock();
+            app->renderer->physics_mutex.lock();
 
             //Time spent on logic + physics
             app->tmr_physics->Restart();
             app->RunLogic();
-            app->main_scene->UpdatePhysics();
+            app->UpdatePhysics();
             app->tmr_physics->Stop();
-            app->renderer->state_mutex.unlock();
+            app->renderer->physics_mutex.unlock();
 
             double us_loop = app->tmr_physics_loop->Stop();
             app->tmr_physics_loop->Restart();
@@ -234,7 +266,7 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             timeEndPeriod(1);
             last_sleep = app->tmr_physics_sleep->Stop();
 
-            app->main_scene->inputcontroller->Tick();
+            app->NextInput();
         }else{
             timeBeginPeriod(1);
             Sleep(5);
@@ -247,10 +279,26 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     return 0;
 }
 
-//Called before update physics
+//Called after input update before update physics to run something...?
 void Application::RunLogic(){
-    Camera* camera = main_scene->camera;
-    InputController* input = main_scene->inputcontroller;
+    return;
+}
+
+void Application::UpdatePhysics(){
+    if (!main_scene){
+        return;
+    }
+    main_scene->UpdatePhysics();
+}
+
+void Application::NextInput(){
+    if (!main_scene){
+        return;
+    }
+    if (!main_scene->inputcontroller){
+        return;
+    }
+    main_scene->inputcontroller->Tick();
 }
 
 void Application::UpdateUICameraControls(Camera* camera,int id){
@@ -305,18 +353,12 @@ void Application::UpdateUICameraControls(Camera* camera,int id){
                 camera->SetType(CAMERA_TYPE_PERSPECTIVE);
             }
         }
-
-        if (ImGui::Button("Switch Camera")){
-            main_scene->camera->Show();
-            main_scene->camera = camera;
-            main_scene->camera->Hide();
-        }
     }
 }
 
-void Application::UpdateUISceneObjectTree(){
+void Application::UpdateUISceneObjectTree(Scene* scene){
     if (ImGui::TreeNode("Scene Root")){
-        for (Object* object:main_scene->renderer->objects){
+        for (Object* object:scene->renderer->objects){
             UpdateUISceneObjectTreeNode(object,NULL);
         }
         ImGui::TreePop();
@@ -333,9 +375,14 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
     }
 
     if (ImGui::CollapsingHeader("World Physics")){
-        static bool ph_debug_render = false;
-        if (ImGui::Checkbox("Render Colliders",&ph_debug_render)){
+        bool ph_debug_render = physics_world->IsDebugRenderingEnabled();
+        if (ImGui::Checkbox("Render Colliders [Debug]",&ph_debug_render)){
             physics_world->SetDebugRendering(ph_debug_render);
+        }
+
+        bool ph_paused = main_scene->IsPhysicsPaused();
+        if (ImGui::Checkbox("Pause Physics (Active Scene) [Debug]",&ph_paused)){
+            main_scene->PausePhysics(ph_paused);
         }
         vec3 gravity = physics_world->GetGravity();
         if (ImGui::DragFloat3("Gravity (m/s^2)",(float*)&gravity,0.1f,-20,20)){
@@ -438,10 +485,9 @@ void Application::RenderDebugMenuBar(){
         }
          ImGui::EndMainMenuBar();
     }
-
 }
 
-void Application::RenderGenericObjectUI(){
+void Application::RenderApplicationUI(){
     //For generic Objects and parameters
     ImGui::Begin("Generic Object UI");
     if (ImGui::CollapsingHeader("Application")){
@@ -454,52 +500,155 @@ void Application::RenderGenericObjectUI(){
         ImGui::Text("Scenes");
         for (Scene* scene:scenes){
             ImGui::Text("Scene             : %s",scene->name.c_str());
+            UpdateUISceneObjectTree(scene);
         }
-
     }
 
     //So the same camera panel has a different ImGUI ID.
     int ui_camid = 0;
-
-    if (ImGui::CollapsingHeader("Scene")){
-        Scene* scene = main_scene;
-        ImGui::Text("Main Scene             : %s",scene->name.c_str());
-        UpdateUISceneObjectTree();
-        UpdateUICameraControls(scene->camera ,ui_camid);
-        UpdateUIWorldPhysics(scene->physics_world);
+    if (main_scene){
+        UpdateUICameraControls(main_scene->camera ,ui_camid);
+        UpdateUIWorldPhysics(main_scene->physics_world);
     }
 
-    ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
 
-    vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
-    ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
+    if (ImGui::CollapsingHeader("Input")){
+        ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
 
-    Object* object = hovered_object;
-    if (!object){
-        ImGui::Text("No Object Hovered");
-    }else{
-        ImGui::Text("Hovered Object: %s",object->name.c_str());
-    }
+        vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
+        ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
 
-    object = selected_object;
-    if (!object){
-        ImGui::Text("No Object Selected");
-    }else{
-        ImGui::Text("Selected Object: %s",object->name.c_str());
-        bool obj_visible = object->IsVisible();
-        if (ImGui::Checkbox("Visible",&obj_visible)){
-            object->SetVisibility(obj_visible);
-        }
-        if (ImGui::Button("Duplicate(Linked)")){
-            Object* duplicated = new Object(object);
-            main_scene->AddObject(duplicated);
+
+        if (!hovered_object){
+            ImGui::Text("No Object Hovered");
+        }else{
+            ImGui::Text("Hovered Object Name: %s",hovered_object->name.c_str());
         }
     }
-    if (object){
+
+
+    if (ImGui::CollapsingHeader("Performance")){
+        bool sync = renderer->GetVSync();
+        if (ImGui::Checkbox("V-Sync", &sync)){
+            renderer->SetVSync(sync);
+        }
+        ImGui::Text("Renderer Time : %8.1f us  (%5.2f ms)", renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f);
+        ImGui::Text("Frame Time    : %8.2f FPS (%5.2f ms)", 1000000.0f/tmr_render_loop->avg,tmr_render_loop->avg/1000.0f );
+
+        ImGui::Text("Physics Loop  : %8.2f TPS (%5.2f ms)", 1000000.0f/tmr_physics_loop->avg,tmr_physics_loop->avg/1000.0f );
+        ImGui::Text("Physics Sleep : %8.1f us  (%5.2f ms)", tmr_physics_sleep->avg,tmr_physics_sleep->avg/1000.0f );
+        ImGui::Text("Physics Time  : %8.1f us  (%5.2f ms)", tmr_physics->avg,tmr_physics->avg/1000.0f );
+
+        ImGui::Text("Scene - Renderable Objects  : %i", main_scene->renderer->renderable_objects.size());
+        ImGui::Text("Scene - Unique Meshes       : %i", main_scene->renderer->unique_meshes.size());
+        ImGui::Text("Scene - Batches             : %i", main_scene->renderer->unique_mesh_batches.size());
+    }
+
+    if (ImGui::CollapsingHeader("Renderer")){
+        ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
+        ImGui::Checkbox("##1", &renderer->f_normal_mapping);
+        ImGui::Text(    "Render Skybox  :");ImGui::SameLine();
+        ImGui::Checkbox("##2", &renderer->f_render_skybox);
+
+
+
+        int num_samples = renderer->aa_samples;
+        if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
+            renderer->SetNumAASamples(num_samples);
+        }
+
+        if (ImGui::SliderFloat("Alpha Clip     : ",&renderer->alpha_clip,0.0f,1.0f)){
+
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Window")){
+        ImGui::Text(    "Current Size   : %i x %i", main_window->width,main_window->height);
+    }
+
+    if (ImGui::CollapsingHeader("Assets")){
+        for (Asset* asset: assetmanager->assets){
+            ImGui::Text("Asset  : %s", asset->name.c_str());
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Materials")){
+        ImGui::Text(    "Num Materials  : %i", renderer->GetNumMaterials());
+        int n =0;
+        for (Material& material: renderer->materials){
+            ImGui::Text("Material  : %s", material.name.c_str());
+            ImGui::Text("GLSL Material Properties");
+            ImGui::Text(" diffuse_texture  : %i", material.glsl_material.diffuse_texture);
+
+            ImGui::PushID(n++);
+            ImGui::ColorEdit4(" GLSL Color", (float*)&material.glsl_material.color, ImGuiColorEditFlags_DisplayRGB);
+            ImGui::PopID();
+
+        }
+    }
+
+    if (ImGui::CollapsingHeader("[TEST] Ray - Plane Intersection")){
+        plane& p = projection_plane;
+
+        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+
+        ray r = main_scene->camera->GetPixelRay(px);
+        ImGui::BeginDisabled();
+        ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Origin", (float*)&r.origin, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Direction", (float*)&r.direction, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        ImGui::Separator();
+
+
+        ImGui::DragFloat3("Plane Origin", (float*)&p.pos, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Plane Normal", (float*)&p.normal, 0.01f, -1.0f, 1.0f);
+
+        vec3 at = {};
+        bool intersect = r.intersects_plane(p,at);
+
+        if (intersect){
+            ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
+            //Move the object there?
+            if (selected_object){
+                selected_object->SetPosition(at);
+            }
+        }else{
+            ImGui::Text("No intersection");
+        }
+    }
+
+    RenderSelectedObjectUI(selected_object, ui_camid);
+
+
+    ImGui::End();
+}
+
+//Renders a set of collapsing headers for supplied object
+void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
+    if (!object){
+        ImGui::BeginDisabled();
+        ImGui::CollapsingHeader("Selected Object");
+        ImGui::EndDisabled();
+        return;
+    }
+
+    if (ImGui::CollapsingHeader("Selected Object")){
+        if (ImGui::CollapsingHeader("Generic Properties")){
+            ImGui::Text("Name  : %s",object->name.c_str());
+            bool obj_visible = object->IsVisible();
+            if (ImGui::Checkbox("Visible",&obj_visible)){
+                object->SetVisibility(obj_visible);
+            }
+            if (ImGui::Button("Duplicate(Linked)")){
+                Object* duplicated = new Object(object);
+                main_scene->AddObject(duplicated);
+            }
+        }
+
         Camera* cam = dynamic_cast<Camera*>(object);
         if (cam){
-            ui_camid++;
-            UpdateUICameraControls(cam,ui_camid);
+            UpdateUICameraControls(cam,++ui_camera_id);
         }
 
         if (ImGui::CollapsingHeader("Node Hierarchy")){
@@ -515,7 +664,7 @@ void Application::RenderGenericObjectUI(){
             }else{
                 ImGui::Text("Parent             : Has No Parent");
             }
-                ImGui::Text("Children           : %i",object->children.size());
+            ImGui::Text("Children           : %i",object->children.size());
         }
 
         Light* light = dynamic_cast<Light*>(object);
@@ -717,7 +866,12 @@ void Application::RenderGenericObjectUI(){
                     physics->WakeUp();
                 }
                 int num_colliders = physics->GetNumColliders();
-                ImGui::Text("Number of colliders : %lu",num_colliders);
+                float mass = physics->GetMass();
+                ImGui::Text("Number of colliders : %i",num_colliders);
+                ImGui::Text("Mass                : %.3f kg",mass);
+                ImGui::Text("Collision Cat Bits  : %08X",object->collision_category_bits);
+                ImGui::Text("Collide Wtih  Bits  : %08X",object->collide_with_bits);
+
                 vec3 v = physics->GetVelocity();
                 if (v.length() > 0){
                     v.normalize();
@@ -798,99 +952,6 @@ void Application::RenderGenericObjectUI(){
             }
         }
     }
-
-    if (ImGui::CollapsingHeader("Performance")){
-        bool sync = renderer->GetVSync();
-        if (ImGui::Checkbox("V-Sync", &sync)){
-            renderer->SetVSync(sync);
-        }
-        ImGui::Text("Frame Rate    : %.2f FPS (%.2f ms)", 1000000.0f / renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f );
-        ImGui::Text("Physics Loop  : %.2f TPS (%.2f ms)", 1000000.0f/tmr_physics_loop->avg,tmr_physics_loop->avg/1000.0f );
-        ImGui::Text("Physics Sleep : %.1f us (%.2f ms)", tmr_physics_sleep->avg,tmr_physics_sleep->avg/1000.0f );
-        ImGui::Text("Physics Time  : %.1f us (%.2f ms)", tmr_physics->avg,tmr_physics->avg/1000.0f );
-    }
-
-    if (ImGui::CollapsingHeader("Renderer")){
-        ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
-        ImGui::Checkbox("##1", &renderer->f_normal_mapping);
-        ImGui::Text(    "Render Skybox  :");ImGui::SameLine();
-        ImGui::Checkbox("##2", &renderer->f_render_skybox);
-
-        if (main_scene && main_scene->physics_world){
-            bool physics_debug = main_scene->physics_world->IsDebugRenderingEnabled();
-            if (ImGui::Checkbox("Debug Render Colliders", &physics_debug)){
-                main_scene->physics_world->SetDebugRendering(physics_debug);
-            }
-        }
-
-        int num_samples = renderer->aa_samples;
-        if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
-            renderer->SetNumAASamples(num_samples);
-        }
-
-        if (ImGui::SliderFloat("Alpha Clip     : ",&renderer->alpha_clip,0.0f,1.0f)){
-
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Window")){
-        ImGui::Text(    "Current Size   : %i x %i", main_window->width,main_window->height);
-    }
-
-    if (ImGui::CollapsingHeader("Assets")){
-        for (Asset* asset: assetmanager->assets){
-            ImGui::Text("Asset  : %s", asset->name.c_str());
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Materials")){
-        ImGui::Text(    "Num Materials  : %i", renderer->GetNumMaterials());
-        int n =0;
-        for (Material& material: renderer->materials){
-            ImGui::Text("Material  : %s", material.name.c_str());
-            ImGui::Text("GLSL Material Properties");
-            ImGui::Text(" diffuse_texture  : %i", material.glsl_material.diffuse_texture);
-
-            ImGui::PushID(n++);
-            ImGui::ColorEdit4(" GLSL Color", (float*)&material.glsl_material.color, ImGuiColorEditFlags_DisplayRGB);
-            ImGui::PopID();
-
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Ray - Plane Intersection")){
-        plane& p = projection_plane;
-
-        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
-
-        ray r = main_scene->camera->GetPixelRay(px);
-        ImGui::BeginDisabled();
-        ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Ray Origin", (float*)&r.origin, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Ray Direction", (float*)&r.direction, 0.01f, -1.0f, 1.0f);
-        ImGui::EndDisabled();
-        ImGui::Separator();
-
-
-        ImGui::DragFloat3("Plane Origin", (float*)&p.pos, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Plane Normal", (float*)&p.normal, 0.01f, -1.0f, 1.0f);
-
-        vec3 at = {};
-        bool intersect = r.intersects_plane(p,at);
-
-        if (intersect){
-            ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
-            //Move the object there?
-            if (selected_object){
-                selected_object->SetPosition(at);
-            }
-        }else{
-            ImGui::Text("No intersection");
-        }
-        //
-    }
-
-    ImGui::End();
 }
 
 //For showing how RRandom would work.
@@ -1149,10 +1210,14 @@ void Application::GetAllAssetsFromGLTF(){
         debug->Err("No assetmanager to load assets into.\n");
     }
 
+    //Materials loaded belonging to a single node
+    std::vector<Material>loaded_materials;
+
     debug->Info("GetAllAssetsFromGLTF: Loading %i nodes\n",gltfloader.node_names.size());
     //Iterate through all nodes that have a mesh, check if we have no asset with that name and load.
     for (std::string& nodename:gltfloader.node_names){
         debug->Info("GetAllAssetsFromGLTF: Node %s\n",nodename.c_str());
+        loaded_materials.clear();
 
         bool already_loaded = false;
 
@@ -1168,7 +1233,6 @@ void Application::GetAllAssetsFromGLTF(){
             continue;
         }
 
-        std::vector<Material>loaded_materials;
         Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
         if (gltfmesh){
             Object* gltf_object = new Object();
@@ -1179,7 +1243,9 @@ void Application::GetAllAssetsFromGLTF(){
         }
     }
 
-    //TODO: We also need to make sure all materials are loaded
+    debug->Info("Loaded %i different materials from GLTF file\n",loaded_materials.size());
+
+    //TODO: We also need to make sure all materials are loaded and stored somewhere usefull
 }
 
 //This loads it, makes an asset from it... and sets up all the things.

@@ -18,7 +18,7 @@ Asset* AssetManager::AddNewAsset(const char* asset_name, Object* object){
     return asset;
 }
 
-Asset* AssetManager::AddNewAsset(const char* asset_name, const char* file_name){
+Asset* AssetManager::AddNewAssetFromOBJFile(const char* asset_name, const char* file_name){
     Asset* asset = new Asset();
     asset->name = asset_name;
     Object* object = new Object();
