@@ -121,8 +121,9 @@ void Scene::DrawFrame(){
             debugobject->SetVisibility(false);
         }
     }
-
+    renderer->physics_mutex.lock();
     renderer->DrawFrame(camera, shader,inputcontroller);
+    renderer->physics_mutex.unlock();
 };
 
 void Scene::AddObject(Object* object){

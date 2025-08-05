@@ -89,6 +89,7 @@ void ApplicationDozer::Init(){
     soundsystem->AppendFile("dozer/data/engine_revup.wav","engine_revup");
     soundsystem->AppendFile("dozer/data/engine_revup_long.wav","engine_revup_long");
     soundsystem->AppendFile("dozer/data/engine_stop.wav","engine_stop");
+    soundsystem->AppendFile("dozer/data/engine_crank.wav","engine_crank");
 
     main_scene = CreateMainScene();
     main_scene->UpdatePhysics();
@@ -223,7 +224,11 @@ void ApplicationDozer::RunLogic(){
     }
 
     if (input->WasKeyReleased(INPUT_E)){
-        dozer->StartEngine();
+        if (dozer->IsEngineRunning()){
+            dozer->StartStopEngine(false);
+        }else{
+            dozer->StartStopEngine(true);
+        }
     }
 
     if (input->WasKeyReleased(INPUT_T)){
@@ -231,23 +236,40 @@ void ApplicationDozer::RunLogic(){
     }
 
     //Check that all objects havent fallen to their doom
+    bool something_was_destroyed = false;
     for (Object* object:renderer->objects){
+        if (object == camera){
+            continue;
+        }
         vec3 pos = object->GetPosition();
-        if (pos.y < -50){
+        if (pos.y < -10){
             //This one is lost to the void... for sure.
-            if (object != dozer){
-                object->Destroy();
-            }else{
+            if ((object == dozer) || (object == dozer->armobject)){
                 ResetDozer();
+            }else{
+
             }
         }
     }
+
+    //Can't just call this... the renderer might be rendering.
+    //TODO: Think harder. Sync more things. Mutex more stuff...?
+    renderer->DeleteDestroyedObjects();
 }
 
 void ApplicationDozer::ResetDozer(){
+    //This joint thing really likes to break
+    // Destroy the joint
+    if (dozer->joint){
+        //dozer->GetPhysics()->world->rp_world->destroyJoint(dozer->joint);
+        //dozer->joint = NULL;
+    }
+
+
     dozer->SetPosition(vec3(0,2,0));
     dozer->SetRotation(quat().identity());
     dozer->SetVelocity(vec3());
+    dozer->armobject->SetPosition(vec3(0,1,0));
 }
 
 void ApplicationDozer::SpawnAssetAt(const std::string& name, const vec3& wpos){
@@ -255,6 +277,7 @@ void ApplicationDozer::SpawnAssetAt(const std::string& name, const vec3& wpos){
     if (!asset){
         return;
     }
+    asset->name = name;
     asset->SetPosition(wpos);
     asset->AddPhysics(main_scene->physics_world);
     Physics* physics = asset->GetPhysics();

@@ -547,10 +547,15 @@ void Application::RenderApplicationUI(){
     if (ImGui::CollapsingHeader("Renderer")){
         ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
         ImGui::Checkbox("##1", &renderer->f_normal_mapping);
+        ImGui::Text(    "SSAO           :");ImGui::SameLine();
+        ImGui::Checkbox("##2", &renderer->f_ssao);
         ImGui::Text(    "Render Skybox  :");ImGui::SameLine();
-        ImGui::Checkbox("##2", &renderer->f_render_skybox);
+        ImGui::Checkbox("##3", &renderer->f_render_skybox);
 
-
+        int view_buffer = renderer->view_buffer;
+        if (ImGui::SliderInt("View Buffer      : ",&view_buffer,0,8)){
+            renderer->SelectViewBuffer(view_buffer);
+        }
 
         int num_samples = renderer->aa_samples;
         if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
@@ -626,46 +631,49 @@ void Application::RenderApplicationUI(){
 
 //Renders a set of collapsing headers for supplied object
 void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
-    if (!object){
-        ImGui::BeginDisabled();
-        ImGui::CollapsingHeader("Selected Object");
-        ImGui::EndDisabled();
+
+    ImGui::Separator();
+    if (object == NULL){
+        ImGui::Text("No Object is Selected");
         return;
     }
+    ImGui::Text("Selected Object");
+    ImGui::Separator();
+    ImGui::Text("Object Name     : %s",object->name.c_str());
+    ImGui::Text("Object ID       : %lu",object->GetID());
 
-    if (ImGui::CollapsingHeader("Selected Object")){
-        if (ImGui::CollapsingHeader("Generic Properties")){
-            ImGui::Text("Name  : %s",object->name.c_str());
-            bool obj_visible = object->IsVisible();
-            if (ImGui::Checkbox("Visible",&obj_visible)){
-                object->SetVisibility(obj_visible);
+    if (object->parent){
+    ImGui::Text("Parent          : ID: %lu Name: %s",object->parent->GetID(),object->parent->name.c_str());
+        if (ImGui::Button("Select Root Node")){
+            Object* o = object->parent;
+            while(o->parent){
+                o = o->parent;
             }
-            if (ImGui::Button("Duplicate(Linked)")){
-                Object* duplicated = new Object(object);
-                main_scene->AddObject(duplicated);
-            }
+            selected_object = o;
         }
+    }else{
+        ImGui::Text("Parent          : Has No Parent");
+    }
+    ImGui::Text("Children        : %i",object->children.size());
+
+    bool obj_visible = object->IsVisible();
+    if (ImGui::Checkbox("Visible",&obj_visible)){
+        object->SetVisibility(obj_visible);
+    }
+
+    if (ImGui::Button("Duplicate(Linked)")){
+        Object* duplicated = new Object(object);
+        main_scene->AddObject(duplicated);
+    }
+
 
         Camera* cam = dynamic_cast<Camera*>(object);
         if (cam){
             UpdateUICameraControls(cam,++ui_camera_id);
         }
 
-        if (ImGui::CollapsingHeader("Node Hierarchy")){
-            if (object->parent){
-                ImGui::Text("Parent             : %s",object->parent->name.c_str());
-                if (ImGui::Button("Select Root Node")){
-                    Object* o = object->parent;
-                    while(o->parent){
-                        o = o->parent;
-                    }
-                    selected_object = o;
-                }
-            }else{
-                ImGui::Text("Parent             : Has No Parent");
-            }
-            ImGui::Text("Children           : %i",object->children.size());
-        }
+
+
 
         Light* light = dynamic_cast<Light*>(object);
         if (light && ImGui::CollapsingHeader("Light Properties")){
@@ -951,7 +959,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 ImGui::Text("Current Animation State : %i\n",object->animation_state);
             }
         }
-    }
+
 }
 
 //For showing how RRandom would work.
@@ -1177,10 +1185,6 @@ void Application::CheckObjectSelection(){
     }
 
     for (Object* object:renderer->renderable_objects){
-        if (object->IsDestroyed()){
-            //TODO: Remove it... here?
-        }
-
         if (object->GetID() == hovered_objid){
             hovered_object = object;
         }

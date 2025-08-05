@@ -1,6 +1,9 @@
 #include "Renderer.h"
 
 #include "Debug.h"
+
+#define DEFAULT_FRAMEBUFFER_ID  0
+
 static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
 
 Renderer::Renderer(int w, int h){
@@ -25,12 +28,26 @@ bool Renderer::Init(int _pipeline){
     pipeline = _pipeline;
     //Get some info
     int r = 0;
+    int x,y,z;
 
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &r);
     debug->Info("GL_MAX_TEXTURE_SIZE = %i\n",r);
 
     glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &r);
     debug->Info("GL_MAX_TEXTURE_IMAGE_UNITS = %i\n",r);
+
+    glGetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &r);
+    debug->Info("GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS = %i\n",r);
+
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT,0, &x);
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT,1, &y);
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT,2, &z);
+    debug->Info("GL_MAX_COMPUTE_WORK_GROUP_COUNT = x=%i y=%i z=%i\n",x,y,z);
+
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE,0, &x);
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE,1, &y);
+    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE,2, &z);
+    debug->Info("GL_MAX_COMPUTE_WORK_GROUP_SIZE = x=%i y=%i z=%i\n",x,y,z);
 
     if (!SetNumAASamples(16)){
         return false;
@@ -529,12 +546,12 @@ void Renderer::SSAOPass(Camera* camera){
 
     ssao_compute_shader->Setmat4("mat_worldcam",camera->mat_cam);
 
-    glDispatchCompute(width, height, 1);
+    glDispatchCompute(width/32, height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
     //Set this as output buffer
-    glBindFramebuffer(GL_FRAMEBUFFER, deferred_fbo_id);
-    glReadBuffer(GL_COLOR_ATTACHMENT2);
+    //glBindFramebuffer(GL_FRAMEBUFFER, deferred_fbo_id);
+    //glReadBuffer(GL_COLOR_ATTACHMENT2);
 }
 
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
@@ -655,10 +672,24 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         //glReadPixels(x,  window->height - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixelData);
     }
 
+    if (f_ssao){
+        SSAOPass(camera);
+    }
 
+    //Look at one of the intermediate buffers
+    if (view_buffer == 1){
+        //Object position
+        BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT0);
+    }else if (view_buffer == 2){
+        //Normals
+        BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT1);
+    }else if (view_buffer == 3){
+        //SSAO output
+        BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT2);
+    }else{
 
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
-    //SSAOPass(camera);
 
     if (tmr_frame){
         tmr_frame->Stop();
@@ -846,6 +877,22 @@ void Renderer::ResolveAA(){
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+}
+
+//Copy a renderbuffer target to main buffer
+void Renderer::BlitBufferTarget(GLuint framebuffer_id, GLenum attachment){
+    //Blit from multisampled buffer to main backbuffer = GL_COLOR_ATTACHMENT0
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer_id);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve_fbo_id);
+    glReadBuffer(attachment);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    //glBlitNamedFramebuffer exists, but you still have to bint the correct attachments...?
+    //There is also glNamedFramebufferDrawBuffer
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+}
+
+void Renderer::SelectViewBuffer(int view_id){
+    view_buffer = view_id;
 }
 
 //Returns true if the framebuffer checks OK.
@@ -1062,12 +1109,6 @@ Texture* Renderer::LoadTexture(const char* filename, int target, int depth){
     return texture;
 }
 
-//A Test for only rendering a texture to screen which we can upload first.
-void Renderer::RenderResolveTextureOnly(){
-    glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
-    //glFinish();
-}
-
 //Should be called when physics is done, before rendering.
 //It deletes them from the list, and actually deletes them.
 //This is now responsible for destroying objects... until something better comes to mind.
@@ -1079,7 +1120,7 @@ void Renderer::DeleteDestroyedObjects(){
             //We should destroy it.
             it = objects.erase(it);
             //Destroy object
-            debug->Info("Object %lu is about to be destroyed\n",object->GetID());
+            //debug->Info("Object %lu is about to be destroyed\n",object->GetID());
             delete object;
         }else{
             object->DeleteDestroyedChildren();

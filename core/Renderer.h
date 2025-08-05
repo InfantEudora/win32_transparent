@@ -41,9 +41,11 @@ typedef struct{
 //A callback for debugging
 void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, char const* message, void const* user_param);
 
-#define PIPELINE_NONE       0
-#define PIPELINE_MSAA       1
-#define PIPELINE_DEFERRED   2
+typedef enum RenderPipeline{
+    PIPELINE_NONE      = 0,
+    PIPELINE_MSAA      = 1,
+    PIPELINE_DEFERRED  = 2
+}RenderPipelineType;
 
 /*
     A class responsible of managing the OpenGL state and pipeline.
@@ -92,7 +94,8 @@ class Renderer{
 
     bool InitSSBO();
     void ResolveAA();
-    void RenderResolveTextureOnly();
+    void BlitBufferTarget(GLuint framebuffer_id, GLenum attachment);
+    void SelectViewBuffer(int view_id);
 
     void SetVSync(bool enable);
     bool GetVSync();
@@ -150,11 +153,13 @@ class Renderer{
 
     //Settings
     int aa_samples = 1;
-    float alpha_clip = 1.0f;         // At what value pixels with alpha will get discarded in fragment shader
+    float alpha_clip = 1.0f;          // At what value pixels with alpha will get discarded in fragment shader
     int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering
-    bool f_backface_culling = true;   // Enable/disable normal mapping
+    bool f_backface_culling = true;   //
+    bool f_ssao = false;              //
+    int view_buffer = 0;              // Output different intermediate buffers to view
 
 
     //Counters/Timers

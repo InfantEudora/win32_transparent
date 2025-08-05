@@ -40,7 +40,8 @@ class DozerCharacter : public Object{
     Object* exhaust = NULL;
     ParticleEmitter* smoke_emitter = NULL;
 
-    void StartEngine();
+    void StartStopEngine(bool start);
+    bool IsEngineRunning();
 
     void MoveForward();
     void MoveBackward();

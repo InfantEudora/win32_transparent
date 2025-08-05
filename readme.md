@@ -161,6 +161,8 @@ Version 0.9.0 seems to work a lot better than 0.10.2. This is asserting on basic
 
 Apparently, friction is like not done properly in any physics engine just by the way they solve things.
 
+It has so many quirks... soo many!
+
 ### More OpenGL 4.5 Madness
 Changed glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_STREAM_DRAW); from GL_DYNAMIC_DRAW.
 
@@ -254,3 +256,7 @@ We're using GDB in MSYS2. Start like:
 `catch throw` to catch those pesky throws.
 
 Type start
+
+### Videos and Docs
+Optimisation
+https://www.youtube.com/watch?v=hf27qsQPRLQ

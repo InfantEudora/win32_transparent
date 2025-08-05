@@ -7,6 +7,7 @@ static Debugger* debug = new Debugger("DozerCharacter",DEBUG_INFO);
 
 DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene,RRandom* rrand):Object(){
     //Build the object.
+    name = "Dozer";
     body = assetmanager->GetObjectFromAsset("Body");
     body->name = "Body";
     AttachChild(body);
@@ -73,6 +74,8 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     jointInfo.maxAngleLimit = +0.10;
 
     joint = dynamic_cast<rp3d::HingeJoint*>(physicsworld->rp_world->createJoint(jointInfo));
+    //physicsworld->rp_world->destroyJoint(joint);
+    //joint = NULL;
 
     exhaust = assetmanager->GetObjectFromAsset("Exhaust");
     AttachChild(exhaust);
@@ -96,7 +99,6 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
 
     SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
     SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS|COLLISION_CATEGORY_FLOOR);
-
 }
 
 DozerCharacter::~DozerCharacter(){
@@ -121,7 +123,7 @@ void DozerCharacter::MoveForward(){
 
         //vec3 fwd = GetForward();
         //debug->Info("Forward : %.3f, %.3f, %.3f \n",fwd.x,fwd.y,fwd.z);
-        float motorspeed = joint->getMotorSpeed();
+        //float motorspeed = joint->getMotorSpeed();
         //debug->Info("Motor Speed : %.3f\n",motorspeed);
 
         vec3 vel = GetVelocity();
@@ -234,7 +236,10 @@ void DozerCharacter::ArmUp(){
         return;
     }
 
-    float joint_angle = joint->getAngle();
+    float joint_angle = 0;
+    if (joint){
+        joint_angle = joint->getAngle();
+    }
 
 
     //float delta = -0.05f;
@@ -258,7 +263,7 @@ void DozerCharacter::ArmUp(){
 
 
 
-    debug->Info("Joint Angle: %.2f. Arm Torque: %.1f Nm\n",joint->getAngle(),arm_torque);
+    debug->Info("Joint Angle: %.2f. Arm Torque: %.1f Nm\n",joint_angle,arm_torque);
 }
 
 void DozerCharacter::ArmDown(){
@@ -268,23 +273,36 @@ void DozerCharacter::ArmDown(){
     //float delta = 0.05f;
     //quat q = quat(vec3(1,0,0),delta);
     //armobject->RotateBy(q);
-    joint->enableMotor(false);
+    //joint->enableMotor(false);
     armobject->GetPhysics()->AddLocalTorque(vec3(20,0,0));
 
 }
 
-void DozerCharacter::StartEngine(){
+bool DozerCharacter::IsEngineRunning(){
+    if (engine_state == ENGINE_IDLE){
+        return true;
+    }
+    if (engine_state == ENGINE_RUNNING){
+        return true;
+    }
+    return false;
+}
+
+void DozerCharacter::StartStopEngine(bool start){
     if (!soundsystem){
         return;
     }
 
-    if (engine_state == ENGINE_STOPPED){
+    if (start && (engine_state == ENGINE_STOPPED)){
         soundsystem->Play("engine_start");
         engine_state = ENGINE_STARTING;
         smoke_emitter->EmitParticles(5);
-    }else if (engine_state == ENGINE_IDLE){
+    }else if (!start && (engine_state == ENGINE_IDLE)){
         soundsystem->Play("engine_stop");
         soundsystem->Pause("engine_idle");
         engine_state = ENGINE_STALLING;
+    }else{
+        soundsystem->Play("engine_crank");
     }
+    //Some sound for starting while running
 }

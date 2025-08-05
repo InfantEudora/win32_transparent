@@ -26,9 +26,12 @@ Object::Object(Object* object):Object(){
     if (p){
         AddPhysics(p->world);
         rp3d::CollisionShape* shape =  p->body->collider->getCollisionShape();
-        reactphysics3d::Transform t = reactphysics3d::Transform::identity();
+        reactphysics3d::Transform t = p->body->collider->getLocalToBodyTransform();
         physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
+        physics->SetGravityEnabled(p->IsGravityEnabled());
+        physics->SetStatic(p->IsStatic());
+        SetMass(object->GetMass());
     }
     SetCollisionCategoryBits(object->collision_category_bits);
     SetCollideWithMaskBits(object->collide_with_bits);
@@ -44,13 +47,16 @@ Object::Object(Object* object):Object(){
 }
 
 Object::~Object(){
-    debug->Info("Destroyed Object %p\n",this);
+    //debug->Info("Destroyed Object %p\n",this);
     DeleteMesh();
+    if (physics){
+        physics->world->rp_world->destroyRigidBody(physics->body->rigidbody);
+    }
 }
 
 void Object::DeleteMesh(){
     if (mesh){
-        debug->Info("DeleteMesh: num_references=%i\n",mesh->num_references);
+        //debug->Info("DeleteMesh: num_references=%i\n",mesh->num_references);
         mesh->num_references--;
         if (mesh->num_references == 0){
             delete mesh;
