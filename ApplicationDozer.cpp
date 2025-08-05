@@ -330,8 +330,16 @@ Scene* ApplicationDozer::CreateMainScene(){
     sun->SetPosition(vec3(-10,10,10));
     sun->color = vec3(1,0.85,0.7);
     sun->brightness = 8.5;
+    sun->viewport.zoom = 10;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
+
+    PointLight* lamp = new PointLight();
+    lamp->name = "Blue Point Light";
+    lamp->SetPosition(vec3(0,5,0));
+    lamp->color = vec3(0,0.2,1.0);
+    lamp->brightness = 10;
+    scene->AddObject(lamp);
 
     scene->camera = new Camera();
     scene->camera->name = "Main Camera";

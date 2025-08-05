@@ -89,6 +89,8 @@ class Renderer{
     bool RebuildDeferredFBO();
 
     bool RebuildShadowFBO(int shadow_width, int shadow_height);
+    void RenderSingleDepthPass(Camera* camera, Shader* shader);
+    void RenderDepthPasses(Shader* shader);
 
     bool InitSSBO();
     void ResolveAA();
@@ -161,6 +163,7 @@ class Renderer{
     bool f_render_skybox = true;      // Enable/disable skybox rendering
     bool f_backface_culling = true;   //
     bool f_ssao = false;              //
+    bool f_msaa = true;               //
     int view_buffer = 0;              // Output different intermediate buffers to view
     int shadow_texture_size = 1024;   // Size for a single shadow caster
 

@@ -30,6 +30,10 @@ bool Renderer::Init(int _pipeline){
     int r = 0;
     int x,y,z;
 
+
+    glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &r);
+    debug->Info("GL_MAX_VERTEX_ATTRIBS = %i\n",r);
+
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &r);
     debug->Info("GL_MAX_TEXTURE_SIZE = %i\n",r);
 
@@ -425,8 +429,8 @@ void Renderer::DeferredPass(Camera* camera){
     glClearNamedFramebufferiv(deferred_fbo_id,GL_COLOR,3,(GLint*)&int_clear);
 
 
-    UploadMaterials();
-    UploadLights();
+    //UploadMaterials();
+    //UploadLights();
     RenderUniqueMeshes(MESH_MODE_NORMAL);
 
     if (deferred_shader_skinned && camera){
@@ -454,6 +458,57 @@ void Renderer::SSAOPass(Camera* camera){
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
+void Renderer::RenderSingleDepthPass(Camera* camera,Shader* shader){
+    if (!camera){
+        debug->Err("Rendering Depth Pass with no camera\n");
+        return;
+    }
+    //debug->Info("Rendering Depth Pass for Camera %s ID:%lu\n",camera->name.c_str(),camera->GetID());
+
+    //TODO: We need to put this thing in its seperate tile in the texture.
+    //For now, we use the entire texture
+
+    // Setup view port.
+    glViewport(0, 0, camera->viewport.width, camera->viewport.height);
+    //It seems happy renering with no color buffer attached
+
+    camera->CalculateLookatMatrix();
+    shader->Setmat4("mat_worldcam",camera->mat_cam);
+    shader->Setmat4("mat_shadow",camera->mat_cam);
+
+    RenderUniqueMeshes(MESH_MODE_NORMAL);
+    //TODO: Skinned meshes
+}
+
+void Renderer::RenderDepthPasses(Shader* shader){
+    //We need to know for which light source we need to do the depth pass
+    //Each shadow caster is a new pass
+    //For now we're use the one sun.
+
+    float depth = 1.0;
+    glClearNamedFramebufferfv(shadow_fbo_id,GL_DEPTH,0,&depth);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo_id);
+
+    //We are only interested in back faces, so we cull front faces
+    glFrontFace(GL_CW);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+
+
+
+    for (Light* l:visible_lights){
+        light_t light;
+        DirectionalLight* directional_light = dynamic_cast<DirectionalLight*>(l);
+        if (directional_light){
+            RenderSingleDepthPass(dynamic_cast<Camera*>(directional_light),shader);
+            return;
+        }
+    }
+
+    //Reset
+    glCullFace(GL_BACK);
+}
+
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
     if (!camera){
         debug->Fatal("DrawFrame called without camera.\n");
@@ -465,6 +520,24 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         tmr_frame->Restart();
     }
 
+    //TODO: Where/When to render Skybox. Re-Test
+    //DrawSkyBox(camera);
+
+    PrepareObjects();
+
+    //Use the default shader
+    shader->Use();
+    vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
+    shader->Setvec3("eye_position",p);
+    shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+    shader->Setfloat("alpha_clip",alpha_clip);
+    shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
+
+
+    RenderDepthPasses(shader);
+    glBindTextureUnit(0, shadow_tex_id);
+    shader->Setmat4("mat_worldcam",camera->mat_cam);
+
     //Select the mutisampled framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
@@ -475,22 +548,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
 
-    //Skybox
-    DrawSkyBox(camera);
-
-    if (shader && camera){
-        shader->Use();
-        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
-        shader->Setvec3("eye_position",p);
-        shader->Setmat4("mat_worldcam",camera->mat_cam);
-        shader->Setint("f_normal_mapping",(int)f_normal_mapping);
-        shader->Setfloat("alpha_clip",alpha_clip);
-    }
-
-    PrepareObjects();
     UploadMaterials();
     UploadLights();
 
+    shader->Setint("f_materialindex_is_color",0);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
     shader->Setint("f_materialindex_is_color",1);
     RenderUniqueMeshes(MESH_MODE_LINE);
@@ -622,6 +683,7 @@ bool Renderer::SetNumAASamples(int desired){
 }
 
 bool Renderer::RebuildShadowFBO(int shadow_width, int shadow_height){
+    debug->Info("(Re)Building buffers for Shadow mapping: %i x %i\n",shadow_width,shadow_height);
     if (shadow_fbo_id == -1){
         glCreateFramebuffers(1, &shadow_fbo_id);
     }
@@ -632,7 +694,7 @@ bool Renderer::RebuildShadowFBO(int shadow_width, int shadow_height){
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &shadow_tex_id);
 
-    glTextureStorage2D(shadow_tex_id, 1, GL_DEPTH_COMPONENT32F, width, height);
+    glTextureStorage2D(shadow_tex_id, 1, GL_DEPTH_COMPONENT32F, shadow_width, shadow_height);
     glTextureParameteri(shadow_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(shadow_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glNamedFramebufferTexture(shadow_fbo_id, GL_DEPTH_ATTACHMENT, shadow_tex_id, 0);
@@ -640,7 +702,7 @@ bool Renderer::RebuildShadowFBO(int shadow_width, int shadow_height){
 }
 
 bool Renderer::RebuildDeferredFBO(){
-    debug->Info("Re-Creating buffers for deferred stage\n");
+    debug->Info("(Re)Building buffers for deferred stage\n");
     if (deferred_fbo_id == -1){
         glCreateFramebuffers(1, &deferred_fbo_id);
     }
@@ -717,6 +779,7 @@ bool Renderer::RebuildDeferredFBO(){
 //Create all the frame and renderbuffers for mulisampling
 // A multisampled color and depth buffer, and a resolve buffer.
 bool Renderer::RebuildMSAAFBO(){
+    debug->Info("(Re)Building buffers for MSAA\n");
     if (msaa_fbo_id == -1){
         glCreateFramebuffers(1, &msaa_fbo_id);
     }
@@ -749,8 +812,6 @@ bool Renderer::RebuildMSAAFBO(){
         glDeleteTextures(1, &resolve_tex_id);
     }
     glCreateTextures(GL_TEXTURE_2D, 1, &resolve_tex_id);
-
-    debug->Info("Resolve Texture ID: %i\n",resolve_tex_id);
     glTextureStorage2D(resolve_tex_id, 1, GL_RGBA16F, width, height);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(resolve_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -904,12 +965,12 @@ int Renderer::GetNumMaterials(){
 //This for now just uploads all the known materials to a SSBO... each frame.
 //Might only need to do this once.
 void Renderer::UploadMaterials(){
-    last_texture_unit = 0;
+    last_texture_unit = 4;
 
     glsl_materials.clear();
     for (Material& mat:materials){
         if (mat.diff_texture){;
-            //debug->Trace("Material has diffuse Texture: Binding to Unit %i\n",texture_unit);
+            //debug->Info("Material has diffuse Texture: Binding to Unit %i\n",last_texture_unit);
             mat.glsl_material.diffuse_texture = last_texture_unit;
             glBindTextureUnit(last_texture_unit, mat.diff_texture->texture_id);
             last_texture_unit++;

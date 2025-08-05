@@ -64,11 +64,22 @@ layout (location = 3) out mat3 TBN;			//Normal mapping matrix
 layout (location = 6) flat out int vmatindex;	//Material index
 layout (location = 7) flat out int vobjid;	//gl_InstanceID
 
+//We reserve n locations for shadow space
+layout (location = 8) out vec4 vshadow;		//Vertex position in shadow coordinates for first shadowcaster
+
 //Settings
 uniform int f_normal_mapping = 1;
 
 //Matrix for world camera.
 layout(location = 0) uniform mat4 mat_worldcam = mat4(
+	1		,0		,0		,0,
+	0		,1		,0		,0,
+	0		,0		,1		,0,
+	0		,0		,0		,1
+);
+
+//Matrix for single shadow caster
+layout(location = 1) uniform mat4 mat_shadow = mat4(
 	1		,0		,0		,0,
 	0		,1		,0		,0,
 	0		,0		,1		,0,
@@ -130,6 +141,8 @@ void main(){
 
 	vnormal = (mat_rotate * normal);
 	vnormal = normalize(vnormal);
+
+	vshadow = mat_shadow * world_position; //Vertex postition in shadow coordinates
 
 	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
 	vmatindex = matindex_out;

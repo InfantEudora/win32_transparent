@@ -13,7 +13,8 @@ layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
 layout (location = 6)  flat in int vmatindex;   //Material index
 layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
-layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
+layout (binding = 0) uniform sampler2D shadow_texture;
+layout (binding = 1) uniform sampler2D material_texture[15];   //Input texture
 
 struct Material{
 	vec4 color;

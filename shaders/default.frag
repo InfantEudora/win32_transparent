@@ -23,8 +23,12 @@ layout (location = 3)  in mat3 TBN;			    //Normal mapping matrix
 layout (location = 6)  flat in int vmatindex;   //Material index
 layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
+layout (location = 8) in vec4 vshadow;    //This vertex' position as seen from sun light source
+
 //It's set with glBindTextureUnit
-layout (binding = 0) uniform sampler2D material_texture[16];   //Input texture
+
+layout (binding = 0) uniform sampler2D material_texture[24];   //Input texture
+//layout (binding = 1) uniform sampler2D shadow_texture;
 
 struct Material{
 	vec4 color;
@@ -126,7 +130,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
         //albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
         //albedo = texture(m.handle_normal,vuv).xyz;// * m.color.xyz;
         //Default
-        albedo = texture(material_texture[m.diffuse_texture], vuv).xyz;
+        albedo = texture(material_texture[m.diffuse_texture], vuv).rgb;
     }else{
         albedo = m.color.xyz;
     }
@@ -183,7 +187,6 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
 }
 
 float GetTransparency(){
-
     if (m.diffuse_texture >= 0){
         //Bindless
         //return texture(m.handle_diffuse,vuv).w;
@@ -192,6 +195,48 @@ float GetTransparency(){
     }
     return m.color.w;
 }
+
+
+//Compute shadow from sun shadowmap
+float CalcShadow(vec4 vposinshadow){
+    //Linearise
+    vec3 pos_proj = vposinshadow.xyz / vposinshadow.w;
+
+    //Map to UV coordinates
+    vec2 uvshadow;
+	uvshadow.x 		= (0.5 * pos_proj.x) + (0.5);
+    uvshadow.y 		= (0.5 * pos_proj.y) + (0.5);
+
+    //Lookup this fragment's associated depth value from the lights point of view.
+    float closest_depth = texture(material_texture[0], uvshadow).r;
+    float current_depth = (0.5 * pos_proj.z) + (0.5);
+    float bias = 0.0025;
+
+    float shadow = (current_depth - bias) > closest_depth  ? 0.1 : 1.0;
+    return shadow;
+/*
+
+    vec3 sunpos = sun.position;
+    //vec3 lightvec = sunpos - vposition; //This would be the light vector if the sun had a perspective camera.
+    vec3 lightvec = sunpos;
+    vec3 nlightvec = normalize(lightvec);
+
+    //float bias = max(0.05 * (1.0 - dot(vnormal, nlightvec)), shadow_bias);
+    float bias = max(shadow_bias * (1.0 - dot(vnormal, nlightvec)), shadow_bias/32.0);
+    //bias = shadow_bias;
+    // check whether current frag pos is in shadow
+    //float shadow = (current_depth - bias) - closest_depth;
+
+    //if (shadow < 0){
+    //    return 1;
+    //}
+    //shadow = clamp(shadow,0,1);
+    float shadow = (current_depth - bias) > closest_depth  ? 0.0 : 1.0;
+    //float shadow =
+    return shadow;
+*/
+}
+
 
 vec4 CalcPBRLighting(){
     vec4 final;
@@ -216,19 +261,28 @@ vec4 CalcPBRLighting(){
                 continue;
             }
             light_value = brightness;
+        }else{
+            float shadow = CalcShadow(vshadow);
+            light_value = shadow;
         }
 
         light = light_value * CalcDirectionalPBRLight(lightdirection,lights[i].color,lights[i].brightness);
 
         total_light += light;
+
+
     }
+
+
+    //total_light *= 0.51f;
+    //total_light += vshadow.xyz;
 
 
     float alpha = 1 - step(GetTransparency(),alpha_clip);
     //if (alpha < alpha_clip){
     //    discard;
     //}
-    final = vec4(total_light,alpha);
+    final = vec4(total_light ,alpha);
 
     return final;
 }
