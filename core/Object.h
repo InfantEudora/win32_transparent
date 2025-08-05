@@ -69,7 +69,8 @@ class Object{
     void SetShapekey(int index, float factor);
 
     //Rendering
-    void MarkForRender();
+    void MarkForRenderBatch();
+    void ClearRenderBatch();
     void UpdateTransformMatrix();
     fmat4& GetLocalTransformScaleMatrix();
     fmat4& GetWorldTransformScaleMatrix();

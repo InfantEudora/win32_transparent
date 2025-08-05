@@ -3,8 +3,6 @@
 #include "Debug.h"
 static Debugger* debug = new Debugger("DozerCharacter",DEBUG_INFO);
 
-
-
 DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene,RRandom* rrand):Object(){
     //Build the object.
     name = "Dozer";

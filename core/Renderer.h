@@ -68,16 +68,13 @@ class Renderer{
     void UpdateState();
     void RebuildUniqueMeshList();
     void ClearBatches();
+    void ClearObjectBatches();
     void FillBactches();
-    void DrawStaticObjects();
-    void DrawSkinnedObjects();
-    void DrawLineObjects();
+    void PrepareObjects();
+
     void DrawSkyBox(Camera* camera);
 
-    void UpdateReadbackBuffer();
     void RenderUniqueMeshes(int normal_or_skinned); //0 renders norma meshes, 1 renders only skinned meshes.
-
-    void RenderDebugLines();
 
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
@@ -89,8 +86,9 @@ class Renderer{
     bool SetNumAASamples(int desired);
     bool Resize(int new_width, int new_height);
     bool RebuildMSAAFBO();
-
     bool RebuildDeferredFBO();
+
+    bool RebuildShadowFBO(int shadow_width, int shadow_height);
 
     bool InitSSBO();
     void ResolveAA();
@@ -119,16 +117,14 @@ class Renderer{
     GLuint msaa_fbo_id = -1; //Main FBO consisting of:
     GLuint color_rbo_id = -1; // Main color
     GLuint depth_rbo_id = -1; // Main depth
-    //GLuint objectid_rbo_id = -1; // Main Object-ID color buffer in INT32
 
     GLuint resolve_fbo_id = -1;  //Resolve frame buffer
     GLuint resolve_tex_id = -1;  //Resolves into a texture
-    //GLuint resolve_rbo_id = -1;  //Resolve buffer for Object ID so we don't need a seperate pass.
 
     GLuint instdata_ssbo = -1;  //Shader Storage Buffer holding per-instance object data for each unique mesh
     GLuint materialdata_ssbo = -1;  //Shader Storage Buffer holding all different materials
     GLuint lights_ssbo = -1;  //Shader Storage Buffer holding all different lights
-    GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
+    //GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
     GLuint boneinstdata_ssbo = -1;  //Shader Storage Buffer for bone data
 
     //Deferred stuff: Non-MSAA?
@@ -137,7 +133,13 @@ class Renderer{
     GLuint deferred_position_tex_id = -1; // Position of objects
     GLuint deferred_normal_tex_id = -1; // Normals of objects
     GLuint deferred_objectid_tex_id = -1; // Object IDs of objects for selection
+
+    //Buffers for stages that require the output of the deferred pipeline
     GLuint ssao_tex_id = -1; // SSAO output texture
+
+    //Shadow
+    GLuint shadow_fbo_id = -1;  // Framebuffer for getting depth of a light sournce
+    GLuint shadow_tex_id = -1;  // Texture where shadow depth info is stored
 
     Shader* deferred_shader = NULL;         // Shader that outputs data to textures
     Shader* deferred_shader_skinned = NULL; // Shader that outputs data to textures
@@ -160,6 +162,7 @@ class Renderer{
     bool f_backface_culling = true;   //
     bool f_ssao = false;              //
     int view_buffer = 0;              // Output different intermediate buffers to view
+    int shadow_texture_size = 1024;   // Size for a single shadow caster
 
 
     //Counters/Timers

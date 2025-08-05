@@ -481,9 +481,16 @@ quat Object::GetWorldRotation(){
     return world_rotation;
 }
 
-void Object::MarkForRender(){
+//Used by renderer to create batches for objects with same meshes
+void Object::MarkForRenderBatch(){
     if (mesh){
         mesh->batch_num_instances++;
+    }
+}
+
+void Object::ClearRenderBatch(){
+    if (mesh){
+        mesh->batch_num_instances = 0;
     }
 }
 

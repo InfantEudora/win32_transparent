@@ -61,6 +61,11 @@ bool Renderer::Init(int _pipeline){
         return false;
     }
 
+    //If we do shadows
+    if (!RebuildShadowFBO(shadow_texture_size,shadow_texture_size)){
+        return false;
+    }
+
     if (pipeline == PIPELINE_DEFERRED){
         deferred_shader = new Shader("shaders/default.vert","shaders/deferred.frag");
         deferred_shader_skinned = new Shader("shaders/default_skinned.vert","shaders/deferred.frag");
@@ -226,15 +231,20 @@ void Renderer::RebuildUniqueMeshList(){
                 }
             }
         }
-
     }
-
 }
 
 //Clear all previous batches
 void Renderer::ClearBatches(){
     for (int i = 0;i<unique_meshes.size();i++){
         unique_mesh_batches.at(i)->clear();
+    }
+}
+
+//Called when all rendering has finished and a new batch should be started
+void Renderer::ClearObjectBatches(){
+    for (Object* object:renderable_objects){
+        object->ClearRenderBatch();
     }
 }
 
@@ -250,7 +260,7 @@ void Renderer::FillBactches(){
     for (int32_t object_index=0;object_index<renderable_objects.size();object_index++){
         Object* object = renderable_objects.at(object_index);
         if (object->GetMesh()){
-            object->MarkForRender();
+            object->MarkForRenderBatch();
             num_rendered_objects++;
             //It can only be rendered if it has a mesh
             int32_t mesh_index = object->GetMeshBatchIndex();
@@ -360,94 +370,7 @@ void Renderer::RenderUniqueMeshes(int rendering_mode){
 
         debug->Trace("Rendering %i instances of mesh->id %i\n",mesh->batch_num_instances,mesh->GetID());
         mesh->RenderInstances(mesh->batch_num_instances);
-        mesh->batch_num_instances = 0;
     }
-}
-/*
-
-//We are lazy and for now we only render a single skinned mesh, which is the first object that has one.
-void Renderer::RenderUniqueSkinnedMeshes(){
-
-    debug->Info("Rendering %i Skinned Meshes\n",unique_skinned_meshes.size());
-
-    uint32_t object_index = -1;
-    for (Object* object:renderable_objects){
-        //TODO: Have mulltiple skinned meshes render at different animation states.
-        object_index++;
-        SkinnedMesh* skinned_mesh = object->GetSkinnedMesh();
-        if (!skinned_mesh){
-            continue;
-        }
-        //We have one
-        debug->Trace("Rendering the first skinned mesh we found in object: %s\n",object->name.c_str());
-        skinned_mesh->batch_num_instances = 1; //We render just one.
-
-        //We are probably a skeleton then
-        Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
-        if (!skeleton){
-            debug->Warn("Skinned mesh does not appear to be a skeleton...\n");
-            continue;
-        }
-        debug->Trace("Skeleton contains %i bones\n",skeleton->num_bones);
-        instancedata.clear();
-
-        instancedata_t data;
-        data.mat_transformscale = object->GetWorldTransformScaleMatrix();
-        for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
-            data.material_slot[i] = object->material_slot[i];
-        }
-        if (object->IsPickable()){
-            data.objectindex = object_index; //Index in array renderable_objects
-        }else{
-            //TODO: This will overwrite any objects below the non-pickable object.
-            data.objectindex = OBJECTID_INVALID;
-        }
-        instancedata.push_back(data);
-        glInvalidateBufferData(instdata_ssbo);
-        glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_DYNAMIC_DRAW);
-
-        //Now we build a buffer holding all the bone data for this mesh
-        boneinstancedata.clear();
-        bonedata_t bonedata;
-        bonedata.mat_transformscale = fmat4().identity();
-
-        std::vector<Bone*>bones;
-        skeleton->GetAllBones(skeleton,bones);
-        if (bones.size() != skeleton->num_bones){
-            debug->Err("skeleton->GetAllBones() did not yield expected number of bones (%i vs %i)\n",bones.size(),skeleton->num_bones);
-        }
-
-        //We add however many bones we want / have
-        int num_bones = skeleton->num_bones;
-        for (int i=0;i<num_bones;i++){
-            bonedata.mat_inversebind = bones.at(i)->inverse_bind_matrix;
-            bonedata.mat_transformscale = bones.at(i)->GetWorldTransformScaleMatrix();
-
-            bones.at(i)->bone_unpacked_index = i;
-            boneinstancedata.push_back(bonedata);
-        }
-        glInvalidateBufferData(boneinstdata_ssbo);
-        glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_DYNAMIC_DRAW);
-
-        //And render all the shize
-        debug->Trace("Rendering %i instances of skinned_mesh->id %i\n",skinned_mesh->batch_num_instances,skinned_mesh->GetID());
-        skinned_mesh->RenderInstances(skinned_mesh->batch_num_instances);
-        skinned_mesh->batch_num_instances = 0;
-
-        break;
-    }
-}*/
-
-void Renderer::RenderDebugLines(){
-
-}
-
-//Set's the SSBO that will be used for reading back data
-void Renderer::UpdateReadbackBuffer(){
-    readbackbuffer.data_out[0] = -1;
-    readbackbuffer.data_out[1] = 0;
-    //glInvalidateBufferData(readback_ssbo);
-    glNamedBufferData(readback_ssbo,sizeof(readback_buffer_t), &readbackbuffer,GL_STREAM_DRAW);
 }
 
 //Requires a skybox shader and skybox to have been set.
@@ -463,7 +386,7 @@ void Renderer::DrawSkyBox(Camera* camera){
     }
 }
 
-void Renderer::DrawStaticObjects(){
+void Renderer::PrepareObjects(){
     //First, we cull all objects we are sure of are not visible.
     //Then we make a list of all objects that need to be rendered.
     //Of those objects, we make a list for each unique mesh with object attributes and object ids.
@@ -471,22 +394,9 @@ void Renderer::DrawStaticObjects(){
     CullLights();
     UpdateState();
     UpdateObjectMaterials();
-
     RebuildUniqueMeshList();
     ClearBatches();
     FillBactches();
-    UploadMaterials();
-    UploadLights();
-    RenderUniqueMeshes(MESH_MODE_NORMAL);
-}
-
-// We'll be using a seperate shader for skinned meshes, should be called after drawstatic.
-void Renderer::DrawSkinnedObjects(){
-    RenderUniqueMeshes(MESH_MODE_SKINNED);
-}
-
-void Renderer::DrawLineObjects(){
-    RenderUniqueMeshes(MESH_MODE_LINE);
 }
 
 void Renderer::DeferredPass(Camera* camera){
@@ -514,9 +424,10 @@ void Renderer::DeferredPass(Camera* camera){
     GLint int_clear[4] = {-1,-1,-1,-1};
     glClearNamedFramebufferiv(deferred_fbo_id,GL_COLOR,3,(GLint*)&int_clear);
 
-    //UpdateReadbackBuffer();
 
-    DrawStaticObjects();
+    UploadMaterials();
+    UploadLights();
+    RenderUniqueMeshes(MESH_MODE_NORMAL);
 
     if (deferred_shader_skinned && camera){
         deferred_shader_skinned->Use();
@@ -525,14 +436,8 @@ void Renderer::DeferredPass(Camera* camera){
         deferred_shader_skinned->Setmat4("mat_worldcam",camera->mat_cam);
         deferred_shader_skinned->Setint("f_normal_mapping",(int)f_normal_mapping);
         //deferred_shader_skinned->Setfloat("alpha_clip",alpha_clip);
-        DrawSkinnedObjects();
+        RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
-
-    //glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
-    //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
-
-    //glFinish();
-    //We have deferred bound...
 }
 
 //Uses a compute shader and uses the textures from deferred pass.
@@ -543,15 +448,10 @@ void Renderer::SSAOPass(Camera* camera){
     glBindTextureUnit(1, deferred_normal_tex_id);
     glBindTextureUnit(2, resolve_tex_id);
 
-
     ssao_compute_shader->Setmat4("mat_worldcam",camera->mat_cam);
 
     glDispatchCompute(width/32, height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-    //Set this as output buffer
-    //glBindFramebuffer(GL_FRAMEBUFFER, deferred_fbo_id);
-    //glReadBuffer(GL_COLOR_ATTACHMENT2);
 }
 
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
@@ -587,24 +487,13 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         shader->Setfloat("alpha_clip",alpha_clip);
     }
 
-    if (0 && input){
-        int2 mouse = {-1,-1};
-        if (input){
-            mouse = input->GetRelativeMousePosition();
-        }
-        readbackbuffer.data_in[0] = mouse.x;
-        readbackbuffer.data_in[1] = height - mouse.y;
-        readbackbuffer.fdata_out[0] = 1.0f;
-        readbackbuffer.fdata_out[1] = 0.0f;
-        readbackbuffer.fdata_out[2] = 0.0f;
-        readbackbuffer.fdata_out[3] = 0.0f;
+    PrepareObjects();
+    UploadMaterials();
+    UploadLights();
 
-        UpdateReadbackBuffer();
-    }
-
-    DrawStaticObjects();
+    RenderUniqueMeshes(MESH_MODE_NORMAL);
     shader->Setint("f_materialindex_is_color",1);
-    DrawLineObjects();
+    RenderUniqueMeshes(MESH_MODE_LINE);
     shader->Setint("f_materialindex_is_color",0);
 
     if (skinned_shader && camera){
@@ -614,30 +503,11 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
         skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
-        DrawSkinnedObjects();
+        RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
 
     ResolveAA();
 
-    if (0 && input){
-        //Read back buffer contents
-        glGetNamedBufferSubData(readback_ssbo, 0, sizeof(readback_buffer_t), &readbackbuffer);
-        //debug->Info("Read back %i x %i = %i, %i\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1]);
-        if(readbackbuffer.data_out[0] != -1){
-            //debug->Info("Read back %i x %i = %i, %i Depth=%.7f\n",readbackbuffer.data_in[0],readbackbuffer.data_in[1],readbackbuffer.data_out[0],readbackbuffer.data_out[1],readbackbuffer.fdata_out[0]);
-            int index = readbackbuffer.data_out[0];
-            input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
-            //debug->Info("Normal at mouse = %.3f, %.3f, %.3f\n",readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]);
-            vec3 n = vec3(readbackbuffer.fdata_out[1],readbackbuffer.fdata_out[2],readbackbuffer.fdata_out[3]);
-            //debug->Info("Read back %i samples at location\n",readbackbuffer.data_out[1]);
-
-            input->SetHoveredNormal(n.normalize());
-            //TODO: Make this less noisy and work better
-        }else{
-            input->SetHoveredObjectID(OBJECTID_INVALID);
-            input->SetHoveredNormal(vec3());
-        }
-    }
 
     //We use a deferred pass for object ID, amongst many other things.
     //TODO: These passes need to be fixed... do we even want them?
@@ -691,6 +561,8 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     }
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
 
+    ClearObjectBatches();
+
     if (tmr_frame){
         tmr_frame->Stop();
     }
@@ -714,10 +586,10 @@ bool Renderer::InitSSBO(){
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, lights_ssbo);
 
     //A buffer where we read back data from, mainly the object id at mouse coordinate.
-    glCreateBuffers(1, (GLuint*)&readback_ssbo);
-    glNamedBufferData(readback_ssbo, 0 , NULL, GL_STREAM_DRAW);
+    //glCreateBuffers(1, (GLuint*)&readback_ssbo);
+    //glNamedBufferData(readback_ssbo, 0 , NULL, GL_STREAM_DRAW);
     //glNamedBufferStorage(readback_ssbo, sizeof(readback_buffer_t), &readbackbuffer, GL_DYNAMIC_STORAGE_BIT);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, readback_ssbo);
+    //glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, readback_ssbo);
 
     //A buffer for storing all the bone data for skinned meshes
     glCreateBuffers(1, (GLuint*)&boneinstdata_ssbo);
@@ -747,6 +619,24 @@ bool Renderer::SetNumAASamples(int desired){
         return false;
     }
     return true;
+}
+
+bool Renderer::RebuildShadowFBO(int shadow_width, int shadow_height){
+    if (shadow_fbo_id == -1){
+        glCreateFramebuffers(1, &shadow_fbo_id);
+    }
+
+    //32-bit depth
+    if (shadow_tex_id != -1){
+        glDeleteTextures(1, &shadow_tex_id);
+    }
+    glCreateTextures(GL_TEXTURE_2D, 1, &shadow_tex_id);
+
+    glTextureStorage2D(shadow_tex_id, 1, GL_DEPTH_COMPONENT32F, width, height);
+    glTextureParameteri(shadow_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(shadow_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glNamedFramebufferTexture(shadow_fbo_id, GL_DEPTH_ATTACHMENT, shadow_tex_id, 0);
+    return CheckFrameBuffer();
 }
 
 bool Renderer::RebuildDeferredFBO(){

@@ -62,7 +62,9 @@ void ApplicationDozer::Start(void){
 void ApplicationDozer::Init(){
     //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
-    renderer->Init(PIPELINE_DEFERRED);
+    if (!renderer->Init(PIPELINE_DEFERRED)){
+        debug->Fatal("Failed to Initilise Rendering Pipeline\n");
+    }
     renderer->SetVSync(true);
     renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 
@@ -264,7 +266,6 @@ void ApplicationDozer::ResetDozer(){
         //dozer->GetPhysics()->world->rp_world->destroyJoint(dozer->joint);
         //dozer->joint = NULL;
     }
-
 
     dozer->SetPosition(vec3(0,2,0));
     dozer->SetRotation(quat().identity());
