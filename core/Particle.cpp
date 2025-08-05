@@ -21,7 +21,7 @@ Particle::Particle(Particle* particle):Particle(particle->GetPhysics()->world){
         physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
     }
-    name = particle->name + "+1";
+    name = particle->name;
     SetCollisionCategoryBits(particle->collision_category_bits);
     SetCollideWithMaskBits(particle->collide_with_bits);
 }

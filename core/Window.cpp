@@ -213,11 +213,13 @@ bool Window::InitImGui(){
     config.OversampleH = 2;
     config.OversampleV = 2;
     config.GlyphExtraSpacing.x = 0.0f;
+    sprintf(config.Name,"Consola TTF");
 
     size_t size = 0;
     uint8_t* data = LoadFile("fonts/consola.ttf",&size);
+    ImFont* font = NULL;
     if (data){
-        ImFont* font = io.Fonts->AddFontFromMemoryTTF(data,size, 13, &config);
+        font = io.Fonts->AddFontFromMemoryTTF(data,size, 13, &config);
     }
     const char* glsl_version = "#version 430";
 
@@ -605,4 +607,9 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
 
 void Window::RegisterDropFiles(){
     DragAcceptFiles(hWnd,true);
+}
+
+//Resize by doing a WinAPI Call. Using some hard coded shite
+void Window::Resize(int _width, int _height){
+    MoveWindow(hWnd,400,320,_width + 16,_height + 39,true);
 }

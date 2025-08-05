@@ -25,7 +25,9 @@ typedef struct {
     int diffuse_texture = -1;       // The OpenGL texture unit the material is bound to. 0 to 32 typically.
     int normal_texture = -1;        // The OpenGL texture unit the material is bound to
     float brightness = 1;           // Values above 1 automatically make the object emissive. (Maybe: Seperate into a seperate flag.)
-    int pad[1];
+    float metallic = 0.8;
+    float roughness = 0.5;
+    int pad[3];
     uint64_t handle_diffuse = 0;    // The texture handle for OpenGL Bindless Textures
     uint64_t handle_normal = 0;     // The texture handle for OpenGL Bindless Textures
 }material_t;

@@ -3,61 +3,16 @@
 
 static Debugger *debug = new Debugger("ApplicationDozer", DEBUG_ALL);
 
-#define INPUT_H     INPUT_LAST+1
-#define INPUT_E     INPUT_LAST+2
-#define INPUT_FOCUS INPUT_LAST+3
-#define INPUT_B     INPUT_LAST+4
-#define INPUT_T     INPUT_LAST+5
+#define INPUT_H         INPUT_LAST+1
+#define INPUT_E         INPUT_LAST+2
+#define INPUT_FOCUS     INPUT_LAST+3
+#define INPUT_B         INPUT_LAST+4
+#define INPUT_T         INPUT_LAST+5
+#define INPUT_DELETE    INPUT_LAST+6
 
 ApplicationDozer::ApplicationDozer():Application(){
     debug->Info("Created new application.\n");
 };
-
-//We need to overwrite default start so we call the threadfunctions local to this class.
-void ApplicationDozer::Start(void){
-    //Create a main window
-    main_window = Window::CreateNewWindow(1280,800,&Window::wcs.at(0));
-    if (!main_window){
-        debug->Fatal("Unable to create window\n");
-    }
-    if (!main_window->Init()){
-        debug->Fatal("Failed to init window\n");
-    }
-
-    main_window->Show(SW_SHOWDEFAULT);
-
-    //We release the window's context from this thread
-    wglMakeCurrent(main_window->hDC, NULL);
-
-    //And do all render calls from a seperate thread:
-    HANDLE hThread = NULL;
-
-    // Create a new thread which will get this one's render context
-    hThread = CreateThread(
-        NULL,    // Thread attributes
-        0,       // Stack size (0 = use default)
-        FrameThreadFunction, // Thread start address from this class, not the base class
-        this,    // Parameter to pass to the thread
-        0,       // Creation flags
-        &thread_id_render);   // Thread id
-
-    if (hThread == NULL){
-        debug->Fatal("Unable to FrameFunction thread\n");
-    }
-
-    //Catch all input and window related messages in this thread:
-    MSG msg = {0};
-    while (main_window->f_should_quit == false){
-        if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
-            if (msg.message == WM_QUIT)
-                break;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }else{
-            Sleep(1);
-        }
-    }
-}
 
 void ApplicationDozer::Init(){
     //Create a renderer for this window
@@ -72,7 +27,6 @@ void ApplicationDozer::Init(){
     rrand = new RRandom();
     debug->Info("Polulating RRandom\n");
     rrand->Generate(512,512);
-
 
     //Renderer settings
     renderer->alpha_clip = 0.5f;
@@ -98,6 +52,8 @@ void ApplicationDozer::Init(){
 
     BinaryAsset::DumpBinaryAssets();
     assetmanager->ListAssets();
+
+    main_window->Resize(1600,800);
 }
 
 //Called before update physics from the physics Thread
@@ -121,13 +77,19 @@ void ApplicationDozer::RunLogic(){
     CheckObjectSelection();
 
     if (dozer_camera_tracking){
+        //We attempt to keep distance constant, and height
         vec3 new_camera_target = dozer->GetPosition();
+        vec3 camera_target_lerp = camera_target.lerp(new_camera_target,0.15f);
 
-        vec3 camera_lerp = camera_target.lerp(new_camera_target,0.15f);
+        vec3 camera_pos_target = camera->GetPosition();
+        camera_pos_target.y = dozer->GetPosition().y + 5.0;
+        vec3 camera_pos_lerp = camera->GetPosition().lerp(camera_pos_target,0.15f);
+        camera->SetPosition(camera_pos_lerp);
 
         vec3 up = vec3(0,1,0);
-        camera->SetLookAt(camera_lerp,&up);
-        camera_target = camera_lerp;
+        camera->SetLookAt(camera_target_lerp,&up);
+
+        camera_target = camera_target_lerp;
 
         vec3 dist = camera->GetPosition() - new_camera_target;
         if (dist.length() < 20.0f){
@@ -189,6 +151,14 @@ void ApplicationDozer::RunLogic(){
         if (input->WasKeyReleased(INPUT_H)){
             selected_object->Hide();
         }
+        if (input->WasKeyReleased(INPUT_DELETE)){
+            selected_object->Destroy();
+            Physics* physics = selected_object->GetPhysics();
+            if (physics){
+                physics->world->WakeUpEveryone();
+            }
+            selected_object = NULL;
+        }
     }
 
     //character
@@ -215,13 +185,15 @@ void ApplicationDozer::RunLogic(){
 
     if (input->WasKeyReleased(INPUT_B)){
         for (int i=0;i<50;i++){
-        int r = rand()%3;
+        int r = rand()%4;
         if (r == 0)
             SpawnAssetAt("Box", vec3(0,5,0));
         if (r == 1)
             SpawnAssetAt("Crate", vec3(0,5,0));
         if (r == 2)
             SpawnAssetAt("Barrel", vec3(0,5,0));
+        if (r == 3)
+            SpawnAssetAt("TrafficCone", vec3(0,6,0));
         }
     }
 
@@ -267,9 +239,9 @@ void ApplicationDozer::ResetDozer(){
         //dozer->joint = NULL;
     }
 
+    dozer->ResetPhysics();
     dozer->SetPosition(vec3(0,2,0));
-    dozer->SetRotation(quat().identity());
-    dozer->SetVelocity(vec3());
+    dozer->armobject->ResetPhysics();
     dozer->armobject->SetPosition(vec3(0,1,0));
 }
 
@@ -312,6 +284,7 @@ void ApplicationDozer::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
     RenderRandTestWindow();
+    //ImGui::ShowDemoWindow();
 }
 
 Scene* ApplicationDozer::CreateMainScene(){
@@ -323,6 +296,7 @@ Scene* ApplicationDozer::CreateMainScene(){
     scene->inputcontroller->AddKeyMap('B',INPUT_B);
     scene->inputcontroller->AddKeyMap('T',INPUT_T);
     scene->inputcontroller->AddKeyMap(VK_DECIMAL,INPUT_FOCUS);
+    scene->inputcontroller->AddKeyMap(VK_DELETE,INPUT_DELETE);
 
     //Setup light and camera
     DirectionalLight* sun = new DirectionalLight();
@@ -330,7 +304,7 @@ Scene* ApplicationDozer::CreateMainScene(){
     sun->SetPosition(vec3(-10,10,10));
     sun->color = vec3(1,0.85,0.7);
     sun->brightness = 8.5;
-    sun->viewport.zoom = 10;
+    sun->viewport.zoom = 15;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
@@ -352,6 +326,7 @@ Scene* ApplicationDozer::CreateMainScene(){
     scene->physics_world = new PhysicsWorld();
     scene->physics_world->SetGravity(vec3(0,-9.81,0));
     scene->physics_world->SetDebugRendering(false);
+    scene->physics_world->rp_world->setEventListener(this);
 
     //Load from a GLTF file and build assets.
     gltfloader.LoadGLTFFile("dozer/data/dozer.glb");
@@ -368,6 +343,7 @@ Scene* ApplicationDozer::CreateMainScene(){
             physics->SetStatic(true);
             floor->SetCollisionCategoryBits(COLLISION_CATEGORY_FLOOR);
             floor->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS|COLLISION_CATEGORY_SMOKE);
+            physics->body->rigidbody->setUserData((Object*)floor);
         }
         //Create a copy
         floor = new Object(floor);
@@ -396,6 +372,48 @@ Scene* ApplicationDozer::CreateMainScene(){
         }
     }
 
+    {
+        Object* wall = CreateNewObjectFromGLTF("WallDoor",scene);
+        if (!wall){
+            debug->Fatal("No WallDoor was found\n");
+        }
+        wall->AddPhysics(scene->physics_world);
+        if (Physics* physics = wall->GetPhysics()){
+
+            physics->AddBoxCollider(vec3(0.4,4,1),vec3(0,0,-3),quat().identity());
+            physics->AddBoxCollider(vec3(0.4,4,1),vec3(0,0,3),quat().identity());
+            physics->AddBoxCollider(vec3(0.4,1,4),vec3(0,3,0),quat().identity());
+            physics->SetStatic(true);
+            physics->SetGravityEnabled(false);
+            physics->SetBounciness(0);
+            wall->SetCollisionCategoryBits(COLLISION_CATEGORY_FLOOR);
+            wall->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS|COLLISION_CATEGORY_SMOKE);
+            quat q; q.set_rotation(vec3(0,1,0),toradians(90));
+            wall->SetRotation(q);
+            wall->SetPosition(vec3(0,3.4,-3.4));
+        }
+    }
+
+    {
+        Object* beam = CreateNewObjectFromGLTF("Beam",scene);
+        if (!beam){
+            debug->Fatal("No Beam was found\n");
+        }
+        beam->AddPhysics(scene->physics_world);
+        if (Physics* physics = beam->GetPhysics()){
+            vec3 extent = beam->GetMesh()->GetExtents()*0.5f;
+            physics->AddBoxCollider(extent,vec3(0,extent.y,0),quat().identity());
+            physics->SetStatic(false);
+            physics->SetGravityEnabled(true);
+            physics->SetBounciness(0);
+            beam->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
+            beam->SetCollideWithMaskBits(COLLISION_CATEGORY_FLOOR|COLLISION_CATEGORY_OBJECTS);
+            quat q; q.set_rotation(vec3(1,0,0),toradians(-20));
+            beam->SetRotation(q);
+            beam->SetPosition(vec3(-1.8,2,0));
+        }
+    }
+
     //Add's all remaining unloaded objects
     GetAllAssetsFromGLTF();
     scene->renderer->AddMaterials(gltfloader.GetAllUniqueLoadedMaterials());
@@ -413,7 +431,23 @@ Scene* ApplicationDozer::CreateMainScene(){
         debug->Ok("Loaded EngineIdle Animation from file.\n");
         dozer->AddAnimation(animation);
     }
-
-
     return scene;
+}
+
+//Event listener for on contact method
+//Called from within physics update.
+void ApplicationDozer::onContact(const CollisionCallback::CallbackData& callbackData){
+    //debug->Info("Contact: num pairs %hhu\n",callbackData.getNbContactPairs());
+    // For each contact pair
+    for (uint32_t i = 0; i < callbackData.getNbContactPairs(); i++) {
+        CollisionCallback::ContactPair contactPair = callbackData.getContactPair(i);
+
+        Object* d1 = (Object*)contactPair.getBody1()->getUserData();
+        Object* d2 = (Object*)contactPair.getBody2()->getUserData();
+
+    }
+}
+
+void ApplicationDozer::onTrigger(const reactphysics3d::OverlapCallback::CallbackData& callbackData){
+    //debug->Info("Trigger: num overlap pairs %hhu\n",callbackData.getNbOverlappingPairs());
 }

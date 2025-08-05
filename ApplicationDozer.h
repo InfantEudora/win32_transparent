@@ -8,11 +8,11 @@
 /*
     An attempt at an application that overrides the default, and shows a UI only.
 */
-class ApplicationDozer : public Application{
+class ApplicationDozer : public Application, public rp3d::EventListener{
 public:
     ApplicationDozer();
 
-    void Start(void) override;
+
     void Init(void) override;
 
     void RunLogic(void) override;
@@ -26,9 +26,10 @@ public:
     void SpawnAssetAt(const std::string& name, const vec3& wpos);
     SoundSystem* soundsystem = NULL;
 
-
-
 private:
+    //reactphysics3d::EventListener
+    void onContact(const rp3d::CollisionCallback::CallbackData& callbackData) override;
+    void onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData) override;
 
 };
 

@@ -20,7 +20,9 @@ class ApplicationGrid : public Application{
 public:
     ApplicationGrid();
 
-    void Run(void) override;
+    void Init(void) override;
+
+    void DrawImGuiUI(void) override;
     void RunLogic() override;
 
     vec3 camera_target = {};
@@ -76,7 +78,6 @@ private:
     void RenderSkeletonUI();
     void RenderAnimationUI();
 
-    void UpdateUI();
 };
 
 #endif

@@ -586,6 +586,8 @@ void Application::RenderApplicationUI(){
             ImGui::Text(" diffuse_texture  : %i", material.glsl_material.diffuse_texture);
 
             ImGui::PushID(n++);
+            ImGui::DragFloat(" Metallic", (float*)&material.glsl_material.metallic,0.01f,0,1);
+            ImGui::DragFloat(" Roughness", (float*)&material.glsl_material.roughness,0.01f,0,1);
             ImGui::ColorEdit4(" GLSL Color", (float*)&material.glsl_material.color, ImGuiColorEditFlags_DisplayRGB);
             ImGui::PopID();
 

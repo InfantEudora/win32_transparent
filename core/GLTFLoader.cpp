@@ -603,8 +603,16 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 m = *m_loaded;
                 debug->Info("It was. m.name = %s\n",m.name.c_str());
             }else{
-                debug->Info("Nope. Loading\n");
+                debug->Info("Nope. Loading. Metal Roughness %.3f %.3f\n",gltfmaterial->pbrMetallicRoughness.metallicFactor,gltfmaterial->pbrMetallicRoughness.roughnessFactor);
                 m.name = gltfmaterial->name;
+                m.glsl_material.roughness = gltfmaterial->pbrMetallicRoughness.roughnessFactor;
+                m.glsl_material.metallic = gltfmaterial->pbrMetallicRoughness.metallicFactor;
+
+                m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
+                m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
+                m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
+                m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
+
                 //If the material has a diffuse texture, we load that here
                 if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
                     //This material uses texture with index
@@ -636,12 +644,6 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
 
                     m.diff_texture = diff_texture;
                     debug->Info("Loaded diffuse texture %s from GLTF File using Bufferview %i\n",diff_texture->name.c_str(),image.bufferView);
-                }else{
-                    //We just load the base color
-                    m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
-                    m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
-                    m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
-                    m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
                 }
                 loaded_materials.push_back(m);
             }

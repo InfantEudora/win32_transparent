@@ -21,7 +21,11 @@ struct Material{
     int diffuse_texture;
     int normal_texture;
     float brightness;
+    float metallic;
+    float roughness;
+    int pad2;
     int pad3;
+    int pad4;
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;
     uvec2 handle_diffuse;
@@ -30,8 +34,6 @@ struct Material{
 
 #define PI 	3.14159265359
 
-float metallic = 0.5f;
-float roughness = 0.5f;
 uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 
 layout (std430, binding = 1) buffer MaterialBuffer{

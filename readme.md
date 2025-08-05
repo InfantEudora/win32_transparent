@@ -37,13 +37,15 @@ It should kind of look like this:
 - [x] Normal Mapping https://youtu.be/hOLLh80hDmw?si=-nQxkodGUvsnA35I
 - [ ] Make sperate light calculation for directional and point lights.
 - [ ] Cubemaps. Can be merged in the main shader.
+- [ ] Make a billboard with a light icon
+- [ ] Make lights selectable as billboards while editing... and make editing some kind of flag.
 
 ### ToDo's
 
 - [ ] Will we be using OBJLoader ever again? Maybe remove it.
-- [ ] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
+- [x] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
 - [x] Implement GLTF Morph Targets == Blender Shape Keys. A list of weights per mesh vertex, with modifiers.
-- [ ] GLTF and material loading loads and then afterwards checks for duplicates. It should do it beforehand... somehow.
+- [x] GLTF and material loading loads and then afterwards checks for duplicates. It should do it beforehand... somehow.
 - [ ] Load Spherical skyboxes from a .pbr file (should work with stb_image) and use them... view them... or cubemap them.
 - [ ] The Mat3 rotation used to also rotate normals in the vertex shader needs to be renormalised. Why?
 - [ ] Project camera and cursor throught the camera, in order to figure out where in the grid you are.

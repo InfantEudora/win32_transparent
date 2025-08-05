@@ -547,150 +547,39 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
     return scene;
 }
 
-//Function for rendering the frame to a window
-DWORD WINAPI ApplicationGrid::GridFrameThreadFunction(LPVOID lpParameter){
-    ApplicationGrid* app = static_cast<ApplicationGrid*>(lpParameter);
-    if (!app){
-        debug->Err("No application was supplied to FrameThread\n");
-        return 0;
-    }
 
-    app->thread_id_render = GetCurrentThreadId();
-    debug->Info("FrameFunction ThreadID: %lu\n",app->thread_id_render);
-
-    //We make the window's context current to this thread
-    if (!wglMakeCurrent(app->main_window->hDC, app->main_window->hRC)){
-        debug->Err("FrameFunction Thread unable to get context by wglMakeCurrent\n");
-        return 0;
-    }
-
-    if (!app->main_window->InitImGui()){
-        debug->Fatal("Failed to setup ImGui on Window\n");
-    }
-
+void ApplicationGrid::Init(){
     //Create a renderer for this window
-    app->renderer = new Renderer(app->main_window->width,app->main_window->height);
-    app->renderer->Init(PIPELINE_DEFERRED);
-    app->renderer->SetVSync(true);
-    app->renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
+    renderer = new Renderer(main_window->width,main_window->height);
+    renderer->Init(PIPELINE_DEFERRED);
+    renderer->SetVSync(true);
+    renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 
     //Renderer settings
-    app->renderer->alpha_clip = 0.5f;
-    app->renderer->f_render_skybox = false;
+    renderer->alpha_clip = 0.5f;
+    renderer->f_render_skybox = false;
 
-    app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+    default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
     //We make an assetmanager which we use to load/build all assets from:
-    app->assetmanager = new AssetManager();
+    assetmanager = new AssetManager();
 
     //Comment in/out a test scene.
-    //app->test_scene = app->CreateEmptyScene();
-    //app->test_scene = app->CreateTestScene();
-    //app->test_scene = app->CreateBoneTestScene();
-    app->test_scene = app->CreateHandTestScene();
+    //test_scene = CreateEmptyScene();
+    //test_scene = CreateTestScene();
+    //test_scene = CreateBoneTestScene();
+    test_scene = CreateHandTestScene();
 
-    app->main_scene = app->test_scene;
+    main_scene = test_scene;
 
-    app->main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics();
 
     BinaryAsset::DumpBinaryAssets();
-    app->assetmanager->ListAssets();
+    assetmanager->ListAssets();
 
-    app->grid_settings.f_place = false;
-    app->grid_settings.f_place_prop = false;
-    app->grid_settings.f_delete = false;
-
-    //Now that all the setup is done, we create another thread for physics.
-    HANDLE hThread = NULL;
-    DWORD thread_id;
-    // Create a new thread which will get it's own render context
-    hThread = CreateThread(
-        NULL,    // Thread attributes
-        0,       // Stack size (0 = use default)
-        PhysicsThreadFunction, // Thread start address in Application base class
-        app,    // Parameter to pass to the thread
-        0,       // Creation flags
-        &app->thread_id_physics);   // Thread id
-
-    if (hThread == NULL){
-        debug->Fatal("Unable to create thread\n");
-    }
-
-    while (app->main_window->f_should_quit == false){
-        if (app->main_window->f_resized){
-            app->main_window->f_resized = false;
-            app->renderer->Resize(app->main_window->width,app->main_window->height);
-        }
-
-        //Tell ImGui to start a new frame
-        app->main_window->ImGuiNewFrame();
-
-        //This should render the frame only.
-        app->main_scene->DrawFrame(); // This renders state, not state_physics
-
-        app->renderer->state_mutex.lock();
-        app->UpdateUI(); //This right now modifies state_physics... but
-        app->renderer->state_mutex.unlock();
-        //RunLogic() at a completely different time interval also modifies state_physics.
-        //When done, copies that over to prev_state.
-
-        //In Renderer, that get's called
-        app->main_window->ImGuiDrawFrame();
-
-        //Copy to screen and finish
-        app->main_window->DrawFrame();
-    }
-
-    debug->Info("FrameThreadFunction terminated\n");
-    return 1;
-}
-
-void ApplicationGrid::Run(void){
-    //Create a main window
-    main_window = Window::CreateNewWindow(1920,960,&Window::wcs.at(0));
-    if (!main_window){
-        debug->Fatal("Unable to create window\n");
-    }
-    if (!main_window->Init()){
-        debug->Fatal("Failed to init window\n");
-    }
-
-    main_window->Show(SW_SHOWDEFAULT);
-
-    //Setup renderer
-    //Renderer::SetVSync(true);
-
-    //We release the window's context from this thread
-    wglMakeCurrent(main_window->hDC, NULL);
-
-    //And do all render calls from a seperate thread:
-    HANDLE hThread = NULL;
-
-    // Create a new thread which will get this one's render context
-    hThread = CreateThread(
-        NULL,    // Thread attributes
-        0,       // Stack size (0 = use default)
-        GridFrameThreadFunction, // Thread start address
-        this,    // Parameter to pass to the thread
-        0,       // Creation flags
-        &thread_id_render);   // Thread id
-
-    if (hThread == NULL){
-        debug->Fatal("Unable to FrameFunction thread\n");
-    }
-
-    //Catch all input and window related messages in this thread:
-    MSG msg = {0};
-    while (main_window->f_should_quit == false){
-        if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
-            if (msg.message == WM_QUIT)
-                break;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }else{
-            Sleep(1);
-        }
-    }
+    grid_settings.f_place = false;
+    grid_settings.f_place_prop = false;
+    grid_settings.f_delete = false;
 }
 
 //Called before update physics
@@ -1386,10 +1275,10 @@ void ApplicationGrid::RenderSkeletonUI(){
     ImGui::End();
 }
 
-void ApplicationGrid::UpdateUI(){
+void ApplicationGrid::DrawImGuiUI(){
     RenderGridUI();
     RenderDebugMenuBar();
-    RenderGenericObjectUI();
+    RenderApplicationUI();
 
     if (f_show_rightclick_menu){
         RenderRightClickMenu();

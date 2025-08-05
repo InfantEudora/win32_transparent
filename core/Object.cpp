@@ -21,7 +21,7 @@ Object::Object(){
 Object::Object(Object* object):Object(){
     debug->Info("Duplicating object Object %p into this %p\n",object,this);
     SetMesh(object->GetMesh());
-    name = object->name + "+1";
+    name = object->name;
     Physics* p = object->GetPhysics();
     if (p){
         AddPhysics(p->world);
@@ -159,6 +159,7 @@ void Object::ResetPhysics(){
     if (physics){
         physics->SetVelocity(vec3());
         physics->SetAngularVelocity(vec3());
+        physics->SetBodyWorldOrientation(quat().identity());
     }
 }
 

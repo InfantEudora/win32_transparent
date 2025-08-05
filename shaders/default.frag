@@ -35,7 +35,11 @@ struct Material{
     int diffuse_texture;
     int normal_texture;
     float brightness;
+    float metallic;
+    float roughness;
+    int pad2;
     int pad3;
+    int pad4;
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;
     uvec2 handle_diffuse;
@@ -54,8 +58,6 @@ struct Light{
 
 #define PI 	3.14159265359
 
-float metallic = 0.5f;
-float roughness = 0.75f;
 uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 uniform int f_normal_mapping = 1;
 uniform int f_materialindex_is_color = 0;
@@ -112,7 +114,6 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0){
 }
 
 vec3 GetNormalMapNormal(){
-    Material m = materials[vmatindex];
     //Bindless
     //vec3 normal = texture(m.handle_normal,vuv).rgb;
     //Default
@@ -152,7 +153,7 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
     sampled_normal = normalize(vnormal);
 
     vec3 F0 = vec3(0.04); //Fresnell factor
-    F0 = mix(F0, albedo, metallic);
+    F0 = mix(F0, albedo, m.metallic);
 
     // reflectance equation
     vec3 Lo = vec3(0.0);
@@ -163,13 +164,13 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
     vec3 radiance     = color * brightness;
 
     // cook-torrance brdf
-    float NDF = DistributionGGX(N, H, roughness + 0.0001); //Some base roughness to prevent /0
-    float G   = GeometrySmith(N, V, L, roughness + 0.0001);
+    float NDF = DistributionGGX(N, H, m.roughness + 0.0001); //Some base roughness to prevent /0
+    float G   = GeometrySmith(N, V, L, m.roughness + 0.0001);
     vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
+    kD *= 1.0 - m.metallic;
 
     vec3 numerator    = NDF * G * F;
     float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;

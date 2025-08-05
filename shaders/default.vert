@@ -28,7 +28,11 @@ struct Material{
     int diffuse_texture;
     int normal_texture;
     float brightness;
+    float metallic;
+    float roughness;
+    int pad2;
     int pad3;
+    int pad4;
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;
     uvec2 handle_diffuse;
