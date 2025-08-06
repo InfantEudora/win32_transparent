@@ -1,12 +1,9 @@
-
 #include "SoundSystem.h"
 #include "WaveFile.h"
 
-
-
 #include "Debug.h"
 static Debugger *debug = new Debugger("SoundSystem", DEBUG_INFO);
-
+/*
 //Funtion pointers that we load from DLL
 LPALCCREATECONTEXT alcCreateContext;
 LPALCOPENDEVICE alcOpenDevice;
@@ -18,6 +15,7 @@ LPALBUFFERDATA alBufferData;
 
 LPALGENSOURCES alGenSources;
 LPALSOURCEI alSourcei;
+LPALSOURCEF alSourcef;
 LPALGETSOURCEI alGetSourcei;
 
 LPALSOURCEPLAY alSourcePlay;
@@ -63,6 +61,9 @@ bool GetALFunctions(HINSTANCE hdll){
     alSourcei = (LPALSOURCEI)GetProcAddress(hdll, "alSourcei");
     if (alSourcei == NULL)
         return false;
+    alSourcef = (LPALSOURCEF)GetProcAddress(hdll, "alSourcef");
+    if (alSourcef == NULL)
+        return false;
     alGetSourcei = (LPALGETSOURCEI)GetProcAddress(hdll, "alGetSourcei");
     if (alGetSourcei == NULL)
         return false;
@@ -78,9 +79,10 @@ bool GetALFunctions(HINSTANCE hdll){
 
 
     return true;
-}
+}*/
 
 void SoundSystem::Initialise(){
+    /*
     const char* dllname = "soft_oal.dll";
 
     hdll = LoadLibrary(dllname);
@@ -96,7 +98,7 @@ void SoundSystem::Initialise(){
             debug->Err("Could not load function adresses\n");
             return;
         }
-    }
+    }*/
 
     debug->Info("Initialising sound device with OpenAL\n");
     default_device = alcOpenDevice(NULL);
@@ -164,13 +166,15 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
     }
 }
 
-void SoundSystem::Play(const char* handle_name, bool looping){
+void SoundSystem::Play(const char* handle_name, bool looping, float gain){
     int handle = map_handles[handle_name];
     debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
     alSourcei(sources[handle], AL_BUFFER, buffers[handle]);
 
     alSourcei(sources[handle],AL_LOOPING,looping);
     alSourcePlay(sources[handle]);
+
+    alSourcef(sources[handle],AL_GAIN,gain);
 }
 
 void SoundSystem::Pause(const char* handle_name){

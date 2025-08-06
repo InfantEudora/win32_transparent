@@ -23,50 +23,38 @@
 *                                                                               *
 ********************************************************************************/
 
-#ifndef REACTPHYSICS3D_SPHERE_VS_CAPSULE_ALGORITHM_H
-#define	REACTPHYSICS3D_SPHERE_VS_CAPSULE_ALGORITHM_H
+#ifndef REACTPHYSICS3D_MESSAGE_H
+#define REACTPHYSICS3D_MESSAGE_H
 
 // Libraries
-#include <reactphysics3d/collision/narrowphase/NarrowPhaseAlgorithm.h>
+#include <string>
 
-/// Namespace ReactPhysics3D
+/// ReactPhysics3D namespace
 namespace reactphysics3d {
 
-// Declarations
-class ContactPoint;
-struct NarrowPhaseInfoBatch;
-
-// Class SphereVsCapsuleAlgorithm
+// Structure Message
 /**
- * This class is used to compute the narrow-phase collision detection
- * between a sphere collision shape and a capsule collision shape.
- * For this case, we do not use GJK or SAT algorithm. We directly compute the
- * contact points and contact normal. This is based on the "Robust Contact
- * Creation for Physics Simulation" presentation by Dirk Gregorius.
+ * This structure represent a message that can be returned to the user
  */
-class SphereVsCapsuleAlgorithm : public NarrowPhaseAlgorithm {
+struct Message {
 
-    protected :
+    public:
 
-    public :
+        /// Type of message
+        enum class Type {Error = 1, Warning = 2, Information = 4};
+
+        /// Message text
+        std::string text;
+
+        // Type (error, warning, information)
+        Type type;
 
         // -------------------- Methods -------------------- //
 
         /// Constructor
-		SphereVsCapsuleAlgorithm() = default;
+        Message(std::string text, Type type = Type::Error) : text(text), type(type) {
 
-        /// Destructor
-        virtual ~SphereVsCapsuleAlgorithm() override = default;
-
-        /// Deleted copy-constructor
-		SphereVsCapsuleAlgorithm(const SphereVsCapsuleAlgorithm& algorithm) = delete;
-
-        /// Deleted assignment operator
-		SphereVsCapsuleAlgorithm& operator=(const SphereVsCapsuleAlgorithm& algorithm) = delete;
-
-        /// Compute the narrow-phase collision detection between a sphere and a capsule
-        bool testCollision(NarrowPhaseInfoBatch& narrowPhaseInfoBatch, uint32 batchStartIndex,
-                           uint32 batchNbItems, MemoryAllocator& memoryAllocator);
+        }
 };
 
 }

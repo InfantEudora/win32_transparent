@@ -99,7 +99,7 @@ void main(){
 
     vec4 outval;
     outval = vec4(albedo.xyz * occlusion,alpha);
-    outval = vec4(vec3(occlusion),1);
+    //outval = vec4(vec3(occlusion),1);
 
     imageStore(imgOut, texelCoord, outval);
 }

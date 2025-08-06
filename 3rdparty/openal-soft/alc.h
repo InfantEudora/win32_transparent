@@ -1,10 +1,58 @@
 #ifndef AL_ALC_H
 #define AL_ALC_H
 
-#define ALC_API
-#define ALC_APIENTRY __stdcall
+/* NOLINTBEGIN */
+#ifdef __cplusplus
+extern "C" {
+
+#ifdef _MSVC_LANG
+#define ALC_CPLUSPLUS _MSVC_LANG
+#else
+#define ALC_CPLUSPLUS __cplusplus
+#endif
+
+#ifndef AL_DISABLE_NOEXCEPT
+#if ALC_CPLUSPLUS >= 201103L
+#define ALC_API_NOEXCEPT noexcept
+#else
+#define ALC_API_NOEXCEPT
+#endif
+#if ALC_CPLUSPLUS >= 201703L
+#define ALC_API_NOEXCEPT17 noexcept
+#else
+#define ALC_API_NOEXCEPT17
+#endif
+
+#else /* AL_DISABLE_NOEXCEPT */
+
 #define ALC_API_NOEXCEPT
 #define ALC_API_NOEXCEPT17
+#endif
+
+#undef ALC_CPLUSPLUS
+
+#else /* __cplusplus */
+
+#define ALC_API_NOEXCEPT
+#define ALC_API_NOEXCEPT17
+#endif
+
+#ifndef ALC_API
+ #if defined(AL_LIBTYPE_STATIC)
+  #define ALC_API
+ #elif defined(_WIN32)
+  #define ALC_API __declspec(dllimport)
+ #else
+  #define ALC_API extern
+ #endif
+#endif
+
+#ifdef _WIN32
+ #define ALC_APIENTRY __cdecl
+#else
+ #define ALC_APIENTRY
+#endif
+
 
 /* Deprecated macros. */
 #define ALCAPI                                   ALC_API
@@ -152,46 +200,16 @@ typedef void ALCvoid;
 #define ALC_ALL_DEVICES_SPECIFIER                0x1013
 
 
-
-/* Pointer-to-function types, useful for storing dynamically loaded ALC entry
- * points.
- */
-typedef ALCcontext*    (ALC_APIENTRY *LPALCCREATECONTEXT)(ALCdevice *device, const ALCint *attrlist) ALC_API_NOEXCEPT17;
-typedef ALCboolean     (ALC_APIENTRY *LPALCMAKECONTEXTCURRENT)(ALCcontext *context) ALC_API_NOEXCEPT17;
-typedef void           (ALC_APIENTRY *LPALCPROCESSCONTEXT)(ALCcontext *context) ALC_API_NOEXCEPT17;
-typedef void           (ALC_APIENTRY *LPALCSUSPENDCONTEXT)(ALCcontext *context) ALC_API_NOEXCEPT17;
-typedef void           (ALC_APIENTRY *LPALCDESTROYCONTEXT)(ALCcontext *context) ALC_API_NOEXCEPT17;
-typedef ALCcontext*    (ALC_APIENTRY *LPALCGETCURRENTCONTEXT)(void) ALC_API_NOEXCEPT17;
-typedef ALCdevice*     (ALC_APIENTRY *LPALCGETCONTEXTSDEVICE)(ALCcontext *context) ALC_API_NOEXCEPT17;
-typedef ALCdevice*     (ALC_APIENTRY *LPALCOPENDEVICE)(const ALCchar *devicename) ALC_API_NOEXCEPT17;
-typedef ALCboolean     (ALC_APIENTRY *LPALCCLOSEDEVICE)(ALCdevice *device) ALC_API_NOEXCEPT17;
-typedef ALCenum        (ALC_APIENTRY *LPALCGETERROR)(ALCdevice *device) ALC_API_NOEXCEPT17;
-typedef ALCboolean     (ALC_APIENTRY *LPALCISEXTENSIONPRESENT)(ALCdevice *device, const ALCchar *extname) ALC_API_NOEXCEPT17;
-typedef ALCvoid*       (ALC_APIENTRY *LPALCGETPROCADDRESS)(ALCdevice *device, const ALCchar *funcname) ALC_API_NOEXCEPT17;
-typedef ALCenum        (ALC_APIENTRY *LPALCGETENUMVALUE)(ALCdevice *device, const ALCchar *enumname) ALC_API_NOEXCEPT17;
-typedef const ALCchar* (ALC_APIENTRY *LPALCGETSTRING)(ALCdevice *device, ALCenum param) ALC_API_NOEXCEPT17;
-typedef void           (ALC_APIENTRY *LPALCGETINTEGERV)(ALCdevice *device, ALCenum param, ALCsizei size, ALCint *values) ALC_API_NOEXCEPT17;
-typedef ALCdevice*     (ALC_APIENTRY *LPALCCAPTUREOPENDEVICE)(const ALCchar *devicename, ALCuint frequency, ALCenum format, ALCsizei buffersize) ALC_API_NOEXCEPT17;
-typedef ALCboolean     (ALC_APIENTRY *LPALCCAPTURECLOSEDEVICE)(ALCdevice *device) ALC_API_NOEXCEPT17;
-typedef void           (ALC_APIENTRY *LPALCCAPTURESTART)(ALCdevice *device) ALC_API_NOEXCEPT17;
-typedef void           (ALC_APIENTRY *LPALCCAPTURESTOP)(ALCdevice *device) ALC_API_NOEXCEPT17;
-typedef void           (ALC_APIENTRY *LPALCCAPTURESAMPLES)(ALCdevice *device, ALCvoid *buffer, ALCsizei samples) ALC_API_NOEXCEPT17;
-
-
-
 #ifndef ALC_NO_PROTOTYPES
 /* Context management. */
 
-
-extern LPALCCREATECONTEXT alcCreateContext;
-
 /** Create and attach a context to the given device. */
-//ALC_API ALCcontext* ALC_APIENTRY alcCreateContext(ALCdevice *device, const ALCint *attrlist) ALC_API_NOEXCEPT;
+ALC_API ALCcontext* ALC_APIENTRY alcCreateContext(ALCdevice *device, const ALCint *attrlist) ALC_API_NOEXCEPT;
 /**
  * Makes the given context the active process-wide context. Passing NULL clears
  * the active context.
  */
-extern LPALCMAKECONTEXTCURRENT alcMakeContextCurrent;
+ALC_API ALCboolean  ALC_APIENTRY alcMakeContextCurrent(ALCcontext *context) ALC_API_NOEXCEPT;
 /** Resumes processing updates for the given context. */
 ALC_API void        ALC_APIENTRY alcProcessContext(ALCcontext *context) ALC_API_NOEXCEPT;
 /** Suspends updates for the given context. */
@@ -205,10 +223,8 @@ ALC_API ALCdevice*  ALC_APIENTRY alcGetContextsDevice(ALCcontext *context) ALC_A
 
 /* Device management. */
 
-extern LPALCOPENDEVICE alcOpenDevice;
-
 /** Opens the named playback device. */
-//ALC_API ALCdevice* ALC_APIENTRY alcOpenDevice(const ALCchar *devicename) ALC_API_NOEXCEPT;
+ALC_API ALCdevice* ALC_APIENTRY alcOpenDevice(const ALCchar *devicename) ALC_API_NOEXCEPT;
 /** Closes the given playback device. */
 ALC_API ALCboolean ALC_APIENTRY alcCloseDevice(ALCdevice *device) ALC_API_NOEXCEPT;
 
@@ -259,6 +275,33 @@ ALC_API void       ALC_APIENTRY alcCaptureStop(ALCdevice *device) ALC_API_NOEXCE
 ALC_API void       ALC_APIENTRY alcCaptureSamples(ALCdevice *device, ALCvoid *buffer, ALCsizei samples) ALC_API_NOEXCEPT;
 #endif /* ALC_NO_PROTOTYPES */
 
+/* Pointer-to-function types, useful for storing dynamically loaded ALC entry
+ * points.
+ */
+typedef ALCcontext*    (ALC_APIENTRY *LPALCCREATECONTEXT)(ALCdevice *device, const ALCint *attrlist) ALC_API_NOEXCEPT17;
+typedef ALCboolean     (ALC_APIENTRY *LPALCMAKECONTEXTCURRENT)(ALCcontext *context) ALC_API_NOEXCEPT17;
+typedef void           (ALC_APIENTRY *LPALCPROCESSCONTEXT)(ALCcontext *context) ALC_API_NOEXCEPT17;
+typedef void           (ALC_APIENTRY *LPALCSUSPENDCONTEXT)(ALCcontext *context) ALC_API_NOEXCEPT17;
+typedef void           (ALC_APIENTRY *LPALCDESTROYCONTEXT)(ALCcontext *context) ALC_API_NOEXCEPT17;
+typedef ALCcontext*    (ALC_APIENTRY *LPALCGETCURRENTCONTEXT)(void) ALC_API_NOEXCEPT17;
+typedef ALCdevice*     (ALC_APIENTRY *LPALCGETCONTEXTSDEVICE)(ALCcontext *context) ALC_API_NOEXCEPT17;
+typedef ALCdevice*     (ALC_APIENTRY *LPALCOPENDEVICE)(const ALCchar *devicename) ALC_API_NOEXCEPT17;
+typedef ALCboolean     (ALC_APIENTRY *LPALCCLOSEDEVICE)(ALCdevice *device) ALC_API_NOEXCEPT17;
+typedef ALCenum        (ALC_APIENTRY *LPALCGETERROR)(ALCdevice *device) ALC_API_NOEXCEPT17;
+typedef ALCboolean     (ALC_APIENTRY *LPALCISEXTENSIONPRESENT)(ALCdevice *device, const ALCchar *extname) ALC_API_NOEXCEPT17;
+typedef ALCvoid*       (ALC_APIENTRY *LPALCGETPROCADDRESS)(ALCdevice *device, const ALCchar *funcname) ALC_API_NOEXCEPT17;
+typedef ALCenum        (ALC_APIENTRY *LPALCGETENUMVALUE)(ALCdevice *device, const ALCchar *enumname) ALC_API_NOEXCEPT17;
+typedef const ALCchar* (ALC_APIENTRY *LPALCGETSTRING)(ALCdevice *device, ALCenum param) ALC_API_NOEXCEPT17;
+typedef void           (ALC_APIENTRY *LPALCGETINTEGERV)(ALCdevice *device, ALCenum param, ALCsizei size, ALCint *values) ALC_API_NOEXCEPT17;
+typedef ALCdevice*     (ALC_APIENTRY *LPALCCAPTUREOPENDEVICE)(const ALCchar *devicename, ALCuint frequency, ALCenum format, ALCsizei buffersize) ALC_API_NOEXCEPT17;
+typedef ALCboolean     (ALC_APIENTRY *LPALCCAPTURECLOSEDEVICE)(ALCdevice *device) ALC_API_NOEXCEPT17;
+typedef void           (ALC_APIENTRY *LPALCCAPTURESTART)(ALCdevice *device) ALC_API_NOEXCEPT17;
+typedef void           (ALC_APIENTRY *LPALCCAPTURESTOP)(ALCdevice *device) ALC_API_NOEXCEPT17;
+typedef void           (ALC_APIENTRY *LPALCCAPTURESAMPLES)(ALCdevice *device, ALCvoid *buffer, ALCsizei samples) ALC_API_NOEXCEPT17;
 
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+/* NOLINTEND */
 
 #endif /* AL_ALC_H */

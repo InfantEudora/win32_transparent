@@ -21,6 +21,7 @@ public:
     vec3 camera_target = {};
     Scene* CreateMainScene();
     DozerCharacter* dozer = NULL;
+    int dozer_floor_contact_points = 0;
     void ResetDozer();
     bool dozer_camera_tracking = true;
     void SpawnAssetAt(const std::string& name, const vec3& wpos);

@@ -10,6 +10,9 @@
 
 #include "al.h"
 #include "alc.h"
+//This magical fun feature
+#define INITGUID
+#include "knownfolders.h"
 
 #include "WaveFile.h"
 
@@ -45,7 +48,7 @@ public:
     void Initialise();
 
     void AppendFile(const char* filename, const char* handle);
-    void Play(const char* handle_name, bool looping = false);
+    void Play(const char* handle_name, bool looping = false, float gain=1.0f);
     void Pause(const char* handle_name);
     void Rewind(const char* handle_name);
     bool FinishedPlaying(const char* handle_name);

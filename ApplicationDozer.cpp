@@ -46,6 +46,7 @@ void ApplicationDozer::Init(){
     soundsystem->AppendFile("dozer/data/engine_revup_long.wav","engine_revup_long");
     soundsystem->AppendFile("dozer/data/engine_stop.wav","engine_stop");
     soundsystem->AppendFile("dozer/data/engine_crank.wav","engine_crank");
+    soundsystem->AppendFile("dozer/data/steelbeam.wav","steelbeam");
 
     main_scene = CreateMainScene();
     main_scene->UpdatePhysics();
@@ -66,6 +67,29 @@ void ApplicationDozer::RunLogic(){
     if (!main_window->f_has_focus){
         return;
     }
+
+    //We reset this here, gets set from callback from app->UpdatePhysics();
+    dozer_floor_contact_points = 0;
+
+    //Check that all objects havent fallen to their doom
+    bool something_was_destroyed = false;
+    for (Object* object:renderer->objects){
+        if (object == camera){
+            continue;
+        }
+        vec3 pos = object->GetPosition();
+        if (pos.y < -10){
+            //This one is lost to the void... for sure.
+            if ((object == dozer) || (object == dozer->armobject)){
+                ResetDozer();
+            }else{
+
+            }
+        }
+    }
+
+    //Can't just call this... the renderer might be rendering. Now it needs a mutex around everything
+    renderer->DeleteDestroyedObjects();
 
     //All further code requires the cursor not to be above an UI element
     if (ImGui::GetIO().WantCaptureMouse){
@@ -209,26 +233,7 @@ void ApplicationDozer::RunLogic(){
         dozer_camera_tracking = !dozer_camera_tracking;
     }
 
-    //Check that all objects havent fallen to their doom
-    bool something_was_destroyed = false;
-    for (Object* object:renderer->objects){
-        if (object == camera){
-            continue;
-        }
-        vec3 pos = object->GetPosition();
-        if (pos.y < -10){
-            //This one is lost to the void... for sure.
-            if ((object == dozer) || (object == dozer->armobject)){
-                ResetDozer();
-            }else{
 
-            }
-        }
-    }
-
-    //Can't just call this... the renderer might be rendering.
-    //TODO: Think harder. Sync more things. Mutex more stuff...?
-    renderer->DeleteDestroyedObjects();
 }
 
 void ApplicationDozer::ResetDozer(){
@@ -278,6 +283,8 @@ void ApplicationDozer::DrawImGuiUI(){
     std::string str_camera_tracking;
     dozer_camera_tracking ? str_camera_tracking = "ENABLED" : str_camera_tracking = "DISABLED";
     ImGui::Text("Press 'T' to enable camera tracking (Currently %s)\n",str_camera_tracking.c_str());
+
+    ImGui::Text("Dozer Floor Contacts: %i\n",dozer_floor_contact_points);
 
     ImGui::End();
 
@@ -411,6 +418,34 @@ Scene* ApplicationDozer::CreateMainScene(){
             quat q; q.set_rotation(vec3(1,0,0),toradians(-20));
             beam->SetRotation(q);
             beam->SetPosition(vec3(-1.8,2,0));
+            physics->body->rigidbody->setUserData(beam);
+        }
+        beam = new Object(beam);
+        quat q; q.set_rotation(vec3(1,0,0),toradians(-10));
+        beam->SetRotation(q);
+        beam->SetPosition(vec3(-3.2,0.4,-1));
+        scene->AddObject(beam);
+    }
+
+    {
+        Object* barrier = CreateNewObjectFromGLTF("BarrierDouble",scene);
+        if (!barrier){
+            debug->Fatal("No BarrierDouble was found\n");
+        }
+        barrier->AddPhysics(scene->physics_world);
+        if (Physics* physics = barrier->GetPhysics()){
+            vec3 extent = barrier->GetMesh()->GetExtents()*0.5f;
+            physics->AddBoxCollider(extent,vec3(0,0,0),quat().identity());
+            physics->SetStatic(false);
+            physics->SetGravityEnabled(true);
+            physics->SetBounciness(0);
+            barrier->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
+            barrier->SetCollideWithMaskBits(COLLISION_CATEGORY_FLOOR|COLLISION_CATEGORY_OBJECTS);
+            quat q; q.set_rotation(vec3(0,1,0),toradians(90));
+            barrier->SetRotation(q);
+            barrier->SetPosition(vec3(-.6,0.0,3.2));
+            physics->body->rigidbody->setUserData(barrier);
+            barrier->SetMass(50);
         }
     }
 
@@ -438,13 +473,61 @@ Scene* ApplicationDozer::CreateMainScene(){
 //Called from within physics update.
 void ApplicationDozer::onContact(const CollisionCallback::CallbackData& callbackData){
     //debug->Info("Contact: num pairs %hhu\n",callbackData.getNbContactPairs());
-    // For each contact pair
+
+
     for (uint32_t i = 0; i < callbackData.getNbContactPairs(); i++) {
         CollisionCallback::ContactPair contactPair = callbackData.getContactPair(i);
 
         Object* d1 = (Object*)contactPair.getBody1()->getUserData();
         Object* d2 = (Object*)contactPair.getBody2()->getUserData();
 
+        //Things we are interested in
+        Object* floor = NULL;
+        Object* dozer = NULL;
+        Object* beam = NULL;
+        if (d1 && (d1->name.compare("FloorConcrete") == 0)){
+            floor = d1;
+        }
+        if (d2 && (d2->name.compare("FloorConcrete") == 0)){
+            floor = d2;
+        }
+        if (d1 && (d1->name.compare("Dozer") == 0)){
+            dozer = d1;
+        }
+        if (d2 && (d2->name.compare("Dozer") == 0)){
+            dozer = d2;
+        }
+        if (d1 && (d1->name.compare("Beam") == 0)){
+            beam = d1;
+        }
+        if (d2 && (d2->name.compare("Beam") == 0)){
+            beam = d2;
+        }
+        if (dozer && floor){
+            dozer_floor_contact_points++;
+        }
+        if (beam && floor){
+            float beam_velocity = beam->GetVelocity().length();
+
+            if (contactPair.getEventType() == CollisionCallback::ContactPair::EventType::ContactStart){
+                debug->Info("Beam hit floor at velocity %.3f\n",beam_velocity);
+                if (soundsystem->FinishedPlaying("steelbeam")){
+                    float gain;
+                    if (beam_velocity > 1.5){
+                        gain = 1;
+                    }else{
+                        gain = clamp(beam_velocity,0,1);
+                    }
+                    soundsystem->Play("steelbeam",false,gain);
+                    debug->Info(" -> Doink!\n");
+                }
+            }
+
+        }
+
+    }
+    if (dozer_floor_contact_points > 0){
+        //debug->Info("Dozer contacts a floor by %i contactpoints\n",dozer_floor_contact_points);
     }
 }
 

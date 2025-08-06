@@ -32,6 +32,7 @@ Object::Object(Object* object):Object(){
         physics->SetGravityEnabled(p->IsGravityEnabled());
         physics->SetStatic(p->IsStatic());
         SetMass(object->GetMass());
+        physics->body->rigidbody->setUserData(this);
     }
     SetCollisionCategoryBits(object->collision_category_bits);
     SetCollideWithMaskBits(object->collide_with_bits);

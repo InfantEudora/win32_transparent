@@ -26,6 +26,8 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
         physics->SetGravityEnabled(true);
         physics->body->rigidbody->setLinearDamping(0.5);
         physics->body->rigidbody->setMass(10);
+        physics->body->rigidbody->setUserData(this);
+        physics->body->rigidbody->setIsAllowedToSleep(false);
     }
 
     armobject = assetmanager->GetObjectFromAsset("Arm");
@@ -257,11 +259,7 @@ void DozerCharacter::ArmUp(){
     if (joint_angle > -0.75){
         arm_torque = clamp(arm_torque+2,0,arm_torque_max);
     }
-
-
-
-
-    debug->Info("Joint Angle: %.2f. Arm Torque: %.1f Nm\n",joint_angle,arm_torque);
+    //debug->Info("Joint Angle: %.2f. Arm Torque: %.1f Nm\n",joint_angle,arm_torque);
 }
 
 void DozerCharacter::ArmDown(){

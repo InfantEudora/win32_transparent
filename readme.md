@@ -159,11 +159,7 @@ Ignore documentation for building and run:
 ```mkdir build; cmake -G"MSYS Makefiles" -B build;cd build;make```
 
 It defaults to making some kind of ninja file, and assumes that Windows means Visual Studio.
-Version 0.9.0 seems to work a lot better than 0.10.2. This is asserting on basically everything.
-
 Apparently, friction is like not done properly in any physics engine just by the way they solve things.
-
-It has so many quirks... soo many!
 
 ### More OpenGL 4.5 Madness
 Changed glNamedBufferData(boneinstdata_ssbo, 0 , NULL, GL_STREAM_DRAW); from GL_DYNAMIC_DRAW.
@@ -247,7 +243,26 @@ Tiled
 ### Audio
 
 Currently we play Wav files with OpenAL. It'd be nice to handle opus file format.
-It's currently loaded in with a dll. It would be nice to also compile it as a static library.
+Tested with a DLL, but now compiled in as a static library with the following basic configuration:
+```
+$ cmake --build .
+[0/1] Re-running CMake...-- {fmt} version: 11.1.4
+-- Build type: Release
+--
+-- Building OpenAL with support for the following backends:
+--     WinMM, Null
+--
+-- Building with support for CPU extensions:
+--     Default, SSE, SSE2, SSE3, SSE4.1
+--
+-- Embedding HRTF datasets
+--
+-- Installing library and headers
+--
+-- Configuring done (0.2s)
+-- Generating done (0.0s)
+```
+
 
 ### Debugging
 
