@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>HTTP Server</title>
+	<style>
+		body { font-family: Arial, sans-serif; margin: 24px; background-color: #f7f7f7; }
+		h1 { color: #222; }
+		.stat { font-weight: bold; color: #007acc; }
+		.status { font-weight: bold; padding-left: 6px; }
+		.status.online { color: #1a9b00; }
+		.status.offline { color: #c62828; }
+		.panel { background: #fff; padding: 16px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); max-width:600px }
+	</style>
+	<script>
+		// Poll /status and update DOM elements in-place without reloading the page
+		async function pollStatus() {
+			try {
+				const res = await fetch('/status?_=' + Date.now(), { cache: 'no-store' });
+				if (!res.ok) return;
+				const j = await res.json();
+				// update known fields if present
+				if (j.playerHealth !== undefined) {
+					const el = document.getElementById('playerHealth'); if (el) el.textContent = j.playerHealth;
+				}
+				if (j.score !== undefined) {
+					const el = document.getElementById('score'); if (el) el.textContent = j.score;
+				}
+				if (j.fps !== undefined) {
+					const el = document.getElementById('fps'); if (el) el.textContent = j.fps;
+				}
+			} catch (e) {
+				console.warn('status poll failed', e);
+			}
+		}
+
+		// Start WebSocket connection after page load
+		window.addEventListener('load', () => {
+			try {
+				const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+				const ws = new WebSocket(proto + '//' + location.host + '/ws');
+				ws.addEventListener('message', function(e){
+					try {
+						const j = JSON.parse(e.data);
+						if (j.playerHealth !== undefined) {
+							const el = document.getElementById('playerHealth'); if (el) el.textContent = j.playerHealth;
+						}
+						if (j.score !== undefined) {
+							const el = document.getElementById('score'); if (el) el.textContent = j.score;
+						}
+						if (j.fps !== undefined) {
+							const el = document.getElementById('fps'); if (el) el.textContent = j.fps;
+						}
+					} catch (err) { console.warn('ws msg parse', err); }
+				});
+				ws.addEventListener('open', function(){ console.log('WebSocket open'); });
+						ws.addEventListener('open', function(){ console.log('WebSocket open'); setWSStatus(true); });
+						ws.addEventListener('close', function(){ console.log('WebSocket closed'); setWSStatus(false); });
+						ws.addEventListener('error', function(){ console.log('WebSocket error'); setWSStatus(false); });
+			} catch(e){ console.warn('websocket init failed', e); }
+		});
+
+				function setWSStatus(connected){
+					const el = document.getElementById('wsStatus');
+					if (!el) return;
+					if (connected){ el.textContent = 'Connected'; el.className = 'status online'; }
+					else { el.textContent = 'Disconnected'; el.className = 'status offline'; }
+				}
+	</script>
+</head>
+<body>
+	<div class="panel">
+		<h1>Application Status</h1>
+		<p>WebSocket: <span id="wsStatus" class="status offline">Disconnected</span></p>
+		<p>Player Health: <span id="playerHealth" class="stat">70</span></p>
+		<p>Score: <span id="score" class="stat">26087</span></p>
+		<p>FPS: <span id="fps" class="stat">51</span></p>
+		<p style="color:#666; margin-top:12px; font-size:0.9em">This page updates values in-place via WebSocket.</p>
+	</div>
+</body>
+</html>

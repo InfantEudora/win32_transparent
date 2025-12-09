@@ -45,31 +45,6 @@ void BinaryAsset::Uncompress(){
     }
 }
 
-//Test miniz compression of the first binary asset
-/*
-void BinaryAsset::DeflateBinaryAssets(){
-    for (BinaryAsset& asset:file_assets){
-        //if (asset.name.compare("data/hand.glb") == 0){
-            uint32_t crc_initial = mz_crc32(MZ_CRC32_INIT,asset.data,asset.size);
-            debug->Info("Deflating %s. Uncompressed size: %i kB (%i Bytes) CRC = %08X\n",asset.name.c_str(),asset.size / 1024,asset.size,crc_initial);
-
-
-            size_t compressed_size = 0;
-            uint8_t* compressed_data = (uint8_t*)tdefl_compress_mem_to_heap(asset.data,asset.size,&compressed_size,1500);
-            debug->Info("Done. Compressed size: %zu kB (%zu Bytes)\n",compressed_size / 1024,compressed_size);
-
-            uint8_t* data = (uint8_t*)malloc(assets->size);
-            debug->Info("Uncompressing...\n");
-            size_t uncompressed_size = 0;
-            uint8_t* uncompressed_data = (uint8_t*)tinfl_decompress_mem_to_heap(compressed_data,compressed_size,&uncompressed_size,1500);
-
-            uint32_t crc_final = mz_crc32(MZ_CRC32_INIT,uncompressed_data,uncompressed_size);
-            debug->Info("Done. Uncompressed size: %zu kB (%zu Bytes)CRC = %08X\n",uncompressed_size / 1024,uncompressed_size,crc_final);
-
-        //}
-    }
-}*/
-
 BinaryAsset* BinaryAsset::GetBinaryAsset(const char* filename){
     //Find in file assets
     for (BinaryAsset& asset:file_assets){

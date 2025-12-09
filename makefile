@@ -16,7 +16,7 @@ FNOCONSOLE = -Wl,-subsystem,windows
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
 COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
 
-CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -luser32 -lopengl32 -lgdi32 -lws2_32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
+CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 #CFLAGS += -std=c++11
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 #CFLAGS += $(FNOCONSOLE)
@@ -57,6 +57,8 @@ SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_win32.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_opengl3.cpp
 OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
 
+
+
 ifeq ($(COMPILE_BINARYASSETS), 1)
 	SRCS += BinaryAssetMemory.cpp
 else
@@ -69,15 +71,15 @@ endif
 #DIR_SRC += ./isoterrain
 
 #ApplicationDozer
-SRCS += ApplicationDozer.cpp
-IPATHS += -Idozer/
-DIR_SRC += ./dozer
+#SRCS += ApplicationDozer.cpp
+#IPATHS += -Idozer/
+#DIR_SRC += ./dozer
 
 #SRCS += ImCurveEdit.cpp
 #SRCS += ImSequencer.cpp
 
 #ApplicationTileset
-#SRCS += ApplicationTileset.cpp
+SRCS += ApplicationTileset.cpp
 
 #ApplicationSim
 #IPATHS += -Igalaxy/
@@ -111,6 +113,7 @@ $(OBJ_LIBIMGUI): %.o: %.cpp
 imgui: $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
 	mkdir -p libs
 	@echo "Linking IMGui into static Library imgui.a"
+	-rm -rf libs/libimgui.a
 	ar q libs/libimgui.a $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
 
 all: default

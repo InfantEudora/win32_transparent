@@ -25,9 +25,10 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
         physics->SetStatic(false);
         physics->SetGravityEnabled(true);
         physics->body->rigidbody->setLinearDamping(0.5);
-        physics->body->rigidbody->setMass(10);
         physics->body->rigidbody->setUserData(this);
         physics->body->rigidbody->setIsAllowedToSleep(false);
+        physics->body->rigidbody->updateMassPropertiesFromColliders();
+        physics->body->rigidbody->setMass(10);
     }
 
     armobject = assetmanager->GetObjectFromAsset("Arm");
@@ -40,7 +41,9 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
         p->SetStatic(false);
         armobject->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
         armobject->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS|COLLISION_CATEGORY_FLOOR);
+        armobject->GetPhysics()->body->rigidbody->updateMassPropertiesFromColliders();
         armobject->GetPhysics()->body->rigidbody->setMass(0.5);
+        armobject->GetPhysics()->body->rigidbody->setUserData(this);
     }
 
     rp3d::RigidBody* body1 = GetRigidBody();

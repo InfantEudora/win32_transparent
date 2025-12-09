@@ -25,7 +25,7 @@
     For now, wraps around some version of OpenAL.
 */
 
-#define  NUM_AL_BUFFERS 8
+#define  NUM_AL_BUFFERS 16
 
 class SoundSystem{
 public:
@@ -42,7 +42,6 @@ public:
     ALuint buffers[NUM_AL_BUFFERS];
 
     std::map<std::string, int>map_handles;
-
 
     bool f_initialised;
     void Initialise();

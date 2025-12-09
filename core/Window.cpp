@@ -513,6 +513,15 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
            //return 0;
         }
         break;
+        case WM_MOUSEHOVER:
+            //We never seem to get this
+        break;
+        case WM_CAPTURECHANGED:
+            //debug->Info("WM_CAPTURECHANGED wParam= %li\n",wParam);
+        break;
+        case WM_MOUSELEAVE:
+            //debug->Info("WM_MOUSELEAVE wParam= %li\n",wParam);
+        break;
         case WM_SETFOCUS:
             wnd->f_has_focus = true;
             //debug->Info("WM_SETFOCUS\n");

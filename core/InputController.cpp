@@ -185,31 +185,34 @@ void InputController::Tick(){
 //Handles message from a WIN32 message handler, which are from a different thread.
 void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
 
-    if (msg == WM_MOUSELEAVE){
-        //debug->Warn("Mouse has left the building.\n");
-    }else if (msg == WM_NCMOUSEMOVE){
+    if (msg == WM_NCMOUSEMOVE){
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
-        debug->Trace("WM_NCMOUSEMOVE x,y = %li,%li\n",x,y);
+        f_mouse_over_window = true;
+        //debug->Trace("WM_NCMOUSEMOVE x,y = %li,%li\n",x,y);
     }else if (msg == WM_MOUSEMOVE){
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
-        debug->Trace("WM_MOUSEMOVE x,y = %li,%li\n",x,y);
+        f_mouse_over_window = true;
+        //debug->Trace("WM_MOUSEMOVE x,y = %li,%li\n",x,y);
     }else if (msg == WM_MOUSEWHEEL){
         int d = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
-        debug->Trace("WM_MOUSEWHEEL x,y = %li,%li delta=%i\n",x,y,d);
+        //debug->Trace("WM_MOUSEWHEEL x,y = %li,%li delta=%i\n",x,y,d);
         KeyMap* m = GetByMappedKey(INPUT_MOUSE_WHEEL);
         if (m){
             m->state->value += d;
             m->state->delta += d;
             m->state->f_processed = false;
         }
-    }else if (msg == WM_NCMOUSELEAVE){
+        f_mouse_over_window = true;
+    }else if (msg == WM_MOUSELEAVE){
+        debug->Trace("WM_MOUSELEAVE wParam= %li\n",wParam);
+        f_mouse_over_window = false;
     }else if (msg == WM_SETCURSOR){
     }else if (msg == WM_CHAR){
-
+    }else if (msg == WM_CAPTURECHANGED){
     }else if (msg == WM_KEYDOWN){
         debug->Trace("WM_KEYDOWN wParam= %li\n",wParam);
     }else if (msg == WM_KEYUP){

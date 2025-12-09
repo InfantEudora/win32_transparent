@@ -14,7 +14,7 @@ Physics::Physics(PhysicsWorld* _world){
 	body->collider = NULL;
 	body->rigidbody = world->rp_world->createRigidBody(reactphysics3d::Transform::identity());
 	//This only works on > 0.9.0
-	//body->rigidbody->setIsDebugEnabled(true);
+	body->rigidbody->setIsDebugEnabled(true);
 }
 
 Physics::~Physics(){
@@ -29,7 +29,10 @@ void Physics::SetBodyWorldPosition(const vec3& wp){
 	reactphysics3d::Transform t = body->rigidbody->getTransform();
 	reactphysics3d::Vector3 p = reactphysics3d::Vector3(wp.x,wp.y,wp.z);
 	t.setPosition(p);
+	bool f_active = body->rigidbody->isActive();
+	body->rigidbody->setIsActive(false);
 	body->rigidbody->setTransform(t);
+	body->rigidbody->setIsActive(f_active);
 	world->WakeUpEveryone();
 }
 
@@ -46,17 +49,29 @@ quat Physics::GetBodyWorldOrientation(){
 void Physics::SetBodyWorldOrientation(const quat& q){
 	reactphysics3d::Transform t = body->rigidbody->getTransform();
 	t.setOrientation(reactphysics3d::Quaternion(q.x,q.y,q.z,q.w));
+	bool f_active = body->rigidbody->isActive();
+	rp3d::BodyType type = body->rigidbody->getType();
+	if (type == rp3d::BodyType::STATIC){
+		body->rigidbody->setIsActive(false);
+	}
 	body->rigidbody->setTransform(t);
+	if (type == rp3d::BodyType::STATIC){
+		body->rigidbody->setIsActive(f_active);
+	}
+
 	world->WakeUpEveryone();
 }
 
 //Toggles the body to be either static or dynamic
 void Physics::SetStatic(bool _static){
+	bool f_active = body->rigidbody->isActive();
+	body->rigidbody->setIsActive(false);
 	if (_static){
-		body->rigidbody->setType(reactphysics3d::BodyType::STATIC);
+		body->rigidbody->setType(rp3d::BodyType::STATIC);
 	}else{
-		body->rigidbody->setType(reactphysics3d::BodyType::DYNAMIC);
+		body->rigidbody->setType(rp3d::BodyType::DYNAMIC);
 	}
+	body->rigidbody->setIsActive(f_active);
 }
 
 bool Physics::IsStatic(){

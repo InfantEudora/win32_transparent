@@ -3,6 +3,7 @@
 
 #include "Application.h"
 #include "DozerCharacter.h"
+#include "DozerButton.h"
 #include "SoundSystem.h"
 
 /*
@@ -27,11 +28,17 @@ public:
     void SpawnAssetAt(const std::string& name, const vec3& wpos);
     SoundSystem* soundsystem = NULL;
 
+    DozerButton* CreateDozerButton(Scene* scene);
+
+    void ExportSceneString();
+
+protected:
+    void RenderDebugMenuBarClass(void) override;
+
 private:
     //reactphysics3d::EventListener
     void onContact(const rp3d::CollisionCallback::CallbackData& callbackData) override;
     void onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData) override;
-
 };
 
 #endif

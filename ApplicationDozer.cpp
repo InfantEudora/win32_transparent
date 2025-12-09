@@ -47,6 +47,7 @@ void ApplicationDozer::Init(){
     soundsystem->AppendFile("dozer/data/engine_stop.wav","engine_stop");
     soundsystem->AppendFile("dozer/data/engine_crank.wav","engine_crank");
     soundsystem->AppendFile("dozer/data/steelbeam.wav","steelbeam");
+    soundsystem->AppendFile("dozer/data/door_opening.wav","door_opening");
 
     main_scene = CreateMainScene();
     main_scene->UpdatePhysics();
@@ -103,11 +104,12 @@ void ApplicationDozer::RunLogic(){
     if (dozer_camera_tracking){
         //We attempt to keep distance constant, and height
         vec3 new_camera_target = dozer->GetPosition();
-        vec3 camera_target_lerp = camera_target.lerp(new_camera_target,0.15f);
+        vec3 camera_target_lerp = camera_target.lerp(new_camera_target,0.05f);
 
         vec3 camera_pos_target = camera->GetPosition();
-        camera_pos_target.y = dozer->GetPosition().y + 5.0;
-        vec3 camera_pos_lerp = camera->GetPosition().lerp(camera_pos_target,0.15f);
+        camera_pos_target.y = dozer->GetPosition().y + 7.0;
+        camera_pos_target.x = dozer->GetPosition().x;
+        vec3 camera_pos_lerp = camera->GetPosition().lerp(camera_pos_target,0.05f);
         camera->SetPosition(camera_pos_lerp);
 
         vec3 up = vec3(0,1,0);
@@ -233,6 +235,14 @@ void ApplicationDozer::RunLogic(){
         dozer_camera_tracking = !dozer_camera_tracking;
     }
 
+    if (input->WasKeyReleased(INPUT_FOCUS)){
+        //We center and track the camera onto the selected object
+        if (selected_object){
+            camera_target = selected_object->GetWorldPosition();
+            vec3 up = up = vec3(0,1,0);
+            camera->SetLookAt(camera_target,&up);
+        }
+    }
 
 }
 
@@ -271,6 +281,48 @@ void ApplicationDozer::SpawnAssetAt(const std::string& name, const vec3& wpos){
 
     main_scene->AddObject(asset);
     //debug->Info("Spwaned in %s\n",name.c_str());
+}
+
+//Write all scene objects with parameters to a file.
+void ApplicationDozer::ExportSceneString(){
+    FILE* file;
+	size_t sz = 0;
+    const char* filename = "SceneExport.cpp";
+	file = fopen(filename, "wb");
+    if(!file){
+		debug->Fatal("Writing to %s failed.\n",filename);
+		return;
+	}
+
+    //Loop over the objects we are interested in
+    for (Object* object:renderer->objects){
+        if (object->name.compare("Wall") == 0){
+            vec3 p = object->GetPosition();
+            quat q = object->GetRotation();
+            fprintf(file,"wall = new Object(wall);\n");
+            fprintf(file,"wall->SetPosition(vec3(%.5f,%.5f,%.5f));\n",p.x,p.y,p.z);
+            fprintf(file,"wall->SetRotation(quat(%.5f,%.5f,%.5f,%.5f));\n",q.x,q.y,q.z,q.w);
+            fprintf(file,"scene->AddObject(wall);\n");
+        }
+        if (object->name.compare("FloorConcrete") == 0){
+            fprintf(file,"FloorConcrete:\n");
+            fprintf(file," -> ID  : %lu\n",object->GetID());
+            vec3 p = object->GetPosition();
+            fprintf(file," -> POS : %.5f %.5f %.5f\n",p.x,p.y,p.z);
+        }
+    }
+
+    debug->Info("Exported to %s\n",filename);
+    fclose(file);
+}
+
+void ApplicationDozer::RenderDebugMenuBarClass(void){
+    if (ImGui::BeginMenu("Dozer Scene")){
+        if (ImGui::MenuItem("Export")){
+            ExportSceneString();
+        }
+        ImGui::EndMenu();
+    }
 }
 
 void ApplicationDozer::DrawImGuiUI(){
@@ -354,11 +406,22 @@ Scene* ApplicationDozer::CreateMainScene(){
         }
         //Create a copy
         floor = new Object(floor);
-        floor->SetPosition(vec3(-8,-8,0));
+        floor->SetPosition(vec3(-8,-1,0));
         scene->AddObject(floor);
         floor = new Object(floor);
-        floor->SetPosition(vec3(0,-8,0));
+        floor->SetPosition(vec3(-16,-2.7,0));
+        quat q;
+        q.set_rotation(vec3(0,1,0),toradians(5));
+        q.set_rotation(vec3(0,0,1),toradians(25));
+        floor->SetRotation(q);
         scene->AddObject(floor);
+        floor = new Object(floor);
+        floor->SetPosition(vec3(-24,-4.7,0));
+        scene->AddObject(floor);
+        floor = new Object(floor);
+        floor->SetPosition(vec3(-24,-4.7,8));
+        scene->AddObject(floor);
+
     }
 
     {//Walls
@@ -376,7 +439,32 @@ Scene* ApplicationDozer::CreateMainScene(){
             wall->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
             wall->SetCollideWithMaskBits(COLLISION_CATEGORY_FLOOR|COLLISION_CATEGORY_OBJECTS);
             wall->SetMass(20);
+            wall->SetPosition(vec3(2.5,-0.5,0));
         }
+        wall = new Object(wall);
+        wall->SetPosition(vec3(-9.81609,-0.60122,3.31158));
+        wall->SetRotation(quat(0.00049,0.75604,0.00029,0.65452));
+        scene->AddObject(wall);
+        wall = new Object(wall);
+        wall->SetPosition(vec3(-9.94301,-0.60226,-2.87427));
+        wall->SetRotation(quat(0.00024,0.69999,-0.00001,0.71415));
+        scene->AddObject(wall);
+        wall = new Object(wall);
+        wall->SetPosition(vec3(-26.40296,-4.30119,-2.79435));
+        wall->SetRotation(quat(-0.00031,-0.36153,-0.00010,0.93236));
+        scene->AddObject(wall);
+        wall = new Object(wall);
+        wall->SetPosition(vec3(-27.08307,-4.30100,4.32575));
+        wall->SetRotation(quat(0.00000,-0.00000,-0.00001,1.00000));
+        scene->AddObject(wall);
+        wall = new Object(wall);
+        wall->SetPosition(vec3(-27.08308,-4.30096,0.66575));
+        wall->SetRotation(quat(-0.00000,-0.00000,-0.00005,1.00000));
+        scene->AddObject(wall);
+        wall = new Object(wall);
+        wall->SetPosition(vec3(-22.75300,-4.24106,-3.39431));
+        wall->SetRotation(quat(0.00000,0.73455,0.00000,0.67856));
+        scene->AddObject(wall);
     }
 
     {
@@ -417,7 +505,7 @@ Scene* ApplicationDozer::CreateMainScene(){
             beam->SetCollideWithMaskBits(COLLISION_CATEGORY_FLOOR|COLLISION_CATEGORY_OBJECTS);
             quat q; q.set_rotation(vec3(1,0,0),toradians(-20));
             beam->SetRotation(q);
-            beam->SetPosition(vec3(-1.8,2,0));
+            beam->SetPosition(vec3(2.7,2,0));
             physics->body->rigidbody->setUserData(beam);
         }
         beam = new Object(beam);
@@ -449,10 +537,57 @@ Scene* ApplicationDozer::CreateMainScene(){
         }
     }
 
+    {
+        Object* barrier = CreateNewObjectFromGLTF("SlidingDoorFrame",scene);
+        if (!barrier){
+            debug->Fatal("No SlidingDoorFrame was found\n");
+        }
+        barrier->AddPhysics(scene->physics_world);
+        if (Physics* physics = barrier->GetPhysics()){
+            vec3 extent = barrier->GetMesh()->GetExtents()*0.5f;
+            physics->AddBoxCollider(vec3(0.8,2,0.8),vec3(-5.0,0,0.2),quat().identity());
+            physics->AddBoxCollider(vec3(0.8,2,0.8),vec3(1.8,0,0.2),quat().identity());
+            physics->SetStatic(true);
+            physics->SetGravityEnabled(false);
+            physics->SetBounciness(0);
+            barrier->SetCollisionCategoryBits(COLLISION_CATEGORY_FLOOR);
+            barrier->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS);
+            quat q; q.set_rotation(vec3(0,1,0),toradians(-90));
+            barrier->SetRotation(q);
+            barrier->SetPosition(vec3(-7.0,0.6,2.2));
+            physics->body->rigidbody->setUserData(barrier);
+        }
+    }
+
+    Object* door = NULL;
+    {
+        door = CreateNewObjectFromGLTF("SlidingDoor",scene);
+        if (!door){
+            debug->Fatal("No SlidingDoorFrame was found\n");
+        }
+        door->AddPhysics(scene->physics_world);
+        if (Physics* physics = door->GetPhysics()){
+            vec3 extent = door->GetMesh()->GetExtents()*0.5f;
+            physics->AddBoxCollider(extent,vec3(0,extent.y,0),quat().identity());
+            physics->SetStatic(true);
+            physics->SetGravityEnabled(false);
+            physics->SetBounciness(0);
+            door->SetCollisionCategoryBits(COLLISION_CATEGORY_FLOOR);
+            door->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS);
+            quat q; q.set_rotation(vec3(0,1,0),toradians(-90));
+            door->SetRotation(q);
+            door->SetPosition(vec3(-7.35,-.75,0.2));
+            physics->body->rigidbody->setUserData(door);
+        }
+    }
+
+    DozerButton* button = CreateDozerButton(scene);
+    button->SetDoor(door);
+    button->SetSoundSystem(soundsystem);
+
     //Add's all remaining unloaded objects
     GetAllAssetsFromGLTF();
     scene->renderer->AddMaterials(gltfloader.GetAllUniqueLoadedMaterials());
-
     dozer = new DozerCharacter(assetmanager,scene->physics_world,scene,rrand);
     dozer->soundsystem = soundsystem;
     scene->AddObject(dozer);
@@ -469,12 +604,39 @@ Scene* ApplicationDozer::CreateMainScene(){
     return scene;
 }
 
+DozerButton* ApplicationDozer::CreateDozerButton(Scene* scene){
+    std::vector<Material>loaded_materials;
+    DozerButton* button = new DozerButton();
+    Mesh* gltfmesh = gltfloader.GetMeshFromNode("Button",&loaded_materials);
+    if (!gltfmesh){
+        debug->Fatal("No Button Mesh was found\n");
+    }
+    button->name = "Button";
+    button->SetMesh(gltfmesh);
+    Asset* asset = assetmanager->AddNewAsset("Button",button);
+    button->AddPhysics(scene->physics_world);
+    if (Physics* physics = button->GetPhysics()){
+        vec3 extent = button->GetMesh()->GetExtents()*0.5f;
+        physics->AddBoxCollider(extent,vec3(0,-0.2,0),quat().identity());
+        physics->SetStatic(false);
+        physics->SetGravityEnabled(true);
+        physics->SetBounciness(0);
+        button->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
+        button->SetCollideWithMaskBits(COLLISION_CATEGORY_FLOOR|COLLISION_CATEGORY_OBJECTS);
+        physics->body->rigidbody->setUserData((Object*)button);
+        button->SetPosition(vec3(-6,0.6,3.0));
+        button->TakeMaterialNames(loaded_materials);
+    }
+
+    scene->AddObject(button);
+    return button;
+
+}
+
 //Event listener for on contact method
 //Called from within physics update.
 void ApplicationDozer::onContact(const CollisionCallback::CallbackData& callbackData){
     //debug->Info("Contact: num pairs %hhu\n",callbackData.getNbContactPairs());
-
-
     for (uint32_t i = 0; i < callbackData.getNbContactPairs(); i++) {
         CollisionCallback::ContactPair contactPair = callbackData.getContactPair(i);
 
@@ -485,6 +647,7 @@ void ApplicationDozer::onContact(const CollisionCallback::CallbackData& callback
         Object* floor = NULL;
         Object* dozer = NULL;
         Object* beam = NULL;
+        Object* button = NULL;
         if (d1 && (d1->name.compare("FloorConcrete") == 0)){
             floor = d1;
         }
@@ -503,14 +666,26 @@ void ApplicationDozer::onContact(const CollisionCallback::CallbackData& callback
         if (d2 && (d2->name.compare("Beam") == 0)){
             beam = d2;
         }
+        if (d1 && (d1->name.compare("Button") == 0)){
+            button = d1;
+        }
+        if (d2 && (d2->name.compare("Button") == 0)){
+            button = d2;
+        }
         if (dozer && floor){
             dozer_floor_contact_points++;
         }
+        if (dozer && button){
+
+            DozerButton* dbutton = dynamic_cast<DozerButton*>(button);
+            if (dbutton){
+                dbutton->SetWasPressed(true);
+            }
+        }
         if (beam && floor){
             float beam_velocity = beam->GetVelocity().length();
-
             if (contactPair.getEventType() == CollisionCallback::ContactPair::EventType::ContactStart){
-                debug->Info("Beam hit floor at velocity %.3f\n",beam_velocity);
+                //debug->Info("Beam hit floor at velocity %.3f\n",beam_velocity);
                 if (soundsystem->FinishedPlaying("steelbeam")){
                     float gain;
                     if (beam_velocity > 1.5){
@@ -519,12 +694,10 @@ void ApplicationDozer::onContact(const CollisionCallback::CallbackData& callback
                         gain = clamp(beam_velocity,0,1);
                     }
                     soundsystem->Play("steelbeam",false,gain);
-                    debug->Info(" -> Doink!\n");
+                    //debug->Info(" -> Doink!\n");
                 }
             }
-
         }
-
     }
     if (dozer_floor_contact_points > 0){
         //debug->Info("Dozer contacts a floor by %i contactpoints\n",dozer_floor_contact_points);

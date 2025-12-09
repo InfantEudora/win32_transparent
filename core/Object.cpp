@@ -33,6 +33,9 @@ Object::Object(Object* object):Object(){
         physics->SetStatic(p->IsStatic());
         SetMass(object->GetMass());
         physics->body->rigidbody->setUserData(this);
+        physics->SetFrictionCoefficient(object->GetPhysics()->GetFrictionCoefficient());
+        physics->SetBounciness(object->GetPhysics()->GetBounciness());
+
     }
     SetCollisionCategoryBits(object->collision_category_bits);
     SetCollideWithMaskBits(object->collide_with_bits);
@@ -45,6 +48,7 @@ Object::Object(Object* object):Object(){
     material_slot[1] = object->material_slot[1];
     material_slot[2] = object->material_slot[2];
     material_slot[3] = object->material_slot[3];
+    SetPosition(object->GetPosition());
 }
 
 Object::~Object(){
@@ -345,6 +349,15 @@ void Object::UpdateState(){
         child->UpdateState();
     }
 }
+
+
+/*//TODO: Some kind of list thing, event.. whatever... that tells all object about the destruction of
+another object.
+//Could also maybe use ... smart pointers?
+void Object::HandleObjectDestruction(){
+
+}
+*/
 
 //Called by Physics
 void Object::UpdatePhysicsState(){
@@ -658,10 +671,13 @@ void Object::SetCollisionCategoryBits(uint32_t bits){
     if (!physics){
         return;
     }
+    bool f_active = physics->body->rigidbody->isActive();
+	physics->body->rigidbody->setIsActive(false);
     for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
         physics->body->rigidbody->getCollider(i)->setCollisionCategoryBits(bits);
     }
     collision_category_bits = bits;
+    physics->body->rigidbody->setIsActive(f_active);
 }
 
 //This sets all categories that this object can collide with
@@ -669,10 +685,13 @@ void Object::SetCollideWithMaskBits(uint32_t bits){
     if (!physics){
         return;
     }
+    bool f_active = physics->body->rigidbody->isActive();
+	physics->body->rigidbody->setIsActive(false);
     for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
         physics->body->rigidbody->getCollider(i)->setCollideWithMaskBits(bits);
     }
     collide_with_bits = bits;
+    physics->body->rigidbody->setIsActive(f_active);
 }
 
 void Object::SetMass(float mass){

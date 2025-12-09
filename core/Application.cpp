@@ -233,7 +233,7 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     }
 
     //Setup debugging to run from this thread:
-    app->debug_physics = new Debugger("AppPhysics", DEBUG_ALL);
+    app->debug_physics = new Debugger("App.Physics", DEBUG_ALL);
 
     uint32_t physics_ticks = 0;
     double us_looptime_desired = 20000;
@@ -271,6 +271,7 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             timeBeginPeriod(1);
             Sleep(5);
             timeEndPeriod(1);
+            debug->Warn("No main scene for physics thread to work on!\n");
         }
         //debug->Ok("Physics Loop %lu completed\n",physics_ticks);
         physics_ticks++;
@@ -426,6 +427,9 @@ void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicke
     }
 }
 
+void Application::RenderDebugMenuBarClass(){
+    return;
+}
 
 void Application::RenderDebugMenuBar(){
     if (ImGui::BeginMainMenuBar()){
@@ -483,7 +487,11 @@ void Application::RenderDebugMenuBar(){
             }
             ImGui::EndMenu();
         }
-         ImGui::EndMainMenuBar();
+
+        //Render class spcific menu bar things
+        RenderDebugMenuBarClass();
+
+        ImGui::EndMainMenuBar();
     }
 }
 
@@ -513,11 +521,12 @@ void Application::RenderApplicationUI(){
 
 
     if (ImGui::CollapsingHeader("Input")){
+        ImGui::Text("Window In Focus          : %s",main_window->f_has_focus ? "True" : "False");
+        ImGui::Text("Mouser Over Window       : %s",main_window->inputcontroller->IsMouseOverWindow() ? "True" : "False");
         ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
 
         vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
         ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
-
 
         if (!hovered_object){
             ImGui::Text("No Object Hovered");
@@ -666,16 +675,26 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
     if (ImGui::Button("Duplicate(Linked)")){
         Object* duplicated = new Object(object);
         main_scene->AddObject(duplicated);
+        Physics* physics = duplicated->GetPhysics();
+        if (physics){
+            physics->SetActive(false); //Helps with placement
+        }
+        selected_object = duplicated;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Destroy")){
+        object->Destroy();
+        Physics* physics = object->GetPhysics();
+        if (physics){
+            physics->world->WakeUpEveryone();
+        }
+        selected_object = NULL;
     }
 
-
-        Camera* cam = dynamic_cast<Camera*>(object);
-        if (cam){
-            UpdateUICameraControls(cam,++ui_camera_id);
-        }
-
-
-
+    Camera* cam = dynamic_cast<Camera*>(object);
+    if (cam){
+        UpdateUICameraControls(cam,++ui_camera_id);
+    }
 
         Light* light = dynamic_cast<Light*>(object);
         if (light && ImGui::CollapsingHeader("Light Properties")){
@@ -878,9 +897,62 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 int num_colliders = physics->GetNumColliders();
                 float mass = physics->GetMass();
                 ImGui::Text("Number of colliders : %i",num_colliders);
+                for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
+                    if (physics->body->rigidbody->getCollider(i)->getCollisionShape()->getName() == rp3d::CollisionShapeName::BOX){
+                        //Testing. Spawn an object that 'attaches' to the collider of this object so we can modify it.
+                        char caption[32];
+                        sprintf(caption, "Modify Box Collider %lu",i);
+                        if (ImGui::Button(caption)){
+                            ObjectCollider* oc = new ObjectCollider();
+                            oc->HookTargetCollider(physics->body->rigidbody->getCollider(i));
+                            main_scene->AddObject(oc);
+                            selected_object = oc;
+                        }
+                    }
+                }
                 ImGui::Text("Mass                : %.3f kg",mass);
                 ImGui::Text("Collision Cat Bits  : %08X",object->collision_category_bits);
+                ImGui::Separator();
+                bool bits[8];
+                bool cat_wasmodified = false;
+                for (int i=0;i<8;i++){
+                    bits[i] = !!(object->collision_category_bits & (1<<i));
+                    char boxid[32];
+                    sprintf(boxid,"##CatBit%i",i);
+                    if (ImGui::Checkbox(boxid,&bits[i])){
+                        cat_wasmodified = true;
+                    }
+                    if (i < 7)
+                        ImGui::SameLine();
+                }
+                if (cat_wasmodified){
+                    uint32_t mask = 0;
+                    for (int i=0;i<8;i++){
+                        mask |= (bits[i]<<i);
+                    }
+                    object->SetCollisionCategoryBits(mask);
+                }
+
                 ImGui::Text("Collide Wtih  Bits  : %08X",object->collide_with_bits);
+
+                bool col_wasmodified = false;
+                for (int i=0;i<8;i++){
+                    bits[i] = !!(object->collide_with_bits & (1<<i));
+                    char boxid[32];
+                    sprintf(boxid,"##ColBit%i",i);
+                    if (ImGui::Checkbox(boxid,&bits[i])){
+                        col_wasmodified = true;
+                    }
+                    if (i < 7)
+                        ImGui::SameLine();
+                }
+                if (col_wasmodified){
+                    uint32_t mask = 0;
+                    for (int i=0;i<8;i++){
+                        mask |= (bits[i]<<i);
+                    }
+                    object->SetCollideWithMaskBits(mask);
+                }
 
                 vec3 v = physics->GetVelocity();
                 if (v.length() > 0){
@@ -1174,11 +1246,11 @@ void Application::CheckObjectSelection(){
     hovered_object = NULL;
     InputController* input = main_scene->inputcontroller;
 
-    //Check if we selected a tile
-    objectid_t hovered_objid = OBJECTID_INVALID;
+    if (input->IsMouseOverWindow() == false){
+        return;
+    }
 
-
-    if (!ImGui::GetIO().WantCaptureMouse){
+    if (!ImGui::GetIO().WantCaptureMouse){ //Mouse is not over an ImGUI Window
         hovered_objid = input->GetHoveredObjectID();
         if ((hovered_objid == OBJECTID_INVALID) && input->WasKeyReleased(INPUT_CLICK_LEFT)){
             selected_object = NULL;
@@ -1190,21 +1262,33 @@ void Application::CheckObjectSelection(){
         if (object->GetID() == hovered_objid){
             hovered_object = object;
         }
-        if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == hovered_objid)){
+        if (input->IsKeyDown(INPUT_CLICK_LEFT) && (object->GetID() == hovered_objid)){
+            dragged_objid = hovered_objid;
+            //debug->Info("dragged_objid on ID: %3i \n",hovered_objid);
+        }else if (input->WasKeyReleased(INPUT_CLICK_LEFT) && (object->GetID() == dragged_objid)){
             vec3 p = object->GetPosition();
             debug->Info("Clicked on ID: %3i Object Pos: %.2f %.2f %.2f\n",hovered_objid,p.x,p.y,p.z);
             selected_object = object;
+            dragged_objid = OBJECTID_INVALID;
             //clicked_empty = false;
         }
     }
 }
 
+//Creates a new scene with default camera and settings
 Scene* Application::CreateNewScene(const std::string& name){
     Scene* scene = new Scene();
     scene->name = name;
     scene->renderer = renderer;
     scene->inputcontroller = main_window->inputcontroller;
     scene->shader = default_shader;
+
+    scene->camera = new Camera();
+    scene->camera->name = "Main Camera";
+    scene->camera->SetPosition(vec3(5,5,5));
+    scene->camera->SetLookAt(vec3());
+    scene->camera->SetupPerspective(scene->renderer->width,scene->renderer->height,45,0.1,100);
+    scene->AddObject(scene->camera);
 
     scenes.push_back(scene);
     return scene;

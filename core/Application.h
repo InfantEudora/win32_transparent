@@ -15,7 +15,7 @@
 #include "Debug.h"
 #include "GLTFLoader.h"
 #include "RRandom.h"
-
+#include "ObjectCollider.h"
 
 /*
     The thing that ties everything together.
@@ -102,9 +102,12 @@ protected:
     static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
     static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);
 
+    objectid_t hovered_objid = OBJECTID_INVALID;
+    objectid_t dragged_objid = OBJECTID_INVALID;
     void CheckObjectSelection();
     //UI
     void UpdateUICameraControls(Camera* camera, int id);
+    virtual void RenderDebugMenuBarClass(void);
     void RenderDebugMenuBar();
     void RenderRandTestWindow();
     void RenderApplicationUI();

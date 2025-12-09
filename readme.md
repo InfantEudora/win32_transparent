@@ -277,3 +277,12 @@ Type start
 ### Videos and Docs
 Optimisation
 https://www.youtube.com/watch?v=hf27qsQPRLQ
+
+### Assets
+
+Setting up a single object with a bunch of colliders on it and some settings requires quite a bit of boilerplate and finicking.
+
+Importing random assets from GLB now works. The materials and positions, scale and orientations. We now need a way to couple these to the Physics properties.
+And add them to some kind of level.
+
+It still would be nice to use the Asset manager for it.
