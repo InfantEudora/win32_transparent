@@ -1330,12 +1330,17 @@ void Application::GetAllAssetsFromGLTF(){
             gltf_object->SetMesh(gltfmesh);
             gltf_object->TakeMaterialNames(loaded_materials);
             assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
+            //Just add all...
+            renderer->AddMaterials(loaded_materials);
         }
+
+
     }
 
     debug->Info("Loaded %i different materials from GLTF file\n",loaded_materials.size());
 
     //TODO: We also need to make sure all materials are loaded and stored somewhere usefull
+
 }
 
 //This loads it, makes an asset from it... and sets up all the things.

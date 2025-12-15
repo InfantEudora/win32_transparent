@@ -94,10 +94,15 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 
 	http_debug->Trace("HTTP Request received:\n%s\n", buffer);
 
-	// Determine requested path (strip any query string and trailing slash)
-	std::string path = ParseHTTPRequest(request);
-	size_t qpos = path.find('?');
-	if (qpos != std::string::npos) path = path.substr(0, qpos);
+	// Determine requested path (keep query string separate)
+	std::string fullPath = ParseHTTPRequest(request);
+	size_t qpos = fullPath.find('?');
+	std::string path = fullPath;
+	std::string query;
+	if (qpos != std::string::npos) {
+		path = fullPath.substr(0, qpos);
+		query = fullPath.substr(qpos + 1);
+	}
 	// Remove trailing slash (treat "/" as root)
 	if (path.size() > 1 && path.back() == '/') path.pop_back();
 
@@ -158,6 +163,112 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		else
 			http_debug->Err("Failed to send /status response: %d\n", WSAGetLastError());
 
+		closesocket(clientSocket);
+		DisconnectClient(clientSocket);
+		return;
+	}
+
+	// Support setting the operation mode via /set_mode?mode=<id>
+	if (path == "/set_mode")
+	{
+		std::string mode;
+		if (!query.empty()){
+			// simple parse mode=...
+			size_t pos = query.find("mode=");
+			if (pos != std::string::npos){
+				pos += 5;
+				size_t end = query.find('&', pos);
+				mode = query.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+			}
+		}
+		if (!mode.empty()){
+			// URL decode simple + and %20 handling (minimal)
+			std::string dec;
+			for (size_t i=0;i<mode.size();++i){
+				char c = mode[i];
+				if (c == '+') dec.push_back(' ');
+				else if (c == '%' && i + 2 < mode.size()){
+					char hi = mode[i+1]; char lo = mode[i+2];
+					int v = 0;
+					if (hi >= '0' && hi <= '9') v = (hi - '0') << 4; else if (hi >= 'A' && hi <= 'F') v = (hi - 'A' + 10) << 4; else if (hi >= 'a' && hi <= 'f') v = (hi - 'a' + 10) << 4;
+					if (lo >= '0' && lo <= '9') v |= (lo - '0'); else if (lo >= 'A' && lo <= 'F') v |= (lo - 'A' + 10); else if (lo >= 'a' && lo <= 'f') v |= (lo - 'a' + 10);
+					dec.push_back((char)v);
+					i += 2;
+				}else dec.push_back(c);
+			}
+			mode = dec;
+			// set variable and broadcast
+			SetVariable("operationMode", mode);
+			std::string body = "{\"result\":\"ok\",\"mode\":\"" + mode + "\"}";
+			std::ostringstream response;
+			response << "HTTP/1.1 200 OK\r\n";
+			response << "Content-Type: application/json; charset=UTF-8\r\n";
+			response << "Content-Length: " << body.length() << "\r\n";
+			response << "Connection: close\r\n";
+			response << "\r\n";
+			response << body;
+			std::string responseStr = response.str();
+			send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+			closesocket(clientSocket);
+			DisconnectClient(clientSocket);
+			return;
+		}
+		// bad request
+		std::string body = "{\"result\":\"error\",\"reason\":\"missing mode\"}";
+		std::ostringstream response;
+		response << "HTTP/1.1 400 Bad Request\r\n";
+		response << "Content-Type: application/json; charset=UTF-8\r\n";
+		response << "Content-Length: " << body.length() << "\r\n";
+		response << "Connection: close\r\n";
+		response << "\r\n";
+		response << body;
+		std::string responseStr = response.str();
+		send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+		closesocket(clientSocket);
+		DisconnectClient(clientSocket);
+		return;
+	}
+
+	// Support toggling whether a mode is available
+	if (path == "/set_mode_enabled"){
+		std::string mode;
+		std::string enabled;
+		if (!query.empty()){
+			size_t pos = query.find("mode=");
+			if (pos != std::string::npos){ pos += 5; size_t end = query.find('&', pos); mode = query.substr(pos, end==std::string::npos?std::string::npos:end-pos); }
+			pos = query.find("enabled=");
+			if (pos != std::string::npos){ pos += 8; size_t end = query.find('&', pos); enabled = query.substr(pos, end==std::string::npos?std::string::npos:end-pos); }
+		}
+		if (!mode.empty() && !enabled.empty()){
+			std::string dec;
+			for (size_t i=0;i<mode.size();++i){ char c = mode[i]; if (c == '+') dec.push_back(' '); else if (c == '%' && i+2 < mode.size()){ char hi = mode[i+1]; char lo = mode[i+2]; int v = 0; if (hi >= '0' && hi <= '9') v = (hi - '0') << 4; else if (hi >= 'A' && hi <= 'F') v = (hi - 'A' + 10) << 4; else if (hi >= 'a' && hi <= 'f') v = (hi - 'a' + 10) << 4; if (lo >= '0' && lo <= '9') v |= (lo - '0'); else if (lo >= 'A' && lo <= 'F') v |= (lo - 'A' + 10); else if (lo >= 'a' && lo <= 'f') v |= (lo - 'a' + 10); dec.push_back((char)v); i += 2; } else dec.push_back(c); }
+			mode = dec;
+			std::string val = (enabled == "1" || enabled == "true") ? "1" : "0";
+			SetVariable(std::string("mode_") + mode + std::string("_enabled"), val);
+			std::string body = "{\"result\":\"ok\",\"mode\":\"" + mode + "\",\"enabled\":\"" + val + "\"}";
+			std::ostringstream response;
+			response << "HTTP/1.1 200 OK\r\n";
+			response << "Content-Type: application/json; charset=UTF-8\r\n";
+			response << "Content-Length: " << body.length() << "\r\n";
+			response << "Connection: close\r\n";
+			response << "\r\n";
+			response << body;
+			std::string responseStr = response.str();
+			send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+			closesocket(clientSocket);
+			DisconnectClient(clientSocket);
+			return;
+		}
+		std::string body = "{\"result\":\"error\",\"reason\":\"missing params\"}";
+		std::ostringstream response;
+		response << "HTTP/1.1 400 Bad Request\r\n";
+		response << "Content-Type: application/json; charset=UTF-8\r\n";
+		response << "Content-Length: " << body.length() << "\r\n";
+		response << "Connection: close\r\n";
+		response << "\r\n";
+		response << body;
+		std::string responseStr = response.str();
+		send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
 		closesocket(clientSocket);
 		DisconnectClient(clientSocket);
 		return;
@@ -274,6 +385,40 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 	// Parse the request to check if it's a valid HTTP request
 	if (request.find("GET") != std::string::npos || request.find("POST") != std::string::npos)
 	{
+		// Serve a few static files (like /modes.json)
+		if (path == "/modes.json") {
+			size_t sz = 0;
+			uint8_t* data = LoadFile("data/modes.json", &sz);
+			if (data && sz > 0) {
+				std::string body((char*)data, sz);
+				std::ostringstream response;
+				response << "HTTP/1.1 200 OK\r\n";
+				response << "Content-Type: application/json; charset=UTF-8\r\n";
+				response << "Content-Length: " << body.length() << "\r\n";
+				response << "Connection: close\r\n";
+				response << "\r\n";
+				response << body;
+				std::string responseStr = response.str();
+				send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+				closesocket(clientSocket);
+				DisconnectClient(clientSocket);
+				return;
+			} else {
+				std::string body = "{\"error\":\"not found\"}";
+				std::ostringstream response;
+				response << "HTTP/1.1 404 Not Found\r\n";
+				response << "Content-Type: application/json; charset=UTF-8\r\n";
+				response << "Content-Length: " << body.length() << "\r\n";
+				response << "Connection: close\r\n";
+				response << "\r\n";
+				response << body;
+				std::string responseStr = response.str();
+				send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+				closesocket(clientSocket);
+				DisconnectClient(clientSocket);
+				return;
+			}
+		}
 		// Build HTTP response with replaced variables
 		std::string htmlContent = ReplaceVariables(m_htmlContent);
 

@@ -1,81 +1,455 @@
 <!DOCTYPE html>
 <html>
 <head>
-	<meta charset="utf-8" />
-	<title>HTTP Server</title>
-	<style>
-		body { font-family: Arial, sans-serif; margin: 24px; background-color: #f7f7f7; }
-		h1 { color: #222; }
-		.stat { font-weight: bold; color: #007acc; }
-		.status { font-weight: bold; padding-left: 6px; }
-		.status.online { color: #1a9b00; }
-		.status.offline { color: #c62828; }
-		.panel { background: #fff; padding: 16px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); max-width:600px }
-	</style>
-	<script>
-		// Poll /status and update DOM elements in-place without reloading the page
-		async function pollStatus() {
-			try {
-				const res = await fetch('/status?_=' + Date.now(), { cache: 'no-store' });
-				if (!res.ok) return;
-				const j = await res.json();
-				// update known fields if present
-				if (j.playerHealth !== undefined) {
-					const el = document.getElementById('playerHealth'); if (el) el.textContent = j.playerHealth;
-				}
-				if (j.score !== undefined) {
-					const el = document.getElementById('score'); if (el) el.textContent = j.score;
-				}
-				if (j.fps !== undefined) {
-					const el = document.getElementById('fps'); if (el) el.textContent = j.fps;
-				}
-			} catch (e) {
-				console.warn('status poll failed', e);
-			}
-		}
+    <meta charset="utf-8" />
+    <title>HTTP Server</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 24px; background-color: #f7f7f7; }
+        h1 { color: #222; }
+        .stat { font-weight: bold; color: #007acc; }
+        .status { font-weight: bold; padding-left: 6px; }
+        .status.online { color: #1a9b00; }
+        .status.offline { color: #c62828; }
+        .panel { background: #fff; padding: 16px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); max-width:600px }
 
-		// Start WebSocket connection after page load
-		window.addEventListener('load', () => {
-			try {
-				const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-				const ws = new WebSocket(proto + '//' + location.host + '/ws');
-				ws.addEventListener('message', function(e){
-					try {
-						const j = JSON.parse(e.data);
-						if (j.playerHealth !== undefined) {
-							const el = document.getElementById('playerHealth'); if (el) el.textContent = j.playerHealth;
-						}
-						if (j.score !== undefined) {
-							const el = document.getElementById('score'); if (el) el.textContent = j.score;
-						}
-						if (j.fps !== undefined) {
-							const el = document.getElementById('fps'); if (el) el.textContent = j.fps;
-						}
-					} catch (err) { console.warn('ws msg parse', err); }
-				});
-				ws.addEventListener('open', function(){ console.log('WebSocket open'); });
-						ws.addEventListener('open', function(){ console.log('WebSocket open'); setWSStatus(true); });
-						ws.addEventListener('close', function(){ console.log('WebSocket closed'); setWSStatus(false); });
-						ws.addEventListener('error', function(){ console.log('WebSocket error'); setWSStatus(false); });
-			} catch(e){ console.warn('websocket init failed', e); }
-		});
+        /* Hour grid styles */
+        .hour-grid{ display:grid; grid-template-columns: repeat(6, 1fr); gap:6px; }
+        .hour-cell{ background:#f2f2f2; border:1px solid #ddd; padding:10px; border-radius:4px; cursor:pointer; text-align:center; font-weight:600; }
+        .hour-cell.selected{ box-shadow:0 0 0 3px rgba(0,122,204,0.12); }
+        .hour-cell.hour-past{ opacity:0.45; }
+        .hour-cell.hour-current{ background:#1a9b00; color:#fff; }
+        /* Top row layout: status and mode panels */
+        .top-row{ display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+        .top-row .panel{ min-width:260px; }
 
-				function setWSStatus(connected){
-					const el = document.getElementById('wsStatus');
-					if (!el) return;
-					if (connected){ el.textContent = 'Connected'; el.className = 'status online'; }
-					else { el.textContent = 'Disconnected'; el.className = 'status offline'; }
-				}
-	</script>
+        /* Battery styles */
+        #batteryPanel { margin-top:6px; }
+        .battery-cell { background:#fafafa; padding:8px; border-radius:6px; border:1px solid #e6e6e6; text-align:center; }
+        .battery-label { font-size:0.9em; color:#333; margin-bottom:6px; }
+        .cell-bar { height:12px; background:#eee; border-radius:6px; overflow:hidden; margin:6px 0; }
+        .cell-fill { height:100%; width:0%; background:linear-gradient(90deg,#1a9b00,#86e07f); transition: width 300ms ease, background 300ms; }
+        .cell-percent { font-size:0.85em; color:#555; }
+        .cell-mv { font-size:0.9em; color:#222; margin-top:4px; }
+        .cell-minmax { font-size:0.85em; color:#555; margin-top:4px; }
+        .cell-temp { font-size:0.85em; color:#555; margin-top:4px; }
+        .cell-total { font-size:0.95em; color:#111; margin-top:6px; font-weight:700; }
+        .cell-soc { font-size:0.95em; color:#007acc; margin-top:4px; font-weight:600; }
+        .mode-btn { padding:6px 10px; border-radius:4px; border:1px solid #ccc; cursor:pointer; }
+    </style>
+    <script>
+        // Poll /status and update DOM elements in-place without reloading the page
+        async function pollStatus() {
+            try {
+                const res = await fetch('/status?_=' + Date.now(), { cache: 'no-store' });
+                if (!res.ok) return;
+                const j = await res.json();
+                // update known fields if present
+                if (j.playerHealth !== undefined) {
+                    const el = document.getElementById('playerHealth'); if (el) el.textContent = j.playerHealth;
+                }
+                if (j.score !== undefined) {
+                    const el = document.getElementById('score'); if (el) el.textContent = j.score;
+                }
+                if (j.fps !== undefined) {
+                    const el = document.getElementById('fps'); if (el) el.textContent = j.fps;
+                }
+                if (j.operationMode !== undefined){ try{ updateModeSelection(j.operationMode); }catch(e){} }
+                // update per-mode enabled states if present
+                for (const k in j){
+                    if (k.startsWith('mode_') && k.endsWith('_enabled')){
+                        const mid = k.substring(5, k.length - 8);
+                        const el = document.getElementById('modeEnable_' + mid);
+                        if (el) { el.checked = (j[k] === '1' || j[k] === 'true'); }
+                    }
+                }
+                try{ updateModeAvailabilities(); }catch(e){}
+                // string values via poll (or fallback to battery percent)
+                if (j.string1_mv !== undefined || j.strings) {
+                    function getVal(obj, idx, key){ if (obj.strings) return obj.strings[idx] ? obj.strings[idx][key] : undefined; return obj['string'+(idx+1)+'_'+key]; }
+                    const s1 = { mv: Number(j.string1_mv || getVal(j,0,'mv')||0), min: Number(j.string1_min_mv || getVal(j,0,'min')||0), max: Number(j.string1_max_mv || getVal(j,0,'max')||0), temp: Number(j.string1_temp_c || getVal(j,0,'temp')||0) };
+                    const s2 = { mv: Number(j.string2_mv || getVal(j,1,'mv')||0), min: Number(j.string2_min_mv || getVal(j,1,'min')||0), max: Number(j.string2_max_mv || getVal(j,1,'max')||0), temp: Number(j.string2_temp_c || getVal(j,1,'temp')||0) };
+                    const s3 = { mv: Number(j.string3_mv || getVal(j,2,'mv')||0), min: Number(j.string3_min_mv || getVal(j,2,'min')||0), max: Number(j.string3_max_mv || getVal(j,2,'max')||0), temp: Number(j.string3_temp_c || getVal(j,2,'temp')||0) };
+                    updateStringUI(s1,s2,s3);
+                } else if (j.battery1 !== undefined || j.batteries) {
+                    const b1 = j.battery1 !== undefined ? Number(j.battery1) : (j.batteries ? Number(j.batteries[0]||0) : 0);
+                    const b2 = j.battery2 !== undefined ? Number(j.battery2) : (j.batteries ? Number(j.batteries[1]||0) : 0);
+                    const b3 = j.battery3 !== undefined ? Number(j.battery3) : (j.batteries ? Number(j.batteries[2]||0) : 0);
+                    updateStringUI({mv: Math.round(b1/100*4200), soc: b1},{mv: Math.round(b2/100*4200), soc: b2},{mv: Math.round(b3/100*4200), soc: b3});
+                }
+            } catch (e) {
+                console.warn('status poll failed', e);
+            }
+        }
+
+        // Color by SOC (percent)
+        function colorForSoc(soc){
+            if (soc === undefined || isNaN(soc)) return 'linear-gradient(90deg,#ddd,#eee)';
+            if (soc >= 66) return 'linear-gradient(90deg,#1a9b00,#86e07f)';
+            if (soc >= 33) return 'linear-gradient(90deg,#ffae42,#ffd27a)';
+            return 'linear-gradient(90deg,#c62828,#ff7b7b)';
+        }
+
+        // Update UI for three strings. Each argument can be a number (mv) or an object {mv,min,max,temp}
+        function updateStringUI(s1,s2,s3){
+            function norm(s){
+                if (s === undefined) return {mv:0,min:0,max:0,temp:0};
+                if (typeof s === 'number') return {mv:Math.round(s), min:Math.round(s), max:Math.round(s), temp:0};
+                return { mv: Number(s.mv||0), min: Number(s.min||0), max: Number(s.max||0), temp: Number(s.temp||0) };
+            }
+            const a = [norm(s1), norm(s2), norm(s3)];
+            for (let i=0;i<3;i++){
+                const mv = a[i].mv;
+                const min = a[i].min;
+                const max = a[i].max;
+                const tmp = a[i].temp;
+                const soc = a[i].soc !== undefined ? a[i].soc : (mv ? Math.round(mv/4200*100) : undefined);
+                const fill = document.getElementById('stringFill'+i);
+                const mvEl = document.getElementById('stringMv'+i);
+                const minEl = document.getElementById('stringMin'+i);
+                const maxEl = document.getElementById('stringMax'+i);
+                const tempEl = document.getElementById('stringTemp'+i);
+                const socEl = document.getElementById('stringSoc'+i);
+                const totalEl = document.getElementById('stringTotal'+i);
+                if (fill){
+                    // percent to use for visuals: prefer SOC if present, otherwise derive from mV
+                    const pct = (soc !== undefined && !isNaN(soc)) ? Math.max(0, Math.min(100, Math.round(soc))) : Math.max(0, Math.min(100, Math.round(mv/4200*100)));
+                    fill.style.width = pct + '%';
+                    fill.style.background = colorForSoc(pct);
+                }
+                if (mvEl) mvEl.textContent = mv || '-';
+                if (socEl) socEl.textContent = (soc !== undefined) ? (soc + ' %') : '-';
+                if (minEl) minEl.textContent = min || '-';
+                if (maxEl) maxEl.textContent = max || '-';
+                if (tempEl) tempEl.textContent = tmp || '-';
+                if (totalEl) totalEl.textContent = mv ? (Math.round((mv * 192)/10)/100).toFixed(2) : '-'; // V with 2 decimals
+            }
+            // overall aggregate: average SOC (prefer explicit soc, otherwise derive from mv)
+            const pct0 = (a[0].soc !== undefined && !isNaN(a[0].soc)) ? a[0].soc : (a[0].mv ? Math.round(a[0].mv/4200*100) : 0);
+            const pct1 = (a[1].soc !== undefined && !isNaN(a[1].soc)) ? a[1].soc : (a[1].mv ? Math.round(a[1].mv/4200*100) : 0);
+            const pct2 = (a[2].soc !== undefined && !isNaN(a[2].soc)) ? a[2].soc : (a[2].mv ? Math.round(a[2].mv/4200*100) : 0);
+            const avgSoc = Math.round((pct0 + pct1 + pct2)/3);
+            const batFill = document.getElementById('batteryFill'); const batPct = document.getElementById('batteryPercent');
+            if (batFill) { batFill.style.width = Math.max(0, Math.min(100, avgSoc)) + '%'; batFill.style.background = colorForSoc(avgSoc); }
+            if (batPct) batPct.textContent = (avgSoc || '-') ;
+        }
+
+        // Utility to update visible WS status
+        function setWSStatus(connected){
+            const el = document.getElementById('wsState');
+            if (!el) return;
+            el.textContent = connected ? 'Connected' : 'Disconnected';
+            const parent = document.getElementById('wsStatus');
+            if (parent) parent.className = connected ? 'status online' : 'status offline';
+        }
+
+        window.addEventListener('load', () => {
+            let ws = null;
+            let reconnectDelay = 1000; // start with 1s
+            const maxDelay = 30000; // 30s max
+            let reconnectTimer = null;
+
+            function resetBackoff(){ reconnectDelay = 1000; if(reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer = null; } }
+
+            function scheduleReconnect(){
+                if (reconnectTimer) return;
+                console.log('scheduling reconnect in', reconnectDelay);
+                reconnectTimer = setTimeout(()=>{ reconnectTimer = null; connect(); reconnectDelay = Math.min(maxDelay, Math.round(reconnectDelay * 1.8)); }, reconnectDelay);
+            }
+
+            function connect() {
+                if (ws) { try { ws.close(); } catch(e){} ws = null; }
+                const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const url = proto + '//' + location.host + '/ws';
+                console.log('Connecting WebSocket to', url, 'delay', reconnectDelay);
+                try {
+                    ws = new WebSocket(url);
+                } catch (e) {
+                    console.warn('WebSocket construction failed', e);
+                    scheduleReconnect();
+                    return;
+                }
+
+                ws.onopen = function() {
+                    console.log('WS open');
+                    resetBackoff();
+                    setWSStatus(true);
+                    // request initial values
+                    try{ ws.send(JSON.stringify({type:'get_status'})); }catch(e){}
+                };
+
+                ws.onmessage = function(ev){
+                    try{
+                        const msg = JSON.parse(ev.data);
+                        if(msg.playerHealth!==undefined) document.getElementById('playerHealth').innerText = msg.playerHealth;
+                        if(msg.score!==undefined) document.getElementById('score').innerText = msg.score;
+                        if(msg.fps!==undefined) document.getElementById('fps').innerText = msg.fps;
+                        // string updates: support stringX_mv/stringX_min_mv/stringX_max_mv/stringX_temp_c
+                        // or support strings array: [{mv,min,max,temp}, ...]
+                        if (msg.string1_mv !== undefined || msg.strings || msg.string1_soc !== undefined) {
+                            function getVal(obj, idx, key){
+                                if (obj.strings) return obj.strings[idx] ? obj.strings[idx][key] : undefined;
+                                return obj['string'+(idx+1)+'_'+key];
+                            }
+                            const s1 = { mv: Number(msg.string1_mv || getVal(msg,0,'mv')||0), min: Number(msg.string1_min_mv || getVal(msg,0,'min')||0), max: Number(msg.string1_max_mv || getVal(msg,0,'max')||0), temp: Number(msg.string1_temp_c || getVal(msg,0,'temp')||0), soc: Number(msg.string1_soc || getVal(msg,0,'soc')) };
+                            const s2 = { mv: Number(msg.string2_mv || getVal(msg,1,'mv')||0), min: Number(msg.string2_min_mv || getVal(msg,1,'min')||0), max: Number(msg.string2_max_mv || getVal(msg,1,'max')||0), temp: Number(msg.string2_temp_c || getVal(msg,1,'temp')||0), soc: Number(msg.string2_soc || getVal(msg,1,'soc')) };
+                            const s3 = { mv: Number(msg.string3_mv || getVal(msg,2,'mv')||0), min: Number(msg.string3_min_mv || getVal(msg,2,'min')||0), max: Number(msg.string3_max_mv || getVal(msg,2,'max')||0), temp: Number(msg.string3_temp_c || getVal(msg,2,'temp')||0), soc: Number(msg.string3_soc || getVal(msg,2,'soc')) };
+                            updateStringUI(s1,s2,s3);
+                        } else if (msg.battery1!==undefined || msg.batteries) {
+                            // backward compatibility: percent -> estimate mV (assume 4200mV full)
+                            const b1 = msg.battery1 !== undefined ? Number(msg.battery1) : (msg.batteries ? Number(msg.batteries[0]||0) : 0);
+                            const b2 = msg.battery2 !== undefined ? Number(msg.battery2) : (msg.batteries ? Number(msg.batteries[1]||0) : 0);
+                            const b3 = msg.battery3 !== undefined ? Number(msg.battery3) : (msg.batteries ? Number(msg.batteries[2]||0) : 0);
+                            updateStringUI({mv: Math.round(b1/100*4200), soc: b1},{mv: Math.round(b2/100*4200), soc: b2},{mv: Math.round(b3/100*4200), soc: b3});
+                        }
+
+                        if (msg.operationMode !== undefined){
+                             try{ updateModeSelection(msg.operationMode); }
+                             catch(e){
+
+                            }
+                        }
+                        // handle live updates to per-mode enabled flags
+                        try{
+                            let modeAvailChanged = false;
+                            for (const k in msg){
+                                if (k.startsWith('mode_') && k.endsWith('_enabled')){
+                                    const mid = k.substring(5, k.length - 8);
+                                    const el = document.getElementById('modeEnable_' + mid);
+                                    if (el) { el.checked = (msg[k] === '1' || msg[k] === 'true'); modeAvailChanged = true; }
+                                }
+                            }
+                            if (modeAvailChanged) updateModeAvailabilities();
+                        }catch(e){ console.warn('mode enable update failed', e); }
+                    } catch(e){ console.warn('ws msg parse', e); }
+                };
+
+                ws.onclose = function(){ console.log('WS closed'); setWSStatus(false); scheduleReconnect(); };
+                ws.onerror = function(){ console.log('WS error'); setWSStatus(false); try{ ws.close(); }catch(e){} };
+            }
+
+            // Hour grid creation and updates
+            function createHourGrid(){
+                const container = document.getElementById('hourGrid');
+                if (!container) return;
+                container.innerHTML = '';
+                for (let h=0; h<24; h++){
+                    const btn = document.createElement('div');
+                    btn.className = 'hour-cell';
+                    btn.setAttribute('data-hour', String(h));
+                    btn.setAttribute('aria-pressed','false');
+                    btn.textContent = (h<10? '0'+h : h) + ':00';
+                    btn.addEventListener('click', ()=>{
+                        const sel = btn.classList.toggle('selected');
+                        btn.setAttribute('aria-pressed', sel ? 'true' : 'false');
+                    });
+                    container.appendChild(btn);
+                }
+                updateHourGridHighlight();
+            }
+
+            function updateHourGridHighlight(){
+                const now = new Date();
+                const cur = now.getHours();
+                const buttons = document.querySelectorAll('#hourGrid .hour-cell');
+                buttons.forEach((btn)=>{
+                    const h = parseInt(btn.getAttribute('data-hour'));
+                    btn.classList.remove('hour-past');
+                    btn.classList.remove('hour-current');
+                    if (h < cur) btn.classList.add('hour-past');
+                    else if (h === cur) btn.classList.add('hour-current');
+                });
+            }
+
+            // Kick things off
+            setWSStatus(false);
+            connect();
+            createHourGrid();
+            setInterval(updateHourGridHighlight, 60 * 1000);
+            // Poll fallback in case WS misses anything
+            setInterval(pollStatus, 5000);
+            pollStatus();
+
+            // Load operation modes from JSON file and render UI
+            async function loadModes(){
+                try{
+                    const res = await fetch('/modes.json');
+                    if(!res.ok) throw new Error('Failed to load modes.json');
+                    const modes = await res.json();
+                    const container = document.getElementById('modesContainer');
+                    container.innerHTML = '';
+                    window.loadedModes = modes; // keep for later logic
+                    modes.forEach(m=>{
+                        const div = document.createElement('div');
+                        div.style.padding = '6px 0';
+                        const btn = document.createElement('button');
+                        btn.textContent = m.name;
+                        btn.style.marginRight = '8px';
+                        btn.className = 'mode-btn';
+                        btn.setAttribute('data-mode', m.id);
+                        btn.addEventListener('click', ()=>{ setMode(m.id); updateModeSelection(m.id); });
+                        const chk = document.createElement('input');
+                        chk.type = 'checkbox';
+                        chk.id = 'modeEnable_' + m.id;
+                        chk.style.marginRight = '8px';
+                        chk.addEventListener('change', ()=>{ setModeEnabled(m.id, chk.checked); });
+                        const chkLabel = document.createElement('label');
+                        chkLabel.style.marginRight = '12px';
+                        chkLabel.appendChild(chk);
+                        chkLabel.appendChild(document.createTextNode('Enabled'));
+                        const desc = document.createElement('div');
+                        desc.style.fontSize = '0.9em';
+                        desc.style.color = '#444';
+                        desc.textContent = m.description;
+                        div.appendChild(chkLabel);
+                        div.appendChild(btn);
+                        div.appendChild(desc);
+                        container.appendChild(div);
+                    });
+                    // after rendering, query current mode and highlight
+                    try{ const sres = await fetch('/status'); if (sres.ok){ const j = await sres.json(); if (j.operationMode) updateModeSelection(j.operationMode); // set initial enabled states
+                        for (const k in j){ if (k.startsWith('mode_') && k.endsWith('_enabled')){ const mid = k.substring(5, k.length - 8); const el = document.getElementById('modeEnable_' + mid); if (el) el.checked = (j[k] === '1' || j[k] === 'true'); }} } }catch(e){}
+                    // after rendering, query current mode and highlight
+                    try{ const sres = await fetch('/status'); if (sres.ok){ const j = await sres.json(); if (j.operationMode) updateModeSelection(j.operationMode); } }catch(e){}
+                }catch(e){
+                    const container = document.getElementById('modesContainer'); if(container) container.textContent = 'Failed to load modes';
+                }
+            }
+
+            async function setMode(modeId){
+                // call server endpoint to set mode
+                try{
+                    const resp = await fetch('/set_mode?mode=' + encodeURIComponent(modeId));
+                    if(!resp.ok) throw new Error('set_mode failed');
+                    // success: server will broadcast the new mode via /status ws
+                    console.log('Mode set to', modeId);
+                }catch(e){ console.warn(e); alert('Failed to set mode'); }
+            }
+
+            async function setModeEnabled(modeId, enabled){
+                try{
+                    const resp = await fetch('/set_mode_enabled?mode=' + encodeURIComponent(modeId) + '&enabled=' + (enabled ? '1' : '0'));
+                    if(!resp.ok) throw new Error('set_mode_enabled failed');
+                    console.log('Mode '+modeId+' enabled='+enabled);
+                }catch(e){ console.warn(e); alert('Failed to set mode enabled'); }
+            }
+
+            loadModes();
+                // watch for changes to explicit enable checkboxes to recompute availability
+                document.addEventListener('change', (e)=>{ if (e.target && e.target.id && e.target.id.startsWith('modeEnable_')) updateModeAvailabilities(); });
+
+            function updateModeSelection(modeId){
+                const btns = document.querySelectorAll('.mode-btn');
+                btns.forEach(b=>{
+                    const mid = b.getAttribute('data-mode');
+                    if (mid === modeId){
+                        b.style.background = '#1a9b00'; b.style.color = '#fff';
+                    }else{ b.style.background = ''; b.style.color = ''; }
+                });
+                // disable modes listed in the selected mode's disables array
+                if (window.loadedModes){
+                    const sel = window.loadedModes.find(x=>x.id===modeId);
+                    const toDisable = sel && sel.disables ? sel.disables : [];
+                    const btns = document.querySelectorAll('.mode-btn');
+                    btns.forEach(b=>{
+                        const mid = b.getAttribute('data-mode');
+                        const chk = document.getElementById('modeEnable_' + mid);
+                        const explicitlyEnabled = chk ? chk.checked : true;
+                        if (toDisable.includes(mid) || !explicitlyEnabled){
+                            b.classList.add('disabled');
+                            b.style.opacity = '0.45';
+                            b.style.pointerEvents = 'none';
+                        } else {
+                            b.classList.remove('disabled');
+                            b.style.opacity = '';
+                            b.style.pointerEvents = '';
+                        }
+                    });
+                }
+            }
+
+            // update availability for all modes based on explicit enables
+            function updateModeAvailabilities(){
+                const btns = document.querySelectorAll('.mode-btn');
+                btns.forEach(b=>{
+                    const mid = b.getAttribute('data-mode');
+                    const chk = document.getElementById('modeEnable_' + mid);
+                    if (chk && !chk.checked){
+                        b.classList.add('disabled');
+                        b.style.opacity = '0.45'; b.style.pointerEvents = 'none';
+                    } else {
+                        b.classList.remove('disabled'); b.style.opacity = ''; b.style.pointerEvents = '';
+                    }
+                });
+            }
+        });
+    </script>
 </head>
 <body>
-	<div class="panel">
-		<h1>Application Status</h1>
-		<p>WebSocket: <span id="wsStatus" class="status offline">Disconnected</span></p>
-		<p>Player Health: <span id="playerHealth" class="stat">70</span></p>
-		<p>Score: <span id="score" class="stat">26087</span></p>
-		<p>FPS: <span id="fps" class="stat">51</span></p>
-		<p style="color:#666; margin-top:12px; font-size:0.9em">This page updates values in-place via WebSocket.</p>
-	</div>
+    <div class="top-row">
+        <div class="panel status-panel">
+            <h1>Application Status</h1>
+            <div id="wsStatus">WebSocket: <span id="wsState">Disconnected</span></div>
+            <p>Player Health: <span id="playerHealth" class="stat">-</span></p>
+            <p>Score: <span id="score" class="stat">-</span></p>
+            <p>FPS: <span id="fps" class="stat">-</span></p>
+            <p style="color:#666; margin-top:12px; font-size:0.9em">This page updates values in-place via WebSocket.</p>
+        </div>
+
+        <div class="panel mode-panel">
+            <h2>Operation Mode</h2>
+            <div id="modesContainer">Loading modes...</div>
+            <p style="color:#666; margin-top:8px; font-size:0.9em">Select an operation mode for the application.</p>
+        </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px;">
+        <h2>Hours (selectable)</h2>
+        <p style="color:#666; margin-top:4px; margin-bottom:8px; font-size:0.9em">The current hour is highlighted; past hours are dimmed.</p>
+        <div id="hourGrid" class="hour-grid" aria-label="Hours of day"></div>
+    </div>
+
+    <div class="panel" style="margin-top:14px;">
+        <h2>Battery SOC</h2>
+        <p style="color:#666; margin-top:4px; margin-bottom:8px; font-size:0.9em">Aggregate SOC shown with three internal batteries below.</p>
+        <div id="batteryPanel" aria-label="Battery status">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <div style="flex:1">
+                    <div style="height:18px; border:2px solid #444; border-radius:6px; background:#fff; overflow:hidden;">
+                        <div id="batteryFill" style="height:100%; width:0%; background:linear-gradient(90deg,#1a9b00,#86e07f);"></div>
+                    </div>
+                </div>
+                <div style="min-width:80px; text-align:right;"><span id="batteryPercent">-</span>%</div>
+            </div>
+            <div style="margin-top:10px; display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
+                <div class="battery-cell" data-i="0">
+                    <div class="battery-label">String 1</div>
+                    <div class="cell-bar"><div class="cell-fill" id="stringFill0" style="width:0%"></div></div>
+                    <div class="cell-mv">Cell: <span id="stringMv0">-</span> mV</div>
+                    <div class="cell-soc">SOC: <span id="stringSoc0">-</span></div>
+                    <div class="cell-minmax">Min: <span id="stringMin0">-</span> mV &nbsp; Max: <span id="stringMax0">-</span> mV</div>
+                    <div class="cell-temp">Temp: <span id="stringTemp0">-</span> °C</div>
+                    <div class="cell-total">Total V: <span id="stringTotal0">-</span> V</div>
+                </div>
+                <div class="battery-cell" data-i="1">
+                    <div class="battery-label">String 2</div>
+                    <div class="cell-bar"><div class="cell-fill" id="stringFill1" style="width:0%"></div></div>
+                    <div class="cell-mv">Cell: <span id="stringMv1">-</span> mV</div>
+                    <div class="cell-soc">SOC: <span id="stringSoc1">-</span></div>
+                    <div class="cell-minmax">Min: <span id="stringMin1">-</span> mV &nbsp; Max: <span id="stringMax1">-</span> mV</div>
+                    <div class="cell-temp">Temp: <span id="stringTemp1">-</span> °C</div>
+                    <div class="cell-total">Total V: <span id="stringTotal1">-</span> V</div>
+                </div>
+                <div class="battery-cell" data-i="2">
+                    <div class="battery-label">String 3</div>
+                    <div class="cell-bar"><div class="cell-fill" id="stringFill2" style="width:0%"></div></div>
+                    <div class="cell-mv">Cell: <span id="stringMv2">-</span> mV</div>
+                    <div class="cell-soc">SOC: <span id="stringSoc2">-</span></div>
+                    <div class="cell-minmax">Min: <span id="stringMin2">-</span> mV &nbsp; Max: <span id="stringMax2">-</span> mV</div>
+                    <div class="cell-temp">Temp: <span id="stringTemp2">-</span> °C</div>
+                    <div class="cell-total">Total V: <span id="stringTotal2">-</span> V</div>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

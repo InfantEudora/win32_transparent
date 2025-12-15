@@ -2,7 +2,7 @@
 #include "File.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("GLTFLoader", DEBUG_INFO);
+static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
 
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
@@ -405,22 +405,26 @@ vertex GLTFLoader::GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb,
         return v;
     }
     if (!ub){
-        debug->Err("No bufferview for uv data\n");
-        return v;
+        debug->Warn("No bufferview for uv data\n");
     }
 
     int byte_offset_position = pb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
     int byte_offset_normal = nb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index
-    int byte_offset_uv = ub->byteOffset + (index * 2 * sizeof(float)); //FLOAT * VEC2 * index
 
     //This is guaranteed to exist... when the file is ok.
     tinygltf::Buffer& position_buffer = model.buffers[pb->buffer];
     tinygltf::Buffer& normal_buffer = model.buffers[nb->buffer];
-    tinygltf::Buffer& uv_buffer = model.buffers[ub->buffer];
 
     v.pos = Getvec3(&position_buffer.data.at(0),byte_offset_position);
     v.normal = Getvec3(&normal_buffer.data.at(0),byte_offset_normal);
-    v.uv = Getvec2(&uv_buffer.data.at(0),byte_offset_uv);
+
+    if (ub){
+        int byte_offset_uv = ub->byteOffset + (index * 2 * sizeof(float)); //FLOAT * VEC2 * index
+        tinygltf::Buffer& uv_buffer = model.buffers[ub->buffer];
+        v.uv = Getvec2(&uv_buffer.data.at(0),byte_offset_uv);
+    }else{
+        v.uv = vec2(0,0);
+    }
 
     v.matid = 0;
     return v;
@@ -702,7 +706,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         }
 
         if (uv_bufferview == NULL){
-            debug->Fatal("No uv_bufferview for Mesh\n");
+            debug->Warn("No uv_bufferview for Mesh\n");
         }
 
         int vertex_count = indexAccessor.count;

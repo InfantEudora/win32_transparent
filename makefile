@@ -80,6 +80,8 @@ endif
 
 #ApplicationTileset
 SRCS += ApplicationTileset.cpp
+IPATHS += -Iisoterrain/
+DIR_SRC += ./isoterrain
 
 #ApplicationSim
 #IPATHS += -Igalaxy/

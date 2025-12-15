@@ -599,8 +599,6 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
                         //wnd->dropped_files.push(string);
                     }
                 }
-
-
             }
         break;
         default:

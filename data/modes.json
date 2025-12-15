@@ -1,0 +1,20 @@
+[
+  {
+    "id": "netzero",
+    "name": "Net Zero",
+    "description": "Attemts to keep the grid power consumption at zero.",
+    "disables" : []
+  },
+  {
+    "id": "charge",
+    "name": "Charge to SOC within x hours",
+    "description": "Charge to specified SOC within a set number of hours.",
+    "disables" : ["discharge","netzero"]
+  },
+  {
+    "id": "discharge",
+    "name": "Discharge to SOC within x hours",
+    "description": "Discharge to specified SOC within a set number of hours.",
+    "disables" : ["charge","netzero"]
+  }
+]

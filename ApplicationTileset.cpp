@@ -31,68 +31,30 @@ void ApplicationTileset::Init(void){
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics();
 
-     // Create a simple cube mesh and add it to the scene so there is something visible by default.
+
+    gltfloader.LoadGLTFFile("data/cityandroads.glb");
+    GetAllAssetsFromGLTF();
     {
-        Mesh* cubeMesh = new Mesh();
-        std::vector<vertex> verts;
-        verts.reserve(36);
-        float s = 0.5f; // half-size
-
-        auto pushQuad = [&](vec3 a, vec3 b, vec3 c, vec3 d, vec3 n){
-            vertex v;
-            v.tangent = vec3(0,0,0);
-            v.matid = 0;
-
-            v.pos = a; v.normal = n; v.uv = vec2(0,0); verts.push_back(v);
-            v.pos = c; v.normal = n; v.uv = vec2(1,1); verts.push_back(v);
-            v.pos = b; v.normal = n; v.uv = vec2(1,0); verts.push_back(v);
-
-
-            v.pos = a; v.normal = n; v.uv = vec2(0,0); verts.push_back(v);
-
-            v.pos = d; v.normal = n; v.uv = vec2(0,1); verts.push_back(v);
-            v.pos = c; v.normal = n; v.uv = vec2(1,1); verts.push_back(v);
-        };
-
-        // +X face
-        pushQuad(vec3(s,-s,-s), vec3(s,-s,s), vec3(s,s,s), vec3(s,s,-s), vec3(1,0,0));
-        // -X face
-        pushQuad(vec3(-s,-s,s), vec3(-s,-s,-s), vec3(-s,s,-s), vec3(-s,s,s), vec3(-1,0,0));
-        // +Y face (top)
-        pushQuad(vec3(-s,s,-s), vec3(s,s,-s), vec3(s,s,s), vec3(-s,s,s), vec3(0,1,0));
-        // -Y face (bottom)
-        pushQuad(vec3(-s,-s,s), vec3(s,-s,s), vec3(s,-s,-s), vec3(-s,-s,-s), vec3(0,-1,0));
-        // +Z face (front)
-        pushQuad(vec3(-s,-s,s), vec3(-s,s,s), vec3(s,s,s), vec3(s,-s,s), vec3(0,0,1));
-        // -Z face (back)
-        pushQuad(vec3(s,-s,-s), vec3(s,s,-s), vec3(-s,s,-s), vec3(-s,-s,-s), vec3(0,0,-1));
-
-        cubeMesh->SetMeshData(verts.data(), (int)verts.size());
-        cubeMesh->num_materials = 1;
-        cubeMesh->InitVBOVAO();
-
-        Object* cubeObj = new Object();
-        cubeObj->name = "Cube";
-        cubeObj->SetMesh(cubeMesh);
-        cubeObj->SetPosition(vec3(0,0,0));
-        // Add a light green material and assign it to the cube so it's visible.
-        Material lightGreenMat;
-        lightGreenMat.name = "LightGreen";
-        lightGreenMat.glsl_material.color = vec4(0.6f, 1.0f, 0.6f, 1.0f);
-        int matIndex = renderer->AddMaterial(lightGreenMat);
-        cubeObj->material_slot[0] = matIndex;
-        main_scene->AddObject(cubeObj);
-
         //Setup sun light
         DirectionalLight* sun = new DirectionalLight();
         sun->name = "Directional Light (Sun)";
-        sun->SetPosition(vec3(-10,10,10));
+        sun->SetPosition(vec3(-10,7,9));
         sun->color = vec3(1,0.85,0.7);
-        sun->brightness = 8.5;
-        sun->viewport.zoom = 15;
+        sun->brightness = 6.0;
+        sun->viewport.zoom = 3;
         sun->SetLookAt(vec3());
         main_scene->AddObject(sun);
     }
+
+
+    terrain = new IsoTerrain();
+    terrain->name = "Iso Terrain";
+    terrain->assetmanager = assetmanager;
+    terrain->base_tile = "tile";
+    terrain->height_factor = 0.2f;
+    terrain->CreateTerrain(NULL,5,5,1);
+    main_scene->AddObject(terrain);
+
 
     //Create an HTTP server to listen for connections
     http_server = new HTTPServer(9090);
@@ -103,6 +65,30 @@ void ApplicationTileset::Init(void){
     http_server->SetVariable("playerHealth", "100");
     http_server->SetVariable("score", "0");
     http_server->SetVariable("fps", "0");
+    // initial string values (mV, min/max, temp)
+    http_server->SetVariable("string1_mv", "3300");
+    http_server->SetVariable("string1_min_mv", "3290");
+    http_server->SetVariable("string1_max_mv", "3310");
+    http_server->SetVariable("string1_temp_c", "25");
+
+    http_server->SetVariable("string2_mv", "3300");
+    http_server->SetVariable("string2_min_mv", "3280");
+    http_server->SetVariable("string2_max_mv", "3320");
+    http_server->SetVariable("string2_temp_c", "24");
+
+    http_server->SetVariable("string3_mv", "3300");
+    http_server->SetVariable("string3_min_mv", "3270");
+    http_server->SetVariable("string3_max_mv", "3330");
+    http_server->SetVariable("string3_temp_c", "23");
+    http_server->SetVariable("string1_soc", "100");
+    http_server->SetVariable("string2_soc", "80");
+    http_server->SetVariable("string3_soc", "60");
+    // initial operation mode
+    http_server->SetVariable("operationMode", "normal");
+    // initial per-mode enabled flags
+    http_server->SetVariable("mode_netzero_enabled", "1");
+    http_server->SetVariable("mode_charge_enabled", "1");
+    http_server->SetVariable("mode_discharge_enabled", "1");
     debug->Info("HTTP Server started on port 9090\n");
 }
 
@@ -124,7 +110,65 @@ void ApplicationTileset::RunLogic(){
         }
     }
 
+    //Shortcuts
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        //Clear mouse delta
+        input->GetDelta(INPUT_MOUSE_WHEEL);
+        return;
+    }
+
     CheckObjectSelection();
+
+    //Camera rotation moving
+    if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+        //f_show_rightclick_menu = false;
+        int dx = input->GetDelta(INPUT_MOUSE_X);
+        int dy = input->GetDelta(INPUT_MOUSE_Y);
+        if (input->IsKeyDown(INPUT_SHIFT)){
+            //Move the camera
+            vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
+            d += camera->MoveUpBy(dy/100.0f);
+            camera_target += d;
+        }else{
+            //If we move left/right, we rotate the camera around the camera target.
+            vec3 p = camera->GetPosition() - camera_target;
+            vec3 axis = camera->GetLeft();
+
+            //Get the axis towards the camera.
+            quat q(axis,-dy/50.0f);
+
+            //Rotate the camera position around the camera target
+            p = q * p;
+            //We update the position
+            camera->SetPosition(p+camera_target);
+
+            //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
+            vec3 up = camera->GetUp();
+            //up = vec3(0,1,0);
+            camera->SetLookAt(camera_target,&up);
+
+            //Now we rotate around the Y-axis
+            p = camera->GetPosition()-camera_target;
+            axis = vec3(0,1,0);
+            q.set_rotation(axis,-dx/50.0f);
+            p = q * p;
+            camera->SetPosition(p+camera_target);
+            //The lookat should make the same rotation around the y axis
+            camera->RotateBy(q);
+        }
+    }
+
+    //Mouse wheel for zoom
+    static float mouse_delta_sum = 0;
+    if (mouse_delta_sum != 0){
+        camera->MoveForwardBy(mouse_delta_sum / 10.0f);
+        mouse_delta_sum /= 1.1;
+    }
+    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 }
 
 void ApplicationTileset::DrawImGuiUI(){
@@ -137,6 +181,57 @@ void ApplicationTileset::DrawImGuiUI(){
         if (http_server) http_server->SetVariable("playerHealth", std::to_string(ui_playerHealth));
     }
 
+    // String 1 (cell mV, min, max, temp)
+    if (ImGui::SliderInt("String 1 - Cell mV", &ui_string0_mv, 2800, 4200)){
+        if (http_server) http_server->SetVariable("string1_mv", std::to_string(ui_string0_mv));
+    }
+    if (ImGui::SliderInt("String 1 - SOC %", &ui_string0_soc, 0, 100)){
+        if (http_server) http_server->SetVariable("string1_soc", std::to_string(ui_string0_soc));
+    }
+    if (ImGui::SliderInt("String 1 - Min mV", &ui_string0_min_mv, 0, ui_string0_mv)){
+        if (http_server) http_server->SetVariable("string1_min_mv", std::to_string(ui_string0_min_mv));
+    }
+    if (ImGui::SliderInt("String 1 - Max mV", &ui_string0_max_mv, ui_string0_mv, 5000)){
+        if (http_server) http_server->SetVariable("string1_max_mv", std::to_string(ui_string0_max_mv));
+    }
+    if (ImGui::SliderInt("String 1 - Temp (C)", &ui_string0_temp_c, -40, 120)){
+        if (http_server) http_server->SetVariable("string1_temp_c", std::to_string(ui_string0_temp_c));
+    }
+
+    // String 2
+    if (ImGui::SliderInt("String 2 - Cell mV", &ui_string1_mv, 2800, 4200)){
+        if (http_server) http_server->SetVariable("string2_mv", std::to_string(ui_string1_mv));
+    }
+    if (ImGui::SliderInt("String 2 - SOC %", &ui_string1_soc, 0, 100)){
+        if (http_server) http_server->SetVariable("string2_soc", std::to_string(ui_string1_soc));
+    }
+    if (ImGui::SliderInt("String 2 - Min mV", &ui_string1_min_mv, 0, ui_string1_mv)){
+        if (http_server) http_server->SetVariable("string2_min_mv", std::to_string(ui_string1_min_mv));
+    }
+    if (ImGui::SliderInt("String 2 - Max mV", &ui_string1_max_mv, ui_string1_mv, 5000)){
+        if (http_server) http_server->SetVariable("string2_max_mv", std::to_string(ui_string1_max_mv));
+    }
+    if (ImGui::SliderInt("String 2 - Temp (C)", &ui_string1_temp_c, -40, 120)){
+        if (http_server) http_server->SetVariable("string2_temp_c", std::to_string(ui_string1_temp_c));
+    }
+
+    // String 3
+    if (ImGui::SliderInt("String 3 - Cell mV", &ui_string2_mv, 2800, 4200)){
+        if (http_server) http_server->SetVariable("string3_mv", std::to_string(ui_string2_mv));
+    }
+    if (ImGui::SliderInt("String 3 - SOC %", &ui_string2_soc, 0, 100)){
+        if (http_server) http_server->SetVariable("string3_soc", std::to_string(ui_string2_soc));
+    }
+    if (ImGui::SliderInt("String 3 - Min mV", &ui_string2_min_mv, 0, ui_string2_mv)){
+        if (http_server) http_server->SetVariable("string3_min_mv", std::to_string(ui_string2_min_mv));
+    }
+    if (ImGui::SliderInt("String 3 - Max mV", &ui_string2_max_mv, ui_string2_mv, 5000)){
+        if (http_server) http_server->SetVariable("string3_max_mv", std::to_string(ui_string2_max_mv));
+    }
+    if (ImGui::SliderInt("String 3 - Temp (C)", &ui_string2_temp_c, -40, 120)){
+        if (http_server) http_server->SetVariable("string3_temp_c", std::to_string(ui_string2_temp_c));
+    }
+
     // Score slider
     if (ImGui::SliderInt("Score", &ui_score, 0, 100000)){
         if (http_server) http_server->SetVariable("score", std::to_string(ui_score));
@@ -144,6 +239,24 @@ void ApplicationTileset::DrawImGuiUI(){
 
     // Show last measured FPS
     ImGui::Text("FPS: %d", g_lastFPS);
+
+    // Operation Mode: show and allow selection
+    const char* modes[] = { "normal", "performance", "conservative" };
+    static int opModeIdx = 0;
+    if (ImGui::Combo("Operation Mode", &opModeIdx, (const char* const*)modes, IM_ARRAYSIZE(modes))){
+        if (http_server) http_server->SetVariable("operationMode", std::string(modes[opModeIdx]));
+    }
+
+    // Mode availability toggles (enabled/disabled)
+    if (ImGui::Checkbox("Enable NetZero", &ui_mode_netzero_enabled)){
+        if (http_server) http_server->SetVariable("mode_netzero_enabled", ui_mode_netzero_enabled ? "1" : "0");
+    }
+    if (ImGui::Checkbox("Enable Charge", &ui_mode_charge_enabled)){
+        if (http_server) http_server->SetVariable("mode_charge_enabled", ui_mode_charge_enabled ? "1" : "0");
+    }
+    if (ImGui::Checkbox("Enable Discharge", &ui_mode_discharge_enabled)){
+        if (http_server) http_server->SetVariable("mode_discharge_enabled", ui_mode_discharge_enabled ? "1" : "0");
+    }
 
     ImGui::End();
 
