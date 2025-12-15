@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <wincrypt.h>
 #include "File.h"
+#include <thread>
 
 static Debugger* http_debug = new Debugger("HTTPServer", DEBUG_INFO);
 
@@ -108,8 +109,7 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 
 
 	// If client asked for /status, return JSON of variables
-	if (path == "/status")
-	{
+	if (path == "/status"){
 		// Build JSON from m_variables
 		std::ostringstream json;
 		json << "{";
@@ -166,11 +166,7 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		closesocket(clientSocket);
 		DisconnectClient(clientSocket);
 		return;
-	}
-
-	// Support setting the operation mode via /set_mode?mode=<id>
-	if (path == "/set_mode")
-	{
+	}else if (path == "/set_mode"){	// Support setting the operation mode via /set_mode?mode=<id>
 		std::string mode;
 		if (!query.empty()){
 			// simple parse mode=...
@@ -227,10 +223,7 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		closesocket(clientSocket);
 		DisconnectClient(clientSocket);
 		return;
-	}
-
-	// Support toggling whether a mode is available
-	if (path == "/set_mode_enabled"){
+	}else if (path == "/set_mode_enabled"){ // Support toggling whether a mode is available
 		std::string mode;
 		std::string enabled;
 		if (!query.empty()){
@@ -272,11 +265,7 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		closesocket(clientSocket);
 		DisconnectClient(clientSocket);
 		return;
-	}
-
-	// Handle websocket upgrade at /ws
-	if ((path == "/ws") || (path == "/test-cp"))
-	{
+	}else{ // Handle websocket upgrade at any other path
 		// Look for Sec-WebSocket-Key header
 		auto findHeader = [&](const std::string &name)->std::string{
 			size_t i = request.find(name);
@@ -391,14 +380,21 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 
 		// Add to websocket clients list
 		EnterCriticalSection(&m_wsLock);
-		m_wsClients.push_back(clientSocket);
 		if (!chosenProtocol.empty()) {
 			m_ocppClients.push_back(clientSocket);
 			http_debug->Info("OCPP client connected (protocol=%s)\n", chosenProtocol.c_str());
 		} else {
+			m_wsClients.push_back(clientSocket);
 			http_debug->Info("WebSocket client connected\n");
 		}
 		LeaveCriticalSection(&m_wsLock);
+
+		// Start a reader thread to parse incoming websocket frames from this client
+		// Set client socket to blocking mode for the dedicated reader thread (so recv blocks)
+		u_long blockingMode = 0;
+		ioctlsocket(clientSocket, FIONBIO, &blockingMode);
+		std::thread th(&HTTPServer::HandleWebSocketClient, this, clientSocket, path, chosenProtocol);
+		th.detach();
 
 		// Send initial variables snapshot
 		BroadcastVariables();
@@ -574,4 +570,112 @@ void HTTPServer::BroadcastVariables()
 		++i;
 	}
 	LeaveCriticalSection(&m_wsLock);
+}
+
+// Helper: read exactly n bytes or return false on error/close
+static bool recvAll(SOCKET s, void *buf, size_t len)
+{
+	char *p = (char*)buf;
+	size_t got = 0;
+	while (got < len) {
+		int r = recv(s, p + got, (int)(len - got), 0);
+		if (r > 0) { got += r; continue; }
+		if (r == 0) return false; // peer closed
+		int err = WSAGetLastError();
+		if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
+			// no data yet, wait a bit and try again
+			Sleep(10);
+			continue;
+		}
+		return false;
+	}
+	return true;
+}
+
+// Minimal websocket frame reader: supports single-frame text messages, masked client frames, ping/pong/close handling
+void HTTPServer::HandleWebSocketClient(SOCKET clientSocket, const std::string &path, const std::string &protocol)
+{
+	http_debug->Info("WebSocket reader started for path=%s protocol=%s\n", path.c_str(), protocol.c_str());
+	while (true) {
+		unsigned char hdr[2];
+		if (!recvAll(clientSocket, hdr, 2)) {
+			http_debug->Info("WebSocket client %s disconnected (recv header failed)\n", path.c_str());
+			break;
+		}
+		unsigned char b0 = hdr[0];
+		unsigned char b1 = hdr[1];
+		bool fin = (b0 & 0x80) != 0;
+		unsigned char opcode = b0 & 0x0F;
+		bool masked = (b1 & 0x80) != 0;
+		uint64_t payloadLen = b1 & 0x7F;
+
+		if (payloadLen == 126) {
+			unsigned char ext[2];
+			if (!recvAll(clientSocket, ext, 2)) break;
+			payloadLen = ((uint64_t)ext[0] << 8) | ext[1];
+		} else if (payloadLen == 127) {
+			unsigned char ext[8];
+			if (!recvAll(clientSocket, ext, 8)) break;
+			payloadLen = 0;
+			for (int i = 0; i < 8; ++i) payloadLen = (payloadLen << 8) | ext[i];
+		}
+
+		unsigned char maskKey[4] = {0,0,0,0};
+		if (masked) {
+			if (!recvAll(clientSocket, maskKey, 4)) break;
+		}
+
+		std::vector<char> payload;
+		if (payloadLen > 0) {
+			//Had a try-catch here but we've disabled exceptions project-wide
+			if (payloadLen > SIZE_MAX) {
+				http_debug->Warn("WebSocket payload too large from %s: %llu bytes\n", path.c_str(), payloadLen);
+				break;
+			}
+			payload.resize((size_t)payloadLen);
+
+			if (!recvAll(clientSocket, payload.data(), (size_t)payloadLen)) break;
+			if (masked) {
+				for (size_t i = 0; i < payload.size(); ++i) payload[i] ^= maskKey[i % 4];
+			}
+		}
+
+		// Handle opcodes
+		if (opcode == 0x1) { // text
+			std::string msg(payload.begin(), payload.end());
+			http_debug->Info("WS text from %s: %s\n", path.c_str(), msg.c_str());
+			// For debug/visibility also set a variable that will be visible via /status
+			SetVariable(std::string("ocpp_last_msg_") + path, msg);
+		} else if (opcode == 0x8) { // close
+			http_debug->Info("WS close received from %s\n", path.c_str());
+			break;
+		} else if (opcode == 0x9) { // ping - reply pong
+			std::vector<unsigned char> frame;
+			frame.push_back(0x8A); // FIN=1, pong opcode=0xA
+			size_t len = payload.size();
+			if (len <= 125) frame.push_back((unsigned char)len);
+			else if (len <= 65535) { frame.push_back(126); frame.push_back((len>>8)&0xFF); frame.push_back(len&0xFF); }
+			else { frame.push_back(127); for (int i = 7; i >= 0; --i) frame.push_back((len >> (i*8)) & 0xFF); }
+			frame.insert(frame.end(), payload.begin(), payload.end());
+			send(clientSocket, (const char*)frame.data(), (int)frame.size(), 0);
+		} else {
+			http_debug->Trace("Unhandled WS opcode %d from %s (len=%llu)\n", (int)opcode, path.c_str(), payloadLen);
+		}
+	}
+
+	// Cleanup on disconnect
+	EnterCriticalSection(&m_wsLock);
+	// remove from generic ws list
+	for (size_t i = 0; i < m_wsClients.size(); ++i) {
+		if (m_wsClients[i] == clientSocket) { m_wsClients.erase(m_wsClients.begin() + i); break; }
+	}
+	// remove from ocpp list
+	for (size_t j = 0; j < m_ocppClients.size(); ++j) {
+		if (m_ocppClients[j] == clientSocket) { m_ocppClients.erase(m_ocppClients.begin() + j); break; }
+	}
+	LeaveCriticalSection(&m_wsLock);
+
+	closesocket(clientSocket);
+	DisconnectClient(clientSocket);
+	http_debug->Info("WebSocket reader stopped for %s\n", path.c_str());
 }

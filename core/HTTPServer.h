@@ -48,6 +48,9 @@ private:
 	// Handle HTTP requests from clients
 	void HandleHTTPRequest(SOCKET clientSocket);
 
+	// Per-WebSocket client reader that decodes client frames and handles simple opcodes
+	void HandleWebSocketClient(SOCKET clientSocket, const std::string &path, const std::string &protocol);
+
 	// Parse HTTP request
 	std::string ParseHTTPRequest(const std::string& request);
 
