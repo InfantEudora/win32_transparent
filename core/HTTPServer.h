@@ -35,6 +35,8 @@ private:
 
 	// WebSocket clients
 	std::vector<SOCKET> m_wsClients;
+	// OCPP-specific websocket clients (subset of m_wsClients) - sockets speaking ocpp1.6/ocpp2.0
+	std::vector<SOCKET> m_ocppClients;
 	CRITICAL_SECTION m_wsLock;
 
 	// Send raw websocket text message to a client

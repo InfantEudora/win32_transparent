@@ -92,7 +92,7 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 	buffer[bytesReceived] = '\0';
 	std::string request(buffer);
 
-	http_debug->Trace("HTTP Request received:\n%s\n", buffer);
+	http_debug->Info("HTTP Request received:\n%s\n", buffer);
 
 	// Determine requested path (keep query string separate)
 	std::string fullPath = ParseHTTPRequest(request);
@@ -275,7 +275,7 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 	}
 
 	// Handle websocket upgrade at /ws
-	if (path == "/ws")
+	if ((path == "/ws") || (path == "/test-cp"))
 	{
 		// Look for Sec-WebSocket-Key header
 		auto findHeader = [&](const std::string &name)->std::string{
@@ -298,6 +298,26 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 			closesocket(clientSocket);
 			DisconnectClient(clientSocket);
 			return;
+		}
+
+		// See if the client requested an OCPP subprotocol and pick the first we support
+		std::string requestedProtocols = findHeader("Sec-WebSocket-Protocol");
+		std::string chosenProtocol;
+		if (!requestedProtocols.empty()){
+			// split by comma
+			size_t pos = 0;
+			while (pos < requestedProtocols.size()){
+				size_t comma = requestedProtocols.find(',', pos);
+				std::string token = requestedProtocols.substr(pos, (comma==std::string::npos?requestedProtocols.size():comma)-pos);
+				// trim whitespace
+				auto l = token.find_first_not_of(" \t\r\n");
+				auto r = token.find_last_not_of(" \t\r\n");
+				if (l!=std::string::npos && r!=std::string::npos) token = token.substr(l, r-l+1);
+				// accept ocpp1.6 or ocpp2.0
+				if (token == "ocpp1.6" || token == "ocpp2.0") { chosenProtocol = token; break; }
+				if (comma==std::string::npos) break;
+				pos = comma + 1;
+			}
 		}
 
 		// Compute accept
@@ -357,12 +377,13 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		// ensure no trailing nulls
 		if (!accept.empty() && accept.back() == '\0') accept.pop_back();
 
-		// Send upgrade response
+		// Send upgrade response (include Sec-WebSocket-Protocol if we chose one)
 		std::ostringstream resp;
 		resp << "HTTP/1.1 101 Switching Protocols\r\n";
 		resp << "Upgrade: websocket\r\n";
 		resp << "Connection: Upgrade\r\n";
 		resp << "Sec-WebSocket-Accept: " << accept << "\r\n";
+		if (!chosenProtocol.empty()) resp << "Sec-WebSocket-Protocol: " << chosenProtocol << "\r\n";
 		resp << "\r\n";
 
 		std::string respStr = resp.str();
@@ -371,9 +392,13 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		// Add to websocket clients list
 		EnterCriticalSection(&m_wsLock);
 		m_wsClients.push_back(clientSocket);
+		if (!chosenProtocol.empty()) {
+			m_ocppClients.push_back(clientSocket);
+			http_debug->Info("OCPP client connected (protocol=%s)\n", chosenProtocol.c_str());
+		} else {
+			http_debug->Info("WebSocket client connected\n");
+		}
 		LeaveCriticalSection(&m_wsLock);
-
-		http_debug->Info("WebSocket client connected\n");
 
 		// Send initial variables snapshot
 		BroadcastVariables();
@@ -538,7 +563,12 @@ void HTTPServer::BroadcastVariables()
 		bool ok = SendWebSocketMessage(s, body);
 		if (!ok) {
 			closesocket(s);
+			// remove from generic ws list
 			m_wsClients.erase(m_wsClients.begin() + i);
+			// also remove from ocpp clients list if present
+			for (size_t j = 0; j < m_ocppClients.size(); ++j) {
+				if (m_ocppClients[j] == s) { m_ocppClients.erase(m_ocppClients.begin() + j); break; }
+			}
 			continue;
 		}
 		++i;
