@@ -253,6 +253,96 @@ int IsoCell::GetWallDirection(IsoWall* wall){
     return DIRECTION_NONE;
 }
 
+//Only a single road object per cell.
+Object* IsoCell::PlaceRoad(const std::string& asset_name){
+    std::string new_asset_name = asset_name;
+    quat roadq; roadq.identity();
+    //We need find out if our neighbours have roads, and keep track of the road type we need to use.
+    int bitmask = 0;
+    IsoCell* neighbours[4] = {NULL,NULL,NULL,NULL};
+    neighbours[0] = GetNeighbour(DIRECTION_NORTH);
+    if (neighbours[0] && neighbours[0]->object_road){
+        debug->Info("Neighbour north has road\n");
+        bitmask |= 1;
+    }
+    neighbours[1] = GetNeighbour(DIRECTION_EAST);
+    if (neighbours[1] && neighbours[1]->object_road){
+        debug->Info("Neighbour east has road\n");
+        bitmask |= 2;
+    }
+    neighbours[2] = GetNeighbour(DIRECTION_SOUTH);
+    if (neighbours[2] && neighbours[2]->object_road){
+        debug->Info("Neighbour south has road\n");
+        bitmask |= 4;
+    }
+    neighbours[3] = GetNeighbour(DIRECTION_WEST);
+    if (neighbours[3] && neighbours[3]->object_road){
+        debug->Info("Neighbour west has road\n");
+        bitmask |= 8;
+    }
+    debug->Info("Road bitmask %i\n",bitmask);
+    if (bitmask == 15){
+        //Adjust asset name based on bitmask
+        new_asset_name = "road_cross";
+        debug->Info("Adjusting road asset from %s to %s\n",asset_name.c_str(),new_asset_name.c_str());
+    }else if ((bitmask == 3) || (bitmask == 6) || (bitmask == 12) || (bitmask == 9)){
+        new_asset_name = "road_corner";
+        debug->Info("Adjusting road asset from %s to %s\n",asset_name.c_str(),new_asset_name.c_str());
+
+        if (bitmask == 3){
+            roadq.set_rotation(ref_up,toradians(0));
+        }else if (bitmask == 6){
+            roadq.set_rotation(ref_up,toradians(-90));
+        }else if (bitmask == 9){
+            roadq.set_rotation(ref_up,toradians(90));
+        }else if (bitmask == 12){
+            roadq.set_rotation(ref_up,toradians(180));
+        }
+    }else if ((bitmask == 1) || (bitmask == 4) || (bitmask == 5)){
+        roadq.set_rotation(ref_up,toradians(90));
+    }else if ((bitmask == 0) || (bitmask == 2) || (bitmask == 10)){
+        //Keep default
+    }
+
+    if (!object_road){
+        object_road = assetmanager->GetObjectFromAsset(new_asset_name.c_str());
+        if (object_road && AttachChild(object_road)){
+            debug->Ok("Placed some road decoration\n");
+            object_road->f_update_materials = true;
+            //object_road->name = "Road @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
+            object_road->name = new_asset_name;
+            object_road->SetRotation(roadq);
+        }
+    }else{
+        //Check if we have the correct road type loaded. TODO
+        debug->Info("Updating existing road from %s to %s\n",object_road->name.c_str(),new_asset_name.c_str());
+        if (object_road->name != new_asset_name){
+            DetachChild(object_road);
+            delete object_road;
+            object_road = assetmanager->GetObjectFromAsset(new_asset_name.c_str());
+            if (object_road && AttachChild(object_road)){
+                debug->Ok("Updated road asset\n");
+                object_road->f_update_materials = true;
+                object_road->name = new_asset_name;
+                object_road->SetRotation(roadq);
+            }
+        }else{
+            object_road->SetRotation(roadq);
+        }
+    }
+    update_count++;
+    debug->Info("Road update count %i. Updating neighbours\n",update_count);
+
+    //Each neighbour with a road needs to update their road too.
+    for (int i =0;i<4;i++){
+        if (neighbours[i] && neighbours[i]->object_road && (neighbours[i]->update_count == 0)){
+            neighbours[i]->PlaceRoad(asset_name);
+        }
+    }
+
+    return object_road;
+}
+
 // Place a wall at one of the 4 coordinates.
 IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
     if (!IsoDirection::DirectionIsValid(direction)){

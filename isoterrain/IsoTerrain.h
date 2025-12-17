@@ -40,6 +40,7 @@ public:
     PhysicsWorld* physicsworld = NULL;
 
     void CreateTerrain(PhysicsWorld* physicsworld, int w, int d, int h);
+    void ClearUpdateCounts();
     IsoCell* FindCellByWorldPosition(vec3& at);
     IsoCell* GetCellByCoordinate(int3 coord);
 

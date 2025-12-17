@@ -6,6 +6,14 @@
 #include "type_ray.h"
 #include "HTTPServer.h"
 #include "Isoterrain.h"
+
+enum IsoTool{
+    ISO_TOOL_NONE       = 0,
+    ISO_TOOL_ROAD       = 1,
+    ISO_TOOL_TREE       = 2,
+    ISO_TOOL_TERRAIN    = 3,
+};
+
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
@@ -18,10 +26,15 @@ public:
     void RunLogic() override;
 
     void DrawImGuiUI(void) override;
+    void RenderOCPPClientsUI();
+    void RenderToolsUI();
+    void RenderTerrainUI();
 
     vec3 camera_target = {};
 
     IsoTerrain* terrain = NULL;
+    IsoTool current_tool = ISO_TOOL_NONE;
+    void StartDrag(IsoCell* cell);
 private:
 	HTTPServer* http_server = nullptr;
 

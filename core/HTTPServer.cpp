@@ -5,6 +5,7 @@
 #include <wincrypt.h>
 #include "File.h"
 #include <thread>
+#include <ctime>
 
 static Debugger* http_debug = new Debugger("HTTPServer", DEBUG_INFO);
 
@@ -111,12 +112,12 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 	// If client asked for /status, return JSON of variables
 	if (path == "/status"){
 		// Build JSON from m_variables
-		std::ostringstream json;
-		json << "{";
+		std::ostringstream jsonstream;
+		jsonstream << "{";
 		bool first = true;
 		for (const auto &p : m_variables)
 		{
-			if (!first) json << ",";
+			if (!first) jsonstream << ",";
 			first = false;
 			// simple JSON string escaping for quotes and backslashes
 			std::string key = p.first;
@@ -143,11 +144,11 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 				return o.str();
 			};
 
-			json << '"' << escape(key) << '"' << ":" << '"' << escape(val) << '"';
+			jsonstream << '"' << escape(key) << '"' << ":" << '"' << escape(val) << '"';
 		}
-		json << "}";
+		jsonstream << "}";
 
-		std::string body = json.str();
+		std::string body = jsonstream.str();
 		std::ostringstream response;
 		response << "HTTP/1.1 200 OK\r\n";
 		response << "Content-Type: application/json; charset=UTF-8\r\n";
@@ -646,6 +647,13 @@ void HTTPServer::HandleWebSocketClient(SOCKET clientSocket, const std::string &p
 			http_debug->Info("WS text from %s: %s\n", path.c_str(), msg.c_str());
 			// For debug/visibility also set a variable that will be visible via /status
 			SetVariable(std::string("ocpp_last_msg_") + path, msg);
+			// Try to parse and handle as an OCPP message (e.g., BootNotification)
+
+			if (HandleOCPPMessage(clientSocket, path, msg)){
+				http_debug->Info("Handled OCPP message from %s\n", path.c_str());
+			}else{
+				http_debug->Warn("OCPP message handling failed\n");
+			}
 		} else if (opcode == 0x8) { // close
 			http_debug->Info("WS close received from %s\n", path.c_str());
 			break;
@@ -678,4 +686,129 @@ void HTTPServer::HandleWebSocketClient(SOCKET clientSocket, const std::string &p
 	closesocket(clientSocket);
 	DisconnectClient(clientSocket);
 	http_debug->Info("WebSocket reader stopped for %s\n", path.c_str());
+}
+
+// Very small/simple parser to detect OCPP CALL BootNotification messages and reply with CALLRESULT
+bool HTTPServer::HandleOCPPMessage(SOCKET clientSocket, const std::string &path, const std::string &msg)
+{
+
+	auto j = json::parse(msg);
+	if (!j.is_array() || j.size() < 3) return false;
+	int msgType = j[0].get<int>();
+	if (msgType != 2) return false; // not a CALL
+	std::string msgId = j[1].is_string() ? j[1].get<std::string>() : j[1].dump();
+	std::string action = j[2].get<std::string>();
+	if (action == "BootNotification") {
+		return HandleOCPPBootNotification(clientSocket, path, msgId, j);
+	}
+	if (action == "StatusNotification") {
+		return HandleOCPPStatusNotification(clientSocket, path, msgId, j);
+	}
+	if (action == "Heartbeat") {
+		return HandleOCPPHeartbeat(clientSocket, path, msgId, j);
+	}
+	http_debug->Warn("Unhandled OCPP action: %s\n", action.c_str());
+	return false;
+}
+
+bool HTTPServer::HandleOCPPBootNotification(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j)
+{
+	std::string identity;
+	if (j.size() >= 4 && j[3].is_object()){
+		if (j[3].contains("chargeBoxIdentity")) identity = j[3]["chargeBoxIdentity"].get<std::string>();
+		else if (j[3].contains("chargePointIdentity")) identity = j[3]["chargePointIdentity"].get<std::string>();
+	}
+
+	std::string expectedId = path;
+	if (!expectedId.empty() && expectedId[0] == '/') expectedId = expectedId.substr(1);
+
+	bool accept = false;
+	if (identity.empty() || identity == expectedId) accept = true;
+
+	json resp = json::array();
+	resp.push_back(3);
+	resp.push_back(msgId);
+	json result;
+	result["status"] = accept ? "Accepted" : "Rejected";
+	result["interval"] = accept ? 300 : 0;
+	resp.push_back(result);
+
+	SendWebSocketMessage(clientSocket, resp.dump());
+	SetVariable(std::string("ocpp_last_boot_") + path, accept ? "Accepted" : "Rejected");
+	http_debug->Info("BootNotification %s for %s (id=%s)\n", accept ? "Accepted" : "Rejected", path.c_str(), identity.c_str());
+	return true;
+}
+
+bool HTTPServer::HandleOCPPStatusNotification(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j)
+{
+	// Expect payload in j[3]
+	if (j.size() < 4 || !j[3].is_object()) {
+		http_debug->Warn("StatusNotification missing payload from %s\n", path.c_str());
+		return false;
+	}
+	const json &p = j[3];
+	std::string status;
+	std::string errorCode;
+	std::string timestamp;
+	std::string vendorId;
+	std::string vendorErrorCode;
+	std::string connectorIdStr;
+
+	if (p.contains("status")) status = p["status"].get<std::string>();
+	if (p.contains("errorCode")) errorCode = p["errorCode"].get<std::string>();
+	if (p.contains("timestamp")) timestamp = p["timestamp"].get<std::string>();
+	if (p.contains("vendorId")) vendorId = p["vendorId"].get<std::string>();
+	if (p.contains("vendorErrorCode")) vendorErrorCode = p["vendorErrorCode"].get<std::string>();
+	if (p.contains("connectorId")) {
+		if (p["connectorId"].is_number()) connectorIdStr = std::to_string(p["connectorId"].get<int>());
+		else connectorIdStr = p["connectorId"].get<std::string>();
+	}
+
+	// Set variables for visibility via /status
+	std::string base = std::string("ocpp_status_") + path;
+	if (!status.empty()) SetVariable(base, status);
+	if (!errorCode.empty()) SetVariable(base + std::string("_error"), errorCode);
+	if (!timestamp.empty()) SetVariable(base + std::string("_ts"), timestamp);
+	if (!vendorId.empty()) SetVariable(base + std::string("_vendor"), vendorId);
+	if (!vendorErrorCode.empty()) SetVariable(base + std::string("_vendor_err"), vendorErrorCode);
+	if (!connectorIdStr.empty()) SetVariable(base + std::string("_connector"), connectorIdStr);
+
+	// Store full JSON payload for debugging
+	SetVariable(std::string("ocpp_last_status_") + path, p.dump());
+
+	http_debug->Info("Received OCPP StatusNotification from %s: connector=%s status=%s error=%s\n", path.c_str(), connectorIdStr.c_str(), status.c_str(), errorCode.c_str());
+
+	// Reply with CALLRESULT (empty object) per OCPP convention
+	json resp = json::array();
+	resp.push_back(3);
+	resp.push_back(msgId);
+	resp.push_back(json::object());
+	SendWebSocketMessage(clientSocket, resp.dump());
+	return true;
+}
+
+bool HTTPServer::HandleOCPPHeartbeat(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j)
+{
+	// Build ISO8601 UTC timestamp
+	time_t now = time(nullptr);
+	struct tm gm;
+	gmtime_s(&gm, &now);
+	char buf[64];
+	strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &gm);
+	std::string ts(buf);
+
+	// Expose via /status and log
+	SetVariable(std::string("ocpp_last_heartbeat_") + path, ts);
+	http_debug->Info("Heartbeat from %s at %s\n", path.c_str(), ts.c_str());
+
+	// Send CALLRESULT [3, msgId, { currentTime: ts }]
+	json resp = json::array();
+	resp.push_back(3);
+	resp.push_back(msgId);
+	json result;
+	result["currentTime"] = ts;
+	resp.push_back(result);
+	SendWebSocketMessage(clientSocket, resp.dump());
+
+	return true;
 }

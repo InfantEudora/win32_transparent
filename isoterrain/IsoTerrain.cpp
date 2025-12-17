@@ -103,6 +103,12 @@ void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, int w, int d, int h){
     }
 }
 
+void IsoTerrain::ClearUpdateCounts(){
+    for (IsoCell* cell : cells){
+        cell->update_count = 0;
+    }
+}
+
 //This maps a world position to a cell coordinate. Doest not account for rotation and scaling.
 //So just 1x1 sized grid cells.
 IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){

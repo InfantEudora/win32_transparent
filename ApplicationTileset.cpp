@@ -52,7 +52,7 @@ void ApplicationTileset::Init(void){
     terrain->assetmanager = assetmanager;
     terrain->base_tile = "tile";
     terrain->height_factor = 0.2f;
-    terrain->CreateTerrain(NULL,5,5,1);
+    terrain->CreateTerrain(NULL,7,7,1);
     main_scene->AddObject(terrain);
 
 
@@ -92,6 +92,11 @@ void ApplicationTileset::Init(void){
     debug->Info("HTTP Server started on port 9090\n");
 }
 
+void ApplicationTileset::StartDrag(IsoCell* cell){
+
+}
+
+
 static unsigned long long g_lastTick = GetTickCount64();
 static int g_frames = 0;
 static int g_lastFPS = 0;
@@ -122,6 +127,21 @@ void ApplicationTileset::RunLogic(){
     }
 
     CheckObjectSelection();
+
+    if (input->IsKeyDown(INPUT_CLICK_RIGHT)){
+        current_tool = ISO_TOOL_NONE;
+    }
+
+    terrain->ClearUpdateCounts();
+
+    IsoCell* selected_cell = dynamic_cast<IsoCell*>(selected_object);
+    if (selected_cell){
+        if ((input->WasKeyReleased(INPUT_CLICK_LEFT) && (current_tool == ISO_TOOL_ROAD))){
+            selected_cell->update_count = 0;
+            selected_cell->PlaceRoad("road_straight");
+        }
+        StartDrag(selected_cell);
+    }
 
     //Camera rotation moving
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
@@ -263,4 +283,56 @@ void ApplicationTileset::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
     RenderRandTestWindow();
+    RenderOCPPClientsUI();
+    RenderToolsUI();
+    RenderTerrainUI();
+}
+
+void ApplicationTileset::RenderOCPPClientsUI(){
+    if (!http_server) return;
+
+    ImGui::Begin("OCPP Clients");
+
+    ImGui::Text("Connected OCPP Clients: %d", (int)http_server->m_ocppClients.size());
+    int client_idx = 0;
+    for (SOCKET client_socket : http_server->m_ocppClients){
+        ImGui::PushID(client_idx);
+        ImGui::Text("Client %d - Socket %llu", client_idx, (unsigned long long)client_socket);
+        client_idx++;
+        ImGui::PopID();
+    }
+
+    ImGui::End();
+}
+
+void ApplicationTileset::RenderToolsUI(){
+    ImGui::Begin("Tools");
+
+    ImGui::Text("This is the Tools UI.");
+    ImGui::Text("Current Tool: %d", (int)current_tool);
+
+    if (ImGui::Button("No Tool")){
+        current_tool = ISO_TOOL_NONE;
+    }
+    if (ImGui::Button("Road Tool")){
+        current_tool = ISO_TOOL_ROAD;
+    }
+    if (ImGui::Button("Tree Tool")){
+        current_tool = ISO_TOOL_TREE;
+    }
+    if (ImGui::Button("Terrain Tool")){
+        current_tool = ISO_TOOL_TERRAIN;
+    }
+
+    ImGui::End();
+}
+
+void ApplicationTileset::RenderTerrainUI(){
+    if (!terrain) return;
+
+    ImGui::Begin("Terrain");
+
+    ImGui::Text("Iso Terrain Settings");
+
+    ImGui::End();
 }
