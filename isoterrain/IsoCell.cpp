@@ -302,6 +302,19 @@ Object* IsoCell::PlaceRoad(const std::string& asset_name){
         roadq.set_rotation(ref_up,toradians(90));
     }else if ((bitmask == 0) || (bitmask == 2) || (bitmask == 10)){
         //Keep default
+    }else if ((bitmask == 7) || (bitmask == 11) || (bitmask == 13) || (bitmask == 14)){
+        new_asset_name = "road_tjunction";
+        debug->Info("Adjusting road asset from %s to %s\n",asset_name.c_str(),new_asset_name.c_str());
+
+        if (bitmask == 7){
+            roadq.set_rotation(ref_up,toradians(-90));
+        }else if (bitmask == 11){
+            roadq.set_rotation(ref_up,toradians(0));
+        }else if (bitmask == 14){
+            roadq.set_rotation(ref_up,toradians(180));
+        }else if (bitmask == 13){
+            roadq.set_rotation(ref_up,toradians(90));
+        }
     }
 
     if (!object_road){

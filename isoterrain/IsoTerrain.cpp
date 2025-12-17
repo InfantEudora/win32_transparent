@@ -112,6 +112,7 @@ void IsoTerrain::ClearUpdateCounts(){
 //This maps a world position to a cell coordinate. Doest not account for rotation and scaling.
 //So just 1x1 sized grid cells.
 IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
+
     vec3 coord = at - center_offset;
     if ((coord.x < 0) || (coord.z < 0)){
         return NULL;
@@ -119,8 +120,14 @@ IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
     if ((coord.x >= width) || (coord.z >= depth)){
         return NULL;
     }
+    coord += vec3(0.5f,0,0.5f); //Offset to cell center
 
-    int index = (1/height_factor * coord.y * width * depth) +  (coord.z * width) + coord.x;
+    int3 cell_coord = int3(int(floorf(coord.x)),int(floorf(coord.z)),int(floorf(coord.y/height_factor)));
+    //debug->Info("FindCellByWorldPosition %f,%f,%f = coord %i,%i,%i\n",at.x,at.y,at.z,cell_coord.x,cell_coord.y,cell_coord.z);
+
+
+    int index = (cell_coord.z * width * depth) +  (cell_coord.y * width) + cell_coord.x;
+    //debug->Info("FindCellByWorldPosition %i,%i,%i = index %i\n",cell_coord.x,cell_coord.y,cell_coord.z,index);
     if (index < cells.size()){
         return cells.at(index);
     }

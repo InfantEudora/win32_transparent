@@ -52,7 +52,7 @@ void ApplicationTileset::Init(void){
     terrain->assetmanager = assetmanager;
     terrain->base_tile = "tile";
     terrain->height_factor = 0.2f;
-    terrain->CreateTerrain(NULL,7,7,1);
+    terrain->CreateTerrain(NULL,11,11,1);
     main_scene->AddObject(terrain);
 
 
@@ -134,11 +134,27 @@ void ApplicationTileset::RunLogic(){
 
     terrain->ClearUpdateCounts();
 
+
     IsoCell* selected_cell = dynamic_cast<IsoCell*>(selected_object);
     if (selected_cell){
-        if ((input->WasKeyReleased(INPUT_CLICK_LEFT) && (current_tool == ISO_TOOL_ROAD))){
-            selected_cell->update_count = 0;
-            selected_cell->PlaceRoad("road_straight");
+        if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
+            if (current_tool == ISO_TOOL_ROAD){
+                selected_cell->update_count = 0;
+                selected_cell->PlaceRoad("road_straight");
+            }else if (current_tool == ISO_TOOL_CAR){
+                IsoCar* car = new IsoCar();
+                assetmanager->GetObjectFromAsset("car_sedan", car);
+                if (car){
+                    car->SetPosition(selected_cell->GetWorldPosition(STATE_ACCESS_PHYSICS));
+                    main_scene->AddObject(car);
+                    cars.push_back(car);
+                }
+            }else if (current_tool == ISO_TOOL_NONE){
+                for (IsoCar* car:cars){
+                    car->SetTargetCell(selected_cell);
+                    debug->Info("Car target set to cell %i,%i\n",selected_cell->coordinate.x,selected_cell->coordinate.y);
+                }
+            }
         }
         StartDrag(selected_cell);
     }
@@ -317,6 +333,9 @@ void ApplicationTileset::RenderToolsUI(){
     if (ImGui::Button("Road Tool")){
         current_tool = ISO_TOOL_ROAD;
     }
+    if (ImGui::Button("Car Tool")){
+        current_tool = ISO_TOOL_CAR;
+    }
     if (ImGui::Button("Tree Tool")){
         current_tool = ISO_TOOL_TREE;
     }
@@ -333,6 +352,32 @@ void ApplicationTileset::RenderTerrainUI(){
     ImGui::Begin("Terrain");
 
     ImGui::Text("Iso Terrain Settings");
+    IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
+    if (hovered_cell){
+        ImGui::Text("Hovered Cell: %i,%i", hovered_cell->coordinate.x, hovered_cell->coordinate.y);
+    }
+
+    plane p;
+    p.pos = vec3(0,0,0);
+    p.normal = vec3(0,1,0);
+    int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+
+    ray r = main_scene->camera->GetPixelRay(px);
+
+    vec3 at = {};
+    bool intersect = r.intersects_plane(p,at);
+
+    if (intersect){
+        ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
+
+    }else{
+        ImGui::Text("No intersection");
+    }
+    IsoCell* cell = terrain->FindCellByWorldPosition(at);
+    if (cell){
+        ImGui::Text("Cell at intersection: %i,%i", cell->coordinate.x, cell->coordinate.y);
+    }
+
 
     ImGui::End();
 }

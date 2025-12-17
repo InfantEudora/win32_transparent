@@ -6,12 +6,14 @@
 #include "type_ray.h"
 #include "HTTPServer.h"
 #include "Isoterrain.h"
+#include "IsoCar.h"
 
 enum IsoTool{
     ISO_TOOL_NONE       = 0,
     ISO_TOOL_ROAD       = 1,
-    ISO_TOOL_TREE       = 2,
-    ISO_TOOL_TERRAIN    = 3,
+    ISO_TOOL_CAR        = 2,
+    ISO_TOOL_TREE       = 3,
+    ISO_TOOL_TERRAIN    = 4,
 };
 
 /*
@@ -35,6 +37,8 @@ public:
     IsoTerrain* terrain = NULL;
     IsoTool current_tool = ISO_TOOL_NONE;
     void StartDrag(IsoCell* cell);
+
+    std::vector<IsoCar*> cars;
 private:
 	HTTPServer* http_server = nullptr;
 
