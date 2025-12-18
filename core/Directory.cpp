@@ -6,6 +6,21 @@
 static Debugger *debug = new Debugger("Directory", DEBUG_ALL);
 
 
+std::string SensiblePathToWin32Path(const char* dirname){
+    char* c = (char*)dirname;
+    std::string path;
+    while(*c != '\0'){
+        if (*c == '/'){
+            path += '\\';
+        }else{
+            path += *c;
+        }
+        c++;
+    }
+    return path;
+}
+
+
 std::vector<std::string> Directory::GetFiles(const char* dirname, const char* filetype){
     std::vector<std::string>files;
 
@@ -20,12 +35,14 @@ std::vector<std::string> Directory::GetFiles(const char* dirname, const char* fi
     // It'd be nice if std::filesystem actually existed
     WIN32_FIND_DATA ffd;
     HANDLE hFind = INVALID_HANDLE_VALUE;
-    const char* dir = "data\\icons\\\\*.png"; // Look at this absolute mess
+    std::string win32path = SensiblePathToWin32Path(dirname);
+    win32path += "\\";
+    win32path += filetype;
     LARGE_INTEGER filesize;
-    hFind = FindFirstFile(dir, &ffd);
+    hFind = FindFirstFile(win32path.c_str(), &ffd);
 
     if (INVALID_HANDLE_VALUE == hFind){
-        debug->Err("No first file in folder %s\n",dir);
+        debug->Err("No first file in folder %s\n",win32path.c_str());
     }else{
         do{
             if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY){

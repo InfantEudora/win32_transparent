@@ -1,5 +1,6 @@
 #include "ApplicationTileset.h"
 #include "Debug.h"
+#include "Directory.h"
 
 static Debugger *debug = new Debugger("ApplicationTileset", DEBUG_ALL);
 
@@ -28,6 +29,11 @@ void ApplicationTileset::Init(void){
     //We make an assetmanager which we use to load/build all assets from:
     assetmanager = new AssetManager();
 
+    //Setup sound system
+    soundsystem = new SoundSystem();
+    soundsystem->Initialise();
+    soundsystem->AppendFile("isocity/data/car_horn_1.wav","car_horn_1");
+
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics();
 
@@ -41,20 +47,42 @@ void ApplicationTileset::Init(void){
         sun->SetPosition(vec3(-10,7,9));
         sun->color = vec3(1,0.85,0.7);
         sun->brightness = 6.0;
-        sun->viewport.zoom = 3;
+        sun->viewport.zoom = 5;
         sun->SetLookAt(vec3());
         main_scene->AddObject(sun);
     }
 
+    //Setup Random Generator
+    rrand = new RRandom();
+    rrand->Generate(512,512);
 
     terrain = new IsoTerrain();
     terrain->name = "Iso Terrain";
     terrain->assetmanager = assetmanager;
     terrain->base_tile = "tile";
     terrain->height_factor = 0.2f;
-    terrain->CreateTerrain(NULL,11,11,1);
+    terrain->CreateTerrain(NULL, rrand, 11,11,1);
     main_scene->AddObject(terrain);
 
+    Object* compass = CreateNewObjectFromGLTF("compass",main_scene);
+
+    //Add phyics
+    main_scene->physics_world = new PhysicsWorld();
+    main_scene->physics_world->SetGravity(vec3(0,-9.81,0));
+    main_scene->physics_world->SetDebugRendering(false);
+    main_scene->physics_world->rp_world->setEventListener(this);
+
+    icon_sprites = new SpriteSheet();
+    Texture temp_texture;
+    // Load all the icons from the icon folder by extension:
+    std::vector<std::string>filenames = Directory::GetFiles("isocity/data/icons","*.png");
+    for (std::string& filename: filenames){
+        debug->Info("Got filename: %s\n",filename.c_str());
+        temp_texture.LoadFromFile(filename.c_str(),GL_TEXTURE_2D,TEXTURE_DONT_UPLOAD);
+        icon_sprites->AddSpriteFromTexture(&temp_texture,filename.c_str());
+    }
+
+    icon_sprites->Upload();
 
     //Create an HTTP server to listen for connections
     http_server = new HTTPServer(9090);
@@ -115,6 +143,11 @@ void ApplicationTileset::RunLogic(){
         }
     }
 
+    //Only when in focus
+    if (!main_window->f_has_focus){
+        return;
+    }
+
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
@@ -134,6 +167,26 @@ void ApplicationTileset::RunLogic(){
 
     terrain->ClearUpdateCounts();
 
+    IsoCar* selected_car = dynamic_cast<IsoCar*>(selected_object);
+    if (selected_car){
+        controlled_car = selected_car;
+    }
+
+    if (controlled_car){
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            controlled_car->Accelerate(1.0f);
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            controlled_car->Reverse(1.0f);
+        }
+        if (input->IsKeyDown(INPUT_TURN_LEFT)){
+            controlled_car->SteerLeft(1.0f);
+        }
+        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+            controlled_car->SteerRight(1.0f);
+        }
+    }
+
 
     IsoCell* selected_cell = dynamic_cast<IsoCell*>(selected_object);
     if (selected_cell){
@@ -142,13 +195,9 @@ void ApplicationTileset::RunLogic(){
                 selected_cell->update_count = 0;
                 selected_cell->PlaceRoad("road_straight");
             }else if (current_tool == ISO_TOOL_CAR){
-                IsoCar* car = new IsoCar();
-                assetmanager->GetObjectFromAsset("car_sedan", car);
-                if (car){
-                    car->SetPosition(selected_cell->GetWorldPosition(STATE_ACCESS_PHYSICS));
-                    main_scene->AddObject(car);
-                    cars.push_back(car);
-                }
+                PlaceCar(selected_cell);
+            }else if (current_tool == ISO_TOOL_TREE){
+                selected_cell->PlaceTree("pine_tree_1");
             }else if (current_tool == ISO_TOOL_NONE){
                 for (IsoCar* car:cars){
                     car->SetTargetCell(selected_cell);
@@ -201,13 +250,18 @@ void ApplicationTileset::RunLogic(){
     //Mouse wheel for zoom
     static float mouse_delta_sum = 0;
     if (mouse_delta_sum != 0){
-        camera->MoveForwardBy(mouse_delta_sum / 10.0f);
+        vec3 diff = camera->GetForward() - camera_target;
+        float dist = diff.length() * mouse_delta_sum;
+        float delta = dist / 50.0f;
+
+        camera->MoveForwardBy(dist / 50.0f);
+
         mouse_delta_sum /= 1.1;
     }
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 }
 
-void ApplicationTileset::DrawImGuiUI(){
+void ApplicationTileset::RenderHTTPTestUI(){
     //UI
     ImGui::Begin("Hi there!");
     ImGui::Text("This application only renders a window.");
@@ -295,11 +349,14 @@ void ApplicationTileset::DrawImGuiUI(){
     }
 
     ImGui::End();
+}
 
+void ApplicationTileset::DrawImGuiUI(){
+    //RenderHTTPTestUI();
     RenderDebugMenuBar();
     RenderApplicationUI();
-    RenderRandTestWindow();
-    RenderOCPPClientsUI();
+    //RenderRandTestWindow();
+    //RenderOCPPClientsUI();
     RenderToolsUI();
     RenderTerrainUI();
 }
@@ -323,24 +380,46 @@ void ApplicationTileset::RenderOCPPClientsUI(){
 
 void ApplicationTileset::RenderToolsUI(){
     ImGui::Begin("Tools");
-
-    ImGui::Text("This is the Tools UI.");
     ImGui::Text("Current Tool: %d", (int)current_tool);
 
     if (ImGui::Button("No Tool")){
         current_tool = ISO_TOOL_NONE;
     }
-    if (ImGui::Button("Road Tool")){
-        current_tool = ISO_TOOL_ROAD;
-    }
-    if (ImGui::Button("Car Tool")){
-        current_tool = ISO_TOOL_CAR;
-    }
-    if (ImGui::Button("Tree Tool")){
-        current_tool = ISO_TOOL_TREE;
-    }
-    if (ImGui::Button("Terrain Tool")){
-        current_tool = ISO_TOOL_TERRAIN;
+
+    for (int i = 0; i < 3; i++) {
+        std::string id = "Button" + std::to_string(i);
+        ImVec2 size = ImVec2(64.0f, 64.0f);
+        ImVec2 uv0 = ImVec2(0.0f, 0.0f);
+        ImVec2 uv1 = ImVec2(1.0f, 1.0f);
+
+        int sprite_index = i % icon_sprites->Count();
+        Sprite* sprite = icon_sprites->GetSprite(sprite_index);
+        if (!sprite){
+            debug->Fatal("Unable to get sprite index %i from SpriteSheet.\n",sprite_index);
+        }
+        uv0.x = sprite->uv0.x;
+        uv0.y = sprite->uv0.y;
+        uv1.x = sprite->uv1.x;
+        uv1.y = sprite->uv1.y;
+
+        if (ImGui::ImageButton(id.c_str(), (ImTextureID)(intptr_t)icon_sprites->texture->texture_id, size, uv0, uv1 )){
+            switch(i){
+                case 0:
+                current_tool = ISO_TOOL_CAR;
+                if (controlled_car){
+                    controlled_car->HonkHorn();
+                }
+                break;
+                case 1:
+                current_tool = ISO_TOOL_ROAD;
+                break;
+                case 2:
+                current_tool = ISO_TOOL_TREE;
+                break;
+            }
+
+        }
+        ImGui::SameLine();
     }
 
     ImGui::End();
@@ -355,6 +434,8 @@ void ApplicationTileset::RenderTerrainUI(){
     IsoCell* hovered_cell = dynamic_cast<IsoCell*>(hovered_object);
     if (hovered_cell){
         ImGui::Text("Hovered Cell: %i,%i", hovered_cell->coordinate.x, hovered_cell->coordinate.y);
+    }else{
+        ImGui::Text("No cell hovered");
     }
 
     plane p;
@@ -373,11 +454,103 @@ void ApplicationTileset::RenderTerrainUI(){
     }else{
         ImGui::Text("No intersection");
     }
-    IsoCell* cell = terrain->FindCellByWorldPosition(at);
+    /*IsoCell* cell = terrain->FindCellByWorldPosition(at);
     if (cell){
         ImGui::Text("Cell at intersection: %i,%i", cell->coordinate.x, cell->coordinate.y);
+    }*/
+
+    ImGui::Separator();
+    ImGui::Text("Controlled Car: %s",controlled_car?controlled_car->name.c_str():"(none)");
+
+    for (IsoCar* car:cars){
+        vec3 car_pos = car->GetPosition();
+        ImGui::Text("Car [%s] at %5.2f,%5.2f,%5.2f", car->name.c_str(), car_pos.x, car_pos.y, car_pos.z);
+        int car_dir = car->direction;
+        ImGui::Text(" Car Direction: %d (%s)", car_dir, IsoDirection::ToString(car_dir).c_str());
+        ImGui::Text(" Car Has Target: %s", car->f_has_target?"Yes":"No");
+        ImGui::Text(" Car Speed: %5.2f m/s (%5.2f Top)", car->speed, car->top_speed);
+        ImGui::Text(" Car Reverse: %s", car->f_reverse?"Yes":"No");
+        ImGui::Text(" Car Gas Pedal: %5.2f", car->gas_pedal);
+        ImGui::Text(" Car Brake Pedal: %5.2f", car->brake_pedal);
+        ImGui::Text(" Car Close Car: %s", car->close_car?car->close_car->name.c_str():"(none)");
+        ImGui::Text(" Car Time Waiting: %5.2f", car->time_waiting_for_car_ahead);
+        ImGui::Text(" Car Time Threshold: %5.2f", car->time_waiting_threshold);
+
+        ImGui::Text(" Car Path:");
+        for (IsoCell* path_cell : car->path.cells){
+            ImGui::Text("  Cell %i,%i", path_cell->coordinate.x, path_cell->coordinate.y);
+        }
+
     }
-
-
     ImGui::End();
+}
+
+void ApplicationTileset::onTrigger(const reactphysics3d::OverlapCallback::CallbackData& callbackData){
+    //debug->Trace("Trigger: num overlap pairs %hhu\n",callbackData.getNbOverlappingPairs());
+    for (uint8_t i = 0; i < callbackData.getNbOverlappingPairs(); i++){
+        reactphysics3d::OverlapCallback::OverlapPair overlapPair = callbackData.getOverlappingPair(i);
+
+        rp3d::Collider* collider1 = overlapPair.getCollider1();
+        rp3d::Collider* collider2 = overlapPair.getCollider2();
+        uint32_t bits1 = collider1->getCollisionCategoryBits();
+        uint32_t bits2 = collider2->getCollisionCategoryBits();
+
+        if (bits1 == COLLISION_CATEGORY_CAR_PROXIMITY && bits2 == COLLISION_CATEGORY_CAR){
+            Object* d1 = (Object*)overlapPair.getBody1()->getUserData();
+            Object* d2 = (Object*)overlapPair.getBody2()->getUserData();
+
+            IsoCar* proximity_car = dynamic_cast<IsoCar*>(d1);
+            IsoCar* other_car = dynamic_cast<IsoCar*>(d2);
+            if (proximity_car && other_car){
+                //debug->Info("Car-Proximity Trigger Event: %s detected %s nearby\n",proximity_car->name.c_str(),other_car->name.c_str());
+                proximity_car->close_car = other_car;
+            }
+        }
+        else if (bits1 == COLLISION_CATEGORY_CAR && bits2 == COLLISION_CATEGORY_CAR_PROXIMITY){
+            Object* d1 = (Object*)overlapPair.getBody1()->getUserData();
+            Object* d2 = (Object*)overlapPair.getBody2()->getUserData();
+
+            IsoCar* other_car = dynamic_cast<IsoCar*>(d1);
+            IsoCar* proximity_car = dynamic_cast<IsoCar*>(d2);
+            if (proximity_car && other_car){
+                //debug->Info("Car-Proximity Trigger Event: %s detected %s nearby\n",proximity_car->name.c_str(),other_car->name.c_str());
+                proximity_car->close_car = other_car;
+            }
+        }
+    }
+}
+
+void ApplicationTileset::PlaceCar(IsoCell* target_cell){
+    IsoCar* car = new IsoCar();
+    assetmanager->GetObjectFromAsset("car_sedan", car);
+    if (car){
+        car->SetPosition(target_cell->GetWorldPosition(STATE_ACCESS_PHYSICS));
+        car->AddPhysics(main_scene->physics_world);
+        if (Physics* physics = car->GetPhysics()){
+            vec3 extent = car->GetMesh()->GetExtents()*0.5f;
+            //physics->AddBoxCollider(extent,vec3(0,extent.y,0),quat().identity());
+            //The main collider
+            physics->AddSphereCollider(0.15f,vec3(0,extent.y,0),quat().identity());
+            physics->SetTrigger(true);
+            physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR);
+            //Add a box collider in front of the car to act as a trigger for proximity detection
+            //Box extends from car position forward to where the sphere would have reached
+            vec3 box_extent = vec3(extent.x, extent.y, 1.5f * extent.z);
+            vec3 box_offset = vec3(0, extent.y, -3.0f * extent.z);
+            physics->AddBoxCollider(box_extent, box_offset, quat().identity());
+            physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR_PROXIMITY);
+            physics->SetTrigger(true);
+            physics->body->rigidbody->setIsAllowedToSleep(false);
+
+            physics->SetGravityEnabled(false);
+            physics->SetStatic(false);
+            physics->body->rigidbody->setUserData((Object*)car);
+            car->top_speed = rrand->GetFloat(0.5,1.0);
+            car->soundsystem = soundsystem;
+            car->randgen = rrand;
+        }
+        car->name = "Car " + std::to_string(cars.size());
+        main_scene->AddObject(car);
+        cars.push_back(car);
+    }
 }

@@ -405,7 +405,7 @@ vertex GLTFLoader::GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb,
         return v;
     }
     if (!ub){
-        debug->Warn("No bufferview for uv data\n");
+        debug->Trace("No bufferview for uv data\n");
     }
 
     int byte_offset_position = pb->byteOffset + (index * 3 * sizeof(float)); //FLOAT * VEC3 * index

@@ -27,6 +27,10 @@ PhysicsWorld::PhysicsWorld(){
 	debug_renderer->setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::CONTACT_POINT,true);
 };
 
+void PhysicsWorld::SetTestOverlapCallback(rp3d::OverlapCallback* callback){
+	testoverlap_callback = callback;
+}
+
 //Wakeup every sleeping body in the world.
 void PhysicsWorld::WakeUpEveryone(){
 	for (uint32_t i=0;i<rp_world->getNbRigidBodies();i++){
@@ -37,8 +41,13 @@ void PhysicsWorld::WakeUpEveryone(){
 
 //Updates all the stuff in this world.
 void PhysicsWorld::Update(float dt){
-	if (rp_world){
+	if (rp_world && !f_test_collision_only){
 		rp_world->update(dt);
+	}else{
+		//Just do collision detection
+		if (testoverlap_callback){
+			rp_world->testOverlap(*testoverlap_callback);
+		}
 	}
 }
 

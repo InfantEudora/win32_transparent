@@ -285,9 +285,8 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		std::string key = findHeader("Sec-WebSocket-Key");
 		if (key.empty()) {
 			http_debug->Warn("WebSocket upgrade request missing Sec-WebSocket-Key\n");
-			closesocket(clientSocket);
-			DisconnectClient(clientSocket);
-			return;
+			//Probablty just a normal HTTP request
+			goto handle_get;
 		}
 
 		// See if the client requested an OCPP subprotocol and pick the first we support
@@ -403,6 +402,8 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		// Do not close the socket here; keep it open for websocket frames
 		return;
 	}
+
+handle_get:
 
 	// Parse the request to check if it's a valid HTTP request
 	if (request.find("GET") != std::string::npos || request.find("POST") != std::string::npos)

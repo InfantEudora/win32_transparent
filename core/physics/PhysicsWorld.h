@@ -37,8 +37,13 @@ public:
     void SetGravity(const vec3& vector);
     vec3 GetGravity();
 
+    bool f_test_collision_only = false;
+
     reactphysics3d::PhysicsWorld* rp_world = NULL;
     reactphysics3d::DebugRenderer* debug_renderer = NULL;
+
+    rp3d::OverlapCallback* testoverlap_callback = NULL;
+    void SetTestOverlapCallback(rp3d::OverlapCallback* callback);
 
     //Static stuff
     static reactphysics3d::PhysicsCommon* physicsCommon;     //Static because it's a singleton. It can create multiple worlds

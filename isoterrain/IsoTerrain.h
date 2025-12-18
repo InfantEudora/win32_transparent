@@ -2,7 +2,7 @@
 #define _ISO_TERRAIN_H_
 
 #include "AssetManager.h"
-
+#include "RRandom.h"
 /*
     It's a square cell in a larger grid.
     We should probably render the entire grid as a single mesh.
@@ -38,8 +38,9 @@ public:
 
     AssetManager* assetmanager = NULL;  //Used to load assets from file.
     PhysicsWorld* physicsworld = NULL;
+    RRandom* randgen = NULL;
 
-    void CreateTerrain(PhysicsWorld* physicsworld, int w, int d, int h);
+    void CreateTerrain(PhysicsWorld* physicsworld, RRandom* randgen, int w, int d, int h);
     void ClearUpdateCounts();
     IsoCell* FindCellByWorldPosition(vec3& at);
     IsoCell* GetCellByCoordinate(int3 coord);

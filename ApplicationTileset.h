@@ -7,6 +7,7 @@
 #include "HTTPServer.h"
 #include "Isoterrain.h"
 #include "IsoCar.h"
+#include "SpriteSheet.h"
 
 enum IsoTool{
     ISO_TOOL_NONE       = 0,
@@ -16,10 +17,16 @@ enum IsoTool{
     ISO_TOOL_TERRAIN    = 4,
 };
 
+enum collision_category_bits{
+    COLLISION_CATEGORY_CAR = 0x0001,
+    COLLISION_CATEGORY_CAR_PROXIMITY = 0x0002,
+    COLLISION_CATEGORY_SCENERY = 0x0004
+};
+
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
-class ApplicationTileset : public Application{
+class ApplicationTileset : public Application, public rp3d::EventListener{
 public:
     ApplicationTileset();
     ~ApplicationTileset();
@@ -28,9 +35,13 @@ public:
     void RunLogic() override;
 
     void DrawImGuiUI(void) override;
+    void RenderHTTPTestUI();
     void RenderOCPPClientsUI();
     void RenderToolsUI();
     void RenderTerrainUI();
+
+    SoundSystem* soundsystem = NULL;
+    SpriteSheet* icon_sprites = NULL;
 
     vec3 camera_target = {};
 
@@ -38,7 +49,9 @@ public:
     IsoTool current_tool = ISO_TOOL_NONE;
     void StartDrag(IsoCell* cell);
 
+    IsoCar* controlled_car = NULL;
     std::vector<IsoCar*> cars;
+    void PlaceCar(IsoCell* target_cell);
 private:
 	HTTPServer* http_server = nullptr;
 
@@ -70,6 +83,10 @@ private:
     bool ui_mode_discharge_enabled = true;
 
     void UpdateUI();
+
+
+    void onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData) override;
+    //void notifyContact(rp3d::OverlappingPair* overlappingPair,const rp3d::ContactPointInfo& contactInfo);
 };
 
 #endif

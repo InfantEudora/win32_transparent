@@ -525,7 +525,7 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
     terrain = new IsoTerrain();
     terrain->name = "Iso Terrain";
     terrain->assetmanager = assetmanager;
-    terrain->CreateTerrain(NULL,5,5,2);
+    terrain->CreateTerrain(NULL,rrand, 5,5,2);
     //scene->AddObject(terrain);
 
     projection_plane.pos = {};
@@ -1305,7 +1305,7 @@ void ApplicationGrid::RenderGridUI(){
             terrain->base_tile = "Tile.1111";
             terrain->wall_tile = "Pallisade";
 
-            terrain->CreateTerrain(main_scene->physics_world, 9,9,2);
+            terrain->CreateTerrain(main_scene->physics_world,rrand, 9,9,2);
             main_scene->AddObject(terrain);
 
             //Only show the first layer

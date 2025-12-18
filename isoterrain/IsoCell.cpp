@@ -49,15 +49,22 @@ Object* IsoCell::PlaceFloor(const std::string& asset_name){
 
 Object* IsoCell::PlaceTree(const std::string& asset_name){
     Object* prop = NULL;
-    if (prop_index == -1){
+    if (props.size() < max_props){
         prop = assetmanager->GetObjectFromAsset(asset_name.c_str());
-        if (prop && AttachChild(prop)){
-            prop_index = children.size() - 1;
-            debug->Ok("Placed a new tree\n");
-            prop->f_update_materials = true;
-            vec3 s = vec3(0.5);
-            prop->name = "Tree @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
-        }
+        AttachChild(prop);
+
+        prop->f_update_materials = true;
+
+        prop->name = "Tree @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
+
+        //Random position in cell
+        vec3 p = terrain->randgen->GetVec3(-0.5,0.5);
+        p.y = 0;
+        prop->SetPosition(p);
+        float scale = terrain->randgen->GetFloat(0.5f,1.0f);
+        prop->SetScale(vec3(scale));
+        debug->Ok("Placed a new tree prop at position %.3f,%.3f,%.3f\n", p.x, p.y, p.z);
+        props.push_back(prop);
     }
     return prop;
 }
@@ -254,7 +261,7 @@ int IsoCell::GetWallDirection(IsoWall* wall){
 }
 
 //Only a single road object per cell.
-Object* IsoCell::PlaceRoad(const std::string& asset_name){
+IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
     std::string new_asset_name = asset_name;
     quat roadq; roadq.identity();
     //We need find out if our neighbours have roads, and keep track of the road type we need to use.
@@ -318,7 +325,8 @@ Object* IsoCell::PlaceRoad(const std::string& asset_name){
     }
 
     if (!object_road){
-        object_road = assetmanager->GetObjectFromAsset(new_asset_name.c_str());
+        object_road = new IsoRoad();
+        assetmanager->GetObjectFromAsset(new_asset_name.c_str(),object_road);
         if (object_road && AttachChild(object_road)){
             debug->Ok("Placed some road decoration\n");
             object_road->f_update_materials = true;
@@ -330,15 +338,11 @@ Object* IsoCell::PlaceRoad(const std::string& asset_name){
         //Check if we have the correct road type loaded. TODO
         debug->Info("Updating existing road from %s to %s\n",object_road->name.c_str(),new_asset_name.c_str());
         if (object_road->name != new_asset_name){
-            DetachChild(object_road);
-            delete object_road;
-            object_road = assetmanager->GetObjectFromAsset(new_asset_name.c_str());
-            if (object_road && AttachChild(object_road)){
-                debug->Ok("Updated road asset\n");
-                object_road->f_update_materials = true;
-                object_road->name = new_asset_name;
-                object_road->SetRotation(roadq);
-            }
+            assetmanager->GetObjectFromAsset(new_asset_name.c_str(),object_road);
+            debug->Ok("Updated road asset\n");
+            object_road->f_update_materials = true;
+            object_road->name = new_asset_name;
+            object_road->SetRotation(roadq);
         }else{
             object_road->SetRotation(roadq);
         }

@@ -2,6 +2,7 @@
 #define _RRANDOM_H_
 #include <stdint.h>
 #include "Texture.h"
+#include "type_vec3.h"
 
 //Reproducable random
 class RRandom{
@@ -17,6 +18,7 @@ public:
 	int GetInt(int min, int max);
 	float GetFloat(float min, float max);
 	float GetNormalFloat(float mean, float stdev);
+	vec3 GetVec3(float min, float max);
 	bool Roll(float chance); //Returns if you won with a chance of 0 ... 1
 
 	uint32_t state;

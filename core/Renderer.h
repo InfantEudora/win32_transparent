@@ -165,7 +165,7 @@ class Renderer{
     bool f_ssao = false;              //
     bool f_msaa = true;               //
     int view_buffer = 0;              // Output different intermediate buffers to view
-    int shadow_texture_size = 1024;   // Size for a single shadow caster
+    int shadow_texture_size = 2048;   // Size for a single shadow caster
 
 
     //Counters/Timers

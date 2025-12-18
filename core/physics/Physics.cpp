@@ -74,6 +74,14 @@ void Physics::SetStatic(bool _static){
 	body->rigidbody->setIsActive(f_active);
 }
 
+void Physics::SetTrigger(bool trigger){
+	body->collider->setIsTrigger(trigger);
+}
+
+bool Physics::IsTrigger(){
+	return body->collider->getIsTrigger();
+}
+
 bool Physics::IsStatic(){
 	reactphysics3d::BodyType type = body->rigidbody->getType();
 	if (type == reactphysics3d::BodyType::STATIC){

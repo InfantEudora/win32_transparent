@@ -30,6 +30,8 @@ public:
     bool IsStatic();
     void SetActive(bool active);    // ou'd think this completely disables it.
     bool IsActive();
+    void SetTrigger(bool trigger);
+    bool IsTrigger();
 
     //Position etc
     vec3 GetBodyWorldPosition();

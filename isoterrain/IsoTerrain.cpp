@@ -16,11 +16,16 @@ Z=Height
 */
 
 //Generates the tile that make up the terrain
-void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, int w, int d, int h){
+void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, RRandom* randgen_in, int w, int d, int h){
     if (!assetmanager){
         debug->Err("IsoTerrain requires an asset manager\n");
         return;
     }
+    if (!randgen_in){
+        debug->Err("IsoTerrain requires a random generator\n");
+        return;
+    }
+    randgen = randgen_in;
     debug->Info("Creating Terrain %i x %i x %i\n",w,d,h);
     cell_count = w * d * h;
     width = w;
@@ -136,7 +141,7 @@ IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
 
 IsoCell* IsoTerrain::GetCellByCoordinate(int3 coord){
     //TODO: Less lazy lookup
-    debug->Info("GetCellByCoordinate %i,%i\n",coord.x,coord.y);
+    //debug->Info("GetCellByCoordinate %i,%i\n",coord.x,coord.y);
     for (IsoCell* cell : cells){
         if (coord == cell->coordinate){
             return cell;
@@ -147,7 +152,7 @@ IsoCell* IsoTerrain::GetCellByCoordinate(int3 coord){
 
 IsoWall* IsoTerrain::GetWallByCoordinate(int3 coord){
     //TODO: Less lazy lookup
-    debug->Info("GetWallByCoordinate %i,%i\n",coord.x,coord.y);
+    //debug->Info("GetWallByCoordinate %i,%i\n",coord.x,coord.y);
     for (IsoWall* wall : walls){
         if (coord == wall->coordinate){
             return wall;

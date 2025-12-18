@@ -10,6 +10,8 @@ class IsoCell;
 #include "IsoWall.h"
 #include "IsoStairs.h"
 #include "IsoTerrain.h"
+#include "IsoRoad.h"
+#include "RRandom.h"
 
 /*
     It's a square cell in a larger grid.
@@ -39,6 +41,7 @@ public:
     IsoTerrain* terrain = NULL;
     AssetManager* assetmanager = NULL;
 
+
     static std::map<int,int> terrain_material_map;
 
     // We may have one or more props. These are also our children.
@@ -48,12 +51,11 @@ public:
     // How to store things?
     // Floor tiles, child. But reference as a seperate floor object.
     Object* object_floor = NULL;
-    Object* object_road = NULL;
+    IsoRoad* object_road = NULL;
+    std::vector<Object*> props; // Trees, rocks, etc.
+    int max_props = 4;
 
     //std::array<int,4>wall_indices = {-1,-1,-1,-1}; //Used to keep track which child is which wall.
-
-    //We can have one prop smack bang in the middle.
-    int prop_index = -1;
 
     int update_count = 0;
 
@@ -63,7 +65,7 @@ public:
     IsoWall* PlaceWall(const std::string& asset_name,int direction);
     IsoWall* PlaceDoor(const std::string& asset_name,int direction);
     IsoWall* PlacePillar(const std::string& asset_name,int direction); // Direction is on the left side of the wall segment.
-    Object* PlaceRoad(const std::string& asset_name);
+    IsoRoad* PlaceRoad(const std::string& asset_name);
 
     Object* PlaceTree(const std::string& asset_name);
     Object* PlaceFloor(const std::string& asset_name);

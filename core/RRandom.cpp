@@ -124,3 +124,11 @@ bool RRandom::Roll(float chance){
     }
     return false;
 }
+
+vec3 RRandom::GetVec3(float min, float max){
+    vec3 r;
+    r.x = GetFloat(min,max);
+    r.y = GetFloat(min,max);
+    r.z = GetFloat(min,max);
+    return r;
+}

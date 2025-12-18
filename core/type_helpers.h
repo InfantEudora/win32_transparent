@@ -18,6 +18,9 @@ float fround(float a); //Round to nearest
 float fscurve3 (float a);
 float fscurve5(float a);
 
+float smoothstep(float a, float b, float k);
+float fmap(float v, float a, float b, float x, float y);
+
 template <class T>
 const T &max(const T &a, const T &b) {
     return (a < b) ? b : a;
