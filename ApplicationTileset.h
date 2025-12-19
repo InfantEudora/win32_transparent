@@ -7,7 +7,9 @@
 #include "HTTPServer.h"
 #include "Isoterrain.h"
 #include "IsoCar.h"
+#include "IsoHouse.h"
 #include "SpriteSheet.h"
+#include "RouteObject.h"
 
 enum IsoTool{
     ISO_TOOL_NONE       = 0,
@@ -15,6 +17,7 @@ enum IsoTool{
     ISO_TOOL_CAR        = 2,
     ISO_TOOL_TREE       = 3,
     ISO_TOOL_TERRAIN    = 4,
+    ISO_TOOL_HOUSE      = 5,
 };
 
 enum collision_category_bits{
@@ -39,6 +42,8 @@ public:
     void RenderOCPPClientsUI();
     void RenderToolsUI();
     void RenderTerrainUI();
+    void RenderSelectedRoadUI();
+    void RenderSelectedCarUI();
 
     SoundSystem* soundsystem = NULL;
     SpriteSheet* icon_sprites = NULL;
@@ -49,9 +54,14 @@ public:
     IsoTool current_tool = ISO_TOOL_NONE;
     void StartDrag(IsoCell* cell);
 
+    IsoCar* selected_car = NULL;
     IsoCar* controlled_car = NULL;
+    IsoRoad* selected_road = NULL;
+    RouteObject* route_object = NULL;
     std::vector<IsoCar*> cars;
+    std::vector<IsoHouse*> houses;
     void PlaceCar(IsoCell* target_cell);
+    void PlaceHouse(IsoCell* target_cell);
 private:
 	HTTPServer* http_server = nullptr;
 

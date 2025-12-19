@@ -411,79 +411,7 @@ void StellarObject::UpdatePosition(){
     }
 }
 
-void Route::Setup(StellarBody* _start, StellarBody* _end){
-    start = _start;
-    end = _end;
-}
 
-float Route::GetDistance(){
-    if ((!start) || (!end))
-        return 0;
-    return (end->coordinate - start->coordinate).length();
-}
-
-void Route::Reverse(){
-    StellarBody* t = end;
-    end = start;
-    start = t;
-}
-
-//Creates a route from a to b. Adding sufficient path pieces to cover the path.
-void RouteObject::SetupNewRoute(StellarObject* from, StellarObject* to, AssetManager* assetmanager){
-    name = "Route " + from->name + " -> " + to->name;
-
-    //We create a new route
-    route = new Route();
-    route->Setup(from->stellarbody,to->stellarbody);
-
-    float dist = route->GetDistance();
-    debug->Info("Route Distance = %.2f\n",dist);
-
-    //Create the segments
-    int num_segments = (dist / 2) + 1;
-    for (int s=0;s<num_segments;s++){
-        float k = float(s) / (float)num_segments;
-        //Use a bezier to place objects along the path.
-        //Alternatively, we use a single square to the bezier extents, and use a shader.
-        Object* segment = assetmanager->GetObjectFromAsset("plane");
-        if(!segment){
-            debug->Fatal("Unable to load asset for route\n");
-        }
-        AttachChild(segment);
-    }
-
-    UpdateRoute();
-}
-
-//Does not rebuild segments, only updates their positions and rotation
-void RouteObject::UpdateRoute(){
-    //Assume all the children are segments.
-    int num_segments = children.size();
-
-    Bezier2D b = Bezier2D(2);
-    b.AddNewPoint(vec2(0,0));
-    b.AddNewPoint(route->end->coordinate - route->start->coordinate);
-
-    //We start at from.
-    vec2 startcoord = route->start->coordinate;
-    SetPosition(vec3(startcoord.x,0,startcoord.y));
-
-    for (int s=0;s<num_segments;s++){
-        Object* segment = GetChild(s);
-        if (!segment){
-            debug->Fatal("Died while iterating over children\n");
-        }
-        float k = float(s) / (float)num_segments;
-
-        segment->SetScale(vec3(0.4,1,0.12));
-        vec2 p  = b.Lerp(k);
-        segment->SetPosition(vec3(p.x,0,p.y));
-
-        float theta = b.GetAngle(k);
-        quat q; q.set_rotation(vec3(0,-1,0),theta);
-        segment->SetRotation(q);
-    }
-}
 
 void StellarObject::PlaceOnRoute(RouteObject* object_route){
     //Get stellarbody, route

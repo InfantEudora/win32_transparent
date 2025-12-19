@@ -263,6 +263,7 @@ int IsoCell::GetWallDirection(IsoWall* wall){
 //Only a single road object per cell.
 IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
     std::string new_asset_name = asset_name;
+    RoadType new_road_type = RoadType::STRAIGHT;
     quat roadq; roadq.identity();
     //We need find out if our neighbours have roads, and keep track of the road type we need to use.
     int bitmask = 0;
@@ -291,9 +292,11 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
     if (bitmask == 15){
         //Adjust asset name based on bitmask
         new_asset_name = "road_cross";
+        new_road_type = RoadType::CROSS_JUNCTION;
         debug->Info("Adjusting road asset from %s to %s\n",asset_name.c_str(),new_asset_name.c_str());
     }else if ((bitmask == 3) || (bitmask == 6) || (bitmask == 12) || (bitmask == 9)){
         new_asset_name = "road_corner";
+        new_road_type = RoadType::CURVE;
         debug->Info("Adjusting road asset from %s to %s\n",asset_name.c_str(),new_asset_name.c_str());
 
         if (bitmask == 3){
@@ -311,6 +314,7 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
         //Keep default
     }else if ((bitmask == 7) || (bitmask == 11) || (bitmask == 13) || (bitmask == 14)){
         new_asset_name = "road_tjunction";
+        new_road_type = RoadType::T_JUNCTION;
         debug->Info("Adjusting road asset from %s to %s\n",asset_name.c_str(),new_asset_name.c_str());
 
         if (bitmask == 7){
@@ -333,6 +337,7 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
             //object_road->name = "Road @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
             object_road->name = new_asset_name;
             object_road->SetRotation(roadq);
+            object_road->road_type = new_road_type;
         }
     }else{
         //Check if we have the correct road type loaded. TODO
@@ -342,6 +347,7 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
             debug->Ok("Updated road asset\n");
             object_road->f_update_materials = true;
             object_road->name = new_asset_name;
+            object_road->road_type = new_road_type;
             object_road->SetRotation(roadq);
         }else{
             object_road->SetRotation(roadq);

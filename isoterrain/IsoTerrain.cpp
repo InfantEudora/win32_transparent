@@ -129,7 +129,10 @@ IsoCell* IsoTerrain::FindCellByWorldPosition(vec3& at){
 
     int3 cell_coord = int3(int(floorf(coord.x)),int(floorf(coord.z)),int(floorf(coord.y/height_factor)));
     //debug->Info("FindCellByWorldPosition %f,%f,%f = coord %i,%i,%i\n",at.x,at.y,at.z,cell_coord.x,cell_coord.y,cell_coord.z);
-
+    if (cell_coord.z < 0){
+        debug->Warn("Z-Lookup was negative.\n");
+        cell_coord.z = 0;
+    }
 
     int index = (cell_coord.z * width * depth) +  (cell_coord.y * width) + cell_coord.x;
     //debug->Info("FindCellByWorldPosition %i,%i,%i = index %i\n",cell_coord.x,cell_coord.y,cell_coord.z,index);

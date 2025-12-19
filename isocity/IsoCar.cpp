@@ -60,7 +60,9 @@ void IsoCar::SetTargetCell(IsoCell* cell){
 
     // If car is not currently on the road start, first move to the startRoad cell center, then follow path
     if (current_cell != startRoad){
-        target_position = startRoad->GetWorldPosition();
+        // Get the first cell in the path to determine lane offset for approach
+        IsoCell* first_path_cell = path.cells.empty() ? nullptr : path.cells[0];
+        target_position = GetLaneAdjustedPosition(startRoad, first_path_cell);
         f_has_target = true;
         f_waiting_for_road = true;
         f_following_path = false;
@@ -77,7 +79,9 @@ void IsoCar::SetTargetCell(IsoCell* cell){
         IsoCell* next = path.PopNext();
         if (next){
             next_cell = next;
-            target_position = next_cell->GetWorldPosition();
+            // Look ahead to next cell after this one for lane calculation
+            IsoCell* peek_next = path.cells.empty() ? nullptr : path.cells[0];
+            target_position = GetLaneAdjustedPosition(next_cell, peek_next);
             f_has_target = true;
         }
         debug->Info("Car starting path follow to %i,%i (endRoad %i,%i)\n", cell->coordinate.x, cell->coordinate.y, endRoad->coordinate.x, endRoad->coordinate.y);
@@ -122,7 +126,24 @@ void IsoCar::UpdatePhysicsState(){
     float move_delta =  reverse_multiplier * speed * timestep;
     if (move_delta != 0.0){
         MoveForwardBy(move_delta);
+        //Clear the y position to 0, or in future the level..?
+        vec3 p = GetPosition();
+        p.y = 0;
+        SetPosition(p);
+
+        //Update current cell based on car position
+        IsoCell* helper_cell = current_cell;
+        if (!helper_cell){
+            helper_cell = target_cell;
+        }
+        if (helper_cell){
+            IsoCell* cell_under_car = current_cell->terrain->FindCellByWorldPosition(p);
+            if (cell_under_car){
+                current_cell = cell_under_car;
+            }
+        }
     }
+
     brake_pedal = 0.1f;
     gas_pedal = 0.0f;
 
@@ -131,6 +152,8 @@ void IsoCar::UpdatePhysicsState(){
         if (speed <= 0.0f){
             speed = 0.0f;
             f_has_reached_last_target = false;
+            debug->Ok("Looking for a new place to drive to\n");
+            FindNewDestination(5);
         }
     }
 
@@ -162,7 +185,7 @@ void IsoCar::UpdatePhysicsState(){
 
             time_waiting_for_car_ahead = 0.0f;
             time_waiting_threshold = randgen->GetFloat(3.0f,5.0f);
-            HonkHorn();
+            //HonkHorn();
 
             bool dir_change = randgen->Roll(0.4f);
             if (dir_change){
@@ -208,7 +231,9 @@ void IsoCar::UpdatePhysicsState(){
             IsoCell* next = path.PopNext();
             if (next){
                 next_cell = next;
-                target_position = next_cell->GetWorldPosition();
+                // Look ahead to next cell for lane calculation
+                IsoCell* peek_next = path.cells.empty() ? nullptr : path.cells[0];
+                target_position = GetLaneAdjustedPosition(next_cell, peek_next);
                 f_has_target = true;
             }
             Object::UpdatePhysicsState();
@@ -223,7 +248,9 @@ void IsoCar::UpdatePhysicsState(){
                     IsoCell* next = path.PopNext();
                     next_cell = next;
                     if (next_cell){
-                        target_position = next_cell->GetWorldPosition();
+                        // Look ahead to next cell for lane calculation
+                        IsoCell* peek_next = path.cells.empty() ? nullptr : path.cells[0];
+                        target_position = GetLaneAdjustedPosition(next_cell, peek_next);
                         f_has_target = true;
                         Object::UpdatePhysicsState();
                         return;
@@ -266,17 +293,6 @@ void IsoCar::UpdatePhysicsState(){
     quat current_r = GetRotation();
     r = current_r.slerp(current_r,r,0.05f);
     SetRotation(r);
-
-
-    //Determine if car is over target cell
-    if (target_cell){
-        vec3 car_pos = GetPosition(STATE_ACCESS_PHYSICS);
-        IsoCell* cell_under_car = target_cell->terrain->FindCellByWorldPosition(car_pos);
-        if (cell_under_car == target_cell){
-            //We are over the target cell
-            //debug->Info("Car entered target cell %i,%i\n",target_cell->coordinate.x,target_cell->coordinate.y);
-        }
-    }
 
     Object::UpdatePhysicsState();
 }
@@ -323,4 +339,77 @@ void IsoCar::HonkHorn(){
         soundsystem->Rewind("car_horn_1");
         soundsystem->Play("car_horn_1");
     }
+}
+
+vec3 IsoCar::GetLaneAdjustedPosition(IsoCell* cell, IsoCell* next_cell){
+    if (!cell){
+        return vec3(0,0,0);
+    }
+
+    lane_offset = 0.1f;
+
+    vec3 base_pos = cell->GetWorldPosition();
+
+    // If we don't have a next cell, just return center
+    if (!next_cell){
+        return base_pos;
+    }
+
+    // Calculate direction vector from current cell to next cell
+    vec3 next_pos = next_cell->GetWorldPosition();
+    vec3 forward = next_pos - base_pos;
+    forward.y = 0; // Ignore vertical component
+    float dist = forward.length();
+
+    if (dist < 0.001f){
+        return base_pos; // Cells are at same position, no offset
+    }
+
+    forward = forward / dist; // Normalize
+
+    // Calculate right vector (perpendicular to forward)
+    // In a right-hand coordinate system: right = forward × up
+    vec3 up = vec3(0, 1, 0);
+    vec3 right = forward.cross(up);
+    right.normalize();
+
+    // Apply lane offset to the right
+    return base_pos + right * lane_offset;
+}
+
+void IsoCar::FindNewDestination(int min_distance){
+    if (!current_cell || !current_cell->terrain || !randgen){
+        debug->Warn("Car cannot find new destination: missing terrain or random generator\n");
+        return;
+    }
+
+    IsoTerrain* terrain = current_cell->terrain;
+
+    // Try to find a valid destination cell at least min_distance away
+    int max_attempts = 50;
+    for (int attempt = 0; attempt < max_attempts; attempt++){
+        // Pick a random cell in the terrain
+        int rand_x = randgen->GetInt(0, terrain->width - 1);
+        int rand_z = randgen->GetInt(0, terrain->depth - 1);
+
+        IsoCell* candidate = terrain->GetCellByCoordinate(int3(rand_x, rand_z, 0));
+
+        if (!candidate) continue;
+        if (!candidate->object_road) continue;
+
+        // Calculate Manhattan distance
+        int dx = abs(candidate->coordinate.x - current_cell->coordinate.x);
+        int dz = abs(candidate->coordinate.y - current_cell->coordinate.y);
+        int manhattan_dist = dx + dz;
+
+        // Check if far enough away
+        if (manhattan_dist >= min_distance){
+            debug->Info("Car [%s] found new destination at %i,%i (distance: %i tiles)\n",
+                       name.c_str(), candidate->coordinate.x, candidate->coordinate.y, manhattan_dist);
+            SetTargetCell(candidate);
+            return;
+        }
+    }
+
+    debug->Warn("Car [%s] couldn't find destination after %i attempts\n", name.c_str(), max_attempts);
 }

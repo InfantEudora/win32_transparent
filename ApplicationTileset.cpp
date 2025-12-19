@@ -118,6 +118,8 @@ void ApplicationTileset::Init(void){
     http_server->SetVariable("mode_charge_enabled", "1");
     http_server->SetVariable("mode_discharge_enabled", "1");
     debug->Info("HTTP Server started on port 9090\n");
+
+    main_window->Resize(1600,800);
 }
 
 void ApplicationTileset::StartDrag(IsoCell* cell){
@@ -167,26 +169,26 @@ void ApplicationTileset::RunLogic(){
 
     terrain->ClearUpdateCounts();
 
-    IsoCar* selected_car = dynamic_cast<IsoCar*>(selected_object);
-    if (selected_car){
-        controlled_car = selected_car;
-    }
+
 
     if (controlled_car){
         if (input->IsKeyDown(INPUT_TURN_UP)){
             controlled_car->Accelerate(1.0f);
+            controlled_car->f_has_target = false;
         }
         if (input->IsKeyDown(INPUT_TURN_DOWN)){
             controlled_car->Reverse(1.0f);
+            controlled_car->f_has_target = false;
         }
         if (input->IsKeyDown(INPUT_TURN_LEFT)){
             controlled_car->SteerLeft(1.0f);
+            controlled_car->f_has_target = false;
         }
         if (input->IsKeyDown(INPUT_TURN_RIGHT)){
             controlled_car->SteerRight(1.0f);
+            controlled_car->f_has_target = false;
         }
     }
-
 
     IsoCell* selected_cell = dynamic_cast<IsoCell*>(selected_object);
     if (selected_cell){
@@ -198,6 +200,9 @@ void ApplicationTileset::RunLogic(){
                 PlaceCar(selected_cell);
             }else if (current_tool == ISO_TOOL_TREE){
                 selected_cell->PlaceTree("pine_tree_1");
+            }else if (current_tool == ISO_TOOL_HOUSE){
+                PlaceHouse(selected_cell);
+
             }else if (current_tool == ISO_TOOL_NONE){
                 for (IsoCar* car:cars){
                     car->SetTargetCell(selected_cell);
@@ -359,6 +364,8 @@ void ApplicationTileset::DrawImGuiUI(){
     //RenderOCPPClientsUI();
     RenderToolsUI();
     RenderTerrainUI();
+    RenderSelectedCarUI();
+    RenderSelectedRoadUI();
 }
 
 void ApplicationTileset::RenderOCPPClientsUI(){
@@ -382,11 +389,9 @@ void ApplicationTileset::RenderToolsUI(){
     ImGui::Begin("Tools");
     ImGui::Text("Current Tool: %d", (int)current_tool);
 
-    if (ImGui::Button("No Tool")){
-        current_tool = ISO_TOOL_NONE;
-    }
 
-    for (int i = 0; i < 3; i++) {
+
+    for (int i = 0; i < 5; i++) {
         std::string id = "Button" + std::to_string(i);
         ImVec2 size = ImVec2(64.0f, 64.0f);
         ImVec2 uv0 = ImVec2(0.0f, 0.0f);
@@ -411,9 +416,15 @@ void ApplicationTileset::RenderToolsUI(){
                 }
                 break;
                 case 1:
-                current_tool = ISO_TOOL_ROAD;
+                current_tool = ISO_TOOL_HOUSE;
                 break;
                 case 2:
+                current_tool = ISO_TOOL_NONE;
+                break;
+                case 3:
+                current_tool = ISO_TOOL_ROAD;
+                break;
+                case 4:
                 current_tool = ISO_TOOL_TREE;
                 break;
             }
@@ -421,6 +432,103 @@ void ApplicationTileset::RenderToolsUI(){
         }
         ImGui::SameLine();
     }
+
+    ImGui::End();
+}
+
+void ApplicationTileset::RenderSelectedRoadUI(){
+    ImGui::Begin("Selected Road");
+
+    IsoRoad* road = dynamic_cast<IsoRoad*>(selected_object);
+    if (road && road != selected_road){
+        selected_road = road;
+    }
+    road = selected_road;
+    if (!road){
+        ImGui::Text("No road selected");
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("Road Type: (%i) %s",road->road_type, RoadTypeToString(road->road_type).c_str());
+    if (ImGui::Button("Show Road Markers")){
+
+    }
+    ImGui::End();
+}
+
+void ApplicationTileset::RenderSelectedCarUI(){
+    ImGui::Begin("Selected Car");
+    IsoCar* car = dynamic_cast<IsoCar*>(selected_object);
+    if (car && car != selected_car){
+        selected_car = car;
+    }
+    car = selected_car;
+
+    if (selected_object){
+        if (ImGui::Button("Set as route start")){
+            if (!route_object){
+                route_object = new RouteObject();
+                main_scene->AddObject(route_object);
+            }
+            route_object->SetupNewRoute(selected_object,route_object->GetEndObject(),assetmanager);
+            route_object->MoveUpBy(0.1f);
+        }
+        if (ImGui::Button("Set as route end")){
+            if (!route_object){
+                route_object = new RouteObject();
+                main_scene->AddObject(route_object);
+            }
+            route_object->SetupNewRoute(route_object->GetStartObject(),selected_object,assetmanager);
+            route_object->MoveUpBy(0.1f);
+        }
+    }
+
+    if (!car){
+        ImGui::Text("No car selected");
+        ImGui::End();
+        return;
+    }
+
+    if (controlled_car == car){
+        if (ImGui::Button("Release contol of Car")){
+            controlled_car->f_has_target = !!controlled_car->next_cell;
+            controlled_car = NULL;
+
+        }
+    }else{
+        if (ImGui::Button("Take contol of Car")){
+            controlled_car = car;
+        }
+    }
+    if (ImGui::Button("Clear Destination")){
+        car->f_has_target = false;
+    }
+    if (ImGui::Button("Pick New Destination")){
+        car->FindNewDestination(5);
+    }
+    if (ImGui::Button("Honk Horn")){
+        car->HonkHorn();
+    }
+
+    if (car->current_cell){
+        ImGui::Text("Current Cell: %s",car->current_cell->name.c_str());
+        IsoRoad* current_road = car->current_cell->object_road;
+        if (current_road){
+            ImGui::Text("Current Road Type: %s",RoadTypeToString(current_road->road_type).c_str());
+        }else{
+            ImGui::Text("No Road");
+        }
+    }else{
+        ImGui::TextColored(ImVec4(1,0,0,1), "Car has no current Cell!");
+    }
+    if (car->next_cell){
+        ImGui::Text("Next    Cell: %s",car->next_cell->name.c_str());
+    }else{
+        ImGui::TextColored(ImVec4(1,1,0,1), "Car has no next Cell");
+    }
+
+    ImGui::Text("Car Has Target: %s", car->f_has_target?"Yes":"No");
+
 
     ImGui::End();
 }
@@ -521,6 +629,7 @@ void ApplicationTileset::onTrigger(const reactphysics3d::OverlapCallback::Callba
 }
 
 void ApplicationTileset::PlaceCar(IsoCell* target_cell){
+
     IsoCar* car = new IsoCar();
     assetmanager->GetObjectFromAsset("car_sedan", car);
     if (car){
@@ -528,9 +637,9 @@ void ApplicationTileset::PlaceCar(IsoCell* target_cell){
         car->AddPhysics(main_scene->physics_world);
         if (Physics* physics = car->GetPhysics()){
             vec3 extent = car->GetMesh()->GetExtents()*0.5f;
-            //physics->AddBoxCollider(extent,vec3(0,extent.y,0),quat().identity());
             //The main collider
-            physics->AddSphereCollider(0.15f,vec3(0,extent.y,0),quat().identity());
+            physics->AddBoxCollider(extent,vec3(0,extent.y,0),quat().identity());
+            //physics->AddSphereCollider(0.15f,vec3(0,extent.y,0),quat().identity());
             physics->SetTrigger(true);
             physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR);
             //Add a box collider in front of the car to act as a trigger for proximity detection
@@ -545,12 +654,38 @@ void ApplicationTileset::PlaceCar(IsoCell* target_cell){
             physics->SetGravityEnabled(false);
             physics->SetStatic(false);
             physics->body->rigidbody->setUserData((Object*)car);
-            car->top_speed = rrand->GetFloat(0.5,1.0);
-            car->soundsystem = soundsystem;
-            car->randgen = rrand;
+
         }
+        car->top_speed = rrand->GetFloat(0.5,1.0);
+        car->soundsystem = soundsystem;
+        car->randgen = rrand;
         car->name = "Car " + std::to_string(cars.size());
+        car->current_cell = target_cell;
         main_scene->AddObject(car);
         cars.push_back(car);
+    }
+}
+
+void ApplicationTileset::PlaceHouse(IsoCell* target_cell){
+    if (target_cell->object_road){
+        debug->Warn("Cannot place house on a road.\n");
+        return;
+    }
+    IsoHouse* house = new IsoHouse();
+    assetmanager->GetObjectFromAsset("house_1", house);
+    if (house){
+        vec3 pos = target_cell->GetWorldPosition(STATE_ACCESS_PHYSICS);
+        house->SetPosition(pos);
+        house->AddPhysics(main_scene->physics_world);
+        if (Physics* physics = house->GetPhysics()){
+            vec3 extent = house->GetMesh()->GetExtents()*0.5f;
+            physics->AddBoxCollider(extent, vec3(0, extent.y, 0), quat().identity());
+            physics->SetStatic(true);
+            physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_SCENERY);
+        }
+        house->name = "House " + std::to_string(houses.size());
+        main_scene->AddObject(house);
+        houses.push_back(house);
+        debug->Info("Placed house at cell %i,%i\n", target_cell->coordinate.x, target_cell->coordinate.y);
     }
 }

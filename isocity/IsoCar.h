@@ -62,6 +62,14 @@ public:
     vec3 target_position = vec3(0,0,0);
     bool f_has_target = false;
     bool f_has_reached_last_target = false;
+
+    float lane_offset = 0.25f; // Offset from cell center for right lane (positive = right side)
+
+    // Calculate lane-adjusted position based on travel direction
+    vec3 GetLaneAdjustedPosition(IsoCell* cell, IsoCell* next_cell);
+
+    // Find a new random destination at least min_distance tiles away
+    void FindNewDestination(int min_distance = 5);
 protected:
 };
 

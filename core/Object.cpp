@@ -517,6 +517,12 @@ void Object::GetAllSubObjects(std::vector<Object*>& objects){
     }
 }
 
+Object* Object::GetLastChild(){
+    if (children.empty())
+        return NULL;
+    return children.back();
+}
+
 //Returns the specified child if there is one.
 Object* Object::GetChild(int index){
     std::list<Object*>::iterator it = children.begin();

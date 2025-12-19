@@ -7,6 +7,7 @@
 
 struct vec3;
 #include "type_helpers.h"
+#include "type_vec2.h"
 
 struct vec3{
     union{
@@ -38,6 +39,7 @@ struct vec3{
     vec3&   fract();                                        // returns the non-integer part
     vec3&   round();                                        // round to nearest
     vec3    lerp(const vec3& rhs, float s) const;           // Does linear interpolation between this and target vector by a factor s
+    vec2    xz() const;                                     // returns vec2 with x and z components
 
     vec3   	operator-() const;                              // unary operator (negate)
     vec3   	operator-(const vec3& rhs) const;               // subtract rhs
@@ -47,6 +49,8 @@ struct vec3{
     vec3  	operator*(const float scale) const;             // scale
     vec3& 	operator*=(const float scale);                  // scale and update this object
     friend vec3 operator*(const float a, const vec3 vec);   // scale
+    vec3  	operator/(const float scale) const;             // divide by scalar
+    vec3& 	operator/=(const float scale);                  // divide by scalar and update this object
 
 
 
@@ -149,12 +153,24 @@ inline vec3& vec3::operator*=(const float a) {
 	x *= a; y *= a; z *= a; return *this;
 }
 
+inline vec3 vec3::operator/(const float a) const {
+	return vec3(x/a, y/a, z/a);
+}
+
+inline vec3& vec3::operator/=(const float a) {
+	x /= a; y /= a; z /= a; return *this;
+}
+
 inline bool vec3::equal(const vec3& rhs) const {
     return fabs(x - rhs.x) < FT_EPSILON && fabs(y - rhs.y) < FT_EPSILON && fabs(z - rhs.z) < FT_EPSILON;
 }
 
 inline void vec3::print(){
     printf("vec3: %7.2f | %7.2f | %7.2f\n",x,y,z);
+}
+
+inline vec2 vec3::xz() const {
+    return vec2(x, z);
 }
 
 #endif

@@ -7,6 +7,7 @@
 #include "Object.h"
 #include "AssetManager.h"
 #include "Bezier2D.h"
+#include "RouteObject.h"
 
 struct Population{
     int amount = 0;
@@ -131,25 +132,7 @@ typedef enum {
 }stellarbody_type;
 
 class StellarBody;
-class Route;
 
-class Route{
-    public:
-    Route(){};
-    Route(Route* route){
-        start = route->start;
-        end = route->end;
-    };
-    ~Route(){};
-
-    void Setup(StellarBody* start, StellarBody* end);
-    void Reverse();
-
-    StellarBody* start = NULL;
-    StellarBody* end = NULL;
-
-    float GetDistance();
-};
 
 //Storage decoupled from object, so it can be run in simulation.
 //Ships will follow routes and get delayed or get off track randomly.
@@ -199,18 +182,7 @@ public:
     static StellarObject* CreateNewBeacon(AssetManager* assetmanager);
 };
 
-//We build a route for a ship to follow. Uses a 2D spline limited to a linear one for now.
-class RouteObject : public Object{
-public:
-    RouteObject(){};
-    ~RouteObject(){};
 
-    Route* route = NULL;
-    Bezier2D curve = Bezier2D(2);
-
-    void SetupNewRoute(StellarObject* from, StellarObject* to, AssetManager* assetmanager);
-    void UpdateRoute();
-};
 
 #endif
 

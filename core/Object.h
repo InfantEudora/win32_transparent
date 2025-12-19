@@ -183,6 +183,7 @@ class Object{
     bool    AttachChild(Object* newchild); //Attaches an object as a child.
     void    DetachChild(Object* targetchild);
     void    GetAllSubObjects(std::vector<Object*>& objects); //Add's all objects attached to this object into a vector.
+    Object* GetLastChild();
     Object* GetChild(int index);
 protected:
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable

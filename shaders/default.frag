@@ -124,17 +124,7 @@ vec3 GetNormalMapNormal(){
 }
 
 //Returns the light intensity from a single directional light such as the sun
-vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
-    vec3 albedo;
-    if (m.diffuse_texture >= 0){
-        //Bindless
-        //albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
-        //albedo = texture(m.handle_normal,vuv).xyz;// * m.color.xyz;
-        //Default
-        albedo = texture(material_texture[m.diffuse_texture], vuv).rgb;
-    }else{
-        albedo = m.color.xyz;
-    }
+vec3 CalcDirectionalPBRLight(vec3 albedo, vec3 lightdirection, vec3 color, float brightness){
 
     vec3 N;
     vec3 V;
@@ -182,8 +172,6 @@ vec3 CalcDirectionalPBRLight(vec3 lightdirection, vec3 color, float brightness){
     //NdotL = min(dot(vnormal, normalize(lightpos - vposition)),NdotL );
 
     Lo += (kD * albedo / PI + specular) * radiance * NdotL;
-    //Ambient
-    Lo += 0.10 * albedo;
     return Lo;
 }
 
@@ -213,7 +201,7 @@ float CalcShadow(vec4 vposinshadow){
     float current_depth = (0.5 * pos_proj.z) + (0.5);
     float bias = 0.0025;
 
-    float shadow = (current_depth - bias) > closest_depth  ? 0.1 : 1.0;
+    float shadow = (current_depth - bias) > closest_depth  ? 0.2 : 1.0;
     return shadow;
 /*
 
@@ -243,6 +231,16 @@ vec4 CalcPBRLighting(){
     vec4 final;
 
     vec3 total_light = vec3(0,0,0);
+    vec3 albedo;
+    if (m.diffuse_texture >= 0){
+        //Bindless
+        //albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
+        //albedo = texture(m.handle_normal,vuv).xyz;// * m.color.xyz;
+        //Default
+        albedo = texture(material_texture[m.diffuse_texture], vuv).rgb;
+    }else{
+        albedo = m.color.xyz;
+    }
 
     for (int i = 0; i < lights.length(); i++){
         vec3 lightdirection = lights[i].position;
@@ -267,12 +265,12 @@ vec4 CalcPBRLighting(){
             light_value = shadow;
         }
 
-        light = light_value * CalcDirectionalPBRLight(lightdirection,lights[i].color,lights[i].brightness);
-
+        light = light_value * CalcDirectionalPBRLight(albedo,lightdirection,lights[i].color,lights[i].brightness);
         total_light += light;
-
-
     }
+
+    //Add some ambient
+    total_light += 0.1f * albedo;
 
 
     //total_light *= 0.51f;
