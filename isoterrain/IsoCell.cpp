@@ -269,22 +269,22 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
     int bitmask = 0;
     IsoCell* neighbours[4] = {NULL,NULL,NULL,NULL};
     neighbours[0] = GetNeighbour(DIRECTION_NORTH);
-    if (neighbours[0] && neighbours[0]->object_road){
+    if (neighbours[0] && neighbours[0]->road_object){
         debug->Info("Neighbour north has road\n");
         bitmask |= 1;
     }
     neighbours[1] = GetNeighbour(DIRECTION_EAST);
-    if (neighbours[1] && neighbours[1]->object_road){
+    if (neighbours[1] && neighbours[1]->road_object){
         debug->Info("Neighbour east has road\n");
         bitmask |= 2;
     }
     neighbours[2] = GetNeighbour(DIRECTION_SOUTH);
-    if (neighbours[2] && neighbours[2]->object_road){
+    if (neighbours[2] && neighbours[2]->road_object){
         debug->Info("Neighbour south has road\n");
         bitmask |= 4;
     }
     neighbours[3] = GetNeighbour(DIRECTION_WEST);
-    if (neighbours[3] && neighbours[3]->object_road){
+    if (neighbours[3] && neighbours[3]->road_object){
         debug->Info("Neighbour west has road\n");
         bitmask |= 8;
     }
@@ -328,29 +328,29 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
         }
     }
 
-    if (!object_road){
-        object_road = new IsoRoad();
-        assetmanager->GetObjectFromAsset(new_asset_name.c_str(),object_road);
-        if (object_road && AttachChild(object_road)){
+    if (!road_object){
+        road_object = new IsoRoad();
+        assetmanager->GetObjectFromAsset(new_asset_name.c_str(),road_object);
+        if (road_object && AttachChild(road_object)){
             debug->Ok("Placed some road decoration\n");
-            object_road->f_update_materials = true;
-            //object_road->name = "Road @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
-            object_road->name = new_asset_name;
-            object_road->SetRotation(roadq);
-            object_road->road_type = new_road_type;
+            road_object->f_update_materials = true;
+            //road_object->name = "Road @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
+            road_object->name = new_asset_name;
+            road_object->SetRotation(roadq);
+            road_object->road_type = new_road_type;
         }
     }else{
         //Check if we have the correct road type loaded. TODO
-        debug->Info("Updating existing road from %s to %s\n",object_road->name.c_str(),new_asset_name.c_str());
-        if (object_road->name != new_asset_name){
-            assetmanager->GetObjectFromAsset(new_asset_name.c_str(),object_road);
+        debug->Info("Updating existing road from %s to %s\n",road_object->name.c_str(),new_asset_name.c_str());
+        if (road_object->name != new_asset_name){
+            assetmanager->GetObjectFromAsset(new_asset_name.c_str(),road_object);
             debug->Ok("Updated road asset\n");
-            object_road->f_update_materials = true;
-            object_road->name = new_asset_name;
-            object_road->road_type = new_road_type;
-            object_road->SetRotation(roadq);
+            road_object->f_update_materials = true;
+            road_object->name = new_asset_name;
+            road_object->road_type = new_road_type;
+            road_object->SetRotation(roadq);
         }else{
-            object_road->SetRotation(roadq);
+            road_object->SetRotation(roadq);
         }
     }
     update_count++;
@@ -358,12 +358,12 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
 
     //Each neighbour with a road needs to update their road too.
     for (int i =0;i<4;i++){
-        if (neighbours[i] && neighbours[i]->object_road && (neighbours[i]->update_count == 0)){
+        if (neighbours[i] && neighbours[i]->road_object && (neighbours[i]->update_count == 0)){
             neighbours[i]->PlaceRoad(asset_name);
         }
     }
 
-    return object_road;
+    return road_object;
 }
 
 // Place a wall at one of the 4 coordinates.

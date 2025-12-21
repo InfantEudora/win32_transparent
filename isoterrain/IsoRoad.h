@@ -6,13 +6,13 @@
 #include <string>
 #include "Object.h"
 #include "type_vec3.h"
+#include "AssetManager.h"
 
 enum RoadMarkerType {
     LANE,
     PARKING,
     CROSSING
 };
-
 
 enum RoadType {
     STRAIGHT,
@@ -43,7 +43,12 @@ public:
     int num_lanes = 2;
     bool one_way = false;
 
-    void PlaceNewMarker(RoadMarkerType type, vec3 position);
+    Object* PlaceNewMarker(AssetManager* assetmanager, RoadMarkerType type, vec3 position);
+    Object* PlaceDecoration(AssetManager* assetmanager,std::string& name,vec3 position);
+
+    std::vector<Object*>road_markers;
+    std::vector<Object*>street_signs;
+    std::vector<Object*>decorations;
 
 };
 

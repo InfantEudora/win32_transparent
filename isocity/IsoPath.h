@@ -19,7 +19,7 @@ public:
     // Pop the next cell in the path and return it (or NULL if empty)
     IsoCell* PopNext();
 
-    // Build a path that only traverses cells that have roads (object_road != NULL).
+    // Build a path that only traverses cells that have roads (road_object != NULL).
     // Returns true on success and fills out.path
     static bool BuildPath(IsoTerrain* terrain, IsoCell* start, IsoCell* end, IsoPath& out);
 

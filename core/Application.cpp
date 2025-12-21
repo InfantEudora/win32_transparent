@@ -704,6 +704,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             ImGui::EndDisabled();
             ImGui::DragFloat3("Color", (float*)&light->color, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Brightness", (float*)&light->brightness, 0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Shadow Bias", (float*)&light->shadow_bias, 0.0001f, 0.0f, 1.0f);
         }
 
         if (object->GetMesh()){

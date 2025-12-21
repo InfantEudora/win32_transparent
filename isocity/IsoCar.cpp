@@ -18,10 +18,9 @@ void IsoCar::SetTargetCell(IsoCell* cell){
     IsoTerrain* terrain = cell->terrain;
     if (!terrain){
         // Fallback to simple world position target
-        target_position = cell->GetWorldPosition();
-        f_has_target = true;
+        SetTargetPosition(cell->GetWorldPosition());
         f_following_path = false;
-        path.Clear();
+        iso_path.Clear();
         f_waiting_for_road = false;
         f_has_final_target = false;
         return;
@@ -31,14 +30,13 @@ void IsoCar::SetTargetCell(IsoCell* cell){
     vec3 carpos = GetPosition(STATE_ACCESS_PHYSICS);
     current_cell = terrain->FindCellByWorldPosition(carpos);
 
-    IsoCell* startRoad = current_cell && current_cell->object_road ? current_cell : IsoPath::FindClosestRoadCell(terrain, current_cell ? current_cell : cell);
-    IsoCell* endRoad = cell->object_road ? cell : IsoPath::FindClosestRoadCell(terrain, cell);
+    IsoCell* startRoad = current_cell && current_cell->road_object ? current_cell : IsoPath::FindClosestRoadCell(terrain, current_cell ? current_cell : cell);
+    IsoCell* endRoad = cell->road_object ? cell : IsoPath::FindClosestRoadCell(terrain, cell);
 
     // If no road-based route available, fallback to simple target
     if (!startRoad || !endRoad){
-        target_position = cell->GetWorldPosition();
-        f_has_target = true;
-        path.Clear();
+        SetTargetPosition(GetWorldPosition());
+        iso_path.Clear();
         f_following_path = false;
         f_waiting_for_road = false;
         f_has_final_target = false;
@@ -46,11 +44,11 @@ void IsoCar::SetTargetCell(IsoCell* cell){
     }
 
     // Build road-only path
-    path.Clear();
-    bool ok = IsoPath::BuildPath(terrain, startRoad, endRoad, path);
+    iso_path.Clear();
+    bool ok = IsoPath::BuildPath(terrain, startRoad, endRoad, iso_path);
     if (!ok){
         // Fallback to direct
-        target_position = cell->GetWorldPosition();
+        SetTargetPosition(cell->GetWorldPosition());
         f_has_target = true;
         f_following_path = false;
         f_waiting_for_road = false;
@@ -61,12 +59,12 @@ void IsoCar::SetTargetCell(IsoCell* cell){
     // If car is not currently on the road start, first move to the startRoad cell center, then follow path
     if (current_cell != startRoad){
         // Get the first cell in the path to determine lane offset for approach
-        IsoCell* first_path_cell = path.cells.empty() ? nullptr : path.cells[0];
-        target_position = GetLaneAdjustedPosition(startRoad, first_path_cell);
+        IsoCell* first_path_cell = iso_path.cells.empty() ? nullptr : iso_path.cells[0];
+        SetTargetPosition(GetLaneAdjustedPosition(startRoad, first_path_cell));
         f_has_target = true;
         f_waiting_for_road = true;
         f_following_path = false;
-        f_has_final_target = !cell->object_road;
+        f_has_final_target = !cell->road_object;
         if (f_has_final_target) final_target_position = cell->GetWorldPosition();
         debug->Info("Car will move to nearest road cell %i,%i then follow path to %i,%i\n", startRoad->coordinate.x, startRoad->coordinate.y, endRoad->coordinate.x, endRoad->coordinate.y);
     }else{
@@ -74,14 +72,14 @@ void IsoCar::SetTargetCell(IsoCell* cell){
         f_waiting_for_road = false;
         f_following_path = true;
         f_has_target = false; // we'll set it below when moving to first cell
-        f_has_final_target = !cell->object_road;
+        f_has_final_target = !cell->road_object;
         if (f_has_final_target) final_target_position = cell->GetWorldPosition();
-        IsoCell* next = path.PopNext();
+        IsoCell* next = iso_path.PopNext();
         if (next){
             next_cell = next;
             // Look ahead to next cell after this one for lane calculation
-            IsoCell* peek_next = path.cells.empty() ? nullptr : path.cells[0];
-            target_position = GetLaneAdjustedPosition(next_cell, peek_next);
+            IsoCell* peek_next = iso_path.cells.empty() ? nullptr : iso_path.cells[0];
+            SetTargetPosition(GetLaneAdjustedPosition(next_cell, peek_next));
             f_has_target = true;
         }
         debug->Info("Car starting path follow to %i,%i (endRoad %i,%i)\n", cell->coordinate.x, cell->coordinate.y, endRoad->coordinate.x, endRoad->coordinate.y);
@@ -91,6 +89,9 @@ void IsoCar::SetTargetCell(IsoCell* cell){
 void IsoCar::SetTargetPosition(const vec3& pos){
     target_position = pos;
     f_has_target = true;
+    if (target_vis){
+        target_vis->SetPosition(pos);
+    }
 }
 
 void IsoCar::ClearTarget(){
@@ -106,10 +107,84 @@ vec3 IsoCar::GetTargetPosition() const{
 }
 
 
+void IsoCar::UpdateCellReferences(){
+    vec3 pos = GetPosition();
+    pos.y = 0;
+
+    //Update current cell based on car position
+    IsoCell* helper_cell = current_cell;
+    if (!helper_cell){
+        helper_cell = target_cell;
+    }
+    if (helper_cell){
+        IsoCell* cell_under_car = current_cell->terrain->FindCellByWorldPosition(pos);
+        if (cell_under_car){
+            current_cell = cell_under_car;
+        }
+
+        //Find the cell ahead of us:
+        int3 offset = int3(0,0,0);
+        switch(direction){
+            case DIRECTION_NORTH:
+                offset = int3(0, -1, 0);
+                break;
+            case DIRECTION_EAST:
+                offset = int3(1, 0, 0);
+                break;
+            case DIRECTION_SOUTH:
+                offset = int3(0, 1, 0);
+                break;
+            case DIRECTION_WEST:
+                offset = int3(-1, 0, 0);
+                break;
+            default:
+                break;
+        }
+
+        if (offset.x != 0 || offset.y != 0){
+            int3 ahead_coord = int3(
+                current_cell->coordinate.x + offset.x,
+                current_cell->coordinate.y + offset.y,
+                current_cell->coordinate.z
+            );
+            cell_ahead = current_cell->terrain->GetCellByCoordinate(ahead_coord);
+            if (cell_ahead && cell_ahead->road_object){
+                IsoRoad* road_ahead = cell_ahead->road_object;
+                if (road_ahead->road_type == RoadType::STRAIGHT){
+                    target_speed = top_speed;
+                }else{
+                    target_speed = 0.5f;
+                }
+            }
+        }
+    }
+}
+
 void IsoCar::UpdatePhysicsState(){
     //Update direction
     direction = IsoDirection::NormalToDirection(GetForward());
     float timestep = 0.02f; // conservative default; if called more frequently it's fine
+
+    //Steering
+    if (steering_position < 0){
+        //Converge toward 0.
+        steering_position = clamp(steering_position + 0.05f,-1.0,0);
+    }else if (steering_position > 0){
+        steering_position = clamp(steering_position - 0.05f,0.0,1.0);
+    }
+
+    float reverse_multiplier = f_reverse ? -1.0f : 1.0f;
+    //Apply steering. At low speeds
+    if (steering_position !=0){
+        float speed_factor = speed / top_speed;
+        //At low speeds we steer better.
+        float steer_amount = 1.0 - speed_factor;
+        steer_amount = fmap(steer_amount,0.0,1.0,0.5,1.5);
+
+        if (speed_factor > 0){
+            RotateAroundAxis(vec3(0,-reverse_multiplier,0),steer_amount * speed_factor *  steering_position / 10.0f);
+        }
+    }
 
     float acceleration = gas_pedal * timestep;
     float braking = brake_pedal * 2.0f * timestep;
@@ -118,10 +193,10 @@ void IsoCar::UpdatePhysicsState(){
     if (speed < 0.0f){
         speed = 0.0f;
     }
+
     if (speed > top_speed){
-         speed = top_speed;
+        speed = top_speed;
     }
-    float reverse_multiplier = f_reverse ? -1.0f : 1.0f;
 
     float move_delta =  reverse_multiplier * speed * timestep;
     if (move_delta != 0.0){
@@ -131,17 +206,7 @@ void IsoCar::UpdatePhysicsState(){
         p.y = 0;
         SetPosition(p);
 
-        //Update current cell based on car position
-        IsoCell* helper_cell = current_cell;
-        if (!helper_cell){
-            helper_cell = target_cell;
-        }
-        if (helper_cell){
-            IsoCell* cell_under_car = current_cell->terrain->FindCellByWorldPosition(p);
-            if (cell_under_car){
-                current_cell = cell_under_car;
-            }
-        }
+        UpdateCellReferences();
     }
 
     brake_pedal = 0.1f;
@@ -211,16 +276,18 @@ void IsoCar::UpdatePhysicsState(){
 
     debug->Debug("Car moving towards target position (%5.2f,%5.2f,%5.2f)\n",target_position.x,target_position.y,target_position.z);
 
-    vec3 cur = GetPosition(STATE_ACCESS_PHYSICS);
-    vec3 diff = vec3(target_position.x - cur.x, target_position.y - cur.y, target_position.z - cur.z);
+    vec3 current_position = GetPosition(STATE_ACCESS_PHYSICS);
+    vec3 diff = target_position - current_position;
 
     float dist = diff.length();
     // Use a slightly larger arrival threshold so cell centers can be reliably reached
     const float arrival_threshold = 0.1f;
     if (dist > arrival_threshold){
-        Accelerate(1.0f);
+        if (speed < target_speed){
+            Accelerate(1.0f);
+        }
     }else {
-        debug->Ok("Car reached target\n");
+        //debug->Ok("Car reached target\n");
         //SetPosition(target_position);
         f_has_target = false;
         // If we were moving to reach the road before following the path
@@ -228,13 +295,12 @@ void IsoCar::UpdatePhysicsState(){
             f_waiting_for_road = false;
             f_following_path = true;
             // Start following the path we already built
-            IsoCell* next = path.PopNext();
+            IsoCell* next = iso_path.PopNext();
             if (next){
                 next_cell = next;
                 // Look ahead to next cell for lane calculation
-                IsoCell* peek_next = path.cells.empty() ? nullptr : path.cells[0];
-                target_position = GetLaneAdjustedPosition(next_cell, peek_next);
-                f_has_target = true;
+                IsoCell* peek_next = iso_path.cells.empty() ? nullptr : iso_path.cells[0];
+                SetTargetPosition(GetLaneAdjustedPosition(next_cell, peek_next));
             }
             Object::UpdatePhysicsState();
             return;
@@ -244,14 +310,13 @@ void IsoCar::UpdatePhysicsState(){
         if (f_following_path){
             if (next_cell){
                 // We have arrived at next_cell; advance
-                if (!path.Empty()){
-                    IsoCell* next = path.PopNext();
+                if (!iso_path.Empty()){
+                    IsoCell* next = iso_path.PopNext();
                     next_cell = next;
                     if (next_cell){
                         // Look ahead to next cell for lane calculation
-                        IsoCell* peek_next = path.cells.empty() ? nullptr : path.cells[0];
-                        target_position = GetLaneAdjustedPosition(next_cell, peek_next);
-                        f_has_target = true;
+                        IsoCell* peek_next = iso_path.cells.empty() ? nullptr : iso_path.cells[0];
+                        SetTargetPosition(GetLaneAdjustedPosition(next_cell, peek_next));
                         Object::UpdatePhysicsState();
                         return;
                     }
@@ -261,8 +326,7 @@ void IsoCar::UpdatePhysicsState(){
                 next_cell = NULL;
                 // If final target is off-road, go there now
                 if (f_has_final_target){
-                    target_position = final_target_position;
-                    f_has_target = true;
+                    SetTargetPosition(final_target_position);
                     f_has_final_target = false;
                     Object::UpdatePhysicsState();
                     return;
@@ -284,16 +348,33 @@ void IsoCar::UpdatePhysicsState(){
         f_has_target = false;
     }
 
-    //Rotate towards movement direction
-    vec3 dir = vec3(diff.x/dist, diff.y/dist, diff.z/dist);
+    //Rotate towards target direction
+    diff.y = 0.0f;
+    vec3 dir = diff.normalize();
 
+    //Figure out if direction is to our right or to our left.
+    vec3 forward = GetForward();
+    forward.y = 0.0f;
+    forward.normalize();
+
+    // Cross product of forward and target direction
+    // If result is positive (pointing up), target is to the right
+    // If result is negative (pointing down), target is to the left
+    vec3 cross = forward.cross(dir);
+    float side = cross.y;  // Positive = right, Negative = left
+    if (side < 0){
+        SteerRight(1.0f);
+    }else{
+        SteerLeft(1.0f);
+    }
+/*
     quat r = quat::getquat(dir,GetForward(),vec3(0,1,0));
     r.normalize();
 
     quat current_r = GetRotation();
     r = current_r.slerp(current_r,r,0.05f);
     SetRotation(r);
-
+*/
     Object::UpdatePhysicsState();
 }
 
@@ -308,15 +389,22 @@ void IsoCar::Accelerate(float factor){
     gas_pedal = clamp(factor,0.0f,1.0f);
     brake_pedal = 0.0f;
 }
+
 void IsoCar::Brake(float factor){
     brake_pedal = clamp(factor,0.0f,1.0f);
     gas_pedal = 0.0f;
 }
+
 void IsoCar::SteerLeft(float factor){
-    RotateAroundAxis(GetUp(), 0.1f * factor);
+    float delta = 0.10f * factor;
+    steering_position = clamp(steering_position - delta,-1.0f,0.0f);
+    //RotateAroundAxis(GetUp(), 0.1f * factor);
 }
+
 void IsoCar::SteerRight(float factor){
-    RotateAroundAxis(GetUp(), -0.1f * factor);
+    float delta = 0.10f * factor;
+    steering_position = clamp(steering_position + delta,0.0f,1.0f);
+    //RotateAroundAxis(GetUp(), -0.1f * factor);
 }
 
 void IsoCar::Reverse(float factor){
@@ -341,6 +429,7 @@ void IsoCar::HonkHorn(){
     }
 }
 
+//This sets the target position to a position in the current cell in the lane that car is traveling on.
 vec3 IsoCar::GetLaneAdjustedPosition(IsoCell* cell, IsoCell* next_cell){
     if (!cell){
         return vec3(0,0,0);
@@ -350,13 +439,15 @@ vec3 IsoCar::GetLaneAdjustedPosition(IsoCell* cell, IsoCell* next_cell){
 
     vec3 base_pos = cell->GetWorldPosition();
 
-    // If we don't have a next cell, just return center
+    // If we don't have a next cell, we use our current heading.
+    vec3 next_pos;
     if (!next_cell){
-        return base_pos;
+        next_pos = base_pos + GetForward();
+    }else{
+        next_pos = next_cell->GetWorldPosition();
     }
 
     // Calculate direction vector from current cell to next cell
-    vec3 next_pos = next_cell->GetWorldPosition();
     vec3 forward = next_pos - base_pos;
     forward.y = 0; // Ignore vertical component
     float dist = forward.length();
@@ -364,17 +455,22 @@ vec3 IsoCar::GetLaneAdjustedPosition(IsoCell* cell, IsoCell* next_cell){
     if (dist < 0.001f){
         return base_pos; // Cells are at same position, no offset
     }
+    forward.normalize();
 
-    forward = forward / dist; // Normalize
+    //If we are not on a straight road, we should aim to stop just after we crossed the cell border
+    if (cell->road_object && cell->road_object->road_type != RoadType::STRAIGHT){
+        base_pos -= GetForward()/4.0f;
+    }
 
     // Calculate right vector (perpendicular to forward)
     // In a right-hand coordinate system: right = forward × up
     vec3 up = vec3(0, 1, 0);
     vec3 right = forward.cross(up);
     right.normalize();
+    //debug->Info("AdjustPos: Forward : %.3f %.3f %.3f\n",forward.x,forward.y,forward.z);
 
     // Apply lane offset to the right
-    return base_pos + right * lane_offset;
+    return base_pos + (right * lane_offset);
 }
 
 void IsoCar::FindNewDestination(int min_distance){
@@ -395,7 +491,7 @@ void IsoCar::FindNewDestination(int min_distance){
         IsoCell* candidate = terrain->GetCellByCoordinate(int3(rand_x, rand_z, 0));
 
         if (!candidate) continue;
-        if (!candidate->object_road) continue;
+        if (!candidate->road_object) continue;
 
         // Calculate Manhattan distance
         int dx = abs(candidate->coordinate.x - current_cell->coordinate.x);

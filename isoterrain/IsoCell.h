@@ -51,7 +51,7 @@ public:
     // How to store things?
     // Floor tiles, child. But reference as a seperate floor object.
     Object* object_floor = NULL;
-    IsoRoad* object_road = NULL;
+    IsoRoad* road_object = NULL;
     std::vector<Object*> props; // Trees, rocks, etc.
     int max_props = 4;
 

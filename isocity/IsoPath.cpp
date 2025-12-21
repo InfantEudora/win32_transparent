@@ -28,7 +28,7 @@ bool IsoPath::BuildPath(IsoTerrain* terrain, IsoCell* start, IsoCell* end, IsoPa
     }
 
     // Both start and end should have roads for road-only path.
-    if(!start->object_road || !end->object_road) return false;
+    if(!start->road_object || !end->road_object) return false;
 
     std::deque<IsoCell*> queue;
     std::unordered_map<IsoCell*, IsoCell*> parent;
@@ -47,7 +47,7 @@ bool IsoPath::BuildPath(IsoTerrain* terrain, IsoCell* start, IsoCell* end, IsoPa
             if(!n) continue;
             if(visited.count(n)) continue;
             // Only traverse cells that have a road
-            if(!n->object_road) continue;
+            if(!n->road_object) continue;
             visited.insert(n);
             parent[n] = cur;
             queue.push_back(n);
@@ -75,7 +75,7 @@ bool IsoPath::BuildPath(IsoTerrain* terrain, IsoCell* start, IsoCell* end, IsoPa
 // BFS search to find the closest cell that has a road. We traverse all cells.
 IsoCell* IsoPath::FindClosestRoadCell(IsoTerrain* terrain, IsoCell* start){
     if(!terrain || !start) return NULL;
-    if(start->object_road) return start;
+    if(start->road_object) return start;
 
     std::deque<IsoCell*> queue;
     std::unordered_set<IsoCell*> visited;
@@ -85,7 +85,7 @@ IsoCell* IsoPath::FindClosestRoadCell(IsoTerrain* terrain, IsoCell* start){
 
     while(!queue.empty()){
         IsoCell* cur = queue.front(); queue.pop_front();
-        if(cur->object_road) return cur;
+        if(cur->road_object) return cur;
         for(int d=0; d<4; d++){
             IsoCell* n = cur->GetNeighbour(d);
             if(!n) continue;

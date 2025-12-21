@@ -4,6 +4,8 @@
 
 static Debugger *debug = new Debugger("ApplicationTileset", DEBUG_ALL);
 
+#define INPUT_FOCUS     INPUT_LAST+1
+
 ApplicationTileset::ApplicationTileset():Application(){
     debug->Info("Created new application.\n");
 };
@@ -36,6 +38,7 @@ void ApplicationTileset::Init(void){
 
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics();
+    main_scene->inputcontroller->AddKeyMap(VK_DECIMAL,INPUT_FOCUS);
 
 
     gltfloader.LoadGLTFFile("data/cityandroads.glb");
@@ -47,7 +50,7 @@ void ApplicationTileset::Init(void){
         sun->SetPosition(vec3(-10,7,9));
         sun->color = vec3(1,0.85,0.7);
         sun->brightness = 6.0;
-        sun->viewport.zoom = 5;
+        sun->viewport.zoom = 10;
         sun->SetLookAt(vec3());
         main_scene->AddObject(sun);
     }
@@ -61,7 +64,7 @@ void ApplicationTileset::Init(void){
     terrain->assetmanager = assetmanager;
     terrain->base_tile = "tile";
     terrain->height_factor = 0.2f;
-    terrain->CreateTerrain(NULL, rrand, 11,11,1);
+    terrain->CreateTerrain(NULL, rrand, 15,15,1);
     main_scene->AddObject(terrain);
 
     Object* compass = CreateNewObjectFromGLTF("compass",main_scene);
@@ -150,6 +153,14 @@ void ApplicationTileset::RunLogic(){
         return;
     }
 
+    //Compute the mouse position in the terrain
+    plane p;
+    p.pos = vec3(0,0,0);
+    p.normal = vec3(0,1,0);
+    int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+    ray r = main_scene->camera->GetPixelRay(px);
+    f_mouse_over_terrain = r.intersects_plane(p,mouse_terrain_coord);
+
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
@@ -163,13 +174,31 @@ void ApplicationTileset::RunLogic(){
 
     CheckObjectSelection();
 
+    if (f_place_road_marker && input->WasKeyReleased(INPUT_CLICK_LEFT)){
+        IsoCell* cell = terrain->FindCellByWorldPosition(mouse_terrain_coord);
+
+        if (cell && cell->road_object){
+            IsoRoad* road = cell->road_object;
+            Object* marker = road->PlaceNewMarker(assetmanager,RoadMarkerType::LANE,mouse_terrain_coord - road->GetWorldPosition());
+            marker->material_slot[0] = renderer->FindMaterialIndex("Sign Red");
+            f_place_road_marker = false;
+        }
+    }
+
     if (input->IsKeyDown(INPUT_CLICK_RIGHT)){
         current_tool = ISO_TOOL_NONE;
     }
 
     terrain->ClearUpdateCounts();
 
-
+    if (input->WasKeyReleased(INPUT_FOCUS)){
+        //We center and track the camera onto the selected object
+        if (selected_object){
+            camera_target = selected_object->GetWorldPosition();
+            vec3 up = up = vec3(0,1,0);
+            camera->SetLookAt(camera_target,&up);
+        }
+    }
 
     if (controlled_car){
         if (input->IsKeyDown(INPUT_TURN_UP)){
@@ -453,6 +482,14 @@ void ApplicationTileset::RenderSelectedRoadUI(){
     if (ImGui::Button("Show Road Markers")){
 
     }
+    if (!f_place_road_marker){
+        if (ImGui::Button("Place Road Marker")){
+            f_place_road_marker = true;
+        }
+    }else{
+        ImGui::Text("Click on road to place road marker.");
+    }
+
     ImGui::End();
 }
 
@@ -463,7 +500,7 @@ void ApplicationTileset::RenderSelectedCarUI(){
         selected_car = car;
     }
     car = selected_car;
-
+/*
     if (selected_object){
         if (ImGui::Button("Set as route start")){
             if (!route_object){
@@ -482,6 +519,7 @@ void ApplicationTileset::RenderSelectedCarUI(){
             route_object->MoveUpBy(0.1f);
         }
     }
+*/
 
     if (!car){
         ImGui::Text("No car selected");
@@ -503,16 +541,24 @@ void ApplicationTileset::RenderSelectedCarUI(){
     if (ImGui::Button("Clear Destination")){
         car->f_has_target = false;
     }
+    ImGui::SameLine();
     if (ImGui::Button("Pick New Destination")){
         car->FindNewDestination(5);
     }
     if (ImGui::Button("Honk Horn")){
         car->HonkHorn();
     }
+    if (ImGui::Button("Show Target Position")){
+        if (!car->target_vis){
+            car->target_vis = assetmanager->GetObjectFromAsset("marker");
+            car->target_vis->SetScale(vec3(0.25));
+            main_scene->AddObject(car->target_vis);
+        }
+    }
 
     if (car->current_cell){
         ImGui::Text("Current Cell: %s",car->current_cell->name.c_str());
-        IsoRoad* current_road = car->current_cell->object_road;
+        IsoRoad* current_road = car->current_cell->road_object;
         if (current_road){
             ImGui::Text("Current Road Type: %s",RoadTypeToString(current_road->road_type).c_str());
         }else{
@@ -521,13 +567,35 @@ void ApplicationTileset::RenderSelectedCarUI(){
     }else{
         ImGui::TextColored(ImVec4(1,0,0,1), "Car has no current Cell!");
     }
+
+    if (car->cell_ahead){
+        ImGui::Text("Cell Ahead: %s",car->cell_ahead->name.c_str());
+        IsoRoad* road_ahead = car->cell_ahead->road_object;
+        if (road_ahead){
+            ImGui::Text("Approaching Road Type: %s",RoadTypeToString(road_ahead->road_type).c_str());
+        }else{
+            ImGui::Text("No Road");
+        }
+    }else{
+        ImGui::TextColored(ImVec4(1,0,0,1), "No cell in front of car!");
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Car Iso Path   : len=%i",car->iso_path.cells.size());
+    ImGui::Text("Car Has Target : %s", car->f_has_target?"Yes":"No");
     if (car->next_cell){
-        ImGui::Text("Next    Cell: %s",car->next_cell->name.c_str());
+    ImGui::Text("Next Cell      : %s",car->next_cell->name.c_str());
     }else{
         ImGui::TextColored(ImVec4(1,1,0,1), "Car has no next Cell");
     }
 
-    ImGui::Text("Car Has Target: %s", car->f_has_target?"Yes":"No");
+    ImGui::Separator();
+    ImGui::Text("Target Speed : %4.1f kph",car->target_speed * 36);
+    ImGui::Text("Speed        : %4.1f kph = %5.2f m/s (%5.2f Top)",car->speed * 36, car->speed, car->top_speed);
+    ImGui::Text("Reverse      : %s", car->f_reverse?"Yes":"No");
+    ImGui::Text("Gas Pedal    : %5.2f", car->gas_pedal);
+    ImGui::Text("Brake Pedal  : %5.2f", car->brake_pedal);
+    ImGui::Text("Steering Pos : %5.2f", car->steering_position);
 
 
     ImGui::End();
@@ -546,18 +614,8 @@ void ApplicationTileset::RenderTerrainUI(){
         ImGui::Text("No cell hovered");
     }
 
-    plane p;
-    p.pos = vec3(0,0,0);
-    p.normal = vec3(0,1,0);
-    int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
-
-    ray r = main_scene->camera->GetPixelRay(px);
-
-    vec3 at = {};
-    bool intersect = r.intersects_plane(p,at);
-
-    if (intersect){
-        ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
+    if (f_mouse_over_terrain){
+        ImGui::DragFloat3("Intersection at", (float*)&mouse_terrain_coord, 0.01f, -1.0f, 1.0f);
 
     }else{
         ImGui::Text("No intersection");
@@ -585,7 +643,7 @@ void ApplicationTileset::RenderTerrainUI(){
         ImGui::Text(" Car Time Threshold: %5.2f", car->time_waiting_threshold);
 
         ImGui::Text(" Car Path:");
-        for (IsoCell* path_cell : car->path.cells){
+        for (IsoCell* path_cell : car->iso_path.cells){
             ImGui::Text("  Cell %i,%i", path_cell->coordinate.x, path_cell->coordinate.y);
         }
 
@@ -629,9 +687,10 @@ void ApplicationTileset::onTrigger(const reactphysics3d::OverlapCallback::Callba
 }
 
 void ApplicationTileset::PlaceCar(IsoCell* target_cell){
-
     IsoCar* car = new IsoCar();
-    assetmanager->GetObjectFromAsset("car_sedan", car);
+    const char* asset_name = rrand->PickFromArray({"car_sedan","car_hatchback"});
+
+    assetmanager->GetObjectFromAsset(asset_name, car);
     if (car){
         car->SetPosition(target_cell->GetWorldPosition(STATE_ACCESS_PHYSICS));
         car->AddPhysics(main_scene->physics_world);
@@ -644,8 +703,8 @@ void ApplicationTileset::PlaceCar(IsoCell* target_cell){
             physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR);
             //Add a box collider in front of the car to act as a trigger for proximity detection
             //Box extends from car position forward to where the sphere would have reached
-            vec3 box_extent = vec3(extent.x, extent.y, 1.5f * extent.z);
-            vec3 box_offset = vec3(0, extent.y, -3.0f * extent.z);
+            vec3 box_extent = vec3(extent.x, extent.y, 1.0f * extent.z);
+            vec3 box_offset = vec3(0, extent.y, -2.0f * extent.z);
             physics->AddBoxCollider(box_extent, box_offset, quat().identity());
             physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR_PROXIMITY);
             physics->SetTrigger(true);
@@ -654,20 +713,20 @@ void ApplicationTileset::PlaceCar(IsoCell* target_cell){
             physics->SetGravityEnabled(false);
             physics->SetStatic(false);
             physics->body->rigidbody->setUserData((Object*)car);
-
         }
         car->top_speed = rrand->GetFloat(0.5,1.0);
         car->soundsystem = soundsystem;
         car->randgen = rrand;
         car->name = "Car " + std::to_string(cars.size());
         car->current_cell = target_cell;
+        car->UpdateCellReferences();
         main_scene->AddObject(car);
         cars.push_back(car);
     }
 }
 
 void ApplicationTileset::PlaceHouse(IsoCell* target_cell){
-    if (target_cell->object_road){
+    if (target_cell->road_object){
         debug->Warn("Cannot place house on a road.\n");
         return;
     }

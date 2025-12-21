@@ -15,10 +15,17 @@ public:
 
     RRandom* randgen = NULL;
 
+    //Cell info
     IsoCell* current_cell = NULL;
+    IsoCell* cell_ahead = NULL;
+
+
+    //Cells in it's route
     IsoCell* target_cell = NULL;
     IsoCell* next_cell = NULL;
-    IsoPath path;
+
+    IsoPath iso_path;
+
     bool f_waiting_for_road = false; // True when moving to the nearest road cell before following path
     bool f_following_path = false;   // True when following a road path
     vec3 final_target_position = vec3(0,0,0); // If target cell is not on a road, final approach position
@@ -30,8 +37,11 @@ public:
     bool HasTarget() const;
     vec3 GetTargetPosition() const;
     void SetTargetCell(IsoCell* cell);
+    void UpdateCellReferences();
 
     IsoCar* close_car = NULL;
+
+    Object* target_vis = NULL;
 
     int direction = DIRECTION_NONE;
 
@@ -48,10 +58,14 @@ public:
     // Override physics update to move towards target if set.
     void UpdatePhysicsState() override;
 
-    float top_speed = 1.0f; // meters per second
+    //Speed in meters per second
+    float top_speed = 1.0f;
     float speed = 0.0f;
+    float target_speed = 0.5f;
+
     float gas_pedal = 0.0f;
     float brake_pedal = 0.0f;
+    float steering_position = 0.0f; //From -1 to +1
     bool f_reverse = false;
 
     //Actions

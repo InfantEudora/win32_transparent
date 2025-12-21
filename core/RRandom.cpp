@@ -132,3 +132,5 @@ vec3 RRandom::GetVec3(float min, float max){
     r.z = GetFloat(min,max);
     return r;
 }
+
+

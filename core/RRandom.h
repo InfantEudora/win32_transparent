@@ -26,6 +26,13 @@ public:
 	float spare = 0;
 	bool hasspare = false;
 
+	// Pick a random element from an array
+	template <typename T, size_t N>
+	T PickFromArray(const T (&array)[N]) {
+		if (N == 0) return T();
+		int index = GetInt(0, N - 1);
+		return array[index];
+	}
 
 private:
 	uint32_t seed;

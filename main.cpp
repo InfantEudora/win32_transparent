@@ -10,7 +10,7 @@
 #include "Debug.h"
 
 //Would be the name of the application
-#include "ApplicationTileset.h"
+#include APP_HEADER
 
 static Debugger* debug = new Debugger("Main",DEBUG_ALL);
 
@@ -20,7 +20,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug->Info("WinMain hInstance = %lu\n",hInstance);
     debug->Info("GetModuleHandle = %lu\n",GetModuleHandle(NULL));
 
-    Application* main_app = new ApplicationTileset();
+    Application* main_app = new APP_CLASS();
     main_app->Start();
     return main_app->Exit();
 }

@@ -199,7 +199,7 @@ float CalcShadow(vec4 vposinshadow){
     //Lookup this fragment's associated depth value from the lights point of view.
     float closest_depth = texture(material_texture[0], uvshadow).r;
     float current_depth = (0.5 * pos_proj.z) + (0.5);
-    float bias = 0.0025;
+    float bias = 0.00025;
 
     float shadow = (current_depth - bias) > closest_depth  ? 0.2 : 1.0;
     return shadow;

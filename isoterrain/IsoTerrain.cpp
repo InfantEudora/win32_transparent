@@ -23,7 +23,6 @@ void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, RRandom* randgen_in, int 
     }
     if (!randgen_in){
         debug->Err("IsoTerrain requires a random generator\n");
-        return;
     }
     randgen = randgen_in;
     debug->Info("Creating Terrain %i x %i x %i\n",w,d,h);

@@ -62,6 +62,10 @@ public:
     std::vector<IsoHouse*> houses;
     void PlaceCar(IsoCell* target_cell);
     void PlaceHouse(IsoCell* target_cell);
+
+    bool f_place_road_marker = false;
+    bool f_mouse_over_terrain = false;
+    vec3 mouse_terrain_coord = vec3();
 private:
 	HTTPServer* http_server = nullptr;
 

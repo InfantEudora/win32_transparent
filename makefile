@@ -66,6 +66,8 @@ else
 endif
 
 #ApplicationGrid
+#CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationGrid
 #SRCS += ApplicationGrid.cpp
 #IPATHS += -Iisoterrain/
 #DIR_SRC += ./isoterrain
@@ -79,6 +81,8 @@ endif
 #SRCS += ImSequencer.cpp
 
 #ApplicationTileset
+CFLAGS+= -DAPP_HEADER=\"ApplicationTileset.h\"
+CFLAGS+= -DAPP_CLASS=ApplicationTileset
 SRCS += ApplicationTileset.cpp
 IPATHS += -Iisoterrain/
 DIR_SRC += ./isoterrain
