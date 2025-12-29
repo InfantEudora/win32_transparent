@@ -81,19 +81,30 @@ endif
 #SRCS += ImSequencer.cpp
 
 #ApplicationTileset
-CFLAGS+= -DAPP_HEADER=\"ApplicationTileset.h\"
-CFLAGS+= -DAPP_CLASS=ApplicationTileset
-SRCS += ApplicationTileset.cpp
-IPATHS += -Iisoterrain/
-DIR_SRC += ./isoterrain
-IPATHS += -Iisocity/
-DIR_SRC += ./isocity
+#CFLAGS+= -DAPP_HEADER=\"ApplicationTileset.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationTileset
+#SRCS += ApplicationTileset.cpp
+#IPATHS += -Iisoterrain/
+#DIR_SRC += ./isoterrain
+#IPATHS += -Iisocity/
+#DIR_SRC += ./isocity
 
 #ApplicationSim
 #IPATHS += -Igalaxy/
 #DIR_SRC += ./galaxy
 #SRCS += ApplicationSim.cpp
 #SRCS += imgooey.cpp
+
+#ApplicationUI
+#CFLAGS+= -DAPP_HEADER=\"ApplicationUI.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationUI
+#SRCS += ApplicationUI.cpp
+
+#ApplicationOCPP
+CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
+CFLAGS+= -DAPP_CLASS=ApplicationOCPP
+SRCS += ApplicationOCPP.cpp
+
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 

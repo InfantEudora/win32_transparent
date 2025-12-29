@@ -10,6 +10,58 @@
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;
 
+// Structure to store OCPP client data
+struct OCPPClientData {
+	SOCKET socket;
+	std::string path;
+	std::string protocol;  // e.g., "ocpp1.6" or "ocpp2.0"
+
+	// Boot notification data
+	std::string chargePointVendor;
+	std::string chargePointModel;
+	std::string chargeBoxSerialNumber;
+	std::string chargePointSerialNumber;
+	std::string firmwareVersion;
+	std::string iccid;
+	std::string imsi;
+	std::string meterSerialNumber;
+	std::string meterType;
+	std::string chargeBoxIdentity;
+	bool bootAccepted;
+	std::string bootTimestamp;
+
+	// Status notification data
+	std::string connectorStatus;
+	std::string errorCode;
+	std::string statusTimestamp;
+	std::string vendorId;
+	std::string vendorErrorCode;
+	int connectorId;
+
+	// Authorization data
+	std::string lastAuthorizedIdTag;
+	std::string lastAuthorizeTimestamp;
+
+	// Heartbeat data
+	std::string lastHeartbeatTimestamp;
+
+	// Meter values data
+	double powerActiveImport;  // in Watts
+	double soc;  // State of Charge in Percent
+	std::string meterValuesTimestamp;
+
+	// Connection info
+	std::string connectTimestamp;
+
+	OCPPClientData()
+		: socket(INVALID_SOCKET),
+		  bootAccepted(false),
+		  connectorId(-1),
+		  powerActiveImport(0.0),
+		  soc(0.0)
+	{}
+};
+
 class HTTPServer : public TCPServer
 {
 public:
@@ -33,12 +85,19 @@ public:
 
 	// OCPP-specific websocket clients (subset of m_wsClients) - sockets speaking ocpp1.6/ocpp2.0
 	std::vector<SOCKET> m_ocppClients;
+
+	// Get OCPP client data by socket (returns nullptr if not found)
+	OCPPClientData* GetOCPPClientData(SOCKET clientSocket);
+
 private:
 	std::string m_htmlContent;
 	std::map<std::string, std::string> m_variables;
 
 	// WebSocket clients
 	std::vector<SOCKET> m_wsClients;
+
+	// OCPP client data map (socket -> client data)
+	std::map<SOCKET, OCPPClientData> m_ocppClientData;
 
 	CRITICAL_SECTION m_wsLock;
 
@@ -61,6 +120,8 @@ private:
 	bool HandleOCPPBootNotification(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
 	bool HandleOCPPStatusNotification(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
 	bool HandleOCPPHeartbeat(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
+	bool HandleOCPPAuthorize(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
+	bool HandleOCPPMeterValues(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
 
 	// Parse HTTP request
 	std::string ParseHTTPRequest(const std::string& request);

@@ -7,7 +7,10 @@
 #include <thread>
 #include <ctime>
 
-static Debugger* http_debug = new Debugger("HTTPServer", DEBUG_INFO);
+//See https://github.com/gennadiygnezdilov/ocpp-1.6J-example-request-response/tree/main
+//For examples
+
+static Debugger* http_debug = new Debugger("HTTPServer", DEBUG_TRACE);
 
 HTTPServer::HTTPServer(int port)
 	: TCPServer(port)
@@ -78,16 +81,28 @@ bool HTTPServer::Start()
 	return TCPServer::Start();
 }
 
+OCPPClientData* HTTPServer::GetOCPPClientData(SOCKET clientSocket)
+{
+	EnterCriticalSection(&m_wsLock);
+	auto it = m_ocppClientData.find(clientSocket);
+	OCPPClientData* result = (it != m_ocppClientData.end()) ? &it->second : nullptr;
+	LeaveCriticalSection(&m_wsLock);
+	return result;
+}
+
 void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 {
 	char buffer[4096];
+	Sleep(100);
 	int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
 
-	if (bytesReceived <= 0)
-	{
+	if (bytesReceived <= 0){
 		// nothing received or error
-		closesocket(clientSocket);
-		DisconnectClient(clientSocket);
+		http_debug->Info("Nothing reveived.\n ");
+		//We also send nothing?
+		//send(clientSocket, "\0", 1, 0);
+		//closesocket(clientSocket);
+		//DisconnectClient(clientSocket);
 		return;
 	}
 
@@ -382,6 +397,21 @@ void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
 		EnterCriticalSection(&m_wsLock);
 		if (!chosenProtocol.empty()) {
 			m_ocppClients.push_back(clientSocket);
+
+			// Initialize OCPP client data
+			OCPPClientData& clientData = m_ocppClientData[clientSocket];
+			clientData.socket = clientSocket;
+			clientData.path = path;
+			clientData.protocol = chosenProtocol;
+
+			// Build ISO8601 UTC timestamp for connection time
+			time_t now = time(nullptr);
+			struct tm gm;
+			gmtime_s(&gm, &now);
+			char buf[64];
+			strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &gm);
+			clientData.connectTimestamp = std::string(buf);
+
 			http_debug->Info("OCPP client connected (protocol=%s)\n", chosenProtocol.c_str());
 		} else {
 			m_wsClients.push_back(clientSocket);
@@ -682,6 +712,8 @@ void HTTPServer::HandleWebSocketClient(SOCKET clientSocket, const std::string &p
 	for (size_t j = 0; j < m_ocppClients.size(); ++j) {
 		if (m_ocppClients[j] == clientSocket) { m_ocppClients.erase(m_ocppClients.begin() + j); break; }
 	}
+	// remove from ocpp client data map
+	m_ocppClientData.erase(clientSocket);
 	LeaveCriticalSection(&m_wsLock);
 
 	closesocket(clientSocket);
@@ -692,7 +724,7 @@ void HTTPServer::HandleWebSocketClient(SOCKET clientSocket, const std::string &p
 // Very small/simple parser to detect OCPP CALL BootNotification messages and reply with CALLRESULT
 bool HTTPServer::HandleOCPPMessage(SOCKET clientSocket, const std::string &path, const std::string &msg)
 {
-
+	http_debug->Ok("OCPP Message: %s\n",msg.c_str());
 	auto j = json::parse(msg);
 	if (!j.is_array() || j.size() < 3) return false;
 	int msgType = j[0].get<int>();
@@ -708,9 +740,26 @@ bool HTTPServer::HandleOCPPMessage(SOCKET clientSocket, const std::string &path,
 	if (action == "Heartbeat") {
 		return HandleOCPPHeartbeat(clientSocket, path, msgId, j);
 	}
+	if (action == "Authorize") {
+		return HandleOCPPAuthorize(clientSocket, path, msgId, j);
+	}
+	if (action == "MeterValues") {
+		return HandleOCPPMeterValues(clientSocket, path, msgId, j);
+	}
 	http_debug->Warn("Unhandled OCPP action: %s\n", action.c_str());
 	return false;
 }
+
+//Message from Heliox
+//[2,"4928f01b-6dcb-4549-b467-34f3061e9b26","BootNotification",{"chargePointVendor":"Heliox","chargePointModel":"FE20","chargeBoxSerialNumber":"620722003700_2241001115","chargePointSerialNumber":"243401022","firmwareVersion":"1.0.0","iccid":"","imsi":""}]
+//Simulator
+//[2,"b16dd18e-a33a-41dc-9f0f-e1a1c0b30279","BootNotification",{"chargeBoxSerialNumber":"123456","chargePointModel":"Model","chargePointSerialNumber":"123456","chargePointVendor":"Vendor","firmwareVersion":"1.0","iccid":"","imsi":"","meterSerialNumber":"123456","meterType":""}]
+//Authorise
+//[2,"f0922aea-da99-4c71-9084-98d43af98a64","Authorize",{"idTag":"6BABE9D2"}]
+//
+//[2,"2bf90fe7-298e-488c-818f-2c109e3ac002","DataTransfer",{"vendorId":"nu.ame","messageId":"customMeterValues","data":"{\"local_mode\":false,\"p_baseline\":7000,\"q_baseline\":0,\"p_max\":18326,\"p_min\":-19998,\"min_soc\":0,\"max_soc\":100,\"ev_min_soc\":10,\"ev_energy_capacity\":33,\"session_active\":true,\"output_power\":6678}"}]
+//[2,"d4187d9e-3fd3-4c49-84b5-bcb6b4053d44","MeterValues",{"connectorId":1,"transactionId":0,"meterValue":[{"timestamp":"2025-12-29T14:37:27.444Z","sampledValue":[{"value":"68","measurand":"SoC","unit":"Percent"},{"value":"6807.0","measurand":"Power.Active.Import","unit":"W"},{"value":"0","measurand":"Power.Active.Export","unit":"W"},{"value":"72.0","measurand":"Power.Reactive.Import","unit":"var"},{"value":"0","measurand":"Power.Reactive.Export","unit":"var"},{"value":"28.300001","measurand":"Temperature","unit":"Celsius"},{"value":"49.965004","measurand":"Frequency","unit":"W"}]}]}]
+
 
 bool HTTPServer::HandleOCPPBootNotification(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j)
 {
@@ -724,17 +773,52 @@ bool HTTPServer::HandleOCPPBootNotification(SOCKET clientSocket, const std::stri
 	if (!expectedId.empty() && expectedId[0] == '/') expectedId = expectedId.substr(1);
 
 	bool accept = false;
-	if (identity.empty() || identity == expectedId) accept = true;
+	if (identity.empty() || identity == expectedId){
+		accept = true;
+	}
+
+	accept = true;
+
+	// Build ISO8601 UTC timestamp
+	time_t now = time(nullptr);
+	struct tm gm;
+	gmtime_s(&gm, &now);
+	char buf[64];
+	strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &gm);
+	std::string ts(buf);
+
+	// Update OCPP client data
+	EnterCriticalSection(&m_wsLock);
+	auto it = m_ocppClientData.find(clientSocket);
+	if (it != m_ocppClientData.end()) {
+		OCPPClientData& clientData = it->second;
+		const json& payload = j[3];
+		if (payload.contains("chargePointVendor")) clientData.chargePointVendor = payload["chargePointVendor"].get<std::string>();
+		if (payload.contains("chargePointModel")) clientData.chargePointModel = payload["chargePointModel"].get<std::string>();
+		if (payload.contains("chargeBoxSerialNumber")) clientData.chargeBoxSerialNumber = payload["chargeBoxSerialNumber"].get<std::string>();
+		if (payload.contains("chargePointSerialNumber")) clientData.chargePointSerialNumber = payload["chargePointSerialNumber"].get<std::string>();
+		if (payload.contains("firmwareVersion")) clientData.firmwareVersion = payload["firmwareVersion"].get<std::string>();
+		if (payload.contains("iccid")) clientData.iccid = payload["iccid"].get<std::string>();
+		if (payload.contains("imsi")) clientData.imsi = payload["imsi"].get<std::string>();
+		if (payload.contains("meterSerialNumber")) clientData.meterSerialNumber = payload["meterSerialNumber"].get<std::string>();
+		if (payload.contains("meterType")) clientData.meterType = payload["meterType"].get<std::string>();
+		clientData.chargeBoxIdentity = identity;
+		clientData.bootAccepted = accept;
+		clientData.bootTimestamp = ts;
+	}
+	LeaveCriticalSection(&m_wsLock);
 
 	json resp = json::array();
 	resp.push_back(3);
 	resp.push_back(msgId);
 	json result;
 	result["status"] = accept ? "Accepted" : "Rejected";
-	result["interval"] = accept ? 300 : 0;
+	result["interval"] = accept ? 15 : 0;
+	result["currentTime"] = ts;
 	resp.push_back(result);
 
 	SendWebSocketMessage(clientSocket, resp.dump());
+	http_debug->Ok("Sending Back: %s\n",resp.dump().c_str());
 	SetVariable(std::string("ocpp_last_boot_") + path, accept ? "Accepted" : "Rejected");
 	http_debug->Info("BootNotification %s for %s (id=%s)\n", accept ? "Accepted" : "Rejected", path.c_str(), identity.c_str());
 	return true;
@@ -760,10 +844,29 @@ bool HTTPServer::HandleOCPPStatusNotification(SOCKET clientSocket, const std::st
 	if (p.contains("timestamp")) timestamp = p["timestamp"].get<std::string>();
 	if (p.contains("vendorId")) vendorId = p["vendorId"].get<std::string>();
 	if (p.contains("vendorErrorCode")) vendorErrorCode = p["vendorErrorCode"].get<std::string>();
+	int connectorId = -1;
 	if (p.contains("connectorId")) {
-		if (p["connectorId"].is_number()) connectorIdStr = std::to_string(p["connectorId"].get<int>());
-		else connectorIdStr = p["connectorId"].get<std::string>();
+		if (p["connectorId"].is_number()) {
+			connectorId = p["connectorId"].get<int>();
+			connectorIdStr = std::to_string(connectorId);
+		} else {
+			connectorIdStr = p["connectorId"].get<std::string>();
+		}
 	}
+
+	// Update OCPP client data
+	EnterCriticalSection(&m_wsLock);
+	auto it = m_ocppClientData.find(clientSocket);
+	if (it != m_ocppClientData.end()) {
+		OCPPClientData& clientData = it->second;
+		if (!status.empty()) clientData.connectorStatus = status;
+		if (!errorCode.empty()) clientData.errorCode = errorCode;
+		if (!timestamp.empty()) clientData.statusTimestamp = timestamp;
+		if (!vendorId.empty()) clientData.vendorId = vendorId;
+		if (!vendorErrorCode.empty()) clientData.vendorErrorCode = vendorErrorCode;
+		if (connectorId != -1) clientData.connectorId = connectorId;
+	}
+	LeaveCriticalSection(&m_wsLock);
 
 	// Set variables for visibility via /status
 	std::string base = std::string("ocpp_status_") + path;
@@ -798,6 +901,14 @@ bool HTTPServer::HandleOCPPHeartbeat(SOCKET clientSocket, const std::string &pat
 	strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &gm);
 	std::string ts(buf);
 
+	// Update OCPP client data
+	EnterCriticalSection(&m_wsLock);
+	auto it = m_ocppClientData.find(clientSocket);
+	if (it != m_ocppClientData.end()) {
+		it->second.lastHeartbeatTimestamp = ts;
+	}
+	LeaveCriticalSection(&m_wsLock);
+
 	// Expose via /status and log
 	SetVariable(std::string("ocpp_last_heartbeat_") + path, ts);
 	http_debug->Info("Heartbeat from %s at %s\n", path.c_str(), ts.c_str());
@@ -809,6 +920,153 @@ bool HTTPServer::HandleOCPPHeartbeat(SOCKET clientSocket, const std::string &pat
 	json result;
 	result["currentTime"] = ts;
 	resp.push_back(result);
+	SendWebSocketMessage(clientSocket, resp.dump());
+
+	return true;
+}
+
+bool HTTPServer::HandleOCPPAuthorize(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j)
+{
+	// Extract idTag from payload
+	std::string idTag;
+	if (j.size() >= 4 && j[3].is_object()){
+		if (j[3].contains("idTag")) {
+			idTag = j[3]["idTag"].get<std::string>();
+		}
+	}
+
+	// Build ISO8601 UTC timestamp
+	time_t now = time(nullptr);
+	struct tm gm;
+	gmtime_s(&gm, &now);
+	char buf[64];
+	strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &gm);
+	std::string ts(buf);
+
+	// Update OCPP client data
+	EnterCriticalSection(&m_wsLock);
+	auto it = m_ocppClientData.find(clientSocket);
+	if (it != m_ocppClientData.end()) {
+		it->second.lastAuthorizedIdTag = idTag;
+		it->second.lastAuthorizeTimestamp = ts;
+	}
+	LeaveCriticalSection(&m_wsLock);
+
+	// Expose via /status and log
+	SetVariable(std::string("ocpp_last_authorize_") + path, idTag);
+	http_debug->Info("Authorize request from %s for idTag: %s\n", path.c_str(), idTag.c_str());
+
+	// Accept all ID tags - send CALLRESULT [3, msgId, { idTagInfo: { status: "Accepted" } }]
+	json resp = json::array();
+	resp.push_back(3);
+	resp.push_back(msgId);
+	json result;
+	json idTagInfo;
+	idTagInfo["status"] = "Accepted";
+	result["idTagInfo"] = idTagInfo;
+	resp.push_back(result);
+
+	SendWebSocketMessage(clientSocket, resp.dump());
+	http_debug->Ok("Authorize Accepted for idTag: %s\n", idTag.c_str());
+
+	return true;
+}
+
+bool HTTPServer::HandleOCPPMeterValues(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j)
+{
+	// Expect payload in j[3]
+	if (j.size() < 4 || !j[3].is_object()) {
+		http_debug->Warn("MeterValues missing payload from %s\n", path.c_str());
+		return false;
+	}
+
+	const json &payload = j[3];
+
+	// Extract meterValue array
+	if (!payload.contains("meterValue") || !payload["meterValue"].is_array()) {
+		http_debug->Warn("MeterValues missing meterValue array from %s\n", path.c_str());
+		return false;
+	}
+
+	double powerActiveImport = 0.0;
+	double soc = 0.0;
+	bool foundPower = false;
+	bool foundSoC = false;
+	std::string timestamp;
+
+	// Iterate through meterValue array (usually contains one entry with timestamp and sampledValues)
+	const json &meterValueArray = payload["meterValue"];
+	for (const auto &meterValue : meterValueArray) {
+		if (!meterValue.is_object()) continue;
+
+		// Extract timestamp if available
+		if (meterValue.contains("timestamp") && timestamp.empty()) {
+			timestamp = meterValue["timestamp"].get<std::string>();
+		}
+
+		// Extract sampledValue array
+		if (!meterValue.contains("sampledValue") || !meterValue["sampledValue"].is_array()) continue;
+
+		const json &sampledValueArray = meterValue["sampledValue"];
+		for (const auto &sample : sampledValueArray) {
+			if (!sample.is_object()) continue;
+
+			std::string measurand;
+			if (sample.contains("measurand")) {
+				measurand = sample["measurand"].get<std::string>();
+			}
+
+			// Look for Power.Active.Import
+			if (measurand == "Power.Active.Import" && sample.contains("value")) {
+				if (sample["value"].is_number()) {
+					powerActiveImport = sample["value"].get<double>();
+				} else if (sample["value"].is_string()) {
+					powerActiveImport = std::stod(sample["value"].get<std::string>());
+				}
+				foundPower = true;
+			}
+
+			// Look for SoC
+			if (measurand == "SoC" && sample.contains("value")) {
+				if (sample["value"].is_number()) {
+					soc = sample["value"].get<double>();
+				} else if (sample["value"].is_string()) {
+					soc = std::stod(sample["value"].get<std::string>());
+				}
+				foundSoC = true;
+			}
+		}
+	}
+
+	// Update OCPP client data
+	EnterCriticalSection(&m_wsLock);
+	auto it = m_ocppClientData.find(clientSocket);
+	if (it != m_ocppClientData.end()) {
+		if (foundPower) it->second.powerActiveImport = powerActiveImport;
+		if (foundSoC) it->second.soc = soc;
+		if (!timestamp.empty()) it->second.meterValuesTimestamp = timestamp;
+	}
+	LeaveCriticalSection(&m_wsLock);
+
+	// Log the values
+	if (foundPower || foundSoC) {
+		http_debug->Info("MeterValues from %s: Power=%.1fW, SoC=%.1f%%\n",
+			path.c_str(), powerActiveImport, soc);
+	}
+
+	// Set variables for visibility via /status
+	if (foundPower) {
+		SetVariable(std::string("ocpp_power_") + path, std::to_string(powerActiveImport));
+	}
+	if (foundSoC) {
+		SetVariable(std::string("ocpp_soc_") + path, std::to_string(soc));
+	}
+
+	// Reply with CALLRESULT (empty object) per OCPP convention
+	json resp = json::array();
+	resp.push_back(3);
+	resp.push_back(msgId);
+	resp.push_back(json::object());
 	SendWebSocketMessage(clientSocket, resp.dump());
 
 	return true;

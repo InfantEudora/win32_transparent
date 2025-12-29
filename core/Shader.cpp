@@ -180,7 +180,7 @@ void Shader::Setint(const char* name, int value){
 	GLuint intid = glGetUniformLocation(progid, name);
 	if (intid == -1){
 		//Warn once.
-		debug->Fatal("Could not set %i's int %s\n",progid,name);
+		debug->Err("Could not set %i's int %s\n",progid,name);
 		return;
 	}
 	glUniform1i(intid,(GLint)value);

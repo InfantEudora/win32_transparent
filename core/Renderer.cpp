@@ -4,7 +4,7 @@
 
 #define DEFAULT_FRAMEBUFFER_ID  0
 
-static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
+static Debugger* debug = new Debugger("Renderer",DEBUG_ERROR);
 
 Renderer::Renderer(int w, int h){
     width = w;
@@ -572,7 +572,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     //We use a deferred pass for object ID, amongst many other things.
     //TODO: These passes need to be fixed... do we even want them?
-    DeferredPass(camera);
+    //DeferredPass(camera);
 
     //Now we can read the normal and object ID:
     if ((pipeline == PIPELINE_DEFERRED && input)){

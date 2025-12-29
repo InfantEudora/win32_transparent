@@ -2,18 +2,23 @@
 #define _APPLICATION_UI_H_
 
 #include "Application.h"
+#include "HTTPServer.h"
 
 /*
     An attempt at an application that overrides the default, and shows a UI only.
 */
-class ApplicationUI : public Application{
+class ApplicationOCPP : public Application{
 public:
-    ApplicationUI();
+    ApplicationOCPP();
 
     void Init(void) override;
     void RunLogic() override;
 
     void DrawImGuiUI(void) override;
+
+    void RenderOCPPClientsUI();
+
+    HTTPServer* http_server = nullptr;
 };
 
 #endif
