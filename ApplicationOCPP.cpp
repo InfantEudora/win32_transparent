@@ -84,7 +84,7 @@ void ApplicationOCPP::RenderOCPPServerUI(){
     ImGui::End();
 }
 
-void ApplicationOCPP::RenderOCPPClientsUI(){
+void ApplicationOCPP::RenderTCPClientsUI(){
     ImGui::Begin("TCP Client");
     if (!tcp_client){
 
@@ -95,7 +95,6 @@ void ApplicationOCPP::RenderOCPPClientsUI(){
         ImGui::End();
         return;
     }
-
 
     static char server_address[128] = "127.0.0.1:9090";
     ImGui::InputText("Server Address", server_address, 128);
@@ -118,7 +117,6 @@ void ApplicationOCPP::RenderOCPPClientsUI(){
                 } else {
                     debug->Err("Failed to connect to server\n");
                 }
-
             } else {
                 debug->Err("Invalid server address format. Use host:port\n");
             }
@@ -131,6 +129,73 @@ void ApplicationOCPP::RenderOCPPClientsUI(){
             tcp_client->Send("Garbage\n");
         }
     }
+    ImGui::End();
+}
 
+void ApplicationOCPP::RenderOCPPClientsUI(){
+    ImGui::Begin("OCPP Client");
+    if (!ocpp_client){
+
+        ImGui::Text("No OCPP Client");
+        if (ImGui::Button("Create")){
+            ocpp_client = new OCPPClient();
+        }
+        ImGui::End();
+        return;
+    }
+
+    static char server_address[128] = "ws://127.0.0.1:9090";
+    static char ocpp_id[128] = "CP_1";
+    ImGui::InputText("Server Address", server_address, 128);
+    ImGui::InputText("OCPP ID", ocpp_id, 128);
+
+    if (!ocpp_client->IsConnected()){
+        if (ImGui::Button("Connect")){
+            // Parse server address into host and port
+            std::string addr_str(server_address);
+
+            // Strip protocol prefix (ws://, wss://, http://, https://)
+            size_t protocol_end = addr_str.find("://");
+            if (protocol_end != std::string::npos){
+                addr_str = addr_str.substr(protocol_end + 3);
+            }
+
+            size_t colon_pos = addr_str.find(':');
+
+            if (colon_pos != std::string::npos){
+                std::string host = addr_str.substr(0, colon_pos);
+                std::string port_str = addr_str.substr(colon_pos + 1);
+
+                int port = std::stoi(port_str);
+                debug->Info("Connecting to %s:%d\n", host.c_str(), port);
+
+                if (ocpp_client->ConnectOCPP(host, port, std::string(ocpp_id))){
+                    debug->Info("Successfully connected to OCPP server\n");
+                } else {
+                    debug->Err("Failed to connect to OCPP server\n");
+                }
+            } else {
+                debug->Err("Invalid server address format. Use host:port\n");
+            }
+        }
+    }
+
+    if (ocpp_client->IsConnected()){
+        ImGui::Text("Connected");
+        if (ImGui::Button("Send Boot Notification")){
+            ocpp_client->SendBootNotification("MyVendor", "ChargePoint-v1");
+        }
+        if (ImGui::Button("Send Status Notification")){
+            ocpp_client->SendStatusNotification(0, "Available");
+        }
+        if (ImGui::Button("Send Heartbeat")){
+            ocpp_client->SendHeartbeat();
+        }
+        if (ImGui::Button("Send Metervalues")){
+            ocpp_client->SendMeterValues(1, 7400.0, 85.5);
+        }
+
+
+    }
     ImGui::End();
 }

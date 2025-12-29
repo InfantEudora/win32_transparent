@@ -442,13 +442,13 @@ void Application::RenderDebugMenuBar(){
                 Camera* camera = new Camera();
                 camera->name = "New Camera";
                 main_scene->AddObject(camera);
-
-                if (assetmanager->GetObjectFromAsset("editor_camera",camera)){
+                if (assetmanager && assetmanager->GetObjectFromAsset("editor_camera",camera)){
                     camera->SetPosition(vec3(1,2,1));
                     camera->material_slot[0] = 3;
-                    camera->SetLookAt(vec3());
-                    camera->SetupPerspective(main_scene->renderer->width,main_scene->renderer->height,45,0.1,100);
+
                 }
+                camera->SetLookAt(vec3());
+                camera->SetupPerspective(main_scene->renderer->width,main_scene->renderer->height,45,0.1,100);
             }
             if (ImGui::MenuItem("DirectionalLight")){
                 DirectionalLight* l = new DirectionalLight();
@@ -461,12 +461,15 @@ void Application::RenderDebugMenuBar(){
                 main_scene->AddObject(l);
             }
             if (ImGui::BeginMenu("From Assets")){
-                for (Asset* asset:assetmanager->assets){
-
-                    if (ImGui::MenuItem(asset->name.c_str())){
-                        Object* object = assetmanager->GetObjectFromAsset(asset->name.c_str());
-                        object->name = asset->name;
-                        main_scene->AddObject(object);
+                if (!assetmanager){
+                    ImGui::MenuItem("-- NO ASSET MANAGER --");
+                }else{
+                    for (Asset* asset:assetmanager->assets){
+                        if (ImGui::MenuItem(asset->name.c_str())){
+                            Object* object = assetmanager->GetObjectFromAsset(asset->name.c_str());
+                            object->name = asset->name;
+                            main_scene->AddObject(object);
+                        }
                     }
                 }
                 ImGui::EndMenu();

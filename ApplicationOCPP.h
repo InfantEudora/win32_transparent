@@ -3,7 +3,7 @@
 
 #include "Application.h"
 #include "HTTPServer.h"
-#include "TCPClient.h"
+#include "OCPPClient.h"
 /*
     An attempt at an application that overrides the default, and shows a UI only.
 */
@@ -18,10 +18,12 @@ public:
 
     void RenderOCPPServerUI();
     void RenderOCPPClientsUI();
+    void RenderTCPClientsUI();
 
     HTTPServer* http_server = NULL;
 
     TCPClient* tcp_client = NULL;
+    OCPPClient* ocpp_client = NULL;
 };
 
 #endif
