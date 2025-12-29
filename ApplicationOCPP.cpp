@@ -43,14 +43,18 @@ void ApplicationOCPP::RunLogic(){
 }
 
 void ApplicationOCPP::DrawImGuiUI(){
+    RenderOCPPServerUI();
     RenderOCPPClientsUI();
     RenderDebugMenuBar();
 }
 
-void ApplicationOCPP::RenderOCPPClientsUI(){
-    if (!http_server) return;
-
-    ImGui::Begin("OCPP Clients");
+void ApplicationOCPP::RenderOCPPServerUI(){
+    ImGui::Begin("OCPP Server");
+    if (!http_server){
+        ImGui::Text("No HTTP server running.");
+        ImGui::End();
+        return;
+    }
 
     ImGui::Text("Connected OCPP Clients: %d", (int)http_server->m_ocppClients.size());
     int client_idx = 0;
@@ -74,15 +78,58 @@ void ApplicationOCPP::RenderOCPPClientsUI(){
             ImGui::Text("SOC   : %.1f%% ",soc);
             ImGui::Text("Power : %.1f Watt",power);
             ImGui::Text("Time  : %s",timestamp.c_str());
-
-            if (ImGui::Button("Get Metervalues")){
-
-            }
-
-
         }
-
         ImGui::PopID();
+    }
+    ImGui::End();
+}
+
+void ApplicationOCPP::RenderOCPPClientsUI(){
+    ImGui::Begin("TCP Client");
+    if (!tcp_client){
+
+        ImGui::Text("No TCP Client");
+        if (ImGui::Button("Create")){
+            tcp_client = new TCPClient();
+        }
+        ImGui::End();
+        return;
+    }
+
+
+    static char server_address[128] = "127.0.0.1:9090";
+    ImGui::InputText("Server Address", server_address, 128);
+
+    if (!tcp_client->IsConnected()){
+        if (ImGui::Button("Connect")){
+            // Parse server address into host and port
+            std::string addr_str(server_address);
+            size_t colon_pos = addr_str.find(':');
+
+            if (colon_pos != std::string::npos){
+                std::string host = addr_str.substr(0, colon_pos);
+                std::string port_str = addr_str.substr(colon_pos + 1);
+
+                int port = std::stoi(port_str);
+                debug->Info("Connecting to %s:%d\n", host.c_str(), port);
+
+                if (tcp_client->Connect(host, port)){
+                    debug->Info("Successfully connected to server\n");
+                } else {
+                    debug->Err("Failed to connect to server\n");
+                }
+
+            } else {
+                debug->Err("Invalid server address format. Use host:port\n");
+            }
+        }
+    }
+
+    if (tcp_client->IsConnected()){
+        ImGui::Text("Connected");
+        if (ImGui::Button("Send some garbage")){
+            tcp_client->Send("Garbage\n");
+        }
     }
 
     ImGui::End();

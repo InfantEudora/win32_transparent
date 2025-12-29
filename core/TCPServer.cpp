@@ -271,9 +271,11 @@ void TCPServer::ReceiveClientData()
 {
 	while (m_running)
 	{
+
 		EnterCriticalSection(&m_clientsLock);
 		std::vector<SOCKET> clients = m_connectedClients;
 		LeaveCriticalSection(&m_clientsLock);
+		//debug->Info("Receiving Client data for %i clients\n",clients.size());
 
 		for (size_t i = 0; i < clients.size(); ++i)
 		{

@@ -3,7 +3,7 @@
 
 #include "Application.h"
 #include "HTTPServer.h"
-
+#include "TCPClient.h"
 /*
     An attempt at an application that overrides the default, and shows a UI only.
 */
@@ -16,9 +16,12 @@ public:
 
     void DrawImGuiUI(void) override;
 
+    void RenderOCPPServerUI();
     void RenderOCPPClientsUI();
 
-    HTTPServer* http_server = nullptr;
+    HTTPServer* http_server = NULL;
+
+    TCPClient* tcp_client = NULL;
 };
 
 #endif

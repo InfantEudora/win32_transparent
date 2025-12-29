@@ -108,7 +108,10 @@ private:
 	void BroadcastVariables();
 
 	// Handle HTTP requests from clients
-	void HandleHTTPRequest(SOCKET clientSocket);
+	void HandleHTTPConnection(SOCKET clientSocket);
+
+	// Per client reader that waits for HTTP trafic.
+	void HandleHTTPClient(SOCKET clientSocket);
 
 	// Per-WebSocket client reader that decodes client frames and handles simple opcodes
 	void HandleWebSocketClient(SOCKET clientSocket, const std::string &path, const std::string &protocol);

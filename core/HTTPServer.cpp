@@ -74,8 +74,9 @@ bool HTTPServer::Start()
 {
 	// Set callback to handle incoming connections
 	SetOnClientConnect([this](SOCKET clientSocket) {
-		HandleHTTPRequest(clientSocket);
+		HandleHTTPConnection(clientSocket);
 	});
+
 
 	// Call parent Start()
 	return TCPServer::Start();
@@ -90,19 +91,21 @@ OCPPClientData* HTTPServer::GetOCPPClientData(SOCKET clientSocket)
 	return result;
 }
 
-void HTTPServer::HandleHTTPRequest(SOCKET clientSocket)
-{
+void HTTPServer::HandleHTTPConnection(SOCKET clientSocket){
+	http_debug->Info("Spawning thread for client %i.\n ",clientSocket);
+	//We spawn a thread to wait for data from the client.
+	u_long blockingMode = 0;
+	ioctlsocket(clientSocket, FIONBIO, &blockingMode);
+	std::thread th(&HTTPServer::HandleHTTPClient, this, clientSocket);
+	th.detach();
+}
+
+void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 	char buffer[4096];
-	Sleep(100);
 	int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
 
 	if (bytesReceived <= 0){
-		// nothing received or error
 		http_debug->Info("Nothing reveived.\n ");
-		//We also send nothing?
-		//send(clientSocket, "\0", 1, 0);
-		//closesocket(clientSocket);
-		//DisconnectClient(clientSocket);
 		return;
 	}
 
