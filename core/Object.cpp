@@ -523,6 +523,22 @@ Object* Object::GetLastChild(){
     return children.back();
 }
 
+Object* Object::FindChild(std::string child_name){
+    std::list<Object*>::iterator it = children.begin();
+
+    for ( ; it != children.end(); ) {
+        Object* child = *it;
+        if (child->name.compare(child_name) == 0){
+            return child;
+        }
+        if (Object* s = child->FindChild(child_name)){
+            return s;
+        }
+        ++it;
+    }
+    return NULL;
+}
+
 //Returns the specified child if there is one.
 Object* Object::GetChild(int index){
     std::list<Object*>::iterator it = children.begin();
@@ -636,6 +652,7 @@ Animation* Object::FindAnimation(const std::string& name){
     return NULL;
 }
 
+//From whereever the current animation is, we transistion into the next animation.
 void Object::ProceedToNextAnimation(){
     if (next_animation == current_animation){
         return;
@@ -646,10 +663,10 @@ void Object::ProceedToNextAnimation(){
     }
 }
 
+//TODO: This is finetuned in PlayerCharacter
 void Object::ApplyAnimation(float time_delta){
     if (!current_animation){
         current_animation = next_animation;
-
     }
     if (!current_animation){
         return;

@@ -12,12 +12,19 @@ PlayerCharacter::~PlayerCharacter(){
 }
 
 void PlayerCharacter::ApplyAnimation(float time_delta){
+
+    /*idle_time += time_delta;
+    if (idle_time > idle_time_max){
+        //Wait for the current animation to reset.
+        SetNextAnimation("Idle");
+    }*/
+
     if (!current_animation){
         current_animation = next_animation;
         next_animation = NULL;
     }
     if (!current_animation){
-        debug->Warn("AnimationSampler: No current animation to play.\n");
+        debug->Trace("AnimationSampler: No current animation to play.\n");
         return;
     }
 
@@ -30,11 +37,18 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         //Loop the same animation
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
+            //Animation has ended
             current_animation->time_index -= current_animation->duration;
             //We need to correct the body postion and orientation from what is currently displayed,
             //to what will be displayed.
-            update_hippos = true;
+            if (!f_movement_animation_inplace){
+                update_hippos = true;
+            }
             hippos_start = hip_bone->GetPosition();
+            if (!current_animation->looped){
+                SetNextAnimation("Idle");
+                ProceedToNextAnimation();
+            }
         }
         current_animation->ApplyInterval(current_animation->time_index);
 
@@ -46,6 +60,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             //d.y = 0;
             MoveForwardBy(-d.z);
             update_hippos = false;
+        }else if (f_movement_animation_inplace){
+            //Each frame we update depending on foot placement.
+
+
         }
     }else if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
@@ -74,7 +92,11 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             next_animation->time_index -= next_animation->duration;
         }
 
-        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_time / animation_transition_time_max, vec3());
+        float lerp_factor =  animation_transition_time / animation_transition_time_max;
+        if (animation_transition_time_max == 0){
+            lerp_factor = 0;
+        }
+        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,lerp_factor, vec3());
 
         if (update_hippos){
             vec3 hippos_end = hip_bone->GetPosition();
@@ -87,13 +109,21 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
 
         animation_transition_time += time_delta;
-        if (animation_transition_time > animation_transition_time_max){
-            animation_transition_time = animation_transition_time;
+        if (animation_transition_time >= animation_transition_time_max){
+            animation_transition_time = animation_transition_time_max;
             current_animation = next_animation;
             animation_state = ANIMATION_STATE_LOOPING;
             update_hippos = true;
             hippos_start = hip_bone->GetPosition();
         }
+    }
+
+    //Update the foot trackers
+    if (foot_tracker_l && tracked_foot_l){
+        foot_tracker_l->SetPosition(tracked_foot_l->GetWorldPosition());
+    }
+    if (foot_tracker_r && tracked_foot_r){
+        foot_tracker_r->SetPosition(tracked_foot_r->GetWorldPosition());
     }
 }
 
@@ -255,13 +285,18 @@ void PlayerCharacter::TransitionAnimation(){
 
 //Going to play a move forward animation based on whatever animation its in.
 void PlayerCharacter::MoveForward(){
-    //Load the move forward animation
-    //SetNextAnimation("CatwalkForward");
-    //ProceedToNextAnimation();
+    //Go to catwalk animation and enable foot tracking
+    SetNextAnimation("CatWalking");
+    ProceedToNextAnimation();
+    f_movement_animation_inplace = true;
+
+    return;
+
     idle_time = 0;
-    //MoveForwardBy(0.025f);
     if (physics){
         physics->AddLocalForce(vec3(0,0,-1));
+    }else{
+        MoveForwardBy(-0.025f);
     }
 }
 
@@ -273,7 +308,7 @@ void PlayerCharacter::MoveBackward(){
         ProceedToNextAnimation();
     }
     idle_time = 0;
-    MoveForwardBy(-0.01f);
+    MoveForwardBy(0.025f);
 }
 
 //Going to play a move forward animation based on whatever animation its in.
@@ -302,4 +337,11 @@ void PlayerCharacter::TurnLeft(){
         quat q = quat(vec3(0,1,0),delta);
         RotateBy(q);
     }
+}
+
+void PlayerCharacter::Jump(){
+    idle_time = 0;
+    SetNextAnimation("JoyfullJump");
+    ProceedToNextAnimation();
+    next_animation->looped = false;
 }

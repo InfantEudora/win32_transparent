@@ -507,7 +507,11 @@ void Application::RenderDebugMenuBar(){
                 }
                 ImGui::EndMenu();
             }
-            ImGui::Separator();
+
+
+            ImGui::EndMenu();
+        }
+        if (main_scene && ImGui::BeginMenu("Load Animation")){
             if (ImGui::BeginMenu("Skeleton Animations From Loaded GLTF")){
                 std::vector<std::string>animation_names = gltfloader.GetAnimationNames();
                 if (animation_names.size() == 0){
@@ -515,15 +519,28 @@ void Application::RenderDebugMenuBar(){
                 }else{
                     for (std::string name:animation_names){
                         if (ImGui::MenuItem(name.c_str())){
-
+                            Animation* animation = gltfloader.LoadAnimation(name.c_str());
+                            if (selected_object){
+                                selected_object->AddAnimation(animation);
+                            }
                         }
                     }
                 }
                 ImGui::EndMenu();
             }
-
             ImGui::EndMenu();
         }
+
+        if (ImGui::BeginMenu("Window")){
+            if (ImGui::MenuItem("Set Always on Top")){
+                SetWindowPos(main_window->hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            }
+            if (ImGui::MenuItem("Set Normal")){
+                SetWindowPos(main_window->hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            }
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Debug")){
             std::map<std::string, Debugger*>* handles = debug->GetHandles();
             std::map<std::string,Debugger*>::iterator it = handles->begin();
@@ -1082,6 +1099,8 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             ImGui::DragFloat("Target 2",&object->morph_factors[1],0.01,0,1);
             ImGui::DragFloat("Target 3",&object->morph_factors[2],0.01,0,1);
             ImGui::DragFloat("Target 4",&object->morph_factors[3],0.01,0,1);
+
+            ImGui::DragFloat("Animation Transistion Time Max",&object->animation_transition_time_max,0.01,0,1);
 
             if (object->animations.size() == 0){
                 ImGui::Text("Object has no animations");

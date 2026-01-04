@@ -89,8 +89,10 @@ class Renderer{
     bool RebuildDeferredFBO();
 
     bool RebuildShadowFBO(int shadow_width, int shadow_height);
-    void RenderSingleDepthPass(Camera* camera, Shader* shader);
-    void RenderDepthPasses(Shader* shader);
+    void ClearDepthPasses();
+    void RenderSingleDepthPass(Camera* camera, Shader* shader, int mesh_mode);
+    void RenderDepthPasses(Shader* shader, int mesh_mode);
+    void FinishDepthPasses();
 
     bool InitSSBO();
     void ResolveAA();

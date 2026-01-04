@@ -16,7 +16,7 @@ FNOCONSOLE = -Wl,-subsystem,windows
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
 COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
 
-CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
+CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -lthirdparty -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 #CFLAGS += -std=c++11
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 #CFLAGS += $(FNOCONSOLE)
@@ -33,17 +33,12 @@ DIR_SRC += ./core/physics
 IPATHS += -Icore/
 IPATHS += -Icore/physics
 
-SRCS += ./3rdparty/stb_image/stb_image.cpp
-SRCS += ./3rdparty/tinygltf/tiny_gltf.cpp
-DIR_SRC += ./3rdparty/miniz
-
 IPATHS += -I3rdparty/imgui/
 IPATHS += -I3rdparty/
 IPATHS += -I3rdparty/stb_image/
 IPATHS += -I3rdparty/openal-soft/
 IPATHS += -I3rdparty/miniz/
 IPATHS += -I3rdparty/reactphysics3d/
-
 
 SRCS += main.cpp
 
@@ -56,6 +51,13 @@ SRC_LIBIMGUI += 3rdparty/imgui/imgui_demo.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_win32.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_opengl3.cpp
 OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
+
+#Third Party
+SRC_LIBTHIRDPARTY += ./3rdparty/stb_image/stb_image.cpp
+SRC_LIBTHIRDPARTY += ./3rdparty/tinygltf/tiny_gltf.cpp
+SRC_LIBTHIRDPARTY += ./3rdparty/miniz/miniz_tdef.cpp
+SRC_LIBTHIRDPARTY += ./3rdparty/miniz/miniz_tinfl.cpp
+OBJ_LIBTHIRDPARTY += $(patsubst %.cpp, %.o, $(SRC_LIBTHIRDPARTY))
 
 ifeq ($(COMPILE_BINARYASSETS), 1)
 	SRCS += BinaryAssetMemory.cpp
@@ -132,11 +134,20 @@ $(OBJS): %.o: %.cpp
 $(OBJ_LIBIMGUI): %.o: %.cpp
 	$(CC) -c $(CFLAGS) $(IPATHS) $< -o $@
 
-imgui: $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
+$(OBJ_LIBTHIRDPARTY): %.o: %.cpp
+	$(CC) -c $(CFLAGS) $(IPATHS) $< -o $@
+
+thirdparty: $(OBJ_LIBTHIRDPARTY)
+	mkdir -p libs
+	@echo "Linking Thrird Party stuff into static Library thridparty.a"
+	-rm -rf libs/libthirdparty.a
+	ar q libs/libthirdparty.a $(OBJ_LIBTHIRDPARTY)
+
+imgui: $(OBJ_LIBIMGUI)
 	mkdir -p libs
 	@echo "Linking IMGui into static Library imgui.a"
 	-rm -rf libs/libimgui.a
-	ar q libs/libimgui.a $(OBJ_LIBIMGUI) $(OBJ_LOCALLIB_C)
+	ar q libs/libimgui.a $(OBJ_LIBIMGUI)
 
 all: default
 

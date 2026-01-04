@@ -458,7 +458,7 @@ void Renderer::SSAOPass(Camera* camera){
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
-void Renderer::RenderSingleDepthPass(Camera* camera,Shader* shader){
+void Renderer::RenderSingleDepthPass(Camera* camera,Shader* shader, int mesh_mode){
     if (!camera){
         debug->Err("Rendering Depth Pass with no camera\n");
         return;
@@ -470,17 +470,16 @@ void Renderer::RenderSingleDepthPass(Camera* camera,Shader* shader){
 
     // Setup view port.
     glViewport(0, 0, camera->viewport.width, camera->viewport.height);
-    //It seems happy renering with no color buffer attached
+    //It seems happy rendering with no color buffer attached
 
     camera->CalculateLookatMatrix();
     shader->Setmat4("mat_worldcam",camera->mat_cam);
     shader->Setmat4("mat_shadow",camera->mat_cam);
 
-    RenderUniqueMeshes(MESH_MODE_NORMAL);
-    //TODO: Skinned meshes
+    RenderUniqueMeshes(mesh_mode);
 }
 
-void Renderer::RenderDepthPasses(Shader* shader){
+void Renderer::ClearDepthPasses(){
     //We need to know for which light source we need to do the depth pass
     //Each shadow caster is a new pass
     //For now we're use the one sun.
@@ -490,23 +489,25 @@ void Renderer::RenderDepthPasses(Shader* shader){
     glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo_id);
 
     //We are only interested in back faces, so we cull front faces
-    glFrontFace(GL_CW);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
+    //glFrontFace(GL_CW);
+    //glEnable(GL_CULL_FACE);
+    //glCullFace(GL_FRONT);
+}
 
-
-
+void Renderer::RenderDepthPasses(Shader* shader, int mesh_mode){
     for (Light* l:visible_lights){
         light_t light;
         DirectionalLight* directional_light = dynamic_cast<DirectionalLight*>(l);
         if (directional_light){
-            RenderSingleDepthPass(dynamic_cast<Camera*>(directional_light),shader);
+            RenderSingleDepthPass(dynamic_cast<Camera*>(directional_light),shader,mesh_mode);
             return;
         }
     }
+}
 
+void Renderer::FinishDepthPasses(){
     //Reset
-    glCullFace(GL_BACK);
+    //glCullFace(GL_BACK);
 }
 
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
@@ -525,16 +526,28 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     PrepareObjects();
 
-    //Use the default shader
+    ClearDepthPasses();
+    if (skinned_shader){
+        skinned_shader->Use();
+        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
+        skinned_shader->Setvec3("eye_position",p);
+        skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+        skinned_shader->Setfloat("alpha_clip",alpha_clip);
+        skinned_shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
+        RenderDepthPasses(shader,MESH_MODE_SKINNED);
+    }
+
+    //Depth pass with default shader.
     shader->Use();
     vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
     shader->Setvec3("eye_position",p);
     shader->Setint("f_normal_mapping",(int)f_normal_mapping);
     shader->Setfloat("alpha_clip",alpha_clip);
     shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
+    RenderDepthPasses(shader,MESH_MODE_NORMAL);
 
+    FinishDepthPasses();
 
-    RenderDepthPasses(shader);
     glBindTextureUnit(0, shadow_tex_id);
     shader->Setmat4("mat_worldcam",camera->mat_cam);
 
@@ -564,6 +577,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
         skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
+        skinned_shader->Setint("f_materialindex_is_color",0);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
 

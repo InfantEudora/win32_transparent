@@ -137,9 +137,10 @@ class Object{
     //Animation
     float morph_factors[NUM_MORPH_FACTOR_SLOTS] = {};
     std::vector<Animation*>animations;
-    Animation* previous_animation = NULL;
+    Animation* previous_animation = NULL; //Not used...
     Animation* current_animation = NULL;
     Animation* next_animation = NULL;
+    Animation* idle_animation = NULL;
     int animation_state = ANIMATION_STATE_LOOPING;
     bool f_animation_override = false;
     float animation_time_delta = 0.02f;
@@ -185,6 +186,7 @@ class Object{
     void    GetAllSubObjects(std::vector<Object*>& objects); //Add's all objects attached to this object into a vector.
     Object* GetLastChild();
     Object* GetChild(int index);
+    Object* FindChild(std::string child_name);
 protected:
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable
     bool f_is_destroyed = false;    // Someone should clean it up.

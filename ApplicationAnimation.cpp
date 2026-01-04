@@ -1,7 +1,9 @@
 #include "ApplicationAnimation.h"
 #include "Debug.h"
 
-static Debugger *debug = new Debugger("ApplicationUI", DEBUG_ALL);
+static Debugger *debug = new Debugger("ApplicationAnimation", DEBUG_ALL);
+
+#define INPUT_JUMP    INPUT_LAST+1
 
 ApplicationAnimation::ApplicationAnimation():Application(){
     debug->Info("Created new ApplicationAnimation.\n");
@@ -10,14 +12,16 @@ ApplicationAnimation::ApplicationAnimation():Application(){
 Scene* ApplicationAnimation::CreateEmptyScene(){
     Scene* scene = CreateNewScene("Empty Test Scene");
     //Make a sun
-    DirectionalLight* sun = new DirectionalLight();
+    sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
     sun->SetPosition(vec3(-10,10,10));
     sun->color = vec3(1,0.8,0.6);
-    sun->brightness = 6.0;
-    sun->viewport.zoom = 10;
+    sun->brightness = 7.0;
+    sun->viewport.zoom = 3;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
+
+    scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_JUMP);
 
     return scene;
 }
@@ -39,9 +43,44 @@ void ApplicationAnimation::Init(void){
     main_scene->UpdatePhysics();
 
     assetmanager = new AssetManager();
-    gltfloader.LoadGLTFFile("C:/IDE-E/Mijn Documenten/Projects/code/test/blender_anim/gwen_animation/gwen_anim.glb");
+    gltfloader.LoadGLTFFile("data/gwen_anim.glb");
     GetAllAssetsFromGLTF();
 
+    //Load Gwen model with animation data
+    character = new PlayerCharacter();
+    Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
+    gltfloader.GetSkeleton("gwen",assetmanager,skeleton);
+    if (skeleton){
+        std::vector<Material>loaded_materials;
+        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("gwen_body",&loaded_materials);
+        skeleton->SetMesh(skinned_mesh);
+        skeleton->TakeMaterialNames(loaded_materials);
+        skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
+        main_scene->AddObject(character);
+        character->root_bone_name = character->GetChild(0) ? character->GetChild(0)->name : "No Root Bone";
+
+        //Add all animations from GLTF
+        std::vector<std::string>animation_names = gltfloader.GetAnimationNames();
+        for (std::string animation_name:animation_names){
+            Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
+            character->AddAnimation(animation);
+        }
+
+        //We'll give it to foot trackers.
+        character->foot_tracker_l = assetmanager->GetObjectFromAsset("icosphere");
+        character->foot_tracker_r = assetmanager->GetObjectFromAsset("icosphere");
+        main_scene->AddObject(character->foot_tracker_l);
+        main_scene->AddObject(character->foot_tracker_r);
+
+        character->foot_tracker_l->material_slot[0] = renderer->FindMaterialIndex("left_tracker");
+        character->foot_tracker_l->material_names[0] = "left_tracker";
+        character->foot_tracker_r->material_slot[0] = renderer->FindMaterialIndex("right_tracker");
+        character->foot_tracker_r->material_names[0] = "right_tracker";
+        character->tracked_foot_l = character->FindChild("mixamorig:LeftToeBase");
+        character->tracked_foot_r = character->FindChild("mixamorig:RightToeBase");
+    }
+
+    //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
         debug->Info("File callback received with file %s\n",filename.c_str());
         //Create a modal window in the UI:
@@ -50,14 +89,10 @@ void ApplicationAnimation::Init(void){
     });
 
     main_window->Resize(1440,900);
-    //f_filemodal = true;
-    //filemodal_filename = "C:/IDE-E/Mijn Documenten/Projects/code/test/blender_anim/gwen_animation/gwen_anim.glb";
 }
 
 //Called before update physics
 void ApplicationAnimation::RunLogic(){
-
-
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
@@ -122,6 +157,35 @@ void ApplicationAnimation::RunLogic(){
         mouse_delta_sum /= 1.1;
     }
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
+
+    //Character input
+    if (character){
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            character->MoveForward();
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            character->MoveBackward();
+        }
+        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+            character->TurnRight();
+        }
+        if (input->IsKeyDown(INPUT_TURN_LEFT)){
+            character->TurnLeft();
+        }
+        if (input->WasKeyReleased(INPUT_JUMP)){
+            character->Jump();
+        }
+    }
+
+    //Get the sun position to the character.
+    if (sun){
+        vec3 delta = sun->GetPosition() - character->GetPosition();
+        //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
+        //Make sure it's always above our character
+        sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
+        sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
+    }
+
 }
 
 void ApplicationAnimation::DrawImGuiUI(){
@@ -145,8 +209,12 @@ void ApplicationAnimation::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
 
-    ImGui::Begin("Hi there!");
-    ImGui::Text("This application will be all about animation.");
+    ImGui::Begin("Character Animation");
+    if (character){
+        ImGui::Text("Foot Tracker Left Y-Pos: %.2f",character->foot_tracker_l->GetPosition().y);
+        ImGui::Text("Foot Tracker Left Y-Pos: %.2f",character->foot_tracker_r->GetPosition().y);
+        ImGui::Checkbox("Movement in Place",&character->f_movement_animation_inplace);
+    }
     ImGui::End();
 
     if (f_filemodal){

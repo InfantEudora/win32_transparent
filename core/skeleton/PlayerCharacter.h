@@ -24,9 +24,6 @@ class PlayerCharacter : public virtual Skeleton{
     //It does when you don't want to lookup the objects every single time.
     std::string root_bone_name;
 
-
-
-
     bool update_hippos = false;
     vec3 hippos_start = {};
     vec3 hipfwd_start = {};
@@ -38,6 +35,7 @@ class PlayerCharacter : public virtual Skeleton{
 
     bool f_switch_now = false;
     bool f_rotation_animation = false;
+    bool f_movement_animation_inplace = false;
 
 
 
@@ -50,6 +48,16 @@ class PlayerCharacter : public virtual Skeleton{
     void MoveBackward();
     void TurnLeft();
     void TurnRight();
+    void Jump();
+
+    //For debugging visualisation:
+    Object* foot_tracker_l = NULL; //The object to show as tracker
+    Object* foot_tracker_r = NULL;
+    Object* tracked_foot_l = NULL; //Reference to the foot.
+    Object* tracked_foot_r = NULL;
+    vec3 left_foot_prev_pos = vec3();
+    vec3 right_foot_prev_pos = vec3();
+
 };
 
 #endif

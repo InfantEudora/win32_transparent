@@ -29,6 +29,7 @@ struct quat{
     float   dot (const quat& rkQ) const;
 
     quat&   normalize();
+    quat&   inverse();
 
     fmat4   tofmat4() const;
 
@@ -98,6 +99,14 @@ inline quat& quat::normalize(){
         return *this; // do nothing if it is zero
 
     x *= invLength;  y *= invLength;  z *= invLength; w *= invLength;
+    return *this;
+}
+
+// Normalize the quaternion
+inline quat& quat::inverse(){
+    x = -x;
+    y = -y;
+    z = -z;
     return *this;
 }
 

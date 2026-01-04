@@ -17,6 +17,9 @@ public:
 
     Scene* CreateEmptyScene();
 
+    DirectionalLight* sun = NULL;
+    PlayerCharacter* character = NULL;
+
 private:
     vec3 camera_target = {};
     bool f_filemodal = false;

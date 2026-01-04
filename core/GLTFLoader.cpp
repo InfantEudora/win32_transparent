@@ -586,7 +586,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     }
 
     if (node->mesh < 0){
-        debug->Warn("GetMeshFromNode: Node %s does not contain a mesh\n",node_name);
+        debug->Trace("GetMeshFromNode: Node %s does not contain a mesh\n",node_name);
         return NULL;
     }
 
