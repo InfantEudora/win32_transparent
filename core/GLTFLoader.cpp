@@ -267,6 +267,32 @@ tinygltf::Skin*  GLTFLoader::FindSkin(std::string skin_name){
     return NULL;
 }
 
+std::vector<std::string> GLTFLoader::GetSkeletonNames(){
+    std::vector<std::string> names;
+    for (int skin_index=0;skin_index<model.skins.size();skin_index++){
+        names.push_back(model.skins[skin_index].name);
+    }
+    return names;
+}
+
+std::vector<std::string> GLTFLoader::GetAnimationNames(){
+    std::vector<std::string> names;
+    for (int animation_index=0;animation_index<model.animations.size();animation_index++){
+        names.push_back(model.animations[animation_index].name);
+    }
+    return names;
+}
+
+std::vector<std::string> GLTFLoader::GetSkinnedMeshNames(){
+    std::vector<std::string> names;
+    for (int node_index=0;node_index<model.nodes.size();node_index++){
+        if (model.nodes[node_index].skin != -1){
+            names.push_back(model.nodes[node_index].name);
+        }
+    }
+    return names;
+}
+
 //Returns a pointer to node if found, or NULL
 tinygltf::Animation*  GLTFLoader::FindAnimation(std::string animation_name){
     for (int animation_index=0;animation_index<model.animations.size();animation_index++){

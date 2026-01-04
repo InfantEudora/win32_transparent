@@ -16,6 +16,7 @@
 #include "GLTFLoader.h"
 #include "RRandom.h"
 #include "ObjectCollider.h"
+#include "skeleton/PlayerCharacter.h"
 
 /*
     The thing that ties everything together.

@@ -5,7 +5,7 @@
 #include "IsoTerrain.h"
 #include "type_plane.h"
 #include "type_ray.h"
-#include "IsoCharacter.h"
+#include "PlayerCharacter.h"
 #include "IsoRoom.h"
 /*
     An attempt at an application that overrides the default, and shows a grid.
@@ -51,7 +51,7 @@ public:
     bool f_track_cursor = false;
     Animation* selected_animation = NULL;
 
-    IsoCharacter* character = NULL;
+    PlayerCharacter* character = NULL;
 
 
 private:

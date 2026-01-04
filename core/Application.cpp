@@ -460,7 +460,8 @@ void Application::RenderDebugMenuBar(){
                 l->name = "Point Light";
                 main_scene->AddObject(l);
             }
-            if (ImGui::BeginMenu("From Assets")){
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Objects From Assets")){
                 if (!assetmanager){
                     ImGui::MenuItem("-- NO ASSET MANAGER --");
                 }else{
@@ -474,6 +475,53 @@ void Application::RenderDebugMenuBar(){
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("PlayerCharacter(Skeleton) From Loaded GLTF")){
+                //Use of assetmanager is optional, can be NULL. It's only used to load debug bones.
+                //Skeletons need to be loaded as skin in GLTF. List skins currently open in GLTF loader.
+                std::vector<std::string>skeleton_names = gltfloader.GetSkeletonNames();
+                if (skeleton_names.size() == 0){
+                    ImGui::MenuItem("-- NO SKELETON IN GLTF --");
+                }else{
+                    for (std::string name:skeleton_names){
+                        if (ImGui::BeginMenu(name.c_str())){
+                            //We list all the skinned meshes from the current file.
+                            std::vector<std::string>skinned_meshes = gltfloader.GetSkinnedMeshNames();
+                            for (std::string skinned_mesh_name:skinned_meshes){
+                                if (ImGui::MenuItem(skinned_mesh_name.c_str())){
+                                    PlayerCharacter* character = new PlayerCharacter();
+                                    Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
+                                    gltfloader.GetSkeleton(name.c_str(),assetmanager,skeleton);
+                                    if (skeleton){
+                                        std::vector<Material>loaded_materials;
+                                        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode(skinned_mesh_name.c_str(),&loaded_materials);
+                                        skeleton->SetMesh(skinned_mesh);
+                                        skeleton->TakeMaterialNames(loaded_materials);
+                                        skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
+                                        main_scene->AddObject(character);
+                                    }
+                                }
+                            }
+                            ImGui::EndMenu();
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Skeleton Animations From Loaded GLTF")){
+                std::vector<std::string>animation_names = gltfloader.GetAnimationNames();
+                if (animation_names.size() == 0){
+                    ImGui::MenuItem("-- NO ANIMATIONS IN GLTF --");
+                }else{
+                    for (std::string name:animation_names){
+                        if (ImGui::MenuItem(name.c_str())){
+
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
+
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Debug")){

@@ -84,7 +84,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
     //Load from a GLTF file and build assets.
     gltfloader.LoadGLTFFile("data/hand.glb");
 
-    character = new IsoCharacter();
+    character = new PlayerCharacter();
     Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
     gltfloader.GetSkeleton("HandArmature",assetmanager,skeleton);
     if (skeleton){
@@ -135,7 +135,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
 
     //Load another hand, that uses the same mesh... preferably.
     {
-        IsoCharacter* character = new IsoCharacter();
+        PlayerCharacter* character = new PlayerCharacter();
         Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
         gltfloader.GetSkeleton("HandArmature",assetmanager,skeleton);
         if (skeleton){
@@ -429,7 +429,7 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
     bone_mat.glsl_material.color = vec4(1,1,1,1);
     scene->renderer->AddMaterial(bone_mat);
 
-    character = new IsoCharacter();
+    character = new PlayerCharacter();
     character->root_bone_name = "Hips";
     Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
     gltfloader.GetSkeleton("character_armature",assetmanager,skeleton);

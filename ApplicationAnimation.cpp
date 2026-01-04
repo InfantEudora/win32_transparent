@@ -38,9 +38,9 @@ void ApplicationAnimation::Init(void){
     main_scene = CreateEmptyScene();
     main_scene->UpdatePhysics();
 
-    //assetmanager = new AssetManager();
-    //gltfloader.LoadGLTFFile("C:/IDE-E/Mijn Documenten/Projects/code/test/blender_anim/gwen_animation/gwen_anim.glb");
-    //GetAllAssetsFromGLTF();
+    assetmanager = new AssetManager();
+    gltfloader.LoadGLTFFile("C:/IDE-E/Mijn Documenten/Projects/code/test/blender_anim/gwen_animation/gwen_anim.glb");
+    GetAllAssetsFromGLTF();
 
     main_window->SetOnFileDropped([this](std::string filename){
         debug->Info("File callback received with file %s\n",filename.c_str());

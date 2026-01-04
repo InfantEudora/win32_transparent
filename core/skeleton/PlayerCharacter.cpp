@@ -1,17 +1,17 @@
-#include "IsoCharacter.h"
+#include "PlayerCharacter.h"
 
 #include "Debug.h"
-static Debugger* debug = new Debugger("IsoCharacter",DEBUG_INFO);
+static Debugger* debug = new Debugger("PlayerCharacter",DEBUG_INFO);
 
-IsoCharacter::IsoCharacter():Object(){
+PlayerCharacter::PlayerCharacter():Object(){
     animation_transition_time_max = 0.2;
 }
 
-IsoCharacter::~IsoCharacter(){
+PlayerCharacter::~PlayerCharacter(){
 
 }
 
-void IsoCharacter::ApplyAnimation(float time_delta){
+void PlayerCharacter::ApplyAnimation(float time_delta){
     if (!current_animation){
         current_animation = next_animation;
         next_animation = NULL;
@@ -98,7 +98,7 @@ void IsoCharacter::ApplyAnimation(float time_delta){
 }
 
 /*
-void IsoCharacter::UpdatePhysicsState(){
+void PlayerCharacter::UpdatePhysicsState(){
     if (f_animation_override){
         Object::UpdatePhysicsState();
         return;
@@ -182,14 +182,14 @@ void IsoCharacter::UpdatePhysicsState(){
 
 
 /*
-void IsoCharacter::SwitchAnimationNow(){
+void PlayerCharacter::SwitchAnimationNow(){
     if (next_animation != current_animation){
         f_switch_now = true;
         debug->Info("Switching now at %.2f \n",current_animation_time);
     }
 }
 
-void IsoCharacter::CheckSwitchAnimation(){
+void PlayerCharacter::CheckSwitchAnimation(){
     //On start... or no loaded animation..
     if (!current_animation){
         current_animation = next_animation;
@@ -215,7 +215,7 @@ void IsoCharacter::CheckSwitchAnimation(){
 
 
 /*
-void IsoCharacter::TransitionAnimation(){
+void PlayerCharacter::TransitionAnimation(){
     //We need to know how far the hip has moved between the first and last frame.
     ObjectAnimationKeyFrame* keyframe_start;
     ObjectAnimationKeyFrame* keyframe_end;
@@ -254,7 +254,7 @@ void IsoCharacter::TransitionAnimation(){
 */
 
 //Going to play a move forward animation based on whatever animation its in.
-void IsoCharacter::MoveForward(){
+void PlayerCharacter::MoveForward(){
     //Load the move forward animation
     //SetNextAnimation("CatwalkForward");
     //ProceedToNextAnimation();
@@ -266,7 +266,7 @@ void IsoCharacter::MoveForward(){
 }
 
 //Going to play a move forward animation based on whatever animation its in.
-void IsoCharacter::MoveBackward(){
+void PlayerCharacter::MoveBackward(){
     //debug->Info("Current animation state : %i\n",animation_state);
     if (animation_state == ANIMATION_STATE_LOOPING){
         SetNextAnimation("IdleStanding");
@@ -277,7 +277,7 @@ void IsoCharacter::MoveBackward(){
 }
 
 //Going to play a move forward animation based on whatever animation its in.
-void IsoCharacter::TurnRight(){
+void PlayerCharacter::TurnRight(){
     if (f_rotation_animation){
         //Pick an animation that will rotate us.
         idle_time = 0;
@@ -291,7 +291,7 @@ void IsoCharacter::TurnRight(){
     }
 }
 
-void IsoCharacter::TurnLeft(){
+void PlayerCharacter::TurnLeft(){
     if (f_rotation_animation){
         idle_time = 0;
         SetNextAnimation("TurnLeft");

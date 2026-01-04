@@ -1,5 +1,5 @@
-#ifndef _ISO_CHARACTER_H_
-#define _ISO_CHARACTER_H_
+#ifndef _PLAYER_CHARACTER_H_
+#define _PLAYER_CHARACTER_H_
 #include "skeleton/Skeleton.h"
 /*
     A character that you control.
@@ -13,12 +13,12 @@
      When lerping to a different animation, that may be in place we'd need to move the root, or hip from local transform to parent.
 */
 
-class IsoCharacter;
+class PlayerCharacter;
 
-class IsoCharacter : public virtual Skeleton{
+class PlayerCharacter : public virtual Skeleton{
     public:
-    IsoCharacter();
-    ~IsoCharacter();
+    PlayerCharacter();
+    ~PlayerCharacter();
 
     //Does each character need a copy of all animations?
     //It does when you don't want to lookup the objects every single time.
