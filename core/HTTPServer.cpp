@@ -14,12 +14,30 @@ static Debugger* http_debug = new Debugger("HTTPServer", DEBUG_TRACE);
 
 HTTPServer::HTTPServer(int port)
 	: TCPServer(port)
+	, m_fileWatcher(nullptr)
 {
 	InitializeCriticalSection(&m_wsLock);
 
 	// Try to load HTML from disk first (common locations). If not found, fall back to built-in default.
 	if (LoadHTMLFromFile("data/index.html")){
 		http_debug->Info("Using HTML loaded from file\n");
+
+		// Start watching the HTML file for changes
+		m_fileWatcher = new FileWatcher();
+		m_fileWatcher->WatchFile(m_htmlFilePath, [this](const std::string& filePath) {
+			http_debug->Info("HTML file changed, reloading: %s\n", filePath.c_str());
+			LoadHTMLFromFile(filePath);
+
+			// Notify WebSocket clients about the file change
+			SetVariable("fileChanged", "true");
+			SetVariable("fileChangedPath", filePath);
+
+			// Get current timestamp
+			time_t now = time(nullptr);
+			char timeStr[64];
+			strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", localtime(&now));
+			SetVariable("fileChangedTime", timeStr);
+		});
 	} else{
         // Default HTML content
         m_htmlContent =
@@ -38,6 +56,13 @@ HTTPServer::HTTPServer(int port)
 
 HTTPServer::~HTTPServer()
 {
+	// Stop file watcher
+	if (m_fileWatcher)
+	{
+		delete m_fileWatcher;
+		m_fileWatcher = nullptr;
+	}
+
 	DeleteCriticalSection(&m_wsLock);
 }
 
@@ -58,7 +83,7 @@ void HTTPServer::SetHTMLContent(const std::string& html)
 bool HTTPServer::LoadHTMLFromFile(const std::string& filename)
 {
 	size_t sz = 0;
-	uint8_t* data = LoadFile(filename.c_str(), &sz);
+	uint8_t* data = LoadFile(filename.c_str(), &sz,true);
 	if (!data || sz == 0) {
 		http_debug->Trace("LoadHTMLFromFile: not found %s\n", filename.c_str());
 		return false;
@@ -66,6 +91,7 @@ bool HTTPServer::LoadHTMLFromFile(const std::string& filename)
 
 	// Safe copy into std::string
 	m_htmlContent.assign((char*)data, sz);
+	m_htmlFilePath = filename;
 	http_debug->Info("Loaded HTML from file: %s (%zu bytes)\n", filename.c_str(), sz);
 	return true;
 }
@@ -92,7 +118,7 @@ OCPPClientData* HTTPServer::GetOCPPClientData(SOCKET clientSocket)
 }
 
 void HTTPServer::HandleHTTPConnection(SOCKET clientSocket){
-	http_debug->Info("Spawning thread for client %i.\n ",clientSocket);
+	http_debug->Info("Spawning thread for client %i\n",clientSocket);
 	//We spawn a thread to wait for data from the client.
 	u_long blockingMode = 0;
 	ioctlsocket(clientSocket, FIONBIO, &blockingMode);

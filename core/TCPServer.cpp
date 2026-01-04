@@ -267,11 +267,8 @@ void TCPServer::AcceptConnections(){
 	}
 }
 
-void TCPServer::ReceiveClientData()
-{
-	while (m_running)
-	{
-
+void TCPServer::ReceiveClientData(){
+	while (m_running){
 		EnterCriticalSection(&m_clientsLock);
 		std::vector<SOCKET> clients = m_connectedClients;
 		LeaveCriticalSection(&m_clientsLock);

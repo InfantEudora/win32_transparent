@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TCPServer.h"
+#include "FileWatcher.h"
 #include <string>
 #include <map>
 #include <vector>
@@ -91,6 +92,7 @@ public:
 
 private:
 	std::string m_htmlContent;
+	std::string m_htmlFilePath;
 	std::map<std::string, std::string> m_variables;
 
 	// WebSocket clients
@@ -100,6 +102,9 @@ private:
 	std::map<SOCKET, OCPPClientData> m_ocppClientData;
 
 	CRITICAL_SECTION m_wsLock;
+
+	// File watcher for HTML file changes
+	FileWatcher* m_fileWatcher;
 
 	// Send raw websocket text message to a client
 	bool SendWebSocketMessage(SOCKET client, const std::string &message);

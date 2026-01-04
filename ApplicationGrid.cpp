@@ -34,7 +34,8 @@ Scene* ApplicationGrid::CreateEmptyScene(){
     sun->name = "Directional Light (Sun)";
     sun->SetPosition(vec3(-10,10,10));
     sun->color = vec3(1,0.8,0.6);
-    sun->brightness = 5.0;
+    sun->brightness = 6.0;
+    sun->viewport.zoom = 10;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
@@ -359,7 +360,8 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
     sun->name = "Directional Light (Sun)";
     sun->SetPosition(vec3(-10,10,10));
     sun->color = vec3(1,0.8,0.6);
-    sun->brightness = 5.0;
+    sun->brightness = 6.0;
+    sun->viewport.zoom = 10;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
@@ -565,10 +567,10 @@ void ApplicationGrid::Init(){
     assetmanager = new AssetManager();
 
     //Comment in/out a test scene.
-    //test_scene = CreateEmptyScene();
+    test_scene = CreateEmptyScene();
     //test_scene = CreateTestScene();
     //test_scene = CreateBoneTestScene();
-    test_scene = CreateHandTestScene();
+    //test_scene = CreateHandTestScene();
 
     main_scene = test_scene;
 
@@ -1283,6 +1285,8 @@ void ApplicationGrid::DrawImGuiUI(){
     if (f_show_rightclick_menu){
         RenderRightClickMenu();
     }
+
+    //ImGui::ShowDemoWindow();
 
     //RenderSkeletonUI();
     //RenderAnimationUI(); //TODO: Move/Moved to base Object class + Base Application

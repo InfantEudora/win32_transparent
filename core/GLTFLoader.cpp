@@ -30,9 +30,11 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     }
     if (!err.empty()) {
         debug->Err("%s\n", err.c_str());
+        return;
     }
     if (!ret) {
         debug->Err("Failed to load .glTF : %s\n", input_filename);
+        return;
     }else{
         debug->Ok("Loaded .glTF : %s\n", input_filename);
     }

@@ -479,11 +479,36 @@ void Application::RenderDebugMenuBar(){
         if (ImGui::BeginMenu("Debug")){
             std::map<std::string, Debugger*>* handles = debug->GetHandles();
             std::map<std::string,Debugger*>::iterator it = handles->begin();
+            const char* items[] = { "TRACE", "INFO", "WARN", "ERROR"};
+            static std::vector<int>current_items;
+            if (current_items.size() != handles->size()){
+                current_items.resize(handles->size());
+            }
             for (int i=0;i<handles->size();i++){
                  if (ImGui::BeginMenu(it->first.c_str())){
                     static bool enabled = true;
                     ImGui::MenuItem("Enabled", "", &enabled);
                     ImGui::InputInt("Input", &it->second->level, 1);
+                    if (it->second->level >= DEBUG_TRACE){
+                        current_items.at(i) = 0;
+                    }
+                    if (it->second->level >= DEBUG_INFO){
+                        current_items.at(i) = 1;
+                    }
+
+                    if (ImGui::Combo("Levels", &current_items.at(i), items, IM_ARRAYSIZE(items))){
+                        if (current_items.at(i) == 0){
+                            it->second->SetLevel(DEBUG_TRACE);
+                        }else if (current_items.at(i) == 1){
+                            it->second->SetLevel(DEBUG_INFO);
+                        }else if (current_items.at(i) == 2){
+                            it->second->SetLevel(DEBUG_WARN);
+                        }else if (current_items.at(i) == 3){
+                            it->second->SetLevel(DEBUG_ERROR);
+                        }
+                    }
+                    ImGui::Text("The lower the level, the more info get's printed");
+
                     ImGui::EndMenu();
                 }
                 it++;
@@ -1299,7 +1324,15 @@ Scene* Application::CreateNewScene(const std::string& name){
 }
 
 //Get's the currently loaded GLTF file, and imports everyting that wasn't imported.
+//This has to be called from a thread that owns the OpenGL context.
 void Application::GetAllAssetsFromGLTF(){
+    DWORD called_thread_id = -1;
+    called_thread_id = GetCurrentThreadId();
+    debug->Info("GetAllAssetsFromGLTF called from ThreadID: %lu\n", called_thread_id);
+    if (called_thread_id != thread_id_render){
+        debug->Fatal("Should be called from render thread\n");
+    }
+
     if (!assetmanager){
         debug->Err("No assetmanager to load assets into.\n");
     }

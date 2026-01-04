@@ -4,7 +4,7 @@
 
 #define DEFAULT_FRAMEBUFFER_ID  0
 
-static Debugger* debug = new Debugger("Renderer",DEBUG_ERROR);
+static Debugger* debug = new Debugger("Renderer",DEBUG_WARN);
 
 Renderer::Renderer(int w, int h){
     width = w;
@@ -284,7 +284,7 @@ void Renderer::FillBactches(){
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
 void Renderer::RenderUniqueMeshes(int rendering_mode){
-    //debug->Info("Rendering Meshes\n");
+    debug->Trace("Rendering Meshes rendering_mode = %i\n",rendering_mode);
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
         boneinstancedata.clear();
@@ -572,7 +572,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     //We use a deferred pass for object ID, amongst many other things.
     //TODO: These passes need to be fixed... do we even want them?
-    //DeferredPass(camera);
+    if (pipeline == PIPELINE_DEFERRED){
+        DeferredPass(camera);
+    }
 
     //Now we can read the normal and object ID:
     if ((pipeline == PIPELINE_DEFERRED && input)){
@@ -965,12 +967,13 @@ int Renderer::GetNumMaterials(){
 //This for now just uploads all the known materials to a SSBO... each frame.
 //Might only need to do this once.
 void Renderer::UploadMaterials(){
+    debug->Trace("Uploading materials\n");
     last_texture_unit = 4;
 
     glsl_materials.clear();
     for (Material& mat:materials){
         if (mat.diff_texture){;
-            //debug->Info("Material has diffuse Texture: Binding to Unit %i\n",last_texture_unit);
+            debug->Info("Material has diffuse Texture: Binding to Unit %i\n",last_texture_unit);
             mat.glsl_material.diffuse_texture = last_texture_unit;
             glBindTextureUnit(last_texture_unit, mat.diff_texture->texture_id);
             last_texture_unit++;
@@ -1003,6 +1006,7 @@ void Renderer::UploadCubeMap(CubeMap* cubemap){
 
 //Convert all the active lights in the scene to a list
 void Renderer::UploadLights(){
+    debug->Trace("Uploading Lights\n");
     glsl_lights.clear();
     for (Light* l:visible_lights){
         light_t light;

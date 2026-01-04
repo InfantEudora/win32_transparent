@@ -99,8 +99,12 @@ public:
     static HWND _FindWindow(std::string title);
     static std::vector<WNDCLASSEXA>wcs;      //Different types of window classes
 
+    //Callback when a file is dropped on the window
+    void SetOnFileDropped(std::function<void(std::string)> callback);
+    std::function<void(std::string)> onFileDropped; //Declared public because it must be accessed from windproc
 private:
     static std::vector<Window*> windows; //An array of all created windows
+
 };
 
 #endif

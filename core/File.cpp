@@ -13,17 +13,21 @@ std::string GetBasePath(const char* filename){
   	return sname.substr(0,found);
 }
 
-//Loads binary file into memory.
-uint8_t* LoadFile(const char* filename, size_t* size){
-    bool store_assets = true;   //Flag if file assets need to be held in memory so they can be exported.
-    BinaryAsset* memory_asset = BinaryAsset::GetBinaryAsset(filename);
-
-    if (memory_asset){
-        if (size){
-            *size = memory_asset->size;
-        }
-        return memory_asset->data;
-    }
+// Loads binary file into memory. This does multiple things:
+// If can load file from disk, and store it in a BinaryAsset table called memory_asset.
+// If it's already stored in memory, it loads it from memory.
+uint8_t* LoadFile(const char* filename, size_t* size, bool bypass_cache){
+	BinaryAsset* memory_asset = NULL;
+	if (bypass_cache == false){
+		//We are allowed to look it up in memory cache.
+		memory_asset = BinaryAsset::GetBinaryAsset(filename);
+		if (memory_asset){
+			if (size){
+				*size = memory_asset->size;
+			}
+			return memory_asset->data;
+		}
+	}
 
 	FILE* file;
 	size_t sz = 0;
@@ -48,7 +52,7 @@ uint8_t* LoadFile(const char* filename, size_t* size){
         *size = sz;
     }
     //It was loaded from a file
-    if (!memory_asset){
+    if (!memory_asset && !bypass_cache){
         BinaryAsset::StoreBinaryAsset(filename,data,sz);
     }
 

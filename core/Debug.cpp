@@ -27,7 +27,11 @@ std::map<std::string, Debugger *> *Debugger::GetHandles() {
 
 Debugger *Debugger::FindHandle(std::string name) {
     std::map<std::string, Debugger *> *handles = GetHandles();
-    return (*handles)[name];
+    //Check if handle exists
+    if (handles->count(name)){
+        return (*handles)[name];
+    }
+    return NULL;
 }
 
 void Debugger::SetLevel(std::string name, int level) {

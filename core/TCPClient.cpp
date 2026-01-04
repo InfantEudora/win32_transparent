@@ -1,6 +1,6 @@
 #include "TCPClient.h"
 
-static Debugger* debug = new Debugger("TCPClient", DEBUG_ALL);
+static Debugger* debug = new Debugger("TCPClient", DEBUG_INFO);
 static bool g_winsockInitialized = false;
 
 TCPClient::TCPClient()
@@ -229,7 +229,7 @@ void TCPClient::ReceiveData()
 			// Null-terminate the received data
 			buffer[bytesReceived] = '\0';
 
-			debug->Info("Received %d bytes: %s\n", bytesReceived, buffer);
+			debug->Trace("Received %d bytes: %s\n", bytesReceived, buffer);
 
 			// Call callback if set
 			if (m_onDataReceived)

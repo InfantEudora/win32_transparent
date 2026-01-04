@@ -65,6 +65,8 @@ void ApplicationOCPP::RenderOCPPServerUI(){
 
         OCPPClientData* data = http_server->GetOCPPClientData(client_socket);
         if (data) {
+            ImGui::Text("Chargebox Path %s", data->path.c_str());
+
             // Access any OCPP data for this client
             std::string vendor = data->chargePointVendor;
             std::string status = data->connectorStatus;

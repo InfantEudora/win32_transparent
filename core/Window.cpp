@@ -596,7 +596,9 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
                     res = DragQueryFileA(hDrop,i,string,255); //Query the amount of files.
                     if (res > 0){
                         debug->Info("File name: %s\n",string);
-                        //wnd->dropped_files.push(string);
+                        if (wnd->onFileDropped){
+                            wnd->onFileDropped(string);
+                        }
                     }
                 }
             }
@@ -619,4 +621,8 @@ void Window::RegisterDropFiles(){
 //Resize by doing a WinAPI Call. Using some hard coded shite
 void Window::Resize(int _width, int _height){
     MoveWindow(hWnd,400,320,_width + 16,_height + 39,true);
+}
+
+void Window::SetOnFileDropped(std::function<void(std::string)> callback){
+    onFileDropped = callback;
 }

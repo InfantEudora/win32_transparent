@@ -52,18 +52,21 @@ SRC_LIBIMGUI += 3rdparty/imgui/imgui.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_draw.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_widgets.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_tables.cpp
-#SRC_LIBIMGUI += 3rdparty/imgui/imgui_demo.cpp
+SRC_LIBIMGUI += 3rdparty/imgui/imgui_demo.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_win32.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_opengl3.cpp
 OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
-
-
 
 ifeq ($(COMPILE_BINARYASSETS), 1)
 	SRCS += BinaryAssetMemory.cpp
 else
 	SRCS += BinaryAssetMemoryEmpty.cpp
 endif
+
+#ApplicationAnimation
+CFLAGS+= -DAPP_HEADER=\"ApplicationAnimation.h\"
+CFLAGS+= -DAPP_CLASS=ApplicationAnimation
+SRCS += ApplicationAnimation.cpp
 
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
@@ -101,9 +104,9 @@ endif
 #SRCS += ApplicationUI.cpp
 
 #ApplicationOCPP
-CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
-CFLAGS+= -DAPP_CLASS=ApplicationOCPP
-SRCS += ApplicationOCPP.cpp
+#CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationOCPP
+#SRCS += ApplicationOCPP.cpp
 
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
