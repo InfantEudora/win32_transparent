@@ -427,6 +427,7 @@ vec3 Object::GetWorldUp(){
     return vec3();
 }
 
+
 vec3 Object::GetLeft(){
     return state_physics.rotation * ref_left;
 }
@@ -660,6 +661,7 @@ void Object::ProceedToNextAnimation(){
     if (animation_state != ANIMATION_STATE_TRANSITION){
         animation_state = ANIMATION_STATE_TRANSITION;
         animation_transition_time = 0.0f;
+        animation_transition_factor = 0.0f;
     }
 }
 

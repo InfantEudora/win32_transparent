@@ -19,13 +19,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         SetNextAnimation("Idle");
     }*/
 
+
     if (!current_animation){
-        current_animation = next_animation;
-        next_animation = NULL;
-    }
-    if (!current_animation){
-        debug->Trace("AnimationSampler: No current animation to play.\n");
-        return;
+        //debug->Trace("AnimationSampler: No current animation to play.\n");
+        animation_state = ANIMATION_STATE_INVALID;
     }
 
     Bone* hip_bone = FindBone(root_bone_name);
@@ -33,7 +30,16 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         debug->Fatal("Could not find root/hip bone '%s;.\n",root_bone_name.c_str());
     }
 
-    if (animation_state == ANIMATION_STATE_LOOPING){
+    if (animation_state == ANIMATION_STATE_INVALID){
+        if (next_animation){
+            current_animation = next_animation;
+            animation_state = ANIMATION_STATE_TRANSITION;
+            animation_transition_time = 0.0f;
+            animation_transition_factor = 0.0f;
+        }
+        //We reset the head and neck.
+
+    }else if (animation_state == ANIMATION_STATE_LOOPING){
         //Loop the same animation
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
@@ -52,6 +58,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
         current_animation->ApplyInterval(current_animation->time_index);
 
+
+
         if (update_hippos){
             vec3 hippos_end = hip_bone->GetPosition();
             //How much has the hip moved?
@@ -62,8 +70,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             update_hippos = false;
         }else if (f_movement_animation_inplace){
             //Each frame we update depending on foot placement.
-
-
         }
     }else if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
@@ -92,11 +98,11 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             next_animation->time_index -= next_animation->duration;
         }
 
-        float lerp_factor =  animation_transition_time / animation_transition_time_max;
+        animation_transition_factor =  animation_transition_time / animation_transition_time_max;
         if (animation_transition_time_max == 0){
-            lerp_factor = 0;
+            animation_transition_factor = 0;
         }
-        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,lerp_factor, vec3());
+        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_factor, vec3());
 
         if (update_hippos){
             vec3 hippos_end = hip_bone->GetPosition();
@@ -115,6 +121,38 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_state = ANIMATION_STATE_LOOPING;
             update_hippos = true;
             hippos_start = hip_bone->GetPosition();
+        }
+    }
+
+    //Apply additional rotation
+    {
+        Bone* neck = FindBone("mixamorig:Neck");
+        if (neck){
+            quat q = neck->GetRotation();
+            quat r,r1,r2;
+            vec3 left = neck->GetLeft();
+            r1.set_rotation(left,head_turn_direction_ud*0.2f);
+            r2.set_rotation(vec3(0,1,0),head_turn_direction_lr*0.2f);
+            r = r2 * r1;
+            if (animation_state == ANIMATION_STATE_INVALID){
+                neck->SetRotation(r);
+            }else{
+                neck->RotateBy(r);
+            }
+        }
+        Bone* head = FindBone("mixamorig:Head");
+        if (head){
+            quat q = head->GetRotation();
+            quat r,r1,r2;
+            vec3 left = neck->GetLeft();
+            r1.set_rotation(left,head_turn_direction_ud*0.8f);
+            r2.set_rotation(vec3(0,1,0),head_turn_direction_lr*0.8f);
+            r = r2 * r1;
+            if (animation_state == ANIMATION_STATE_INVALID){
+                head->SetRotation(r);
+            }else{
+                head->RotateBy(r);
+            }
         }
     }
 
@@ -286,10 +324,11 @@ void PlayerCharacter::TransitionAnimation(){
 //Going to play a move forward animation based on whatever animation its in.
 void PlayerCharacter::MoveForward(){
     //Go to catwalk animation and enable foot tracking
-    SetNextAnimation("CatWalking");
+    SetNextAnimation("CatWalkingInPlace");
     ProceedToNextAnimation();
     f_movement_animation_inplace = true;
 
+    MoveForwardBy(-0.025f * animation_transition_factor);
     return;
 
     idle_time = 0;
@@ -339,9 +378,33 @@ void PlayerCharacter::TurnLeft(){
     }
 }
 
+void PlayerCharacter::ToIdle(){
+    //Go to catwalk animation and enable foot tracking
+    SetNextAnimation("Idle");
+    ProceedToNextAnimation();
+    f_movement_animation_inplace = true;
+
+}
+
 void PlayerCharacter::Jump(){
     idle_time = 0;
     SetNextAnimation("JoyfullJump");
     ProceedToNextAnimation();
     next_animation->looped = false;
+}
+
+void PlayerCharacter::TurnLookLeft(){
+    head_turn_direction_lr = clamp(head_turn_direction_lr+0.05f,-1.0,1.0);
+}
+
+void PlayerCharacter::TurnLookRight(){
+    head_turn_direction_lr = clamp(head_turn_direction_lr-0.05f,-1.0,1.0);
+}
+
+void PlayerCharacter::TurnLookUp(){
+    head_turn_direction_ud = clamp(head_turn_direction_ud+0.05f,-1.0,1.0);
+}
+
+void PlayerCharacter::TurnLookDown(){
+    head_turn_direction_ud = clamp(head_turn_direction_ud-0.05f,-1.0,1.0);
 }

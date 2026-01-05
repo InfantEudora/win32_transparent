@@ -22,6 +22,8 @@ Scene* ApplicationAnimation::CreateEmptyScene(){
     scene->AddObject(sun);
 
     scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_JUMP);
+    scene->camera->SetPosition(vec3(3,3,3));
+    scene->camera->SetLookAt(vec3(0,1.0,0));
 
     return scene;
 }
@@ -175,6 +177,22 @@ void ApplicationAnimation::RunLogic(){
         if (input->WasKeyReleased(INPUT_JUMP)){
             character->Jump();
         }
+        if (input->WasKeyReleased(INPUT_TURN_UP)){
+            character->ToIdle();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_LEFT)){
+            character->TurnLookLeft();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
+            character->TurnLookRight();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_UP)){
+            character->TurnLookUp();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_DOWN)){
+            character->TurnLookDown();
+        }
+
     }
 
     //Get the sun position to the character.
@@ -211,8 +229,10 @@ void ApplicationAnimation::DrawImGuiUI(){
 
     ImGui::Begin("Character Animation");
     if (character){
-        ImGui::Text("Foot Tracker Left Y-Pos: %.2f",character->foot_tracker_l->GetPosition().y);
-        ImGui::Text("Foot Tracker Left Y-Pos: %.2f",character->foot_tracker_r->GetPosition().y);
+        ImGui::Text("Foot Tracker Left Y-Pos : %.2f",character->foot_tracker_l->GetPosition().y);
+        ImGui::Text("Foot Tracker Left Y-Pos : %.2f",character->foot_tracker_r->GetPosition().y);
+        ImGui::Text("Head Turn Direction L/R : %.2f",character->head_turn_direction_lr);
+        ImGui::Text("Head Turn Direction U/D : %.2f",character->head_turn_direction_ud);
         ImGui::Checkbox("Movement in Place",&character->f_movement_animation_inplace);
     }
     ImGui::End();

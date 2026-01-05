@@ -20,6 +20,7 @@ typedef uint32_t objectid_t;
 #define NUM_MATERIAL_SLOTS  4
 #define NUM_MORPH_FACTOR_SLOTS  4
 
+#define ANIMATION_STATE_INVALID    -1
 #define ANIMATION_STATE_PAUSED      0
 #define ANIMATION_STATE_LOOPING     1
 #define ANIMATION_STATE_TRANSITION  2
@@ -144,8 +145,10 @@ class Object{
     int animation_state = ANIMATION_STATE_LOOPING;
     bool f_animation_override = false;
     float animation_time_delta = 0.02f;
+
     float animation_transition_time = 0.0f;
     float animation_transition_time_max = 0.25f;
+    float animation_transition_factor = 0.0f;   //Computed factor of animation_transition_time /animation_transition_time_max
     void AddAnimation(Animation* animation);
     //void SetAnimation(Animation* animation);
     Animation* FindAnimation(const std::string& name); //Finds it by name

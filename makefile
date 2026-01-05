@@ -151,6 +151,9 @@ imgui: $(OBJ_LIBIMGUI)
 
 all: default
 
+reset:
+	-rm -rf main.o ApplicationAnimation.o core/Object.o core/skeleton/PlayerCharacter.o
+
 clean:
 	-rm -rf $(OBJS) $(OBJ_LIBIMGUI)
 

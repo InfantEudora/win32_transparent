@@ -8,7 +8,7 @@
 
     - Play an idle animation.
     - Goto a walking animation when pressing forward.
-     The animation can be done in place, but it makes more sence to get the animation with position changes.
+     The animation can be done in place, but it makes more sense to get the animation with position changes.
 
      When lerping to a different animation, that may be in place we'd need to move the root, or hip from local transform to parent.
 */
@@ -37,6 +37,8 @@ class PlayerCharacter : public virtual Skeleton{
     bool f_rotation_animation = false;
     bool f_movement_animation_inplace = false;
 
+    float head_turn_direction_lr = 0.0f;   //Direction the head should be facing on top of the animation from -1 to 1
+    float head_turn_direction_ud = 0.0f;
 
 
     //There also needs to be a list, or a tree linked list thing with all allowed actions from a current one.
@@ -49,6 +51,14 @@ class PlayerCharacter : public virtual Skeleton{
     void TurnLeft();
     void TurnRight();
     void Jump();
+    void ToIdle();
+
+    void TurnLookLeft();
+    void TurnLookRight();
+    void TurnLookUp();
+    void TurnLookDown();
+
+    Object* head_tracker = NULL;    //The object the character is looking at.
 
     //For debugging visualisation:
     Object* foot_tracker_l = NULL; //The object to show as tracker
