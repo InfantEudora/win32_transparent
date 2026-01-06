@@ -18,7 +18,6 @@ struct quat{
     quat(float x, float y, float z,float w) : x(x), y(y), z(z),w(w){}
     quat(const vec3& axis, float angle);            // rot axis & angle (radian)
 
-
     //Functions
     void    print();
     quat&   identity();
@@ -48,6 +47,7 @@ struct quat{
 inline quat::quat(const vec3& axis, float angle){
     set_rotation(axis, angle);
 }
+
 
 inline quat& quat::identity(){
     x = 0;

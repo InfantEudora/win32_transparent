@@ -24,9 +24,13 @@ class PlayerCharacter : public virtual Skeleton{
     //It does when you don't want to lookup the objects every single time.
     std::string root_bone_name;
 
-    bool update_hippos = false;
-    vec3 hippos_start = {};
-    vec3 hipfwd_start = {};
+    bool update_hip_position = false;
+    vec3 hip_posistion_start = {};
+    vec3 hip_fwd_start = {};
+
+    bool update_hip_rotation = false;
+    quat hip_rotation_start;
+    quat hip_rotation_cummulative;
 
     void ApplyAnimation(float time_delta) override;
 

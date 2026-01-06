@@ -24,6 +24,7 @@ struct vec3{
     };
 
 	vec3() : x(0), y(0), z(0) {}
+    vec3(vec2 v) : x(v.x), y(0), z(v.y) {}
     vec3(float f) : x(f), y(f), z(f){}
     vec3(float x, float y, float z) : x(x), y(y), z(z){}
 
@@ -32,9 +33,12 @@ struct vec3{
     float   length() const;
 	float   distance(const vec3& vec) const;                // distance between two vectors
     vec3&  	normalize();
+    vec3  	orthogonal() const;                                   // returns an orthogonal vector
 	float  	dot(const vec3& vec) const;                     // dot product
     vec3   	cross(const vec3& vec) const;                   // cross product
-    bool   	equal(const vec3& vec) const;                   // compare with epsilon
+    bool   	equal(const vec3& vec) const;                   // check if equal to rhs, compare with epsilon
+    bool   	iszero();                                       // compare with epsilon to vec3(0,0,0)
+    bool   	isparallel(const vec3& vec) const;              // check if crossproduct with rhs is close to epsilon
     vec3&   floor();                                        // round down
     vec3&   fract();                                        // returns the non-integer part
     vec3&   round();                                        // round to nearest
@@ -84,6 +88,15 @@ inline vec3& vec3::normalize(){
 	s = sqrt(s);
 	x/=s; y/=s;z/=s;
 	return *this;
+}
+
+inline vec3 vec3::orthogonal() const{
+    float x = abs(x);
+    float y = abs(y);
+    float z = abs(z);
+
+    vec3 other = x < y ? (x < z ? vec3(1,0,0) : vec3(0,0,1)) : (y < z ? vec3(0,1,0) : vec3(0,0,1));
+    return cross(other);
 }
 
 inline vec3& vec3::round(){
@@ -165,6 +178,13 @@ inline bool vec3::equal(const vec3& rhs) const {
     return fabs(x - rhs.x) < FT_EPSILON && fabs(y - rhs.y) < FT_EPSILON && fabs(z - rhs.z) < FT_EPSILON;
 }
 
+inline bool vec3::iszero(){
+    return fabs(x) < FT_EPSILON && fabs(y) < FT_EPSILON && fabs(z) < FT_EPSILON;
+}
+
+inline bool vec3::isparallel(const vec3& rhs) const {
+    return cross(rhs).iszero();
+}
 inline void vec3::print(){
     printf("vec3: %7.2f | %7.2f | %7.2f\n",x,y,z);
 }

@@ -888,7 +888,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             ImGui::DragFloat4("Current Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
             ImGui::EndDisabled();
 
-            bool apply_rotation = false;
+            bool set_rotation = false;
 
             float roll_by = 0;
             if (ImGui::DragFloat("Roll By", (float*)&roll_by, 0.01f, -1.0f, 1.0f)){
@@ -920,15 +920,15 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             }else if (option == 2){
                 static vec3 target = {0,0,-1};
                 if (ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f)){
-                    apply_rotation = true;
+                    set_rotation = true;
                 }
                 static vec3 position = {0,0,0};
                 if (ImGui::DragFloat3("Position", (float*)&position, 0.01f, -5.0f, 5.0f)){
-                    apply_rotation = true;
+                    set_rotation = true;
                 }
                 static vec3 worldup = {0,1,0};
                 if (ImGui::DragFloat3("World Up", (float*)&worldup, 0.01f, -1.0f, 1.0f)){
-                    apply_rotation = true;
+                    set_rotation = true;
                 }
                 ImGui::BeginDisabled();
                 q = quat::getquat(target,position,worldup);
@@ -937,7 +937,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             }else if (option == 3){
                 static vec3 axis_degrees = {0,0,0};
                 if (ImGui::DragFloat3("Axis Degrees", (float*)&axis_degrees, 1.0f, -180.0f, 180.0f)){
-                    apply_rotation = true;
+                    set_rotation = true;
                 }
                 ImGui::BeginDisabled();
                 //Let's do them in order?
@@ -950,10 +950,13 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 ImGui::EndDisabled();
             }
 
-            if (ImGui::Button("Apply Rotation")){
-                apply_rotation = true;
+            if (ImGui::Button("Set Rotation")){
+                set_rotation = true;
             }
-            if (apply_rotation){
+            if (ImGui::Button("Rotate By")){
+                object->RotateBy(q);
+            }
+            if (set_rotation){
                 object->SetRotation(q);
             }
         }
@@ -1276,12 +1279,6 @@ void ApplicationGrid::RenderAnimationUI(){
         if (ImGui::DragFloat("Animation Time Delta", (float*)&character->animation_time_delta, 0.005f, -1.0f, 1.0f)){
 
         }
-    }
-
-
-
-    if (ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override)){
-
     }
 
     if (selected_animation){

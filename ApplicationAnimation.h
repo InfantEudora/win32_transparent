@@ -19,12 +19,16 @@ public:
 
     DirectionalLight* sun = NULL;
     PlayerCharacter* character = NULL;
+    Object* chain = NULL;
+
 
 private:
     vec3 camera_target = {};
     bool f_filemodal = false;
     std::string filemodal_filename;
     bool f_import_file = false;
+    bool f_mode_grab = false;
+    bool f_mode_camera_track = false;
 };
 
 #endif

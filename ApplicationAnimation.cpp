@@ -4,6 +4,8 @@
 static Debugger *debug = new Debugger("ApplicationAnimation", DEBUG_ALL);
 
 #define INPUT_JUMP    INPUT_LAST+1
+#define INPUT_F       INPUT_LAST+2
+#define INPUT_G       INPUT_LAST+3
 
 ApplicationAnimation::ApplicationAnimation():Application(){
     debug->Info("Created new ApplicationAnimation.\n");
@@ -22,9 +24,15 @@ Scene* ApplicationAnimation::CreateEmptyScene(){
     scene->AddObject(sun);
 
     scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_JUMP);
+    scene->inputcontroller->AddKeyMap('F',INPUT_F);
+    scene->inputcontroller->AddKeyMap('G',INPUT_G);
     scene->camera->SetPosition(vec3(3,3,3));
     scene->camera->SetLookAt(vec3(0,1.0,0));
 
+    //Add phyics
+    scene->physics_world = new PhysicsWorld();
+    scene->physics_world->SetGravity(vec3(0,-9.81,0));
+    scene->physics_world->SetDebugRendering(false);
     return scene;
 }
 
@@ -47,6 +55,9 @@ void ApplicationAnimation::Init(void){
     assetmanager = new AssetManager();
     gltfloader.LoadGLTFFile("data/gwen_anim.glb");
     GetAllAssetsFromGLTF();
+
+    Object* floor = assetmanager->GetObjectFromAsset("floor");
+    main_scene->AddObject(floor);
 
     //Load Gwen model with animation data
     character = new PlayerCharacter();
@@ -80,7 +91,19 @@ void ApplicationAnimation::Init(void){
         character->foot_tracker_r->material_names[0] = "right_tracker";
         character->tracked_foot_l = character->FindChild("mixamorig:LeftToeBase");
         character->tracked_foot_r = character->FindChild("mixamorig:RightToeBase");
+
+        chain = assetmanager->GetObjectFromAsset("bone");
+        Physics* physics = chain->AddPhysics(main_scene->physics_world);
+        if (physics){
+            physics->SetStatic(true);
+        }
+        main_scene->AddObject(chain);
+
     }
+
+
+
+
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -90,7 +113,7 @@ void ApplicationAnimation::Init(void){
         filemodal_filename = filename;
     });
 
-    main_window->Resize(1440,900);
+    main_window->Resize(1680,900);
 }
 
 //Called before update physics
@@ -98,6 +121,36 @@ void ApplicationAnimation::RunLogic(){
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
+
+    if (character){
+        if (f_mode_camera_track){
+            Bone* neck = character->FindBone("mixamorig:Neck");
+            Bone* head = character->FindBone("mixamorig:Head");
+            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - 3 * head->GetWorldForward();
+            vec3 p = camera->GetPosition();
+            vec3 diff = p.lerp(head_wp,0.04f);
+            camera->SetPosition(diff);
+            quat r = camera->GetRotation();
+            quat t = quat::getquat(neck->GetWorldPosition(STATE_ACCESS_PHYSICS),camera->GetWorldPosition(),Object::ref_up);
+            t.normalize();
+            r = quat::slerp(r,t,0.15f);
+            camera->SetRotation(r);
+        }
+
+        if (f_mode_grab){
+            //We use the camera left/right up down to move the character.
+            int dx = input->GetDelta(INPUT_MOUSE_X);
+            int dy = input->GetDelta(INPUT_MOUSE_Y);
+
+            vec3 vdx = camera->GetLeft() * dx * 0.01;
+            vec3 vdy = camera->GetUp() * -dy * 0.01;
+            character->MoveBy(vdx + vdy);
+
+            if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
+                f_mode_grab = false;
+            }
+        }
+    }
 
     //All further code requires the cursor not to be above an UI element
     if (ImGui::GetIO().WantCaptureMouse){
@@ -109,7 +162,7 @@ void ApplicationAnimation::RunLogic(){
     CheckObjectSelection();
 
     //Camera rotation moving
-    if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+    if (main_window->f_has_focus && input->IsKeyDown(INPUT_CLICK_MIDDLE)){
         //f_show_rightclick_menu = false;
         int dx = input->GetDelta(INPUT_MOUSE_X);
         int dy = input->GetDelta(INPUT_MOUSE_Y);
@@ -161,7 +214,7 @@ void ApplicationAnimation::RunLogic(){
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 
     //Character input
-    if (character){
+    if (character && main_window->f_has_focus){
         if (input->IsKeyDown(INPUT_TURN_UP)){
             character->MoveForward();
         }
@@ -180,6 +233,12 @@ void ApplicationAnimation::RunLogic(){
         if (input->WasKeyReleased(INPUT_TURN_UP)){
             character->ToIdle();
         }
+        if (input->WasKeyReleased(INPUT_TURN_RIGHT)){
+            character->ToIdle();
+        }
+        if (input->WasKeyReleased(INPUT_TURN_LEFT)){
+            character->ToIdle();
+        }
         if (input->IsKeyDown(INPUT_MOVE_LEFT)){
             character->TurnLookLeft();
         }
@@ -192,6 +251,13 @@ void ApplicationAnimation::RunLogic(){
         if (input->IsKeyDown(INPUT_MOVE_DOWN)){
             character->TurnLookDown();
         }
+        if (input->WasKeyReleased(INPUT_F)){
+            character->f_animation_override = true;
+            character->animation_override_ticks++;
+        }
+        if (input->WasKeyReleased(INPUT_G)){
+            f_mode_grab = !f_mode_grab;
+        }
 
     }
 
@@ -202,6 +268,15 @@ void ApplicationAnimation::RunLogic(){
         //Make sure it's always above our character
         sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
         sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
+    }
+
+    //Let the bone track the character
+    if (chain && character){
+        Bone* head = character->FindBone("mixamorig:Head");
+        vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward();
+        vec3 p = chain->GetPosition();
+        vec3 diff = p.lerp(head_wp,0.04f);
+        chain->SetPosition(diff);
     }
 
 }
@@ -234,6 +309,25 @@ void ApplicationAnimation::DrawImGuiUI(){
         ImGui::Text("Head Turn Direction L/R : %.2f",character->head_turn_direction_lr);
         ImGui::Text("Head Turn Direction U/D : %.2f",character->head_turn_direction_ud);
         ImGui::Checkbox("Movement in Place",&character->f_movement_animation_inplace);
+        ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override);
+        ImGui::Checkbox("Rotation Animations",&character->f_rotation_animation);
+        ImGui::Checkbox("Grab Mode",&f_mode_grab);
+        ImGui::Checkbox("Camera Track",&f_mode_camera_track);
+        ImGui::Separator();
+        Bone* hips = character->FindBone("mixamorig:Hips");
+        if (hips){
+            ImGui::Text("Hip Bone");
+            vec3 wp = hips->GetWorldPosition(STATE_ACCESS_RENDERER);
+            vec3 pos = hips->GetPosition(STATE_ACCESS_RENDERER);
+            ImGui::BeginDisabled();
+            ImGui::DragFloat3("Local Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
+            ImGui::DragFloat3("World Position", (float*)&wp, 0.01f, -1.0f, 1.0f);
+            vec3 wfwd = hips->GetWorldForward(STATE_ACCESS_RENDERER);
+            vec3 fwd = hips->GetForward(STATE_ACCESS_RENDERER);
+            ImGui::DragFloat3("Local Forward", (float*)&fwd, 0.01f, -1.0f, 1.0f);
+            ImGui::DragFloat3("World Forward", (float*)&wfwd, 0.01f, -1.0f, 1.0f);
+            ImGui::EndDisabled();
+        }
     }
     ImGui::End();
 

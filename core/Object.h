@@ -114,10 +114,12 @@ class Object{
 
     vec3 GetPosition(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);
     vec3 GetWorldPosition(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
+    vec3 GetForward(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);          // Returns the forward or normalized lookat direction
+    vec3 GetWorldForward(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
 
     vec3 GetUp();               // Returns the local vector pointing up.
     vec3 GetWorldUp();          //
-    vec3 GetForward();          // Returns the forward or normalized lookat direction
+
     vec3 GetLeft();             // Return the vector pointing left
     quat GetRotation();         // Returns a copy of the rotation
     quat GetWorldRotation();    // Calculates and returns world rotation
@@ -143,7 +145,10 @@ class Object{
     Animation* next_animation = NULL;
     Animation* idle_animation = NULL;
     int animation_state = ANIMATION_STATE_LOOPING;
-    bool f_animation_override = false;
+
+    bool f_animation_override = false;  //If we should manually step through animation with ticks
+    int animation_override_ticks = 0;
+
     float animation_time_delta = 0.02f;
 
     float animation_transition_time = 0.0f;

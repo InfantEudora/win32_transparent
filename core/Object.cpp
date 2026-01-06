@@ -251,7 +251,7 @@ void Object::SetWorldLookat(const vec3& target,const vec3& world_up){
         return;
     }
      //Compute the target in world coordinates.
-    vec3 delta = GetWorldPosition() - target ;
+    vec3 delta = GetWorldPosition(STATE_ACCESS_PHYSICS) - target ;
 
     //Rotate by the inverse of our current world rotation
     fmat4 r = parent->GetWorldTransformScaleMatrix().inverse_transform().rotationmatrix();
@@ -373,9 +373,7 @@ void Object::UpdatePhysicsState(){
         SetRotation(physics_q,false);
     }
 
-    if (!f_animation_override){
-        ApplyAnimation(animation_time_delta);
-    }
+    ApplyAnimation(animation_time_delta);
 
     for (Object* child:children) {
         child->UpdatePhysicsState();
@@ -409,13 +407,18 @@ vec3 Object::GetPosition(ObjectStateAccessType t){
 }
 
 //Computes and gets the world position. Currently always reads from render state
+//TODO Read physics state?
 vec3 Object::GetWorldPosition(ObjectStateAccessType t){
     fmat4 wt = GetWorldTransformScaleMatrix();
     return world_transform_scale_matrix.vertex[3].xyz();
 }
 
-vec3 Object::GetForward(){
+vec3 Object::GetForward(ObjectStateAccessType t){
     return state_physics.rotation * ref_forward;
+}
+
+vec3 Object::GetWorldForward(ObjectStateAccessType t){
+    return GetWorldRotation() * ref_forward;
 }
 
 vec3 Object::GetUp(){
@@ -493,7 +496,7 @@ quat Object::GetWorldRotation(){
     //We have a parent. Get it's rotation and apply in reverse order
     //TODO CHECK
     quat parent_rotation = parent->GetWorldRotation();
-    quat world_rotation = GetRotation() * parent_rotation;
+    quat world_rotation =  parent_rotation * GetRotation();
     return world_rotation;
 }
 
@@ -667,6 +670,11 @@ void Object::ProceedToNextAnimation(){
 
 //TODO: This is finetuned in PlayerCharacter
 void Object::ApplyAnimation(float time_delta){
+    //TODO check all the things
+    if (f_animation_override){
+        return;
+    }
+
     if (!current_animation){
         current_animation = next_animation;
     }
