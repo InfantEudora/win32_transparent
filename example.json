@@ -129,3 +129,71 @@
         "transactionId": -1
     }
 ]
+
+[
+    2,
+    "6a14195e-2228-41f1-b666-55a00e879e85",
+    "MeterValues",
+    {
+        "connectorId": 1,
+        "meterValue": [
+            {
+                "timestamp": "2026-01-07T14:19:06Z",
+                "sampledValue": [
+                    {
+                        "value": "1548506",
+                        "context": "Sample.Periodic",
+                        "format": "Raw",
+                        "measurand": "Energy.Active.Import.Register",
+                        "location": "Outlet",
+                        "unit": "Wh"
+                    },
+                    {
+                        "value": "67.1",
+                        "context": "Sample.Periodic",
+                        "format": "Raw",
+                        "measurand": "Power.Active.Import",
+                        "location": "Outlet",
+                        "unit": "W"
+                    },
+                    {
+                        "value": "0.7",
+                        "context": "Sample.Periodic",
+                        "format": "Raw",
+                        "measurand": "Current.Import",
+                        "phase": "L1",
+                        "location": "Outlet",
+                        "unit": "A"
+                    },
+                    {
+                        "value": "0.0",
+                        "context": "Sample.Periodic",
+                        "format": "Raw",
+                        "measurand": "Current.Import",
+                        "phase": "L2",
+                        "location": "Outlet",
+                        "unit": "A"
+                    },
+                    {
+                        "value": "0.0",
+                        "context": "Sample.Periodic",
+                        "format": "Raw",
+                        "measurand": "Current.Import",
+                        "phase": "L3",
+                        "location": "Outlet",
+                        "unit": "A"
+                    },
+                    {
+                        "value": "226.5",
+                        "context": "Sample.Periodic",
+                        "format": "Raw",
+                        "measurand": "Voltage",
+                        "location": "Outlet",
+                        "unit": "V"
+                    }
+                ]
+            }
+        ],
+        "transactionId": 2
+    }
+]

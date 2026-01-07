@@ -661,10 +661,11 @@ void Object::ProceedToNextAnimation(){
     if (next_animation == current_animation){
         return;
     }
-    if (animation_state != ANIMATION_STATE_TRANSITION){
-        animation_state = ANIMATION_STATE_TRANSITION;
+    if ((animation_state != ANIMATION_STATE_TRANSITION_START) && (animation_state != ANIMATION_STATE_TRANSITION)){
+        animation_state = ANIMATION_STATE_TRANSITION_START;
         animation_transition_time = 0.0f;
         animation_transition_factor = 0.0f;
+        //We record the current position and rotation as needing to be applied.
     }
 }
 

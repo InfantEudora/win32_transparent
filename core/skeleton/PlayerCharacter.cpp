@@ -5,12 +5,54 @@ static Debugger* debug = new Debugger("PlayerCharacter",DEBUG_INFO);
 
 PlayerCharacter::PlayerCharacter():Object(){
     animation_transition_time_max = 0.2;
-    hip_rotation_cummulative.identity();
-    hip_rotation_start.identity();
+
 }
 
 PlayerCharacter::~PlayerCharacter(){
 
+}
+
+//Function checks input and applies correct animation and state.
+void PlayerCharacter::ProcessInputState(){
+    if (!(character_state.input_forward_down || character_state.input_backward_down ||  character_state.input_left_down || character_state.input_right_down)){
+        //No input was down.
+        SetNextAnimation("Idle");
+        ProceedToNextAnimation();
+    }
+    if (character_state.input_forward_down){
+        SetNextAnimation("CatWalkingInPlace");
+        ProceedToNextAnimation();
+        MoveForwardBy(-0.025f * animation_transition_factor);
+        character_state.input_forward_down = false;
+    }
+    if (character_state.input_backward_down){
+        SetNextAnimation("WalkBackwardInPlace");
+        ProceedToNextAnimation();
+        MoveForwardBy(0.025f * animation_transition_factor);
+        character_state.input_backward_down = false;
+    }
+    if (character_state.input_left_down){
+        float delta = 0.025f;
+        if (f_rotation_animation){
+            SetNextAnimation("LeftTurnInPlace");
+            ProceedToNextAnimation();
+            delta = 0.025f * animation_transition_factor;
+        }
+        quat q = quat(vec3(0,1,0),delta);
+        RotateBy(q);
+        character_state.input_left_down = false;
+    }
+    if (character_state.input_right_down){
+        float delta = -0.025f;
+        if (f_rotation_animation){
+            SetNextAnimation("RightTurnInPlace");
+            ProceedToNextAnimation();
+            delta = -0.025f * animation_transition_factor;
+        }
+        quat q = quat(vec3(0,1,0),delta);
+        RotateBy(q);
+        character_state.input_right_down = false;
+    }
 }
 
 void PlayerCharacter::ApplyAnimation(float time_delta){
@@ -23,16 +65,17 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
     }
 
-    if (!current_animation){
-        //debug->Trace("AnimationSampler: No current animation to play.\n");
-        animation_state = ANIMATION_STATE_INVALID;
-    }
-
     Bone* hip_bone = FindBone(root_bone_name);
     if (!hip_bone){
         debug->Fatal("Could not find root/hip bone '%s;.\n",root_bone_name.c_str());
     }
 
+    ProcessInputState();
+
+    //Animation state starts off as invalid.
+    if (!current_animation){
+        animation_state = ANIMATION_STATE_INVALID;
+    }
     if (animation_state == ANIMATION_STATE_INVALID){
         if (next_animation){
             current_animation = next_animation;
@@ -40,9 +83,9 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_transition_time = animation_transition_time_max;
             animation_transition_factor = 1.0f;
         }
-        //We reset the head and neck.
+    }
 
-    }else if (animation_state == ANIMATION_STATE_LOOPING){
+    if (animation_state == ANIMATION_STATE_LOOPING){
         //Loop the same animation
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
@@ -52,7 +95,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             //to what will be displayed.
             if (!f_movement_animation_inplace){
                 update_hip_position = true;
-                update_hip_rotation = true;
+
             }
             hip_posistion_start = hip_bone->GetPosition();
             hip_fwd_start = hip_bone->GetWorldForward();
@@ -60,16 +103,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 SetNextAnimation("Idle");
                 ProceedToNextAnimation();
             }
-            hip_rotation_start = hip_bone->GetRotation();
+
         }
         current_animation->ApplyInterval(current_animation->time_index);
 
-        if (update_hip_rotation){
-            quat hip_rotation_end = hip_bone->GetRotation();
-            quat d = hip_rotation_start * hip_rotation_end;
-            //debug->Info("Looping: Hips delta = %.3f %.3f %.3f %.3f\n",d.x,d.y,d.z,d.w);
-            update_hip_rotation = false;
-        }
 
         if (update_hip_position){
             vec3 hippos_end = hip_bone->GetPosition();
@@ -89,18 +126,24 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             vec3 xz_end = vec3(hip_fwd_end.xz()).normalize();
 
             float dot = xz_start.dot(xz_end);
+            dot = clamp(dot,-1.0,1.0);
             debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
             quat r = quat(vec3(0,-1,0),acos(dot));
             debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
             RotateBy(r);
 
-            hip_rotation_cummulative = hip_rotation_start * hip_rotation_cummulative;
-            //SetRotation(hip_rotation_cummulative);
+
             update_hip_position = false;
         }else if (f_movement_animation_inplace){
             //Each frame we update depending on foot placement.
         }
-    }else if (animation_state == ANIMATION_STATE_TRANSITION){
+    }else if (animation_state == ANIMATION_STATE_TRANSITION_START){
+        //In this state, we need to record the character position to where the hips currently are.
+        //We are going to transition by playing this animation
+
+        animation_state = ANIMATION_STATE_TRANSITION;
+    }
+    if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
         if (!next_animation){
             debug->Warn("AnimationSampler: Transition to next = NULL\n");
@@ -112,27 +155,44 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_state = ANIMATION_STATE_LOOPING;
             return;
         }
-
-        //We need to play the current and the next animation
-        //Loop the same animation
+        debug->Info("Current animation %p\n");
+        //We need to play the current and the next animation,
+        //and loop both if we transistion longer than the animation is.
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
             current_animation->time_index -= current_animation->duration;
-            update_hip_position = true;
-            hip_posistion_start = hip_bone->GetPosition();
-            hip_fwd_start = hip_bone->GetWorldForward();
+            //update_hip_position = true;
+            //hip_posistion_start = hip_bone->GetPosition();
+            //hip_fwd_start = hip_bone->GetWorldForward();
+            debug->Info("Transition: current_animation rewind.\n");
         }
-
+        //Rewind next animation as well.
         next_animation->time_index += time_delta;
         if (next_animation->time_index > next_animation->duration){
             next_animation->time_index -= next_animation->duration;
+            debug->Info("Transition: next_animation rewind.\n");
         }
 
         animation_transition_factor =  animation_transition_time / animation_transition_time_max;
         if (animation_transition_time_max == 0){
             animation_transition_factor = 0;
         }
+
+        //We might need to undo any hip rotation by applying the reverse to the parent.
+        hip_fwd_start = hip_bone->GetWorldForward();
         current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_factor, vec3());
+        vec3 hip_fwd_end = hip_bone->GetWorldForward();
+
+        //Compute the angle the hip has rotate in the XZ plane.
+        vec3 xz_start = vec3(hip_fwd_start.xz()).normalize();
+        vec3 xz_end = vec3(hip_fwd_end.xz()).normalize();
+        float dot = xz_start.dot(xz_end);
+        dot = clamp(dot,-1.0,1.0);
+        debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
+        quat r = quat(vec3(0,-1,0),acos(dot));
+        debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
+        RotateBy(r);
+
 
         if (update_hip_position){
             vec3 hippos_end = hip_bone->GetPosition();
@@ -140,7 +200,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             vec3 d = hip_posistion_start - hippos_end;
             debug->Info("Transition: Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
             d.y = 0;
-            MoveBy(GetRotation()*d);
+            //MoveBy(GetRotation()*d);
             update_hip_position = false;
         }
 
@@ -149,7 +209,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_transition_time = animation_transition_time_max;
             current_animation = next_animation;
             animation_state = ANIMATION_STATE_LOOPING;
-            update_hip_position = true;
+            //update_hip_position = true;
             hip_posistion_start = hip_bone->GetPosition();
         }
     }
@@ -196,227 +256,36 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
     }
 }
 
-/*
-void PlayerCharacter::UpdatePhysicsState(){
-    if (f_animation_override){
-        Object::UpdatePhysicsState();
-        return;
-    }
-
-    float physics_delta = 0.02f;
-
-    if (f_manual_animation_time){
-        physics_delta = 0;
-        if (manual_animation_time > 0){
-            physics_delta = manual_animation_time;
-            manual_animation_time = 0;
-        }
-    }
-
-    //What to play.
-    if ((transition_time < transition_time_max) && current_animation && previous_animation){
-        //This lerps including position
-        Bone* hip_bone = FindBone("Hips");
-        if (!hip_bone){
-            debug->Fatal("Could not find hip bone.\n");
-        }
-        vec3 hip_posistion_start = hip_bone->GetPosition();
-        vec3 hip_forward_start = hip_bone->GetForward();
-
-
-        previous_animation->Lerp(current_animation,previous_animation_time,current_animation_time,transition_time / transition_time_max);
-        vec3 hippos_end = hip_bone->GetPosition();
-
-        //How much has the hip moved?
-        vec3 d = hip_posistion_start - hippos_end;
-        debug->Info("Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
-        d.y = 0;
-        MoveForwardBy(-d.z);
-
-        vec3 hip_forward_end = hip_bone->GetForward();
-
-        //Flatten the forward in the XZ plane
-        hip_forward_start.y = 0;
-        hip_forward_start.normalize();
-        hip_forward_end.y = 0;
-        hip_forward_end.normalize();
-        d = hip_forward_end - hip_forward_start;
-
-        float angle_start = atan2(hip_forward_start.z, hip_forward_start.x);
-        float angle_end = atan2(hip_forward_end.z, hip_forward_end.x);
-        float delta = angle_end - angle_start;
-
-        debug->Info("Hips Forward rotated by %.2f\n",todegrees(delta));
-        quat q = quat(vec3(0,1,0),delta);
-        RotateBy(q);
-    }else if (current_animation){
-
-        if (f_switch_now || (current_animation_time >= current_animation->duration)){
-            TransitionAnimation();
-        }
-        current_animation_time += physics_delta;
-        current_animation->ApplyInterval(current_animation_time);
-    }else{
-        //We should find idle.
-        SetNextAnimation("Idle");
-    }
-    idle_time += physics_delta;
-
-    if (idle_time > idle_time_max){
-        //Wait for the current animation to reset.
-        SetNextAnimation("Idle");
-    }
-
-    if (transition_time < transition_time_max){
-        transition_time += physics_delta;
-    }else{
-        transition_time = transition_time_max;
-    }
-
-    CheckSwitchAnimation();
-
-    Object::UpdatePhysicsState();
-}*/
-
-
-
-/*
-void PlayerCharacter::SwitchAnimationNow(){
-    if (next_animation != current_animation){
-        f_switch_now = true;
-        debug->Info("Switching now at %.2f \n",current_animation_time);
-    }
-}
-
-void PlayerCharacter::CheckSwitchAnimation(){
-    //On start... or no loaded animation..
-    if (!current_animation){
-        current_animation = next_animation;
-        previous_animation = current_animation;
-        current_animation_time = 0;
-        transition_time = transition_time_max;
-        return;
-    }
-    //Wait for the current animation to reset.
-    if (f_switch_now || (current_animation_time >= current_animation->duration)){
-        if (current_animation != next_animation){
-            transition_time = 0.0f;
-            previous_animation = current_animation;
-            current_animation = next_animation;
-            previous_animation_time = current_animation_time;
-            current_animation_time = 0;
-            next_animation = NULL;
-        }
-        f_switch_now = false;
-    }
-}*/
-
-
-
-/*
-void PlayerCharacter::TransitionAnimation(){
-    //We need to know how far the hip has moved between the first and last frame.
-    ObjectAnimationKeyFrame* keyframe_start;
-    ObjectAnimationKeyFrame* keyframe_end;
-
-    ObjectAnimation* hip_animation = current_animation->FindObjectAnimation("Hips");
-    if (!hip_animation){
-        return;
-    }
-
-    keyframe_start = hip_animation->GetFirstKeyframe();
-    keyframe_end = hip_animation->GetClosestKeyframe(current_animation_time);
-
-    vec3 s = keyframe_start->position;
-    vec3 e = keyframe_end->position;
-    debug->Info("TransitionAnimation:\n");
-    debug->Info(" Animation Keyframes: %i. At %.2f / %.2f\n",hip_animation->keyframes.size(),current_animation_time,current_animation->duration);
-    debug->Info(" Hip Translation %.2f %.2f %.2f -> %.2f %.2f %.2f\n",s.x,s.y,s.z,e.x,e.y,e.z);
-
-    vec3 delta = e - s;
-    //Get the forward component;
-    delta.x = 0;
-    delta.y = 0;
-
-
-    if (current_animation->looped == false){
-        SetNextAnimation("Idle");
-    }
-    if (next_animation != current_animation){
-
-    }else{
-        //This replays it, so we insta correct for hip position
-        current_animation_time = 0;
-        MoveForwardBy(-delta.z);
-    }
-}
-*/
-
-//Going to play a move forward animation based on whatever animation its in.
 void PlayerCharacter::MoveForward(){
-    //Go to catwalk animation and enable foot tracking
-    SetNextAnimation("CatWalkingInPlace");
-    ProceedToNextAnimation();
-    //f_movement_animation_inplace = true;
-
-    MoveForwardBy(-0.025f * animation_transition_factor);
+    character_state.input_forward_down = true;
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void PlayerCharacter::MoveBackward(){
-    //debug->Info("Current animation state : %i\n",animation_state);
-    if (animation_state == ANIMATION_STATE_LOOPING){
-        SetNextAnimation("IdleStanding");
-        ProceedToNextAnimation();
-    }
-    idle_time = 0;
-    MoveForwardBy(0.025f);
+    character_state.input_backward_down = true;
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void PlayerCharacter::TurnRight(){
-    if (f_rotation_animation){
-        //Pick an animation that will rotate us.
-        idle_time = 0;
-        SetNextAnimation("RightTurnInPlace");
-        ProceedToNextAnimation();
-        float delta = -0.025f * animation_transition_factor;
-        quat q = quat(vec3(0,1,0),delta);
-        RotateBy(q);
-    }else{
-        //We rotate within current animation
-        float delta = -0.025f;
-        quat q = quat(vec3(0,1,0),delta);
-        RotateBy(q);
-    }
+    character_state.input_right_down = true;
 }
 
 void PlayerCharacter::TurnLeft(){
-    if (f_rotation_animation){
-        idle_time = 0;
-        SetNextAnimation("LeftTurnInPlace");
-        ProceedToNextAnimation();
-        float delta = 0.025f * animation_transition_factor;
-        quat q = quat(vec3(0,1,0),delta);
-        RotateBy(q);
-    }else{
-        //We rotate within current animation
-        float delta = 0.025f;
-        quat q = quat(vec3(0,1,0),delta);
-        RotateBy(q);
-    }
+    character_state.input_left_down = true;
 }
 
 void PlayerCharacter::ToIdle(){
+    //If the current animation is idle, leave it.
+    if (current_animation && current_animation->name.compare("Idle") == 0){
+        return;
+    }
     //Go to catwalk animation and enable foot tracking
     SetNextAnimation("Idle");
     ProceedToNextAnimation();
-    //f_movement_animation_inplace = true;
-
 }
 
 void PlayerCharacter::Jump(){
-    idle_time = 0;
+
     SetNextAnimation("JoyfullJump");
     ProceedToNextAnimation();
     next_animation->looped = false;

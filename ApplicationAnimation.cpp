@@ -150,6 +150,24 @@ void ApplicationAnimation::RunLogic(){
                 f_mode_grab = false;
             }
         }
+
+         //Get the sun position to the character.
+        if (sun){
+            vec3 delta = sun->GetPosition() - character->GetPosition();
+            //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
+            //Make sure it's always above our character
+            sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
+            sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
+        }
+
+        //Let the bone track the character
+        if (chain && character){
+            Bone* head = character->FindBone("mixamorig:Head");
+            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward();
+            vec3 p = chain->GetPosition();
+            vec3 diff = p.lerp(head_wp,0.04f);
+            chain->SetPosition(diff);
+        }
     }
 
     //All further code requires the cursor not to be above an UI element
@@ -230,6 +248,7 @@ void ApplicationAnimation::RunLogic(){
         if (input->WasKeyReleased(INPUT_JUMP)){
             character->Jump();
         }
+        /*
         if (input->WasKeyReleased(INPUT_TURN_UP)){
             character->ToIdle();
         }
@@ -238,7 +257,7 @@ void ApplicationAnimation::RunLogic(){
         }
         if (input->WasKeyReleased(INPUT_TURN_LEFT)){
             character->ToIdle();
-        }
+        }*/
         if (input->IsKeyDown(INPUT_MOVE_LEFT)){
             character->TurnLookLeft();
         }
@@ -261,23 +280,7 @@ void ApplicationAnimation::RunLogic(){
 
     }
 
-    //Get the sun position to the character.
-    if (sun){
-        vec3 delta = sun->GetPosition() - character->GetPosition();
-        //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
-        //Make sure it's always above our character
-        sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
-        sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
-    }
 
-    //Let the bone track the character
-    if (chain && character){
-        Bone* head = character->FindBone("mixamorig:Head");
-        vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward();
-        vec3 p = chain->GetPosition();
-        vec3 diff = p.lerp(head_wp,0.04f);
-        chain->SetPosition(diff);
-    }
 
 }
 
@@ -304,8 +307,12 @@ void ApplicationAnimation::DrawImGuiUI(){
 
     ImGui::Begin("Character Animation");
     if (character){
-        ImGui::Text("Foot Tracker Left Y-Pos : %.2f",character->foot_tracker_l->GetPosition().y);
-        ImGui::Text("Foot Tracker Left Y-Pos : %.2f",character->foot_tracker_r->GetPosition().y);
+        ImGui::Text("character_state");
+        ImGui::Text("moving_forward : %s",character->character_state.moving_forward ? "Yes" : "No");
+        ImGui::Text("moving_left    : %s",character->character_state.moving_left ? "Yes" : "No");
+        ImGui::Text("moving_right   : %s",character->character_state.moving_right ? "Yes" : "No");
+
+        ImGui::Separator();
         ImGui::Text("Head Turn Direction L/R : %.2f",character->head_turn_direction_lr);
         ImGui::Text("Head Turn Direction U/D : %.2f",character->head_turn_direction_ud);
         ImGui::Checkbox("Movement in Place",&character->f_movement_animation_inplace);

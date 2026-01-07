@@ -39,7 +39,28 @@ void ApplicationOCPP::Init(void){
 
 //Called before update physics
 void ApplicationOCPP::RunLogic(){
+    // Check if any OCPP clients need charging profile updates
+    if (http_server) {
+        DWORD now_ms = GetTickCount();
+        for (SOCKET client_socket : http_server->m_ocppClients) {
+            OCPPClientData* data = http_server->GetOCPPClientData(client_socket);
+            if (data && data->server_current_timit_updatereq) {
+                // Rate limit: only send updates once per second (1000ms)
+                DWORD time_since_last_update_ms = now_ms - data->last_profile_update_time_ms;
+                if (time_since_last_update_ms >= 1000) {
+                    // Send SetChargingProfile request
+                    int connectorId = (data->connectorId > 0) ? data->connectorId : 1;
+                    http_server->SendSetChargingProfile(client_socket, connectorId, data->server_current_limit);
 
+                    // Update the last update time
+                    data->last_profile_update_time_ms = now_ms;
+
+                    // Clear the update flag
+                    data->server_current_timit_updatereq = false;
+                }
+            }
+        }
+    }
 }
 
 void ApplicationOCPP::DrawImGuiUI(){
@@ -72,14 +93,22 @@ void ApplicationOCPP::RenderOCPPServerUI(){
             std::string status = data->connectorStatus;
             std::string lastTag = data->lastAuthorizedIdTag;
             // etc.
-            ImGui::Text("Status: %s",status.c_str());
+            ImGui::Text("Status     : %s",status.c_str());
 
             double power = data->powerActiveImport;  // in Watts
-            double soc = data->soc;                   // in Percent
+            double ac_voltage = data->powerActiveImport;
+            double soc = data->soc;                  // in Percent
             std::string timestamp = data->meterValuesTimestamp;
-            ImGui::Text("SOC   : %.1f%% ",soc);
-            ImGui::Text("Power : %.1f Watt",power);
-            ImGui::Text("Time  : %s",timestamp.c_str());
+            ImGui::Text("SOC        : %.1f%% ",soc);
+            ImGui::Text("AC Voltage : %.1f Watt",power);
+            ImGui::Text("Power      : %.1f Watt",power);
+            ImGui::Text("Time       : %s",timestamp.c_str());
+
+            static float current_limit = 16.0f;
+            if (ImGui::SliderFloat("Set Current Limit for Session",&current_limit,5,32)){
+                data->server_current_limit = current_limit;
+                data->server_current_timit_updatereq = true;
+            }
         }
         ImGui::PopID();
     }

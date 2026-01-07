@@ -4,7 +4,7 @@
 #include "Debug.h"
 #include "File.h"
 
-static Debugger *debug = new Debugger("Shader", DEBUG_ALL);
+static Debugger *debug = new Debugger("Shader", DEBUG_ERROR);
 
 Shader::Shader(){
 
@@ -176,14 +176,15 @@ void Shader::Use(){
 }
 
 //Set a uniform int
-void Shader::Setint(const char* name, int value){
+bool Shader::Setint(const char* name, int value){
 	GLuint intid = glGetUniformLocation(progid, name);
 	if (intid == -1){
 		//Warn once.
 		debug->Err("Could not set %i's int %s\n",progid,name);
-		return;
+		return false;
 	}
 	glUniform1i(intid,(GLint)value);
+	return true;
 }
 
 void Shader::Setfloat(const char* name, const float& value){
@@ -195,6 +196,7 @@ void Shader::Setfloat(const char* name, const float& value){
 		//debug->Info("Uniform %s at location %i\n",name,fid);
 	}
 	glUniform1fv(fid,1,(GLfloat*)&value);
+
 }
 
 void Shader::Setvec3(const char* name, const vec3& value){
@@ -203,9 +205,9 @@ void Shader::Setvec3(const char* name, const vec3& value){
 		debug->Warn("Could not set %i's vec3 %s\n",progid,name);
 		return;
 	}else{
-		//debug->Info("Uniform %s at location %i\n",name,fid);
+		debug->Info("Uniform %s at location %i\n",name,fid);
 	}
-	glUniform3fv(fid,1,(GLfloat*)&value);
+	glUniform3fv(fid,1,(const GLfloat*)&value);
 	//glUniform3f(fid,value.x,value.y,value.z);
 }
 

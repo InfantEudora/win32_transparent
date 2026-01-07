@@ -4,7 +4,7 @@
 
 #define DEFAULT_FRAMEBUFFER_ID  0
 
-static Debugger* debug = new Debugger("Renderer",DEBUG_WARN);
+static Debugger* debug = new Debugger("Renderer",DEBUG_ERROR);
 
 Renderer::Renderer(int w, int h){
     width = w;
@@ -438,7 +438,9 @@ void Renderer::DeferredPass(Camera* camera){
         //vec3 p = camera->GetPosition();
         //deferred_shader_skinned->Setvec3("eye_position",p);
         deferred_shader_skinned->Setmat4("mat_worldcam",camera->mat_cam);
-        deferred_shader_skinned->Setint("f_normal_mapping",(int)f_normal_mapping);
+        if (!deferred_shader_skinned->Setint("f_normal_mapping",(int)f_normal_mapping)){
+            debug->Fatal("Could not set normal mapping int in deferred pass\n");
+        };
         //deferred_shader_skinned->Setfloat("alpha_clip",alpha_clip);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
@@ -531,7 +533,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         skinned_shader->Use();
         vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
         skinned_shader->Setvec3("eye_position",p);
-        skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+        if (!skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
+            debug->Fatal("Could not set f_normal_mapping in skinned shader\n");
+        }
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
         RenderDepthPasses(shader,MESH_MODE_SKINNED);
@@ -541,7 +545,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     shader->Use();
     vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
     shader->Setvec3("eye_position",p);
-    shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+    if (!shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
+        debug->Fatal("Could not set f_normal_mapping in default shader\n");
+    }
     shader->Setfloat("alpha_clip",alpha_clip);
     shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
     RenderDepthPasses(shader,MESH_MODE_NORMAL);
@@ -575,7 +581,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
         skinned_shader->Setvec3("eye_position",p);
         skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
-        skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping);
+        if (!skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
+            debug->Fatal("Could not set f_normal_mapping in skinned shader\n");
+        }
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",0);
         RenderUniqueMeshes(MESH_MODE_SKINNED);

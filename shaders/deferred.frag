@@ -34,7 +34,7 @@ struct Material{
 
 #define PI 	3.14159265359
 
-uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
+//uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
 
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];

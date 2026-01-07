@@ -58,7 +58,7 @@ struct Light{
 
 #define PI 	3.14159265359
 
-uniform vec3 eye_position  = vec3(0.0,0.5,8.0);
+uniform vec3 eye_position;
 uniform int f_normal_mapping = 1;
 uniform int f_materialindex_is_color = 0;
 uniform float alpha_clip = 1.0f;
@@ -132,7 +132,7 @@ vec3 CalcDirectionalPBRLight(vec3 albedo, vec3 lightdirection, vec3 color, float
     if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
         N = GetNormalMapNormal();
         mat3 iTBN = transpose(TBN);
-        V = normalize(iTBN * (eye_position - vposition));
+        V = normalize(iTBN * (eye_position- vposition));
         L = normalize(iTBN * (lightdirection));
     }else{
         N = normalize(vnormal);

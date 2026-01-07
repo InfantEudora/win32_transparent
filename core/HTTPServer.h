@@ -48,8 +48,21 @@ struct OCPPClientData {
 
 	// Meter values data
 	double powerActiveImport;  // in Watts
+	double ACVoltage; //In volts
 	double soc;  // State of Charge in Percent
 	std::string meterValuesTimestamp;
+
+	// Transaction data
+	int transactionId;
+	std::string transactionIdTag;
+	int transactionMeterStart;
+	std::string transactionTimestamp;
+	std::string transactionReservationId;
+
+	// Server-side charging profile control
+	float server_current_limit;
+	bool server_current_timit_updatereq;
+	DWORD last_profile_update_time_ms;
 
 	// Connection info
 	std::string connectTimestamp;
@@ -59,7 +72,12 @@ struct OCPPClientData {
 		  bootAccepted(false),
 		  connectorId(-1),
 		  powerActiveImport(0.0),
-		  soc(0.0)
+		  soc(0.0),
+		  transactionId(-1),
+		  transactionMeterStart(0),
+		  server_current_limit(32.0f),
+		  server_current_timit_updatereq(false),
+		  last_profile_update_time_ms(0)
 	{}
 };
 
@@ -89,6 +107,9 @@ public:
 
 	// Get OCPP client data by socket (returns nullptr if not found)
 	OCPPClientData* GetOCPPClientData(SOCKET clientSocket);
+
+	// Send SetChargingProfile request to a client
+	bool SendSetChargingProfile(SOCKET clientSocket, int connectorId, float currentLimit);
 
 private:
 	std::string m_htmlContent;
@@ -130,6 +151,9 @@ private:
 	bool HandleOCPPHeartbeat(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
 	bool HandleOCPPAuthorize(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
 	bool HandleOCPPMeterValues(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
+	bool HandleOCPPStartTransaction(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
+	bool HandleOCPPStopTransaction(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
+	bool HandleOCPPDataTransfer(SOCKET clientSocket, const std::string &path, const std::string &msgId, const nlohmann::json &j);
 
 	// Parse HTTP request
 	std::string ParseHTTPRequest(const std::string& request);

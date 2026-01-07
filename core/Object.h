@@ -20,10 +20,11 @@ typedef uint32_t objectid_t;
 #define NUM_MATERIAL_SLOTS  4
 #define NUM_MORPH_FACTOR_SLOTS  4
 
-#define ANIMATION_STATE_INVALID    -1
-#define ANIMATION_STATE_PAUSED      0
-#define ANIMATION_STATE_LOOPING     1
-#define ANIMATION_STATE_TRANSITION  2
+#define ANIMATION_STATE_INVALID             -1
+#define ANIMATION_STATE_PAUSED              0
+#define ANIMATION_STATE_LOOPING             1
+#define ANIMATION_STATE_TRANSITION_START    2
+#define ANIMATION_STATE_TRANSITION          3
 
 typedef enum ObjectStateAccess{
     STATE_ACCESS_PHYSICS = 1,

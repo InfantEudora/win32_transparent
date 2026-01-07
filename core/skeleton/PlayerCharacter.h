@@ -8,10 +8,27 @@
 
     - Play an idle animation.
     - Goto a walking animation when pressing forward.
-     The animation can be done in place, but it makes more sense to get the animation with position changes.
+    The animation can be done in place, but it makes more sense to get the animation with position changes.
 
-     When lerping to a different animation, that may be in place we'd need to move the root, or hip from local transform to parent.
+    When lerping to a different animation, that may be in place we'd need to move the root, or hip from local transform to parent.
+
+    The character is in a state, character state. These can be many things at once.
+    Moving forward and turning at the same time.
+    Or jumping moving and turning.
+    Some combinations might have unique animations.
+    Some animations require the animation to finish playing of be beyond some point.
 */
+
+struct CharacterState{
+    bool input_forward_down = false;
+    bool input_backward_down = false;
+    bool input_left_down = false;
+    bool input_right_down = false;
+    bool moving_forward = false;
+    bool moving_backward = false;
+    bool moving_left = false;
+    bool moving_right = false;
+};
 
 class PlayerCharacter;
 
@@ -20,6 +37,8 @@ class PlayerCharacter : public virtual Skeleton{
     PlayerCharacter();
     ~PlayerCharacter();
 
+    CharacterState character_state;
+
     //Does each character need a copy of all animations?
     //It does when you don't want to lookup the objects every single time.
     std::string root_bone_name;
@@ -27,10 +46,6 @@ class PlayerCharacter : public virtual Skeleton{
     bool update_hip_position = false;
     vec3 hip_posistion_start = {};
     vec3 hip_fwd_start = {};
-
-    bool update_hip_rotation = false;
-    quat hip_rotation_start;
-    quat hip_rotation_cummulative;
 
     void ApplyAnimation(float time_delta) override;
 
@@ -71,7 +86,8 @@ class PlayerCharacter : public virtual Skeleton{
     Object* tracked_foot_r = NULL;
     vec3 left_foot_prev_pos = vec3();
     vec3 right_foot_prev_pos = vec3();
-
+private:
+    void ProcessInputState();
 };
 
 #endif

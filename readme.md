@@ -54,6 +54,10 @@ It should kind of look like this:
       some wave-function collapse type deal.
 - [ ] Camera isometric / perspective.
 - [ ] eye_position setting is not working on AMD...? It doesn't like glUniform3fv to uniforms that arent an array?
+- [ ] The is also the issue that only after recompilation:
+        [ info]                 File : LoadFile: File fonts/consola.ttf is 459180 bytes
+        Segmentation fault
+        It segfaults somewhere....
 - [ ] Share the texture across contexts?
 - [x] Assign different materials to objects by storing their material index in a sperate VAO.
 - [ ] Make OBJ file not require UV to be present so it only uses color.
