@@ -80,7 +80,17 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
     Bone* hip_bone = FindBone(root_bone_name);
     if (!hip_bone){
         debug->Err("Could not find root/hip bone [%s]\n",root_bone_name.c_str());
-        return;
+        //Try the first bone instead
+        if (children.size() > 0){
+            hip_bone = dynamic_cast<Bone*>(GetChild(0));
+            if (hip_bone){
+                debug->Warn("Using first child bone [%s] as root/hip bone instead.\n",hip_bone->name.c_str());
+                root_bone_name = hip_bone->name;
+            }else{
+                debug->Err("First child is not a bone either.\n");
+                return;
+            }
+        }
     }
 
     ProcessInputState();

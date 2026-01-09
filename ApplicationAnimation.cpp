@@ -131,7 +131,7 @@ void ApplicationAnimation::RunLogic(){
             vec3 diff = p.lerp(head_wp,0.04f);
             camera->SetPosition(diff);
             quat r = camera->GetRotation();
-            quat t = quat::getquat(neck->GetWorldPosition(STATE_ACCESS_PHYSICS),camera->GetWorldPosition(),Object::ref_up);
+            quat t = quat::getquat(neck->GetWorldPosition(STATE_ACCESS_PHYSICS),camera->GetWorldPosition(STATE_ACCESS_PHYSICS),Object::ref_up);
             t.normalize();
             r = quat::slerp(r,t,0.15f);
             camera->SetRotation(r);
@@ -170,12 +170,15 @@ void ApplicationAnimation::RunLogic(){
         }
     }
 
-    if (character && f_ik_arm){
-        Bone* hand_r = character->FindBone("mixamorig:RightHand");
+    if (selected_skeleton && f_ik_arm){
+        Bone* hand_r = selected_skeleton->FindBone("mixamorig:RightHand");
+        if (!hand_r){
+            hand_r = selected_skeleton->FindBone("Bone.002");
+        }
+
         if (hand_r && chain){
             vec3 target_pos = chain->GetWorldPosition(STATE_ACCESS_PHYSICS);
-
-            hand_r->IKExtend(target_pos,3,0.5f);
+            hand_r->IKExtend(target_pos,2,0.5f);
         }
     }
 
@@ -375,7 +378,7 @@ void ApplicationAnimation::DrawImGuiUI(){
 
 void ApplicationAnimation::RenderSkeletonUI(){
     ImGui::Begin("Skeleton UI");
-    static Skeleton* selected_skeleton = NULL;
+
     Skeleton* skeleton = dynamic_cast<Skeleton*>(selected_object);
     if (!skeleton){
         ImGui::Text("Selected object is not a skeleton.\n");
@@ -433,39 +436,13 @@ void ApplicationAnimation::RenderSkeletonUI(){
         }
     }
 
-    std::vector<std::string>bone_list;
-    bone_list.push_back("mixamorig:Head");
-    bone_list.push_back("mixamorig:Neck");
-    bone_list.push_back("mixamorig:Shoulders");
+    std::vector<Bone*> bone_list;
+    skeleton->GetAllBones(skeleton,bone_list);
 
-
-    bone_list.push_back("mixamorig:Hips");
-    bone_list.push_back("mixamorig:Spine");
-    bone_list.push_back("mixamorig:Spine1");
-    bone_list.push_back("mixamorig:Spine2");
-
-
-    bone_list.push_back("Waist.R");
-    bone_list.push_back("UpperLeg.R");
-    bone_list.push_back("LowerLeg.R");
-    bone_list.push_back("Foot.R");
-
-    bone_list.push_back("Shoulders");
-    bone_list.push_back("UpperArm.R");
-    bone_list.push_back("LowerArm.R");
-
-
-    bone_list.push_back("mixamorig:RightShoulder");
-    bone_list.push_back("mixamorig:RightArm");
-    bone_list.push_back("mixamorig:RightForeArm");
-    bone_list.push_back("mixamorig:RightHand");
-
-
-    int index = -1;
-    for (std::string& name:bone_list){
-        index++;
-        Bone* bone = skeleton->FindBone(name);
-        RenderBoneModifierHeader(bone, 0);
+    int imgui_id = -1;
+    for (Bone* bone:bone_list){
+        imgui_id++;
+        RenderBoneModifierHeader(bone, imgui_id);
     }
     ImGui::End();
 }
@@ -477,6 +454,7 @@ void ApplicationAnimation::RenderBoneModifierHeader(Bone* bone, int id){
     }
 
     if (ImGui::CollapsingHeader(bone->name.c_str())){
+        ImGui::PushID(id);
         bool apply_rotation = false;
         quat q = bone->GetRotation();
         static vec3 axis_degrees = {0,0,0};
@@ -510,6 +488,8 @@ void ApplicationAnimation::RenderBoneModifierHeader(Bone* bone, int id){
         quat q3; q3.set_rotation(vec3(0,0,1),toradians(axis_degrees.z));
 
         q = q1 * q2 * q3;
+
+        ImGui::DragFloat4("Reference Quaternion", (float*)&bone->reference_rotation, 0.01f, -1.0f, 1.0f);
         ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
         ImGui::EndDisabled();
         if (apply_rotation){
@@ -540,9 +520,11 @@ void ApplicationAnimation::RenderBoneModifierHeader(Bone* bone, int id){
             bone->YawBy(yaw_by);
         }
 
-        float forward_by = 0;
-        if (ImGui::DragFloat("Forward By", (float*)&forward_by, 0.01f, -1.0f, 1.0f)){
-            bone->MoveUpBy(forward_by);
+        float up_by = 0;
+        if (ImGui::DragFloat("Up By", (float*)&up_by, 0.01f, -1.0f, 1.0f)){
+            bone->MoveUpBy(up_by);
         }
+
+        ImGui::PopID();
     }
 }

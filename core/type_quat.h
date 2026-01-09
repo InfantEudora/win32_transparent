@@ -219,6 +219,7 @@ inline quat quat::getquat(const vec3& v1, const vec3& v2){
 
 
 //Constructs a quaternion from a lookat and position. Supplied worldup should point in the half sphere that is up.
+//https://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToQuaternion/
 inline quat quat::getquat(const vec3& target, const vec3& position, const vec3& worldup){
     vec3 lookat = (position - target).normalize();
     vec3 left = worldup.cross(lookat).normalize();
@@ -233,7 +234,7 @@ inline quat quat::getquat(const vec3& target, const vec3& position, const vec3& 
         q.y = (lookat.x - left.z) * s;
         q.z = (left.y - u.x) * s;
     } else {
-    if (left.x > u.y && left.x > lookat.z) {
+        if (left.x > u.y && left.x > lookat.z) {
             double s = 2.0 * sqrt(1.0 + left.x - u.y - lookat.z);
             q.w = (u.z - lookat.y) / s;
             q.x = 0.25 * s;

@@ -1108,9 +1108,14 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 ImGui::Text("Root Bone Name: %s",skeleton->root_bone_name.c_str());
                 static char bone_name[64] = {};
                 ImGui::InputText("Set Root Bone Name",bone_name, 64);
-
                 if (ImGui::Button("Apply Name")){
                     skeleton->root_bone_name = bone_name;
+                }
+                std::vector<Bone*> bones;
+                skeleton->GetAllBones(skeleton,bones);
+                ImGui::Text("Num Bones: %i",bones.size());
+                for (Bone* bone:bones){
+                    ImGui::Text("Bone Name: %s",bone->name.c_str());
                 }
 
             }

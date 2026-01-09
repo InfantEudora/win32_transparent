@@ -409,8 +409,24 @@ vec3 Object::GetPosition(ObjectStateAccessType t){
 //Computes and gets the world position. Currently always reads from render state
 //TODO Read physics state?
 vec3 Object::GetWorldPosition(ObjectStateAccessType t){
-    fmat4 wt = GetWorldTransformScaleMatrix();
-    return world_transform_scale_matrix.vertex[3].xyz();
+    if (t == STATE_ACCESS_RENDERER){
+        fmat4 wt = GetWorldTransformScaleMatrix();
+        return world_transform_scale_matrix.vertex[3].xyz();
+    }else{
+        //Compute from physics state
+        if (!parent){
+            return state_physics.position;
+        }else{
+            //Get parent's world position and rotation
+            vec3 parent_wp = parent->GetWorldPosition(STATE_ACCESS_PHYSICS);
+            quat parent_wr = parent->GetWorldRotation();
+
+            //Rotate our local position by parent's world rotation
+            vec3 rotated_pos = parent_wr * state_physics.position;
+
+            return parent_wp + rotated_pos;
+        }
+    }
 }
 
 vec3 Object::GetForward(ObjectStateAccessType t){
@@ -426,10 +442,8 @@ vec3 Object::GetUp(){
 }
 
 vec3 Object::GetWorldUp(){
-    //TODO
     return vec3();
 }
-
 
 vec3 Object::GetLeft(){
     return state_physics.rotation * ref_left;

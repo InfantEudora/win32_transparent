@@ -25,6 +25,10 @@ void Bone::SetInitialLength(){
     }
 }
 
+void Bone::SetReferenceRotation(const quat& q){
+    reference_rotation = q;
+}
+
 void Bone::IKExtend(const vec3& target,int depth,float decay, std::vector<Bone*>* chain){
     if (!chain){
         //First call, create chain vector
@@ -41,38 +45,45 @@ void Bone::IKExtend(const vec3& target,int depth,float decay, std::vector<Bone*>
 
     //We are at the top of the chain now.
     if (chain){
+        int decay_steps = chain->size();
         for (std::reverse_iterator<std::vector<Bone*>::iterator> it = chain->rbegin(); it != chain->rend(); ++it) {
+            decay_steps--;
+            float resulting_decay = pow(decay, decay_steps);
             Bone* b = *it;
             debug->Info(" Chain bone: %s\n",b->name.c_str());
-            debug->Info("Extending Bone %s len=%.2f by factor %.1f\n",name.c_str(),length, decay);
+            debug->Info("Extending Bone %s len=%.2f by factor %.1f\n",b->name.c_str(),length, resulting_decay);
             debug->Info(" Target wp : %.2f %.2f %.2f\n",target.x,target.y,target.z);
-            vec3 tail_wp = GetTailWorldPosition();
+            vec3 tail_wp = b->GetTailWorldPosition(STATE_ACCESS_PHYSICS);
             debug->Info(" Tail wp   : %.2f %.2f %.2f\n",tail_wp.x,tail_wp.y,tail_wp.z);
 
             //The bone now points somewhere in space
-            quat q = GetWorldRotation();
+            //quat q = b->GetWorldRotation();
 
             //And it should rotate to point at target
-            quat q_target = quat::getquat(GetWorldPosition(STATE_ACCESS_PHYSICS),target,vec3(0,1,0));
-            q_target.normalize();
+            quat q_target = quat::getquat(b->GetWorldPosition(STATE_ACCESS_PHYSICS),target,vec3(0,1,0));
             //We now have the target rotation in world space.
             //Convert to local space
-            quat local_rotation = WorldRotationToLocal(q_target);
+            quat local_rotation = b->WorldRotationToLocal(q_target);
+
+            //This target quaternion makes the bone look at the target, with the side.
+            //But we need it to point with it's head towards the target.
+            quat pitch = quat(vec3(1,0,0),TYPE_PI/2);
+            local_rotation = local_rotation * pitch;
+            local_rotation.normalize();
 
             b->animation_mask = 0.0f;
-
-            SetRotation(local_rotation);
+            b->SetRotation(local_rotation);
         }
     }
 }
 
-vec3 Bone::GetHeadWorldPosition(){
-    return GetWorldPosition();
+vec3 Bone::GetHeadWorldPosition(ObjectStateAccessType t){
+    return GetWorldPosition(t);
 }
 
-vec3 Bone::GetTailWorldPosition(){
+vec3 Bone::GetTailWorldPosition(ObjectStateAccessType t){
     if (child_bone){
-        return child_bone->GetWorldPosition();
+        return child_bone->GetWorldPosition(t);
     }
     return vec3();
 }

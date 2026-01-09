@@ -24,7 +24,7 @@ public:
     Object* chain = NULL;
     bool f_chain_track_head = true;
     bool f_ik_arm = false;
-
+    Skeleton* selected_skeleton = NULL;
 private:
     vec3 camera_target = {};
     bool f_filemodal = false;

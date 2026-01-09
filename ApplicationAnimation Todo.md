@@ -40,4 +40,10 @@ Then resize bones and remove icohedron.
 Then fix the animation by scaling everyting only by 1/100.
 And now there is less jitter... because blender can't scale animation data properly. Maybe they use 16 bit floats?
 
+### Bones
+
+Bone's have a slightly weird thing going on orientation wise, even in Blender they are not a default object but have some more going on.
+
+A Bone in Blender has a Roll property. Seperate from an object's roll.
+Moving a bone up moves the bone in the direction from tail to head.
 
