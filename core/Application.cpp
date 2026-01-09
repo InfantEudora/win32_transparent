@@ -498,6 +498,9 @@ void Application::RenderDebugMenuBar(){
                                         skeleton->TakeMaterialNames(loaded_materials);
                                         skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
                                         main_scene->AddObject(character);
+                                        //In order to apply animations to anyting, there needs to be a
+                                        //root bone name set.
+                                        character->root_bone_name = "Hips";
                                     }
                                 }
                             }
@@ -1095,6 +1098,23 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             ImGui::Text("Material Name 2 : %s",object->material_names[2].c_str());
             ImGui::Text("Material Name 3 : %s",object->material_names[3].c_str());
         }
+        Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
+        if (!skeleton){
+            ImGui::BeginDisabled();
+            ImGui::CollapsingHeader("No Skeleton");
+            ImGui::EndDisabled();
+        }else{
+            if (ImGui::CollapsingHeader("Skeleton")){
+                ImGui::Text("Root Bone Name: %s",skeleton->root_bone_name.c_str());
+                static char bone_name[64] = {};
+                ImGui::InputText("Set Root Bone Name",bone_name, 64);
+
+                if (ImGui::Button("Apply Name")){
+                    skeleton->root_bone_name = bone_name;
+                }
+
+            }
+        }
 
         if (ImGui::CollapsingHeader("Animations")){
             ImGui::Text("Morph Factors");
@@ -1112,11 +1132,21 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     object->SetNextAnimation(NULL);
                     object->ProceedToNextAnimation();
                 }
+                int button_id = 0;
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
                         object->SetNextAnimation(animation);
                         object->ProceedToNextAnimation();
                     }
+                    /*
+                    ImGui::Text("Bone[0] Target: %s",animation->object_animations.at(0)->target_name.c_str());
+                    ImGui::Text("Bone[1] Target: %s",animation->object_animations.at(1)->target_name.c_str());
+                    ImGui::PushID(button_id);
+                    if (ImGui::Button("Retarget")){
+                        animation->Retarget(object);
+                    }
+                    ImGui::PopID();
+                    button_id++;*/
                 }
 
                 if (object->current_animation){

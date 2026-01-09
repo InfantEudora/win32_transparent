@@ -14,10 +14,17 @@ PlayerCharacter::~PlayerCharacter(){
 
 //Function checks input and applies correct animation and state.
 void PlayerCharacter::ProcessInputState(){
-    if (!(character_state.input_forward_down || character_state.input_backward_down ||  character_state.input_left_down || character_state.input_right_down)){
-        //No input was down.
-        SetNextAnimation("Idle");
-        ProceedToNextAnimation();
+    if (!(character_state.input_forward_down || character_state.input_backward_down ||
+          character_state.input_left_down || character_state.input_right_down
+        || character_state.input_jump)){
+        //No input was down. We proceed to idle animation once.
+        if (character_state.any_input_was_active){
+            SetNextAnimation("Idle");
+            ProceedToNextAnimation();
+            character_state.any_input_was_active = false;
+        }
+    }else{
+        character_state.any_input_was_active = true;
     }
     if (character_state.input_forward_down){
         SetNextAnimation("CatWalkingInPlace");
@@ -53,6 +60,11 @@ void PlayerCharacter::ProcessInputState(){
         RotateBy(q);
         character_state.input_right_down = false;
     }
+    if (character_state.input_jump){
+        SetNextAnimation("JoyfullJump");
+        ProceedToNextAnimation();
+        character_state.input_jump = false;
+    }
 }
 
 void PlayerCharacter::ApplyAnimation(float time_delta){
@@ -67,7 +79,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
     Bone* hip_bone = FindBone(root_bone_name);
     if (!hip_bone){
-        debug->Fatal("Could not find root/hip bone '%s;.\n",root_bone_name.c_str());
+        debug->Err("Could not find root/hip bone [%s]\n",root_bone_name.c_str());
+        return;
     }
 
     ProcessInputState();
@@ -112,13 +125,13 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             vec3 hippos_end = hip_bone->GetPosition();
             //How much has the hip moved?
             vec3 d = hip_posistion_start - hippos_end;
-            debug->Info("Looping: Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
+            //debug->Info("Looping: Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
             d.y = 0;
             //MoveForwardBy(-d.z);
 
             //Now, have we turned around maybe?
             vec3 hip_fwd_end = hip_bone->GetWorldForward();
-            debug->Info("Looping: Hip fwd start | end %.3f %.3f %.3f | %.3f %.3f %.3f\n",hip_fwd_start.x,hip_fwd_start.y,hip_fwd_start.z,hip_fwd_end.x,hip_fwd_end.y,hip_fwd_end.z);
+            //debug->Info("Looping: Hip fwd start | end %.3f %.3f %.3f | %.3f %.3f %.3f\n",hip_fwd_start.x,hip_fwd_start.y,hip_fwd_start.z,hip_fwd_end.x,hip_fwd_end.y,hip_fwd_end.z);
             MoveBy(GetRotation()*d);
 
             //Compute the angle the hip has rotate in the XZ plane.
@@ -127,9 +140,9 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
             float dot = xz_start.dot(xz_end);
             dot = clamp(dot,-1.0,1.0);
-            debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
+            //debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
             quat r = quat(vec3(0,-1,0),acos(dot));
-            debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
+            //debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
             RotateBy(r);
 
 
@@ -188,7 +201,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         vec3 xz_end = vec3(hip_fwd_end.xz()).normalize();
         float dot = xz_start.dot(xz_end);
         dot = clamp(dot,-1.0,1.0);
-        debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
+        //debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
         quat r = quat(vec3(0,-1,0),acos(dot));
         debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
         RotateBy(r);
@@ -198,7 +211,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             vec3 hippos_end = hip_bone->GetPosition();
             //How much has the hip moved?
             vec3 d = hip_posistion_start - hippos_end;
-            debug->Info("Transition: Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
+            //debug->Info("Transition: Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
             d.y = 0;
             //MoveBy(GetRotation()*d);
             update_hip_position = false;
@@ -285,10 +298,7 @@ void PlayerCharacter::ToIdle(){
 }
 
 void PlayerCharacter::Jump(){
-
-    SetNextAnimation("JoyfullJump");
-    ProceedToNextAnimation();
-    next_animation->looped = false;
+    character_state.input_jump = true;
 }
 
 void PlayerCharacter::TurnLookLeft(){

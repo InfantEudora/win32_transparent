@@ -14,13 +14,16 @@ public:
     void RunLogic() override;
 
     void DrawImGuiUI(void) override;
+    void RenderSkeletonUI();
+    void RenderBoneModifierHeader(Bone* bone, int id);
 
     Scene* CreateEmptyScene();
 
     DirectionalLight* sun = NULL;
     PlayerCharacter* character = NULL;
     Object* chain = NULL;
-
+    bool f_chain_track_head = true;
+    bool f_ik_arm = false;
 
 private:
     vec3 camera_target = {};

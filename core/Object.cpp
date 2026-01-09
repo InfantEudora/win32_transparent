@@ -440,6 +440,18 @@ quat Object::GetRotation(){
     return state_physics.rotation;
 }
 
+quat Object::WorldRotationToLocal(const quat& world_rotation_in){
+    if (!parent){
+        return world_rotation_in;
+    }
+
+    //We have a parent. Get it's rotation and apply in reverse order
+    quat parent_rotation = parent->GetWorldRotation();
+    quat local_rotation = parent_rotation.inverse() * world_rotation_in;
+
+    return local_rotation;
+}
+
 //Calculate the single transformation matrix for rendering
 void Object::UpdateTransformMatrix(){
     //We do in order:

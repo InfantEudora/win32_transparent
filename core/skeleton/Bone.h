@@ -16,6 +16,7 @@ public:
     float initial_length = 0.0f;
     float length = 0.0f;
 
+
     vec3 GetHeadWorldPosition();    // Where the bone starts and attaches to parent
     vec3 GetTailWorldPosition();    // Where the bone ends and children sit
 
@@ -35,7 +36,7 @@ public:
         Depth specifies the number of bones that should follow it.
         Decay: each subsequent bone will use decay factor as influence.
     */
-    void IKExtend(const vec3& taget,int depth,float decay);
+    void IKExtend(const vec3& taget,int depth,float decay, std::vector<Bone*>* chain = NULL);
 
     //Tunable UI parameters per bone
 

@@ -124,6 +124,7 @@ class Object{
     vec3 GetLeft();             // Return the vector pointing left
     quat GetRotation();         // Returns a copy of the rotation
     quat GetWorldRotation();    // Calculates and returns world rotation
+    quat WorldRotationToLocal(const quat& world_rotation); // Converts a world rotation to a local rotation for this object.
 
     //Materials
     void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
@@ -149,6 +150,8 @@ class Object{
 
     bool f_animation_override = false;  //If we should manually step through animation with ticks
     int animation_override_ticks = 0;
+
+    float animation_mask = 1.0f; // 0.0 = no animation, 1.0 = full animation
 
     float animation_time_delta = 0.02f;
 

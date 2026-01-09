@@ -25,20 +25,44 @@ void Bone::SetInitialLength(){
     }
 }
 
-void Bone::IKExtend(const vec3& target,int depth,float decay){
-    debug->Info("Extending Bone %s len=%.2f by factor %.1f\n",name.c_str(),length, decay);
-    debug->Info(" Target wp : %.2f %.2f %.2f\n",target.x,target.y,target.z);
-    vec3 tail_wp = GetTailWorldPosition();
-    debug->Info(" Tail wp   : %.2f %.2f %.2f\n",tail_wp.x,tail_wp.y,tail_wp.z);
+void Bone::IKExtend(const vec3& target,int depth,float decay, std::vector<Bone*>* chain){
+    if (!chain){
+        //First call, create chain vector
+        chain = new std::vector<Bone*>();
+    }
+    chain->push_back(this);
 
-    //The bone now points somewhere in space
-    quat q = GetWorldRotation();
-
-
-
+    //We start at the tail, and work our way up the chain, and remember which child we came from.
     if (parent_bone && (depth > 0)){
-        vec3 new_target;
-        parent_bone->IKExtend(new_target,depth-1,decay);
+        debug->Info(" Bone %s passing IK extend to parent %s\n",name.c_str(),parent_bone->name.c_str());
+        parent_bone->IKExtend(target,depth-1,decay,chain);
+        return;
+    }
+
+    //We are at the top of the chain now.
+    if (chain){
+        for (std::reverse_iterator<std::vector<Bone*>::iterator> it = chain->rbegin(); it != chain->rend(); ++it) {
+            Bone* b = *it;
+            debug->Info(" Chain bone: %s\n",b->name.c_str());
+            debug->Info("Extending Bone %s len=%.2f by factor %.1f\n",name.c_str(),length, decay);
+            debug->Info(" Target wp : %.2f %.2f %.2f\n",target.x,target.y,target.z);
+            vec3 tail_wp = GetTailWorldPosition();
+            debug->Info(" Tail wp   : %.2f %.2f %.2f\n",tail_wp.x,tail_wp.y,tail_wp.z);
+
+            //The bone now points somewhere in space
+            quat q = GetWorldRotation();
+
+            //And it should rotate to point at target
+            quat q_target = quat::getquat(GetWorldPosition(STATE_ACCESS_PHYSICS),target,vec3(0,1,0));
+            q_target.normalize();
+            //We now have the target rotation in world space.
+            //Convert to local space
+            quat local_rotation = WorldRotationToLocal(q_target);
+
+            b->animation_mask = 0.0f;
+
+            SetRotation(local_rotation);
+        }
     }
 }
 

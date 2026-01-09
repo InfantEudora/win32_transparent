@@ -227,6 +227,16 @@ A vertex get's a bone index. This index references a list in an armature with wh
 
 Skeletal animation might be easiest when all the animations are in place. With complex animations however, it's nice to have the position 'encoded' in the bone position.
 
+Animation importing from difference sources is a bitch.
+
+For instance: From Cartwheel studio:
+- Set blender to a unit scale of 100
+- Apply scale of armature from 0.01 to 1.
+- Make bones look normal size by removing icospehere in pose mode + ALT.
+- Resize bones in edit mode with individual origins by 0.01
+- Resize Hip position by 0.001 in animation
+- Reposition Hip origin.
+
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
 

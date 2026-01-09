@@ -24,6 +24,8 @@ struct CharacterState{
     bool input_backward_down = false;
     bool input_left_down = false;
     bool input_right_down = false;
+    bool input_jump = false;
+    bool any_input_was_active = false;
     bool moving_forward = false;
     bool moving_backward = false;
     bool moving_left = false;
@@ -38,10 +40,6 @@ class PlayerCharacter : public virtual Skeleton{
     ~PlayerCharacter();
 
     CharacterState character_state;
-
-    //Does each character need a copy of all animations?
-    //It does when you don't want to lookup the objects every single time.
-    std::string root_bone_name;
 
     bool update_hip_position = false;
     vec3 hip_posistion_start = {};

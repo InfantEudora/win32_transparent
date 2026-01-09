@@ -161,12 +161,21 @@ void ApplicationAnimation::RunLogic(){
         }
 
         //Let the bone track the character
-        if (chain && character){
+        if (f_chain_track_head && chain && character){
             Bone* head = character->FindBone("mixamorig:Head");
             vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward();
             vec3 p = chain->GetPosition();
             vec3 diff = p.lerp(head_wp,0.04f);
             chain->SetPosition(diff);
+        }
+    }
+
+    if (character && f_ik_arm){
+        Bone* hand_r = character->FindBone("mixamorig:RightHand");
+        if (hand_r && chain){
+            vec3 target_pos = chain->GetWorldPosition(STATE_ACCESS_PHYSICS);
+
+            hand_r->IKExtend(target_pos,3,0.5f);
         }
     }
 
@@ -245,7 +254,7 @@ void ApplicationAnimation::RunLogic(){
         if (input->IsKeyDown(INPUT_TURN_LEFT)){
             character->TurnLeft();
         }
-        if (input->WasKeyReleased(INPUT_JUMP)){
+        if (input->IsKeyDown(INPUT_JUMP)){
             character->Jump();
         }
         /*
@@ -270,22 +279,19 @@ void ApplicationAnimation::RunLogic(){
         if (input->IsKeyDown(INPUT_MOVE_DOWN)){
             character->TurnLookDown();
         }
-        if (input->WasKeyReleased(INPUT_F)){
+        if (input->IsKeyDown(INPUT_F)){
             character->f_animation_override = true;
             character->animation_override_ticks++;
         }
         if (input->WasKeyReleased(INPUT_G)){
             f_mode_grab = !f_mode_grab;
         }
-
     }
-
 
 
 }
 
 void ApplicationAnimation::DrawImGuiUI(){
-
     //We're asked to import the f_filemodal file.
     if (f_import_file){
         debug->Info("Starting import of file %s\n",filemodal_filename.c_str());
@@ -304,6 +310,7 @@ void ApplicationAnimation::DrawImGuiUI(){
 
     RenderDebugMenuBar();
     RenderApplicationUI();
+    RenderSkeletonUI();
 
     ImGui::Begin("Character Animation");
     if (character){
@@ -319,6 +326,7 @@ void ApplicationAnimation::DrawImGuiUI(){
         ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override);
         ImGui::Checkbox("Rotation Animations",&character->f_rotation_animation);
         ImGui::Checkbox("Grab Mode",&f_mode_grab);
+        ImGui::Checkbox("Head Track",&f_chain_track_head);
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Separator();
         Bone* hips = character->FindBone("mixamorig:Hips");
@@ -361,5 +369,180 @@ void ApplicationAnimation::DrawImGuiUI(){
             f_import_file = false;
         }
         ImGui::EndPopup();
+    }
+}
+
+
+void ApplicationAnimation::RenderSkeletonUI(){
+    ImGui::Begin("Skeleton UI");
+    static Skeleton* selected_skeleton = NULL;
+    Skeleton* skeleton = dynamic_cast<Skeleton*>(selected_object);
+    if (!skeleton){
+        ImGui::Text("Selected object is not a skeleton.\n");
+    }else{
+        if (ImGui::Button("Remember Sekelton")){
+            selected_skeleton = skeleton;
+        }
+    }
+
+    if (!selected_skeleton){
+        ImGui::End();
+        return;
+    }
+    skeleton = selected_skeleton;
+
+    Object* bones = skeleton->GetChild(0);
+
+    bool obj_visible = bones->IsVisible();
+    if (ImGui::Checkbox("Show Skeleton Bones",&obj_visible)){
+        bones->SetVisibility(obj_visible);
+    }
+
+
+    vec3 at = {};
+    plane& p = projection_plane;
+    int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+    ray r = main_scene->camera->GetPixelRay(px);
+    bool intersect = r.intersects_plane(p,at);
+
+    static bool  f_track_cursor = false;
+
+    if (ImGui::Checkbox("f_track_cursor",&f_track_cursor)){
+
+    }
+    if (ImGui::Checkbox("f_ik_arm",&f_ik_arm)){
+
+    }
+
+    if (f_track_cursor){
+        ImGui::BeginDisabled();
+        ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Origin", (float*)&r.origin, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Ray Direction", (float*)&r.direction, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        ImGui::Separator();
+
+
+        ImGui::DragFloat3("Plane Origin", (float*)&p.pos, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Plane Normal", (float*)&p.normal, 0.01f, -1.0f, 1.0f);
+
+        if (intersect){
+            ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
+        }else{
+            ImGui::Text("No intersection");
+        }
+    }
+
+    std::vector<std::string>bone_list;
+    bone_list.push_back("mixamorig:Head");
+    bone_list.push_back("mixamorig:Neck");
+    bone_list.push_back("mixamorig:Shoulders");
+
+
+    bone_list.push_back("mixamorig:Hips");
+    bone_list.push_back("mixamorig:Spine");
+    bone_list.push_back("mixamorig:Spine1");
+    bone_list.push_back("mixamorig:Spine2");
+
+
+    bone_list.push_back("Waist.R");
+    bone_list.push_back("UpperLeg.R");
+    bone_list.push_back("LowerLeg.R");
+    bone_list.push_back("Foot.R");
+
+    bone_list.push_back("Shoulders");
+    bone_list.push_back("UpperArm.R");
+    bone_list.push_back("LowerArm.R");
+
+
+    bone_list.push_back("mixamorig:RightShoulder");
+    bone_list.push_back("mixamorig:RightArm");
+    bone_list.push_back("mixamorig:RightForeArm");
+    bone_list.push_back("mixamorig:RightHand");
+
+
+    int index = -1;
+    for (std::string& name:bone_list){
+        index++;
+        Bone* bone = skeleton->FindBone(name);
+        RenderBoneModifierHeader(bone, 0);
+    }
+    ImGui::End();
+}
+
+
+void ApplicationAnimation::RenderBoneModifierHeader(Bone* bone, int id){
+    if (!bone){
+        return;
+    }
+
+    if (ImGui::CollapsingHeader(bone->name.c_str())){
+        bool apply_rotation = false;
+        quat q = bone->GetRotation();
+        static vec3 axis_degrees = {0,0,0};
+
+        std::string title;
+
+        std::string parent_name = "NULL";
+        std::string child_name = "NULL";
+        if (bone->parent_bone){
+            parent_name = bone->parent_bone->name;
+        }
+        if (bone->child_bone){
+            child_name = bone->child_bone->name;
+        }
+        ImGui::Text("Parent Bone     : %s\n",parent_name.c_str());
+        ImGui::Text("Child Bone [0]  : %s\n",child_name.c_str());
+
+
+        axis_degrees.x = todegrees(q.get_pitch());
+        axis_degrees.z = todegrees(q.get_roll());
+        axis_degrees.y = todegrees(q.get_yaw());
+
+        title = "Axis Degrees ##" + std::to_string(id);
+        if (ImGui::DragFloat3(title.c_str(), (float*)&axis_degrees, 1.0f, -180.0f, 180.0f)){
+            apply_rotation = true;
+        }
+        ImGui::BeginDisabled();
+        //Let's do them in order?
+        quat q1; q1.set_rotation(vec3(1,0,0),toradians(axis_degrees.x));
+        quat q2; q2.set_rotation(vec3(0,1,0),toradians(axis_degrees.y));
+        quat q3; q3.set_rotation(vec3(0,0,1),toradians(axis_degrees.z));
+
+        q = q1 * q2 * q3;
+        ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
+        ImGui::EndDisabled();
+        if (apply_rotation){
+            bone->SetRotation(q);
+        }
+
+        static float modify_parent = 0.0f;
+        if (ImGui::DragFloat("Parent Depth = 1", (float*)&modify_parent, 0.01f, 0.0f, 1.0f)){
+
+        }
+        if (ImGui::DragFloat("Animation Mask", (float*)&bone->animation_mask, 0.01f, 0.0f, 1.0f)){
+
+        }
+
+        float roll_by = 0;
+        if (ImGui::DragFloat("Roll By", (float*)&roll_by, 0.01f, -1.0f, 1.0f)){
+            bone->RollBy(roll_by);
+            if (bone->parent_bone && (modify_parent > 0.0f)){
+                bone->parent_bone->RollBy(roll_by * modify_parent);
+            }
+        }
+        float pitch_by = 0;
+        if (ImGui::DragFloat("Pitch By", (float*)&pitch_by, 0.01f, -1.0f, 1.0f)){
+            bone->PitchBy(pitch_by);
+        }
+        float yaw_by = 0;
+        if (ImGui::DragFloat("Yaw By", (float*)&yaw_by, 0.01f, -1.0f, 1.0f)){
+            bone->YawBy(yaw_by);
+        }
+
+        float forward_by = 0;
+        if (ImGui::DragFloat("Forward By", (float*)&forward_by, 0.01f, -1.0f, 1.0f)){
+            bone->MoveUpBy(forward_by);
+        }
     }
 }

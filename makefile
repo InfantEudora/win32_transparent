@@ -66,9 +66,9 @@ else
 endif
 
 #ApplicationAnimation
-#CFLAGS+= -DAPP_HEADER=\"ApplicationAnimation.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationAnimation
-#SRCS += ApplicationAnimation.cpp
+CFLAGS+= -DAPP_HEADER=\"ApplicationAnimation.h\"
+CFLAGS+= -DAPP_CLASS=ApplicationAnimation
+SRCS += ApplicationAnimation.cpp
 
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
@@ -106,10 +106,9 @@ endif
 #SRCS += ApplicationUI.cpp
 
 #ApplicationOCPP
-CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
-CFLAGS+= -DAPP_CLASS=ApplicationOCPP
-SRCS += ApplicationOCPP.cpp
-
+#CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationOCPP
+#SRCS += ApplicationOCPP.cpp
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 

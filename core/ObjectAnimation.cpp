@@ -59,7 +59,13 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
         return;
     }
     if (keyframe->f_rotation){
-        target->SetRotation(keyframe->rotation);
+        //Set rotation forces the bone into a specific rotation, ignoring existing rotation.
+        if (target->animation_mask < 1.0f){
+            quat rot = quat::slerp(target->GetRotation(),keyframe->rotation,target->animation_mask);
+            target->SetRotation(rot);
+        }else{
+            target->SetRotation(keyframe->rotation);
+        }
     }
     if (keyframe->f_position){
         target->SetPosition(keyframe->position);
@@ -126,9 +132,16 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
             }
         }
         if (start_keyframe->f_rotation && end_keyframe->f_rotation){
-            quat rot = quat::slerp(start_keyframe->rotation,end_keyframe->rotation,factor);
             if (this_object_animation->target){
-                this_object_animation->target->SetRotation(rot);
+                quat merged_rot = quat::slerp(start_keyframe->rotation,end_keyframe->rotation,factor);
+
+                //Set rotation forces the bone into a specific rotation, ignoring existing rotation.
+                if (this_object_animation->target->animation_mask < 1.0f){
+                    quat rot = quat::slerp(this_object_animation->target->GetRotation(),merged_rot,this_object_animation->target->animation_mask);
+                    this_object_animation->target->SetRotation(rot);
+                }else{
+                    this_object_animation->target->SetRotation(merged_rot);
+                }
             }
         }
     }
@@ -228,4 +241,13 @@ void ObjectAnimation::AddKeyframe(ObjectAnimationKeyFrame* new_keyframe){
 
     //Nothing, insert this as last.
     keyframes.push_back(new_keyframe);
+}
+
+//TODO: Make it majestic
+void Animation::Retarget(Object* target){
+    //We iterate over the object animations and add mixamo
+    for (ObjectAnimation* objectanimation:object_animations){
+        objectanimation->target_name = "mixamorig:" + objectanimation->target_name;
+    }
+    LinkObjects(target);
 }
