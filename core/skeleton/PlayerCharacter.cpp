@@ -272,10 +272,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
     //Update the foot trackers
     if (foot_tracker_l && tracked_foot_l){
-        foot_tracker_l->SetPosition(tracked_foot_l->GetWorldPosition());
+        foot_tracker_l->SetPosition(tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS));
     }
     if (foot_tracker_r && tracked_foot_r){
-        foot_tracker_r->SetPosition(tracked_foot_r->GetWorldPosition());
+        foot_tracker_r->SetPosition(tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS));
     }
 }
 

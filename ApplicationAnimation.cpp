@@ -93,10 +93,10 @@ void ApplicationAnimation::Init(void){
         character->tracked_foot_r = character->FindChild("mixamorig:RightToeBase");
 
         chain = assetmanager->GetObjectFromAsset("bone");
-        Physics* physics = chain->AddPhysics(main_scene->physics_world);
-        if (physics){
-            physics->SetStatic(true);
-        }
+        //Physics* physics = chain->AddPhysics(main_scene->physics_world);
+        //if (physics){
+        //   physics->SetStatic(true);
+        //}
         main_scene->AddObject(chain);
 
     }
@@ -116,7 +116,7 @@ void ApplicationAnimation::Init(void){
     main_window->Resize(1680,900);
 }
 
-//Called before update physics
+//Called before update physics after update animations
 void ApplicationAnimation::RunLogic(){
     //Shortcuts
     Camera* camera = main_scene->camera;
@@ -126,8 +126,8 @@ void ApplicationAnimation::RunLogic(){
         if (f_mode_camera_track){
             Bone* neck = character->FindBone("mixamorig:Neck");
             Bone* head = character->FindBone("mixamorig:Head");
-            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - 3 * head->GetWorldForward();
-            vec3 p = camera->GetPosition();
+            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - 3 * head->GetWorldForward(STATE_ACCESS_PHYSICS);
+            vec3 p = camera->GetPosition(STATE_ACCESS_PHYSICS);
             vec3 diff = p.lerp(head_wp,0.04f);
             camera->SetPosition(diff);
             quat r = camera->GetRotation();
@@ -163,8 +163,8 @@ void ApplicationAnimation::RunLogic(){
         //Let the bone track the character
         if (f_chain_track_head && chain && character){
             Bone* head = character->FindBone("mixamorig:Head");
-            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward();
-            vec3 p = chain->GetPosition();
+            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward(STATE_ACCESS_PHYSICS);
+            vec3 p = chain->GetPosition(STATE_ACCESS_PHYSICS);
             vec3 diff = p.lerp(head_wp,0.04f);
             chain->SetPosition(diff);
         }

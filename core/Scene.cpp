@@ -17,6 +17,17 @@ void Scene::UpdateInput(){
     inputcontroller->UpdateKeyState();
 };
 
+void Scene::UpdateAnimations(){
+    if (!renderer){
+        return;
+    }
+
+    //Update all objects stored in the renderer.
+    for (Object* object:renderer->objects){
+        object->ApplyAnimation(object->animation_time_delta); //Each object updates its own animation time
+    }
+};
+
 void Scene::UpdatePhysics(){
     //We need a renderer because that's were we store our objects that need to be rendered.
     if (!renderer){
@@ -24,11 +35,6 @@ void Scene::UpdatePhysics(){
     }
     if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
         PausePhysics(!f_paused);
-    }
-
-    //We do allow for camera updates on the main camera.
-    if (camera){
-        camera->UpdatePhysicsState();
     }
 
     if (f_paused){
@@ -42,21 +48,18 @@ void Scene::UpdatePhysics(){
     //Update all objects stored in the renderer.
     for (Object* object:renderer->objects){
         //debug->Info("Updating physics for obj->id %i\n",object->GetID());
-        if (object == camera){
-            //debug->Info("Skipping already handled camera update physics for obj->id %i\n",object->GetID());
-            continue;
-        }
+
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();
     }
 };
 
 void Scene::DrawFrame(){
-    if (camera){
+    /*if (camera){
         camera->viewport.width = renderer->width;
         camera->viewport.height = renderer->height;
         camera->CalculateLookatMatrix();
-    }
+    }*/
 
     int2 m = inputcontroller->GetRelativeMousePosition();
 

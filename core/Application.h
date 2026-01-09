@@ -51,6 +51,7 @@ public:
 
     //Physics thread
     virtual void UpdateInput(void);
+    virtual void UpdateAnimations(void);
     virtual void RunLogic(void);
     virtual void UpdatePhysics(void);
     virtual void NextInput(void);

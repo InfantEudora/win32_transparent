@@ -373,7 +373,7 @@ void Object::UpdatePhysicsState(){
         SetRotation(physics_q,false);
     }
 
-    ApplyAnimation(animation_time_delta);
+    //ApplyAnimation(animation_time_delta);
 
     for (Object* child:children) {
         child->UpdatePhysicsState();

@@ -528,6 +528,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     PrepareObjects();
 
+    camera->viewport.width = width;
+    camera->viewport.height = height;
+    camera->CalculateLookatMatrix();
+
     ClearDepthPasses();
     if (skinned_shader){
         skinned_shader->Use();

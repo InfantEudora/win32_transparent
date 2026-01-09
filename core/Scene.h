@@ -29,6 +29,7 @@ public:
 
 
     void UpdateInput();
+    void UpdateAnimations();
     void UpdatePhysics();
     void DrawFrame();
 

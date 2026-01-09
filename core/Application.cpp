@@ -247,6 +247,7 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
 
             //Time spent on logic + physics
             app->tmr_physics->Restart();
+            app->UpdateAnimations();
             app->RunLogic();
             app->UpdatePhysics();
             app->tmr_physics->Stop();
@@ -283,6 +284,13 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
 //Called after input update before update physics to run something...?
 void Application::RunLogic(){
     return;
+}
+
+void Application::UpdateAnimations(){
+    if (!main_scene){
+        return;
+    }
+    main_scene->UpdateAnimations();
 }
 
 void Application::UpdatePhysics(){
