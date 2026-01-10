@@ -107,6 +107,16 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_transition_factor = 1.0f;
         }
     }
+    if (animation_state == ANIMATION_STATE_LOAD_DEFAULT_POSE){
+        //Load the default pose into the skeleton.
+        std::vector<Bone*> bones;
+        GetAllBones(this,bones);
+        for (Bone* bone:bones){
+            bone->SetRotation(bone->reference_rotation);
+        }
+        animation_state = ANIMATION_STATE_INVALID;
+        current_animation = NULL;
+    }
 
     if (animation_state == ANIMATION_STATE_LOOPING){
         //Loop the same animation
@@ -170,7 +180,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         //If there is no next animation, we can't proceed.
         if (!next_animation){
             debug->Warn("AnimationSampler: Transition to next = NULL\n");
-            animation_state = ANIMATION_STATE_LOOPING;
+            animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
+
             return;
         }
         if (next_animation == current_animation){

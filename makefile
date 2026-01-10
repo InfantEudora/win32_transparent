@@ -47,7 +47,7 @@ SRC_LIBIMGUI += 3rdparty/imgui/imgui.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_draw.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_widgets.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_tables.cpp
-SRC_LIBIMGUI += 3rdparty/imgui/imgui_demo.cpp
+#SRC_LIBIMGUI += 3rdparty/imgui/imgui_demo.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_win32.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_opengl3.cpp
 OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
@@ -154,7 +154,7 @@ reset:
 	-rm -rf main.o ApplicationAnimation.o core/Object.o core/skeleton/PlayerCharacter.o
 
 clean:
-	-rm -rf $(OBJS) $(OBJ_LIBIMGUI)
+	-rm -rf $(OBJS) $(OBJ_LIBIMGUI) $(OBJ_LIBTHIRDPARTY)
 
 superclean:
 	-rm -rf libs/libimgui.a

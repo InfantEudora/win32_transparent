@@ -53,6 +53,7 @@ class PlayerCharacter : public virtual Skeleton{
     bool f_switch_now = false;
     bool f_rotation_animation = false;
     bool f_movement_animation_inplace = false;
+    bool f_move_by_feet_placement = false;  //For inplace animations.
 
     float head_turn_direction_lr = 0.0f;   //Direction the head should be facing on top of the animation from -1 to 1
     float head_turn_direction_ud = 0.0f;
@@ -82,8 +83,8 @@ class PlayerCharacter : public virtual Skeleton{
     Object* foot_tracker_r = NULL;
     Object* tracked_foot_l = NULL; //Reference to the foot.
     Object* tracked_foot_r = NULL;
-    vec3 left_foot_prev_pos = vec3();
-    vec3 right_foot_prev_pos = vec3();
+    vec3 left_foot_prev_wpos = vec3();
+    vec3 right_foot_prev_wpos = vec3();
 private:
     void ProcessInputState();
 };
