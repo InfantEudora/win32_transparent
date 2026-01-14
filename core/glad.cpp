@@ -30,6 +30,7 @@ PFNGLNAMEDFRAMEBUFFERTEXTUREPROC glNamedFramebufferTexture = NULL;
 
 PFNGLSHADERSOURCEPROC glShaderSource = NULL;
 PFNGLGETSHADERIVPROC glGetShaderiv = NULL;
+PFNGLGETACTIVEUNIFORMPROC glGetActiveUniform = NULL;
 PFNGLCREATESHADERPROC glCreateShader = NULL;
 PFNGLCOMPILESHADERPROC glCompileShader = NULL;
 PFNGLGETSHADERINFOLOGPROC glGetShaderInfoLog = NULL;
@@ -134,6 +135,7 @@ bool InitGLExtensions(void){
     glAttachShader = (PFNGLATTACHSHADERPROC)wglGetProcAddress("glAttachShader");
     glLinkProgram = (PFNGLLINKPROGRAMPROC)wglGetProcAddress("glLinkProgram");
     glGetProgramiv = (PFNGLGETPROGRAMIVPROC)wglGetProcAddress("glGetProgramiv");
+    glGetActiveUniform = (PFNGLGETACTIVEUNIFORMPROC)wglGetProcAddress("glGetActiveUniform");
     glGetProgramInfoLog = (PFNGLGETPROGRAMINFOLOGPROC)wglGetProcAddress("glGetProgramInfoLog");
     glDeleteShader = (PFNGLDELETESHADERPROC)wglGetProcAddress("glDeleteShader");
     glDetachShader = (PFNGLDETACHSHADERPROC)wglGetProcAddress("glDetachShader");

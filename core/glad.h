@@ -126,6 +126,7 @@
 #define GL_INFO_LOG_LENGTH 0x8B84
 
 #define GL_MAX_VERTEX_ATTRIBS 0x8869
+#define GL_ACTIVE_UNIFORMS 0x8B86
 
 //VBOs
 #define GL_ARRAY_BUFFER 0x8892
@@ -221,6 +222,7 @@ bool InitGLExtensions(void);
 typedef signed long long int GLsizeiptr;
 typedef intptr_t    GLintptr;
 typedef uint64_t    GLuint64;
+typedef char GLchar;
 
 typedef GLenum (APIENTRYP PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
 typedef void (APIENTRYP PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
@@ -290,6 +292,8 @@ typedef void (APIENTRYP PFNGLGETPROGRAMIVPROC)(GLuint program, GLenum pname, GLi
 GLAPI PFNGLGETPROGRAMIVPROC glGetProgramiv;
 typedef void (APIENTRYP PFNGLGETPROGRAMINFOLOGPROC)(GLuint program, GLsizei bufSize, GLsizei *length, char *infoLog);
 GLAPI PFNGLGETPROGRAMINFOLOGPROC glGetProgramInfoLog;
+typedef void (APIENTRYP PFNGLGETACTIVEUNIFORMPROC)(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, GLchar *name);
+GLAPI PFNGLGETACTIVEUNIFORMPROC glGetActiveUniform;
 typedef void (APIENTRYP PFNGLDELETESHADERPROC)(GLuint shader);
 GLAPI PFNGLDELETESHADERPROC glDeleteShader;
 typedef void (APIENTRYP PFNGLDETACHSHADERPROC)(GLuint program, GLuint shader);

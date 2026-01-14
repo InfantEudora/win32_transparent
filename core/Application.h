@@ -112,6 +112,7 @@ protected:
     virtual void RenderDebugMenuBarClass(void);
     void RenderDebugMenuBar();
     void RenderRandTestWindow();
+    void RenderShaderUI();
     void RenderApplicationUI();
     void RenderSelectedObjectUI(Object* objec, int ui_camera_id);
 

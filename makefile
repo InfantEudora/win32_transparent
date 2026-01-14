@@ -47,7 +47,6 @@ SRC_LIBIMGUI += 3rdparty/imgui/imgui.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_draw.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_widgets.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_tables.cpp
-#SRC_LIBIMGUI += 3rdparty/imgui/imgui_demo.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_win32.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_opengl3.cpp
 OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
@@ -110,6 +109,7 @@ SRCS += ApplicationAnimation.cpp
 #CFLAGS+= -DAPP_CLASS=ApplicationOCPP
 #SRCS += ApplicationOCPP.cpp
 
+
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 
 ifeq ($(DUMP_BINARYASSETS), 1)
@@ -155,6 +155,7 @@ reset:
 
 clean:
 	-rm -rf $(OBJS) $(OBJ_LIBIMGUI) $(OBJ_LIBTHIRDPARTY)
+	-rm -rf $(OBJS) $(OBJ_LIBIMGUI)
 
 superclean:
 	-rm -rf libs/libimgui.a

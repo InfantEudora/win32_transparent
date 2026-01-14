@@ -4,7 +4,7 @@
 #include "Debug.h"
 #include "File.h"
 
-static Debugger *debug = new Debugger("Shader", DEBUG_ERROR);
+static Debugger *debug = new Debugger("Shader", DEBUG_INFO);
 
 Shader::Shader(){
 
@@ -205,7 +205,7 @@ void Shader::Setvec3(const char* name, const vec3& value){
 		debug->Warn("Could not set %i's vec3 %s\n",progid,name);
 		return;
 	}else{
-		debug->Info("Uniform %s at location %i\n",name,fid);
+		//debug->Info("Uniform %s at location %i\n",name,fid);
 	}
 	glUniform3fv(fid,1,(const GLfloat*)&value);
 	//glUniform3f(fid,value.x,value.y,value.z);

@@ -67,6 +67,7 @@ void ApplicationOCPP::DrawImGuiUI(){
     RenderOCPPServerUI();
     RenderOCPPClientsUI();
     RenderDebugMenuBar();
+    RenderShaderUI();
 }
 
 void ApplicationOCPP::RenderOCPPServerUI(){

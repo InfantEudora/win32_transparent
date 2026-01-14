@@ -212,7 +212,6 @@ bool Window::InitImGui(){
     ImFontConfig config;
     config.OversampleH = 2;
     config.OversampleV = 2;
-    config.GlyphExtraSpacing.x = 0.0f;
     sprintf(config.Name,"Consola TTF");
 
     size_t size = 0;
@@ -225,9 +224,11 @@ bool Window::InitImGui(){
 
     // Setup Platform/Renderer backends
     if (!ImGui_ImplWin32_Init(hWnd)){
+        debug->Err("Failed to do ImGui_ImplWin32_Init\n");
         return false;
     };
     if (!ImGui_ImplOpenGL3_Init(glsl_version)){
+        debug->Err("Failed to do ImGui_ImplOpenGL3_Init\n");
         return false;
     }
     return true;
@@ -440,6 +441,7 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
 
     //Forward message to ImGui
     int res = ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+    //Res != 0 means message was handled...
 
     switch(msg){
         case WM_KEYDOWN:

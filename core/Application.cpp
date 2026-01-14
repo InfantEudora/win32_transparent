@@ -599,6 +599,42 @@ void Application::RenderDebugMenuBar(){
     }
 }
 
+void Application::RenderShaderUI(){
+    ImGui::Begin("Default Shader");
+        GLint shaderprog_id = 3;
+        GLint count = 0;
+        GLint size; // size of the variable
+		GLenum type; // type of the variable (float, vec3 or mat4, etc)
+
+		GLchar name[128] = {}; // variable name in GLSL
+		GLsizei length; // name length
+		glGetProgramiv(shaderprog_id, GL_ACTIVE_UNIFORMS, &count);
+		ImGui::Text("Shader ID       : %i\n", shaderprog_id);
+		ImGui::Text("Active Uniforms : %i\n", count);
+
+        for (int i = 0; i < (int)count; i++){
+
+            glGetActiveUniform(shaderprog_id, (GLuint)i, 128, &length, &size, &type, name);
+            if (type == GL_INT){
+				int v = 0;
+				//glGetnUniformiv(progid,i,1*sizeof(GLint),&v);
+				if(ImGui::DragInt(name,&v, 1,-10,10)){
+					//glUseProgram(progid);
+					//Setint(name,&v);
+            }else if (type == GL_FLOAT){
+				float v = 0;
+				//glGetnUniformfv(progid,i,1*sizeof(GLfloat),&v);
+				if(ImGui::DragFloat(name,&v, 0.01f,-10,100,"%.6f")){
+					//glUseProgram(progid);
+					//SetFloat(name,&v);
+				}
+            }else{
+				ImGui::Text("Uniform #%i Type: %X Name: %s\n", i, type, name);
+        }
+
+    ImGui::End();
+}
+
 void Application::RenderApplicationUI(){
     //For generic Objects and parameters
     ImGui::Begin("Generic Object UI");

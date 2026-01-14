@@ -54,14 +54,14 @@ It should kind of look like this:
       some wave-function collapse type deal.
 - [ ] Camera isometric / perspective.
 - [ ] eye_position setting is not working on AMD...? It doesn't like glUniform3fv to uniforms that arent an array?
-- [ ] The is also the issue that only after recompilation:
+- [x] The is also the issue that only after recompilation:
         [ info]                 File : LoadFile: File fonts/consola.ttf is 459180 bytes
         Segmentation fault
-        It segfaults somewhere....
+        Updated ImGui. There was no nullptr check in ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData(io);
 - [ ] Share the texture across contexts?
 - [x] Assign different materials to objects by storing their material index in a sperate VAO.
-- [ ] Make OBJ file not require UV to be present so it only uses color.
-- [ ] Scale window and framebuffers
+- [x] Make OBJ file not require UV to be present so it only uses color.
+- [x] Scale window and framebuffers
 - [x] Attempt to put ImGui in and keep the crazy overlay going.
 - [x] Compile ImGUI once to a library.
 - [x] Object selection based on ID with a buffer...? SSBO read/write from FS doesn't work optimally.
@@ -155,6 +155,9 @@ An application can perform multithread drawing by making different rendering con
 https://www.shadertoy.com/view/ld2Gz3
 
 Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... what's the position or normal for a fragment that's a blend of different fragments...? Actually... why wouldn't it? It can blend normals, the blended edges just get a curved normal. Blending to transparent would probably be weird...
+
+### ImGui:
+Checked out docking branch commit: 8d0723c2c36c7200d317fe1285ab86d24068c342
 
 ImGui: ImGui_ImplWin32_EnableAlphaCompositing needs to be commented out. It's a Windows 7 feature.
 
