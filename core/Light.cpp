@@ -4,7 +4,7 @@
 static Debugger* debug = new Debugger("Light",DEBUG_ALL);
 
 DirectionalLight::DirectionalLight(){
-	SetupOrthographic(2048,2048,60.0f,0.1,100.0f);
+	SetupOrthographic(4096,4096,60.0f,0.1,100.0f);
 	debug->Info("Created directional light.\n");
 }
 

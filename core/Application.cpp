@@ -1136,20 +1136,18 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             ImGui::DragFloat("Target 3",&object->morph_factors[2],0.01,0,1);
             ImGui::DragFloat("Target 4",&object->morph_factors[3],0.01,0,1);
 
-            ImGui::DragFloat("Animation Transistion Time Max",&object->animation_transition_time_max,0.01,0,1);
+            ImGui::DragFloat("Animation Transistion Time Max",&object->animation_transition_time_max,0.01,0,3);
 
             if (object->animations.size() == 0){
                 ImGui::Text("Object has no animations");
             }else{
                 if (ImGui::Button("NULL")){
-                    object->SetNextAnimation(NULL);
-                    object->ProceedToNextAnimation();
+                    object->ProceedToAnimation(NULL);
                 }
                 int button_id = 0;
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
-                        object->SetNextAnimation(animation);
-                        object->ProceedToNextAnimation();
+                        object->ProceedToAnimation(animation);
                     }
                     /*
                     ImGui::Text("Bone[0] Target: %s",animation->object_animations.at(0)->target_name.c_str());

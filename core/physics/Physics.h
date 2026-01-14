@@ -60,6 +60,10 @@ public:
     void SetFrictionCoefficient(float v);
     float GetBounciness();
     void SetBounciness(float v);
+
+    //Joints
+    void CreateBallAndSocketJoint(PhysicsBody* a, PhysicsBody* b,const vec3& wp);
+
 };
 
 

@@ -19,30 +19,27 @@ void PlayerCharacter::ProcessInputState(){
         || character_state.input_jump)){
         //No input was down. We proceed to idle animation once.
         if (character_state.any_input_was_active){
-            SetNextAnimation("Idle");
-            ProceedToNextAnimation();
+            ProceedToAnimation("Idle");
             character_state.any_input_was_active = false;
         }
     }else{
         character_state.any_input_was_active = true;
     }
     if (character_state.input_forward_down){
-        SetNextAnimation("CatWalkingInPlace");
-        ProceedToNextAnimation();
+        ProceedToAnimation("CatwalkInPlace");
         MoveForwardBy(-0.025f * animation_transition_factor);
         character_state.input_forward_down = false;
     }
     if (character_state.input_backward_down){
-        SetNextAnimation("WalkBackwardInPlace");
-        ProceedToNextAnimation();
+        ProceedToAnimation("WalkBackwardInPlace");
+
         MoveForwardBy(0.025f * animation_transition_factor);
         character_state.input_backward_down = false;
     }
     if (character_state.input_left_down){
         float delta = 0.025f;
         if (f_rotation_animation){
-            SetNextAnimation("LeftTurnInPlace");
-            ProceedToNextAnimation();
+            ProceedToAnimation("LeftTurnInPlace");
             delta = 0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
@@ -52,8 +49,7 @@ void PlayerCharacter::ProcessInputState(){
     if (character_state.input_right_down){
         float delta = -0.025f;
         if (f_rotation_animation){
-            SetNextAnimation("RightTurnInPlace");
-            ProceedToNextAnimation();
+            ProceedToAnimation("RightTurnInPlace");
             delta = -0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
@@ -61,8 +57,7 @@ void PlayerCharacter::ProcessInputState(){
         character_state.input_right_down = false;
     }
     if (character_state.input_jump){
-        SetNextAnimation("JoyfullJump");
-        ProceedToNextAnimation();
+        ProceedToAnimation("JoyfullJump");
         character_state.input_jump = false;
     }
 }
@@ -133,8 +128,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             hip_posistion_start = hip_bone->GetPosition();
             hip_fwd_start = hip_bone->GetWorldForward();
             if (!current_animation->looped){
-                SetNextAnimation("Idle");
-                ProceedToNextAnimation();
+                ProceedToAnimation("Idle");
             }
 
         }
@@ -173,9 +167,22 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
     }else if (animation_state == ANIMATION_STATE_TRANSITION_START){
         //In this state, we need to record the character position to where the hips currently are.
         //We are going to transition by playing this animation
-
+        if (next_animation == NULL){
+            debug->Ok("Transition start from %s to NULL\n",current_animation->name.c_str());
+        }else{
+            debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),next_animation->name.c_str());
+        }
         animation_state = ANIMATION_STATE_TRANSITION;
+
+        //
     }
+    /*
+        If we are transitioning between two animations, and during that transition
+        decide we want to transition to a different animation. What to do?
+
+        We could snapshot the current transition as a single frame animation,
+        and blend that to the new next.
+    */
     if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
         if (!next_animation){
@@ -189,7 +196,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_state = ANIMATION_STATE_LOOPING;
             return;
         }
-        debug->Info("Current animation %p\n");
+
         //We need to play the current and the next animation,
         //and loop both if we transistion longer than the animation is.
         current_animation->time_index += time_delta;
@@ -198,13 +205,13 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             //update_hip_position = true;
             //hip_posistion_start = hip_bone->GetPosition();
             //hip_fwd_start = hip_bone->GetWorldForward();
-            debug->Info("Transition: current_animation rewind.\n");
+            //debug->Info("Transition: current_animation rewind.\n");
         }
         //Rewind next animation as well.
         next_animation->time_index += time_delta;
         if (next_animation->time_index > next_animation->duration){
             next_animation->time_index -= next_animation->duration;
-            debug->Info("Transition: next_animation rewind.\n");
+            //debug->Info("Transition: next_animation rewind.\n");
         }
 
         animation_transition_factor =  animation_transition_time / animation_transition_time_max;
@@ -224,7 +231,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         dot = clamp(dot,-1.0,1.0);
         //debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
         quat r = quat(vec3(0,-1,0),acos(dot));
-        debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
+        //debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
         RotateBy(r);
 
 
@@ -309,13 +316,7 @@ void PlayerCharacter::TurnLeft(){
 }
 
 void PlayerCharacter::ToIdle(){
-    //If the current animation is idle, leave it.
-    if (current_animation && current_animation->name.compare("Idle") == 0){
-        return;
-    }
-    //Go to catwalk animation and enable foot tracking
-    SetNextAnimation("Idle");
-    ProceedToNextAnimation();
+
 }
 
 void PlayerCharacter::Jump(){

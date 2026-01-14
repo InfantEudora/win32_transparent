@@ -657,22 +657,6 @@ void Object::AddAnimation(Animation* animation){
     }
 }
 
-void Object::SetNextAnimation(const std::string& name){
-    SetNextAnimation(FindAnimation(name));
-}
-
-void Object::SetNextAnimation(Animation* animation){
-    if (!animation){
-        next_animation = NULL;
-        return;
-    }
-    //If this is a new one, we reset it to 0. Otherwise, leave it.
-    if (next_animation != animation){
-        next_animation = animation;
-        next_animation->time_index = 0;
-    }
-}
-
 Animation* Object::FindAnimation(const std::string& name){
     for (Animation* animation:animations){
         if (animation->name.compare(name) == 0){
@@ -682,11 +666,29 @@ Animation* Object::FindAnimation(const std::string& name){
     return NULL;
 }
 
+void Object::ProceedToAnimation(const std::string& name){
+    ProceedToAnimation(FindAnimation(name));
+}
+
 //From whereever the current animation is, we transistion into the next animation.
-void Object::ProceedToNextAnimation(){
-    if (next_animation == current_animation){
+void Object::ProceedToAnimation(Animation* animation){
+    if (!animation){
+        next_animation = NULL;
         return;
     }
+    if (animation == current_animation){
+        //We are already playing this animation... but... we might be transitioning to a new one.
+        if (animation_state != ANIMATION_STATE_LOOPING){
+            debug->Info("Proceed to animation during non looping state.\n");
+        }
+        return;
+    }
+    //If this is a new one, we reset it to 0. Otherwise, leave it.
+    if (next_animation != animation){
+        next_animation = animation;
+        next_animation->time_index = 0;
+    }
+
     if ((animation_state != ANIMATION_STATE_TRANSITION_START) && (animation_state != ANIMATION_STATE_TRANSITION)){
         animation_state = ANIMATION_STATE_TRANSITION_START;
         animation_transition_time = 0.0f;

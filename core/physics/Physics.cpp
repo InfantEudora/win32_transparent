@@ -249,3 +249,15 @@ float Physics::GetBounciness(){
 	}
 	return 0;
 }
+
+void Physics::CreateBallAndSocketJoint(PhysicsBody* body1, PhysicsBody* body2, const vec3& wp){
+	const rp3d::Vector3 anchorPoint = (rp3d::Vector3&)wp;
+
+	// Create the joint info object
+	rp3d::BallAndSocketJointInfo jointInfo(body1->rigidbody, body2->rigidbody, anchorPoint);
+
+	// Create the joint in the physics world
+	rp3d::BallAndSocketJoint* joint;
+	joint = dynamic_cast<rp3d::BallAndSocketJoint*>(world->rp_world->createJoint(jointInfo));
+	debug->Info("Physics created a joint at %.2f %.2f %.2f\n",anchorPoint.x,anchorPoint.y,anchorPoint.z);
+}

@@ -65,7 +65,7 @@ void ApplicationAnimation::Init(void){
     gltfloader.GetSkeleton("gwen",assetmanager,skeleton);
     if (skeleton){
         std::vector<Material>loaded_materials;
-        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("gwen_body",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("gwen_body_t",&loaded_materials);
         skeleton->SetMesh(skinned_mesh);
         skeleton->TakeMaterialNames(loaded_materials);
         skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
@@ -91,19 +91,38 @@ void ApplicationAnimation::Init(void){
         character->foot_tracker_r->material_names[0] = "right_tracker";
         character->tracked_foot_l = character->FindChild("mixamorig:LeftToeBase");
         character->tracked_foot_r = character->FindChild("mixamorig:RightToeBase");
-
-        chain = assetmanager->GetObjectFromAsset("bone");
-        //Physics* physics = chain->AddPhysics(main_scene->physics_world);
-        //if (physics){
-        //   physics->SetStatic(true);
-        //}
-        main_scene->AddObject(chain);
-
     }
 
+    //We add some links to a chain
+    for (int i=0;i<1;i++){
+        //We'll chain them together with the physics ball and socket joint.
+        Object* chain_link = assetmanager->GetObjectFromAsset("bone");
+        chain_link->SetPosition(vec3(1,(float)-i * 0.1f,1));
+        chain_link->SetScale(vec3(0.25,0.25,0.25));
 
+        Physics* physics = chain_link->AddPhysics(main_scene->physics_world);
+        if (physics){
+            physics->SetStatic(false);
+            physics->SetGravityEnabled(true);
+            vec3 extents = chain_link->GetMesh()->GetExtents();
+            physics->AddBoxCollider(extents*0.5f*0.25f,vec3(0,0.0,0),quat().identity());
+        }
 
+        main_scene->AddObject(chain_link);
+        chain.push_back(chain_link);
+    }
 
+    //A thing to collide with
+    //We'll chain them together with the physics ball and socket joint.
+    Object* ledge = assetmanager->GetObjectFromAsset("ledge");
+    Physics* physics = ledge->AddPhysics(main_scene->physics_world);
+    if (physics){
+        physics->SetStatic(true);
+        physics->SetGravityEnabled(false);
+        vec3 extents = ledge->GetMesh()->GetExtents();
+        physics->AddBoxCollider(extents*0.5f,vec3(0,0.0,0),quat().identity());
+    }
+    main_scene->AddObject(ledge);
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -122,6 +141,60 @@ void ApplicationAnimation::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
+    //We try manually doing physics on the chain,
+    //just to test if it has the desired effect.
+    int link_index = 0;
+    Object* link_prev = NULL;
+    Object* link_first = NULL;
+    for (Object* link:chain){
+        //The first one is the one we manipulate.
+        if (link_index == 0){
+            link_first = link;
+        }
+        if (link_index > 0){
+            vec3 first_pos = link_first->GetPosition();
+            vec3 target_pos = first_pos - vec3(0,0.15 * link_index,0);
+            vec3 prev_pos = link_prev->GetPosition();
+
+
+
+            vec3 p = link->GetPosition().lerp(first_pos,chain_factor);
+            vec3 diff  = first_pos - p;
+            vec3 f = diff * 0.01f;
+            if (f.length() > 1.0f){
+                f.normalize();
+            }
+
+
+
+            link->GetPhysics()->body->rigidbody->resetForce();
+            link->GetPhysics()->AddLocalForce(f);
+            vec3 vel = link->GetPhysics()->GetVelocity();
+            if (vel.length() > 0.01f){
+
+                link->GetPhysics()->SetVelocity(vel.normalize()*0.01f);
+            }
+        }
+        link_prev = link;
+        link_index++;
+    }
+
+    if (selected_object){
+        if (f_mode_grab){
+            //We use the camera left/right up down to move the character.
+            int dx = input->GetDelta(INPUT_MOUSE_X);
+            int dy = input->GetDelta(INPUT_MOUSE_Y);
+
+            vec3 vdx = camera->GetLeft() * dx * 0.01;
+            vec3 vdy = camera->GetUp() * -dy * 0.01;
+            selected_object->MoveBy(vdx + vdy);
+
+            if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
+                f_mode_grab = false;
+            }
+        }
+    }
+
     if (character){
         if (f_mode_camera_track){
             Bone* neck = character->FindBone("mixamorig:Neck");
@@ -137,21 +210,7 @@ void ApplicationAnimation::RunLogic(){
             camera->SetRotation(r);
         }
 
-        if (f_mode_grab){
-            //We use the camera left/right up down to move the character.
-            int dx = input->GetDelta(INPUT_MOUSE_X);
-            int dy = input->GetDelta(INPUT_MOUSE_Y);
-
-            vec3 vdx = camera->GetLeft() * dx * 0.01;
-            vec3 vdy = camera->GetUp() * -dy * 0.01;
-            character->MoveBy(vdx + vdy);
-
-            if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
-                f_mode_grab = false;
-            }
-        }
-
-         //Get the sun position to the character.
+        //Get the sun position to the character.
         if (sun){
             vec3 delta = sun->GetPosition() - character->GetPosition();
             //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
@@ -161,12 +220,12 @@ void ApplicationAnimation::RunLogic(){
         }
 
         //Let the bone track the character
-        if (f_chain_track_head && chain && character){
+        if (f_chain_track_head && (chain.size() > 0) && character){
             Bone* head = character->FindBone("mixamorig:Head");
             vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward(STATE_ACCESS_PHYSICS);
-            vec3 p = chain->GetPosition(STATE_ACCESS_PHYSICS);
+            vec3 p = chain.at(0)->GetPosition(STATE_ACCESS_PHYSICS);
             vec3 diff = p.lerp(head_wp,0.04f);
-            chain->SetPosition(diff);
+            chain.at(0)->SetPosition(diff);
         }
 
         if (character->f_move_by_feet_placement){
@@ -235,8 +294,8 @@ void ApplicationAnimation::RunLogic(){
             hand_r = selected_skeleton->FindBone("Bone.002");
         }
 
-        if (hand_r && chain){
-            vec3 target_pos = chain->GetWorldPosition(STATE_ACCESS_PHYSICS);
+        if (hand_r && (chain.size() > 0)){
+            vec3 target_pos = chain.at(0)->GetWorldPosition(STATE_ACCESS_PHYSICS);
             hand_r->IKExtend(target_pos,2,0.5f);
         }
     }
@@ -420,6 +479,7 @@ void ApplicationAnimation::DrawImGuiUI(){
         ImGui::Checkbox("Rotation Animations",&character->f_rotation_animation);
         ImGui::Checkbox("Grab Mode",&f_mode_grab);
         ImGui::Checkbox("Head Track",&f_chain_track_head);
+        ImGui::DragFloat("Chain Dampening",&chain_factor,0.01f,0,1);
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Separator();
         Bone* hips = character->FindBone("mixamorig:Hips");

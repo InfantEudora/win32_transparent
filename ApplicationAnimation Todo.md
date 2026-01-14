@@ -1,8 +1,13 @@
-#ApplicationAnimation Todo
+## ApplicationAnimation Todo
 
-Attach a physics object that follows her around with a delayed response.
-So we can have a cape that followes her around. Hair that moves when you move her.
-Make a small chain of physics objects that react to gravity.
+- [ ] Attach a physics object that follows her around with a delayed response.
+- [ ] So we can have a cape that followes her around. Hair that moves when you move her.
+- [ ] Make a small chain of physics objects that react to gravity that are also a skeleton.
+- [ ] So whe can pick the character up, like <br>
+ ![Pick Up](pickup_character.png)
+- [ ] Make the character climb up on a box, and be able to jump down from it.
+
+## General Notes Findings and Frustrations
 
 Some goals and findings.
 
@@ -40,7 +45,7 @@ Then resize bones and remove icohedron.
 Then fix the animation by scaling everyting only by 1/100.
 And now there is less jitter... because blender can't scale animation data properly. Maybe they use 16 bit floats?
 
-### Bones
+## Bones
 
 Bone's have a slightly weird thing going on orientation wise, even in Blender they are not a default object but have some more going on.
 
