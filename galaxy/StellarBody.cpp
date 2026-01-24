@@ -438,8 +438,8 @@ void StellarBody::UpdateRouteInfo(){
     //It'd be nice to find the closest point on the route
     //TODO: Reuse the bezier?
     Bezier2D b = Bezier2D(2);
-    b.AddNewPoint(route->start->coordinate);
-    b.AddNewPoint(route->end->coordinate);
+    //b.AddNewPoint(route->start->coordinate);
+    //b.AddNewPoint(route->end->coordinate);
 
     vec2 clostest_point = b.FindClosest(coordinate,20);
     //debug->Info("clostest_point = %.2f, %.2f\n",clostest_point.x,clostest_point.y);
@@ -469,6 +469,7 @@ void StellarBody::Turn(float delta){
 
 //Just going to move to the endpoint at some speed
 void StellarBody::FollowRoute(){
+    /*
     if (!route) return;
     if (!route->end) return;
 
@@ -502,7 +503,7 @@ void StellarBody::FollowRoute(){
         debug->Info("Reversing route!\n");
         route->Reverse();
     }
-
+*/
 }
 
 //Pickup resource from another stellar body and store in our store.

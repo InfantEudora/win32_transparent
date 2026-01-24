@@ -59,7 +59,7 @@ namespace ImGooey{
         if (gflags & ImGooyItemFlag_Greyed){
             col = ImGui::GetColorU32(ImVec4(0,0,0,1));
         }
-        ImGui::RenderNavHighlight(bb, id);
+        ImGui::RenderNavCursor(bb, id);
         RenderFrameCorner(bb.Min, bb.Max, col, true, gflags);
 
         if (g.LogEnabled)

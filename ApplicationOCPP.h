@@ -13,7 +13,6 @@ public:
 
     void Init(void) override;
     void RunLogic() override;
-
     void DrawImGuiUI(void) override;
 
     void RenderOCPPServerUI();

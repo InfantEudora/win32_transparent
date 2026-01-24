@@ -14,16 +14,16 @@ Particle::Particle(Particle* particle):Particle(particle->GetPhysics()->world){
     //How would we use the Object Copy constructor... that would be nice.
     SetMesh(particle->GetMesh());
     Physics* p = particle->GetPhysics();
-    if (p){
+    if (p && p->body && p->body->collider){
         //debug->Info("physics->world = %p\n",physics->world);
         rp3d::CollisionShape* shape =  p->body->collider->getCollisionShape();
         reactphysics3d::Transform t = reactphysics3d::Transform::identity();
         physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
+        SetCollisionCategoryBits(particle->collision_category_bits);
+        SetCollideWithMaskBits(particle->collide_with_bits);
     }
     name = particle->name;
-    SetCollisionCategoryBits(particle->collision_category_bits);
-    SetCollideWithMaskBits(particle->collide_with_bits);
 }
 
 Particle::~Particle(){

@@ -118,9 +118,8 @@ class Object{
     vec3 GetWorldPosition(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
     vec3 GetForward(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);          // Returns the forward or normalized lookat direction
     vec3 GetWorldForward(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
-
-    vec3 GetUp();               // Returns the local vector pointing up.
-    vec3 GetWorldUp();          //
+    vec3 GetUp(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);               // Returns the local vector pointing up.
+    vec3 GetWorldUp(ObjectStateAccessType t = STATE_ACCESS_RENDERER);          //
 
     vec3 GetLeft();             // Return the vector pointing left
     quat GetRotation();         // Returns a copy of the rotation

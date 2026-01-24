@@ -26,16 +26,35 @@ void ParticleEmitter::SetParticle(Particle* particle){
     p.z = rrand->GetFloat(-0.1,0.1);
 
     particle->SetPosition(GetWorldPosition() + p);
-    particle->SetScale(rrand->GetFloat(0.5,1.5));
+    particle->SetScale(rrand->GetFloat(emission_properties.particle_size_min,emission_properties.particle_size_max));
 
-    vec3 v;
-    v.x = rrand->GetFloat(-0.5,0.5);
-    v.y = rrand->GetFloat(0.5,2.5);
-    v.z = rrand->GetFloat(-0.5,0.5);
+    vec3 v = emission_properties.emission_direction;
+    //We need to get a vector within the spread angle.
+    float spread_rad = emission_properties.emission_spread * (TYPE_PI / 180.0f);
+    float angle_x = rrand->GetFloat(-spread_rad/2,spread_rad/2);
+    float angle_y = rrand->GetFloat(-spread_rad/2,spread_rad/2);
+    float angle_z = rrand->GetFloat(-spread_rad/2,spread_rad/2);
+    quat qx = quat(vec3(1,0,0),angle_x);
+    quat qy = quat(vec3(0,1,0),angle_y);
+    quat qz = quat(vec3(0,0,1),angle_z);
+    quat q = qx * qy * qz;
+    v = q * v;
+    //Rotate by our parent's rotation too
+    if (parent){
+        quat parent_rot = parent->GetWorldRotation();
+        v = parent_rot * v;
+    }
+
+    //Add our parent's velocity too
+    if (parent && parent->GetPhysics()){
+        v = v + parent->GetPhysics()->GetVelocity();
+    }
+
     particle->GetPhysics()->SetStatic(false);
     particle->GetPhysics()->SetVelocity(v);
     particle->GetPhysics()->SetActive(true);
-    particle->lifetime = rrand->GetFloat(0.5,2.0);
+    particle->lifetime = rrand->GetFloat(emission_properties.particle_lifetime_min,emission_properties.particle_lifetime_max);
+    particle->UpdatePhysicsState();
 }
 
 void ParticleEmitter::EmitParticles(int amount){
@@ -49,7 +68,6 @@ void ParticleEmitter::EmitParticles(int amount){
     for (Particle* particle:emitted_particles){
         if (particle->IsVisible() == false){
             particle->Show();
-            particle->UpdatePhysicsState();
             SetParticle(particle);
             //Extra step...
 

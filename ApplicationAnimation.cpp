@@ -432,6 +432,7 @@ void ApplicationAnimation::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
     RenderSkeletonUI();
+    RenderShaderUI(default_shader);
 
     ImGui::Begin("Character Animation");
     if (character){

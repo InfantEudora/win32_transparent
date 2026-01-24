@@ -49,6 +49,8 @@ Shader::Shader(const char* vert_path,const char* frag_path):Shader(){
 	fragid = CompileFragment((char*)frag_data,frag_data_sz);
 	debug->Info("Linking program\n");
 	progid = LinkProgram(2,vertid,fragid);
+	vname = vert_path;
+	fname = frag_path;
 
 
 	//TODO: Figure out if loaded from file or from memory.

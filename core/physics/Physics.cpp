@@ -198,6 +198,11 @@ vec3 Physics::GetVelocity(){
 	return vec3(v.x,v.y,v.z);
 }
 
+vec3 Physics::GetAngularVelocity(){
+	rp3d::Vector3 v = body->rigidbody->getAngularVelocity();
+	return vec3(v.x,v.y,v.z);
+}
+
 vec3 Physics::GetForce(){
 	rp3d::Vector3 v = body->rigidbody->getForce();
 	return vec3(v.x,v.y,v.z);

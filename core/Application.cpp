@@ -599,16 +599,24 @@ void Application::RenderDebugMenuBar(){
     }
 }
 
-void Application::RenderShaderUI(){
-    ImGui::Begin("Default Shader");
-        GLint shaderprog_id = 3;
+void Application::RenderShaderUI(Shader* shader){
+    if (!shader){
+        return;
+    }
+    ImGui::Begin("Shader UI");
+
+        GLint shaderprog_id = shader->progid;
         GLint count = 0;
         GLint size; // size of the variable
 		GLenum type; // type of the variable (float, vec3 or mat4, etc)
 
 		GLchar name[128] = {}; // variable name in GLSL
 		GLsizei length; // name length
+
 		glGetProgramiv(shaderprog_id, GL_ACTIVE_UNIFORMS, &count);
+        ImGui::Text("vert file       : %s\n", shader->vname.c_str());
+        ImGui::Text("frag file       : %s\n", shader->fname.c_str());
+
 		ImGui::Text("Shader ID       : %i\n", shaderprog_id);
 		ImGui::Text("Active Uniforms : %i\n", count);
 
@@ -621,6 +629,7 @@ void Application::RenderShaderUI(){
 				if(ImGui::DragInt(name,&v, 1,-10,10)){
 					//glUseProgram(progid);
 					//Setint(name,&v);
+				}
             }else if (type == GL_FLOAT){
 				float v = 0;
 				//glGetnUniformfv(progid,i,1*sizeof(GLfloat),&v);
@@ -630,6 +639,7 @@ void Application::RenderShaderUI(){
 				}
             }else{
 				ImGui::Text("Uniform #%i Type: %X Name: %s\n", i, type, name);
+			}
         }
 
     ImGui::End();

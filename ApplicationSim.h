@@ -18,8 +18,9 @@ class ApplicationSim : public Application{
 public:
     ApplicationSim();
 
-    void Run(void) override;
+    void Init(void) override;
     void RunLogic() override;
+    void DrawImGuiUI(void) override;
 
     RRandom rrand;
     PerlinNoise pnoise;
@@ -43,9 +44,9 @@ public:
     void StoreStellarObject(StellarObject* object);
     void SetControllingShip(StellarBody* body);
 
-    static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
+
     void RenderPopulationOverview();
-    void RenderRandTestWindow();
+
     void RenderNoiseTestWindow();
     void RenderSuperCustomUI();
     void UpdateUI();

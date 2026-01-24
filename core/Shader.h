@@ -32,13 +32,11 @@ public:
     void Use();
 
     //Uniforms
-
     bool Setint(const char* name, int value);
     void Setfloat(const char* name, const float& value);
     void Setvec3(const char* name, const vec3& value);
     void Setmat3(const char* name, const fmat3& matrix);
     void Setmat4(const char* name, const fmat4& matrix);
-
 };
 
 #endif

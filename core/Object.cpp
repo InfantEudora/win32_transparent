@@ -437,12 +437,13 @@ vec3 Object::GetWorldForward(ObjectStateAccessType t){
     return GetWorldRotation() * ref_forward;
 }
 
-vec3 Object::GetUp(){
+//Only for physics state
+vec3 Object::GetUp(ObjectStateAccessType t){
     return state_physics.rotation * ref_up;
 }
 
-vec3 Object::GetWorldUp(){
-    return vec3();
+vec3 Object::GetWorldUp(ObjectStateAccessType t){
+    return GetWorldRotation() * ref_up;
 }
 
 vec3 Object::GetLeft(){

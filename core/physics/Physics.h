@@ -55,6 +55,7 @@ public:
     void SetVelocity(const vec3& v);
     vec3 GetVelocity();
     void SetAngularVelocity(const vec3& v);
+    vec3 GetAngularVelocity();
     vec3 GetCenterofMass();
     float GetFrictionCoefficient();
     void SetFrictionCoefficient(float v);

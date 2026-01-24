@@ -14,11 +14,6 @@ void ApplicationOCPP::Init(void){
         debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
 
-    //Create a renderer for this window
-    renderer = new Renderer(main_window->width,main_window->height);
-    renderer->Init();
-
-
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
     main_window->Resize(1024,768);
@@ -33,8 +28,6 @@ void ApplicationOCPP::Init(void){
     }
 
     debug->Info("HTTP Server started on port 9090\n");
-
-
 }
 
 //Called before update physics
@@ -67,7 +60,6 @@ void ApplicationOCPP::DrawImGuiUI(){
     RenderOCPPServerUI();
     RenderOCPPClientsUI();
     RenderDebugMenuBar();
-    RenderShaderUI();
 }
 
 void ApplicationOCPP::RenderOCPPServerUI(){

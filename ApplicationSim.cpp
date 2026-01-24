@@ -75,46 +75,27 @@ void GenerateComponentOperations(Component* component){
     }
 }
 
-//Function for rendering the frame to a window
-DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
-    ApplicationSim* app = static_cast<ApplicationSim*>(lpParameter);
-    if (!app){
-        debug->Fatal("No application was supplied to FrameThread\n");
-        return 0;
+void ApplicationSim::Init(void){
+    int2 dimensions = GetDisplaySettings();
+
+    renderer = new Renderer(main_window->width,main_window->height);
+    if (!renderer->Init(PIPELINE_DEFERRED)){
+        debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
+    default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
 
-
-    app->thread_id_render = GetCurrentThreadId();
-    debug->Info("FrameFunction ThreadID: %lu\n",app->thread_id_render);
-
-    //We make the window's context current to this thread
-    if (!wglMakeCurrent(app->main_window->hDC, app->main_window->hRC)){
-        debug->Err("FrameFunction Thread unable to get context by wglMakeCurrent\n");
-        return 0;
-    }
-
-    if (!app->main_window->InitImGui()){
-        debug->Fatal("Failed to setup ImGui on Window\n");
-    }
-
-    //Create a renderer and attach to this window
-    app->renderer = new Renderer(app->main_window->width,app->main_window->height);
-    app->renderer->Init(PIPELINE_DEFERRED);
-    app->renderer->SetVSync(true);
-
-    //Create and setup new scene
     Scene* scene = new Scene();
-    app->main_scene = scene;
+    main_scene = scene;
     scene->name = "Star Scene";
-    scene->renderer = app->renderer;
-    scene->inputcontroller = app->main_window->inputcontroller;
+    scene->renderer = renderer;
+    scene->inputcontroller = main_window->inputcontroller;
 
     scene->inputcontroller->AddKeyMap('M',INPUT_M);
     scene->inputcontroller->AddKeyMap('R',INPUT_R);
 
-    app->default_shader = new Shader("shaders/default.vert","shaders/default.frag");
-    scene->shader = app->default_shader;
+    default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+    scene->shader = default_shader;
 
     scene->camera = new Camera();
     scene->camera->name = "Main Camera";
@@ -136,151 +117,60 @@ DWORD WINAPI ApplicationSim::FrameThreadFunction(LPVOID lpParameter){
     scene->AddObject(sun);
 
     //We make an assetmanager which we use to load/build all assets from:
-    app->assetmanager = new AssetManager();
+    assetmanager = new AssetManager();
 
     //Load stuff here. At some point, this should be in a loading screen... far in the future.
-    app->assetmanager->AddNewAsset("sphere","galaxy/data/meshes/sphere.obj");
-    app->assetmanager->AddNewAsset("sunhighlight","galaxy/data/meshes/sunhighlight.obj");
-    app->assetmanager->AddNewAsset("ship","galaxy/data/meshes/ship.obj");
-    app->assetmanager->AddNewAsset("plane","galaxy/data/meshes/plane.obj");
+    assetmanager->AddNewAssetFromOBJFile("sphere","galaxy/data/meshes/sphere.obj");
+    assetmanager->AddNewAssetFromOBJFile("sunhighlight","galaxy/data/meshes/sunhighlight.obj");
+    assetmanager->AddNewAssetFromOBJFile("ship","galaxy/data/meshes/ship.obj");
+    assetmanager->AddNewAssetFromOBJFile("plane","galaxy/data/meshes/plane.obj");
 
-    scene->renderer->AddMaterials(app->assetmanager->loaded_materials);
+    scene->renderer->AddMaterials(assetmanager->loaded_materials);
 
     //We make two stars
-    StellarObject* stara = StellarObject::CreateNewStar(app->assetmanager);
+    StellarObject* stara = StellarObject::CreateNewStar(assetmanager);
     stara->SetPosition(vec3(-3,0,3));
     stara->UpdatePosition();
     stara->name = "Star A";
     scene->AddObject(stara);
-    app->StoreStellarObject(stara);
+    StoreStellarObject(stara);
 
-    StellarObject* starb = StellarObject::CreateNewStar(app->assetmanager);
+    StellarObject* starb = StellarObject::CreateNewStar(assetmanager);
     starb->SetPosition(vec3(7,0,7));
     starb->UpdatePosition();
     starb->name = "Star B";
     starb->stellarbody->colony->structures[0].productionrate_slots[0].amount = 5;
     starb->stellarbody->colony->population.base_growth = 1.001;
     scene->AddObject(starb);
-    app->StoreStellarObject(starb);
+    StoreStellarObject(starb);
 
-    StellarObject* ship1 = StellarObject::CreateNewShip(app->assetmanager);
+    StellarObject* ship1 = StellarObject::CreateNewShip(assetmanager);
     ship1->SetPosition(vec3(2,0,2));
     ship1->UpdatePosition();
     ship1->name = "Ship 1";
     scene->AddObject(ship1);
-    app->StoreStellarObject(ship1);
+    StoreStellarObject(ship1);
 
-    StellarObject* ship2 = StellarObject::CreateNewShip(app->assetmanager);
+    StellarObject* ship2 = StellarObject::CreateNewShip(assetmanager);
     ship2->SetPosition(vec3(-8,0,9));
     ship2->UpdatePosition();
     ship2->name = "Ship 2";
     scene->AddObject(ship2);
-    app->StoreStellarObject(ship2);
+    StoreStellarObject(ship2);
 
     RouteObject* route = new RouteObject();
-    route->SetupNewRoute(stara,starb,app->assetmanager);
-    app->routeobjects.push_back(route);
+    route->SetupNewRoute(stara,starb,assetmanager);
+    routeobjects.push_back(route);
     scene->AddObject(route);
 
     ship1->PlaceOnRoute(route);
     ship2->PlaceOnRoute(route);
 
-    app->assetmanager->ListAssets();
+    assetmanager->ListAssets();
     //Before starting anything
     scene->UpdatePhysics();
 
     InitComponents();
-
-    //Catch all input and window related messages in this thread:
-    MSG msg = {0};
-    while (app->main_window->f_should_quit == false){
-        if (app->main_window->f_resized){
-            app->main_window->f_resized = false;
-
-            //Allows for texture packing GL_PACK_ALIGNMENT 4
-            app->main_window->width -= app->main_window->width % 4;
-            app->main_window->height -= app->main_window->height % 4;
-
-            app->renderer->Resize(app->main_window->width,app->main_window->height);
-        }
-
-        //Physics. TODO: Move to a seperate thread PhysicsThreadFunction in Application::
-        if (app->main_scene){
-            app->main_scene->HandleInput();
-            app->RunLogic();
-            app->main_scene->UpdatePhysics();
-            app->main_scene->inputcontroller->Tick();
-        }
-        //Tell ImGui to start a new frame
-        app->main_window->ImGuiNewFrame();
-
-        app->main_scene->DrawFrame();
-
-        app->UpdateUI();
-
-        app->main_window->ImGuiDrawFrame();
-
-        //Copy to screen and finish
-        app->main_window->DrawFrame();
-
-        Sleep(1);
-    }
-
-    debug->Info("FrameThreadFunction terminated\n");
-    return 1;
-}
-
-void ApplicationSim::Run(void){
-    int2 dimensions = GetDisplaySettings();
-
-    //Create a main window
-    main_window = Window::CreateNewWindow(1600,900,&Window::wcs.at(0));
-    if (!main_window){
-        debug->Fatal("Unable to create window\n");
-    }
-    if (!main_window->Init()){
-        debug->Fatal("Failed to init window\n");
-    }
-
-    main_window->Show(SW_SHOWDEFAULT);
-
-    //We release the window's context from this thread
-    wglMakeCurrent(main_window->hDC, NULL);
-
-    //And do all render calls from a seperate thread:
-    HANDLE hThread = NULL;
-
-    //Sounddd
-    soundsystem = new SoundSystem();
-    soundsystem->Initialise();
-    soundsystem->AppendFile("data/sound/floop.wav","floop");
-
-    // Create a new thread which will get this one's render context
-    hThread = CreateThread(
-        NULL,    // Thread attributes
-        0,       // Stack size (0 = use default)
-        FrameThreadFunction, // Thread start address
-        this,    // Parameter to pass to the thread
-        0,       // Creation flags
-        &thread_id_render);   // Thread id
-
-    if (hThread == NULL){
-        debug->Fatal("Unable to FrameFunction thread\n");
-    }
-
-    //Catch all input and window related messages in this thread.
-    //The thread that creates the window automagically gets messages sent to it.
-    MSG msg = {0};
-    while (main_window->f_should_quit == false){
-        if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)){
-            if (msg.message == WM_QUIT)
-                break;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }else{
-            Sleep(1);
-        }
-    }
 }
 
 static int popticks = -1;
@@ -652,7 +542,8 @@ void ApplicationSim::RenderPopulationOverview(){
                 body->route = new Route();
                 StellarBody* closest = body->FindClosest(stellarbodies,BODY_STAR);
                 if (closest){
-                    body->route->Setup(NULL,closest);
+                    //TODO: This first line...
+                    //body->route->Setup(NULL,closest);
                     debug->Info("Routing to nearest Star at %.2f,%.2f\n",closest->coordinate.x,closest->coordinate.y);
                 }
             };
@@ -996,11 +887,11 @@ void ApplicationSim::RenderSuperCustomUI(){
     ImGui::End();
 }
 
-void ApplicationSim::UpdateUI(){
+void ApplicationSim::DrawImGuiUI(){
     RenderRandTestWindow();
     //RenderNoiseTestWindow();
     RenderPopulationOverview();
-    RenderGenericObjectUI();
+    RenderApplicationUI();
     //ImGui::ShowDemoWindow();
 
     RenderSuperCustomUI();

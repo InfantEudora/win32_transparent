@@ -65,9 +65,9 @@ else
 endif
 
 #ApplicationAnimation
-CFLAGS+= -DAPP_HEADER=\"ApplicationAnimation.h\"
-CFLAGS+= -DAPP_CLASS=ApplicationAnimation
-SRCS += ApplicationAnimation.cpp
+#CFLAGS+= -DAPP_HEADER=\"ApplicationAnimation.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationAnimation
+#SRCS += ApplicationAnimation.cpp
 
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
@@ -94,6 +94,8 @@ SRCS += ApplicationAnimation.cpp
 #DIR_SRC += ./isocity
 
 #ApplicationSim
+#CFLAGS+= -DAPP_HEADER=\"ApplicationSim.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationSim
 #IPATHS += -Igalaxy/
 #DIR_SRC += ./galaxy
 #SRCS += ApplicationSim.cpp
@@ -108,6 +110,13 @@ SRCS += ApplicationAnimation.cpp
 #CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
 #CFLAGS+= -DAPP_CLASS=ApplicationOCPP
 #SRCS += ApplicationOCPP.cpp
+
+#ApplicationShip
+CFLAGS+= -DAPP_HEADER=\"ApplicationShip.h\"
+CFLAGS+= -DAPP_CLASS=ApplicationShip
+SRCS += ApplicationShip.cpp
+IPATHS += -Iship/
+DIR_SRC += ./ship
 
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
