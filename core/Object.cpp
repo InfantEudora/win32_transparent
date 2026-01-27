@@ -111,6 +111,14 @@ void Object::Show(){
     }
 }
 
+bool Object::IsVisible(ObjectStateAccessType t){
+    if (t == STATE_ACCESS_PHYSICS){
+        return state_physics.f_visible;
+    }else{
+        return state.f_visible;
+    }
+}
+
 void Object::SetPickability(bool flag){
     f_pickable = flag;
 }
@@ -305,8 +313,15 @@ void Object::SetScale(const vec3& newscale){
     state_physics.scale = newscale;
     state_physics.f_was_transformed = true;
     //Maybe we should also scale the collider
-    if (physics){
-        //TODO
+    if (physics && physics->body && physics->body->collider){
+        rp3d::Vector3 s(newscale.x,newscale.y,newscale.z);
+        rp3d::CollisionShape* shape = physics->body->collider->getCollisionShape();
+        if (shape->getType() == rp3d::CollisionShapeType::SPHERE){
+            rp3d::SphereShape* sphere = static_cast<rp3d::SphereShape*>(shape);
+            sphere->setRadius(newscale.x * 0.5f); //Assumes uniform scale
+            physics->body->rigidbody->updateMassPropertiesFromColliders();
+        }
+
     }
 }
 

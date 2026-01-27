@@ -28,7 +28,7 @@ void Scene::UpdateAnimations(){
     }
 };
 
-void Scene::UpdatePhysics(){
+void Scene::UpdatePhysics(float delta_time){
     //We need a renderer because that's were we store our objects that need to be rendered.
     if (!renderer){
         return;
@@ -42,7 +42,7 @@ void Scene::UpdatePhysics(){
     }
 
     if (physics_world){
-        physics_world->Update(1.0/50.0);
+        physics_world->Update(delta_time);
     }
 
     //Update all objects stored in the renderer.

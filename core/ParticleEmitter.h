@@ -31,6 +31,8 @@ public:
         float particle_size_max     = 1.0f;
         float particle_lifetime_min = 1.0f;
         float particle_lifetime_max = 3.0f;
+        float emission_speed_min    = 0.1f;
+        float emission_speed_max    = 1.0f;
     } emission_properties;
 
     private:

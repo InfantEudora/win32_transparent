@@ -3,7 +3,7 @@
 
 static Debugger *debug = new Debugger("ApplicationShip", DEBUG_ALL);
 
-#define INPUT_JUMP    INPUT_LAST+1
+#define INPUT_SHOOT   INPUT_LAST+1
 #define INPUT_F       INPUT_LAST+2
 #define INPUT_G       INPUT_LAST+3
 #define INPUT_Q       INPUT_LAST+4
@@ -21,11 +21,11 @@ Scene* ApplicationShip::CreateEmptyScene(){
     sun->SetPosition(vec3(-10,10,10));
     sun->color = vec3(1,0.8,0.6);
     sun->brightness = 7.0;
-    sun->viewport.zoom = 3;
+    sun->viewport.zoom = 10;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
-    scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_JUMP);
+    scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_SHOOT);
     scene->inputcontroller->AddKeyMap('F',INPUT_F);
     scene->inputcontroller->AddKeyMap('G',INPUT_G);
     scene->inputcontroller->AddKeyMap('Q',INPUT_Q);
@@ -51,6 +51,8 @@ void ApplicationShip::Init(void){
     renderer->alpha_clip = 0.5f;
     renderer->f_render_skybox = false;
 
+    SetPhysicsTPS(100.0f);
+
     //Randomise the randomiser
     rrand = new RRandom();
     debug->Info("Polulating RRandom\n");
@@ -59,7 +61,7 @@ void ApplicationShip::Init(void){
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
     main_scene = CreateEmptyScene();
-    main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
 
     assetmanager = new AssetManager();
     gltfloader.LoadGLTFFile("data/ships.glb");
@@ -82,6 +84,31 @@ void ApplicationShip::Init(void){
             .particle_lifetime_max = 0.5f,
         };
         ship_character->exhaust_emitter->AddParticleType(exhaust_particle);
+
+        //Setup laser emitter
+        Particle* laser_particle = new Particle(main_scene->physics_world);
+
+        assetmanager->GetObjectFromAsset("laser_particle",laser_particle);
+        vec3 sz = laser_particle->GetMesh()->GetExtents();
+        laser_particle->GetPhysics()->AddBoxCollider(sz/2,vec3(0,0,0),quat().identity(),0.1f);
+        laser_particle->SetCollideWithMaskBits(COLLISION_CATEGORY_ASTEROID);
+        laser_particle->SetCollisionCategoryBits(COLLISION_CATEGORY_LASER);
+        laser_particle->GetPhysics()->SetActive(false); //We don't want it to interfere until fired.
+        ship_character->laser_emitter->emission_properties = {
+            .emission_rate         = 10.0f,
+            .emission_direction    = vec3(0,0,1), //Relative to ship
+            .emission_spread       = 20.0f,
+            .particle_size_min     = 1.0f,
+            .particle_size_max     = 1.0f,
+            .particle_lifetime_min = 0.5f,
+            .particle_lifetime_max = 0.5f,
+            .emission_speed_min    = 10.0f,
+            .emission_speed_max    = 12.0f,
+        };
+        ship_character->laser_emitter->AddParticleType(laser_particle);
+
+        //The ships laser light should be added to the scene for rendering
+        main_scene->AddObject(ship_character->laser_light);
     }
 
     //We add a grid of cells to have a sense of speed and movement
@@ -135,21 +162,22 @@ void ApplicationShip::RunLogic(){
         }
     }
 
-    if (ship_character){
+    if (f_mode_camera_track && ship_character){
         //We'll make the camera track the ship
-        if (f_mode_camera_track){
-            vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_PHYSICS);
-            vec3 p = camera->GetPosition(STATE_ACCESS_PHYSICS);
-            vec3 camera_target = ship_pos + vec3(0,15,0);
-            vec3 diff = p.lerp(camera_target,0.04f);
-            camera->SetPosition(diff);
+        vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 p = camera->GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 camera_target = ship_pos + vec3(0,zoom_target,0);
+        vec3 diff = p.lerp(camera_target,0.04f);
+        camera->SetPosition(diff);
 
-            quat r = camera->GetRotation();
-            quat t = quat::getquat(ship_pos,camera->GetWorldPosition(STATE_ACCESS_PHYSICS),-Object::ref_forward);
-            t.normalize();
-            r = quat::slerp(r,t,0.15f);
-            camera->SetRotation(r);
-        }
+        //This will also rotate the camera to look at the ship
+        /*
+        quat r = camera->GetRotation();
+        quat t = quat::getquat(ship_pos,camera->GetWorldPosition(STATE_ACCESS_PHYSICS),-Object::ref_forward);
+        t.normalize();
+        r = quat::slerp(r,t,0.15f);
+        camera->SetRotation(r);
+        */
     }
 
     if (f_lock_ship_axis && ship_character){
@@ -235,29 +263,28 @@ void ApplicationShip::RunLogic(){
     //Mouse wheel for zoom
     static float mouse_delta_sum = 0;
     if (mouse_delta_sum != 0){
-        vec3 diff = camera->GetForward() - camera_target;
-        float dist = diff.length() * mouse_delta_sum;
-        float delta = dist / 20.0f;
-
-        camera->MoveForwardBy(dist / 20.0f);
-
-        mouse_delta_sum /= 1.1;
+        zoom_target -= mouse_delta_sum * 0.5f;
+        if (zoom_target < 5.0f) zoom_target = 5.0f;
+        if (zoom_target > 80.0f) zoom_target = 80.0f;
+        mouse_delta_sum = 0;
     }
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 
     //Character input
     if (ship_character && main_window->f_has_focus){
         if (input->IsKeyDown(INPUT_TURN_UP)){
-            ship_character->MoveForward();
+            ship_character->MoveForwardBy(100);
         }
         if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            ship_character->MoveBackward();
+            ship_character->MoveBackwardBy(100);
         }
         if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-            ship_character->TurnRight();
+            ship_character->TurnRightBy(0.05f);
+            ship_character->RollBy(-0.05f);
         }
         if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            ship_character->TurnLeft();
+            ship_character->TurnLeftBy(0.05f);
+            ship_character->RollBy(0.05f);
         }
         if (input->IsKeyDown(INPUT_Q)){
             ship_character->RollBy(0.05f);
@@ -271,6 +298,9 @@ void ApplicationShip::RunLogic(){
         }
         if (input->WasKeyReleased(INPUT_G)){
             f_mode_grab = !f_mode_grab;
+        }
+        if (input->IsKeyDown(INPUT_SHOOT)){
+            ship_character->ShootLaser();
         }
     }
 }

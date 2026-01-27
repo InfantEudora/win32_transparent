@@ -23,7 +23,6 @@ Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene
 
     if (physics){
         physics->AddSphereCollider(1.0f,vec3(0,0,0),quat().identity());
-
         physics->SetStatic(false);
         physics->SetGravityEnabled(false);
         physics->body->rigidbody->setLinearDamping(0.1);
@@ -32,6 +31,9 @@ Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene
         physics->body->rigidbody->updateMassPropertiesFromColliders();
         physics->body->rigidbody->setMass(5);
     }
+
+    SetCollisionCategoryBits(COLLISION_CATEGORY_ASTEROID);
+    SetCollideWithMaskBits(COLLISION_CATEGORY_SHIP|COLLISION_CATEGORY_LASER);
 }
 
 Asteroid::~Asteroid(){

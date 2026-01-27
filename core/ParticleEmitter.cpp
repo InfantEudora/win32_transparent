@@ -28,7 +28,7 @@ void ParticleEmitter::SetParticle(Particle* particle){
     particle->SetPosition(GetWorldPosition() + p);
     particle->SetScale(rrand->GetFloat(emission_properties.particle_size_min,emission_properties.particle_size_max));
 
-    vec3 v = emission_properties.emission_direction;
+    vec3 v = emission_properties.emission_direction * rrand->GetFloat(emission_properties.emission_speed_min,emission_properties.emission_speed_max);
     //We need to get a vector within the spread angle.
     float spread_rad = emission_properties.emission_spread * (TYPE_PI / 180.0f);
     float angle_x = rrand->GetFloat(-spread_rad/2,spread_rad/2);
@@ -39,16 +39,19 @@ void ParticleEmitter::SetParticle(Particle* particle){
     quat qz = quat(vec3(0,0,1),angle_z);
     quat q = qx * qy * qz;
     v = q * v;
-    //Rotate by our parent's rotation too
+    //Rotate speed by our parent's rotation too
     if (parent){
         quat parent_rot = parent->GetWorldRotation();
         v = parent_rot * v;
+        particle->SetRotation(parent_rot);
     }
 
     //Add our parent's velocity too
     if (parent && parent->GetPhysics()){
         v = v + parent->GetPhysics()->GetVelocity();
     }
+
+
 
     particle->GetPhysics()->SetStatic(false);
     particle->GetPhysics()->SetVelocity(v);
@@ -67,8 +70,8 @@ void ParticleEmitter::EmitParticles(int amount){
     //Figure out if we can maybe reuse existing particles.
     for (Particle* particle:emitted_particles){
         if (particle->IsVisible() == false){
-            particle->Show();
             SetParticle(particle);
+            particle->Show();
             //Extra step...
 
             amount_extra--;

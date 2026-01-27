@@ -64,7 +64,7 @@ class Renderer{
     void CullObjects();
     void CullLights();
     void GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects);
-    void GetAllVisibleSubLights(Light* light,std::vector<Light*>&lights);
+    void GetAllVisibleSubLights(Object* light,std::vector<Light*>&lights);
     void UpdateState();
     void RebuildUniqueMeshList();
     void ClearBatches();

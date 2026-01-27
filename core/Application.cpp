@@ -140,7 +140,7 @@ void Application::Init(){
     BinaryAsset::DumpBinaryAssets();
 
     //Just so the current items show on the first frame...?
-    main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
 }
 
 void Application::DrawImGuiUI(){
@@ -236,7 +236,7 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     app->debug_physics = new Debugger("App.Physics", DEBUG_ALL);
 
     uint32_t physics_ticks = 0;
-    double us_looptime_desired = 20000;
+    double us_looptime_desired = app->physics_us_per_tick;
     double last_sleep = 0;
     while (1){
         if (app->main_scene){
@@ -297,7 +297,7 @@ void Application::UpdatePhysics(){
     if (!main_scene){
         return;
     }
-    main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
 }
 
 void Application::NextInput(){
@@ -388,7 +388,6 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
         if (ImGui::Checkbox("Render Colliders [Debug]",&ph_debug_render)){
             physics_world->SetDebugRendering(ph_debug_render);
         }
-
         bool ph_paused = main_scene->IsPhysicsPaused();
         if (ImGui::Checkbox("Pause Physics (Active Scene) [Debug]",&ph_paused)){
             main_scene->PausePhysics(ph_paused);
@@ -396,6 +395,13 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
         vec3 gravity = physics_world->GetGravity();
         if (ImGui::DragFloat3("Gravity (m/s^2)",(float*)&gravity,0.1f,-20,20)){
             physics_world->SetGravity(gravity);
+        }
+        if (ImGui::DragFloat("Global Time Factor",&physics_time_factor,0.01f,0.1f,2.0f)){
+            //Nothing to do here, it's applied in the physics update loop.
+        }
+        float tps = physics_tps;
+        if (ImGui::DragFloat("Target Physics TPS",&tps,1.0f,1.0f,200.0f)){
+            SetPhysicsTPS(tps);
         }
     }
 

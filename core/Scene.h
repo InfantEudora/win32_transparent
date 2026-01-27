@@ -30,7 +30,7 @@ public:
 
     void UpdateInput();
     void UpdateAnimations();
-    void UpdatePhysics();
+    void UpdatePhysics(float delta_time);
     void DrawFrame();
 
     void AddObject(Object* object);

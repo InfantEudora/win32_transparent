@@ -160,7 +160,8 @@ imgui: $(OBJ_LIBIMGUI)
 all: default
 
 reset:
-	-rm -rf main.o ApplicationAnimation.o core/Object.o core/skeleton/PlayerCharacter.o
+# -rm -rf main.o ApplicationAnimation.o core/Object.o core/skeleton/PlayerCharacter.o
+	-rm -rf main.o ApplicationShip.o ship/ShipCharacter.o
 
 clean:
 	-rm -rf $(OBJS) $(OBJ_LIBIMGUI) $(OBJ_LIBTHIRDPARTY)

@@ -11,16 +11,16 @@ ShipCharacter::ShipCharacter(AssetManager* assetmanager, PhysicsWorld* physicswo
         debug->Fatal("No assetmanager given!\n");
         return;
     }
-    assetmanager->GetObjectFromAsset("ship_import",this);
+    assetmanager->GetObjectFromAsset("ship.002",this);
 
     AddPhysics(physicsworld);
 
     if (physics){
-        physics->AddBoxCollider(vec3(0.8,0.4,0.8),vec3(0,0.5,0),quat().identity());
+        physics->AddBoxCollider(vec3(0.5,0.4,0.5),vec3(0,0.0,0),quat().identity());
 
 
-        quat r = quat(vec3(0,0,1),TYPE_PI/2);
-        physics->AddCapsuleCollider(0.25,1,vec3(0,0.25,0.8),r);
+        quat r = quat(vec3(1,0,0),TYPE_PI/2);
+        physics->AddCapsuleCollider(0.20,1,vec3(0,0.0,0.6),r);
 
         physics->SetStatic(false);
         physics->SetGravityEnabled(false);
@@ -31,12 +31,34 @@ ShipCharacter::ShipCharacter(AssetManager* assetmanager, PhysicsWorld* physicswo
         physics->body->rigidbody->setMass(10);
     }
 
+    SetCollideWithMaskBits(COLLISION_CATEGORY_ASTEROID);
+    SetCollisionCategoryBits(COLLISION_CATEGORY_SHIP);
+
     exhaust_emitter = new ParticleEmitter(physicsworld);
     exhaust_emitter->name = "Exhaust Emitter";
     exhaust_emitter->target_scene = target_scene;
     exhaust_emitter->SetRandomGenerator(rrand);
-    exhaust_emitter->SetPosition(vec3(0.0,0.5,-1.0));
+    exhaust_emitter->SetPosition(vec3(0.0,0.0,-1.0));
     AttachChild(exhaust_emitter);
+
+    laser_emitter = new ParticleEmitter(physicsworld);
+    laser_emitter->name = "Laser Emitter";
+    laser_emitter->target_scene = target_scene;
+    laser_emitter->SetRandomGenerator(rrand);
+    laser_emitter->SetPosition(vec3(0.0,0.0,2.0));
+    AttachChild(laser_emitter);
+
+    engine_light = new PointLight();
+    engine_light->name = "Engine Light";
+    engine_light->color = vec3(0.0,0.5,1.0);
+    engine_light->SetPosition(vec3(0.0,0.1,-1.0));
+    engine_light->brightness = 5.0f;
+    AttachChild(engine_light);
+
+    laser_light = new PointLight();
+    laser_light->name = "Laser Light";
+    laser_light->color = vec3(1.0,0.2,0.0);
+    laser_light->brightness = 5.0f;
 
 }
 
@@ -44,9 +66,9 @@ ShipCharacter::~ShipCharacter(){
 
 }
 
-void ShipCharacter::MoveForward(){
+void ShipCharacter::MoveForwardBy(float force){
     if (physics){
-        vec3 lf = vec3(0,0,100);
+        vec3 lf = vec3(0,0,force);
         quat q = GetRotation();
         vec3 rf = q * lf;
         physics->AddLocalForce(lf);
@@ -75,31 +97,62 @@ void ShipCharacter::MoveForward(){
 }
 
 //Going to play a move forward animation based on whatever animation its in.
-void ShipCharacter::MoveBackward(){
+void ShipCharacter::MoveBackwardBy(float force){
 
     if (physics){
-        vec3 lf = vec3(0,0,-100);
+        vec3 lf = vec3(0,0,-force);
         vec3 vel = GetVelocity();
         quat q = GetRotation();
         vec3 rf = q * lf;
-        SetVelocity(vel + rf*0.00125);
-        physics->AddLocalForce(vec3(0,0,-100));
+        //SetVelocity(vel + rf*0.00125);
+        physics->AddLocalForce(vec3(0,0,-force));
     }
 }
 
 void ShipCharacter::UpdatePhysicsState(){
+    if (laser_emitter && laser_light){
+        //We track where the center of all particles are, so we can place a light there.
+        vec3 center = vec3(0,0,0);
+        int count = 0;
+        for (size_t i = 0; i < laser_emitter->emitted_particles.size(); i++){
+            if (!laser_emitter->emitted_particles.at(i)->IsVisible()){
+                continue;
+            }
+            center += laser_emitter->emitted_particles.at(i)->GetPosition(STATE_ACCESS_PHYSICS);
+            count++;
+        }
+        if (count > 0){
+            center = center / (float)count;
+            laser_light->SetPosition(center);
+            laser_light->brightness = 1.0f * count;
+            if (laser_light->brightness > 10.0f){
+                laser_light->brightness = 10.0f;
+            }
+        }
+        if (count == 0){
+            laser_light->Hide();
+        }else{
+            laser_light->Show();
+        }
+    }
+
+
     Object::UpdatePhysicsState();
 }
 
-void ShipCharacter::TurnRight(){
-
-    float delta = -0.05f;
-    quat q = quat(vec3(0,1,0),delta);
+void ShipCharacter::TurnRightBy(float angle){
+    quat q = quat(vec3(0,1,0),-angle);
     RotateBy(q);
 }
 
-void ShipCharacter::TurnLeft(){
-    float delta = 0.05f;
-    quat q = quat(vec3(0,1,0),delta);
+void ShipCharacter::TurnLeftBy(float angle){
+    quat q = quat(vec3(0,1,0),angle);
     RotateBy(q);
+}
+
+void ShipCharacter::ShootLaser(){
+    if (laser_emitter){
+        laser_emitter->EmitParticles(1);
+
+    }
 }

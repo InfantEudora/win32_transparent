@@ -83,6 +83,16 @@ public:
 
     RRandom* rrand = NULL;
 
+    //Physics Settings
+    float physics_tps           = 50.0f; //Target physics ticks per second
+    double physics_us_per_tick  = 20000.0f;
+    float physics_time_factor   = 1.0f; //Used to speed up or slow down physics globally
+    void SetPhysicsTPS(float tps){
+        physics_tps = tps;
+        physics_us_per_tick = 1000000.0f / physics_tps;
+    }
+
+
     //Generic Object placement and selection
     Object* selected_object = NULL;
     Object* hovered_object = NULL;

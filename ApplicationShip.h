@@ -4,10 +4,8 @@
 #include "Application.h"
 #include "ship/Asteroid.h"
 #include "ship/ShipCharacter.h"
+#include "ship/ShipCollisionMasks.h"
 
-/*
-    An attempt at an application that overrides the default, and shows a UI only.
-*/
 class ApplicationShip : public Application, public rp3d::EventListener{
 public:
     ApplicationShip();
@@ -25,6 +23,7 @@ public:
 
 private:
     vec3 camera_target = {};
+    float zoom_target = 20.0f;
     bool f_filemodal = false;
     std::string filemodal_filename;
     bool f_import_file = false;

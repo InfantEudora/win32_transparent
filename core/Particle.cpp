@@ -24,6 +24,9 @@ Particle::Particle(Particle* particle):Particle(particle->GetPhysics()->world){
         SetCollideWithMaskBits(particle->collide_with_bits);
     }
     name = particle->name;
+    //Copy the material names and slots
+    material_names[0] = particle->material_names[0];
+    material_slot[0] = particle->material_slot[0];
 }
 
 Particle::~Particle(){

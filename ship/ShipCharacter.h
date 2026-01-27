@@ -5,6 +5,7 @@
 #include "Physics.h"
 #include "ParticleEmitter.h"
 #include "SoundSystem.h"
+#include "ShipCollisionMasks.h"
 
 class ShipCharacter;
 
@@ -16,11 +17,15 @@ class ShipCharacter : public Object{
 
     SoundSystem* soundsystem = NULL;
     ParticleEmitter* exhaust_emitter = NULL;
+    ParticleEmitter* laser_emitter = NULL;
+    PointLight* engine_light = NULL;
+    PointLight* laser_light = NULL;
 
-    void MoveForward();
-    void MoveBackward();
-    void TurnLeft();
-    void TurnRight();
+    void MoveForwardBy(float force);
+    void MoveBackwardBy(float force);
+    void TurnLeftBy(float angle);
+    void TurnRightBy(float angle);
+    void ShootLaser();
 
 };
 

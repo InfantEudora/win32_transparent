@@ -4,6 +4,7 @@
 #include "AssetManager.h"
 #include "Physics.h"
 #include "ParticleEmitter.h"
+#include "ShipCollisionMasks.h"
 
 class Asteroid : public Object{
 public:

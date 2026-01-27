@@ -106,20 +106,19 @@ bool Renderer::Resize(int new_width, int new_height){
 }
 
 //TODO: This should iterate over sub objects as well.
-void Renderer::GetAllVisibleSubLights(Light* light,std::vector<Light*>&lights){
-    if (!light){
-        return;
-    }
-    if (light->IsDestroyed()){
+void Renderer::GetAllVisibleSubLights(Object* object,std::vector<Light*>&lights){
+    if (!object){
         return;
     }
 
-    if (!light->IsVisible()){
-        return;
+    //Check if any of the direct children are lights
+    for (int i=0;i<object->children.size();i++){
+        Object* child = object->GetChild(i);
+        Light* light = dynamic_cast<Light*>(child);
+        if (light && light->IsVisible(STATE_ACCESS_RENDERER)){
+            lights.push_back(light);
+        }
     }
-
-    lights.push_back(light);
-    //Lights don't get to have lights as children...
 }
 
 //Put's all children and it's childrens children etc into a list
@@ -169,9 +168,11 @@ void Renderer::CullLights(){
     visible_lights.clear();
     for (Object* object:objects){
         Light* light = dynamic_cast<Light*>(object);
-        if (light){
-            GetAllVisibleSubLights(light,visible_lights);
+        if (light && light->IsVisible(STATE_ACCESS_RENDERER)){
+            visible_lights.push_back(light);
+            continue;
         }
+        GetAllVisibleSubLights(object,visible_lights);
     }
 }
 
