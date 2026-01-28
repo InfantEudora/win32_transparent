@@ -242,6 +242,8 @@ For instance: From Cartwheel studio:
 
 ### Input
 Input can be fetched from the messages sent to a window, but this ties the input thread to a different thread than the render thread.
+Experimented with getting controller input through HID. Works. But sending things back to the controller does not.
+Using the XInput is simple enough and works.
 
 ### Tested
 Video Cards:

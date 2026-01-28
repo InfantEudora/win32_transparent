@@ -114,6 +114,7 @@ class Object{
     static vec3 ref_forward;
 
     bool IsVisible(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
+    vec3 GetCenterofMass();
     vec3 GetPosition(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);
     vec3 GetWorldPosition(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
     vec3 GetForward(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);          // Returns the forward or normalized lookat direction

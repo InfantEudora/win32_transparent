@@ -1115,12 +1115,15 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 }
 
                 vec3 v = physics->GetVelocity();
-                if (v.length() > 0){
-                    v.normalize();
+                vec3 a = physics->GetAngularVelocity();
+                //ImGui::BeginDisabled();
+                if (ImGui::DragFloat3("Velocity", (float*)&v, 0.01f, -1.0f, 1.0f)){
+                    physics->SetVelocity(v);
                 }
-                ImGui::BeginDisabled();
-                ImGui::DragFloat3("Velocity", (float*)&v, 0.01f, -1.0f, 1.0f);
-                ImGui::EndDisabled();
+                if (ImGui::DragFloat3("Angular Velocity", (float*)&a, 0.01f, -1.0f, 1.0f)){
+                    physics->SetAngularVelocity(a);
+                }
+                //ImGui::EndDisabled();
 
                 float collider_friction = physics->GetFrictionCoefficient();
                 if (ImGui::DragFloat("Friction Coefficient", (float*)&collider_friction, 0.01f, 0.0f, 2.0f)){

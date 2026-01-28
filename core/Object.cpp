@@ -413,6 +413,14 @@ bool Object::PhysicsCompleted(){
     return !!state_physics_prev_completed;
 }
 
+//STATE_ACCESS_PHYSICS
+vec3 Object::GetCenterofMass(){
+    if (!physics){
+        return vec3();
+    }
+    return physics->GetCenterofMass();
+}
+
 //Returns local position (within parent)
 vec3 Object::GetPosition(ObjectStateAccessType t){
     if (t == STATE_ACCESS_PHYSICS)

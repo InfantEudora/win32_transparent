@@ -66,33 +66,36 @@ ShipCharacter::~ShipCharacter(){
 
 }
 
+void ShipCharacter::StrafeBy(float force){
+    if (physics){
+        vec3 f = vec3(force,0,0);
+        vec3 wp = GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 cm = GetCenterofMass();
+        quat q = GetRotation();
+        wp += q * cm;
+
+        f = q * f;
+        physics->AddWorldForceAt(f,wp);
+    }
+}
+
 void ShipCharacter::MoveForwardBy(float force){
     if (physics){
         vec3 lf = vec3(0,0,force);
-        quat q = GetRotation();
-        vec3 rf = q * lf;
         physics->AddLocalForce(lf);
 
         //We also want a force that slightly lifts the ship up when moving forward
-
-
+        quat q = GetRotation();
         vec3 wp = GetPosition(STATE_ACCESS_PHYSICS);
         wp += q * vec3(0,0,-1);
-        vec3 lift = vec3(0,-5,0);
+        vec3 lift = vec3(0,-force/50,0);
         lift = q * lift;
         physics->AddWorldForceAt(lift,wp);
-
-
-
-
         vec3 vel = GetVelocity();
         //debug->Info("Force applied       : %.1f, %.1f, %.1f Newton\n",f.x,f.y,f.z);
 
-        //SetVelocity(vel + rf*0.0025);
-
+        forward_thrust = force;
     }
-
-
     exhaust_emitter->EmitParticles(8);
 }
 
@@ -106,6 +109,7 @@ void ShipCharacter::MoveBackwardBy(float force){
         vec3 rf = q * lf;
         //SetVelocity(vel + rf*0.00125);
         physics->AddLocalForce(vec3(0,0,-force));
+        forward_thrust = -force;
     }
 }
 

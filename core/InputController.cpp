@@ -66,8 +66,6 @@ KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
 }
 
 void InputController::UpdateKeyState(){
-    SHORT s = GetAsyncKeyState(VK_UP);
-    //debug->Info("State: %i\n",s);
     bool mousepoint_valid = false;
     POINT p;
     if (mousepoint_valid = GetCursorPos(&p)){

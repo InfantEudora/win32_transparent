@@ -21,11 +21,16 @@ class ShipCharacter : public Object{
     PointLight* engine_light = NULL;
     PointLight* laser_light = NULL;
 
+    void StrafeBy(float force);
     void MoveForwardBy(float force);
     void MoveBackwardBy(float force);
     void TurnLeftBy(float angle);
     void TurnRightBy(float angle);
     void ShootLaser();
+
+    float forward_thrust = 0.0f;
+    float tilt_thrust = 0.0f;
+    float rotation_thrust = 0.0f;
 
 };
 

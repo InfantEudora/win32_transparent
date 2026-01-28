@@ -3,11 +3,16 @@
 
 static Debugger *debug = new Debugger("ApplicationShip", DEBUG_ALL);
 
-#define INPUT_SHOOT   INPUT_LAST+1
-#define INPUT_F       INPUT_LAST+2
-#define INPUT_G       INPUT_LAST+3
-#define INPUT_Q       INPUT_LAST+4
-#define INPUT_E       INPUT_LAST+5
+#define INPUT_SHOOT             INPUT_LAST+1
+#define INPUT_F                 INPUT_LAST+2
+#define INPUT_G                 INPUT_LAST+3
+#define INPUT_Q                 INPUT_LAST+4
+#define INPUT_E                 INPUT_LAST+5
+#define GAMEPAD_LEFT_STICK_X    INPUT_LAST+6
+#define GAMEPAD_LEFT_STICK_Y    INPUT_LAST+7
+#define GAMEPAD_RIGHT_STICK_X   INPUT_LAST+8
+#define GAMEPAD_RIGHT_STICK_Y   INPUT_LAST+9
+#define GAMEPAD_R2L2            INPUT_LAST+10
 
 ApplicationShip::ApplicationShip():Application(){
     debug->Info("Created new ApplicationShip.\n");
@@ -37,6 +42,7 @@ Scene* ApplicationShip::CreateEmptyScene(){
     scene->physics_world = new PhysicsWorld();
     scene->physics_world->SetGravity(vec3(0,-9.81,0));
     scene->physics_world->SetDebugRendering(false);
+    scene->physics_world->rp_world->setEventListener(this);
     return scene;
 }
 
@@ -137,6 +143,13 @@ void ApplicationShip::Init(void){
 
     main_window->Resize(1680,900);
 
+    gamepad_controller = new GamePadController();
+    gamepad_controller->ListDevices();
+    gamepad_controller->AddGamePadMap(0,GAMEPAD_LEFT_STICK_Y);
+    gamepad_controller->AddGamePadMap(1,GAMEPAD_LEFT_STICK_X);
+    gamepad_controller->AddGamePadMap(2,GAMEPAD_RIGHT_STICK_Y);
+    gamepad_controller->AddGamePadMap(3,GAMEPAD_RIGHT_STICK_X);
+    gamepad_controller->AddGamePadMap(4,GAMEPAD_R2L2);
 
 }
 
@@ -163,12 +176,20 @@ void ApplicationShip::RunLogic(){
     }
 
     if (f_mode_camera_track && ship_character){
+        //We use a slight zoom depending on speed
+        vec3 vel = ship_character->GetVelocity();
+        float fact = vel.length();
+        fact = clamp(fact,0.0f,5.0f);
+        float local_zoom_target = zoom_target + fact;
+
         //We'll make the camera track the ship
         vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_PHYSICS);
         vec3 p = camera->GetPosition(STATE_ACCESS_PHYSICS);
-        vec3 camera_target = ship_pos + vec3(0,zoom_target,0);
+        vec3 camera_target = ship_pos + vec3(0,local_zoom_target,0);
         vec3 diff = p.lerp(camera_target,0.04f);
         camera->SetPosition(diff);
+
+
 
         //This will also rotate the camera to look at the ship
         /*
@@ -217,6 +238,24 @@ void ApplicationShip::RunLogic(){
     }
 
     CheckObjectSelection();
+
+    //We keep the asteroids in a certain range around the ship
+    for (Asteroid* asteroid : asteroids){
+        vec3 center_pos = vec3();
+        vec3 asteroid_pos = asteroid->GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 diff = asteroid_pos - center_pos;
+        float dist = diff.length();
+        if (dist > 20.0f){
+            asteroid_pos.y = 0;
+            //asteroid->SetPosition(asteroid_pos);
+            //We modify its velocity to head towards the ship
+            vec3 dir_to_ship = (center_pos - asteroid_pos).normalize();
+            float speed = asteroid->GetPhysics()->GetVelocity().length();
+            speed = clamp(speed,1.0f,5.0f);
+            asteroid->GetPhysics()->SetVelocity(dir_to_ship * speed);
+        }
+    }
+
 
 
 
@@ -270,8 +309,50 @@ void ApplicationShip::RunLogic(){
     }
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 
+    gamepad_controller->UpdateKeyState();
+
+
     //Character input
     if (ship_character && main_window->f_has_focus){
+
+        float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
+        float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
+        float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
+        float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
+        float gp_l2r2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2L2);
+
+        float y = gp_ly + gp_ry;
+        y = clamp(y,-1.0f,1.0f);
+
+        if (y > 0.01f){
+            ship_character->MoveBackwardBy(y * 100);
+        }
+        if (y < -0.01f){
+            ship_character->MoveForwardBy(-y * 100);
+        }
+        if (gp_rx > 0.01f){
+            ship_character->RollBy(-gp_rx * 0.05f);
+            ship_character->StrafeBy(-gp_rx * 50.0f);
+        }
+        if (gp_rx < -0.01f){
+            ship_character->RollBy(-gp_rx * 0.05f);
+             ship_character->StrafeBy(-gp_rx * 50.0f);
+        }
+        if (gp_lx > 0.01f){
+            ship_character->TurnRightBy(gp_lx*gp_lx * 0.04f);
+            ship_character->RollBy(-gp_lx * 0.05f);
+        }
+        if (gp_lx < -0.01f){
+            ship_character->TurnLeftBy((gp_lx*gp_lx) * 0.04f);
+            ship_character->RollBy(-gp_lx * 0.05f);
+        }
+
+        if (gp_l2r2 > 0.01f){
+            ship_character->ShootLaser();
+            gamepad_controller->rmotor = 5000;
+        }
+
+
         if (input->IsKeyDown(INPUT_TURN_UP)){
             ship_character->MoveForwardBy(100);
         }
@@ -279,11 +360,11 @@ void ApplicationShip::RunLogic(){
             ship_character->MoveBackwardBy(100);
         }
         if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-            ship_character->TurnRightBy(0.05f);
+            ship_character->TurnRightBy(0.04f);
             ship_character->RollBy(-0.05f);
         }
         if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            ship_character->TurnLeftBy(0.05f);
+            ship_character->TurnLeftBy(0.04f);
             ship_character->RollBy(0.05f);
         }
         if (input->IsKeyDown(INPUT_Q)){
@@ -331,8 +412,11 @@ void ApplicationShip::DrawImGuiUI(){
         ImGui::Checkbox("Grab Mode",&f_mode_grab);
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Checkbox("Lock Ship Axis",&f_lock_ship_axis);
-        ImGui::Text("Ship Up: (%.2f, %.2f, %.2f)",ship_character->GetUp(STATE_ACCESS_RENDERER).x,ship_character->GetUp(STATE_ACCESS_RENDERER).y,ship_character->GetUp(STATE_ACCESS_RENDERER).z);
-        ImGui::Text("Ship Y-Pos: %.2f",ship_character->GetPosition(STATE_ACCESS_RENDERER).y);
+        ImGui::Text("Ship Up              : (%.2f, %.2f, %.2f)",ship_character->GetUp(STATE_ACCESS_RENDERER).x,ship_character->GetUp(STATE_ACCESS_RENDERER).y,ship_character->GetUp(STATE_ACCESS_RENDERER).z);
+        ImGui::Text("Ship Y-Pos           : %.2f",ship_character->GetPosition(STATE_ACCESS_RENDERER).y);
+        ImGui::Text("Ship Forward Thrust  : %.2f N",ship_character->forward_thrust);
+        ImGui::Text("Ship Tilt Thrust     : %.2f N",ship_character->tilt_thrust);
+        ImGui::Text("Ship Rotation Thrust : %.2f N",ship_character->rotation_thrust);
         if (ImGui::Button("Reset Ship Position")){
             ship_character->SetPosition(vec3(0,0,0));
             ship_character->SetRotation(quat().identity());
@@ -343,9 +427,40 @@ void ApplicationShip::DrawImGuiUI(){
                 vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_RENDERER);
                 vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
                 asteroid->SetPosition(ship_pos + offset);
-                asteroid->SetScale(vec3(rrand->GetFloat(0.8f,1.5f)));
+                asteroid->SetScale(vec3(rrand->GetFloat(0.8f,2.5f)));
+                asteroid->GetPhysics()->SetAngularVelocity(vec3(rrand->GetFloat(-0.5,0.5),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-0.5,0.5)));
+                asteroid->GetPhysics()->SetVelocity(vec3(rrand->GetFloat(-1,1),0,rrand->GetFloat(-1,1)));
                 asteroid->UpdatePhysicsState();
                 main_scene->AddObject(asteroid);
+                asteroids.push_back(asteroid);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Capsule")){
+            Object* capsule = new Object();
+            if (capsule){
+                assetmanager->GetObjectFromAsset("capsule",capsule);
+                vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_RENDERER);
+                vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
+                capsule->SetPosition(ship_pos + offset);
+                capsule->SetScale(vec3(2.0f,2.0f,2.0f));
+                capsule->AddPhysics(main_scene->physics_world);
+                capsule->GetPhysics()->SetStatic(false);
+                capsule->GetPhysics()->SetAngularVelocity(vec3(rrand->GetFloat(-1,1),rrand->GetFloat(-1,1),rrand->GetFloat(-1,1)));
+
+                capsule->UpdatePhysicsState();
+                main_scene->AddObject(capsule);
+            }
+        }
+
+        static int lspeed = 0;
+        static int rspeed = 0;
+        ImGui::SliderInt("Left Motor Speed",&lspeed,0,65535);
+        ImGui::SliderInt("Right Motor Speed",&rspeed,0,65535);
+
+        if (ImGui::Button("Send Data")){
+            if (gamepad_controller){
+                gamepad_controller->SendMotorData(lspeed,rspeed);
             }
         }
         ImGui::End();
@@ -382,5 +497,36 @@ void ApplicationShip::DrawImGuiUI(){
 void ApplicationShip::onContact(const rp3d::CollisionCallback::CallbackData& callbackData){
     //debug->Info("Contact: num pairs %hhu\n",callbackData.getNbContactPairs());
     for (uint32_t i = 0; i < callbackData.getNbContactPairs(); i++) {
+        //We want to be notified of asteroid - ship collisions
+         CollisionCallback::ContactPair contactPair = callbackData.getContactPair(i);
+
+        Object* d1 = (Object*)contactPair.getBody1()->getUserData();
+        Object* d2 = (Object*)contactPair.getBody2()->getUserData();
+
+        ShipCharacter* ship = dynamic_cast<ShipCharacter*>(d1);
+        Object* other = d2;
+        if (!ship){
+            ship = dynamic_cast<ShipCharacter*>(d2);
+            other = d1;
+        }
+        if (ship){
+
+            //debug->Info("Bump\n");
+            if (contactPair.getEventType() == CollisionCallback::ContactPair::EventType::ContactStart){
+                //Velocity before impact?
+                vec3 vel = ship->GetVelocity();
+                debug->Info("Ship velocity: %.2f\n",vel.length());
+                vec3 othervel = other->GetVelocity();
+                debug->Info("Other velocity: %.2f\n",othervel.length());
+                //The sum determines the impact
+                float impact_vel = othervel.length() + vel.length();
+                impact_vel = clamp(impact_vel,0,10);
+
+                gamepad_controller->lmotor = 3200*impact_vel;
+                gamepad_controller->rmotor = 3200*impact_vel;
+
+            }
+        }
+
     }
 }

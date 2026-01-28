@@ -16,7 +16,8 @@ FNOCONSOLE = -Wl,-subsystem,windows
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
 COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
 
-CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -lthirdparty -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
+CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
+CFLAGS += -lXinput9_1_0
 #CFLAGS += -std=c++11
 #CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 #CFLAGS += $(FNOCONSOLE)
@@ -41,6 +42,9 @@ IPATHS += -I3rdparty/miniz/
 IPATHS += -I3rdparty/reactphysics3d/
 
 SRCS += main.cpp
+
+#USB HID
+SRCS += 3rdparty/UsbHidIO.cpp
 
 #ImGUI
 SRC_LIBIMGUI += 3rdparty/imgui/imgui.cpp

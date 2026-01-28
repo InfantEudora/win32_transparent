@@ -25,14 +25,18 @@ float Physics::GetMass(){
 	return body->rigidbody->getMass();
 }
 
+//Some note here: We need to use setIsActive false before changing transform, else it will not update properly.
+//Apparently also the angular velocity gets reset on setTransform, so we need to store it and reapply it.
 void Physics::SetBodyWorldPosition(const vec3& wp){
 	reactphysics3d::Transform t = body->rigidbody->getTransform();
 	reactphysics3d::Vector3 p = reactphysics3d::Vector3(wp.x,wp.y,wp.z);
 	t.setPosition(p);
 	bool f_active = body->rigidbody->isActive();
+	vec3 angvel = GetAngularVelocity();
 	body->rigidbody->setIsActive(false);
 	body->rigidbody->setTransform(t);
 	body->rigidbody->setIsActive(f_active);
+	SetAngularVelocity(angvel);
 	world->WakeUpEveryone();
 }
 

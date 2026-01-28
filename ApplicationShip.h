@@ -5,6 +5,7 @@
 #include "ship/Asteroid.h"
 #include "ship/ShipCharacter.h"
 #include "ship/ShipCollisionMasks.h"
+#include "GamePadController.h"
 
 class ApplicationShip : public Application, public rp3d::EventListener{
 public:
@@ -17,9 +18,10 @@ public:
 
     DirectionalLight* sun = NULL;
     ShipCharacter* ship_character = NULL;
+    std::vector<Asteroid*> asteroids;
 
     Scene* CreateEmptyScene();
-
+    GamePadController* gamepad_controller = NULL;
 
 private:
     vec3 camera_target = {};
