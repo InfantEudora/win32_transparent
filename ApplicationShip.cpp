@@ -57,7 +57,7 @@ void ApplicationShip::Init(void){
     renderer->alpha_clip = 0.5f;
     renderer->f_render_skybox = false;
 
-    SetPhysicsTPS(100.0f);
+    SetPhysicsTPS(60.0f);
 
     //Randomise the randomiser
     rrand = new RRandom();
@@ -100,6 +100,7 @@ void ApplicationShip::Init(void){
         laser_particle->SetCollideWithMaskBits(COLLISION_CATEGORY_ASTEROID);
         laser_particle->SetCollisionCategoryBits(COLLISION_CATEGORY_LASER);
         laser_particle->GetPhysics()->SetActive(false); //We don't want it to interfere until fired.
+        laser_particle->name = "laser_particle";
         ship_character->laser_emitter->emission_properties = {
             .emission_rate         = 10.0f,
             .emission_direction    = vec3(0,0,1), //Relative to ship
@@ -155,6 +156,22 @@ void ApplicationShip::Init(void){
 
 //Called before update physics after update animations
 void ApplicationShip::RunLogic(){
+    //Does anything need to be created / destroyed before we run any logic on it?
+    //We add any asteroids explisions to the scene:
+    for (AsteroidExplosion* explosion:new_asteroid_explosions){
+        main_scene->AddObject(explosion);
+        explosion->StartExplosion();
+        active_asteroid_explosions.push_back(explosion);
+    }
+    new_asteroid_explosions.clear();
+
+    if (selected_object && selected_object->IsDestroyed()){
+        selected_object = NULL;
+    }
+
+    renderer->DeleteDestroyedObjects();
+
+
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
@@ -230,31 +247,49 @@ void ApplicationShip::RunLogic(){
         }
     }
 
-    //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
-        //Clear mouse delta
-        input->GetDelta(INPUT_MOUSE_WHEEL);
-        return;
-    }
+
 
     CheckObjectSelection();
 
     //We keep the asteroids in a certain range around the ship
-    for (Asteroid* asteroid : asteroids){
-        vec3 center_pos = vec3();
-        vec3 asteroid_pos = asteroid->GetPosition(STATE_ACCESS_PHYSICS);
-        vec3 diff = asteroid_pos - center_pos;
-        float dist = diff.length();
-        if (dist > 20.0f){
-            asteroid_pos.y = 0;
-            //asteroid->SetPosition(asteroid_pos);
-            //We modify its velocity to head towards the ship
-            vec3 dir_to_ship = (center_pos - asteroid_pos).normalize();
-            float speed = asteroid->GetPhysics()->GetVelocity().length();
-            speed = clamp(speed,1.0f,5.0f);
-            asteroid->GetPhysics()->SetVelocity(dir_to_ship * speed);
+    //Get all asteroids in the scene
+    for (Object* object:renderer->objects){
+        Asteroid* asteroid = dynamic_cast<Asteroid*>(object);
+        if (asteroid){
+            vec3 center_pos = vec3();
+            vec3 asteroid_pos = asteroid->GetPosition(STATE_ACCESS_PHYSICS);
+            vec3 diff = asteroid_pos - center_pos;
+            float dist = diff.length();
+            if (dist > 20.0f){
+                asteroid_pos.y = 0;
+                //asteroid->SetPosition(asteroid_pos);
+                //We modify its velocity to head towards the ship
+                vec3 dir_to_ship = (center_pos - asteroid_pos).normalize();
+                float speed = asteroid->GetPhysics()->GetVelocity().length();
+                speed = clamp(speed,1.0f,5.0f);
+                asteroid->GetPhysics()->SetVelocity(dir_to_ship * speed);
+            }
+
+            bool update_pos = false;
+            if (asteroid_pos.y > 0.1f){
+                asteroid_pos.y = 0.1f;
+                update_pos = true;
+            }
+            if (asteroid_pos.y < -0.1f){
+                asteroid_pos.y = -0.1f;
+                update_pos = true;
+            }
+            if (update_pos){
+                vec3 vel = asteroid->GetVelocity();
+                asteroid->SetPosition(asteroid_pos);
+                asteroid->SetVelocity(vel);
+            }
+
         }
     }
+
+
+
 
 
 
@@ -312,7 +347,7 @@ void ApplicationShip::RunLogic(){
     gamepad_controller->UpdateKeyState();
 
 
-    //Character input
+    //Character input with gamepad
     if (ship_character && main_window->f_has_focus){
 
         float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
@@ -352,7 +387,10 @@ void ApplicationShip::RunLogic(){
             gamepad_controller->rmotor = 5000;
         }
 
+    }
 
+    //With keyboard / mouse
+    if (ship_character && main_window->f_has_focus){
         if (input->IsKeyDown(INPUT_TURN_UP)){
             ship_character->MoveForwardBy(100);
         }
@@ -383,6 +421,13 @@ void ApplicationShip::RunLogic(){
         if (input->IsKeyDown(INPUT_SHOOT)){
             ship_character->ShootLaser();
         }
+    }
+
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        //Clear mouse delta
+        input->GetDelta(INPUT_MOUSE_WHEEL);
+        return;
     }
 }
 
@@ -498,10 +543,16 @@ void ApplicationShip::onContact(const rp3d::CollisionCallback::CallbackData& cal
     //debug->Info("Contact: num pairs %hhu\n",callbackData.getNbContactPairs());
     for (uint32_t i = 0; i < callbackData.getNbContactPairs(); i++) {
         //We want to be notified of asteroid - ship collisions
-         CollisionCallback::ContactPair contactPair = callbackData.getContactPair(i);
+        CollisionCallback::ContactPair contactPair = callbackData.getContactPair(i);
+
 
         Object* d1 = (Object*)contactPair.getBody1()->getUserData();
         Object* d2 = (Object*)contactPair.getBody2()->getUserData();
+
+        if ((d1 == NULL) || (d2 == NULL)){
+            debug->Err("Collision has no userdata\n");
+            continue;
+        }
 
         ShipCharacter* ship = dynamic_cast<ShipCharacter*>(d1);
         Object* other = d2;
@@ -510,21 +561,45 @@ void ApplicationShip::onContact(const rp3d::CollisionCallback::CallbackData& cal
             other = d1;
         }
         if (ship){
-
             //debug->Info("Bump\n");
             if (contactPair.getEventType() == CollisionCallback::ContactPair::EventType::ContactStart){
                 //Velocity before impact?
                 vec3 vel = ship->GetVelocity();
-                debug->Info("Ship velocity: %.2f\n",vel.length());
+                //debug->Info("Ship velocity: %.2f\n",vel.length());
                 vec3 othervel = other->GetVelocity();
-                debug->Info("Other velocity: %.2f\n",othervel.length());
+                //debug->Info("Other velocity: %.2f\n",othervel.length());
                 //The sum determines the impact
                 float impact_vel = othervel.length() + vel.length();
                 impact_vel = clamp(impact_vel,0,10);
 
                 gamepad_controller->lmotor = 3200*impact_vel;
-                gamepad_controller->rmotor = 3200*impact_vel;
+                gamepad_controller->rmotor = max((float)gamepad_controller->rmotor, 3200*impact_vel);
 
+            }
+        }
+
+        Object* laser = NULL;
+        if (d1->name.compare("laser_particle") == 0){
+            laser = d1;
+            other = d2;
+        }
+        if (d2->name.compare("laser_particle") == 0){
+            laser = d2;
+            other = d1;
+        }
+        if (laser){
+            Asteroid* asteroid = dynamic_cast<Asteroid*>(other);
+            if (asteroid){
+                if (asteroid->health > 0){
+                    asteroid->health = clamp(asteroid->health-1.0,0,100);
+                    //debug->Info("Laser hit on asteroid. Health = %.1f\n",asteroid->health);
+                }else if (asteroid->health == 0){
+                    //debug->Ok("Laser hit on asteroid. Creating new explosion. Destroying asteroid.\n");
+                    AsteroidExplosion* explosion = new AsteroidExplosion(assetmanager,main_scene->physics_world,main_scene,rrand);
+                    explosion->target_asteroid = asteroid;
+                    new_asteroid_explosions.push_back(explosion);
+                    asteroid->health = -1;
+                }
             }
         }
 

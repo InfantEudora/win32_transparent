@@ -33,6 +33,8 @@ void GamePadController::ListDevices(){
             debug->Info("X-Input:  - wLeftMotorSpeed %lu\n",cap.Vibration.wLeftMotorSpeed);
             debug->Info("X-Input:  - wRightMotorSpeed %lu\n",cap.Vibration.wRightMotorSpeed);
         }
+    }else{
+        debug->Warn("No Game Controller was found using XInput\n");
     }
 }
 

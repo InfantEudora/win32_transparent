@@ -57,6 +57,14 @@ Object::~Object(){
     if (physics){
         physics->world->rp_world->destroyRigidBody(physics->body->rigidbody);
     }
+
+    //Delete all the child objects and their children
+    std::list<Object*>::iterator it = children.begin();
+    for ( ; it != children.end(); ) {
+        Object* child = *it;
+        delete child;
+        it = children.erase(it);
+    }
 }
 
 void Object::DeleteMesh(){

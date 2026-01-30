@@ -8,10 +8,27 @@ ParticleEmitter::ParticleEmitter(PhysicsWorld* world):Object(){
 }
 
 ParticleEmitter::~ParticleEmitter(){
-
+    for (Particle* particle:particle_types){
+        delete particle;
+    }
+    //All emitted particles will need to be destroyed
+    for (Particle* particle:emitted_particles){
+        particle->Destroy();
+    }
 }
 
 void ParticleEmitter::UpdatePhysicsState(){
+    std::vector<Particle*>::iterator it = emitted_particles.begin();
+    for ( ; it != emitted_particles.end(); ) {
+        Particle* particle = *it;
+        if (particle->IsVisible(STATE_ACCESS_PHYSICS) == false){
+            //Particle will also destroy itself next tick
+            particle->Destroy();
+            it = emitted_particles.erase(it);
+        }else{
+            ++it;
+        }
+    }
     Object::UpdatePhysicsState();
 }
 
@@ -69,7 +86,7 @@ void ParticleEmitter::EmitParticles(int amount){
     int amount_extra = amount;
     //Figure out if we can maybe reuse existing particles.
     for (Particle* particle:emitted_particles){
-        if (particle->IsVisible() == false){
+        if (particle->IsVisible(STATE_ACCESS_PHYSICS) == false){
             SetParticle(particle);
             particle->Show();
             //Extra step...
@@ -86,8 +103,6 @@ void ParticleEmitter::EmitParticles(int amount){
     if (particle_types.size() > 0){
         Particle* ref_particle = particle_types.at(0);
         for (int i =0;i<amount_extra;i++){
-
-
             Particle* particle = new Particle(ref_particle);
             SetParticle(particle);
 

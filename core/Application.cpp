@@ -753,6 +753,7 @@ void Application::RenderApplicationUI(){
             ImGui::PushID(n++);
             ImGui::DragFloat(" Metallic", (float*)&material.glsl_material.metallic,0.01f,0,1);
             ImGui::DragFloat(" Roughness", (float*)&material.glsl_material.roughness,0.01f,0,1);
+            ImGui::DragFloat(" Brightness", (float*)&material.glsl_material.brightness,0.01f,0,10);
             ImGui::ColorEdit4(" GLSL Color", (float*)&material.glsl_material.color, ImGuiColorEditFlags_DisplayRGB);
             ImGui::PopID();
 

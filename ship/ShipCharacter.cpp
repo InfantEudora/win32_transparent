@@ -88,7 +88,7 @@ void ShipCharacter::MoveForwardBy(float force){
         quat q = GetRotation();
         vec3 wp = GetPosition(STATE_ACCESS_PHYSICS);
         wp += q * vec3(0,0,-1);
-        vec3 lift = vec3(0,-force/50,0);
+        vec3 lift = vec3(0,-force/100,0);
         lift = q * lift;
         physics->AddWorldForceAt(lift,wp);
         vec3 vel = GetVelocity();

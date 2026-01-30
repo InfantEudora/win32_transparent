@@ -20,8 +20,11 @@ Particle::Particle(Particle* particle):Particle(particle->GetPhysics()->world){
         reactphysics3d::Transform t = reactphysics3d::Transform::identity();
         physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
+        physics->body->rigidbody->setUserData(this);
+
         SetCollisionCategoryBits(particle->collision_category_bits);
         SetCollideWithMaskBits(particle->collide_with_bits);
+
     }
     name = particle->name;
     //Copy the material names and slots
@@ -39,5 +42,6 @@ void Particle::UpdatePhysicsState(){
     }else{
         Hide();
     }
+
     Object::UpdatePhysicsState();
 }

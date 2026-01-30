@@ -171,7 +171,7 @@ vec3 CalcDirectionalPBRLight(vec3 albedo, vec3 lightdirection, vec3 color, float
     //Use the original object normal to completely shadow back faces
     //NdotL = min(dot(vnormal, normalize(lightpos - vposition)),NdotL );
 
-    Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+    Lo += (kD * albedo / PI + specular) * radiance * NdotL * m.brightness;
     return Lo;
 }
 

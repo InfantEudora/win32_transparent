@@ -4,13 +4,10 @@ static Debugger* debug = new Debugger("Asteroid",DEBUG_INFO);
 
 Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, RRandom* rrand):Object(){
     name = "Asteroid";
-
     if (!assetmanager){
         debug->Fatal("No assetmanager given!\n");
         return;
     }
-
-
 
     //Select an asteroid model at random
     std::vector<std::string>asteroid_models = {
@@ -24,8 +21,7 @@ Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene
     if (physics){
         physics->SetStatic(false);
 
-
-        physics->AddSphereCollider(1.0f,vec3(0,0,0),quat().identity());
+        physics->AddSphereCollider(0.85f,vec3(0,0,0),quat().identity());
 
         physics->SetGravityEnabled(false);
         physics->body->rigidbody->setLinearDamping(0.1);
@@ -33,7 +29,6 @@ Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene
         physics->body->rigidbody->setIsAllowedToSleep(false);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
         physics->body->rigidbody->setMass(5);
-
     }
 
     SetCollisionCategoryBits(COLLISION_CATEGORY_ASTEROID);
