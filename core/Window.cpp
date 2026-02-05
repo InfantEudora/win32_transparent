@@ -3,7 +3,7 @@
 #include "glad.h"
 #include "File.h"
 
-static Debugger* debug = new Debugger("Window",DEBUG_ERROR);
+static Debugger* debug = new Debugger("Window",DEBUG_INFO);
 
 std::vector<Window*>Window::windows; //A list of windows to match handles to
 std::vector<WNDCLASSEXA>Window::wcs;      //Different types of window classes
@@ -192,6 +192,9 @@ bool Window::InitOpenGL(){
     if (!wglMakeCurrent(hDC, hRC)){
         debug->Err("wglMakeCurrent failed (%d)\n", GetLastError());
     }
+
+    //Doesnt seem to work... yet
+    GLSelectGPU();
 
     const char* gl_version = (const char*)glGetString(GL_VERSION);
     debug->Info("OpenGL Version: %s\n", gl_version);

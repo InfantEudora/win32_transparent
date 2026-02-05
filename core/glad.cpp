@@ -11,6 +11,9 @@ PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB = NULL;
 PFNWGLGETPIXELFORMATATTRIBFVARBPROC wglGetPixelFormatAttribfvARB = NULL;
 PFNWGLGETPIXELFORMATATTRIBIVARBPROC wglGetPixelFormatAttribivARB = NULL;
 
+PFNWGLENUMGPUSNVPROC wglEnumGpusNV = NULL;
+PFNWGLENUMGPUDEVICESNVPROC wglEnumGpuDevicesNV = NULL;
+
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
 
 PFNGLCREATEFRAMEBUFFERSPROC glCreateFramebuffers;
@@ -94,8 +97,59 @@ PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback = NULL;
 
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = NULL;
 
-bool extensions_loaded = false;
+//Callable maybe after extensions are loaded
+void GLSelectGPU(){
 
+        int idx;
+        DISPLAY_DEVICEA dd;
+        HDC dc;
+        PIXELFORMATDESCRIPTOR pfd;
+
+        dd.cb = sizeof(dd);
+        idx = 0;
+        while (1) {
+            if (!EnumDisplayDevicesA(NULL, idx, &dd, 0))
+                break;
+            debug->Info("Display %i DeviceID   : %s\n",idx,dd.DeviceID);
+            debug->Info("Display %i DeviceName : %s\n",idx,dd.DeviceName);
+            debug->Info("Display %i DeviceString : %s\n",idx,dd.DeviceString);
+            idx += 1;
+        }
+/*
+        dc = CreateDCA(dd.DeviceName, NULL, NULL, NULL);
+        memset(&pfd, 0, sizeof(pfd));
+        pfd.nSize = sizeof(pfd);
+        pfd.nVersion = 1;
+        // those flags are not important, they just need to be valid (and nondemanding, just in case).
+        // later you will use whatever flags you wish when you are creating your actual gl context
+        pfd.dwFlags = PFD_DRAW_TO_WINDOW|PFD_SUPPORT_OPENGL|PFD_DOUBLEBUFFER|PFD_DEPTH_DONTCARE;
+        ChoosePixelFormat(dc, &pfd);
+        DeleteDC(dc);*/
+
+
+
+
+    HGPUNV hGPU = 0;
+    for (UINT gpu_id = 0;gpu_id < 4;gpu_id++){
+        if (!wglEnumGpusNV){
+            debug->Warn("GPU selection with wglEnumGpusNV unsupported\n");
+            return;
+        }
+        debug->Info("Looking for GPU %i\n",gpu_id);
+        if (!wglEnumGpusNV(gpu_id, &hGPU)){
+            debug->Info("No GPU at index %i\n",gpu_id);
+            break;
+        }
+
+        GPU_DEVICE gpuDevice;
+        gpuDevice.cb = sizeof(gpuDevice);
+        const bool found = wglEnumGpuDevicesNV(hGPU, 0, &gpuDevice);
+        debug->Info("GPU: %s\n",gpuDevice.DeviceString);
+    }
+}
+
+
+bool extensions_loaded = false;
 bool InitGLExtensions(void){
     if (extensions_loaded){
         return true;
@@ -105,6 +159,9 @@ bool InitGLExtensions(void){
     wglChoosePixelFormatARB      = (PFNWGLCHOOSEPIXELFORMATARBPROC)wglGetProcAddress("wglChoosePixelFormatARB");
     wglGetPixelFormatAttribfvARB = (PFNWGLGETPIXELFORMATATTRIBFVARBPROC)wglGetProcAddress("wglGetPixelFormatAttribfvARB");
     wglGetPixelFormatAttribivARB = (PFNWGLGETPIXELFORMATATTRIBIVARBPROC)wglGetProcAddress("wglGetPixelFormatAttribivARB");
+
+    // WGL GPU selection
+    wglEnumGpusNV = (PFNWGLENUMGPUSNVPROC)wglGetProcAddress("wglEnumGpusNV");
 
     //Swap
     wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");

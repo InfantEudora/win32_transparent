@@ -206,9 +206,20 @@
 #define GL_MAX_DEBUG_GROUP_STACK_DEPTH 0x826C
 #define GL_DEBUG_GROUP_STACK_DEPTH 0x826D
 
-
+//GPU selection
+struct _GPU_DEVICE {
+    DWORD  cb;
+    CHAR   DeviceName[32];
+    CHAR   DeviceString[128];
+    DWORD  Flags;
+    RECT   rcVirtualScreen;
+};
+DECLARE_HANDLE(HGPUNV);
+typedef struct _GPU_DEVICE GPU_DEVICE;
+typedef struct _GPU_DEVICE *PGPU_DEVICE;
 
 bool InitGLExtensions(void);
+void GLSelectGPU();
 
 #ifndef APIENTRY
 #define APIENTRY
@@ -236,6 +247,12 @@ typedef BOOL (WINAPI * PFNWGLGETPIXELFORMATATTRIBFVARBPROC) (HDC hdc, int iPixel
 GLAPI PFNWGLGETPIXELFORMATATTRIBFVARBPROC wglGetPixelFormatAttribfvARB;
 typedef BOOL (WINAPI * PFNWGLGETPIXELFORMATATTRIBIVARBPROC) (HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes, const int *piAttributes, int *piValues);
 GLAPI PFNWGLGETPIXELFORMATATTRIBIVARBPROC wglGetPixelFormatAttribivARB;
+
+//GPU selection
+typedef BOOL (APIENTRYP PFNWGLENUMGPUSNVPROC)(UINT iGpuIndex, HGPUNV *phGpu);
+GLAPI PFNWGLENUMGPUSNVPROC wglEnumGpusNV;
+typedef BOOL (APIENTRYP PFNWGLENUMGPUDEVICESNVPROC)(HGPUNV hGpu, UINT iDeviceIndex, PGPU_DEVICE lpGpuDevice);
+GLAPI PFNWGLENUMGPUDEVICESNVPROC wglEnumGpuDevicesNV;
 
 typedef BOOL (WINAPI * PFNWGLSWAPINTERVALEXTPROC)(GLint);
 GLAPI PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;

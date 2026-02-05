@@ -14,7 +14,7 @@ FNOCONSOLE = -Wl,-subsystem,windows
 ##There can be no space after a 0 or 1 in a makefile... for some reason.
 ##Then, recompile with the comile flag on... and all files will get loaded from the executable!
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
-COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
+COMPILE_BINARYASSETS = 1#Set when all assets need to be compiled into the application binary.
 
 CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 CFLAGS += -lXinput9_1_0

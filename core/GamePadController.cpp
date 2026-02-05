@@ -8,7 +8,9 @@ GamePadController::GamePadController(){
 }
 
 void GamePadController::ListDevices(){
+    /*
     hid_input->GetHIDCollectionDevices(NumHIDDevices, arrayDetailData, arrayAttributes, arrayValueCaps);
+    debug->Info("Iterating over %i HID devices\n"),(int)NumHIDDevices;
     for (int i=0; i<NumHIDDevices;i++){
         debug->Info("HID Device %d: VID: %04X PID: %04X\n",i,arrayAttributes[i].VendorID,arrayAttributes[i].ProductID);
         debug->Info(" Device Path: %s\n",arrayDetailData[i]->DevicePath);
@@ -19,7 +21,8 @@ void GamePadController::ListDevices(){
             debug->Ok("Found controller 0x045E/0x028E at index %i\n",i);
         }
     }
-
+    */
+    debug->Info("X-Input: Checking for contollers using X-Input\n");
     XINPUT_STATE state;
     ZeroMemory(&state, sizeof(XINPUT_STATE));
 
@@ -106,6 +109,9 @@ GamePadMap* GamePadController::AddGamePadMap(int analog_index, uint32_t mapped){
 }
 
 float GamePadController::GetNormalizedAnalogValue(uint32_t mapped_key){
+    if (dev_index == -1){
+        return 0.0f;
+    }
     for (GamePadMap& map: keymap){
         if (map.mapped_keycode == mapped_key){
             if (map.analog_index >=0 && map.analog_index < GAMEPAD_MAX_ANALOG_VALUES){

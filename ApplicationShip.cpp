@@ -152,6 +152,8 @@ void ApplicationShip::Init(void){
     gamepad_controller->AddGamePadMap(3,GAMEPAD_RIGHT_STICK_X);
     gamepad_controller->AddGamePadMap(4,GAMEPAD_R2L2);
 
+    BinaryAsset::DumpBinaryAssets();
+    assetmanager->ListAssets();
 }
 
 //Called before update physics after update animations

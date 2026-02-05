@@ -4,7 +4,7 @@
 
 #define DEFAULT_FRAMEBUFFER_ID  0
 
-static Debugger* debug = new Debugger("Renderer",DEBUG_ERROR);
+static Debugger* debug = new Debugger("Renderer",DEBUG_INFO);
 
 Renderer::Renderer(int w, int h){
     width = w;
@@ -1000,7 +1000,7 @@ void Renderer::UploadMaterials(){
     glsl_materials.clear();
     for (Material& mat:materials){
         if (mat.diff_texture){;
-            debug->Info("Material has diffuse Texture: Binding to Unit %i\n",last_texture_unit);
+            debug->Trace("Material has diffuse Texture: Binding to Unit %i\n",last_texture_unit);
             mat.glsl_material.diffuse_texture = last_texture_unit;
             glBindTextureUnit(last_texture_unit, mat.diff_texture->texture_id);
             last_texture_unit++;

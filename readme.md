@@ -42,6 +42,9 @@ It should kind of look like this:
 
 ### ToDo's
 
+- [ ] Select GPU Intel or Nvidia. Maybe using WGL_NV_gpu_affinity:
+        https://github.com/Eyescale/Equalizer/blob/master/tools/affinityCheck/affinityCheck.cpp
+- [ ] Using XInput detect controller hotplug?
 - [ ] Will we be using OBJLoader ever again? Maybe remove it.
 - [x] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
 - [x] Implement GLTF Morph Targets == Blender Shape Keys. A list of weights per mesh vertex, with modifiers.

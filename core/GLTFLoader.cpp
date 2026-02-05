@@ -2,7 +2,7 @@
 #include "File.h"
 
 #include "Debug.h"
-static Debugger *debug = new Debugger("GLTFLoader", DEBUG_INFO);
+static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
 
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
@@ -168,6 +168,7 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(1)
         , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(2)
         , model.materials[material_index].pbrMetallicRoughness.baseColorFactor.at(3));
+        debug->Info("Model.materials[%i].emissiveFactor[3]           : %.1f %.1f %.1f\n",material_index, model.materials[material_index].emissiveFactor[0],model.materials[material_index].emissiveFactor[1],model.materials[material_index].emissiveFactor[2]);
 
     }
     debug->Trace("Model has %i buffers\n",model.buffers.size());
