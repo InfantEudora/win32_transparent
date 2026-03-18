@@ -25,6 +25,9 @@ layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
 layout (location = 8) in vec4 vshadow;    //This vertex' position as seen from sun light source
 
+layout (location = 9)  flat in int vmatselect;      //ObjectID from vertex shader
+
+
 //It's set with glBindTextureUnit
 
 layout (binding = 0) uniform sampler2D material_texture[24];   //Input texture
@@ -55,6 +58,18 @@ struct Light{
     vec3    color;
     float   cos_angle; 	// 0 means its a point light, else it becomes a cone light
 };
+//Multiple of 4 for padding
+#define NUM_MATERIAL_SLOTS  4
+#define MAX_MORPH_TARGETS	4
+struct InstanceData{
+	mat4 mat_transformscale;
+	int material_slot[NUM_MATERIAL_SLOTS];
+	float morph_factors[MAX_MORPH_TARGETS];
+	int objectid;
+	int num_bones;
+	int vertex_count;
+	int num_morph_targets;
+};
 
 #define PI 	3.14159265359
 
@@ -65,6 +80,12 @@ uniform float alpha_clip = 1.0f;
 
 //This gets set when lighting calculation is done, and is this fragments resulting normal.
 vec3 sampled_normal = vec3(0,0,0);
+
+//A material index comes in from a vertex, which matches a material specified in the OBJ file.
+//This matches our material slot, which looks up the global index.
+layout (std430, binding = 0) buffer InstanceDataBuffer{
+	InstanceData instance_data[];
+};
 
 layout (std430, binding = 1) buffer MaterialBuffer{
 	Material materials[];
@@ -292,7 +313,12 @@ void main(){
        color = vec4(1,1,1,1);
        return;
     }else{
+        //We have to do this again here. We could use vmatindex... but intel.
+        //On intel, use matindex_out.
+        //On nvidia, use vmatindex.
+
         if (vmatindex > -1){
+
             m = materials[vmatindex];
         }else{
             //Default invalid material
@@ -303,6 +329,8 @@ void main(){
     }
 
     vec4 final = CalcPBRLighting();
+
+
 
     //ivec2 mouse_coord = ivec2(data_in[0],data_in[1]);
     //ivec2 frag_coord = ivec2(gl_FragCoord.xy);

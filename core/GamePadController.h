@@ -2,7 +2,7 @@
 #define _GAMEPADCONTROLLER_H_
 class GamePadController;
 
-#include "UsbHidIO.h"
+
 #include "InputController.h"
 #include <xinput.h>
 
@@ -28,12 +28,6 @@ class GamePadController{
 
     int dev_index = -1;
 
-    //Interface to USB HID
-    USHORT NumHIDDevices = 0;
-    PSP_DEVICE_INTERFACE_DETAIL_DATA	arrayDetailData[RD_MAXHIDDEVICES];	// Array of "Path structures" with every HID Device
-	HIDD_ATTRIBUTES						arrayAttributes[RD_MAXHIDDEVICES];	// Array of "Attributes structures" with every HID Device
-	HIDP_CAPS							arrayValueCaps[RD_MAXHIDDEVICES];	// Array of "Capabilities structures" with every HID Device
-    CUsbHidIO* hid_input = NULL;
 
     void UpdateKeyState();
     void SendMotorData(int,int);

@@ -4,7 +4,7 @@ static Debugger* debug = new Debugger("GamePad",DEBUG_INFO);
 
 
 GamePadController::GamePadController(){
-    hid_input = new CUsbHidIO();
+
 }
 
 void GamePadController::ListDevices(){
@@ -29,6 +29,7 @@ void GamePadController::ListDevices(){
     if (XInputGetState(0, &state) == ERROR_SUCCESS){
         debug->Info("X-Input: Controller at 0\n");
         XINPUT_CAPABILITIES cap;
+        dev_index = 0;
 
         if (XInputGetCapabilities(0,0,&cap) == ERROR_SUCCESS){
             debug->Info("X-Input: Got Capabilities\n");
@@ -47,6 +48,7 @@ void GamePadController::UpdateKeyState(){
     }
 
     //We make a list of Inputvalues caps
+    /*
     USHORT numInputValues = arrayValueCaps[dev_index].NumberInputValueCaps;
     HIDP_CAPS device_caps = arrayValueCaps[dev_index];
     PHIDP_VALUE_CAPS pInputValueCaps = (PHIDP_VALUE_CAPS)calloc (device_caps.NumberInputValueCaps, sizeof (HIDP_VALUE_CAPS));
@@ -61,6 +63,15 @@ void GamePadController::UpdateKeyState(){
             //debug->Info("  Input Value Cap %i: Value: %lu\n",i,aUsageValue[i]);
             analog_values[i] = (int)aUsageValue[i];
         }
+    }*/
+
+    XINPUT_STATE state;
+    ZeroMemory(&state, sizeof(XINPUT_STATE));
+    if (XInputGetState(0, &state) == ERROR_SUCCESS){
+        
+    }else{
+        dev_index = -1;
+        debug->Warn("Game Controller has disconnected.\n");
     }
 
     //We update the motor speed

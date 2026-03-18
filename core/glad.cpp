@@ -100,31 +100,31 @@ PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = NULL;
 //Callable maybe after extensions are loaded
 void GLSelectGPU(){
 
-        int idx;
-        DISPLAY_DEVICEA dd;
-        HDC dc;
-        PIXELFORMATDESCRIPTOR pfd;
+    int idx;
+    DISPLAY_DEVICEA dd;
+    HDC dc;
+    PIXELFORMATDESCRIPTOR pfd;
 
-        dd.cb = sizeof(dd);
-        idx = 0;
-        while (1) {
-            if (!EnumDisplayDevicesA(NULL, idx, &dd, 0))
-                break;
-            debug->Info("Display %i DeviceID   : %s\n",idx,dd.DeviceID);
-            debug->Info("Display %i DeviceName : %s\n",idx,dd.DeviceName);
-            debug->Info("Display %i DeviceString : %s\n",idx,dd.DeviceString);
-            idx += 1;
-        }
-/*
-        dc = CreateDCA(dd.DeviceName, NULL, NULL, NULL);
-        memset(&pfd, 0, sizeof(pfd));
-        pfd.nSize = sizeof(pfd);
-        pfd.nVersion = 1;
-        // those flags are not important, they just need to be valid (and nondemanding, just in case).
-        // later you will use whatever flags you wish when you are creating your actual gl context
-        pfd.dwFlags = PFD_DRAW_TO_WINDOW|PFD_SUPPORT_OPENGL|PFD_DOUBLEBUFFER|PFD_DEPTH_DONTCARE;
-        ChoosePixelFormat(dc, &pfd);
-        DeleteDC(dc);*/
+    dd.cb = sizeof(dd);
+    idx = 0;
+    while (1) {
+        if (!EnumDisplayDevicesA(NULL, idx, &dd, 0))
+            break;
+        debug->Info("Display %i DeviceID   : %s\n",idx,dd.DeviceID);
+        debug->Info("Display %i DeviceName : %s\n",idx,dd.DeviceName);
+        debug->Info("Display %i DeviceString : %s\n",idx,dd.DeviceString);
+        idx += 1;
+    }
+    /*
+    dc = CreateDCA(dd.DeviceName, NULL, NULL, NULL);
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    // those flags are not important, they just need to be valid (and nondemanding, just in case).
+    // later you will use whatever flags you wish when you are creating your actual gl context
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW|PFD_SUPPORT_OPENGL|PFD_DOUBLEBUFFER|PFD_DEPTH_DONTCARE;
+    ChoosePixelFormat(dc, &pfd);
+    DeleteDC(dc);*/
 
 
 

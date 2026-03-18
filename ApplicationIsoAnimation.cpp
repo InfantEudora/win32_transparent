@@ -1,17 +1,17 @@
-#include "ApplicationAnimation.h"
+#include "ApplicationIsoAnimation.h"
 #include "Debug.h"
 
-static Debugger *debug = new Debugger("ApplicationAnimation", DEBUG_ALL);
+static Debugger *debug = new Debugger("ApplicationIsoAnimation", DEBUG_ALL);
 
 #define INPUT_JUMP    INPUT_LAST+1
 #define INPUT_F       INPUT_LAST+2
 #define INPUT_G       INPUT_LAST+3
 
-ApplicationAnimation::ApplicationAnimation():Application(){
-    debug->Info("Created new ApplicationAnimation.\n");
+ApplicationIsoAnimation::ApplicationIsoAnimation():Application(){
+    debug->Info("Created new ApplicationIsoAnimation.\n");
 };
 
-Scene* ApplicationAnimation::CreateEmptyScene(){
+Scene* ApplicationIsoAnimation::CreateEmptyScene(){
     Scene* scene = CreateNewScene("Empty Test Scene");
     //Make a sun
     sun = new DirectionalLight();
@@ -36,7 +36,7 @@ Scene* ApplicationAnimation::CreateEmptyScene(){
     return scene;
 }
 
-void ApplicationAnimation::Init(void){
+void ApplicationIsoAnimation::Init(void){
     //Create a renderer with initial size
     int2 dimensions = GetDisplaySettings();
     renderer = new Renderer(main_window->width,main_window->height);
@@ -53,19 +53,19 @@ void ApplicationAnimation::Init(void){
     main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
 
     assetmanager = new AssetManager();
-    gltfloader.LoadGLTFFile("data/gwen_anim.glb");
+    gltfloader.LoadGLTFFile("data/isoanim.glb");
     GetAllAssetsFromGLTF();
 
     Object* floor = assetmanager->GetObjectFromAsset("floor");
     main_scene->AddObject(floor);
 
-    //Load Gwen model with animation data
+    //Load character model with animation data
     character = new PlayerCharacter();
     Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
-    gltfloader.GetSkeleton("gwen",assetmanager,skeleton);
+    gltfloader.GetSkeleton("character",assetmanager,skeleton);
     if (skeleton){
         std::vector<Material>loaded_materials;
-        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("gwen_body_t",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("body_female",&loaded_materials);
         skeleton->SetMesh(skinned_mesh);
         skeleton->TakeMaterialNames(loaded_materials);
         skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
@@ -79,6 +79,7 @@ void ApplicationAnimation::Init(void){
             character->AddAnimation(animation);
         }
 
+        /*
         //We'll give it to foot trackers.
         character->foot_tracker_l = assetmanager->GetObjectFromAsset("icosphere");
         character->foot_tracker_r = assetmanager->GetObjectFromAsset("icosphere");
@@ -91,8 +92,10 @@ void ApplicationAnimation::Init(void){
         character->foot_tracker_r->material_names[0] = "right_tracker";
         character->tracked_foot_l = character->FindChild("mixamorig:LeftToeBase");
         character->tracked_foot_r = character->FindChild("mixamorig:RightToeBase");
+        */
     }
 
+    /*
     //We add some links to a chain
     for (int i=0;i<1;i++){
         //We'll chain them together with the physics ball and socket joint.
@@ -110,10 +113,11 @@ void ApplicationAnimation::Init(void){
 
         main_scene->AddObject(chain_link);
         chain.push_back(chain_link);
-    }
+    }*/
 
     //A thing to collide with
     //We'll chain them together with the physics ball and socket joint.
+    /*
     Object* ledge = assetmanager->GetObjectFromAsset("ledge");
     Physics* physics = ledge->AddPhysics(main_scene->physics_world);
     if (physics){
@@ -123,6 +127,7 @@ void ApplicationAnimation::Init(void){
         physics->AddBoxCollider(extents*0.5f,vec3(0,0.0,0),quat().identity());
     }
     main_scene->AddObject(ledge);
+    */
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -136,7 +141,7 @@ void ApplicationAnimation::Init(void){
 }
 
 //Called before update physics after update animations
-void ApplicationAnimation::RunLogic(){
+void ApplicationIsoAnimation::RunLogic(){
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
@@ -412,7 +417,7 @@ void ApplicationAnimation::RunLogic(){
 
 }
 
-void ApplicationAnimation::DrawImGuiUI(){
+void ApplicationIsoAnimation::DrawImGuiUI(){
     //We're asked to import the f_filemodal file.
     if (f_import_file){
         debug->Info("Starting import of file %s\n",filemodal_filename.c_str());
@@ -527,7 +532,7 @@ void ApplicationAnimation::DrawImGuiUI(){
 }
 
 
-void ApplicationAnimation::RenderSkeletonUI(){
+void ApplicationIsoAnimation::RenderSkeletonUI(){
     ImGui::Begin("Skeleton UI");
 
     Skeleton* skeleton = dynamic_cast<Skeleton*>(selected_object);
@@ -599,7 +604,7 @@ void ApplicationAnimation::RenderSkeletonUI(){
 }
 
 
-void ApplicationAnimation::RenderBoneModifierHeader(Bone* bone, int id){
+void ApplicationIsoAnimation::RenderBoneModifierHeader(Bone* bone, int id){
     if (!bone){
         return;
     }

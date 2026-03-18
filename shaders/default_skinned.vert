@@ -71,6 +71,8 @@ layout (location = 7) flat out int vobjid;	//gl_InstanceID
 //We reserve n locations for shadow space
 layout (location = 8) out vec4 vshadow;		//Vertex position in shadow coordinates for first shadowcaster
 
+layout (location = 9) flat out int vinstanceid;	// gl_InstanceID
+
 //Settings
 uniform int f_normal_mapping = 1;
 
@@ -150,6 +152,7 @@ void main(){
 
 	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
 	vmatindex = matindex_out;
+	vinstanceid = gl_InstanceID;
 
 	Material m = materials[matindex_out];
 	if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){

@@ -14,7 +14,7 @@ FNOCONSOLE = -Wl,-subsystem,windows
 ##There can be no space after a 0 or 1 in a makefile... for some reason.
 ##Then, recompile with the comile flag on... and all files will get loaded from the executable!
 DUMP_BINARYASSETS    = 0#Set when all assets need to be dumped to a file.
-COMPILE_BINARYASSETS = 1#Set when all assets need to be compiled into the application binary.
+COMPILE_BINARYASSETS = 0#Set when all assets need to be compiled into the application binary.
 
 CFLAGS = -std=c++17 -Llibs/ -lreactphysics3d-0.10.2 -limgui -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 CFLAGS += -lXinput9_1_0
@@ -43,8 +43,6 @@ IPATHS += -I3rdparty/reactphysics3d/
 
 SRCS += main.cpp
 
-#USB HID
-SRCS += 3rdparty/UsbHidIO.cpp
 
 #ImGUI
 SRC_LIBIMGUI += 3rdparty/imgui/imgui.cpp
@@ -72,6 +70,11 @@ endif
 #CFLAGS+= -DAPP_HEADER=\"ApplicationAnimation.h\"
 #CFLAGS+= -DAPP_CLASS=ApplicationAnimation
 #SRCS += ApplicationAnimation.cpp
+
+#ApplicationIsoAnimation
+CFLAGS+= -DAPP_HEADER=\"ApplicationIsoAnimation.h\"
+CFLAGS+= -DAPP_CLASS=ApplicationIsoAnimation
+SRCS += ApplicationIsoAnimation.cpp
 
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
@@ -116,11 +119,11 @@ endif
 #SRCS += ApplicationOCPP.cpp
 
 #ApplicationShip
-CFLAGS+= -DAPP_HEADER=\"ApplicationShip.h\"
-CFLAGS+= -DAPP_CLASS=ApplicationShip
-SRCS += ApplicationShip.cpp
-IPATHS += -Iship/
-DIR_SRC += ./ship
+#CFLAGS+= -DAPP_HEADER=\"ApplicationShip.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationShip
+#SRCS += ApplicationShip.cpp
+#IPATHS += -Iship/
+#DIR_SRC += ./ship
 
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))

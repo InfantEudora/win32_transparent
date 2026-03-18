@@ -71,10 +71,13 @@ layout (location = 2) out vec2 vuv;			//Texture UV coordinates
 layout (location = 3) out mat3 TBN;			//Normal mapping matrix
 
 layout (location = 6) flat out int vmatindex;	//Material index
-layout (location = 7) flat out int vobjid;	//gl_InstanceID
+layout (location = 7) flat out int vobjid;	// based on gl_InstanceID
 
 //We reserve n locations for shadow space
 layout (location = 8) out vec4 vshadow;		//Vertex position in shadow coordinates for first shadowcaster
+
+layout (location = 9) flat out int vmatselect;	// gl_InstanceID
+
 
 //Settings
 uniform int f_normal_mapping = 1;
@@ -146,6 +149,7 @@ void main(){
 	//vtangent = mat_rotate * tangent;
 
 	vobjid = instance_data[gl_InstanceID].objectid;
+	vmatselect = m.diffuse_texture;
 
 	gl_Position = (mat_worldcam * transpos);
 }
