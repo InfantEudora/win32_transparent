@@ -3,6 +3,8 @@
 
 
 class Animation;
+class AnimationTransition;
+class AnimationGraph;
 class ObjectAnimation;
 class ObjectAnimationKeyFrame;
 
@@ -79,6 +81,34 @@ public:
     bool f_rotation = false;
     bool f_scale = false;
     bool f_shapekeys = false;
+};
+
+
+// A transition between two animations,
+class AnimationTransition {
+    public:
+    Animation*  from;
+    Animation*  to;
+    float       blend_time;     // blend time in seconds
+
+    bool        f_hips_rotated = false; //If at the end of the transition, the hips are roteted.
+
+    void Trigger();
+};
+
+// Defines a graph of animations, and rules to transition between them. This is used for characters, but could also be used for other things.
+class AnimationGraph{
+    //We should be able to see the current animation, and the allowed transitions.
+    /*
+    For instance:
+    Idle -> StandingToSitting -> Sitting - >SittingToStanding -> Walking
+                                                              -> Idle
+    */
+    public:
+    std::vector<Animation*> *animations = NULL;     //A reference to where the animations are stored.
+    std::vector<AnimationTransition*>transitions;
+    Animation* LookupAnimation(const std::string& name);
+    AnimationTransition* AddTransition(const std::string& from, const std::string& to);
 };
 
 #endif

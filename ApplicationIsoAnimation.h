@@ -22,10 +22,6 @@ public:
     DirectionalLight* sun = NULL;
     PlayerCharacter* character = NULL;
 
-    std::vector<Object*>chain;
-    float chain_factor = 0.5f;
-
-    bool f_chain_track_head = true;
     bool f_ik_arm = false;
     Skeleton* selected_skeleton = NULL;
 private:

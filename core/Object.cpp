@@ -708,6 +708,19 @@ void Object::ProceedToAnimation(Animation* animation){
         next_animation = NULL;
         return;
     }
+
+    //We attempt to find the transition from the current animation to the new one. If there is none, we just switch immediately.
+    AnimationTransition* transition = NULL;
+    if (current_animation){
+        for (AnimationTransition* t:animation_graph->transitions){
+            if ((t->from == current_animation) && (t->to == animation)){
+                transition = t;
+                debug->Info("Found transition from %s to %s\n",current_animation->name.c_str(),animation->name.c_str());
+                break;
+            }
+        }
+    }
+
     if (animation == current_animation){
         //We are already playing this animation... but... we might be transitioning to a new one.
         if (animation_state != ANIMATION_STATE_LOOPING){

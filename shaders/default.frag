@@ -25,7 +25,7 @@ layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
 layout (location = 8) in vec4 vshadow;    //This vertex' position as seen from sun light source
 
-layout (location = 9)  flat in int vmatselect;      //ObjectID from vertex shader
+
 
 
 //It's set with glBindTextureUnit

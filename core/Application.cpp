@@ -1197,23 +1197,22 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             if (object->animations.size() == 0){
                 ImGui::Text("Object has no animations");
             }else{
+                ImGui::Text("Object Animmations");
+
                 if (ImGui::Button("NULL")){
                     object->ProceedToAnimation(NULL);
                 }
-                int button_id = 0;
+                ImGui::SameLine();
+
+
+                int button_id = 1;
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
                         object->ProceedToAnimation(animation);
                     }
-                    /*
-                    ImGui::Text("Bone[0] Target: %s",animation->object_animations.at(0)->target_name.c_str());
-                    ImGui::Text("Bone[1] Target: %s",animation->object_animations.at(1)->target_name.c_str());
-                    ImGui::PushID(button_id);
-                    if (ImGui::Button("Retarget")){
-                        animation->Retarget(object);
-                    }
-                    ImGui::PopID();
-                    button_id++;*/
+                    button_id++;
+                    if (button_id % 4 != 0)
+                        ImGui::SameLine();
                 }
 
                 if (object->current_animation){
@@ -1227,6 +1226,16 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     ImGui::Text("Next Animation    : NULL");
                 }
                 ImGui::Text("Current Animation State : %i\n",object->animation_state);
+            }
+
+            if (object->animation_graph && object->animation_graph->transitions.size() != 0){
+                ImGui::Text("Animation Transitions");
+                for (AnimationTransition* transition:object->animation_graph->transitions){
+
+                    ImGui::Text("From Animation: %s",transition->from ? transition->from->name.c_str() : "NULL");
+                    ImGui::Text("To Animation  : %s",transition->to ? transition->to->name.c_str() : "NULL");
+
+                }
             }
         }
 

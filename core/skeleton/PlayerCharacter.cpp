@@ -135,7 +135,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         current_animation->ApplyInterval(current_animation->time_index);
 
 
-        if (update_hip_position){
+        if (f_update_hip_position && update_hip_position){
             vec3 hippos_end = hip_bone->GetPosition();
             //How much has the hip moved?
             vec3 d = hip_posistion_start - hippos_end;
@@ -220,22 +220,25 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
 
         //We might need to undo any hip rotation by applying the reverse to the parent.
-        hip_fwd_start = hip_bone->GetWorldForward();
-        current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_factor, vec3());
-        vec3 hip_fwd_end = hip_bone->GetWorldForward();
+        if (f_update_hip_position){
+            hip_fwd_start = hip_bone->GetWorldForward();
+            current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_factor, vec3());
+            vec3 hip_fwd_end = hip_bone->GetWorldForward();
 
-        //Compute the angle the hip has rotate in the XZ plane.
-        vec3 xz_start = vec3(hip_fwd_start.xz()).normalize();
-        vec3 xz_end = vec3(hip_fwd_end.xz()).normalize();
-        float dot = xz_start.dot(xz_end);
-        dot = clamp(dot,-1.0,1.0);
-        //debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
-        quat r = quat(vec3(0,-1,0),acos(dot));
-        //debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
-        RotateBy(r);
+            //Compute the angle the hip has rotate in the XZ plane.
+            vec3 xz_start = vec3(hip_fwd_start.xz()).normalize();
+            vec3 xz_end = vec3(hip_fwd_end.xz()).normalize();
+            float dot = xz_start.dot(xz_end);
+            dot = clamp(dot,-1.0,1.0);
+            //debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
+            quat r = quat(vec3(0,-1,0),acos(dot));
+            //debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
+            RotateBy(r);
+        }else{
+            current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_factor, vec3());
+        }
 
-
-        if (update_hip_position){
+        if (f_update_hip_position && update_hip_position){
             vec3 hippos_end = hip_bone->GetPosition();
             //How much has the hip moved?
             vec3 d = hip_posistion_start - hippos_end;

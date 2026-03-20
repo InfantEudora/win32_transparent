@@ -163,6 +163,8 @@ class Object{
     //void SetAnimation(Animation* animation);
     Animation* FindAnimation(const std::string& name); //Finds it by name
 
+    AnimationGraph* animation_graph = NULL; //A graph describing what animations may follow what.
+
 
     virtual void ApplyAnimation(float time_delta);
     void ProceedToAnimation(const std::string& name);

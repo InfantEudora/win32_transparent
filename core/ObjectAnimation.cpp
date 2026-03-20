@@ -251,3 +251,58 @@ void Animation::Retarget(Object* target){
     }
     LinkObjects(target);
 }
+
+Animation* AnimationGraph::LookupAnimation(const std::string& name){
+    if (!animations){
+        debug->Warn("AddTransition with no animations to look up\n");
+        return NULL;
+    }
+    for (Animation* animation:*animations){
+        if (animation->name.compare(name) == 0){
+            return animation;
+        }
+    }
+    return NULL;
+}
+
+AnimationTransition* AnimationGraph::AddTransition(const std::string& from, const std::string& to){
+    //If to and from are the same, we need to only make sure the animation is looping
+    if (!from.empty() && (from.compare(to) == 0)){
+        Animation* animation = LookupAnimation(from);
+        if (animation){
+            animation->looped = true;
+        }
+        return NULL;
+    }
+
+    // Check this transition does not already exist.
+    for (AnimationTransition* t : transitions){
+        bool from_match = from.empty() ? (t->from == NULL) : (t->from && t->from->name == from);
+        bool to_match   = t->to && t->to->name == to;
+        if (from_match && to_match){
+            debug->Warn("AddTransition: transition %s -> %s already exists\n", from.c_str(), to.c_str());
+            return t;
+        }
+    }
+
+    Animation* anim_from = from.empty() ? NULL : LookupAnimation(from);
+    Animation* anim_to   = LookupAnimation(to);
+
+    if (!from.empty() && !anim_from){
+        debug->Warn("AddTransition: animation '%s' not found\n", from.c_str());
+        return NULL;
+    }
+    if (!anim_to){
+        debug->Warn("AddTransition: animation '%s' not found\n", to.c_str());
+        return NULL;
+    }
+
+    AnimationTransition* transition = new AnimationTransition();
+    transition->from       = anim_from;
+    transition->to         = anim_to;
+    transition->blend_time = 0.3f;
+    transitions.push_back(transition);
+
+    debug->Info("AnimationGraph: Added transition %s -> %s\n", from.c_str(), to.c_str());
+    return transition;
+}

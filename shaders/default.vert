@@ -149,7 +149,6 @@ void main(){
 	//vtangent = mat_rotate * tangent;
 
 	vobjid = instance_data[gl_InstanceID].objectid;
-	vmatselect = m.diffuse_texture;
 
 	gl_Position = (mat_worldcam * transpos);
 }

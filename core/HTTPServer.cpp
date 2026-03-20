@@ -117,6 +117,18 @@ OCPPClientData* HTTPServer::GetOCPPClientData(SOCKET clientSocket)
 	return result;
 }
 
+std::vector<OCPPTransaction> HTTPServer::GetTransactionHistory(SOCKET clientSocket)
+{
+	EnterCriticalSection(&m_wsLock);
+	auto it = m_ocppClientData.find(clientSocket);
+	std::vector<OCPPTransaction> history;
+	if (it != m_ocppClientData.end()) {
+		history = it->second.transactionHistory;
+	}
+	LeaveCriticalSection(&m_wsLock);
+	return history;
+}
+
 void HTTPServer::HandleHTTPConnection(SOCKET clientSocket){
 	http_debug->Info("Spawning thread for client %i\n",clientSocket);
 	//We spawn a thread to wait for data from the client.
@@ -1197,6 +1209,16 @@ bool HTTPServer::HandleOCPPStartTransaction(SOCKET clientSocket, const std::stri
 		it->second.transactionTimestamp = timestamp;
 		it->second.transactionReservationId = reservationId;
 		it->second.connectorId = connectorId;
+
+		// Record in transaction history
+		OCPPTransaction tx;
+		tx.transactionId = transactionId;
+		tx.connectorId   = connectorId;
+		tx.idTag         = idTag;
+		tx.meterStart    = meterStart;
+		tx.startTimestamp = timestamp;
+		tx.completed     = false;
+		it->second.transactionHistory.push_back(tx);
 	}
 	LeaveCriticalSection(&m_wsLock);
 
@@ -1285,7 +1307,19 @@ bool HTTPServer::HandleOCPPStopTransaction(SOCKET clientSocket, const std::strin
 			http_debug->Warn("StopTransaction transactionId mismatch: expected=%d, received=%d\n",
 				it->second.transactionId, transactionId);
 		}
-		// Clear transaction data
+
+		// Update the matching history entry with stop data
+		for (OCPPTransaction &tx : it->second.transactionHistory) {
+			if (tx.transactionId == transactionId && !tx.completed) {
+				tx.meterStop      = meterStop;
+				tx.stopTimestamp  = timestamp;
+				tx.stopReason     = reason;
+				tx.completed      = true;
+				break;
+			}
+		}
+
+		// Clear active transaction fields
 		it->second.transactionId = -1;
 		it->second.transactionIdTag.clear();
 		it->second.transactionMeterStart = 0;

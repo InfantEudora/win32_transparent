@@ -41,9 +41,6 @@ class PlayerCharacter : public virtual Skeleton{
 
     CharacterState character_state;
 
-    bool update_hip_position = false;
-    vec3 hip_posistion_start = {};
-    vec3 hip_fwd_start = {};
 
     void ApplyAnimation(float time_delta) override;
 
@@ -53,7 +50,8 @@ class PlayerCharacter : public virtual Skeleton{
     bool f_switch_now = false;
     bool f_rotation_animation = false;
     bool f_movement_animation_inplace = false;
-    bool f_move_by_feet_placement = false;  //For inplace animations.
+    bool f_move_by_feet_placement = false;      //For inplace animations.
+    bool f_update_hip_position = false;         //Used for blending animations that move hip to a new orientation / position.
 
     float head_turn_direction_lr = 0.0f;   //Direction the head should be facing on top of the animation from -1 to 1
     float head_turn_direction_ud = 0.0f;
@@ -87,6 +85,11 @@ class PlayerCharacter : public virtual Skeleton{
     vec3 right_foot_prev_wpos = vec3();
 private:
     void ProcessInputState();
+
+    //Additional flags for animation state
+    bool update_hip_position = false;
+    vec3 hip_posistion_start = {};
+    vec3 hip_fwd_start = {};
 };
 
 #endif

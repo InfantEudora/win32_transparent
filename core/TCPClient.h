@@ -20,7 +20,7 @@ public:
 	bool Connect(const std::string& host, int port);
 
 	// Disconnect from server
-	void Disconnect();
+	virtual void Disconnect();
 
 	// Check if connected
 	bool IsConnected() const;

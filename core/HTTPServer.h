@@ -10,6 +10,8 @@
 #include <wincrypt.h>
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;
+#include "OCPPClient.h"
+
 
 // Structure to store OCPP client data
 struct OCPPClientData {
@@ -52,12 +54,15 @@ struct OCPPClientData {
 	double soc;  // State of Charge in Percent
 	std::string meterValuesTimestamp;
 
-	// Transaction data
+	// Active transaction data
 	int transactionId;
 	std::string transactionIdTag;
 	int transactionMeterStart;
 	std::string transactionTimestamp;
 	std::string transactionReservationId;
+
+	// Historical record of all transactions for this chargepoint
+	std::vector<OCPPTransaction> transactionHistory;
 
 	// Server-side charging profile control
 	float server_current_limit;
@@ -110,6 +115,9 @@ public:
 
 	// Send SetChargingProfile request to a client
 	bool SendSetChargingProfile(SOCKET clientSocket, int connectorId, float currentLimit);
+
+	// Returns a snapshot copy of the transaction history for a client (thread-safe)
+	std::vector<OCPPTransaction> GetTransactionHistory(SOCKET clientSocket);
 
 private:
 	std::string m_htmlContent;
