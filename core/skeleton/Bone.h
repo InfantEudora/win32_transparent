@@ -26,8 +26,10 @@ public:
     //Chould be called when placed in skeleton to store bone references and set inital values
     void SetReferences();
     void SetInitialLength();
+    void SetReferencePosition(const vec3& p);
     void SetReferenceRotation(const quat& q);
 
+    vec3 reference_position = vec3();
     quat reference_rotation = quat().identity();
 
 

@@ -147,6 +147,7 @@ class Renderer{
 
     Shader* deferred_shader = NULL;         // Shader that outputs data to textures
     Shader* deferred_shader_skinned = NULL; // Shader that outputs data to textures
+    Shader* deferred_shader_custom = NULL;
     Shader* ssao_compute_shader = NULL;
     Shader* line_shader = NULL;             // Seperate shader for rendering line meshes.
 

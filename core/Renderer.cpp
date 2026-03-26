@@ -303,6 +303,9 @@ void Renderer::RenderUniqueMeshes(int rendering_mode){
         if ((rendering_mode == MESH_MODE_LINE) && (!mesh->IsLineMesh())){
             continue;
         }
+        if ((rendering_mode == MESH_MODE_SHADER) && (mesh->mesh_mode != MESH_MODE_SHADER)){
+            continue;
+        }
 
         int batch_index = unique_meshes.at(i)->batch_index;
         if (unique_mesh_batches.at(batch_index)->size() == 0){
@@ -433,6 +436,10 @@ void Renderer::DeferredPass(Camera* camera){
     //UploadMaterials();
     //UploadLights();
     RenderUniqueMeshes(MESH_MODE_NORMAL);
+    //A seperate render pass for meshes that use a custom shader.
+    if (deferred_shader_custom && camera){
+        RenderUniqueMeshes(MESH_MODE_SHADER);
+    }
 
     if (deferred_shader_skinned && camera){
         deferred_shader_skinned->Use();
@@ -445,6 +452,8 @@ void Renderer::DeferredPass(Camera* camera){
         //deferred_shader_skinned->Setfloat("alpha_clip",alpha_clip);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
+
+
 }
 
 //Uses a compute shader and uses the textures from deferred pass.
@@ -556,6 +565,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     shader->Setfloat("alpha_clip",alpha_clip);
     shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
     RenderDepthPasses(shader,MESH_MODE_NORMAL);
+    RenderDepthPasses(shader,MESH_MODE_SHADER);
 
     FinishDepthPasses();
 
@@ -580,6 +590,17 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     shader->Setint("f_materialindex_is_color",1);
     RenderUniqueMeshes(MESH_MODE_LINE);
     shader->Setint("f_materialindex_is_color",0);
+
+    //A seperate render pass for meshes that use a custom shader.
+    if (deferred_shader_custom && camera){
+        deferred_shader_custom->Use();
+        deferred_shader_custom->Setmat4("mat_worldcam",camera->mat_cam);
+        //We'd like a callback so the custom shader can set its own uniforms and such.
+        if (deferred_shader_custom->uniform_callback){
+            deferred_shader_custom->uniform_callback();
+        }
+        RenderUniqueMeshes(MESH_MODE_SHADER);
+    }
 
     if (skinned_shader && camera){
         skinned_shader->Use();
@@ -619,9 +640,15 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         //Somehow, -1 reads back as 3F800000
         if ((id_pixeldata[0] != 0x3F800000) && (id_pixeldata[0] != -1)){
             int index = id_pixeldata[0];
-            input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
-            vec3 n = vec3(normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
-            input->SetHoveredNormal(n.normalize());
+            if (index > renderable_objects.size()){
+                debug->Err("Read back object index %i is out of bounds (max %i)\n",index,renderable_objects.size());
+                input->SetHoveredObjectID(OBJECTID_INVALID);
+                input->SetHoveredNormal(vec3());
+            }else{
+                input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
+                vec3 n = vec3(normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
+                input->SetHoveredNormal(n.normalize());
+            }
         }else{
             input->SetHoveredObjectID(OBJECTID_INVALID);
             input->SetHoveredNormal(vec3());

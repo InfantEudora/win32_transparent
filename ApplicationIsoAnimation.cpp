@@ -36,6 +36,45 @@ Scene* ApplicationIsoAnimation::CreateEmptyScene(){
     return scene;
 }
 
+void ApplicationIsoAnimation::SetCharacterUniforms(void){
+    if (character && renderer->deferred_shader_custom){
+        //We get the direction forward in the zx plane.
+        vec3 forward = character->GetForward();
+        forward.y = 0;
+        forward.normalize();
+        float angle = atan2(forward.x,-forward.z) + TYPE_PI/2;
+        //renderer->deferred_shader_custom->Setfloat("circle_start",angle);
+        debug->Info("Character forward: %.2f %.2f %.2f Angle: %.2f\n",forward.x,forward.y,forward.z,angle);
+
+        //Angle is now from -PI/2  to +3/2PI
+        angle += TYPE_PI/2;
+
+        //Get the direction to the target
+        vec3 to_target = character->GetPosition() - target_indicator->GetPosition() ;
+        to_target.y = 0;
+        to_target.normalize();
+        float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;
+
+
+        target_angle += TYPE_PI/2;
+
+        if (target_angle > angle){
+            angle -= TYPE_PI/2;
+            target_angle -= TYPE_PI/2;
+
+            renderer->deferred_shader_custom->Setfloat("circle_start",angle);
+            renderer->deferred_shader_custom->Setfloat("circle_end",target_angle);
+        }else{
+            angle -= TYPE_PI/2;
+            target_angle -= TYPE_PI/2;
+            renderer->deferred_shader_custom->Setfloat("circle_start",target_angle);
+            renderer->deferred_shader_custom->Setfloat("circle_end",angle);
+        }
+
+
+    }
+}
+
 void ApplicationIsoAnimation::Init(void){
     //Create a renderer with initial size
     int2 dimensions = GetDisplaySettings();
@@ -48,6 +87,8 @@ void ApplicationIsoAnimation::Init(void){
     renderer->f_render_skybox = false;
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+    renderer->deferred_shader_custom = new Shader("shaders/default.vert","shaders/custom.frag");
+    renderer->deferred_shader_custom->uniform_callback = std::bind(&ApplicationIsoAnimation::SetCharacterUniforms,this);
 
     main_scene = CreateEmptyScene();
     main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
@@ -57,6 +98,7 @@ void ApplicationIsoAnimation::Init(void){
     GetAllAssetsFromGLTF();
 
     Object* floor = assetmanager->GetObjectFromAsset("floor");
+    floor->name = "Floor";
     main_scene->AddObject(floor);
 
     //Load character model with animation data
@@ -86,18 +128,41 @@ void ApplicationIsoAnimation::Init(void){
     AnimationTransition* t = NULL;
 
     character->animation_graph->animations = &character->animations;
+    t = character->animation_graph->AddTransition("","Idle"); //Null to Idle transition for when we start an animation without an active one.
     t = character->animation_graph->AddTransition("Idle","Idle");
     t = character->animation_graph->AddTransition("Idle","Running");
+    if (t){
+        t->blend_time = 0.75f;
+    }
+    t = character->animation_graph->AddTransition("Running","Running");
+    t = character->animation_graph->AddTransition("Idle","BalanceOneLeg");
     t = character->animation_graph->AddTransition("Idle","StandingToSitting");
+    t = character->animation_graph->AddTransition("Idle","ActionIdle");
+    t = character->animation_graph->AddTransition("ActionIdle","ActionIdle");
+    t = character->animation_graph->AddTransition("ActionIdle","Idle");
     t = character->animation_graph->AddTransition("Idle","TurnLeftInPlace");
-    t = character->animation_graph->AddTransition("TurnLeftInPlace","Idle");
     if (t){
         t->f_hips_rotated = true;
+        t->hip_rotation = quat(vec3(0,1,0),toradians(90));
     }
-
-    t = character->animation_graph->AddTransition("StandingToSitting","Sitting");
-    t = character->animation_graph->AddTransition("Sitting","Sitting");
+    t = character->animation_graph->AddTransition("TurnLeftInPlace","Idle");
+    if (t){
+        t->f_only_last_frame = true;
+    }
+    t = character->animation_graph->AddTransition("StandingToSitting","SittingLegsCrossed");
+    if (t){
+        t->blend_time = 0.5f;
+    }
+    t = character->animation_graph->AddTransition("SittingLegsCrossed","SittingLegsCrossed");
+    t = character->animation_graph->AddTransition("SittingLegsCrossed","SittingToStanding");
+    if (t){
+        t->blend_time = 0.5f;
+    }
+    t = character->animation_graph->AddTransition("SittingToStanding","Idle");
     t = character->animation_graph->AddTransition("Running","Idle");
+    if (t){
+        t->blend_time = 0.75f;
+    }
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -106,6 +171,16 @@ void ApplicationIsoAnimation::Init(void){
         f_filemodal = true;
         filemodal_filename = filename;
     });
+
+
+    target_indicator = assetmanager->GetObjectFromAsset("indicator");
+    main_scene->AddObject(target_indicator);
+
+    Object* plane = assetmanager->GetObjectFromAsset("plane");
+    plane->name = "Test Plane";
+    plane->GetMesh()->mesh_mode = MESH_MODE_SHADER;
+    plane->SetPosition(vec3(0,0.01,0));
+    main_scene->AddObject(plane);
 
     main_window->Resize(1680,900);
 }
@@ -332,7 +407,25 @@ void ApplicationIsoAnimation::RunLogic(){
         }
     }
 
-
+    //Target selection for character using right mouse button, similat to zomboid.
+    if (input->IsKeyDown(INPUT_CLICK_RIGHT)){
+        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+        ray r = main_scene->camera->GetPixelRay(px);
+        vec3 at = {};
+        projection_plane.normal = vec3(0,1,0);
+        projection_plane.pos = vec3(0,0,0);
+        bool intersect = r.intersects_plane(projection_plane,at);
+        if (target_indicator){
+            target_indicator->SetPosition(at);
+            target_indicator->SetVisibility(true);
+            character->ProceedToAnimation("ActionIdle");
+        }
+    }else{
+        if (target_indicator){
+            target_indicator->SetVisibility(false);
+            character->ProceedToAnimation("Idle");
+        }
+    }
 }
 
 void ApplicationIsoAnimation::DrawImGuiUI(){

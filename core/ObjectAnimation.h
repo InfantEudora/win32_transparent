@@ -20,7 +20,7 @@ class Animation{
 
     float duration = 0.0f;      // Value of last keyframe.
     float time_index = 0.0f;    // When playing
-    bool looped = true;
+    bool looped = false;
 
     //Apply the animation at supplied interval
     void LinkObjects(Object* root);
@@ -89,9 +89,11 @@ class AnimationTransition {
     public:
     Animation*  from;
     Animation*  to;
-    float       blend_time;     // blend time in seconds
+    float       blend_time = -1;     // blend time in seconds
 
-    bool        f_hips_rotated = false; //If at the end of the transition, the hips are roteted.
+    bool        f_hips_rotated = false;             // If at the end of the transition, the hips are rotated.
+    bool        f_only_last_frame = false;          // Used for non looping animations, where we can only transition at the end of the animation.
+    quat        hip_rotation = quat().identity();    // Rotation we apply at the end of the transition
 
     void Trigger();
 };
@@ -109,6 +111,7 @@ class AnimationGraph{
     std::vector<AnimationTransition*>transitions;
     Animation* LookupAnimation(const std::string& name);
     AnimationTransition* AddTransition(const std::string& from, const std::string& to);
+    AnimationTransition* FindTransitionFrom(Animation* from);
 };
 
 #endif

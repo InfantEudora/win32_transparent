@@ -143,10 +143,10 @@ class Object{
     //Animation
     float morph_factors[NUM_MORPH_FACTOR_SLOTS] = {};
     std::vector<Animation*>animations;
-    Animation* previous_animation = NULL; //Not used...
+
     Animation* current_animation = NULL;
-    Animation* next_animation = NULL;
-    Animation* idle_animation = NULL;
+    AnimationTransition* current_transition = NULL;
+
     int animation_state = ANIMATION_STATE_LOOPING;
 
     bool f_animation_override = false;  //If we should manually step through animation with ticks

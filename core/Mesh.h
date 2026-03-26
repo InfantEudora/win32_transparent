@@ -24,6 +24,7 @@ class Mesh;
 #define MESH_MODE_NORMAL  0
 #define MESH_MODE_SKINNED 1
 #define MESH_MODE_LINE    2
+#define MESH_MODE_SHADER  3
 
 typedef uint32_t meshid_t;
 

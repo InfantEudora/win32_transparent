@@ -702,23 +702,42 @@ void Object::ProceedToAnimation(const std::string& name){
     ProceedToAnimation(FindAnimation(name));
 }
 
-//From whereever the current animation is, we transistion into the next animation.
+//TODO: ProceedToAnimation should just proceed to the supplied animation.
+//There should be a function that only transitions to the supplied animation if there is a transition
+
+//From whereever the current animation is, we attempt transition into the next animation.
 void Object::ProceedToAnimation(Animation* animation){
     if (!animation){
-        next_animation = NULL;
+        current_transition = NULL;
+        animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
         return;
     }
 
-    //We attempt to find the transition from the current animation to the new one. If there is none, we just switch immediately.
-    AnimationTransition* transition = NULL;
-    if (current_animation){
-        for (AnimationTransition* t:animation_graph->transitions){
-            if ((t->from == current_animation) && (t->to == animation)){
-                transition = t;
-                debug->Info("Found transition from %s to %s\n",current_animation->name.c_str(),animation->name.c_str());
-                break;
-            }
+    //First we attempt to find the transition from the current animation to the new one.
+    debug->Trace("Looking for transition from %s to %s\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
+    if (current_animation && animation && current_animation->name.compare(animation->name) == 0){
+        if (current_animation->looped){
+            debug->Trace("Animation is looped\n");
+            return;
         }
+    }
+
+    AnimationTransition* transition = NULL;
+    for (AnimationTransition* t:animation_graph->transitions){
+        if ((t->from == current_animation) && (t->to == animation)){
+            transition = t;
+
+            debug->Info("Found transition from %s to %s\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
+            break;
+        }
+    }
+    current_transition = transition;
+
+    if (transition == NULL){
+        debug->Info("No transition found from %s to %s. Pausing animation.\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
+
+        animation_state = ANIMATION_STATE_PAUSED;
+        return;
     }
 
     if (animation == current_animation){
@@ -729,10 +748,10 @@ void Object::ProceedToAnimation(Animation* animation){
         return;
     }
     //If this is a new one, we reset it to 0. Otherwise, leave it.
-    if (next_animation != animation){
+    /*if (next_animation != animation){
         next_animation = animation;
         next_animation->time_index = 0;
-    }
+    }*/
 
     if ((animation_state != ANIMATION_STATE_TRANSITION_START) && (animation_state != ANIMATION_STATE_TRANSITION)){
         animation_state = ANIMATION_STATE_TRANSITION_START;
@@ -742,7 +761,7 @@ void Object::ProceedToAnimation(Animation* animation){
     }
 }
 
-//TODO: This is finetuned in PlayerCharacter
+//TODO: This is finetuned in PlayerCharacter. Could be fixed for normal objects
 void Object::ApplyAnimation(float time_delta){
     //TODO check all the things
     if (f_animation_override){
@@ -750,7 +769,7 @@ void Object::ApplyAnimation(float time_delta){
     }
 
     if (!current_animation){
-        current_animation = next_animation;
+        //current_animation = next_animation;
     }
     if (!current_animation){
         return;
@@ -767,7 +786,7 @@ void Object::ApplyAnimation(float time_delta){
         animation_transition_time += time_delta;
         if (animation_transition_time > animation_transition_time_max){
             animation_transition_time = animation_transition_time;
-            current_animation = next_animation;
+            //current_animation = next_animation;
             animation_state = ANIMATION_STATE_LOOPING;
         }
     }

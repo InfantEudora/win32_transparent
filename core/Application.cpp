@@ -1217,24 +1217,35 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
 
                 if (object->current_animation){
                     ImGui::Text("Current Animation : %s @ %.2f / %.2f",object->current_animation->name.c_str(),object->current_animation->time_index,object->current_animation->duration);
+                    bool looping = object->current_animation->looped;
+                    if (ImGui::Checkbox("  - Looping",&looping)){
+                        object->current_animation->looped = looping;
+                    }
                 }else{
                     ImGui::Text("Current Animation : NULL");
                 }
-                if (object->next_animation){
-                    ImGui::Text("Next Animation    : %s @ %.2f / %.2f",object->next_animation->name.c_str(),object->next_animation->time_index,object->next_animation->duration);
+                if (object->current_transition){
+                    ImGui::Text("Transition->To    : %s @ %.2f / %.2f",object->current_transition->to->name.c_str(),object->current_transition->to->time_index,object->current_transition->to->duration);
                 }else{
-                    ImGui::Text("Next Animation    : NULL");
+                    ImGui::Text("Transition->To    : NULL");
                 }
                 ImGui::Text("Current Animation State : %i\n",object->animation_state);
+
             }
 
             if (object->animation_graph && object->animation_graph->transitions.size() != 0){
                 ImGui::Text("Animation Transitions");
+                int id = 0;
                 for (AnimationTransition* transition:object->animation_graph->transitions){
-
-                    ImGui::Text("From Animation: %s",transition->from ? transition->from->name.c_str() : "NULL");
-                    ImGui::Text("To Animation  : %s",transition->to ? transition->to->name.c_str() : "NULL");
-
+                    ImGui::PushID(id++);
+                    std::string button_text = transition->from ? transition->from->name : "NULL";
+                    ImGui::Button(button_text.c_str());
+                    ImGui::SameLine();
+                    ImGui::Button(" --> ");
+                    ImGui::SameLine();
+                    button_text = transition->to ? transition->to->name : "NULL";
+                    ImGui::Button(button_text.c_str());
+                    ImGui::PopID();
                 }
             }
         }

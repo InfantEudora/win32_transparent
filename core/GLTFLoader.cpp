@@ -1244,6 +1244,7 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
     if (node.translation.size() == 3){
         vec3 translation = vec3(node.translation[0],node.translation[1],node.translation[2]);
         bone->SetPosition(translation);
+        bone->SetReferencePosition(translation);
     }
     if (node.rotation.size() == 4){
         quat rotation = quat(node.rotation[0],node.rotation[1],node.rotation[2],node.rotation[3]);

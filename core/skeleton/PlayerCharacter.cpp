@@ -39,7 +39,7 @@ void PlayerCharacter::ProcessInputState(){
     if (character_state.input_left_down){
         float delta = 0.025f;
         if (f_rotation_animation){
-            ProceedToAnimation("LeftTurnInPlace");
+            ProceedToAnimation("TurnLeftInPlace");
             delta = 0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
@@ -49,7 +49,7 @@ void PlayerCharacter::ProcessInputState(){
     if (character_state.input_right_down){
         float delta = -0.025f;
         if (f_rotation_animation){
-            ProceedToAnimation("RightTurnInPlace");
+            ProceedToAnimation("TurnRightInPlace");
             delta = -0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
@@ -95,8 +95,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         animation_state = ANIMATION_STATE_INVALID;
     }
     if (animation_state == ANIMATION_STATE_INVALID){
-        if (next_animation){
-            current_animation = next_animation;
+        if (current_transition){
+            current_animation = current_transition->to;
             animation_state = ANIMATION_STATE_TRANSITION;
             animation_transition_time = animation_transition_time_max;
             animation_transition_factor = 1.0f;
@@ -108,6 +108,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         GetAllBones(this,bones);
         for (Bone* bone:bones){
             bone->SetRotation(bone->reference_rotation);
+            bone->SetPosition(bone->reference_position);
         }
         animation_state = ANIMATION_STATE_INVALID;
         current_animation = NULL;
@@ -117,20 +118,42 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         //Loop the same animation
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
-            //Animation has ended. We play a frame close to 0.
-            current_animation->time_index -= current_animation->duration;
+            if (!current_animation->looped){
+                current_animation->time_index = current_animation->duration;
+                debug->Info("Animation %s ended.\n",current_animation->name.c_str());
+                //We need to find a transition to a new animation:
+                AnimationTransition* transition = animation_graph->FindTransitionFrom(current_animation);
+                if (!transition){
+                    debug->Info("No transition found from %s. Pausing animation.\n",current_animation->name.c_str());
+                    animation_state = ANIMATION_STATE_PAUSED;
+                }else{
+                    //Check if we need to do something at the end of this transition:
+                    if (current_transition->f_hips_rotated){
+                        quat r = hip_bone->GetRotation() - hip_bone->reference_rotation;
+                        float z_angle = r.get_yaw();
+                        debug->Info("Applying Hip Rotation. Z-Rotation : %.2f Degrees\n",todegrees(z_angle));
+
+                        //Get the hip bone
+                        RotateBy(current_transition->hip_rotation);
+                        hip_bone->SetRotation(hip_bone->reference_rotation);
+                        hip_bone->animation_mask = 0;
+
+                    }
+                    current_transition = transition;
+                    debug->Info("Transition found from %s to %s. Starting transition.\n",current_animation->name.c_str(),current_transition->to->name.c_str());
+                    ProceedToAnimation(current_transition->to);
+                }
+            }else{
+                //Animation has ended. We play a frame close to 0.
+                current_animation->time_index -= current_animation->duration;
+            }
             //We need to correct the body postion and orientation from what is currently displayed,
             //to what will be displayed.
             if (!f_movement_animation_inplace){
                 update_hip_position = true;
-
             }
             hip_posistion_start = hip_bone->GetPosition();
             hip_fwd_start = hip_bone->GetWorldForward();
-            if (!current_animation->looped){
-                ProceedToAnimation("Idle");
-            }
-
         }
         current_animation->ApplyInterval(current_animation->time_index);
 
@@ -167,10 +190,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
     }else if (animation_state == ANIMATION_STATE_TRANSITION_START){
         //In this state, we need to record the character position to where the hips currently are.
         //We are going to transition by playing this animation
-        if (next_animation == NULL){
+        if (current_transition == NULL){
             debug->Ok("Transition start from %s to NULL\n",current_animation->name.c_str());
         }else{
-            debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),next_animation->name.c_str());
+            debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),current_transition->to->name.c_str());
         }
         animation_state = ANIMATION_STATE_TRANSITION;
 
@@ -185,13 +208,13 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
     */
     if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
-        if (!next_animation){
+        if (!current_transition){
             debug->Warn("AnimationSampler: Transition to next = NULL\n");
             animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
 
             return;
         }
-        if (next_animation == current_animation){
+        if (current_transition->to == current_animation){
             debug->Warn("AnimationSampler: Next is identical to current\n");
             animation_state = ANIMATION_STATE_LOOPING;
             return;
@@ -199,30 +222,46 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
         //We need to play the current and the next animation,
         //and loop both if we transistion longer than the animation is.
+        //If the current animation is a non-looping animation, we need to make sure we don't play past the end of it.
+
+        if (current_transition->f_only_last_frame){
+            hip_bone->animation_mask = 0;
+        }
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
-            current_animation->time_index -= current_animation->duration;
+            if (!current_animation->looped){
+                current_animation->time_index = current_animation->duration;
+            }else{
+                current_animation->time_index -= current_animation->duration;
+            }
             //update_hip_position = true;
             //hip_posistion_start = hip_bone->GetPosition();
             //hip_fwd_start = hip_bone->GetWorldForward();
             //debug->Info("Transition: current_animation rewind.\n");
         }
         //Rewind next animation as well.
-        next_animation->time_index += time_delta;
-        if (next_animation->time_index > next_animation->duration){
-            next_animation->time_index -= next_animation->duration;
+        current_transition->to->time_index += time_delta;
+        if (current_transition->to->time_index > current_transition->to->duration){
+            current_transition->to->time_index -= current_transition->to->duration;
             //debug->Info("Transition: next_animation rewind.\n");
         }
 
-        animation_transition_factor =  animation_transition_time / animation_transition_time_max;
-        if (animation_transition_time_max == 0){
+        float chosen_max_blend_time = 0;
+        if (current_transition->blend_time >= 0){
+            chosen_max_blend_time = current_transition->blend_time;
+        }else{
+            chosen_max_blend_time = animation_transition_time_max;
+        }
+
+        animation_transition_factor =  animation_transition_time / chosen_max_blend_time;
+        if (chosen_max_blend_time == 0){
             animation_transition_factor = 0;
         }
 
         //We might need to undo any hip rotation by applying the reverse to the parent.
         if (f_update_hip_position){
             hip_fwd_start = hip_bone->GetWorldForward();
-            current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_factor, vec3());
+            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
             vec3 hip_fwd_end = hip_bone->GetWorldForward();
 
             //Compute the angle the hip has rotate in the XZ plane.
@@ -235,7 +274,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             //debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
             RotateBy(r);
         }else{
-            current_animation->Lerp(next_animation,current_animation->time_index,next_animation->time_index,animation_transition_factor, vec3());
+            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
         }
 
         if (f_update_hip_position && update_hip_position){
@@ -249,12 +288,13 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
 
         animation_transition_time += time_delta;
-        if (animation_transition_time >= animation_transition_time_max){
-            animation_transition_time = animation_transition_time_max;
-            current_animation = next_animation;
+        if (animation_transition_time >= chosen_max_blend_time){
+            animation_transition_time = chosen_max_blend_time;
+            current_animation = current_transition->to;
             animation_state = ANIMATION_STATE_LOOPING;
             //update_hip_position = true;
             hip_posistion_start = hip_bone->GetPosition();
+            hip_bone->animation_mask = 1;
         }
     }
 

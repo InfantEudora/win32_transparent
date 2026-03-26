@@ -25,6 +25,10 @@ void Bone::SetInitialLength(){
     }
 }
 
+void Bone::SetReferencePosition(const vec3& p){
+    reference_position = p;
+}
+
 void Bone::SetReferenceRotation(const quat& q){
     reference_rotation = q;
 }

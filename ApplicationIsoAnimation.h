@@ -16,6 +16,7 @@ public:
     void DrawImGuiUI(void) override;
     void RenderSkeletonUI();
     void RenderBoneModifierHeader(Bone* bone, int id);
+    void SetCharacterUniforms(void);
 
     Scene* CreateEmptyScene();
 
@@ -24,6 +25,8 @@ public:
 
     bool f_ik_arm = false;
     Skeleton* selected_skeleton = NULL;
+
+    Object* target_indicator = NULL;
 private:
     vec3 camera_target = {};
     bool f_filemodal = false;

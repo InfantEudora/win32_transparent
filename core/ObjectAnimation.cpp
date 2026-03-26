@@ -303,6 +303,16 @@ AnimationTransition* AnimationGraph::AddTransition(const std::string& from, cons
     transition->blend_time = 0.3f;
     transitions.push_back(transition);
 
-    debug->Info("AnimationGraph: Added transition %s -> %s\n", from.c_str(), to.c_str());
+    debug->Info("AnimationGraph: Added transition %s -> %s %p %p\n", from.c_str(), to.c_str());
     return transition;
+}
+
+//This just looks for the first transition from the specified animation. We might want to have multiple transitions.
+AnimationTransition* AnimationGraph::FindTransitionFrom(Animation* from){
+    for (AnimationTransition* t : transitions){
+        if (t->from == from){
+            return t;
+        }
+    }
+    return NULL;
 }
