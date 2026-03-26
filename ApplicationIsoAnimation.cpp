@@ -36,32 +36,32 @@ Scene* ApplicationIsoAnimation::CreateEmptyScene(){
     return scene;
 }
 
+//This function is called from inside the renderer.
 void ApplicationIsoAnimation::SetCharacterUniforms(void){
     if (character && renderer->deferred_shader_custom){
         //We get the direction forward in the zx plane.
-        vec3 forward = character->GetForward();
+        vec3 forward = character->GetForward(STATE_ACCESS_RENDERER);
         forward.y = 0;
         forward.normalize();
         float angle = atan2(forward.x,-forward.z) + TYPE_PI/2;
-        //renderer->deferred_shader_custom->Setfloat("circle_start",angle);
-        debug->Info("Character forward: %.2f %.2f %.2f Angle: %.2f\n",forward.x,forward.y,forward.z,angle);
-
         //Angle is now from -PI/2  to +3/2PI
         angle += TYPE_PI/2;
 
         //Get the direction to the target
-        vec3 to_target = character->GetPosition() - target_indicator->GetPosition() ;
+        vec3 to_target = character->GetPosition(STATE_ACCESS_RENDERER) - target_indicator->GetPosition(STATE_ACCESS_RENDERER) ;
         to_target.y = 0;
         to_target.normalize();
         float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;
-
-
         target_angle += TYPE_PI/2;
 
+        //This now spcifies the angle between the forward direction and the target direction.
+        float angle_diff = target_angle - angle;
+        //debug->Info("Angle Diff: %.2f\n",todegrees(angle_diff));
+
+        //debug->Info("Character forward: %.2f %.2f %.2f Angle: %.2f\n",forward.x,forward.y,forward.z,angle);
         if (target_angle > angle){
             angle -= TYPE_PI/2;
             target_angle -= TYPE_PI/2;
-
             renderer->deferred_shader_custom->Setfloat("circle_start",angle);
             renderer->deferred_shader_custom->Setfloat("circle_end",target_angle);
         }else{
@@ -70,8 +70,6 @@ void ApplicationIsoAnimation::SetCharacterUniforms(void){
             renderer->deferred_shader_custom->Setfloat("circle_start",target_angle);
             renderer->deferred_shader_custom->Setfloat("circle_end",angle);
         }
-
-
     }
 }
 
@@ -129,6 +127,7 @@ void ApplicationIsoAnimation::Init(void){
 
     character->animation_graph->animations = &character->animations;
     t = character->animation_graph->AddTransition("","Idle"); //Null to Idle transition for when we start an animation without an active one.
+    t = character->animation_graph->AddTransition("","ActionIdle"); //Null to Idle transition for when we start an animation without an active one.
     t = character->animation_graph->AddTransition("Idle","Idle");
     t = character->animation_graph->AddTransition("Idle","Running");
     if (t){
@@ -418,13 +417,34 @@ void ApplicationIsoAnimation::RunLogic(){
         if (target_indicator){
             target_indicator->SetPosition(at);
             target_indicator->SetVisibility(true);
-            character->ProceedToAnimation("ActionIdle");
+            character->Action();
         }
+
+
+        //We get the direction forward in the zx plane.
+        vec3 forward = character->GetForward();
+        forward.y = 0;
+        forward.normalize();
+        float angle = atan2(forward.x,-forward.z) + TYPE_PI/2;
+        //Angle is now from -PI/2  to +3/2PI
+        angle += TYPE_PI/2;
+
+        //Get the direction to the target
+        vec3 to_target = character->GetPosition() - target_indicator->GetPosition() ;
+        to_target.y = 0;
+        to_target.normalize();
+        float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;
+        target_angle += TYPE_PI/2;
+
+        //This now spcifies the angle between the forward direction and the target direction.
+        float angle_diff = target_angle - angle;
+        debug->Info("Angle Diff: %.2f\n",todegrees(angle_diff));
+        character->hips_turn_direction = clamp(-angle_diff,toradians(-35),toradians(35));
     }else{
         if (target_indicator){
             target_indicator->SetVisibility(false);
-            character->ProceedToAnimation("Idle");
         }
+        character->hips_turn_direction /= 2;
     }
 }
 

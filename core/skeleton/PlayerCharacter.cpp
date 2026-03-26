@@ -16,8 +16,9 @@ PlayerCharacter::~PlayerCharacter(){
 void PlayerCharacter::ProcessInputState(){
     if (!(character_state.input_forward_down || character_state.input_backward_down ||
           character_state.input_left_down || character_state.input_right_down
-        || character_state.input_jump)){
+        || character_state.input_jump || character_state.input_action)){
         //No input was down. We proceed to idle animation once.
+
         if (character_state.any_input_was_active){
             ProceedToAnimation("Idle");
             character_state.any_input_was_active = false;
@@ -25,6 +26,13 @@ void PlayerCharacter::ProcessInputState(){
     }else{
         character_state.any_input_was_active = true;
     }
+    if (character_state.input_action){
+        ProceedToAnimation("ActionIdle");
+        character_state.input_action = false;
+
+        //On top of this animation, we want to rotate the hips to face the target
+    }
+
     if (character_state.input_forward_down){
         ProceedToAnimation("CatwalkInPlace");
         MoveForwardBy(-0.025f * animation_transition_factor);
@@ -329,6 +337,19 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             }
         }
 
+        Bone* hips = FindBone("mixamorig:Spine");
+        if (hips){
+            quat q = hips->GetRotation();
+            quat r;
+            r.set_rotation(vec3(0,1,0),hips_turn_direction);
+
+            if (animation_state == ANIMATION_STATE_INVALID){
+                hips->SetRotation(r);
+            }else{
+                hips->RotateBy(r);
+            }
+        }
+
     }
 
     //Update the foot trackers
@@ -360,6 +381,10 @@ void PlayerCharacter::TurnLeft(){
 
 void PlayerCharacter::ToIdle(){
 
+}
+
+void PlayerCharacter::Action(){
+    character_state.input_action = true;
 }
 
 void PlayerCharacter::Jump(){
