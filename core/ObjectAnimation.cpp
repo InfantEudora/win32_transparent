@@ -316,3 +316,12 @@ AnimationTransition* AnimationGraph::FindTransitionFrom(Animation* from){
     }
     return NULL;
 }
+
+AnimationTransition* AnimationGraph::FindTransition(Animation* from, Animation* to){
+    for (AnimationTransition* t : transitions){
+        if (t->from == from && t->to == to){
+            return t;
+        }
+    }
+    return NULL;
+}

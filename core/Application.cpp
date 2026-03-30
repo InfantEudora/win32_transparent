@@ -1200,7 +1200,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 ImGui::Text("Object Animmations");
 
                 if (ImGui::Button("NULL")){
-                    object->ProceedToAnimation(NULL);
+                    object->SwitchToAnimation(NULL);
                 }
                 ImGui::SameLine();
 
@@ -1208,7 +1208,12 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 int button_id = 1;
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
-                        object->ProceedToAnimation(animation);
+                        AnimationTransition* transition = object->animation_graph ? object->animation_graph->FindTransition(object->current_animation, animation) : NULL;
+                        if (transition){
+                            object->TransitionToAnimation(animation,transition);
+                        }else{
+                            object->SwitchToAnimation(animation);
+                        }
                     }
                     button_id++;
                     if (button_id % 4 != 0)

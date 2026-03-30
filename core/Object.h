@@ -167,8 +167,10 @@ class Object{
 
 
     virtual void ApplyAnimation(float time_delta);
-    void ProceedToAnimation(const std::string& name);
-    void ProceedToAnimation(Animation* animation);                  // Flags that we can blend into the next animation
+    void TransitionToAnimation(const std::string& name);
+    void TransitionToAnimation(Animation* animation, AnimationTransition* transition = NULL);  // Flags that we can blend into the next animation
+    void SwitchToAnimation(const std::string& name);                   // Does not need a animation transistion
+    void SwitchToAnimation(Animation* animation);                      // Instantly switches to the next animation, without blending
 
     //Maybe we want some place for the current object transforms, that may be rendered.
     //And some place where the new ones are calculated.

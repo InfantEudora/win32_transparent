@@ -698,15 +698,32 @@ Animation* Object::FindAnimation(const std::string& name){
     return NULL;
 }
 
-void Object::ProceedToAnimation(const std::string& name){
-    ProceedToAnimation(FindAnimation(name));
+void Object::SwitchToAnimation(const std::string& name){
+    SwitchToAnimation(FindAnimation(name));
 }
 
-//TODO: ProceedToAnimation should just proceed to the supplied animation.
+void Object::SwitchToAnimation(Animation* animation){
+    if (!animation){
+        current_animation = NULL;
+        animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
+        return;
+    }
+    current_animation = animation;
+    current_animation->time_index = 0.0f;
+    animation_state = ANIMATION_STATE_LOOPING;
+}
+
+
+void Object::TransitionToAnimation(const std::string& name){
+    TransitionToAnimation(FindAnimation(name));
+}
+
+//TODO: TransitionToAnimation should just transition to the supplied animation.
 //There should be a function that only transitions to the supplied animation if there is a transition
 
 //From whereever the current animation is, we attempt transition into the next animation.
-void Object::ProceedToAnimation(Animation* animation){
+
+void Object::TransitionToAnimation(Animation* animation, AnimationTransition* transition){
     if (!animation){
         current_transition = NULL;
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
@@ -722,19 +739,21 @@ void Object::ProceedToAnimation(Animation* animation){
         }
     }
 
-    AnimationTransition* transition = NULL;
-    for (AnimationTransition* t:animation_graph->transitions){
-        if ((t->from == current_animation) && (t->to == animation)){
-            transition = t;
 
-            debug->Info("Found transition from %s to %s\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
-            break;
+    if (!transition && animation_graph){
+        for (AnimationTransition* t:animation_graph->transitions){
+            if ((t->from == current_animation) && (t->to == animation)){
+                transition = t;
+
+                debug->Info("Found transition from %s to %s\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
+                break;
+            }
         }
     }
     current_transition = transition;
 
     if (transition == NULL){
-        debug->Info("No transition found from %s to %s. Pausing animation.\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
+        debug->Info("ProceedToAnimation: No transition found from %s to %s. Pausing animation.\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
 
         animation_state = ANIMATION_STATE_PAUSED;
         return;

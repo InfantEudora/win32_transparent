@@ -39,37 +39,15 @@ Scene* ApplicationIsoAnimation::CreateEmptyScene(){
 //This function is called from inside the renderer.
 void ApplicationIsoAnimation::SetCharacterUniforms(void){
     if (character && renderer->deferred_shader_custom){
-        //We get the direction forward in the zx plane.
-        vec3 forward = character->GetForward(STATE_ACCESS_RENDERER);
-        forward.y = 0;
-        forward.normalize();
-        float angle = atan2(forward.x,-forward.z) + TYPE_PI/2;
-        //Angle is now from -PI/2  to +3/2PI
-        angle += TYPE_PI/2;
+        float angle_facing = 0;
+        float angle_target_diff = 0;
+        vec3 target = target_indicator->GetPosition(STATE_ACCESS_RENDERER);
+        character->ComputeFacingAngles(STATE_ACCESS_RENDERER,target,angle_facing,angle_target_diff);
 
-        //Get the direction to the target
-        vec3 to_target = character->GetPosition(STATE_ACCESS_RENDERER) - target_indicator->GetPosition(STATE_ACCESS_RENDERER) ;
-        to_target.y = 0;
-        to_target.normalize();
-        float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;
-        target_angle += TYPE_PI/2;
 
-        //This now spcifies the angle between the forward direction and the target direction.
-        float angle_diff = target_angle - angle;
-        //debug->Info("Angle Diff: %.2f\n",todegrees(angle_diff));
-
-        //debug->Info("Character forward: %.2f %.2f %.2f Angle: %.2f\n",forward.x,forward.y,forward.z,angle);
-        if (target_angle > angle){
-            angle -= TYPE_PI/2;
-            target_angle -= TYPE_PI/2;
-            renderer->deferred_shader_custom->Setfloat("circle_start",angle);
-            renderer->deferred_shader_custom->Setfloat("circle_end",target_angle);
-        }else{
-            angle -= TYPE_PI/2;
-            target_angle -= TYPE_PI/2;
-            renderer->deferred_shader_custom->Setfloat("circle_start",target_angle);
-            renderer->deferred_shader_custom->Setfloat("circle_end",angle);
-        }
+        // Arc always runs CCW from the lower angle to the higher one.
+        renderer->deferred_shader_custom->Setfloat("circle_start", angle_facing + fmin(angle_target_diff, 0.0f));
+        renderer->deferred_shader_custom->Setfloat("circle_end",   angle_facing + fmax(angle_target_diff, 0.0f));
     }
 }
 
@@ -133,6 +111,16 @@ void ApplicationIsoAnimation::Init(void){
     if (t){
         t->blend_time = 0.75f;
     }
+
+    t = character->animation_graph->AddTransition("Idle","Walking");
+    t = character->animation_graph->AddTransition("Walking","Walking");
+    t = character->animation_graph->AddTransition("Walking","WalkBackwardInPlace");
+    t = character->animation_graph->AddTransition("Idle","WalkBackwardInPlace");
+    t = character->animation_graph->AddTransition("WalkBackwardInPlace","WalkBackwardInPlace");
+    t = character->animation_graph->AddTransition("WalkBackwardInPlace","Idle");
+    t = character->animation_graph->AddTransition("WalkBackwardInPlace","Walking");
+    t = character->animation_graph->AddTransition("Walking","Idle");
+
     t = character->animation_graph->AddTransition("Running","Running");
     t = character->animation_graph->AddTransition("Idle","BalanceOneLeg");
     t = character->animation_graph->AddTransition("Idle","StandingToSitting");
@@ -407,7 +395,7 @@ void ApplicationIsoAnimation::RunLogic(){
     }
 
     //Target selection for character using right mouse button, similat to zomboid.
-    if (input->IsKeyDown(INPUT_CLICK_RIGHT)){
+    if (character && input->IsKeyDown(INPUT_CLICK_RIGHT)){
         int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
         ray r = main_scene->camera->GetPixelRay(px);
         vec3 at = {};
@@ -420,31 +408,28 @@ void ApplicationIsoAnimation::RunLogic(){
             character->Action();
         }
 
+        float angle_facing = 0;
+        float angle_target_diff = 0;
+        vec3 target = target_indicator->GetPosition(STATE_ACCESS_PHYSICS);
+        character->ComputeFacingAngles(STATE_ACCESS_PHYSICS,target,angle_facing,angle_target_diff);
 
-        //We get the direction forward in the zx plane.
-        vec3 forward = character->GetForward();
-        forward.y = 0;
-        forward.normalize();
-        float angle = atan2(forward.x,-forward.z) + TYPE_PI/2;
-        //Angle is now from -PI/2  to +3/2PI
-        angle += TYPE_PI/2;
 
-        //Get the direction to the target
-        vec3 to_target = character->GetPosition() - target_indicator->GetPosition() ;
-        to_target.y = 0;
-        to_target.normalize();
-        float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;
-        target_angle += TYPE_PI/2;
-
-        //This now spcifies the angle between the forward direction and the target direction.
-        float angle_diff = target_angle - angle;
-        debug->Info("Angle Diff: %.2f\n",todegrees(angle_diff));
-        character->hips_turn_direction = clamp(-angle_diff,toradians(-35),toradians(35));
-    }else{
+        character->hips_turn_direction = clamp(-angle_target_diff,toradians(-35),toradians(35));
+    }else if (character){
         if (target_indicator){
             target_indicator->SetVisibility(false);
         }
         character->hips_turn_direction /= 2;
+    }
+
+    if (character){
+        //Make the UI plane stay below the character
+        Object* plane = main_scene->FindObject("Test Plane");
+        if (plane){
+            vec3 pos = character->GetPosition();
+            pos.y = 0.01f;
+            plane->SetPosition(pos);
+        }
     }
 }
 

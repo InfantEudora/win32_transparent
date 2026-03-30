@@ -112,6 +112,7 @@ class AnimationGraph{
     Animation* LookupAnimation(const std::string& name);
     AnimationTransition* AddTransition(const std::string& from, const std::string& to);
     AnimationTransition* FindTransitionFrom(Animation* from);
+    AnimationTransition* FindTransition(Animation* from, Animation* to);
 };
 
 #endif

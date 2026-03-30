@@ -20,26 +20,26 @@ void PlayerCharacter::ProcessInputState(){
         //No input was down. We proceed to idle animation once.
 
         if (character_state.any_input_was_active){
-            ProceedToAnimation("Idle");
+            TransitionToAnimation("Idle");
             character_state.any_input_was_active = false;
         }
     }else{
         character_state.any_input_was_active = true;
     }
     if (character_state.input_action){
-        ProceedToAnimation("ActionIdle");
+        TransitionToAnimation("ActionIdle");
         character_state.input_action = false;
 
         //On top of this animation, we want to rotate the hips to face the target
     }
 
     if (character_state.input_forward_down){
-        ProceedToAnimation("CatwalkInPlace");
+        TransitionToAnimation("Walking");
         MoveForwardBy(-0.025f * animation_transition_factor);
         character_state.input_forward_down = false;
     }
     if (character_state.input_backward_down){
-        ProceedToAnimation("WalkBackwardInPlace");
+        TransitionToAnimation("WalkBackwardInPlace");
 
         MoveForwardBy(0.025f * animation_transition_factor);
         character_state.input_backward_down = false;
@@ -47,7 +47,7 @@ void PlayerCharacter::ProcessInputState(){
     if (character_state.input_left_down){
         float delta = 0.025f;
         if (f_rotation_animation){
-            ProceedToAnimation("TurnLeftInPlace");
+            TransitionToAnimation("TurnLeftInPlace");
             delta = 0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
@@ -57,7 +57,7 @@ void PlayerCharacter::ProcessInputState(){
     if (character_state.input_right_down){
         float delta = -0.025f;
         if (f_rotation_animation){
-            ProceedToAnimation("TurnRightInPlace");
+            TransitionToAnimation("TurnRightInPlace");
             delta = -0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
@@ -65,7 +65,7 @@ void PlayerCharacter::ProcessInputState(){
         character_state.input_right_down = false;
     }
     if (character_state.input_jump){
-        ProceedToAnimation("JoyfullJump");
+        TransitionToAnimation("JoyfullJump");
         character_state.input_jump = false;
     }
 }
@@ -136,7 +136,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                     animation_state = ANIMATION_STATE_PAUSED;
                 }else{
                     //Check if we need to do something at the end of this transition:
-                    if (current_transition->f_hips_rotated){
+                    if (current_transition &&  current_transition->f_hips_rotated){
                         quat r = hip_bone->GetRotation() - hip_bone->reference_rotation;
                         float z_angle = r.get_yaw();
                         debug->Info("Applying Hip Rotation. Z-Rotation : %.2f Degrees\n",todegrees(z_angle));
@@ -149,7 +149,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                     }
                     current_transition = transition;
                     debug->Info("Transition found from %s to %s. Starting transition.\n",current_animation->name.c_str(),current_transition->to->name.c_str());
-                    ProceedToAnimation(current_transition->to);
+                    TransitionToAnimation(current_transition->to);
                 }
             }else{
                 //Animation has ended. We play a frame close to 0.
@@ -343,7 +343,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             quat r;
             r.set_rotation(vec3(0,1,0),hips_turn_direction);
 
-            if (animation_state == ANIMATION_STATE_INVALID){
+            if (animation_state == ANIMATION_STATE_INVALID || animation_state == ANIMATION_STATE_PAUSED){
                 hips->SetRotation(r);
             }else{
                 hips->RotateBy(r);
@@ -405,4 +405,25 @@ void PlayerCharacter::TurnLookUp(){
 
 void PlayerCharacter::TurnLookDown(){
     head_turn_direction_ud = clamp(head_turn_direction_ud-0.05f,-1.0,1.0);
+}
+
+void PlayerCharacter::ComputeFacingAngles(ObjectStateAccessType state_access, const vec3& target, float& out_facing, float& out_diff){
+    //We get the direction forward in the zx plane.
+    vec3 forward = GetForward(state_access);
+    forward.y = 0;
+    forward.normalize();
+
+    // Convert facing direction to the shader's atan2(uv.y, uv.x) space.
+    float facing = atan2(forward.x, -forward.z) + TYPE_PI/2;
+    //Get the direction to the target
+    vec3 to_target = GetPosition(state_access) - target;
+    to_target.y = 0;
+    to_target.normalize();
+    float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;
+
+    // Normalize target offset into [-PI, PI] relative to facing.
+    // This avoids any wrap-around comparison by keeping both ends numerically close.
+    float diff = fmod(target_angle - facing + 3 * TYPE_PI, 2 * TYPE_PI) - TYPE_PI;
+    out_facing = facing;
+    out_diff  = diff;
 }

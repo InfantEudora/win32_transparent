@@ -77,6 +77,10 @@ class PlayerCharacter : public virtual Skeleton{
     void TurnLookUp();
     void TurnLookDown();
 
+    //Computes the facing and target angles for the character to look at a target. This is used for head and hip turning.
+    //Sets the angle the character is facing, and the diff angle the target is in -Pi - Pi
+    void ComputeFacingAngles(ObjectStateAccessType state_access, const vec3& target, float& out_facing, float& out_diff);
+
     Object* head_tracker = NULL;    //The object the character is looking at.
 
     //For debugging visualisation:
