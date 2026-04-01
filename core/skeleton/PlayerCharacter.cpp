@@ -16,7 +16,8 @@ PlayerCharacter::~PlayerCharacter(){
 void PlayerCharacter::ProcessInputState(){
     if (!(character_state.input_forward_down || character_state.input_backward_down ||
           character_state.input_left_down || character_state.input_right_down
-        || character_state.input_jump || character_state.input_action)){
+        || character_state.input_jump || character_state.input_action
+        || character_state.input_action_active)){
         //No input was down. We proceed to idle animation once.
 
         if (character_state.any_input_was_active){
@@ -27,17 +28,17 @@ void PlayerCharacter::ProcessInputState(){
         character_state.any_input_was_active = true;
     }
     if (character_state.input_action){
-        TransitionToAnimation("ActionIdle");
+        TransitionToAnimation("Boxing");
         character_state.input_action = false;
 
+    }else if (character_state.input_action_active){
+        TransitionToAnimation("ActionIdle");
+        character_state.input_action_active = false;
         //On top of this animation, we want to rotate the hips to face the target
     }
 
-    if (character_state.input_forward_down){
-        TransitionToAnimation("Walking");
-        MoveForwardBy(-0.025f * animation_transition_factor);
-        character_state.input_forward_down = false;
-    }
+
+
     if (character_state.input_backward_down){
         TransitionToAnimation("WalkBackwardInPlace");
 
@@ -46,7 +47,7 @@ void PlayerCharacter::ProcessInputState(){
     }
     if (character_state.input_left_down){
         float delta = 0.025f;
-        if (f_rotation_animation){
+        if (f_rotation_animation && !character_state.input_forward_down){
             TransitionToAnimation("TurnLeftInPlace");
             delta = 0.025f * animation_transition_factor;
         }
@@ -56,7 +57,7 @@ void PlayerCharacter::ProcessInputState(){
     }
     if (character_state.input_right_down){
         float delta = -0.025f;
-        if (f_rotation_animation){
+        if (f_rotation_animation && !character_state.input_forward_down){
             TransitionToAnimation("TurnRightInPlace");
             delta = -0.025f * animation_transition_factor;
         }
@@ -64,9 +65,18 @@ void PlayerCharacter::ProcessInputState(){
         RotateBy(q);
         character_state.input_right_down = false;
     }
+    if (character_state.input_forward_down){
+        TransitionToAnimation("Walking");
+        MoveForwardBy(-0.025f * animation_transition_factor);
+        character_state.input_forward_down = false;
+    }
     if (character_state.input_jump){
         TransitionToAnimation("JoyfullJump");
         character_state.input_jump = false;
+    }
+    if (character_state.input_interact){
+        TransitionToAnimation("Pushing");
+        character_state.input_interact = false;
     }
 }
 
@@ -124,6 +134,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
     if (animation_state == ANIMATION_STATE_LOOPING){
         //Loop the same animation
+        float last_time_index = current_animation->time_index;
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
             if (!current_animation->looped){
@@ -155,45 +166,34 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 //Animation has ended. We play a frame close to 0.
                 current_animation->time_index -= current_animation->duration;
             }
-            //We need to correct the body postion and orientation from what is currently displayed,
-            //to what will be displayed.
-            if (!f_movement_animation_inplace){
-                update_hip_position = true;
+        }
+        //If the animation modifies the root object, we need to keep track of how much it woule have moved.
+        vec3 pos_delta = vec3();
+        if (current_animation->modifies_root_object){
+            //We need to get the difference in postion from the current keyframe
+            //to the target keyframe.
+            //Then, we need to not apply that.
+            //Rotate the position by our current orientation first.
+            animation_mask = 0;
+            ObjectAnimation* root_anim = current_animation->FindObjectAnimation(this);
+            if (root_anim){
+                ObjectAnimationKeyFrame* frame = root_anim->GetClosestKeyframe(last_time_index);
+                if (frame && frame->f_position){
+                    vec3 pos_start = frame->position;
+                    frame = root_anim->GetClosestKeyframe(current_animation->time_index);
+                    if (frame && frame->f_position){
+                        vec3 pos_end = frame->position;
+                        pos_delta = pos_end - pos_start;
+                        //debug->Info("Animation modifies root object. Delta = %.3f %.3f %.3f\n",pos_delta.x,pos_delta.y,pos_delta.z);
+                    }
+                }
             }
-            hip_posistion_start = hip_bone->GetPosition();
-            hip_fwd_start = hip_bone->GetWorldForward();
         }
         current_animation->ApplyInterval(current_animation->time_index);
 
-
-        if (f_update_hip_position && update_hip_position){
-            vec3 hippos_end = hip_bone->GetPosition();
-            //How much has the hip moved?
-            vec3 d = hip_posistion_start - hippos_end;
-            //debug->Info("Looping: Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
-            d.y = 0;
-            //MoveForwardBy(-d.z);
-
-            //Now, have we turned around maybe?
-            vec3 hip_fwd_end = hip_bone->GetWorldForward();
-            //debug->Info("Looping: Hip fwd start | end %.3f %.3f %.3f | %.3f %.3f %.3f\n",hip_fwd_start.x,hip_fwd_start.y,hip_fwd_start.z,hip_fwd_end.x,hip_fwd_end.y,hip_fwd_end.z);
-            MoveBy(GetRotation()*d);
-
-            //Compute the angle the hip has rotate in the XZ plane.
-            vec3 xz_start = vec3(hip_fwd_start.xz()).normalize();
-            vec3 xz_end = vec3(hip_fwd_end.xz()).normalize();
-
-            float dot = xz_start.dot(xz_end);
-            dot = clamp(dot,-1.0,1.0);
-            //debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
-            quat r = quat(vec3(0,-1,0),acos(dot));
-            //debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
-            RotateBy(r);
-
-
-            update_hip_position = false;
-        }else if (f_movement_animation_inplace){
-            //Each frame we update depending on foot placement.
+        if (pos_delta.length() > 0){
+            //We manually apply the position change, but rotated by our current orientation.
+            MoveBy(GetRotation()*pos_delta);
         }
     }else if (animation_state == ANIMATION_STATE_TRANSITION_START){
         //In this state, we need to record the character position to where the hips currently are.
@@ -242,10 +242,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             }else{
                 current_animation->time_index -= current_animation->duration;
             }
-            //update_hip_position = true;
-            //hip_posistion_start = hip_bone->GetPosition();
-            //hip_fwd_start = hip_bone->GetWorldForward();
-            //debug->Info("Transition: current_animation rewind.\n");
         }
         //Rewind next animation as well.
         current_transition->to->time_index += time_delta;
@@ -266,42 +262,14 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_transition_factor = 0;
         }
 
-        //We might need to undo any hip rotation by applying the reverse to the parent.
-        if (f_update_hip_position){
-            hip_fwd_start = hip_bone->GetWorldForward();
-            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
-            vec3 hip_fwd_end = hip_bone->GetWorldForward();
-
-            //Compute the angle the hip has rotate in the XZ plane.
-            vec3 xz_start = vec3(hip_fwd_start.xz()).normalize();
-            vec3 xz_end = vec3(hip_fwd_end.xz()).normalize();
-            float dot = xz_start.dot(xz_end);
-            dot = clamp(dot,-1.0,1.0);
-            //debug->Info("Dot product: %.3f. acos = %.3f\n",dot,acos(dot));
-            quat r = quat(vec3(0,-1,0),acos(dot));
-            //debug->Info("Q = %.3f %.3f %.3f %.3f\n",r.x,r.y,r.z,r.w);
-            RotateBy(r);
-        }else{
-            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
-        }
-
-        if (f_update_hip_position && update_hip_position){
-            vec3 hippos_end = hip_bone->GetPosition();
-            //How much has the hip moved?
-            vec3 d = hip_posistion_start - hippos_end;
-            //debug->Info("Transition: Hips delta = %.3f %.3f %.3f\n",d.x,d.y,d.z);
-            d.y = 0;
-            //MoveBy(GetRotation()*d);
-            update_hip_position = false;
-        }
+        current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
 
         animation_transition_time += time_delta;
         if (animation_transition_time >= chosen_max_blend_time){
             animation_transition_time = chosen_max_blend_time;
             current_animation = current_transition->to;
             animation_state = ANIMATION_STATE_LOOPING;
-            //update_hip_position = true;
-            hip_posistion_start = hip_bone->GetPosition();
+
             hip_bone->animation_mask = 1;
         }
     }
@@ -383,12 +351,20 @@ void PlayerCharacter::ToIdle(){
 
 }
 
+void PlayerCharacter::ActionActive(){
+    character_state.input_action_active = true;
+}
+
 void PlayerCharacter::Action(){
     character_state.input_action = true;
 }
 
 void PlayerCharacter::Jump(){
     character_state.input_jump = true;
+}
+
+void PlayerCharacter::Interact(){
+    character_state.input_interact = true;
 }
 
 void PlayerCharacter::TurnLookLeft(){

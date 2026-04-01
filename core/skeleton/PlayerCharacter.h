@@ -30,7 +30,9 @@ struct CharacterState{
     bool moving_backward = false;
     bool moving_left = false;
     bool moving_right = false;
+    bool input_action_active = false;
     bool input_action = false;
+    bool input_interact = false;
 };
 
 class PlayerCharacter;
@@ -50,7 +52,6 @@ class PlayerCharacter : public virtual Skeleton{
 
     bool f_switch_now = false;
     bool f_rotation_animation = false;
-    bool f_movement_animation_inplace = false;
     bool f_move_by_feet_placement = false;      //For inplace animations.
     bool f_update_hip_position = false;         //Used for blending animations that move hip to a new orientation / position.
 
@@ -70,7 +71,9 @@ class PlayerCharacter : public virtual Skeleton{
     void TurnRight();
     void Jump();
     void ToIdle();
+    void ActionActive();
     void Action();
+    void Interact();
 
     void TurnLookLeft();
     void TurnLookRight();
@@ -92,11 +95,6 @@ class PlayerCharacter : public virtual Skeleton{
     vec3 right_foot_prev_wpos = vec3();
 private:
     void ProcessInputState();
-
-    //Additional flags for animation state
-    bool update_hip_position = false;
-    vec3 hip_posistion_start = {};
-    vec3 hip_fwd_start = {};
 };
 
 #endif

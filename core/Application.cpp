@@ -1197,7 +1197,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
             if (object->animations.size() == 0){
                 ImGui::Text("Object has no animations");
             }else{
-                ImGui::Text("Object Animmations");
+                ImGui::Text("Object Animations");
 
                 if (ImGui::Button("NULL")){
                     object->SwitchToAnimation(NULL);
@@ -1226,6 +1226,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     if (ImGui::Checkbox("  - Looping",&looping)){
                         object->current_animation->looped = looping;
                     }
+                    ImGui::Checkbox("  - Modifies Root Object",&object->current_animation->modifies_root_object);
                 }else{
                     ImGui::Text("Current Animation : NULL");
                 }

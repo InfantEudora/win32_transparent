@@ -72,9 +72,6 @@ void Mesh::SetLineMeshData(line_vertex* verts, int vertex_count){
 //When mesh is in normal mode, you can add morph meshes (meshes of the same size)
 void Mesh::SetMorphMeshData(morph_vertex* verts, int vertex_count){
 
-    if (mesh_mode != MESH_MODE_NORMAL){
-        return;
-    }
     //Copy the data in
     morph_vertices.clear();
     for (int i=0;i<vertex_count;i++){

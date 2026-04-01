@@ -107,23 +107,21 @@ void main(){
 	mat_rotate[0] = instance_data[gl_InstanceID].mat_transformscale[0].xyz;
 	mat_rotate[1] = instance_data[gl_InstanceID].mat_transformscale[1].xyz;
 	mat_rotate[2] = instance_data[gl_InstanceID].mat_transformscale[2].xyz;
-
-
-	vec3 objpos = instance_data[gl_InstanceID].mat_transformscale[3].xyz;
+	//vec3 objpos = instance_data[gl_InstanceID].mat_transformscale[3].xyz;
 
 	//Calculate position when using morph targets
-	vec3 pos = position;
+	vec3 pos = position; //Position of this vertex
 	int voffset = instance_data[gl_InstanceID].vertex_count;
 	for (int i=0;i<instance_data[gl_InstanceID].num_morph_targets;i++){
 		pos += (morph_vertices[(i*voffset) + gl_VertexID].position * instance_data[gl_InstanceID].morph_factors[i]);
 	}
 
-	vec4 transpos = instance_data[gl_InstanceID].mat_transformscale * vec4(pos,1); //In world space
-	vposition = transpos.xyz;
+	vec4 world_position = instance_data[gl_InstanceID].mat_transformscale * vec4(pos,1);
+	vposition = world_position.xyz;
 
 	vnormal = (mat_rotate * normal);
 	vnormal = normalize(vnormal);
-	vshadow = mat_shadow * transpos; //Vertex postition in shadow coordinates
+	vshadow = mat_shadow * world_position; //Vertex postition in shadow coordinates
 
 	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
 
@@ -150,5 +148,5 @@ void main(){
 
 	vobjid = instance_data[gl_InstanceID].objectid;
 
-	gl_Position = (mat_worldcam * transpos);
+	gl_Position = (mat_worldcam * world_position);
 }

@@ -40,6 +40,13 @@ struct Material{
     uvec2 handle_normal;
 };
 
+struct morph_vertex{
+	vec3 position;
+	float pad1;
+	vec3 normal;
+	float pad2;
+};
+
 struct Bone{
 	mat4 mat_transformscale;
 	mat4 inv_bindmatrix;
@@ -57,6 +64,10 @@ layout (std430, binding = 1) buffer MaterialBuffer{
 
 layout (std430, binding = 4) buffer BoneDataBuffer{
 	Bone bone_data[];
+};
+
+layout (std430, binding = 5) buffer MorphBuffer{
+	morph_vertex morph_vertices[];
 };
 
 //Output
@@ -119,7 +130,14 @@ void main(){
 
 	mat4 final_transform_matrix = /*global_transform_matrix * */joint_matrix;
 
-	vec4 world_position = final_transform_matrix * vec4(position,1) ;
+	//Calculate position when using morph targets
+	vec3 pos = position;
+	int voffset = instance_data[gl_InstanceID].vertex_count;
+	for (int i=0;i<instance_data[gl_InstanceID].num_morph_targets;i++){
+		pos += (morph_vertices[(i*voffset) + gl_VertexID].position * instance_data[gl_InstanceID].morph_factors[i]);
+	}
+
+	vec4 world_position = final_transform_matrix * vec4(pos,1) ;
 
 	//Calculated the TBN matrix for normal mapping..
 	//TODO: Maybe this can be done in a Geometry Shader.
@@ -137,7 +155,6 @@ void main(){
 	mat_rotate[0] = final_transform_matrix[0].xyz;
 	mat_rotate[1] = final_transform_matrix[1].xyz;
 	mat_rotate[2] = final_transform_matrix[2].xyz;
-
 
 	//vec3 objpos = final_transform_matrix[3].xyz;
 

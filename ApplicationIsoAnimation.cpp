@@ -1,11 +1,13 @@
 #include "ApplicationIsoAnimation.h"
 #include "Debug.h"
 
+
 static Debugger *debug = new Debugger("ApplicationIsoAnimation", DEBUG_ALL);
 
 #define INPUT_JUMP    INPUT_LAST+1
 #define INPUT_F       INPUT_LAST+2
 #define INPUT_G       INPUT_LAST+3
+#define INPUT_E       INPUT_LAST+4
 
 ApplicationIsoAnimation::ApplicationIsoAnimation():Application(){
     debug->Info("Created new ApplicationIsoAnimation.\n");
@@ -26,6 +28,7 @@ Scene* ApplicationIsoAnimation::CreateEmptyScene(){
     scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_JUMP);
     scene->inputcontroller->AddKeyMap('F',INPUT_F);
     scene->inputcontroller->AddKeyMap('G',INPUT_G);
+    scene->inputcontroller->AddKeyMap('E',INPUT_E);
     scene->camera->SetPosition(vec3(3,3,3));
     scene->camera->SetLookAt(vec3(0,1.0,0));
 
@@ -70,6 +73,12 @@ void ApplicationIsoAnimation::Init(void){
     main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
 
     assetmanager = new AssetManager();
+    Debugger* glftdebug = debug->FindHandle("GLTFLoader");
+    if (glftdebug){
+        glftdebug->SetLevel(DEBUG_INFO);
+    }
+
+
     gltfloader.LoadGLTFFile("data/isoanim.glb");
     GetAllAssetsFromGLTF();
 
@@ -120,22 +129,35 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("WalkBackwardInPlace","Idle");
     t = character->animation_graph->AddTransition("WalkBackwardInPlace","Walking");
     t = character->animation_graph->AddTransition("Walking","Idle");
+    t = character->animation_graph->AddTransition("Walking","ActionIdle");
 
     t = character->animation_graph->AddTransition("Running","Running");
     t = character->animation_graph->AddTransition("Idle","BalanceOneLeg");
     t = character->animation_graph->AddTransition("Idle","StandingToSitting");
     t = character->animation_graph->AddTransition("Idle","ActionIdle");
     t = character->animation_graph->AddTransition("ActionIdle","ActionIdle");
+    t = character->animation_graph->AddTransition("ActionIdle","Boxing");
+    t = character->animation_graph->AddTransition("Boxing","Boxing");
+    t = character->animation_graph->AddTransition("Boxing","ActionIdle");
+    t = character->animation_graph->AddTransition("Boxing","Idle");
     t = character->animation_graph->AddTransition("ActionIdle","Idle");
     t = character->animation_graph->AddTransition("Idle","TurnLeftInPlace");
-    if (t){
-        t->f_hips_rotated = true;
-        t->hip_rotation = quat(vec3(0,1,0),toradians(90));
-    }
+    t = character->animation_graph->AddTransition("TurnLeftInPlace","TurnLeftInPlace");
     t = character->animation_graph->AddTransition("TurnLeftInPlace","Idle");
-    if (t){
-        t->f_only_last_frame = true;
-    }
+    t = character->animation_graph->AddTransition("TurnLeftInPlace","Walking");
+    t = character->animation_graph->AddTransition("TurnRightInPlace","Walking");
+    t = character->animation_graph->AddTransition("Walking","TurnRightInPlace");
+    t = character->animation_graph->AddTransition("Walking","TurnLeftInPlace");
+
+    t = character->animation_graph->AddTransition("TurnLeftInPlace","TurnRightInPlace");
+    t = character->animation_graph->AddTransition("TurnRightInPlace","TurnLeftInPlace");
+
+
+    t = character->animation_graph->AddTransition("Idle","TurnRightInPlace");
+    t = character->animation_graph->AddTransition("TurnRightInPlace","TurnRightInPlace");
+    t = character->animation_graph->AddTransition("TurnRightInPlace","Idle");
+
+
     t = character->animation_graph->AddTransition("StandingToSitting","SittingLegsCrossed");
     if (t){
         t->blend_time = 0.5f;
@@ -150,6 +172,10 @@ void ApplicationIsoAnimation::Init(void){
     if (t){
         t->blend_time = 0.75f;
     }
+
+    t = character->animation_graph->AddTransition("Idle","Pushing");
+    t = character->animation_graph->AddTransition("Pushing","Idle");
+
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -218,64 +244,7 @@ void ApplicationIsoAnimation::RunLogic(){
             sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
         }
 
-        if (character->f_move_by_feet_placement){
-            vec3 fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS);
-            bool left_foot_on_ground = (fpl.y < 0.01f);
 
-
-            vec3 fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS);
-            bool right_foot_on_ground = (fpr.y < 0.01f);
-
-
-            //Get the distance between the feet
-            float foot_dist = (fpl - fpr).length();
-
-            //Show which foot is leading
-            //Get the forward direction
-            vec3 forward = character->GetForward(STATE_ACCESS_PHYSICS);
-            float left_foot_fwd = forward.dot(fpl);
-            float right_foot_fwd = forward.dot(fpr);
-
-            bool left_foot_leading = (left_foot_fwd < right_foot_fwd);
-            //debug->Info("Foot Dist: %.2f Left Leading: %s\n",foot_dist,left_foot_leading ? "Yes" : "No");
-            //debug->Info("Left Foot on ground: %s Right Foot on ground: %s\n",left_foot_on_ground ? "Yes" : "No", right_foot_on_ground ? "Yes" : "No");
-
-            //If one foot is on the ground and leading, we move the character by the distance the leading foot moved.
-            if (left_foot_on_ground && (right_foot_on_ground == false)){
-                vec3 delta = fpl - character->left_foot_prev_wpos;
-                delta.y = 0;
-                debug->Info("Left foot on ground. Moving character by left foot delta %.2f.\n",delta.length());
-                character->MoveBy(-delta);
-                fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS);
-                character->left_foot_prev_wpos = fpl;
-                character->right_foot_prev_wpos = fpr;
-            }else if (right_foot_on_ground && (left_foot_on_ground == false)){
-                vec3 delta = fpr - character->right_foot_prev_wpos;
-                delta.y = 0;
-                debug->Info("Right foot on ground. Moving character by right foot delta %.2f.\n",delta.length());
-                character->MoveBy(-delta);
-                fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS);
-                character->left_foot_prev_wpos = fpl;
-                character->right_foot_prev_wpos = fpr;
-            }else if (left_foot_on_ground && right_foot_on_ground){
-                //Both feet on the ground, we move by the average delta
-                vec3 delta_l = fpl - character->left_foot_prev_wpos;
-                delta_l.y = 0;
-                vec3 delta_r = fpr - character->right_foot_prev_wpos;
-                delta_r.y = 0;
-                vec3 delta = (delta_l + delta_r) * 0.5f;
-                debug->Info("Both feet on ground. Moving character by average foot delta %.2f.\n",delta.length());
-                character->MoveBy(-delta);
-                fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS);
-                fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS);
-                character->left_foot_prev_wpos = fpl;
-                character->right_foot_prev_wpos = fpr;
-            }else{
-                character->left_foot_prev_wpos = fpl;
-                character->right_foot_prev_wpos = fpr;
-            }
-
-        }
     }
 
     if (selected_skeleton && f_ik_arm){
@@ -363,6 +332,9 @@ void ApplicationIsoAnimation::RunLogic(){
         if (input->IsKeyDown(INPUT_JUMP)){
             character->Jump();
         }
+        if (input->IsKeyDown(INPUT_E)){
+            character->Interact();
+        }
         /*
         if (input->WasKeyReleased(INPUT_TURN_UP)){
             character->ToIdle();
@@ -394,7 +366,7 @@ void ApplicationIsoAnimation::RunLogic(){
         }
     }
 
-    //Target selection for character using right mouse button, similat to zomboid.
+    //Target selection for character using right mouse button, similar to zomboid.
     if (character && input->IsKeyDown(INPUT_CLICK_RIGHT)){
         int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
         ray r = main_scene->camera->GetPixelRay(px);
@@ -405,16 +377,20 @@ void ApplicationIsoAnimation::RunLogic(){
         if (target_indicator){
             target_indicator->SetPosition(at);
             target_indicator->SetVisibility(true);
-            character->Action();
+            character->ActionActive();
         }
 
         float angle_facing = 0;
         float angle_target_diff = 0;
         vec3 target = target_indicator->GetPosition(STATE_ACCESS_PHYSICS);
         character->ComputeFacingAngles(STATE_ACCESS_PHYSICS,target,angle_facing,angle_target_diff);
-
-
         character->hips_turn_direction = clamp(-angle_target_diff,toradians(-35),toradians(35));
+
+        //When we are in action mode, left clicking will make the character swing a weapon
+        // or punch.
+        if (input->IsKeyDown(INPUT_CLICK_LEFT)){
+            character->Action();
+        }
     }else if (character){
         if (target_indicator){
             target_indicator->SetVisibility(false);
@@ -449,6 +425,7 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
     }
 
     //ImGui::ShowDemoWindow();
+
 
     RenderDebugMenuBar();
     RenderApplicationUI();
@@ -495,8 +472,6 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         ImGui::Separator();
         ImGui::Text("Head Turn Direction L/R : %.2f",character->head_turn_direction_lr);
         ImGui::Text("Head Turn Direction U/D : %.2f",character->head_turn_direction_ud);
-        ImGui::Checkbox("Movement in Place",&character->f_movement_animation_inplace);
-        ImGui::Checkbox("Movement by Feet Placement",&character->f_move_by_feet_placement);
         ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override);
         ImGui::Checkbox("Rotation Animations",&character->f_rotation_animation);
         ImGui::Checkbox("Grab Mode",&f_mode_grab);

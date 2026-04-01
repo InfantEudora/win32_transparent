@@ -873,7 +873,7 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
     }
 
     //A node can contain a single mesh (or none)
-    debug->Trace("GetSkinnedMeshFromNode: Found Node %s for you.\n",node_name);
+    debug->Info("GetSkinnedMeshFromNode: Found Node %s for you.\n",node_name);
 
     if (node->skin == -1){
         debug->Err("GetSkinnedMeshFromNode: Node %s does not contain a skin!\n",node_name);
@@ -886,7 +886,7 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
     }
 
     tinygltf::Mesh& nodemesh = model.meshes.at(node->mesh);
-    debug->Trace(" -> Mesh name : %s\n",nodemesh.name.c_str());
+    debug->Info(" -> Mesh name : %s\n",nodemesh.name.c_str());
 
     //A Mesh can have multiple primitives, like points, lines and triangles ... but not quads
     //We'll be parsing it only when it has seperate triangles for now
@@ -907,9 +907,10 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
 
     //All vertices loaded from this node.
     std::vector<skinned_vertex>verts;
+    std::vector<morph_vertex>morph_verts;
     std::vector<Material>materials;
 
-    debug->Trace("Node has %i primitives\n",nodemesh.primitives.size());
+    debug->Info("Node %s has %i primitives\n",node_name, nodemesh.primitives.size());
 
     for (tinygltf::Primitive &primitive : nodemesh.primitives){
         //This should be such that at least the materials in this Mesh can be looked up later on.
@@ -923,7 +924,6 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
 
             Material m;
             m.name = gltfmaterial->name;
-
 
             //If the material has a diffuse texture, we load that here
             if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
@@ -1039,15 +1039,93 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
             verts.push_back(vert3);
             vertex_index += 3;
         }
+
+        //In addition to attibutes, it has 'targets' which are effectively the same, they form meshes.
+        //This is done per primitive. I.e. a single mesh, with two materials can have 2 primitives. Each with an
+        // asociated list of morph targets
+        //For morph targets == shapekeys
+        //Reset
+
+        normal_bufferview = NULL;
+        position_bufferview = NULL;
+        uv_bufferview = NULL;
+
+        //List morph targets
+        for (size_t mt_i = 0; mt_i < primitive.targets.size(); mt_i++){
+            std::map<std::string, int>& morph_target = primitive.targets.at(mt_i);
+            debug->Info("targets[%i].size() = %i\n",mt_i,morph_target.size());
+
+            std::map<std::string, int>::const_iterator it(morph_target.begin());
+            std::map<std::string, int>::const_iterator itEnd(morph_target.end());
+
+            int attrib_index = 0;
+            for (; it != itEnd; it++) {
+                debug->Info("targets[%i] : %s -> accessor: %i\n",mt_i, it->first.c_str(),it->second);
+                attrib_index++;
+
+                //We expect a morph target to consist of positions and normals, for a morph_vertex
+                const tinygltf::Accessor &accessor = model.accessors[it->second];
+                int size = 1;
+                if (accessor.type == TINYGLTF_TYPE_SCALAR) {
+                    size = 1;
+                } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
+                    size = 2;
+                } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
+                    size = 3;
+                } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
+                    size = 4;
+                } else {
+                    debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
+                }
+
+                if (accessor.sparse.isSparse){
+                    debug->Fatal("We don't support sparse accessors in GLB files yet.\n");
+                    //TODO: Make it do
+                }
+
+                if (it->first.compare("NORMAL") == 0){
+                    normal_bufferview = &model.bufferViews[accessor.bufferView];
+                }else if (it->first.compare("POSITION") == 0){
+                    position_bufferview = &model.bufferViews[accessor.bufferView];
+                }else{
+                    debug->Err("Unknown Morph Target accessor %s\n",it->first);
+                }
+            }
+
+            //We have to read these in using the same indices the base mesh was loaded with.
+            //Assemble the triangles:
+            int vertex_index = 0;
+            for (int t=0;t<triangle_count;t++){
+                morph_vertex vert1 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 0));
+                morph_vertex vert2 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 1));
+                morph_vertex vert3 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 2));
+
+                morph_verts.push_back(vert1);
+                morph_verts.push_back(vert2);
+                morph_verts.push_back(vert3);
+                vertex_index += 3;
+            }
+        }
     }
 
     if (optional_mat_list_out){
         optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
     }
 
-    debug->Trace("Generated %i skinned vertices. Loaded %i materials\n",verts.size(),materials.size());
+    debug->Info("Generated %i skinned vertices. Loaded %i materials\n",verts.size(),materials.size());
+    debug->Info("Loaded %i associated morph_target vertices.\n",morph_verts.size());
+
+    int num_morph_targets = morph_verts.size() / verts.size();
+    //Check if they are whole multiples
+    if (num_morph_targets * verts.size() != morph_verts.size()){
+        debug->Fatal("Loaded a fractional numper of morph vertices.\n");
+    }
+
     Mesh* mesh = new Mesh();
     mesh->SetSkinnedMeshData(&verts.at(0),verts.size());
+    if (morph_verts.size() > 0){
+        mesh->SetMorphMeshData(&morph_verts.at(0),morph_verts.size());
+    }
     mesh->num_materials = materials.size();
     return mesh;
 }

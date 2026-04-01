@@ -33,8 +33,12 @@ void Animation::LinkObjects(Object* root){
     root->GetAllSubObjects(objects);
     int count = 0;
     for (ObjectAnimation* object_animation:object_animations){
+        if (root->name.compare(object_animation->target_name) == 0){
+            modifies_root_object = true;
+        }
         for (Object* object:objects){
             if (object->name.compare(object_animation->target_name) == 0){
+                //debug->Info("Animation: Linking target %s to animation %s\n",object->name.c_str(),name.c_str());
                 object_animation->target = object;
                 count++;
                 break;
@@ -68,7 +72,9 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
         }
     }
     if (keyframe->f_position){
-        target->SetPosition(keyframe->position);
+        if (target->animation_mask > 0.0f){
+            target->SetPosition(keyframe->position);
+        }
     }
     if (keyframe->f_scale){
         debug->Fatal("TODO: Implement animation scaling\n");
@@ -172,6 +178,15 @@ void Animation::SetPositionUpdates(ObjectAnimation* object_animation, bool flag)
 ObjectAnimation* Animation::FindObjectAnimation(const std::string& target_name){
     for (int index=0;index<object_animations.size();index++){
         if (target_name.compare(object_animations.at(index)->target_name) == 0){
+            return object_animations.at(index);
+        }
+    }
+    return NULL;
+}
+
+ObjectAnimation* Animation::FindObjectAnimation(Object* target_object){
+    for (int index=0;index<object_animations.size();index++){
+        if (target_object == object_animations.at(index)->target){
             return object_animations.at(index);
         }
     }

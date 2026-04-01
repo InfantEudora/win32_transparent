@@ -76,6 +76,7 @@ CFLAGS+= -DAPP_HEADER=\"ApplicationIsoAnimation.h\"
 CFLAGS+= -DAPP_CLASS=ApplicationIsoAnimation
 SRCS += ApplicationIsoAnimation.cpp
 
+
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
 #CFLAGS+= -DAPP_CLASS=ApplicationGrid

@@ -21,6 +21,7 @@ class Animation{
     float duration = 0.0f;      // Value of last keyframe.
     float time_index = 0.0f;    // When playing
     bool looped = false;
+    bool modifies_root_object = false; // If this animation modifies the root object, we need to be careful when transitioning to it, and maybe move the root position to parent.
 
     //Apply the animation at supplied interval
     void LinkObjects(Object* root);
@@ -29,6 +30,7 @@ class Animation{
     void SetPositionUpdates(ObjectAnimation* object_animation, bool flag);
     void AddObjectAnimation(ObjectAnimation* object_animation);
     ObjectAnimation* FindObjectAnimation(const std::string& target_name);
+    ObjectAnimation* FindObjectAnimation(Object* target_object);
 
     //Lerp this animation at specified interval towards target animation at target interval.
     //The intermediate state is applied as if called with ApplyInterval
