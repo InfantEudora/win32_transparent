@@ -67,3 +67,11 @@ void AssetManager::ListAssets(){
         debug->Info(" - %s\n",asset->name.c_str());
     }
 }
+
+Mesh* AssetManager::GetMeshFromAsset(const char* asset_name){
+    Asset* asset = GetAsset(asset_name);
+    if (asset){
+        return asset->mesh;
+    }
+    return NULL;
+}

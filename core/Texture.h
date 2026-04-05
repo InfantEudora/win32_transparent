@@ -28,7 +28,11 @@ public:
     uint8_t* file_data = NULL;  // Data loaded from disk
 
     size_t img_data_sz = 0;
-    uint8_t* img_data = NULL;   // Decompressed image data
+    uint8_t* img_data = NULL;   // Decompressed image data (8-bit)
+
+    size_t hdr_data_sz = 0;
+    float*   hdr_data = NULL;   // Decompressed float image data (HDR)
+    bool     f_is_hdr = false;
 
     std::string name;   //When loaded from file, it's filename.
 
@@ -43,8 +47,10 @@ public:
     void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);
     void LoadFromMemory(uint8_t* data, size_t length, int target, int depth);
     void LoadFromFile(const char* filename, int target = GL_TEXTURE_2D, int depth_in = 0);
+    void LoadHDRFromFile(const char* filename, int depth_in = TEXTURE_DONT_UPLOAD);
 
-    vec3 GetValueAt(float x, float y); //Returns the pixel value at 0 ... 1 interval.
+    vec3 GetValueAt(float x, float y);  // Returns pixel value [0..255] (LDR)
+    vec3 GetValueAtF(float x, float y); // Returns pixel value as float (HDR), bilinear filtered
 
     //Compile texture
     void AppendTexture(Texture* target, int2 at);

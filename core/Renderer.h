@@ -105,6 +105,7 @@ class Renderer{
     void UploadMaterials();
     void UploadLights();
     void UploadCubeMap(CubeMap* cubemap);
+    void SetSkyboxCubemap(CubeMap* cubemap);
 
     Material* GetMaterial(int index);
     int FindMaterialIndex(const std::string &name);

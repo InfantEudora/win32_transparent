@@ -33,6 +33,7 @@ struct CharacterState{
     bool input_action_active = false;
     bool input_action = false;
     bool input_interact = false;
+    bool input_toggle_handgun = false;
 };
 
 class PlayerCharacter;
@@ -65,6 +66,8 @@ class PlayerCharacter : public virtual Skeleton{
 
     //And maybe a list of animation names that can be picked for certain actions, like idle and moving.
 
+    bool f_handgun_drawn = false;
+
     void MoveForward();
     void MoveBackward();
     void TurnLeft();
@@ -74,11 +77,14 @@ class PlayerCharacter : public virtual Skeleton{
     void ActionActive();
     void Action();
     void Interact();
+    void ToggleHandgun();
 
     void TurnLookLeft();
     void TurnLookRight();
     void TurnLookUp();
     void TurnLookDown();
+
+    Object* handgun = NULL;
 
     //Computes the facing and target angles for the character to look at a target. This is used for head and hip turning.
     //Sets the angle the character is facing, and the diff angle the target is in -Pi - Pi

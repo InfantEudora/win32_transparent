@@ -21,7 +21,14 @@ public:
     };
     Texture* texture[6];
 
+    // Set when built via LoadFromEquirectangular — single GL cubemap object.
+    GLuint cubemap_id = 0;
+
     void LoadFromFile(const char* filename, int depth_in);
+
+    // Convert an equirectangular image (HDR or LDR) to a cubemap.
+    // face_size: pixel size of each face. 0 = auto (source height / 2).
+    void LoadFromEquirectangular(const char* filename, int face_size = 0);
 };
 
 #endif

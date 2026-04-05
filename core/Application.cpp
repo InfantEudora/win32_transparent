@@ -1231,8 +1231,10 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     ImGui::Text("Current Animation : NULL");
                 }
                 if (object->current_transition){
+                    ImGui::Text("Transition->From  : %s @ %.2f / %.2f",object->current_transition->from->name.c_str(),object->current_transition->from->time_index,object->current_transition->from->duration);
                     ImGui::Text("Transition->To    : %s @ %.2f / %.2f",object->current_transition->to->name.c_str(),object->current_transition->to->time_index,object->current_transition->to->duration);
                 }else{
+                    ImGui::Text("Transition->From  : NULL");
                     ImGui::Text("Transition->To    : NULL");
                 }
                 ImGui::Text("Current Animation State : %i\n",object->animation_state);

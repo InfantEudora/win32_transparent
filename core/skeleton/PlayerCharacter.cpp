@@ -32,13 +32,14 @@ void PlayerCharacter::ProcessInputState(){
         character_state.input_action = false;
 
     }else if (character_state.input_action_active){
-        TransitionToAnimation("ActionIdle");
+        if (f_handgun_drawn){
+            TransitionToAnimation("PistolIdle");
+        }else{
+            TransitionToAnimation("ActionIdle");
+        }
         character_state.input_action_active = false;
         //On top of this animation, we want to rotate the hips to face the target
     }
-
-
-
     if (character_state.input_backward_down){
         TransitionToAnimation("WalkBackwardInPlace");
 
@@ -77,6 +78,10 @@ void PlayerCharacter::ProcessInputState(){
     if (character_state.input_interact){
         TransitionToAnimation("Pushing");
         character_state.input_interact = false;
+    }
+    if (character_state.input_toggle_handgun){
+        f_handgun_drawn = !f_handgun_drawn;
+        character_state.input_toggle_handgun = false;
     }
 }
 
@@ -365,6 +370,10 @@ void PlayerCharacter::Jump(){
 
 void PlayerCharacter::Interact(){
     character_state.input_interact = true;
+}
+
+void PlayerCharacter::ToggleHandgun(){
+    character_state.input_toggle_handgun = true;
 }
 
 void PlayerCharacter::TurnLookLeft(){

@@ -43,6 +43,7 @@ public:
 
     Asset* GetAsset(const char* asset_name);
     Object* GetObjectFromAsset(const char* asset_name, Object* optional_target=NULL);
+    Mesh* GetMeshFromAsset(const char* asset_name); //Should not be used to get meshes for objects.
     Asset* FindAssetInGroup(std::string& asset_name, std::string& group_name);
 };
 

@@ -94,6 +94,10 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
     }
 
     if (target->object_animations.size() != object_animations.size()){
+        //We can Lerp if we find the animation with the least amount of objects,
+        //and map those to the other animation.
+        //TODO
+
         debug->Err("Lerp on these animations are incompatible (%s -> %s)\n",name.c_str(),target->name.c_str());
         return;
     }

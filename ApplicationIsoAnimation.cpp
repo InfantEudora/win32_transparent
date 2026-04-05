@@ -1,6 +1,6 @@
 #include "ApplicationIsoAnimation.h"
 #include "Debug.h"
-
+#include "CubeMap.h"
 
 static Debugger *debug = new Debugger("ApplicationIsoAnimation", DEBUG_ALL);
 
@@ -137,6 +137,9 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("Idle","ActionIdle");
     t = character->animation_graph->AddTransition("ActionIdle","ActionIdle");
     t = character->animation_graph->AddTransition("ActionIdle","Boxing");
+    t = character->animation_graph->AddTransition("ActionIdle","PistolIdle");
+    t = character->animation_graph->AddTransition("PistolIdle","PistolIdle");
+    t = character->animation_graph->AddTransition("PistolIdle","ActionIdle");
     t = character->animation_graph->AddTransition("Boxing","Boxing");
     t = character->animation_graph->AddTransition("Boxing","ActionIdle");
     t = character->animation_graph->AddTransition("Boxing","Idle");
@@ -194,6 +197,15 @@ void ApplicationIsoAnimation::Init(void){
     plane->GetMesh()->mesh_mode = MESH_MODE_SHADER;
     plane->SetPosition(vec3(0,0.01,0));
     main_scene->AddObject(plane);
+
+    //Load a panorama skybox and convert it to a cubemap
+    CubeMap* cubemap = new CubeMap();
+    cubemap->LoadFromEquirectangular("data/christmas_photo_studio_01_2k.hdr");
+    renderer->SetSkyboxCubemap(cubemap);
+    renderer->f_render_skybox = true;
+    renderer->UploadCubeMap(cubemap);
+    renderer->skybox_shader = new Shader("shaders/skybox.vert","shaders/skybox.frag");
+    renderer->skybox_mesh = assetmanager->GetMeshFromAsset("cube");
 
     main_window->Resize(1680,900);
 }
@@ -362,7 +374,7 @@ void ApplicationIsoAnimation::RunLogic(){
             character->animation_override_ticks++;
         }
         if (input->WasKeyReleased(INPUT_G)){
-            f_mode_grab = !f_mode_grab;
+            character->ToggleHandgun();
         }
     }
 

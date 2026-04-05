@@ -22,6 +22,7 @@ class Animation{
     float time_index = 0.0f;    // When playing
     bool looped = false;
     bool modifies_root_object = false; // If this animation modifies the root object, we need to be careful when transitioning to it, and maybe move the root position to parent.
+    bool f_end_orientation_different = false; // If at the end of the animation, the orientation is different. This is used for blending to a new animation that starts with a different orientation.
 
     //Apply the animation at supplied interval
     void LinkObjects(Object* root);

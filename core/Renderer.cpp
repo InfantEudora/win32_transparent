@@ -533,8 +533,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         tmr_frame->Restart();
     }
 
-    //TODO: Where/When to render Skybox. Re-Test
-    //DrawSkyBox(camera);
+
 
     PrepareObjects();
 
@@ -582,14 +581,22 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
 
+    //TODO: Where/When to render Skybox. Re-Test
+    DrawSkyBox(camera);
+    shader->Use();
+
     UploadMaterials();
     UploadLights();
+
+
 
     shader->Setint("f_materialindex_is_color",0);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
     shader->Setint("f_materialindex_is_color",1);
     RenderUniqueMeshes(MESH_MODE_LINE);
     shader->Setint("f_materialindex_is_color",0);
+
+
 
     //A seperate render pass for meshes that use a custom shader.
     if (deferred_shader_custom && camera){
@@ -1047,9 +1054,20 @@ void Renderer::UploadMaterials(){
     }
 }
 
+void Renderer::SetSkyboxCubemap(CubeMap* cubemap){
+    skybox = cubemap;
+}
+
 void Renderer::UploadCubeMap(CubeMap* cubemap){
-    //We upload each of the
-    for (int i = 0;i<6;i++){
+    if (cubemap->cubemap_id){
+        // Built via LoadFromEquirectangular — one GL object, bind once.
+        debug->Info("UploadCubeMap: binding equirectangular cubemap to unit %i\n", last_texture_unit);
+        glBindTextureUnit(last_texture_unit, cubemap->cubemap_id);
+        last_texture_unit++;
+        return;
+    }
+    // Legacy path: 6 separate Texture objects sharing a texture_id.
+    for (int i = 0; i < 6; i++){
         if (cubemap->texture[i]){
             debug->Info("Loading CubeMap %i/6 : %s to texture_unit %i\n",i,cubemap->texture[0]->name.c_str(),last_texture_unit);
             glBindTextureUnit(last_texture_unit, cubemap->texture[i]->texture_id);

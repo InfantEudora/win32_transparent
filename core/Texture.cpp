@@ -17,6 +17,9 @@ Texture::~Texture(){
     if (file_data){
         free(file_data);
     }
+    if (hdr_data){
+        stbi_image_free(hdr_data);
+    }
 }
 
 //Creates the image handle in OpenGL
@@ -145,21 +148,18 @@ void Texture::LoadFromFile(const char* filename, int target, int depth_in){
 
 //CPU interpolation time!
 vec3 Texture::GetValueAt(float x, float y){
-    vec3 p = vec3(x,y,0);
+    x = clamp(x, 0.0f, 1.0f);
+    y = clamp(y, 0.0f, 1.0f);
 
-    int row = (float)height * y;
-    int ypixel_index = row * width * 3;
-    float pixel_index = ((float)width * x * 3) + ypixel_index;
+    int stride = (image_format == GL_RGBA) ? 4 : 3;
+    int row    = (int)((float)height * y);
+    int col    = (int)((float)width  * x);
+    int index  = (row * width + col) * stride;
 
-    int index = pixel_index;
-    //debug->Info("Getting data from pixel index %i\n",pixel_index);
-    p = vec3(img_data[index + 0],img_data[index + 1],img_data[index + 2]);
-
-
-    //Clamp output range
-    p.x = clamp(p.x ,0,255);
-    p.y = clamp(p.y ,0,255);
-    p.z = clamp(p.z ,0,255);
+    vec3 p = vec3(img_data[index], img_data[index+1], img_data[index+2]);
+    p.x = clamp(p.x, 0, 255);
+    p.y = clamp(p.y, 0, 255);
+    p.z = clamp(p.z, 0, 255);
     return p;
 } //Returns the pixel value at 0 ... 1 interval.
 
@@ -170,6 +170,61 @@ bool Texture::IsEmpty(){
 void Texture::CopyLine(uint8_t* line, int num_pixels, uint8_t* out, int num_color_channels){
     if (line && out)
     memcpy(out,line,num_pixels * num_color_channels);
+}
+
+// Load a Radiance HDR (.hdr) file into float CPU data.
+// depth_in = TEXTURE_DONT_UPLOAD: CPU only (for cubemap conversion).
+// depth_in = 0: upload as a plain GL_TEXTURE_2D.
+void Texture::LoadHDRFromFile(const char* filename, int depth_in){
+    f_is_hdr = true;
+    name     = filename;
+    depth    = depth_in;
+
+    int w, h, channels;
+    stbi_set_flip_vertically_on_load(false);
+    hdr_data = stbi_loadf(filename, &w, &h, &channels, 3); // force RGB
+    if (!hdr_data){
+        debug->Err("LoadHDRFromFile: failed to load %s: %s\n", filename, stbi_failure_reason());
+        return;
+    }
+    width       = w;
+    height      = h;
+    hdr_data_sz = (size_t)w * h * 3 * sizeof(float);
+    storage_format = GL_RGB16F;
+    image_format   = GL_RGB;
+    debug->Info("LoadHDRFromFile: %s  %i x %i\n", filename, w, h);
+
+    if (depth_in == TEXTURE_DONT_UPLOAD){
+        return;
+    }
+
+    glCreateTextures(GL_TEXTURE_2D, 1, &texture_id);
+    glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTextureStorage2D(texture_id, 1, GL_RGB16F, width, height);
+    glTextureSubImage2D(texture_id, 0, 0, 0, width, height, GL_RGB, GL_FLOAT, hdr_data);
+}
+
+// Bilinear-filtered HDR sample. x, y in [0, 1].
+vec3 Texture::GetValueAtF(float x, float y){
+    x = clamp(x, 0.0f, 1.0f);
+    y = clamp(y, 0.0f, 1.0f);
+
+    float px = x * (width  - 1);
+    float py = y * (height - 1);
+    int x0 = (int)px,  y0 = (int)py;
+    int x1 = min(x0 + 1, width  - 1);
+    int y1 = min(y0 + 1, height - 1);
+    float fx = px - x0,  fy = py - y0;
+
+    auto s = [&](int cx, int cy) -> vec3 {
+        int i = (cy * width + cx) * 3;
+        return vec3(hdr_data[i], hdr_data[i+1], hdr_data[i+2]);
+    };
+    return s(x0,y0).lerp(s(x1,y0), fx).lerp(
+           s(x0,y1).lerp(s(x1,y1), fx), fy);
 }
 
 void Texture::AppendTexture(Texture* target, int2 at){
