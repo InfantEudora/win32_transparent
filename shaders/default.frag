@@ -32,6 +32,9 @@ layout (location = 8) in vec4 vshadow;    //This vertex' position as seen from s
 
 layout (binding = 0) uniform sampler2D material_texture[24];   //Input texture
 //layout (binding = 1) uniform sampler2D shadow_texture;
+layout (binding = 24) uniform samplerCube environment_map;
+//Setting for using reflections from environment map
+uniform int f_environment_map = 1;
 
 struct Material{
 	vec4 color;
@@ -293,6 +296,17 @@ vec4 CalcPBRLighting(){
     //Add some ambient
     total_light += 0.1f * albedo;
 
+    // Environment reflections from cubemap
+    if (f_environment_map > 0){
+        vec3 N = normalize(vnormal);
+        vec3 V = normalize(eye_position - vposition);
+        vec3 R = reflect(-V, N);
+        vec3 env = texture(environment_map, R).rgb;
+        // Metallic surfaces reflect the environment fully; rough surfaces don't.
+        float env_strength = m.metallic * (1.0 - m.roughness);
+        total_light += env * env_strength;
+    }
+
 
     //total_light *= 0.51f;
     //total_light += vshadow.xyz;
@@ -316,9 +330,7 @@ void main(){
         //We have to do this again here. We could use vmatindex... but intel.
         //On intel, use matindex_out.
         //On nvidia, use vmatindex.
-
         if (vmatindex > -1){
-
             m = materials[vmatindex];
         }else{
             //Default invalid material

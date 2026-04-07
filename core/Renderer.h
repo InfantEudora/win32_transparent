@@ -175,6 +175,8 @@ class Renderer{
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;
     int last_texture_unit = 0;
+    int num_texture_units = 24;
+    int cubemap_texture_unit = 24; //We reserve the last texture unit for the skybox cubemap, so we can easily bind it in the shader without needing to change other texture bindings.
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;                           // An array of unique meshes

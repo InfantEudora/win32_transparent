@@ -554,19 +554,19 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         RenderDepthPasses(shader,MESH_MODE_SKINNED);
     }
 
-    //Depth pass with default shader.
-    shader->Use();
-    vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
-    shader->Setvec3("eye_position",p);
-    if (!shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
-        debug->Fatal("Could not set f_normal_mapping in default shader\n");
+    {//Depth pass with default shader.
+        shader->Use();
+        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
+        shader->Setvec3("eye_position",p);
+        if (!shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
+            debug->Fatal("Could not set f_normal_mapping in default shader\n");
+        }
+        shader->Setfloat("alpha_clip",alpha_clip);
+        shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
+        RenderDepthPasses(shader,MESH_MODE_NORMAL);
+        RenderDepthPasses(shader,MESH_MODE_SHADER);
+        FinishDepthPasses();
     }
-    shader->Setfloat("alpha_clip",alpha_clip);
-    shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
-    RenderDepthPasses(shader,MESH_MODE_NORMAL);
-    RenderDepthPasses(shader,MESH_MODE_SHADER);
-
-    FinishDepthPasses();
 
     glBindTextureUnit(0, shadow_tex_id);
     shader->Setmat4("mat_worldcam",camera->mat_cam);
@@ -581,14 +581,13 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
 
-    //TODO: Where/When to render Skybox. Re-Test
-    DrawSkyBox(camera);
+    { //We draw skybox before other stuff
+        DrawSkyBox(camera);
+    }
     shader->Use();
 
     UploadMaterials();
     UploadLights();
-
-
 
     shader->Setint("f_materialindex_is_color",0);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
@@ -1061,17 +1060,15 @@ void Renderer::SetSkyboxCubemap(CubeMap* cubemap){
 void Renderer::UploadCubeMap(CubeMap* cubemap){
     if (cubemap->cubemap_id){
         // Built via LoadFromEquirectangular — one GL object, bind once.
-        debug->Info("UploadCubeMap: binding equirectangular cubemap to unit %i\n", last_texture_unit);
-        glBindTextureUnit(last_texture_unit, cubemap->cubemap_id);
-        last_texture_unit++;
+        debug->Info("UploadCubeMap: binding equirectangular cubemap to unit %i\n", cubemap_texture_unit);
+        glBindTextureUnit(cubemap_texture_unit, cubemap->cubemap_id);
         return;
     }
     // Legacy path: 6 separate Texture objects sharing a texture_id.
     for (int i = 0; i < 6; i++){
         if (cubemap->texture[i]){
-            debug->Info("Loading CubeMap %i/6 : %s to texture_unit %i\n",i,cubemap->texture[0]->name.c_str(),last_texture_unit);
-            glBindTextureUnit(last_texture_unit, cubemap->texture[i]->texture_id);
-            last_texture_unit++;
+            debug->Info("Loading CubeMap %i/6 : %s to texture_unit %i\n",i,cubemap->texture[0]->name.c_str(),cubemap_texture_unit+i);
+            glBindTextureUnit(cubemap_texture_unit+i, cubemap->texture[i]->texture_id);
         }
     }
 }
