@@ -456,9 +456,9 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
                 break;
             }else if (wParam == 'C'){
                 if (wnd->f_control_down){
-                    wnd->f_should_quit = true;
                     debug->Info("CTRL+C on window\n");
-                    DestroyWindow(wnd->hWnd);
+                    //DestroyWindow(wnd->hWnd);
+                    //wnd->f_should_quit = true;
                 }
                 break;
             }else{

@@ -14,74 +14,74 @@ PlayerCharacter::~PlayerCharacter(){
 
 //Function checks input and applies correct animation and state.
 void PlayerCharacter::ProcessInputState(){
-    if (!(character_state.input_forward_down || character_state.input_backward_down ||
-          character_state.input_left_down || character_state.input_right_down
-        || character_state.input_jump || character_state.input_action
-        || character_state.input_action_active)){
+    if (!(character_input_state.input_forward_down || character_input_state.input_backward_down ||
+         /* character_input_state.input_left_down || character_input_state.input_right_down ||*/
+        character_input_state.input_jump || character_input_state.input_action ||
+        character_input_state.input_action_active)){
         //No input was down. We proceed to idle animation once.
 
-        if (character_state.any_input_was_active){
+        if (character_input_state.any_input_was_active){
             TransitionToAnimation("Idle");
-            character_state.any_input_was_active = false;
+            character_input_state.any_input_was_active = false;
         }
     }else{
-        character_state.any_input_was_active = true;
+        character_input_state.any_input_was_active = true;
     }
-    if (character_state.input_action){
+    if (character_input_state.input_action){
         TransitionToAnimation("Boxing");
-        character_state.input_action = false;
+        character_input_state.input_action = false;
 
-    }else if (character_state.input_action_active){
+    }else if (character_input_state.input_action_active){
         if (f_handgun_drawn){
             TransitionToAnimation("PistolIdle");
         }else{
             TransitionToAnimation("ActionIdle");
         }
-        character_state.input_action_active = false;
+        character_input_state.input_action_active = false;
         //On top of this animation, we want to rotate the hips to face the target
     }
-    if (character_state.input_backward_down){
+    if (character_input_state.input_backward_down){
         TransitionToAnimation("WalkBackwardInPlace");
 
         MoveForwardBy(0.025f * animation_transition_factor);
-        character_state.input_backward_down = false;
+        character_input_state.input_backward_down = false;
     }
-    if (character_state.input_left_down){
+    if (character_input_state.input_left_down){
         float delta = 0.025f;
-        if (f_rotation_animation && !character_state.input_forward_down){
+        if (f_rotation_animation && !character_input_state.input_forward_down){
             TransitionToAnimation("TurnLeftInPlace");
             delta = 0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
         RotateBy(q);
-        character_state.input_left_down = false;
+        character_input_state.input_left_down = false;
     }
-    if (character_state.input_right_down){
+    if (character_input_state.input_right_down){
         float delta = -0.025f;
-        if (f_rotation_animation && !character_state.input_forward_down){
+        if (f_rotation_animation && !character_input_state.input_forward_down){
             TransitionToAnimation("TurnRightInPlace");
             delta = -0.025f * animation_transition_factor;
         }
         quat q = quat(vec3(0,1,0),delta);
         RotateBy(q);
-        character_state.input_right_down = false;
+        character_input_state.input_right_down = false;
     }
-    if (character_state.input_forward_down){
+    if (character_input_state.input_forward_down){
         TransitionToAnimation("Walking");
         MoveForwardBy(-0.025f * animation_transition_factor);
-        character_state.input_forward_down = false;
+        character_input_state.input_forward_down = false;
     }
-    if (character_state.input_jump){
+    if (character_input_state.input_jump){
         TransitionToAnimation("JoyfullJump");
-        character_state.input_jump = false;
+        character_input_state.input_jump = false;
     }
-    if (character_state.input_interact){
+    if (character_input_state.input_interact){
         TransitionToAnimation("Pushing");
-        character_state.input_interact = false;
+        character_input_state.input_interact = false;
     }
-    if (character_state.input_toggle_handgun){
+    if (character_input_state.input_toggle_handgun){
         f_handgun_drawn = !f_handgun_drawn;
-        character_state.input_toggle_handgun = false;
+        character_input_state.input_toggle_handgun = false;
     }
 }
 
@@ -196,7 +196,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
         current_animation->ApplyInterval(current_animation->time_index);
 
-        if (pos_delta.length() > 0){
+        if (current_animation->modifies_root_object && (pos_delta.length() > 0)){
             //We manually apply the position change, but rotated by our current orientation.
             MoveBy(GetRotation()*pos_delta);
         }
@@ -236,10 +236,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         //We need to play the current and the next animation,
         //and loop both if we transistion longer than the animation is.
         //If the current animation is a non-looping animation, we need to make sure we don't play past the end of it.
-
-        if (current_transition->f_only_last_frame){
-            hip_bone->animation_mask = 0;
-        }
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
             if (!current_animation->looped){
@@ -252,7 +248,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         current_transition->to->time_index += time_delta;
         if (current_transition->to->time_index > current_transition->to->duration){
             current_transition->to->time_index -= current_transition->to->duration;
-            //debug->Info("Transition: next_animation rewind.\n");
         }
 
         float chosen_max_blend_time = 0;
@@ -275,7 +270,58 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             current_animation = current_transition->to;
             animation_state = ANIMATION_STATE_LOOPING;
 
-            hip_bone->animation_mask = 1;
+
+        }
+    }
+    //We rewind the transition if we are aborting the transition.
+    if (animation_state == ANIMATION_STATE_TRANSITION_BACK){
+        if (!current_transition){
+            debug->Warn("No current transition to transition back from.\n");
+            animation_state = ANIMATION_STATE_PAUSED;
+            return;
+        }
+        if (current_transition->from == current_animation){
+
+            current_animation->time_index -= time_delta;
+            if (current_animation->time_index < 0){
+                if (!current_animation->looped){
+                    current_animation->time_index = 0;
+                }else{
+                    current_animation->time_index += current_animation->duration;
+                }
+            }
+            //Rewind next animation as well.
+            current_transition->to->time_index -= time_delta;
+            if (current_transition->to->time_index < 0){
+                current_transition->to->time_index += current_transition->to->duration;
+            }
+
+            debug->Info("Rewinding transition from %s to %s\n",current_transition->from->name.c_str(),current_transition->to->name.c_str());
+            //We just need to rewind the current transition.
+            animation_transition_time -= time_delta;
+            if (animation_transition_time <= 0){
+                animation_transition_time = 0;
+                current_animation = current_transition->from;
+                animation_state = ANIMATION_STATE_LOOPING;
+                debug->Info("Transition rewind complete. Now at %s\n",current_animation->name.c_str());
+            }else{
+                float chosen_max_blend_time = 0;
+                if (current_transition->blend_time >= 0){
+                    chosen_max_blend_time = current_transition->blend_time;
+                }else{
+                    chosen_max_blend_time = animation_transition_time_max;
+                }
+
+                animation_transition_factor =  animation_transition_time / chosen_max_blend_time;
+                if (chosen_max_blend_time == 0){
+                    animation_transition_factor = 0;
+                }
+
+                current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
+            }
+        }else{
+            debug->Warn("Current animation is not the target of the current transition. Cannot transition back.\n");
+            animation_state = ANIMATION_STATE_PAUSED;
         }
     }
 
@@ -335,21 +381,21 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 }
 
 void PlayerCharacter::MoveForward(){
-    character_state.input_forward_down = true;
+    character_input_state.input_forward_down = true;
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void PlayerCharacter::MoveBackward(){
-    character_state.input_backward_down = true;
+    character_input_state.input_backward_down = true;
 }
 
 //Going to play a move forward animation based on whatever animation its in.
 void PlayerCharacter::TurnRight(){
-    character_state.input_right_down = true;
+    character_input_state.input_right_down = true;
 }
 
 void PlayerCharacter::TurnLeft(){
-    character_state.input_left_down = true;
+    character_input_state.input_left_down = true;
 }
 
 void PlayerCharacter::ToIdle(){
@@ -357,23 +403,23 @@ void PlayerCharacter::ToIdle(){
 }
 
 void PlayerCharacter::ActionActive(){
-    character_state.input_action_active = true;
+    character_input_state.input_action_active = true;
 }
 
 void PlayerCharacter::Action(){
-    character_state.input_action = true;
+    character_input_state.input_action = true;
 }
 
 void PlayerCharacter::Jump(){
-    character_state.input_jump = true;
+    character_input_state.input_jump = true;
 }
 
 void PlayerCharacter::Interact(){
-    character_state.input_interact = true;
+    character_input_state.input_interact = true;
 }
 
 void PlayerCharacter::ToggleHandgun(){
-    character_state.input_toggle_handgun = true;
+    character_input_state.input_toggle_handgun = true;
 }
 
 void PlayerCharacter::TurnLookLeft(){

@@ -5,35 +5,38 @@
     A character that you control.
 
     TODO:
-
-    - Play an idle animation.
-    - Goto a walking animation when pressing forward.
-    The animation can be done in place, but it makes more sense to get the animation with position changes.
-
     When lerping to a different animation, that may be in place we'd need to move the root, or hip from local transform to parent.
 
     The character is in a state, character state. These can be many things at once.
     Moving forward and turning at the same time.
     Or jumping moving and turning.
     Some combinations might have unique animations.
-    Some animations require the animation to finish playing of be beyond some point.
+    Some animations require the animation to finish playing or be beyond some point.
+
+    The should be a way to overlay animations that only change the upper body, like shooting a gun,
+    on top of a moving animation. So maybe a separate state for upper body actions?
 */
 
-struct CharacterState{
+struct CharacterInputState{
     bool input_forward_down = false;
     bool input_backward_down = false;
     bool input_left_down = false;
     bool input_right_down = false;
     bool input_jump = false;
-    bool any_input_was_active = false;
-    bool moving_forward = false;
-    bool moving_backward = false;
-    bool moving_left = false;
-    bool moving_right = false;
     bool input_action_active = false;
     bool input_action = false;
     bool input_interact = false;
     bool input_toggle_handgun = false;
+    //Catch-all
+    bool any_input_was_active = false;
+};
+
+//
+struct CharacterAnimationState{
+    bool moving_forward = false;
+    bool moving_backward = false;
+    bool moving_left = false;
+    bool moving_right = false;
 };
 
 class PlayerCharacter;
@@ -43,8 +46,7 @@ class PlayerCharacter : public virtual Skeleton{
     PlayerCharacter();
     ~PlayerCharacter();
 
-    CharacterState character_state;
-
+    CharacterInputState character_input_state;
 
     void ApplyAnimation(float time_delta) override;
 

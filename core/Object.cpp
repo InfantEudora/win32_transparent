@@ -713,7 +713,6 @@ void Object::SwitchToAnimation(Animation* animation){
     animation_state = ANIMATION_STATE_LOOPING;
 }
 
-
 void Object::TransitionToAnimation(const std::string& name){
     TransitionToAnimation(FindAnimation(name));
 }
@@ -730,10 +729,32 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
         return;
     }
 
+    //Check that we are not already transitioning to a new animation.
+    Animation* target_animation = current_animation; //The animation we are in, or are transitioning to
+
+    if (current_transition && (animation_state == ANIMATION_STATE_TRANSITION)){
+        if (animation == current_transition->to){
+            debug->Info("Already transitioning to this animation\n");
+            return;
+        }
+        debug->Info("Currently Transition from %s to %s. Request Transition back to %s\n",current_animation ? current_animation->name.c_str() : "NULL",current_transition->to ? current_transition->to->name.c_str() : "NULL",animation->name.c_str());
+        if (current_transition->from == animation){
+            debug->Info("Rewinding transition back to %s\n",animation->name.c_str());
+            animation_state = ANIMATION_STATE_TRANSITION_BACK;
+        }else{
+            debug->Warn("Cannot transition back to %s.\n",animation->name.c_str());
+            animation_state = ANIMATION_STATE_PAUSED;
+        }
+        return;
+
+        //We are in the middle of a transition. We can either continue to the current target animation, or we can attempt to transition to the new one.
+        //Or rewind this transition.
+    }
+
     //First we attempt to find the transition from the current animation to the new one.
-    debug->Trace("Looking for transition from %s to %s\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
-    if (current_animation && animation && current_animation->name.compare(animation->name) == 0){
-        if (current_animation->looped){
+    debug->Trace("Looking for transition from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
+    if (target_animation && animation && target_animation->name.compare(animation->name) == 0){
+        if (target_animation->looped){
             debug->Trace("Animation is looped\n");
             return;
         }
@@ -742,10 +763,10 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
 
     if (!transition && animation_graph){
         for (AnimationTransition* t:animation_graph->transitions){
-            if ((t->from == current_animation) && (t->to == animation)){
+            if ((t->from == target_animation) && (t->to == animation)){
                 transition = t;
 
-                debug->Info("Found transition from %s to %s\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
+                debug->Info("Found transition from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
                 break;
             }
         }
@@ -753,13 +774,13 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
     current_transition = transition;
 
     if (transition == NULL){
-        debug->Info("ProceedToAnimation: No transition found from %s to %s. Pausing animation.\n",current_animation ? current_animation->name.c_str() : "NULL",animation->name.c_str());
+        debug->Info("ProceedToAnimation: No transition found from %s to %s. Pausing animation.\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
 
         animation_state = ANIMATION_STATE_PAUSED;
         return;
     }
 
-    if (animation == current_animation){
+    if (animation == target_animation){
         //We are already playing this animation... but... we might be transitioning to a new one.
         if (animation_state != ANIMATION_STATE_LOOPING){
             debug->Info("Proceed to animation during non looping state.\n");
@@ -777,6 +798,9 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
         animation_transition_time = 0.0f;
         animation_transition_factor = 0.0f;
         //We record the current position and rotation as needing to be applied.
+    }else{
+        debug->Warn("Transition from ANIMATION_STATE_TRANSITION(START)\n");
+        animation_state = ANIMATION_STATE_TRANSITION_START;
     }
 }
 

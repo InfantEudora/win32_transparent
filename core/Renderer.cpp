@@ -589,6 +589,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     UploadMaterials();
     UploadLights();
 
+    shader->Setint("f_environment_reflections",f_use_reflections);
     shader->Setint("f_materialindex_is_color",0);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
     shader->Setint("f_materialindex_is_color",1);
@@ -616,6 +617,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         if (!skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
             debug->Fatal("Could not set f_normal_mapping in skinned shader\n");
         }
+        skinned_shader->Setint("f_environment_reflections",f_use_reflections);
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",0);
         RenderUniqueMeshes(MESH_MODE_SKINNED);

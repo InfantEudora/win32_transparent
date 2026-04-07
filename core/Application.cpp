@@ -7,6 +7,9 @@
 #include "Window.h"
 #include "Renderer.h"
 
+#include "tinygltf/json.hpp"
+using json = nlohmann::json;
+
 static Debugger *debug = new Debugger("Application", DEBUG_ALL);
 
 Application::Application(){
@@ -598,6 +601,32 @@ void Application::RenderDebugMenuBar(){
             ImGui::EndMenu();
         }
 
+        if (main_scene && ImGui::BeginMenu("Export Scene")){
+            if (ImGui::MenuItem("Scene Objects to export.json")){
+                FILE* f = fopen("export.json", "w");
+                if (f){
+                    fprintf(f, "{\n  \"objects\": [\n");
+                    bool first = true;
+                    for (Object* object : main_scene->renderer->objects){
+                        vec3 pos = object->GetPosition();
+                        quat rot = object->GetRotation();
+                        if (!first) fprintf(f, ",\n");
+                        fprintf(f, "    { \"name\": \"%s\", \"position\": [%.4f, %.4f, %.4f], \"rotation\": [%.4f, %.4f, %.4f, %.4f] }",
+                                object->name.c_str(),
+                                pos.x, pos.y, pos.z,
+                                rot.x, rot.y, rot.z, rot.w);
+                        first = false;
+                    }
+                    fprintf(f, "\n  ]\n}\n");
+                    fclose(f);
+                    debug->Info("Exported %zu objects to export.json\n", main_scene->renderer->objects.size());
+                }else{
+                    debug->Err("Failed to open export.json for writing\n");
+                }
+            }
+            ImGui::EndMenu();
+        }
+
         //Render class spcific menu bar things
         RenderDebugMenuBarClass();
 
@@ -710,12 +739,14 @@ void Application::RenderApplicationUI(){
     }
 
     if (ImGui::CollapsingHeader("Renderer")){
-        ImGui::Text(    "Normal Mapping :");ImGui::SameLine();
+        ImGui::Text(    "Normal Mapping     :");ImGui::SameLine();
         ImGui::Checkbox("##1", &renderer->f_normal_mapping);
-        ImGui::Text(    "SSAO           :");ImGui::SameLine();
+        ImGui::Text(    "SSAO               :");ImGui::SameLine();
         ImGui::Checkbox("##2", &renderer->f_ssao);
-        ImGui::Text(    "Render Skybox  :");ImGui::SameLine();
+        ImGui::Text(    "Render Skybox      :");ImGui::SameLine();
         ImGui::Checkbox("##3", &renderer->f_render_skybox);
+        ImGui::Text(    "Render Reflections :");ImGui::SameLine();
+        ImGui::Checkbox("##4", &renderer->f_use_reflections);
 
         int view_buffer = renderer->view_buffer;
         if (ImGui::SliderInt("View Buffer      : ",&view_buffer,0,8)){
@@ -1210,8 +1241,10 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     if (ImGui::Button(animation->name.c_str())){
                         AnimationTransition* transition = object->animation_graph ? object->animation_graph->FindTransition(object->current_animation, animation) : NULL;
                         if (transition){
+                            //debug->Info("Transition found from %s to %s. Transitioning!\n",transition->from ? transition->from->name.c_str() : "NULL",transition->to ? transition->to->name.c_str() : "NULL");
                             object->TransitionToAnimation(animation,transition);
                         }else{
+                            //debug->Info("No transition found from %s to %s. Switching directly.\n",object->current_animation ? object->current_animation->name.c_str() : "NULL",animation->name.c_str());
                             object->SwitchToAnimation(animation);
                         }
                     }
@@ -1231,8 +1264,16 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     ImGui::Text("Current Animation : NULL");
                 }
                 if (object->current_transition){
-                    ImGui::Text("Transition->From  : %s @ %.2f / %.2f",object->current_transition->from->name.c_str(),object->current_transition->from->time_index,object->current_transition->from->duration);
-                    ImGui::Text("Transition->To    : %s @ %.2f / %.2f",object->current_transition->to->name.c_str(),object->current_transition->to->time_index,object->current_transition->to->duration);
+                    if (object->current_transition->from){
+                        ImGui::Text("Transition->From  : %s @ %.2f / %.2f",object->current_transition->from->name.c_str(),object->current_transition->from->time_index,object->current_transition->from->duration);
+                    }else{
+                        ImGui::Text("Transition->From  : NULL (Reference Pose)");
+                    }
+                    if (object->current_transition->to){
+                        ImGui::Text("Transition->To    : %s @ %.2f / %.2f",object->current_transition->to->name.c_str(),object->current_transition->to->time_index,object->current_transition->to->duration);
+                    }else{
+                        ImGui::Text("Transition->To    : NULL (Reference Pose)");
+                    }
                 }else{
                     ImGui::Text("Transition->From  : NULL");
                     ImGui::Text("Transition->To    : NULL");
@@ -1511,6 +1552,38 @@ Scene* Application::CreateNewScene(const std::string& name){
     scenes.push_back(scene);
     return scene;
 }
+
+//Attempt to load all assets from the assetmanager.
+void Application::BuildSceneFromJSON(){
+    debug->Info("Building scene from JSON export\n");
+    size_t file_data_sz = 0;
+    uint8_t* file_data = NULL;  // Data loaded from disk
+    file_data = LoadFile("export.json",&file_data_sz);
+
+    auto j1 = json::parse(file_data);
+    //Iterate the objects:
+    for (json& j_object:j1["objects"]){
+        std::string name = j_object["name"].get<std::string>();
+        Object* object = assetmanager->GetObjectFromAsset(name.c_str());
+        if (object == NULL){
+            debug->Err("Could not find asset with name %s\n",name.c_str());
+            continue;
+        }
+        object->name = name;
+        auto pos_array = j_object["position"].get<std::vector<float>>();
+        if (pos_array.size() == 3){
+            object->SetPosition(vec3(pos_array[0],pos_array[1],pos_array[2]));
+        }
+        auto rot_array = j_object["rotation"].get<std::vector<float>>();
+        if (rot_array.size() == 4){
+            object->SetRotation(quat(rot_array[0],rot_array[1],rot_array[2],rot_array[3]));
+        }
+        debug->Info("Loaded object with name %s at position (%.2f, %.2f, %.2f)\n", name.c_str(), object->GetPosition().x, object->GetPosition().y, object->GetPosition().z);
+        main_scene->AddObject(object);
+    }
+}
+
+
 
 //Get's the currently loaded GLTF file, and imports everyting that wasn't imported.
 //This has to be called from a thread that owns the OpenGL context.

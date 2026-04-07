@@ -25,7 +25,8 @@ typedef uint32_t objectid_t;
 #define ANIMATION_STATE_LOOPING             1
 #define ANIMATION_STATE_TRANSITION_START    2
 #define ANIMATION_STATE_TRANSITION          3
-#define ANIMATION_STATE_LOAD_DEFAULT_POSE   4
+#define ANIMATION_STATE_TRANSITION_BACK     4
+#define ANIMATION_STATE_LOAD_DEFAULT_POSE   5
 
 typedef enum ObjectStateAccess{
     STATE_ACCESS_PHYSICS = 1,

@@ -437,9 +437,9 @@ void ApplicationAnimation::DrawImGuiUI(){
     ImGui::Begin("Character Animation");
     if (character){
         ImGui::Text("character_state");
-        ImGui::Text("moving_forward : %s",character->character_state.moving_forward ? "Yes" : "No");
-        ImGui::Text("moving_left    : %s",character->character_state.moving_left ? "Yes" : "No");
-        ImGui::Text("moving_right   : %s",character->character_state.moving_right ? "Yes" : "No");
+        //ImGui::Text("moving_forward : %s",character->character_input_state.moving_forward ? "Yes" : "No");
+        //ImGui::Text("moving_left    : %s",character->character_state.moving_left ? "Yes" : "No");
+        //ImGui::Text("moving_right   : %s",character->character_state.moving_right ? "Yes" : "No");
 
         if (character->tracked_foot_l && character->tracked_foot_r){
             vec3 fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_RENDERER);
@@ -474,7 +474,7 @@ void ApplicationAnimation::DrawImGuiUI(){
         ImGui::Separator();
         ImGui::Text("Head Turn Direction L/R : %.2f",character->head_turn_direction_lr);
         ImGui::Text("Head Turn Direction U/D : %.2f",character->head_turn_direction_ud);
-        ImGui::Checkbox("Movement in Place",&character->f_movement_animation_inplace);
+
         ImGui::Checkbox("Movement by Feet Placement",&character->f_move_by_feet_placement);
         ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override);
         ImGui::Checkbox("Rotation Animations",&character->f_rotation_animation);

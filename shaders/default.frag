@@ -34,7 +34,7 @@ layout (binding = 0) uniform sampler2D material_texture[24];   //Input texture
 //layout (binding = 1) uniform sampler2D shadow_texture;
 layout (binding = 24) uniform samplerCube environment_map;
 //Setting for using reflections from environment map
-uniform int f_environment_map = 1;
+uniform int f_environment_reflections = 1;
 
 struct Material{
 	vec4 color;
@@ -297,7 +297,7 @@ vec4 CalcPBRLighting(){
     total_light += 0.1f * albedo;
 
     // Environment reflections from cubemap
-    if (f_environment_map > 0){
+    if (f_environment_reflections > 0){
         vec3 N = normalize(vnormal);
         vec3 V = normalize(eye_position - vposition);
         vec3 R = reflect(-V, N);

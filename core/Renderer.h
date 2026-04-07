@@ -165,6 +165,7 @@ class Renderer{
     int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering
+    bool f_use_reflections = false;   // Enable/disable skybox reflections
     bool f_backface_culling = true;   //
     bool f_ssao = false;              //
     bool f_msaa = true;               //

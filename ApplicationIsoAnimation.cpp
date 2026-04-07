@@ -82,9 +82,9 @@ void ApplicationIsoAnimation::Init(void){
     gltfloader.LoadGLTFFile("data/isoanim.glb");
     GetAllAssetsFromGLTF();
 
-    Object* floor = assetmanager->GetObjectFromAsset("floor");
-    floor->name = "Floor";
-    main_scene->AddObject(floor);
+    //Load all the scenery from export.json that we don't already have.
+    BuildSceneFromJSON();
+
 
     //Load character model with animation data
     character = new PlayerCharacter();
@@ -178,6 +178,8 @@ void ApplicationIsoAnimation::Init(void){
 
     t = character->animation_graph->AddTransition("Idle","Pushing");
     t = character->animation_graph->AddTransition("Pushing","Idle");
+
+    t = character->animation_graph->AddTransition("torso_PistolIdle","torso_PistolIdle");
 
 
     //A handler for dropping files onto the window
@@ -446,10 +448,21 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
 
     ImGui::Begin("Character Animation");
     if (character){
-        ImGui::Text("character_state");
-        ImGui::Text("moving_forward : %s",character->character_state.moving_forward ? "Yes" : "No");
-        ImGui::Text("moving_left    : %s",character->character_state.moving_left ? "Yes" : "No");
-        ImGui::Text("moving_right   : %s",character->character_state.moving_right ? "Yes" : "No");
+        ImGui::TextColored(ImVec4(0.8,1,0.8,1),"Character Animation State");
+
+        ImGui::TextColored(ImVec4(0.8,1,0.8,1),"Character Input State");
+        if (character->character_input_state.input_forward_down){
+            ImGui::Text(" input_forward");
+        }
+        if (character->character_input_state.input_left_down){
+            ImGui::Text(" input_left");
+        }
+        if (character->character_input_state.input_right_down){
+            ImGui::Text(" input_right");
+        }
+        //ImGui::Text(" moving_forward : %s",character->character_state.moving_forward ? "Yes" : "No");
+        //ImGui::Text(" moving_left    : %s",character->character_state.moving_left ? "Yes" : "No");
+        //ImGui::Text(" moving_right   : %s",character->character_state.moving_right ? "Yes" : "No");
 
         if (character->tracked_foot_l && character->tracked_foot_r){
             vec3 fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_RENDERER);
