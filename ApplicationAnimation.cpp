@@ -65,7 +65,7 @@ void ApplicationAnimation::Init(void){
     gltfloader.GetSkeleton("gwen",assetmanager,skeleton);
     if (skeleton){
         std::vector<Material>loaded_materials;
-        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("gwen_body_t",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode("gwen_body_t",&loaded_materials,true);
         skeleton->SetMesh(skinned_mesh);
         skeleton->TakeMaterialNames(loaded_materials);
         skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);

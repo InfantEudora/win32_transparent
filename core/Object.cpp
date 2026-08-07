@@ -601,6 +601,10 @@ Object* Object::FindChild(std::string child_name){
     return NULL;
 }
 
+Object* Object::GetParent(){
+    return parent;
+}
+
 //Returns the specified child if there is one.
 Object* Object::GetChild(int index){
     std::list<Object*>::iterator it = children.begin();
@@ -653,6 +657,12 @@ void Object::DetachChild(Object* targetchild){
         }
     }
     debug->Fatal("Unable to detach child object id=%i from parent. %p from %p\n",targetchild->id, this, parent);
+}
+
+void Object::SetMaterialSlot(int slot, int material_id){
+    if ((slot >= 0) && (slot < NUM_MATERIAL_SLOTS)){
+        material_slot[slot] = material_id;
+    }
 }
 
 //Find materials from list in global list, and assign them to the material slots as they are ordered in the list
@@ -714,6 +724,7 @@ void Object::SwitchToAnimation(Animation* animation){
 }
 
 void Object::TransitionToAnimation(const std::string& name){
+    dbg_desired_animation_name = name;
     TransitionToAnimation(FindAnimation(name));
 }
 

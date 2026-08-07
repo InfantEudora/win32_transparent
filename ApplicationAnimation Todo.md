@@ -1,5 +1,6 @@
 ## Doing
-- [ ] Import a new mesh with seperate hair and eyes.
+- [x] Import a new mesh with seperate hair and eyes.
+
 
 ## ApplicationAnimation Todo
 - [ ] Implement hair tracking
@@ -10,6 +11,29 @@
 - [ ] So whe can pick the character up, like <br>
  ![Pick Up](pickup_character.png)
 - [ ] Make the character climb up on a box, and be able to jump down from it.
+
+## Workflow for Blender -> Mixamo -> Blender -> App
+
+From Blender to this application is easy. Export to glb. Import. Done.
+
+From Blender you first bake a character in preferably a T-Pose or something close. Autorig in Mixamo. Export. Import.
+Then in Blender the imported character animates, but the scale is all wrong.
+
+- Remove the animation.
+- Fix the skeleton scale to be 1 instead of 0.01. Set the rotation and position to 0.
+
+Then re-import into Mixamo. Each subsequent import should now have the correct scale.
+
+Each animation has a frame with a refrecen to the root object, that needs to be deleted.
+And all the Bone names need to be renamed from *Left* to .L with a script.
+
+Now you have a model that can be exported with all animations tied to it, and still mirrored editing works.
+
+Using Mixamo control Rig:
+TBD
+
+
+
 
 ## General Notes Findings and Frustrations
 

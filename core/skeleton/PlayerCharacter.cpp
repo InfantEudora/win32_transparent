@@ -72,7 +72,7 @@ void PlayerCharacter::ProcessInputState(){
         character_input_state.input_forward_down = false;
     }
     if (character_input_state.input_jump){
-        TransitionToAnimation("JoyfullJump");
+        TransitionToAnimation("Jump");
         character_input_state.input_jump = false;
     }
     if (character_input_state.input_interact){
@@ -267,10 +267,11 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         animation_transition_time += time_delta;
         if (animation_transition_time >= chosen_max_blend_time){
             animation_transition_time = chosen_max_blend_time;
+            //Reset the animation that we have transitioned from:
+            current_animation->time_index = 0;
             current_animation = current_transition->to;
             animation_state = ANIMATION_STATE_LOOPING;
-
-
+            debug->Info("Transition complete. Now at %s\n",current_animation->name.c_str());
         }
     }
     //We rewind the transition if we are aborting the transition.
@@ -301,6 +302,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_transition_time -= time_delta;
             if (animation_transition_time <= 0){
                 animation_transition_time = 0;
+                //Reset current animation
+                current_animation->time_index = 0;
                 current_animation = current_transition->from;
                 animation_state = ANIMATION_STATE_LOOPING;
                 debug->Info("Transition rewind complete. Now at %s\n",current_animation->name.c_str());

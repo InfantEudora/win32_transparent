@@ -93,24 +93,75 @@ void ApplicationIsoAnimation::Init(void){
 
     //Load character model with animation data
     character = new PlayerCharacter();
+
     Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
     gltfloader.GetSkeleton("character",assetmanager,skeleton);
     if (skeleton){
         std::vector<Material>loaded_materials;
-        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("body_female",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode("body_female",&loaded_materials,true);
         skeleton->SetMesh(skinned_mesh);
         skeleton->TakeMaterialNames(loaded_materials);
         skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
-        main_scene->AddObject(character);
-        character->root_bone_name = character->GetChild(0) ? character->GetChild(0)->name : "No Root Bone";
+        main_scene->AddObject(skeleton);
+        skeleton->root_bone_name = skeleton->GetChild(0) ? skeleton->GetChild(0)->name : "No Root Bone";
 
         //Add all animations from GLTF
         std::vector<std::string>animation_names = gltfloader.GetAnimationNames();
         for (std::string animation_name:animation_names){
             Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
-            character->AddAnimation(animation);
+            skeleton->AddAnimation(animation);
         }
     }
+
+    Object* bra = assetmanager->GetObjectFromAsset("bra");
+    if (bra){
+        character->AttachChild(bra);
+    }
+    Object* hair = assetmanager->GetObjectFromAsset("hair");
+    if (hair){
+        character->AttachChild(hair);
+    }
+    Object* eyes = assetmanager->GetObjectFromAsset("eyes");
+    if (eyes){
+        character->AttachChild(eyes);
+    }
+    Object* bottom = assetmanager->GetObjectFromAsset("bottom");
+    if (bottom){
+        character->AttachChild(bottom);
+    }
+
+    //Let's explore what the neatest way is to have parts of the character be able to load as a seperate mesh.
+    Skeleton* second_character = gltfloader.GetSkeleton("character",assetmanager);
+    if (second_character){
+        second_character->name = "Second Character";
+        std::vector<Material>loaded_materials;
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode("body_female",&loaded_materials,true);
+        second_character->SetMesh(skinned_mesh);
+        second_character->SetPosition(vec3(2,0,0));
+        second_character->TakeMaterialNames(loaded_materials);
+        second_character->PickMaterials(loaded_materials,main_scene->renderer->materials);
+        main_scene->AddObject(second_character);
+        second_character->root_bone_name = second_character->GetChild(0) ? second_character->GetChild(0)->name : "No Root Bone";
+
+        //Add all animations from GLTF
+        std::vector<std::string>animation_names = gltfloader.GetAnimationNames();
+        for (std::string animation_name:animation_names){
+            Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
+            second_character->AddAnimation(animation);
+        }
+    }
+
+
+    hair = assetmanager->GetObjectFromAsset("hair");
+    if (hair){
+        second_character->AttachChild(hair);
+    }
+    eyes = assetmanager->GetObjectFromAsset("eyes");
+    if (eyes){
+        second_character->AttachChild(eyes);
+    }
+
+
 
     //We'll attach a handgun to the character, and manually place it.
     Object* handgun = assetmanager->GetObjectFromAsset("pistol");
@@ -140,7 +191,6 @@ void ApplicationIsoAnimation::Init(void){
     if (t){
         t->blend_time = 0.75f;
     }
-
     t = character->animation_graph->AddTransition("Idle","Walking");
     t = character->animation_graph->AddTransition("Walking","Walking");
     t = character->animation_graph->AddTransition("Walking","WalkBackwardInPlace");
@@ -150,6 +200,11 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("WalkBackwardInPlace","Walking");
     t = character->animation_graph->AddTransition("Walking","Idle");
     t = character->animation_graph->AddTransition("Walking","ActionIdle");
+
+    t = character->animation_graph->AddTransition("Idle","Jump");
+    t = character->animation_graph->AddTransition("Jump","Jump");
+    t = character->animation_graph->AddTransition("Jump","Idle");
+
 
     t = character->animation_graph->AddTransition("Running","Running");
     t = character->animation_graph->AddTransition("Idle","BalanceOneLeg");
@@ -592,7 +647,11 @@ void ApplicationIsoAnimation::RenderSkeletonUI(){
     skeleton = selected_skeleton;
 
     Object* bones = skeleton->GetChild(0);
-
+    if (!bones){
+        ImGui::Text("Skeleton has no bones.\n");
+        ImGui::End();
+        return;
+    }
     bool obj_visible = bones->IsVisible();
     if (ImGui::Checkbox("Show Skeleton Bones",&obj_visible)){
         bones->SetVisibility(obj_visible);

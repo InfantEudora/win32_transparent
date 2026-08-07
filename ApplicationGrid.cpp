@@ -98,7 +98,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
         }
 
         loaded_materials.clear();
-        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("Hand",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode("Hand",&loaded_materials,true);
 
         scene->renderer->AddMaterials(loaded_materials);
         skeleton->SetMesh(skinned_mesh);
@@ -149,7 +149,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
             }
 
             loaded_materials.clear();
-            Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("Hand",&loaded_materials);
+            Mesh* skinned_mesh = gltfloader.GetMeshFromNode("Hand",&loaded_materials,true);
 
             scene->renderer->AddMaterials(loaded_materials);
             skeleton->SetMesh(skinned_mesh);
@@ -442,7 +442,7 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
         }
 
         loaded_materials.clear();
-        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode("character",&loaded_materials);
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode("character",&loaded_materials,true);
 
         scene->renderer->AddMaterials(loaded_materials);
         skeleton->SetMesh(skinned_mesh);

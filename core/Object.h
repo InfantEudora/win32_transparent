@@ -106,6 +106,7 @@ class Object{
     virtual void UpdatePhysicsState();
 
     std::string name;
+    std::string dbg_desired_animation_name; //What the character state wants for animation.
     fmat4 local_transform_scale_matrix;
     fmat4 world_transform_scale_matrix;
 
@@ -131,6 +132,7 @@ class Object{
     //Materials
     void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
     int material_slot[NUM_MATERIAL_SLOTS] = {};
+    void SetMaterialSlot(int slot, int material_id);
     void TakeMaterialNames(std::vector<Material>& list);
     std::array<std::string,NUM_MATERIAL_SLOTS>material_names; // List of material names the object should pick into it's material slots.
     bool f_update_materials = true; //In this render cycle, lookup materials from names and place them in slots.
@@ -197,16 +199,20 @@ class Object{
     uint32_t collision_category_bits = 0;
 
     //Hierarchy
-    Object* parent = NULL;              //Object we are a child of.
     std::list<Object*>children;
-
     bool    AttachChild(Object* newchild); //Attaches an object as a child.
     void    DetachChild(Object* targetchild);
     void    GetAllSubObjects(std::vector<Object*>& objects); //Add's all objects attached to this object into a vector.
     Object* GetLastChild();
+    Object* GetParent();
     Object* GetChild(int index);
     Object* FindChild(std::string child_name);
+    int     GetNumChildren(){return (int)children.size();};
 protected:
+    //Hierarchy
+    Object* parent = NULL;              //Object we are a child of.
+
+    //Flags
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable
     bool f_is_destroyed = false;    // Someone should clean it up.
 

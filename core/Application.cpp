@@ -430,9 +430,7 @@ void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicke
             }
             ImGui::TreePop();
         }
-
     }else{
-
         if (ImGui::TreeNodeEx((void*)p,ImGuiTreeNodeFlags_Bullet , "Object #%i - %s",id,object->name.c_str())){
             if (ImGui::IsItemClicked() && (lastclicked == NULL)){
                 selected_object = object;
@@ -510,7 +508,7 @@ void Application::RenderDebugMenuBar(){
                                     gltfloader.GetSkeleton(name.c_str(),assetmanager,skeleton);
                                     if (skeleton){
                                         std::vector<Material>loaded_materials;
-                                        Mesh* skinned_mesh = gltfloader.GetSkinnedMeshFromNode(skinned_mesh_name.c_str(),&loaded_materials);
+                                        Mesh* skinned_mesh = gltfloader.GetMeshFromNode(skinned_mesh_name.c_str(),&loaded_materials,true);
                                         skeleton->SetMesh(skinned_mesh);
                                         skeleton->TakeMaterialNames(loaded_materials);
                                         skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
@@ -841,19 +839,19 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
     ImGui::Text("Object Name     : %s",object->name.c_str());
     ImGui::Text("Object ID       : %lu",object->GetID());
 
-    if (object->parent){
-    ImGui::Text("Parent          : ID: %lu Name: %s",object->parent->GetID(),object->parent->name.c_str());
+    if (object->GetParent()){
+        ImGui::Text("Parent          : ID: %lu Name: %s",object->GetParent()->GetID(),object->GetParent()->name.c_str());
         if (ImGui::Button("Select Root Node")){
-            Object* o = object->parent;
-            while(o->parent){
-                o = o->parent;
+            Object* o = object->GetParent();
+            while(o->GetParent()){
+                o = o->GetParent();
             }
             selected_object = o;
         }
     }else{
         ImGui::Text("Parent          : Has No Parent");
     }
-    ImGui::Text("Children        : %i",object->children.size());
+    ImGui::Text("Children        : %i",object->GetNumChildren());
 
     bool obj_visible = object->IsVisible();
     if (ImGui::Checkbox("Visible",&obj_visible)){
@@ -1279,6 +1277,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     ImGui::Text("Transition->To    : NULL");
                 }
                 ImGui::Text("Current Animation State : %i\n",object->animation_state);
+                ImGui::Text("Desired Animation : %s\n",object->dbg_desired_animation_name.c_str());
 
             }
 
@@ -1671,7 +1670,7 @@ void Application::GetAllAssetsFromGLTF(){
             continue;
         }
 
-        Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials,true);
         if (gltfmesh){
             Object* gltf_object = new Object();
             gltf_object->name = nodename.c_str();
@@ -1680,6 +1679,10 @@ void Application::GetAllAssetsFromGLTF(){
             assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
             //Just add all...
             renderer->AddMaterials(loaded_materials);
+            if (loaded_materials.size() == 0){
+                //Mesh with no materials? We set the material to -1
+                gltf_object->material_slot[0] = -1;
+            }
         }
     }
     debug->Info("Loaded %i different materials from GLTF file\n",loaded_materials.size());

@@ -576,7 +576,9 @@ Material* GLTFLoader::LookupLoadedMaterial(const std::string& material_name){
     return NULL;
 }
 
-Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
+//Loads a Mesh from a node. Pass skinned=true to get a skinned_vertex Mesh built from GetSkinnedVertex instead.
+//Skinned mesh will fall back to normal mesh if the node does not contain a skin.
+Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out, bool _skinned){
     //First, we lookup the node.
     tinygltf::Node* node = FindNode(node_name);
     if (!node){
@@ -587,7 +589,12 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     //A node can contain a single mesh (or none)
     debug->Trace("Found Node %s for you.\n",node_name);
 
-    if (node->skin > -1){
+    bool skinned = _skinned;
+
+    if (skinned && (!(node->skin > -1))){
+        debug->Warn("GetMeshFromNode: Node %s does not contain a skin!\n",node_name);
+        skinned = false;
+    }else if (node->skin > -1){
         debug->Trace("Node %s contains a skin!\n",node_name);
     }
 
@@ -617,16 +624,15 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
 
     //All vertices loaded from this node.
     std::vector<vertex>verts;
+    std::vector<skinned_vertex>skinned_verts;
     std::vector<morph_vertex>morph_verts;
     std::vector<Material>materials;
 
     debug->Info("Node %s has %i primitives\n",node_name, nodemesh.primitives.size());
     for (tinygltf::Primitive &primitive : nodemesh.primitives){
         int material_index = primitive.material;
-        int diff_texture_index = -1;
 
         tinygltf::Material* gltfmaterial = NULL;
-        int material_id = -1;
         if (material_index > -1){
             gltfmaterial = &model.materials.at(material_index);
 
@@ -642,6 +648,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 m.glsl_material.roughness = gltfmaterial->pbrMetallicRoughness.roughnessFactor;
                 m.glsl_material.metallic = gltfmaterial->pbrMetallicRoughness.metallicFactor;
 
+                //We always load the base color
                 m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
                 m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
                 m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
@@ -650,10 +657,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 //If the material has a diffuse texture, we load that here
                 if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
                     //This material uses texture with index
-                    diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
-                    if (diff_texture_index == -1){
-                        debug->Fatal("diff_texture_index == -1\n");
-                    }
+                    int diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
                     debug->Info("diff_texture_index = %i\n",diff_texture_index);
 
                     Texture* diff_texture = new Texture();
@@ -682,10 +686,11 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 loaded_materials.push_back(m);
             }
             materials.push_back(m);
-            //Vertex parameter
-            material_id = materials.size() - 1;
-        }else{
-            //Primitive has no material defined. We use material slot 0 anyway, so we can load some kind of default material
+        }
+        //No material present leaves material_id at -1, the sentinel for a missing material.
+        int material_id = materials.size() - 1;
+        if (material_id < 0){
+            debug->Warn("Mesh primitive has no material\n");
             material_id = 0;
         }
 
@@ -697,6 +702,8 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         tinygltf::BufferView* normal_bufferview = NULL;
         tinygltf::BufferView* position_bufferview = NULL;
         tinygltf::BufferView* uv_bufferview = NULL;
+        tinygltf::BufferView* bones_bufferview = NULL;
+        tinygltf::BufferView* weights_bufferview = NULL;
 
         //Iterate over the accessors for each attribute.
         //Set the appropriate buffer views.
@@ -705,20 +712,9 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         for (; it != itEnd; it++) {
             //it->first is NORMAL, POSITION and maybe a TEXCOORD_0
             const tinygltf::Accessor &accessor = model.accessors[it->second];
-            int size = 1;
-            if (accessor.type == TINYGLTF_TYPE_SCALAR) {
-                size = 1;
-            } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
-                size = 2;
-            } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
-                size = 3;
-            } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
-                size = 4;
-            } else {
-                debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
-            }
+            int size = GetAccesorTypeSize(accessor);
 
-            debug->Info("Accessor Size = %i for %s\n",size,it->first.c_str());
+            debug->Trace("Accessor Size = %i for %s\n",size,it->first.c_str());
 
             if (it->first.compare("NORMAL") == 0){
                 normal_bufferview = &model.bufferViews[accessor.bufferView];
@@ -728,10 +724,15 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
             }else if (it->first.compare("TEXCOORD_0") == 0){
                 uv_bufferview = &model.bufferViews[accessor.bufferView];
             }else if (it->first.compare("JOINTS_0") == 0){
-                //Skinning
-                debug->Warn("Loading a skinned mesh as normal mesh\n");
+                if (skinned){
+                    bones_bufferview = &model.bufferViews[accessor.bufferView];
+                }else{
+                    debug->Warn("Loading a skinned mesh as normal mesh\n");
+                }
             }else if (it->first.compare("WEIGHTS_0") == 0){
-                //Skinning
+                if (skinned){
+                    weights_bufferview = &model.bufferViews[accessor.bufferView];
+                }
             }
         }
 
@@ -746,30 +747,57 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         //Assemble the triangles:
         int vertex_index = 0;
         for (int t=0;t<triangle_count;t++){
-            vertex vert1 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 0));
-            vertex vert2 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 1));
-            vertex vert3 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor, vertex_index + 2));
+            if (skinned){
+                skinned_vertex vert1 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor,vertex_index + 0));
+                skinned_vertex vert2 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor,vertex_index + 1));
+                skinned_vertex vert3 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor, vertex_index + 2));
 
-            //Tangent calculation
-            vec3 edge1 = vert2.pos - vert1.pos;
-            vec3 edge2 = vert3.pos - vert1.pos;
-            vec2 deltaUV1 = vert2.uv - vert1.uv;
-            vec2 deltaUV2 = vert3.uv - vert1.uv;
+                //Tangent calculation
+                vec3 edge1 = vert2.pos - vert1.pos;
+                vec3 edge2 = vert3.pos - vert1.pos;
+                vec2 deltaUV1 = vert2.uv - vert1.uv;
+                vec2 deltaUV2 = vert3.uv - vert1.uv;
 
-            float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-            vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
-            vert1.tangent.normalize();
-            vert2.tangent = vert1.tangent;
-            vert3.tangent = vert1.tangent;
+                float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+                vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
+                vert1.tangent.normalize();
+                vert2.tangent = vert1.tangent;
+                vert3.tangent = vert1.tangent;
 
-            //We use the last material we loaded.
-            vert1.matid = material_id;
-            vert2.matid = material_id;
-            vert3.matid = material_id;
+                //We use the last material we loaded.
+                vert1.matid = material_id;
+                vert2.matid = material_id;
+                vert3.matid = material_id;
 
-            verts.push_back(vert1);
-            verts.push_back(vert2);
-            verts.push_back(vert3);
+                skinned_verts.push_back(vert1);
+                skinned_verts.push_back(vert2);
+                skinned_verts.push_back(vert3);
+            }else{
+                vertex vert1 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 0));
+                vertex vert2 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor,vertex_index + 1));
+                vertex vert3 = GetVertex(position_bufferview,normal_bufferview,uv_bufferview, GetIndex(indexAccessor, vertex_index + 2));
+
+                //Tangent calculation
+                vec3 edge1 = vert2.pos - vert1.pos;
+                vec3 edge2 = vert3.pos - vert1.pos;
+                vec2 deltaUV1 = vert2.uv - vert1.uv;
+                vec2 deltaUV2 = vert3.uv - vert1.uv;
+
+                float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+                vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
+                vert1.tangent.normalize();
+                vert2.tangent = vert1.tangent;
+                vert3.tangent = vert1.tangent;
+
+                //We use the last material we loaded.
+                vert1.matid = material_id;
+                vert2.matid = material_id;
+                vert3.matid = material_id;
+
+                verts.push_back(vert1);
+                verts.push_back(vert2);
+                verts.push_back(vert3);
+            }
             vertex_index += 3;
         }
 
@@ -845,286 +873,22 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
     }
 
-    debug->Info("Loaded %i vertices. Loaded %i materials\n",verts.size(),materials.size());
+    size_t final_vertex_count = skinned ? skinned_verts.size() : verts.size();
+    debug->Info("Loaded %i vertices. Loaded %i materials\n",final_vertex_count,materials.size());
     debug->Info("Loaded %i associated morph_target vertices.\n",morph_verts.size());
 
-    int num_morph_targets = morph_verts.size() / verts.size();
+    int num_morph_targets = morph_verts.size() / final_vertex_count;
     //Check if they are whole multiples
-    if (num_morph_targets * verts.size() != morph_verts.size()){
+    if (num_morph_targets * final_vertex_count != morph_verts.size()){
         debug->Fatal("Loaded a fractional numper of morph vertices.\n");
     }
 
     Mesh* mesh = new Mesh();
-    mesh->SetMeshData(&verts.at(0),verts.size());
-    if (morph_verts.size() > 0){
-        mesh->SetMorphMeshData(&morph_verts.at(0),morph_verts.size());
+    if (skinned){
+        mesh->SetSkinnedMeshData(&skinned_verts.at(0),skinned_verts.size());
+    }else{
+        mesh->SetMeshData(&verts.at(0),verts.size());
     }
-    mesh->num_materials = materials.size();
-    return mesh;
-}
-
-//TODO: Merge with getmesh and switch by argument on returned mesh type.
-// Basically the same as get mesh, only it returns a skinned mesh
-Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Material>*optional_mat_list_out){
-    //First, we lookup the node.
-    tinygltf::Node* node = FindNode(node_name);
-    if (!node){
-        debug->Warn("Unable to find Node %s for you.\n",node_name);
-        return NULL;
-    }
-
-    //A node can contain a single mesh (or none)
-    debug->Info("GetSkinnedMeshFromNode: Found Node %s for you.\n",node_name);
-
-    if (node->skin == -1){
-        debug->Err("GetSkinnedMeshFromNode: Node %s does not contain a skin!\n",node_name);
-        return NULL;
-    }
-
-    if (node->mesh < 0){
-        debug->Warn("GetSkinnedMeshFromNode: Node %s does not contain a mesh\n",node_name);
-        return NULL;
-    }
-
-    tinygltf::Mesh& nodemesh = model.meshes.at(node->mesh);
-    debug->Info(" -> Mesh name : %s\n",nodemesh.name.c_str());
-
-    //A Mesh can have multiple primitives, like points, lines and triangles ... but not quads
-    //We'll be parsing it only when it has seperate triangles for now
-    if (nodemesh.primitives.size() < 1){
-        debug->Err("Mesh has no primitives.\n");
-        return NULL;
-    }
-
-    if (nodemesh.primitives.at(0).mode != TINYGLTF_MODE_TRIANGLES){
-        debug->Err("Unable to parse primitive[0].mode %i\n",nodemesh.primitives.at(0).mode);
-        return NULL;
-    }
-
-
-    //Now we expect there to be a NORMAL, POSITION and maybe a TEXCOORD_0
-    //TODO: Parse a mesh without UVs
-    //Parse multiple primitives, one primitive may have one material
-
-    //All vertices loaded from this node.
-    std::vector<skinned_vertex>verts;
-    std::vector<morph_vertex>morph_verts;
-    std::vector<Material>materials;
-
-    debug->Info("Node %s has %i primitives\n",node_name, nodemesh.primitives.size());
-
-    for (tinygltf::Primitive &primitive : nodemesh.primitives){
-        //This should be such that at least the materials in this Mesh can be looked up later on.
-        int material_index = primitive.material;
-        int diff_texture_index = -1;
-
-
-        tinygltf::Material* gltfmaterial = NULL;
-        if (material_index > -1){
-            gltfmaterial = &model.materials.at(material_index);
-
-            Material m;
-            m.name = gltfmaterial->name;
-
-            //We always load the base color
-            m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
-            m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
-            m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
-            m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
-
-            //If the material has a diffuse texture, we load that here
-            if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
-                //This material uses texture with index
-                diff_texture_index = gltfmaterial->pbrMetallicRoughness.baseColorTexture.index;
-
-                //Get texture by name and store/lookup in textures vector... TODO
-
-                Texture* diff_texture = new Texture();
-                //Get the memory offset.
-                tinygltf::Texture& texture = model.textures.at(diff_texture_index);
-
-                int image_index = texture.source;
-                tinygltf::Image& image = model.images.at(image_index);
-                if (image.bufferView == -1){
-                    debug->Fatal("Probably external image file needs to be loaded.\n");
-                }
-
-                tinygltf::BufferView& bufferview = model.bufferViews.at(image.bufferView);
-                tinygltf::Buffer& buffer = model.buffers.at(bufferview.buffer);
-
-                int offset = bufferview.byteOffset;
-
-                uint8_t* image_data = &buffer.data.at(offset);
-                size_t data_len = bufferview.byteLength;
-                diff_texture->LoadFromMemory(image_data,data_len,GL_TEXTURE_2D,1);
-                diff_texture->name = image.name;
-
-                m.diff_texture = diff_texture;
-                debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
-            }
-            materials.push_back(m);
-        }
-        //No material present sets id to -1, which is the default value for a missing material.
-        int material_id = materials.size() - 1;
-
-        std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
-        std::map<std::string, int>::const_iterator itEnd(primitive.attributes.end());
-
-        const tinygltf::Accessor &indexAccessor = model.accessors[primitive.indices];
-
-        tinygltf::BufferView* normal_bufferview = NULL;
-        tinygltf::BufferView* position_bufferview = NULL;
-        tinygltf::BufferView* uv_bufferview = NULL;
-        tinygltf::BufferView* bones_bufferview = NULL;
-        tinygltf::BufferView* weights_bufferview = NULL;
-
-
-        //Iterate over the accessors for each attribute.
-        //Set the appropriate buffer views.
-        //The we loop over the indices fetching the normals and postions for those
-
-        for (; it != itEnd; it++) {
-            //it->first is NORMAL, POSITION and maybe a TEXCOORD_0
-
-            const tinygltf::Accessor &accessor = model.accessors[it->second];
-            int size = GetAccesorTypeSize(accessor);
-
-            debug->Trace("Accessor Size = %i for %s component_type = %i\n",size,it->first.c_str(),accessor.componentType);
-
-            if (it->first.compare("NORMAL") == 0){
-                normal_bufferview = &model.bufferViews[accessor.bufferView];
-            }else if (it->first.compare("POSITION") == 0){
-                position_bufferview = &model.bufferViews[accessor.bufferView];
-            }else if (it->first.compare("TEXCOORD_0") == 0){
-                uv_bufferview = &model.bufferViews[accessor.bufferView];
-            }else if (it->first.compare("JOINTS_0") == 0){
-                bones_bufferview = &model.bufferViews[accessor.bufferView];
-            }else if (it->first.compare("WEIGHTS_0") == 0){
-                weights_bufferview = &model.bufferViews[accessor.bufferView];
-            }
-        }
-
-        if (uv_bufferview == NULL){
-            debug->Warn("No uv_bufferview for Mesh\n");
-        }
-
-        int vertex_count = indexAccessor.count;
-        debug->Trace("indexAccessor.count = %i\n",vertex_count);
-        int triangle_count = vertex_count / 3;
-
-        //Assemble the triangles:
-        int vertex_index = 0;
-        for (int t=0;t<triangle_count;t++){
-            skinned_vertex vert1 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor,vertex_index + 0));
-            skinned_vertex vert2 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor,vertex_index + 1));
-            skinned_vertex vert3 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor, vertex_index + 2));
-
-            //Tangent calculation
-            vec3 edge1 = vert2.pos - vert1.pos;
-            vec3 edge2 = vert3.pos - vert1.pos;
-            vec2 deltaUV1 = vert2.uv - vert1.uv;
-            vec2 deltaUV2 = vert3.uv - vert1.uv;
-
-            float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-            vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
-            vert1.tangent.normalize();
-            vert2.tangent = vert1.tangent;
-            vert3.tangent = vert1.tangent;
-
-            //We use the last material we loaded.
-            vert1.matid = material_id;
-            vert2.matid = material_id;
-            vert3.matid = material_id;
-
-            verts.push_back(vert1);
-            verts.push_back(vert2);
-            verts.push_back(vert3);
-            vertex_index += 3;
-        }
-
-        //In addition to attibutes, it has 'targets' which are effectively the same, they form meshes.
-        //This is done per primitive. I.e. a single mesh, with two materials can have 2 primitives. Each with an
-        // asociated list of morph targets
-        //For morph targets == shapekeys
-        //Reset
-
-        normal_bufferview = NULL;
-        position_bufferview = NULL;
-        uv_bufferview = NULL;
-
-        //List morph targets
-        for (size_t mt_i = 0; mt_i < primitive.targets.size(); mt_i++){
-            std::map<std::string, int>& morph_target = primitive.targets.at(mt_i);
-            debug->Info("targets[%i].size() = %i\n",mt_i,morph_target.size());
-
-            std::map<std::string, int>::const_iterator it(morph_target.begin());
-            std::map<std::string, int>::const_iterator itEnd(morph_target.end());
-
-            int attrib_index = 0;
-            for (; it != itEnd; it++) {
-                debug->Info("targets[%i] : %s -> accessor: %i\n",mt_i, it->first.c_str(),it->second);
-                attrib_index++;
-
-                //We expect a morph target to consist of positions and normals, for a morph_vertex
-                const tinygltf::Accessor &accessor = model.accessors[it->second];
-                int size = 1;
-                if (accessor.type == TINYGLTF_TYPE_SCALAR) {
-                    size = 1;
-                } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
-                    size = 2;
-                } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
-                    size = 3;
-                } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
-                    size = 4;
-                } else {
-                    debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
-                }
-
-                if (accessor.sparse.isSparse){
-                    debug->Fatal("We don't support sparse accessors in GLB files yet.\n");
-                    //TODO: Make it do
-                }
-
-                if (it->first.compare("NORMAL") == 0){
-                    normal_bufferview = &model.bufferViews[accessor.bufferView];
-                }else if (it->first.compare("POSITION") == 0){
-                    position_bufferview = &model.bufferViews[accessor.bufferView];
-                }else{
-                    debug->Err("Unknown Morph Target accessor %s\n",it->first);
-                }
-            }
-
-            //We have to read these in using the same indices the base mesh was loaded with.
-            //Assemble the triangles:
-            int vertex_index = 0;
-            for (int t=0;t<triangle_count;t++){
-                morph_vertex vert1 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 0));
-                morph_vertex vert2 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 1));
-                morph_vertex vert3 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 2));
-
-                morph_verts.push_back(vert1);
-                morph_verts.push_back(vert2);
-                morph_verts.push_back(vert3);
-                vertex_index += 3;
-            }
-        }
-    }
-
-    if (optional_mat_list_out){
-        optional_mat_list_out->insert(optional_mat_list_out->end(),materials.begin(),materials.end());
-    }
-
-    debug->Info("Generated %i skinned vertices. Loaded %i materials\n",verts.size(),materials.size());
-    debug->Info("Loaded %i associated morph_target vertices.\n",morph_verts.size());
-
-    int num_morph_targets = morph_verts.size() / verts.size();
-    //Check if they are whole multiples
-    if (num_morph_targets * verts.size() != morph_verts.size()){
-        debug->Fatal("Loaded a fractional numper of morph vertices.\n");
-    }
-
-    Mesh* mesh = new Mesh();
-    mesh->SetSkinnedMeshData(&verts.at(0),verts.size());
     if (morph_verts.size() > 0){
         mesh->SetMorphMeshData(&morph_verts.at(0),morph_verts.size());
     }

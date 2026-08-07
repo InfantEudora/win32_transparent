@@ -337,14 +337,19 @@ void Renderer::RenderUniqueMeshes(int rendering_mode){
             //data.mat_transformscale.print();
 
             if (rendering_mode == MESH_MODE_SKINNED){
-                bonedata_t bonedata;
+                bonedata_t bonedata = {};
                 bonedata.mat_transformscale = fmat4().identity();
 
                 //It has been previously established we are skinned mesh
                 Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
                 if (!skeleton){
-                    debug->Warn("Skinned mesh does not appear to be a skeleton...\n");
-                    continue;
+                    debug->Trace("Skinned itself does not appear to be a skeleton...\n");
+                    skeleton = dynamic_cast<Skeleton*>(object->GetParent());
+                    if (!skeleton){
+                        instancedata.push_back(data);
+                        debug->Warn("Skinned mesh itself does not appear to be a skeleton nor it's parent.\n");
+                        continue;
+                    }
                 }
 
                 std::vector<Bone*>bones;
@@ -372,8 +377,13 @@ void Renderer::RenderUniqueMeshes(int rendering_mode){
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_STREAM_DRAW);
 
         if (rendering_mode == MESH_MODE_SKINNED){
-            //glInvalidateBufferData(boneinstdata_ssbo);
-            glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_STREAM_DRAW);
+
+            if (boneinstancedata.size() > 0){
+                glNamedBufferData(boneinstdata_ssbo,boneinstancedata.size()*sizeof(bonedata_t) , &boneinstancedata.at(0),GL_STREAM_DRAW);
+            }else{
+                debug->Warn("No boneinstancedata for mesh ID: %lu\n",mesh->GetID());
+                //glInvalidateBufferData(boneinstdata_ssbo);
+            }
         }
 
         debug->Trace("Rendering %i instances of mesh->id %i\n",mesh->batch_num_instances,mesh->GetID());
