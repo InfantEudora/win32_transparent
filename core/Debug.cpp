@@ -1,18 +1,6 @@
 #include "Debug.h"
-
-#include <io.h>
-#include <fcntl.h>
-
-#define NEED_COLOR_FIX
-
-// Buffer sizes
-#define DEBUG_IO_BUFFERSIZE 8192
-#define DEBUG_IO_HIGHWM 4096
-
-char Debugger::buffer[DEBUG_IO_BUFFERSIZE] = {0};
-int Debugger::boffset = 0;
-int Debugger::lines_buffered = 1;
-// HANDLE Debugger::writemutex = NULL;
+#include <cstdio>
+#include <cstdlib>
 
 std::mutex Debugger::mutex;
 bool Debugger::setup_done = false;
@@ -27,8 +15,7 @@ std::map<std::string, Debugger *> *Debugger::GetHandles() {
 
 Debugger *Debugger::FindHandle(std::string name) {
     std::map<std::string, Debugger *> *handles = GetHandles();
-    //Check if handle exists
-    if (handles->count(name)){
+    if (handles->count(name)) {
         return (*handles)[name];
     }
     return NULL;
@@ -59,35 +46,6 @@ void Debugger::SetLevel(debug_t type) {
     level = type - 1;
 }
 
-void Debugger::SetupConsole(void) {
-    /*
-    int hConHandle;
-    long lStdHandle;
-    FILE* fp;
-
-    // Allocate a console for this app
-    AllocConsole();
-
-    // Redirect unbuffered STDOUT to the console
-    lStdHandle = (long)GetStdHandle(STD_OUTPUT_HANDLE);
-    hConHandle = _open_osfhandle(lStdHandle, _O_TEXT);
-    fp = _fdopen(hConHandle, "w");
-    *stdout = *fp;
-
-    setvbuf(stdout, NULL, _IONBF, 0);*/
-#ifdef NEED_COLOR_FIX
-    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (handle != INVALID_HANDLE_VALUE) {
-        DWORD mode = 0;
-        if (GetConsoleMode(handle, &mode)) {
-            mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-            SetConsoleMode(handle, mode);
-        }
-    }
-#endif
-    setup_done = true;
-}
-
 Debugger::Debugger(const char *name) {
     Start((char *)name);
     // Default, suppress all but warn and error:
@@ -96,12 +54,14 @@ Debugger::Debugger(const char *name) {
 
 Debugger::Debugger(const char *name, int level) {
     Start((char *)name);
-    // Default, suppress all but warn and error:
     SetLevel(level);
 }
 
 Debugger::Debugger(char *name) {
     Start(name);
+}
+
+Debugger::~Debugger() {
 }
 
 void Debugger::Start(char *name) {
@@ -182,17 +142,25 @@ void Debugger::Err(const char *format, ...) {
     va_end(arglist);
 }
 
+// Fatal always prints, then terminates -- no level check, but still needs
+// the lock like every other emitting path (the original left this one
+// (and both PrintLine overloads below) unlocked, a real race against any
+// concurrent Trace/Debug/Info/Ok/Warn/Err call on another thread).
 void Debugger::Fatal(const char *format, ...) {
-    va_list arglist;
-    va_start(arglist, format);
-    PrintLineva(DEBUG_FATAL, format, arglist);
-    va_end(arglist);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        va_list arglist;
+        va_start(arglist, format);
+        PrintLineva(DEBUG_FATAL, format, arglist);
+        va_end(arglist);
+    }
     Flush();
     exit(1);
 }
 
 // PrintLine always outputs no matter what level
 void Debugger::PrintLine(const char *format, ...) {
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(DEBUG_INFO, format, arglist);
@@ -203,113 +171,26 @@ void Debugger::PrintLine(debug_t type, const char *format, ...) {
     if (level >= type) {
         return;
     }
+    std::lock_guard<std::mutex> lock(mutex);
     va_list arglist;
     va_start(arglist, format);
     PrintLineva(type, format, arglist);
     va_end(arglist);
 }
 
-void Debugger::color_tobuffer(int color){
-    switch (color) {
-        case CLR_BLACK:
-            boffset += sprintf(&buffer[boffset], "\x1b[30m");
-            break;
-        case CLR_RED:
-            boffset += sprintf(&buffer[boffset], "\x1b[31m");
-            break;
-        case CLR_GREEN:
-            boffset += sprintf(&buffer[boffset], "\x1b[32m");
-            break;
-        case CLR_LIGHTGREEN:
-            boffset += sprintf(&buffer[boffset], "\x1b[92m");
-            break;
-        case CLR_YELLOW:
-            boffset += sprintf(&buffer[boffset], "\x1b[33m");
-            break;
-        case CLR_BLUE:
-            boffset += sprintf(&buffer[boffset], "\x1b[34m");
-            break;
-        case CLR_MAGENTA:
-            boffset += sprintf(&buffer[boffset], "\x1b[35m");
-            break;
-        case CLR_CYAN:
-            boffset += sprintf(&buffer[boffset], "\x1b[36m");
-            break;
-        case CLR_LIGHTCYAN:
-            boffset += sprintf(&buffer[boffset], "\x1b[96m");
-            break;
-        case CLR_GREY: // Default set by Cancel.
-            boffset += sprintf(&buffer[boffset], "\x1b[90m");
-            break;
-        case CLR_WHITE:
-            boffset += sprintf(&buffer[boffset], "\x1b[97m");
-            break;
-        case CLR_CANCEL:
-            boffset += sprintf(&buffer[boffset], "\x1b[39m");
-            break;
-        default:
-            break;
-    }
-}
-
+// Formats into a local, bounded, per-call buffer -- never a shared static
+// one -- so there's no cross-instance/cross-thread overflow hazard and no
+// way to walk past the end of it. The original built the message with raw
+// sprintf/vsprintf into a fixed 8192-byte buffer *shared by every Debugger
+// instance*, only checking for overflow after the unbounded write already
+// happened. vsnprintf can't overrun its destination by construction, and
+// a local buffer means concurrent callers (even without the mutex above)
+// can't corrupt each other's in-progress line.
 void Debugger::PrintLineva(debug_t type, const char *format, va_list arglist) {
     if (!enable_console) {
         return;
     }
-    buffer[boffset++] = '[';
-
-    if (type == DEBUG_TRACE) {
-        color_tobuffer(CLR_GREY);
-        boffset += sprintf(&buffer[boffset], "trace");
-    } else if (type == DEBUG_DEBUG) {
-        color_tobuffer(CLR_WHITE);
-        boffset += sprintf(&buffer[boffset], "debug");
-    } else if (type == DEBUG_INFO) {
-        color_tobuffer(CLR_CYAN);
-        boffset += sprintf(&buffer[boffset], " info");
-    } else if (type == DEBUG_OK) {
-        color_tobuffer(CLR_GREEN);
-        boffset += sprintf(&buffer[boffset], "  ok ");
-    } else if (type == DEBUG_WARN) {
-        color_tobuffer(CLR_YELLOW);
-        boffset += sprintf(&buffer[boffset], " warn");
-    } else if (type == DEBUG_ERROR) {
-        color_tobuffer(CLR_RED);
-        boffset += sprintf(&buffer[boffset], " err ");
-    } else if (type == DEBUG_FATAL) {
-        color_tobuffer(CLR_RED);
-        boffset += sprintf(&buffer[boffset], "fatal");
-    } else {
-        boffset += sprintf(&buffer[boffset],  " -- ");
-    }
-    color_tobuffer(CLR_WHITE);
-    boffset += sprintf(&buffer[boffset], "] %20s : ", name);
-    color_tobuffer(CLR_CANCEL);
-
-    boffset += vsprintf(&buffer[boffset], format, arglist);
-    if (boffset > (DEBUG_IO_BUFFERSIZE - 1)) {
-        printf("Wrote past buffer\n");
-        exit(1);
-    }
-    lines_buffered++;
-    Flush();
-    return;
-    if (enable_buffering && (boffset > DEBUG_IO_HIGHWM)) {
-        Flush();
-    } else if (!enable_buffering) {
-        Flush();
-    }
-}
-
-// This should be called once a while.
-void Debugger::Flush() {
-    if (boffset) {
-        fputs(buffer, stdout);
-        memset(buffer, 0, boffset + 1);
-        boffset = 0;
-        lines_buffered = 0;
-    }
-}
-
-Debugger::~Debugger() {
+    char message[4096];
+    vsnprintf(message, sizeof(message), format, arglist);
+    EmitLine(type, name, message);
 }

@@ -1,10 +1,10 @@
 #ifndef _DEBUGGER_H_
 #define _DEBUGGER_H_
+#include <cstdarg>
 #include <map>
+#include <mutex>
 #include <stdint.h>
 #include <string>
-#include <windows.h>
-#include <mutex>
 
 #define DEBUGGER 1
 
@@ -21,7 +21,7 @@ typedef uint64_t debug_t;
 #define DEBUG_ERROR 60
 #define DEBUG_FATAL 70
 
-// Colors
+// Colors (consumed by the Win32 console backend only; ignored elsewhere)
 #define CLR_BLACK 1
 #define CLR_RED 2
 #define CLR_GREEN 3
@@ -35,32 +35,35 @@ typedef uint64_t debug_t;
 #define CLR_LIGHTGREEN 11
 #define CLR_CANCEL 15
 
+// Debugger is portable: the named-instance registry, per-instance severity
+// filtering, and message formatting all live in Debug.cpp unchanged across
+// platforms. Only "where does a finished line actually go" differs, so
+// that's the only part pushed behind SetupConsole()/Flush()/EmitLine() --
+// implemented once in Debug_win32.cpp (ANSI console output, this file's
+// original behavior) and once in Debug_android.cpp (__android_log_print).
 class Debugger {
 public:
     static std::map<std::string, Debugger *> *GetHandles();
     static Debugger *FindHandle(std::string name);
     static void SetLevel(std::string name, int level);
     static void ListHandles();
-    static char buffer[8192];
-    static int boffset;
-    static int lines_buffered;
-    static void Flush();
     static std::mutex mutex;
     static bool setup_done;
+
     Debugger(const char *name);
     Debugger(const char *name, int level);
     Debugger(char *name);
     ~Debugger();
 
     int level = DEBUG_ALL;
-    static bool enable_buffering; // Enable if you need a high amount of output.
+    static bool enable_buffering; // Meaningful to the Win32 backend only.
     static bool enable_console;
 
     static void SetupConsole();
+    static void Flush();
     void Start(char *name);
     void SetLevel(debug_t type);
 
-    void color_tobuffer(int color);
     void PrintLine(const char *format, ...); // PrintLine always outputs no matter what level
     void Trace(const char *format, ...);
     void Debug(const char *format, ...);
@@ -74,6 +77,9 @@ public:
 private:
     char *name = NULL;
     void PrintLineva(debug_t type, const char *format, va_list arglist);
+
+    // Platform hook: emit one already-formatted, bounds-safe message.
+    static void EmitLine(debug_t type, const char *name, const char *message);
 };
 
 #if DEBUGGER

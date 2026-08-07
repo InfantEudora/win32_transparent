@@ -1,11 +1,7 @@
 #include "Mesh.h"
-#include "Debug.h"
-static Debugger* debug = new Debugger("Mesh",DEBUG_INFO);
-
 meshid_t Mesh::mesh_ids = 0;
 
 Mesh::Mesh(){
-
 }
 
 void Mesh::GenerateUniqueID(){

@@ -472,8 +472,7 @@ skinned_vertex GLTFLoader::GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::
         return v;
     }
     if (!ub){
-        debug->Err("No bufferview for uv data\n");
-        return v;
+        debug->Trace("No bufferview for uv data\n");
     }
     if (!bb){
         debug->Err("No bufferview for uv bone ids\n");
@@ -499,7 +498,13 @@ skinned_vertex GLTFLoader::GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::
 
     v.pos = Getvec3(&position_buffer.data.at(0),byte_offset_position);
     v.normal = Getvec3(&normal_buffer.data.at(0),byte_offset_normal);
-    v.uv = Getvec2(&uv_buffer.data.at(0),byte_offset_uv);
+    if (ub){
+        int byte_offset_uv = ub->byteOffset + (index * 2 * sizeof(float)); //FLOAT * VEC2 * index
+        tinygltf::Buffer& uv_buffer = model.buffers[ub->buffer];
+        v.uv = Getvec2(&uv_buffer.data.at(0),byte_offset_uv);
+    }else{
+        v.uv = vec2(0,0);
+    }
     v.bones = Getint3_uint8_4(&bones_buffer.data.at(0),byte_offset_bones);
     vec4 v_bone_weights = Getvec4(&weights_buffer.data.at(0),byte_offset_weights);
 
@@ -616,16 +621,12 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
     std::vector<Material>materials;
 
     debug->Info("Node %s has %i primitives\n",node_name, nodemesh.primitives.size());
-    int primitive_count = -1;
     for (tinygltf::Primitive &primitive : nodemesh.primitives){
-        //This should be such that at least the materials in this Mesh can be looked up later on.
-        primitive_count++;
         int material_index = primitive.material;
         int diff_texture_index = -1;
-        debug->Trace("Primitive %i material_index = %i\n",primitive_count, material_index);
 
         tinygltf::Material* gltfmaterial = NULL;
-        int material_id = 0;
+        int material_id = -1;
         if (material_index > -1){
             gltfmaterial = &model.materials.at(material_index);
 
@@ -925,6 +926,12 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
             Material m;
             m.name = gltfmaterial->name;
 
+            //We always load the base color
+            m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
+            m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
+            m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
+            m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
+
             //If the material has a diffuse texture, we load that here
             if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
                 //This material uses texture with index
@@ -954,15 +961,10 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
 
                 m.diff_texture = diff_texture;
                 debug->Info("Loaded diffuse texture %s from GLTF File\n",diff_texture->name.c_str());
-            }else{
-                //We just load the base color
-                m.glsl_material.color.r = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(0);
-                m.glsl_material.color.g = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(1);
-                m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
-                m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
             }
             materials.push_back(m);
         }
+        //No material present sets id to -1, which is the default value for a missing material.
         int material_id = materials.size() - 1;
 
         std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
@@ -1003,7 +1005,7 @@ Mesh* GLTFLoader::GetSkinnedMeshFromNode(const char* node_name, std::vector<Mate
         }
 
         if (uv_bufferview == NULL){
-            debug->Fatal("No uv_bufferview for Mesh\n");
+            debug->Warn("No uv_bufferview for Mesh\n");
         }
 
         int vertex_count = indexAccessor.count;

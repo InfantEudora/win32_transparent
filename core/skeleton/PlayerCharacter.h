@@ -86,6 +86,7 @@ class PlayerCharacter : public virtual Skeleton{
     void TurnLookUp();
     void TurnLookDown();
 
+
     Object* handgun = NULL;
 
     //Computes the facing and target angles for the character to look at a target. This is used for head and hip turning.

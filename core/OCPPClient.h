@@ -84,6 +84,14 @@ struct OCPPClientInfo {
 class OCPPClient : public TCPClient
 {
 public:
+	// Result of kicking off the WebSocket handshake. The handshake response
+	// arrives asynchronously via the nonblocking data-received handler, so
+	// sending the request successfully does not mean it has completed yet.
+	enum class HandshakeResult {
+		Failed,   // Could not even send the handshake request
+		Pending   // Request sent; completion/failure is reported later via IsWebSocketReady()/OnDataReceivedInternal
+	};
+
 	OCPPClient();
 	~OCPPClient();
 
@@ -122,7 +130,7 @@ private:
 	OCPPTransaction m_current_transaction;
 
 	// WebSocket handshake
-	bool PerformWebSocketHandshake(const std::string& chargeBoxIdentity);
+	HandshakeResult PerformWebSocketHandshake(const std::string& chargeBoxIdentity);
 	std::string GenerateWebSocketKey();
 
 	// WebSocket frame handling

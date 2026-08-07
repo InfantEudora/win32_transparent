@@ -21,8 +21,8 @@ public:
     int width = 0;
     int height = 0;
     int depth = 0;          // Index in a Cube Map
-    UINT storage_format = GL_RGB8;    // If 3 or 4 bytes per pixel
-    UINT image_format = GL_RGB;
+    GLenum storage_format = GL_RGB8;    // If 3 or 4 bytes per pixel
+    GLenum image_format = GL_RGB;
 
     size_t file_data_sz = 0;
     uint8_t* file_data = NULL;  // Data loaded from disk
@@ -42,7 +42,7 @@ public:
     bool IsEmpty();
 
     void Create2D(int target = GL_TEXTURE_2D, int depth_in = 1);    //Creates a 2D openGL texture, but does not transfer any data
-    void UploadTexture(UINT _format = GL_RGB, int target = GL_TEXTURE_2D);
+    void UploadTexture(GLenum _format = GL_RGB, int target = GL_TEXTURE_2D);
 
     void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);
     void LoadFromMemory(uint8_t* data, size_t length, int target, int depth);

@@ -32,11 +32,12 @@ typedef struct {
     fmat4 mat_inversebind;
 }bonedata_t;
 
+/*
 typedef struct{
     int data_in[4];         // Stored pixel coordinates of mouse
     int data_out[4];        // Holds objid
     float fdata_out[4];     // Holds ztest
-}readback_buffer_t;
+}readback_buffer_t;*/
 
 //A callback for debugging
 void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, char const* message, void const* user_param);
@@ -195,7 +196,7 @@ class Renderer{
 
     std::vector<line>debug_lines;
 
-    readback_buffer_t readbackbuffer;                   //A single buffer for reading back data from shader
+    //readback_buffer_t readbackbuffer;                   //A single buffer for reading back data from shader
 
     std::vector<Object*>objects;                        //All known objects
 

@@ -19,8 +19,17 @@ void BinaryAsset::StoreBinaryAsset(const char* filename, uint8_t* data, size_t s
 
     BinaryAsset a;
     a.name = filename;
-    uint8_t* local_copy = new uint8_t[sz];
+    // +1/[sz]=0: LoadFile()'s fresh-disk-read buffer is null-terminated
+    // (it calloc's sz+1 bytes), so callers that treat the result as a C
+    // string work on first load. Without preserving that here, every
+    // *cached* re-fetch of the same asset would hand back this
+    // undersized, non-null-terminated copy instead -- silently correct
+    // for binary data, silently broken (reads past the end into
+    // whatever's next on the heap) for anything text-like, e.g. GLSL
+    // shader source.
+    uint8_t* local_copy = new uint8_t[sz + 1];
     memcpy(local_copy,data,sz);
+    local_copy[sz] = 0;
     a.data = local_copy;
     a.size = sz;
     file_assets.push_back(a);
@@ -40,6 +49,12 @@ void BinaryAsset::Uncompress(){
             debug->Fatal("Uncompressing asset with exising data\n");
         }
         data = (uint8_t*)tinfl_decompress_mem_to_heap(compressed_data,compressed_size,&size,1500);
+        // DumpBinaryAssets() compresses size+1 bytes (content + the null
+        // terminator StoreBinaryAsset now guarantees), so what comes back
+        // is one byte longer than the logical content -- correct for that
+        // so `size` keeps meaning "content length" everywhere else, same
+        // as the disk-read path.
+        size -= 1;
         iscompressed = false;
         debug->Info(" Done.\n");
     }
@@ -92,7 +107,10 @@ void BinaryAsset::DumpBinaryAssets(){
             if (asset.iscompressed){
                 debug->Fatal("Duping an already compressed asset?\n");
             }
-            asset.compressed_data = (uint8_t*)tdefl_compress_mem_to_heap(asset.data,asset.size,&asset.compressed_size,1500);
+            // +1: bake the null terminator in too (see StoreBinaryAsset/
+            // Uncompress) so a decompressed memory asset is just as safe
+            // to treat as a C string as a fresh disk read is.
+            asset.compressed_data = (uint8_t*)tdefl_compress_mem_to_heap(asset.data,asset.size+1,&asset.compressed_size,1500);
             float ratio = (100.0f / asset.size) * asset.compressed_size;
             debug->Info(" Compressed from %zu to %zu (%.0f%%)\n",asset.size,asset.compressed_size,ratio);
             asset.iscompressed = true;

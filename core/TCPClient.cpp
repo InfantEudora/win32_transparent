@@ -154,7 +154,6 @@ bool TCPClient::Send(const char *data, int length) {
         debug->Warn("Only sent %d of %d bytes\n", bytesSent, length);
         return false;
     }
-
     return true;
 }
 
@@ -162,13 +161,15 @@ bool TCPClient::Send(const std::string &data) {
     return Send(data.c_str(), static_cast<int>(data.length()));
 }
 
-void TCPClient::SetOnDataReceived(
-    std::function<void(const char *, int)> callback) {
+void TCPClient::SetOnDataReceived(std::function<void(const char *, int)> callback) {
     m_onDataReceived = callback;
 }
 
 void TCPClient::SetOnDisconnected(std::function<void()> callback) {
     m_onDisconnected = callback;
+}
+void TCPClient::SetOnConnected(std::function<void()> callback) {
+    m_onConnected = callback;
 }
 
 DWORD WINAPI TCPClient::ReceiveDataThread(LPVOID param) {

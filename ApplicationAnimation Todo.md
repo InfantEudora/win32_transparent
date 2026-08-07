@@ -1,5 +1,9 @@
-## ApplicationAnimation Todo
+## Doing
+- [ ] Import a new mesh with seperate hair and eyes.
 
+## ApplicationAnimation Todo
+- [ ] Implement hair tracking
+- [ ] Implement hair bouncing or wind effect.
 - [ ] Attach a physics object that follows her around with a delayed response.
 - [ ] So we can have a cape that followes her around. Hair that moves when you move her.
 - [ ] Make a small chain of physics objects that react to gravity that are also a skeleton.

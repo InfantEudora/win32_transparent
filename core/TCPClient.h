@@ -29,10 +29,9 @@ public:
 	bool Send(const char* data, int length);
 	bool Send(const std::string& data);
 
-	// Set callback for when data is received (receives data buffer and length)
+	//Callbacks
 	void SetOnDataReceived(std::function<void(const char*, int)> callback);
-
-	// Set callback for when disconnected
+	void SetOnConnected(std::function<void()> callback);
 	void SetOnDisconnected(std::function<void()> callback);
 
 private:
@@ -40,6 +39,7 @@ private:
 	std::atomic<bool> m_connected = false;
 	HANDLE m_receiveThread;
 	std::function<void(const char*, int)> m_onDataReceived;
+	std::function<void()> m_onConnected;
 	std::function<void()> m_onDisconnected;
 
 	// Receive data from server (static for WinAPI threading)

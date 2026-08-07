@@ -1584,6 +1584,55 @@ void Application::BuildSceneFromJSON(){
 }
 
 
+//Get's the currently loaded GLTF file, and imports only the requested node names that aren't already loaded.
+//This has to be called from a thread that owns the OpenGL context.
+void Application::GetAssetsFromGLTF(const std::vector<std::string>& names){
+    DWORD called_thread_id = -1;
+    called_thread_id = GetCurrentThreadId();
+    debug->Info("GetAssetsFromGLTF called from ThreadID: %lu\n", called_thread_id);
+    if (called_thread_id != thread_id_render){
+        debug->Fatal("Should be called from render thread\n");
+    }
+
+    if (!assetmanager){
+        debug->Err("No assetmanager to load assets into.\n");
+    }
+
+    //Materials loaded belonging to a single node
+    std::vector<Material>loaded_materials;
+
+    for (const std::string& nodename:names){
+        debug->Info("GetAssetsFromGLTF: Node %s\n",nodename.c_str());
+        loaded_materials.clear();
+
+        bool already_loaded = false;
+
+        for (Asset* asset:assetmanager->assets){
+            if (asset->name.compare(nodename) == 0){
+                debug->Err(" -> Already loaded\n");
+                already_loaded = true;
+                break;
+            }
+        }
+
+        if (already_loaded){
+            continue;
+        }
+
+        Mesh* gltfmesh = gltfloader.GetMeshFromNode(nodename.c_str(),&loaded_materials);
+        if (gltfmesh){
+            Object* gltf_object = new Object();
+            gltf_object->name = nodename.c_str();
+            gltf_object->SetMesh(gltfmesh);
+            gltf_object->TakeMaterialNames(loaded_materials);
+            assetmanager->AddNewAsset(nodename.c_str(),gltf_object);
+            //Just add all...
+            renderer->AddMaterials(loaded_materials);
+        } else {
+            debug->Err("GetAssetsFromGLTF: Could not find node %s in currently loaded GLTF file\n",nodename.c_str());
+        }
+    }
+}
 
 //Get's the currently loaded GLTF file, and imports everyting that wasn't imported.
 //This has to be called from a thread that owns the OpenGL context.
@@ -1612,7 +1661,7 @@ void Application::GetAllAssetsFromGLTF(){
 
         for (Asset* asset:assetmanager->assets){
             if (asset->name.compare(nodename) == 0){
-                debug->Info(" -> Already loaded\n");
+                debug->Err(" -> Already loaded\n");
                 already_loaded = true;
                 break;
             }
@@ -1632,14 +1681,9 @@ void Application::GetAllAssetsFromGLTF(){
             //Just add all...
             renderer->AddMaterials(loaded_materials);
         }
-
-
     }
-
     debug->Info("Loaded %i different materials from GLTF file\n",loaded_materials.size());
-
     //TODO: We also need to make sure all materials are loaded and stored somewhere usefull
-
 }
 
 //This loads it, makes an asset from it... and sets up all the things.

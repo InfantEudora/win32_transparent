@@ -49,6 +49,7 @@ SRC_LIBIMGUI += 3rdparty/imgui/imgui.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_draw.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_widgets.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/imgui_tables.cpp
+SRC_LIBIMGUI += 3rdparty/imgui/imgui_demo.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_win32.cpp
 SRC_LIBIMGUI += 3rdparty/imgui/backends/imgui_impl_opengl3.cpp
 OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
@@ -75,7 +76,6 @@ endif
 CFLAGS+= -DAPP_HEADER=\"ApplicationIsoAnimation.h\"
 CFLAGS+= -DAPP_CLASS=ApplicationIsoAnimation
 SRCS += ApplicationIsoAnimation.cpp
-
 
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"

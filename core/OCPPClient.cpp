@@ -12,6 +12,17 @@ OCPPClient::OCPPClient()
     SetOnDataReceived([this](const char *data, int length) {
         OnDataReceivedInternal(data, length);
     });
+    SetOnConnected([this]() {
+        m_info.connected = true;
+        debug->Info("TCP connection established, now performing WebSocket handshake\n");
+        if (PerformWebSocketHandshake(m_info.chargeBoxIdentity) == HandshakeResult::Failed) {
+            debug->Err("WebSocket handshake failed\n");
+            m_info.connected = false;
+            Disconnect();
+        }
+        // else: request sent, actual success/failure arrives asynchronously
+        // in OnDataReceivedInternal once the server's HTTP response comes in.
+    });
 }
 
 OCPPClient::~OCPPClient() {
@@ -26,24 +37,13 @@ void OCPPClient::Disconnect() {
 bool OCPPClient::ConnectOCPP(const std::string &host, int port, const std::string &chargeBoxIdentity) {
     m_info.chargeBoxIdentity = chargeBoxIdentity;
     m_info.serverUrl = host + ":" + std::to_string(port);
+    m_info.websocketHandshakeComplete = false;
 
     // First establish TCP connection
     if (!Connect(host, port)) {
         debug->Err("Failed to connect to OCPP server\n");
         return false;
-    }
-
-    m_info.connected = true;
-
-    // Perform WebSocket handshake
-    if (!PerformWebSocketHandshake(chargeBoxIdentity)) {
-        debug->Err("WebSocket handshake failed\n");
-        Disconnect();
-        m_info.connected = false;
-        return false;
-    }
-
-    debug->Info("OCPP Client connected to %s\n", m_info.serverUrl.c_str());
+    }    
     return true;
 }
 
@@ -79,11 +79,11 @@ std::string OCPPClient::GenerateWebSocketKey() {
     return base64Key;
 }
 
-bool OCPPClient::PerformWebSocketHandshake(const std::string &chargeBoxIdentity) {
+OCPPClient::HandshakeResult OCPPClient::PerformWebSocketHandshake(const std::string &chargeBoxIdentity) {
     std::string wsKey = GenerateWebSocketKey();
     if (wsKey.empty()) {
         debug->Err("Failed to generate WebSocket key\n");
-        return false;
+        return HandshakeResult::Failed;
     }
 
     // Build WebSocket upgrade request
@@ -102,24 +102,13 @@ bool OCPPClient::PerformWebSocketHandshake(const std::string &chargeBoxIdentity)
 
     if (!Send(handshake)) {
         debug->Err("Failed to send WebSocket handshake\n");
-        return false;
+        return HandshakeResult::Failed;
     }
 
-    // Wait for handshake response (simple synchronous wait)
-    Sleep(50);
-
-	if (!IsConnected()){
-		debug->Warn("WebSocket was disconnected\n");
-		return false;
-	}
-
-    if (!m_info.websocketHandshakeComplete) {
-        debug->Warn("WebSocket handshake not yet complete, but continuing...\n");
-        // For now, assume it will complete
-        m_info.websocketHandshakeComplete = true;
-    }
-
-    return true;
+    // The handshake response is read on the nonblocking data-received path
+    // (see OnDataReceivedInternal), so completion cannot be observed here.
+    debug->Info("WebSocket handshake request sent, awaiting response\n");
+    return HandshakeResult::Pending;
 }
 
 std::string OCPPClient::GenerateMessageId() {
@@ -318,11 +307,17 @@ void OCPPClient::OnDataReceivedInternal(const char *data, int length) {
     if (!m_info.websocketHandshakeComplete && m_receiveBuffer.find("HTTP/1.1") != std::string::npos) {
         if (m_receiveBuffer.find("\r\n\r\n") != std::string::npos) {
             debug->Info("WebSocket handshake response received:\n%s\n", m_receiveBuffer.c_str());
+            debug->Info("Buffer length: %zu\n", m_receiveBuffer.length());
+            debug->Info("Buffer content:\n%s\n", m_receiveBuffer.c_str());
 
             if (m_receiveBuffer.find("101 Switching Protocols") != std::string::npos) {
                 debug->Info("WebSocket handshake successful\n");
                 m_info.websocketHandshakeComplete = true;
             } else {
+                // Note: deliberately not calling Disconnect() here — this runs
+                // on the receive thread itself, and Disconnect() joins that
+                // same thread (deadlock). Callers must notice via
+                // IsWebSocketReady() staying false and disconnect from another thread.
                 debug->Err("WebSocket handshake failed\n");
             }
 

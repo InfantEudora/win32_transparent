@@ -21,7 +21,7 @@ Scene* ApplicationIsoAnimation::CreateEmptyScene(){
     sun->SetPosition(vec3(-10,10,10));
     sun->color = vec3(1,0.8,0.6);
     sun->brightness = 7.0;
-    sun->viewport.zoom = 3;
+    sun->viewport.zoom = 8;
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
@@ -80,10 +80,15 @@ void ApplicationIsoAnimation::Init(void){
 
 
     gltfloader.LoadGLTFFile("data/isoanim.glb");
+    GetAssetsFromGLTF("indicator","plane");
+    //GetAllAssetsFromGLTF();
+
+    //Load a second gltf
+    gltfloader.LoadGLTFFile("data/girlgun.glb");
     GetAllAssetsFromGLTF();
 
     //Load all the scenery from export.json that we don't already have.
-    BuildSceneFromJSON();
+    //BuildSceneFromJSON();
 
 
     //Load character model with animation data
@@ -104,6 +109,21 @@ void ApplicationIsoAnimation::Init(void){
         for (std::string animation_name:animation_names){
             Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
             character->AddAnimation(animation);
+        }
+    }
+
+    //We'll attach a handgun to the character, and manually place it.
+    Object* handgun = assetmanager->GetObjectFromAsset("pistol");
+    if (handgun){
+        character->handgun = handgun;
+        character->AttachChild(handgun);
+        Bone* hand_bone = character->FindBone("mixamorig:RightHand");
+        if (hand_bone){
+            hand_bone->AttachChild(handgun);
+            handgun->SetPosition(vec3(0,0,0));
+
+        }else{
+            debug->Err("Could not find hand bone to attach handgun to.\n");
         }
     }
 
@@ -438,7 +458,7 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         GetAllAssetsFromGLTF();
     }
 
-    //ImGui::ShowDemoWindow();
+    ImGui::ShowDemoWindow();
 
 
     RenderDebugMenuBar();
@@ -449,16 +469,22 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
     ImGui::Begin("Character Animation");
     if (character){
         ImGui::TextColored(ImVec4(0.8,1,0.8,1),"Character Animation State");
-
         ImGui::TextColored(ImVec4(0.8,1,0.8,1),"Character Input State");
+
         if (character->character_input_state.input_forward_down){
-            ImGui::Text(" input_forward");
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_forward");
+        }else{
+            ImGui::Text("input_forward");
         }
         if (character->character_input_state.input_left_down){
-            ImGui::Text(" input_left");
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_left");
+        }else{
+            ImGui::Text("input_left");
         }
         if (character->character_input_state.input_right_down){
-            ImGui::Text(" input_right");
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_right");
+        }else{
+            ImGui::Text("input_right");
         }
         //ImGui::Text(" moving_forward : %s",character->character_state.moving_forward ? "Yes" : "No");
         //ImGui::Text(" moving_left    : %s",character->character_state.moving_left ? "Yes" : "No");
@@ -501,6 +527,8 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         ImGui::Checkbox("Rotation Animations",&character->f_rotation_animation);
         ImGui::Checkbox("Grab Mode",&f_mode_grab);
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
+        ImGui::Separator();
+        ImGui::Text("Current Animation : %s",character->current_animation ? character->current_animation->name.c_str() : "None");
         ImGui::Separator();
         Bone* hips = character->FindBone("mixamorig:Hips");
         if (hips){
@@ -545,7 +573,6 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
     }
 }
 
-
 void ApplicationIsoAnimation::RenderSkeletonUI(){
     ImGui::Begin("Skeleton UI");
 
@@ -570,7 +597,6 @@ void ApplicationIsoAnimation::RenderSkeletonUI(){
     if (ImGui::Checkbox("Show Skeleton Bones",&obj_visible)){
         bones->SetVisibility(obj_visible);
     }
-
 
     vec3 at = {};
     plane& p = projection_plane;
@@ -617,7 +643,6 @@ void ApplicationIsoAnimation::RenderSkeletonUI(){
     ImGui::End();
 }
 
-
 void ApplicationIsoAnimation::RenderBoneModifierHeader(Bone* bone, int id){
     if (!bone){
         return;
@@ -641,7 +666,6 @@ void ApplicationIsoAnimation::RenderBoneModifierHeader(Bone* bone, int id){
         }
         ImGui::Text("Parent Bone     : %s\n",parent_name.c_str());
         ImGui::Text("Child Bone [0]  : %s\n",child_name.c_str());
-
 
         axis_degrees.x = todegrees(q.get_pitch());
         axis_degrees.z = todegrees(q.get_roll());

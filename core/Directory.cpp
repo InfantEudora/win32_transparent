@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include "Directory.h"
 #include "StringView.h"
-
+#include <windows.h>
 #include "Debug.h"
 static Debugger *debug = new Debugger("Directory", DEBUG_ALL);
 

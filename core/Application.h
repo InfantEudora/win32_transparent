@@ -108,6 +108,11 @@ public:
     //One liners that do many things
     Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);
     void GetAllAssetsFromGLTF();
+    void GetAssetsFromGLTF(const std::vector<std::string>& names);
+    template<typename... Args>
+    void GetAssetsFromGLTF(Args... names){
+        GetAssetsFromGLTF(std::vector<std::string>{ std::string(names)... });
+    }
     void BuildSceneFromJSON();
 
 protected:
