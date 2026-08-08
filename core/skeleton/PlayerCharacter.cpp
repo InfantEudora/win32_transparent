@@ -144,6 +144,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         if (current_animation->time_index > current_animation->duration){
             if (!current_animation->looped){
                 current_animation->time_index = current_animation->duration;
+
                 debug->Info("Animation %s ended.\n",current_animation->name.c_str());
                 //We need to find a transition to a new animation:
                 AnimationTransition* transition = animation_graph->FindTransitionFrom(current_animation);
@@ -179,9 +180,15 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             //to the target keyframe.
             //Then, we need to not apply that.
             //Rotate the position by our current orientation first.
+            debug->Info("Animation modifies root object. Checking delta.\n");
             animation_mask = 0;
-            ObjectAnimation* root_anim = current_animation->FindObjectAnimation(this);
+
+            //Should be the hip bone.
+            Bone* root_bone = FindBone("mixamorig:Hips");
+
+            ObjectAnimation* root_anim = current_animation->FindObjectAnimation(root_bone);
             if (root_anim){
+                debug->Info("Found root object animation. Checking keyframes.\n");
                 ObjectAnimationKeyFrame* frame = root_anim->GetClosestKeyframe(last_time_index);
                 if (frame && frame->f_position){
                     vec3 pos_start = frame->position;
@@ -189,7 +196,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                     if (frame && frame->f_position){
                         vec3 pos_end = frame->position;
                         pos_delta = pos_end - pos_start;
-                        //debug->Info("Animation modifies root object. Delta = %.3f %.3f %.3f\n",pos_delta.x,pos_delta.y,pos_delta.z);
+                        debug->Info("Animation modifies root object. Delta = %.3f %.3f %.3f\n",pos_delta.x,pos_delta.y,pos_delta.z);
                     }
                 }
             }
@@ -261,6 +268,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         if (chosen_max_blend_time == 0){
             animation_transition_factor = 0;
         }
+
+        debug->Info("Transitioning from %s to %s. Time = %.3f / %.3f (%.2f%%)\n",current_animation->name.c_str(),current_transition->to->name.c_str(),animation_transition_time,chosen_max_blend_time,animation_transition_factor*100.0f);
 
         current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
 

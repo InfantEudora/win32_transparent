@@ -155,7 +155,9 @@ class Object{
     bool f_animation_override = false;  //If we should manually step through animation with ticks
     int animation_override_ticks = 0;
 
+    //These override applying animation
     float animation_mask = 1.0f; // 0.0 = no animation, 1.0 = full animation
+    float position_mask = 1.0f;
 
     float animation_time_delta = 0.02f;
 

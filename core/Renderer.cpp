@@ -574,7 +574,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         shader->Setfloat("alpha_clip",alpha_clip);
         shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
         RenderDepthPasses(shader,MESH_MODE_NORMAL);
-        RenderDepthPasses(shader,MESH_MODE_SHADER);
+        //RenderDepthPasses(shader,MESH_MODE_SHADER);
         FinishDepthPasses();
     }
 

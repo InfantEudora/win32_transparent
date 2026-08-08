@@ -763,7 +763,7 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
     }
 
     //First we attempt to find the transition from the current animation to the new one.
-    debug->Trace("Looking for transition from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
+    debug->Info("Looking for transition from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
     if (target_animation && animation && target_animation->name.compare(animation->name) == 0){
         if (target_animation->looped){
             debug->Trace("Animation is looped\n");
@@ -785,7 +785,7 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
     current_transition = transition;
 
     if (transition == NULL){
-        debug->Info("ProceedToAnimation: No transition found from %s to %s. Pausing animation.\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
+        debug->Info("TransitionToAnimation: No transition found from %s to %s. Pausing animation.\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
 
         animation_state = ANIMATION_STATE_PAUSED;
         return;

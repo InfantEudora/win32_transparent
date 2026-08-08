@@ -34,7 +34,8 @@ void Animation::LinkObjects(Object* root){
     int count = 0;
     for (ObjectAnimation* object_animation:object_animations){
         if (root->name.compare(object_animation->target_name) == 0){
-            modifies_root_object = true;
+            //modifies_root_object = true;
+            //???
         }
         for (Object* object:objects){
             if (object->name.compare(object_animation->target_name) == 0){
@@ -72,7 +73,7 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
         }
     }
     if (keyframe->f_position){
-        if (target->animation_mask > 0.0f){
+        if ((target->animation_mask > 0.0f) && (target->position_mask > 0.0f)){
             target->SetPosition(keyframe->position);
         }
     }
@@ -122,18 +123,8 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
 
         //Apply the Lerp value.
         if (start_keyframe->f_position && end_keyframe->f_position){
-            if (this_object_animation->target_name.compare("Hips") == 0){
-                if (end_keyframe->position.length() > start_keyframe->position.length()){
-                    vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
-                    if (this_object_animation->target){
-                        this_object_animation->target->SetPosition(pos);
-                    }
-                }else{
-                    if (this_object_animation->target){
-                        this_object_animation->target->SetPosition(start_keyframe->position);
-                    }
-                }
-
+            if (modifies_root_object && this_object_animation->target_name.compare("mixamorig:Hips") == 0){
+                //We do not lerp between positions.
             }else{
                 vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
                 if (this_object_animation->target){
@@ -160,11 +151,21 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
 //Apply complete animation to all objects in chain at interval
 void Animation::ApplyInterval(float interval){
     for (ObjectAnimation* object_animation:object_animations){
+        Object* target = object_animation->target;
         if (!object_animation->target){
             continue;
         }
-        Object* target = object_animation->target;
+        bool mask_position = false;
+        float target_mask = target->position_mask;
+        if (modifies_root_object && object_animation->target_name.compare("mixamorig:Hips") == 0){
+            mask_position = true;
+            target->position_mask = 0.0f;
+        }
         ApplyIntervalOnto(object_animation,target,interval);
+        //Reset
+        if (mask_position){
+            target->position_mask = target_mask;
+        }
     }
 }
 

@@ -129,6 +129,10 @@ void ApplicationIsoAnimation::Init(void){
     if (bottom){
         character->AttachChild(bottom);
     }
+    Object* holster = assetmanager->GetObjectFromAsset("holster");
+    if (holster){
+        character->AttachChild(holster);
+    }
 
     //Let's explore what the neatest way is to have parts of the character be able to load as a seperate mesh.
     Skeleton* second_character = gltfloader.GetSkeleton("character",assetmanager);
@@ -201,9 +205,13 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("Walking","Idle");
     t = character->animation_graph->AddTransition("Walking","ActionIdle");
 
+    t = character->animation_graph->AddTransition("Jumproping","Jumproping");
+
     t = character->animation_graph->AddTransition("Idle","Jump");
     t = character->animation_graph->AddTransition("Jump","Jump");
     t = character->animation_graph->AddTransition("Jump","Idle");
+    t = character->animation_graph->AddTransition("JumpForward","Idle");
+
 
 
     t = character->animation_graph->AddTransition("Running","Running");
@@ -255,6 +263,10 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("Pushing","Idle");
 
     t = character->animation_graph->AddTransition("torso_PistolIdle","torso_PistolIdle");
+
+    if (Animation* animation = character->animation_graph->LookupAnimation("JumpForward")){
+        animation->modifies_root_object = true;
+    }
 
 
     //A handler for dropping files onto the window
