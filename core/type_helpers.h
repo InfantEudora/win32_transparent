@@ -31,5 +31,8 @@ const T &min(const T &a, const T &b) {
     return (b < a) ? b : a;
 }
 
+int RandInt();
+int RandInt(int imin, int imax);
+float RandFloat(float fmin, float fmax);
 
 #endif

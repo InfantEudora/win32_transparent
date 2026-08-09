@@ -49,6 +49,9 @@ class PlayerCharacter : public virtual Skeleton{
     CharacterInputState character_input_state;
     CharacterAnimationState character_animation_state;
 
+    float blink_interval = 0.0f;    //Time to next blink
+    Animation* blink_animation = NULL;
+
     void ApplyAnimation(float time_delta) override;
 
     float idle_time = 0.0f;
@@ -105,6 +108,9 @@ class PlayerCharacter : public virtual Skeleton{
     vec3 right_foot_prev_wpos = vec3();
 private:
     void ProcessInputState();
+
+    //Keep track of delta in animation lerps
+    vec3 lerp_delta = vec3();
 };
 
 #endif

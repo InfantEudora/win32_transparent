@@ -119,3 +119,31 @@ float clamp(float in, float min, float max) {
     }
     return in;
 }
+
+//Returns a random int between INT_MIN and INT_MAX
+int RandInt(){
+    return rand();
+}
+
+//Returns a random integer between min and max
+int RandInt(int imin, int imax){
+    if (imin >= imax){
+        return min(imin,imax);
+    }
+    int dist = imax - imin;
+    int r = abs(RandInt());
+    r = r % (dist+1);
+    return imin + r;
+}
+
+//Random float that does not need to be repeatable.
+float RandFloat(float fmin, float fmax){
+    //Size so that floats can be gotten in range 0 - 1/size
+    float size = 1000;
+    if (fmin >= fmax){
+        return min(fmin,fmax);
+    }
+    float res = RandInt(fmin * size,fmax * size);
+    res /= size;
+    return res;
+}

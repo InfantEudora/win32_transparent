@@ -24,6 +24,9 @@ class Animation{
     bool modifies_root_object = false; // If this animation modifies the root object, we need to be careful when transitioning to it, and maybe move the root position to parent.
     bool f_end_orientation_different = false; // If at the end of the animation, the orientation is different. This is used for blending to a new animation that starts with a different orientation.
 
+    void Play(float time_delta); //Plays animmtion forward (or backward if time_delta is negative) and loops if necessary.
+    bool HasFinished();
+
     //Apply the animation at supplied interval
     void LinkObjects(Object* root);
     void ApplyInterval(float interval);
@@ -35,7 +38,7 @@ class Animation{
 
     //Lerp this animation at specified interval towards target animation at target interval.
     //The intermediate state is applied as if called with ApplyInterval
-    void Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3 inital_hip_pos);
+    void Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3* delta_out = NULL);
 
     //This will be majestic obviously. But currently only adds mixamo to the target... :)
     void Retarget(Object* target);

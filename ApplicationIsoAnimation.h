@@ -14,6 +14,10 @@ public:
     void RunLogic() override;
 
     void DrawImGuiUI(void) override;
+    void RenderDebugMenuBarClass(void) override;
+    bool f_show_demo_window = false;
+    bool f_show_shader_window = false;
+
     void RenderSkeletonUI();
     void RenderBoneModifierHeader(Bone* bone, int id);
     void SetCharacterUniforms(void);

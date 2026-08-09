@@ -27,6 +27,36 @@ Animation::Animation(){
 
 }
 
+void Animation::Play(float time_delta){
+    time_index += time_delta;
+    if (looped){
+        while (time_index > duration){
+            time_index -= duration;
+        }
+        while (time_index < 0.0f){
+            time_index += duration;
+        }
+    }else{
+        if (time_index > duration){
+            time_index = duration;
+        }
+        if (time_index < 0.0f){
+            time_index = 0.0f;
+        }
+    }
+    ApplyInterval(time_index);
+}
+
+bool Animation::HasFinished(){
+    if (looped){
+        return false;
+    }
+    if (time_index >= duration){
+        return true;
+    }
+    return false;
+}
+
 //Animation contains object names. We look them up and store references.
 void Animation::LinkObjects(Object* root){
     std::vector<Object*>objects;
@@ -89,7 +119,7 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
     }
 }
 
-void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3 initial_hip_pos){
+void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3* delta_out){
     if (!target){
         return;
     }
@@ -123,8 +153,15 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
 
         //Apply the Lerp value.
         if (start_keyframe->f_position && end_keyframe->f_position){
-            if (modifies_root_object && this_object_animation->target_name.compare("mixamorig:Hips") == 0){
-                //We do not lerp between positions.
+            if (modifies_root_object && target->modifies_root_object){
+                //Unhandled.
+                debug->Err("No Lerping between two root modifying animations yet.\n");
+            }else if ((target->modifies_root_object || modifies_root_object)  && target_object_animation->target_name.compare("mixamorig:Hips") == 0){
+                //We do not lerp between positions, but optionally return them
+                vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
+                if (delta_out){
+                    *delta_out = pos - target_object_animation->target->GetPosition();
+                }
             }else{
                 vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
                 if (this_object_animation->target){

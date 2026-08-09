@@ -1,5 +1,5 @@
 #include "PlayerCharacter.h"
-
+#include "type_helpers.h"
 #include "Debug.h"
 static Debugger* debug = new Debugger("PlayerCharacter",DEBUG_INFO);
 
@@ -152,6 +152,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
     if (animation_state == ANIMATION_STATE_LOOPING){
         //Loop the same animation
+        bool did_rewind = false;
         float last_time_index = current_animation->time_index;
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
@@ -184,24 +185,21 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             }else{
                 //Animation has ended. We play a frame close to 0.
                 current_animation->time_index -= current_animation->duration;
+                did_rewind = true;
             }
         }
         //If the animation modifies the root object, we need to keep track of how much it woule have moved.
         vec3 pos_delta = vec3();
-        if (current_animation->modifies_root_object){
+        if (current_animation->modifies_root_object && !did_rewind){
             //We need to get the difference in postion from the current keyframe
             //to the target keyframe.
-            //Then, we need to not apply that.
-            //Rotate the position by our current orientation first.
-            debug->Info("Animation modifies root object. Checking delta.\n");
-            animation_mask = 0;
 
             //Should be the hip bone.
             Bone* root_bone = FindBone("mixamorig:Hips");
 
             ObjectAnimation* root_anim = current_animation->FindObjectAnimation(root_bone);
             if (root_anim){
-                debug->Info("Found root object animation. Checking keyframes.\n");
+
                 ObjectAnimationKeyFrame* frame = root_anim->GetClosestKeyframe(last_time_index);
                 if (frame && frame->f_position){
                     vec3 pos_start = frame->position;
@@ -209,7 +207,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                     if (frame && frame->f_position){
                         vec3 pos_end = frame->position;
                         pos_delta = pos_end - pos_start;
-                        debug->Info("Animation modifies root object. Delta = %.3f %.3f %.3f\n",pos_delta.x,pos_delta.y,pos_delta.z);
+                        debug->Info("Animation modifies root object. Time Index: %.3f, Delta = %.3f %.3f %.3f\n", current_animation->time_index, pos_delta.x, pos_delta.y, pos_delta.z);
                     }
                 }
             }
@@ -229,8 +227,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),current_transition->to->name.c_str());
         }
         animation_state = ANIMATION_STATE_TRANSITION;
-
-        //
+        lerp_delta = vec3();
     }
     /*
         If we are transitioning between two animations, and during that transition
@@ -282,9 +279,36 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_transition_factor = 0;
         }
 
+        //Either the current animation or the one we are transitioning to can have modified the root object:
+        if (current_animation->modifies_root_object || current_transition->to->modifies_root_object){
+            debug->Info("Transition to/from animation with root modification\n");
+        }
         debug->Info("Transitioning from %s to %s. Time = %.3f / %.3f (%.2f%%)\n",current_animation->name.c_str(),current_transition->to->name.c_str(),animation_transition_time,chosen_max_blend_time,animation_transition_factor*100.0f);
 
-        current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
+        vec3 position_delta = vec3();
+        current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, &position_delta);
+
+        if (position_delta.length() > 0){
+
+            //Just no. It might be best to take a percentage of the modification the target animation would do.
+            //Instead of looking at what lerp did.
+
+
+            //The lerp delta is the position change from animation into new animation.
+            //Does not take into account that we manually moved. So we need to keep track of the delta.
+            vec3 delta = position_delta - lerp_delta;
+            lerp_delta = position_delta;
+            delta.y = 0;
+
+            if (animation_transition_time == 0.0){
+                delta = vec3();
+            }
+
+            debug->Info("Position Delta: %.3f %.3f %.3f, Delta: %.3f %.3f %.3f\n",position_delta.x,position_delta.y,position_delta.z, delta.x,delta.y,delta.z);
+
+            //We manually apply the position change, but rotated by our current orientation.
+            MoveBy(GetRotation()*delta);
+        }
 
         animation_transition_time += time_delta;
         if (animation_transition_time >= chosen_max_blend_time){
@@ -342,11 +366,23 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 }
             }
 
-            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
+            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, NULL);
 
         }else{
             debug->Warn("Current animation is not the target of the current transition. Cannot transition back.\n");
             animation_state = ANIMATION_STATE_PAUSED;
+        }
+    }
+
+    //Addition animation layering on top of the current animation.
+    if (blink_animation){
+        blink_interval = clamp(blink_interval - time_delta, 0.0f, 100.0f);
+        if (blink_interval == 0.0f){
+            blink_animation->Play(time_delta*2);
+        }
+        if (blink_animation->HasFinished()){
+            blink_animation->time_index = 0;
+            blink_interval = RandFloat(2.0f,5.0f);
         }
     }
 
@@ -360,7 +396,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             r1.set_rotation(left,head_turn_direction_ud*0.2f);
             r2.set_rotation(vec3(0,1,0),head_turn_direction_lr*0.2f);
             r = r2 * r1;
-            if (animation_state == ANIMATION_STATE_INVALID){
+            if (animation_state == ANIMATION_STATE_INVALID || animation_state == ANIMATION_STATE_PAUSED){
                 neck->SetRotation(r);
             }else{
                 neck->RotateBy(r);
@@ -374,7 +410,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             r1.set_rotation(left,head_turn_direction_ud*0.8f);
             r2.set_rotation(vec3(0,1,0),head_turn_direction_lr*0.8f);
             r = r2 * r1;
-            if (animation_state == ANIMATION_STATE_INVALID){
+            if (animation_state == ANIMATION_STATE_INVALID || animation_state == ANIMATION_STATE_PAUSED){
                 head->SetRotation(r);
             }else{
                 head->RotateBy(r);
@@ -387,7 +423,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             quat r;
             r.set_rotation(vec3(0,1,0),hips_turn_direction);
 
-            if (animation_state == ANIMATION_STATE_INVALID){
+            if (animation_state == ANIMATION_STATE_INVALID || animation_state == ANIMATION_STATE_PAUSED){
                 hips->SetRotation(r);
             }else{
                 hips->RotateBy(r);

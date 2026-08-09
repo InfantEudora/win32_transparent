@@ -89,6 +89,8 @@ void ApplicationIsoAnimation::Init(void){
 
     //Load all the scenery from export.json that we don't already have.
     //BuildSceneFromJSON();
+    Object* scene_obstacles = assetmanager->GetObjectFromAsset("scene");
+    main_scene->AddObject(scene_obstacles);
 
 
     //Load character model with animation data
@@ -111,30 +113,38 @@ void ApplicationIsoAnimation::Init(void){
             Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
             skeleton->AddAnimation(animation);
         }
+
+        character->blink_animation = character->FindAnimation("Blink");
     }
 
     Object* bra = assetmanager->GetObjectFromAsset("bra");
     if (bra){
+        bra->name = "Bra";
         character->AttachChild(bra);
     }
     Object* hair = assetmanager->GetObjectFromAsset("hair");
     if (hair){
+        hair->name = "Hair";
         character->AttachChild(hair);
     }
     Object* eyes = assetmanager->GetObjectFromAsset("eyes");
     if (eyes){
+        eyes->name = "Eyes";
         character->AttachChild(eyes);
     }
     Object* bottom = assetmanager->GetObjectFromAsset("bottom");
     if (bottom){
+        bottom->name = "Bottom";
         character->AttachChild(bottom);
     }
     Object* holster = assetmanager->GetObjectFromAsset("holster");
     if (holster){
+        holster->name = "Holster";
         character->AttachChild(holster);
     }
     Object* pants = assetmanager->GetObjectFromAsset("pants");
     if (pants){
+        pants->name = "Pants";
         character->AttachChild(pants);
     }
 
@@ -527,6 +537,20 @@ void ApplicationIsoAnimation::RunLogic(){
     }
 }
 
+void ApplicationIsoAnimation::RenderDebugMenuBarClass(){
+    if (ImGui::BeginMenu("Window")){
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Show ImGui Demo",NULL,&f_show_demo_window)){
+
+        }
+        if (ImGui::MenuItem("Show Shader Window",NULL,&f_show_shader_window)){
+
+        }
+        ImGui::EndMenu();
+    }
+}
+
 void ApplicationIsoAnimation::DrawImGuiUI(){
     //We're asked to import the f_filemodal file.
     if (f_import_file){
@@ -541,14 +565,14 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         f_import_file = false;
         GetAllAssetsFromGLTF();
     }
-
-    ImGui::ShowDemoWindow();
-
+    if (f_show_demo_window)
+        ImGui::ShowDemoWindow();
+    if (f_show_shader_window)
+        RenderShaderUI(default_shader);
 
     RenderDebugMenuBar();
     RenderApplicationUI();
     RenderSkeletonUI();
-    RenderShaderUI(default_shader);
 
     ImGui::Begin("Character Animation");
     if (character){
