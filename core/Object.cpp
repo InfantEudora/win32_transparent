@@ -708,11 +708,27 @@ Animation* Object::FindAnimation(const std::string& name){
     return NULL;
 }
 
+const char* Object::CurrentAnimationName(){
+    return current_animation ? current_animation->name.c_str() : "None";
+}
+
+const char* Object::NextAnimationName(){
+    if (!current_transition){
+        return "None";
+    }
+    if (!current_transition->to){
+            return "None";
+        }
+        return current_transition->to->name.c_str();
+    };
+
 void Object::SwitchToAnimation(const std::string& name){
     SwitchToAnimation(FindAnimation(name));
 }
 
+//Forcesfull switches to the specified animation. If NULL, will switch to default pose.
 void Object::SwitchToAnimation(Animation* animation){
+    current_transition = NULL;
     if (!animation){
         current_animation = NULL;
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
@@ -721,11 +737,16 @@ void Object::SwitchToAnimation(Animation* animation){
     current_animation = animation;
     current_animation->time_index = 0.0f;
     animation_state = ANIMATION_STATE_LOOPING;
+
 }
 
 void Object::TransitionToAnimation(const std::string& name){
     dbg_desired_animation_name = name;
-    TransitionToAnimation(FindAnimation(name));
+    Animation* animation = FindAnimation(name);
+    if (!animation){
+        debug->Warn("TransitionToAnimation: Animation %s not found\n",name.c_str());
+    }
+    TransitionToAnimation(animation);
 }
 
 //TODO: TransitionToAnimation should just transition to the supplied animation.
@@ -786,9 +807,12 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
 
     if (transition == NULL){
         debug->Info("TransitionToAnimation: No transition found from %s to %s. Pausing animation.\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
-
-        animation_state = ANIMATION_STATE_PAUSED;
-        return;
+        //We can just make one... for now.
+        transition = animation_graph->AddTransition(target_animation ? target_animation->name : "", animation->name);
+        current_transition = transition;
+        //animation_state = ANIMATION_STATE_PAUSED;
+        //return;
+        debug->Warn("TransitionToAnimation: Created transition from %s to %s.\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
     }
 
     if (animation == target_animation){

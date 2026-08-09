@@ -31,12 +31,12 @@ struct CharacterInputState{
     bool any_input_was_active = false;
 };
 
-//
+//Addition to Object animation state, to keep track of what the character is doing.
 struct CharacterAnimationState{
+    bool t_pose = true;
+    bool idle = false;
     bool moving_forward = false;
-    bool moving_backward = false;
-    bool moving_left = false;
-    bool moving_right = false;
+    void Clear(){ t_pose = false; idle = false; moving_forward = false; };
 };
 
 class PlayerCharacter;
@@ -47,6 +47,7 @@ class PlayerCharacter : public virtual Skeleton{
     ~PlayerCharacter();
 
     CharacterInputState character_input_state;
+    CharacterAnimationState character_animation_state;
 
     void ApplyAnimation(float time_delta) override;
 

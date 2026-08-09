@@ -133,6 +133,10 @@ void ApplicationIsoAnimation::Init(void){
     if (holster){
         character->AttachChild(holster);
     }
+    Object* pants = assetmanager->GetObjectFromAsset("pants");
+    if (pants){
+        character->AttachChild(pants);
+    }
 
     //Let's explore what the neatest way is to have parts of the character be able to load as a seperate mesh.
     Skeleton* second_character = gltfloader.GetSkeleton("character",assetmanager);
@@ -154,8 +158,6 @@ void ApplicationIsoAnimation::Init(void){
             second_character->AddAnimation(animation);
         }
     }
-
-
     hair = assetmanager->GetObjectFromAsset("hair");
     if (hair){
         second_character->AttachChild(hair);
@@ -164,8 +166,14 @@ void ApplicationIsoAnimation::Init(void){
     if (eyes){
         second_character->AttachChild(eyes);
     }
-
-
+    bra = assetmanager->GetObjectFromAsset("bra");
+    if (bra){
+        second_character->AttachChild(bra);
+    }
+    bottom = assetmanager->GetObjectFromAsset("bottom");
+    if (bottom){
+        second_character->AttachChild(bottom);
+    }
 
     //We'll attach a handgun to the character, and manually place it.
     Object* handgun = assetmanager->GetObjectFromAsset("pistol");
@@ -190,6 +198,10 @@ void ApplicationIsoAnimation::Init(void){
     character->animation_graph->animations = &character->animations;
     t = character->animation_graph->AddTransition("","Idle"); //Null to Idle transition for when we start an animation without an active one.
     t = character->animation_graph->AddTransition("","ActionIdle"); //Null to Idle transition for when we start an animation without an active one.
+    t = character->animation_graph->AddTransition("","CrossJumps");
+    t = character->animation_graph->AddTransition("Idle","CrossJumps");
+    t = character->animation_graph->AddTransition("CrossJumps","CrossJumps");
+    t = character->animation_graph->AddTransition("CrossJumps","Idle");
     t = character->animation_graph->AddTransition("Idle","Idle");
     t = character->animation_graph->AddTransition("Idle","Running");
     if (t){
@@ -197,11 +209,11 @@ void ApplicationIsoAnimation::Init(void){
     }
     t = character->animation_graph->AddTransition("Idle","Walking");
     t = character->animation_graph->AddTransition("Walking","Walking");
-    t = character->animation_graph->AddTransition("Walking","WalkBackwardInPlace");
-    t = character->animation_graph->AddTransition("Idle","WalkBackwardInPlace");
-    t = character->animation_graph->AddTransition("WalkBackwardInPlace","WalkBackwardInPlace");
-    t = character->animation_graph->AddTransition("WalkBackwardInPlace","Idle");
-    t = character->animation_graph->AddTransition("WalkBackwardInPlace","Walking");
+    t = character->animation_graph->AddTransition("Walking","WalkingBackwards");
+    t = character->animation_graph->AddTransition("Idle","WalkingBackwards");
+    t = character->animation_graph->AddTransition("WalkingBackwards","WalkingBackwards");
+    t = character->animation_graph->AddTransition("WalkingBackwards","Idle");
+    t = character->animation_graph->AddTransition("WalkingBackwards","Walking");
     t = character->animation_graph->AddTransition("Walking","Idle");
     t = character->animation_graph->AddTransition("Walking","ActionIdle");
 
@@ -210,6 +222,8 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("Idle","Jump");
     t = character->animation_graph->AddTransition("Jump","Jump");
     t = character->animation_graph->AddTransition("Jump","Idle");
+    t = character->animation_graph->AddTransition("Jump","Walking");
+    t = character->animation_graph->AddTransition("Walking","Jump");
     t = character->animation_graph->AddTransition("JumpForward","Idle");
 
 
@@ -265,6 +279,9 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("torso_PistolIdle","torso_PistolIdle");
 
     if (Animation* animation = character->animation_graph->LookupAnimation("JumpForward")){
+        animation->modifies_root_object = true;
+    }
+    if (Animation* animation = character->animation_graph->LookupAnimation("WalkingBackwards")){
         animation->modifies_root_object = true;
     }
 
@@ -459,8 +476,8 @@ void ApplicationIsoAnimation::RunLogic(){
             character->TurnLookDown();
         }
         if (input->IsKeyDown(INPUT_F)){
-            character->f_animation_override = true;
             character->animation_override_ticks++;
+            character->f_animation_override = true;
         }
         if (input->WasKeyReleased(INPUT_G)){
             character->ToggleHandgun();
@@ -543,6 +560,11 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         }else{
             ImGui::Text("input_forward");
         }
+        if (character->character_input_state.input_backward_down){
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_backward");
+        }else{
+            ImGui::Text("input_backward");
+        }
         if (character->character_input_state.input_left_down){
             ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_left");
         }else{
@@ -552,6 +574,26 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
             ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_right");
         }else{
             ImGui::Text("input_right");
+        }
+        if (character->character_input_state.input_jump){
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_jump");
+        }else{
+            ImGui::Text("input_jump");
+        }
+        if (character->character_input_state.input_action){
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_action");
+        }else{
+            ImGui::Text("input_action");
+        }
+        if (character->character_input_state.input_action_active){
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_action_active");
+        }else{
+            ImGui::Text("input_action_active");
+        }
+        if (character->character_input_state.input_interact){
+            ImGui::TextColored(ImVec4(0.5,1,0.5,1),"input_interact");
+        }else{
+            ImGui::Text("input_interact");
         }
         //ImGui::Text(" moving_forward : %s",character->character_state.moving_forward ? "Yes" : "No");
         //ImGui::Text(" moving_left    : %s",character->character_state.moving_left ? "Yes" : "No");
@@ -595,7 +637,8 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         ImGui::Checkbox("Grab Mode",&f_mode_grab);
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Separator();
-        ImGui::Text("Current Animation : %s",character->current_animation ? character->current_animation->name.c_str() : "None");
+        ImGui::Text("Current Animation : %s",character->CurrentAnimationName());
+        ImGui::Text("Next Animation    : %s",character->NextAnimationName());
         ImGui::Separator();
         Bone* hips = character->FindBone("mixamorig:Hips");
         if (hips){

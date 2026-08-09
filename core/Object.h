@@ -15,6 +15,7 @@ class Object;
 #include "ObjectAnimation.h"
 #include "Physics.h"
 
+
 typedef uint32_t objectid_t;
 #define OBJECTID_INVALID    0xFFFFFFFF
 #define NUM_MATERIAL_SLOTS  4
@@ -169,6 +170,9 @@ class Object{
     Animation* FindAnimation(const std::string& name); //Finds it by name
 
     AnimationGraph* animation_graph = NULL; //A graph describing what animations may follow what.
+    const char* CurrentAnimationName();
+    const char* NextAnimationName();
+
 
 
     virtual void ApplyAnimation(float time_delta);

@@ -515,7 +515,7 @@ void Application::RenderDebugMenuBar(){
                                         main_scene->AddObject(character);
                                         //In order to apply animations to anyting, there needs to be a
                                         //root bone name set.
-                                        character->root_bone_name = "Hips";
+                                        character->root_bone_name = "Mixamorig:Hips";
                                     }
                                 }
                             }

@@ -23,6 +23,8 @@ void PlayerCharacter::ProcessInputState(){
         if (character_input_state.any_input_was_active){
             TransitionToAnimation("Idle");
             character_input_state.any_input_was_active = false;
+            character_animation_state.Clear();
+            character_animation_state.idle = true;
         }
     }else{
         character_input_state.any_input_was_active = true;
@@ -30,20 +32,23 @@ void PlayerCharacter::ProcessInputState(){
     if (character_input_state.input_action){
         TransitionToAnimation("Boxing");
         character_input_state.input_action = false;
-
     }else if (character_input_state.input_action_active){
         if (f_handgun_drawn){
             TransitionToAnimation("PistolIdle");
         }else{
-            TransitionToAnimation("ActionIdle");
+            if (FindAnimation("ActionIdle")){
+                TransitionToAnimation("ActionIdle");
+            }else{
+                TransitionToAnimation("CrossJumps");
+            }
         }
         character_input_state.input_action_active = false;
         //On top of this animation, we want to rotate the hips to face the target
     }
     if (character_input_state.input_backward_down){
-        TransitionToAnimation("WalkBackwardInPlace");
+        TransitionToAnimation("WalkingBackwards");
 
-        MoveForwardBy(0.025f * animation_transition_factor);
+        //MoveForwardBy(0.025f * animation_transition_factor);
         character_input_state.input_backward_down = false;
     }
     if (character_input_state.input_left_down){
@@ -70,9 +75,15 @@ void PlayerCharacter::ProcessInputState(){
         TransitionToAnimation("Walking");
         MoveForwardBy(-0.025f * animation_transition_factor);
         character_input_state.input_forward_down = false;
+        character_animation_state.Clear();
+        character_animation_state.moving_forward = true;
     }
     if (character_input_state.input_jump){
-        TransitionToAnimation("Jump");
+        if (character_animation_state.moving_forward){
+            TransitionToAnimation("JumpForward");
+        }else{
+            TransitionToAnimation("Jump");
+        }
         character_input_state.input_jump = false;
     }
     if (character_input_state.input_interact){
@@ -135,6 +146,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
         animation_state = ANIMATION_STATE_INVALID;
         current_animation = NULL;
+        character_animation_state.Clear();
+        character_animation_state.t_pose = true;
     }
 
     if (animation_state == ANIMATION_STATE_LOOPING){
@@ -288,7 +301,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         if (!current_transition){
             debug->Warn("No current transition to transition back from.\n");
             animation_state = ANIMATION_STATE_PAUSED;
-            return;
         }
         if (current_transition->from == current_animation){
 
@@ -306,7 +318,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 current_transition->to->time_index += current_transition->to->duration;
             }
 
-            debug->Info("Rewinding transition from %s to %s\n",current_transition->from->name.c_str(),current_transition->to->name.c_str());
+            debug->Info("Rewinding transition from %s to %s. Time = %.3f (%.2f%%)\n",current_animation->name.c_str(),current_transition->to->name.c_str(),animation_transition_time,animation_transition_factor*100.0f);
             //We just need to rewind the current transition.
             animation_transition_time -= time_delta;
             if (animation_transition_time <= 0){
@@ -328,9 +340,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 if (chosen_max_blend_time == 0){
                     animation_transition_factor = 0;
                 }
-
-                current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
             }
+
+            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, vec3());
+
         }else{
             debug->Warn("Current animation is not the target of the current transition. Cannot transition back.\n");
             animation_state = ANIMATION_STATE_PAUSED;
@@ -374,7 +387,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             quat r;
             r.set_rotation(vec3(0,1,0),hips_turn_direction);
 
-            if (animation_state == ANIMATION_STATE_INVALID || animation_state == ANIMATION_STATE_PAUSED){
+            if (animation_state == ANIMATION_STATE_INVALID){
                 hips->SetRotation(r);
             }else{
                 hips->RotateBy(r);
