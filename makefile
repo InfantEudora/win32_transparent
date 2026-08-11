@@ -76,6 +76,8 @@ endif
 CFLAGS+= -DAPP_HEADER=\"ApplicationIsoAnimation.h\"
 CFLAGS+= -DAPP_CLASS=ApplicationIsoAnimation
 SRCS += ApplicationIsoAnimation.cpp
+IPATHS += -Iisoterrain/
+DIR_SRC += ./isoterrain
 
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"

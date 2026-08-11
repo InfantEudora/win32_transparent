@@ -3,6 +3,7 @@
 static Debugger* debug = new Debugger("Asteroid",DEBUG_INFO);
 
 Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, RRandom* rrand):Object(){
+
     name = "Asteroid";
     if (!assetmanager){
         debug->Fatal("No assetmanager given!\n");
@@ -33,6 +34,7 @@ Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene
 
     SetCollisionCategoryBits(COLLISION_CATEGORY_ASTEROID);
     SetCollideWithMaskBits(COLLISION_CATEGORY_SHIP|COLLISION_CATEGORY_ASTEROID|COLLISION_CATEGORY_LASER);
+
 }
 
 Asteroid::~Asteroid(){

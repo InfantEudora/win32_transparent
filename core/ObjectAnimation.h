@@ -38,7 +38,7 @@ class Animation{
 
     //Lerp this animation at specified interval towards target animation at target interval.
     //The intermediate state is applied as if called with ApplyInterval
-    void Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3* delta_out = NULL);
+    void Lerp(Animation* target,float this_interval, float target_interval, float factor);
 
     //This will be majestic obviously. But currently only adds mixamo to the target... :)
     void Retarget(Object* target);

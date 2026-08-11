@@ -2,6 +2,7 @@
 #define _APPLICATION_ANIMATION_H_
 
 #include "Application.h"
+#include "IsoTerrain.h"
 
 /*
     An attempt at an application that overrides the default, and shows a UI only.
@@ -23,6 +24,11 @@ public:
     void SetCharacterUniforms(void);
 
     Scene* CreateEmptyScene();
+
+    //The test environment will contain a IsoTerrain with some platforms, stairs, etc
+    //To test all animations.
+    IsoTerrain* terrain = NULL;
+    void BuildTestEnvironment();
 
     DirectionalLight* sun = NULL;
     PlayerCharacter* character = NULL;

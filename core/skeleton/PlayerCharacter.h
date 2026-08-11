@@ -64,7 +64,10 @@ class PlayerCharacter : public virtual Skeleton{
 
     float head_turn_direction_lr = 0.0f;        //Direction the head should be facing on top of the animation from -1 to 1
     float head_turn_direction_ud = 0.0f;
-    float hips_turn_direction = 0.0f;            //Direction the hips should be facing on top of the animation from -1 to 1
+    float hips_turn_direction = 0.0f;           //Direction the hips should be facing on top of the animation from -1 to 1
+
+    float target_y_location = 0.0f;             //Animation root modifications can make slight offsets. And the character might be on a different level.
+    float target_location_factor = 1.0f;        //Amount that we lerp the character position to y each frame.
 
 
     //There also needs to be a list, or a tree linked list thing with all allowed actions from a current one.
@@ -108,9 +111,6 @@ class PlayerCharacter : public virtual Skeleton{
     vec3 right_foot_prev_wpos = vec3();
 private:
     void ProcessInputState();
-
-    //Keep track of delta in animation lerps
-    vec3 lerp_delta = vec3();
 };
 
 #endif

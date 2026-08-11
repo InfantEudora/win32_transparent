@@ -68,6 +68,10 @@ void Physics::SetBodyWorldOrientation(const quat& q){
 
 //Toggles the body to be either static or dynamic
 void Physics::SetStatic(bool _static){
+	if (!body || !body->rigidbody){
+		debug->Warn("Cannot SetStatic() without rigidbody\n");
+		return;
+	}
 	bool f_active = body->rigidbody->isActive();
 	body->rigidbody->setIsActive(false);
 	if (_static){

@@ -39,6 +39,11 @@ Scene* ApplicationIsoAnimation::CreateEmptyScene(){
     return scene;
 }
 
+void ApplicationIsoAnimation::BuildTestEnvironment(){
+
+
+}
+
 //This function is called from inside the renderer.
 void ApplicationIsoAnimation::SetCharacterUniforms(void){
     if (character && renderer->deferred_shader_custom){

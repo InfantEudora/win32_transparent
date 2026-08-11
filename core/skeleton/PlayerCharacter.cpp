@@ -227,44 +227,39 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),current_transition->to->name.c_str());
         }
         animation_state = ANIMATION_STATE_TRANSITION;
-        lerp_delta = vec3();
-    }
-    /*
-        If we are transitioning between two animations, and during that transition
-        decide we want to transition to a different animation. What to do?
-
-        We could snapshot the current transition as a single frame animation,
-        and blend that to the new next.
-    */
-    if (animation_state == ANIMATION_STATE_TRANSITION){
+    }else if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
         if (!current_transition){
             debug->Warn("AnimationSampler: Transition to next = NULL\n");
             animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
-
-            return;
         }
         if (current_transition->to == current_animation){
             debug->Warn("AnimationSampler: Next is identical to current\n");
             animation_state = ANIMATION_STATE_LOOPING;
-            return;
+
         }
 
         //We need to play the current and the next animation,
         //and loop both if we transistion longer than the animation is.
         //If the current animation is a non-looping animation, we need to make sure we don't play past the end of it.
+        float from_last_time_index = current_animation->time_index;
+        bool from_did_rewind = false;
         current_animation->time_index += time_delta;
         if (current_animation->time_index > current_animation->duration){
             if (!current_animation->looped){
                 current_animation->time_index = current_animation->duration;
             }else{
                 current_animation->time_index -= current_animation->duration;
+                from_did_rewind = true;
             }
         }
         //Rewind next animation as well.
+        float to_last_time_index = current_transition->to->time_index;
+        bool to_did_rewind = false;
         current_transition->to->time_index += time_delta;
         if (current_transition->to->time_index > current_transition->to->duration){
             current_transition->to->time_index -= current_transition->to->duration;
+            to_did_rewind = true;
         }
 
         float chosen_max_blend_time = 0;
@@ -279,35 +274,59 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_transition_factor = 0;
         }
 
-        //Either the current animation or the one we are transitioning to can have modified the root object:
+        //Either the current animation or the one we are transitioning to can have modified the root object.
+        //We compute the per-frame root movement of each animation the same way ANIMATION_STATE_LOOPING does
+        //(the difference between the keyframe position at the last time index and at the new one), then blend
+        //the two deltas by how far we are through the transition.
+        vec3 delta = vec3();
         if (current_animation->modifies_root_object || current_transition->to->modifies_root_object){
             debug->Info("Transition to/from animation with root modification\n");
+
+            Bone* root_bone = FindBone("mixamorig:Hips");
+
+            vec3 from_delta = vec3();
+            if (current_animation->modifies_root_object && !from_did_rewind){
+                ObjectAnimation* from_root_anim = current_animation->FindObjectAnimation(root_bone);
+                if (from_root_anim){
+                    ObjectAnimationKeyFrame* frame = from_root_anim->GetClosestKeyframe(from_last_time_index);
+                    if (frame && frame->f_position){
+                        vec3 pos_start = frame->position;
+                        frame = from_root_anim->GetClosestKeyframe(current_animation->time_index);
+                        if (frame && frame->f_position){
+                            from_delta = frame->position - pos_start;
+                        }
+                    }
+                }
+            }
+
+            vec3 to_delta = vec3();
+            if (current_transition->to->modifies_root_object && !to_did_rewind){
+                ObjectAnimation* to_root_anim = current_transition->to->FindObjectAnimation(root_bone);
+                if (to_root_anim){
+                    ObjectAnimationKeyFrame* frame = to_root_anim->GetClosestKeyframe(to_last_time_index);
+                    if (frame && frame->f_position){
+                        vec3 pos_start = frame->position;
+                        frame = to_root_anim->GetClosestKeyframe(current_transition->to->time_index);
+                        if (frame && frame->f_position){
+                            to_delta = frame->position - pos_start;
+                        }
+                    }
+                }
+            }
+
+            delta = from_delta.lerp(to_delta,animation_transition_factor);
+            //delta.y = 0;
         }
         debug->Info("Transitioning from %s to %s. Time = %.3f / %.3f (%.2f%%)\n",current_animation->name.c_str(),current_transition->to->name.c_str(),animation_transition_time,chosen_max_blend_time,animation_transition_factor*100.0f);
 
-        vec3 position_delta = vec3();
-        current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, &position_delta);
+        current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor);
 
-        if (position_delta.length() > 0){
-
-            //Just no. It might be best to take a percentage of the modification the target animation would do.
-            //Instead of looking at what lerp did.
-
-
-            //The lerp delta is the position change from animation into new animation.
-            //Does not take into account that we manually moved. So we need to keep track of the delta.
-            vec3 delta = position_delta - lerp_delta;
-            lerp_delta = position_delta;
-            delta.y = 0;
-
-            if (animation_transition_time == 0.0){
-                delta = vec3();
-            }
-
-            debug->Info("Position Delta: %.3f %.3f %.3f, Delta: %.3f %.3f %.3f\n",position_delta.x,position_delta.y,position_delta.z, delta.x,delta.y,delta.z);
+        if (delta.length() > 0){
+            delta = GetRotation()*delta;
+            debug->Info("Delta: %.3f %.3f %.3f\n",delta.x,delta.y,delta.z);
 
             //We manually apply the position change, but rotated by our current orientation.
-            MoveBy(GetRotation()*delta);
+            MoveBy(delta);
         }
 
         animation_transition_time += time_delta;
@@ -319,9 +338,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             animation_state = ANIMATION_STATE_LOOPING;
             debug->Info("Transition complete. Now at %s\n",current_animation->name.c_str());
         }
-    }
-    //We rewind the transition if we are aborting the transition.
-    if (animation_state == ANIMATION_STATE_TRANSITION_BACK){
+    }else if (animation_state == ANIMATION_STATE_TRANSITION_BACK){
+        //We rewind the transition if we are aborting the transition.
         if (!current_transition){
             debug->Warn("No current transition to transition back from.\n");
             animation_state = ANIMATION_STATE_PAUSED;
@@ -366,7 +384,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 }
             }
 
-            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor, NULL);
+            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor);
 
         }else{
             debug->Warn("Current animation is not the target of the current transition. Cannot transition back.\n");
@@ -429,6 +447,18 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 hips->RotateBy(r);
             }
         }
+
+    }
+
+    //Update character position to y target
+    float current_y = GetPosition().y;
+    if (abs(current_y - target_y_location) > 0.001f){
+        debug->Info("Lerping character to Y=%.3f position\n",target_y_location);
+        vec3 target = GetPosition();
+        target.y = target_y_location;
+        vec3 p = GetPosition();
+        p = p.lerp(target,0.1f);
+        //SetPosition(p);
 
     }
 

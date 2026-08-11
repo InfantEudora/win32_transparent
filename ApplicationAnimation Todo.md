@@ -1,6 +1,5 @@
 ## Doing
-- [x] Import a new mesh with seperate hair and eyes.
-
+- [ ] Make the character climb up on a box, and be able to jump down from it.
 
 ## ApplicationAnimation Todo
 - [ ] Implement hair tracking
@@ -10,7 +9,7 @@
 - [ ] Make a small chain of physics objects that react to gravity that are also a skeleton.
 - [ ] So whe can pick the character up, like <br>
  ![Pick Up](pickup_character.png)
-- [ ] Make the character climb up on a box, and be able to jump down from it.
+- [x] Import a new mesh with seperate hair and eyes.
 
 ## Workflow for Blender -> Mixamo -> Blender -> App
 

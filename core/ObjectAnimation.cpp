@@ -119,7 +119,7 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
     }
 }
 
-void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor, vec3* delta_out){
+void Animation::Lerp(Animation* target,float this_interval, float target_interval, float factor){
     if (!target){
         return;
     }
@@ -157,11 +157,7 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
                 //Unhandled.
                 debug->Err("No Lerping between two root modifying animations yet.\n");
             }else if ((target->modifies_root_object || modifies_root_object)  && target_object_animation->target_name.compare("mixamorig:Hips") == 0){
-                //We do not lerp between positions, but optionally return them
-                vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
-                if (delta_out){
-                    *delta_out = pos - target_object_animation->target->GetPosition();
-                }
+                //Root motion for the Hips bone is applied manually by the caller, so we don't set its position here.
             }else{
                 vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
                 if (this_object_animation->target){
