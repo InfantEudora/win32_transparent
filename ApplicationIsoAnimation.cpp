@@ -40,7 +40,31 @@ Scene* ApplicationIsoAnimation::CreateEmptyScene(){
 }
 
 void ApplicationIsoAnimation::BuildTestEnvironment(){
+    test_terrain = new IsoTerrain();
+    test_terrain->assetmanager = assetmanager;
+    test_terrain->base_tile = "block";
+    test_terrain->height_factor = 1.0f;
+    test_terrain->CreateTerrain(NULL,rrand, 5,5,3);
+    main_scene->AddObject(test_terrain);
 
+    //Hide all the tiles above 1
+    for (int z = 1;z < test_terrain->height;z++){
+        for (int y = 0;y < test_terrain->depth;y++){
+            for (int x = 0;x < test_terrain->width;x++){
+                IsoCell* hide_cell = test_terrain->GetCellByCoordinate(int3(x,y,z));
+                if (hide_cell){
+                    hide_cell->Hide();
+                }
+            }
+        }
+    }
+
+    //We'd like now to add a ramp, a pillar and a few 'islands'to jump across.
+
+    IsoCell* cell = test_terrain->GetCellByCoordinate(int3(0,0,0));
+    if (cell){
+        cell->SetTileAsset("ramp_half");
+    }
 
 }
 
@@ -77,6 +101,11 @@ void ApplicationIsoAnimation::Init(void){
     main_scene = CreateEmptyScene();
     main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
 
+    //Randomise the randomiser
+    rrand = new RRandom();
+    debug->Info("Polulating RRandom\n");
+    rrand->Generate(256,256);
+
     assetmanager = new AssetManager();
     Debugger* glftdebug = debug->FindHandle("GLTFLoader");
     if (glftdebug){
@@ -94,9 +123,6 @@ void ApplicationIsoAnimation::Init(void){
 
     //Load all the scenery from export.json that we don't already have.
     //BuildSceneFromJSON();
-    Object* scene_obstacles = assetmanager->GetObjectFromAsset("scene");
-    main_scene->AddObject(scene_obstacles);
-
 
     //Load character model with animation data
     character = new PlayerCharacter();
@@ -241,6 +267,12 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("Walking","Jump");
     t = character->animation_graph->AddTransition("JumpForward","Idle");
 
+    t = character->animation_graph->AddTransition("StandToFreeHang","FreeHangIdle");
+    t = character->animation_graph->AddTransition("FreeHangIdle","FreeHangIdle");
+    if (Animation* animation = character->animation_graph->LookupAnimation("StandToFreeHang")){
+        animation->modifies_root_object = true;
+    }
+
 
 
     t = character->animation_graph->AddTransition("Running","Running");
@@ -329,6 +361,8 @@ void ApplicationIsoAnimation::Init(void){
     renderer->skybox_mesh = assetmanager->GetMeshFromAsset("cube");
 
     main_window->Resize(1680,900);
+
+    BuildTestEnvironment();
 }
 
 //Called before update physics after update animations
@@ -663,6 +697,8 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         ImGui::Text("Head Turn Direction U/D : %.2f",character->head_turn_direction_ud);
         ImGui::Checkbox("Enable Manual Animations",&character->f_animation_override);
         ImGui::Checkbox("Rotation Animations",&character->f_rotation_animation);
+        ImGui::DragFloat("Target y_location factor", (float*)&character->target_location_factor, 0.01f, 0.0f, 1.0f);
+
         ImGui::Checkbox("Grab Mode",&f_mode_grab);
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Separator();

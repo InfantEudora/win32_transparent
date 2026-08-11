@@ -27,7 +27,8 @@ public:
 
     //The test environment will contain a IsoTerrain with some platforms, stairs, etc
     //To test all animations.
-    IsoTerrain* terrain = NULL;
+    IsoTerrain* test_terrain = NULL;
+
     void BuildTestEnvironment();
 
     DirectionalLight* sun = NULL;

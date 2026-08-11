@@ -72,6 +72,8 @@ public:
     IsoStairs* PlaceStairs(const std::string& asset_name,int direction);
     Object* RaiseTerrain();
 
+    void SetTileAsset(const std::string& asset_name);
+
     /*
         Walls and pillars might as well be stored in the terrain, so they can be queried easier.
         So we can simply look up the pillar by coordinate. But then who owns the wall?

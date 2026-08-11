@@ -501,3 +501,9 @@ IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
     return NULL;
     */
 }
+
+void IsoCell::SetTileAsset(const std::string& asset_name){
+    if (assetmanager){
+        assetmanager->GetObjectFromAsset(asset_name.c_str(),this);
+    }
+}

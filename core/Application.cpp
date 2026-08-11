@@ -1277,7 +1277,8 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     ImGui::Text("Transition->To    : NULL");
                 }
                 ImGui::Text("Current Animation State : %i\n",object->animation_state);
-                ImGui::Text("Desired Animation : %s\n",object->dbg_desired_animation_name.c_str());
+                ImGui::Text("Desired Animation       : %s\n",object->dbg_desired_animation_name.c_str());
+                ImGui::Text("Anim Transition Factor  : %.3f\n",object->animation_transition_factor);
 
             }
 

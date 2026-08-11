@@ -73,7 +73,13 @@ void PlayerCharacter::ProcessInputState(){
     }
     if (character_input_state.input_forward_down){
         TransitionToAnimation("Walking");
-        MoveForwardBy(-0.025f * animation_transition_factor);
+        //If the animation is transitioning to walking, we move by a factor.
+        //If the animation is looping, that is the full speed.
+        float factor = animation_transition_factor;
+        if (animation_state == ANIMATION_STATE_LOOPING){
+            factor = 1;
+        }
+        MoveForwardBy(-0.025f * factor);
         character_input_state.input_forward_down = false;
         character_animation_state.Clear();
         character_animation_state.moving_forward = true;
@@ -271,7 +277,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
         animation_transition_factor =  animation_transition_time / chosen_max_blend_time;
         if (chosen_max_blend_time == 0){
-            animation_transition_factor = 0;
+            animation_transition_factor = 1.0;
         }
 
         //Either the current animation or the one we are transitioning to can have modified the root object.
@@ -451,15 +457,15 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
     }
 
     //Update character position to y target
+    //Disabled for now.
     float current_y = GetPosition().y;
     if (abs(current_y - target_y_location) > 0.001f){
-        debug->Info("Lerping character to Y=%.3f position\n",target_y_location);
+        //debug->Info("Lerping character to Y=%.3f position\n",target_y_location);
         vec3 target = GetPosition();
         target.y = target_y_location;
         vec3 p = GetPosition();
-        p = p.lerp(target,0.1f);
-        //SetPosition(p);
-
+        p = p.lerp(target,0.1f * target_location_factor);
+        SetPosition(p);
     }
 
     //Update the foot trackers
