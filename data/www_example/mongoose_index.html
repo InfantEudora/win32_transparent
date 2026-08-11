@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MQTT Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <nav>
+    <div class="nav-title">
+      <span class="nav-label">&#9889; MQTT</span>
+      <button id="nav-toggle" title="Collapse sidebar">&#8249;</button>
+    </div>
+    <div class="nav-item active" data-page="overview">
+      <span class="nav-icon">&#9632;</span><span class="nav-label">Overview</span>
+    </div>
+    <div class="nav-item" data-page="devices">
+      <span class="nav-icon">&#9776;</span><span class="nav-label">Devices</span>
+    </div>
+    <div class="nav-item" data-page="solar">
+      <span class="nav-icon">&#9728;</span><span class="nav-label">Solar</span>
+    </div>
+    <div class="nav-item" data-page="grid">
+      <span class="nav-icon">&#x23FB;</span><span class="nav-label">Grid</span>
+    </div>
+    <div class="nav-item" data-page="chargepoints">
+      <span class="nav-icon">&#9889;</span><span class="nav-label">Chargepoints</span>
+    </div>
+    <div class="nav-item" data-page="heating">
+      <span class="nav-icon">&#x1F321;</span><span class="nav-label">Heating / AC</span>
+    </div>
+    <div class="nav-item" data-page="config" style="margin-top:auto; border-top:1px solid #21262d;">
+      <span class="nav-icon">&#9881;</span><span class="nav-label">Config</span>
+    </div>
+    <div class="nav-item" id="nav-login" style="border-top:1px solid #21262d;" onclick="authShowModal()">
+      <span class="nav-icon" id="auth-icon">&#128274;</span>
+      <span id="auth-label" class="nav-label">Login</span>
+      <span class="nav-auth-status" id="auth-ok">&#10003;</span>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- Overview page -->
+    <div id="page-overview" class="page active">
+      <h1>Overview</h1>
+      <div id="ov-status" class="" style="color:#6e7681;font-size:0.82em;margin-bottom:20px;">Connecting…</div>
+      <div class="cards" id="cards"></div>
+    </div>
+
+    <!-- Devices page -->
+    <div id="page-devices" class="page">
+      <h1>Devices</h1>
+      <div id="status" style="color:#6e7681;font-size:0.82em;margin-bottom:20px;">Connecting…</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Device</th>
+            <th>Alias</th>
+            <th>IP Address</th>
+            <th>Subtopic</th>
+            <th>Last Data</th>
+            <th>Age</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- Solar page -->
+    <div id="page-solar" class="page">
+      <div class="solar-wrap">
+
+        <div class="sol-layout">
+          <div class="sol-card">
+            <div class="card-header">
+              <h1>Expected Solar Power</h1>
+              <div class="date" id="date-label"></div>
+            </div>
+            <div class="stats">
+              <div class="stat">
+                <label>System peak power</label>
+                <span class="value" id="syspeak-display" title="Click to edit" style="cursor:pointer;border-bottom:1px dashed #444">3.8</span><span class="unit">kWp</span>
+                <input id="syspeak-input" type="number" min="0.1" max="99" step="0.1"
+                       style="display:none;width:4.5rem;font-size:1.8rem;font-weight:600;color:#f0c040;background:#12141c;border:1px solid #3a8fd1;border-radius:4px;padding:0 4px;outline:none">
+              </div>
+              <div class="stat">
+                <label>Expected total</label>
+                <span class="value" id="expected-total">18.4</span><span class="unit">kWh</span>
+              </div>
+              <div class="stat">
+                <label>Peak hour</label>
+                <span class="value">13:00</span>
+              </div>
+              <div class="stats-divider"></div>
+              <div class="sun-stat">
+                <label>Sun</label>
+                <div class="sun-rows">
+                  <div class="sun-row">
+                    <span class="sun-icon">&#9651;</span>
+                    <span class="sun-time" id="sunrise-time"></span>
+                    <span class="sun-lbl">sunrise</span>
+                  </div>
+                  <div class="sun-row">
+                    <span class="sun-icon">&#9661;</span>
+                    <span class="sun-time" id="sunset-time"></span>
+                    <span class="sun-lbl">sunset</span>
+                  </div>
+                </div>
+                <div class="daylight-val">Daylight: <span id="daylight-hours"></span></div>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="chart"></canvas>
+            </div>
+            <div class="sol-legend">
+              <div class="legend-item"><div class="legend-dot" style="background:#f0c040"></div>Expected power (kW)</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#3a8fd1"></div>Current time</div>
+            </div>
+          </div>
+          <div class="sol-sidebar" id="forecast-sidebar"></div>
+        </div>
+
+      </div><!-- /.solar-wrap -->
+    </div>
+
+    <!-- Grid page -->
+    <div id="page-grid" class="page">
+      <div class="grid-strip">
+        <div class="gs-section">
+          <div class="grid-strip-label">Grid</div>
+          <div class="gs-total">
+            <span class="gs-kw importing" id="gs-kw">2.4</span>
+            <span class="gs-kw-unit">kW</span>
+          </div>
+          <div class="gs-dir importing" id="gs-dir">&#9650; Importing</div>
+        </div>
+        <div class="gs-section">
+          <div class="grid-strip-label">Phases</div>
+          <div class="gs-phases">
+            <div class="gs-phase">
+              <div class="gs-phase-name">L1</div>
+              <div class="gs-phase-bar-wrap"><div class="gs-phase-bar" id="gs-bar-l1" style="height:40%"></div></div>
+              <div class="gs-phase-amp" id="gs-l1">8.2</div>
+              <div class="gs-phase-unit">A</div>
+            </div>
+            <div class="gs-phase">
+              <div class="gs-phase-name">L2</div>
+              <div class="gs-phase-bar-wrap"><div class="gs-phase-bar" id="gs-bar-l2" style="height:38%"></div></div>
+              <div class="gs-phase-amp" id="gs-l2">7.9</div>
+              <div class="gs-phase-unit">A</div>
+            </div>
+            <div class="gs-phase">
+              <div class="gs-phase-name">L3</div>
+              <div class="gs-phase-bar-wrap"><div class="gs-phase-bar" id="gs-bar-l3" style="height:41%"></div></div>
+              <div class="gs-phase-amp" id="gs-l3">8.5</div>
+              <div class="gs-phase-unit">A</div>
+            </div>
+          </div>
+        </div>
+        <div class="gs-section">
+          <div class="grid-strip-label">Today</div>
+          <div class="gs-energy">
+            <div class="gs-energy-row">
+              <span class="gs-energy-val import" id="gs-import">4.2</span>
+              <span class="gs-energy-unit">kWh</span>
+              <span class="gs-energy-lbl">imported</span>
+            </div>
+            <div class="gs-energy-row">
+              <span class="gs-energy-val export" id="gs-export">0.0</span>
+              <span class="gs-energy-unit">kWh</span>
+              <span class="gs-energy-lbl">exported</span>
+            </div>
+          </div>
+        </div>
+        <div class="gs-live">
+          <div class="gs-live-dot" id="gs-dot"></div>
+          <span class="gs-live-text" id="gs-live-text">Live</span>
+        </div>
+      </div>
+      <div class="grid-chart-wrap"><canvas id="grid-chart"></canvas></div>
+    </div>
+
+    <!-- Chargepoints page -->
+    <div id="page-chargepoints" class="page">
+      <div class="cp-row">
+        <div class="cp-card" id="cp-card-1">
+          <div class="cp-header">
+            <span class="cp-title">Chargepoint 1</span>
+            <span class="cp-status charging" id="cp-status-1">Charging</span>
+            <div class="cp-live"><div class="gs-live-dot" id="cp-dot-1"></div></div>
+          </div>
+          <div class="cp-body">
+            <div class="cp-power">
+              <span class="cp-kw charging" id="cp-kw-1">7.40</span>
+              <span class="cp-kw-unit">kW</span>
+            </div>
+            <div class="cp-phases">
+              <div class="cp-phase">
+                <div class="cp-phase-name">L1</div>
+                <div class="cp-phase-bar-wrap"><div class="cp-phase-bar" id="cp-bar-l1-1" style="height:50%"></div><div class="cp-limit-line" id="cp-lim-l1-1"></div></div>
+                <div class="cp-phase-amp" id="cp-l1-1">16.0</div><div class="cp-phase-unit">A</div>
+              </div>
+              <div class="cp-phase">
+                <div class="cp-phase-name">L2</div>
+                <div class="cp-phase-bar-wrap"><div class="cp-phase-bar" id="cp-bar-l2-1" style="height:50%"></div><div class="cp-limit-line" id="cp-lim-l2-1"></div></div>
+                <div class="cp-phase-amp" id="cp-l2-1">16.0</div><div class="cp-phase-unit">A</div>
+              </div>
+              <div class="cp-phase">
+                <div class="cp-phase-name">L3</div>
+                <div class="cp-phase-bar-wrap"><div class="cp-phase-bar" id="cp-bar-l3-1" style="height:50%"></div><div class="cp-limit-line" id="cp-lim-l3-1"></div></div>
+                <div class="cp-phase-amp" id="cp-l3-1">16.0</div><div class="cp-phase-unit">A</div>
+              </div>
+            </div>
+            <div class="cp-details">
+              <div class="cp-detail-row"><span class="cp-detail-val" id="cp-session-1">12.4</span><span class="cp-detail-unit">kWh</span><span class="cp-detail-lbl">session</span></div>
+              <div class="cp-detail-row"><span class="cp-detail-val cp-limit-val" id="cp-limit-1">16</span><span class="cp-detail-unit">A</span><span class="cp-detail-lbl">limit</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="cp-card" id="cp-card-2">
+          <div class="cp-header">
+            <span class="cp-title">Chargepoint 2</span>
+            <span class="cp-status idle" id="cp-status-2">Idle</span>
+            <div class="cp-live"><div class="gs-live-dot" id="cp-dot-2"></div></div>
+          </div>
+          <div class="cp-body">
+            <div class="cp-power">
+              <span class="cp-kw idle" id="cp-kw-2">0.00</span>
+              <span class="cp-kw-unit">kW</span>
+            </div>
+            <div class="cp-phases">
+              <div class="cp-phase">
+                <div class="cp-phase-name">L1</div>
+                <div class="cp-phase-bar-wrap"><div class="cp-phase-bar" id="cp-bar-l1-2" style="height:0%"></div><div class="cp-limit-line" id="cp-lim-l1-2"></div></div>
+                <div class="cp-phase-amp" id="cp-l1-2">0.0</div><div class="cp-phase-unit">A</div>
+              </div>
+              <div class="cp-phase">
+                <div class="cp-phase-name">L2</div>
+                <div class="cp-phase-bar-wrap"><div class="cp-phase-bar" id="cp-bar-l2-2" style="height:0%"></div><div class="cp-limit-line" id="cp-lim-l2-2"></div></div>
+                <div class="cp-phase-amp" id="cp-l2-2">0.0</div><div class="cp-phase-unit">A</div>
+              </div>
+              <div class="cp-phase">
+                <div class="cp-phase-name">L3</div>
+                <div class="cp-phase-bar-wrap"><div class="cp-phase-bar" id="cp-bar-l3-2" style="height:0%"></div><div class="cp-limit-line" id="cp-lim-l3-2"></div></div>
+                <div class="cp-phase-amp" id="cp-l3-2">0.0</div><div class="cp-phase-unit">A</div>
+              </div>
+            </div>
+            <div class="cp-details">
+              <div class="cp-detail-row"><span class="cp-detail-val" id="cp-session-2">0.0</span><span class="cp-detail-unit">kWh</span><span class="cp-detail-lbl">session</span></div>
+              <div class="cp-detail-row"><span class="cp-detail-val cp-limit-val" id="cp-limit-2">32</span><span class="cp-detail-unit">A</span><span class="cp-detail-lbl">limit</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Heating / AC page -->
+    <div id="page-heating" class="page">
+      <div class="ac-panel">
+        <div class="ac-left">
+          <div class="ac-section-label">Air Conditioning</div>
+          <span class="ac-state-badge off" id="ac-state">—</span>
+          <div class="ac-mode-label" id="ac-mode">—</div>
+        </div>
+        <div class="ac-temps">
+          <div class="ac-temp-group">
+            <div class="ac-temp-label">Setpoint</div>
+            <div class="ac-temp-val"><span class="ac-temp-num" id="ac-setpoint">—</span><span class="ac-temp-unit">°C</span></div>
+          </div>
+          <div class="ac-temp-group">
+            <div class="ac-temp-label">Return</div>
+            <div class="ac-temp-val"><span class="ac-temp-num" id="ac-return">—</span><span class="ac-temp-unit">°C</span></div>
+          </div>
+          <div class="ac-temp-group">
+            <div class="ac-temp-label">Outdoor</div>
+            <div class="ac-temp-val"><span class="ac-temp-num" id="ac-outdoor">—</span><span class="ac-temp-unit">°C</span></div>
+          </div>
+        </div>
+        <div class="ac-right">
+          <div class="ac-detail-row">
+            <span class="ac-detail-lbl">Fan</span>
+            <span class="ac-detail-val" id="ac-fan">—</span>
+          </div>
+          <div class="ac-detail-row">
+            <span class="ac-detail-lbl">AC Status</span>
+            <span class="ac-detail-val" id="ac-hw-status">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="fh-panel">
+        <div class="fh-left">
+          <div class="fh-section-label">Floor Heating</div>
+          <span class="fh-state-badge off" id="fh-state">OFF</span>
+          <div class="fh-power">
+            <span class="fh-kw off" id="fh-kw">0.0</span>
+            <span class="fh-kw-unit">kW</span>
+          </div>
+          <div id="fh-link"></div>
+        </div>
+        <div class="fh-right">
+          <div class="fh-header">
+            <div id="fh-tabs"></div>
+          </div>
+          <div class="fh-schedule" id="fh-schedule"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Config page -->
+    <div id="page-config" class="page">
+      <div class="cfg-wrap">
+        <h1 style="margin-bottom:20px;">Configuration</h1>
+
+        <!-- Solar -->
+        <div class="cfg-section">
+          <div class="cfg-section-title">Solar</div>
+          <div class="cfg-row">
+            <span class="cfg-label">Enable solar monitoring</span>
+            <label class="cfg-toggle">
+              <input type="checkbox" id="cfg-solar-enabled" checked>
+              <span class="cfg-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Chargepoints -->
+        <div class="cfg-section">
+          <div class="cfg-section-title">Chargepoints</div>
+          <div class="cfg-items" id="cfg-cp-list"></div>
+          <button class="cfg-add" id="cfg-cp-add">+ Add chargepoint</button>
+        </div>
+
+        <!-- Electric loads -->
+        <div class="cfg-section">
+          <div class="cfg-section-title">Electric Loads</div>
+          <div class="cfg-items" id="cfg-load-list"></div>
+          <button class="cfg-add" id="cfg-load-add">+ Add electric load</button>
+        </div>
+
+        <!-- Floor Heating Zones -->
+        <div class="cfg-section">
+          <div class="cfg-section-title">Floor Heating Zones</div>
+          <div class="cfg-items" id="cfg-fh-list"></div>
+          <button class="cfg-add" id="cfg-fh-add">+ Add zone</button>
+        </div>
+
+        <!-- Save -->
+        <div class="cfg-section">
+          <button class="cfg-save" id="cfg-save">Save configuration</button>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <script src="dashboard.js"></script>
+
+  <script src="solar.js"></script>
+
+  <script src="config.js"></script>
+
+  <!-- Login modal -->
+  <div id="login-modal">
+    <div class="login-box">
+      <div class="login-title">&#128274; Login</div>
+      <label class="login-label" for="login-pw">Password</label>
+      <input id="login-pw" class="login-input" type="password" autocomplete="current-password" placeholder="Enter password">
+      <div id="login-err" class="login-error">Incorrect password.</div>
+      <button id="login-btn" class="login-btn">Login</button>
+    </div>
+  </div>
+
+  <script src="auth.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCPP Test Console</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <nav>
+    <div class="nav-title">&#9889; OCPP Console</div>
+    <div class="nav-server">
+      <label for="serverAddress">Server</label>
+      <input id="serverAddress" type="text" placeholder="localhost:9090">
+      <div class="nav-server-hint">host:port this page's WebSocket/HTTP calls target</div>
+    </div>
+    <div class="nav-item active" data-page="chargepoint">
+      <span class="nav-icon">&#128663;</span><span class="nav-label">Charge Station</span>
+    </div>
+    <div class="nav-item" data-page="backend">
+      <span class="nav-icon">&#128225;</span><span class="nav-label">Backend</span>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- Charge Station (client) page -->
+    <div id="page-chargepoint" class="page active">
+      <h1>Charge Station Simulator</h1>
+      <div class="subtitle">Acts as a charge point speaking OCPP 1.6J over this page's own WebSocket connection to the server.</div>
+      <div id="cp-conn-status" class="conn-status pill-disconnected">Disconnected</div>
+
+      <div class="panel">
+        <div class="panel-header"><h2>Connection</h2></div>
+        <div class="panel-body">
+          <div class="field-row">
+            <label>Charge Box Identity</label>
+            <input id="cpIdentity" type="text" value="CP001">
+          </div>
+          <div class="field-row">
+            <button id="cpConnectBtn" class="btn">Connect</button>
+            <button id="cpDisconnectBtn" class="btn secondary" disabled>Disconnect</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cp-grid">
+        <div class="panel">
+          <div class="panel-header"><h2>Boot Notification</h2></div>
+          <div class="panel-body">
+            <div class="field-row"><label>Vendor</label><input id="bootVendor" value="Acme"></div>
+            <div class="field-row"><label>Model</label><input id="bootModel" value="Simulator"></div>
+            <div class="field-row"><label>Serial</label><input id="bootSerial" value="SIM-0001"></div>
+            <button class="btn" data-requires-conn disabled id="sendBootBtn">Send BootNotification</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h2>Heartbeat</h2></div>
+          <div class="panel-body">
+            <p class="hint">Send a Heartbeat request to keep the session alive.</p>
+            <br>
+            <button class="btn" data-requires-conn disabled id="sendHeartbeatBtn">Send Heartbeat</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h2>Status Notification</h2></div>
+          <div class="panel-body">
+            <div class="field-row"><label>Connector</label><input id="statusConnector" type="number" value="1" min="0"></div>
+            <div class="field-row">
+              <label>Status</label>
+              <select id="statusValue">
+                <option>Available</option>
+                <option>Preparing</option>
+                <option>Charging</option>
+                <option>SuspendedEVSE</option>
+                <option>SuspendedEV</option>
+                <option>Finishing</option>
+                <option>Reserved</option>
+                <option>Unavailable</option>
+                <option>Faulted</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Error Code</label>
+              <select id="statusError">
+                <option>NoError</option>
+                <option>ConnectorLockFailure</option>
+                <option>GroundFailure</option>
+                <option>HighTemperature</option>
+                <option>InternalError</option>
+                <option>OtherError</option>
+                <option>OverCurrentFailure</option>
+                <option>PowerMeterFailure</option>
+                <option>PowerSwitchFailure</option>
+                <option>ReaderFailure</option>
+                <option>ResetFailure</option>
+                <option>UnderVoltage</option>
+                <option>OverVoltage</option>
+                <option>WeakSignal</option>
+              </select>
+            </div>
+            <button class="btn" data-requires-conn disabled id="sendStatusBtn">Send StatusNotification</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h2>Authorize</h2></div>
+          <div class="panel-body">
+            <div class="field-row"><label>ID Tag</label><input id="authIdTag" value="AABBCCDD"></div>
+            <button class="btn" data-requires-conn disabled id="sendAuthBtn">Send Authorize</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h2>Transaction</h2></div>
+          <div class="panel-body">
+            <div class="field-row"><label>Connector</label><input id="txConnector" type="number" value="1" min="1"></div>
+            <div class="field-row"><label>ID Tag</label><input id="txIdTag" value="AABBCCDD"></div>
+            <div class="field-row"><label>Meter Start</label><input id="txMeterStart" type="number" value="0"></div>
+            <button class="btn" data-requires-conn disabled id="startTxBtn">Start Transaction</button>
+            <div class="hint">Active transaction: <span id="activeTxId">none</span></div>
+            <hr class="divider">
+            <div class="field-row"><label>Meter Stop</label><input id="txMeterStop" type="number" value="1000"></div>
+            <div class="field-row">
+              <label>Reason</label>
+              <select id="txStopReason">
+                <option>Local</option>
+                <option>Remote</option>
+                <option>EVDisconnected</option>
+                <option>EmergencyStop</option>
+                <option>HardReset</option>
+                <option>PowerLoss</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <button class="btn" data-requires-conn disabled id="stopTxBtn">Stop Transaction</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h2>Meter Values</h2></div>
+          <div class="panel-body">
+            <div class="field-row"><label>Power (W)</label><input id="mvPower" type="number" value="7400"></div>
+            <div class="field-row"><label>Voltage (V)</label><input id="mvVoltage" type="number" value="230"></div>
+            <div class="field-row"><label>SoC (%)</label><input id="mvSoc" type="number" value="55" min="0" max="100"></div>
+            <button class="btn" data-requires-conn disabled id="sendMvBtn">Send MeterValues</button>
+            <label class="checkbox-row"><input type="checkbox" id="mvAuto"> Auto-send every 5s while connected</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Vehicle Simulator</h2>
+          <span id="vehicleStateBadge" class="conn-status pill-disconnected">Unplugged</span>
+        </div>
+        <div class="panel-body">
+          <div class="field-row"><label>Connector</label><input id="vehicleConnector" type="number" value="1" min="1"></div>
+          <div class="field-row"><label>ID Tag</label><input id="vehicleIdTag" value="AABBCCDD"></div>
+          <div class="field-row"><label>Battery (kWh)</label><input id="vehicleCapacityKwh" type="number" value="60" min="1"></div>
+          <div class="field-row"><label>Charge Rate (kW)</label><input id="vehicleChargeRateKw" type="number" value="7.4" min="0" step="0.1"></div>
+          <div class="field-row"><label>SoC (%)</label><input id="vehicleSoc" type="number" value="20" min="0" max="100" step="0.1"></div>
+          <div class="vehicle-soc-bar"><div id="vehicleSocFill" class="vehicle-soc-fill" style="width:20%"></div></div>
+          <div class="hint">Battery: <span id="vehicleSocLabel">20.0%</span></div>
+
+          <div class="field-row" style="margin-top: 14px;">
+            <button id="vehiclePlugInBtn" class="btn" disabled>Plug In</button>
+            <button id="vehiclePresentIdBtn" class="btn" disabled>Present ID Tag</button>
+            <button id="vehicleStopBtn" class="btn secondary" disabled>Stop Charging</button>
+            <button id="vehicleUnplugBtn" class="btn secondary" disabled>Unplug</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel log-panel">
+        <div class="panel-header">
+          <h2>Message Log</h2>
+          <button id="cpClearLog" class="btn small secondary">Clear</button>
+        </div>
+        <div class="panel-body">
+          <div id="cpLog" class="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Backend (CSMS) monitor page -->
+    <div id="page-backend" class="page">
+      <h1>OCPP Backend</h1>
+      <div class="subtitle">Live view of every charge point currently registered with this server's OCPP handler.</div>
+      <div id="be-conn-status" class="conn-status pill-connecting">Connecting&hellip;</div>
+
+      <div class="cp-cards" id="beCards">
+        <div class="empty">No charge points seen yet.</div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // ───────────────────────── shared helpers ─────────────────────────
+    function el(id) { return document.getElementById(id); }
+    function nowStr() { return new Date().toLocaleTimeString(); }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        item.classList.add('active');
+        el('page-' + item.dataset.page).classList.add('active');
+      });
+    });
+
+    // The page assumes it's served by the same HTTPServer it's testing, so location.host
+    // normally has the right value already. But that's empty when opened as a local file
+    // (file://) and someone may want to point the tool at a different server anyway, so
+    // it's exposed as an editable field seeded from location.host.
+    function getServerAddress() {
+      const v = (el('serverAddress').value || '').trim();
+      return v || 'localhost:9090';
+    }
+    function serverHttpOrigin() { return (location.protocol === 'https:' ? 'https:' : 'http:') + '//' + getServerAddress(); }
+    function serverWsOrigin() { return (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + getServerAddress(); }
+
+    el('serverAddress').value = location.host;
+    el('serverAddress').addEventListener('change', () => {
+      cpResetBackoff();
+      if (cpDesiredConnected) cpConnect();
+      beResetBackoff();
+      beConnect();
+      bePollStatus();
+    });
+
+    // ───────────────────────── Charge Station (client) ─────────────────────────
+    let cpWs = null;
+    let cpDesiredConnected = false;
+    let cpReconnectDelay = 1000;
+    const cpMaxDelay = 30000;
+    let cpReconnectTimer = null;
+    let cpMsgIdCounter = 1;
+    let cpPendingCalls = {};
+    let cpActiveTransactionId = null;
+    let cpMeterAutoTimer = null;
+
+    function cpLog(dir, text) {
+      const logEl = el('cpLog');
+      const row = document.createElement('div');
+      row.className = 'log-entry dir-' + dir;
+      const ts = document.createElement('span'); ts.className = 'log-ts'; ts.textContent = nowStr();
+      const body = document.createElement('span'); body.className = 'log-body'; body.textContent = text;
+      row.appendChild(ts); row.appendChild(body);
+      logEl.appendChild(row);
+      logEl.scrollTop = logEl.scrollHeight;
+      while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+    }
+
+    function setCpConnUI(state) {
+      const status = el('cp-conn-status');
+      status.className = 'conn-status pill-' + state;
+      status.textContent = state === 'connected' ? 'Connected' : (state === 'connecting' ? 'Connecting…' : 'Disconnected');
+      document.querySelectorAll('#page-chargepoint .btn[data-requires-conn]').forEach(b => b.disabled = state !== 'connected');
+      el('cpConnectBtn').disabled = (state === 'connected' || state === 'connecting');
+      el('cpDisconnectBtn').disabled = (state === 'disconnected');
+      if (state !== 'connected' && cpMeterAutoTimer) { clearInterval(cpMeterAutoTimer); cpMeterAutoTimer = null; el('mvAuto').checked = false; }
+      if (state !== 'connected' && vehicleTicker) { clearInterval(vehicleTicker); vehicleTicker = null; }
+      vehicleApplyButtonStates();
+    }
+
+    function cpResetBackoff() { cpReconnectDelay = 1000; if (cpReconnectTimer) { clearTimeout(cpReconnectTimer); cpReconnectTimer = null; } }
+
+    function cpScheduleReconnect() {
+      if (cpReconnectTimer || !cpDesiredConnected) return;
+      cpLog('sys', 'Reconnecting in ' + Math.round(cpReconnectDelay / 1000) + 's');
+      cpReconnectTimer = setTimeout(() => {
+        cpReconnectTimer = null;
+        cpConnect();
+        cpReconnectDelay = Math.min(cpMaxDelay, Math.round(cpReconnectDelay * 1.8));
+      }, cpReconnectDelay);
+    }
+
+    function cpConnect() {
+      if (cpWs) { try { cpWs.close(); } catch (e) {} cpWs = null; }
+      const identity = (el('cpIdentity').value || 'CP001').trim();
+      const url = serverWsOrigin() + '/' + encodeURIComponent(identity);
+      setCpConnUI('connecting');
+      cpLog('sys', 'Connecting to ' + url);
+
+      try {
+        cpWs = new WebSocket(url, ['ocpp1.6']);
+      } catch (e) {
+        cpLog('err', 'WebSocket construction failed: ' + e);
+        cpScheduleReconnect();
+        return;
+      }
+
+      cpWs.onopen = function () {
+        cpResetBackoff();
+        setCpConnUI('connected');
+        cpLog('sys', 'Connected as ' + identity);
+        cpSendBoot();
+      };
+      cpWs.onmessage = function (ev) {
+        cpLog('recv', ev.data);
+        try { cpHandleIncoming(JSON.parse(ev.data)); } catch (e) { cpLog('err', 'Failed to parse message: ' + e); }
+      };
+      cpWs.onclose = function () {
+        setCpConnUI('disconnected');
+        cpLog('sys', 'Connection closed');
+        cpScheduleReconnect();
+      };
+      cpWs.onerror = function () {
+        cpLog('err', 'WebSocket error');
+        try { cpWs.close(); } catch (e) {}
+      };
+    }
+
+    function cpDisconnect() {
+      cpDesiredConnected = false;
+      if (cpReconnectTimer) { clearTimeout(cpReconnectTimer); cpReconnectTimer = null; }
+      if (cpWs) { try { cpWs.close(); } catch (e) {} cpWs = null; }
+      setCpConnUI('disconnected');
+    }
+
+    // onResult(payload, errorCode), if given, fires once when the matching CALLRESULT/CALLERROR
+    // arrives - used by the Vehicle Simulator to chain Authorize -> StartTransaction without
+    // affecting the standalone per-message panels, which don't pass one.
+    function cpSendCall(action, payload, onResult) {
+      if (!cpWs || cpWs.readyState !== WebSocket.OPEN) { cpLog('err', 'Not connected'); return null; }
+      const msgId = String(cpMsgIdCounter++);
+      cpPendingCalls[msgId] = { action, onResult };
+      const text = JSON.stringify([2, msgId, action, payload]);
+      cpWs.send(text);
+      cpLog('sent', text);
+      return msgId;
+    }
+
+    function cpHandleIncoming(j) {
+      if (!Array.isArray(j) || j.length < 3) return;
+      const type = j[0], msgId = j[1];
+      if (type === 3) { // CALLRESULT
+        const payload = j[2];
+        const pending = cpPendingCalls[msgId];
+        delete cpPendingCalls[msgId];
+        const action = pending && pending.action;
+        if (action === 'StartTransaction' && payload && payload.transactionId !== undefined) {
+          cpActiveTransactionId = payload.transactionId;
+          el('activeTxId').textContent = cpActiveTransactionId;
+        }
+        if (action === 'StopTransaction') {
+          cpActiveTransactionId = null;
+          el('activeTxId').textContent = 'none';
+        }
+        if (pending && pending.onResult) pending.onResult(payload, null);
+      } else if (type === 4) { // CALLERROR
+        cpLog('err', 'CALLERROR for ' + msgId + ': ' + (j[2] || '') + ' ' + (j[3] || ''));
+        const pending = cpPendingCalls[msgId];
+        delete cpPendingCalls[msgId];
+        if (pending && pending.onResult) pending.onResult(null, j[2]);
+      }
+    }
+
+    function cpSendBoot() {
+      cpSendCall('BootNotification', {
+        chargePointVendor: el('bootVendor').value,
+        chargePointModel: el('bootModel').value,
+        chargePointSerialNumber: el('bootSerial').value,
+        chargeBoxIdentity: (el('cpIdentity').value || '').trim()
+      });
+    }
+
+    function cpSendMeterValues() {
+      const power = Number(el('mvPower').value) || 0;
+      const voltage = Number(el('mvVoltage').value) || 0;
+      const soc = Number(el('mvSoc').value) || 0;
+      cpSendCall('MeterValues', {
+        connectorId: parseInt(el('txConnector').value) || 1,
+        transactionId: cpActiveTransactionId,
+        meterValue: [{
+          timestamp: new Date().toISOString(),
+          sampledValue: [
+            { value: String(power), measurand: 'Power.Active.Import', unit: 'W' },
+            { value: String(voltage), measurand: 'Voltage', unit: 'V' },
+            { value: String(soc), measurand: 'SoC', unit: 'Percent' }
+          ]
+        }]
+      });
+    }
+
+    el('cpConnectBtn').addEventListener('click', () => { cpDesiredConnected = true; cpResetBackoff(); cpConnect(); });
+    el('cpDisconnectBtn').addEventListener('click', cpDisconnect);
+    el('sendBootBtn').addEventListener('click', cpSendBoot);
+    el('sendHeartbeatBtn').addEventListener('click', () => cpSendCall('Heartbeat', {}));
+    el('sendStatusBtn').addEventListener('click', () => {
+      cpSendCall('StatusNotification', {
+        connectorId: parseInt(el('statusConnector').value) || 0,
+        status: el('statusValue').value,
+        errorCode: el('statusError').value,
+        timestamp: new Date().toISOString()
+      });
+    });
+    el('sendAuthBtn').addEventListener('click', () => cpSendCall('Authorize', { idTag: el('authIdTag').value }));
+    el('startTxBtn').addEventListener('click', () => {
+      cpSendCall('StartTransaction', {
+        connectorId: parseInt(el('txConnector').value) || 1,
+        idTag: el('txIdTag').value,
+        meterStart: parseInt(el('txMeterStart').value) || 0,
+        timestamp: new Date().toISOString()
+      });
+    });
+    el('stopTxBtn').addEventListener('click', () => {
+      if (cpActiveTransactionId === null) { cpLog('err', 'No active transaction'); return; }
+      cpSendCall('StopTransaction', {
+        transactionId: cpActiveTransactionId,
+        meterStop: parseInt(el('txMeterStop').value) || 0,
+        reason: el('txStopReason').value,
+        timestamp: new Date().toISOString()
+      });
+    });
+    el('sendMvBtn').addEventListener('click', cpSendMeterValues);
+    el('mvAuto').addEventListener('change', function () {
+      if (this.checked) {
+        cpMeterAutoTimer = setInterval(() => {
+          const p = el('mvPower'), s = el('mvSoc');
+          p.value = Math.max(0, Math.round(Number(p.value || 0) + (Math.random() * 200 - 100)));
+          if (Number(s.value) < 100) s.value = Math.min(100, Number(s.value || 0) + 1);
+          cpSendMeterValues();
+        }, 5000);
+      } else if (cpMeterAutoTimer) {
+        clearInterval(cpMeterAutoTimer); cpMeterAutoTimer = null;
+      }
+    });
+    el('cpClearLog').addEventListener('click', () => { el('cpLog').innerHTML = ''; });
+
+    // ───────────────────────── Vehicle Simulator ─────────────────────────
+    // Drives the same cpSendCall() channel as the panels above, but as a small state machine
+    // that mimics what a real EV does: plug in, present an RFID tag, charge (ticking SoC up
+    // and sending MeterValues), then stop and unplug. Every message it sends still shows up
+    // in the Message Log below like anything else.
+    let vehicleState = 'unplugged'; // 'unplugged' | 'pluggedin' | 'charging' | 'finishing'
+    let vehicleMeterWh = 0;
+    let vehicleTicker = null;
+
+    function vehicleConnectorId() { return parseInt(el('vehicleConnector').value) || 1; }
+    function vehicleCapacityKwh() { return Math.max(1, Number(el('vehicleCapacityKwh').value) || 60); }
+    function vehicleChargeRateKw() { return Math.max(0, Number(el('vehicleChargeRateKw').value) || 7.4); }
+    function vehicleSoc() { return Math.max(0, Math.min(100, Number(el('vehicleSoc').value) || 0)); }
+
+    function vehicleSocColor(pct) {
+      if (pct >= 66) return 'linear-gradient(90deg,#1a9b00,#86e07f)';
+      if (pct >= 33) return 'linear-gradient(90deg,#e3b341,#f0c040)';
+      return 'linear-gradient(90deg,#f85149,#ff7b7b)';
+    }
+
+    function vehicleUpdateSocBar() {
+      const pct = vehicleSoc();
+      el('vehicleSocFill').style.width = pct + '%';
+      el('vehicleSocFill').style.background = vehicleSocColor(pct);
+      el('vehicleSocLabel').textContent = pct.toFixed(1) + '%';
+    }
+
+    function vehicleSetSoc(pct) {
+      el('vehicleSoc').value = Math.max(0, Math.min(100, Math.round(pct * 10) / 10));
+      vehicleUpdateSocBar();
+    }
+
+    // Only the buttons for the transition(s) valid from the current state stay enabled -
+    // and everything is disabled while the simulated charge station itself isn't connected.
+    function vehicleApplyButtonStates() {
+      const connected = !!(cpWs && cpWs.readyState === WebSocket.OPEN);
+      el('vehiclePlugInBtn').disabled = !connected || vehicleState !== 'unplugged';
+      el('vehiclePresentIdBtn').disabled = !connected || vehicleState !== 'pluggedin';
+      el('vehicleStopBtn').disabled = !connected || vehicleState !== 'charging';
+      el('vehicleUnplugBtn').disabled = !connected || !(vehicleState === 'pluggedin' || vehicleState === 'finishing');
+    }
+
+    function vehicleSetState(state) {
+      vehicleState = state;
+      const label = { unplugged: 'Unplugged', pluggedin: 'Plugged In', charging: 'Charging', finishing: 'Finishing' }[state] || state;
+      const badge = el('vehicleStateBadge');
+      badge.textContent = label;
+      badge.className = 'conn-status ' + (state === 'charging' ? 'pill-online' : state === 'unplugged' ? 'pill-disconnected' : 'pill-connecting');
+      if (state !== 'charging' && vehicleTicker) { clearInterval(vehicleTicker); vehicleTicker = null; }
+      vehicleApplyButtonStates();
+    }
+
+    function vehiclePlugIn() {
+      if (vehicleState !== 'unplugged') return;
+      vehicleMeterWh = 0;
+      vehicleSetState('pluggedin');
+      cpSendCall('StatusNotification', {
+        connectorId: vehicleConnectorId(), status: 'Preparing', errorCode: 'NoError', timestamp: new Date().toISOString()
+      });
+    }
+
+    function vehiclePresentIdTag() {
+      if (vehicleState !== 'pluggedin') return;
+      const idTag = (el('vehicleIdTag').value || '').trim();
+      cpSendCall('Authorize', { idTag }, (payload, error) => {
+        if (error || !payload || !payload.idTagInfo || payload.idTagInfo.status !== 'Accepted') {
+          cpLog('err', 'Vehicle: Authorize was not accepted');
+          return;
+        }
+        if (vehicleState !== 'pluggedin') return; // state moved on while the response was in flight
+
+        cpSendCall('StartTransaction', {
+          connectorId: vehicleConnectorId(), idTag: idTag, meterStart: Math.round(vehicleMeterWh), timestamp: new Date().toISOString()
+        }, (startPayload, startError) => {
+          if (startError || !startPayload) { cpLog('err', 'Vehicle: StartTransaction failed'); return; }
+          if (vehicleState !== 'pluggedin') return;
+
+          vehicleSetState('charging');
+          cpSendCall('StatusNotification', {
+            connectorId: vehicleConnectorId(), status: 'Charging', errorCode: 'NoError', timestamp: new Date().toISOString()
+          });
+          vehicleStartChargingTicker();
+        });
+      });
+    }
+
+    function vehicleStartChargingTicker() {
+      if (vehicleTicker) clearInterval(vehicleTicker);
+      vehicleTicker = setInterval(() => {
+        const rateKw = vehicleChargeRateKw();
+        const addedKwh = rateKw * (5 / 3600); // 5s tick
+        vehicleMeterWh += addedKwh * 1000;
+        const soc = Math.min(100, vehicleSoc() + (addedKwh / vehicleCapacityKwh()) * 100);
+        vehicleSetSoc(soc);
+
+        cpSendCall('MeterValues', {
+          connectorId: vehicleConnectorId(),
+          transactionId: cpActiveTransactionId,
+          meterValue: [{
+            timestamp: new Date().toISOString(),
+            sampledValue: [
+              { value: String(Math.round(rateKw * 1000)), measurand: 'Power.Active.Import', unit: 'W' },
+              { value: soc.toFixed(1), measurand: 'SoC', unit: 'Percent' }
+            ]
+          }]
+        });
+
+        if (soc >= 100) {
+          cpLog('sys', 'Vehicle: battery full, stopping charge');
+          vehicleStopCharging();
+        }
+      }, 5000);
+    }
+
+    function vehicleStopCharging() {
+      if (vehicleState !== 'charging') return;
+      vehicleSetState('finishing');
+      cpSendCall('StopTransaction', {
+        transactionId: cpActiveTransactionId, meterStop: Math.round(vehicleMeterWh), reason: 'Local', timestamp: new Date().toISOString()
+      });
+      cpSendCall('StatusNotification', {
+        connectorId: vehicleConnectorId(), status: 'Finishing', errorCode: 'NoError', timestamp: new Date().toISOString()
+      });
+    }
+
+    function vehicleUnplug() {
+      if (!(vehicleState === 'pluggedin' || vehicleState === 'finishing')) return;
+      vehicleSetState('unplugged');
+      cpSendCall('StatusNotification', {
+        connectorId: vehicleConnectorId(), status: 'Available', errorCode: 'NoError', timestamp: new Date().toISOString()
+      });
+    }
+
+    el('vehiclePlugInBtn').addEventListener('click', vehiclePlugIn);
+    el('vehiclePresentIdBtn').addEventListener('click', vehiclePresentIdTag);
+    el('vehicleStopBtn').addEventListener('click', vehicleStopCharging);
+    el('vehicleUnplugBtn').addEventListener('click', vehicleUnplug);
+    el('vehicleSoc').addEventListener('input', vehicleUpdateSocBar);
+
+    // ───────────────────────── Backend (CSMS monitor) ─────────────────────────
+    let beWs = null;
+    let beReconnectDelay = 1000;
+    const beMaxDelay = 30000;
+    let beReconnectTimer = null;
+    let beChargePoints = {};
+
+    // OCPPServerHandler publishes two kinds of SetVariable keys: chargepoint-level ones
+    // (boot/heartbeat/authorize - OCPP messages that carry no connectorId) and connector-scoped
+    // ones of the form "ocpp_<field>_<path>/<connectorId>[_<suffix>]" for anything that's
+    // reported per connector (status, meter values, transactions).
+    const BE_CP_FIELD_PATTERNS = [
+      [/^ocpp_last_boot_(.+)$/, 'bootStatus'],
+      [/^ocpp_last_heartbeat_(.+)$/, 'lastHeartbeat'],
+      [/^ocpp_last_authorize_(.+)$/, 'lastAuthorizeIdTag']
+    ];
+
+    // More specific (longer-suffixed) patterns are listed before their shorter prefixes.
+    const BE_CONN_FIELD_PATTERNS = [
+      [/^ocpp_status_(.+)\/(\d+)_vendor_err$/, 'vendorErrorCode'],
+      [/^ocpp_status_(.+)\/(\d+)_vendor$/, 'vendorId'],
+      [/^ocpp_status_(.+)\/(\d+)_error$/, 'errorCode'],
+      [/^ocpp_status_(.+)\/(\d+)_ts$/, 'statusTimestamp'],
+      [/^ocpp_status_(.+)\/(\d+)$/, 'status'],
+      [/^ocpp_power_(.+)\/(\d+)$/, 'powerW'],
+      [/^ocpp_voltage_(.+)\/(\d+)$/, 'voltageV'],
+      [/^ocpp_soc_(.+)\/(\d+)$/, 'socPercent'],
+      [/^ocpp_transaction_idtag_(.+)\/(\d+)$/, 'transactionIdTag'],
+      [/^ocpp_transaction_meter_start_(.+)\/(\d+)$/, 'transactionMeterStart'],
+      [/^ocpp_transaction_id_(.+)\/(\d+)$/, 'transactionId'],
+      [/^ocpp_last_stop_meter_(.+)\/(\d+)$/, 'lastStopMeter'],
+      [/^ocpp_last_stop_reason_(.+)\/(\d+)$/, 'lastStopReason'],
+      [/^ocpp_last_stop_timestamp_(.+)\/(\d+)$/, 'lastStopTimestamp']
+    ];
+
+    function beApplyVariables(vars) {
+      const next = {};
+      function getCp(cpId) {
+        if (!next[cpId]) next[cpId] = { id: cpId, connectors: {} };
+        return next[cpId];
+      }
+      for (const key in vars) {
+        let matched = false;
+        for (const [re, field] of BE_CP_FIELD_PATTERNS) {
+          const m = key.match(re);
+          if (!m || !m[1]) continue;
+          getCp(m[1])[field] = vars[key];
+          matched = true;
+          break;
+        }
+        if (matched) continue;
+        for (const [re, field] of BE_CONN_FIELD_PATTERNS) {
+          const m = key.match(re);
+          if (!m || !m[1]) continue;
+          const cp = getCp(m[1]);
+          const connId = m[2];
+          if (!cp.connectors[connId]) cp.connectors[connId] = { id: connId };
+          cp.connectors[connId][field] = vars[key];
+          break;
+        }
+      }
+      beChargePoints = next;
+      beRenderCards();
+    }
+
+    function beStatusClass(status) {
+      switch (status) {
+        case 'Charging': return 'charging';
+        case 'Preparing': case 'Finishing': case 'Reserved': return 'connected';
+        case 'Faulted': return 'faulted';
+        default: return 'idle';
+      }
+    }
+
+    function beRenderConnector(connId, conn) {
+      const status = conn.status || 'Unknown';
+      const statusClass = beStatusClass(status);
+      const powerKw = conn.powerW !== undefined ? (Number(conn.powerW) / 1000).toFixed(2) : '0.00';
+      const txActive = conn.transactionId !== undefined && String(conn.transactionId) !== '-1';
+      return (
+        '<div class="cp-connector">' +
+          '<div class="cp-connector-header">' +
+            '<span class="cp-connector-title">Connector ' + escapeHtml(connId) + '</span>' +
+            '<span class="cp-status ' + statusClass + '">' + escapeHtml(status) + '</span>' +
+          '</div>' +
+          '<div class="cp-body-be">' +
+            '<div class="cp-power">' +
+              '<span class="cp-kw ' + statusClass + '">' + powerKw + '</span>' +
+              '<span class="cp-kw-unit">kW</span>' +
+            '</div>' +
+            '<div class="cp-details">' +
+              '<div class="cp-detail-row"><span class="cp-detail-lbl">Error</span><span class="cp-detail-val">' + escapeHtml(conn.errorCode || '-') + '</span></div>' +
+              '<div class="cp-detail-row"><span class="cp-detail-lbl">Voltage</span><span class="cp-detail-val">' + (conn.voltageV !== undefined ? Number(conn.voltageV).toFixed(1) + ' V' : '-') + '</span></div>' +
+              '<div class="cp-detail-row"><span class="cp-detail-lbl">SoC</span><span class="cp-detail-val">' + (conn.socPercent !== undefined ? Number(conn.socPercent).toFixed(0) + ' %' : '-') + '</span></div>' +
+              '<div class="cp-detail-row"><span class="cp-detail-lbl">Updated</span><span class="cp-detail-val">' + escapeHtml(conn.statusTimestamp || '-') + '</span></div>' +
+            '</div>' +
+          '</div>' +
+          (txActive ?
+            '<div class="cp-tx"><span class="cp-tx-badge">Transaction #' + escapeHtml(conn.transactionId) + '</span>idTag=' + escapeHtml(conn.transactionIdTag || '-') + ' &nbsp; meterStart=' + escapeHtml(conn.transactionMeterStart || '-') + ' Wh</div>'
+            : '') +
+        '</div>'
+      );
+    }
+
+    function beRenderCards() {
+      const container = el('beCards');
+      const ids = Object.keys(beChargePoints).sort();
+      if (ids.length === 0) {
+        container.innerHTML = '<div class="empty">No charge points seen yet. Connect one from the Charge Station page (or point a real charger at ws://' + escapeHtml(getServerAddress()) + '/&lt;identity&gt;).</div>';
+        return;
+      }
+      container.innerHTML = '';
+      ids.forEach(id => {
+        const cp = beChargePoints[id];
+        const connIds = Object.keys(cp.connectors).sort((a, b) => Number(a) - Number(b));
+        const connectorsHtml = connIds.length
+          ? connIds.map(connId => beRenderConnector(connId, cp.connectors[connId])).join('')
+          : '<div class="cp-conn-empty">No connector data yet.</div>';
+
+        const card = document.createElement('div');
+        card.className = 'cp-card';
+        card.innerHTML =
+          '<div class="cp-header">' +
+            '<span class="cp-title">' + escapeHtml(id.replace(/^\//, '')) + '</span>' +
+            '<span class="cp-meta">Boot: ' + escapeHtml(cp.bootStatus || '-') + ' &middot; Heartbeat: ' + escapeHtml(cp.lastHeartbeat || '-') + '</span>' +
+          '</div>' +
+          '<div class="cp-connectors">' + connectorsHtml + '</div>' +
+          '<div class="cp-footer"><span class="cp-detail-lbl">Last IdTag</span> ' + escapeHtml(cp.lastAuthorizeIdTag || '-') + '</div>';
+        container.appendChild(card);
+      });
+    }
+
+    function beResetBackoff() { beReconnectDelay = 1000; if (beReconnectTimer) { clearTimeout(beReconnectTimer); beReconnectTimer = null; } }
+
+    function beScheduleReconnect() {
+      if (beReconnectTimer) return;
+      beReconnectTimer = setTimeout(() => {
+        beReconnectTimer = null;
+        beConnect();
+        beReconnectDelay = Math.min(beMaxDelay, Math.round(beReconnectDelay * 1.8));
+      }, beReconnectDelay);
+    }
+
+    function beSetStatus(state, text) {
+      const s = el('be-conn-status');
+      s.className = 'conn-status pill-' + state;
+      s.textContent = text;
+    }
+
+    function beConnect() {
+      if (beWs) { try { beWs.close(); } catch (e) {} beWs = null; }
+      const url = serverWsOrigin() + '/ws';
+      beSetStatus('connecting', 'Connecting…');
+
+      try {
+        beWs = new WebSocket(url);
+      } catch (e) {
+        beScheduleReconnect();
+        return;
+      }
+
+      beWs.onopen = function () {
+        beResetBackoff();
+        beSetStatus('online', 'Live');
+        try { beWs.send(JSON.stringify({ type: 'get_status' })); } catch (e) {}
+      };
+      beWs.onmessage = function (ev) {
+        try { beApplyVariables(JSON.parse(ev.data)); } catch (e) {}
+      };
+      beWs.onclose = function () { beSetStatus('offline', 'Disconnected'); beScheduleReconnect(); };
+      beWs.onerror = function () { try { beWs.close(); } catch (e) {} };
+    }
+
+    async function bePollStatus() {
+      try {
+        const res = await fetch(serverHttpOrigin() + '/status?_=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return;
+        beApplyVariables(await res.json());
+      } catch (e) { /* ignore, WS or next poll will catch up */ }
+    }
+
+    // ───────────────────────── kick things off ─────────────────────────
+    window.addEventListener('load', () => {
+      vehicleUpdateSocBar();
+      vehicleApplyButtonStates();
+
+      cpDesiredConnected = true;
+      cpConnect();
+
+      beConnect();
+      bePollStatus();
+      setInterval(bePollStatus, 5000);
+    });
+  </script>
+</body>
+</html>

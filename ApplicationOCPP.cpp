@@ -36,21 +36,24 @@ void ApplicationOCPP::RunLogic(){
     // Check if any OCPP clients need charging profile updates
     if (http_server) {
         DWORD now_ms = GetTickCount();
-        for (SOCKET client_socket : http_server->m_ocppClients) {
-            OCPPClientData* data = http_server->GetOCPPClientData(client_socket);
-            if (data && data->server_current_timit_updatereq) {
+        for (SOCKET client_socket : http_server->ocpp.clients) {
+            OCPPClientData* data = http_server->ocpp.GetClientData(client_socket);
+            if (!data) continue;
+            for (auto& kv : data->connectors) {
+                int connectorId = kv.first;
+                OCPPConnectorState& conn = kv.second;
+                if (!conn.server_current_timit_updatereq) continue;
                 // Rate limit: only send updates once per second (1000ms)
-                DWORD time_since_last_update_ms = now_ms - data->last_profile_update_time_ms;
+                DWORD time_since_last_update_ms = now_ms - conn.last_profile_update_time_ms;
                 if (time_since_last_update_ms >= 1000) {
                     // Send SetChargingProfile request
-                    int connectorId = (data->connectorId > 0) ? data->connectorId : 1;
-                    http_server->SendSetChargingProfile(client_socket, connectorId, data->server_current_limit);
+                    http_server->ocpp.SendSetChargingProfile(client_socket, connectorId, conn.server_current_limit);
 
                     // Update the last update time
-                    data->last_profile_update_time_ms = now_ms;
+                    conn.last_profile_update_time_ms = now_ms;
 
                     // Clear the update flag
-                    data->server_current_timit_updatereq = false;
+                    conn.server_current_timit_updatereq = false;
                 }
             }
         }
@@ -98,41 +101,45 @@ void ApplicationOCPP::RenderOCPPServerUI(){
         return;
     }
 
-    ImGui::Text("Connected OCPP Clients: %d", (int)http_server->m_ocppClients.size());
+    ImGui::Text("Connected OCPP Clients: %d", (int)http_server->ocpp.clients.size());
     int client_idx = 0;
-    for (SOCKET client_socket : http_server->m_ocppClients){
+    for (SOCKET client_socket : http_server->ocpp.clients){
         ImGui::PushID(client_idx);
         ImGui::Text("Client %d - Socket %llu", client_idx, (unsigned long long)client_socket);
         client_idx++;
 
-        OCPPClientData* data = http_server->GetOCPPClientData(client_socket);
+        OCPPClientData* data = http_server->ocpp.GetClientData(client_socket);
         if (data) {
             ImGui::Text("Chargebox Path %s", data->path.c_str());
 
             // Access any OCPP data for this client
             std::string vendor = data->chargePointVendor;
-            std::string status = data->connectorStatus;
             std::string lastTag = data->lastAuthorizedIdTag;
             // etc.
-            ImGui::Text("Status     : %s",status.c_str());
 
-            double power = data->powerActiveImport;  // in Watts
-            double ac_voltage = data->powerActiveImport;
-            double soc = data->soc;                  // in Percent
-            std::string timestamp = data->meterValuesTimestamp;
-            ImGui::Text("SOC        : %.1f%% ",soc);
-            ImGui::Text("AC Voltage : %.1f Watt",power);
-            ImGui::Text("Power      : %.1f Watt",power);
-            ImGui::Text("Time       : %s",timestamp.c_str());
+            if (data->connectors.empty()) {
+                ImGui::TextDisabled("No connector data yet");
+            }
+            for (auto& kv : data->connectors) {
+                int connectorId = kv.first;
+                OCPPConnectorState& conn = kv.second;
+                ImGui::PushID(connectorId);
+                ImGui::Separator();
+                ImGui::Text("Connector %d", connectorId);
+                ImGui::Text("Status     : %s", conn.status.c_str());
+                ImGui::Text("SOC        : %.1f%% ", conn.soc);
+                ImGui::Text("AC Voltage : %.1f V", conn.ACVoltage);
+                ImGui::Text("Power      : %.1f Watt", conn.powerActiveImport);
+                ImGui::Text("Time       : %s", conn.meterValuesTimestamp.c_str());
 
-            static float current_limit = 16.0f;
-            if (ImGui::SliderFloat("Set Current Limit for Session",&current_limit,5,32)){
-                data->server_current_limit = current_limit;
-                data->server_current_timit_updatereq = true;
+                if (ImGui::SliderFloat("Set Current Limit for Session", &conn.server_current_limit, 5, 32)){
+                    conn.server_current_timit_updatereq = true;
+                }
+                ImGui::PopID();
             }
 
-            // Transaction history table for this chargepoint
-            std::vector<OCPPTransaction> history = http_server->GetTransactionHistory(client_socket);
+            // Transaction history table for this chargepoint (spans all connectors)
+            std::vector<OCPPTransaction> history = http_server->ocpp.GetTransactionHistory(client_socket);
             if (!history.empty()) {
                 ImGui::Separator();
                 ImGui::Text("Transaction History (%d)", (int)history.size());
@@ -210,8 +217,8 @@ void ApplicationOCPP::RenderTCPClientsUI(){
                 debug->Info("Connecting to %s:%d\n", host.c_str(), port);
 
                 if (tcp_client->Connect(host, port)){
-                    debug->Info("Successfully connected to server\n");
-                } else {
+                    debug->Info("Connecting to server\n");
+                }else{
                     debug->Err("Failed to connect to server\n");
                 }
             } else {
@@ -259,7 +266,8 @@ void ApplicationOCPP::RenderOCPPClientsUI(){
                         debug->Warn("Client Len = 0\n");
                         //Load default addres and ID:
                         //sprintf_s(server_address,"ws://127.0.0.1:9090");
-                        sprintf_s(server_address,"ws://10.239.1.42:8081");
+                        //sprintf_s(server_address,"ws://10.239.1.42:8081");
+                        sprintf_s(server_address,"ws://192.168.140.10:9000");
                         sprintf_s(ocpp_id,"OCPP/Tester");
                         ocpp_client->GetInfo().serverUrl = server_address;
                         ocpp_client->GetInfo().chargeBoxIdentity = ocpp_id;                          
@@ -295,7 +303,7 @@ void ApplicationOCPP::RenderOCPPClientsUI(){
                                 debug->Info("Connecting to %s:%d\n", host.c_str(), port);
 
                                 if (ocpp_client->ConnectOCPP(host, port, std::string(ocpp_id))){
-                                    debug->Info("Successfully connected to OCPP server\n");
+                                    debug->Info("Connecting to OCPP server\n");
                                 } else {
                                     debug->Err("Failed to connect to OCPP server\n");
                                 }
