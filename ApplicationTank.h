@@ -30,6 +30,7 @@ public:
     void TestHeightmapMesh();
     void RegisterMCPTools();
     json GetTankTelemetry();
+    json MaybeAttachScreenshot(json result, bool include_screenshot);
 
     TankCharacter* controlled_tank = NULL;
 private:

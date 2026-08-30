@@ -12,6 +12,8 @@ class Renderer;
 #include "InputController.h"
 #include "PerfTimer.h"
 #include <mutex>
+#include <condition_variable>
+#include <cstdint>
 
 //This should have the same layout as in the shader
 #define NUM_MATERIAL_SLOTS  4
@@ -102,6 +104,15 @@ class Renderer{
 
     void SetVSync(bool enable);
     bool GetVSync();
+
+    //Thread-safe: call from any thread (e.g. an MCP tool handler on the TCP receive
+    //thread). glReadPixels is only valid on the thread owning the GL context (the render
+    //thread), so this just flags a request and blocks until CaptureScreenshotIfRequested,
+    //called from DrawFrame at the end of the render thread's next frame, has captured and
+    //PNG-encoded resolve_fbo_id's fully-resolved color output and signalled it's ready.
+    //Returns an empty vector on timeout (render thread not running or stuck).
+    std::vector<uint8_t> RequestScreenshot(int timeout_ms = 2000);
+    void CaptureScreenshotIfRequested();
 
     void UploadMaterials();
     void UploadLights();
@@ -203,6 +214,14 @@ class Renderer{
     private:
     //Settings
     bool f_vsync = false;
+
+    //Screenshot request/result handoff between whichever thread calls RequestScreenshot
+    //and the render thread that services it in CaptureScreenshotIfRequested.
+    std::mutex screenshot_mutex;
+    std::condition_variable screenshot_cv;
+    bool screenshot_requested = false;
+    bool screenshot_ready = false;
+    std::vector<uint8_t> screenshot_png;
 };
 
 

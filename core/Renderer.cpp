@@ -1,6 +1,9 @@
 #include "Renderer.h"
 
 #include "Debug.h"
+#include "stb_image_write.h"
+#include <chrono>
+#include <cstring>
 
 #define DEFAULT_FRAMEBUFFER_ID  0
 
@@ -696,11 +699,62 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     }
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
 
+    //resolve_fbo_id's GL_COLOR_ATTACHMENT0 now holds this frame's fully-resolved output
+    //(see ResolveAA/BlitBufferTarget, which always blit into it) - the right place to grab
+    //a screenshot from, before anything else gets a chance to rebind the framebuffer.
+    CaptureScreenshotIfRequested();
+
     ClearObjectBatches();
 
     if (tmr_frame){
         tmr_frame->Stop();
     }
+}
+
+std::vector<uint8_t> Renderer::RequestScreenshot(int timeout_ms){
+    std::unique_lock<std::mutex> lock(screenshot_mutex);
+    screenshot_requested = true;
+    screenshot_ready = false;
+    bool got = screenshot_cv.wait_for(lock,std::chrono::milliseconds(timeout_ms),[this]{ return screenshot_ready; });
+    if (!got){
+        debug->Warn("RequestScreenshot: timed out after %dms waiting for the render thread\n",timeout_ms);
+        return {};
+    }
+    return screenshot_png; //copy out while still holding the lock
+}
+
+void Renderer::CaptureScreenshotIfRequested(){
+    std::unique_lock<std::mutex> lock(screenshot_mutex);
+    if (!screenshot_requested){
+        return;
+    }
+    screenshot_requested = false;
+    lock.unlock(); //GL work + PNG encoding can take a while - don't hold the mutex for it
+
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT,1);
+    int row_bytes = width * 3;
+    std::vector<uint8_t> pixels((size_t)row_bytes * height);
+    glReadPixels(0,0,width,height,GL_RGB,GL_UNSIGNED_BYTE,pixels.data());
+
+    //glReadPixels' origin is bottom-left; flip rows so the PNG reads top-down like a normal image.
+    std::vector<uint8_t> flipped(pixels.size());
+    for (int y = 0; y < height; y++){
+        memcpy(flipped.data() + (size_t)y*row_bytes,pixels.data() + (size_t)(height-1-y)*row_bytes,row_bytes);
+    }
+
+    std::vector<uint8_t> png_bytes;
+    auto write_cb = [](void* context, void* data, int size){
+        std::vector<uint8_t>* out = (std::vector<uint8_t>*)context;
+        out->insert(out->end(),(uint8_t*)data,(uint8_t*)data + size);
+    };
+    stbi_write_png_to_func(write_cb,&png_bytes,width,height,3,flipped.data(),row_bytes);
+
+    lock.lock();
+    screenshot_png = std::move(png_bytes);
+    screenshot_ready = true;
+    lock.unlock();
+    screenshot_cv.notify_all();
 }
 
 //Create the required Shader Storage Buffer

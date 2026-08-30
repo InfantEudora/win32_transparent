@@ -60,6 +60,13 @@ public:
     void RegisterTool(const std::string &name, const std::string &description,
                        const json &inputSchema, MCPToolHandler handler);
 
+    // For a tool handler that wants to hand back an image alongside/instead of its normal
+    // JSON result (e.g. a screenshot): wrap your result with this and return it as-is.
+    // BuildToolsCall recognizes the reserved key this adds and splits it into a separate
+    // MCP "image" content block (base64-encoded) instead of dumping it as text - every
+    // other tool's return value is untouched by this.
+    static json AttachImagePNG(json result, const std::vector<uint8_t> &png_bytes);
+
     // Spawns the stdin-reading thread. Safe to call more than once (no-op
     // after the first call).
     void Start();

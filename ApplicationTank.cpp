@@ -147,6 +147,26 @@ json ApplicationTank::GetTankTelemetry(){
     return result;
 }
 
+//If requested, blocks (Renderer::RequestScreenshot) until the render thread has captured
+//and PNG-encoded the current frame, and attaches it to result as an MCP image content
+//block. A no-op passthrough otherwise, so every MCP tool below can opt into a screenshot
+//with the same one line.
+json ApplicationTank::MaybeAttachScreenshot(json result, bool include_screenshot){
+    if (!include_screenshot){
+        return result;
+    }
+    if (!renderer){
+        result["screenshot_error"] = "no renderer";
+        return result;
+    }
+    std::vector<uint8_t> png = renderer->RequestScreenshot();
+    if (png.empty()){
+        result["screenshot_error"] = "timed out waiting for the render thread to capture a frame";
+        return result;
+    }
+    return MCPServer::AttachImagePNG(result,png);
+}
+
 //Exposes the tank's existing input methods (the same ones RunLogic already calls for
 //keyboard input) and its live physics state over MCP. Handlers run on MCPServer's own
 //stdin-reading thread, writing the same gas_pedal/brake_pedal/steering_position floats
@@ -168,13 +188,15 @@ void ApplicationTank::RegisterMCPTools(){
         "rate, so without this a call would produce almost no motion, the same way an unrealistically "
         "brief key tap wouldn't. Default duration is 100ms, about as short as a real key tap. This "
         "call blocks until duration_ms has elapsed and returns the resulting telemetry (same shape "
-        "as tank_telemetry) - no need for a separate call to see the outcome.",
+        "as tank_telemetry) - no need for a separate call to see the outcome. Set include_screenshot "
+        "to also get a PNG of the resulting frame, to see what happened rather than just read numbers.",
         json{
             {"type","object"},
             {"properties", {
                 {"direction", {{"type","string"},{"enum", json::array({"forward","reverse","brake","stop"})}}},
                 {"amount", {{"type","number"},{"description","0..1 throttle/brake magnitude, default 1"}}},
-                {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}}
+                {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
             }},
             {"required", json::array({"direction"})}
         },
@@ -195,20 +217,22 @@ void ApplicationTank::RegisterMCPTools(){
                 controlled_tank->ReleaseInputs();
             }
             Sleep((DWORD)duration_ms);
-            return GetTankTelemetry();
+            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("tank_steer",
         "Steer the tank hull left or right. Held for duration_ms of real time (re-asserted every "
         "physics tick server-side) - default 100ms, about as short as a real key tap. This call "
         "blocks until duration_ms has elapsed and returns the resulting telemetry (same shape as "
-        "tank_telemetry) - no need for a separate call to see the outcome.",
+        "tank_telemetry) - no need for a separate call to see the outcome. Set include_screenshot "
+        "to also get a PNG of the resulting frame, to see what happened rather than just read numbers.",
         json{
             {"type","object"},
             {"properties", {
                 {"direction", {{"type","string"},{"enum", json::array({"left","right"})}}},
                 {"amount", {{"type","number"},{"description","0..1 turn-rate magnitude, default 1"}}},
-                {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}}
+                {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
             }},
             {"required", json::array({"direction"})}
         },
@@ -222,15 +246,31 @@ void ApplicationTank::RegisterMCPTools(){
             float signed_amount = (direction == "right") ? amount : -amount;
             controlled_tank->HoldSteer(signed_amount,duration_ms);
             Sleep((DWORD)duration_ms);
-            return GetTankTelemetry();
+            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("tank_telemetry",
         "Report the tank hull's current position, facing, and physics state (velocity, "
-        "angular velocity, mass, whether the rigidbody is asleep).",
+        "angular velocity, mass, whether the rigidbody is asleep). Set include_screenshot to "
+        "also get a PNG of the current frame.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the current frame, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("tank_screenshot",
+        "Capture a PNG screenshot of the currently rendered frame, along with the same "
+        "telemetry tank_telemetry reports. Blocks briefly for the render thread to finish "
+        "the frame already in progress and encode the image - use this to actually look at "
+        "the tank/terrain rather than infer what happened from numbers alone.",
         json{ {"type","object"}, {"properties", json::object()} },
         [this](const json & /*args*/) -> json {
-            return GetTankTelemetry();
+            return MaybeAttachScreenshot(GetTankTelemetry(),true);
         });
 }
 

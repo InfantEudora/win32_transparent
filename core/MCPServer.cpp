@@ -7,8 +7,34 @@
 #include <cctype>
 #include <sstream>
 #include <thread>
+#include <wincrypt.h>
 
 static Debugger *debug = new Debugger("MCPServer", DEBUG_ALL);
+
+static const char *IMAGE_KEY = "_mcp_image_png_base64";
+
+// CryptBinaryToStringA - same approach HTTPServer.cpp already uses for its websocket
+// handshake, reused here instead of adding a third-party base64 dependency.
+static std::string Base64Encode(const std::vector<uint8_t> &bytes) {
+    DWORD outLen = 0;
+    if (!CryptBinaryToStringA(bytes.data(), (DWORD)bytes.size(), CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, NULL, &outLen)) {
+        debug->Err("Base64Encode: size query failed: %d\n", (int)GetLastError());
+        return "";
+    }
+    std::string out;
+    out.resize(outLen);
+    if (!CryptBinaryToStringA(bytes.data(), (DWORD)bytes.size(), CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, &out[0], &outLen)) {
+        debug->Err("Base64Encode: encode failed: %d\n", (int)GetLastError());
+        return "";
+    }
+    out.resize(outLen); // CryptBinaryToStringA includes a trailing NUL in outLen
+    return out;
+}
+
+json MCPServer::AttachImagePNG(json result, const std::vector<uint8_t> &png_bytes) {
+    result[IMAGE_KEY] = Base64Encode(png_bytes);
+    return result;
+}
 
 MCPServer::MCPServer() {
     // Always available, even if nothing else in this binary registers a
@@ -156,8 +182,18 @@ json MCPServer::BuildToolsCall(const json &id, const json &params) {
     }
 
     json output = handler(arguments);
-    std::string text = output.is_string() ? output.get<std::string>() : output.dump();
-    json content = json::array({ { { "type", "text" }, { "text", text } } });
+    json content = json::array();
+    if (output.is_object() && output.contains(IMAGE_KEY)) {
+        std::string b64 = output[IMAGE_KEY].get<std::string>();
+        output.erase(IMAGE_KEY);
+        if (!output.empty()) {
+            content.push_back({ { "type", "text" }, { "text", output.dump() } });
+        }
+        content.push_back({ { "type", "image" }, { "data", b64 }, { "mimeType", "image/png" } });
+    } else {
+        std::string text = output.is_string() ? output.get<std::string>() : output.dump();
+        content.push_back({ { "type", "text" }, { "text", text } });
+    }
     return BuildResult(id, { { "content", content }, { "isError", false } });
 }
 
