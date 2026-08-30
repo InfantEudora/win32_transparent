@@ -1,6 +1,7 @@
 #include "ApplicationTank.h"
 #include "Debug.h"
 #include "type_helpers.h"
+#include "MCPServer.h"
 #include <cmath>
 
 static Debugger *debug = new Debugger("ApplicationTank", DEBUG_ALL);
@@ -24,6 +25,10 @@ void ApplicationTank::Init(void){
 
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics(1/50.0f);
+
+    main_scene->physics_world = new PhysicsWorld();
+    main_scene->physics_world->SetGravity(vec3(0,-9.81,0));
+    main_scene->physics_world->SetDebugRendering(false);
 
     {
         //Setup sun light
@@ -58,6 +63,47 @@ void ApplicationTank::Init(void){
     controlled_tank->name = "Tank";
     main_scene->AddObject(controlled_tank);
 
+    controlled_tank->AddPhysics(main_scene->physics_world);
+    if (Physics* physics = controlled_tank->GetPhysics()){
+        //Two capsule colliders spanning the tracks (left/right) instead of one box. A single box
+        //only contacts the terrain along one face/edge, so on a slope it can hinge/tip around that
+        //single contact line - two colliders separated sideways give two contact lines instead,
+        //closer to how actual tracks would resist tipping.
+        //Sized from the tank_tracks mesh itself, not the hull - the hull's extent.y is basically
+        //the whole vehicle's half-height, which made the capsules almost as fat as the tank (visible
+        //as the oversized blob). The tracks mesh's own bounds run Y:[0, 0.245], X:[-0.354, 0.346]
+        //(bottom sits at local Y=0, same ground-level convention as the hull), so its own half-extent
+        //doubles as both the correct radius and the correct center height.
+        vec3 extent = controlled_tank->GetMesh()->GetExtents() * 0.5f;
+        vec3 track_extent = tank_tracks ? tank_tracks->GetMesh()->GetExtents() * 0.5f : extent;
+        float capsule_radius = track_extent.y;
+        float capsule_length = max(track_extent.z * 2.0f - capsule_radius * 2.0f,0.01f);
+        float track_offset_x = track_extent.x - capsule_radius;
+        //Capsules stand along local Y by default; rotate onto Z to run along the hull's length.
+        quat capsule_orientation(vec3(1,0,0),TYPE_PI * 0.5f);
+
+        //AddCapsuleCollider's density param is kg/m^3, not total kg - derive it from the desired
+        //~100kg total mass and the capsules' own combined volume (cylinder + 2 hemisphere caps).
+        float capsule_volume = TYPE_PI * capsule_radius * capsule_radius * (capsule_length + (4.0f/3.0f) * capsule_radius);
+        float target_mass_kg = 100.0f;
+        float density = target_mass_kg / (capsule_volume * 2.0f);
+
+        //SetFrictionCoefficient/SetBounciness only touch body->collider, which points at whichever
+        //collider was added last - so each needs to be set right after its own AddCapsuleCollider,
+        //not once at the end (that would leave the first capsule at rp3d's default material).
+        physics->AddCapsuleCollider(capsule_radius,capsule_length,vec3(-track_offset_x,capsule_radius,0),capsule_orientation,density);
+        physics->SetFrictionCoefficient(0.5f);
+        physics->SetBounciness(0.00f);
+
+        physics->AddCapsuleCollider(capsule_radius,capsule_length,vec3( track_offset_x,capsule_radius,0),capsule_orientation,density);
+        physics->SetFrictionCoefficient(0.5f);
+        physics->SetBounciness(0.00f);
+
+        physics->SetStatic(false);
+        physics->SetGravityEnabled(true);
+
+    }
+
     target = CreateNewObjectFromGLTF("target",main_scene);
     controlled_tank->turret_target = target;
     target->SetPickability(false);
@@ -68,7 +114,105 @@ void ApplicationTank::Init(void){
     //TestHeightmapRoundTrip();
     TestHeightmapMesh();
 
+    RegisterMCPTools();
+
     main_window->Resize(1600,800);
+}
+
+//Exposes the tank's existing input methods (the same ones RunLogic already calls for
+//keyboard input) and its live physics state over MCP. Handlers run on MCPServer's own
+//stdin-reading thread, writing the same gas_pedal/brake_pedal/steering_position floats
+//RunLogic writes from the main thread and UpdatePhysicsState reads/resets on the physics
+//thread - unsynchronized, but no more so than that existing main/physics-thread relationship
+//already is, and a stale/torn single frame here is harmless for a control input.
+void ApplicationTank::RegisterMCPTools(){
+    MCPServer::Get()->RegisterTool("tank_drive",
+        "Drive the tank hull forward or reverse, or release the pedals. The input is held for "
+        "duration_ms of real time (re-asserted every physics tick server-side), not just for the "
+        "instant of this call - a single MCP round-trip can't reliably out-pace the physics tick "
+        "rate, so without this a call would produce almost no motion, the same way an unrealistically "
+        "brief key tap wouldn't. Default duration is 100ms, about as short as a real key tap.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"direction", {{"type","string"},{"enum", json::array({"forward","reverse","brake","stop"})}}},
+                {"amount", {{"type","number"},{"description","0..1 throttle/brake magnitude, default 1"}}},
+                {"duration_ms", {{"type","number"},{"description","how long to hold the input, default 100"}}}
+            }},
+            {"required", json::array({"direction"})}
+        },
+        [this](const json &args) -> json {
+            if (!controlled_tank){
+                return json{ {"error","no tank"} };
+            }
+            float amount = args.value("amount",1.0f);
+            float duration_ms = args.value("duration_ms",100.0f);
+            std::string direction = args.value("direction","stop");
+            if (direction == "forward"){
+                controlled_tank->HoldDrive(false,amount,duration_ms);
+            }else if (direction == "reverse"){
+                controlled_tank->HoldDrive(true,amount,duration_ms);
+            }else if (direction == "brake"){
+                controlled_tank->HoldBrake(amount,duration_ms);
+            }else{
+                controlled_tank->ReleaseInputs();
+            }
+            return json{ {"ok", true} };
+        });
+
+    MCPServer::Get()->RegisterTool("tank_steer",
+        "Steer the tank hull left or right. Held for duration_ms of real time (re-asserted every "
+        "physics tick server-side) - default 100ms, about as short as a real key tap.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"direction", {{"type","string"},{"enum", json::array({"left","right"})}}},
+                {"amount", {{"type","number"},{"description","0..1 turn-rate magnitude, default 1"}}},
+                {"duration_ms", {{"type","number"},{"description","how long to hold the input, default 100"}}}
+            }},
+            {"required", json::array({"direction"})}
+        },
+        [this](const json &args) -> json {
+            if (!controlled_tank){
+                return json{ {"error","no tank"} };
+            }
+            float amount = args.value("amount",1.0f);
+            float duration_ms = args.value("duration_ms",100.0f);
+            std::string direction = args.value("direction","left");
+            float signed_amount = (direction == "right") ? amount : -amount;
+            controlled_tank->HoldSteer(signed_amount,duration_ms);
+            return json{ {"ok", true} };
+        });
+
+    MCPServer::Get()->RegisterTool("tank_telemetry",
+        "Report the tank hull's current position, facing, and physics state (velocity, "
+        "angular velocity, mass, whether the rigidbody is asleep).",
+        json{ {"type","object"}, {"properties", json::object()} },
+        [this](const json & /*args*/) -> json {
+            if (!controlled_tank){
+                return json{ {"error","no tank"} };
+            }
+            vec3 pos = controlled_tank->GetPosition();
+            vec3 forward = controlled_tank->GetForward();
+            json result = {
+                {"position", json::array({pos.x,pos.y,pos.z})},
+                {"forward", json::array({forward.x,forward.y,forward.z})},
+            };
+            if (Physics *physics = controlled_tank->GetPhysics()){
+                vec3 vel = physics->GetVelocity();
+                vec3 angvel = physics->GetAngularVelocity();
+                result["velocity"] = json::array({vel.x,vel.y,vel.z});
+                result["speed"] = vel.length();
+                result["angular_velocity"] = json::array({angvel.x,angvel.y,angvel.z});
+                result["mass_kg"] = physics->GetMass();
+                result["is_sleeping"] = physics->IsSleeping();
+            }
+            if (controlled_tank->turret){
+                vec3 turret_forward = controlled_tank->turret->GetWorldForward(STATE_ACCESS_RENDERER);
+                result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
+            }
+            return result;
+        });
 }
 
 //Debug helper: write a small hand-picked grid of known heights to a PNG, read it back,
@@ -147,6 +291,15 @@ void ApplicationTank::TestHeightmapMesh(){
     heightmap_mesh_test->SetMesh(mesh);
     heightmap_mesh_test->name = "Heightmap Test Mesh";
     heightmap_mesh_test->SetPosition(vec3(0,0,0)); //Off to the side so it doesn't overlap the tank.
+
+    heightmap_mesh_test->AddPhysics(main_scene->physics_world);
+    if (Physics* physics = heightmap_mesh_test->GetPhysics()){
+        //Same cell_size_x/cell_size_z as the render mesh above, so collision matches what's drawn.
+        physics->AddHeightFieldCollider(heights,w,h,cell_size_x,cell_size_z,vec3(0,0,0),quat().identity());
+        physics->SetFrictionCoefficient(0.01f);
+        physics->SetBounciness(0.00f);
+        physics->SetStatic(true);
+    }
 
     main_scene->AddObject(heightmap_mesh_test);
 }

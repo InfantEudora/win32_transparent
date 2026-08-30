@@ -51,7 +51,10 @@ static void color_tobuffer(int color) {
 }
 
 void Debugger::SetupConsole() {
-    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    // Debug output goes to stderr (see Flush()) so stdout stays free for
+    // things like an MCPServer's JSON-RPC stdio stream - enable VT color
+    // processing on the handle that actually carries the text.
+    HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
     if (handle != INVALID_HANDLE_VALUE) {
         DWORD mode = 0;
         if (GetConsoleMode(handle, &mode)) {
@@ -101,7 +104,10 @@ void Debugger::EmitLine(debug_t type, const char *name, const char *message) {
 
 void Debugger::Flush() {
     if (g_boffset > 0) {
-        fputs(g_buffer, stdout);
+        // stderr, not stdout: stdout is reserved for MCPServer's JSON-RPC
+        // stdio stream, and must never see interleaved debug text.
+        fputs(g_buffer, stderr);
+        fflush(stderr);
         memset(g_buffer, 0, g_boffset);
         g_boffset = 0;
     }

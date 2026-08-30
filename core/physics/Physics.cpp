@@ -164,6 +164,32 @@ void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& ori
 	//debug->Info("Sphere Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
 
+//Static terrain collider from a heightmap grid. reactphysics3d only allows concave shapes
+//(like this one) on static bodies - call SetStatic(true) on this Physics before using this.
+void Physics::AddHeightFieldCollider(const std::vector<float>& heights,int columns,int rows,float cell_size_x,float cell_size_z,const vec3& pos,const quat& orientation){
+    std::vector<rp3d::Message> messages;
+    rp3d::HeightField* heightfield = PhysicsWorld::physicsCommon->createHeightField(
+        columns,rows,heights.data(),rp3d::HeightField::HeightDataType::HEIGHT_FLOAT_TYPE,messages);
+
+    for (rp3d::Message& msg : messages){
+        debug->Warn("AddHeightFieldCollider: %s\n",msg.text.c_str());
+    }
+    if (!heightfield){
+        debug->Err("AddHeightFieldCollider: createHeightField failed\n");
+        return;
+    }
+
+    rp3d::HeightFieldShape* heightfieldShape = PhysicsWorld::physicsCommon->createHeightFieldShape(
+        heightfield,rp3d::Vector3(cell_size_x,1.0f,cell_size_z));
+
+    rp3d::Transform t = rp3d::Transform::identity();
+    t.setPosition((rp3d::Vector3&)pos);
+    t.setOrientation((rp3d::Quaternion&)orientation);
+    if (body->rigidbody){
+        body->collider = body->rigidbody->addCollider(heightfieldShape, t);
+    }
+}
+
 
 void Physics::AddCapsuleCollider(const float radius, const float height,const vec3& pos,const quat& orientation,float density){
     rp3d::CapsuleShape* capsuleShape = PhysicsWorld::physicsCommon->createCapsuleShape(radius,height);
@@ -175,6 +201,8 @@ void Physics::AddCapsuleCollider(const float radius, const float height,const ve
 		body->collider->getMaterial().setMassDensity(density);
 		//body_collider->getMaterial().setFrictionCoefficient(2);
 		//body_collider->getMaterial().setBounciness(0);
+		body->rigidbody->setAngularDamping(0.5);
+		body->rigidbody->setLinearDamping(0.5);
 		body->rigidbody->updateMassPropertiesFromColliders();
 	}
 	//debug->Info("Capsule Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());

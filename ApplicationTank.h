@@ -25,6 +25,7 @@ public:
     void DumpTerrainVertices();
     void TestHeightmapRoundTrip();
     void TestHeightmapMesh();
+    void RegisterMCPTools();
 
     TankCharacter* controlled_tank = NULL;
 private:

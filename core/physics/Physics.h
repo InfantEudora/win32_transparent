@@ -44,6 +44,10 @@ public:
     void AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation, float density = 1.0f);
     void AddCapsuleCollider(const float radius, const float v,const vec3& pos,const quat& orientation,float density = 1.0f);
     void AddSphereCollider(const float size,const vec3& pos,const quat& orientation,float density = 1.0f);
+    //Static terrain collider. heights is a row-major grid (index = z*columns+x), same layout
+    //as CreateMeshFromHeightmap. cell_size_x/cell_size_z stretch the (columns-1)x(rows-1) local
+    //grid to world-space spacing - pass the same values used to build the matching render mesh.
+    void AddHeightFieldCollider(const std::vector<float>& heights,int columns,int rows,float cell_size_x,float cell_size_z,const vec3& pos,const quat& orientation);
 
     //Force, acceleration velocity etc.
     void AddLocalForce(const vec3& force);

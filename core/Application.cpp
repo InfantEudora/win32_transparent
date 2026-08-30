@@ -3,6 +3,7 @@
 
 #include "Application.h"
 #include "OBJLoader.h"
+#include "MCPServer.h"
 
 #include "Window.h"
 #include "Renderer.h"
@@ -172,6 +173,24 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     }
 
     app->Init();
+
+    //Only now, after the concrete app's Init() has fully returned (and so
+    //registered every MCPServer::Get()->RegisterTool() call it makes - see
+    //ApplicationTank::RegisterMCPTools), start accepting MCP requests.
+    //Init() is where per-app tools get registered, not the constructor, and
+    //it runs here on the render thread, potentially taking several seconds
+    //(asset/shader loading) - starting the MCP server any earlier races an
+    //MCP client's initial tools/list against that registration, resulting in
+    //only the built-in "status" tool ever being returned.
+    //
+    //Both transports are started unconditionally for every app - stdio for
+    //clients that want to spawn+own the process, HTTP for a client that just
+    //wants to attach to (and detach from) an already-running, user-visible
+    //instance without touching its lifetime. If the HTTP port is already
+    //taken (e.g. another instance of this app is already running), that
+    //transport just logs an error and stays off; stdio still works.
+    MCPServer::Get()->Start();
+    MCPServer::Get()->StartHttp(8765);
 
     //Now that all the setup is done, we create another thread for physics.
     HANDLE hThread = NULL;
