@@ -213,6 +213,8 @@ json ApplicationTank::GetTankTelemetry(){
             {"drive_force", wheel.drive_force},
             {"longitudinal_force", wheel.longitudinal_force},
             {"lateral_force", wheel.lateral_force},
+            {"friction_budget", wheel.friction_budget},
+            {"friction_saturated", wheel.friction_saturated},
         });
     }
     result["wheels"] = wheels;
@@ -229,6 +231,7 @@ json ApplicationTank::GetTankTelemetry(){
         {"suspension_rest_length", controlled_tank->suspension_rest_length},
         {"suspension_travel", controlled_tank->suspension_travel},
         {"lateral_friction", controlled_tank->lateral_friction},
+        {"friction_coefficient", controlled_tank->friction_coefficient},
         {"engine_force", controlled_tank->engine_force},
         {"brake_force", controlled_tank->brake_force},
         {"top_speed", controlled_tank->top_speed},

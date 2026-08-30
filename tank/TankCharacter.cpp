@@ -135,6 +135,8 @@ void TankCharacter::UpdatePhysicsState(){
             wheel.drive_force = 0.0f;
             wheel.longitudinal_force = 0.0f;
             wheel.lateral_force = 0.0f;
+            wheel.friction_budget = 0.0f;
+            wheel.friction_saturated = false;
 
             vec3 mount_world = body_world_pos + rotation * wheel.local_offset;
             //Start slightly above the mount point so a wheel that's already compressed past
@@ -202,46 +204,84 @@ void TankCharacter::UpdatePhysicsState(){
             wheel.spring_force = spring_force;
             physics->AddWorldForceAt(push_dir * spring_force,mount_world);
 
+            //Everything this contact does tangentially - engine thrust, passive grip,
+            //resistance to sideways slip - is friction against the ground, so all of it draws
+            //on one budget set by how hard this wheel is actually pressed down. spring_force IS
+            //that normal load, already computed and clamped just above.
+            float friction_budget = friction_coefficient * spring_force;
+            wheel.friction_budget = friction_budget;
+
+            //Longitudinal: engine thrust while this side is driven, passive grip when it isn't.
+            //Exactly one of the two is ever non-zero, so they're tracked separately for
+            //telemetry but share a single axis in the circle below.
+            //
+            //Grip exists because a raycast contact with no drive force and no friction of its
+            //own would let gravity's component along a slope accelerate the hull downhill
+            //forever - a real track doesn't slip lengthwise on its own. It's skipped while
+            //actively driven so it doesn't simply fight the drive force.
+            float drive_force = 0.0f;
+            float grip_force = 0.0f;
             float command = wheel.is_left_side ? left_command : right_command;
             int side_count = wheel.is_left_side ? num_left : num_right;
             if (!drive_capped && command != 0.0f && side_count > 0){
-                float per_wheel_force = (engine_force / side_count) * command;
-                wheel.drive_force = per_wheel_force;
-                physics->AddWorldForceAt(forward * per_wheel_force,mount_world);
+                drive_force = (engine_force / side_count) * command;
             }else{
-                //Longitudinal grip: when this side isn't actively driven, resist any existing
-                //forward-axis slip at this contact the same way lateral_friction resists
-                //sideways slip. Without this a track doesn't slip forward/backward on its own,
-                //but a raycast contact with no drive force and no friction of its own would just
-                //let gravity's component along a slope accelerate the hull downhill forever -
-                //skipped while actively driven so it doesn't fight the drive force itself.
-                float longitudinal_speed = point_velocity.dot(forward);
-                wheel.longitudinal_force = -longitudinal_speed * lateral_friction;
-                physics->AddWorldForceAt(forward * wheel.longitudinal_force,mount_world);
+                grip_force = -point_velocity.dot(forward) * lateral_friction;
             }
+            //Lateral: oppose sideways slip so the tank doesn't slide sideways indefinitely,
+            //while still allowing the scrub a real tank has when pivoting on its tracks. This
+            //is velocity-proportional damping, not a hard no-slip constraint, so some scrub
+            //always gets through even before the budget below trims it.
+            float longitudinal_force = drive_force + grip_force;
+            float lateral_force = -point_velocity.dot(left) * lateral_friction;
 
-            //Lateral friction: oppose sideways slip at this contact point so the tank doesn't
-            //just slide sideways indefinitely, while still allowing the scrub a real tank has
-            //when pivoting on its tracks - this is velocity-proportional damping, not a hard
-            //no-slip constraint, so some scrub always gets through.
-            float lateral_speed = point_velocity.dot(left);
-            wheel.lateral_force = -lateral_speed * lateral_friction;
-            physics->AddWorldForceAt(left * wheel.lateral_force,mount_world);
+            //The friction circle: it's the COMBINED tangential demand that has to fit inside
+            //the budget, not each axis independently - a wheel already spending everything it
+            //has on forward thrust has nothing left to resist a sideways slide with, which is
+            //what makes a hard-accelerating vehicle slide wide instead of gripping. Scaling
+            //both axes by the same factor preserves the direction of the force while bringing
+            //its magnitude down to what the contact can actually deliver.
+            float demand = sqrtf(longitudinal_force * longitudinal_force + lateral_force * lateral_force);
+            if (demand > friction_budget){
+                //demand > budget >= 0 implies demand > 0, so this can't divide by zero.
+                float scale = friction_budget / demand;
+                longitudinal_force *= scale;
+                lateral_force *= scale;
+                drive_force *= scale;
+                grip_force *= scale;
+                wheel.friction_saturated = true;
+            }
+            wheel.drive_force = drive_force;
+            wheel.longitudinal_force = grip_force;
+            wheel.lateral_force = lateral_force;
+
+            //One call rather than three: same total force, and the two tangential components
+            //are now a single vector that was scaled as a unit.
+            physics->AddWorldForceAt(forward * longitudinal_force + left * lateral_force,mount_world);
         }
 
-        //Last-resort safety net: clamping point_velocity above bounds any single wheel's force,
-        //but several wheels can still each push a bounded amount in the same rotational
-        //direction for several consecutive ticks (e.g. right after first ground contact, before
-        //the clamped forces have had time to arrest an initial asymmetry) - confirmed
-        //empirically to still be enough to tip the hull to a stable rest ON ITS SIDE, not
-        //upright. Capping the rigidbody's actual angular speed directly, after all of this
-        //tick's forces are already applied, catches that regardless of which force caused it.
-        //max_roll_speed is well above anything a real driving/steering turn produces (that's
-        //linear-velocity based, not this), so this should never engage during normal play.
+        //Last-resort safety net against a roll/pitch excursion, applied after all of this tick's
+        //forces are in so it catches one regardless of which force caused it. Historically this
+        //was load-bearing: several wheels could each push a bounded amount in the same
+        //rotational direction for enough consecutive ticks to tip the hull to a stable rest ON
+        //ITS SIDE. That had a specific cause (lever arms measured from the body origin rather
+        //than the centre of mass - see com_world above) and it is fixed, so this should now be
+        //genuinely dead code in any drivable configuration. If it starts engaging again,
+        //something upstream has regressed; treat it as an alarm, not as the fix.
+        //Yaw is deliberately exempt. This net used to clamp the magnitude of the WHOLE angular
+        //velocity, on the stated assumption that nothing in normal play would reach it - but a
+        //pivot-in-place turn is precisely an angular manoeuvre, and once the tracks had real
+        //grip (see the friction budget above) it pinned this limit exactly, at 3.000 rad/s,
+        //while the actual roll rate was still only ~0.2. The safety net was silently governing
+        //how fast the tank could steer. Splitting yaw out leaves steering to be limited by
+        //track scrub, which is now modelled, and leaves this net doing only the job it was
+        //added for: catching a roll/pitch excursion no drivable configuration should produce.
         vec3 angvel_now = physics->GetAngularVelocity();
-        float angvel_speed = angvel_now.length();
-        if (angvel_speed > max_roll_speed){
-            physics->SetAngularVelocity(angvel_now * (max_roll_speed / angvel_speed));
+        float yaw_rate = angvel_now.dot(up);
+        vec3 tilt_rate = angvel_now - up * yaw_rate; //roll+pitch, with yaw projected out
+        float tilt_speed = tilt_rate.length();
+        if (tilt_speed > max_roll_speed){
+            physics->SetAngularVelocity(up * yaw_rate + tilt_rate * (max_roll_speed / tilt_speed));
         }
     }
 

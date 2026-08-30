@@ -39,6 +39,10 @@ struct TankWheel{
     float drive_force = 0.0f;        //N along the hull's forward axis from engine thrust, signed
     float longitudinal_force = 0.0f; //N along forward from passive grip when undriven, signed
     float lateral_force = 0.0f;      //N along the hull's left axis from lateral_friction, signed
+    float friction_budget = 0.0f;    //N, friction_coefficient * spring_force - the most this
+                                     //contact can transmit to the ground in any direction
+    bool friction_saturated = false; //true when the tick's combined longitudinal+lateral demand
+                                     //exceeded friction_budget and had to be scaled back
 };
 
 class TankCharacter : public Object{
@@ -115,13 +119,48 @@ public:
     //of settling - a wheel that's "grounded but never applying real force" looks identical to
     //one that's airborne from the outside, which made that bug look like a driving/input bug.
     float max_wheel_force = 4000.0f; //Newtons
-    //Subject to exactly the same c*dt/m < 1 limit as suspension_damping above (see the
-    //derivation there) - it is another velocity-proportional force, applied per grounded wheel,
-    //to the same hull. At 4000 the ten wheels totalled 40000 N/(m/s), c*dt/m = 9.8: divergent
-    //by an order of magnitude, held in check only by the max_point_speed clamp below, which
-    //left every contact permanently saturated and bang-banging rather than damping. That is
-    //also why the clamps kept looking load-bearing - they were the only thing bounding this.
-    float lateral_friction = 400.0f;      //N per (m/s) of sideways slip, per grounded wheel
+    //Subject to the same kind of explicit-integration limit as suspension_damping above, but
+    //to a TIGHTER one, and this is the subtlety that cost the most time here. Suspension force
+    //is vertical and the wheels are spread horizontally, so it damps a linear mode and the
+    //bound is against the hull's MASS. Lateral force is horizontal and the wheels sit 0.279m
+    //BELOW the centre of mass, so it feeds a roll mode, and the bound is against the hull's
+    //roll INERTIA, which is far smaller in the units that matter:
+    //
+    //    c_per_wheel * num_wheels * r_y^2 * dt / I_roll  <  1
+    //
+    //Measured rather than derived, since I_roll comes out of rp3d's collider integration: at
+    //400 a level, fully-grounded hull diverged with lateral force alternating sign every tick
+    //and growing x1.77 (+0.1, -0.1, +0.2, -0.3, +0.5, -1.0, +1.7, -3.0, +5.3, -9.5, +16.7...),
+    //which puts the ratio above at 2.77 and needs roughly a 3x reduction. 120 lands it near
+    //0.83, i.e. monotonic decay with no alternation at all. 4000 - the original value - was
+    //past even the loose linear bound by an order of magnitude.
+    //
+    //Lowering this costs much less grip than it looks like it should, because since the
+    //friction budget below exists this value is only the SLOPE of the approach to saturation,
+    //not the ceiling. Maximum grip is friction_coefficient * normal load either way; all that
+    //changes is how much slip it takes to get there (~0.67 m/s at 120, vs ~0.2 m/s at 400).
+    //
+    //The robust fix, if this ever needs revisiting: solve the lateral force implicitly - pick
+    //the force that exactly cancels this contact's slip velocity over one timestep
+    //(-slip * mass_share / dt), then clip THAT to the friction budget. It is unconditionally
+    //stable at any timestep and removes this whole tuning cliff, at the cost of needing the
+    //real dt (currently hardcoded to 0.02 at the top of UpdatePhysicsState) plumbed in.
+    float lateral_friction = 120.0f;      //N per (m/s) of sideways slip, per grounded wheel
+
+    //Coulomb friction coefficient. A track can only transmit force to the ground in proportion
+    //to how hard it is pressed into it, so each contact's drive/grip/lateral forces share a
+    //single budget of friction_coefficient * spring_force - see the friction circle in
+    //UpdatePhysicsState. Without that coupling, a wheel in rebound reporting spring_force = 0
+    //still applied full lateral force (traced at 1660 N from a wheel carrying zero vertical
+    //load), which is not merely unphysical: it is self-reinforcing, because the wheels a roll
+    //UNLOADS were exactly the ones still pushing hardest against being reloaded.
+    //
+    //1.0 is high for real steel-on-dirt (0.5-0.7 would be typical) but the tracks are wide and
+    //this keeps the hull from sliding on the terrain's slopes. Note the whole vehicle is now
+    //traction-limited rather than engine-limited: total available thrust is roughly
+    //friction_coefficient * weight = 804 N against engine_force's 2000 N, which is realistic
+    //for a tracked vehicle and still reaches top_speed in about a tenth of a second.
+    float friction_coefficient = 1.0f;
 
     //The other two clamps, previously function-local consts in UpdatePhysicsState. Out here
     //because whether they engage is the central tuning question, not an implementation detail:
