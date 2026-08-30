@@ -50,6 +50,8 @@ public:
     void SetSkinnedMeshData(skinned_vertex* verts, int vertex_count);
     void SetMorphMeshData(morph_vertex* verts, int vertex_count);
 
+    const std::vector<vertex>& GetVertices() const {return vertices;};
+
     bool IsNormalMesh();
     bool IsSkinnedMesh();
     bool IsLineMesh();

@@ -61,6 +61,7 @@ OBJ_LIBIMGUI += $(patsubst %.cpp, %.o, $(SRC_LIBIMGUI))
 
 #Third Party
 SRC_LIBTHIRDPARTY += ./3rdparty/stb_image/stb_image.cpp
+SRC_LIBTHIRDPARTY += ./3rdparty/stb_image/stb_image_write.cpp
 SRC_LIBTHIRDPARTY += ./3rdparty/tinygltf/tiny_gltf.cpp
 SRC_LIBTHIRDPARTY += ./3rdparty/miniz/miniz_tdef.cpp
 SRC_LIBTHIRDPARTY += ./3rdparty/miniz/miniz_tinfl.cpp

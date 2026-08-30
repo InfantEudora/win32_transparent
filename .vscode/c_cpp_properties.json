@@ -3,7 +3,7 @@
         {
             "name": "Win32",
             "includePath": [
-                "${workspaceFolder}/**",
+                "${workspaceFolder}/**/*",
                 "C:/msys64/usr/include/**",
                 "${workspaceFolder}/3rdparty/openal-soft/",
                 "${workspaceFolder}/3rdparty/miniz/"
@@ -13,7 +13,7 @@
             "intelliSenseMode": "windows-gcc-x64",
             "browse": {
                 "path": [
-                    "${workspaceFolder}/**",
+                    "${workspaceFolder}/**/*",
                     "C:/msys64/usr/include/**"
                 ],
                 "limitSymbolsToIncludedHeaders": true,

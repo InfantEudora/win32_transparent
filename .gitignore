@@ -10,3 +10,4 @@ imgui.ini
 *.blend
 *.a
 BinaryAssetMemory.cpp
+.current_app
