@@ -46,12 +46,13 @@ void TankCharacter::UpdatePhysicsState(){
 
     float reverse_multiplier = f_reverse ? -1.0f : 1.0f;
 
-    //Everything below applies forces/torques to the rigidbody - that's what the physics engine
-    //expects a dynamic body to be driven by. We no longer track our own "speed" or teleport
-    //position/rotation: mass, friction, gravity and collision against the terrain now genuinely
-    //determine how the hull moves, including on slopes.
+    //Everything below applies forces to the rigidbody via each wheel's raycast contact point -
+    //no single rigid collider rests on the terrain, and steering is no longer a direct rotation.
+    //A tank's tracks apply propulsion (and, incidentally, most of its weight support) at several
+    //points along its own length rather than through its centre of mass, so that's modelled here
+    //instead of approximating it with one force/torque through the middle.
     if (Physics* physics = GetPhysics()){
-        //Forces/torques applied to a sleeping rigidbody appear to do nothing (confirmed empirically:
+        //Forces applied to a sleeping rigidbody appear to do nothing (confirmed empirically:
         //two AddLocalForce calls in a row left velocity at exactly zero and is_sleeping still true).
         //Any actual input intent needs to wake it first, or the tank goes completely unresponsive
         //the moment it's sat still long enough for rp3d to put it to sleep - not just an issue for
@@ -61,32 +62,186 @@ void TankCharacter::UpdatePhysicsState(){
         }
 
         vec3 velocity = physics->GetVelocity();
-        float forward_speed = velocity.dot(GetForward());
-
-        //Drive/reverse: local-space force along the hull's forward axis. Soft-capped by simply
-        //not pushing further once real velocity along that axis reaches top_speed.
-        if (gas_pedal > 0.0f && fabs(forward_speed) < top_speed){
-            physics->AddLocalForce(Object::ref_forward * reverse_multiplier * gas_pedal * engine_force);
-        }
+        vec3 angular_velocity = physics->GetAngularVelocity();
+        //Orientation read straight off the rigidbody rather than through GetRotation()/
+        //GetForward()/GetUp()/GetLeft(): those all return state_physics.rotation, which
+        //Object::UpdatePhysicsState() only refreshes at the END of this function, so they were
+        //a full tick behind the body_world_pos read below. Mixing a current position with a
+        //stale rotation puts every mount point on the wrong arc, and adds a tick of phase lag
+        //to forces that are already integrated a tick late (Scene::UpdatePhysics steps the
+        //world BEFORE calling this, so this tick's forces land on the next step) - phase lag
+        //being the one thing a stiff velocity damper can least afford. Fine to use as the
+        //local rotation too: the tank is a root object with no parent, so local == world.
+        quat rotation = physics->GetBodyWorldOrientation();
+        vec3 forward = rotation * ref_forward;
+        vec3 up = rotation * ref_up;
+        vec3 left = rotation * ref_left;
+        vec3 body_world_pos = physics->GetBodyWorldPosition();
+        //rp3d's body transform origin is NOT its centre of mass. The hull's box collider is
+        //deliberately centred well above the hull origin (see ApplicationTank::Init, which
+        //trims the box's bottom face up to the wheels' ground clearance), leaving the two
+        //roughly half a metre apart vertically. Every lever arm below has to be measured from
+        //the centre of mass, because that is the point the body actually rotates about - rp3d's
+        //own applyWorldForceAtWorldPosition already computes its torque as
+        //(point - centre_of_mass) x force, so anything computed here against the origin instead
+        //disagrees with what the solver then does with it.
+        //
+        //Measuring from the origin (as this did) put r.y at about +0.12 where the truth is
+        //about -0.34: wrong sign AND ~3x magnitude. The vertical component of a contact's point
+        //velocity only depends on r.x/r.z, so the springs still behaved and the bug stayed
+        //invisible there - but the LATERAL component during a roll is -w*r.y, so it came out
+        //INVERTED. That put lateral_friction, the largest coefficient in the whole system, to
+        //work pumping roll instead of damping it: a positive feedback loop present on every
+        //single tick, whose direction is fixed by whichever way the hull first happens to tip.
+        //The one-directional roll bias that ends with the hull resting on its side is this.
+        vec3 com_world = body_world_pos + rotation * physics->GetCenterofMass();
+        float forward_speed = velocity.dot(forward);
 
         //Braking: oppose whatever the current horizontal velocity actually is (not just facing),
-        //same as a real brake would.
+        //same as a real brake would. Applied once at the centre of mass - it's resisting the
+        //hull's actual motion, not something that needs a per-wheel breakdown. Applied at the
+        //body ORIGIN (as it was) it acted ~0.5m below the centre of mass, so every brake
+        //application also fed in a pitch torque of roughly force*0.5 N.m that nothing asked
+        //for - including the permanent idle brake at the bottom of this function.
         vec3 horizontal_velocity = vec3(velocity.x,0,velocity.z);
         float horizontal_speed = horizontal_velocity.length();
         if (brake_pedal > 0.0f && horizontal_speed > 0.01f){
             vec3 brake_dir = horizontal_velocity * (-1.0f / horizontal_speed);
-            physics->AddWorldForceAt(brake_dir * brake_pedal * brake_force,physics->GetBodyWorldPosition());
+            physics->AddWorldForceAt(brake_dir * brake_pedal * brake_force,com_world);
         }
 
-        //Steering: direct rotation around the hull's up axis, same as before physics was
-        //introduced. Steadier (larger steer_amount) at low speed. Tried driving this via
-        //AddLocalTorque instead, but couldn't get it to produce visible turning at any
-        //reasonable torque magnitude - kinematic rotation is what's actually in use.
-        if (steering_position != 0.0f){
-            float speed_factor = clamp(fabs(forward_speed) / top_speed,0.0f,1.0f);
-            float steer_amount = fmap(1.0f - speed_factor,0.0f,1.0f,0.5f,1.5f);
-            float steer_factor = -reverse_multiplier * steering_position * steer_amount;
-            RotateAroundAxis(GetUp(),steer_factor*0.1f);
+        //Differential drive: steering comes from the two tracks being pushed with different
+        //(possibly opposite) force, not from directly rotating the hull. steering_position > 0
+        //(SteerRight) biases the left track stronger and the right track weaker/reversed, which
+        //swings the nose right - same as a real tank pivoting on its tracks. This works even
+        //with gas_pedal at 0 (a pure pivot-in-place turn), since it doesn't depend on gas_pedal.
+        float base_command = reverse_multiplier * gas_pedal;
+        float left_command  = clamp(base_command + steering_position * steer_authority,-1.0f,1.0f);
+        float right_command = clamp(base_command - steering_position * steer_authority,-1.0f,1.0f);
+        bool drive_capped = fabs(forward_speed) >= top_speed;
+
+        int num_left = 0, num_right = 0;
+        for (TankWheel& wheel : wheels){
+            if (wheel.is_left_side){ num_left++; }else{ num_right++; }
+        }
+
+        for (TankWheel& wheel : wheels){
+            //Diagnostics are rewritten from scratch every tick (see TankWheel) - cleared up
+            //front so a wheel that's airborne, or that bails out at one of the early continues
+            //below, reports honest zeroes rather than whatever it last did while grounded.
+            wheel.point_speed = 0.0f;
+            wheel.compression_rate = 0.0f;
+            wheel.spring_force = 0.0f;
+            wheel.drive_force = 0.0f;
+            wheel.longitudinal_force = 0.0f;
+            wheel.lateral_force = 0.0f;
+
+            vec3 mount_world = body_world_pos + rotation * wheel.local_offset;
+            //Start slightly above the mount point so a wheel that's already compressed past
+            //rest_length at the start of this tick is still detected, not missed by starting
+            //the ray exactly at (or below) the surface.
+            const float start_margin = 0.05f;
+            vec3 ray_start = mount_world + up * start_margin;
+            float ray_length = start_margin + suspension_rest_length + suspension_travel;
+            vec3 ray_end = ray_start - up * ray_length;
+
+            PhysicsWorld::RaycastHit hit = physics->world->Raycast(ray_start,ray_end,physics->body->rigidbody);
+            if (!hit.hit){
+                wheel.grounded = false;
+                wheel.compression = 0.0f;
+                continue;
+            }
+
+            float clearance = (hit.point - ray_start).length() - start_margin;
+            float compression = suspension_rest_length - clearance;
+            wheel.grounded = true;
+            wheel.compression = clamp(compression,0.0f,suspension_rest_length + suspension_travel);
+
+            if (wheel.compression <= 0.0f){
+                continue; //extended past rest length - a passive spring gives no force here
+            }
+
+            //Velocity of the hull material at this exact wheel's contact point (linear +
+            //angular_velocity x r) so every force below reacts to how fast THIS point is
+            //moving, not just the hull's overall velocity - matters once the hull starts
+            //pitching/rolling. Clamped in magnitude before ANY force derives from it: all
+            //three forces below (spring damping, longitudinal grip, lateral friction) feed
+            //back into velocity/angular_velocity next tick, through this exact same lever arm.
+            //With a wide multi-wheel track and a discrete timestep, that loop can amplify a
+            //small initial asymmetry into a divergent oscillation tick over tick (confirmed
+            //empirically: one wheel's damping term alone hit 1300+ N once its local
+            //compression_rate - derived from this same point_velocity - reached 1.4 m/s).
+            //Clamping point_velocity itself, once, is what actually breaks that loop - clamping
+            //only one of the three forces that read it (as an earlier version of this code did)
+            //left the other two just as able to run away.
+            //Measured from the centre of mass, NOT the body origin - see com_world above for
+            //why that distinction was inverting this contact's lateral response to roll.
+            vec3 r = mount_world - com_world;
+            vec3 point_velocity = velocity + angular_velocity.cross(r);
+            float point_speed = point_velocity.length();
+            wheel.point_speed = point_speed; //recorded PRE-clamp - see TankWheel::point_speed
+            if (point_speed > max_point_speed){
+                point_velocity = point_velocity * (max_point_speed / point_speed);
+            }
+
+            //Pushed along the actual ground normal, not the hull's own (possibly already
+            //tilted) up vector - using the hull's up here would mean that once the hull is
+            //tilted even slightly, the "corrective" force is ALSO tilted, extending the error
+            //instead of fixing it (confirmed empirically: this is what let a small initial
+            //asymmetry escalate into the hull settling on its side instead of upright, even
+            //with the point_velocity/force clamps above already in place). The ground normal
+            //has no such feedback - it only reflects the terrain, never the hull's own state.
+            vec3 push_dir = hit.normal;
+            float compression_rate = -point_velocity.dot(push_dir); //positive = moving further into the ground
+            float spring_force = wheel.compression * suspension_stiffness + compression_rate * suspension_damping;
+            //Hard ceiling regardless of the above: a wheel bearing its share of the tank's
+            //weight should never need many times that just to support it, so anything past
+            //max_wheel_force is almost certainly still a transient spike, not real load.
+            spring_force = clamp(spring_force,0.0f,max_wheel_force);
+            wheel.compression_rate = compression_rate;
+            wheel.spring_force = spring_force;
+            physics->AddWorldForceAt(push_dir * spring_force,mount_world);
+
+            float command = wheel.is_left_side ? left_command : right_command;
+            int side_count = wheel.is_left_side ? num_left : num_right;
+            if (!drive_capped && command != 0.0f && side_count > 0){
+                float per_wheel_force = (engine_force / side_count) * command;
+                wheel.drive_force = per_wheel_force;
+                physics->AddWorldForceAt(forward * per_wheel_force,mount_world);
+            }else{
+                //Longitudinal grip: when this side isn't actively driven, resist any existing
+                //forward-axis slip at this contact the same way lateral_friction resists
+                //sideways slip. Without this a track doesn't slip forward/backward on its own,
+                //but a raycast contact with no drive force and no friction of its own would just
+                //let gravity's component along a slope accelerate the hull downhill forever -
+                //skipped while actively driven so it doesn't fight the drive force itself.
+                float longitudinal_speed = point_velocity.dot(forward);
+                wheel.longitudinal_force = -longitudinal_speed * lateral_friction;
+                physics->AddWorldForceAt(forward * wheel.longitudinal_force,mount_world);
+            }
+
+            //Lateral friction: oppose sideways slip at this contact point so the tank doesn't
+            //just slide sideways indefinitely, while still allowing the scrub a real tank has
+            //when pivoting on its tracks - this is velocity-proportional damping, not a hard
+            //no-slip constraint, so some scrub always gets through.
+            float lateral_speed = point_velocity.dot(left);
+            wheel.lateral_force = -lateral_speed * lateral_friction;
+            physics->AddWorldForceAt(left * wheel.lateral_force,mount_world);
+        }
+
+        //Last-resort safety net: clamping point_velocity above bounds any single wheel's force,
+        //but several wheels can still each push a bounded amount in the same rotational
+        //direction for several consecutive ticks (e.g. right after first ground contact, before
+        //the clamped forces have had time to arrest an initial asymmetry) - confirmed
+        //empirically to still be enough to tip the hull to a stable rest ON ITS SIDE, not
+        //upright. Capping the rigidbody's actual angular speed directly, after all of this
+        //tick's forces are already applied, catches that regardless of which force caused it.
+        //max_roll_speed is well above anything a real driving/steering turn produces (that's
+        //linear-velocity based, not this), so this should never engage during normal play.
+        vec3 angvel_now = physics->GetAngularVelocity();
+        float angvel_speed = angvel_now.length();
+        if (angvel_speed > max_roll_speed){
+            physics->SetAngularVelocity(angvel_now * (max_roll_speed / angvel_speed));
         }
     }
 
@@ -180,4 +335,22 @@ void TankCharacter::ReleaseInputs(){
     brake_latch_until_ms = 0;
     steer_latch_until_ms = 0;
     Brake(0.0f); //releases both gas and brake pedals immediately
+}
+
+void TankCharacter::SetupWheels(float track_offset_x,float half_length,float mount_height,int wheels_per_side){
+    wheels.clear();
+    wheels_per_side = max(wheels_per_side,1);
+    for (int side = 0; side < 2; side++){
+        bool is_left = (side == 0);
+        //+X = left, matching Object::GetLeft()/ref_left's convention.
+        float x = is_left ? track_offset_x : -track_offset_x;
+        for (int i = 0; i < wheels_per_side; i++){
+            float t = (wheels_per_side == 1) ? 0.5f : (float)i / (float)(wheels_per_side - 1);
+            float z = fmap(t,0.0f,1.0f,-half_length,half_length);
+            TankWheel wheel;
+            wheel.local_offset = vec3(x,mount_height,z);
+            wheel.is_left_side = is_left;
+            wheels.push_back(wheel);
+        }
+    }
 }

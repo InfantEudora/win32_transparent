@@ -414,6 +414,21 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
         if (ImGui::Checkbox("Pause Physics (Active Scene) [Debug]",&ph_paused)){
             main_scene->PausePhysics(ph_paused);
         }
+        static int step_count = 1;
+        ImGui::BeginDisabled(!ph_paused);
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("##PhysicsStepCount",&step_count);
+        if (step_count < 1) step_count = 1;
+        ImGui::SameLine();
+        if (ImGui::Button("Step Physics")){
+            main_scene->StepPhysics(step_count);
+        }
+        ImGui::EndDisabled();
+        int pending_steps = main_scene->GetPendingPhysicsSteps();
+        if (pending_steps > 0){
+            ImGui::SameLine();
+            ImGui::Text("(%i pending)",pending_steps);
+        }
         vec3 gravity = physics_world->GetGravity();
         if (ImGui::DragFloat3("Gravity (m/s^2)",(float*)&gravity,0.1f,-20,20)){
             physics_world->SetGravity(gravity);

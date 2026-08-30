@@ -68,6 +68,45 @@ vec3 PhysicsWorld::GetGravity(){
 	return (vec3&)g;
 }
 
+//Collects the nearest hit: returning raycastInfo.hitFraction from notifyRaycastHit clips the
+//ray to no farther than that fraction for the remainder of the query, so whichever hit is
+//still recorded once reactphysics3d finishes checking every collider is guaranteed nearest -
+//this is the standard "find nearest hit" pattern for rp3d's callback-based raycast API.
+namespace {
+    class NearestRaycastCallback : public reactphysics3d::RaycastCallback {
+    public:
+        reactphysics3d::RigidBody* exclude = NULL;
+        bool hit = false;
+        reactphysics3d::Vector3 point;
+        reactphysics3d::Vector3 normal;
+
+        reactphysics3d::decimal notifyRaycastHit(const reactphysics3d::RaycastInfo &info) override {
+            if (exclude && info.body == exclude) {
+                return -1.0f; // ignore this collider, keep casting at the same max fraction
+            }
+            hit = true;
+            point = info.worldPoint;
+            normal = info.worldNormal;
+            return info.hitFraction; // clip further queries to no farther than this hit
+        }
+    };
+}
+
+PhysicsWorld::RaycastHit PhysicsWorld::Raycast(const vec3& from, const vec3& to, reactphysics3d::RigidBody* exclude_rigidbody){
+    reactphysics3d::Ray ray((reactphysics3d::Vector3&)from,(reactphysics3d::Vector3&)to);
+    NearestRaycastCallback callback;
+    callback.exclude = exclude_rigidbody;
+    rp_world->raycast(ray,&callback);
+
+    RaycastHit result;
+    result.hit = callback.hit;
+    if (callback.hit){
+        result.point = (vec3&)callback.point;
+        result.normal = (vec3&)callback.normal;
+    }
+    return result;
+}
+
 void PhysicsWorld::SetDebugRendering(bool state){
 	rp_world->setIsDebugRenderingEnabled(state);
 }

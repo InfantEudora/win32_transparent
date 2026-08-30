@@ -54,59 +54,83 @@ void ApplicationTank::Init(void){
         tank_top->name = "Tank Top";
         controlled_tank->AttachChild(tank_top);
         controlled_tank->turret = tank_top;
+
     }
     Object* tank_tracks = assetmanager->GetObjectFromAsset("tank_tracks");
     if (tank_tracks){
         tank_tracks->name = "Tank Tracks";
         controlled_tank->AttachChild(tank_tracks);
+        //Superseded visually by the per-wheel tank_wheel Objects set up below (one per
+        //TankWheel, at its actual raycast mount point) - kept attached (for its geometry, still
+        //used to size the suspension below) but hidden rather than removed.
+        tank_tracks->SetVisibility(false);
     }
     controlled_tank->name = "Tank";
     main_scene->AddObject(controlled_tank);
 
     controlled_tank->AddPhysics(main_scene->physics_world);
     if (Physics* physics = controlled_tank->GetPhysics()){
-        //Two capsule colliders spanning the tracks (left/right) instead of one box. A single box
-        //only contacts the terrain along one face/edge, so on a slope it can hinge/tip around that
-        //single contact line - two colliders separated sideways give two contact lines instead,
-        //closer to how actual tracks would resist tipping.
+        //A single box collider now provides mass and incidental collision (walls, other objects -
+        //none exist yet, but this is what would catch them) only. It is NOT what the tank rests
+        //or drives on: ground support and steering both come from several raycast-sampled wheel
+        //contacts per track instead (TankCharacter::SetupWheels/UpdatePhysicsState) - a spring+
+        //damper suspension force plus that side's own drive force at each point, closer to how a
+        //tracked vehicle actually moves and far less sensitive to the terrain heightmap's small-
+        //scale noise than one rigid shape resting directly on it.
+        //
         //Sized from the tank_tracks mesh itself, not the hull - the hull's extent.y is basically
-        //the whole vehicle's half-height, which made the capsules almost as fat as the tank (visible
-        //as the oversized blob). The tracks mesh's own bounds run Y:[0, 0.245], X:[-0.354, 0.346]
-        //(bottom sits at local Y=0, same ground-level convention as the hull), so its own half-extent
-        //doubles as both the correct radius and the correct center height.
+        //the whole vehicle's half-height. The tracks mesh's own bounds run Y:[0, 0.245],
+        //X:[-0.354, 0.346] (bottom sits at local Y=0, same ground-level convention as the hull),
+        //so its own half-extent doubles as both the wheels' mount height and their ray's rest
+        //length - the hull floats at the same height the old rigid capsules used to sit at.
         vec3 extent = controlled_tank->GetMesh()->GetExtents() * 0.5f;
         vec3 track_extent = tank_tracks ? tank_tracks->GetMesh()->GetExtents() * 0.5f : extent;
-        float capsule_radius = track_extent.y;
-        float capsule_length = max(track_extent.z * 2.0f - capsule_radius * 2.0f,0.01f);
-        float track_offset_x = track_extent.x - capsule_radius;
-        //Capsules stand along local Y by default; rotate onto Z to run along the hull's length.
-        quat capsule_orientation(vec3(1,0,0),TYPE_PI * 0.5f);
 
-        //AddCapsuleCollider's density param is kg/m^3, not total kg - derive it from the desired
-        //~100kg total mass and the capsules' own combined volume (cylinder + 2 hemisphere caps).
-        float capsule_volume = TYPE_PI * capsule_radius * capsule_radius * (capsule_length + (4.0f/3.0f) * capsule_radius);
         float target_mass_kg = 100.0f;
-        float density = target_mass_kg / (capsule_volume * 2.0f);
+        float volume = max((extent.x * 2.0f) * (extent.y * 2.0f) * (extent.z * 2.0f),0.001f);
+        float density = target_mass_kg / volume; //AddBoxCollider's density param is kg/m^3, not total kg
 
-        //SetFrictionCoefficient/SetBounciness only touch body->collider, which points at whichever
-        //collider was added last - so each needs to be set right after its own AddCapsuleCollider,
-        //not once at the end (that would leave the first capsule at rp3d's default material).
-        physics->AddCapsuleCollider(capsule_radius,capsule_length,vec3(-track_offset_x,capsule_radius,0),capsule_orientation,density);
+        //Raised so its bottom face clears the ground by track_extent.y (the same ground
+        //clearance the wheels rest at) instead of sitting right at world Y=0 like the full hull
+        //extent would put it - a box reaching all the way down to true ground level would be a
+        //SECOND, independent rigid contact with the terrain fighting the wheels' spring contact
+        //every tick, which is what was behind the hull never fully settling (confirmed: this is
+        //exactly that same box, previously positioned at vec3(0,extent.y,0) spanning down to
+        //Y=0). Top stays where the visual hull's top actually is - only the bottom is trimmed up.
+        vec3 box_extent = vec3(extent.x,extent.y - track_extent.y * 0.5f,extent.z);
+        vec3 box_center = vec3(0,extent.y + track_extent.y * 0.5f,0);
+        physics->AddBoxCollider(box_extent,box_center,quat().identity(),density);
         physics->SetFrictionCoefficient(0.5f);
-        physics->SetBounciness(0.00f);
-
-        physics->AddCapsuleCollider(capsule_radius,capsule_length,vec3( track_offset_x,capsule_radius,0),capsule_orientation,density);
-        physics->SetFrictionCoefficient(0.5f);
-        physics->SetBounciness(0.00f);
-
+        physics->SetBounciness(0.0f);
         physics->SetStatic(false);
         physics->SetGravityEnabled(true);
 
+        float track_offset_x = track_extent.x * 0.8f; //slightly inset from the tracks' outer edge
+        controlled_tank->suspension_rest_length = track_extent.y;
+        controlled_tank->SetupWheels(track_offset_x,track_extent.z,track_extent.y,5);
+
+        //Visual reference only: one tank_wheel Object per TankWheel, parented to the hull and
+        //placed at its actual mount point (the same local_offset UpdatePhysicsState raycasts
+        //from) - so the wheel positions used by the physics are visible, not just the fixed
+        //(now-hidden) tank_tracks band. Static for now, at the mount point itself rather than
+        //wherever the current compression/ground contact has it - not yet following
+        //wheel.compression tick to tick.
+        for (TankWheel& wheel : controlled_tank->wheels){
+            Object* wheel_visual = assetmanager->GetObjectFromAsset("tank_wheel");
+            if (!wheel_visual){
+                break; //asset missing - warned once via AssetManager's own debug->Err already
+            }
+            wheel_visual->name = "Tank Wheel";
+            controlled_tank->AttachChild(wheel_visual);
+            wheel_visual->SetPosition(wheel.local_offset);
+            wheel.visual = wheel_visual;
+        }
     }
 
     target = CreateNewObjectFromGLTF("target",main_scene);
     controlled_tank->turret_target = target;
     target->SetPickability(false);
+    controlled_tank->SetPosition(vec3(0,0.05,0));
 
     //terrain = CreateNewObjectFromGLTF("terrain",main_scene);
 
@@ -116,7 +140,12 @@ void ApplicationTank::Init(void){
 
     RegisterMCPTools();
 
-    main_window->Resize(1600,800);
+    main_window->Resize(1200,800);
+
+    //Need an inital step to show everything.
+    main_scene->StepPhysics(1);
+
+    main_scene->PausePhysics(true);
 }
 
 //Shared by all three MCP tools below - same fields tank_telemetry reports on its own,
@@ -139,11 +168,74 @@ json ApplicationTank::GetTankTelemetry(){
         result["angular_velocity"] = json::array({angvel.x,angvel.y,angvel.z});
         result["mass_kg"] = physics->GetMass();
         result["is_sleeping"] = physics->IsSleeping();
+        //The body's transform origin (reported as "position" above) is NOT its centre of mass -
+        //with the hull's box collider centred well above the hull origin the two sit roughly
+        //half a metre apart, which is what made every lever arm in TankCharacter's wheel loop
+        //wrong. Reported so that offset is visible rather than something to rederive by hand.
+        vec3 com_local = physics->GetCenterofMass();
+        vec3 com_world = physics->GetBodyWorldPosition() + physics->GetBodyWorldOrientation() * com_local;
+        result["center_of_mass_local"] = json::array({com_local.x,com_local.y,com_local.z});
+        result["center_of_mass_world"] = json::array({com_world.x,com_world.y,com_world.z});
     }
     if (controlled_tank->turret){
         vec3 turret_forward = controlled_tank->turret->GetWorldForward(STATE_ACCESS_RENDERER);
         result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
     }
+
+    //Per-wheel suspension/force breakdown, straight from the TankWheel diagnostics the physics
+    //thread wrote on its last tick (see TankWheel in tank/TankCharacter.h). The hull-level
+    //fields above only ever say THAT something is wrong; this says which contact is doing it.
+    //Read unsynchronized while the physics thread writes, same as the pedal inputs already are.
+    //
+    //What to look for: point_speed at or above max_point_speed means that clamp is holding the
+    //simulation together rather than merely trimming it, i.e. the tuning underneath is
+    //diverging. lateral_force is the one to watch for roll trouble - it carries the largest
+    //coefficient in the system, so a left/right pair disagreeing in sign while the hull is
+    //level is a contact fighting the suspension instead of helping it.
+    json wheels = json::array();
+    int wheels_grounded = 0;
+    bool point_speed_clamped = false;
+    for (const TankWheel& wheel : controlled_tank->wheels){
+        if (wheel.grounded){
+            wheels_grounded++;
+        }
+        if (wheel.point_speed > controlled_tank->max_point_speed){
+            point_speed_clamped = true;
+        }
+        wheels.push_back(json{
+            {"side", wheel.is_left_side ? "left" : "right"},
+            {"local_offset", json::array({wheel.local_offset.x,wheel.local_offset.y,wheel.local_offset.z})},
+            {"grounded", wheel.grounded},
+            {"compression", wheel.compression},
+            {"compression_rate", wheel.compression_rate},
+            {"point_speed", wheel.point_speed},
+            {"spring_force", wheel.spring_force},
+            {"drive_force", wheel.drive_force},
+            {"longitudinal_force", wheel.longitudinal_force},
+            {"lateral_force", wheel.lateral_force},
+        });
+    }
+    result["wheels"] = wheels;
+    result["wheels_grounded"] = wheels_grounded;
+    //Surfaced on its own rather than left to be spotted in the per-wheel list: if this is ever
+    //true the point_velocity clamp is load-bearing, which invalidates reading any force below
+    //it as a real physical value.
+    result["point_speed_clamped"] = point_speed_clamped;
+    //Echoed so a reader can judge the numbers above against the tuning that produced them
+    //without a separate lookup or a rebuild to check what the constants currently are.
+    result["tuning"] = json{
+        {"suspension_stiffness", controlled_tank->suspension_stiffness},
+        {"suspension_damping", controlled_tank->suspension_damping},
+        {"suspension_rest_length", controlled_tank->suspension_rest_length},
+        {"suspension_travel", controlled_tank->suspension_travel},
+        {"lateral_friction", controlled_tank->lateral_friction},
+        {"engine_force", controlled_tank->engine_force},
+        {"brake_force", controlled_tank->brake_force},
+        {"top_speed", controlled_tank->top_speed},
+        {"max_wheel_force", controlled_tank->max_wheel_force},
+        {"max_point_speed", controlled_tank->max_point_speed},
+        {"max_roll_speed", controlled_tank->max_roll_speed},
+    };
     return result;
 }
 
@@ -271,6 +363,61 @@ void ApplicationTank::RegisterMCPTools(){
         json{ {"type","object"}, {"properties", json::object()} },
         [this](const json & /*args*/) -> json {
             return MaybeAttachScreenshot(GetTankTelemetry(),true);
+        });
+
+    MCPServer::Get()->RegisterTool("tank_pause",
+        "Pause or resume the physics simulation. While paused, the render loop keeps running "
+        "(the window stays responsive) but nothing physical moves until either tank_step "
+        "advances it manually or this is called again with paused=false. Useful for inspecting "
+        "exactly what a single physics tick does instead of guessing how long to sleep.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"paused", {{"type","boolean"},{"description","true to pause, false to resume free-running physics"}}}
+            }},
+            {"required", json::array({"paused"})}
+        },
+        [this](const json &args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            main_scene->PausePhysics(args.value("paused",true));
+            json result = GetTankTelemetry();
+            result["paused"] = main_scene->IsPhysicsPaused();
+            return result;
+        });
+
+    MCPServer::Get()->RegisterTool("tank_step",
+        "Advance the physics simulation by exactly num_steps ticks (each the same fixed "
+        "timestep a normally-running frame would use) while paused, then return the resulting "
+        "telemetry - lets you single-step the simulation deterministically rather than driving "
+        "for some guessed duration and polling. Requires physics to already be paused via "
+        "tank_pause; returns an error otherwise. Blocks until the physics thread has actually "
+        "consumed the requested steps.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"num_steps", {{"type","number"},{"description","how many physics ticks to advance, default 1"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            if (!main_scene->IsPhysicsPaused()){
+                return json{ {"error","physics is not paused - call tank_pause with paused=true first"} };
+            }
+            int num_steps = max((int)args.value("num_steps",1.0f),0);
+            main_scene->StepPhysics(num_steps);
+
+            //Physics ticks run on their own thread at its own pace - poll briefly for it to
+            //actually consume what was just queued rather than guessing a fixed sleep.
+            int timeout_ms = max(2000,num_steps * 30);
+            for (int waited_ms = 0; waited_ms < timeout_ms && main_scene->GetPendingPhysicsSteps() > 0; waited_ms += 5){
+                Sleep(5);
+            }
+            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
         });
 }
 
@@ -478,4 +625,60 @@ void ApplicationTank::RunLogic(){
 void ApplicationTank::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
+    RenderTankWheelDebugUI();
+}
+
+void ApplicationTank::RenderTankWheelDebugUI(){
+    ImGui::Begin("Tank Wheels [Debug]");
+    if (!controlled_tank){
+        ImGui::Text("No controlled_tank");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Gas Pedal      : %.2f",controlled_tank->gas_pedal);
+    ImGui::Text("Brake Pedal    : %.2f",controlled_tank->brake_pedal);
+    ImGui::Text("Steering       : %.2f",controlled_tank->steering_position);
+    ImGui::Text("Reverse        : %s",controlled_tank->f_reverse ? "true" : "false");
+    ImGui::Separator();
+
+    if (ImGui::BeginTable("tank_wheels",6,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){
+        ImGui::TableSetupColumn("#");
+        ImGui::TableSetupColumn("Side");
+        ImGui::TableSetupColumn("Grounded");
+        ImGui::TableSetupColumn("Compression (m)");
+        ImGui::TableSetupColumn("Local Offset");
+        ImGui::TableSetupColumn("Roll Angle");
+        ImGui::TableHeadersRow();
+
+        int i = 0;
+        for (TankWheel& wheel:controlled_tank->wheels){
+            ImGui::TableNextRow();
+            ImGui::PushID(i);
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%i",i);
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%s",wheel.is_left_side ? "Left" : "Right");
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextColored(wheel.grounded ? ImVec4(0.3f,1.0f,0.3f,1.0f) : ImVec4(1.0f,0.4f,0.4f,1.0f),
+                                wheel.grounded ? "Yes" : "No");
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%.4f",wheel.compression);
+
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%.2f, %.2f, %.2f",wheel.local_offset.x,wheel.local_offset.y,wheel.local_offset.z);
+
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%.2f",wheel.roll_angle);
+
+            ImGui::PopID();
+            i++;
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
 }

@@ -37,6 +37,16 @@ public:
     void SetGravity(const vec3& vector);
     vec3 GetGravity();
 
+    //Nearest hit along the segment from->to, or hit=false if nothing was struck.
+    //exclude_rigidbody skips that body's own colliders - e.g. so a raycast wheel doesn't
+    //detect its own vehicle's hull collider as the ground.
+    struct RaycastHit{
+        bool hit = false;
+        vec3 point = {};
+        vec3 normal = {};
+    };
+    RaycastHit Raycast(const vec3& from, const vec3& to, reactphysics3d::RigidBody* exclude_rigidbody = NULL);
+
     bool f_test_collision_only = false;
 
     reactphysics3d::PhysicsWorld* rp_world = NULL;

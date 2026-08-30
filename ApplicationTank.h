@@ -19,6 +19,7 @@ public:
     void RunLogic() override;
 
     void DrawImGuiUI(void) override;
+    void RenderTankWheelDebugUI(void);
 
     Object* compass = NULL;
     Object* target = NULL;

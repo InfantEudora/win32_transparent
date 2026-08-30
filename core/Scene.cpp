@@ -38,7 +38,13 @@ void Scene::UpdatePhysics(float delta_time){
     }
 
     if (f_paused){
-        return;
+        //StepPhysics() queues these up from any thread (e.g. an MCP tool handler) - run
+        //exactly one queued tick per call here, same as this function would do unpaused,
+        //so the caller can single-step the simulation deterministically.
+        if (pending_physics_steps <= 0){
+            return;
+        }
+        pending_physics_steps--;
     }
 
     if (physics_world){
