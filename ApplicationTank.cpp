@@ -119,25 +119,62 @@ void ApplicationTank::Init(void){
     main_window->Resize(1600,800);
 }
 
+//Shared by all three MCP tools below - same fields tank_telemetry reports on its own,
+//reused so tank_drive/tank_steer can hand back the resulting state without a separate call.
+json ApplicationTank::GetTankTelemetry(){
+    if (!controlled_tank){
+        return json{ {"error","no tank"} };
+    }
+    vec3 pos = controlled_tank->GetPosition();
+    vec3 forward = controlled_tank->GetForward();
+    json result = {
+        {"position", json::array({pos.x,pos.y,pos.z})},
+        {"forward", json::array({forward.x,forward.y,forward.z})},
+    };
+    if (Physics *physics = controlled_tank->GetPhysics()){
+        vec3 vel = physics->GetVelocity();
+        vec3 angvel = physics->GetAngularVelocity();
+        result["velocity"] = json::array({vel.x,vel.y,vel.z});
+        result["speed"] = vel.length();
+        result["angular_velocity"] = json::array({angvel.x,angvel.y,angvel.z});
+        result["mass_kg"] = physics->GetMass();
+        result["is_sleeping"] = physics->IsSleeping();
+    }
+    if (controlled_tank->turret){
+        vec3 turret_forward = controlled_tank->turret->GetWorldForward(STATE_ACCESS_RENDERER);
+        result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
+    }
+    return result;
+}
+
 //Exposes the tank's existing input methods (the same ones RunLogic already calls for
 //keyboard input) and its live physics state over MCP. Handlers run on MCPServer's own
 //stdin-reading thread, writing the same gas_pedal/brake_pedal/steering_position floats
 //RunLogic writes from the main thread and UpdatePhysicsState reads/resets on the physics
 //thread - unsynchronized, but no more so than that existing main/physics-thread relationship
 //already is, and a stale/torn single frame here is harmless for a control input.
+//
+//tank_drive/tank_steer block for duration_ms (Sleep on this call's own TCPServer receive
+//thread - the HTTP transport is already one-request-at-a-time synchronous, so this doesn't
+//stall anything else) and return the telemetry that resulted, instead of firing the hold
+//and returning immediately. A caller otherwise has no way to know when the hold has actually
+//played out without a separate tank_telemetry round-trip guessing at a wait in between -
+//this collapses "apply input, wait it out, read the result" into one call.
 void ApplicationTank::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("tank_drive",
         "Drive the tank hull forward or reverse, or release the pedals. The input is held for "
         "duration_ms of real time (re-asserted every physics tick server-side), not just for the "
         "instant of this call - a single MCP round-trip can't reliably out-pace the physics tick "
         "rate, so without this a call would produce almost no motion, the same way an unrealistically "
-        "brief key tap wouldn't. Default duration is 100ms, about as short as a real key tap.",
+        "brief key tap wouldn't. Default duration is 100ms, about as short as a real key tap. This "
+        "call blocks until duration_ms has elapsed and returns the resulting telemetry (same shape "
+        "as tank_telemetry) - no need for a separate call to see the outcome.",
         json{
             {"type","object"},
             {"properties", {
                 {"direction", {{"type","string"},{"enum", json::array({"forward","reverse","brake","stop"})}}},
                 {"amount", {{"type","number"},{"description","0..1 throttle/brake magnitude, default 1"}}},
-                {"duration_ms", {{"type","number"},{"description","how long to hold the input, default 100"}}}
+                {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}}
             }},
             {"required", json::array({"direction"})}
         },
@@ -146,7 +183,7 @@ void ApplicationTank::RegisterMCPTools(){
                 return json{ {"error","no tank"} };
             }
             float amount = args.value("amount",1.0f);
-            float duration_ms = args.value("duration_ms",100.0f);
+            float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
             std::string direction = args.value("direction","stop");
             if (direction == "forward"){
                 controlled_tank->HoldDrive(false,amount,duration_ms);
@@ -157,18 +194,21 @@ void ApplicationTank::RegisterMCPTools(){
             }else{
                 controlled_tank->ReleaseInputs();
             }
-            return json{ {"ok", true} };
+            Sleep((DWORD)duration_ms);
+            return GetTankTelemetry();
         });
 
     MCPServer::Get()->RegisterTool("tank_steer",
         "Steer the tank hull left or right. Held for duration_ms of real time (re-asserted every "
-        "physics tick server-side) - default 100ms, about as short as a real key tap.",
+        "physics tick server-side) - default 100ms, about as short as a real key tap. This call "
+        "blocks until duration_ms has elapsed and returns the resulting telemetry (same shape as "
+        "tank_telemetry) - no need for a separate call to see the outcome.",
         json{
             {"type","object"},
             {"properties", {
                 {"direction", {{"type","string"},{"enum", json::array({"left","right"})}}},
                 {"amount", {{"type","number"},{"description","0..1 turn-rate magnitude, default 1"}}},
-                {"duration_ms", {{"type","number"},{"description","how long to hold the input, default 100"}}}
+                {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}}
             }},
             {"required", json::array({"direction"})}
         },
@@ -177,11 +217,12 @@ void ApplicationTank::RegisterMCPTools(){
                 return json{ {"error","no tank"} };
             }
             float amount = args.value("amount",1.0f);
-            float duration_ms = args.value("duration_ms",100.0f);
+            float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
             std::string direction = args.value("direction","left");
             float signed_amount = (direction == "right") ? amount : -amount;
             controlled_tank->HoldSteer(signed_amount,duration_ms);
-            return json{ {"ok", true} };
+            Sleep((DWORD)duration_ms);
+            return GetTankTelemetry();
         });
 
     MCPServer::Get()->RegisterTool("tank_telemetry",
@@ -189,29 +230,7 @@ void ApplicationTank::RegisterMCPTools(){
         "angular velocity, mass, whether the rigidbody is asleep).",
         json{ {"type","object"}, {"properties", json::object()} },
         [this](const json & /*args*/) -> json {
-            if (!controlled_tank){
-                return json{ {"error","no tank"} };
-            }
-            vec3 pos = controlled_tank->GetPosition();
-            vec3 forward = controlled_tank->GetForward();
-            json result = {
-                {"position", json::array({pos.x,pos.y,pos.z})},
-                {"forward", json::array({forward.x,forward.y,forward.z})},
-            };
-            if (Physics *physics = controlled_tank->GetPhysics()){
-                vec3 vel = physics->GetVelocity();
-                vec3 angvel = physics->GetAngularVelocity();
-                result["velocity"] = json::array({vel.x,vel.y,vel.z});
-                result["speed"] = vel.length();
-                result["angular_velocity"] = json::array({angvel.x,angvel.y,angvel.z});
-                result["mass_kg"] = physics->GetMass();
-                result["is_sleeping"] = physics->IsSleeping();
-            }
-            if (controlled_tank->turret){
-                vec3 turret_forward = controlled_tank->turret->GetWorldForward(STATE_ACCESS_RENDERER);
-                result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
-            }
-            return result;
+            return GetTankTelemetry();
         });
 }
 

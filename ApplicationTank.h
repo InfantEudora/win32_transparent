@@ -4,6 +4,9 @@
 #include "Application.h"
 #include "TankCharacter.h"
 #include "Heightmap.h"
+#include "tinygltf/json.hpp"
+
+using json = nlohmann::json;
 
 /*
     An attempt at an application that overrides the default, and shows a compass.
@@ -26,6 +29,7 @@ public:
     void TestHeightmapRoundTrip();
     void TestHeightmapMesh();
     void RegisterMCPTools();
+    json GetTankTelemetry();
 
     TankCharacter* controlled_tank = NULL;
 private:
