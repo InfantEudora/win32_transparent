@@ -662,6 +662,7 @@ void Object::DetachChild(Object* targetchild){
 void Object::SetMaterialSlot(int slot, int material_id){
     if ((slot >= 0) && (slot < NUM_MATERIAL_SLOTS)){
         material_slot[slot] = material_id;
+        f_update_materials = false;
     }
 }
 

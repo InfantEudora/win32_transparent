@@ -33,6 +33,8 @@ public:
 
     DirectionalLight* sun = NULL;
     PlayerCharacter* character = NULL;
+    PlayerCharacter* hands = NULL; //Preview of where the character's hands will be for a given animation.
+    PlayerCharacter* feet = NULL;  //Preview of where the character's feet will be for a given animation.
 
     bool f_ik_arm = false;
     Skeleton* selected_skeleton = NULL;

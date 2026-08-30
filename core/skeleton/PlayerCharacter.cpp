@@ -166,8 +166,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 current_animation->time_index = current_animation->duration;
 
                 debug->Info("Animation %s ended.\n",current_animation->name.c_str());
-                //We need to find a transition to a new animation:
-                AnimationTransition* transition = animation_graph->FindTransitionFrom(current_animation);
+                AnimationTransition* transition = animation_graph ? animation_graph->FindTransitionFrom(current_animation) : NULL;
                 if (!transition){
                     debug->Info("No transition found from %s. Pausing animation.\n",current_animation->name.c_str());
                     animation_state = ANIMATION_STATE_PAUSED;
@@ -182,7 +181,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                         RotateBy(current_transition->hip_rotation);
                         hip_bone->SetRotation(hip_bone->reference_rotation);
                         hip_bone->animation_mask = 0;
-
                     }
                     current_transition = transition;
                     debug->Info("Transition found from %s to %s. Starting transition.\n",current_animation->name.c_str(),current_transition->to->name.c_str());
@@ -286,7 +284,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         //the two deltas by how far we are through the transition.
         vec3 delta = vec3();
         if (current_animation->modifies_root_object || current_transition->to->modifies_root_object){
-            debug->Info("Transition to/from animation with root modification\n");
+
 
             Bone* root_bone = FindBone("mixamorig:Hips");
 
@@ -321,7 +319,7 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             }
 
             delta = from_delta.lerp(to_delta,animation_transition_factor);
-            //delta.y = 0;
+            debug->Info("Transition to/from animation with root modification. Delta: %.3f %.3f %.3f\n",delta.x,delta.y,delta.z);
         }
         debug->Info("Transitioning from %s to %s. Time = %.3f / %.3f (%.2f%%)\n",current_animation->name.c_str(),current_transition->to->name.c_str(),animation_transition_time,chosen_max_blend_time,animation_transition_factor*100.0f);
 

@@ -39,7 +39,6 @@ public:
 
     void DrawImGuiUI(void) override;
     void RenderHTTPTestUI();
-    void RenderOCPPClientsUI();
     void RenderToolsUI();
     void RenderTerrainUI();
     void RenderSelectedRoadUI();

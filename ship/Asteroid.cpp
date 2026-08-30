@@ -40,3 +40,9 @@ Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene
 Asteroid::~Asteroid(){
 
 }
+
+void Asteroid::UpdatePhysicsState(){
+    if (health > -1){
+        return Object::UpdatePhysicsState();
+    }
+}

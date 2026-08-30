@@ -37,7 +37,7 @@ void ApplicationTileset::Init(void){
     soundsystem->AppendFile("isocity/data/car_horn_1.wav","car_horn_1");
 
     main_scene = CreateNewScene("Main Scene");
-    main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics(1/50.0f);
     main_scene->inputcontroller->AddKeyMap(VK_DECIMAL,INPUT_FOCUS);
 
 
@@ -390,29 +390,13 @@ void ApplicationTileset::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
     //RenderRandTestWindow();
-    //RenderOCPPClientsUI();
+
     RenderToolsUI();
     RenderTerrainUI();
     RenderSelectedCarUI();
     RenderSelectedRoadUI();
 }
 
-void ApplicationTileset::RenderOCPPClientsUI(){
-    if (!http_server) return;
-
-    ImGui::Begin("OCPP Clients");
-
-    ImGui::Text("Connected OCPP Clients: %d", (int)http_server->m_ocppClients.size());
-    int client_idx = 0;
-    for (SOCKET client_socket : http_server->m_ocppClients){
-        ImGui::PushID(client_idx);
-        ImGui::Text("Client %d - Socket %llu", client_idx, (unsigned long long)client_socket);
-        client_idx++;
-        ImGui::PopID();
-    }
-
-    ImGui::End();
-}
 
 void ApplicationTileset::RenderToolsUI(){
     ImGui::Begin("Tools");

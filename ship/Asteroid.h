@@ -12,6 +12,8 @@ public:
     ~Asteroid();
     float rotation_speed = 0.01f;
     float health = 10.0f;
+
+    void UpdatePhysicsState() override;
 };
 
 #endif // _ASTEROID_H_

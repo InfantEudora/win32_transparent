@@ -1,6 +1,11 @@
 #Compiler
 CC = g++
 
+#Without this, plain `make` runs whichever real target happens to be defined
+#first in the file - fragile as more targets (like the FORCE/APP_MARKER rules
+#below) get added. Pin it explicitly instead.
+.DEFAULT_GOAL := default
+
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
@@ -67,67 +72,36 @@ else
 	SRCS += BinaryAssetMemoryEmpty.cpp
 endif
 
-#ApplicationAnimation
-#CFLAGS+= -DAPP_HEADER=\"ApplicationAnimation.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationAnimation
-#SRCS += ApplicationAnimation.cpp
+#Active application: pick one of the names under apps/ (Animation, IsoAnimation,
+#Grid, Dozer, Tileset, Sim, UI, OCPP, Ship, Tank). Override per-build with `make APP=Grid`
+#without touching this file, or just change the default here.
+APP ?= Ship
 
-#ApplicationIsoAnimation
-CFLAGS+= -DAPP_HEADER=\"ApplicationIsoAnimation.h\"
-CFLAGS+= -DAPP_CLASS=ApplicationIsoAnimation
-SRCS += ApplicationIsoAnimation.cpp
-IPATHS += -Iisoterrain/
-DIR_SRC += ./isoterrain
+include apps/$(APP).mk
 
-#ApplicationGrid
-#CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationGrid
-#SRCS += ApplicationGrid.cpp
-#IPATHS += -Iisoterrain/
-#DIR_SRC += ./isoterrain
+CFLAGS += -DAPP_HEADER=\"$(APP_HEADER)\"
+CFLAGS += -DAPP_CLASS=$(APP_CLASS)
 
-#ApplicationDozer
-#SRCS += ApplicationDozer.cpp
-#IPATHS += -Idozer/
-#DIR_SRC += ./dozer
+#main.o only depends on main.cpp's mtime as far as make is concerned, but its
+#compiled output also depends on which APP is selected (APP_HEADER/APP_CLASS
+#above). Switching APP without touching main.cpp would otherwise leave a stale
+#main.o linked against the previous app. Track the last-built APP in a sentinel
+#file and make main.o depend on it, so it only rebuilds when APP actually changes.
+APP_MARKER := .current_app
 
-#SRCS += ImCurveEdit.cpp
-#SRCS += ImSequencer.cpp
+.PHONY: FORCE
+FORCE:
 
-#ApplicationTileset
-#CFLAGS+= -DAPP_HEADER=\"ApplicationTileset.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationTileset
-#SRCS += ApplicationTileset.cpp
-#IPATHS += -Iisoterrain/
-#DIR_SRC += ./isoterrain
-#IPATHS += -Iisocity/
-#DIR_SRC += ./isocity
+$(APP_MARKER): FORCE
+	@if [ ! -f $(APP_MARKER) ] || [ "$$(cat $(APP_MARKER) 2>/dev/null)" != "$(APP)" ]; then \
+		echo $(APP) > $(APP_MARKER); \
+	fi
 
-#ApplicationSim
-#CFLAGS+= -DAPP_HEADER=\"ApplicationSim.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationSim
-#IPATHS += -Igalaxy/
-#DIR_SRC += ./galaxy
-#SRCS += ApplicationSim.cpp
-#SRCS += imgooey.cpp
+main.o: $(APP_MARKER)
 
-#ApplicationUI
-#CFLAGS+= -DAPP_HEADER=\"ApplicationUI.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationUI
-#SRCS += ApplicationUI.cpp
-
-#ApplicationOCPP
-#CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationOCPP
-#SRCS += ApplicationOCPP.cpp
-
-#ApplicationShip
-#CFLAGS+= -DAPP_HEADER=\"ApplicationShip.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationShip
-#SRCS += ApplicationShip.cpp
-#IPATHS += -Iship/
-#DIR_SRC += ./ship
-
+#ImCurveEdit.cpp / ImSequencer.cpp exist in the repo but aren't wired into any
+#app yet - add `SRCS += ImCurveEdit.cpp` / `ImSequencer.cpp` to an apps/*.mk
+#when one of them starts using a curve editor / sequencer widget.
 
 SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
 
@@ -176,6 +150,7 @@ reset:
 clean:
 	-rm -rf $(OBJS) $(OBJ_LIBIMGUI) $(OBJ_LIBTHIRDPARTY)
 	-rm -rf $(OBJS) $(OBJ_LIBIMGUI)
+	-rm -f $(APP_MARKER)
 
 superclean:
 	-rm -rf libs/libimgui.a
