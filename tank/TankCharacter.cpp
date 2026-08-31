@@ -121,121 +121,43 @@ void TankCharacter::UpdatePhysicsState(){
         bool drive_capped = fabs(forward_speed) >= top_speed;
 
         int num_left = 0, num_right = 0;
-        for (TankWheel& wheel : wheels){
+        for (Wheel& wheel : wheels){
             if (wheel.is_left_side){ num_left++; }else{ num_right++; }
         }
 
         //Real tracks are a closed loop, so every wheel on a side - road wheel, idler, drive
-        //sprocket alike - turns at the same speed. Approximated here as the average this
-        //tick's actually-grounded road wheels on that side are spinning at (below), then
-        //applied to that side's non-contact wheels (idler/sprocket) in the visual-follow loop
-        //further down - rougher than giving the idler/sprocket their own point_velocity at
-        //their own mount point, but avoids computing that for wheels with no raycast of their
-        //own. Revisit if the two ever need to visibly disagree with their side's road wheels.
-        float roll_delta_sum[2] = {0.0f,0.0f};   //[0]=left,[1]=right
-        int roll_delta_count[2] = {0,0};
+        //sprocket alike - has the same TRACK SPEED past it. What's shared between them is
+        //therefore a distance in metres, not an angle: a smaller wheel covering the same
+        //ground has to spin faster, by exactly the ratio of the radii. Accumulated here from
+        //whichever wheels computed their own contact velocity this tick (ContactResult::active,
+        //see core/Wheel.h), then handed to the ones that didn't (airborne, or with the ray
+        //missing) in the visual-follow loop below, where each divides it by its OWN radius.
+        float track_distance_sum[2] = {0.0f,0.0f};   //[0]=left,[1]=right, metres this tick
+        int track_distance_count[2] = {0,0};
 
-        for (TankWheel& wheel : wheels){
-            //Diagnostics are rewritten from scratch every tick (see TankWheel) - cleared up
-            //front so a wheel that's airborne, or that bails out at one of the early continues
-            //below, reports honest zeroes rather than whatever it last did while grounded.
-            wheel.point_speed = 0.0f;
-            wheel.compression_rate = 0.0f;
-            wheel.spring_force = 0.0f;
+        for (Wheel& wheel : wheels){
+            //Tangential diagnostics this loop owns - WheelSuspension::UpdateContact resets its
+            //own (point_speed/compression_rate/spring_force/friction_budget) itself.
             wheel.drive_force = 0.0f;
             wheel.longitudinal_force = 0.0f;
             wheel.lateral_force = 0.0f;
-            wheel.friction_budget = 0.0f;
             wheel.friction_saturated = false;
 
-            if (!wheel.ground_contact){
-                continue; //idler/drive sprocket - see TankWheel::ground_contact
-            }
+            //The suspension/normal-force half of this wheel's physics - raycast, compression,
+            //spring+damper, and (if it produced real force this tick) the wheel's own roll -
+            //is entirely shared with any other vehicle now; see core/Wheel.h/.cpp. Everything
+            //below this call is tank-specific: differential-track drive and the friction-circle
+            //clamp would look different on a steered car, so that part stays here.
+            WheelTuning tuning = ResolveTuning(wheel);
+            WheelSuspension::ContactResult contact = WheelSuspension::UpdateContact(
+                wheel,tuning,physics,body_world_pos,rotation,com_world,velocity,angular_velocity,forward,timestep);
 
-            vec3 mount_world = body_world_pos + rotation * wheel.local_offset;
-            //Start slightly above the mount point so a wheel that's already compressed past
-            //rest_length at the start of this tick is still detected, not missed by starting
-            //the ray exactly at (or below) the surface.
-            const float start_margin = 0.05f;
-            vec3 ray_start = mount_world + up * start_margin;
-            float ray_length = start_margin + suspension_rest_length + suspension_travel;
-            vec3 ray_end = ray_start - up * ray_length;
-
-            PhysicsWorld::RaycastHit hit = physics->world->Raycast(ray_start,ray_end,physics->body->rigidbody);
-            if (!hit.hit){
-                wheel.grounded = false;
-                wheel.compression = 0.0f;
+            if (!contact.active){
                 continue;
             }
-
-            float clearance = (hit.point - ray_start).length() - start_margin;
-            float compression = suspension_rest_length - clearance;
-            wheel.grounded = true;
-            wheel.compression = clamp(compression,0.0f,suspension_rest_length + suspension_travel);
-
-            if (wheel.compression <= 0.0f){
-                continue; //extended past rest length - a passive spring gives no force here
-            }
-
-            //Velocity of the hull material at this exact wheel's contact point (linear +
-            //angular_velocity x r) so every force below reacts to how fast THIS point is
-            //moving, not just the hull's overall velocity - matters once the hull starts
-            //pitching/rolling. Clamped in magnitude before ANY force derives from it: all
-            //three forces below (spring damping, longitudinal grip, lateral friction) feed
-            //back into velocity/angular_velocity next tick, through this exact same lever arm.
-            //With a wide multi-wheel track and a discrete timestep, that loop can amplify a
-            //small initial asymmetry into a divergent oscillation tick over tick (confirmed
-            //empirically: one wheel's damping term alone hit 1300+ N once its local
-            //compression_rate - derived from this same point_velocity - reached 1.4 m/s).
-            //Clamping point_velocity itself, once, is what actually breaks that loop - clamping
-            //only one of the three forces that read it (as an earlier version of this code did)
-            //left the other two just as able to run away.
-            //Measured from the centre of mass, NOT the body origin - see com_world above for
-            //why that distinction was inverting this contact's lateral response to roll.
-            vec3 r = mount_world - com_world;
-            vec3 point_velocity = velocity + angular_velocity.cross(r);
-            float point_speed = point_velocity.length();
-            wheel.point_speed = point_speed; //recorded PRE-clamp - see TankWheel::point_speed
-            if (point_speed > max_point_speed){
-                point_velocity = point_velocity * (max_point_speed / point_speed);
-            }
-
-            //Wheel spin, visual only - not fed back into anything physical. Rolling-without-
-            //slip: angular speed is this contact's along-track speed divided by its radius,
-            //using the same (already-clamped) point_velocity every force below derives from,
-            //so the spin stays consistent with what the wheel is visibly doing on the ground.
-            if (wheel_radius > 0.0f){
-                float roll_delta = -point_velocity.dot(forward) / wheel_radius * timestep;
-                wheel.roll_angle += roll_delta;
-                int side = wheel.is_left_side ? 0 : 1;
-                roll_delta_sum[side] += roll_delta;
-                roll_delta_count[side]++;
-            }
-
-            //Pushed along the actual ground normal, not the hull's own (possibly already
-            //tilted) up vector - using the hull's up here would mean that once the hull is
-            //tilted even slightly, the "corrective" force is ALSO tilted, extending the error
-            //instead of fixing it (confirmed empirically: this is what let a small initial
-            //asymmetry escalate into the hull settling on its side instead of upright, even
-            //with the point_velocity/force clamps above already in place). The ground normal
-            //has no such feedback - it only reflects the terrain, never the hull's own state.
-            vec3 push_dir = hit.normal;
-            float compression_rate = -point_velocity.dot(push_dir); //positive = moving further into the ground
-            float spring_force = wheel.compression * suspension_stiffness + compression_rate * suspension_damping;
-            //Hard ceiling regardless of the above: a wheel bearing its share of the tank's
-            //weight should never need many times that just to support it, so anything past
-            //max_wheel_force is almost certainly still a transient spike, not real load.
-            spring_force = clamp(spring_force,0.0f,max_wheel_force);
-            wheel.compression_rate = compression_rate;
-            wheel.spring_force = spring_force;
-            physics->AddWorldForceAt(push_dir * spring_force,mount_world);
-
-            //Everything this contact does tangentially - engine thrust, passive grip,
-            //resistance to sideways slip - is friction against the ground, so all of it draws
-            //on one budget set by how hard this wheel is actually pressed down. spring_force IS
-            //that normal load, already computed and clamped just above.
-            float friction_budget = friction_coefficient * spring_force;
-            wheel.friction_budget = friction_budget;
+            int side = wheel.is_left_side ? 0 : 1;
+            track_distance_sum[side] += contact.roll_distance;
+            track_distance_count[side]++;
 
             //Longitudinal: engine thrust while this side is driven, passive grip when it isn't.
             //Exactly one of the two is ever non-zero, so they're tracked separately for
@@ -249,28 +171,29 @@ void TankCharacter::UpdatePhysicsState(){
             float grip_force = 0.0f;
             float command = wheel.is_left_side ? left_command : right_command;
             int side_count = wheel.is_left_side ? num_left : num_right;
-            if (!drive_capped && command != 0.0f && side_count > 0){
+            if (wheel.driven && !drive_capped && command != 0.0f && side_count > 0){
                 drive_force = (engine_force / side_count) * command;
             }else{
-                grip_force = -point_velocity.dot(forward) * lateral_friction;
+                grip_force = -contact.point_velocity.dot(forward) * lateral_friction;
             }
             //Lateral: oppose sideways slip so the tank doesn't slide sideways indefinitely,
             //while still allowing the scrub a real tank has when pivoting on its tracks. This
             //is velocity-proportional damping, not a hard no-slip constraint, so some scrub
             //always gets through even before the budget below trims it.
             float longitudinal_force = drive_force + grip_force;
-            float lateral_force = -point_velocity.dot(left) * lateral_friction;
+            float lateral_force = -contact.point_velocity.dot(left) * lateral_friction;
 
             //The friction circle: it's the COMBINED tangential demand that has to fit inside
-            //the budget, not each axis independently - a wheel already spending everything it
-            //has on forward thrust has nothing left to resist a sideways slide with, which is
-            //what makes a hard-accelerating vehicle slide wide instead of gripping. Scaling
-            //both axes by the same factor preserves the direction of the force while bringing
-            //its magnitude down to what the contact can actually deliver.
+            //the budget (wheel.friction_budget, written by UpdateContact just above), not each
+            //axis independently - a wheel already spending everything it has on forward thrust
+            //has nothing left to resist a sideways slide with, which is what makes a hard-
+            //accelerating vehicle slide wide instead of gripping. Scaling both axes by the same
+            //factor preserves the direction of the force while bringing its magnitude down to
+            //what the contact can actually deliver.
             float demand = sqrtf(longitudinal_force * longitudinal_force + lateral_force * lateral_force);
-            if (demand > friction_budget){
+            if (demand > wheel.friction_budget){
                 //demand > budget >= 0 implies demand > 0, so this can't divide by zero.
-                float scale = friction_budget / demand;
+                float scale = wheel.friction_budget / demand;
                 longitudinal_force *= scale;
                 lateral_force *= scale;
                 drive_force *= scale;
@@ -283,29 +206,28 @@ void TankCharacter::UpdatePhysicsState(){
 
             //One call rather than three: same total force, and the two tangential components
             //are now a single vector that was scaled as a unit.
-            physics->AddWorldForceAt(forward * longitudinal_force + left * lateral_force,mount_world);
+            physics->AddWorldForceAt(forward * longitudinal_force + left * lateral_force,contact.mount_world);
         }
 
         //Drive each wheel's visual (if any - see ApplicationTank::Init) from the same
         //compression/roll_angle this tick just computed above, instead of leaving it fixed at
-        //its mount point. Wheel.compression follows the same convention the raycast above uses
-        //to produce it: 0 at rest (hanging suspension_rest_length below the mount, whether
-        //grounded or not) rising toward the mount as the suspension compresses.
-        float avg_roll_delta[2] = {
-            roll_delta_count[0] > 0 ? roll_delta_sum[0] / roll_delta_count[0] : 0.0f,
-            roll_delta_count[1] > 0 ? roll_delta_sum[1] / roll_delta_count[1] : 0.0f,
+        //its mount point - see WheelSuspension::UpdateVisual.
+        float avg_track_distance[2] = {
+            track_distance_count[0] > 0 ? track_distance_sum[0] / track_distance_count[0] : 0.0f,
+            track_distance_count[1] > 0 ? track_distance_sum[1] / track_distance_count[1] : 0.0f,
         };
-        for (TankWheel& wheel : wheels){
-            if (!wheel.ground_contact){
-                wheel.roll_angle += avg_roll_delta[wheel.is_left_side ? 0 : 1];
+        for (Wheel& wheel : wheels){
+            WheelTuning tuning = ResolveTuning(wheel);
+            //Exactly the wheels that reached the spin code inside UpdateContact: it sits after
+            //the ray-missed and compression<=0 bail-outs, so this reconstructs "computed its
+            //own roll this tick" without carrying a parallel flag around for it (ContactResult
+            //doesn't survive past the loop above). Everything else - airborne, ray missed,
+            //contact disabled - is dragged round by its own track instead.
+            bool rolled_itself = wheel.can_contact_ground && wheel.grounded && wheel.compression > 0.0f;
+            if (!rolled_itself && tuning.radius > 0.0f){
+                wheel.roll_angle += avg_track_distance[wheel.is_left_side ? 0 : 1] / tuning.radius;
             }
-            if (!wheel.visual){
-                continue;
-            }
-            vec3 visual_pos = wheel.local_offset;
-            visual_pos.y -= suspension_rest_length - wheel.compression;
-            wheel.visual->SetPosition(visual_pos);
-            wheel.visual->SetRotation(quat(vec3(1,0,0),wheel.roll_angle));
+            WheelSuspension::UpdateVisual(wheel,tuning.rest_length);
         }
 
         //Last-resort safety net against a roll/pitch excursion, applied after all of this tick's
@@ -333,6 +255,7 @@ void TankCharacter::UpdatePhysicsState(){
         }
     }
 
+    //Permanent idle brake/rolling resistance: without it, releasing all controls would leave the tank coasting at constant velocity forever.
     brake_pedal = 0.1f;
     gas_pedal = 0.0f;
 
@@ -473,7 +396,7 @@ void TankCharacter::ResetState(const vec3& pos,const quat& rot){
                             //same issue as gas/brake/steer, see UpdatePhysicsState's comment
     }
 
-    for (TankWheel& wheel : wheels){
+    for (Wheel& wheel : wheels){
         wheel.roll_angle = 0.0f;
         wheel.compression = 0.0f;
         wheel.grounded = false;
@@ -491,9 +414,17 @@ void TankCharacter::SetupWheels(float track_offset_x,float half_length,float mou
         for (int i = 0; i < wheels_per_side; i++){
             float t = (wheels_per_side == 1) ? 0.5f : (float)i / (float)(wheels_per_side - 1);
             float z = fmap(t,0.0f,1.0f,-half_length,half_length);
-            TankWheel wheel;
+            Wheel wheel;
             wheel.local_offset = vec3(x,mount_height,z);
             wheel.is_left_side = is_left;
+            //Road wheels: plain vertical struts on the shared suspension tuning. radius,
+            //rest_length and travel are deliberately left at 0 = "inherit", so the character-
+            //level values stay the single place to tune all six of them at once; the debug UI
+            //displays what they resolve to and only writes a per-wheel override once dragged.
+            wheel.suspension_axis = vec3(0,-1,0);
+            wheel.is_road_wheel = true;
+            wheel.can_contact_ground = true;
+            wheel.driven = true;
             wheels.push_back(wheel);
         }
     }
@@ -501,14 +432,40 @@ void TankCharacter::SetupWheels(float track_offset_x,float half_length,float mou
 
 //Appends rather than clears (unlike SetupWheels) - call after SetupWheels, once per raised
 //wheel position, so the road wheels it already laid out stay untouched.
-void TankCharacter::AddNonContactWheel(float track_offset_x,float mount_height,float z){
+void TankCharacter::AddRaisedWheel(float track_offset_x,float z,float hub_rest_height,
+                                   float rest_length,float travel,const vec3& axis,float radius){
+    vec3 unit_axis = axis;
+    float axis_length = unit_axis.length();
+    unit_axis = (axis_length > 0.0001f) ? unit_axis * (1.0f / axis_length) : vec3(0,-1,0);
+
     for (int side = 0; side < 2; side++){
         bool is_left = (side == 0);
         float x = is_left ? track_offset_x : -track_offset_x;
-        TankWheel wheel;
-        wheel.local_offset = vec3(x,mount_height,z);
+        Wheel wheel;
+        //The caller states where the hub should REST; the anchor is wherever that puts it,
+        //back up the suspension axis. For an angled axis that shifts the anchor in Z as well
+        //as Y, which is the point - the strut leans, so its top isn't above its bottom.
+        wheel.local_offset = vec3(x,hub_rest_height,z) - unit_axis * rest_length;
+        wheel.suspension_axis = unit_axis;
+        wheel.radius = radius; //0 = inherit wheel_radius, same as the road wheels
+        wheel.rest_length = rest_length;
+        //Set explicitly, and much shorter than the road wheels' - not a style choice. A ray is
+        //sized rest_length + travel + radius, so travel is what governs how far BELOW a wheel
+        //it still reaches, and an over-generous one is what would let these find flat ground
+        //from up here. At the road wheels' shared 0.08 the rear sprocket - the lower of the
+        //two, its tread resting 0.0658 m up - would have overshot the terrain by 0.0097 m and
+        //hit it on level going every tick. That produces no force (the compression comes out
+        //negative and clamps to 0) but it does report grounded, which is exactly the kind of
+        //contact that reads as real in telemetry and isn't. At 0.02 it clears by 0.0469 m.
+        wheel.travel = travel;
         wheel.is_left_side = is_left;
-        wheel.ground_contact = false;
+        wheel.is_road_wheel = false;
+        //Contact-capable, but not driven: these sit clear of flat ground and only find terrain
+        //when there is something raised to find, so they add suspension force and passive grip
+        //where it exists without changing anything on level going. Thrust stays with the road
+        //wheels until the per-side share counts grounded wheels rather than mounted ones.
+        wheel.can_contact_ground = true;
+        wheel.driven = false;
         wheels.push_back(wheel);
     }
 }

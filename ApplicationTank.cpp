@@ -65,7 +65,7 @@ void ApplicationTank::Init(void){
         tank_tracks->name = "Tank Tracks";
         controlled_tank->AttachChild(tank_tracks);
         //Superseded visually by the per-wheel tank_wheel Objects set up below (one per
-        //TankWheel, at its actual raycast mount point) - kept attached (for its geometry, still
+        //Wheel, at its actual raycast mount point) - kept attached (for its geometry, still
         //used to size the suspension below) but hidden rather than removed.
         tank_tracks->SetVisibility(false);
     }
@@ -110,56 +110,92 @@ void ApplicationTank::Init(void){
         physics->SetGravityEnabled(true);
 
         float track_offset_x = track_extent.x * 0.8f; //slightly inset from the tracks' outer edge
-        controlled_tank->suspension_rest_length = track_extent.y;
+
+        //Probed from the asset rather than instantiated, because every wheel's geometry below
+        //depends on it and the visuals aren't created until further down. Rolls around the
+        //hull's local X (left/right) axis (see TankCharacter::UpdatePhysicsState's spin code),
+        //so its rolling radius is whichever of Y/Z is larger, not X - that's its width.
+        if (Mesh* wheel_mesh = assetmanager->GetMeshFromAsset("tank_wheel")){
+            vec3 wheel_extent = wheel_mesh->GetExtents() * 0.5f;
+            controlled_tank->wheel_radius = max(wheel_extent.y,wheel_extent.z);
+        }
+
+        //rest_length is anchor-to-HUB, and the wheel's own radius hangs below that, so the
+        //anchor-to-GROUND distance the tracks mesh actually dictates (track_extent.y) has to be
+        //split between the two. Subtracting the radius here is what puts the tread on the
+        //terrain instead of the axle: with the two equal, as they were, the hub came to rest at
+        //ground level and 84% of each wheel sat below the surface - the buried look.
+        //
+        //Deliberately derived rather than re-probed off the mesh: leaving the anchor at
+        //track_extent.y and taking the radius out of rest_length instead puts full extension at
+        //exactly local Y=0 (0.1224 - 0.0513 - 0.0711), and makes the hull's resting height
+        //come out at -compression whatever the radius is - algebraically the same expression it
+        //was before, so ride height, droop, ray length and the equilibrium compression the
+        //spring rate was tuned against are all unchanged. The wheels move; the force balance
+        //does not. A missing wheel asset leaves wheel_radius at 0 and this at track_extent.y,
+        //which is the old point-contact model exactly.
+        //
+        //Note the radius really is ~0.0711, not the 0.0754 the old hand-probed constant beside
+        //the raised wheels claimed - that number never agreed with what the same mesh extents
+        //produced at runtime, and nothing derives from it any more.
+        controlled_tank->suspension_rest_length = track_extent.y - controlled_tank->wheel_radius;
 
         //6 road wheels, spanning the flat band of the tank_tracks mesh rather than its full
         //length - probed directly off the mesh (binned max-Y along Z): the profile is flat at
         //~0.145-0.155 from about z=-0.31 to z=+0.36, then climbs toward two raised humps at the
-        //very ends (idler front, drive sprocket rear - see AddNonContactWheel calls below).
+        //very ends (idler front, drive sprocket rear - see AddRaisedWheel calls below).
         //0.33 keeps all 6 comfortably inside that flat band rather than spilling into the climb.
         const float road_wheel_half_length = 0.38f;
         controlled_tank->SetupWheels(track_offset_x,road_wheel_half_length,track_extent.y,6);
 
         //The two raised wheels above the road-wheel band, per side - same probe: humps peak at
-        //z~-0.57 (front, height 0.2447 = the mesh's overall max Y) and z~+0.57 (rear, height
-        //0.2192). Centred so each wheel's top (wheel_radius above its own mount) lines up with
-        //its hump's peak - wheel_radius isn't known yet at this point (it's derived below, from
-        //the tank_wheel asset, once the first one loads), so these use the same probed number
-        //(0.0754) rather than a forward reference; if the tank_wheel asset is ever swapped for a
-        //visibly different size, these two heights would need re-deriving alongside it.
+        //z~-0.57 (front idler, height 0.2447 = the mesh's overall max Y) and z~+0.57 (rear drive
+        //sprocket, height 0.2192). Each wheel's TOP wants to sit at its hump's peak, so its hub
+        //rests one radius below that - stated directly now that AddRaisedWheel takes a resting
+        //hub height and works the anchor out itself. The hand-computed offset that used to be
+        //here existed only to cancel a suspension hang these wheels never had; both it and the
+        //hardcoded 0.0754 copy of the radius are gone, so swapping the wheel asset for a
+        //different size now re-derives all of this on its own.
         //
-        //mount_height is offset by +suspension_rest_length (not just the desired centre height)
-        //because these wheels are ground_contact=false: UpdatePhysicsState never raycasts for
-        //them, so compression stays permanently 0, and the shared bob formula every wheel's
-        //visual follows (local_offset.y - (suspension_rest_length - compression)) would
-        //otherwise sink them by suspension_rest_length below where they're actually mounted.
-        const float probed_wheel_radius = 0.0754f;
-        controlled_tank->AddNonContactWheel(track_offset_x,0.2447f - probed_wheel_radius + track_extent.y,-0.57f);
-        controlled_tank->AddNonContactWheel(track_offset_x,0.2192f - probed_wheel_radius + track_extent.y,0.57f);
+        //These are contact-capable but undriven (see AddRaisedWheel). On level ground they stay
+        //clear, confirmed against a settled hull over MCP: the rear sprocket, the lower of the
+        //two, rests its tread 0.066 m above the terrain with its ray still stopping 0.047 m
+        //short of it, and all four report grounded=false while all twelve road wheels carry an
+        //even 0.0112 m of compression. Nothing about flat-ground behaviour changes. They bite
+        //when there's something to bite - a step the idler noses into, a ledge the sprocket
+        //comes down off - which is the whole reason for giving them a ray at all.
+        //
+        //A short arm (0.03 rest / 0.02 travel, against the road wheels' 0.0471 / 0.08) both
+        //matches what a tensioner actually has and keeps that flat-ground clearance: the ray is
+        //sized rest + travel + radius, so travel is what governs how far below the wheel it
+        //still reaches. The axis leans them ~19 degrees toward their own end of the hull, so
+        //they extend down-and-outward the way an idler arm swings rather than straight down.
+        const float raised_rest_length = 0.03f;
+        const float raised_travel = 0.02f;
+        float raised_radius = controlled_tank->wheel_radius;
+        controlled_tank->AddRaisedWheel(track_offset_x,-0.57f,0.2447f - raised_radius,
+                                        raised_rest_length,raised_travel,vec3(0,-1,-0.35f));
+        controlled_tank->AddRaisedWheel(track_offset_x,0.57f,0.2192f - raised_radius,
+                                        raised_rest_length,raised_travel,vec3(0,-1,0.35f));
 
-        //Visual reference only: one tank_wheel Object per TankWheel, parented to the hull and
+        //Visual reference only: one tank_wheel Object per Wheel, parented to the hull and
         //placed at its actual mount point (the same local_offset UpdatePhysicsState raycasts
         //from) - so the wheel positions used by the physics are visible, not just the fixed
         //(now-hidden) tank_tracks band. Followed tick to tick by UpdatePhysicsState (bobs with
         //compression, spins with roll_angle) once wheel_radius below is set.
-        for (TankWheel& wheel : controlled_tank->wheels){
+        for (Wheel& wheel : controlled_tank->wheels){
             Object* wheel_visual = assetmanager->GetObjectFromAsset("tank_wheel");
             if (!wheel_visual){
                 break; //asset missing - warned once via AssetManager's own debug->Err already
             }
             wheel_visual->name = "Tank Wheel";
             controlled_tank->AttachChild(wheel_visual);
-            wheel_visual->SetPosition(wheel.local_offset);
+            //Placed at the hub's resting position rather than at the anchor - the two are no
+            //longer the same point. UpdatePhysicsState overwrites this every tick anyway; it
+            //only matters for the frame before the first physics step.
+            wheel_visual->SetPosition(wheel.local_offset +
+                                      wheel.suspension_axis * controlled_tank->WheelRestLength(wheel));
             wheel.visual = wheel_visual;
-
-            //Derived once, from whichever wheel_visual loads first - every instance shares the
-            //same asset/mesh. Rolls around the hull's local X (left/right) axis (see
-            //TankCharacter::UpdatePhysicsState's spin code), so its rolling diameter is
-            //whichever of Y/Z is larger, not X (the wheel's own thickness/width).
-            if (controlled_tank->wheel_radius <= 0.0f && wheel_visual->GetMesh()){
-                vec3 wheel_extent = wheel_visual->GetMesh()->GetExtents() * 0.5f;
-                controlled_tank->wheel_radius = max(wheel_extent.y,wheel_extent.z);
-            }
         }
     }
 
@@ -263,8 +299,8 @@ json ApplicationTank::GetTankTelemetry(){
         result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
     }
 
-    //Per-wheel suspension/force breakdown, straight from the TankWheel diagnostics the physics
-    //thread wrote on its last tick (see TankWheel in tank/TankCharacter.h). The hull-level
+    //Per-wheel suspension/force breakdown, straight from the Wheel diagnostics the physics
+    //thread wrote on its last tick (see Wheel in core/Wheel.h). The hull-level
     //fields above only ever say THAT something is wrong; this says which contact is doing it.
     //Read unsynchronized while the physics thread writes, same as the pedal inputs already are.
     //
@@ -276,7 +312,7 @@ json ApplicationTank::GetTankTelemetry(){
     json wheels = json::array();
     int wheels_grounded = 0;
     bool point_speed_clamped = false;
-    for (const TankWheel& wheel : controlled_tank->wheels){
+    for (const Wheel& wheel : controlled_tank->wheels){
         if (wheel.grounded){
             wheels_grounded++;
         }
@@ -285,6 +321,16 @@ json ApplicationTank::GetTankTelemetry(){
         }
         wheels.push_back(json{
             {"side", wheel.is_left_side ? "left" : "right"},
+            //Which wheel this is, and what it's currently allowed to do - without these the
+            //raised idler/sprocket are indistinguishable from a road wheel that has simply
+            //lost contact, and a compression of 0 reads the same either way.
+            {"kind", wheel.is_road_wheel ? "road" : "raised"},
+            {"driven", wheel.driven},
+            {"can_contact_ground", wheel.can_contact_ground},
+            //Included because compression is only interpretable against it: the wheel touches
+            //down when its anchor is (rest_length + radius) above the terrain, so a reader
+            //that assumes a point contact will misjudge every ride height by one radius.
+            {"radius", controlled_tank->WheelRadius(wheel)},
             {"local_offset", json::array({wheel.local_offset.x,wheel.local_offset.y,wheel.local_offset.z})},
             {"grounded", wheel.grounded},
             {"compression", wheel.compression},
@@ -858,7 +904,7 @@ void ApplicationTank::RenderTankWheelDebugUI(){
     }
 
     if (ImGui::Checkbox("Show pink wheel debug visuals (vs. tracks mesh)",&f_show_wheel_debug_visuals)){
-        for (TankWheel& wheel:controlled_tank->wheels){
+        for (Wheel& wheel:controlled_tank->wheels){
             if (wheel.visual){
                 wheel.visual->SetVisibility(f_show_wheel_debug_visuals);
             }
@@ -869,18 +915,21 @@ void ApplicationTank::RenderTankWheelDebugUI(){
     }
     ImGui::Separator();
 
-    if (ImGui::BeginTable("tank_wheels",7,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){
+    if (ImGui::BeginTable("tank_wheels",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollX)){
         ImGui::TableSetupColumn("#");
         ImGui::TableSetupColumn("Side");
         ImGui::TableSetupColumn("Kind");
         ImGui::TableSetupColumn("Grounded");
         ImGui::TableSetupColumn("Compression (m)");
-        ImGui::TableSetupColumn("Local Offset (editable)");
+        ImGui::TableSetupColumn("Anchor Offset (editable)");
+        ImGui::TableSetupColumn("Radius");
+        ImGui::TableSetupColumn("Rest / Travel");
+        ImGui::TableSetupColumn("Susp Axis");
         ImGui::TableSetupColumn("Roll Angle");
         ImGui::TableHeadersRow();
 
         int i = 0;
-        for (TankWheel& wheel:controlled_tank->wheels){
+        for (Wheel& wheel:controlled_tank->wheels){
             ImGui::TableNextRow();
             ImGui::PushID(i);
 
@@ -891,28 +940,61 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::Text("%s",wheel.is_left_side ? "Left" : "Right");
 
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%s",wheel.ground_contact ? "Road" : "Idler/sprocket");
+            //The checkbox rides in the Kind cell rather than taking a column of its own:
+            //unticking it drops this wheel's raycast (and so all of its force) for as long as
+            //it's off, which is the quickest way to find out what one contact is contributing.
+            ImGui::Checkbox("##can_contact",&wheel.can_contact_ground);
+            ImGui::SameLine();
+            ImGui::Text("%s%s",wheel.is_road_wheel ? "Road" : "Idler/sprocket",
+                                wheel.driven ? "" : " (undriven)");
 
             ImGui::TableSetColumnIndex(3);
-            if (wheel.ground_contact){
+            if (wheel.can_contact_ground){
                 ImGui::TextColored(wheel.grounded ? ImVec4(0.3f,1.0f,0.3f,1.0f) : ImVec4(1.0f,0.4f,0.4f,1.0f),
                                     wheel.grounded ? "Yes" : "No");
             }else{
-                ImGui::TextDisabled("n/a");
+                ImGui::TextDisabled("off");
             }
 
             ImGui::TableSetColumnIndex(4);
             ImGui::Text("%.4f",wheel.compression);
 
             ImGui::TableSetColumnIndex(5);
-            //Writes straight into wheel.local_offset - road wheels' next raycast (mount_world
-            //in TankCharacter::UpdatePhysicsState) and every wheel's visual (position AND, for
-            //non-contact ones, their whole reason for existing) both read it fresh every tick,
-            //so a drag here takes effect immediately, no rebuild needed to try a new mount point.
+            //Writes straight into wheel.local_offset - the next raycast (mount_world in
+            //TankCharacter::UpdatePhysicsState) and the wheel's visual both read it fresh every
+            //tick, so a drag here takes effect immediately, no rebuild needed to try a new mount
+            //point. Note this is the suspension ANCHOR, not the hub: the wheel itself hangs
+            //rest_length below it along the axis, so the visual won't sit where this says.
             ImGui::SetNextItemWidth(180.0f);
             ImGui::DragFloat3("##local_offset",(float*)&wheel.local_offset,0.005f,-2.0f,2.0f,"%.3f");
 
+            //The next three show what this wheel RESOLVES to (Wheel's own value, or the
+            //character-level default when it's left at 0) and only write a per-wheel override
+            //once actually dragged - so the six road wheels keep inheriting one shared spring
+            //until you deliberately single one out. Dragging a value back to exactly 0 hands it
+            //back to the default.
             ImGui::TableSetColumnIndex(6);
+            ImGui::SetNextItemWidth(70.0f);
+            float radius = controlled_tank->WheelRadius(wheel);
+            if (ImGui::DragFloat("##radius",&radius,0.001f,0.0f,0.5f,"%.4f")){
+                wheel.radius = radius;
+            }
+
+            ImGui::TableSetColumnIndex(7);
+            ImGui::SetNextItemWidth(120.0f);
+            float rest_travel[2] = {controlled_tank->WheelRestLength(wheel),controlled_tank->WheelTravel(wheel)};
+            if (ImGui::DragFloat2("##rest_travel",rest_travel,0.002f,0.0f,0.5f,"%.3f")){
+                wheel.rest_length = rest_travel[0];
+                wheel.travel = rest_travel[1];
+            }
+
+            ImGui::TableSetColumnIndex(8);
+            //Renormalized by UpdatePhysicsState every tick, so dragging one component here is
+            //safe - it just tilts the strut rather than lengthening it.
+            ImGui::SetNextItemWidth(150.0f);
+            ImGui::DragFloat3("##susp_axis",(float*)&wheel.suspension_axis,0.01f,-1.0f,1.0f,"%.2f");
+
+            ImGui::TableSetColumnIndex(9);
             ImGui::Text("%.2f",wheel.roll_angle);
 
             ImGui::PopID();

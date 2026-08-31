@@ -2,57 +2,11 @@
 #define _TANK_CHARACTER_H_
 
 #include "Object.h"
+#include "Wheel.h"
 #include <windows.h>
 #include <vector>
 
 class TankCharacter;
-
-//One raycast-sampled ground-contact point along a track. A spring+damper suspension force and
-//this wheel's side's drive force are both applied here instead of through a single rigid
-//capsule collider resting on the terrain - see TankCharacter::UpdatePhysicsState.
-struct TankWheel{
-    vec3 local_offset;          //mount point relative to the hull origin, in local space
-    bool is_left_side = false;  //local_offset.x > 0 - matches Object::GetLeft()/ref_left's convention
-    //false for the idler/drive-sprocket wheels added by AddNonContactWheel - the track's own
-    //6 road wheels per side are what actually bear the tank's weight; the two raised end
-    //wheels sit well clear of the ground in normal operation, so they skip the raycast/force
-    //section of UpdatePhysicsState entirely (kept as ground_contact=false, permanently
-    //compression 0/grounded false) rather than risk a false ground hit from a raycast that was
-    //only ever sized for the road wheels' much lower mount height. roll_angle is still driven -
-    //see UpdatePhysicsState's avg_roll_delta - since a real track spins every wheel together.
-    bool ground_contact = true;
-    float compression = 0.0f;   //current spring compression in metres, 0 = extended/airborne
-    bool grounded = false;
-    float roll_angle = 0.0f;    //accumulated wheel spin (radians) around the hull's local X
-                                 //(left/right) axis, visual only - see UpdatePhysicsState
-    Object* visual = NULL;      //optional child Object placed at local_offset for visual reference -
-                                 //set up by ApplicationTank::Init, then followed tick to tick by
-                                 //UpdatePhysicsState (bobs with compression, spins with roll_angle)
-
-    //Per-tick force diagnostics. Written by TankCharacter::UpdatePhysicsState (rewritten from
-    //scratch every tick, left at zero for a wheel that never reached the force stage) and read
-    //by ApplicationTank::GetTankTelemetry, which reports them over MCP as a "wheels" array.
-    //Nothing in the simulation reads them back. They exist because hull-level telemetry
-    //(position/velocity/angular_velocity) only ever says THAT something is wrong, never which
-    //contact is doing it - a wheel saturating a clamp, pushing the wrong way, or grounded but
-    //silently contributing nothing all look identical from outside, which is exactly what made
-    //several of the bugs documented below present as driving/input bugs instead of suspension
-    //bugs. Read from the MCP thread while the physics thread writes them; unsynchronized, same
-    //as the pedal inputs already are, and a torn single frame of a debug readout is harmless.
-    float point_speed = 0.0f;        //m/s magnitude of this contact's velocity BEFORE the
-                                     //max_point_speed clamp. If this routinely reads above that
-                                     //clamp, the clamp is load-bearing - i.e. the tuning
-                                     //underneath it is diverging, not merely being trimmed.
-    float compression_rate = 0.0f;   //m/s into the ground along the contact normal
-    float spring_force = 0.0f;       //N along the ground normal, post-clamp, as actually applied
-    float drive_force = 0.0f;        //N along the hull's forward axis from engine thrust, signed
-    float longitudinal_force = 0.0f; //N along forward from passive grip when undriven, signed
-    float lateral_force = 0.0f;      //N along the hull's left axis from lateral_friction, signed
-    float friction_budget = 0.0f;    //N, friction_coefficient * spring_force - the most this
-                                     //contact can transmit to the ground in any direction
-    bool friction_saturated = false; //true when the tick's combined longitudinal+lateral demand
-                                     //exceeded friction_budget and had to be scaled back
-};
 
 class TankCharacter : public Object{
 public:
@@ -85,23 +39,52 @@ public:
     //compression, grounded) so nothing looks mid-spin or mid-bounce right after the reset.
     void ResetState(const vec3& pos, const quat& rot);
 
-    //Lays out wheels_per_side raycast contact points evenly along each track, from
-    //-half_length to +half_length in local Z, at +-track_offset_x in local X and mount_height
-    //above the hull origin in local Y. Called once from ApplicationTank::Init(), after the
-    //hull's own (mass/incidental-collision-only) collider is set up.
+    //Lays out wheels_per_side road wheels evenly along each track, from -half_length to
+    //+half_length in local Z, at +-track_offset_x in local X, with their suspension anchored
+    //mount_height above the hull origin in local Y and hanging straight down from it. Called
+    //once from ApplicationTank::Init(), after the hull's own (mass/incidental-collision-only)
+    //collider.
     void SetupWheels(float track_offset_x, float half_length, float mount_height, int wheels_per_side);
 
-    //Adds one non-load-bearing wheel per side (see TankWheel::ground_contact) at the given
-    //mount height/Z - e.g. the idler (front) or drive sprocket (rear) visible in the
-    //tank_tracks mesh above the road-wheel band. Call after SetupWheels, once per raised
-    //wheel position (see ApplicationTank::Init for how the positions were derived from the
-    //mesh itself).
-    void AddNonContactWheel(float track_offset_x, float mount_height, float z);
+    //Adds one raised wheel per side - the idler (front) or drive sprocket (rear) that sit above
+    //the road-wheel band in the tank_tracks mesh. Appends rather than clears, so call after
+    //SetupWheels, once per raised wheel position.
+    //
+    //Takes the wheel's resting HUB HEIGHT rather than its anchor, and derives the anchor from
+    //it (anchor = hub - axis*rest_length): where these wheels have to sit is read off the
+    //mesh's own humps, so letting the caller state that directly is what removes the old
+    //hand-computed offset that existed purely to cancel the suspension's hang. radius <= 0
+    //falls back to wheel_radius, as everywhere else.
+    void AddRaisedWheel(float track_offset_x, float z, float hub_rest_height, float rest_length,
+                        float travel, const vec3& axis, float radius = 0.0f);
 
-    //Derived once from the tank_wheel asset's own mesh extents (see ApplicationTank::Init),
-    //not hand-tuned - used only to convert a wheel's along-track speed into a visual spin
-    //rate (UpdatePhysicsState's wheel.roll_angle accumulation below). 0 skips spin entirely,
-    //so a build that never sets this just leaves the wheels visually static, as before.
+    //Turns a Wheel's per-field 0s into real numbers by falling back to the tank's own shared
+    //defaults below - see Wheel's own comment for why the fields are 0-means-inherit in the
+    //first place. Every read of per-wheel geometry/suspension tuning (physics, visuals, debug
+    //UI, telemetry) goes through this, so a 0 override means "use the default" identically
+    //everywhere. WheelRadius/WheelRestLength/WheelTravel are kept as thin wrappers purely so
+    //existing call sites (ApplicationTank's debug UI/telemetry) don't need to change.
+    WheelTuning ResolveTuning(const Wheel& wheel) const {
+        WheelTuning t;
+        t.radius = wheel.radius > 0.0f ? wheel.radius : wheel_radius;
+        t.rest_length = wheel.rest_length > 0.0f ? wheel.rest_length : suspension_rest_length;
+        t.travel = wheel.travel > 0.0f ? wheel.travel : suspension_travel;
+        t.stiffness = wheel.stiffness > 0.0f ? wheel.stiffness : suspension_stiffness;
+        t.damping = wheel.damping > 0.0f ? wheel.damping : suspension_damping;
+        t.max_force = wheel.max_force > 0.0f ? wheel.max_force : max_wheel_force;
+        t.max_point_speed = wheel.max_point_speed > 0.0f ? wheel.max_point_speed : max_point_speed;
+        t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
+        return t;
+    }
+    float WheelRadius(const Wheel& wheel) const { return ResolveTuning(wheel).radius; }
+    float WheelRestLength(const Wheel& wheel) const { return ResolveTuning(wheel).rest_length; }
+    float WheelTravel(const Wheel& wheel) const { return ResolveTuning(wheel).travel; }
+
+    //Default rolling radius, derived once from the tank_wheel asset's own mesh extents (see
+    //ApplicationTank::Init), not hand-tuned. Used for any wheel that doesn't override it, and
+    //it is real geometry now rather than only a visual spin rate: it sets how far each ray
+    //reaches and how high above the terrain the hub rests. 0 degrades gracefully to the old
+    //point-contact model, with the wheels visually static as before.
     float wheel_radius = 0.0f;
 
     //Soft cap (m/s): stop adding more drive force once real physics velocity reaches this.
@@ -115,9 +98,16 @@ public:
     float brake_force = 3000.0f;  //Newtons
 
     //Suspension tuning - see UpdatePhysicsState for how these become a per-wheel spring+damper
-    //force. rest_length is normally set from the tank_tracks mesh's own geometry (see
-    //ApplicationTank::Init) so the hull floats at the same height the old rigid capsules did.
-    float suspension_rest_length = 0.15f; //metres from mount point to ground at equilibrium
+    //force via WheelSuspension::UpdateContact. Defaults for any wheel that doesn't override them
+    //(Wheel::rest_length/travel/etc, resolved through ResolveTuning above).
+    //
+    //rest_length is the anchor-to-HUB distance at full extension, not anchor-to-ground: the
+    //wheel's own radius sits below the hub on top of it, so a wheel touches down when its
+    //anchor is (rest_length + radius) above the terrain. ApplicationTank::Init sets it from the
+    //tank_tracks mesh's geometry MINUS the wheel radius for exactly that reason, which leaves
+    //the hull floating at the same height it always did while the tread now meets the ground
+    //instead of the axle sinking to it.
+    float suspension_rest_length = 0.15f; //metres from the anchor to the hub at full extension
     float suspension_travel = 0.08f;      //extra compressible range beyond rest_length
     float suspension_stiffness = 6000.0f; //N per metre of compression
     //900 before, which was past the point where an explicit integrator can represent it at all.
@@ -140,13 +130,14 @@ public:
     //the tick rate change, rerun the division above - this value is not independent of them.
     float suspension_damping = 400.0f;    //N per (m/s) of compression rate
     //Hard per-wheel force ceiling - a last-resort sanity check, not a routine limiter: with
-    //point_velocity's magnitude already clamped in UpdatePhysicsState, the legitimate maximum
-    //is provably compression_max*stiffness + clamp*damping = 0.23*6000 + 2.0*900 = 3180N, so
-    //this only ever engages if stiffness/damping/travel are tuned upward later without
-    //updating it too. Set too low once before (800N) and it silently ate the damping force
-    //needed to arrest a normal landing impact, leaving the hull bouncing indefinitely instead
-    //of settling - a wheel that's "grounded but never applying real force" looks identical to
-    //one that's airborne from the outside, which made that bug look like a driving/input bug.
+    //point_velocity's magnitude already clamped in WheelSuspension::UpdateContact, the
+    //legitimate maximum is provably compression_max*stiffness + clamp*damping =
+    //0.23*6000 + 2.0*900 = 3180N, so this only ever engages if stiffness/damping/travel are
+    //tuned upward later without updating it too. Set too low once before (800N) and it
+    //silently ate the damping force needed to arrest a normal landing impact, leaving the hull
+    //bouncing indefinitely instead of settling - a wheel that's "grounded but never applying
+    //real force" looks identical to one that's airborne from the outside, which made that bug
+    //look like a driving/input bug.
     float max_wheel_force = 4000.0f; //Newtons
     //Subject to the same kind of explicit-integration limit as suspension_damping above, but
     //to a TIGHTER one, and this is the subtlety that cost the most time here. Suspension force
@@ -193,7 +184,7 @@ public:
 
     //The other two clamps, previously function-local consts in UpdatePhysicsState. Out here
     //because whether they engage is the central tuning question, not an implementation detail:
-    //max_point_speed's saturation is now reported per wheel (TankWheel::point_speed) so it can
+    //max_point_speed's saturation is now reported per wheel (Wheel::point_speed) so it can
     //actually be observed rather than inferred, and both want to be adjustable alongside the
     //stiffness/damping/friction values above when tuning.
     float max_point_speed = 2.0f; //m/s ceiling on a contact point's velocity, applied once
@@ -206,7 +197,7 @@ public:
     //pivot the hull in place, same as a real tank turning on its tracks.
     float steer_authority = 1.0f;
 
-    std::vector<TankWheel> wheels;
+    std::vector<Wheel> wheels;
 
     float gas_pedal = 0.0f;
     float brake_pedal = 0.0f;
