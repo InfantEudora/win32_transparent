@@ -125,6 +125,16 @@ void TankCharacter::UpdatePhysicsState(){
             if (wheel.is_left_side){ num_left++; }else{ num_right++; }
         }
 
+        //Real tracks are a closed loop, so every wheel on a side - road wheel, idler, drive
+        //sprocket alike - turns at the same speed. Approximated here as the average this
+        //tick's actually-grounded road wheels on that side are spinning at (below), then
+        //applied to that side's non-contact wheels (idler/sprocket) in the visual-follow loop
+        //further down - rougher than giving the idler/sprocket their own point_velocity at
+        //their own mount point, but avoids computing that for wheels with no raycast of their
+        //own. Revisit if the two ever need to visibly disagree with their side's road wheels.
+        float roll_delta_sum[2] = {0.0f,0.0f};   //[0]=left,[1]=right
+        int roll_delta_count[2] = {0,0};
+
         for (TankWheel& wheel : wheels){
             //Diagnostics are rewritten from scratch every tick (see TankWheel) - cleared up
             //front so a wheel that's airborne, or that bails out at one of the early continues
@@ -137,6 +147,10 @@ void TankCharacter::UpdatePhysicsState(){
             wheel.lateral_force = 0.0f;
             wheel.friction_budget = 0.0f;
             wheel.friction_saturated = false;
+
+            if (!wheel.ground_contact){
+                continue; //idler/drive sprocket - see TankWheel::ground_contact
+            }
 
             vec3 mount_world = body_world_pos + rotation * wheel.local_offset;
             //Start slightly above the mount point so a wheel that's already compressed past
@@ -184,6 +198,18 @@ void TankCharacter::UpdatePhysicsState(){
             wheel.point_speed = point_speed; //recorded PRE-clamp - see TankWheel::point_speed
             if (point_speed > max_point_speed){
                 point_velocity = point_velocity * (max_point_speed / point_speed);
+            }
+
+            //Wheel spin, visual only - not fed back into anything physical. Rolling-without-
+            //slip: angular speed is this contact's along-track speed divided by its radius,
+            //using the same (already-clamped) point_velocity every force below derives from,
+            //so the spin stays consistent with what the wheel is visibly doing on the ground.
+            if (wheel_radius > 0.0f){
+                float roll_delta = -point_velocity.dot(forward) / wheel_radius * timestep;
+                wheel.roll_angle += roll_delta;
+                int side = wheel.is_left_side ? 0 : 1;
+                roll_delta_sum[side] += roll_delta;
+                roll_delta_count[side]++;
             }
 
             //Pushed along the actual ground normal, not the hull's own (possibly already
@@ -260,6 +286,28 @@ void TankCharacter::UpdatePhysicsState(){
             physics->AddWorldForceAt(forward * longitudinal_force + left * lateral_force,mount_world);
         }
 
+        //Drive each wheel's visual (if any - see ApplicationTank::Init) from the same
+        //compression/roll_angle this tick just computed above, instead of leaving it fixed at
+        //its mount point. Wheel.compression follows the same convention the raycast above uses
+        //to produce it: 0 at rest (hanging suspension_rest_length below the mount, whether
+        //grounded or not) rising toward the mount as the suspension compresses.
+        float avg_roll_delta[2] = {
+            roll_delta_count[0] > 0 ? roll_delta_sum[0] / roll_delta_count[0] : 0.0f,
+            roll_delta_count[1] > 0 ? roll_delta_sum[1] / roll_delta_count[1] : 0.0f,
+        };
+        for (TankWheel& wheel : wheels){
+            if (!wheel.ground_contact){
+                wheel.roll_angle += avg_roll_delta[wheel.is_left_side ? 0 : 1];
+            }
+            if (!wheel.visual){
+                continue;
+            }
+            vec3 visual_pos = wheel.local_offset;
+            visual_pos.y -= suspension_rest_length - wheel.compression;
+            wheel.visual->SetPosition(visual_pos);
+            wheel.visual->SetRotation(quat(vec3(1,0,0),wheel.roll_angle));
+        }
+
         //Last-resort safety net against a roll/pitch excursion, applied after all of this tick's
         //forces are in so it catches one regardless of which force caused it. Historically this
         //was load-bearing: several wheels could each push a bounded amount in the same
@@ -310,7 +358,38 @@ void TankCharacter::UpdatePhysicsState(){
         turret->RotateAroundAxis(vec3(0,1,0),-turn_by);
     }
 
+    //Spring the barrel back towards rest after a shot - see Fire().
+    if (turret){
+        if (!turret_rest_pos_captured){
+            turret_rest_local_pos = turret->GetPosition(STATE_ACCESS_PHYSICS);
+            turret_rest_pos_captured = true;
+        }
+        if (turret_recoil_offset > 0.0f){
+            turret_recoil_offset = max(turret_recoil_offset - turret_recoil_recover_speed * timestep,0.0f);
+            turret->SetPosition(turret_rest_local_pos - turret->GetForward(STATE_ACCESS_PHYSICS) * turret_recoil_offset);
+        }
+    }
+
     Object::UpdatePhysicsState();
+}
+
+void TankCharacter::Fire(){
+    if (!turret){
+        return;
+    }
+    turret_recoil_offset = turret_recoil_kick;
+
+    if (Physics* physics = GetPhysics()){
+        //Same "forces/velocity changes do nothing to a sleeping body" issue as gas/brake/steer -
+        //see UpdatePhysicsState's comment on AddLocalForce - so wake it first.
+        physics->WakeUp();
+        vec3 kick_dir = -turret->GetWorldForward(STATE_ACCESS_PHYSICS);
+        kick_dir.y = 0; //Same yaw-only convention as the turret tracking above.
+        if (kick_dir.length() > 0.0001f){
+            kick_dir.normalize();
+        }
+        physics->SetVelocity(physics->GetVelocity() + kick_dir * recoil_kick_speed);
+    }
 }
 
 void TankCharacter::Accelerate(float factor){
@@ -377,6 +456,31 @@ void TankCharacter::ReleaseInputs(){
     Brake(0.0f); //releases both gas and brake pedals immediately
 }
 
+void TankCharacter::ResetState(const vec3& pos,const quat& rot){
+    ReleaseInputs();
+    steering_position = 0.0f; //ReleaseInputs only cancels latches - this normally decays
+                               //toward 0 over several ticks (see UpdatePhysicsState), too slow
+                               //for a reset that's supposed to be instant.
+    f_reverse = false;
+
+    SetPosition(pos);
+    SetRotation(rot);
+
+    if (Physics* physics = GetPhysics()){
+        physics->SetVelocity(vec3());
+        physics->SetAngularVelocity(vec3());
+        physics->WakeUp(); //a sleeping body ignores this teleport's next tick of forces too -
+                            //same issue as gas/brake/steer, see UpdatePhysicsState's comment
+    }
+
+    for (TankWheel& wheel : wheels){
+        wheel.roll_angle = 0.0f;
+        wheel.compression = 0.0f;
+        wheel.grounded = false;
+    }
+    turret_recoil_offset = 0.0f;
+}
+
 void TankCharacter::SetupWheels(float track_offset_x,float half_length,float mount_height,int wheels_per_side){
     wheels.clear();
     wheels_per_side = max(wheels_per_side,1);
@@ -392,5 +496,19 @@ void TankCharacter::SetupWheels(float track_offset_x,float half_length,float mou
             wheel.is_left_side = is_left;
             wheels.push_back(wheel);
         }
+    }
+}
+
+//Appends rather than clears (unlike SetupWheels) - call after SetupWheels, once per raised
+//wheel position, so the road wheels it already laid out stay untouched.
+void TankCharacter::AddNonContactWheel(float track_offset_x,float mount_height,float z){
+    for (int side = 0; side < 2; side++){
+        bool is_left = (side == 0);
+        float x = is_left ? track_offset_x : -track_offset_x;
+        TankWheel wheel;
+        wheel.local_offset = vec3(x,mount_height,z);
+        wheel.is_left_side = is_left;
+        wheel.ground_contact = false;
+        wheels.push_back(wheel);
     }
 }

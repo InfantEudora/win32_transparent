@@ -1,5 +1,6 @@
-# NOTE: predates the APP_HEADER/APP_CLASS pattern - add those two defines
-# below (see apps/ship.mk for the shape) before this will link against main.cpp.
+APP_HEADER := ApplicationDozer.h
+APP_CLASS  := ApplicationDozer
+
 SRCS    += ApplicationDozer.cpp
 IPATHS  += -Idozer/
 DIR_SRC += ./dozer

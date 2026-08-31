@@ -167,6 +167,14 @@ vec3 InputController::GetHoveredNormal(){
     return hovered_normal;
 }
 
+void InputController::SetHoveredPosition(vec3 pos){
+    hovered_position = pos;
+}
+
+vec3 InputController::GetHoveredPosition(){
+    return hovered_position;
+}
+
 //Clears the button and input transition flags
 void InputController::Tick(){
     //debug->Info("Input Controller Tick\n");

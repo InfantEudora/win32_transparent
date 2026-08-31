@@ -42,7 +42,14 @@ void ParticleEmitter::SetParticle(Particle* particle){
     p.y = rrand->GetFloat(-0.1,0.1);
     p.z = rrand->GetFloat(-0.1,0.1);
 
-    particle->SetPosition(GetWorldPosition() + p);
+    //STATE_ACCESS_PHYSICS, not the default STATE_ACCESS_RENDERER: GetWorldPosition's renderer
+    //branch reads world_transform_scale_matrix, which UpdateState() only refreshes once per
+    //frame elsewhere - a frame behind any SetPosition() this emitter's caller just made (e.g.
+    //ApplicationTank repositioning a one-shot impact emitter right before EmitParticles), so
+    //particles would spawn at where the emitter WAS, not where it was just moved to. Rotation
+    //below already reads state_physics via GetWorldRotation()/GetRotation() - this just makes
+    //position consistent with that same always-fresh source instead of a stale copy.
+    particle->SetPosition(GetWorldPosition(STATE_ACCESS_PHYSICS) + p);
     particle->SetScale(rrand->GetFloat(emission_properties.particle_size_min,emission_properties.particle_size_max));
 
     vec3 v = emission_properties.emission_direction * rrand->GetFloat(emission_properties.emission_speed_min,emission_properties.emission_speed_max);

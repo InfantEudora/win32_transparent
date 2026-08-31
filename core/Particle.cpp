@@ -14,6 +14,14 @@ Particle::Particle(Particle* particle):Particle(particle->GetPhysics()->world){
     //How would we use the Object Copy constructor... that would be nice.
     SetMesh(particle->GetMesh());
     Physics* p = particle->GetPhysics();
+    if (p){
+        //AddPhysics (called by the delegated constructor above, for this new instance's own
+        //body) always defaults gravity to false, same as every other Object - copy the
+        //reference particle's own setting instead of silently dropping it, so a particle type
+        //configured to fall (see ApplicationTank::Init's fire-impact particle) actually does,
+        //on every instance EmitParticles spawns from it, not just the one template Object.
+        physics->SetGravityEnabled(p->IsGravityEnabled());
+    }
     if (p && p->body && p->body->collider){
         //debug->Info("physics->world = %p\n",physics->world);
         rp3d::CollisionShape* shape =  p->body->collider->getCollisionShape();

@@ -4,6 +4,8 @@
 #include "MCPServer.h"
 #include <cmath>
 
+#define INPUT_FIRE INPUT_LAST+1
+
 static Debugger *debug = new Debugger("ApplicationTank", DEBUG_ALL);
 
 ApplicationTank::ApplicationTank():Application(){
@@ -25,6 +27,7 @@ void ApplicationTank::Init(void){
 
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics(1/50.0f);
+    main_scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_FIRE);
 
     main_scene->physics_world = new PhysicsWorld();
     main_scene->physics_world->SetGravity(vec3(0,-9.81,0));
@@ -45,7 +48,8 @@ void ApplicationTank::Init(void){
     gltfloader.LoadGLTFFile("data/tank.glb");
     GetAllAssetsFromGLTF();
 
-    compass = CreateNewObjectFromGLTF("compass",main_scene);
+    compass = assetmanager->GetObjectFromAsset("compass");
+    main_scene->AddObject(compass);
 
     controlled_tank = new TankCharacter();
     assetmanager->GetObjectFromAsset("tank_base",controlled_tank);
@@ -56,7 +60,7 @@ void ApplicationTank::Init(void){
         controlled_tank->turret = tank_top;
 
     }
-    Object* tank_tracks = assetmanager->GetObjectFromAsset("tank_tracks");
+    tank_tracks = assetmanager->GetObjectFromAsset("tank_tracks");
     if (tank_tracks){
         tank_tracks->name = "Tank Tracks";
         controlled_tank->AttachChild(tank_tracks);
@@ -107,14 +111,37 @@ void ApplicationTank::Init(void){
 
         float track_offset_x = track_extent.x * 0.8f; //slightly inset from the tracks' outer edge
         controlled_tank->suspension_rest_length = track_extent.y;
-        controlled_tank->SetupWheels(track_offset_x,track_extent.z,track_extent.y,5);
+
+        //6 road wheels, spanning the flat band of the tank_tracks mesh rather than its full
+        //length - probed directly off the mesh (binned max-Y along Z): the profile is flat at
+        //~0.145-0.155 from about z=-0.31 to z=+0.36, then climbs toward two raised humps at the
+        //very ends (idler front, drive sprocket rear - see AddNonContactWheel calls below).
+        //0.33 keeps all 6 comfortably inside that flat band rather than spilling into the climb.
+        const float road_wheel_half_length = 0.38f;
+        controlled_tank->SetupWheels(track_offset_x,road_wheel_half_length,track_extent.y,6);
+
+        //The two raised wheels above the road-wheel band, per side - same probe: humps peak at
+        //z~-0.57 (front, height 0.2447 = the mesh's overall max Y) and z~+0.57 (rear, height
+        //0.2192). Centred so each wheel's top (wheel_radius above its own mount) lines up with
+        //its hump's peak - wheel_radius isn't known yet at this point (it's derived below, from
+        //the tank_wheel asset, once the first one loads), so these use the same probed number
+        //(0.0754) rather than a forward reference; if the tank_wheel asset is ever swapped for a
+        //visibly different size, these two heights would need re-deriving alongside it.
+        //
+        //mount_height is offset by +suspension_rest_length (not just the desired centre height)
+        //because these wheels are ground_contact=false: UpdatePhysicsState never raycasts for
+        //them, so compression stays permanently 0, and the shared bob formula every wheel's
+        //visual follows (local_offset.y - (suspension_rest_length - compression)) would
+        //otherwise sink them by suspension_rest_length below where they're actually mounted.
+        const float probed_wheel_radius = 0.0754f;
+        controlled_tank->AddNonContactWheel(track_offset_x,0.2447f - probed_wheel_radius + track_extent.y,-0.57f);
+        controlled_tank->AddNonContactWheel(track_offset_x,0.2192f - probed_wheel_radius + track_extent.y,0.57f);
 
         //Visual reference only: one tank_wheel Object per TankWheel, parented to the hull and
         //placed at its actual mount point (the same local_offset UpdatePhysicsState raycasts
         //from) - so the wheel positions used by the physics are visible, not just the fixed
-        //(now-hidden) tank_tracks band. Static for now, at the mount point itself rather than
-        //wherever the current compression/ground contact has it - not yet following
-        //wheel.compression tick to tick.
+        //(now-hidden) tank_tracks band. Followed tick to tick by UpdatePhysicsState (bobs with
+        //compression, spins with roll_angle) once wheel_radius below is set.
         for (TankWheel& wheel : controlled_tank->wheels){
             Object* wheel_visual = assetmanager->GetObjectFromAsset("tank_wheel");
             if (!wheel_visual){
@@ -124,13 +151,67 @@ void ApplicationTank::Init(void){
             controlled_tank->AttachChild(wheel_visual);
             wheel_visual->SetPosition(wheel.local_offset);
             wheel.visual = wheel_visual;
+
+            //Derived once, from whichever wheel_visual loads first - every instance shares the
+            //same asset/mesh. Rolls around the hull's local X (left/right) axis (see
+            //TankCharacter::UpdatePhysicsState's spin code), so its rolling diameter is
+            //whichever of Y/Z is larger, not X (the wheel's own thickness/width).
+            if (controlled_tank->wheel_radius <= 0.0f && wheel_visual->GetMesh()){
+                vec3 wheel_extent = wheel_visual->GetMesh()->GetExtents() * 0.5f;
+                controlled_tank->wheel_radius = max(wheel_extent.y,wheel_extent.z);
+            }
         }
     }
 
-    target = CreateNewObjectFromGLTF("target",main_scene);
+    target = assetmanager->GetObjectFromAsset("target");
+    main_scene->AddObject(target);
+
     controlled_tank->turret_target = target;
     target->SetPickability(false);
     controlled_tank->SetPosition(vec3(0,0.05,0));
+    tank_start_position = controlled_tank->GetPosition();
+    tank_start_rotation = controlled_tank->GetRotation();
+
+    //Placeholder impact effect for Fire() (see RunLogic): bursts copies of the target marker
+    //itself outward from the target's position. Needs its own RRandom, same as every other
+    //app's particle emitter (ParticleEmitter::EmitParticles hard-fails without one).
+    rrand = new RRandom();
+    rrand->Generate(512,512);
+
+    fire_impact_emitter = new ParticleEmitter(main_scene->physics_world);
+    fire_impact_emitter->name = "Fire Impact Emitter";
+    fire_impact_emitter->target_scene = main_scene;
+    fire_impact_emitter->SetRandomGenerator(rrand);
+    fire_impact_emitter->emission_properties.emission_direction = vec3(0,1,0);
+    fire_impact_emitter->emission_properties.emission_spread = 360.0f; //outward in every direction, not a narrow cone
+    fire_impact_emitter->emission_properties.particle_size_min = 0.15f;
+    fire_impact_emitter->emission_properties.particle_size_max = 0.35f;
+    fire_impact_emitter->emission_properties.particle_lifetime_min = 0.3f;
+    fire_impact_emitter->emission_properties.particle_lifetime_max = 0.6f;
+    fire_impact_emitter->emission_properties.emission_speed_min = 3.0f;
+    fire_impact_emitter->emission_properties.emission_speed_max = 6.0f;
+    main_scene->AddObject(fire_impact_emitter);
+
+    //The particle template: a bare copy of the target marker's mesh/material - see
+    //Particle::Particle(Particle*), which this mirrors by hand since target is a plain
+    //Object, not itself a Particle. No collider, unlike some other apps' particle types -
+    //this is a one-off visual burst, nothing needs to collide with it.
+    Particle* target_particle = new Particle(main_scene->physics_world);
+    target_particle->name = "Fire Impact Particle";
+    target_particle->SetMesh(target->GetMesh());
+    target_particle->material_names = target->material_names;
+    //Falls back to the ground once emitted, rather than just coasting outward on its burst
+    //velocity forever - AddPhysics defaults gravity off, same as every Object, so this has to
+    //be requested. Read back and re-applied to each actual clone by Particle's copy
+    //constructor (see its comment), since every EmitParticles spawn is a fresh physics body.
+    target_particle->GetPhysics()->SetGravityEnabled(true);
+    fire_impact_emitter->AddParticleType(target_particle);
+
+    //Recorded on 2026-08-31 via bridge_telemetry over MCP: drove the tank up to the ravine
+    //notch just north-west of its start position, dropped the bridge in over MCP, then nudged
+    //its position/yaw (the ~21.2 deg here) by hand over MCP until it spanned the gap cleanly -
+    //this is that placement, made permanent.
+    SpawnBridge(vec3(-1.294021f,-0.48f,-6.942404f),21.199468f);
 
     //terrain = CreateNewObjectFromGLTF("terrain",main_scene);
 
@@ -145,7 +226,7 @@ void ApplicationTank::Init(void){
     //Need an inital step to show everything.
     main_scene->StepPhysics(1);
 
-    main_scene->PausePhysics(true);
+    main_scene->PausePhysics(false);
 }
 
 //Shared by all three MCP tools below - same fields tank_telemetry reports on its own,
@@ -240,6 +321,56 @@ json ApplicationTank::GetTankTelemetry(){
         {"max_roll_speed", controlled_tank->max_roll_speed},
     };
     return result;
+}
+
+//Creates the bridge from its asset, gives it a static box collider sized to its own mesh
+//extents (same "bottom sits at local Y=0" modelling convention as the tank's own assets - see
+//the tank_tracks/hull collider setup above), and places it. Shared by Init()'s permanent
+//placement and the bridge_spawn MCP tool's ad hoc one. Returns false (bridge left NULL)
+//if one already exists or the asset/asset manager isn't available.
+bool ApplicationTank::SpawnBridge(const vec3& pos, float yaw_degrees){
+    if (bridge || !assetmanager){
+        return false;
+    }
+    bridge = assetmanager->GetObjectFromAsset("bridge");
+    if (!bridge){
+        return false;
+    }
+    bridge->name = "Bridge";
+    main_scene->AddObject(bridge);
+
+    bridge->AddPhysics(main_scene->physics_world);
+    if (Physics* physics = bridge->GetPhysics()){
+        vec3 extent = bridge->GetMesh() ? bridge->GetMesh()->GetExtents() * 0.5f : vec3(1,0.1f,1);
+        extent.y *= 0.1f; //Thin asphalt.
+        vec3 box_center = vec3(0,0.781,0);
+        physics->AddBoxCollider(extent,box_center,quat().identity(),1.0f); //density is irrelevant, static
+        physics->SetFrictionCoefficient(0.8f); //asphalt-ish grip for the tank's tracks
+        physics->SetBounciness(0.0f);
+        physics->SetStatic(true);
+    }
+
+    bridge->SetPosition(pos);
+    bridge_yaw_degrees = yaw_degrees;
+    bridge->SetRotation(quat(vec3(0,1,0),bridge_yaw_degrees * TYPE_PI / 180.0f));
+    return true;
+}
+
+//Reports the bridge's current placement - position, the yaw we last set it to (see
+//bridge_yaw_degrees's comment in the header for why that's tracked rather than decomposed
+//back out of the quaternion), and the raw rotation quaternion for pasting a placement straight
+//into code once it's been dialed in over MCP.
+json ApplicationTank::GetBridgeTelemetry(){
+    if (!bridge){
+        return json{ {"error","no bridge - call bridge_spawn first"} };
+    }
+    vec3 pos = bridge->GetPosition();
+    quat rot = bridge->GetRotation();
+    return json{
+        {"position", json::array({pos.x,pos.y,pos.z})},
+        {"yaw_degrees", bridge_yaw_degrees},
+        {"rotation_quat", json::array({rot.x,rot.y,rot.z,rot.w})},
+    };
 }
 
 //If requested, blocks (Renderer::RequestScreenshot) until the render thread has captured
@@ -422,6 +553,77 @@ void ApplicationTank::RegisterMCPTools(){
             }
             return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
         });
+
+    MCPServer::Get()->RegisterTool("bridge_spawn",
+        "Drop a new bridge prop into the scene from the 'bridge' asset (same asset the editor's "
+        "Add Object -> Objects From Assets -> bridge menu entry places), with a static box "
+        "collider sized to the bridge mesh's own extents so the tank can drive over it. Only "
+        "works once per session - if a bridge already exists, use bridge_transform to move the "
+        "existing one instead of calling this again. Position/yaw default to the origin/0 ; "
+        "expect to follow up with bridge_transform once you can see where it landed.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position, default [0,0,0]"}}},
+                {"yaw_degrees", {{"type","number"},{"description","rotation around the world up axis, in degrees, default 0"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (bridge){
+                return json{ {"error","bridge already spawned - use bridge_transform to move it"} };
+            }
+            json posarr = args.value("position",json::array({0,0,0}));
+            vec3 pos = vec3(posarr.at(0).get<float>(),posarr.at(1).get<float>(),posarr.at(2).get<float>());
+            float yaw_degrees = args.value("yaw_degrees",0.0f);
+            if (!SpawnBridge(pos,yaw_degrees)){
+                return json{ {"error","no asset manager, or 'bridge' asset not found"} };
+            }
+            return MaybeAttachScreenshot(GetBridgeTelemetry(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("bridge_transform",
+        "Move and/or rotate the already-spawned bridge (call bridge_spawn first). Only the "
+        "fields supplied are changed - omit position to leave it where it is, omit yaw_degrees "
+        "to leave the rotation alone. Returns the resulting position/rotation so it can be "
+        "noted down once the crossing looks right.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position"}}},
+                {"yaw_degrees", {{"type","number"},{"description","rotation around the world up axis, in degrees"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!bridge){
+                return json{ {"error","no bridge - call bridge_spawn first"} };
+            }
+            if (args.contains("position")){
+                json posarr = args.at("position");
+                vec3 pos = vec3(posarr.at(0).get<float>(),posarr.at(1).get<float>(),posarr.at(2).get<float>());
+                bridge->SetPosition(pos);
+            }
+            if (args.contains("yaw_degrees")){
+                bridge_yaw_degrees = args.at("yaw_degrees").get<float>();
+                bridge->SetRotation(quat(vec3(0,1,0),bridge_yaw_degrees * TYPE_PI / 180.0f));
+            }
+            return MaybeAttachScreenshot(GetBridgeTelemetry(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("bridge_telemetry",
+        "Report the bridge's current position and rotation (yaw in degrees, plus the raw "
+        "rotation quaternion) without changing anything. Set include_screenshot to also get a "
+        "PNG of the current frame.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the current frame, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            return MaybeAttachScreenshot(GetBridgeTelemetry(),args.value("include_screenshot",false));
+        });
 }
 
 //Debug helper: write a small hand-picked grid of known heights to a PNG, read it back,
@@ -488,8 +690,8 @@ void ApplicationTank::TestHeightmapMesh(){
     //Bake the target 10x10 world footprint into the mesh itself rather than via
     //Object::SetScale afterward - normals are computed from these final positions,
     //so a post-hoc non-uniform scale wouldn't be reflected in them.
-    float cell_size_x = 10.0f / (w - 1);
-    float cell_size_z = 10.0f / (h - 1);
+    float cell_size_x = 20.0f / (w - 1);
+    float cell_size_z = 20.0f / (h - 1);
     Mesh* mesh = CreateMeshFromHeightmap(heights,w,h,cell_size_x,cell_size_z);
     if (!mesh){
         debug->Err("TestHeightmapMesh: failed to build mesh\n");
@@ -539,15 +741,11 @@ void ApplicationTank::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
-    //Track the target on the Y=0 plane under the mouse cursor.
-    if (target){
-        int2 px = input->GetRelativeMousePosition();
-        ray r = camera->GetPixelRay(px);
-        vec3 at = {};
-        projection_plane.normal = vec3(0,1,0);
-        projection_plane.pos = vec3(0,0,0);
-        if (r.intersects_plane(projection_plane,at)){
-            target->SetPosition(at);
+    //Track the target on the terrain under the mouse cursor. If the cursor isn't over the
+    //terrain (eg. over the sky, or over the tank itself), leave the target where it is.
+    if (target && heightmap_mesh_test){
+        if (input->GetHoveredObjectID() == heightmap_mesh_test->GetID()){
+            target->SetPosition(input->GetHoveredPosition());
         }
     }
 
@@ -572,6 +770,17 @@ void ApplicationTank::RunLogic(){
         }
         if (input->IsKeyDown(INPUT_TURN_RIGHT)){
             controlled_tank->SteerRight(1.0f);
+        }
+        if (input->WasKeyReleased(INPUT_FIRE)){
+            controlled_tank->Fire();
+            if (fire_impact_emitter && target){
+                //Local, not world, position - target is a root object (added straight to
+                //main_scene, no parent), so the two are the same, and local is fresh (just set
+                //a few lines up in this same function) where GetWorldPosition's default render-
+                //state read would still be lagging a frame behind.
+                fire_impact_emitter->SetPosition(target->GetPosition(STATE_ACCESS_PHYSICS));
+                fire_impact_emitter->EmitParticles(32);
+            }
         }
     }
 
@@ -643,14 +852,30 @@ void ApplicationTank::RenderTankWheelDebugUI(){
     ImGui::Text("Brake Pedal    : %.2f",controlled_tank->brake_pedal);
     ImGui::Text("Steering       : %.2f",controlled_tank->steering_position);
     ImGui::Text("Reverse        : %s",controlled_tank->f_reverse ? "true" : "false");
+
+    if (ImGui::Button("Reset Tank To Start")){
+        controlled_tank->ResetState(tank_start_position,tank_start_rotation);
+    }
+
+    if (ImGui::Checkbox("Show pink wheel debug visuals (vs. tracks mesh)",&f_show_wheel_debug_visuals)){
+        for (TankWheel& wheel:controlled_tank->wheels){
+            if (wheel.visual){
+                wheel.visual->SetVisibility(f_show_wheel_debug_visuals);
+            }
+        }
+        if (tank_tracks){
+            tank_tracks->SetVisibility(!f_show_wheel_debug_visuals);
+        }
+    }
     ImGui::Separator();
 
-    if (ImGui::BeginTable("tank_wheels",6,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){
+    if (ImGui::BeginTable("tank_wheels",7,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){
         ImGui::TableSetupColumn("#");
         ImGui::TableSetupColumn("Side");
+        ImGui::TableSetupColumn("Kind");
         ImGui::TableSetupColumn("Grounded");
         ImGui::TableSetupColumn("Compression (m)");
-        ImGui::TableSetupColumn("Local Offset");
+        ImGui::TableSetupColumn("Local Offset (editable)");
         ImGui::TableSetupColumn("Roll Angle");
         ImGui::TableHeadersRow();
 
@@ -666,16 +891,28 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::Text("%s",wheel.is_left_side ? "Left" : "Right");
 
             ImGui::TableSetColumnIndex(2);
-            ImGui::TextColored(wheel.grounded ? ImVec4(0.3f,1.0f,0.3f,1.0f) : ImVec4(1.0f,0.4f,0.4f,1.0f),
-                                wheel.grounded ? "Yes" : "No");
+            ImGui::Text("%s",wheel.ground_contact ? "Road" : "Idler/sprocket");
 
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%.4f",wheel.compression);
+            if (wheel.ground_contact){
+                ImGui::TextColored(wheel.grounded ? ImVec4(0.3f,1.0f,0.3f,1.0f) : ImVec4(1.0f,0.4f,0.4f,1.0f),
+                                    wheel.grounded ? "Yes" : "No");
+            }else{
+                ImGui::TextDisabled("n/a");
+            }
 
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.2f, %.2f, %.2f",wheel.local_offset.x,wheel.local_offset.y,wheel.local_offset.z);
+            ImGui::Text("%.4f",wheel.compression);
 
             ImGui::TableSetColumnIndex(5);
+            //Writes straight into wheel.local_offset - road wheels' next raycast (mount_world
+            //in TankCharacter::UpdatePhysicsState) and every wheel's visual (position AND, for
+            //non-contact ones, their whole reason for existing) both read it fresh every tick,
+            //so a drag here takes effect immediately, no rebuild needed to try a new mount point.
+            ImGui::SetNextItemWidth(180.0f);
+            ImGui::DragFloat3("##local_offset",(float*)&wheel.local_offset,0.005f,-2.0f,2.0f,"%.3f");
+
+            ImGui::TableSetColumnIndex(6);
             ImGui::Text("%.2f",wheel.roll_angle);
 
             ImGui::PopID();

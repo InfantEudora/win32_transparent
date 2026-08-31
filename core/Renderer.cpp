@@ -650,6 +650,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         glReadBuffer(GL_COLOR_ATTACHMENT3);
         int32_t id_pixeldata[4] = {-1,-1,-1,-1};
         float  normal_pixeldata[4] = {0,0,0,0};
+        float  position_pixeldata[4] = {0,0,0,0};
         int2 mouse = {-1,-1};
         if (input){
             mouse = input->GetRelativeMousePosition();
@@ -657,6 +658,8 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RED_INTEGER, GL_INT, id_pixeldata);
         glReadBuffer(GL_COLOR_ATTACHMENT1);
         glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RGB, GL_FLOAT, normal_pixeldata);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RGB, GL_FLOAT, position_pixeldata);
 
         //Somehow, -1 reads back as 3F800000
         if ((id_pixeldata[0] != 0x3F800000) && (id_pixeldata[0] != -1)){
@@ -665,14 +668,17 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
                 debug->Err("Read back object index %i is out of bounds (max %i)\n",index,renderable_objects.size());
                 input->SetHoveredObjectID(OBJECTID_INVALID);
                 input->SetHoveredNormal(vec3());
+                input->SetHoveredPosition(vec3());
             }else{
                 input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
                 vec3 n = vec3(normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
                 input->SetHoveredNormal(n.normalize());
+                input->SetHoveredPosition(vec3(position_pixeldata[0],position_pixeldata[1],position_pixeldata[2]));
             }
         }else{
             input->SetHoveredObjectID(OBJECTID_INVALID);
             input->SetHoveredNormal(vec3());
+            input->SetHoveredPosition(vec3());
         }
 
         //debug->Info("Pixel data: %08X %08X %08X %08X\n",id_pixeldata[0],id_pixeldata[1],id_pixeldata[2],id_pixeldata[3]);

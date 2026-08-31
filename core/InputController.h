@@ -84,6 +84,8 @@ class InputController{
     objectid_t GetHoveredObjectID();
     void    SetHoveredNormal(vec3 normal);
     vec3    GetHoveredNormal();
+    void    SetHoveredPosition(vec3 pos);
+    vec3    GetHoveredPosition();
     bool    IsMouseOverWindow(){return f_mouse_over_window;};
 
     //There needs to be at least some form of feedback from UI which object was selected/hovered.
@@ -99,6 +101,7 @@ protected:
 
     std::atomic<objectid_t>hovered_object = {OBJECTID_INVALID};
     vec3 hovered_normal = vec3(); //TODO: How to atomicise this? Doest it need to be?
+    vec3 hovered_position = vec3(); //World-space position under the mouse cursor, read back from the deferred position buffer.
 };
 
 #endif

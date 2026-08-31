@@ -745,6 +745,9 @@ void Application::RenderApplicationUI(){
         vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
         ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
 
+        vec3 hov_pos = main_scene->inputcontroller->GetHoveredPosition();
+        ImGui::Text("Position at mouse : %.3f, %.3f, %.3f",hov_pos.x,hov_pos.y,hov_pos.z);
+
         if (!hovered_object){
             ImGui::Text("No Object Hovered");
         }else{

@@ -13,12 +13,21 @@ class TankCharacter;
 struct TankWheel{
     vec3 local_offset;          //mount point relative to the hull origin, in local space
     bool is_left_side = false;  //local_offset.x > 0 - matches Object::GetLeft()/ref_left's convention
+    //false for the idler/drive-sprocket wheels added by AddNonContactWheel - the track's own
+    //6 road wheels per side are what actually bear the tank's weight; the two raised end
+    //wheels sit well clear of the ground in normal operation, so they skip the raycast/force
+    //section of UpdatePhysicsState entirely (kept as ground_contact=false, permanently
+    //compression 0/grounded false) rather than risk a false ground hit from a raycast that was
+    //only ever sized for the road wheels' much lower mount height. roll_angle is still driven -
+    //see UpdatePhysicsState's avg_roll_delta - since a real track spins every wheel together.
+    bool ground_contact = true;
     float compression = 0.0f;   //current spring compression in metres, 0 = extended/airborne
     bool grounded = false;
-    float roll_angle = 0.0f;    //accumulated wheel spin (radians), unused for now - kept so a
-                                 //future visual wheel Object can be driven from the same state
+    float roll_angle = 0.0f;    //accumulated wheel spin (radians) around the hull's local X
+                                 //(left/right) axis, visual only - see UpdatePhysicsState
     Object* visual = NULL;      //optional child Object placed at local_offset for visual reference -
-                                 //set up by ApplicationTank::Init, positioned once at setup for now
+                                 //set up by ApplicationTank::Init, then followed tick to tick by
+                                 //UpdatePhysicsState (bobs with compression, spins with roll_angle)
 
     //Per-tick force diagnostics. Written by TankCharacter::UpdatePhysicsState (rewritten from
     //scratch every tick, left at zero for a wheel that never reached the force stage) and read
@@ -69,11 +78,31 @@ public:
     void HoldSteer(float signed_amount, float duration_ms); //negative = left, positive = right
     void ReleaseInputs(); //cancels all latches and releases the pedals immediately
 
+    //Teleports the hull to pos/rot, zeroes velocity/angular velocity, wakes the body (a
+    //stationary rigidbody put to sleep by rp3d would otherwise ignore the teleport's own next
+    //tick of forces - same issue as gas/brake/steer, see UpdatePhysicsState), releases every
+    //pedal/steering/hold-latch, and zeroes each wheel's transient per-tick state (roll_angle,
+    //compression, grounded) so nothing looks mid-spin or mid-bounce right after the reset.
+    void ResetState(const vec3& pos, const quat& rot);
+
     //Lays out wheels_per_side raycast contact points evenly along each track, from
     //-half_length to +half_length in local Z, at +-track_offset_x in local X and mount_height
     //above the hull origin in local Y. Called once from ApplicationTank::Init(), after the
     //hull's own (mass/incidental-collision-only) collider is set up.
     void SetupWheels(float track_offset_x, float half_length, float mount_height, int wheels_per_side);
+
+    //Adds one non-load-bearing wheel per side (see TankWheel::ground_contact) at the given
+    //mount height/Z - e.g. the idler (front) or drive sprocket (rear) visible in the
+    //tank_tracks mesh above the road-wheel band. Call after SetupWheels, once per raised
+    //wheel position (see ApplicationTank::Init for how the positions were derived from the
+    //mesh itself).
+    void AddNonContactWheel(float track_offset_x, float mount_height, float z);
+
+    //Derived once from the tank_wheel asset's own mesh extents (see ApplicationTank::Init),
+    //not hand-tuned - used only to convert a wheel's along-track speed into a visual spin
+    //rate (UpdatePhysicsState's wheel.roll_angle accumulation below). 0 skips spin entirely,
+    //so a build that never sets this just leaves the wheels visually static, as before.
+    float wheel_radius = 0.0f;
 
     //Soft cap (m/s): stop adding more drive force once real physics velocity reaches this.
     float top_speed = 1.0f;
@@ -197,6 +226,18 @@ public:
     Object* turret = NULL;
     Object* turret_target = NULL;
     float turret_turn_speed = 2.0f; //Radians per second
+
+    //Firing: kicks the barrel back along its own bore axis (springing back over subsequent
+    //ticks) and gives the hull an instant shove opposite the turret's aim. Physics has no
+    //ApplyImpulse, so the hull kick is a direct velocity add rather than a one-tick force -
+    //a single AddWorldForceAt call integrated over one timestep would be far too weak to feel.
+    void Fire();
+    float recoil_kick_speed = 2.5f;            //m/s added to hull velocity, opposite the turret's aim, per shot
+    float turret_recoil_kick = 0.3f;           //metres the barrel snaps back on firing
+    float turret_recoil_recover_speed = 1.5f;  //metres/second the barrel springs back to rest
+    float turret_recoil_offset = 0.0f;         //current backward displacement along the turret's local forward axis
+    vec3 turret_rest_local_pos = {};           //turret's local position before any recoil offset, captured once
+    bool turret_rest_pos_captured = false;
 };
 
 #endif
