@@ -16,33 +16,10 @@ void TankCharacter::UpdatePhysicsState(){
     float timestep = 0.02f; // conservative default; if called more frequently it's fine
 
     //Re-assert any still-active hold-latch, exactly as if RunLogic had just called
-    //Accelerate/Reverse/Brake/SteerLeft/SteerRight this tick from a held key - see
-    //HoldDrive/HoldBrake/HoldSteer below for why this exists.
-    unsigned long long now_ms = GetTickCount64();
-    if (now_ms < gas_latch_until_ms){
-        if (gas_latch_reverse){
-            Reverse(gas_latch_amount);
-        }else{
-            Accelerate(gas_latch_amount);
-        }
-    }
-    if (now_ms < brake_latch_until_ms){
-        Brake(brake_latch_amount);
-    }
-    if (now_ms < steer_latch_until_ms){
-        if (steer_latch_amount < 0.0f){
-            SteerLeft(-steer_latch_amount);
-        }else{
-            SteerRight(steer_latch_amount);
-        }
-    }
-
-    //Steering converges toward 0.
-    if (steering_position < 0){
-        steering_position = clamp(steering_position + 0.05f,-1.0f,0.0f);
-    }else if (steering_position > 0){
-        steering_position = clamp(steering_position - 0.05f,0.0f,1.0f);
-    }
+    //Accelerate/Reverse/Brake/SteerLeft/SteerRight this tick from a held key, and let steering
+    //converge back toward 0 - both shared with any other Vehicle now, see core/Vehicle.cpp.
+    ApplyHoldLatches();
+    DecaySteering();
 
     float reverse_multiplier = f_reverse ? -1.0f : 1.0f;
 
@@ -75,7 +52,11 @@ void TankCharacter::UpdatePhysicsState(){
         quat rotation = physics->GetBodyWorldOrientation();
         vec3 forward = rotation * ref_forward;
         vec3 up = rotation * ref_up;
-        vec3 left = rotation * ref_left;
+        //Built from the basis rather than read off ref_left, which is misnamed and points
+        //right - see Wheel::is_left_side. Only the naming was ever at stake for this particular
+        //vector (it feeds a slip-opposing force, so its sign cancels), but having "left" mean
+        //left in the one function that also decides which track to drive is the point.
+        vec3 left = up.cross(forward);
         vec3 body_world_pos = physics->GetBodyWorldPosition();
         //rp3d's body transform origin is NOT its centre of mass. The hull's box collider is
         //deliberately centred well above the hull origin (see ApplicationTank::Init, which
@@ -222,12 +203,15 @@ void TankCharacter::UpdatePhysicsState(){
             //the ray-missed and compression<=0 bail-outs, so this reconstructs "computed its
             //own roll this tick" without carrying a parallel flag around for it (ContactResult
             //doesn't survive past the loop above). Everything else - airborne, ray missed,
-            //contact disabled - is dragged round by its own track instead.
+            //contact disabled - is a real track's own closed loop still dragging it around at
+            //the track's speed, NOT freewheeling independently the way a car's wheel would (see
+            //Wheel::angular_velocity) - overridden here rather than left alone for exactly that
+            //reason, before WheelSuspension::UpdateVisual integrates roll_angle from it below.
             bool rolled_itself = wheel.can_contact_ground && wheel.grounded && wheel.compression > 0.0f;
-            if (!rolled_itself && tuning.radius > 0.0f){
-                wheel.roll_angle += avg_track_distance[wheel.is_left_side ? 0 : 1] / tuning.radius;
+            if (!rolled_itself && tuning.radius > 0.0f && timestep > 0.0f){
+                wheel.angular_velocity = avg_track_distance[wheel.is_left_side ? 0 : 1] / (timestep * tuning.radius);
             }
-            WheelSuspension::UpdateVisual(wheel,tuning.rest_length);
+            WheelSuspension::UpdateVisual(wheel,tuning.rest_length,timestep);
         }
 
         //Last-resort safety net against a roll/pitch excursion, applied after all of this tick's
@@ -315,92 +299,8 @@ void TankCharacter::Fire(){
     }
 }
 
-void TankCharacter::Accelerate(float factor){
-    //No "brake to stop first" state machine needed anymore - a real opposing force naturally
-    //decelerates the hull before it starts moving the other way, same as an actual vehicle.
-    f_reverse = false;
-    gas_pedal = clamp(factor,0.0f,1.0f);
-    brake_pedal = 0.0f;
-}
-
-void TankCharacter::Brake(float factor){
-    brake_pedal = clamp(factor,0.0f,1.0f);
-    gas_pedal = 0.0f;
-}
-
-void TankCharacter::SteerLeft(float factor){
-    float delta = 0.10f * factor;
-    steering_position = clamp(steering_position - delta,-1.0f,0.0f);
-}
-
-void TankCharacter::SteerRight(float factor){
-    float delta = 0.10f * factor;
-    steering_position = clamp(steering_position + delta,0.0f,1.0f);
-}
-
-void TankCharacter::Reverse(float factor){
-    f_reverse = true;
-    gas_pedal = clamp(factor,0.0f,1.0f);
-    brake_pedal = 0.0f;
-}
-
-void TankCharacter::HoldDrive(bool reverse,float amount,float duration_ms){
-    gas_latch_amount = clamp(amount,0.0f,1.0f);
-    gas_latch_reverse = reverse;
-    gas_latch_until_ms = GetTickCount64() + (unsigned long long)max(duration_ms,0.0f);
-    //Apply immediately too, rather than waiting for the next tick's latch check.
-    if (reverse){
-        Reverse(gas_latch_amount);
-    }else{
-        Accelerate(gas_latch_amount);
-    }
-}
-
-void TankCharacter::HoldBrake(float amount,float duration_ms){
-    brake_latch_amount = clamp(amount,0.0f,1.0f);
-    brake_latch_until_ms = GetTickCount64() + (unsigned long long)max(duration_ms,0.0f);
-    Brake(brake_latch_amount);
-}
-
-void TankCharacter::HoldSteer(float signed_amount,float duration_ms){
-    steer_latch_amount = clamp(signed_amount,-1.0f,1.0f);
-    steer_latch_until_ms = GetTickCount64() + (unsigned long long)max(duration_ms,0.0f);
-    if (steer_latch_amount < 0.0f){
-        SteerLeft(-steer_latch_amount);
-    }else{
-        SteerRight(steer_latch_amount);
-    }
-}
-
-void TankCharacter::ReleaseInputs(){
-    gas_latch_until_ms = 0;
-    brake_latch_until_ms = 0;
-    steer_latch_until_ms = 0;
-    Brake(0.0f); //releases both gas and brake pedals immediately
-}
-
 void TankCharacter::ResetState(const vec3& pos,const quat& rot){
-    ReleaseInputs();
-    steering_position = 0.0f; //ReleaseInputs only cancels latches - this normally decays
-                               //toward 0 over several ticks (see UpdatePhysicsState), too slow
-                               //for a reset that's supposed to be instant.
-    f_reverse = false;
-
-    SetPosition(pos);
-    SetRotation(rot);
-
-    if (Physics* physics = GetPhysics()){
-        physics->SetVelocity(vec3());
-        physics->SetAngularVelocity(vec3());
-        physics->WakeUp(); //a sleeping body ignores this teleport's next tick of forces too -
-                            //same issue as gas/brake/steer, see UpdatePhysicsState's comment
-    }
-
-    for (Wheel& wheel : wheels){
-        wheel.roll_angle = 0.0f;
-        wheel.compression = 0.0f;
-        wheel.grounded = false;
-    }
+    Vehicle::ResetState(pos,rot);
     turret_recoil_offset = 0.0f;
 }
 
@@ -409,8 +309,11 @@ void TankCharacter::SetupWheels(float track_offset_x,float half_length,float mou
     wheels_per_side = max(wheels_per_side,1);
     for (int side = 0; side < 2; side++){
         bool is_left = (side == 0);
-        //+X = left, matching Object::GetLeft()/ref_left's convention.
-        float x = is_left ? track_offset_x : -track_offset_x;
+        //-X = left: this engine is right-handed with forward = -Z and up = +Y, so the driver's
+        //left is up.cross(forward) = -X. See Wheel::is_left_side - Object::ref_left is misnamed
+        //and points the other way, and taking it at face value here is what put left_command on
+        //the right-hand track and reversed the tank's steering.
+        float x = is_left ? -track_offset_x : track_offset_x;
         for (int i = 0; i < wheels_per_side; i++){
             float t = (wheels_per_side == 1) ? 0.5f : (float)i / (float)(wheels_per_side - 1);
             float z = fmap(t,0.0f,1.0f,-half_length,half_length);
@@ -440,7 +343,7 @@ void TankCharacter::AddRaisedWheel(float track_offset_x,float z,float hub_rest_h
 
     for (int side = 0; side < 2; side++){
         bool is_left = (side == 0);
-        float x = is_left ? track_offset_x : -track_offset_x;
+        float x = is_left ? -track_offset_x : track_offset_x; //-X = left, see SetupWheels
         Wheel wheel;
         //The caller states where the hub should REST; the anchor is wherever that puts it,
         //back up the suspension axis. For an angled axis that shifts the anchor in Z as well

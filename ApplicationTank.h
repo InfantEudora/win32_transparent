@@ -3,9 +3,11 @@
 
 #include "Application.h"
 #include "TankCharacter.h"
+#include "BuggyCharacter.h"
 #include "Heightmap.h"
 #include "ParticleEmitter.h"
 #include "tinygltf/json.hpp"
+#include <vector>
 
 using json = nlohmann::json;
 
@@ -21,6 +23,10 @@ public:
 
     void DrawImGuiUI(void) override;
     void RenderTankWheelDebugUI(void);
+    //Shared by the tank and buggy sections of RenderTankWheelDebugUI - the per-wheel table only
+    //ever reads/writes Wheel fields and Vehicle::WheelRadius/WheelRestLength/WheelTravel, none
+    //of which are vehicle-specific, so one function renders it for whichever Vehicle is passed.
+    void RenderVehicleWheelTable(Vehicle* vehicle);
 
     Object* compass = NULL;
     Object* target = NULL;
@@ -51,6 +57,17 @@ public:
     vec3 tank_start_position = {};
     quat tank_start_rotation = {};
 
+    //Same idea, captured once the buggy is spawned.
+    vec3 buggy_start_position = {};
+    quat buggy_start_rotation = {};
+
+    //Suspension test bed: one static box-collider prop per buggy wheel (same order as
+    //controlled_buggy->wheels), spawned directly below each wheel's reach. The buggy's own body
+    //is held STATIC and suspended in mid-air while this is in use (see Init()), so dragging one
+    //of these up into a wheel's raycast is what compresses that wheel's suspension - the "Buggy
+    //Suspension Test Bed" panel in RenderTankWheelDebugUI is what does the dragging.
+    std::vector<Object*> buggy_test_cubes;
+
     void DumpTerrainVertices();
     void TestHeightmapRoundTrip();
     void TestHeightmapMesh();
@@ -65,6 +82,25 @@ public:
     bool SpawnBridge(const vec3& pos, float yaw_degrees);
 
     TankCharacter* controlled_tank = NULL;
+    BuggyCharacter* controlled_buggy = NULL;
+
+    //Whichever of controlled_tank/controlled_buggy currently receives keyboard/RunLogic input -
+    //toggled by the "Controlling" selector in RenderTankWheelDebugUI. Both vehicles exist and
+    //simulate simultaneously; this only decides where the arrow keys/fire key go. NULL until
+    //Init() has spawned at least one of them.
+    Vehicle* controlled_vehicle = NULL;
+    void SetControlledVehicle(Vehicle* vehicle);
+
+    //Moves camera_target (the point the middle-mouse orbit/zoom pivots around) onto the
+    //controlled vehicle, carrying the camera along by the same delta so the current viewing
+    //angle and distance are preserved - a snap of the PIVOT, not a jump to a fixed chase pose.
+    //No-op with no controlled vehicle. Called by the "Snap To Vehicle" button, and every frame
+    //while f_camera_follow_vehicle is set.
+    void SnapCameraToControlledVehicle();
+    //While set, SnapCameraToControlledVehicle runs every frame, so the orbit pivot rides along
+    //with the vehicle and the camera keeps whatever angle/distance the mouse last set. Orbiting
+    //and zooming stay fully usable while following, since both are relative to the pivot.
+    bool f_camera_follow_vehicle = false;
 private:
     vec3 camera_target = {};
 };

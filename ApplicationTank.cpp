@@ -12,6 +12,19 @@ ApplicationTank::ApplicationTank():Application(){
     debug->Info("Created new ApplicationTank.\n");
 };
 
+//Switches which vehicle the arrow keys/fire key drive (see the "Controlling" selector in
+//RenderTankWheelDebugUI). Releases the outgoing vehicle's own pedals/steering/hold-latches
+//first - without this, switching away mid-throttle would leave it silently coasting forever on
+//whatever gas_pedal it last had (nothing re-asserts or decays it once nothing calls
+//ApplyHoldLatches against a fresh key state for it - Accelerate/etc. are only ever called from
+//here, on whichever vehicle is currently controlled).
+void ApplicationTank::SetControlledVehicle(Vehicle* vehicle){
+    if (controlled_vehicle && controlled_vehicle != vehicle){
+        controlled_vehicle->ReleaseInputs();
+    }
+    controlled_vehicle = vehicle;
+}
+
 void ApplicationTank::Init(void){
     //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
@@ -43,6 +56,21 @@ void ApplicationTank::Init(void){
         sun->viewport.zoom = 10;
         sun->SetLookAt(vec3());
         main_scene->AddObject(sun);
+
+        //A point light just above the floor, near where both vehicles spawn. The sun alone is
+        //directional, so it lights every surface by its angle to one fixed direction and leaves
+        //the underside of a vehicle - wheels, suspension, the gap the tracks sit in - flat and
+        //unreadable, which is exactly the geometry this project is usually looking at. A local
+        //light low to the ground puts a visible falloff and a real highlight on those parts.
+        PointLight* floor_lamp = new PointLight();
+        floor_lamp->name = "Point Light (Floor)";
+        floor_lamp->SetPosition(vec3(0,1.0f,0));
+        floor_lamp->color = vec3(1.0f,0.95f,0.85f);
+        //4 rather than 8: at 8 the pool directly under it saturates to flat white and the
+        //terrain's own relief inside that radius stops being readable at all, which defeats the
+        //point of adding it. Tune freely - it is a debug/readability light, not an art choice.
+        floor_lamp->brightness = 4.0f;
+        main_scene->AddObject(floor_lamp);
     }
 
     gltfloader.LoadGLTFFile("data/tank.glb");
@@ -204,9 +232,217 @@ void ApplicationTank::Init(void){
 
     controlled_tank->turret_target = target;
     target->SetPickability(false);
-    controlled_tank->SetPosition(vec3(0,0.05,0));
+    controlled_tank->SetPosition(vec3(-4,0.05,0));
     tank_start_position = controlled_tank->GetPosition();
     tank_start_rotation = controlled_tank->GetRotation();
+    SetControlledVehicle(controlled_tank); //keyboard input defaults to the tank until switched
+
+    //Buggy: a 4-wheeled, front-steered vehicle sharing the tank's wheel/suspension code (see
+    //core/Wheel.h/BuggyCharacter.h). Spawned alongside the tank rather than replacing it - both
+    //simulate all the time, and the "Controlling" toggle in RenderTankWheelDebugUI decides which
+    //one the arrow keys/fire key drive (see ApplicationTank::SetControlledVehicle).
+    controlled_buggy = new BuggyCharacter();
+    assetmanager->GetObjectFromAsset("buggy_base",controlled_buggy);
+    if (Object* buggy_interior = assetmanager->GetObjectFromAsset("buggy_interior")){
+        buggy_interior->name = "Buggy Interior";
+        controlled_buggy->AttachChild(buggy_interior); //decoration only, no physics of its own - same role as the tank's tank_top
+    }
+    controlled_buggy->name = "Buggy";
+    main_scene->AddObject(controlled_buggy);
+
+    //Suspension test bed height - the body sits pinned here (see SetStatic(true) below) with
+    //nothing under its wheels by default; buggy_test_cubes are what a wheel's raycast actually
+    //finds, once dragged up into reach via the debug UI.
+    const vec3 buggy_suspended_position(1.0f,1.5f,0.0f);
+
+    controlled_buggy->AddPhysics(main_scene->physics_world);
+    if (Physics* physics = controlled_buggy->GetPhysics()){
+        //Front/rear wheels are visually different sizes (buggy_wheel_front/buggy_wheel_back) -
+        //read directly off each mesh, same probing approach as the tank's single wheel_radius,
+        //then applied per wheel below via Wheel::radius (0 = inherit controlled_buggy->wheel_radius).
+        float front_radius = 0.0f, rear_radius = 0.0f;
+        if (Mesh* front_mesh = assetmanager->GetMeshFromAsset("buggy_wheel_front")){
+            vec3 e = front_mesh->GetExtents() * 0.5f;
+            front_radius = max(e.y,e.z);
+        }
+        if (Mesh* rear_mesh = assetmanager->GetMeshFromAsset("buggy_wheel_back")){
+            vec3 e = rear_mesh->GetExtents() * 0.5f;
+            rear_radius = max(e.y,e.z);
+        }
+        controlled_buggy->wheel_radius = rear_radius > 0.0f ? rear_radius : front_radius;
+
+        //Same "one box collider for mass/incidental collision only, the wheels do the actual
+        //ground support" split as the tank - see its own collider comment above for why the
+        //bottom face is trimmed up rather than left at true ground level (a second, independent
+        //rigid contact would fight the wheels' own spring force every tick). Using a wheel
+        //radius as the clearance stand-in here since there's no separate tracks-style mesh to
+        //measure it from, same reasoning the tank uses wheel_radius for in its own rest_length.
+        vec3 extent = controlled_buggy->GetMesh() ? controlled_buggy->GetMesh()->GetExtents() * 0.5f : vec3(1,0.4f,2);
+        float ground_clearance = max(front_radius,rear_radius);
+        vec3 box_extent = vec3(extent.x,max(extent.y - ground_clearance * 0.5f,0.01f),extent.z);
+        vec3 box_center = vec3(0,extent.y + ground_clearance * 0.5f,0);
+
+        float target_mass_kg = 60.0f; //first guess, lighter than the tank's own 100kg - expect to retune live, see BuggyCharacter's own tuning comments
+        float volume = max((extent.x * 2.0f) * (extent.y * 2.0f) * (extent.z * 2.0f),0.001f);
+        float density = target_mass_kg / volume;
+        physics->AddBoxCollider(box_extent,box_center,quat().identity(),density);
+        physics->SetFrictionCoefficient(0.5f);
+        physics->SetBounciness(0.0f);
+        //Suspension test bed: the body is held STATIC (immune to every force, including its own
+        //wheels' spring force and gravity) and hangs in mid-air, so each wheel's raycast/
+        //compression/spring math still runs and its visual still bobs/scales, but nothing here
+        //moves the chassis. What moves is buggy_test_cubes below - static box colliders you drag
+        //up into a wheel's reach via the "Buggy Suspension Test Bed" debug UI panel, to watch one
+        //wheel's suspension respond in isolation. Swap SetStatic(false) back on (and stop pinning
+        //the body to a fixed height below) once it's time to actually drive the thing.
+        physics->SetStatic(true);
+        physics->SetGravityEnabled(false);
+
+        //First-pass geometry derived from the body mesh's own extents, exactly like the tank's
+        //own bootstrap numbers were before being probed/measured precisely (see its SetupWheels
+        //call above) - expect these to be replaced with exact anchor points once you've placed
+        //and measured buggy_suspension/buggy_wheel_front/buggy_wheel_back in Blender.
+        float track_half_width = extent.x * 0.75f;
+        float half_wheelbase = extent.z * 0.6f;
+        float mount_height = extent.y * 0.5f;
+        controlled_buggy->SetupWheels(track_half_width,half_wheelbase,mount_height);
+
+        //Both axles: measured directly in Blender (2026-08-31) rather than derived from the body
+        //mesh like the rest of this block - the real geometry is now the source of truth. Every
+        //wheel here comes from the one front-left measurement: the right side of each axle
+        //mirrors the left (negate X - same convention Wheel::is_left_side/local_offset.x already
+        //use everywhere else), and the rear axle mirrors the front (negate the BLENDER-space Y,
+        //i.e. before axis conversion - front and back sit the same distance out and up, just on
+        //opposite ends of the wheelbase).
+        //
+        //Wheel::local_offset is the suspension ANCHOR, not the hub (see Wheel's own comment) -
+        //the two were given as separate points, so suspension_axis/rest_length are derived from
+        //the vector between them rather than assumed to be a plain vertical strut.
+        {
+            //The glTF export already re-derives mesh/node geometry into this engine's own axes,
+            //but numbers copied BY HAND out of Blender's own transform panel are still in
+            //Blender's axes (Z-up) and need converting: X is unchanged, Blender's Z becomes this
+            //engine's Y, and Blender's Y becomes this engine's -Z. It's an orientation-preserving
+            //change of basis (a plain rotation, not a reflection), so a rotation's quaternion
+            //vector part (x,y,z) converts with the exact same remap; w is unaffected.
+            auto FromBlenderPos = [](const vec3& b){ return vec3(b.x,b.z,-b.y); };
+            auto FromBlenderRot = [](const quat& b){ return quat(b.x,b.z,-b.y,b.w); };
+
+            //Front-left, in Blender's own axes - everything else in this block is mirrored from
+            //just these three values.
+            const vec3 front_left_hub_bl(-0.27f,0.35f,0.12f);
+            const vec3 front_left_anchor_bl(-0.15f,0.33f,0.27f);
+            //Component order assumed to be this engine's own (x,y,z,w), same as the position
+            //fields above - not yet confirmed against Blender's own quaternion display order
+            //(which shows W first), so this is the one part of this block still worth double-
+            //checking against the render if the suspension mesh looks twisted.
+            const quat front_left_suspension_rotation_bl(0.38f,0.0f,0.92f,0.0f);
+
+            for (Wheel& wheel : controlled_buggy->wheels){
+                bool is_left = wheel.is_left_side;
+                bool is_front = wheel.is_front_side;
+
+                //Mirror the rear axle from the front BEFORE converting axes - flipping Blender's
+                //own Y (front/back) is what "the back wheel sits the same, just further back"
+                //means in the space these numbers were measured in.
+                vec3 hub_bl = front_left_hub_bl;
+                vec3 anchor_bl = front_left_anchor_bl;
+                if (!is_front){
+                    hub_bl.y = -hub_bl.y;
+                    anchor_bl.y = -anchor_bl.y;
+                }
+                vec3 hub = FromBlenderPos(hub_bl);
+                vec3 anchor = FromBlenderPos(anchor_bl);
+                quat suspension_rotation = FromBlenderRot(front_left_suspension_rotation_bl);
+                if (!is_left){
+                    //Mirroring a rotation across the vehicle's centreline (negate X) negates the
+                    //other two vector components and keeps X and W - see core/Wheel.cpp's own
+                    //note on this same reasoning for the TODO nearby.
+                    hub.x = -hub.x;
+                    anchor.x = -anchor.x;
+                    suspension_rotation = quat(suspension_rotation.x,-suspension_rotation.y,
+                                                -suspension_rotation.z,suspension_rotation.w);
+                }
+
+                vec3 diff = hub - anchor;
+                float length = diff.length();
+                wheel.local_offset = anchor;
+                if (length > 0.0001f){
+                    wheel.suspension_axis = diff * (1.0f / length);
+                    wheel.rest_length = length;
+                }
+                wheel.suspension_visual_rotation = suspension_rotation;
+                //The same wheel asset is used on both sides of each axle - flipping the hubcap
+                //to face outward on the right needs the wheel's own base orientation mirrored
+                //too, composed under the roll spin (and, for the front axle, the steer yaw) by
+                //WheelSuspension::UpdateVisual/BuggyCharacter::UpdatePhysicsState. A 180 degree
+                //rotation around UP (Y), same axis steering already rotates around, so the two
+                //commute and the mirrored wheel's STEERING direction comes out correct (confirmed
+                //live: a Z-axis flip here left the right wheel steering opposite the left).
+                //
+                //That same rotation-based mirror then gets ROLLING direction backwards instead
+                //(confirmed live too - a rotation can only stay consistent with ONE other
+                //rotation it's composed with, whichever shares its axis), so visual_mirrored
+                //tells WheelSuspension::UpdateVisual to negate roll_angle for just this wheel's
+                //own rendering - see its own comment for why that's the fix rather than a true
+                //reflection (this renderer's fixed backface-culling winding order would need
+                //handling too for a mirrored scale to render right-side-out).
+                wheel.visual_base_rotation = is_left ? quat(0,0,0,1) : quat(vec3(0,1,0),TYPE_PI);
+                wheel.visual_mirrored = !is_left;
+            }
+        }
+
+        //One buggy_wheel_front/buggy_wheel_back and one buggy_suspension Object per Wheel,
+        //parented to the body and placed at its actual mount point - same visual-reference role
+        //as the tank's per-wheel tank_wheel Objects. Followed tick to tick by
+        //WheelSuspension::UpdateVisual (bob+spin for the wheel, position+orient+scale for the
+        //spring) once BuggyCharacter::UpdatePhysicsState starts running.
+        for (Wheel& wheel : controlled_buggy->wheels){
+            wheel.radius = wheel.is_front_side ? front_radius : rear_radius; //0 falls back to wheel_radius above if a mesh was missing
+
+            Object* wheel_visual = assetmanager->GetObjectFromAsset(wheel.is_front_side ? "buggy_wheel_front" : "buggy_wheel_back");
+            if (wheel_visual){
+                wheel_visual->name = "Buggy Wheel";
+                controlled_buggy->AttachChild(wheel_visual);
+                wheel_visual->SetPosition(wheel.local_offset + wheel.suspension_axis * controlled_buggy->WheelRestLength(wheel));
+                wheel.visual = wheel_visual;
+            }
+
+            Object* suspension_visual = assetmanager->GetObjectFromAsset("buggy_suspension");
+            if (suspension_visual){
+                suspension_visual->name = "Buggy Suspension";
+                controlled_buggy->AttachChild(suspension_visual);
+                suspension_visual->SetPosition(wheel.local_offset); //the anchor - the modeled spring's own origin
+                wheel.suspension_visual = suspension_visual;
+            }
+
+            //One static "crate" box per wheel, placed in WORLD space (not attached to the
+            //body - the body doesn't move while suspended, but these need to be dragged
+            //independently of it) below the wheel's own rest hub position, clear of every
+            //wheel's raycast reach by default. Dragging one up in the "Buggy Suspension Test
+            //Bed" debug UI panel is what a wheel's ray then actually finds.
+            Object* test_cube = assetmanager->GetObjectFromAsset("crate");
+            if (test_cube){
+                test_cube->name = "Buggy Suspension Test Cube";
+                main_scene->AddObject(test_cube);
+                test_cube->AddPhysics(main_scene->physics_world);
+                if (Physics* cube_physics = test_cube->GetPhysics()){
+                    vec3 cube_extent = test_cube->GetMesh() ? test_cube->GetMesh()->GetExtents() * 0.5f : vec3(0.25f,0.25f,0.25f);
+                    cube_physics->AddBoxCollider(cube_extent,vec3(0,cube_extent.y,0),quat().identity(),1.0f); //density irrelevant, static
+                    cube_physics->SetFrictionCoefficient(0.8f);
+                    cube_physics->SetBounciness(0.0f);
+                    cube_physics->SetStatic(true);
+                }
+                vec3 hub_rest_local = wheel.local_offset + wheel.suspension_axis * wheel.rest_length;
+                test_cube->SetPosition(buggy_suspended_position + vec3(hub_rest_local.x,hub_rest_local.y - 0.7f,hub_rest_local.z));
+                buggy_test_cubes.push_back(test_cube);
+            }
+        }
+    }
+
+    controlled_buggy->SetPosition(buggy_suspended_position);
+    buggy_start_position = controlled_buggy->GetPosition();
+    buggy_start_rotation = controlled_buggy->GetRotation();
 
     //Placeholder impact effect for Fire() (see RunLogic): bursts copies of the target marker
     //itself outward from the target's position. Needs its own RRandom, same as every other
@@ -778,6 +1014,16 @@ void ApplicationTank::DumpTerrainVertices(){
 
 //Called before update physics
 void ApplicationTank::RunLogic(){
+    //Before every early-out below, deliberately. The vehicle keeps moving whether or not the
+    //window has focus and whether or not the cursor happens to be over a debug panel, so a
+    //follow that sat further down would let the camera fall behind exactly while the panel is
+    //being used to watch something - which is most of the time this is on. Doing it first also
+    //means this frame's own orbit/zoom pivots around where the vehicle is NOW, not where it was
+    //last frame.
+    if (f_camera_follow_vehicle){
+        SnapCameraToControlledVehicle();
+    }
+
     //Only when in focus
     if (!main_window->f_has_focus){
         return;
@@ -789,10 +1035,13 @@ void ApplicationTank::RunLogic(){
 
     //Track the target on the terrain under the mouse cursor. If the cursor isn't over the
     //terrain (eg. over the sky, or over the tank itself), leave the target where it is.
-    if (target && heightmap_mesh_test){
-        if (input->GetHoveredObjectID() == heightmap_mesh_test->GetID()){
+    if ((controlled_vehicle == controlled_tank) && target && heightmap_mesh_test){
+        target->SetVisibility(true);
+        if (input->GetHoveredObjectID() != OBJECTID_INVALID){
             target->SetPosition(input->GetHoveredPosition());
         }
+    }else{
+        target->SetVisibility(false);
     }
 
     //All further code requires the cursor not to be above an UI element
@@ -804,20 +1053,24 @@ void ApplicationTank::RunLogic(){
 
     CheckObjectSelection();
 
-    if (controlled_tank){
+    //Routed to whichever vehicle is currently selected (see the "Controlling" toggle in
+    //RenderTankWheelDebugUI) - Accelerate/Reverse/SteerLeft/SteerRight are on Vehicle, shared by
+    //both TankCharacter and BuggyCharacter, so the same four keys drive whichever one is active.
+    //Firing stays tank-only: BuggyCharacter has no turret.
+    if (controlled_vehicle){
         if (input->IsKeyDown(INPUT_TURN_UP)){
-            controlled_tank->Accelerate(1.0f);
+            controlled_vehicle->Accelerate(1.0f);
         }
         if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            controlled_tank->Reverse(1.0f);
+            controlled_vehicle->Reverse(1.0f);
         }
         if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            controlled_tank->SteerLeft(1.0f);
+            controlled_vehicle->SteerLeft(1.0f);
         }
         if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-            controlled_tank->SteerRight(1.0f);
+            controlled_vehicle->SteerRight(1.0f);
         }
-        if (input->WasKeyReleased(INPUT_FIRE)){
+        if (input->WasKeyReleased(INPUT_FIRE) && controlled_vehicle == controlled_tank && controlled_tank){
             controlled_tank->Fire();
             if (fire_impact_emitter && target){
                 //Local, not world, position - target is a root object (added straight to
@@ -880,42 +1133,39 @@ void ApplicationTank::RunLogic(){
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 }
 
+void ApplicationTank::SnapCameraToControlledVehicle(){
+    if (!controlled_vehicle || !main_scene || !main_scene->camera){
+        return;
+    }
+    //Render-state position (the default read), not STATE_ACCESS_PHYSICS: this runs on the frame
+    //thread and the camera should sit on the vehicle as DRAWN. The render state lags the physics
+    //state by a frame, but taking the fresher one would put the camera a frame ahead of the
+    //vehicle in the same image, which reads as the vehicle jittering against a camera that has
+    //already moved - worse than a lag both share.
+    vec3 vehicle_pos = controlled_vehicle->GetWorldPosition();
+    //Translate the camera by the same delta rather than re-aiming it: the pivot moves, the
+    //viewing angle and distance the user set with the mouse are left exactly as they were.
+    vec3 delta = vehicle_pos - camera_target;
+    main_scene->camera->SetPosition(main_scene->camera->GetPosition() + delta);
+    camera_target = vehicle_pos;
+}
+
 void ApplicationTank::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
     RenderTankWheelDebugUI();
 }
 
-void ApplicationTank::RenderTankWheelDebugUI(){
-    ImGui::Begin("Tank Wheels [Debug]");
-    if (!controlled_tank){
-        ImGui::Text("No controlled_tank");
-        ImGui::End();
+//Renders the per-wheel table for whichever Vehicle is passed - the table only ever reads/writes
+//Wheel fields and Vehicle::WheelRadius/WheelRestLength/WheelTravel, none of which are
+//vehicle-specific, so this is shared between the tank and buggy sections of
+//RenderTankWheelDebugUI below rather than duplicated per vehicle type.
+void ApplicationTank::RenderVehicleWheelTable(Vehicle* vehicle){
+    if (!vehicle){
         return;
     }
-
-    ImGui::Text("Gas Pedal      : %.2f",controlled_tank->gas_pedal);
-    ImGui::Text("Brake Pedal    : %.2f",controlled_tank->brake_pedal);
-    ImGui::Text("Steering       : %.2f",controlled_tank->steering_position);
-    ImGui::Text("Reverse        : %s",controlled_tank->f_reverse ? "true" : "false");
-
-    if (ImGui::Button("Reset Tank To Start")){
-        controlled_tank->ResetState(tank_start_position,tank_start_rotation);
-    }
-
-    if (ImGui::Checkbox("Show pink wheel debug visuals (vs. tracks mesh)",&f_show_wheel_debug_visuals)){
-        for (Wheel& wheel:controlled_tank->wheels){
-            if (wheel.visual){
-                wheel.visual->SetVisibility(f_show_wheel_debug_visuals);
-            }
-        }
-        if (tank_tracks){
-            tank_tracks->SetVisibility(!f_show_wheel_debug_visuals);
-        }
-    }
-    ImGui::Separator();
-
-    if (ImGui::BeginTable("tank_wheels",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollX)){
+    ImGui::PushID(vehicle);
+    if (ImGui::BeginTable("vehicle_wheels",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollX)){
         ImGui::TableSetupColumn("#");
         ImGui::TableSetupColumn("Side");
         ImGui::TableSetupColumn("Kind");
@@ -929,7 +1179,7 @@ void ApplicationTank::RenderTankWheelDebugUI(){
         ImGui::TableHeadersRow();
 
         int i = 0;
-        for (Wheel& wheel:controlled_tank->wheels){
+        for (Wheel& wheel:vehicle->wheels){
             ImGui::TableNextRow();
             ImGui::PushID(i);
 
@@ -945,7 +1195,8 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             //it's off, which is the quickest way to find out what one contact is contributing.
             ImGui::Checkbox("##can_contact",&wheel.can_contact_ground);
             ImGui::SameLine();
-            ImGui::Text("%s%s",wheel.is_road_wheel ? "Road" : "Idler/sprocket",
+            ImGui::Text("%s%s%s",wheel.is_road_wheel ? "Road" : "Idler/sprocket",
+                                wheel.steerable ? " (steer)" : "",
                                 wheel.driven ? "" : " (undriven)");
 
             ImGui::TableSetColumnIndex(3);
@@ -960,8 +1211,8 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::Text("%.4f",wheel.compression);
 
             ImGui::TableSetColumnIndex(5);
-            //Writes straight into wheel.local_offset - the next raycast (mount_world in
-            //TankCharacter::UpdatePhysicsState) and the wheel's visual both read it fresh every
+            //Writes straight into wheel.local_offset - the next raycast (mount_world in each
+            //vehicle's own UpdatePhysicsState) and the wheel's visual both read it fresh every
             //tick, so a drag here takes effect immediately, no rebuild needed to try a new mount
             //point. Note this is the suspension ANCHOR, not the hub: the wheel itself hangs
             //rest_length below it along the axis, so the visual won't sit where this says.
@@ -969,20 +1220,20 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::DragFloat3("##local_offset",(float*)&wheel.local_offset,0.005f,-2.0f,2.0f,"%.3f");
 
             //The next three show what this wheel RESOLVES to (Wheel's own value, or the
-            //character-level default when it's left at 0) and only write a per-wheel override
-            //once actually dragged - so the six road wheels keep inheriting one shared spring
-            //until you deliberately single one out. Dragging a value back to exactly 0 hands it
-            //back to the default.
+            //vehicle-level default when it's left at 0) and only write a per-wheel override
+            //once actually dragged - so wheels keep inheriting one shared spring until you
+            //deliberately single one out. Dragging a value back to exactly 0 hands it back to
+            //the default.
             ImGui::TableSetColumnIndex(6);
             ImGui::SetNextItemWidth(70.0f);
-            float radius = controlled_tank->WheelRadius(wheel);
+            float radius = vehicle->WheelRadius(wheel);
             if (ImGui::DragFloat("##radius",&radius,0.001f,0.0f,0.5f,"%.4f")){
                 wheel.radius = radius;
             }
 
             ImGui::TableSetColumnIndex(7);
             ImGui::SetNextItemWidth(120.0f);
-            float rest_travel[2] = {controlled_tank->WheelRestLength(wheel),controlled_tank->WheelTravel(wheel)};
+            float rest_travel[2] = {vehicle->WheelRestLength(wheel),vehicle->WheelTravel(wheel)};
             if (ImGui::DragFloat2("##rest_travel",rest_travel,0.002f,0.0f,0.5f,"%.3f")){
                 wheel.rest_length = rest_travel[0];
                 wheel.travel = rest_travel[1];
@@ -1002,5 +1253,109 @@ void ApplicationTank::RenderTankWheelDebugUI(){
         }
         ImGui::EndTable();
     }
+    ImGui::PopID();
+}
+
+void ApplicationTank::RenderTankWheelDebugUI(){
+    ImGui::Begin("Vehicle Debug");
+
+    ImGui::Text("Controlling:");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Tank",controlled_vehicle == controlled_tank) && controlled_tank){
+        SetControlledVehicle(controlled_tank);
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(controlled_buggy == NULL);
+    if (ImGui::RadioButton("Buggy",controlled_vehicle == controlled_buggy) && controlled_buggy){
+        SetControlledVehicle(controlled_buggy);
+    }
+    ImGui::EndDisabled();
+
+    //Camera pivot. Both act on camera_target, the point the middle-mouse orbit and the wheel
+    //zoom already work relative to - so following leaves every existing camera control working
+    //exactly as before, just around a moving point instead of a fixed one.
+    ImGui::Text("Camera:");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(controlled_vehicle == NULL);
+    if (ImGui::Button("Snap To Vehicle")){
+        SnapCameraToControlledVehicle();
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Follow",&f_camera_follow_vehicle);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(pivot only - orbit/zoom still work)");
+    ImGui::Separator();
+
+    if (controlled_tank){
+        if (ImGui::CollapsingHeader("Tank",ImGuiTreeNodeFlags_DefaultOpen)){
+            ImGui::PushID("tank_section");
+            ImGui::Text("Gas Pedal      : %.2f",controlled_tank->gas_pedal);
+            ImGui::Text("Brake Pedal    : %.2f",controlled_tank->brake_pedal);
+            ImGui::Text("Steering       : %.2f",controlled_tank->steering_position);
+            ImGui::Text("Reverse        : %s",controlled_tank->f_reverse ? "true" : "false");
+
+            if (ImGui::Button("Reset Tank To Start")){
+                controlled_tank->ResetState(tank_start_position,tank_start_rotation);
+            }
+
+            if (ImGui::Checkbox("Show pink wheel debug visuals (vs. tracks mesh)",&f_show_wheel_debug_visuals)){
+                for (Wheel& wheel:controlled_tank->wheels){
+                    if (wheel.visual){
+                        wheel.visual->SetVisibility(f_show_wheel_debug_visuals);
+                    }
+                }
+                if (tank_tracks){
+                    tank_tracks->SetVisibility(!f_show_wheel_debug_visuals);
+                }
+            }
+            ImGui::Separator();
+            RenderVehicleWheelTable(controlled_tank);
+            ImGui::PopID();
+        }
+    }
+
+    if (controlled_buggy){
+        if (ImGui::CollapsingHeader("Buggy",ImGuiTreeNodeFlags_DefaultOpen)){
+            ImGui::PushID("buggy_section");
+            ImGui::Text("Gas Pedal      : %.2f",controlled_buggy->gas_pedal);
+            ImGui::Text("Brake Pedal    : %.2f",controlled_buggy->brake_pedal);
+            ImGui::Text("Steering       : %.2f",controlled_buggy->steering_position);
+            ImGui::Text("Reverse        : %s",controlled_buggy->f_reverse ? "true" : "false");
+            ImGui::DragFloat("Power Split (0=RWD, 1=FWD)",&controlled_buggy->power_split_front,0.01f,0.0f,1.0f,"%.2f");
+
+            if (ImGui::Button("Reset Buggy To Start")){
+                controlled_buggy->ResetState(buggy_start_position,buggy_start_rotation);
+            }
+            ImGui::Separator();
+            RenderVehicleWheelTable(controlled_buggy);
+
+            //Suspension test bed: one drag control per buggy_test_cubes entry (same order as
+            //controlled_buggy->wheels - see Init()). The body is pinned static/suspended while
+            //this is in use, so dragging a cube up into a wheel's reach is what compresses it -
+            //watch that wheel's row above (Compression/Grounded) and the visual bob/spring scale
+            //respond live.
+            if (!buggy_test_cubes.empty()){
+                ImGui::Separator();
+                ImGui::Text("Buggy Suspension Test Bed");
+                for (size_t i = 0; i < buggy_test_cubes.size() && i < controlled_buggy->wheels.size(); i++){
+                    Object* cube = buggy_test_cubes[i];
+                    if (!cube){ continue; }
+                    ImGui::PushID((int)i);
+                    const Wheel& wheel = controlled_buggy->wheels[i];
+                    ImGui::Text("%s %s",wheel.is_front_side ? "Front" : "Rear",wheel.is_left_side ? "Left" : "Right");
+                    ImGui::SameLine();
+                    vec3 pos = cube->GetPosition();
+                    ImGui::SetNextItemWidth(220.0f);
+                    if (ImGui::DragFloat3("##cube_pos",(float*)&pos,0.01f,-3.0f,3.0f,"%.3f")){
+                        cube->SetPosition(pos);
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::PopID();
+        }
+    }
+
     ImGui::End();
 }

@@ -44,7 +44,18 @@ struct Wheel{
     float friction_coefficient = 0.0f;//Coulomb: max tangential force = this * spring_force
 
     //--- Role ---
-    bool is_left_side = false;   //local_offset.x > 0 - matches Object::GetLeft()/ref_left's convention
+    //local_offset.x < 0. This engine is right-handed with ref_forward = -Z and ref_up = +Y, so
+    //the driver's right is forward x up = +X, and their left is -X. Note that makes
+    //Object::ref_left = (1,0,0) MISNAMED - it points right. Nothing here derives a side from
+    //that constant any more; where a lateral axis is needed it is built as up.cross(forward),
+    //which is -X and genuinely left. Trusting the name instead is what silently put the tank's
+    //two track commands on the wrong sides of the hull and reversed its steering.
+    bool is_left_side = false;
+    //local_offset.z < 0 - matches ref_forward's convention (a front axle sits ahead of the
+    //body origin). Unused by the tank (its road/raised split serves the analogous "which group
+    //of wheels" role there); a 4-wheeled vehicle's front/rear power split reads this instead of
+    //re-deriving it from local_offset every tick.
+    bool is_front_side = false;
     //Descriptive only (debug UI / telemetry): distinguishes a vehicle's "primary" wheels (a
     //tank's road wheels; a car's four) from any secondary ones (a tank's idler/drive sprocket).
     bool is_road_wheel = true;
@@ -62,8 +73,52 @@ struct Wheel{
     //--- Runtime state ---
     float compression = 0.0f;    //current spring compression in metres, 0 = extended/airborne
     bool grounded = false;
-    float roll_angle = 0.0f;     //accumulated wheel spin (radians) around the wheel's own axle, visual only
+    //rad/s, current spin rate around the wheel's own axle - what WheelSuspension::UpdateVisual
+    //actually integrates roll_angle from every tick, regardless of contact state. Deliberately
+    //NOT reset every tick the way the diagnostics below are: WheelSuspension::UpdateContact only
+    //ever WRITES this when the wheel has a real, grounded, compressed contact this tick (the
+    //rolling-without-slip constraint - matches the contact point's own velocity), and leaves it
+    //untouched otherwise, so a wheel that loses contact freewheels at whatever rate it was last
+    //spinning rather than snapping to zero - the same way a real wheel would in the air. A
+    //vehicle whose wheels are mechanically coupled (a tank's own track) overrides this instead of
+    //trusting it for a wheel that didn't compute its own contact this tick - see TankCharacter's
+    //own per-tick loop.
+    float angular_velocity = 0.0f;
+    float roll_angle = 0.0f;     //accumulated wheel spin (radians) around the wheel's own axle, visual only - integrated from angular_velocity, see above
     Object* visual = NULL;       //optional child Object placed at local_offset, followed tick to tick by WheelSuspension::UpdateVisual
+    //Fixed base orientation composed OUTSIDE the roll spin (visual->SetRotation ends up
+    //visual_base_rotation * quat(local-X, +-roll_angle), sign per visual_mirrored below) -
+    //identity leaves plain rolling behavior unchanged (every existing wheel). Exists for a wheel
+    //whose visual is the SAME mesh asset on both sides of the vehicle (e.g. one "front wheel"
+    //asset mirrored left/right): a 180 degree flip here is what turns the hubcap to face outward
+    //on one side without needing a second, mirrored mesh asset.
+    quat visual_base_rotation = quat(0,0,0,1);
+    //True for a wheel whose visual_base_rotation is one of these 180 degree flips - tells
+    //WheelSuspension::UpdateVisual to negate roll_angle for THIS wheel's rotation only (not the
+    //stored value itself, which stays a real, unmirrored physics quantity shared with telemetry
+    //and TankCharacter's own track-averaging).
+    //
+    //Necessary because a single rotation-based "mirror" can only ever stay consistent with ONE
+    //other rotation it's composed with, since two rotations commute only when they share an axis
+    //(see visual_base_rotation's own PI-around-up choice, picked to keep STEERING direction
+    //correct because steering is also around up) - rolling is around local X instead, a
+    //different axis, so composing the same mirror rotation on top of it flips its APPARENT
+    //direction. Negating roll_angle for just the mirrored wheel's visual is what cancels that
+    //back out. (The alternative - a true reflection via a negative-axis scale instead of any
+    //rotation - would fix both at once with no sign games, but this renderer backface-culls with
+    //a fixed winding order, so a mirrored object would need its winding flipped too or render
+    //inside-out; not attempted here.)
+    bool visual_mirrored = false;
+    //Optional child Object representing the spring/strut itself (e.g. a coil-spring mesh),
+    //authored with its own origin at the anchor. WheelSuspension::UpdateVisual places it at the
+    //anchor, applies suspension_visual_rotation as-is (a FIXED orientation, measured once in the
+    //modeling tool and set at spawn time - not derived from suspension_axis, since the authored
+    //mesh's own axes don't necessarily agree with the strut's physics direction), and
+    //non-uniformly scales it along its own local Y by how much of its full rest_length remains
+    //extended - shorter as the wheel compresses, the way a real coil spring visibly does,
+    //without needing a second mesh per compression state.
+    Object* suspension_visual = NULL;
+    quat suspension_visual_rotation = quat(0,0,0,1);
 
     //--- Per-tick force diagnostics. Rewritten from scratch every tick (left at zero for a
     //wheel that never reached the relevant stage) - not fed back into the simulation, purely
@@ -120,10 +175,13 @@ namespace WheelSuspension{
                                  const vec3& com_world, const vec3& velocity,
                                  const vec3& angular_velocity, const vec3& forward, float timestep);
 
-    //Positions/rotates wheel.visual from its current compression/roll_angle - the hub hangs
-    //(rest_length - compression) from the anchor along suspension_axis, and spins around the
-    //vehicle's local X. No-op if wheel.visual is NULL.
-    void UpdateVisual(Wheel& wheel, float rest_length);
+    //First integrates roll_angle by angular_velocity*timestep (see Wheel::angular_velocity for
+    //why this runs unconditionally, contact or no), then positions/rotates wheel.visual from the
+    //result - the hub hangs (rest_length - compression) from the anchor along suspension_axis,
+    //and spins around the vehicle's local X under wheel.visual_base_rotation. Also
+    //positions/rotates/scales wheel.suspension_visual, if set - see its own comment on Wheel.
+    //Each of the two visuals is independently a no-op if left NULL.
+    void UpdateVisual(Wheel& wheel, float rest_length, float timestep);
 }
 
 #endif

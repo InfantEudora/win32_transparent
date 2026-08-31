@@ -93,10 +93,13 @@ ContactResult UpdateContact(Wheel& wheel,const WheelTuning& tuning,Physics* phys
 
     //Rolling-without-slip: the distance this contact rolled along the ground this tick, from
     //the same (already-clamped) point_velocity every force below derives from, so the spin
-    //stays consistent with what the wheel is visibly doing on the ground.
+    //stays consistent with what the wheel is visibly doing on the ground. Sets angular_velocity
+    //(read by WheelSuspension::UpdateVisual to actually integrate roll_angle) rather than
+    //touching roll_angle directly - this IS the "lock to the ground contact's velocity, assuming
+    //0 slip" half of the freewheel/lock mechanic; see Wheel::angular_velocity for the other half.
     float roll_distance = -point_velocity.dot(forward) * timestep;
     if (tuning.radius > 0.0f){
-        wheel.roll_angle += roll_distance / tuning.radius;
+        wheel.angular_velocity = -point_velocity.dot(forward) / tuning.radius;
     }
 
     //Pushed along the actual ground normal, not the body's own (possibly already tilted) up
@@ -111,6 +114,15 @@ ContactResult UpdateContact(Wheel& wheel,const WheelTuning& tuning,Physics* phys
     spring_force = clamp(spring_force,0.0f,tuning.max_force);
     wheel.compression_rate = compression_rate;
     wheel.spring_force = spring_force;
+    //TODO: applied at the ANCHOR (mount_world), not at the actual ground contact (hit.point).
+    //For a near-vertical strut the two sit almost directly above one another, so this is a fine
+    //approximation (the tank's own struts). It stops being one for a heavily raked strut - the
+    //buggy's front suspension anchor sits ~0.22m from its own wheel's ground contact, mostly
+    //horizontally - and applying a mostly-vertical force that far from where it actually acts
+    //injects a real, persistent torque every tick that isn't physically there (observed: a
+    //suspended buggy slowly pitching up onto its rear wheels over a few seconds with no input).
+    //The physically correct fix is applying this force at the contact point instead - deferred
+    //rather than changed here since it's shared by every vehicle, tank included.
     physics->AddWorldForceAt(push_dir * spring_force,mount_world);
 
     //Everything a wheel does tangentially - engine thrust, passive grip, resistance to sideways
@@ -127,13 +139,15 @@ ContactResult UpdateContact(Wheel& wheel,const WheelTuning& tuning,Physics* phys
     return result;
 }
 
-void UpdateVisual(Wheel& wheel,float rest_length){
-    if (!wheel.visual){
-        return;
-    }
-    //The hub hangs (rest_length - compression) from the anchor along the suspension axis -
-    //which for a plain vertical strut (0,-1,0) is a simple downward bob, and for an angled one
-    //also slides the wheel fore/aft as the spring works.
+void UpdateVisual(Wheel& wheel,float rest_length,float timestep){
+    //Runs every tick regardless of contact state - a wheel UpdateContact left ungrounded this
+    //tick (or that a vehicle like TankCharacter overrode angular_velocity for on its own terms)
+    //still spins by whatever angular_velocity currently holds, instead of freezing the moment
+    //contact is lost. See Wheel::angular_velocity's own comment.
+    wheel.roll_angle += wheel.angular_velocity * timestep;
+
+    //Normalized here (not trusted from the caller/a debug-UI drag) same as UpdateContact does -
+    //shared by both wheel.visual's position and wheel.suspension_visual's orientation/scale below.
     vec3 axis_local = wheel.suspension_axis;
     float axis_length = axis_local.length();
     if (axis_length > 0.0001f){
@@ -141,9 +155,30 @@ void UpdateVisual(Wheel& wheel,float rest_length){
     }else{
         axis_local = vec3(0,-1,0);
     }
-    vec3 visual_pos = wheel.local_offset + axis_local * (rest_length - wheel.compression);
-    wheel.visual->SetPosition(visual_pos);
-    wheel.visual->SetRotation(quat(vec3(1,0,0),wheel.roll_angle));
+
+    if (wheel.visual){
+        //The hub hangs (rest_length - compression) from the anchor along the suspension axis -
+        //which for a plain vertical strut (0,-1,0) is a simple downward bob, and for an angled
+        //one also slides the wheel fore/aft as the spring works.
+        vec3 visual_pos = wheel.local_offset + axis_local * (rest_length - wheel.compression);
+        wheel.visual->SetPosition(visual_pos);
+        //Negated for a mirrored wheel - see Wheel::visual_mirrored for why a rotation-based
+        //mirror needs this to keep the mirrored wheel's APPARENT rolling direction matching the
+        //other side, even though roll_angle itself is the same, correct, unmirrored value either way.
+        float visual_roll = wheel.visual_mirrored ? -wheel.roll_angle : wheel.roll_angle;
+        wheel.visual->SetRotation(wheel.visual_base_rotation * quat(vec3(1,0,0),visual_roll));
+    }
+
+    if (wheel.suspension_visual){
+        wheel.suspension_visual->SetPosition(wheel.local_offset); //the anchor - the modeled spring's own origin, see Wheel's comment
+        wheel.suspension_visual->SetRotation(wheel.suspension_visual_rotation); //fixed, authored - see Wheel's comment on why this isn't derived from axis_local
+        //Object::SetScale applies in the object's own local (pre-rotation) axes - see Object's
+        //"scale, rotate, translate" transform order - so scaling local Y here shortens the mesh
+        //along whatever direction suspension_visual_rotation just pointed it, regardless of
+        //which direction that is.
+        float extension_fraction = rest_length > 0.0f ? clamp((rest_length - wheel.compression) / rest_length,0.0f,1.0f) : 1.0f;
+        wheel.suspension_visual->SetScale(vec3(1,extension_fraction,1));
+    }
 }
 
 }

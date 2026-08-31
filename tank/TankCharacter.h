@@ -1,43 +1,22 @@
 #ifndef _TANK_CHARACTER_H_
 #define _TANK_CHARACTER_H_
 
-#include "Object.h"
-#include "Wheel.h"
+#include "Vehicle.h"
 #include <windows.h>
 #include <vector>
 
 class TankCharacter;
 
-class TankCharacter : public Object{
+class TankCharacter : public Vehicle{
 public:
     TankCharacter();
     ~TankCharacter();
 
     void UpdatePhysicsState() override;
 
-    //Manual movement, same controls as IsoCar but without any terrain/pathing/sound coupling.
-    void Accelerate(float factor);
-    void Brake(float factor);
-    void SteerLeft(float factor);
-    void SteerRight(float factor);
-    void Reverse(float factor);
-
-    //For scripted/MCP control: a single external call can't realistically out-pace the physics
-    //tick rate (gas_pedal/brake_pedal/steering_position all decay back to idle every tick unless
-    //re-asserted), so these latch the equivalent input as "held" for duration_ms of real time,
-    //re-asserting it every tick until the latch expires - the same effect a human's briefest key
-    //tap already has, just made explicit instead of accidental.
-    void HoldDrive(bool reverse, float amount, float duration_ms);
-    void HoldBrake(float amount, float duration_ms);
-    void HoldSteer(float signed_amount, float duration_ms); //negative = left, positive = right
-    void ReleaseInputs(); //cancels all latches and releases the pedals immediately
-
-    //Teleports the hull to pos/rot, zeroes velocity/angular velocity, wakes the body (a
-    //stationary rigidbody put to sleep by rp3d would otherwise ignore the teleport's own next
-    //tick of forces - same issue as gas/brake/steer, see UpdatePhysicsState), releases every
-    //pedal/steering/hold-latch, and zeroes each wheel's transient per-tick state (roll_angle,
-    //compression, grounded) so nothing looks mid-spin or mid-bounce right after the reset.
-    void ResetState(const vec3& pos, const quat& rot);
+    //Teleports the hull to pos/rot as Vehicle::ResetState does, then also zeroes the turret's
+    //own reset-worthy state (recoil offset) that Vehicle knows nothing about.
+    void ResetState(const vec3& pos, const quat& rot) override;
 
     //Lays out wheels_per_side road wheels evenly along each track, from -half_length to
     //+half_length in local Z, at +-track_offset_x in local X, with their suspension anchored
@@ -61,10 +40,9 @@ public:
     //Turns a Wheel's per-field 0s into real numbers by falling back to the tank's own shared
     //defaults below - see Wheel's own comment for why the fields are 0-means-inherit in the
     //first place. Every read of per-wheel geometry/suspension tuning (physics, visuals, debug
-    //UI, telemetry) goes through this, so a 0 override means "use the default" identically
-    //everywhere. WheelRadius/WheelRestLength/WheelTravel are kept as thin wrappers purely so
-    //existing call sites (ApplicationTank's debug UI/telemetry) don't need to change.
-    WheelTuning ResolveTuning(const Wheel& wheel) const {
+    //UI, telemetry) goes through this (via Vehicle::WheelRadius/WheelRestLength/WheelTravel),
+    //so a 0 override means "use the default" identically everywhere.
+    WheelTuning ResolveTuning(const Wheel& wheel) const override{
         WheelTuning t;
         t.radius = wheel.radius > 0.0f ? wheel.radius : wheel_radius;
         t.rest_length = wheel.rest_length > 0.0f ? wheel.rest_length : suspension_rest_length;
@@ -76,9 +54,6 @@ public:
         t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
         return t;
     }
-    float WheelRadius(const Wheel& wheel) const { return ResolveTuning(wheel).radius; }
-    float WheelRestLength(const Wheel& wheel) const { return ResolveTuning(wheel).rest_length; }
-    float WheelTravel(const Wheel& wheel) const { return ResolveTuning(wheel).travel; }
 
     //Default rolling radius, derived once from the tank_wheel asset's own mesh extents (see
     //ApplicationTank::Init), not hand-tuned. Used for any wheel that doesn't override it, and
@@ -196,22 +171,6 @@ public:
     //1.0 = full authority: opposite full-power tracks (gas_pedal 0, steering_position +-1)
     //pivot the hull in place, same as a real tank turning on its tracks.
     float steer_authority = 1.0f;
-
-    std::vector<Wheel> wheels;
-
-    float gas_pedal = 0.0f;
-    float brake_pedal = 0.0f;
-    float steering_position = 0.0f; //From -1 to +1
-    bool f_reverse = false;
-
-    //Hold-latches backing HoldDrive/HoldBrake/HoldSteer, timestamped with GetTickCount64().
-    float gas_latch_amount = 0.0f;
-    bool gas_latch_reverse = false;
-    unsigned long long gas_latch_until_ms = 0;
-    float brake_latch_amount = 0.0f;
-    unsigned long long brake_latch_until_ms = 0;
-    float steer_latch_amount = 0.0f;
-    unsigned long long steer_latch_until_ms = 0;
 
     //Turret tracking: turns towards turret_target at a constant angular speed.
     Object* turret = NULL;
