@@ -19,6 +19,7 @@ struct OCPPConnectorState {
 	std::string statusTimestamp;
 	std::string vendorId;
 	std::string vendorErrorCode;
+	std::string info;  // Free-text detail from StatusNotification.req, e.g. "Stop reason: 0x7, Error: 0x12"
 
 	// Meter values data
 	double powerActiveImport = 0.0;  // in Watts
@@ -37,6 +38,12 @@ struct OCPPConnectorState {
 	float server_current_limit = 32.0f;
 	bool server_current_timit_updatereq = false;
 	DWORD last_profile_update_time_ms = 0;
+
+	// idTag used by the UI when issuing a RemoteStartTransaction for this connector
+	std::string remote_start_id_tag = "RemoteTag";
+
+	// Watts value used by the UI when issuing a ChangeConfiguration("PBaseline", ...) for this connector
+	int pbaseline_watts = 0;
 };
 
 // Per-connection state for a charge point speaking OCPP over the HTTP server's websocket transport.
@@ -68,6 +75,20 @@ struct OCPPClientData {
 
 	// Per-connector state, keyed by OCPP connectorId
 	std::map<int, OCPPConnectorState> connectors;
+
+	// V2G charge-controller telemetry from the vendor's custom "customMeterValues"
+	// DataTransfer payload (chargepoint-scoped; the message carries no connectorId).
+	bool hasV2GTelemetry = false;
+	double v2gPBaselineWatts = 0.0;    // Actual applied power setpoint (signed: + charge, - discharge)
+	double v2gQBaselineWatts = 0.0;
+	double v2gPMaxWatts = 0.0;
+	double v2gPMinWatts = 0.0;
+	double v2gMinSoc = 0.0;
+	double v2gMaxSoc = 0.0;
+	double v2gEvMinSoc = 0.0;
+	double v2gEvEnergyCapacityKwh = 0.0;
+	bool v2gSessionActive = false;
+	double v2gOutputPowerWatts = 0.0;  // Actual measured output power
 
 	// Historical record of all transactions for this chargepoint, across all connectors
 	std::vector<OCPPTransaction> transactionHistory;
@@ -116,6 +137,15 @@ public:
 
 	// Send SetChargingProfile request to a client
 	bool SendSetChargingProfile(SOCKET clientSocket, int connectorId, float currentLimit);
+
+	// Send RemoteStartTransaction request to a client
+	bool SendRemoteStartTransaction(SOCKET clientSocket, int connectorId, const std::string& idTag);
+
+	// Send RemoteStopTransaction request to a client
+	bool SendRemoteStopTransaction(SOCKET clientSocket, int transactionId);
+
+	// Send ChangeConfiguration request to a client (e.g. key="PBaseline", value="5000")
+	bool SendChangeConfiguration(SOCKET clientSocket, const std::string& key, const std::string& value);
 
 private:
 	std::map<SOCKET, OCPPClientData> m_clientData;

@@ -197,12 +197,14 @@ bool OCPPServerHandler::HandleStatusNotification(SOCKET clientSocket, const std:
 	std::string timestamp;
 	std::string vendorId;
 	std::string vendorErrorCode;
+	std::string info;
 
 	if (p.contains("status")) status = p["status"].get<std::string>();
 	if (p.contains("errorCode")) errorCode = p["errorCode"].get<std::string>();
 	if (p.contains("timestamp")) timestamp = p["timestamp"].get<std::string>();
 	if (p.contains("vendorId")) vendorId = p["vendorId"].get<std::string>();
 	if (p.contains("vendorErrorCode")) vendorErrorCode = p["vendorErrorCode"].get<std::string>();
+	if (p.contains("info") && p["info"].is_string()) info = p["info"].get<std::string>();
 	int connectorId = 0; // 0 = the charge point itself, per OCPP convention, when omitted
 	if (p.contains("connectorId") && p["connectorId"].is_number()) {
 		connectorId = p["connectorId"].get<int>();
@@ -218,6 +220,7 @@ bool OCPPServerHandler::HandleStatusNotification(SOCKET clientSocket, const std:
 		if (!timestamp.empty()) conn.statusTimestamp = timestamp;
 		if (!vendorId.empty()) conn.vendorId = vendorId;
 		if (!vendorErrorCode.empty()) conn.vendorErrorCode = vendorErrorCode;
+		if (!info.empty()) conn.info = info;
 	}
 	LeaveCriticalSection(&m_lock);
 
@@ -229,6 +232,7 @@ bool OCPPServerHandler::HandleStatusNotification(SOCKET clientSocket, const std:
 	if (!timestamp.empty()) m_setVariable(base + std::string("_ts"), timestamp);
 	if (!vendorId.empty()) m_setVariable(base + std::string("_vendor"), vendorId);
 	if (!vendorErrorCode.empty()) m_setVariable(base + std::string("_vendor_err"), vendorErrorCode);
+	if (!info.empty()) m_setVariable(base + std::string("_info"), info);
 
 	// Store full JSON payload for debugging
 	m_setVariable(std::string("ocpp_last_status_") + connBase, p.dump());
@@ -630,7 +634,9 @@ bool OCPPServerHandler::HandleStopTransaction(SOCKET clientSocket, const std::st
 	json resp = json::array();
 	resp.push_back(3);
 	resp.push_back(msgId);
-	json result;
+	json result = json::object();   // must stay an object even when empty - a bare `json result;`
+	                                 // here serializes as JSON null, which crashes this charger's
+	                                 // OCPP client (NPE in Session.onCallResult, see docs/ocpp_fault_diagnostics.md)
 	if (!idTag.empty()) {
 		json idTagInfo;
 		idTagInfo["status"] = "Accepted";
@@ -705,6 +711,26 @@ bool OCPPServerHandler::HandleDataTransfer(SOCKET clientSocket, const std::strin
 			int outputPower = customData["output_power"].get<int>();
 			m_setVariable(std::string("ocpp_custom_power_") + path, std::to_string(outputPower));
 		}
+
+		// Store the full V2G telemetry set for the UI (charger's actual applied setpoint,
+		// as opposed to what was last sent via ChangeConfiguration/SetChargingProfile).
+		EnterCriticalSection(&m_lock);
+		auto it = m_clientData.find(clientSocket);
+		if (it != m_clientData.end()) {
+			OCPPClientData& clientData = it->second;
+			clientData.hasV2GTelemetry = true;
+			if (customData.contains("p_baseline")) clientData.v2gPBaselineWatts = customData["p_baseline"].get<double>();
+			if (customData.contains("q_baseline")) clientData.v2gQBaselineWatts = customData["q_baseline"].get<double>();
+			if (customData.contains("p_max")) clientData.v2gPMaxWatts = customData["p_max"].get<double>();
+			if (customData.contains("p_min")) clientData.v2gPMinWatts = customData["p_min"].get<double>();
+			if (customData.contains("min_soc")) clientData.v2gMinSoc = customData["min_soc"].get<double>();
+			if (customData.contains("max_soc")) clientData.v2gMaxSoc = customData["max_soc"].get<double>();
+			if (customData.contains("ev_min_soc")) clientData.v2gEvMinSoc = customData["ev_min_soc"].get<double>();
+			if (customData.contains("ev_energy_capacity")) clientData.v2gEvEnergyCapacityKwh = customData["ev_energy_capacity"].get<double>();
+			if (customData.contains("session_active")) clientData.v2gSessionActive = customData["session_active"].get<bool>();
+			if (customData.contains("output_power")) clientData.v2gOutputPowerWatts = customData["output_power"].get<double>();
+		}
+		LeaveCriticalSection(&m_lock);
 	}
 
 	// Send CALLRESULT [3, msgId, { status: "Accepted" }]
@@ -776,6 +802,96 @@ bool OCPPServerHandler::SendSetChargingProfile(SOCKET clientSocket, int connecto
 		ocpp_debug->Ok("SetChargingProfile sent successfully\n");
 	} else {
 		ocpp_debug->Err("Failed to send SetChargingProfile\n");
+	}
+
+	return result;
+}
+
+bool OCPPServerHandler::SendRemoteStartTransaction(SOCKET clientSocket, int connectorId, const std::string& idTag)
+{
+	// Generate a unique message ID for this request
+	static int nextMsgId = 2000;
+	std::string msgId = std::to_string(nextMsgId++);
+
+	// Create RemoteStartTransaction CALL message [2, msgId, "RemoteStartTransaction", payload]
+	json call = json::array();
+	call.push_back(2); // Message type: CALL
+	call.push_back(msgId);
+	call.push_back("RemoteStartTransaction");
+
+	json payload;
+	payload["connectorId"] = connectorId;
+	payload["idTag"] = idTag;
+	call.push_back(payload);
+
+	std::string message = call.dump();
+	ocpp_debug->Info("Sending RemoteStartTransaction for connector %d, idTag=%s\n", connectorId, idTag.c_str());
+	ocpp_debug->Trace("RemoteStartTransaction message: %s\n", message.c_str());
+
+	bool result = m_sendMessage(clientSocket, message);
+	if (result) {
+		ocpp_debug->Ok("RemoteStartTransaction sent successfully\n");
+	} else {
+		ocpp_debug->Err("Failed to send RemoteStartTransaction\n");
+	}
+
+	return result;
+}
+
+bool OCPPServerHandler::SendRemoteStopTransaction(SOCKET clientSocket, int transactionId)
+{
+	// Generate a unique message ID for this request
+	static int nextMsgId = 3000;
+	std::string msgId = std::to_string(nextMsgId++);
+
+	// Create RemoteStopTransaction CALL message [2, msgId, "RemoteStopTransaction", payload]
+	json call = json::array();
+	call.push_back(2); // Message type: CALL
+	call.push_back(msgId);
+	call.push_back("RemoteStopTransaction");
+
+	json payload;
+	payload["transactionId"] = transactionId;
+	call.push_back(payload);
+
+	std::string message = call.dump();
+	ocpp_debug->Info("Sending RemoteStopTransaction for transactionId=%d\n", transactionId);
+	ocpp_debug->Trace("RemoteStopTransaction message: %s\n", message.c_str());
+
+	bool result = m_sendMessage(clientSocket, message);
+	if (result) {
+		ocpp_debug->Ok("RemoteStopTransaction sent successfully\n");
+	} else {
+		ocpp_debug->Err("Failed to send RemoteStopTransaction\n");
+	}
+
+	return result;
+}
+
+bool OCPPServerHandler::SendChangeConfiguration(SOCKET clientSocket, const std::string& key, const std::string& value)
+{
+	static int nextMsgId = 4000;
+	std::string msgId = std::to_string(nextMsgId++);
+
+	json call = json::array();
+	call.push_back(2); // Message type: CALL
+	call.push_back(msgId);
+	call.push_back("ChangeConfiguration");
+
+	json payload;
+	payload["key"] = key;
+	payload["value"] = value;
+	call.push_back(payload);
+
+	std::string message = call.dump();
+	ocpp_debug->Info("Sending ChangeConfiguration %s=%s\n", key.c_str(), value.c_str());
+	ocpp_debug->Trace("ChangeConfiguration message: %s\n", message.c_str());
+
+	bool result = m_sendMessage(clientSocket, message);
+	if (result) {
+		ocpp_debug->Ok("ChangeConfiguration sent successfully\n");
+	} else {
+		ocpp_debug->Err("Failed to send ChangeConfiguration\n");
 	}
 
 	return result;
