@@ -155,14 +155,14 @@ void TankCharacter::UpdatePhysicsState(){
             if (wheel.driven && !drive_capped && command != 0.0f && side_count > 0){
                 drive_force = (engine_force / side_count) * command;
             }else{
-                grip_force = -contact.point_velocity.dot(forward) * lateral_friction;
+                grip_force = -contact.point_velocity.dot(forward) * tuning.lateral_friction;
             }
             //Lateral: oppose sideways slip so the tank doesn't slide sideways indefinitely,
             //while still allowing the scrub a real tank has when pivoting on its tracks. This
             //is velocity-proportional damping, not a hard no-slip constraint, so some scrub
             //always gets through even before the budget below trims it.
             float longitudinal_force = drive_force + grip_force;
-            float lateral_force = -contact.point_velocity.dot(left) * lateral_friction;
+            float lateral_force = -contact.point_velocity.dot(left) * tuning.lateral_friction;
 
             //The friction circle: it's the COMBINED tangential demand that has to fit inside
             //the budget (wheel.friction_budget, written by UpdateContact just above), not each
@@ -211,7 +211,7 @@ void TankCharacter::UpdatePhysicsState(){
             if (!rolled_itself && tuning.radius > 0.0f && timestep > 0.0f){
                 wheel.angular_velocity = avg_track_distance[wheel.is_left_side ? 0 : 1] / (timestep * tuning.radius);
             }
-            WheelSuspension::UpdateVisual(wheel,tuning.rest_length,timestep);
+            WheelSuspension::UpdateVisual(wheel,tuning,timestep);
         }
 
         //Last-resort safety net against a roll/pitch excursion, applied after all of this tick's

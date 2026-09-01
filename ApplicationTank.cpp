@@ -76,6 +76,7 @@ void ApplicationTank::Init(void){
     gltfloader.LoadGLTFFile("data/tank.glb");
     GetAllAssetsFromGLTF();
 
+
     compass = assetmanager->GetObjectFromAsset("compass");
     main_scene->AddObject(compass);
 
@@ -224,6 +225,7 @@ void ApplicationTank::Init(void){
             wheel_visual->SetPosition(wheel.local_offset +
                                       wheel.suspension_axis * controlled_tank->WheelRestLength(wheel));
             wheel.visual = wheel_visual;
+            wheel.visual_natural_radius = controlled_tank->wheel_radius; //what tank_wheel's own mesh represents at scale 1 - see Wheel's comment
         }
     }
 
@@ -235,7 +237,7 @@ void ApplicationTank::Init(void){
     controlled_tank->SetPosition(vec3(-4,0.05,0));
     tank_start_position = controlled_tank->GetPosition();
     tank_start_rotation = controlled_tank->GetRotation();
-    SetControlledVehicle(controlled_tank); //keyboard input defaults to the tank until switched
+
 
     //Buggy: a 4-wheeled, front-steered vehicle sharing the tank's wheel/suspension code (see
     //core/Wheel.h/BuggyCharacter.h). Spawned alongside the tank rather than replacing it - both
@@ -406,6 +408,7 @@ void ApplicationTank::Init(void){
                 controlled_buggy->AttachChild(wheel_visual);
                 wheel_visual->SetPosition(wheel.local_offset + wheel.suspension_axis * controlled_buggy->WheelRestLength(wheel));
                 wheel.visual = wheel_visual;
+                wheel.visual_natural_radius = wheel.is_front_side ? front_radius : rear_radius; //what THIS wheel's own mesh represents at scale 1 - see Wheel's comment
             }
 
             Object* suspension_visual = assetmanager->GetObjectFromAsset("buggy_suspension");
@@ -416,33 +419,43 @@ void ApplicationTank::Init(void){
                 wheel.suspension_visual = suspension_visual;
             }
 
-            //One static "crate" box per wheel, placed in WORLD space (not attached to the
-            //body - the body doesn't move while suspended, but these need to be dragged
-            //independently of it) below the wheel's own rest hub position, clear of every
-            //wheel's raycast reach by default. Dragging one up in the "Buggy Suspension Test
-            //Bed" debug UI panel is what a wheel's ray then actually finds.
-            Object* test_cube = assetmanager->GetObjectFromAsset("crate");
-            if (test_cube){
-                test_cube->name = "Buggy Suspension Test Cube";
-                main_scene->AddObject(test_cube);
-                test_cube->AddPhysics(main_scene->physics_world);
-                if (Physics* cube_physics = test_cube->GetPhysics()){
-                    vec3 cube_extent = test_cube->GetMesh() ? test_cube->GetMesh()->GetExtents() * 0.5f : vec3(0.25f,0.25f,0.25f);
-                    cube_physics->AddBoxCollider(cube_extent,vec3(0,cube_extent.y,0),quat().identity(),1.0f); //density irrelevant, static
-                    cube_physics->SetFrictionCoefficient(0.8f);
-                    cube_physics->SetBounciness(0.0f);
-                    cube_physics->SetStatic(true);
-                }
-                vec3 hub_rest_local = wheel.local_offset + wheel.suspension_axis * wheel.rest_length;
-                test_cube->SetPosition(buggy_suspended_position + vec3(hub_rest_local.x,hub_rest_local.y - 0.7f,hub_rest_local.z));
-                buggy_test_cubes.push_back(test_cube);
-            }
+
         }
     }
+
+/*
+    for (int i=0;i<4;i++){
+        //One static "crate" box per wheel, placed in WORLD space (not attached to the
+        //body - the body doesn't move while suspended, but these need to be dragged
+        //independently of it) below the wheel's own rest hub position, clear of every
+        //wheel's raycast reach by default. Dragging one up in the "Buggy Suspension Test
+        //Bed" debug UI panel is what a wheel's ray then actually finds.
+
+        Object* test_cube = assetmanager->GetObjectFromAsset("crate");
+        if (test_cube){
+            test_cube->name = "Buggy Suspension Test Cube";
+            main_scene->AddObject(test_cube);
+            test_cube->AddPhysics(main_scene->physics_world);
+            if (Physics* cube_physics = test_cube->GetPhysics()){
+                vec3 cube_extent = test_cube->GetMesh() ? test_cube->GetMesh()->GetExtents() * 0.5f : vec3(0.25f,0.25f,0.25f);
+                cube_physics->AddBoxCollider(cube_extent,vec3(0,cube_extent.y,0),quat().identity(),1.0f); //density irrelevant, static
+                cube_physics->SetFrictionCoefficient(0.8f);
+                cube_physics->SetBounciness(0.0f);
+                cube_physics->SetStatic(true);
+            }
+            vec3 hub_rest_local = wheel.local_offset + wheel.suspension_axis * wheel.rest_length;
+            test_cube->SetPosition(buggy_suspended_position + vec3(hub_rest_local.x,hub_rest_local.y - 0.7f,hub_rest_local.z));
+            buggy_test_cubes.push_back(test_cube);
+        }
+    }*/
+
 
     controlled_buggy->SetPosition(buggy_suspended_position);
     buggy_start_position = controlled_buggy->GetPosition();
     buggy_start_rotation = controlled_buggy->GetRotation();
+
+    //The default vehicle
+    SetControlledVehicle(controlled_buggy);
 
     //Placeholder impact effect for Fire() (see RunLogic): bursts copies of the target marker
     //itself outward from the target's position. Needs its own RRandom, same as every other
@@ -1165,7 +1178,7 @@ void ApplicationTank::RenderVehicleWheelTable(Vehicle* vehicle){
         return;
     }
     ImGui::PushID(vehicle);
-    if (ImGui::BeginTable("vehicle_wheels",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollX)){
+    if (ImGui::BeginTable("vehicle_wheels",12,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollX)){
         ImGui::TableSetupColumn("#");
         ImGui::TableSetupColumn("Side");
         ImGui::TableSetupColumn("Kind");
@@ -1175,6 +1188,8 @@ void ApplicationTank::RenderVehicleWheelTable(Vehicle* vehicle){
         ImGui::TableSetupColumn("Radius");
         ImGui::TableSetupColumn("Rest / Travel");
         ImGui::TableSetupColumn("Susp Axis");
+        ImGui::TableSetupColumn("Friction Coef");
+        ImGui::TableSetupColumn("Lateral Friction");
         ImGui::TableSetupColumn("Roll Angle");
         ImGui::TableHeadersRow();
 
@@ -1245,7 +1260,23 @@ void ApplicationTank::RenderVehicleWheelTable(Vehicle* vehicle){
             ImGui::SetNextItemWidth(150.0f);
             ImGui::DragFloat3("##susp_axis",(float*)&wheel.suspension_axis,0.01f,-1.0f,1.0f,"%.2f");
 
+            //Same "shows the resolved value, only writes a per-wheel override once dragged"
+            //pattern as radius/rest_travel above.
             ImGui::TableSetColumnIndex(9);
+            ImGui::SetNextItemWidth(70.0f);
+            float friction_coefficient = vehicle->WheelFrictionCoefficient(wheel);
+            if (ImGui::DragFloat("##friction_coefficient",&friction_coefficient,0.01f,0.0f,3.0f,"%.2f")){
+                wheel.friction_coefficient = friction_coefficient;
+            }
+
+            ImGui::TableSetColumnIndex(10);
+            ImGui::SetNextItemWidth(80.0f);
+            float lateral_friction = vehicle->WheelLateralFriction(wheel);
+            if (ImGui::DragFloat("##lateral_friction",&lateral_friction,1.0f,0.0f,1000.0f,"%.0f")){
+                wheel.lateral_friction = lateral_friction;
+            }
+
+            ImGui::TableSetColumnIndex(11);
             ImGui::Text("%.2f",wheel.roll_angle);
 
             ImGui::PopID();

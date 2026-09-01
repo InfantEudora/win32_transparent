@@ -39,6 +39,7 @@ public:
         t.max_force = wheel.max_force > 0.0f ? wheel.max_force : max_wheel_force;
         t.max_point_speed = wheel.max_point_speed > 0.0f ? wheel.max_point_speed : max_point_speed;
         t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
+        t.lateral_friction = wheel.lateral_friction > 0.0f ? wheel.lateral_friction : lateral_friction;
         return t;
     }
 
@@ -70,8 +71,10 @@ public:
     float suspension_rest_length = 0.15f;
     float suspension_travel = 0.10f;
     float suspension_stiffness = 8000.0f;
-    float suspension_damping = 500.0f;
+    float suspension_damping = 200.0f;
     float max_wheel_force = 5000.0f;
+    //Default for any wheel that doesn't override its own Wheel::lateral_friction (0 = inherit,
+    //same pattern as every other tuning field here - see ResolveTuning above).
     float lateral_friction = 150.0f;   //N per (m/s) of sideways slip, per grounded wheel
     float friction_coefficient = 1.0f; //Coulomb - see TankCharacter's own field for why this exists
     float max_point_speed = 2.0f;

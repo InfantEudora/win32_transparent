@@ -51,7 +51,9 @@ void BuggyCharacter::UpdatePhysicsState(){
             if (wheel.is_front_side){ num_front_driven++; }else{ num_rear_driven++; }
         }
 
+        int i = 0;
         for (Wheel& wheel : wheels){
+
             wheel.drive_force = 0.0f;
             wheel.longitudinal_force = 0.0f;
             wheel.lateral_force = 0.0f;
@@ -114,10 +116,11 @@ void BuggyCharacter::UpdatePhysicsState(){
             if (wheel.driven && axle_fraction > 0.0f && !drive_capped && drive_command != 0.0f && axle_driven_count > 0){
                 drive_force = (engine_force * axle_fraction / axle_driven_count) * drive_command;
             }else{
-                grip_force = -contact.point_velocity.dot(wheel_forward) * lateral_friction;
+                grip_force = -contact.point_velocity.dot(wheel_forward) * tuning.lateral_friction;
+                //debug->Info("Grip Force: %i -> %.1fwwwww N\n",i,grip_force);
             }
             float longitudinal_force = drive_force + grip_force;
-            float lateral_force = -contact.point_velocity.dot(wheel_left) * lateral_friction;
+            float lateral_force = -contact.point_velocity.dot(wheel_left) * tuning.lateral_friction;
 
             //Friction circle - same combined-demand clamp as TankCharacter, against this
             //wheel's own friction_budget (written by UpdateContact just above).
@@ -135,6 +138,7 @@ void BuggyCharacter::UpdatePhysicsState(){
             wheel.lateral_force = lateral_force;
 
             physics->AddWorldForceAt(wheel_forward * longitudinal_force + wheel_left * lateral_force,contact.mount_world);
+            i++;
         }
 
         //Visual follow: bob/spin from WheelSuspension::UpdateVisual, then layer the steer yaw on
@@ -145,7 +149,7 @@ void BuggyCharacter::UpdatePhysicsState(){
         //at its last angular_velocity instead (see Wheel's own comment on that field).
         for (Wheel& wheel : wheels){
             WheelTuning tuning = ResolveTuning(wheel);
-            WheelSuspension::UpdateVisual(wheel,tuning.rest_length,timestep);
+            WheelSuspension::UpdateVisual(wheel,tuning,timestep);
             if (wheel.steerable && wheel.visual){
                 //Re-set rather than left to UpdateVisual's own (visual_base_rotation * roll) -
                 //a steerable wheel also needs the steer yaw composed in, between the roll spin

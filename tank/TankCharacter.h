@@ -52,6 +52,7 @@ public:
         t.max_force = wheel.max_force > 0.0f ? wheel.max_force : max_wheel_force;
         t.max_point_speed = wheel.max_point_speed > 0.0f ? wheel.max_point_speed : max_point_speed;
         t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
+        t.lateral_friction = wheel.lateral_friction > 0.0f ? wheel.lateral_friction : lateral_friction;
         return t;
     }
 
@@ -140,6 +141,8 @@ public:
     //(-slip * mass_share / dt), then clip THAT to the friction budget. It is unconditionally
     //stable at any timestep and removes this whole tuning cliff, at the cost of needing the
     //real dt (currently hardcoded to 0.02 at the top of UpdatePhysicsState) plumbed in.
+    //Default for any wheel that doesn't override its own Wheel::lateral_friction (0 = inherit,
+    //same pattern as every other tuning field here - see ResolveTuning above).
     float lateral_friction = 120.0f;      //N per (m/s) of sideways slip, per grounded wheel
 
     //Coulomb friction coefficient. A track can only transmit force to the ground in proportion

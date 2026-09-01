@@ -139,7 +139,8 @@ ContactResult UpdateContact(Wheel& wheel,const WheelTuning& tuning,Physics* phys
     return result;
 }
 
-void UpdateVisual(Wheel& wheel,float rest_length,float timestep){
+void UpdateVisual(Wheel& wheel,const WheelTuning& tuning,float timestep){
+    float rest_length = tuning.rest_length;
     //Runs every tick regardless of contact state - a wheel UpdateContact left ungrounded this
     //tick (or that a vehicle like TankCharacter overrode angular_velocity for on its own terms)
     //still spins by whatever angular_velocity currently holds, instead of freezing the moment
@@ -167,6 +168,14 @@ void UpdateVisual(Wheel& wheel,float rest_length,float timestep){
         //other side, even though roll_angle itself is the same, correct, unmirrored value either way.
         float visual_roll = wheel.visual_mirrored ? -wheel.roll_angle : wheel.roll_angle;
         wheel.visual->SetRotation(wheel.visual_base_rotation * quat(vec3(1,0,0),visual_roll));
+        //Grows/shrinks the mesh to match whatever radius actually governs the raycast/physics -
+        //see Wheel::visual_natural_radius. Left alone (no SetScale call at all) if that was never
+        //probed, rather than forcing an assumed 1:1 scale that could be wrong for a mesh nobody
+        //measured.
+        if (wheel.visual_natural_radius > 0.0f){
+            float scale = tuning.radius / wheel.visual_natural_radius;
+            wheel.visual->SetScale(vec3(scale,scale,scale));
+        }
     }
 
     if (wheel.suspension_visual){

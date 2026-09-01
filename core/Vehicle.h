@@ -65,6 +65,8 @@ public:
     float WheelRadius(const Wheel& wheel) const { return ResolveTuning(wheel).radius; }
     float WheelRestLength(const Wheel& wheel) const { return ResolveTuning(wheel).rest_length; }
     float WheelTravel(const Wheel& wheel) const { return ResolveTuning(wheel).travel; }
+    float WheelFrictionCoefficient(const Wheel& wheel) const { return ResolveTuning(wheel).friction_coefficient; }
+    float WheelLateralFriction(const Wheel& wheel) const { return ResolveTuning(wheel).lateral_friction; }
 
     std::vector<Wheel> wheels;
 

@@ -42,6 +42,13 @@ struct Wheel{
     float max_force = 0.0f;           //N, hard per-wheel ceiling on the spring+damper force
     float max_point_speed = 0.0f;     //m/s ceiling on the contact point's velocity
     float friction_coefficient = 0.0f;//Coulomb: max tangential force = this * spring_force
+    //N per (m/s) of slip along the wheel's own tangential (rolling/lateral) directions - the
+    //caller's own tangential-force code applies this, same as friction_coefficient's budget
+    //above; not read by WheelSuspension::UpdateContact itself. Per-wheel rather than vehicle-only
+    //now for the same reason the rest of this block is: a real car's front/rear (or driven/
+    //damaged) wheels don't all grip the same, and tuning one wheel's own value is what a later
+    //blown tire or worn axle would want to degrade independently of the others.
+    float lateral_friction = 0.0f;
 
     //--- Role ---
     //local_offset.x < 0. This engine is right-handed with ref_forward = -Z and ref_up = +Y, so
@@ -86,6 +93,13 @@ struct Wheel{
     float angular_velocity = 0.0f;
     float roll_angle = 0.0f;     //accumulated wheel spin (radians) around the wheel's own axle, visual only - integrated from angular_velocity, see above
     Object* visual = NULL;       //optional child Object placed at local_offset, followed tick to tick by WheelSuspension::UpdateVisual
+    //The rolling radius wheel.visual's own mesh represents AT SCALE 1.0 - i.e. whatever a spawn-
+    //time probe of its extents produced (see ApplicationTank::Init), the same number a wheel with
+    //radius left at 0 resolves to by default. WheelSuspension::UpdateVisual uses the ratio of the
+    //CURRENT resolved radius to this to uniformly scale wheel.visual, so dragging a wheel's own
+    //radius in the debug UI grows/shrinks how it actually looks, not just how far its ray
+    //reaches. 0 (never probed, or the mesh was missing) leaves the visual's scale untouched.
+    float visual_natural_radius = 0.0f;
     //Fixed base orientation composed OUTSIDE the roll spin (visual->SetRotation ends up
     //visual_base_rotation * quat(local-X, +-roll_angle), sign per visual_mirrored below) -
     //identity leaves plain rolling behavior unchanged (every existing wheel). Exists for a wheel
@@ -147,6 +161,7 @@ struct WheelTuning{
     float max_force = 4000.0f;
     float max_point_speed = 2.0f;
     float friction_coefficient = 1.0f;
+    float lateral_friction = 120.0f; //N per (m/s) of tangential slip - not read by UpdateContact, see Wheel's own comment
 };
 
 namespace WheelSuspension{
@@ -176,12 +191,13 @@ namespace WheelSuspension{
                                  const vec3& angular_velocity, const vec3& forward, float timestep);
 
     //First integrates roll_angle by angular_velocity*timestep (see Wheel::angular_velocity for
-    //why this runs unconditionally, contact or no), then positions/rotates wheel.visual from the
-    //result - the hub hangs (rest_length - compression) from the anchor along suspension_axis,
-    //and spins around the vehicle's local X under wheel.visual_base_rotation. Also
-    //positions/rotates/scales wheel.suspension_visual, if set - see its own comment on Wheel.
-    //Each of the two visuals is independently a no-op if left NULL.
-    void UpdateVisual(Wheel& wheel, float rest_length, float timestep);
+    //why this runs unconditionally, contact or no), then positions/rotates/scales wheel.visual
+    //from the result - the hub hangs (tuning.rest_length - compression) from the anchor along
+    //suspension_axis, spins around the vehicle's local X under wheel.visual_base_rotation, and is
+    //uniformly scaled by tuning.radius against wheel.visual_natural_radius (see its own comment).
+    //Also positions/rotates/scales wheel.suspension_visual, if set - see its own comment on
+    //Wheel. Each of the two visuals is independently a no-op if left NULL.
+    void UpdateVisual(Wheel& wheel, const WheelTuning& tuning, float timestep);
 }
 
 #endif
