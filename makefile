@@ -73,11 +73,11 @@ endif
 #SRCS += ApplicationAnimation.cpp
 
 #ApplicationIsoAnimation
-CFLAGS+= -DAPP_HEADER=\"ApplicationIsoAnimation.h\"
-CFLAGS+= -DAPP_CLASS=ApplicationIsoAnimation
-SRCS += ApplicationIsoAnimation.cpp
-IPATHS += -Iisoterrain/
-DIR_SRC += ./isoterrain
+#CFLAGS+= -DAPP_HEADER=\"ApplicationIsoAnimation.h\"
+#CFLAGS+= -DAPP_CLASS=ApplicationIsoAnimation
+#SRCS += ApplicationIsoAnimation.cpp
+#IPATHS += -Iisoterrain/
+#DIR_SRC += ./isoterrain
 
 #ApplicationGrid
 #CFLAGS+= -DAPP_HEADER=\"ApplicationGrid.h\"
@@ -117,9 +117,9 @@ DIR_SRC += ./isoterrain
 #SRCS += ApplicationUI.cpp
 
 #ApplicationOCPP
-#CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
-#CFLAGS+= -DAPP_CLASS=ApplicationOCPP
-#SRCS += ApplicationOCPP.cpp
+CFLAGS+= -DAPP_HEADER=\"ApplicationOCPP.h\"
+CFLAGS+= -DAPP_CLASS=ApplicationOCPP
+SRCS += ApplicationOCPP.cpp
 
 #ApplicationShip
 #CFLAGS+= -DAPP_HEADER=\"ApplicationShip.h\"

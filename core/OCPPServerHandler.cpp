@@ -780,3 +780,64 @@ bool OCPPServerHandler::SendSetChargingProfile(SOCKET clientSocket, int connecto
 
 	return result;
 }
+
+bool OCPPServerHandler::SendRemoteStartTransaction(SOCKET clientSocket, int connectorId, const std::string& idTag)
+{
+	// Generate a unique message ID for this request
+	static int nextMsgId = 2000;
+	std::string msgId = std::to_string(nextMsgId++);
+
+	// Create RemoteStartTransaction CALL message [2, msgId, "RemoteStartTransaction", payload]
+	json call = json::array();
+	call.push_back(2); // Message type: CALL
+	call.push_back(msgId);
+	call.push_back("RemoteStartTransaction");
+
+	json payload;
+	payload["connectorId"] = connectorId;
+	payload["idTag"] = idTag;
+	call.push_back(payload);
+
+	std::string message = call.dump();
+	ocpp_debug->Info("Sending RemoteStartTransaction for connector %d, idTag=%s\n", connectorId, idTag.c_str());
+	ocpp_debug->Trace("RemoteStartTransaction message: %s\n", message.c_str());
+
+	bool result = m_sendMessage(clientSocket, message);
+	if (result) {
+		ocpp_debug->Ok("RemoteStartTransaction sent successfully\n");
+	} else {
+		ocpp_debug->Err("Failed to send RemoteStartTransaction\n");
+	}
+
+	return result;
+}
+
+bool OCPPServerHandler::SendRemoteStopTransaction(SOCKET clientSocket, int transactionId)
+{
+	// Generate a unique message ID for this request
+	static int nextMsgId = 3000;
+	std::string msgId = std::to_string(nextMsgId++);
+
+	// Create RemoteStopTransaction CALL message [2, msgId, "RemoteStopTransaction", payload]
+	json call = json::array();
+	call.push_back(2); // Message type: CALL
+	call.push_back(msgId);
+	call.push_back("RemoteStopTransaction");
+
+	json payload;
+	payload["transactionId"] = transactionId;
+	call.push_back(payload);
+
+	std::string message = call.dump();
+	ocpp_debug->Info("Sending RemoteStopTransaction for transactionId=%d\n", transactionId);
+	ocpp_debug->Trace("RemoteStopTransaction message: %s\n", message.c_str());
+
+	bool result = m_sendMessage(clientSocket, message);
+	if (result) {
+		ocpp_debug->Ok("RemoteStopTransaction sent successfully\n");
+	} else {
+		ocpp_debug->Err("Failed to send RemoteStopTransaction\n");
+	}
+
+	return result;
+}

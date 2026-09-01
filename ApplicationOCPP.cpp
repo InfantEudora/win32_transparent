@@ -135,6 +135,25 @@ void ApplicationOCPP::RenderOCPPServerUI(){
                 if (ImGui::SliderFloat("Set Current Limit for Session", &conn.server_current_limit, 5, 32)){
                     conn.server_current_timit_updatereq = true;
                 }
+
+                if (conn.transactionId != -1) {
+                    ImGui::Text("Active Transaction: %d (idTag: %s)", conn.transactionId, conn.transactionIdTag.c_str());
+                }
+
+                char idTagBuf[64];
+                strncpy_s(idTagBuf, conn.remote_start_id_tag.c_str(), sizeof(idTagBuf) - 1);
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::InputText("##RemoteStartIdTag", idTagBuf, sizeof(idTagBuf))){
+                    conn.remote_start_id_tag = idTagBuf;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remote Start")){
+                    http_server->ocpp.SendRemoteStartTransaction(client_socket, connectorId, conn.remote_start_id_tag);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remote Stop")){
+                    http_server->ocpp.SendRemoteStopTransaction(client_socket, conn.transactionId);
+                }
                 ImGui::PopID();
             }
 

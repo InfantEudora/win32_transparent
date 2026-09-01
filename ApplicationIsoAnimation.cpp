@@ -60,10 +60,14 @@ void ApplicationIsoAnimation::BuildTestEnvironment(){
     }
 
     //We'd like now to add a ramp, a pillar and a few 'islands'to jump across.
-
     IsoCell* cell = test_terrain->GetCellByCoordinate(int3(0,0,0));
     if (cell){
         cell->SetTileAsset("ramp_half");
+    }
+    cell = test_terrain->GetCellByCoordinate(int3(1,0,2));
+    if (cell){
+        cell->SetTileAsset("plateau");
+        cell->Show();
     }
 
 }
@@ -146,6 +150,61 @@ void ApplicationIsoAnimation::Init(void){
         }
 
         character->blink_animation = character->FindAnimation("Blink");
+    }
+
+    //Load a hands-only preview model, set up the same way as the main character.
+    hands = new PlayerCharacter();
+    Skeleton* hands_skeleton = dynamic_cast<Skeleton*>(hands);
+    gltfloader.GetSkeleton("character",assetmanager,hands_skeleton);
+    if (hands_skeleton){
+        std::vector<Material>loaded_materials;
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode("hands",&loaded_materials,true);
+        hands_skeleton->SetMesh(skinned_mesh);
+        hands_skeleton->TakeMaterialNames(loaded_materials);
+        hands_skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
+        main_scene->AddObject(hands_skeleton);
+        hands_skeleton->root_bone_name = hands_skeleton->GetChild(0) ? hands_skeleton->GetChild(0)->name : "No Root Bone";
+
+        //Add all animations from GLTF
+        std::vector<std::string>animation_names = gltfloader.GetAnimationNames();
+        for (std::string animation_name:animation_names){
+            Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
+            hands_skeleton->AddAnimation(animation);
+        }
+
+        hands->SetMaterialSlot(0,0);
+        hands->SetMaterialSlot(1,0);
+
+        hands->name = "Hands";
+
+        hands->animation_graph = new AnimationGraph();
+        hands->animation_graph->animations = &hands->animations;
+    }
+
+    //Load a feet-only preview model, set up the same way as the main character.
+    feet = new PlayerCharacter();
+    Skeleton* feet_skeleton = dynamic_cast<Skeleton*>(feet);
+    gltfloader.GetSkeleton("character",assetmanager,feet_skeleton);
+    if (feet_skeleton){
+        std::vector<Material>loaded_materials;
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode("feet",&loaded_materials,true);
+        feet_skeleton->SetMesh(skinned_mesh);
+        feet_skeleton->TakeMaterialNames(loaded_materials);
+        feet_skeleton->PickMaterials(loaded_materials,main_scene->renderer->materials);
+        main_scene->AddObject(feet_skeleton);
+        feet_skeleton->root_bone_name = feet_skeleton->GetChild(0) ? feet_skeleton->GetChild(0)->name : "No Root Bone";
+
+        //Add all animations from GLTF
+        std::vector<std::string>animation_names = gltfloader.GetAnimationNames();
+        for (std::string animation_name:animation_names){
+            Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
+            feet_skeleton->AddAnimation(animation);
+        }
+
+        feet->SetMaterialSlot(1,0);
+
+        feet->animation_graph = new AnimationGraph();
+        feet->animation_graph->animations = &feet->animations;
     }
 
     Object* bra = assetmanager->GetObjectFromAsset("bra");
@@ -296,6 +355,7 @@ void ApplicationIsoAnimation::Init(void){
     t = character->animation_graph->AddTransition("Walking","TurnRightInPlace");
     t = character->animation_graph->AddTransition("Walking","TurnLeftInPlace");
 
+
     t = character->animation_graph->AddTransition("TurnLeftInPlace","TurnRightInPlace");
     t = character->animation_graph->AddTransition("TurnRightInPlace","TurnLeftInPlace");
 
@@ -363,6 +423,7 @@ void ApplicationIsoAnimation::Init(void){
     main_window->Resize(1680,900);
 
     BuildTestEnvironment();
+
 }
 
 //Called before update physics after update animations
@@ -720,6 +781,42 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
             ImGui::EndDisabled();
         }
     }
+
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.8,1,0.8,1),"Hands / Feet Preview Animations");
+    //Hands/feet previews should start from wherever the character currently is.
+    auto sync_hands_feet_to_character = [this](){
+        if (!character){
+            return;
+        }
+        if (hands){
+            hands->SetPosition(character->GetPosition());
+            hands->SetRotation(character->GetRotation());
+        }
+        if (feet){
+            feet->SetPosition(character->GetPosition());
+            feet->SetRotation(character->GetRotation());
+        }
+    };
+    if (ImGui::Button("StandToFreeHang")){
+        sync_hands_feet_to_character();
+        if (hands){
+            hands->TransitionToAnimation("StandToFreeHang");
+        }
+        if (feet){
+            feet->TransitionToAnimation("StandToFreeHang");
+        }
+    }
+    if (ImGui::Button("Idle")){
+        sync_hands_feet_to_character();
+        if (hands){
+            hands->TransitionToAnimation("Idle");
+        }
+        if (feet){
+            feet->TransitionToAnimation("Idle");
+        }
+    }
+
     ImGui::End();
 
     if (f_filemodal){

@@ -168,7 +168,7 @@ void ApplicationSim::Init(void){
 
     assetmanager->ListAssets();
     //Before starting anything
-    scene->UpdatePhysics();
+    scene->UpdatePhysics(1/50);
 
     InitComponents();
 }

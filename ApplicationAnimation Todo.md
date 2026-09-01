@@ -1,5 +1,6 @@
 ## Doing
 - [ ] Make the character climb up on a box, and be able to jump down from it.
+- [ ] Visialise for debugging where the hands / feet will be at the end of an animation cycle so we can maye figure out what to play / do to land on a certain spot.
 
 ## ApplicationAnimation Todo
 - [ ] Implement hair tracking

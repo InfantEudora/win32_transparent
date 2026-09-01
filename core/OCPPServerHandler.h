@@ -37,6 +37,9 @@ struct OCPPConnectorState {
 	float server_current_limit = 32.0f;
 	bool server_current_timit_updatereq = false;
 	DWORD last_profile_update_time_ms = 0;
+
+	// idTag used by the UI when issuing a RemoteStartTransaction for this connector
+	std::string remote_start_id_tag = "RemoteTag";
 };
 
 // Per-connection state for a charge point speaking OCPP over the HTTP server's websocket transport.
@@ -116,6 +119,12 @@ public:
 
 	// Send SetChargingProfile request to a client
 	bool SendSetChargingProfile(SOCKET clientSocket, int connectorId, float currentLimit);
+
+	// Send RemoteStartTransaction request to a client
+	bool SendRemoteStartTransaction(SOCKET clientSocket, int connectorId, const std::string& idTag);
+
+	// Send RemoteStopTransaction request to a client
+	bool SendRemoteStopTransaction(SOCKET clientSocket, int transactionId);
 
 private:
 	std::map<SOCKET, OCPPClientData> m_clientData;
