@@ -131,6 +131,7 @@ void ApplicationOCPP::RenderOCPPServerUI(){
                 ImGui::Text("AC Voltage : %.1f V", conn.ACVoltage);
                 ImGui::Text("Power      : %.1f Watt", conn.powerActiveImport);
                 ImGui::Text("Time       : %s", conn.meterValuesTimestamp.c_str());
+                if (!conn.info.empty()) ImGui::TextColored(ImVec4(1,0.6f,0,1), "Info: %s", conn.info.c_str());
 
                 if (ImGui::SliderFloat("Set Current Limit for Session", &conn.server_current_limit, 5, 32)){
                     conn.server_current_timit_updatereq = true;
@@ -153,6 +154,24 @@ void ApplicationOCPP::RenderOCPPServerUI(){
                 ImGui::SameLine();
                 if (ImGui::Button("Remote Stop")){
                     http_server->ocpp.SendRemoteStopTransaction(client_socket, conn.transactionId);
+                }
+
+                ImGui::SetNextItemWidth(120);
+                ImGui::InputInt("PBaseline (W)", &conn.pbaseline_watts);
+                ImGui::SameLine();
+                if (ImGui::Button("Set Power")){
+                    http_server->ocpp.SendChangeConfiguration(client_socket, "PBaseline", std::to_string(conn.pbaseline_watts));
+                }
+
+                if (data->hasV2GTelemetry) {
+                    ImGui::TextDisabled("Charger Telemetry (DataTransfer)");
+                    ImGui::Text("Vehicle SOC        : %.1f%%", conn.soc);
+                    ImGui::Text("Applied PBaseline  : %.0f W", data->v2gPBaselineWatts);
+                    ImGui::Text("Actual Output      : %.0f W", data->v2gOutputPowerWatts);
+                    ImGui::Text("Session Active     : %s", data->v2gSessionActive ? "true" : "false");
+                    ImGui::Text("Power Range        : %.0f W .. %.0f W", data->v2gPMinWatts, data->v2gPMaxWatts);
+                    ImGui::Text("SOC Range          : %.0f%% .. %.0f%% (EV min %.0f%%, capacity %.1f kWh)",
+                        data->v2gMinSoc, data->v2gMaxSoc, data->v2gEvMinSoc, data->v2gEvEnergyCapacityKwh);
                 }
                 ImGui::PopID();
             }
