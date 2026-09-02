@@ -36,13 +36,16 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     armobject->name = "Arm";
     armobject->AddPhysics(physicsworld);
     if (Physics* p = armobject->GetPhysics()){
-        p->AddBoxCollider(vec3(1.0,0.7,0.2),vec3(0,-.2,1.5),quat().identity());
+        //0.5 kg via density: rp3d's setMass() leaves the inertia tensor alone, so setting the
+        //mass afterwards would leave the arm with the inertia of a 1.12 kg (density 1) box.
+        const vec3 arm_half_extents(1.0,0.7,0.2);
+        const float arm_mass = 0.5f;
+        float arm_density = arm_mass / (8.0f * arm_half_extents.x * arm_half_extents.y * arm_half_extents.z);
+        p->AddBoxCollider(arm_half_extents,vec3(0,-.2,1.5),quat().identity(),arm_density);
         p->SetGravityEnabled(true);
         p->SetStatic(false);
         armobject->SetCollisionCategoryBits(COLLISION_CATEGORY_OBJECTS);
         armobject->SetCollideWithMaskBits(COLLISION_CATEGORY_OBJECTS|COLLISION_CATEGORY_FLOOR);
-        armobject->GetPhysics()->body->rigidbody->updateMassPropertiesFromColliders();
-        armobject->GetPhysics()->body->rigidbody->setMass(0.5);
         armobject->GetPhysics()->body->rigidbody->setUserData(this);
     }
 

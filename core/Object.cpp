@@ -157,8 +157,12 @@ Physics* Object::AddPhysics(PhysicsWorld* world){
     }
     if (!physics){
         physics = new Physics(world);
-        //We set the worldposition in the physics engine from local position
+        //We set the world position AND orientation in the physics engine from the local ones.
+        //Only copying the position meant any SetRotation done before AddPhysics was silently
+        //thrown away on the first UpdatePhysicsState (which syncs body -> object) - and worse,
+        //any joint created in between had its anchors computed against an unrotated body.
         physics->SetBodyWorldPosition(GetPosition());
+        physics->SetBodyWorldOrientation(GetRotation());
         physics->SetStatic(true);
         physics->SetGravityEnabled(false);
         return physics;
@@ -904,7 +908,7 @@ void Object::SetMass(float mass){
     if (!physics){
         return;
     }
-    physics->body->rigidbody->setMass(mass);
+    physics->SetMass(mass); //also rescales the inertia tensor - see Physics::SetMass
 }
 
 float Object::GetMass(){

@@ -25,11 +25,18 @@ float Physics::GetMass(){
 	return body->rigidbody->getMass();
 }
 
-//Overrides the mass set by AddBoxCollider/AddCapsuleCollider/etc's own density param (which only
-//sets it once, at collider-creation time) - doesn't touch the inertia tensor computed back then,
-//so this is a "how heavy does it feel" knob rather than a fully physically-consistent re-mass.
+//Overrides the mass set by AddBoxCollider/AddCapsuleCollider/etc's own density param. rp3d's
+//setMass() alone leaves the inertia tensor at whatever the colliders computed, which would make a
+//heavier body tumble like the lighter one - so the tensor is scaled along with it (inertia is
+//linear in mass for a fixed shape), keeping this a physically consistent "same shape, different
+//weight" knob.
 void Physics::SetMass(float mass){
 	if (body->rigidbody){
+		float old_mass = body->rigidbody->getMass();
+		if (old_mass > 0.0f && mass > 0.0f){
+			rp3d::Vector3 inertia = body->rigidbody->getLocalInertiaTensor();
+			body->rigidbody->setLocalInertiaTensor(inertia * (mass / old_mass));
+		}
 		body->rigidbody->setMass(mass);
 	}
 }

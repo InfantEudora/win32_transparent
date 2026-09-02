@@ -566,6 +566,13 @@ void ApplicationTank::Init(void){
     TestHeightmapMesh();
     AddTestSceneObjects();
 
+    //A joint-based test rig - see CraneCharacter's own header comment for what it's testing.
+    //Placed near the origin (same area the tank/buggy/default camera lookat all already sit in -
+    //see Application::CreateNewScene's own default camera pose) rather than off in a far corner,
+    //so it's actually in view on startup without having to go hunting for it.
+    crane = new CraneCharacter(assetmanager,main_scene->physics_world,main_scene,vec3(3.5f,0.0f,2.0f));
+    main_scene->AddObject(crane);
+
     RegisterMCPTools();
 
     main_window->Resize(1600,800);
@@ -581,11 +588,38 @@ void ApplicationTank::Init(void){
     //Need an inital step to show everything.
     main_scene->StepPhysics(1);
 
-    main_scene->PausePhysics(false);
+    main_scene->PausePhysics(true);
 }
 
 //Shared by all three MCP tools below - same fields tank_telemetry reports on its own,
 //reused so tank_drive/tank_steer can hand back the resulting state without a separate call.
+json ApplicationTank::GetCraneTelemetry(){
+    if (!crane || !crane->boom_hinge || !crane->boom){
+        return json{ {"error","no crane"} };
+    }
+    json result = {
+        {"speed_command", crane_piston_speed},
+        {"hinge_angle_deg", crane->boom_hinge->getAngle() * 180.0f / TYPE_PI},
+        {"limit_min_deg", crane->boom_min_angle * 180.0f / TYPE_PI},
+        {"limit_max_deg", crane->boom_max_angle * 180.0f / TYPE_PI},
+        {"motor_target_speed", crane->boom_hinge->getMotorSpeed()},
+        {"motor_torque_nm", crane->boom_hinge->getMotorTorque(1.0f / physics_tps)},
+        {"motor_max_torque_nm", crane->boom_hinge->getMaxMotorTorque()},
+    };
+    if (Physics* physics = crane->boom->GetPhysics()){
+        vec3 pos = physics->GetBodyWorldPosition();
+        vec3 vel = physics->GetVelocity();
+        vec3 angvel = physics->GetAngularVelocity();
+        rp3d::Vector3 inertia = physics->body->rigidbody->getLocalInertiaTensor();
+        result["boom_position"] = json::array({pos.x,pos.y,pos.z});
+        result["boom_velocity"] = json::array({vel.x,vel.y,vel.z});
+        result["boom_angular_velocity"] = json::array({angvel.x,angvel.y,angvel.z});
+        result["boom_mass_kg"] = physics->GetMass();
+        result["boom_inertia"] = json::array({inertia.x,inertia.y,inertia.z});
+    }
+    return result;
+}
+
 json ApplicationTank::GetTankTelemetry(){
     if (!controlled_tank){
         return json{ {"error","no tank"} };
@@ -917,6 +951,36 @@ void ApplicationTank::RegisterMCPTools(){
                 Sleep(5);
             }
             return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("crane_speed",
+        "Set the crane boom's velocity command (-1..1, positive raises, 0 holds) - the same value "
+        "the 'Boom Speed' slider in the Crane debug panel sets. Persists until changed. Returns "
+        "crane_telemetry.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"speed", {{"type","number"},{"description","-1..1 velocity command, positive raises"}}}
+            }},
+            {"required", json::array({"speed"})}
+        },
+        [this](const json &args) -> json {
+            //Goes through the same member the debug panel writes/re-applies every frame, so the
+            //panel doesn't immediately overwrite it back.
+            crane_piston_speed = clamp(args.value("speed",0.0f),-1.0f,1.0f);
+            if (crane){
+                crane->SetPistonSpeed(crane_piston_speed);
+            }
+            return GetCraneTelemetry();
+        });
+
+    MCPServer::Get()->RegisterTool("crane_telemetry",
+        "Report the crane boom's hinge angle (deg, relative to its spawn pose), the motor's "
+        "current target speed and applied torque, the boom body's world position/velocity, and "
+        "the current speed command.",
+        json{ {"type","object"}, {"properties", json::object()} },
+        [this](const json & /*args*/) -> json {
+            return GetCraneTelemetry();
         });
 
     MCPServer::Get()->RegisterTool("bridge_spawn",
@@ -1740,6 +1804,21 @@ void ApplicationTank::RenderTankWheelDebugUI(){
                     }
                     ImGui::PopID();
                 }
+            }
+            ImGui::PopID();
+        }
+    }
+
+    if (crane){
+        if (ImGui::CollapsingHeader("Crane",ImGuiTreeNodeFlags_DefaultOpen)){
+            ImGui::PushID("crane_section");
+            //Velocity command - 0 holds the boom in place (motor at speed 0). Set every frame;
+            //it's a state setter, not an accumulator, so that's harmless.
+            ImGui::SliderFloat("Boom Speed (+-1)",&crane_piston_speed,-1.0f,1.0f,"%.2f");
+            crane->SetPistonSpeed(crane_piston_speed);
+            if (crane->boom_hinge){
+                ImGui::Text("Boom Angle : %.1f deg",crane->boom_hinge->getAngle() * 180.0f / TYPE_PI);
+                ImGui::Text("Motor Torque : %.0f N.m",crane->boom_hinge->getMotorTorque(1.0f/physics_tps));
             }
             ImGui::PopID();
         }

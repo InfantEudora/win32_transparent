@@ -4,6 +4,7 @@
 #include "Application.h"
 #include "TankCharacter.h"
 #include "BuggyCharacter.h"
+#include "CraneCharacter.h"
 #include "Heightmap.h"
 #include "ParticleEmitter.h"
 #include "tinygltf/json.hpp"
@@ -89,12 +90,20 @@ public:
     //Suspension Test Bed" panel in RenderTankWheelDebugUI is what does the dragging.
     std::vector<Object*> buggy_test_cubes;
 
+    //A joint-based test rig, unrelated to the tank/buggy - see CraneCharacter's own header
+    //comment for what it's testing. Not a Vehicle (no wheels/pedals/steering), so it stays
+    //outside the controlled_tank/controlled_buggy/controlled_vehicle machinery entirely; driven
+    //directly by the "Crane" panel in RenderTankWheelDebugUI via crane_piston_speed.
+    CraneCharacter* crane = NULL;
+    float crane_piston_speed = 0.0f;
+
     void DumpTerrainVertices();
     void TestHeightmapRoundTrip();
     void TestHeightmapMesh();
     void AddTestSceneObjects();
     void RegisterMCPTools();
     json GetTankTelemetry();
+    json GetCraneTelemetry();
     json GetBridgeTelemetry();
     json MaybeAttachScreenshot(json result, bool include_screenshot);
 

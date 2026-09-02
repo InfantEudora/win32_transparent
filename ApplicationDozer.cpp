@@ -50,7 +50,7 @@ void ApplicationDozer::Init(){
     soundsystem->AppendFile("dozer/data/door_opening.wav","door_opening");
 
     main_scene = CreateMainScene();
-    main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics(1.0/50.0f);
 
     BinaryAsset::DumpBinaryAssets();
     assetmanager->ListAssets();
@@ -607,7 +607,7 @@ Scene* ApplicationDozer::CreateMainScene(){
 DozerButton* ApplicationDozer::CreateDozerButton(Scene* scene){
     std::vector<Material>loaded_materials;
     DozerButton* button = new DozerButton();
-    Mesh* gltfmesh = gltfloader.GetMeshFromNode("Button",&loaded_materials);
+    Mesh* gltfmesh = gltfloader.GetMeshFromNode("Button",&loaded_materials,false);
     if (!gltfmesh){
         debug->Fatal("No Button Mesh was found\n");
     }
