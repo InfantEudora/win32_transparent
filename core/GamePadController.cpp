@@ -68,7 +68,12 @@ void GamePadController::UpdateKeyState(){
     XINPUT_STATE state;
     ZeroMemory(&state, sizeof(XINPUT_STATE));
     if (XInputGetState(0, &state) == ERROR_SUCCESS){
-        
+        analog_values[0] = state.Gamepad.sThumbLX;
+        analog_values[1] = state.Gamepad.sThumbLY;
+        analog_values[2] = state.Gamepad.sThumbRX;
+        analog_values[3] = state.Gamepad.sThumbRY;
+        analog_values[4] = (SHORT)state.Gamepad.bLeftTrigger * 128;
+        analog_values[5] = (SHORT)state.Gamepad.bRightTrigger * 128;
     }else{
         dev_index = -1;
         debug->Warn("Game Controller has disconnected.\n");
@@ -136,6 +141,7 @@ float GamePadController::GetNormalizedAnalogValue(uint32_t mapped_key){
                 }else if (raw_value < -dead_zone){
                     normalized = (float)(raw_value + dead_zone) / (32768.0f - dead_zone);
                 }
+                //debug->Info("GamePadController: GetNormalizedAnalogValue(%i -> %i) = %i -> %.3f\n",mapped_key,map.analog_index,raw_value,normalized);
 
                 return normalized;
             }

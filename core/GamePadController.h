@@ -15,7 +15,7 @@ class GamePadController;
 struct GamePadMap{
     int analog_index = -1;
     uint32_t mapped_keycode = 0;   // Our keycode
-    int32_t zero_offset = 32768;
+    int32_t zero_offset = 0;
     int32_t dead_zone = 50;
     KeyState* state = NULL;
 };

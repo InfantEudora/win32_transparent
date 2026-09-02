@@ -25,6 +25,15 @@ float Physics::GetMass(){
 	return body->rigidbody->getMass();
 }
 
+//Overrides the mass set by AddBoxCollider/AddCapsuleCollider/etc's own density param (which only
+//sets it once, at collider-creation time) - doesn't touch the inertia tensor computed back then,
+//so this is a "how heavy does it feel" knob rather than a fully physically-consistent re-mass.
+void Physics::SetMass(float mass){
+	if (body->rigidbody){
+		body->rigidbody->setMass(mass);
+	}
+}
+
 //Some note here: We need to use setIsActive false before changing transform, else it will not update properly.
 //Apparently also the angular velocity gets reset on setTransform, so we need to store it and reapply it.
 void Physics::SetBodyWorldPosition(const vec3& wp){

@@ -64,6 +64,18 @@ class Renderer{
     int width = 1;
     int height = 1;
 
+    //Lets an app confine the actual 3D draw calls to a sub-rectangle of the window
+    //(e.g. an 800x800 square docked to one side) while every FBO/blit/readback above
+    //stays sized to the full window - see DrawFrame/DeferredPass for the two glViewport
+    //calls that use these, and the comment there for why ImGui isn't affected. -1 (the
+    //default) means "use the full window", so every app that never touches these fields
+    //renders exactly as before.
+    int viewport_x = 0;
+    int viewport_width = -1;
+    int viewport_height = -1;
+    int GetViewportWidth() const { return viewport_width > 0 ? viewport_width : width; }
+    int GetViewportHeight() const { return viewport_height > 0 ? viewport_height : height; }
+
     void CullObjects();
     void CullLights();
     void GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects);

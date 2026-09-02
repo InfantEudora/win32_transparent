@@ -49,6 +49,11 @@ struct Wheel{
     //damaged) wheels don't all grip the same, and tuning one wheel's own value is what a later
     //blown tire or worn axle would want to degrade independently of the others.
     float lateral_friction = 0.0f;
+    //N per (m/s) of forward-axis ground velocity for a COASTING (undriven) wheel - deliberately
+    //its own, much smaller number than lateral_friction: a wheel assumed to roll without slip
+    //(see Wheel::angular_velocity) shouldn't resist forward motion anywhere near as hard as it
+    //resists genuine sideways slip. Not read by every caller - see each vehicle's own use of it.
+    float rolling_resistance = 0.0f;
 
     //--- Role ---
     //local_offset.x < 0. This engine is right-handed with ref_forward = -Z and ref_up = +Y, so
@@ -162,6 +167,7 @@ struct WheelTuning{
     float max_point_speed = 2.0f;
     float friction_coefficient = 1.0f;
     float lateral_friction = 120.0f; //N per (m/s) of tangential slip - not read by UpdateContact, see Wheel's own comment
+    float rolling_resistance = 15.0f; //N per (m/s) of forward-axis speed for a coasting wheel - see Wheel's own comment
 };
 
 namespace WheelSuspension{
@@ -174,6 +180,16 @@ namespace WheelSuspension{
         //roll/point-velocity (vs. some fallback) actually needs.
         bool active = false;
         vec3 mount_world = {};
+        //The actual ground contact (raycast hit.point), not the anchor mount_world sits at -
+        //only meaningful if active. The NORMAL (spring) force stays applied at mount_world (see
+        //the TODO on that in UpdateContact below - deliberately left as the anchor, an
+        //approximation that's fine for a near-vertical strut), but a caller applying TANGENTIAL
+        //force (drive/grip/lateral) should use this instead: mount_world can sit close to or even
+        //above the body's own centre of mass, giving it almost no lever arm for the pitch torque
+        //that force is actually supposed to produce (e.g. a wheelie under hard rear-wheel
+        //acceleration) - ground_contact_world, down at tire height, is what a real contact patch
+        //would use.
+        vec3 ground_contact_world = {};
         vec3 push_dir = {};          //ground normal - only meaningful if active
         vec3 point_velocity = {};    //already max_point_speed-clamped - only meaningful if active
         float roll_distance = 0.0f;  //metres this contact rolled this tick, signed - only meaningful if active

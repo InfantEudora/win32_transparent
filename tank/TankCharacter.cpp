@@ -7,6 +7,8 @@ static Debugger *debug = new Debugger("Tank", DEBUG_ALL);
 
 TankCharacter::TankCharacter(){
     top_speed = 1.0f;
+    engine_force = 2000.0f; //Newtons
+    brake_force = 3000.0f;  //Newtons
 }
 
 TankCharacter::~TankCharacter(){
@@ -76,7 +78,7 @@ void TankCharacter::UpdatePhysicsState(){
         //single tick, whose direction is fixed by whichever way the hull first happens to tip.
         //The one-directional roll bias that ends with the hull resting on its side is this.
         vec3 com_world = body_world_pos + rotation * physics->GetCenterofMass();
-        float forward_speed = velocity.dot(forward);
+        forward_speed = velocity.dot(forward);
 
         //Braking: oppose whatever the current horizontal velocity actually is (not just facing),
         //same as a real brake would. Applied once at the centre of mass - it's resisting the
@@ -136,6 +138,12 @@ void TankCharacter::UpdatePhysicsState(){
             if (!contact.active){
                 continue;
             }
+            //Rolling without slip - WheelSuspension::UpdateContact no longer sets this itself
+            //(see its own comment on why), so it's set here instead, unconditionally, same as it
+            //always was for the tank.
+            if (tuning.radius > 0.0f){
+                wheel.angular_velocity = -contact.point_velocity.dot(forward) / tuning.radius;
+            }
             int side = wheel.is_left_side ? 0 : 1;
             track_distance_sum[side] += contact.roll_distance;
             track_distance_count[side]++;
@@ -182,7 +190,7 @@ void TankCharacter::UpdatePhysicsState(){
                 wheel.friction_saturated = true;
             }
             wheel.drive_force = drive_force;
-            wheel.longitudinal_force = grip_force;
+            wheel.longitudinal_force = longitudinal_force; //the actual applied along-wheel force (drive OR grip, whichever this tick used) - was reading back just grip_force, so a driven wheel's own longitudinal_force always showed 0 even while drive_force was nonzero
             wheel.lateral_force = lateral_force;
 
             //One call rather than three: same total force, and the two tangential components
@@ -234,6 +242,7 @@ void TankCharacter::UpdatePhysicsState(){
         float yaw_rate = angvel_now.dot(up);
         vec3 tilt_rate = angvel_now - up * yaw_rate; //roll+pitch, with yaw projected out
         float tilt_speed = tilt_rate.length();
+
         if (tilt_speed > max_roll_speed){
             physics->SetAngularVelocity(up * yaw_rate + tilt_rate * (max_roll_speed / tilt_speed));
         }

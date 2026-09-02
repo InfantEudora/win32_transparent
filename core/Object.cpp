@@ -25,6 +25,7 @@ Object::Object(Object* object):Object(){
     Physics* p = object->GetPhysics();
     if (p){
         AddPhysics(p->world);
+
         rp3d::CollisionShape* shape =  p->body->collider->getCollisionShape();
         reactphysics3d::Transform t = p->body->collider->getLocalToBodyTransform();
         physics->body->collider = physics->body->rigidbody->addCollider(shape,t);

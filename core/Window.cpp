@@ -243,13 +243,13 @@ void Window::ImGuiNewFrame(){
     ImGui::NewFrame();
 }
 
-void Window::ImGuiDrawFrame(){
+void Window::ImGuiRenderDrawData(){
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 //Simply copies buffer to backbuffer
-void Window::DrawFrame(){
+void Window::SwapWindowBuffers(){
     if (f_is_layered){
         SwapBuffers(hDC); //Just so that frame sync occurs
         CopyBufferToImage();

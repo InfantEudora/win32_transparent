@@ -91,16 +91,16 @@ ContactResult UpdateContact(Wheel& wheel,const WheelTuning& tuning,Physics* phys
         point_velocity = point_velocity * (tuning.max_point_speed / point_speed);
     }
 
-    //Rolling-without-slip: the distance this contact rolled along the ground this tick, from
-    //the same (already-clamped) point_velocity every force below derives from, so the spin
-    //stays consistent with what the wheel is visibly doing on the ground. Sets angular_velocity
-    //(read by WheelSuspension::UpdateVisual to actually integrate roll_angle) rather than
-    //touching roll_angle directly - this IS the "lock to the ground contact's velocity, assuming
-    //0 slip" half of the freewheel/lock mechanic; see Wheel::angular_velocity for the other half.
+    //Rolling-without-slip distance this contact covered this tick, from the same (already-
+    //clamped) point_velocity every force below derives from. Deliberately NOT also written into
+    //wheel.angular_velocity here any more, even though it's the same "0 slip" value that would
+    //produce - a caller whose tangential force ends up friction-saturated (see e.g.
+    //BuggyCharacter::UpdatePhysicsState) needs to blend angular_velocity away from ground-matched
+    //instead of snapping to it, and any write here would just get overwritten again the very
+    //next tick before that blend could ever accumulate. So this is now the CALLER's own
+    //responsibility, using this same point_velocity/forward/radius - see Wheel::angular_velocity
+    //for the other half (freewheel while airborne).
     float roll_distance = -point_velocity.dot(forward) * timestep;
-    if (tuning.radius > 0.0f){
-        wheel.angular_velocity = -point_velocity.dot(forward) / tuning.radius;
-    }
 
     //Pushed along the actual ground normal, not the body's own (possibly already tilted) up
     //vector - using the body's up here would mean that once it's tilted even slightly, the
@@ -136,6 +136,7 @@ ContactResult UpdateContact(Wheel& wheel,const WheelTuning& tuning,Physics* phys
     result.push_dir = push_dir;
     result.point_velocity = point_velocity;
     result.roll_distance = roll_distance;
+    result.ground_contact_world = hit.point; //see ContactResult::ground_contact_world's own comment
     return result;
 }
 

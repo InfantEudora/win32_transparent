@@ -6,12 +6,10 @@ void Vehicle::Accelerate(float factor){
     //decelerates the body before it starts moving the other way, same as an actual vehicle.
     f_reverse = false;
     gas_pedal = clamp(factor,0.0f,1.0f);
-    brake_pedal = 0.0f;
 }
 
 void Vehicle::Brake(float factor){
     brake_pedal = clamp(factor,0.0f,1.0f);
-    gas_pedal = 0.0f;
 }
 
 //Both clamp to the FULL [-1,+1] range, not to their own half of it. Clamping SteerLeft to
@@ -38,7 +36,6 @@ void Vehicle::SteerRight(float factor){
 void Vehicle::Reverse(float factor){
     f_reverse = true;
     gas_pedal = clamp(factor,0.0f,1.0f);
-    brake_pedal = 0.0f;
 }
 
 void Vehicle::HoldDrive(bool reverse,float amount,float duration_ms){

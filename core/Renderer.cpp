@@ -433,8 +433,9 @@ void Renderer::DeferredPass(Camera* camera){
     unsigned int attachments[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,GL_COLOR_ATTACHMENT3};
     glNamedFramebufferDrawBuffers(deferred_fbo_id,3, attachments);
 
-    //Viewport and clear
-    glViewport(0, 0, width, height);
+    //Viewport and clear - see the main color pass in DrawFrame for why this uses
+    //GetViewportWidth/Height() (and the offset) instead of the raw width/height.
+    glViewport(viewport_x, 0, GetViewportWidth(), GetViewportHeight());
     vec4 clr_clear = vec4(0,0,0,0);
     float depth = 1.0;
     glClearNamedFramebufferfv(deferred_fbo_id,GL_DEPTH,0,&depth);
@@ -546,12 +547,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         tmr_frame->Restart();
     }
 
-
-
     PrepareObjects();
 
-    camera->viewport.width = width;
-    camera->viewport.height = height;
+    camera->viewport.width = GetViewportWidth();
+    camera->viewport.height = GetViewportHeight();
     camera->CalculateLookatMatrix();
 
     ClearDepthPasses();
@@ -587,12 +586,18 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     //Select the mutisampled framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
-    //Viewport and clear
-    glViewport(0, 0, width, height);
+    //Clears the WHOLE fbo (unaffected by glViewport, and scissor test is never enabled) -
+    //still full window size, so a restricted viewport_width/height below still leaves the
+    //rest of the frame cleared to transparent black for ImGui to draw over.
     vec4 clr_clear = vec4(0,0,0,0);
     float depth = 1.0;
     glClearNamedFramebufferfv(msaa_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     glClearNamedFramebufferfv(msaa_fbo_id,GL_DEPTH,0,&depth);
+
+    //Viewport - confines the actual 3D draw calls below to the (optionally smaller,
+    //optionally offset) sub-rectangle set via viewport_x/viewport_width/viewport_height;
+    //see Renderer.h's comment on those fields.
+    glViewport(viewport_x, 0, GetViewportWidth(), GetViewportHeight());
 
     { //We draw skybox before other stuff
         DrawSkyBox(camera);

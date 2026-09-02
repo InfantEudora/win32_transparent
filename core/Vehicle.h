@@ -83,6 +83,14 @@ public:
     unsigned long long brake_latch_until_ms = 0;
     float steer_latch_amount = 0.0f;
     unsigned long long steer_latch_until_ms = 0;
+
+    //Settings
+    float engine_force = 1000.0f; //Newtons
+    float brake_force = 1000.0f;  //Newtons
+    float top_speed = 1.0f; //Soft cap (m/s): stop adding more drive force once real physics velocity reaches this.
+
+    //Statistics
+    float forward_speed = 0.0f; //m/s, read from the physics engine each tick, for telemetry/debug UI
 };
 
 #endif

@@ -238,10 +238,10 @@ void Application::DrawFrame(){
     renderer->physics_mutex.unlock();
 
     //Finish ImGui
-    main_window->ImGuiDrawFrame();
+    main_window->ImGuiRenderDrawData();
 
     //Copy to screen and finish
-    main_window->DrawFrame();
+    main_window->SwapWindowBuffers();
 }
 
 DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
@@ -896,6 +896,8 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
     }
 
     if (ImGui::Button("Duplicate(Linked)")){
+        //This might need to happen in the physics thread..
+
         Object* duplicated = new Object(object);
         main_scene->AddObject(duplicated);
         Physics* physics = duplicated->GetPhysics();

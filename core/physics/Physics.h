@@ -55,6 +55,7 @@ public:
     void AddLocalTorque(const vec3& torque);
     void AddWorldTorque(const vec3& torque);
     float GetMass();
+    void SetMass(float mass);
     vec3 GetForce();
     void SetVelocity(const vec3& v);
     vec3 GetVelocity();

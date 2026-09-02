@@ -8,6 +8,7 @@
 #include "ParticleEmitter.h"
 #include "tinygltf/json.hpp"
 #include <vector>
+#include "GamePadController.h"
 
 using json = nlohmann::json;
 
@@ -27,6 +28,11 @@ public:
     //ever reads/writes Wheel fields and Vehicle::WheelRadius/WheelRestLength/WheelTravel, none
     //of which are vehicle-specific, so one function renders it for whichever Vehicle is passed.
     void RenderVehicleWheelTable(Vehicle* vehicle);
+
+    //A separate, focused control panel - only visible while the buggy is the actively controlled
+    //vehicle (see SetControlledVehicle/controlled_vehicle) - as opposed to RenderTankWheelDebugUI's
+    //"Buggy" section above, which stays visible any time the buggy exists at all.
+    void RenderBuggyControlDebugUI(void);
 
     Object* compass = NULL;
     Object* target = NULL;
@@ -71,6 +77,7 @@ public:
     void DumpTerrainVertices();
     void TestHeightmapRoundTrip();
     void TestHeightmapMesh();
+    void AddTestSceneObjects();
     void RegisterMCPTools();
     json GetTankTelemetry();
     json GetBridgeTelemetry();
@@ -80,6 +87,8 @@ public:
     //(an ad hoc one for scouting a new crossing). Fails (returns false, bridge left NULL) if
     //a bridge already exists or the asset/asset manager isn't available.
     bool SpawnBridge(const vec3& pos, float yaw_degrees);
+
+    GamePadController* gamepad_controller = NULL;
 
     TankCharacter* controlled_tank = NULL;
     BuggyCharacter* controlled_buggy = NULL;
@@ -92,15 +101,24 @@ public:
     void SetControlledVehicle(Vehicle* vehicle);
 
     //Moves camera_target (the point the middle-mouse orbit/zoom pivots around) onto the
-    //controlled vehicle, carrying the camera along by the same delta so the current viewing
-    //angle and distance are preserved - a snap of the PIVOT, not a jump to a fixed chase pose.
-    //No-op with no controlled vehicle. Called by the "Snap To Vehicle" button, and every frame
-    //while f_camera_follow_vehicle is set.
+    //controlled vehicle, carrying the camera along by the same delta so its distance and height
+    //above the pivot are preserved, then gently steers its horizontal orbit angle back around
+    //behind the vehicle's own current heading (see camera_behind_blend_rate) - so the camera
+    //chases the vehicle's tail instead of just translating while keeping whatever angle the
+    //mouse last set. No-op with no controlled vehicle. Called by the "Snap To Vehicle" button,
+    //and every frame while f_camera_follow_vehicle is set.
     void SnapCameraToControlledVehicle();
     //While set, SnapCameraToControlledVehicle runs every frame, so the orbit pivot rides along
-    //with the vehicle and the camera keeps whatever angle/distance the mouse last set. Orbiting
-    //and zooming stay fully usable while following, since both are relative to the pivot.
+    //with the vehicle and the camera keeps chasing behind its heading. Orbiting and zooming stay
+    //fully usable while following - both are relative to the pivot/distance this only ever
+    //nudges the ANGLE of, so grabbing the view with the mouse still works, it just drifts back
+    //toward directly-behind again over the next few frames.
     bool f_camera_follow_vehicle = false;
+    //How much of the way from the camera's CURRENT horizontal orbit angle to directly-behind-
+    //the-vehicle SnapCameraToControlledVehicle closes each call (0 = never turns, 1 = snaps
+    //instantly every frame) - a partial step rather than an instant snap so a sharp turn doesn't
+    //whip the view around in one frame.
+    float camera_behind_blend_rate = 0.05f;
 private:
     vec3 camera_target = {};
 };

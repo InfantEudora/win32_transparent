@@ -63,16 +63,6 @@ public:
     //point-contact model, with the wheels visually static as before.
     float wheel_radius = 0.0f;
 
-    //Soft cap (m/s): stop adding more drive force once real physics velocity reaches this.
-    float top_speed = 1.0f;
-
-    //Engine force is split evenly across however many of one side's wheels are grounded, so
-    //total available thrust per side stays ~engine_force regardless of how many are touching
-    //down. Braking still applies once at the hull's centre, same as before - it's a resistive
-    //force against whatever the hull's actual velocity is, not tied to any one wheel.
-    float engine_force = 2000.0f; //Newtons
-    float brake_force = 3000.0f;  //Newtons
-
     //Suspension tuning - see UpdatePhysicsState for how these become a per-wheel spring+damper
     //force via WheelSuspension::UpdateContact. Defaults for any wheel that doesn't override them
     //(Wheel::rest_length/travel/etc, resolved through ResolveTuning above).

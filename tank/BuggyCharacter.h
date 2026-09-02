@@ -40,18 +40,13 @@ public:
         t.max_point_speed = wheel.max_point_speed > 0.0f ? wheel.max_point_speed : max_point_speed;
         t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
         t.lateral_friction = wheel.lateral_friction > 0.0f ? wheel.lateral_friction : lateral_friction;
+        t.rolling_resistance = wheel.rolling_resistance > 0.0f ? wheel.rolling_resistance : rolling_resistance;
         return t;
     }
 
     //Default rolling radius - 0 degrades to the old point-contact model, same as TankCharacter.
     //Set from the buggy wheel asset's own mesh extents once that asset exists.
     float wheel_radius = 0.0f;
-
-    float top_speed = 6.0f; //m/s soft cap - a wheeled buggy is unhindered by anything like a
-                             //track's scrub, so this can be much higher than the tank's
-
-    float engine_force = 2500.0f; //Newtons, total across both driven axles
-    float brake_force = 3500.0f;  //Newtons
 
     //0 = rear-wheel drive, 1 = front-wheel drive, in between = that fraction of engine_force to
     //the front axle, the rest to the rear - see this class's own header comment.
@@ -75,7 +70,11 @@ public:
     float max_wheel_force = 5000.0f;
     //Default for any wheel that doesn't override its own Wheel::lateral_friction (0 = inherit,
     //same pattern as every other tuning field here - see ResolveTuning above).
-    float lateral_friction = 150.0f;   //N per (m/s) of sideways slip, per grounded wheel
+    float lateral_friction = 100.0f;   //N per (m/s) of sideways slip, per grounded wheel
+    //Default for any wheel that doesn't override its own Wheel::rolling_resistance (0 = inherit).
+    //Deliberately its own, much smaller number than lateral_friction - see Wheel's own comment
+    //on why a coasting wheel shouldn't resist forward motion nearly that hard.
+    float rolling_resistance = 15.0f;  //N per (m/s) of forward-axis speed, per coasting wheel
     float friction_coefficient = 1.0f; //Coulomb - see TankCharacter's own field for why this exists
     float max_point_speed = 2.0f;
     float max_roll_speed = 3.0f;

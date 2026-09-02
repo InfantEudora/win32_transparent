@@ -3,8 +3,16 @@
 #include "type_helpers.h"
 #include "MCPServer.h"
 #include <cmath>
+#include <cstdlib>
 
 #define INPUT_FIRE INPUT_LAST+1
+
+#define GAMEPAD_LEFT_STICK_X    INPUT_LAST+6
+#define GAMEPAD_LEFT_STICK_Y    INPUT_LAST+7
+#define GAMEPAD_RIGHT_STICK_X   INPUT_LAST+8
+#define GAMEPAD_RIGHT_STICK_Y   INPUT_LAST+9
+#define GAMEPAD_L2             INPUT_LAST+10
+#define GAMEPAD_R2             INPUT_LAST+11
 
 static Debugger *debug = new Debugger("ApplicationTank", DEBUG_ALL);
 
@@ -45,6 +53,15 @@ void ApplicationTank::Init(void){
     main_scene->physics_world = new PhysicsWorld();
     main_scene->physics_world->SetGravity(vec3(0,-9.81,0));
     main_scene->physics_world->SetDebugRendering(false);
+
+    gamepad_controller = new GamePadController();
+    gamepad_controller->ListDevices();
+    gamepad_controller->AddGamePadMap(0,GAMEPAD_LEFT_STICK_X);
+    gamepad_controller->AddGamePadMap(1,GAMEPAD_LEFT_STICK_Y);
+    gamepad_controller->AddGamePadMap(2,GAMEPAD_RIGHT_STICK_X);
+    gamepad_controller->AddGamePadMap(3,GAMEPAD_RIGHT_STICK_Y);
+    gamepad_controller->AddGamePadMap(4,GAMEPAD_L2);
+    gamepad_controller->AddGamePadMap(5,GAMEPAD_R2);
 
     {
         //Setup sun light
@@ -280,6 +297,9 @@ void ApplicationTank::Init(void){
         //radius as the clearance stand-in here since there's no separate tracks-style mesh to
         //measure it from, same reasoning the tank uses wheel_radius for in its own rest_length.
         vec3 extent = controlled_buggy->GetMesh() ? controlled_buggy->GetMesh()->GetExtents() * 0.5f : vec3(1,0.4f,2);
+        //Scale the collider a bit
+        extent *= 0.85f;
+
         float ground_clearance = max(front_radius,rear_radius);
         vec3 box_extent = vec3(extent.x,max(extent.y - ground_clearance * 0.5f,0.01f),extent.z);
         vec3 box_center = vec3(0,extent.y + ground_clearance * 0.5f,0);
@@ -288,6 +308,7 @@ void ApplicationTank::Init(void){
         float volume = max((extent.x * 2.0f) * (extent.y * 2.0f) * (extent.z * 2.0f),0.001f);
         float density = target_mass_kg / volume;
         physics->AddBoxCollider(box_extent,box_center,quat().identity(),density);
+        physics->AddBoxCollider(box_extent/2,box_center + vec3(0,extent.y,0),quat().identity(),density);
         physics->SetFrictionCoefficient(0.5f);
         physics->SetBounciness(0.0f);
         //Suspension test bed: the body is held STATIC (immune to every force, including its own
@@ -297,8 +318,8 @@ void ApplicationTank::Init(void){
         //up into a wheel's reach via the "Buggy Suspension Test Bed" debug UI panel, to watch one
         //wheel's suspension respond in isolation. Swap SetStatic(false) back on (and stop pinning
         //the body to a fixed height below) once it's time to actually drive the thing.
-        physics->SetStatic(true);
-        physics->SetGravityEnabled(false);
+        physics->SetStatic(false);
+        physics->SetGravityEnabled(true);
 
         //First-pass geometry derived from the body mesh's own extents, exactly like the tank's
         //own bootstrap numbers were before being probed/measured precisely (see its SetupWheels
@@ -453,6 +474,7 @@ void ApplicationTank::Init(void){
     controlled_buggy->SetPosition(buggy_suspended_position);
     buggy_start_position = controlled_buggy->GetPosition();
     buggy_start_rotation = controlled_buggy->GetRotation();
+    controlled_buggy->power_split_front = 0.5f;
 
     //The default vehicle
     SetControlledVehicle(controlled_buggy);
@@ -495,18 +517,29 @@ void ApplicationTank::Init(void){
     //Recorded on 2026-08-31 via bridge_telemetry over MCP: drove the tank up to the ravine
     //notch just north-west of its start position, dropped the bridge in over MCP, then nudged
     //its position/yaw (the ~21.2 deg here) by hand over MCP until it spanned the gap cleanly -
-    //this is that placement, made permanent.
-    SpawnBridge(vec3(-1.294021f,-0.48f,-6.942404f),21.199468f);
+    //this is that placement, made permanent. Shifted -20 in Z along with the heightmap terrain
+    //below (see TestHeightmapMesh) so both sit well clear of the flat test ground AddTestSceneObjects
+    //adds at the origin, keeping vehicle-dynamics testing there reproducible.
+    SpawnBridge(vec3(-1.294021f,-0.48f,-26.942404f),21.199468f);
 
     //terrain = CreateNewObjectFromGLTF("terrain",main_scene);
 
 
     //TestHeightmapRoundTrip();
     TestHeightmapMesh();
+    AddTestSceneObjects();
 
     RegisterMCPTools();
 
-    main_window->Resize(1200,800);
+    main_window->Resize(1600,800);
+
+    //Window stays 1600x800 (so ImGui - composited into the same shared framebuffer as the
+    //3D scene, see Renderer.h's comment on viewport_x/viewport_width/viewport_height - keeps
+    //its full canvas), but the 3D scene itself is confined to an 800x800 square docked to
+    //the right, leaving the left 800px strip free of 3D geometry for ImGui panels to occupy.
+    renderer->viewport_x = 800;
+    renderer->viewport_width = 800;
+    renderer->viewport_height = 800;
 
     //Need an inital step to show everything.
     main_scene->StepPhysics(1);
@@ -996,7 +1029,10 @@ void ApplicationTank::TestHeightmapMesh(){
     heightmap_mesh_test = new Object();
     heightmap_mesh_test->SetMesh(mesh);
     heightmap_mesh_test->name = "Heightmap Test Mesh";
-    heightmap_mesh_test->SetPosition(vec3(0,0,0)); //Off to the side so it doesn't overlap the tank.
+    //Shifted -20 in Z (alongside the bridge, see Init()) so it doesn't overlap the flat test
+    //ground AddTestSceneObjects adds at the origin - the heightmap's undulations made
+    //vehicle-dynamics tests inconsistent run to run.
+    heightmap_mesh_test->SetPosition(vec3(0,-0.270,-20));
 
     heightmap_mesh_test->AddPhysics(main_scene->physics_world);
     if (Physics* physics = heightmap_mesh_test->GetPhysics()){
@@ -1008,6 +1044,201 @@ void ApplicationTank::TestHeightmapMesh(){
     }
 
     main_scene->AddObject(heightmap_mesh_test);
+}
+
+//A flat, perfectly reproducible driving surface at the origin - same 20x20 footprint as the
+//heightmap terrain, but with none of its undulations, so vehicle-dynamics tests run there stay
+//consistent run to run. Sits right under the tank/buggy's own spawn points (see their SetPosition
+//calls above), now that the heightmap terrain itself has been moved out to z=-20.
+void ApplicationTank::AddTestSceneObjects(){
+    Object* ground_plane = assetmanager->GetObjectFromAsset("cube");
+    if (!ground_plane){
+        debug->Err("AddTestSceneObjects: no 'cube' asset found\n");
+        return;
+    }
+    ground_plane->name = "Test Ground Plane";
+    main_scene->AddObject(ground_plane);
+
+    ground_plane->AddPhysics(main_scene->physics_world);
+    const vec3 target_scale(20.0f,1.0f,20.0f);
+    vec3 raw_extent = ground_plane->GetMesh() ? ground_plane->GetMesh()->GetExtents() : vec3(1,1,1);
+    if (Physics* physics = ground_plane->GetPhysics()){
+        //Object::SetScale only rescales SPHERE colliders (see its own comment) - sized directly
+        //to the mesh's final, post-scale extents here instead of relying on that.
+        vec3 extent = vec3(raw_extent.x * target_scale.x,raw_extent.y * target_scale.y,raw_extent.z * target_scale.z) * 0.5f;
+        physics->AddBoxCollider(extent,vec3(0,0,0),quat().identity(),1.0f); //density irrelevant, static
+        physics->SetFrictionCoefficient(0.8f);
+        physics->SetBounciness(0.0f);
+        physics->SetStatic(true);
+    }
+    ground_plane->SetScale(target_scale);
+    ground_plane->SetMaterialSlot(0,0);
+
+    //Cube mesh is centred on its own origin - drop it by half its (post-scale) height so its
+    //TOP face lands on y=0, matching where the tank/buggy spawn expects ground to be.
+    ground_plane->SetPosition(vec3(0,-raw_extent.y * target_scale.y * 0.5f,0));
+
+    //A handful of static obstacles scattered across the ground plane above - fixed seed, so the
+    //layout is the same every run (same reproducibility goal as the flat plane itself).
+    srand(1337);
+    for (int i = 0; i < 3; i++){
+        Object* obstacle = assetmanager->GetObjectFromAsset("cube");
+        if (!obstacle){
+            debug->Err("AddTestSceneObjects: no 'cube' asset found for obstacle %d\n",i);
+            continue;
+        }
+        obstacle->name = "Test Obstacle";
+        main_scene->AddObject(obstacle);
+        obstacle->AddPhysics(main_scene->physics_world);
+        vec3 obstacle_extent = obstacle->GetMesh() ? obstacle->GetMesh()->GetExtents() * 0.5f : vec3(0.5f,0.5f,0.5f);
+        if (Physics* physics = obstacle->GetPhysics()){
+            physics->AddBoxCollider(obstacle_extent,vec3(0,0,0),quat().identity(),1.0f); //density irrelevant, static
+            physics->SetFrictionCoefficient(0.8f);
+            physics->SetBounciness(0.0f);
+            physics->SetStatic(true);
+        }
+        float x = ((float)(rand() % 1600)) / 100.0f - 8.0f; //-8..8, safely inside the 20x20 plane
+        float z = ((float)(rand() % 1600)) / 100.0f - 8.0f;
+        obstacle->SetPosition(vec3(x,obstacle_extent.y,z)); //sits with its bottom on the plane's top face (y=0)
+    }
+
+    //A capsule collider, radius=1 height=1, to look at directly - reactphysics3d's own
+    //createCapsuleShape(radius,height) convention is that `height` is just the cylindrical
+    //section BETWEEN the two hemisphere caps, so this one is capsule_height + 2*capsule_radius
+    //(3 units) tall overall, not a sphere. Left at exactly the requested radius/height rather
+    //than adjusted to force a spherical look, so what's actually rendered can be checked against
+    //that expectation directly.
+    Object* capsule_obstacle = assetmanager->GetObjectFromAsset("capsule");
+    if (!capsule_obstacle){
+        debug->Err("AddTestSceneObjects: no 'capsule' asset found\n");
+    }else{
+        capsule_obstacle->name = "Test Capsule Obstacle";
+        main_scene->AddObject(capsule_obstacle);
+        capsule_obstacle->AddPhysics(main_scene->physics_world);
+        const float capsule_radius = 1.0f;
+        const float capsule_height = 1.0f;
+        if (Physics* physics = capsule_obstacle->GetPhysics()){
+            physics->AddCapsuleCollider(capsule_radius,capsule_height,vec3(0,0,0),quat().identity(),1.0f);
+            physics->SetFrictionCoefficient(0.8f);
+            physics->SetBounciness(0.0f);
+            physics->SetStatic(true);
+        }
+        float x = ((float)(rand() % 1600)) / 100.0f - 8.0f;
+        float z = ((float)(rand() % 1600)) / 100.0f - 8.0f;
+        float half_total_height = capsule_height * 0.5f + capsule_radius; //cylinder half + one hemisphere cap
+        capsule_obstacle->SetPosition(vec3(x,half_total_height,z));
+    }
+
+    //An elongated capsule tipped onto its side - a speed-bump-style obstacle to drive over.
+    //A single capsule mesh can't be stretched along its axis without distorting the hemisphere
+    //caps into an egg/lens shape (SetScale scales the whole mesh, caps included) - the collider
+    //stays exact regardless (it's built from radius+length directly, not from this mesh), but
+    //the two need to actually look alike. So the VISUAL is three pieces instead: a "cylinder"
+    //asset for the straight middle (safe to stretch along its own axis - a circular cross-section
+    //doesn't distort that way) capped by two capsule instances, each scaled UNIFORMLY (so they
+    //stay properly round) and centred exactly on the cylinder's end faces, so only their outer
+    //rounded half shows - the same trick a modeller would use, an embedded sphere as a cap.
+    //bump itself stays a bare, mesh-less Object: it only carries the physics collider (built
+    //directly from bump_radius/bump_length below, unaffected by any of this) and is the parent
+    //the three visual pieces attach to, exactly like controlled_tank/controlled_buggy are
+    //themselves mesh-less bodies with their visuals all attached as children.
+    Object* bump = new Object();
+    bump->name = "Test Speed Bump";
+    main_scene->AddObject(bump);
+    bump->AddPhysics(main_scene->physics_world);
+    const float bump_radius = 0.1f;
+    const float bump_length = 6.0f; //cylindrical section between the two hemisphere caps
+    if (Physics* physics = bump->GetPhysics()){
+        physics->AddCapsuleCollider(bump_radius,bump_length,vec3(0,0,0),quat().identity(),1.0f);
+        physics->SetFrictionCoefficient(0.8f);
+        physics->SetBounciness(0.0f);
+        physics->SetStatic(true);
+    }
+
+    Object* bump_cylinder = assetmanager->GetObjectFromAsset("cylinder");
+    if (!bump_cylinder){
+        debug->Err("AddTestSceneObjects: no 'cylinder' asset found for the bump\n");
+    }else{
+        bump->AttachChild(bump_cylinder);
+        //Diameter (2*radius) in X/Z, bump_length in Y, against the raw "cylinder" asset's own
+        //unscaled extents - only the length axis gets stretched, so the circular cross-section
+        //stays circular the whole way along.
+        vec3 raw_extent = bump_cylinder->GetMesh() ? bump_cylinder->GetMesh()->GetExtents() : vec3(2.0f,2.0f,2.0f);
+        if (raw_extent.x > 0.0001f && raw_extent.y > 0.0001f && raw_extent.z > 0.0001f){
+            float target_diameter = bump_radius * 2.0f;
+            bump_cylinder->SetScale(vec3(target_diameter / raw_extent.x,bump_length / raw_extent.y,target_diameter / raw_extent.z));
+        }
+        bump_cylinder->SetPosition(vec3(0,0,0)); //centred on the parent, same local Y axis as the collider above
+    }
+
+    for (int side = -1; side <= 1; side += 2){
+        Object* cap = assetmanager->GetObjectFromAsset("capsule");
+        if (!cap){
+            debug->Err("AddTestSceneObjects: no 'capsule' asset found for the bump's end cap\n");
+            continue;
+        }
+        bump->AttachChild(cap);
+        //Uniform scale (not the non-uniform stretch above) - this is exactly the single capsule
+        //used for the vertical one earlier, just scaled down to bump_radius, so it stays a
+        //properly proportioned little capsule with genuinely round caps.
+        vec3 raw_cap_extent = cap->GetMesh() ? cap->GetMesh()->GetExtents() : vec3(2.0f,3.0f,2.0f);
+        float raw_cap_radius = raw_cap_extent.x * 0.5f;
+        float uniform_scale = raw_cap_radius > 0.0001f ? bump_radius / raw_cap_radius : 1.0f;
+        cap->SetScale(vec3(uniform_scale,uniform_scale,uniform_scale));
+        //Centred exactly on the cylinder's end face - half of this little capsule pokes out
+        //beyond it (the rounded tip that actually shows), the other half is hidden inside the
+        //cylinder's own body.
+        cap->SetPosition(vec3(0,side * (bump_length * 0.5f),0));
+    }
+
+    bump->SetRotation(quat(vec3(0,0,1),TYPE_PI * 0.5f)); //tip the whole assembly onto its side: local Y axis -> world X
+    //Rests on the ground plane's top face (y=0, see ground_plane above), a few units ahead of
+    //the tank/buggy spawn points so it's easy to find and drive over.
+    bump->SetPosition(vec3(0,0,4));
+
+    //Two ramps on the left side of the ground plane (negative X) - a tilted box makes an
+    //adequate ramp: the "cube" asset again, scaled into a long slab and rotated about X so its
+    //far (local +Z) edge lifts into the air while the near (local -Z) edge stays down at the
+    //ground plane's top face, for testing how the vehicle climbs an incline.
+    auto AddRamp = [this](vec3 position,float angle_degrees){
+        Object* ramp = assetmanager->GetObjectFromAsset("cube");
+        if (!ramp){
+            debug->Err("AddTestSceneObjects: no 'cube' asset found for a ramp\n");
+            return;
+        }
+        ramp->name = "Test Ramp";
+        main_scene->AddObject(ramp);
+        ramp->AddPhysics(main_scene->physics_world);
+
+        const float width = 3.0f;     //across the ramp (X)
+        const float thickness = 0.4f; //slab thickness (Y, before rotation)
+        const float length = 5.0f;    //up the slope (Z, before rotation)
+        const float angle = angle_degrees * TYPE_PI / 180.0f;
+
+        if (Physics* physics = ramp->GetPhysics()){
+            //Sized to the FINAL (post-scale) box directly - SetScale doesn't auto-resize a box
+            //collider, same reasoning as ground_plane above.
+            vec3 extent = vec3(width,thickness,length) * 0.5f;
+            physics->AddBoxCollider(extent,vec3(0,0,0),quat().identity(),1.0f); //density irrelevant, static
+            physics->SetFrictionCoefficient(0.8f);
+            physics->SetBounciness(0.0f);
+            physics->SetStatic(true);
+        }
+        vec3 raw_extent = ramp->GetMesh() ? ramp->GetMesh()->GetExtents() : vec3(1.0f,1.0f,1.0f);
+        if (raw_extent.x > 0.0001f && raw_extent.y > 0.0001f && raw_extent.z > 0.0001f){
+            ramp->SetScale(vec3(width / raw_extent.x,thickness / raw_extent.y,length / raw_extent.z));
+        }
+
+        //Rotated about X by -angle: with this engine's quat(axis,angle) convention (the same
+        //Rodrigues rotation verified against the steering code's own "quat(+Y,t) sends forward
+        //(0,0,-1) to (-sin t,0,-cos t)" comment), local +Z then maps to (0, sin(angle),
+        //cos(angle)) - tipping upward as angle increases, rather than into the ground.
+        ramp->SetRotation(quat(vec3(1,0,0),-angle));
+        ramp->SetPosition(position);
+    };
+
+    AddRamp(vec3(-5.0f, 1.0f, 11.67f), 30.0f);
+    AddRamp(vec3(-8.0f, 1.5f, 11.27f), 45.0f);
 }
 
 //Debug helper: dump the raw vertex data of the terrain mesh, to see what order/layout
@@ -1046,6 +1277,8 @@ void ApplicationTank::RunLogic(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
+    gamepad_controller->UpdateKeyState();
+
     //Track the target on the terrain under the mouse cursor. If the cursor isn't over the
     //terrain (eg. over the sky, or over the tank itself), leave the target where it is.
     if ((controlled_vehicle == controlled_tank) && target && heightmap_mesh_test){
@@ -1071,6 +1304,28 @@ void ApplicationTank::RunLogic(){
     //both TankCharacter and BuggyCharacter, so the same four keys drive whichever one is active.
     //Firing stays tank-only: BuggyCharacter has no turret.
     if (controlled_vehicle){
+
+        float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
+        float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
+        float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
+        float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
+        float gp_l2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_L2);
+        float gp_r2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2);
+
+        //debug->Info("Gamepad: left stick (%.3f,%.3f) right stick (%.3f,%.3f) triggers %.3f\n",gp_lx,gp_ly,gp_rx,gp_ry,gp_l2r2);
+        controlled_vehicle->SteerRight(gp_lx);
+        if (gp_ry > 0.0f){
+            controlled_vehicle->Accelerate(gp_ry);
+        }else if (gp_ry < 0.0f){
+            controlled_vehicle->Reverse(-gp_ry);
+        }else{
+            controlled_vehicle->Accelerate(0);
+        }
+        //debug->Info("Gamepad: gp_r2 %.3f\n",gp_r2);
+
+        controlled_vehicle->Brake(gp_r2);
+
+
         if (input->IsKeyDown(INPUT_TURN_UP)){
             controlled_vehicle->Accelerate(1.0f);
         }
@@ -1161,12 +1416,50 @@ void ApplicationTank::SnapCameraToControlledVehicle(){
     vec3 delta = vehicle_pos - camera_target;
     main_scene->camera->SetPosition(main_scene->camera->GetPosition() + delta);
     camera_target = vehicle_pos;
+
+    //Chase-cam: gently steer the camera's horizontal orbit angle back around behind the
+    //vehicle's own current heading, rather than leaving it wherever the user last set it with
+    //the mouse (which is all the translate above preserves) - so as the vehicle turns, the
+    //camera swings back around to keep its rear in view instead of drifting to a side-on or
+    //head-on angle. Height and distance from the pivot are both left exactly as the user's own
+    //zoom/orbit set them; only the horizontal angle is nudged, and only partway each call (see
+    //camera_behind_blend_rate) rather than snapped, so a sharp turn doesn't whip the view around
+    //in one frame.
+    vec3 vehicle_forward = controlled_vehicle->GetWorldForward(); //render-state, same reasoning as vehicle_pos above
+    vehicle_forward.y = 0.0f;
+    float vehicle_forward_length = vehicle_forward.length();
+    if (vehicle_forward_length < 0.0001f){
+        return; //vehicle pointing straight up/down (or degenerate) - no horizontal heading to chase
+    }
+    vehicle_forward = vehicle_forward * (1.0f / vehicle_forward_length);
+
+    vec3 offset = main_scene->camera->GetPosition() - camera_target;
+    float height = offset.y;
+    vec3 horizontal_offset = vec3(offset.x,0,offset.z);
+    float horizontal_distance = horizontal_offset.length();
+    if (horizontal_distance < 0.0001f){
+        return; //camera sitting directly above/below the pivot - no horizontal angle to correct
+    }
+    vec3 current_dir = horizontal_offset * (1.0f / horizontal_distance);
+    vec3 behind_dir = vehicle_forward * -1.0f; //directly behind = opposite the vehicle's own forward
+
+    vec3 blended_dir = current_dir + (behind_dir - current_dir) * camera_behind_blend_rate;
+    float blended_length = blended_dir.length();
+    if (blended_length < 0.0001f){
+        return; //current and desired directions cancelled out exactly (180 degrees apart, rare)
+    }
+    blended_dir = blended_dir * (1.0f / blended_length);
+
+    main_scene->camera->SetPosition(camera_target + blended_dir * horizontal_distance + vec3(0,height,0));
+    vec3 up = main_scene->camera->GetUp();
+    main_scene->camera->SetLookAt(camera_target);
 }
 
 void ApplicationTank::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
     RenderTankWheelDebugUI();
+    RenderBuggyControlDebugUI();
 }
 
 //Renders the per-wheel table for whichever Vehicle is passed - the table only ever reads/writes
@@ -1315,7 +1608,9 @@ void ApplicationTank::RenderTankWheelDebugUI(){
     ImGui::Checkbox("Follow",&f_camera_follow_vehicle);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextDisabled("(pivot only - orbit/zoom still work)");
+    ImGui::TextDisabled("(chases behind heading - distance/zoom still work)");
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SliderFloat("Behind Turn Rate",&camera_behind_blend_rate,0.0f,1.0f,"%.2f");
     ImGui::Separator();
 
     if (controlled_tank){
@@ -1387,6 +1682,105 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::PopID();
         }
     }
+
+    ImGui::End();
+}
+
+//A focused control panel for the buggy - unlike RenderTankWheelDebugUI's own "Buggy" section
+//(visible any time controlled_buggy exists), this one only shows up while the buggy is actually
+//the vehicle receiving input, so it doesn't clutter the screen while driving the tank instead.
+void ApplicationTank::RenderBuggyControlDebugUI(){
+    if (!controlled_buggy || controlled_vehicle != controlled_buggy){
+        return;
+    }
+
+    ImGui::Begin("Buggy Controls");
+
+    ImGui::SliderFloat("Power Split (0=RWD, 1=FWD)",&controlled_buggy->power_split_front,0.0f,1.0f,"%.2f");
+    ImGui::SliderFloat("Engine Power (N)",&controlled_buggy->engine_force,0.0f,8000.0f,"%.0f");
+    ImGui::SliderFloat("Top Speed (m/s)",&controlled_buggy->top_speed,0.0f,20.0f,"%.1f");
+    ImGui::Text("Inputs");
+    ImGui::Text("  Gas Pedal      : %.2f",controlled_buggy->gas_pedal);
+    ImGui::Text("  Brake Pedal    : %.2f",controlled_buggy->brake_pedal);
+    ImGui::Text("  Steering       : %.2f",controlled_buggy->steering_position);
+
+
+    if (Physics* physics = controlled_buggy->GetPhysics()){
+        //Physics::SetMass overrides whatever AddBoxCollider's own density param set at spawn -
+        //doesn't touch the inertia tensor computed back then, so heavier/lighter here changes how
+        //hard the chassis is to accelerate/brake without also rebalancing how it tumbles.
+        float mass = physics->GetMass();
+        if (ImGui::SliderFloat("Mass (kg)",&mass,10.0f,300.0f,"%.1f")){
+            physics->SetMass(mass);
+        }
+    }
+    ImGui::Separator();
+    ImGui::Text("Speed: %.2f m/s",controlled_buggy->forward_speed);
+    ImGui::Separator();
+
+    //4 blocks laid out to match the buggy's actual physical layout (front pair on top, rear pair
+    //below) - found by is_front_side/is_left_side rather than assumed storage order, since
+    //SetupWheels' order isn't this function's concern to know.
+    auto FindWheel = [this](bool front,bool left)->Wheel*{
+        for (Wheel& wheel:controlled_buggy->wheels){
+            if ((wheel.is_front_side == front) && (wheel.is_left_side == left)){
+                return &wheel;
+            }
+        }
+        return NULL;
+    };
+    auto WheelBlock = [this](const char* label,Wheel* wheel){
+        ImGui::BeginChild(label,ImVec2(240,220),true);
+        ImGui::Text("%s",label);
+        int id = 0;
+        if (wheel){
+            ImGui::Text("Grounded    : %s",wheel->grounded ? "true" : "false");
+            ImGui::Text("Steerable   : %s",wheel->steerable ? "true" : "false");
+            ImGui::Text("Driven      : %s",wheel->driven ? "true" : "false");
+            ImGui::Text("Steer       : %6.1f deg",wheel->steer_angle * 180.0f / TYPE_PI);
+            ImGui::Text("AngVel      : %6.2f rad/s",wheel->angular_velocity);
+            ImGui::Text("Drive Force : %6.2f N",wheel->drive_force);
+            //The force actually applied to the body at this wheel's contact point - see
+            //physics->AddWorldForceAt(wheel_forward * longitudinal_force + wheel_left *
+            //lateral_force, ...) in BuggyCharacter/TankCharacter::UpdatePhysicsState. Longitudinal
+            //is drive OR passive grip, whichever this tick used (Drive Force above is only the
+            //engine's own share, 0 on an undriven axle even while it's still exerting grip); a
+            //steered front wheel with 0 Drive Force can still show real Lateral/Total here from
+            //cornering grip alone.
+            float total_force = sqrtf(wheel->longitudinal_force * wheel->longitudinal_force + wheel->lateral_force * wheel->lateral_force);
+            ImGui::Text("Longitudinal: %6.2f N",wheel->longitudinal_force);
+            ImGui::Text("Lateral     : %6.2f N",wheel->lateral_force);
+            ImGui::Text("Total       : %6.2f N",total_force);
+            ImGui::Text("Grip Budget : %6.2f N",wheel->friction_budget);
+            if (wheel->friction_saturated){
+                ImGui::TextColored(ImVec4(1.0f,0.35f,0.35f,1.0f),"SATURATED");
+            }else{
+                ImGui::TextDisabled("(grip ok)");
+            }
+            ImGui::PushID(id++);
+            //wheel->friction_coefficient is the raw per-wheel OVERRIDE (0 = inherit the
+            //vehicle's own default - same pattern as every other tuning field, see
+            //BuggyCharacter::ResolveTuning), not the value physics actually uses - read that
+            //through WheelFrictionCoefficient() instead, same as RenderVehicleWheelTable does,
+            //or this shows 0 until dragged even though the resolved value (1.0 by default) is
+            //what's really being applied.
+            float friction_coefficient = controlled_buggy->WheelFrictionCoefficient(*wheel);
+            if (ImGui::DragFloat("Friction Coef.",&friction_coefficient,0.01f,0.0f,3.0f,"%.2f")){
+                wheel->friction_coefficient = friction_coefficient;
+            }
+            ImGui::PopID();
+        }else{
+            ImGui::TextDisabled("(missing)");
+        }
+        ImGui::EndChild();
+    };
+
+    WheelBlock("Front Left",FindWheel(true,true));
+    ImGui::SameLine();
+    WheelBlock("Front Right",FindWheel(true,false));
+    WheelBlock("Rear Left",FindWheel(false,true));
+    ImGui::SameLine();
+    WheelBlock("Rear Right",FindWheel(false,false));
 
     ImGui::End();
 }

@@ -146,10 +146,10 @@ void ApplicationShip::Init(void){
 
     gamepad_controller = new GamePadController();
     gamepad_controller->ListDevices();
-    gamepad_controller->AddGamePadMap(0,GAMEPAD_LEFT_STICK_Y);
-    gamepad_controller->AddGamePadMap(1,GAMEPAD_LEFT_STICK_X);
-    gamepad_controller->AddGamePadMap(2,GAMEPAD_RIGHT_STICK_Y);
-    gamepad_controller->AddGamePadMap(3,GAMEPAD_RIGHT_STICK_X);
+    gamepad_controller->AddGamePadMap(0,GAMEPAD_LEFT_STICK_X);
+    gamepad_controller->AddGamePadMap(1,GAMEPAD_LEFT_STICK_Y);
+    gamepad_controller->AddGamePadMap(2,GAMEPAD_RIGHT_STICK_X);
+    gamepad_controller->AddGamePadMap(3,GAMEPAD_RIGHT_STICK_Y);
     gamepad_controller->AddGamePadMap(4,GAMEPAD_R2L2);
 
     BinaryAsset::DumpBinaryAssets();
@@ -352,10 +352,10 @@ void ApplicationShip::RunLogic(){
     //Character input with gamepad
     if (ship_character && main_window->f_has_focus){
 
-        float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
         float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
-        float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
+        float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
         float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
+        float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
         float gp_l2r2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2L2);
 
         float y = gp_ly + gp_ry;

@@ -84,8 +84,8 @@ public:
     static Window* CreateNewWindow(int width, int height, WNDCLASSEXA* wc);
 
     void ImGuiNewFrame();
-    void ImGuiDrawFrame();
-    void DrawFrame();
+    void ImGuiRenderDrawData();
+    void SwapWindowBuffers();
     void CopyBufferToImage();
     void CopyBufferToBackBuffer();
     void RedrawLayeredWindow();
