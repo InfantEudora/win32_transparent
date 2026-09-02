@@ -57,6 +57,21 @@ public:
     //explosion/muzzle-flash asset exists.
     ParticleEmitter* fire_impact_emitter = NULL;
 
+    //One dust-kicking emitter per controlled_buggy->wheels entry (same order/index), parented to
+    //the BUGGY BODY, not the individual wheel Object - a wheel's own visual carries steer/roll
+    //rotation, which would fling emitted particles in whatever direction the tire currently
+    //happens to be pointing rather than a consistent "up off the ground" spray. Repositioned
+    //every frame in UpdateBuggyWheelSpinParticles to track each wheel's own current
+    //(compression-adjusted) position anyway, so being a sibling rather than a child of the wheel
+    //costs nothing.
+    std::vector<ParticleEmitter*> buggy_wheel_spin_emitters;
+    //Repositions each buggy_wheel_spin_emitters entry onto its wheel's current position and
+    //bursts a couple of tiny cube particles from any wheel that's actively spinning out this
+    //tick (driven AND friction-saturated - see BuggyCharacter::UpdatePhysicsState's own
+    //free-spin blend, the same condition). Called every frame regardless of window focus, same
+    //reasoning as SnapCameraToControlledVehicle - the vehicle keeps simulating either way.
+    void UpdateBuggyWheelSpinParticles();
+
     //Captured once in Init(), right after controlled_tank's spawn position/rotation are set -
     //the "Reset Tank To Start" button in RenderTankWheelDebugUI feeds these straight into
     //TankCharacter::ResetState.

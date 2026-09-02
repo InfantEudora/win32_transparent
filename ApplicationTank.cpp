@@ -514,6 +514,43 @@ void ApplicationTank::Init(void){
     target_particle->GetPhysics()->SetGravityEnabled(true);
     fire_impact_emitter->AddParticleType(target_particle);
 
+    //One dust-kicking particle emitter per buggy wheel, parented to the BUGGY BODY rather than
+    //the wheel itself (see buggy_wheel_spin_emitters' own comment for why) - repositioned onto
+    //each wheel's own current spot every frame, bursting tiny cube particles while that wheel is
+    //actively spinning out (see UpdateBuggyWheelSpinParticles).
+    for (Wheel& wheel : controlled_buggy->wheels){
+        ParticleEmitter* dust_emitter = new ParticleEmitter(main_scene->physics_world);
+        dust_emitter->name = "Buggy Wheelspin Dust";
+        dust_emitter->target_scene = main_scene;
+        dust_emitter->SetRandomGenerator(rrand);
+        dust_emitter->emission_properties.emission_direction = vec3(0,0,-1);
+        dust_emitter->emission_properties.emission_spread = 100.0f; //a loose upward cone, not a narrow jet
+        dust_emitter->emission_properties.particle_size_min = 0.03f;
+        dust_emitter->emission_properties.particle_size_max = 0.07f;
+        dust_emitter->emission_properties.particle_lifetime_min = 0.2f;
+        dust_emitter->emission_properties.particle_lifetime_max = 0.4f;
+        dust_emitter->emission_properties.emission_speed_min = 1.5f;
+        dust_emitter->emission_properties.emission_speed_max = 3.5f;
+        controlled_buggy->AttachChild(dust_emitter);
+
+        //Template particle: a small cube, no collider (a one-off visual puff, nothing needs to
+        //collide with it) - same reasoning as the fire-impact particle above.
+        Particle* dust_particle = new Particle(main_scene->physics_world);
+        dust_particle->name = "Buggy Wheelspin Dust Particle";
+        //Never added to the scene (unlike every other GetObjectFromAsset("cube") call in this
+        //file) - just borrowed for its mesh/material, then deleted, same as any other throwaway
+        //local would be.
+        if (Object* cube_ref = assetmanager->GetObjectFromAsset("cube")){
+            dust_particle->SetMesh(cube_ref->GetMesh());
+            dust_particle->material_names = cube_ref->material_names;
+            delete cube_ref;
+        }
+        dust_particle->GetPhysics()->SetGravityEnabled(true);
+        dust_emitter->AddParticleType(dust_particle);
+
+        buggy_wheel_spin_emitters.push_back(dust_emitter);
+    }
+
     //Recorded on 2026-08-31 via bridge_telemetry over MCP: drove the tank up to the ravine
     //notch just north-west of its start position, dropped the bridge in over MCP, then nudged
     //its position/yaw (the ~21.2 deg here) by hand over MCP until it spanned the gap cleanly -
@@ -1267,6 +1304,7 @@ void ApplicationTank::RunLogic(){
     if (f_camera_follow_vehicle){
         SnapCameraToControlledVehicle();
     }
+    UpdateBuggyWheelSpinParticles();
 
     //Only when in focus
     if (!main_window->f_has_focus){
@@ -1453,6 +1491,30 @@ void ApplicationTank::SnapCameraToControlledVehicle(){
     main_scene->camera->SetPosition(camera_target + blended_dir * horizontal_distance + vec3(0,height,0));
     vec3 up = main_scene->camera->GetUp();
     main_scene->camera->SetLookAt(camera_target);
+}
+
+void ApplicationTank::UpdateBuggyWheelSpinParticles(){
+    if (!controlled_buggy){
+        return;
+    }
+    for (size_t i = 0; i < controlled_buggy->wheels.size() && i < buggy_wheel_spin_emitters.size(); i++){
+        Wheel& wheel = controlled_buggy->wheels[i];
+        ParticleEmitter* emitter = buggy_wheel_spin_emitters[i];
+        if (!emitter){
+            continue;
+        }
+        if (wheel.visual){
+            emitter->SetPosition(wheel.visual->GetPosition(STATE_ACCESS_PHYSICS));
+        }
+        //Wheelspin specifically - driven AND friction-saturated, the exact condition
+        //BuggyCharacter::UpdatePhysicsState's own free-spin blend uses (see its comment) - not a
+        //locked/skidding UNDRIVEN wheel, which this doesn't cover.
+        if (wheel.friction_saturated && (wheel.drive_force != 0.0f)){
+            emitter->emission_properties.emission_speed_min = wheel.angular_velocity / 10.0f;
+            emitter->emission_properties.emission_speed_max = emitter->emission_properties.emission_speed_min + 1.0f;
+            emitter->EmitParticles(1);
+        }
+    }
 }
 
 void ApplicationTank::DrawImGuiUI(){
