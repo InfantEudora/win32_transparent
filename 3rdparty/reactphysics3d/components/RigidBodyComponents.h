@@ -389,11 +389,15 @@ class RigidBodyComponents : public Components {
         friend class SolveFixedJointSystem;
         friend class SolveHingeJointSystem;
         friend class SolveSliderJointSystem;
+        friend class SolveSpringJointSystem;
+        friend class SolveVehicleSystem;
+        friend class SolveUprightConstraintSystem;
         friend class DynamicsSystem;
         friend class BallAndSocketJoint;
         friend class FixedJoint;
         friend class HingeJoint;
         friend class SliderJoint;
+        friend class SpringJoint;
 };
 
 // Return a pointer to a body rigid

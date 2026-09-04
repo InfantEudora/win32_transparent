@@ -21,15 +21,13 @@ Asteroid::Asteroid(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene
     AddPhysics(physicsworld);
     if (physics){
         physics->SetStatic(false);
-
-        physics->AddSphereCollider(0.85f,vec3(0,0,0),quat().identity());
-
+        physics->AddSphereCollider(0.4f,vec3(0,0,0),quat().identity());
         physics->SetGravityEnabled(false);
         physics->body->rigidbody->setLinearDamping(0.1);
         physics->body->rigidbody->setUserData(this);
         physics->body->rigidbody->setIsAllowedToSleep(false);
-        physics->body->rigidbody->updateMassPropertiesFromColliders();
-        physics->body->rigidbody->setMass(5);
+        physics->SetMass(5.0f);
+
     }
 
     SetCollisionCategoryBits(COLLISION_CATEGORY_ASTEROID);

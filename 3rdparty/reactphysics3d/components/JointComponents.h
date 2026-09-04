@@ -161,6 +161,7 @@ class JointComponents : public Components {
         friend class SolveFixedJointSystem;
         friend class SolveHingeJointSystem;
         friend class SolveSliderJointSystem;
+        friend class SolveSpringJointSystem;
 
 };
 

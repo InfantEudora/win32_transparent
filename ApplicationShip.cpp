@@ -600,9 +600,9 @@ void ApplicationShip::onContact(const rp3d::CollisionCallback::CallbackData& cal
                     //This should be created not in the callback, but outside.
 
 
-                    //AsteroidExplosion* explosion = new AsteroidExplosion(assetmanager,main_scene->physics_world,main_scene,rrand);
-                    //explosion->target_asteroid = asteroid;
-                    //new_asteroid_explosions.push_back(explosion);
+                    AsteroidExplosion* explosion = new AsteroidExplosion(assetmanager,main_scene->physics_world,main_scene,rrand);
+                    explosion->target_asteroid = asteroid;
+                    new_asteroid_explosions.push_back(explosion);
                     asteroid->health = -1;
                 }
             }

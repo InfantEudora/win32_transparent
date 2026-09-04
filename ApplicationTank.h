@@ -97,6 +97,7 @@ public:
     CraneCharacter* crane = NULL;
     float crane_piston_speed = 0.0f;
     float crane_extension_speed = 0.0f; //same, for the telescoping extension's slider motor
+    float crane_hook_speed = 0.0f;      //same, for the hook's winch (positive lowers)
 
     void DumpTerrainVertices();
     void TestHeightmapRoundTrip();

@@ -114,12 +114,14 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
 
     //--- Extension: a thinner box nested inside the boom, on a SliderJoint whose axis is the
     //boom's own +Z (toward the tip). Fully retracted at creation: it sits inside the boom from
-    //boom-local z=-1.2 to +1.8 (the boom itself spans -2..+2), so the retracted part is hidden
-    //inside the boom's opaque box and only what telescopes past the tip shows.
+    //boom-local z=-0.8 to +2.2 (the boom itself spans -2..+2), so the retracted part is hidden
+    //inside the boom's opaque box, only what telescopes past the tip shows, and the tip itself
+    //always pokes out far enough that the hook's swivel (hung off it below) never sits inside
+    //the boom's collider.
     if (boom){
         const float ext_length = 3.0f, ext_width = 0.22f, ext_thickness = 0.22f;
         const float ext_mass = 20.0f;
-        const float ext_retracted_centre = 0.3f; //boom-local z of the extension's centre when fully retracted
+        const float ext_retracted_centre = 0.7f; //boom-local z of the extension's centre when fully retracted
         extension = MakeCraneBox(assetmanager,ext_width,ext_thickness,ext_length);
         if (extension){
             extension->name = "Crane Boom Extension";
@@ -149,6 +151,66 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
             sinfo.maxMotorForce = extension_max_motor_force;
             extension_slider = dynamic_cast<rp3d::SliderJoint*>(physicsworld->rp_world->createJoint(sinfo));
         }
+
+        //--- Hook chain: swivel on a ball-and-socket just past the extension's tip, hook on a
+        //slider ("cable") hanging straight down from the swivel - see the header comment.
+        if (extension){
+            const float swivel_size = 0.2f, swivel_mass = 2.0f;
+            const float hook_width = 0.2f, hook_height = 0.3f, hook_mass = 10.0f;
+            //Pivot a little beyond the extension's tip face so the swivel box hangs clear of it.
+            vec3 pivot_world = extension->GetPosition() + PointOnAngledAxis(elevation_angle,ext_length * 0.5f + 0.25f);
+
+            swivel = MakeCraneBox(assetmanager,swivel_size,swivel_size,swivel_size);
+            if (swivel){
+                swivel->name = "Crane Hook Swivel";
+                swivel->SetPosition(pivot_world); //pinned at its own centre - a pure pivot
+                swivel->AddPhysics(physicsworld);
+                if (Physics* p = swivel->GetPhysics()){
+                    p->AddBoxCollider(vec3(swivel_size,swivel_size,swivel_size) * 0.5f,vec3(0,0,0),quat().identity(),swivel_mass / (swivel_size * swivel_size * swivel_size));
+                    p->SetGravityEnabled(true);
+                    p->SetStatic(false);
+                    p->body->rigidbody->setIsAllowedToSleep(false);
+                }
+                target_scene->AddObject(swivel);
+
+                rp3d::BallAndSocketJointInfo binfo(extension->GetRigidBody(),swivel->GetRigidBody(),(rp3d::Vector3&)pivot_world);
+                binfo.isCollisionEnabled = false; //the swivel sits right against the tip face
+                hook_pivot = dynamic_cast<rp3d::BallAndSocketJoint*>(physicsworld->rp_world->createJoint(binfo));
+            }
+
+            hook = swivel ? MakeCraneBox(assetmanager,hook_width,hook_height,hook_width) : NULL;
+            if (hook){
+                hook->name = "Crane Hook";
+                hook->SetPosition(pivot_world - vec3(0,hook_cable_min_length,0));
+                hook->AddPhysics(physicsworld);
+                if (Physics* p = hook->GetPhysics()){
+                    p->AddBoxCollider(vec3(hook_width,hook_height,hook_width) * 0.5f,vec3(0,0,0),quat().identity(),hook_mass / (hook_width * hook_height * hook_width));
+                    p->SetGravityEnabled(true);
+                    p->SetStatic(false);
+                    p->body->rigidbody->setIsAllowedToSleep(false);
+                }
+                target_scene->AddObject(hook);
+
+                //body1 = swivel, body2 = hook, axis = world down at creation (= the swivel's local
+                //-Y from then on, so the cable always hangs along whatever way the swivel points),
+                //so getTranslation() grows as the hook drops and a positive motor speed lowers it.
+                rp3d::SliderJointInfo cinfo(swivel->GetRigidBody(),hook->GetRigidBody(),(rp3d::Vector3&)pivot_world,rp3d::Vector3(0,-1,0));
+                cinfo.isCollisionEnabled = false;
+                cinfo.isLimitEnabled = true;
+                cinfo.minTranslationLimit = hook_min;
+                cinfo.maxTranslationLimit = hook_max;
+                cinfo.isMotorEnabled = true;
+                cinfo.motorSpeed = 0.0;
+                cinfo.maxMotorForce = hook_max_motor_force;
+                hook_slider = dynamic_cast<rp3d::SliderJoint*>(physicsworld->rp_world->createJoint(cinfo));
+
+                cable_visual = MakeCraneBox(assetmanager,cable_radius * 2.0f,cable_radius * 2.0f,hook_cable_min_length);
+                if (cable_visual){
+                    cable_visual->name = "Crane Cable (visual)";
+                    target_scene->AddObject(cable_visual);
+                }
+            }
+        }
     }
 
     //--- Piston: purely visual, no physics/joint - see this class's own header comment. Sized
@@ -177,6 +239,23 @@ void CraneCharacter::SetExtensionSpeed(float speed){
     extension_speed_command = clamp(speed,-1.0f,1.0f);
 }
 
+void CraneCharacter::SetHookSpeed(float speed){
+    hook_speed_command = clamp(speed,-1.0f,1.0f);
+}
+
+//Stretches a cosmetic box (its long axis = local +Z) between two world points.
+static void SpanVisual(Object* visual,const vec3& from,const vec3& to,float radius){
+    vec3 delta = to - from;
+    float span = delta.length();
+    if (span <= 0.0001f){
+        return;
+    }
+    vec3 dir = delta * (1.0f / span);
+    visual->SetPosition(from + dir * (span * 0.5f));
+    visual->SetRotation(quat::getquat(vec3(0,0,1),dir));
+    visual->SetScale(vec3(radius * 2.0f,radius * 2.0f,span));
+}
+
 void CraneCharacter::UpdatePhysicsState(){
     if (boom_hinge){
         //Negative rotation about the hinge's X axis increases elevation (see ElevationRotation),
@@ -198,6 +277,17 @@ void CraneCharacter::UpdatePhysicsState(){
         float taper = clamp(remaining / extension_limit_margin,0.0f,1.0f);
         extension_slider->setMotorSpeed(extension_speed_command * extension_max_rate * taper);
     }
+    if (hook_slider){
+        //Winch: same taper again. Positive command = positive motor speed = more cable paid out.
+        float translation = hook_slider->getTranslation();
+        float remaining = hook_speed_command > 0.0f ? hook_max - translation : translation - hook_min;
+        float taper = clamp(remaining / hook_limit_margin,0.0f,1.0f);
+        hook_slider->setMotorSpeed(hook_speed_command * hook_max_rate * taper);
+    }
+    if (swivel && hook && cable_visual){
+        vec3 hook_top = hook->GetWorldPosition(STATE_ACCESS_PHYSICS) + (hook->GetWorldRotation() * vec3(0,0.15f,0));
+        SpanVisual(cable_visual,swivel->GetWorldPosition(STATE_ACCESS_PHYSICS),hook_top,cable_radius);
+    }
     if (boom && piston_visual){
         //STATE_ACCESS_PHYSICS, not the default RENDERER - this runs on the physics thread, same
         //reasoning as ApplicationTank's own UpdateBuggyWheelSpinParticles comment on the same
@@ -205,17 +295,9 @@ void CraneCharacter::UpdatePhysicsState(){
         //be a tick behind the boom's actual current pose here).
         vec3 boom_anchor_world = boom->GetWorldPosition(STATE_ACCESS_PHYSICS) + (boom->GetWorldRotation() * piston_boom_anchor_local);
         vec3 base_anchor_world = GetWorldPosition(STATE_ACCESS_PHYSICS) + (GetWorldRotation() * piston_base_anchor_local);
-        vec3 delta = boom_anchor_world - base_anchor_world;
-        float span = delta.length();
-        if (span > 0.0001f){
-            vec3 dir = delta * (1.0f / span);
-            piston_visual->SetPosition(base_anchor_world + dir * (span * 0.5f));
-            //The piston box's long axis is its local +Z - point that along dir. No assumption
-            //about which plane the mechanism lies in, so this survives the base being moved or
-            //yawed (the box is symmetric, so which end is which doesn't matter).
-            piston_visual->SetRotation(quat::getquat(vec3(0,0,1),dir));
-            piston_visual->SetScale(vec3(piston_radius * 2.0f,piston_radius * 2.0f,span));
-        }
+        //No assumption about which plane the mechanism lies in, so this survives the base being
+        //moved or yawed (the box is symmetric, so which end is which doesn't matter).
+        SpanVisual(piston_visual,base_anchor_world,boom_anchor_world,piston_radius);
     }
     Object::UpdatePhysicsState();
 }

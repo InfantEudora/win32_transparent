@@ -25,6 +25,14 @@
 //Second joint type under test: a telescoping extension - a thinner box nested inside the boom,
 //on a real SliderJoint whose axis runs along the boom, with limits (fully retracted .. fully
 //out) and a motor used exactly like the hinge's: velocity command, force rating, speed 0 holds.
+//
+//Third: a hook on a "stiff cable" hanging from the extension's tip. rp3d has no rope/distance
+//joint and a joint's anchors can't be moved after creation, so a single BallAndSocketJoint alone
+//would give a pendulum of FIXED length. Instead, a two-joint chain: a small swivel body pinned to
+//the tip by a BallAndSocketJoint (the pendulum pivot - free to point any way), and the hook on a
+//SliderJoint to the swivel along the swivel's own down axis - that slider IS the rigid cable, its
+//motor is the winch (positive = pay out/lower). The cable you see is cosmetic, stretched between
+//the swivel and the hook every tick, same trick as the piston.
 class CraneCharacter : public Object{
 public:
     CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, const vec3& base_position);
@@ -38,6 +46,8 @@ public:
     void SetPistonSpeed(float speed);
     //Same idea for the telescoping extension: +-1, positive extends, negative retracts, 0 holds.
     void SetExtensionSpeed(float speed);
+    //And the hook's winch: +-1, positive LOWERS (pays out cable), negative raises, 0 holds.
+    void SetHookSpeed(float speed);
 
     //Root-level Object - own physics body, own AddObject call into target_scene from this
     //constructor - joined to `this` (the base) only through boom_hinge, NOT a parent/child
@@ -71,6 +81,28 @@ public:
     float extension_min = 0.0f;                 //m, fully retracted = the creation pose
     float extension_max = 2.5f;                 //m, fully out
     float extension_limit_margin = 0.15f;       //m, motor speed tapers to 0 over this before a limit
+
+    //Hook chain - see this class's header comment. swivel hangs on hook_pivot (ball-and-socket)
+    //at the extension's tip; hook hangs on hook_slider (the "cable") below the swivel. Slider
+    //translation is along the swivel's local -Y (world down at creation), relative to the
+    //creation pose where the cable is at hook_cable_min_length: 0 = fully reeled in.
+    Object* swivel = NULL;
+    Object* hook = NULL;
+    rp3d::BallAndSocketJoint* hook_pivot = NULL;
+    rp3d::SliderJoint* hook_slider = NULL;
+    float hook_speed_command = 0.0f;        //+-1, from SetHookSpeed
+    float hook_max_rate = 1.0f;             //m/s at SetHookSpeed's +-1
+    float hook_max_motor_force = 300.0f;    //N - ~3x the 10kg hook's weight. Deliberately modest: a
+                                            //rigid "cable" can PUSH, and a strong winch driving a
+                                            //grounded hook would lever the whole boom up.
+    float hook_min = 0.0f;                  //m of pay-out, reeled all the way in
+    float hook_max = 3.0f;                  //m of pay-out, fully lowered
+    float hook_limit_margin = 0.15f;        //m, motor speed tapers to 0 over this before a limit
+    float hook_cable_min_length = 1.5f;     //m from pivot to hook centre when reeled in - long enough
+                                            //that the hook clears the boom at max elevation (80 deg)
+    //Cosmetic cable between the swivel and the hook's top, stretched/reoriented every tick.
+    Object* cable_visual = NULL;
+    float cable_radius = 0.03f;
 
     //Purely cosmetic - no physics, no joint. A separate root-level Object (same reasoning as
     //boom - see above), repositioned/reoriented/rescaled every tick in UpdatePhysicsState to

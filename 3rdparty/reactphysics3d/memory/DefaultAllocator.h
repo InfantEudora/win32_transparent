@@ -76,10 +76,11 @@ class DefaultAllocator : public MemoryAllocator {
         /// Release previously allocated memory.
         virtual void release(void* pointer, size_t /*size*/) override {
 
-            // If compiler is Visual Studio
-#ifdef RP3D_COMPILER_VISUAL_STUDIO
+            // Must mirror allocate() above: memory from _aligned_malloc() can only be released
+            // with _aligned_free(). Testing the compiler here instead of the platform freed it
+            // with std::free() on MinGW, corrupting the heap.
+#ifdef RP3D_PLATFORM_WINDOWS
 
-                // Visual Studio doesn't not support standard std:aligned_alloc() method from c++ 17
                 return _aligned_free(pointer);
 #else
 
