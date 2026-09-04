@@ -617,6 +617,21 @@ json ApplicationTank::GetCraneTelemetry(){
         result["boom_mass_kg"] = physics->GetMass();
         result["boom_inertia"] = json::array({inertia.x,inertia.y,inertia.z});
     }
+    if (crane->extension_slider && crane->extension){
+        result["extension_speed_command"] = crane_extension_speed;
+        result["extension_translation_m"] = crane->extension_slider->getTranslation();
+        result["extension_limit_min_m"] = crane->extension_min;
+        result["extension_limit_max_m"] = crane->extension_max;
+        result["extension_motor_target_speed"] = crane->extension_slider->getMotorSpeed();
+        result["extension_motor_force_n"] = crane->extension_slider->getMotorForce(1.0f / physics_tps);
+        if (Physics* physics = crane->extension->GetPhysics()){
+            vec3 pos = physics->GetBodyWorldPosition();
+            vec3 vel = physics->GetVelocity();
+            result["extension_position"] = json::array({pos.x,pos.y,pos.z});
+            result["extension_velocity"] = json::array({vel.x,vel.y,vel.z});
+            result["extension_mass_kg"] = physics->GetMass();
+        }
+    }
     return result;
 }
 
@@ -954,30 +969,43 @@ void ApplicationTank::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("crane_speed",
-        "Set the crane boom's velocity command (-1..1, positive raises, 0 holds) - the same value "
-        "the 'Boom Speed' slider in the Crane debug panel sets. Persists until changed. Returns "
-        "crane_telemetry.",
+        "Set the crane's velocity commands (-1..1 each): `speed` for the boom's hinge motor "
+        "(positive raises) and/or `extension_speed` for the telescoping extension's slider motor "
+        "(positive extends). 0 holds. Same values the Crane debug panel's sliders set; only the "
+        "ones given are changed, and they persist until changed again. Returns crane_telemetry.",
         json{
             {"type","object"},
             {"properties", {
-                {"speed", {{"type","number"},{"description","-1..1 velocity command, positive raises"}}}
-            }},
-            {"required", json::array({"speed"})}
+                {"speed", {{"type","number"},{"description","-1..1 boom velocity command, positive raises"}}},
+                {"extension_speed", {{"type","number"},{"description","-1..1 extension velocity command, positive extends"}}}
+            }}
         },
         [this](const json &args) -> json {
-            //Goes through the same member the debug panel writes/re-applies every frame, so the
-            //panel doesn't immediately overwrite it back.
-            crane_piston_speed = clamp(args.value("speed",0.0f),-1.0f,1.0f);
-            if (crane){
-                crane->SetPistonSpeed(crane_piston_speed);
+            if (!args.contains("speed") && !args.contains("extension_speed")){
+                return json{ {"error","give speed and/or extension_speed"} };
+            }
+            //Goes through the same members the debug panel writes/re-applies every frame, so the
+            //panel doesn't immediately overwrite them back.
+            if (args.contains("speed")){
+                crane_piston_speed = clamp(args.value("speed",0.0f),-1.0f,1.0f);
+                if (crane){
+                    crane->SetPistonSpeed(crane_piston_speed);
+                }
+            }
+            if (args.contains("extension_speed")){
+                crane_extension_speed = clamp(args.value("extension_speed",0.0f),-1.0f,1.0f);
+                if (crane){
+                    crane->SetExtensionSpeed(crane_extension_speed);
+                }
             }
             return GetCraneTelemetry();
         });
 
     MCPServer::Get()->RegisterTool("crane_telemetry",
         "Report the crane boom's hinge angle (deg, relative to its spawn pose), the motor's "
-        "current target speed and applied torque, the boom body's world position/velocity, and "
-        "the current speed command.",
+        "current target speed and applied torque, the boom body's world position/velocity, the "
+        "current speed commands, and the telescoping extension's slider translation (m), motor "
+        "target speed/force and body state.",
         json{ {"type","object"}, {"properties", json::object()} },
         [this](const json & /*args*/) -> json {
             return GetCraneTelemetry();
@@ -1818,6 +1846,12 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             if (crane->boom_hinge){
                 ImGui::Text("Boom Angle : %.1f deg",crane->boom_hinge->getAngle() * 180.0f / TYPE_PI);
                 ImGui::Text("Motor Torque : %.0f N.m",crane->boom_hinge->getMotorTorque(1.0f/physics_tps));
+            }
+            ImGui::SliderFloat("Extension Speed (+-1)",&crane_extension_speed,-1.0f,1.0f,"%.2f");
+            crane->SetExtensionSpeed(crane_extension_speed);
+            if (crane->extension_slider){
+                ImGui::Text("Extension : %.2f m",crane->extension_slider->getTranslation());
+                ImGui::Text("Motor Force : %.0f N",crane->extension_slider->getMotorForce(1.0f/physics_tps));
             }
             ImGui::PopID();
         }

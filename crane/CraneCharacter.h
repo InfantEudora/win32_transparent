@@ -21,6 +21,10 @@
 //purely cosmetic - no physics body, no joint - just a box that stretches and reorients every
 //tick to visually connect the base to wherever the boom's real hinge angle currently puts it,
 //the same trick the buggy's suspension-spring visual already uses.
+//
+//Second joint type under test: a telescoping extension - a thinner box nested inside the boom,
+//on a real SliderJoint whose axis runs along the boom, with limits (fully retracted .. fully
+//out) and a motor used exactly like the hinge's: velocity command, force rating, speed 0 holds.
 class CraneCharacter : public Object{
 public:
     CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, const vec3& base_position);
@@ -32,6 +36,8 @@ public:
     //(against gravity, up to boom_max_motor_torque). Just stored; UpdatePhysicsState turns it into
     //the hinge motor's target speed each tick (it needs the current angle for the limit taper).
     void SetPistonSpeed(float speed);
+    //Same idea for the telescoping extension: +-1, positive extends, negative retracts, 0 holds.
+    void SetExtensionSpeed(float speed);
 
     //Root-level Object - own physics body, own AddObject call into target_scene from this
     //constructor - joined to `this` (the base) only through boom_hinge, NOT a parent/child
@@ -40,9 +46,10 @@ public:
     rp3d::HingeJoint* boom_hinge = NULL;
     float boom_speed_command = 0.0f;        //+-1, from SetPistonSpeed
     float boom_max_rate = 0.5f;             //rad/s at SetPistonSpeed's +-1
-    float boom_max_motor_torque = 2000.0f;  //N.m - the piston's force rating. Gravity on the 40kg,
-                                            //4m boom is ~800 N.m at horizontal, so this holds and
-                                            //lifts it with margin; overload it and the boom sags.
+    float boom_max_motor_torque = 3000.0f;  //N.m - the piston's force rating. Gravity on the 40kg,
+                                            //4m boom is ~800 N.m at horizontal, plus up to ~950 N.m
+                                            //more from the 20kg extension at full reach, so this
+                                            //holds and lifts it with margin; overload it and it sags.
 
     //Hard hinge limits, relative to the creation-time (elevation_angle) pose - same convention
     //as rp3d::HingeJoint::getAngle(). The commanded motor speed tapers to 0 over the last
@@ -51,6 +58,19 @@ public:
     float boom_min_angle = -35.0f * TYPE_PI / 180.0f;
     float boom_max_angle = 35.0f * TYPE_PI / 180.0f;
     float boom_limit_margin = 5.0f * TYPE_PI / 180.0f;
+
+    //Telescoping extension: another root-level Object (same reasoning as boom), joined to the
+    //boom only through extension_slider. Translation is along the boom's own +Z (toward its
+    //tip), relative to the creation pose - same convention as rp3d::SliderJoint::getTranslation().
+    Object* extension = NULL;
+    rp3d::SliderJoint* extension_slider = NULL;
+    float extension_speed_command = 0.0f;       //+-1, from SetExtensionSpeed
+    float extension_max_rate = 0.6f;            //m/s at SetExtensionSpeed's +-1
+    float extension_max_motor_force = 3000.0f;  //N - gravity along the boom on the 20kg extension is
+                                                //at most ~200 N (boom near vertical), so plenty
+    float extension_min = 0.0f;                 //m, fully retracted = the creation pose
+    float extension_max = 2.5f;                 //m, fully out
+    float extension_limit_margin = 0.15f;       //m, motor speed tapers to 0 over this before a limit
 
     //Purely cosmetic - no physics, no joint. A separate root-level Object (same reasoning as
     //boom - see above), repositioned/reoriented/rescaled every tick in UpdatePhysicsState to

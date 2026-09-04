@@ -112,6 +112,45 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
         boom_hinge = dynamic_cast<rp3d::HingeJoint*>(physicsworld->rp_world->createJoint(info));
     }
 
+    //--- Extension: a thinner box nested inside the boom, on a SliderJoint whose axis is the
+    //boom's own +Z (toward the tip). Fully retracted at creation: it sits inside the boom from
+    //boom-local z=-1.2 to +1.8 (the boom itself spans -2..+2), so the retracted part is hidden
+    //inside the boom's opaque box and only what telescopes past the tip shows.
+    if (boom){
+        const float ext_length = 3.0f, ext_width = 0.22f, ext_thickness = 0.22f;
+        const float ext_mass = 20.0f;
+        const float ext_retracted_centre = 0.3f; //boom-local z of the extension's centre when fully retracted
+        extension = MakeCraneBox(assetmanager,ext_width,ext_thickness,ext_length);
+        if (extension){
+            extension->name = "Crane Boom Extension";
+            vec3 ext_position = boom->GetPosition() + PointOnAngledAxis(elevation_angle,ext_retracted_centre);
+            extension->SetPosition(ext_position);
+            extension->SetRotation(ElevationRotation(elevation_angle));
+            extension->AddPhysics(physicsworld);
+            if (Physics* p = extension->GetPhysics()){
+                float ext_density = ext_mass / (ext_width * ext_thickness * ext_length);
+                p->AddBoxCollider(vec3(ext_width,ext_thickness,ext_length) * 0.5f,vec3(0,0,0),quat().identity(),ext_density);
+                p->SetGravityEnabled(true);
+                p->SetStatic(false);
+                p->body->rigidbody->setIsAllowedToSleep(false);
+            }
+            target_scene->AddObject(extension);
+
+            //body1 = boom, body2 = extension, so getTranslation() (= (anchor2-anchor1).axis) grows
+            //as the extension moves out along the boom, and a positive motor speed extends.
+            vec3 slider_axis_world = PointOnAngledAxis(elevation_angle,1.0f);
+            rp3d::SliderJointInfo sinfo(boom->GetRigidBody(),extension->GetRigidBody(),(rp3d::Vector3&)ext_position,(rp3d::Vector3&)slider_axis_world);
+            sinfo.isCollisionEnabled = false; //nested inside the boom by design
+            sinfo.isLimitEnabled = true;
+            sinfo.minTranslationLimit = extension_min;
+            sinfo.maxTranslationLimit = extension_max;
+            sinfo.isMotorEnabled = true;
+            sinfo.motorSpeed = 0.0;
+            sinfo.maxMotorForce = extension_max_motor_force;
+            extension_slider = dynamic_cast<rp3d::SliderJoint*>(physicsworld->rp_world->createJoint(sinfo));
+        }
+    }
+
     //--- Piston: purely visual, no physics/joint - see this class's own header comment. Sized
     //once here (natural/reference length = the CURRENT base-to-boom distance at construction
     //time); UpdatePhysicsState rescales it every tick to whatever that distance actually is.
@@ -134,6 +173,10 @@ void CraneCharacter::SetPistonSpeed(float speed){
     boom_speed_command = clamp(speed,-1.0f,1.0f);
 }
 
+void CraneCharacter::SetExtensionSpeed(float speed){
+    extension_speed_command = clamp(speed,-1.0f,1.0f);
+}
+
 void CraneCharacter::UpdatePhysicsState(){
     if (boom_hinge){
         //Negative rotation about the hinge's X axis increases elevation (see ElevationRotation),
@@ -146,6 +189,14 @@ void CraneCharacter::UpdatePhysicsState(){
         //stop. Velocity-level, so unlike a torque ramp it can't oscillate.
         float taper = clamp(remaining / boom_limit_margin,0.0f,1.0f);
         boom_hinge->setMotorSpeed(-boom_speed_command * boom_max_rate * taper);
+    }
+    if (extension_slider){
+        //Same velocity-level limit taper as the boom. Positive command = positive motor speed =
+        //translation increasing toward extension_max (see the joint's construction comment).
+        float translation = extension_slider->getTranslation();
+        float remaining = extension_speed_command > 0.0f ? extension_max - translation : translation - extension_min;
+        float taper = clamp(remaining / extension_limit_margin,0.0f,1.0f);
+        extension_slider->setMotorSpeed(extension_speed_command * extension_max_rate * taper);
     }
     if (boom && piston_visual){
         //STATE_ACCESS_PHYSICS, not the default RENDERER - this runs on the physics thread, same

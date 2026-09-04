@@ -96,6 +96,7 @@ public:
     //directly by the "Crane" panel in RenderTankWheelDebugUI via crane_piston_speed.
     CraneCharacter* crane = NULL;
     float crane_piston_speed = 0.0f;
+    float crane_extension_speed = 0.0f; //same, for the telescoping extension's slider motor
 
     void DumpTerrainVertices();
     void TestHeightmapRoundTrip();
