@@ -22,11 +22,14 @@ Particle::Particle(Particle* particle):Particle(particle->GetPhysics()->world){
         //on every instance EmitParticles spawns from it, not just the one template Object.
         physics->SetGravityEnabled(p->IsGravityEnabled());
     }
-    if (p && p->body && p->body->collider){
+    if (p && p->body && p->body->last_collider){
         //debug->Info("physics->world = %p\n",physics->world);
-        rp3d::CollisionShape* shape =  p->body->collider->getCollisionShape();
+        //Own copy of the shape, not the template's - the emitter SetScale()s every particle it
+        //spawns, which rescales its collider, and a shared shape would drag every other particle
+        //(and the template) along with it.
+        rp3d::CollisionShape* shape = Physics::CloneShape(p->body->last_collider->getCollisionShape());
         reactphysics3d::Transform t = reactphysics3d::Transform::identity();
-        physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
+        physics->body->last_collider = physics->body->rigidbody->addCollider(shape,t);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
         physics->body->rigidbody->setUserData(this);
 

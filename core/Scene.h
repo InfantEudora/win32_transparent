@@ -6,6 +6,8 @@
 #include <vector>
 #include <string>
 #include <atomic>
+#include <mutex>
+#include <functional>
 
 #include "type_fmat3.h"
 #include "type_fmat4.h"
@@ -36,7 +38,29 @@ public:
 
     void AddObject(Object* object);
 
+    //All three walk the whole tree (children included), depth-first, in renderer->objects order.
     Object* FindObject(const std::string& name);
+    Object* FindObjectByID(objectid_t id);
+    void ForEachObject(const std::function<void(Object*)>& fn);
+
+    //Moves object from wherever it is when the first tick runs to the given target(s) over
+    //exactly `ticks` physics ticks, interpolated (lerp/slerp). NULL leaves that component alone.
+    //
+    //An object WITH a physics body is switched to KINEMATIC for the duration and driven by
+    //velocity - each tick gets the linear/angular velocity that carries it to the next
+    //interpolated pose, and on the tick after the last it's snapped to the exact target, its
+    //velocities zeroed and its previous body type restored. A collider on it shoves dynamic
+    //bodies out of the way, and joints attached to it follow properly. The obvious alternative
+    //- SetPosition (setTransform) every tick, which is what dragging the Generic Object UI's
+    //slider does - teleports the body with zero velocity: joints on it only see a position
+    //error after the fact, and the per-tick corrections leak into any free joint DOF (a hinged
+    //boom on a yawing base flaps around and drifts straight through its angle limits).
+    //
+    //An object without physics just gets SetPosition/SetRotation each tick. Requesting a motion
+    //for an object that already has one replaces it. Callable from any thread (e.g. an MCP tool
+    //handler); consumed on the physics thread.
+    void MoveObjectOverTicks(Object* object,const vec3* target_position,const quat* target_rotation,int ticks);
+    int GetPendingObjectMotions();
 
     bool IsPhysicsPaused(){return f_paused;}
     void PausePhysics(bool paused){f_paused = paused;}
@@ -55,6 +79,28 @@ private:
     uint64_t physics_ticks = 0;
     bool f_paused = false;
     std::atomic<int> pending_physics_steps{0}; //written from any thread, consumed by UpdatePhysics on the physics thread
+
+    //See MoveObjectOverTicks. start_* are captured on the first tick the motion actually runs,
+    //not when it was requested, so it always starts from the object's real current pose.
+    // A stipped down version of ObjectAnimation
+    struct ObjectMotion{
+        Object* object = NULL;
+        bool f_position = false;
+        bool f_rotation = false;
+        vec3 start_position = {};
+        vec3 target_position = {};
+        quat start_rotation;
+        quat target_rotation;
+        int ticks_total = 1;
+        int ticks_done = 0;
+        //Physics-driven motions only: the body type to put back when done. The motion lives one
+        //tick past ticks_total for that (the velocity set on the last tick still has to play out).
+        bool f_kinematic = false;
+        rp3d::BodyType previous_body_type = rp3d::BodyType::STATIC;
+    };
+    std::vector<ObjectMotion> object_motions;
+    std::mutex object_motions_mutex;
+    void AdvanceObjectMotions(float delta_time); //one tick's worth, physics thread only
 };
 
 #endif

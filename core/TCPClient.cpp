@@ -105,6 +105,15 @@ bool TCPClient::Connect(const std::string &host, int port) {
     }
 
     debug->Info("Connected to %s:%d\n", host.c_str(), port);
+
+    // Fire the connected callback. This is deliberately after the receive
+    // thread is up: OCPPClient uses this hook to send its WebSocket upgrade
+    // request, and the server's 101 response has to have somewhere to land.
+    // Runs on the caller's thread, not the receive thread, so a callback that
+    // calls Disconnect() (which joins that thread) will not deadlock.
+    if (m_onConnected)
+        m_onConnected();
+
     return true;
 }
 

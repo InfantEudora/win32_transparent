@@ -60,7 +60,9 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     const float boom_length = 4.0f;
     const float boom_width = 0.3f, boom_thickness = 0.3f;
     const vec3 boom_hinge_anchor = base_position + vec3(0,0.9f,-0.6f);
-    piston_base_anchor_world = base_position + vec3(0,0.7f,-0.2f);
+    //(0, 0.7, -0.2) above base_position, expressed relative to this object's origin, which sits
+    //base_half_y above base_position (see SetPosition above).
+    piston_base_anchor_local = vec3(0,0.7f - base_half_y,-0.2f);
     const float piston_boom_reach = 1.2f; //distance along the boom from ITS hinge to where the piston visually attaches
     piston_boom_anchor_local = vec3(0,0,-boom_length * 0.5f + piston_boom_reach);
 
@@ -115,7 +117,7 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     //time); UpdatePhysicsState rescales it every tick to whatever that distance actually is.
     if (boom){
         vec3 piston_boom_anchor_world = boom->GetPosition() + PointOnAngledAxis(elevation_angle,-boom_length * 0.5f + piston_boom_reach);
-        float initial_span = (piston_boom_anchor_world - piston_base_anchor_world).length();
+        float initial_span = (piston_boom_anchor_world - (GetPosition() + piston_base_anchor_local)).length(); //base is unrotated at construction
         piston_visual = MakeCraneBox(assetmanager,piston_radius*2.0f,piston_radius*2.0f,max(initial_span,0.01f));
         if (piston_visual){
             piston_visual->name = "Crane Piston (visual)";
@@ -151,16 +153,16 @@ void CraneCharacter::UpdatePhysicsState(){
         //distinction, just the opposite direction (physics code reading stale render state would
         //be a tick behind the boom's actual current pose here).
         vec3 boom_anchor_world = boom->GetWorldPosition(STATE_ACCESS_PHYSICS) + (boom->GetWorldRotation() * piston_boom_anchor_local);
-        vec3 delta = boom_anchor_world - piston_base_anchor_world;
+        vec3 base_anchor_world = GetWorldPosition(STATE_ACCESS_PHYSICS) + (GetWorldRotation() * piston_base_anchor_local);
+        vec3 delta = boom_anchor_world - base_anchor_world;
         float span = delta.length();
         if (span > 0.0001f){
             vec3 dir = delta * (1.0f / span);
-            piston_visual->SetPosition(piston_base_anchor_world + dir * (span * 0.5f));
-            //Both anchor points stay in this crane's own fixed X plane (the whole mechanism is
-            //planar - see this class's header comment), so dir has no X component either, and
-            //the same single-axis elevation trick still applies here.
-            float angle = atan2f(dir.y,dir.z);
-            piston_visual->SetRotation(ElevationRotation(angle));
+            piston_visual->SetPosition(base_anchor_world + dir * (span * 0.5f));
+            //The piston box's long axis is its local +Z - point that along dir. No assumption
+            //about which plane the mechanism lies in, so this survives the base being moved or
+            //yawed (the box is symmetric, so which end is which doesn't matter).
+            piston_visual->SetRotation(quat::getquat(vec3(0,0,1),dir));
             piston_visual->SetScale(vec3(piston_radius * 2.0f,piston_radius * 2.0f,span));
         }
     }

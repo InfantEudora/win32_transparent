@@ -1,5 +1,7 @@
 #include "OCPPClient.h"
 #include <ctime>
+#include <cmath>
+#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 #include <wincrypt.h>
@@ -29,8 +31,34 @@ OCPPClient::~OCPPClient() {
 	
 }
 
+bool OCPPClient::CheckHandshakeTimeout() {
+    // Nothing to do once the outcome is known either way, or before the
+    // request has actually gone out.
+    if (m_info.websocketHandshakeComplete || m_info.handshakeFailed)
+        return false;
+    if (!IsConnected() || m_info.handshakeSentTickMs == 0 || m_info.handshakeTimeoutMs == 0)
+        return false;
+
+    // Unsigned subtraction, so this stays correct across the ~49.7 day
+    // GetTickCount() wrap.
+    DWORD elapsed = GetTickCount() - m_info.handshakeSentTickMs;
+    if (elapsed < m_info.handshakeTimeoutMs)
+        return false;
+
+    m_info.handshakeFailed = true;
+    m_info.handshakeStatusCode = 0;
+    m_info.handshakeError = "no response within " +
+        std::to_string(m_info.handshakeTimeoutMs / 1000) + "s";
+
+    debug->Err("WebSocket handshake timed out after %lu ms\n", (unsigned long)elapsed);
+    return true;
+}
+
 void OCPPClient::Disconnect() {
     m_info.websocketHandshakeComplete = false;
+    // Drop any partial frame/response left over, otherwise the next connect
+    // parses this session's leftovers as part of its handshake response.
+    m_receiveBuffer.clear();
     TCPClient::Disconnect();
 }
 
@@ -38,6 +66,15 @@ bool OCPPClient::ConnectOCPP(const std::string &host, int port, const std::strin
     m_info.chargeBoxIdentity = chargeBoxIdentity;
     m_info.serverUrl = host + ":" + std::to_string(port);
     m_info.websocketHandshakeComplete = false;
+
+    // Clear the previous attempt's outcome - this is the only place it resets,
+    // so a failure stays on screen after the socket is gone.
+    m_info.handshakeFailed = false;
+    m_info.handshakeStatusCode = 0;
+    m_info.handshakeError.clear();
+    m_info.handshakeBody.clear();
+    m_info.handshakeSentTickMs = 0;
+    m_receiveBuffer.clear();
 
     // First establish TCP connection
     if (!Connect(host, port)) {
@@ -107,6 +144,9 @@ OCPPClient::HandshakeResult OCPPClient::PerformWebSocketHandshake(const std::str
 
     // The handshake response is read on the nonblocking data-received path
     // (see OnDataReceivedInternal), so completion cannot be observed here.
+    // Stamp the send so CheckHandshakeTimeout() has something to measure from.
+    m_info.handshakeSentTickMs = GetTickCount();
+
     debug->Info("WebSocket handshake request sent, awaiting response\n");
     return HandshakeResult::Pending;
 }
@@ -127,6 +167,17 @@ std::string OCPPClient::CurrentTimestamp() {
 bool OCPPClient::SendWebSocketFrame(const std::string &message) {
     if (!IsConnected()) {
         debug->Err("Not connected to server\n");
+        return false;
+    }
+
+    // IsConnected() is TCP-level and goes true before the WebSocket upgrade has
+    // been negotiated. Writing a masked frame in that window puts binary noise
+    // in front of an HTTP server that is still waiting for the GET, which it
+    // logs as an unparseable request and the connection is dead from there.
+    // The handshake itself goes out via Send(), not this path, so it is safe
+    // to hard-gate every frame on the 101 having arrived.
+    if (!m_info.websocketHandshakeComplete) {
+        debug->Err("Refusing to send frame before the WebSocket handshake completed\n");
         return false;
     }
 
@@ -216,18 +267,74 @@ bool OCPPClient::SendBootNotification(const std::string &vendor, const std::stri
 }
 
 bool OCPPClient::SendStatusNotification(int connectorId, const std::string &status, const std::string &errorCode) {
-    m_info.connectorId = connectorId;
-    m_info.connectorStatus = status;
-    m_info.errorCode = errorCode;
+    // Record what was sent so the stored per-connector state and the wire never
+    // disagree - the UI reads this map back.
+    ClientConnectorState &conn = m_info.connectors[connectorId];
+    conn.status = status;
+    conn.errorCode = errorCode;
 
     json payload = {
         {"connectorId", connectorId},
         {"status", status},
         {"errorCode", errorCode},
-        {"timestamp", "2025-01-01T00:00:00.000Z"} // Simplified timestamp
+        {"timestamp", CurrentTimestamp()}
     };
 
+    // info is optional in StatusNotification.req; the real charger uses it to
+    // carry its raw stop-reason/error codes.
+    if (!conn.info.empty())
+        payload["info"] = conn.info;
+
     return SendOCPPMessage(2, GenerateMessageId(), "StatusNotification", payload);
+}
+
+bool OCPPClient::SendConnectorStatus(int connectorId) {
+    const ClientConnectorState &conn = m_info.connectors[connectorId];
+    return SendStatusNotification(connectorId, conn.status, conn.errorCode);
+}
+
+bool OCPPClient::SendAllConnectorStatus() {
+    bool allOk = true;
+    for (const auto &kv : m_info.connectors) {
+        if (!SendConnectorStatus(kv.first))
+            allOk = false;
+    }
+    return allOk;
+}
+
+void OCPPClient::HandleChangeAvailability(const std::string &messageId, const json &payload) {
+    int connectorId = payload.value("connectorId", 0);
+    std::string type = payload.value("type", "");
+    bool inoperative = (type == "Inoperative");
+    std::string newStatus = inoperative ? "Unavailable" : "Available";
+
+    // connectorId 0 addresses the whole charge point. Beyond that, the real
+    // FE20 was measured changing *both* connectors when only connector 1 was
+    // addressed - it is a single-socket unit, so connector 0 mirrors it. The
+    // Fermata emulation reproduces that; a generic AC charger changes only the
+    // connector it was told to. See docs/ocpp_fault_diagnostics.md section 4.
+    bool applyToAll = (connectorId == 0) || (m_info.chargerType == ChargerType::FermataV2G);
+
+    if (applyToAll) {
+        for (auto &kv : m_info.connectors)
+            kv.second.status = newStatus;
+    } else {
+        m_info.connectors[connectorId].status = newStatus;
+    }
+
+    debug->Info("ChangeAvailability connectorId=%d type=%s -> %s (%s)\n",
+        connectorId, type.c_str(), newStatus.c_str(),
+        applyToAll ? "all connectors" : "this connector only");
+
+    json response = {{"status", "Accepted"}};
+    SendOCPPMessage(3, messageId, "", response);
+
+    // A real charge point reports the new state straight after accepting.
+    if (applyToAll) {
+        SendAllConnectorStatus();
+    } else {
+        SendConnectorStatus(connectorId);
+    }
 }
 
 bool OCPPClient::SendHeartbeat() {
@@ -295,6 +402,188 @@ bool OCPPClient::SendStopTransaction(int transactionId, int meterStop, const std
     return SendOCPPMessage(2, GenerateMessageId(), "StopTransaction", payload);
 }
 
+const char* ChargerTypeName(ChargerType type) {
+    switch (type) {
+        case ChargerType::FermataV2G: return "Fermata / Heliox FE20 (V2G)";
+        case ChargerType::GenericAC:
+        default:                      return "Generic AC charger";
+    }
+}
+
+void OCPPClient::SetChargerType(ChargerType type) {
+    m_info.chargerType = type;
+
+    // Identity as the real units report it in BootNotification. The Fermata
+    // values are taken from the captured message quoted in OCPPServerHandler.cpp.
+    if (type == ChargerType::FermataV2G) {
+        m_info.chargePointVendor       = "Heliox";
+        m_info.chargePointModel        = "FE20";
+        m_info.chargeBoxSerialNumber   = "620722003700_2241001115";
+        m_info.chargePointSerialNumber = "243401022";
+        m_info.firmwareVersion         = "1.0.0";
+    } else {
+        m_info.chargePointVendor       = "MyVendor";
+        m_info.chargePointModel        = "ChargePoint-v1";
+        m_info.chargeBoxSerialNumber   = "123456";
+        m_info.chargePointSerialNumber = "123456";
+        m_info.firmwareVersion         = "1.0";
+    }
+
+    debug->Info("Charger type set to %s (%s %s)\n", ChargerTypeName(type),
+        m_info.chargePointVendor.c_str(), m_info.chargePointModel.c_str());
+}
+
+bool OCPPClient::SendDataTransfer(const std::string &vendorId, const std::string &messageId, const std::string &data) {
+    json payload = {{"vendorId", vendorId}};
+
+    // messageId and data are both optional per OCPP 1.6. `data` is a free-form
+    // string; the Fermata dialect puts a serialised JSON object in it, which is
+    // why it is passed through as a string rather than as a nested object.
+    if (!messageId.empty())
+        payload["messageId"] = messageId;
+    if (!data.empty())
+        payload["data"] = data;
+
+    return SendOCPPMessage(2, GenerateMessageId(), "DataTransfer", payload);
+}
+
+std::string OCPPClient::BuildCustomMeterValuesData() const {
+    const V2GState &v = m_info.v2g;
+
+    // ordered_json, not json: the default json is backed by std::map and would
+    // emit the keys alphabetically, so the payload would no longer line up with
+    // a capture from the real charger. Insertion order below is the FE20's.
+    // The unit also emits these as integers, so round rather than letting
+    // nlohmann print 7000.0 where the charger sends 7000.
+    nlohmann::ordered_json d;
+    d["local_mode"]         = v.local_mode;
+    d["p_baseline"]         = (long long)llround(v.p_baseline);
+    d["q_baseline"]         = (long long)llround(v.q_baseline);
+    d["p_max"]              = (long long)llround(v.p_max);
+    d["p_min"]              = (long long)llround(v.p_min);
+    d["min_soc"]            = (long long)llround(v.min_soc);
+    d["max_soc"]            = (long long)llround(v.max_soc);
+    d["ev_min_soc"]         = (long long)llround(v.ev_min_soc);
+    d["ev_energy_capacity"] = (long long)llround(v.ev_energy_capacity);
+    d["session_active"]     = v.session_active;
+    d["output_power"]       = (long long)llround(v.output_power);
+
+    return d.dump();
+}
+
+bool OCPPClient::SendCustomMeterValues() {
+    if (m_info.chargerType != ChargerType::FermataV2G) {
+        debug->Warn("SendCustomMeterValues ignored: client is not emulating a Fermata charger\n");
+        return false;
+    }
+    return SendDataTransfer("nu.ame", "customMeterValues", BuildCustomMeterValuesData());
+}
+
+bool OCPPClient::SendV2GMeterValues(int connectorId, double socPercent) {
+    if (m_info.chargerType != ChargerType::FermataV2G)
+        return SendMeterValues(connectorId, m_info.v2g.output_power, socPercent);
+
+    const V2GState &v = m_info.v2g;
+    double power = v.output_power;
+
+    m_info.m_meterdata.powerActiveImport = power;
+    m_info.m_meterdata.soc = socPercent;
+
+    // Measurand set as sampled from the FE20. Import and export are reported as
+    // separate measurands, so a negative (discharging) output goes out as
+    // Power.Active.Export with Import pinned at 0.
+    json sampledValue = json::array();
+    sampledValue.push_back({{"value", std::to_string((int)llround(socPercent))}, {"measurand", "SoC"},                 {"unit", "Percent"}});
+    sampledValue.push_back({{"value", std::to_string(power > 0 ? power : 0.0)},  {"measurand", "Power.Active.Import"}, {"unit", "W"}});
+    sampledValue.push_back({{"value", std::to_string(power < 0 ? -power : 0.0)}, {"measurand", "Power.Active.Export"}, {"unit", "W"}});
+    sampledValue.push_back({{"value", std::to_string(v.q_baseline > 0 ?  v.q_baseline : 0.0)}, {"measurand", "Power.Reactive.Import"}, {"unit", "var"}});
+    sampledValue.push_back({{"value", std::to_string(v.q_baseline < 0 ? -v.q_baseline : 0.0)}, {"measurand", "Power.Reactive.Export"}, {"unit", "var"}});
+    sampledValue.push_back({{"value", "28.300001"}, {"measurand", "Temperature"}, {"unit", "Celsius"}});
+    // Yes, "W" - the FE20 really does tag Frequency with unit W. Mirrored here
+    // so the emulation reproduces the quirk a backend has to cope with.
+    sampledValue.push_back({{"value", "49.965004"}, {"measurand", "Frequency"},   {"unit", "W"}});
+
+    json meterValue = {
+        {"timestamp", CurrentTimestamp()},
+        {"sampledValue", sampledValue}};
+
+    json payload = {
+        {"connectorId", connectorId},
+        {"transactionId", 0},
+        {"meterValue", json::array({meterValue})}};
+
+    return SendOCPPMessage(2, GenerateMessageId(), "MeterValues", payload);
+}
+
+void OCPPClient::TickV2G(double dtSeconds) {
+    if (m_info.chargerType != ChargerType::FermataV2G || dtSeconds <= 0.0)
+        return;
+
+    V2GState &v = m_info.v2g;
+
+    // Outside a session the charger settles back to zero regardless of setpoint.
+    double target = 0.0;
+    if (v.session_active) {
+        target = v.p_baseline;
+        double cap = fabs(v.power_limit);
+        if (target >  cap) target =  cap;
+        if (target < -cap) target = -cap;
+        if (target > v.p_max) target = v.p_max;
+        if (target < v.p_min) target = v.p_min;
+    }
+
+    // First-order ramp so the UI shows the setpoint being tracked rather than
+    // jumped to. This models the ramp only - the real unit also sat slightly
+    // under its setpoint in steady state (6678 W against a commanded 7000 W).
+    const double tau = 2.0;
+    double alpha = dtSeconds / (tau + dtSeconds);
+    v.output_power += (target - v.output_power) * alpha;
+    if (fabs(target - v.output_power) < 1.0)
+        v.output_power = target;
+}
+
+void OCPPClient::HandleChangeConfiguration(const std::string &messageId, const json &payload) {
+    std::string key   = payload.value("key", "");
+    std::string value = payload.value("value", "");
+
+    // A generic AC charger has no V2G settings to change. Reporting
+    // NotSupported rather than Rejected matches OCPP 1.6, which distinguishes
+    // "unknown key" from "known key, bad value".
+    if (m_info.chargerType != ChargerType::FermataV2G) {
+        debug->Warn("ChangeConfiguration %s=%s not supported by a generic AC charger\n", key.c_str(), value.c_str());
+        json response = {{"status", "NotSupported"}};
+        SendOCPPMessage(3, messageId, "", response);
+        return;
+    }
+
+    // strtod, not std::stod: with -fno-exceptions a bad value would abort
+    // instead of throwing std::invalid_argument.
+    const char *begin = value.c_str();
+    char *end = nullptr;
+    double numeric = strtod(begin, &end);
+    bool isNumeric = (end != begin && *end == 0);
+
+    const char *status = "NotSupported";
+    if (key == "PBaseline") {
+        if (isNumeric) { m_info.v2g.p_baseline = numeric; status = "Accepted"; }
+        else           { status = "Rejected"; }
+    } else if (key == "QBaseline") {
+        if (isNumeric) { m_info.v2g.q_baseline = numeric; status = "Accepted"; }
+        else           { status = "Rejected"; }
+    } else if (key == "PowerLimit") {
+        if (isNumeric) { m_info.v2g.power_limit = numeric; status = "Accepted"; }
+        else           { status = "Rejected"; }
+    } else if (key == "LocalMode") {
+        m_info.v2g.local_mode = (value == "true" || value == "1");
+        status = "Accepted";
+    }
+
+    debug->Info("ChangeConfiguration %s=%s -> %s\n", key.c_str(), value.c_str(), status);
+
+    json response = {{"status", status}};
+    SendOCPPMessage(3, messageId, "", response);
+}
+
 void OCPPClient::SetOnOCPPResponse(std::function<void(const std::string &messageType, const json &response)> callback) {
     m_onOCPPResponse = callback;
 }
@@ -310,15 +599,56 @@ void OCPPClient::OnDataReceivedInternal(const char *data, int length) {
             debug->Info("Buffer length: %zu\n", m_receiveBuffer.length());
             debug->Info("Buffer content:\n%s\n", m_receiveBuffer.c_str());
 
-            if (m_receiveBuffer.find("101 Switching Protocols") != std::string::npos) {
+            // Parse the status line ("HTTP/1.1 <code> <reason>") rather than
+            // grepping for "101 Switching Protocols" - the reason phrase is not
+            // fixed by the RFC, and a real status code is what we want to report
+            // when the answer is something like 404.
+            size_t lineEnd = m_receiveBuffer.find("\r\n");
+            std::string statusLine = (lineEnd == std::string::npos)
+                ? m_receiveBuffer : m_receiveBuffer.substr(0, lineEnd);
+
+            int    code = 0;
+            std::string reason;
+            size_t sp = statusLine.find(' ');
+            if (sp != std::string::npos) {
+                // strtol, not std::stoi: -fno-exceptions turns a throw into abort().
+                const char *begin = statusLine.c_str() + sp + 1;
+                char *end = nullptr;
+                long parsed = strtol(begin, &end, 10);
+                if (end != begin) {
+                    code = (int)parsed;
+                    while (*end == ' ') end++;
+                    reason = end;
+                }
+            }
+
+            if (code == 101) {
                 debug->Info("WebSocket handshake successful\n");
                 m_info.websocketHandshakeComplete = true;
             } else {
                 // Note: deliberately not calling Disconnect() here — this runs
                 // on the receive thread itself, and Disconnect() joins that
-                // same thread (deadlock). Callers must notice via
-                // IsWebSocketReady() staying false and disconnect from another thread.
-                debug->Err("WebSocket handshake failed\n");
+                // same thread (deadlock). The flag is what lets the UI thread
+                // notice and tear the socket down.
+                m_info.handshakeFailed = true;
+                m_info.handshakeStatusCode = code;
+                if (code != 0) {
+                    m_info.handshakeError = std::to_string(code);
+                    if (!reason.empty())
+                        m_info.handshakeError += " " + reason;
+                } else {
+                    m_info.handshakeError = "server did not answer with an HTTP status line";
+                }
+
+                // Keep the body - a backend that rejects the path usually says so.
+                size_t bodyStart = m_receiveBuffer.find("\r\n\r\n");
+                if (bodyStart != std::string::npos)
+                    m_info.handshakeBody = m_receiveBuffer.substr(bodyStart + 4);
+
+                debug->Err("WebSocket handshake rejected: %s%s%s\n",
+                    m_info.handshakeError.c_str(),
+                    m_info.handshakeBody.empty() ? "" : " - ",
+                    m_info.handshakeBody.c_str());
             }
 
             m_receiveBuffer.clear();
@@ -487,6 +817,10 @@ void OCPPClient::HandleOCPPMessage(const std::string &message) {
 
         if (action == "SetChargingProfile") {
             HandleSetChargingProfile(messageId, payload);
+        } else if (action == "ChangeConfiguration") {
+            HandleChangeConfiguration(messageId, payload);
+        } else if (action == "ChangeAvailability") {
+            HandleChangeAvailability(messageId, payload);
         } else {
             json response = {{"status", "Accepted"}};
             SendOCPPMessage(3, messageId, "", response);

@@ -49,6 +49,11 @@ public:
     virtual void Start(void);   // Creates 2 threads
     virtual void Init(void);    // Called from Frame Thread
 
+    //Generic, app-independent MCP tools (object_list/object_get/object_set_transform/
+    //object_move) - the MCP counterpart of the Generic Object UI panel. Registered for
+    //every app right after Init(), before the MCP server starts accepting requests.
+    void RegisterCoreMCPTools();
+
     //Physics thread
     virtual void UpdateInput(void);
     virtual void UpdateAnimations(void);

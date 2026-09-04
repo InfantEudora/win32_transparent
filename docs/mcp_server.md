@@ -14,7 +14,14 @@ Two transports, either or both of which can be running at once, share the same t
 
 The built-in `status` tool is always registered (confirms the process is alive); apps add their own on top.
 
-Tank app tools (`ApplicationTank::RegisterMCPTools()`, called from `ApplicationTank::Init()`): `tank_drive`, `tank_steer`, `tank_telemetry`.
+Generic tools every app gets (`Application::RegisterCoreMCPTools()`, called right after `Init()` in `FrameThreadFunction`) - the MCP counterpart of the Generic Object UI panel:
+
+- `object_list` (optional `name_filter`, `limit`) - every object in the active scene, children included, with id/name/parent/position/physics flags. Ids are unique, names are not - use ids.
+- `object_get` (`id` or `name`) - full transform, forward/up, scale, children, physics state.
+- `object_set_transform` (`id`/`name`, any of `position`, `rotation` [x,y,z,w], `axis_degrees` [x,y,z] (X, Y, Z order, same as the UI's "Axis Degrees" mode), `yaw_degrees`, `scale`) - instant, teleports the physics body along.
+- `object_move` (same targets, plus `ticks`, default 50) - interpolates the transform one step per physics tick (`Scene::MoveObjectOverTicks`), which is what dragging the UI's position slider does frame by frame: a collider on the moved object pushes dynamic bodies out of the way instead of passing through them. Blocks until done; returns immediately with a note if physics is paused (the motion then plays out via `tank_step`).
+
+Tank app tools (`ApplicationTank::RegisterMCPTools()`, called from `ApplicationTank::Init()`): `tank_drive`, `tank_steer`, `tank_telemetry`, `tank_screenshot`, `tank_pause`, `tank_step`, `bridge_*`, `crane_speed`, `crane_telemetry`.
 
 `core/Application.cpp`'s `FrameThreadFunction` calls both `MCPServer::Get()->Start()` and `MCPServer::Get()->StartHttp(8765)` unconditionally, so every app in the project gets both transports for free. If port 8765 is already bound (e.g. another instance of the same app is already running), `StartHttp` just logs an error and leaves HTTP transport off - it does not fail the process, and stdio (if a client is using it) is unaffected.
 

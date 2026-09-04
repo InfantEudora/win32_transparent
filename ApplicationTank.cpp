@@ -1160,19 +1160,19 @@ void ApplicationTank::AddTestSceneObjects(){
     ground_plane->name = "Test Ground Plane";
     main_scene->AddObject(ground_plane);
 
-    ground_plane->AddPhysics(main_scene->physics_world);
     const vec3 target_scale(20.0f,1.0f,20.0f);
     vec3 raw_extent = ground_plane->GetMesh() ? ground_plane->GetMesh()->GetExtents() : vec3(1,1,1);
+    //Scale BEFORE adding the collider: SetScale rescales existing colliders along with the
+    //visual, so a collider sized to the final extents must be added once the scale is final.
+    ground_plane->SetScale(target_scale);
+    ground_plane->AddPhysics(main_scene->physics_world);
     if (Physics* physics = ground_plane->GetPhysics()){
-        //Object::SetScale only rescales SPHERE colliders (see its own comment) - sized directly
-        //to the mesh's final, post-scale extents here instead of relying on that.
         vec3 extent = vec3(raw_extent.x * target_scale.x,raw_extent.y * target_scale.y,raw_extent.z * target_scale.z) * 0.5f;
         physics->AddBoxCollider(extent,vec3(0,0,0),quat().identity(),1.0f); //density irrelevant, static
         physics->SetFrictionCoefficient(0.8f);
         physics->SetBounciness(0.0f);
         physics->SetStatic(true);
     }
-    ground_plane->SetScale(target_scale);
     ground_plane->SetMaterialSlot(0,0);
 
     //Cube mesh is centred on its own origin - drop it by half its (post-scale) height so its
@@ -1309,25 +1309,24 @@ void ApplicationTank::AddTestSceneObjects(){
         }
         ramp->name = "Test Ramp";
         main_scene->AddObject(ramp);
-        ramp->AddPhysics(main_scene->physics_world);
 
         const float width = 3.0f;     //across the ramp (X)
         const float thickness = 0.4f; //slab thickness (Y, before rotation)
         const float length = 5.0f;    //up the slope (Z, before rotation)
         const float angle = angle_degrees * TYPE_PI / 180.0f;
 
+        //Scale first, collider after - same reasoning as ground_plane above.
+        vec3 raw_extent = ramp->GetMesh() ? ramp->GetMesh()->GetExtents() : vec3(1.0f,1.0f,1.0f);
+        if (raw_extent.x > 0.0001f && raw_extent.y > 0.0001f && raw_extent.z > 0.0001f){
+            ramp->SetScale(vec3(width / raw_extent.x,thickness / raw_extent.y,length / raw_extent.z));
+        }
+        ramp->AddPhysics(main_scene->physics_world);
         if (Physics* physics = ramp->GetPhysics()){
-            //Sized to the FINAL (post-scale) box directly - SetScale doesn't auto-resize a box
-            //collider, same reasoning as ground_plane above.
             vec3 extent = vec3(width,thickness,length) * 0.5f;
             physics->AddBoxCollider(extent,vec3(0,0,0),quat().identity(),1.0f); //density irrelevant, static
             physics->SetFrictionCoefficient(0.8f);
             physics->SetBounciness(0.0f);
             physics->SetStatic(true);
-        }
-        vec3 raw_extent = ramp->GetMesh() ? ramp->GetMesh()->GetExtents() : vec3(1.0f,1.0f,1.0f);
-        if (raw_extent.x > 0.0001f && raw_extent.y > 0.0001f && raw_extent.z > 0.0001f){
-            ramp->SetScale(vec3(width / raw_extent.x,thickness / raw_extent.y,length / raw_extent.z));
         }
 
         //Rotated about X by -angle: with this engine's quat(axis,angle) convention (the same

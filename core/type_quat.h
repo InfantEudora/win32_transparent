@@ -199,7 +199,7 @@ inline quat quat::getquat(const vec3& v1, const vec3& v2){
             v.set(0, 1, 0);
         else                                        // if z ~= 0
             v.set(0, 0, 1);
-        return quat(v, HALF_PI);
+        return quat(v, HALF_PI * 2.0f); // a full 180 degrees - quat(axis,angle) halves internally
     }
 
     vec3 u1 = v1;                    // convert to normal vector
@@ -211,10 +211,12 @@ inline quat quat::getquat(const vec3& v1, const vec3& v2){
     v.normalize();
 
     float dot = u1.dot(u2);
-    dot = clamp(dot,0.0,1.0);
+    dot = clamp(dot,-1.0,1.0);   // full [-1,1] - clamping at 0 capped every rotation at 90 degrees
     float angle = acosf(dot);    // rotation angle: This was being naugty getting fed a 1.0000001f = nan
 
-    return quat(v, angle * 0.5f); // half angle
+    // quat(axis,angle) already halves the angle itself (see set_rotation) - passing angle*0.5
+    // here, as this used to, produced a rotation of only HALF the way from v1 to v2.
+    return quat(v, angle);
 }
 
 

@@ -90,6 +90,10 @@ struct OCPPClientData {
 	bool v2gSessionActive = false;
 	double v2gOutputPowerWatts = 0.0;  // Actual measured output power
 
+	// UI state: which Reset type is selected for this chargepoint (0=Soft, 1=Hard).
+	// Chargepoint-scoped because Reset.req has no connectorId.
+	int resetTypeIdx = 0;
+
 	// Historical record of all transactions for this chargepoint, across all connectors
 	std::vector<OCPPTransaction> transactionHistory;
 
@@ -146,6 +150,16 @@ public:
 
 	// Send ChangeConfiguration request to a client (e.g. key="PBaseline", value="5000")
 	bool SendChangeConfiguration(SOCKET clientSocket, const std::string& key, const std::string& value);
+
+	// Send Reset request to a client. type is "Soft" (restart the OCPP
+	// application, keep the connection semantics) or "Hard" (full reboot).
+	// Charge-point wide - Reset.req has no connectorId.
+	bool SendReset(SOCKET clientSocket, const std::string& type = "Soft");
+
+	// Send ChangeAvailability request. Unlike Reset this IS per connector;
+	// connectorId 0 addresses the whole charge point. type is "Operative" or
+	// "Inoperative".
+	bool SendChangeAvailability(SOCKET clientSocket, int connectorId, const std::string& type);
 
 private:
 	std::map<SOCKET, OCPPClientData> m_clientData;

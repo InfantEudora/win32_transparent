@@ -684,13 +684,13 @@ void ApplicationTileset::PlaceCar(IsoCell* target_cell){
             physics->AddBoxCollider(extent,vec3(0,extent.y,0),quat().identity());
             //physics->AddSphereCollider(0.15f,vec3(0,extent.y,0),quat().identity());
             physics->SetTrigger(true);
-            physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR);
+            physics->body->last_collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR);
             //Add a box collider in front of the car to act as a trigger for proximity detection
             //Box extends from car position forward to where the sphere would have reached
             vec3 box_extent = vec3(extent.x, extent.y, 1.0f * extent.z);
             vec3 box_offset = vec3(0, extent.y, -2.0f * extent.z);
             physics->AddBoxCollider(box_extent, box_offset, quat().identity());
-            physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR_PROXIMITY);
+            physics->body->last_collider->setCollisionCategoryBits(COLLISION_CATEGORY_CAR_PROXIMITY);
             physics->SetTrigger(true);
             physics->body->rigidbody->setIsAllowedToSleep(false);
 
@@ -724,7 +724,7 @@ void ApplicationTileset::PlaceHouse(IsoCell* target_cell){
             vec3 extent = house->GetMesh()->GetExtents()*0.5f;
             physics->AddBoxCollider(extent, vec3(0, extent.y, 0), quat().identity());
             physics->SetStatic(true);
-            physics->body->collider->setCollisionCategoryBits(COLLISION_CATEGORY_SCENERY);
+            physics->body->last_collider->setCollisionCategoryBits(COLLISION_CATEGORY_SCENERY);
         }
         house->name = "House " + std::to_string(houses.size());
         main_scene->AddObject(house);

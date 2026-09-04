@@ -28,6 +28,12 @@ public:
     void WakeUp();
     void SetStatic(bool _static);
     bool IsStatic();
+    //Raw rp3d body type (STATIC / KINEMATIC / DYNAMIC). A KINEMATIC body is moved by setting its
+    //velocities: it ignores forces, pushes dynamic bodies, and - unlike a STATIC body being
+    //setTransform()ed each tick - joints attached to it see a real velocity to follow instead of a
+    //position error to correct afterwards. See Scene::MoveObjectOverTicks.
+    rp3d::BodyType GetBodyType();
+    void SetBodyType(rp3d::BodyType type);
     void SetActive(bool active);    // ou'd think this completely disables it.
     bool IsActive();
     void SetTrigger(bool trigger);
@@ -48,6 +54,17 @@ public:
     //as CreateMeshFromHeightmap. cell_size_x/cell_size_z stretch the (columns-1)x(rows-1) local
     //grid to world-space spacing - pass the same values used to build the matching render mesh.
     void AddHeightFieldCollider(const std::vector<float>& heights,int columns,int rows,float cell_size_x,float cell_size_z,const vec3& pos,const quat& orientation);
+    //Scales EVERY collider on this body by ratio (new scale / old scale, per axis): box half
+    //extents per axis, sphere radius by the mean ratio, capsule radius by the mean of X/Z and
+    //height by Y (its axis), and each collider's local offset. Then recomputes centre of mass
+    //and inertia for the new shape while keeping the body's mass what it was - rp3d's own
+    //shape setters only re-insert the AABB into the broadphase and leave mass properties stale.
+    //Mesh/heightfield colliders are left alone (rp3d can't resize those in place).
+    void ScaleColliders(const vec3& ratio);
+    //A fresh, unshared copy of a primitive shape (box/sphere/capsule) with the same size, or the
+    //same pointer if it's a type that can't be cloned this way - for duplicating an object so
+    //its colliders can then be scaled independently of the original's.
+    static rp3d::CollisionShape* CloneShape(rp3d::CollisionShape* shape);
 
     //Force, acceleration velocity etc.
     void AddLocalForce(const vec3& force);

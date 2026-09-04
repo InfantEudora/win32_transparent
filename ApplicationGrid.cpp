@@ -1271,6 +1271,7 @@ void ApplicationGrid::RenderGridUI(){
         if (ImGui::Button("Drop Ball")){
             debug->Info("Dropping le Ball\n");
             Object* ball = assetmanager->GetObjectFromAsset("Icosphere");
+            ball->SetScale(vec3(0.2)); //before the collider - SetScale rescales existing colliders too
             Physics* physics = ball->AddPhysics(main_scene->physics_world);
             if (physics){
                 physics->AddSphereCollider(0.1,vec3(),quat().identity());
@@ -1279,7 +1280,6 @@ void ApplicationGrid::RenderGridUI(){
             }
 
             ball->SetPosition(vec3(0,1,0));
-            ball->SetScale(vec3(0.2));
             main_scene->AddObject(ball);
 
         }

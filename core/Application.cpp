@@ -173,6 +173,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     }
 
     app->Init();
+    app->RegisterCoreMCPTools();
 
     //Only now, after the concrete app's Init() has fully returned (and so
     //registered every MCPServer::Get()->RegisterTool() call it makes - see
@@ -320,6 +321,286 @@ void Application::UpdatePhysics(){
         return;
     }
     main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
+}
+
+//--- Generic object MCP tools -------------------------------------------------------------
+
+static json Vec3ToJson(const vec3& v){
+    return json::array({v.x,v.y,v.z});
+}
+
+static json QuatToJson(const quat& q){
+    return json::array({q.x,q.y,q.z,q.w});
+}
+
+static bool JsonToVec3(const json& arr,vec3& out){
+    if (!arr.is_array() || arr.size() != 3 || !arr[0].is_number() || !arr[1].is_number() || !arr[2].is_number()){
+        return false;
+    }
+    out = vec3(arr[0].get<float>(),arr[1].get<float>(),arr[2].get<float>());
+    return true;
+}
+
+//"id" (number) or "name" (string) - id wins if both are given. Fills error and returns NULL if
+//neither resolves.
+static Object* ResolveObjectArg(Scene* scene,const json& args,std::string& error){
+    if (!scene){
+        error = "no scene";
+        return NULL;
+    }
+    if (args.contains("id") && args.at("id").is_number()){
+        objectid_t id = (objectid_t)args.at("id").get<uint32_t>();
+        Object* object = scene->FindObjectByID(id);
+        if (!object){
+            error = "no object with id " + std::to_string(id);
+        }
+        return object;
+    }
+    if (args.contains("name") && args.at("name").is_string()){
+        std::string name = args.at("name").get<std::string>();
+        Object* object = scene->FindObject(name);
+        if (!object){
+            error = "no object named '" + name + "' (names aren't unique - prefer id from object_list)";
+        }
+        return object;
+    }
+    error = "supply either id (number) or name (string)";
+    return NULL;
+}
+
+//Accepts any one of: "rotation" [x,y,z,w] quaternion, "axis_degrees" [x,y,z] (applied in X, Y, Z
+//order, exactly like the Generic Object UI's "Axis Degrees" mode), or "yaw_degrees" (rotation
+//about world up only). Returns false with error left empty if none is present, false with error
+//set if one is present but malformed.
+static bool RotationFromArgs(const json& args,quat& out,std::string& error){
+    if (args.contains("rotation")){
+        const json& arr = args.at("rotation");
+        if (!arr.is_array() || arr.size() != 4){
+            error = "rotation must be a [x,y,z,w] quaternion";
+            return false;
+        }
+        out.x = arr[0].get<float>(); out.y = arr[1].get<float>(); out.z = arr[2].get<float>(); out.w = arr[3].get<float>();
+        out.normalize();
+        return true;
+    }
+    if (args.contains("axis_degrees")){
+        vec3 deg;
+        if (!JsonToVec3(args.at("axis_degrees"),deg)){
+            error = "axis_degrees must be [x,y,z] in degrees";
+            return false;
+        }
+        quat qx(vec3(1,0,0),toradians(deg.x));
+        quat qy(vec3(0,1,0),toradians(deg.y));
+        quat qz(vec3(0,0,1),toradians(deg.z));
+        out = qx * qy * qz;
+        return true;
+    }
+    if (args.contains("yaw_degrees") && args.at("yaw_degrees").is_number()){
+        out = quat(vec3(0,1,0),toradians(args.at("yaw_degrees").get<float>()));
+        return true;
+    }
+    return false;
+}
+
+static json ObjectToJson(Object* object,bool verbose){
+    json result = {
+        {"id", object->GetID()},
+        {"name", object->name},
+        {"parent_id", object->GetParent() ? json(object->GetParent()->GetID()) : json(nullptr)},
+        {"position", Vec3ToJson(object->GetPosition())},
+        {"has_physics", object->GetPhysics() != NULL},
+    };
+    if (Physics* physics = object->GetPhysics()){
+        result["static"] = physics->IsStatic();
+    }
+    if (!verbose){
+        return result;
+    }
+    result["world_position"] = Vec3ToJson(object->GetWorldPosition(STATE_ACCESS_PHYSICS));
+    result["rotation"] = QuatToJson(object->GetRotation());
+    result["forward"] = Vec3ToJson(object->GetForward());
+    result["up"] = Vec3ToJson(object->GetUp());
+    result["scale"] = Vec3ToJson(object->GetScale());
+    result["visible"] = object->IsVisible();
+    json children = json::array();
+    for (Object* child:object->children){
+        children.push_back({{"id",child->GetID()},{"name",child->name}});
+    }
+    result["children"] = children;
+    if (Physics* physics = object->GetPhysics()){
+        result["physics"] = {
+            {"static", physics->IsStatic()},
+            {"gravity", physics->IsGravityEnabled()},
+            {"sleeping", physics->IsSleeping()},
+            {"mass_kg", physics->GetMass()},
+            {"velocity", Vec3ToJson(physics->GetVelocity())},
+            {"angular_velocity", Vec3ToJson(physics->GetAngularVelocity())},
+        };
+    }
+    return result;
+}
+
+void Application::RegisterCoreMCPTools(){
+    const json object_selector_properties = {
+        {"id", {{"type","number"},{"description","object id, as reported by object_list (preferred - unique)"}}},
+        {"name", {{"type","string"},{"description","object name, first match wins - names are not unique"}}}
+    };
+
+    MCPServer::Get()->RegisterTool("object_list",
+        "List the objects in the active scene (children included, depth-first) with id, name, "
+        "parent id, position and whether they carry a physics body. Use name_filter (case-sensitive "
+        "substring) to narrow it down; the list is capped at `limit` entries (default 200).",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"name_filter", {{"type","string"},{"description","only objects whose name contains this substring"}}},
+                {"limit", {{"type","number"},{"description","max entries returned, default 200"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            std::string filter = args.value("name_filter","");
+            int limit = max((int)args.value("limit",200.0f),1);
+            json objects = json::array();
+            int total = 0;
+            main_scene->ForEachObject([&](Object* object){
+                if (!filter.empty() && object->name.find(filter) == std::string::npos){
+                    return;
+                }
+                total++;
+                if ((int)objects.size() < limit){
+                    objects.push_back(ObjectToJson(object,false));
+                }
+            });
+            return json{ {"objects",objects}, {"matched",total}, {"returned",(int)objects.size()} };
+        });
+
+    MCPServer::Get()->RegisterTool("object_get",
+        "Full state of one object: local and world position, rotation (quaternion [x,y,z,w]), "
+        "forward/up vectors, scale, children, and its physics body's static/gravity/sleeping flags, "
+        "mass and velocities if it has one.",
+        json{ {"type","object"}, {"properties", object_selector_properties} },
+        [this](const json &args) -> json {
+            std::string error;
+            Object* object = ResolveObjectArg(main_scene,args,error);
+            if (!object){
+                return json{ {"error",error} };
+            }
+            return ObjectToJson(object,true);
+        });
+
+    MCPServer::Get()->RegisterTool("object_set_transform",
+        "Instantly set an object's position and/or rotation and/or scale - the same as typing a "
+        "value into the Generic Object UI. Only the fields given are changed. Rotation can be given "
+        "as `rotation` [x,y,z,w], `axis_degrees` [x,y,z] (applied X then Y then Z, like the UI's "
+        "'Axis Degrees' mode) or `yaw_degrees`. A physics body is teleported along with it: use "
+        "object_move instead if it should push things out of the way on its way there.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"id", object_selector_properties.at("id")},
+                {"name", object_selector_properties.at("name")},
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] local position (world, for a root object)"}}},
+                {"rotation", {{"type","array"},{"items",{{"type","number"}}},{"minItems",4},{"maxItems",4},{"description","[x,y,z,w] quaternion"}}},
+                {"axis_degrees", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] rotation in degrees about each axis, applied X, Y, Z"}}},
+                {"yaw_degrees", {{"type","number"},{"description","rotation about world up, degrees"}}},
+                {"scale", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] scale - box/sphere/capsule colliders and their offsets follow; mass is kept, inertia recomputed"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            std::string error;
+            Object* object = ResolveObjectArg(main_scene,args,error);
+            if (!object){
+                return json{ {"error",error} };
+            }
+            vec3 v;
+            if (args.contains("position")){
+                if (!JsonToVec3(args.at("position"),v)){
+                    return json{ {"error","position must be [x,y,z]"} };
+                }
+                object->SetPosition(v);
+            }
+            quat q;
+            if (RotationFromArgs(args,q,error)){
+                object->SetRotation(q);
+            }else if (!error.empty()){
+                return json{ {"error",error} };
+            }
+            if (args.contains("scale")){
+                if (!JsonToVec3(args.at("scale"),v)){
+                    return json{ {"error","scale must be [x,y,z]"} };
+                }
+                object->SetScale(v);
+            }
+            return ObjectToJson(object,true);
+        });
+
+    MCPServer::Get()->RegisterTool("object_move",
+        "Move and/or rotate an object to a target over `ticks` physics ticks (default 50, i.e. one "
+        "second at 50 tps), interpolating its transform one step per tick - what dragging the "
+        "Generic Object UI's position slider does frame by frame. The body's transform is set "
+        "directly each tick, so a collider on it pushes dynamic bodies out of the way instead of "
+        "teleporting through them. Rotation is given like object_set_transform. Blocks until the "
+        "motion has finished (or times out) and returns the object's resulting state; if physics "
+        "is paused it returns immediately and the motion plays out as ticks are stepped.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"id", object_selector_properties.at("id")},
+                {"name", object_selector_properties.at("name")},
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] target local position"}}},
+                {"rotation", {{"type","array"},{"items",{{"type","number"}}},{"minItems",4},{"maxItems",4},{"description","[x,y,z,w] target quaternion"}}},
+                {"axis_degrees", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] target rotation in degrees about each axis, applied X, Y, Z"}}},
+                {"yaw_degrees", {{"type","number"},{"description","target rotation about world up, degrees"}}},
+                {"ticks", {{"type","number"},{"description","physics ticks to spread the motion over, default 50, min 1"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            std::string error;
+            Object* object = ResolveObjectArg(main_scene,args,error);
+            if (!object){
+                return json{ {"error",error} };
+            }
+            vec3 target_position;
+            bool f_position = false;
+            if (args.contains("position")){
+                if (!JsonToVec3(args.at("position"),target_position)){
+                    return json{ {"error","position must be [x,y,z]"} };
+                }
+                f_position = true;
+            }
+            quat target_rotation;
+            bool f_rotation = RotationFromArgs(args,target_rotation,error);
+            if (!f_rotation && !error.empty()){
+                return json{ {"error",error} };
+            }
+            if (!f_position && !f_rotation){
+                return json{ {"error","give a target position and/or rotation"} };
+            }
+            int ticks = max((int)args.value("ticks",50.0f),1);
+            main_scene->MoveObjectOverTicks(object,f_position ? &target_position : NULL,f_rotation ? &target_rotation : NULL,ticks);
+
+            json result;
+            if (main_scene->IsPhysicsPaused()){
+                result["note"] = "physics is paused - the motion runs as ticks are stepped";
+            }else{
+                //Physics ticks run on their own thread - poll for the queue to drain rather than
+                //guessing a sleep. Generous timeout: the tick rate may be lower than nominal.
+                int timeout_ms = (int)(ticks * (1000.0f / physics_tps) * 3.0f) + 2000;
+                int waited_ms = 0;
+                for (; waited_ms < timeout_ms && main_scene->GetPendingObjectMotions() > 0; waited_ms += 5){
+                    Sleep(5);
+                }
+                if (main_scene->GetPendingObjectMotions() > 0){
+                    result["note"] = "timed out waiting for the motion to finish - it is still in progress";
+                }
+                result["waited_ms"] = waited_ms;
+            }
+            result["object"] = ObjectToJson(object,true);
+            return result;
+        });
 }
 
 void Application::NextInput(){

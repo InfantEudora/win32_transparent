@@ -22,13 +22,18 @@ Object::Object(Object* object):Object(){
     debug->Info("Duplicating object Object %p into this %p\n",object,this);
     SetMesh(object->GetMesh());
     name = object->name;
+    //Direct assignment, not SetScale(): the collider cloned below is already the source's
+    //scaled size, and SetScale would rescale it by this factor a second time.
+    state_physics.scale = object->GetScale();
     Physics* p = object->GetPhysics();
     if (p){
         AddPhysics(p->world);
 
-        rp3d::CollisionShape* shape =  p->body->collider->getCollisionShape();
-        reactphysics3d::Transform t = p->body->collider->getLocalToBodyTransform();
-        physics->body->collider = physics->body->rigidbody->addCollider(shape,t);
+        //Own copy of a primitive shape rather than sharing the source's, so SetScale on either
+        //object rescales only its own collider (mesh shapes still get shared - see CloneShape).
+        rp3d::CollisionShape* shape = Physics::CloneShape(p->body->last_collider->getCollisionShape());
+        reactphysics3d::Transform t = p->body->last_collider->getLocalToBodyTransform();
+        physics->body->last_collider = physics->body->rigidbody->addCollider(shape,t);
         physics->body->rigidbody->updateMassPropertiesFromColliders();
         physics->SetGravityEnabled(p->IsGravityEnabled());
         physics->SetStatic(p->IsStatic());
@@ -323,18 +328,20 @@ void Object::PitchBy(float by){
 
 //The size of the object in 3 dimensions
 void Object::SetScale(const vec3& newscale){
+    vec3 oldscale = state_physics.scale;
     state_physics.scale = newscale;
     state_physics.f_was_transformed = true;
-    //Maybe we should also scale the collider
-    if (physics && physics->body && physics->body->collider){
-        rp3d::Vector3 s(newscale.x,newscale.y,newscale.z);
-        rp3d::CollisionShape* shape = physics->body->collider->getCollisionShape();
-        if (shape->getType() == rp3d::CollisionShapeType::SPHERE){
-            rp3d::SphereShape* sphere = static_cast<rp3d::SphereShape*>(shape);
-            sphere->setRadius(newscale.x * 0.5f); //Assumes uniform scale
-            physics->body->rigidbody->updateMassPropertiesFromColliders();
+    //Colliders follow the visual: rescaled by the RATIO to the previous scale, so it doesn't
+    //matter what size they were created at (colliders added after a SetScale are sized to the
+    //already-scaled object by their callers, and stay right when the scale changes again).
+    if (physics && physics->body && physics->body->rigidbody){
+        vec3 ratio(
+            fabsf(oldscale.x) > 0.0001f ? newscale.x / oldscale.x : 1.0f,
+            fabsf(oldscale.y) > 0.0001f ? newscale.y / oldscale.y : 1.0f,
+            fabsf(oldscale.z) > 0.0001f ? newscale.z / oldscale.z : 1.0f);
+        if (ratio.x != 1.0f || ratio.y != 1.0f || ratio.z != 1.0f){
+            physics->ScaleColliders(ratio);
         }
-
     }
 }
 

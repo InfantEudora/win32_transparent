@@ -78,11 +78,23 @@ std::vector<OCPPTransaction> OCPPServerHandler::GetTransactionHistory(SOCKET cli
 bool OCPPServerHandler::HandleMessage(SOCKET clientSocket, const std::string &path, const std::string &msg)
 {
 	ocpp_debug->Ok("OCPP Message: %s\n", msg.c_str());
-	auto j = json::parse(msg);
+	// The build is -fno-exceptions -DJSON_NOEXCEPTION, so a throwing parse would
+	// std::abort() the whole process on a malformed frame. Use the non-throwing
+	// overload and check is_discarded(), as OCPPClient::HandleOCPPMessage does.
+	json j = json::parse(msg, nullptr, false);
+	if (j.is_discarded()) {
+		ocpp_debug->Err("Failed to parse OCPP message as JSON from %s\n", path.c_str());
+		return false;
+	}
 	if (!j.is_array() || j.size() < 3) return false;
+	if (!j[0].is_number_integer()) return false;
 	int msgType = j[0].get<int>();
 	if (msgType != 2) return false; // not a CALL
 	std::string msgId = j[1].is_string() ? j[1].get<std::string>() : j[1].dump();
+	if (!j[2].is_string()) {
+		ocpp_debug->Warn("OCPP CALL with non-string action from %s\n", path.c_str());
+		return false;
+	}
 	std::string action = j[2].get<std::string>();
 	if (action == "BootNotification") {
 		return HandleBootNotification(clientSocket, path, msgId, j);
@@ -699,38 +711,47 @@ bool OCPPServerHandler::HandleDataTransfer(SOCKET clientSocket, const std::strin
 	m_setVariable(std::string("ocpp_datatransfer_msgid_") + path, messageId);
 	m_setVariable(std::string("ocpp_datatransfer_data_") + path, data);
 
-	// Parse custom data if it's JSON (like the customMeterValues example)
+	// Parse custom data if it's JSON (like the customMeterValues example). The
+	// payload is double-encoded - `data` is a JSON object serialised into a
+	// string - so this is a second parse, again with the non-throwing overload
+	// because -fno-exceptions would turn a bad payload into an abort().
 	if (!data.empty() && data[0] == '{') {
-		json customData = json::parse(data);
+		json customData = json::parse(data, nullptr, false);
+		if (customData.is_discarded() || !customData.is_object()) {
+			ocpp_debug->Warn("DataTransfer data from %s is not parseable JSON, ignoring\n", path.c_str());
+		} else {
 		// Store interesting fields if they exist
-		if (customData.contains("session_active")) {
+		if (customData["session_active"].is_boolean()) {
 			bool sessionActive = customData["session_active"].get<bool>();
 			m_setVariable(std::string("ocpp_session_active_") + path, sessionActive ? "true" : "false");
 		}
-		if (customData.contains("output_power")) {
+		if (customData["output_power"].is_number()) {
 			int outputPower = customData["output_power"].get<int>();
 			m_setVariable(std::string("ocpp_custom_power_") + path, std::to_string(outputPower));
 		}
 
 		// Store the full V2G telemetry set for the UI (charger's actual applied setpoint,
 		// as opposed to what was last sent via ChangeConfiguration/SetChargingProfile).
+		// is_number()/is_boolean() rather than contains(): a field present but null
+		// (or the wrong type) would otherwise abort in get<>().
 		EnterCriticalSection(&m_lock);
 		auto it = m_clientData.find(clientSocket);
 		if (it != m_clientData.end()) {
 			OCPPClientData& clientData = it->second;
 			clientData.hasV2GTelemetry = true;
-			if (customData.contains("p_baseline")) clientData.v2gPBaselineWatts = customData["p_baseline"].get<double>();
-			if (customData.contains("q_baseline")) clientData.v2gQBaselineWatts = customData["q_baseline"].get<double>();
-			if (customData.contains("p_max")) clientData.v2gPMaxWatts = customData["p_max"].get<double>();
-			if (customData.contains("p_min")) clientData.v2gPMinWatts = customData["p_min"].get<double>();
-			if (customData.contains("min_soc")) clientData.v2gMinSoc = customData["min_soc"].get<double>();
-			if (customData.contains("max_soc")) clientData.v2gMaxSoc = customData["max_soc"].get<double>();
-			if (customData.contains("ev_min_soc")) clientData.v2gEvMinSoc = customData["ev_min_soc"].get<double>();
-			if (customData.contains("ev_energy_capacity")) clientData.v2gEvEnergyCapacityKwh = customData["ev_energy_capacity"].get<double>();
-			if (customData.contains("session_active")) clientData.v2gSessionActive = customData["session_active"].get<bool>();
-			if (customData.contains("output_power")) clientData.v2gOutputPowerWatts = customData["output_power"].get<double>();
+			if (customData["p_baseline"].is_number()) clientData.v2gPBaselineWatts = customData["p_baseline"].get<double>();
+			if (customData["q_baseline"].is_number()) clientData.v2gQBaselineWatts = customData["q_baseline"].get<double>();
+			if (customData["p_max"].is_number()) clientData.v2gPMaxWatts = customData["p_max"].get<double>();
+			if (customData["p_min"].is_number()) clientData.v2gPMinWatts = customData["p_min"].get<double>();
+			if (customData["min_soc"].is_number()) clientData.v2gMinSoc = customData["min_soc"].get<double>();
+			if (customData["max_soc"].is_number()) clientData.v2gMaxSoc = customData["max_soc"].get<double>();
+			if (customData["ev_min_soc"].is_number()) clientData.v2gEvMinSoc = customData["ev_min_soc"].get<double>();
+			if (customData["ev_energy_capacity"].is_number()) clientData.v2gEvEnergyCapacityKwh = customData["ev_energy_capacity"].get<double>();
+			if (customData["session_active"].is_boolean()) clientData.v2gSessionActive = customData["session_active"].get<bool>();
+			if (customData["output_power"].is_number()) clientData.v2gOutputPowerWatts = customData["output_power"].get<double>();
 		}
 		LeaveCriticalSection(&m_lock);
+		}
 	}
 
 	// Send CALLRESULT [3, msgId, { status: "Accepted" }]
@@ -892,6 +913,79 @@ bool OCPPServerHandler::SendChangeConfiguration(SOCKET clientSocket, const std::
 		ocpp_debug->Ok("ChangeConfiguration sent successfully\n");
 	} else {
 		ocpp_debug->Err("Failed to send ChangeConfiguration\n");
+	}
+
+	return result;
+}
+
+bool OCPPServerHandler::SendReset(SOCKET clientSocket, const std::string& type)
+{
+	static int nextMsgId = 5000;
+	std::string msgId = std::to_string(nextMsgId++);
+
+	json call = json::array();
+	call.push_back(2); // Message type: CALL
+	call.push_back(msgId);
+	call.push_back("Reset");
+
+	// Reset.req carries only "type": "Soft" | "Hard". Anything else is rejected
+	// by the charge point, so normalise rather than passing a typo through.
+	json payload;
+	payload["type"] = (type == "Hard") ? "Hard" : "Soft";
+	call.push_back(payload);
+
+	std::string message = call.dump();
+	ocpp_debug->Info("Sending Reset type=%s\n", payload["type"].get<std::string>().c_str());
+	ocpp_debug->Trace("Reset message: %s\n", message.c_str());
+
+	bool result = m_sendMessage(clientSocket, message);
+	if (result) {
+		// Like the other Send* calls this is fire-and-forget: the CALLRESULT
+		// carrying Accepted/Rejected is msgType 3, which HandleMessage drops.
+		// A charge point that accepts a Reset re-connects and sends a fresh
+		// BootNotification, so that is the signal to watch for in the log.
+		ocpp_debug->Ok("Reset sent successfully\n");
+	} else {
+		ocpp_debug->Err("Failed to send Reset\n");
+	}
+
+	return result;
+}
+
+bool OCPPServerHandler::SendChangeAvailability(SOCKET clientSocket, int connectorId, const std::string& type)
+{
+	static int nextMsgId = 6000;
+	std::string msgId = std::to_string(nextMsgId++);
+
+	json call = json::array();
+	call.push_back(2); // Message type: CALL
+	call.push_back(msgId);
+	call.push_back("ChangeAvailability");
+
+	// connectorId is required and 0 means "the whole charge point, all
+	// connectors". type is Operative | Inoperative - normalise so a typo
+	// cannot go out on the wire.
+	json payload;
+	payload["connectorId"] = connectorId;
+	payload["type"] = (type == "Inoperative") ? "Inoperative" : "Operative";
+	call.push_back(payload);
+
+	std::string message = call.dump();
+	ocpp_debug->Info("Sending ChangeAvailability connectorId=%d type=%s\n",
+		connectorId, payload["type"].get<std::string>().c_str());
+	ocpp_debug->Trace("ChangeAvailability message: %s\n", message.c_str());
+
+	bool result = m_sendMessage(clientSocket, message);
+	if (result) {
+		// Fire-and-forget like the other Send* calls: the CALLRESULT is
+		// msgType 3 and HandleMessage drops it. The reply is worth reading in
+		// this case though - ChangeAvailability can answer "Scheduled" as well
+		// as Accepted/Rejected, meaning it will apply once the running
+		// transaction ends. HTTPServer logs every inbound frame ("WS text
+		// from ..."), so the raw reply shows up there.
+		ocpp_debug->Ok("ChangeAvailability sent successfully\n");
+	} else {
+		ocpp_debug->Err("Failed to send ChangeAvailability\n");
 	}
 
 	return result;

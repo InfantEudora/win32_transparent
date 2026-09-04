@@ -54,10 +54,12 @@ public:
 
     //Purely cosmetic - no physics, no joint. A separate root-level Object (same reasoning as
     //boom - see above), repositioned/reoriented/rescaled every tick in UpdatePhysicsState to
-    //visually span from piston_base_anchor_world (fixed) to wherever boom_hinge's current angle
-    //puts piston_boom_anchor_local on the boom - see UpdatePhysicsState's own comment.
+    //visually span from piston_base_anchor_local on the base to wherever boom_hinge's current
+    //angle puts piston_boom_anchor_local on the boom - see UpdatePhysicsState's own comment.
+    //Both anchors are stored in their own body's local space, so the piston keeps up if the
+    //base is moved (the hinge itself already does - rp3d stores joint anchors body-local).
     Object* piston_visual = NULL;
-    vec3 piston_base_anchor_world = {};   //fixed - the base never moves
+    vec3 piston_base_anchor_local = {};   //this object's (the base's) local space
     vec3 piston_boom_anchor_local = {};   //the boom's own local space, relative to ITS origin
     float piston_radius = 0.08f;
 };

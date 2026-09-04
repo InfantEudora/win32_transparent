@@ -23,6 +23,13 @@ struct VehicleSimulation {
     DWORD meterSendIntervalMs = 30000; // How often to send MeterValues (ms)
     int transactionId = 1;
     char idTag[64] = "SimTag";   // RFID tag for this session
+
+    // Fermata emulation only: the charger pushes its customMeterValues
+    // DataTransfer on its own cadence, independent of MeterValues.
+    DWORD lastDataTransferMs = 0;
+    DWORD dataTransferIntervalMs = 5000;
+    DWORD lastV2GTickMs = 0;
+    bool  autoSendDataTransfer = true;
 };
 /*
     An attempt at an application that overrides the default, and shows a UI only.

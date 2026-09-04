@@ -11,7 +11,7 @@ Physics::Physics(PhysicsWorld* _world){
 	world = _world;
 	body = new PhysicsBody();
 	//Create a body for this dude.
-	body->collider = NULL;
+	body->last_collider = NULL;
 	body->rigidbody = world->rp_world->createRigidBody(reactphysics3d::Transform::identity());
 	//This only works on > 0.9.0
 	body->rigidbody->setIsDebugEnabled(true);
@@ -98,12 +98,29 @@ void Physics::SetStatic(bool _static){
 	body->rigidbody->setIsActive(f_active);
 }
 
+rp3d::BodyType Physics::GetBodyType(){
+	return body->rigidbody->getType();
+}
+
+void Physics::SetBodyType(rp3d::BodyType type){
+	if (!body || !body->rigidbody){
+		return;
+	}
+	if (body->rigidbody->getType() == type){
+		return;
+	}
+	bool f_active = body->rigidbody->isActive();
+	body->rigidbody->setIsActive(false);
+	body->rigidbody->setType(type);
+	body->rigidbody->setIsActive(f_active);
+}
+
 void Physics::SetTrigger(bool trigger){
-	body->collider->setIsTrigger(trigger);
+	body->last_collider->setIsTrigger(trigger);
 }
 
 bool Physics::IsTrigger(){
-	return body->collider->getIsTrigger();
+	return body->last_collider->getIsTrigger();
 }
 
 bool Physics::IsStatic(){
@@ -152,9 +169,9 @@ void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orienta
 	t.setOrientation((reactphysics3d::Quaternion&)orientation);
 	//body->collision_shape = boxShape;
 	if (body->rigidbody){
-		body->collider = body->rigidbody->addCollider(boxShape, t);
-		body->collider->getMaterial().setMassDensity(density);
-		body->collider->getMaterial().setFrictionCoefficient(1.0);
+		body->last_collider = body->rigidbody->addCollider(boxShape, t);
+		body->last_collider->getMaterial().setMassDensity(density);
+		body->last_collider->getMaterial().setFrictionCoefficient(1.0);
 		body->rigidbody->setAngularDamping(0.5);
 		body->rigidbody->setLinearDamping(0.5);
 		body->rigidbody->updateMassPropertiesFromColliders();
@@ -171,8 +188,8 @@ void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& ori
 	t.setOrientation((rp3d::Quaternion&)orientation);
 	//body->collision_shape = sphereShape;
 	if (body->rigidbody){
-		body->collider = body->rigidbody->addCollider(sphereShape, t);
-		body->collider->getMaterial().setMassDensity(density);
+		body->last_collider = body->rigidbody->addCollider(sphereShape, t);
+		body->last_collider->getMaterial().setMassDensity(density);
 		//body_collider->getMaterial().setFrictionCoefficient(2);
 		//body_collider->getMaterial().setBounciness(0);
 		body->rigidbody->updateMassPropertiesFromColliders();
@@ -202,7 +219,7 @@ void Physics::AddHeightFieldCollider(const std::vector<float>& heights,int colum
     t.setPosition((rp3d::Vector3&)pos);
     t.setOrientation((rp3d::Quaternion&)orientation);
     if (body->rigidbody){
-        body->collider = body->rigidbody->addCollider(heightfieldShape, t);
+        body->last_collider = body->rigidbody->addCollider(heightfieldShape, t);
     }
 }
 
@@ -213,8 +230,8 @@ void Physics::AddCapsuleCollider(const float radius, const float height,const ve
 	t.setPosition((rp3d::Vector3&)pos);
 	t.setOrientation((rp3d::Quaternion&)orientation);
 	if (body->rigidbody){
-		body->collider = body->rigidbody->addCollider(capsuleShape, t);
-		body->collider->getMaterial().setMassDensity(density);
+		body->last_collider = body->rigidbody->addCollider(capsuleShape, t);
+		body->last_collider->getMaterial().setMassDensity(density);
 		//body_collider->getMaterial().setFrictionCoefficient(2);
 		//body_collider->getMaterial().setBounciness(0);
 		body->rigidbody->setAngularDamping(0.5);
@@ -222,6 +239,74 @@ void Physics::AddCapsuleCollider(const float radius, const float height,const ve
 		body->rigidbody->updateMassPropertiesFromColliders();
 	}
 	//debug->Info("Capsule Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
+}
+
+void Physics::ScaleColliders(const vec3& ratio){
+	if (!body->rigidbody){
+		return;
+	}
+	rp3d::RigidBody* rb = body->rigidbody;
+	bool f_changed = false;
+	for (uint32_t i = 0; i < rb->getNbColliders(); i++){
+		rp3d::Collider* collider = rb->getCollider(i);
+		rp3d::CollisionShape* shape = collider->getCollisionShape();
+		switch (shape->getName()){
+			case rp3d::CollisionShapeName::BOX:{
+				rp3d::BoxShape* box = static_cast<rp3d::BoxShape*>(shape);
+				rp3d::Vector3 he = box->getHalfExtents();
+				box->setHalfExtents(rp3d::Vector3(he.x * ratio.x,he.y * ratio.y,he.z * ratio.z));
+				break;
+			}
+			case rp3d::CollisionShapeName::SPHERE:{
+				rp3d::SphereShape* sphere = static_cast<rp3d::SphereShape*>(shape);
+				sphere->setRadius(sphere->getRadius() * (ratio.x + ratio.y + ratio.z) / 3.0f);
+				break;
+			}
+			case rp3d::CollisionShapeName::CAPSULE:{
+				rp3d::CapsuleShape* capsule = static_cast<rp3d::CapsuleShape*>(shape);
+				capsule->setRadius(capsule->getRadius() * (ratio.x + ratio.z) * 0.5f);
+				capsule->setHeight(capsule->getHeight() * ratio.y);
+				break;
+			}
+			default:
+				debug->Warn("ScaleColliders: collider %u is a mesh/heightfield shape, not rescaled\n",i);
+				continue;
+		}
+		//The collider's offset from the body origin scales with the object too.
+		rp3d::Transform t = collider->getLocalToBodyTransform();
+		rp3d::Vector3 p = t.getPosition();
+		t.setPosition(rp3d::Vector3(p.x * ratio.x,p.y * ratio.y,p.z * ratio.z));
+		collider->setLocalToBodyTransform(t);
+		f_changed = true;
+	}
+	if (f_changed){
+		//New centre of mass and inertia for the new shape, at the mass the body already had -
+		//updateMassPropertiesFromColliders() would otherwise reset the mass to density*volume,
+		//and SetMass() rescales the freshly computed tensor to the preserved mass.
+		float mass = rb->getMass();
+		rb->updateMassPropertiesFromColliders();
+		if (mass > 0.0f){
+			SetMass(mass);
+		}
+	}
+}
+
+rp3d::CollisionShape* Physics::CloneShape(rp3d::CollisionShape* shape){
+	if (!shape || !PhysicsWorld::physicsCommon){
+		return shape;
+	}
+	switch (shape->getName()){
+		case rp3d::CollisionShapeName::BOX:
+			return PhysicsWorld::physicsCommon->createBoxShape(static_cast<rp3d::BoxShape*>(shape)->getHalfExtents());
+		case rp3d::CollisionShapeName::SPHERE:
+			return PhysicsWorld::physicsCommon->createSphereShape(static_cast<rp3d::SphereShape*>(shape)->getRadius());
+		case rp3d::CollisionShapeName::CAPSULE:{
+			rp3d::CapsuleShape* capsule = static_cast<rp3d::CapsuleShape*>(shape);
+			return PhysicsWorld::physicsCommon->createCapsuleShape(capsule->getRadius(),capsule->getHeight());
+		}
+		default:
+			return shape;
+	}
 }
 
 //Add local force at centre of mass
@@ -281,28 +366,28 @@ void Physics::SetFrictionCoefficient(float f){
 	if (f < 0){
 		f = 0;
 	}
-	if (body->collider){
-		body->collider->getMaterial().setFrictionCoefficient(f);
+	if (body->last_collider){
+		body->last_collider->getMaterial().setFrictionCoefficient(f);
 	}
 }
 
 float Physics::GetFrictionCoefficient(){
-	if (body->collider){
-		return body->collider->getMaterial().getFrictionCoefficient();
+	if (body->last_collider){
+		return body->last_collider->getMaterial().getFrictionCoefficient();
 	}
 	return 0;
 }
 
 void Physics::SetBounciness(float f){
 	f = clamp(f,0.0,1.0);
-	if (body->collider){
-		body->collider->getMaterial().setBounciness(f);
+	if (body->last_collider){
+		body->last_collider->getMaterial().setBounciness(f);
 	}
 }
 
 float Physics::GetBounciness(){
-	if (body->collider){
-		return body->collider->getMaterial().getBounciness();
+	if (body->last_collider){
+		return body->last_collider->getMaterial().getBounciness();
 	}
 	return 0;
 }

@@ -14,7 +14,7 @@ public:
     PhysicsBody();
 
     reactphysics3d::RigidBody* rigidbody = NULL;
-	reactphysics3d::Collider* collider = NULL; // A reference to the last collider added to the body...
+	reactphysics3d::Collider* last_collider = NULL; // A reference to the last collider added to the body...
 	reactphysics3d::CollisionShape* collision_shape = NULL;
 };
 
