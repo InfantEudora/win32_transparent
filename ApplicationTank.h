@@ -104,6 +104,12 @@ public:
     void TestHeightmapMesh();
     void AddTestSceneObjects();
     void RegisterMCPTools();
+    //Which vehicle an MCP call is about: args["vehicle"] is "tank" (default, so every existing
+    //caller keeps working unchanged) or "buggy". NULL if that vehicle doesn't exist.
+    Vehicle* ResolveVehicleArg(const json& args);
+    //Position/velocity/mass/centre of mass plus the per-wheel suspension and tire breakdown for
+    //any Vehicle, and the vehicle-specific extras (turret, tuning) for the tank and buggy.
+    json GetVehicleTelemetry(Vehicle* vehicle);
     json GetTankTelemetry();
     json GetCraneTelemetry();
     json GetBridgeTelemetry();

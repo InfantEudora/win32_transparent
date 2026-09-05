@@ -653,22 +653,44 @@ json ApplicationTank::GetCraneTelemetry(){
     return result;
 }
 
-json ApplicationTank::GetTankTelemetry(){
-    if (!controlled_tank){
-        return json{ {"error","no tank"} };
+Vehicle* ApplicationTank::ResolveVehicleArg(const json& args){
+    std::string name = args.value("vehicle","tank");
+    if (name == "buggy"){
+        return controlled_buggy;
     }
-    vec3 pos = controlled_tank->GetPosition();
-    vec3 forward = controlled_tank->GetForward();
+    return controlled_tank;
+}
+
+json ApplicationTank::GetTankTelemetry(){
+    return GetVehicleTelemetry(controlled_tank);
+}
+
+json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
+    if (!vehicle){
+        return json{ {"error","no such vehicle"} };
+    }
+    vec3 pos = vehicle->GetPosition();
+    vec3 forward = vehicle->GetForward();
+    vec3 up = vehicle->GetUp();
     json result = {
+        {"vehicle", vehicle == controlled_tank ? "tank" : (vehicle == controlled_buggy ? "buggy" : "other")},
         {"position", json::array({pos.x,pos.y,pos.z})},
         {"forward", json::array({forward.x,forward.y,forward.z})},
+        {"up", json::array({up.x,up.y,up.z})},
+        {"forward_speed", vehicle->forward_speed},
+        {"gas_pedal", vehicle->gas_pedal},
+        {"brake_pedal", vehicle->brake_pedal},
+        {"steering_position", vehicle->steering_position},
+        {"reverse", vehicle->f_reverse},
     };
-    if (Physics *physics = controlled_tank->GetPhysics()){
+    if (Physics *physics = vehicle->GetPhysics()){
         vec3 vel = physics->GetVelocity();
         vec3 angvel = physics->GetAngularVelocity();
         result["velocity"] = json::array({vel.x,vel.y,vel.z});
         result["speed"] = vel.length();
         result["angular_velocity"] = json::array({angvel.x,angvel.y,angvel.z});
+        //Yaw rate about the body's own up axis - what a pivot turn is measured by.
+        result["yaw_rate"] = angvel.dot(up);
         result["mass_kg"] = physics->GetMass();
         result["is_sleeping"] = physics->IsSleeping();
         //The body's transform origin (reported as "position" above) is NOT its centre of mass -
@@ -679,10 +701,6 @@ json ApplicationTank::GetTankTelemetry(){
         vec3 com_world = physics->GetBodyWorldPosition() + physics->GetBodyWorldOrientation() * com_local;
         result["center_of_mass_local"] = json::array({com_local.x,com_local.y,com_local.z});
         result["center_of_mass_world"] = json::array({com_world.x,com_world.y,com_world.z});
-    }
-    if (controlled_tank->turret){
-        vec3 turret_forward = controlled_tank->turret->GetWorldForward(STATE_ACCESS_RENDERER);
-        result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
     }
 
     //Per-wheel suspension/force breakdown, straight from the Wheel diagnostics the physics
@@ -698,25 +716,31 @@ json ApplicationTank::GetTankTelemetry(){
     json wheels = json::array();
     int wheels_grounded = 0;
     bool point_speed_clamped = false;
-    for (const Wheel& wheel : controlled_tank->wheels){
+    float total_spring_force = 0.0f;
+    for (const Wheel& wheel : vehicle->wheels){
         if (wheel.grounded){
             wheels_grounded++;
         }
-        if (wheel.point_speed > controlled_tank->max_point_speed){
+        if (wheel.point_speed > vehicle->ResolveTuning(wheel).max_point_speed){
             point_speed_clamped = true;
         }
+        total_spring_force += wheel.spring_force;
         wheels.push_back(json{
             {"side", wheel.is_left_side ? "left" : "right"},
+            {"front", wheel.is_front_side},
             //Which wheel this is, and what it's currently allowed to do - without these the
             //raised idler/sprocket are indistinguishable from a road wheel that has simply
             //lost contact, and a compression of 0 reads the same either way.
             {"kind", wheel.is_road_wheel ? "road" : "raised"},
             {"driven", wheel.driven},
+            {"steerable", wheel.steerable},
             {"can_contact_ground", wheel.can_contact_ground},
             //Included because compression is only interpretable against it: the wheel touches
             //down when its anchor is (rest_length + radius) above the terrain, so a reader
             //that assumes a point contact will misjudge every ride height by one radius.
-            {"radius", controlled_tank->WheelRadius(wheel)},
+            {"radius", vehicle->WheelRadius(wheel)},
+            {"rest_length", vehicle->WheelRestLength(wheel)},
+            {"travel", vehicle->WheelTravel(wheel)},
             {"local_offset", json::array({wheel.local_offset.x,wheel.local_offset.y,wheel.local_offset.z})},
             {"grounded", wheel.grounded},
             {"compression", wheel.compression},
@@ -728,30 +752,59 @@ json ApplicationTank::GetTankTelemetry(){
             {"lateral_force", wheel.lateral_force},
             {"friction_budget", wheel.friction_budget},
             {"friction_saturated", wheel.friction_saturated},
+            {"steer_angle", wheel.steer_angle},
+            {"angular_velocity", wheel.angular_velocity},
         });
     }
     result["wheels"] = wheels;
     result["wheels_grounded"] = wheels_grounded;
+    //Against mass_kg * 9.81: at rest on level ground these two agree, so a mismatch is either
+    //motion (a landing, a bounce) or a suspension that is not carrying the vehicle.
+    result["total_spring_force"] = total_spring_force;
     //Surfaced on its own rather than left to be spotted in the per-wheel list: if this is ever
     //true the point_velocity clamp is load-bearing, which invalidates reading any force below
     //it as a real physical value.
     result["point_speed_clamped"] = point_speed_clamped;
+
     //Echoed so a reader can judge the numbers above against the tuning that produced them
     //without a separate lookup or a rebuild to check what the constants currently are.
-    result["tuning"] = json{
-        {"suspension_stiffness", controlled_tank->suspension_stiffness},
-        {"suspension_damping", controlled_tank->suspension_damping},
-        {"suspension_rest_length", controlled_tank->suspension_rest_length},
-        {"suspension_travel", controlled_tank->suspension_travel},
-        {"lateral_friction", controlled_tank->lateral_friction},
-        {"friction_coefficient", controlled_tank->friction_coefficient},
-        {"engine_force", controlled_tank->engine_force},
-        {"brake_force", controlled_tank->brake_force},
-        {"top_speed", controlled_tank->top_speed},
-        {"max_wheel_force", controlled_tank->max_wheel_force},
-        {"max_point_speed", controlled_tank->max_point_speed},
-        {"max_roll_speed", controlled_tank->max_roll_speed},
-    };
+    if (vehicle == controlled_tank && controlled_tank){
+        if (controlled_tank->turret){
+            vec3 turret_forward = controlled_tank->turret->GetWorldForward(STATE_ACCESS_RENDERER);
+            result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
+        }
+        result["tuning"] = json{
+            {"suspension_stiffness", controlled_tank->suspension_stiffness},
+            {"suspension_damping", controlled_tank->suspension_damping},
+            {"suspension_rest_length", controlled_tank->suspension_rest_length},
+            {"suspension_travel", controlled_tank->suspension_travel},
+            {"lateral_friction", controlled_tank->lateral_friction},
+            {"friction_coefficient", controlled_tank->friction_coefficient},
+            {"engine_force", controlled_tank->engine_force},
+            {"brake_force", controlled_tank->brake_force},
+            {"top_speed", controlled_tank->top_speed},
+            {"max_wheel_force", controlled_tank->max_wheel_force},
+            {"max_point_speed", controlled_tank->max_point_speed},
+            {"max_roll_speed", controlled_tank->max_roll_speed},
+        };
+    }else if (vehicle == controlled_buggy && controlled_buggy){
+        result["tuning"] = json{
+            {"suspension_stiffness", controlled_buggy->suspension_stiffness},
+            {"suspension_damping", controlled_buggy->suspension_damping},
+            {"suspension_rest_length", controlled_buggy->suspension_rest_length},
+            {"suspension_travel", controlled_buggy->suspension_travel},
+            {"lateral_friction", controlled_buggy->lateral_friction},
+            {"rolling_resistance", controlled_buggy->rolling_resistance},
+            {"friction_coefficient", controlled_buggy->friction_coefficient},
+            {"engine_force", controlled_buggy->engine_force},
+            {"brake_force", controlled_buggy->brake_force},
+            {"top_speed", controlled_buggy->top_speed},
+            {"power_split_front", controlled_buggy->power_split_front},
+            {"max_steer_angle_degrees", controlled_buggy->max_steer_angle_degrees},
+            {"max_point_speed", controlled_buggy->max_point_speed},
+            {"max_roll_speed", controlled_buggy->max_roll_speed},
+        };
+    }
     return result;
 }
 
@@ -851,6 +904,7 @@ void ApplicationTank::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties", {
+                {"vehicle", {{"type","string"},{"enum", json::array({"tank","buggy"})},{"description","which vehicle, default tank"}}},
                 {"direction", {{"type","string"},{"enum", json::array({"forward","reverse","brake","stop"})}}},
                 {"amount", {{"type","number"},{"description","0..1 throttle/brake magnitude, default 1"}}},
                 {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}},
@@ -859,23 +913,28 @@ void ApplicationTank::RegisterMCPTools(){
             {"required", json::array({"direction"})}
         },
         [this](const json &args) -> json {
-            if (!controlled_tank){
-                return json{ {"error","no tank"} };
+            Vehicle* vehicle = ResolveVehicleArg(args);
+            if (!vehicle){
+                return json{ {"error","no such vehicle"} };
             }
             float amount = args.value("amount",1.0f);
             float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
             std::string direction = args.value("direction","stop");
             if (direction == "forward"){
-                controlled_tank->HoldDrive(false,amount,duration_ms);
+                vehicle->HoldDrive(false,amount,duration_ms);
             }else if (direction == "reverse"){
-                controlled_tank->HoldDrive(true,amount,duration_ms);
+                vehicle->HoldDrive(true,amount,duration_ms);
             }else if (direction == "brake"){
-                controlled_tank->HoldBrake(amount,duration_ms);
+                vehicle->HoldBrake(amount,duration_ms);
             }else{
-                controlled_tank->ReleaseInputs();
+                vehicle->ReleaseInputs();
             }
-            Sleep((DWORD)duration_ms);
-            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
+            //While paused (tank_pause) the hold plays out through tank_step instead, so there is
+            //nothing to wait for here.
+            if (!main_scene || !main_scene->IsPhysicsPaused()){
+                Sleep((DWORD)duration_ms);
+            }
+            return MaybeAttachScreenshot(GetVehicleTelemetry(vehicle),args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("tank_steer",
@@ -887,6 +946,7 @@ void ApplicationTank::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties", {
+                {"vehicle", {{"type","string"},{"enum", json::array({"tank","buggy"})},{"description","which vehicle, default tank"}}},
                 {"direction", {{"type","string"},{"enum", json::array({"left","right"})}}},
                 {"amount", {{"type","number"},{"description","0..1 turn-rate magnitude, default 1"}}},
                 {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}},
@@ -895,16 +955,19 @@ void ApplicationTank::RegisterMCPTools(){
             {"required", json::array({"direction"})}
         },
         [this](const json &args) -> json {
-            if (!controlled_tank){
-                return json{ {"error","no tank"} };
+            Vehicle* vehicle = ResolveVehicleArg(args);
+            if (!vehicle){
+                return json{ {"error","no such vehicle"} };
             }
             float amount = args.value("amount",1.0f);
             float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
             std::string direction = args.value("direction","left");
             float signed_amount = (direction == "right") ? amount : -amount;
-            controlled_tank->HoldSteer(signed_amount,duration_ms);
-            Sleep((DWORD)duration_ms);
-            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
+            vehicle->HoldSteer(signed_amount,duration_ms);
+            if (!main_scene || !main_scene->IsPhysicsPaused()){
+                Sleep((DWORD)duration_ms);
+            }
+            return MaybeAttachScreenshot(GetVehicleTelemetry(vehicle),args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("tank_telemetry",
@@ -914,11 +977,12 @@ void ApplicationTank::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties", {
+                {"vehicle", {{"type","string"},{"enum", json::array({"tank","buggy"})},{"description","which vehicle, default tank"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the current frame, default false"}}}
             }}
         },
         [this](const json &args) -> json {
-            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
+            return MaybeAttachScreenshot(GetVehicleTelemetry(ResolveVehicleArg(args)),args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("tank_screenshot",
@@ -939,6 +1003,7 @@ void ApplicationTank::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties", {
+                {"vehicle", {{"type","string"},{"enum", json::array({"tank","buggy"})},{"description","which vehicle, default tank"}}},
                 {"paused", {{"type","boolean"},{"description","true to pause, false to resume free-running physics"}}}
             }},
             {"required", json::array({"paused"})}
@@ -948,7 +1013,7 @@ void ApplicationTank::RegisterMCPTools(){
                 return json{ {"error","no scene"} };
             }
             main_scene->PausePhysics(args.value("paused",true));
-            json result = GetTankTelemetry();
+            json result = GetVehicleTelemetry(ResolveVehicleArg(args));
             result["paused"] = main_scene->IsPhysicsPaused();
             return result;
         });
@@ -963,6 +1028,7 @@ void ApplicationTank::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties", {
+                {"vehicle", {{"type","string"},{"enum", json::array({"tank","buggy"})},{"description","which vehicle, default tank"}}},
                 {"num_steps", {{"type","number"},{"description","how many physics ticks to advance, default 1"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
             }}
@@ -983,7 +1049,31 @@ void ApplicationTank::RegisterMCPTools(){
             for (int waited_ms = 0; waited_ms < timeout_ms && main_scene->GetPendingPhysicsSteps() > 0; waited_ms += 5){
                 Sleep(5);
             }
-            return MaybeAttachScreenshot(GetTankTelemetry(),args.value("include_screenshot",false));
+            return MaybeAttachScreenshot(GetVehicleTelemetry(ResolveVehicleArg(args)),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("tank_reset",
+        "Teleport a vehicle back to its spawn pose at rest (same as the debug panel's 'Reset To "
+        "Start' button): zero velocity, pedals and steering released, wheels reset. Returns the "
+        "telemetry right after the reset. Use it to start every scripted scenario from the same "
+        "place, e.g. before the vehicle has driven off the test ground plane.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"vehicle", {{"type","string"},{"enum", json::array({"tank","buggy"})},{"description","which vehicle, default tank"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            Vehicle* vehicle = ResolveVehicleArg(args);
+            if (!vehicle){
+                return json{ {"error","no such vehicle"} };
+            }
+            if (vehicle == controlled_tank){
+                vehicle->ResetState(tank_start_position,tank_start_rotation);
+            }else{
+                vehicle->ResetState(buggy_start_position,buggy_start_rotation);
+            }
+            return GetVehicleTelemetry(vehicle);
         });
 
     MCPServer::Get()->RegisterTool("crane_speed",
