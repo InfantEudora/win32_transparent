@@ -38,6 +38,7 @@ DIR_SRC += ./core/skeleton
 DIR_SRC += ./core/physics
 IPATHS += -Icore/
 IPATHS += -Icore/physics
+IPATHS += -Icore/skeleton
 
 IPATHS += -I3rdparty/imgui/
 IPATHS += -I3rdparty/
@@ -117,18 +118,37 @@ CFLAGS += $(DFLAGS)
 
 OBJS  +=  $(patsubst %.cpp, %.o, $(SRCS))
 
+#Header dependency tracking. Every compile also writes a %.d file next to the
+#object listing each header it actually included (-MMD: project headers only, no
+#system headers; -MP: an empty phony rule per header so a deleted/renamed header
+#doesn't break the build). Including those files makes an object rebuild when
+#any header it includes changes. Listing %.d as a prerequisite of %.o (with an
+#empty rule below so a missing one isn't an error) also rebuilds any object that
+#predates this mechanism and so has no .d yet. Before this, switching APP could
+#link months-old app objects against freshly built core objects: different class
+#sizes for Scene/Renderer/... -> heap corruption at run time (c0000374).
+DEPFLAGS = -MMD -MP
+DEPS = $(OBJS:.o=.d) $(OBJ_LIBIMGUI:.o=.d) $(OBJ_LIBTHIRDPARTY:.o=.d)
+
 default: $(OBJS) $(DEPOBJS)
 	$(CC) $^ -o $(PROJECT) $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS)
 #@echo COMPILE_ASSETS == $(COMPILE_ASSETS)
 
-$(OBJS): %.o: %.cpp
-	$(CC) -c $(CFLAGS) $(IPATHS) $< -o $@
+$(OBJS): %.o: %.cpp %.d
+	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 
-$(OBJ_LIBIMGUI): %.o: %.cpp
-	$(CC) -c $(CFLAGS) $(IPATHS) $< -o $@
+$(OBJ_LIBIMGUI): %.o: %.cpp %.d
+	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 
-$(OBJ_LIBTHIRDPARTY): %.o: %.cpp
-	$(CC) -c $(CFLAGS) $(IPATHS) $< -o $@
+$(OBJ_LIBTHIRDPARTY): %.o: %.cpp %.d
+	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
+
+#A .d that doesn't exist yet is "made" by this empty rule (forcing the object to
+#compile, which is what writes it). PRECIOUS keeps make from deleting them as
+#intermediates.
+$(DEPS):
+.PRECIOUS: $(DEPS)
+-include $(DEPS)
 
 thirdparty: $(OBJ_LIBTHIRDPARTY)
 	mkdir -p libs
@@ -150,7 +170,7 @@ reset:
 
 clean:
 	-rm -rf $(OBJS) $(OBJ_LIBIMGUI) $(OBJ_LIBTHIRDPARTY)
-	-rm -rf $(OBJS) $(OBJ_LIBIMGUI)
+	-rm -f $(DEPS)
 	-rm -f $(APP_MARKER)
 
 superclean:

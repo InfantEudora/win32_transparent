@@ -4,3 +4,5 @@ APP_CLASS  := ApplicationGrid
 SRCS    += ApplicationGrid.cpp
 IPATHS  += -Iisoterrain/
 DIR_SRC += ./isoterrain
+IPATHS  += -Iskeleton/
+DIR_SRC += ./skeleton
