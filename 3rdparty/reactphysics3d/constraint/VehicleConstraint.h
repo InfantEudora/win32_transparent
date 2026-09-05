@@ -120,6 +120,21 @@ struct VehicleWheelSettings {
         /// space). A good default is the wheel centre at mid travel.
         Vector3 suspensionForcePoint;
 
+        /// Number of ground samples cast per wheel, each a ray parallel to suspensionDirection but
+        /// offset along the (steered) rolling direction, approximating points around the rim of the
+        /// tire rather than just its very bottom. The one that touches down soonest is the wheel's
+        /// contact for the step. 1 (default) is a single ray straight down through the attachment
+        /// point, exactly as before. A higher count catches a kerb, pothole edge or speed bump that
+        /// the tire's curved profile would reach before a single ray does, at that many raycasts'
+        /// cost per wheel. Values <= 1 behave as 1.
+        uint32 numContactSamples;
+
+        /// Half-angle (rad) of the sample fan about the wheel's lateral axis: with numContactSamples
+        /// samples, the outermost ones are offset from the attachment point by radius * sin of this
+        /// angle, forward and backward along the rolling direction (bounded by radius itself, never
+        /// reaching further than the tire's own rim could). Unused when numContactSamples <= 1.
+        decimal contactSampleHalfAngle;
+
         // -------------------- Methods -------------------- //
 
         /// Constructor
@@ -130,7 +145,8 @@ struct VehicleWheelSettings {
               suspensionSpring(SpringSettings::fromFrequencyAndDampingRatio(decimal(1.5), decimal(0.5))),
               radius(decimal(0.3)), width(decimal(0.1)), inertia(decimal(0.9)), angularDamping(decimal(0.2)),
               longitudinalFriction(decimal(1.0)), lateralFriction(decimal(1.0)),
-              enableSuspensionForcePoint(false), suspensionForcePoint(0, 0, 0) {}
+              enableSuspensionForcePoint(false), suspensionForcePoint(0, 0, 0),
+              numContactSamples(1), contactSampleHalfAngle(PI_RP3D / decimal(4.0)) {}
 };
 
 // Class VehicleWheel
@@ -336,9 +352,10 @@ struct VehicleConstraintSettings {
 // Class VehicleConstraint
 /**
  * A wheeled vehicle: one chassis rigid body plus any number of wheels, each a raycast
- * suspension. Every step the solver casts a ray from the attachment point of each wheel along
- * its suspension direction; where it hits the ground, constraints between the chassis and the
- * ground body are solved together with the other constraints of the world:
+ * suspension. Every step the solver casts a ray (or, if VehicleWheelSettings::numContactSamples
+ * is more than 1, a small fan of them across the tire's footprint) from the attachment point of
+ * each wheel along its suspension direction; where it hits the ground, constraints between the
+ * chassis and the ground body are solved together with the other constraints of the world:
  *
  *  - a spring-damper along the contact normal (AxisConstraintPart, implicit, stable for any
  *    stiffness and time step), pushing only;

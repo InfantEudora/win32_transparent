@@ -238,6 +238,10 @@ class RigidBody : public Body {
         friend class SolveFixedJointSystem;
         friend class SolveHingeJointSystem;
         friend class SolveSliderJointSystem;
+        friend class SolveSpringJointSystem;
+        friend class SolveVehicleSystem;
+        friend class SolveUprightConstraintSystem;
+        friend class SpringJoint;
         friend class Joint;
         friend class Collider;
 };
