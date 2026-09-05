@@ -126,6 +126,7 @@ def summarize(telemetry):
     wheels = telemetry.get("wheels", [])
     grounded = [w for w in wheels if w.get("grounded")]
     return {
+        "position": [round(x, 3) for x in telemetry["position"]],
         "position_y": telemetry["position"][1],
         "up_y": telemetry["up"][1],
         "speed": telemetry.get("speed"),
@@ -141,14 +142,17 @@ def summarize(telemetry):
     }
 
 
-# Per-vehicle scenario parameters. The test ground plane is 20 x 20 m around the origin and the
-# buggy does 6 m/s flat out, so its phases are shorter and gentler than the tank's or it drives
-# off the edge mid-run (which is what an early version of this did).
+# Per-vehicle scenario parameters. The test ground plane is 20 x 20 m around the origin (the
+# heightmap terrain starts beyond its -z edge) and the buggy does 6 m/s flat out, so its phases
+# are shorter and gentler than the tank's or it drives off the edge mid-run - at half throttle
+# for 100 ticks plus a coast it already covered 12 m.
+# The buggy turns LEFT: a right-hand circle from its spawn point runs it into the crane test rig
+# parked at (3.5, 0, 2), which showed up as an unexplained 28 m/s^2 deceleration mid-coast.
 SCENARIO = {
     "tank": {"drive_amount": 1.0, "drive_steps": 150, "coast_steps": 100, "brake_steps": 60,
-             "turn_prestart_steps": 0, "turn_steps": 100},
-    "buggy": {"drive_amount": 0.5, "drive_steps": 100, "coast_steps": 60, "brake_steps": 60,
-              "turn_prestart_steps": 50, "turn_steps": 100},
+             "turn_prestart_steps": 0, "turn_steps": 100, "turn_direction": "right"},
+    "buggy": {"drive_amount": 0.3, "drive_steps": 75, "coast_steps": 50, "brake_steps": 60,
+              "turn_prestart_steps": 40, "turn_steps": 100, "turn_direction": "left"},
 }
 
 # Ticks to let a vehicle come to rest after a reset before a phase starts. It is teleported to
@@ -209,11 +213,12 @@ def baseline(app, vehicle, settle_steps=300):
     if prm["turn_prestart_steps"] > 0:
         drive(prm["drive_amount"])
         app.tool("tank_step", vehicle=vehicle, num_steps=prm["turn_prestart_steps"])
-    app.tool("tank_steer", vehicle=vehicle, direction="right", amount=1.0, duration_ms=15000)
+    app.tool("tank_steer", vehicle=vehicle, direction=prm["turn_direction"], amount=1.0, duration_ms=15000)
     t = app.tool("tank_step", vehicle=vehicle, num_steps=prm["turn_steps"])
-    out["turning_right"] = summarize(t)
-    out["turning_right"]["steering_position"] = t.get("steering_position")
-    out["turning_right"]["heading"] = t["forward"]
+    out["turning"] = summarize(t)
+    out["turning"]["direction"] = prm["turn_direction"]
+    out["turning"]["steering_position"] = t.get("steering_position")
+    out["turning"]["heading"] = t["forward"]
     stop()
     t = app.tool("tank_step", vehicle=vehicle, num_steps=150)
     out["after_turn_rest"] = summarize(t)
@@ -223,7 +228,7 @@ def baseline(app, vehicle, settle_steps=300):
 
 def compare(a, b):
     """Print the summary sections of two baseline files side by side."""
-    keys = ["settled", "driving", "coast", "braked", "turning_right", "after_turn_rest"]
+    keys = ["settled", "driving", "coast", "braked", "turning", "after_turn_rest"]
     for key in keys:
         sa, sb = a.get(key, {}), b.get(key, {})
         print("== %s" % key)

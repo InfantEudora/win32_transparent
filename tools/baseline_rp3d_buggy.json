@@ -1,0 +1,448 @@
+{
+ "vehicle": "buggy",
+ "settle_steps": 300,
+ "scenario": {
+  "drive_amount": 0.3,
+  "drive_steps": 75,
+  "coast_steps": 50,
+  "brake_steps": 60,
+  "turn_prestart_steps": 40,
+  "turn_steps": 100,
+  "turn_direction": "left"
+ },
+ "settled": {
+  "position": [
+   1.0,
+   -0.031,
+   0.001
+  ],
+  "position_y": -0.03058972954750061,
+  "up_y": 0.9999856948852539,
+  "speed": 3.2936881666500994e-07,
+  "forward_speed": -1.0858166810123748e-08,
+  "yaw_rate": 4.6664969666210254e-09,
+  "wheels_grounded": 4,
+  "total_spring_force": 437.204345703125,
+  "weight": 441.5759630584717,
+  "compression": [
+   0.0107,
+   0.0107,
+   0.0106,
+   0.0106
+  ],
+  "spring_force": [
+   109.8,
+   109.8,
+   108.8,
+   108.8
+  ],
+  "wheel_angular_velocity": [
+   -0.0,
+   -0.0,
+   -0.0,
+   -0.0
+  ],
+  "saturated": [
+   false,
+   false,
+   false,
+   false
+  ]
+ },
+ "tuning": {
+  "brake_force": 400.0,
+  "contact_samples": 1,
+  "engine_force": 400.0,
+  "friction_coefficient": 1.0,
+  "lateral_friction": 1.0,
+  "max_roll_speed": 3.0,
+  "max_steer_angle_degrees": 35.0,
+  "power_split_front": 0.5,
+  "suspension_damping": 200.0,
+  "suspension_rest_length": 0.15000000596046448,
+  "suspension_stiffness": 8000.0,
+  "suspension_travel": 0.10000000149011612,
+  "top_speed": 6.0,
+  "wheel_mass": 2.0
+ },
+ "mass_kg": 45.012840270996094,
+ "driving": {
+  "position": [
+   1.0,
+   -0.031,
+   -2.187
+  ],
+  "position_y": -0.030588626861572266,
+  "up_y": 0.9999992251396179,
+  "speed": 2.617884635925293,
+  "forward_speed": 2.617882490158081,
+  "yaw_rate": 1.0543846684640812e-07,
+  "wheels_grounded": 4,
+  "total_spring_force": 437.20343017578125,
+  "weight": 441.5759630584717,
+  "compression": [
+   0.0088,
+   0.0088,
+   0.0125,
+   0.0125
+  ],
+  "spring_force": [
+   90.1,
+   90.1,
+   128.5,
+   128.5
+  ],
+  "wheel_angular_velocity": [
+   -21.23,
+   -21.23,
+   -20.42,
+   -20.42
+  ],
+  "saturated": [
+   false,
+   false,
+   false,
+   false
+  ]
+ },
+ "coast": {
+  "position": [
+   1.0,
+   -0.031,
+   -4.301
+  ],
+  "position_y": -0.03058968484401703,
+  "up_y": 0.9999861121177673,
+  "speed": 1.661736249923706,
+  "forward_speed": 1.6617131233215332,
+  "yaw_rate": 7.894779940897934e-09,
+  "wheels_grounded": 4,
+  "total_spring_force": 437.20428466796875,
+  "weight": 441.5759630584717,
+  "compression": [
+   0.0106,
+   0.0106,
+   0.0106,
+   0.0106
+  ],
+  "spring_force": [
+   109.5,
+   109.5,
+   109.1,
+   109.1
+  ],
+  "wheel_angular_velocity": [
+   -13.48,
+   -13.48,
+   -12.96,
+   -12.96
+  ],
+  "saturated": [
+   false,
+   false,
+   false,
+   false
+  ]
+ },
+ "coast_distance": 2.113930463853786,
+ "braked": {
+  "position": [
+   1.0,
+   -0.031,
+   -2.658
+  ],
+  "position_y": -0.03058972954750061,
+  "up_y": 0.9999857544898987,
+  "speed": 3.975891900154238e-07,
+  "forward_speed": -3.5352081795281265e-07,
+  "yaw_rate": -2.6833992805563867e-09,
+  "wheels_grounded": 4,
+  "total_spring_force": 437.20379638671875,
+  "weight": 441.5759630584717,
+  "compression": [
+   0.0107,
+   0.0107,
+   0.0106,
+   0.0106
+  ],
+  "spring_force": [
+   109.8,
+   109.8,
+   108.8,
+   108.8
+  ],
+  "wheel_angular_velocity": [
+   -0.0,
+   -0.0,
+   -0.0,
+   -0.0
+  ],
+  "saturated": [
+   false,
+   false,
+   false,
+   false
+  ]
+ },
+ "turning": {
+  "position": [
+   -1.956,
+   -0.031,
+   -0.481
+  ],
+  "position_y": -0.030645325779914856,
+  "up_y": 0.9999351501464844,
+  "speed": 2.808992624282837,
+  "forward_speed": 2.7487282752990723,
+  "yaw_rate": 1.8798385858535767,
+  "wheels_grounded": 4,
+  "total_spring_force": 437.20257568359375,
+  "weight": 441.5759630584717,
+  "compression": [
+   0.0058,
+   0.0149,
+   0.0063,
+   0.0155
+  ],
+  "spring_force": [
+   60.4,
+   152.5,
+   65.6,
+   158.6
+  ],
+  "wheel_angular_velocity": [
+   -20.13,
+   -28.8,
+   -16.15,
+   -26.21
+  ],
+  "saturated": [
+   false,
+   true,
+   true,
+   false
+  ],
+  "direction": "left",
+  "steering_position": -0.949999988079071,
+  "heading": [
+   -0.13550801575183868,
+   -0.00465428177267313,
+   0.9907653331756592
+  ]
+ },
+ "after_turn_rest": {
+  "position": [
+   -0.991,
+   -0.031,
+   3.469
+  ],
+  "position_y": -0.030587822198867798,
+  "up_y": 0.9999856948852539,
+  "speed": 0.02933943271636963,
+  "forward_speed": -0.029338855296373367,
+  "yaw_rate": -9.578706112733926e-07,
+  "wheels_grounded": 4,
+  "total_spring_force": 437.1218566894531,
+  "weight": 441.5759630584717,
+  "compression": [
+   0.0107,
+   0.0107,
+   0.0105,
+   0.0106
+  ],
+  "spring_force": [
+   109.7,
+   109.8,
+   108.8,
+   108.8
+  ],
+  "wheel_angular_velocity": [
+   0.24,
+   0.24,
+   0.23,
+   0.23
+  ],
+  "saturated": [
+   false,
+   false,
+   false,
+   false
+  ]
+ },
+ "final_telemetry": {
+  "angular_velocity": [
+   -4.252701546647586e-05,
+   -3.2711549025066233e-09,
+   -0.00017354203737340868
+  ],
+  "brake_pedal": 0.0,
+  "center_of_mass_local": [
+   0.0,
+   0.2778320014476776,
+   0.0
+  ],
+  "center_of_mass_world": [
+   -0.9906424880027771,
+   0.24724021553993225,
+   3.4700937271118164
+  ],
+  "forward": [
+   0.16925416886806488,
+   -0.005356465466320515,
+   0.9855579137802124
+  ],
+  "forward_speed": -0.029338855296373367,
+  "gas_pedal": 0.0,
+  "has_vehicle_constraint": true,
+  "is_sleeping": false,
+  "mass_kg": 45.012840270996094,
+  "position": [
+   -0.9908918142318726,
+   -0.030587822198867798,
+   3.4686264991760254
+  ],
+  "reverse": false,
+  "speed": 0.02933943271636963,
+  "steering_position": 0.0,
+  "total_spring_force": 437.1218566894531,
+  "tuning": {
+   "brake_force": 400.0,
+   "contact_samples": 1,
+   "engine_force": 400.0,
+   "friction_coefficient": 1.0,
+   "lateral_friction": 1.0,
+   "max_roll_speed": 3.0,
+   "max_steer_angle_degrees": 35.0,
+   "power_split_front": 0.5,
+   "suspension_damping": 200.0,
+   "suspension_rest_length": 0.15000000596046448,
+   "suspension_stiffness": 8000.0,
+   "suspension_travel": 0.10000000149011612,
+   "top_speed": 6.0,
+   "wheel_mass": 2.0
+  },
+  "up": [
+   0.0008974758093245327,
+   0.9999856948852539,
+   0.005280752666294575
+  ],
+  "vehicle": "buggy",
+  "velocity": [
+   -0.004922454245388508,
+   -2.1725294573116116e-05,
+   -0.02892354317009449
+  ],
+  "wheels": [
+   {
+    "angular_velocity": 0.23794344067573547,
+    "can_contact_ground": true,
+    "compression": 0.010657429695129395,
+    "compression_rate": -2.2351741790771484e-05,
+    "drive_force": 0.0,
+    "driven": true,
+    "friction_budget": 109.73590850830078,
+    "friction_saturated": false,
+    "front": true,
+    "grounded": true,
+    "kind": "road",
+    "lateral_force": -0.4168377220630646,
+    "local_offset": [
+     -0.15000000596046448,
+     0.27000001072883606,
+     -0.33000001311302185
+    ],
+    "longitudinal_force": -0.008089283481240273,
+    "radius": 0.1232910305261612,
+    "rest_length": 0.19313208758831024,
+    "side": "left",
+    "spring_force": 109.73590850830078,
+    "steer_angle": -0.0,
+    "steerable": true,
+    "travel": 0.10000000149011612
+   },
+   {
+    "angular_velocity": 0.23794342577457428,
+    "can_contact_ground": true,
+    "compression": 0.010668665170669556,
+    "compression_rate": -2.086162567138672e-05,
+    "drive_force": 0.0,
+    "driven": true,
+    "friction_budget": 109.79318237304688,
+    "friction_saturated": false,
+    "front": true,
+    "grounded": true,
+    "kind": "road",
+    "lateral_force": 0.46605879068374634,
+    "local_offset": [
+     0.15000000596046448,
+     0.27000001072883606,
+     -0.33000001311302185
+    ],
+    "longitudinal_force": -0.008089561946690083,
+    "radius": 0.1232910305261612,
+    "rest_length": 0.19313208758831024,
+    "side": "right",
+    "spring_force": 109.79318237304688,
+    "steer_angle": -0.0,
+    "steerable": true,
+    "travel": 0.10000000149011612
+   },
+   {
+    "angular_velocity": 0.2288789451122284,
+    "can_contact_ground": true,
+    "compression": 0.010547816753387451,
+    "compression_rate": -1.4901161193847656e-05,
+    "drive_force": 0.0,
+    "driven": true,
+    "friction_budget": 108.76734161376953,
+    "friction_saturated": false,
+    "front": false,
+    "grounded": true,
+    "kind": "road",
+    "lateral_force": 0.8027457594871521,
+    "local_offset": [
+     -0.15000000596046448,
+     0.27000001072883606,
+     0.33000001311302185
+    ],
+    "longitudinal_force": -0.008089166134595871,
+    "radius": 0.1281738430261612,
+    "rest_length": 0.19313208758831024,
+    "side": "left",
+    "spring_force": 108.76734161376953,
+    "steer_angle": 0.0,
+    "steerable": false,
+    "travel": 0.10000000149011612
+   },
+   {
+    "angular_velocity": 0.2288789302110672,
+    "can_contact_ground": true,
+    "compression": 0.010559171438217163,
+    "compression_rate": -1.1920928955078125e-05,
+    "drive_force": 0.0,
+    "driven": true,
+    "friction_budget": 108.82544708251953,
+    "friction_saturated": false,
+    "front": false,
+    "grounded": true,
+    "kind": "road",
+    "lateral_force": -0.7536851167678833,
+    "local_offset": [
+     0.15000000596046448,
+     0.27000001072883606,
+     0.33000001311302185
+    ],
+    "longitudinal_force": -0.008089450187981129,
+    "radius": 0.1281738430261612,
+    "rest_length": 0.19313208758831024,
+    "side": "right",
+    "spring_force": 108.82544708251953,
+    "steer_angle": 0.0,
+    "steerable": false,
+    "travel": 0.10000000149011612
+   }
+  ],
+  "wheels_grounded": 4,
+  "yaw_rate": -9.578706112733926e-07
+ }
+}
