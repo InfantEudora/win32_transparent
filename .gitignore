@@ -10,4 +10,5 @@ imgui.ini
 *.blend
 *.a
 BinaryAssetMemory.cpp
-.current_app__pycache__/
+.current_app
+__pycache__/
