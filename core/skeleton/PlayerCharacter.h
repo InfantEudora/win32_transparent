@@ -57,10 +57,8 @@ class PlayerCharacter : public virtual Skeleton{
     float idle_time = 0.0f;
     float idle_time_max = 3.0f;
 
-    bool f_switch_now = false;
     bool f_rotation_animation = false;
     bool f_move_by_feet_placement = false;      //For inplace animations.
-    bool f_update_hip_position = false;         //Used for blending animations that move hip to a new orientation / position.
 
     float head_turn_direction_lr = 0.0f;        //Direction the head should be facing on top of the animation from -1 to 1
     float head_turn_direction_ud = 0.0f;

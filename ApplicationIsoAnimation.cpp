@@ -119,10 +119,6 @@ void ApplicationIsoAnimation::Init(void){
 
     gltfloader.LoadGLTFFile("data/isoanim.glb");
     GetAssetsFromGLTF("indicator","plane");
-    //GetAllAssetsFromGLTF();
-
-    //Load a second gltf
-    gltfloader.LoadGLTFFile("data/girlgun.glb");
     GetAllAssetsFromGLTF();
 
     //Load all the scenery from export.json that we don't already have.
@@ -147,6 +143,7 @@ void ApplicationIsoAnimation::Init(void){
         for (std::string animation_name:animation_names){
             Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
             skeleton->AddAnimation(animation);
+            animation->SetRootBone(skeleton->root_bone_name);
         }
 
         character->blink_animation = character->FindAnimation("Blink");
@@ -170,15 +167,13 @@ void ApplicationIsoAnimation::Init(void){
         for (std::string animation_name:animation_names){
             Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
             hands_skeleton->AddAnimation(animation);
+            animation->SetRootBone(hands_skeleton->root_bone_name);
         }
 
         hands->SetMaterialSlot(0,0);
         hands->SetMaterialSlot(1,0);
 
         hands->name = "Hands";
-
-        hands->animation_graph = new AnimationGraph();
-        hands->animation_graph->animations = &hands->animations;
     }
 
     //Load a feet-only preview model, set up the same way as the main character.
@@ -199,12 +194,10 @@ void ApplicationIsoAnimation::Init(void){
         for (std::string animation_name:animation_names){
             Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
             feet_skeleton->AddAnimation(animation);
+            animation->SetRootBone(feet_skeleton->root_bone_name);
         }
 
         feet->SetMaterialSlot(1,0);
-
-        feet->animation_graph = new AnimationGraph();
-        feet->animation_graph->animations = &feet->animations;
     }
 
     Object* bra = assetmanager->GetObjectFromAsset("bra");
@@ -256,6 +249,7 @@ void ApplicationIsoAnimation::Init(void){
         for (std::string animation_name:animation_names){
             Animation* animation = gltfloader.LoadAnimation(animation_name.c_str());
             second_character->AddAnimation(animation);
+            animation->SetRootBone(second_character->root_bone_name);
         }
     }
     hair = assetmanager->GetObjectFromAsset("hair");
@@ -290,108 +284,54 @@ void ApplicationIsoAnimation::Init(void){
         }
     }
 
-    //Describe a list of animations for this character:
-    character->animation_graph = new AnimationGraph();
-
-    AnimationTransition* t = NULL;
-
-    character->animation_graph->animations = &character->animations;
-    t = character->animation_graph->AddTransition("","Idle"); //Null to Idle transition for when we start an animation without an active one.
-    t = character->animation_graph->AddTransition("","ActionIdle"); //Null to Idle transition for when we start an animation without an active one.
-    t = character->animation_graph->AddTransition("","CrossJumps");
-    t = character->animation_graph->AddTransition("Idle","CrossJumps");
-    t = character->animation_graph->AddTransition("CrossJumps","CrossJumps");
-    t = character->animation_graph->AddTransition("CrossJumps","Idle");
-    t = character->animation_graph->AddTransition("Idle","Idle");
-    t = character->animation_graph->AddTransition("Idle","Running");
-    if (t){
-        t->blend_time = 0.75f;
-    }
-    t = character->animation_graph->AddTransition("Idle","Walking");
-    t = character->animation_graph->AddTransition("Walking","Walking");
-    t = character->animation_graph->AddTransition("Walking","WalkingBackwards");
-    t = character->animation_graph->AddTransition("Idle","WalkingBackwards");
-    t = character->animation_graph->AddTransition("WalkingBackwards","WalkingBackwards");
-    t = character->animation_graph->AddTransition("WalkingBackwards","Idle");
-    t = character->animation_graph->AddTransition("WalkingBackwards","Walking");
-    t = character->animation_graph->AddTransition("Walking","Idle");
-    t = character->animation_graph->AddTransition("Walking","ActionIdle");
-
-    t = character->animation_graph->AddTransition("Jumproping","Jumproping");
-
-    t = character->animation_graph->AddTransition("Idle","Jump");
-    t = character->animation_graph->AddTransition("Jump","Jump");
-    t = character->animation_graph->AddTransition("Jump","Idle");
-    t = character->animation_graph->AddTransition("Jump","Walking");
-    t = character->animation_graph->AddTransition("Walking","Jump");
-    t = character->animation_graph->AddTransition("JumpForward","Idle");
-
-    t = character->animation_graph->AddTransition("StandToFreeHang","FreeHangIdle");
-    t = character->animation_graph->AddTransition("FreeHangIdle","FreeHangIdle");
-    if (Animation* animation = character->animation_graph->LookupAnimation("StandToFreeHang")){
-        animation->modifies_root_object = true;
+    //Describe animation behaviour for this character: which clips loop, which auto-continue into
+    //another clip once they finish, any non-default blend times between specific pairs, and which
+    //clips' root motion should drive the character (see docs/animation_root_motion.md). Any pair not
+    //listed here just transitions with the default blend time - there's no separate list of "allowed"
+    //transitions any more; that's PlayerCharacter::ProcessInputState's job, since it already knows
+    //which transitions make sense for the character's current gameplay state.
+    auto Loop = [this](const char* name){
+        if (Animation* a = character->FindAnimation(name)){
+            a->looped = true;
+        }
+    };
+    for (const char* name : {"Idle","CrossJumps","WalkingInPlace","WalkingBackward","WalkingForward","Jumproping","Jump",
+                             "FreeHangIdle","Running","ActionIdle","PistolIdle","Boxing",
+                             "TurnLeftInPlace","TurnRightInPlace","SittingLegsCrossed","torso_PistolIdle"}){
+        Loop(name);
     }
 
+    auto AutoContinue = [this](const char* from, const char* to){
+        if (Animation* a = character->FindAnimation(from)){
+            a->auto_continue_to = character->FindAnimation(to);
+        }
+    };
+    AutoContinue("JumpForward","Idle");
+    AutoContinue("StandToFreeHang","FreeHangIdle");
+    AutoContinue("StandingToSitting","SittingLegsCrossed");
+    AutoContinue("SittingToStanding","Idle");
+    AutoContinue("Pushing","Idle");
 
+    character->SetBlendTime("Idle","Running",0.75f);
+    character->SetBlendTime("Running","Idle",0.75f);
+    character->SetBlendTime("StandingToSitting","SittingLegsCrossed",0.5f);
+    character->SetBlendTime("SittingLegsCrossed","SittingToStanding",0.5f);
 
-    t = character->animation_graph->AddTransition("Running","Running");
-    t = character->animation_graph->AddTransition("Idle","BalanceOneLeg");
-    t = character->animation_graph->AddTransition("Idle","StandingToSitting");
-    t = character->animation_graph->AddTransition("Idle","ActionIdle");
-    t = character->animation_graph->AddTransition("ActionIdle","ActionIdle");
-    t = character->animation_graph->AddTransition("ActionIdle","Boxing");
-    t = character->animation_graph->AddTransition("ActionIdle","PistolIdle");
-    t = character->animation_graph->AddTransition("PistolIdle","PistolIdle");
-    t = character->animation_graph->AddTransition("PistolIdle","ActionIdle");
-    t = character->animation_graph->AddTransition("Boxing","Boxing");
-    t = character->animation_graph->AddTransition("Boxing","ActionIdle");
-    t = character->animation_graph->AddTransition("Boxing","Idle");
-    t = character->animation_graph->AddTransition("ActionIdle","Idle");
-    t = character->animation_graph->AddTransition("Idle","TurnLeftInPlace");
-    t = character->animation_graph->AddTransition("TurnLeftInPlace","TurnLeftInPlace");
-    t = character->animation_graph->AddTransition("TurnLeftInPlace","Idle");
-    t = character->animation_graph->AddTransition("TurnLeftInPlace","Walking");
-    t = character->animation_graph->AddTransition("TurnRightInPlace","Walking");
-    t = character->animation_graph->AddTransition("Walking","TurnRightInPlace");
-    t = character->animation_graph->AddTransition("Walking","TurnLeftInPlace");
-
-
-    t = character->animation_graph->AddTransition("TurnLeftInPlace","TurnRightInPlace");
-    t = character->animation_graph->AddTransition("TurnRightInPlace","TurnLeftInPlace");
-
-
-    t = character->animation_graph->AddTransition("Idle","TurnRightInPlace");
-    t = character->animation_graph->AddTransition("TurnRightInPlace","TurnRightInPlace");
-    t = character->animation_graph->AddTransition("TurnRightInPlace","Idle");
-
-
-    t = character->animation_graph->AddTransition("StandingToSitting","SittingLegsCrossed");
-    if (t){
-        t->blend_time = 0.5f;
+    if (Animation* animation = character->FindAnimation("WalkingForward")){
+        animation->extract_horizontal_root_motion = true;
     }
-    t = character->animation_graph->AddTransition("SittingLegsCrossed","SittingLegsCrossed");
-    t = character->animation_graph->AddTransition("SittingLegsCrossed","SittingToStanding");
-    if (t){
-        t->blend_time = 0.5f;
+    if (Animation* animation = character->FindAnimation("WalkingBackward")){
+        animation->extract_horizontal_root_motion = true;
     }
-    t = character->animation_graph->AddTransition("SittingToStanding","Idle");
-    t = character->animation_graph->AddTransition("Running","Idle");
-    if (t){
-        t->blend_time = 0.75f;
+    if (Animation* animation = character->FindAnimation("JumpForward")){
+        animation->extract_horizontal_root_motion = true;
     }
-
-    t = character->animation_graph->AddTransition("Idle","Pushing");
-    t = character->animation_graph->AddTransition("Pushing","Idle");
-
-    t = character->animation_graph->AddTransition("torso_PistolIdle","torso_PistolIdle");
-
-    if (Animation* animation = character->animation_graph->LookupAnimation("JumpForward")){
-        animation->modifies_root_object = true;
+    if (Animation* animation = character->FindAnimation("RunupClimbing")){
+        animation->extract_horizontal_root_motion = true;
     }
-    if (Animation* animation = character->animation_graph->LookupAnimation("WalkingBackwards")){
-        animation->modifies_root_object = true;
+    if (Animation* animation = character->FindAnimation("MidJumpToHang")){
+        animation->extract_horizontal_root_motion = true;
     }
-
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){

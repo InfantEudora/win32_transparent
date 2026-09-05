@@ -46,7 +46,7 @@ void PlayerCharacter::ProcessInputState(){
         //On top of this animation, we want to rotate the hips to face the target
     }
     if (character_input_state.input_backward_down){
-        TransitionToAnimation("WalkingBackwards");
+        TransitionToAnimation("WalkingBackward");
 
         //MoveForwardBy(0.025f * animation_transition_factor);
         character_input_state.input_backward_down = false;
@@ -72,14 +72,14 @@ void PlayerCharacter::ProcessInputState(){
         character_input_state.input_right_down = false;
     }
     if (character_input_state.input_forward_down){
-        TransitionToAnimation("Walking");
+        TransitionToAnimation("WalkingForward");
         //If the animation is transitioning to walking, we move by a factor.
         //If the animation is looping, that is the full speed.
         float factor = animation_transition_factor;
         if (animation_state == ANIMATION_STATE_LOOPING){
             factor = 1;
         }
-        MoveForwardBy(-0.025f * factor);
+        //MoveForwardBy(-0.025f * factor);
         character_input_state.input_forward_down = false;
         character_animation_state.Clear();
         character_animation_state.moving_forward = true;
@@ -112,22 +112,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
     }
 
-    Bone* hip_bone = FindBone(root_bone_name);
-    if (!hip_bone){
-        debug->Err("Could not find root/hip bone [%s]\n",root_bone_name.c_str());
-        //Try the first bone instead
-        if (children.size() > 0){
-            hip_bone = dynamic_cast<Bone*>(GetChild(0));
-            if (hip_bone){
-                debug->Warn("Using first child bone [%s] as root/hip bone instead.\n",hip_bone->name.c_str());
-                root_bone_name = hip_bone->name;
-            }else{
-                debug->Err("First child is not a bone either.\n");
-                return;
-            }
-        }
-    }
-
     ProcessInputState();
 
     //Animation state starts off as invalid.
@@ -135,10 +119,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         animation_state = ANIMATION_STATE_INVALID;
     }
     if (animation_state == ANIMATION_STATE_INVALID){
-        if (current_transition){
-            current_animation = current_transition->to;
+        if (transition_to){
+            current_animation = transition_to;
             animation_state = ANIMATION_STATE_TRANSITION;
-            animation_transition_time = animation_transition_time_max;
+            animation_transition_time = animation_transition_blend_time;
             animation_transition_factor = 1.0f;
         }
     }
@@ -166,25 +150,12 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 current_animation->time_index = current_animation->duration;
 
                 debug->Info("Animation %s ended.\n",current_animation->name.c_str());
-                AnimationTransition* transition = animation_graph ? animation_graph->FindTransitionFrom(current_animation) : NULL;
-                if (!transition){
-                    debug->Info("No transition found from %s. Pausing animation.\n",current_animation->name.c_str());
+                if (!current_animation->auto_continue_to){
+                    debug->Info("No auto-continue set for %s. Pausing animation.\n",current_animation->name.c_str());
                     animation_state = ANIMATION_STATE_PAUSED;
                 }else{
-                    //Check if we need to do something at the end of this transition:
-                    if (current_transition &&  current_transition->f_hips_rotated){
-                        quat r = hip_bone->GetRotation() - hip_bone->reference_rotation;
-                        float z_angle = r.get_yaw();
-                        debug->Info("Applying Hip Rotation. Z-Rotation : %.2f Degrees\n",todegrees(z_angle));
-
-                        //Get the hip bone
-                        RotateBy(current_transition->hip_rotation);
-                        hip_bone->SetRotation(hip_bone->reference_rotation);
-                        hip_bone->animation_mask = 0;
-                    }
-                    current_transition = transition;
-                    debug->Info("Transition found from %s to %s. Starting transition.\n",current_animation->name.c_str(),current_transition->to->name.c_str());
-                    TransitionToAnimation(current_transition->to);
+                    debug->Info("Auto-continuing from %s to %s.\n",current_animation->name.c_str(),current_animation->auto_continue_to->name.c_str());
+                    TransitionToAnimation(current_animation->auto_continue_to);
                 }
             }else{
                 //Animation has ended. We play a frame close to 0.
@@ -192,52 +163,37 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 did_rewind = true;
             }
         }
-        //If the animation modifies the root object, we need to keep track of how much it woule have moved.
-        vec3 pos_delta = vec3();
-        if (current_animation->modifies_root_object && !did_rewind){
-            //We need to get the difference in postion from the current keyframe
-            //to the target keyframe.
 
-            //Should be the hip bone.
-            Bone* root_bone = FindBone("mixamorig:Hips");
-
-            ObjectAnimation* root_anim = current_animation->FindObjectAnimation(root_bone);
-            if (root_anim){
-
-                ObjectAnimationKeyFrame* frame = root_anim->GetClosestKeyframe(last_time_index);
-                if (frame && frame->f_position){
-                    vec3 pos_start = frame->position;
-                    frame = root_anim->GetClosestKeyframe(current_animation->time_index);
-                    if (frame && frame->f_position){
-                        vec3 pos_end = frame->position;
-                        pos_delta = pos_end - pos_start;
-                        debug->Info("Animation modifies root object. Time Index: %.3f, Delta = %.3f %.3f %.3f\n", current_animation->time_index, pos_delta.x, pos_delta.y, pos_delta.z);
-                    }
-                }
-            }
-        }
+        //Extract this tick's world-motion delta (position/yaw) from the clip's root bone track, and
+        //write the corrected (pinned/swing-only) pose onto the root bone for the new time index.
+        //On a loop wraparound we sample a zero-width window so the bone pose is still refreshed for
+        //the new (wrapped) time, without contributing a spurious delta from the wrap itself.
+        float sample_prev_time = did_rewind ? current_animation->time_index : last_time_index;
+        RootMotionDelta delta = current_animation->SampleRootMotion(sample_prev_time, current_animation->time_index);
         current_animation->ApplyInterval(current_animation->time_index);
 
-        if (current_animation->modifies_root_object && (pos_delta.length() > 0)){
-            //We manually apply the position change, but rotated by our current orientation.
-            MoveBy(GetRotation()*pos_delta);
+        if (delta.yaw != 0.0f){
+            RotateBy(quat(vec3(0,1,0),delta.yaw));
+        }
+        if (delta.position.length() > 0){
+            MoveBy(GetRotation()*delta.position);
         }
     }else if (animation_state == ANIMATION_STATE_TRANSITION_START){
         //In this state, we need to record the character position to where the hips currently are.
         //We are going to transition by playing this animation
-        if (current_transition == NULL){
+        if (transition_to == NULL){
             debug->Ok("Transition start from %s to NULL\n",current_animation->name.c_str());
         }else{
-            debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),current_transition->to->name.c_str());
+            debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),transition_to->name.c_str());
         }
         animation_state = ANIMATION_STATE_TRANSITION;
     }else if (animation_state == ANIMATION_STATE_TRANSITION){
         //If there is no next animation, we can't proceed.
-        if (!current_transition){
+        if (!transition_to){
             debug->Warn("AnimationSampler: Transition to next = NULL\n");
             animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
         }
-        if (current_transition->to == current_animation){
+        if (transition_to == current_animation){
             debug->Warn("AnimationSampler: Next is identical to current\n");
             animation_state = ANIMATION_STATE_LOOPING;
 
@@ -258,98 +214,52 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
             }
         }
         //Rewind next animation as well.
-        float to_last_time_index = current_transition->to->time_index;
+        float to_last_time_index = transition_to->time_index;
         bool to_did_rewind = false;
-        current_transition->to->time_index += time_delta;
-        if (current_transition->to->time_index > current_transition->to->duration){
-            current_transition->to->time_index -= current_transition->to->duration;
+        transition_to->time_index += time_delta;
+        if (transition_to->time_index > transition_to->duration){
+            transition_to->time_index -= transition_to->duration;
             to_did_rewind = true;
         }
 
-        float chosen_max_blend_time = 0;
-        if (current_transition->blend_time >= 0){
-            chosen_max_blend_time = current_transition->blend_time;
-        }else{
-            chosen_max_blend_time = animation_transition_time_max;
-        }
-
-        animation_transition_factor =  animation_transition_time / chosen_max_blend_time;
-        if (chosen_max_blend_time == 0){
+        animation_transition_factor = animation_transition_time / animation_transition_blend_time;
+        if (animation_transition_blend_time == 0){
             animation_transition_factor = 1.0;
         }
 
-        //Either the current animation or the one we are transitioning to can have modified the root object.
-        //We compute the per-frame root movement of each animation the same way ANIMATION_STATE_LOOPING does
-        //(the difference between the keyframe position at the last time index and at the new one), then blend
-        //the two deltas by how far we are through the transition.
-        vec3 delta = vec3();
-        if (current_animation->modifies_root_object || current_transition->to->modifies_root_object){
+        debug->Info("Transitioning from %s to %s. Time = %.3f / %.3f (%.2f%%)\n",current_animation->name.c_str(),transition_to->name.c_str(),animation_transition_time,animation_transition_blend_time,animation_transition_factor*100.0f);
 
+        //Blend the per-frame root motion of both clips (same zero-width-window handling on rewind as
+        //ANIMATION_STATE_LOOPING) and write the blended pose onto the shared root bone.
+        RootMotionDelta delta = current_animation->LerpRootMotion(transition_to,
+            from_did_rewind ? current_animation->time_index : from_last_time_index, current_animation->time_index,
+            to_did_rewind ? transition_to->time_index : to_last_time_index, transition_to->time_index,
+            animation_transition_factor);
+        current_animation->Lerp(transition_to,current_animation->time_index,transition_to->time_index,animation_transition_factor);
 
-            Bone* root_bone = FindBone("mixamorig:Hips");
-
-            vec3 from_delta = vec3();
-            if (current_animation->modifies_root_object && !from_did_rewind){
-                ObjectAnimation* from_root_anim = current_animation->FindObjectAnimation(root_bone);
-                if (from_root_anim){
-                    ObjectAnimationKeyFrame* frame = from_root_anim->GetClosestKeyframe(from_last_time_index);
-                    if (frame && frame->f_position){
-                        vec3 pos_start = frame->position;
-                        frame = from_root_anim->GetClosestKeyframe(current_animation->time_index);
-                        if (frame && frame->f_position){
-                            from_delta = frame->position - pos_start;
-                        }
-                    }
-                }
-            }
-
-            vec3 to_delta = vec3();
-            if (current_transition->to->modifies_root_object && !to_did_rewind){
-                ObjectAnimation* to_root_anim = current_transition->to->FindObjectAnimation(root_bone);
-                if (to_root_anim){
-                    ObjectAnimationKeyFrame* frame = to_root_anim->GetClosestKeyframe(to_last_time_index);
-                    if (frame && frame->f_position){
-                        vec3 pos_start = frame->position;
-                        frame = to_root_anim->GetClosestKeyframe(current_transition->to->time_index);
-                        if (frame && frame->f_position){
-                            to_delta = frame->position - pos_start;
-                        }
-                    }
-                }
-            }
-
-            delta = from_delta.lerp(to_delta,animation_transition_factor);
-            debug->Info("Transition to/from animation with root modification. Delta: %.3f %.3f %.3f\n",delta.x,delta.y,delta.z);
+        if (delta.yaw != 0.0f){
+            RotateBy(quat(vec3(0,1,0),delta.yaw));
         }
-        debug->Info("Transitioning from %s to %s. Time = %.3f / %.3f (%.2f%%)\n",current_animation->name.c_str(),current_transition->to->name.c_str(),animation_transition_time,chosen_max_blend_time,animation_transition_factor*100.0f);
-
-        current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor);
-
-        if (delta.length() > 0){
-            delta = GetRotation()*delta;
-            debug->Info("Delta: %.3f %.3f %.3f\n",delta.x,delta.y,delta.z);
-
-            //We manually apply the position change, but rotated by our current orientation.
-            MoveBy(delta);
+        if (delta.position.length() > 0){
+            MoveBy(GetRotation()*delta.position);
         }
 
         animation_transition_time += time_delta;
-        if (animation_transition_time >= chosen_max_blend_time){
-            animation_transition_time = chosen_max_blend_time;
+        if (animation_transition_time >= animation_transition_blend_time){
+            animation_transition_time = animation_transition_blend_time;
             //Reset the animation that we have transitioned from:
             current_animation->time_index = 0;
-            current_animation = current_transition->to;
+            current_animation = transition_to;
+            transition_to = NULL;
             animation_state = ANIMATION_STATE_LOOPING;
             debug->Info("Transition complete. Now at %s\n",current_animation->name.c_str());
         }
     }else if (animation_state == ANIMATION_STATE_TRANSITION_BACK){
         //We rewind the transition if we are aborting the transition.
-        if (!current_transition){
+        if (!transition_to){
             debug->Warn("No current transition to transition back from.\n");
             animation_state = ANIMATION_STATE_PAUSED;
-        }
-        if (current_transition->from == current_animation){
-
+        }else{
             current_animation->time_index -= time_delta;
             if (current_animation->time_index < 0){
                 if (!current_animation->looped){
@@ -359,40 +269,31 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 }
             }
             //Rewind next animation as well.
-            current_transition->to->time_index -= time_delta;
-            if (current_transition->to->time_index < 0){
-                current_transition->to->time_index += current_transition->to->duration;
+            transition_to->time_index -= time_delta;
+            if (transition_to->time_index < 0){
+                transition_to->time_index += transition_to->duration;
             }
 
-            debug->Info("Rewinding transition from %s to %s. Time = %.3f (%.2f%%)\n",current_animation->name.c_str(),current_transition->to->name.c_str(),animation_transition_time,animation_transition_factor*100.0f);
+            debug->Info("Rewinding transition from %s to %s. Time = %.3f (%.2f%%)\n",current_animation->name.c_str(),transition_to->name.c_str(),animation_transition_time,animation_transition_factor*100.0f);
             //We just need to rewind the current transition.
             animation_transition_time -= time_delta;
             if (animation_transition_time <= 0){
                 animation_transition_time = 0;
-                //Reset current animation
+                //Reset current animation (we've rewound back to it; current_animation was always the "from")
                 current_animation->time_index = 0;
-                current_animation = current_transition->from;
+                transition_to = NULL;
                 animation_state = ANIMATION_STATE_LOOPING;
                 debug->Info("Transition rewind complete. Now at %s\n",current_animation->name.c_str());
             }else{
-                float chosen_max_blend_time = 0;
-                if (current_transition->blend_time >= 0){
-                    chosen_max_blend_time = current_transition->blend_time;
-                }else{
-                    chosen_max_blend_time = animation_transition_time_max;
-                }
-
-                animation_transition_factor =  animation_transition_time / chosen_max_blend_time;
-                if (chosen_max_blend_time == 0){
+                animation_transition_factor = animation_transition_time / animation_transition_blend_time;
+                if (animation_transition_blend_time == 0){
                     animation_transition_factor = 0;
                 }
             }
 
-            current_animation->Lerp(current_transition->to,current_animation->time_index,current_transition->to->time_index,animation_transition_factor);
-
-        }else{
-            debug->Warn("Current animation is not the target of the current transition. Cannot transition back.\n");
-            animation_state = ANIMATION_STATE_PAUSED;
+            if (transition_to){
+                current_animation->Lerp(transition_to,current_animation->time_index,transition_to->time_index,animation_transition_factor);
+            }
         }
     }
 
@@ -451,19 +352,6 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
                 hips->RotateBy(r);
             }
         }
-
-    }
-
-    //Update character position to y target
-    //Disabled for now.
-    float current_y = GetPosition().y;
-    if (abs(current_y - target_y_location) > 0.001f){
-        //debug->Info("Lerping character to Y=%.3f position\n",target_y_location);
-        vec3 target = GetPosition();
-        target.y = target_y_location;
-        vec3 p = GetPosition();
-        p = p.lerp(target,0.1f * target_location_factor);
-        SetPosition(p);
     }
 
     //Update the foot trackers

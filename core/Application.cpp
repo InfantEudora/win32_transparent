@@ -1557,14 +1557,7 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                 int button_id = 1;
                 for (Animation* animation:object->animations){
                     if (ImGui::Button(animation->name.c_str())){
-                        AnimationTransition* transition = object->animation_graph ? object->animation_graph->FindTransition(object->current_animation, animation) : NULL;
-                        if (transition){
-                            //debug->Info("Transition found from %s to %s. Transitioning!\n",transition->from ? transition->from->name.c_str() : "NULL",transition->to ? transition->to->name.c_str() : "NULL");
-                            object->TransitionToAnimation(animation,transition);
-                        }else{
-                            //debug->Info("No transition found from %s to %s. Switching directly.\n",object->current_animation ? object->current_animation->name.c_str() : "NULL",animation->name.c_str());
-                            object->SwitchToAnimation(animation);
-                        }
+                        object->TransitionToAnimation(animation);
                     }
                     button_id++;
                     if (button_id % 4 != 0)
@@ -1577,21 +1570,18 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
                     if (ImGui::Checkbox("  - Looping",&looping)){
                         object->current_animation->looped = looping;
                     }
-                    ImGui::Checkbox("  - Modifies Root Object",&object->current_animation->modifies_root_object);
+                    ImGui::Checkbox("  - Extract Horizontal Root Motion",&object->current_animation->extract_horizontal_root_motion);
+                    ImGui::Checkbox("  - Extract Vertical Root Motion",&object->current_animation->extract_vertical_root_motion);
                 }else{
                     ImGui::Text("Current Animation : NULL");
                 }
-                if (object->current_transition){
-                    if (object->current_transition->from){
-                        ImGui::Text("Transition->From  : %s @ %.2f / %.2f",object->current_transition->from->name.c_str(),object->current_transition->from->time_index,object->current_transition->from->duration);
+                if (object->transition_to){
+                    if (object->current_animation){
+                        ImGui::Text("Transition->From  : %s @ %.2f / %.2f",object->current_animation->name.c_str(),object->current_animation->time_index,object->current_animation->duration);
                     }else{
                         ImGui::Text("Transition->From  : NULL (Reference Pose)");
                     }
-                    if (object->current_transition->to){
-                        ImGui::Text("Transition->To    : %s @ %.2f / %.2f",object->current_transition->to->name.c_str(),object->current_transition->to->time_index,object->current_transition->to->duration);
-                    }else{
-                        ImGui::Text("Transition->To    : NULL (Reference Pose)");
-                    }
+                    ImGui::Text("Transition->To    : %s @ %.2f / %.2f",object->transition_to->name.c_str(),object->transition_to->time_index,object->transition_to->duration);
                 }else{
                     ImGui::Text("Transition->From  : NULL");
                     ImGui::Text("Transition->To    : NULL");
@@ -1602,18 +1592,12 @@ void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
 
             }
 
-            if (object->animation_graph && object->animation_graph->transitions.size() != 0){
-                ImGui::Text("Animation Transitions");
+            if (object->animation_blend_overrides.size() != 0){
+                ImGui::Text("Animation Blend Time Overrides");
                 int id = 0;
-                for (AnimationTransition* transition:object->animation_graph->transitions){
+                for (Object::AnimationBlendOverride& o : object->animation_blend_overrides){
                     ImGui::PushID(id++);
-                    std::string button_text = transition->from ? transition->from->name : "NULL";
-                    ImGui::Button(button_text.c_str());
-                    ImGui::SameLine();
-                    ImGui::Button(" --> ");
-                    ImGui::SameLine();
-                    button_text = transition->to ? transition->to->name : "NULL";
-                    ImGui::Button(button_text.c_str());
+                    ImGui::Text("%s --> %s : %.2fs",o.from.empty() ? "*" : o.from.c_str(),o.to.c_str(),o.blend_time);
                     ImGui::PopID();
                 }
             }

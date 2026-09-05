@@ -1,5 +1,6 @@
 #include "ObjectAnimation.h"
-
+#include "type_helpers.h"
+#include "skeleton/Bone.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("ObjectAnimation", DEBUG_INFO);
@@ -63,10 +64,6 @@ void Animation::LinkObjects(Object* root){
     root->GetAllSubObjects(objects);
     int count = 0;
     for (ObjectAnimation* object_animation:object_animations){
-        if (root->name.compare(object_animation->target_name) == 0){
-            //modifies_root_object = true;
-            //???
-        }
         for (Object* object:objects){
             if (object->name.compare(object_animation->target_name) == 0){
                 //debug->Info("Animation: Linking target %s to animation %s\n",object->name.c_str(),name.c_str());
@@ -137,6 +134,11 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
         ObjectAnimation* this_object_animation = object_animations.at(i);
         ObjectAnimation* target_object_animation = target->object_animations.at(i);
 
+        //The root bone is handled separately, uniformly, by LerpRootMotion - skip it here.
+        if (this_object_animation == root_track || target_object_animation == target->root_track){
+            continue;
+        }
+
         ObjectAnimationKeyFrame* start_keyframe = this_object_animation->GetClosestKeyframe(this_interval);
         ObjectAnimationKeyFrame* end_keyframe = target_object_animation->GetClosestKeyframe(target_interval);
 
@@ -149,20 +151,11 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
             continue;
         }
 
-        //If we are lerping hips towards something more off zero, we do that.
-
         //Apply the Lerp value.
         if (start_keyframe->f_position && end_keyframe->f_position){
-            if (modifies_root_object && target->modifies_root_object){
-                //Unhandled.
-                debug->Err("No Lerping between two root modifying animations yet.\n");
-            }else if ((target->modifies_root_object || modifies_root_object)  && target_object_animation->target_name.compare("mixamorig:Hips") == 0){
-                //Root motion for the Hips bone is applied manually by the caller, so we don't set its position here.
-            }else{
-                vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
-                if (this_object_animation->target){
-                    this_object_animation->target->SetPosition(pos);
-                }
+            vec3 pos = start_keyframe->position.lerp(end_keyframe->position,factor);
+            if (this_object_animation->target){
+                this_object_animation->target->SetPosition(pos);
             }
         }
         if (start_keyframe->f_rotation && end_keyframe->f_rotation){
@@ -184,21 +177,15 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
 //Apply complete animation to all objects in chain at interval
 void Animation::ApplyInterval(float interval){
     for (ObjectAnimation* object_animation:object_animations){
+        //The root bone is handled separately, uniformly, by SampleRootMotion - skip it here.
+        if (object_animation == root_track){
+            continue;
+        }
         Object* target = object_animation->target;
         if (!object_animation->target){
             continue;
         }
-        bool mask_position = false;
-        float target_mask = target->position_mask;
-        if (modifies_root_object && object_animation->target_name.compare("mixamorig:Hips") == 0){
-            mask_position = true;
-            target->position_mask = 0.0f;
-        }
         ApplyIntervalOnto(object_animation,target,interval);
-        //Reset
-        if (mask_position){
-            target->position_mask = target_mask;
-        }
     }
 }
 
@@ -305,76 +292,161 @@ void Animation::Retarget(Object* target){
     LinkObjects(target);
 }
 
-Animation* AnimationGraph::LookupAnimation(const std::string& name){
-    if (!animations){
-        debug->Warn("AddTransition with no animations to look up\n");
-        return NULL;
-    }
-    for (Animation* animation:*animations){
-        if (animation->name.compare(name) == 0){
-            return animation;
-        }
-    }
-    return NULL;
+void Animation::SetRootBone(const std::string& name){
+    root_bone_name = name;
+    root_track = FindObjectAnimation(name);
 }
 
-AnimationTransition* AnimationGraph::AddTransition(const std::string& from, const std::string& to){
-    //If to and from are the same, we need to only make sure the animation is looping
-    if (!from.empty() && (from.compare(to) == 0)){
-        Animation* animation = LookupAnimation(from);
-        if (animation){
-            animation->looped = true;
-        }
-        return NULL;
+//Splits a delta rotation 'relative' (already expressed relative to the bone's reference pose) into
+//a pure twist about +Y (the character's facing direction) and everything else (swing - lean/tilt).
+//See docs/animation_root_motion.md - this is the same swing-twist decomposition a cone-twist joint
+//uses to split its cone limit (swing) from its axial limit (twist).
+static void DecomposeSwingTwistY(const quat& relative, quat& out_swing, float& out_twist_angle){
+    quat twist(0.0f, relative.y, 0.0f, relative.w);
+    float len = sqrtf(twist.y*twist.y + twist.w*twist.w);
+    if (len > 1e-6f){
+        twist.y /= len;
+        twist.w /= len;
+    }else{
+        twist.identity();
     }
+    out_twist_angle = 2.0f * atan2f(twist.y, twist.w);
 
-    // Check this transition does not already exist.
-    for (AnimationTransition* t : transitions){
-        bool from_match = from.empty() ? (t->from == NULL) : (t->from && t->from->name == from);
-        bool to_match   = t->to && t->to->name == to;
-        if (from_match && to_match){
-            debug->Warn("AddTransition: transition %s -> %s already exists\n", from.c_str(), to.c_str());
-            return t;
-        }
-    }
-
-    Animation* anim_from = from.empty() ? NULL : LookupAnimation(from);
-    Animation* anim_to   = LookupAnimation(to);
-
-    if (!from.empty() && !anim_from){
-        debug->Warn("AddTransition: animation '%s' not found\n", from.c_str());
-        return NULL;
-    }
-    if (!anim_to){
-        debug->Warn("AddTransition: animation '%s' not found\n", to.c_str());
-        return NULL;
-    }
-
-    AnimationTransition* transition = new AnimationTransition();
-    transition->from       = anim_from;
-    transition->to         = anim_to;
-    transition->blend_time = 0.3f;
-    transitions.push_back(transition);
-
-    debug->Info("AnimationGraph: Added transition %s -> %s %p %p\n", from.c_str(), to.c_str());
-    return transition;
+    quat twist_inverse = twist;
+    twist_inverse.inverse();
+    out_swing = relative * twist_inverse;
 }
 
-//This just looks for the first transition from the specified animation. We might want to have multiple transitions.
-AnimationTransition* AnimationGraph::FindTransitionFrom(Animation* from){
-    for (AnimationTransition* t : transitions){
-        if (t->from == from){
-            return t;
-        }
-    }
-    return NULL;
+//Wraps an angle delta into (-PI, PI] so a twist angle crossing the +-PI seam doesn't register as a
+//near-2*PI jump.
+static float WrapAngleDelta(float delta){
+    return fmodf(delta + 3.0f*TYPE_PI, 2.0f*TYPE_PI) - TYPE_PI;
 }
 
-AnimationTransition* AnimationGraph::FindTransition(Animation* from, Animation* to){
-    for (AnimationTransition* t : transitions){
-        if (t->from == from && t->to == to){
-            return t;
-        }
+RootPose Animation::ComputeRootPose(float time){
+    RootPose out;
+    if (!root_track || !root_track->target){
+        return out;
     }
-    return NULL;
+    Bone* bone = dynamic_cast<Bone*>(root_track->target);
+    if (!bone){
+        return out;
+    }
+    ObjectAnimationKeyFrame* keyframe = root_track->GetClosestKeyframe(time);
+    if (!keyframe){
+        return out;
+    }
+
+    out.authored_position = keyframe->f_position ? keyframe->position : bone->reference_position;
+
+    if (keyframe->f_rotation){
+        quat reference_inverse = bone->reference_rotation;
+        reference_inverse.inverse();
+        quat relative = keyframe->rotation * reference_inverse;
+        DecomposeSwingTwistY(relative, out.swing, out.twist_angle);
+    }
+    return out;
+}
+
+//Builds the bone-local position to display for a root pose sampled from a clip with the given
+//horizontal/vertical extraction flags: any axis NOT extracted keeps its authored value (so it still
+//reads as cosmetic bone motion - sway, bob); any axis extracted is pinned to the reference position
+//(so it isn't shown twice, once on the bone and once on the character's world transform).
+static vec3 PinnedBonePosition(const RootPose& pose, Bone* bone, bool extract_horizontal, bool extract_vertical){
+    vec3 out = bone->reference_position;
+    if (!extract_horizontal){
+        out.x = pose.authored_position.x;
+        out.z = pose.authored_position.z;
+    }
+    if (!extract_vertical){
+        out.y = pose.authored_position.y;
+    }
+    return out;
+}
+
+RootMotionDelta Animation::SampleRootMotion(float prev_time, float new_time){
+    RootMotionDelta out;
+    if (!root_track || !root_track->target){
+        return out;
+    }
+    Bone* bone = dynamic_cast<Bone*>(root_track->target);
+    if (!bone){
+        return out;
+    }
+
+    RootPose prev = ComputeRootPose(prev_time);
+    RootPose cur  = ComputeRootPose(new_time);
+
+    if (extract_horizontal_root_motion){
+        out.position.x = cur.authored_position.x - prev.authored_position.x;
+        out.position.z = cur.authored_position.z - prev.authored_position.z;
+    }
+    if (extract_vertical_root_motion){
+        out.position.y = cur.authored_position.y - prev.authored_position.y;
+    }
+    out.yaw = WrapAngleDelta(cur.twist_angle - prev.twist_angle);
+
+    bone->SetPosition(PinnedBonePosition(cur, bone, extract_horizontal_root_motion, extract_vertical_root_motion));
+    bone->SetRotation(cur.swing * bone->reference_rotation);
+
+    return out;
+}
+
+RootMotionDelta Animation::LerpRootMotion(Animation* to, float from_prev, float from_new, float to_prev, float to_new, float factor){
+    RootMotionDelta out;
+    if (!to){
+        return out;
+    }
+    ObjectAnimation* track = root_track ? root_track : to->root_track;
+    if (!track || !track->target){
+        return out;
+    }
+    Bone* bone = dynamic_cast<Bone*>(track->target);
+    if (!bone){
+        return out;
+    }
+
+    RootMotionDelta from_delta;
+    RootPose from_cur;
+    if (root_track){
+        RootPose from_prev_pose = ComputeRootPose(from_prev);
+        from_cur = ComputeRootPose(from_new);
+        if (extract_horizontal_root_motion){
+            from_delta.position.x = from_cur.authored_position.x - from_prev_pose.authored_position.x;
+            from_delta.position.z = from_cur.authored_position.z - from_prev_pose.authored_position.z;
+        }
+        if (extract_vertical_root_motion){
+            from_delta.position.y = from_cur.authored_position.y - from_prev_pose.authored_position.y;
+        }
+        from_delta.yaw = WrapAngleDelta(from_cur.twist_angle - from_prev_pose.twist_angle);
+    }
+
+    RootMotionDelta to_delta;
+    RootPose to_cur;
+    if (to->root_track){
+        RootPose to_prev_pose = to->ComputeRootPose(to_prev);
+        to_cur = to->ComputeRootPose(to_new);
+        if (to->extract_horizontal_root_motion){
+            to_delta.position.x = to_cur.authored_position.x - to_prev_pose.authored_position.x;
+            to_delta.position.z = to_cur.authored_position.z - to_prev_pose.authored_position.z;
+        }
+        if (to->extract_vertical_root_motion){
+            to_delta.position.y = to_cur.authored_position.y - to_prev_pose.authored_position.y;
+        }
+        to_delta.yaw = WrapAngleDelta(to_cur.twist_angle - to_prev_pose.twist_angle);
+    }
+
+    out.position = from_delta.position.lerp(to_delta.position, factor);
+    out.yaw = from_delta.yaw + (to_delta.yaw - from_delta.yaw) * factor;
+
+    //Blend the two clips' pinned/swing-corrected display pose for the shared bone.
+    vec3 from_display = root_track ? PinnedBonePosition(from_cur, bone, extract_horizontal_root_motion, extract_vertical_root_motion) : bone->reference_position;
+    vec3 to_display = to->root_track ? PinnedBonePosition(to_cur, bone, to->extract_horizontal_root_motion, to->extract_vertical_root_motion) : bone->reference_position;
+    bone->SetPosition(from_display.lerp(to_display, factor));
+
+    quat from_rot = from_cur.swing * bone->reference_rotation;
+    quat to_rot = to_cur.swing * bone->reference_rotation;
+    bone->SetRotation(quat::slerp(from_rot, to_rot, factor));
+
+    return out;
 }

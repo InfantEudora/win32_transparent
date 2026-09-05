@@ -149,7 +149,7 @@ class Object{
     std::vector<Animation*>animations;
 
     Animation* current_animation = NULL;
-    AnimationTransition* current_transition = NULL;
+    Animation* transition_to = NULL;    // The animation we are transitioning towards (NULL when not transitioning)
 
     int animation_state = ANIMATION_STATE_LOOPING;
 
@@ -163,21 +163,30 @@ class Object{
     float animation_time_delta = 0.02f;
 
     float animation_transition_time = 0.0f;
-    float animation_transition_time_max = 0.25f;
-    float animation_transition_factor = 0.0f;   //Computed factor of animation_transition_time /animation_transition_time_max
+    float animation_transition_time_max = 0.25f;    //Default blend time, used when no override matches
+    float animation_transition_blend_time = 0.25f;  //Blend time resolved for the CURRENT transition (set once when it starts)
+    float animation_transition_factor = 0.0f;   //Computed factor of animation_transition_time / animation_transition_blend_time
     void AddAnimation(Animation* animation);
     //void SetAnimation(Animation* animation);
     Animation* FindAnimation(const std::string& name); //Finds it by name
-
-    AnimationGraph* animation_graph = NULL; //A graph describing what animations may follow what.
     const char* CurrentAnimationName();
     const char* NextAnimationName();
 
-
+    //Sparse per-object table of (from,to) -> blend time overrides. An empty 'from' matches any
+    //current animation (a wildcard "->to" default). Anything not listed here just uses
+    //animation_transition_time_max.
+    struct AnimationBlendOverride{
+        std::string from;
+        std::string to;
+        float blend_time = 0.0f;
+    };
+    std::vector<AnimationBlendOverride> animation_blend_overrides;
+    void SetBlendTime(const std::string& from, const std::string& to, float blend_time);
+    float LookupBlendTime(const std::string& from, const std::string& to);
 
     virtual void ApplyAnimation(float time_delta);
     void TransitionToAnimation(const std::string& name);
-    void TransitionToAnimation(Animation* animation, AnimationTransition* transition = NULL);  // Flags that we can blend into the next animation
+    void TransitionToAnimation(Animation* animation);  // Flags that we can blend into the next animation
     void SwitchToAnimation(const std::string& name);                   // Does not need a animation transistion
     void SwitchToAnimation(Animation* animation);                      // Instantly switches to the next animation, without blending
 

@@ -726,14 +726,34 @@ const char* Object::CurrentAnimationName(){
 }
 
 const char* Object::NextAnimationName(){
-    if (!current_transition){
+    if (!transition_to){
         return "None";
     }
-    if (!current_transition->to){
-            return "None";
+    return transition_to->name.c_str();
+}
+
+void Object::SetBlendTime(const std::string& from, const std::string& to, float blend_time){
+    for (AnimationBlendOverride& o : animation_blend_overrides){
+        if (o.from == from && o.to == to){
+            o.blend_time = blend_time;
+            return;
         }
-        return current_transition->to->name.c_str();
-    };
+    }
+    AnimationBlendOverride o;
+    o.from = from;
+    o.to = to;
+    o.blend_time = blend_time;
+    animation_blend_overrides.push_back(o);
+}
+
+float Object::LookupBlendTime(const std::string& from, const std::string& to){
+    for (AnimationBlendOverride& o : animation_blend_overrides){
+        if ((o.from.empty() || o.from == from) && o.to == to){
+            return o.blend_time;
+        }
+    }
+    return animation_transition_time_max;
+}
 
 void Object::SwitchToAnimation(const std::string& name){
     SwitchToAnimation(FindAnimation(name));
@@ -741,7 +761,7 @@ void Object::SwitchToAnimation(const std::string& name){
 
 //Forcesfull switches to the specified animation. If NULL, will switch to default pose.
 void Object::SwitchToAnimation(Animation* animation){
-    current_transition = NULL;
+    transition_to = NULL;
     if (!animation){
         current_animation = NULL;
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
@@ -758,32 +778,32 @@ void Object::TransitionToAnimation(const std::string& name){
     Animation* animation = FindAnimation(name);
     if (!animation){
         debug->Warn("TransitionToAnimation: Animation %s not found\n",name.c_str());
+        return;
     }
     TransitionToAnimation(animation);
 }
 
-//TODO: TransitionToAnimation should just transition to the supplied animation.
-//There should be a function that only transitions to the supplied animation if there is a transition
-
 //From whereever the current animation is, we attempt transition into the next animation.
-
-void Object::TransitionToAnimation(Animation* animation, AnimationTransition* transition){
+void Object::TransitionToAnimation(Animation* animation){
     if (!animation){
-        current_transition = NULL;
+        transition_to = NULL;
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
         return;
     }
 
-    //Check that we are not already transitioning to a new animation.
     Animation* target_animation = current_animation; //The animation we are in, or are transitioning to
 
-    if (current_transition && (animation_state == ANIMATION_STATE_TRANSITION)){
-        if (animation == current_transition->to){
+    if (animation_state == ANIMATION_STATE_TRANSITION){
+        if (animation == transition_to){
             debug->Info("Already transitioning to this animation\n");
             return;
         }
-        debug->Info("Currently Transition from %s to %s. Request Transition back to %s\n",current_animation ? current_animation->name.c_str() : "NULL",current_transition->to ? current_transition->to->name.c_str() : "NULL",animation->name.c_str());
-        if (current_transition->from == animation){
+        if (transition_to && !transition_to->interruptible){
+            debug->Info("Cannot interrupt transition to %s before it finishes\n",transition_to->name.c_str());
+            return;
+        }
+        debug->Info("Currently Transition from %s to %s. Request Transition back to %s\n",current_animation ? current_animation->name.c_str() : "NULL",transition_to ? transition_to->name.c_str() : "NULL",animation->name.c_str());
+        if (current_animation == animation){
             debug->Info("Rewinding transition back to %s\n",animation->name.c_str());
             animation_state = ANIMATION_STATE_TRANSITION_BACK;
         }else{
@@ -791,65 +811,27 @@ void Object::TransitionToAnimation(Animation* animation, AnimationTransition* tr
             animation_state = ANIMATION_STATE_PAUSED;
         }
         return;
-
-        //We are in the middle of a transition. We can either continue to the current target animation, or we can attempt to transition to the new one.
-        //Or rewind this transition.
+        //We are in the middle of a transition. We can either continue to the current target animation,
+        //rewind it, or (not yet handled) retarget it to a third animation.
     }
 
-    //First we attempt to find the transition from the current animation to the new one.
-    debug->Info("Looking for transition from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
-    if (target_animation && animation && target_animation->name.compare(animation->name) == 0){
-        if (target_animation->looped){
-            debug->Trace("Animation is looped\n");
-            return;
-        }
-    }
-
-
-    if (!transition && animation_graph){
-        for (AnimationTransition* t:animation_graph->transitions){
-            if ((t->from == target_animation) && (t->to == animation)){
-                transition = t;
-
-                debug->Info("Found transition from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
-                break;
-            }
-        }
-    }
-    current_transition = transition;
-
-    if (transition == NULL){
-        debug->Info("TransitionToAnimation: No transition found from %s to %s. Pausing animation.\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
-        //We can just make one... for now.
-        transition = animation_graph->AddTransition(target_animation ? target_animation->name : "", animation->name);
-        current_transition = transition;
-        //animation_state = ANIMATION_STATE_PAUSED;
-        //return;
-        debug->Warn("TransitionToAnimation: Created transition from %s to %s.\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
-    }
-
-    if (animation == target_animation){
-        //We are already playing this animation... but... we might be transitioning to a new one.
-        if (animation_state != ANIMATION_STATE_LOOPING){
-            debug->Info("Proceed to animation during non looping state.\n");
-        }
+    if (target_animation == animation){
+        //Already playing (or transitioning to) this animation - no-op.
         return;
     }
-    //If this is a new one, we reset it to 0. Otherwise, leave it.
-    /*if (next_animation != animation){
-        next_animation = animation;
-        next_animation->time_index = 0;
-    }*/
 
-    if ((animation_state != ANIMATION_STATE_TRANSITION_START) && (animation_state != ANIMATION_STATE_TRANSITION)){
-        animation_state = ANIMATION_STATE_TRANSITION_START;
-        animation_transition_time = 0.0f;
-        animation_transition_factor = 0.0f;
-        //We record the current position and rotation as needing to be applied.
-    }else{
-        debug->Warn("Transition from ANIMATION_STATE_TRANSITION(START)\n");
-        animation_state = ANIMATION_STATE_TRANSITION_START;
+    if (target_animation && !target_animation->interruptible && !target_animation->HasFinished() && animation_state == ANIMATION_STATE_LOOPING){
+        debug->Info("Cannot interrupt %s before it finishes\n",target_animation->name.c_str());
+        return;
     }
+
+    debug->Info("Transitioning from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
+
+    transition_to = animation;
+    animation_transition_blend_time = LookupBlendTime(target_animation ? target_animation->name : "", animation->name);
+    animation_state = ANIMATION_STATE_TRANSITION_START;
+    animation_transition_time = 0.0f;
+    animation_transition_factor = 0.0f;
 }
 
 //TODO: This is finetuned in PlayerCharacter. Could be fixed for normal objects
