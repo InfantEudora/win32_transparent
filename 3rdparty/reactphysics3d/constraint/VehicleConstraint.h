@@ -120,6 +120,10 @@ struct VehicleWheelSettings {
         /// space). A good default is the wheel centre at mid travel.
         Vector3 suspensionForcePoint;
 
+        /// If false the wheel is taken out of the simulation: no ray is cast, it reports no contact
+        /// and applies no force, as if it had come off. It still spins freely. Default true.
+        bool enabled;
+
         /// Number of ground samples cast per wheel, each a ray parallel to suspensionDirection but
         /// offset along the (steered) rolling direction, approximating points around the rim of the
         /// tire rather than just its very bottom. The one that touches down soonest is the wheel's
@@ -146,7 +150,7 @@ struct VehicleWheelSettings {
               radius(decimal(0.3)), width(decimal(0.1)), inertia(decimal(0.9)), angularDamping(decimal(0.2)),
               longitudinalFriction(decimal(1.0)), lateralFriction(decimal(1.0)),
               enableSuspensionForcePoint(false), suspensionForcePoint(0, 0, 0),
-              numContactSamples(1), contactSampleHalfAngle(PI_RP3D / decimal(4.0)) {}
+              enabled(true), numContactSamples(1), contactSampleHalfAngle(PI_RP3D / decimal(4.0)) {}
 };
 
 // Class VehicleWheel
@@ -341,12 +345,23 @@ struct VehicleConstraintSettings {
         /// Collision category bits the wheel rays test against (see Collider::setCollisionCategoryBits)
         unsigned short raycastCategoryMaskBits;
 
+        /// Fraction of last step's tire friction impulse (lateral, and the hard stop) applied at
+        /// the start of the next step as a warm start, in [0, 1]. Below 1 it lets a self-cancelling
+        /// pair of impulses die out: two wheels on one axle pushing sideways against each other
+        /// with equal and opposite force produce no net force or torque, so the solver has
+        /// nothing to correct and a full warm start would carry that pair forward unchanged for
+        /// ever, quietly using up the tires' friction budget (seen as a car that snaps sideways
+        /// after a corner, its tires already at their limit while rolling straight). The
+        /// suspension spring is not affected: as a soft constraint its impulse is determined by
+        /// the spring itself. Default 0.8, as Jolt uses.
+        decimal warmStartImpulseRatio;
+
         // -------------------- Methods -------------------- //
 
         /// Constructor
         VehicleConstraintSettings()
             : up(0, 1, 0), forward(0, 0, 1), maxSlopeAngle(decimal(80.0) * PI_RP3D / decimal(180.0)),
-              raycastCategoryMaskBits(0xFFFF) {}
+              raycastCategoryMaskBits(0xFFFF), warmStartImpulseRatio(decimal(0.8)) {}
 };
 
 // Class VehicleConstraint
@@ -402,6 +417,9 @@ class VehicleConstraint {
 
         /// Collision category bits the wheel rays test against
         unsigned short mRaycastCategoryMaskBits;
+
+        /// Warm start ratio for the tire friction parts (see VehicleConstraintSettings)
+        decimal mWarmStartImpulseRatio;
 
         /// The wheels
         Array<VehicleWheel> mWheels;
@@ -463,6 +481,12 @@ class VehicleConstraint {
 
         /// Set the collision category bits the wheel rays test against
         void setRaycastCategoryMaskBits(unsigned short maskBits);
+
+        /// Return the warm start ratio of the tire friction impulses (see VehicleConstraintSettings::warmStartImpulseRatio)
+        decimal getWarmStartImpulseRatio() const;
+
+        /// Set the warm start ratio of the tire friction impulses, clamped to [0, 1]
+        void setWarmStartImpulseRatio(decimal ratio);
 
         /// Return the world-space centre of a wheel (attachment point + suspension length along
         /// the suspension direction)
@@ -660,6 +684,16 @@ RP3D_FORCE_INLINE unsigned short VehicleConstraint::getRaycastCategoryMaskBits()
 // Set the collision category bits the wheel rays test against
 RP3D_FORCE_INLINE void VehicleConstraint::setRaycastCategoryMaskBits(unsigned short maskBits) {
     mRaycastCategoryMaskBits = maskBits;
+}
+
+// Return the warm start ratio of the tire friction impulses
+RP3D_FORCE_INLINE decimal VehicleConstraint::getWarmStartImpulseRatio() const {
+    return mWarmStartImpulseRatio;
+}
+
+// Set the warm start ratio of the tire friction impulses
+RP3D_FORCE_INLINE void VehicleConstraint::setWarmStartImpulseRatio(decimal ratio) {
+    mWarmStartImpulseRatio = clamp(ratio, decimal(0.0), decimal(1.0));
 }
 
 }

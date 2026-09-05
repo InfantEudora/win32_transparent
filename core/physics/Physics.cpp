@@ -392,6 +392,20 @@ float Physics::GetBounciness(){
 	return 0;
 }
 
+rp3d::VehicleConstraint* Physics::CreateVehicle(const rp3d::VehicleConstraintSettings& settings){
+	if (!body || !body->rigidbody || !world || !world->rp_world){
+		debug->Err("CreateVehicle: no rigidbody/world\n");
+		return NULL;
+	}
+	return world->rp_world->createVehicle(body->rigidbody,settings);
+}
+
+void Physics::DestroyVehicle(rp3d::VehicleConstraint* vehicle){
+	if (vehicle && world && world->rp_world){
+		world->rp_world->destroyVehicle(vehicle);
+	}
+}
+
 void Physics::CreateBallAndSocketJoint(PhysicsBody* body1, PhysicsBody* body2, const vec3& wp){
 	const rp3d::Vector3 anchorPoint = (rp3d::Vector3&)wp;
 

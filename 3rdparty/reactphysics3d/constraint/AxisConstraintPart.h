@@ -219,8 +219,13 @@ class AxisConstraintPart {
         void resetTotalLambda();
 
         /// Apply the accumulated impulse of the previous step (warm starting). Call once per step
-        /// after compute*Properties and before the first solveVelocityConstraint.
-        void warmStart(const AxisConstraintBody& body1, const AxisConstraintBody& body2, const Vector3& axis) const;
+        /// after compute*Properties and before the first solveVelocityConstraint. `ratio` scales
+        /// the carried-over impulse first (1 = keep all of it). Below 1 it lets an impulse the
+        /// solver can no longer see decay away: several hard constraints on one body can hold an
+        /// equal-and-opposite set of impulses that produce no net velocity error at all, which a
+        /// full warm start would otherwise carry forward unchanged for ever.
+        void warmStart(const AxisConstraintBody& body1, const AxisConstraintBody& body2, const Vector3& axis,
+                       decimal ratio = decimal(1.0));
 
         /// One solver iteration: compute the impulse that makes J v + b = 0 (or the soft equivalent),
         /// clamp the ACCUMULATED impulse to [minLambda, maxLambda] and apply the difference.
@@ -367,8 +372,9 @@ RP3D_FORCE_INLINE void AxisConstraintPart::resetTotalLambda() {
 
 // Apply the accumulated impulse of the previous step (warm starting)
 RP3D_FORCE_INLINE void AxisConstraintPart::warmStart(const AxisConstraintBody& body1, const AxisConstraintBody& body2,
-                                                     const Vector3& axis) const {
+                                                     const Vector3& axis, decimal ratio) {
     if (!isActive()) return;
+    mTotalLambda *= ratio;
     applyImpulse(body1, body2, axis, mTotalLambda);
 }
 

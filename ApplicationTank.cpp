@@ -244,6 +244,11 @@ void ApplicationTank::Init(void){
             wheel.visual = wheel_visual;
             wheel.visual_natural_radius = controlled_tank->wheel_radius; //what tank_wheel's own mesh represents at scale 1 - see Wheel's comment
         }
+
+        //All wheels laid out and the hull has its collider (mass): hand them to reactphysics3d.
+        //From here on the wheels are simulated inside the physics world by a VehicleConstraint,
+        //and TankCharacter::UpdatePhysicsState only decides torques - see core/Vehicle.h.
+        controlled_tank->CreateVehicleConstraint();
     }
 
     target = assetmanager->GetObjectFromAsset("target");
@@ -439,9 +444,10 @@ void ApplicationTank::Init(void){
                 suspension_visual->SetPosition(wheel.local_offset); //the anchor - the modeled spring's own origin
                 wheel.suspension_visual = suspension_visual;
             }
-
-
         }
+
+        //Same as the tank: wheels laid out and measured, colliders on - into the physics world.
+        controlled_buggy->CreateVehicleConstraint();
     }
 
 /*
@@ -704,25 +710,21 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
     }
 
     //Per-wheel suspension/force breakdown, straight from the Wheel diagnostics the physics
-    //thread wrote on its last tick (see Wheel in core/Wheel.h). The hull-level
-    //fields above only ever say THAT something is wrong; this says which contact is doing it.
-    //Read unsynchronized while the physics thread writes, same as the pedal inputs already are.
+    //thread wrote on its last tick (read back from the rp3d VehicleConstraint, see Wheel in
+    //core/Wheel.h). The hull-level fields above only ever say THAT something is wrong; this
+    //says which contact is doing it. Read unsynchronized while the physics thread writes, same
+    //as the pedal inputs already are.
     //
-    //What to look for: point_speed at or above max_point_speed means that clamp is holding the
-    //simulation together rather than merely trimming it, i.e. the tuning underneath is
-    //diverging. lateral_force is the one to watch for roll trouble - it carries the largest
-    //coefficient in the system, so a left/right pair disagreeing in sign while the hull is
-    //level is a contact fighting the suspension instead of helping it.
+    //What to look for: friction_saturated on a wheel means the tire is at its grip limit -
+    //wheelspin under power, a locked wheel under the brake, or a sideways slide. lateral_force
+    //is the one to watch for roll trouble: a left/right pair disagreeing in sign while the hull
+    //is level is a contact fighting the suspension instead of helping it.
     json wheels = json::array();
     int wheels_grounded = 0;
-    bool point_speed_clamped = false;
     float total_spring_force = 0.0f;
     for (const Wheel& wheel : vehicle->wheels){
         if (wheel.grounded){
             wheels_grounded++;
-        }
-        if (wheel.point_speed > vehicle->ResolveTuning(wheel).max_point_speed){
-            point_speed_clamped = true;
         }
         total_spring_force += wheel.spring_force;
         wheels.push_back(json{
@@ -745,7 +747,6 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
             {"grounded", wheel.grounded},
             {"compression", wheel.compression},
             {"compression_rate", wheel.compression_rate},
-            {"point_speed", wheel.point_speed},
             {"spring_force", wheel.spring_force},
             {"drive_force", wheel.drive_force},
             {"longitudinal_force", wheel.longitudinal_force},
@@ -761,10 +762,7 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
     //Against mass_kg * 9.81: at rest on level ground these two agree, so a mismatch is either
     //motion (a landing, a bounce) or a suspension that is not carrying the vehicle.
     result["total_spring_force"] = total_spring_force;
-    //Surfaced on its own rather than left to be spotted in the per-wheel list: if this is ever
-    //true the point_velocity clamp is load-bearing, which invalidates reading any force below
-    //it as a real physical value.
-    result["point_speed_clamped"] = point_speed_clamped;
+    result["has_vehicle_constraint"] = vehicle->rp_vehicle != NULL;
 
     //Echoed so a reader can judge the numbers above against the tuning that produced them
     //without a separate lookup or a rebuild to check what the constants currently are.
@@ -780,11 +778,12 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
             {"suspension_travel", controlled_tank->suspension_travel},
             {"lateral_friction", controlled_tank->lateral_friction},
             {"friction_coefficient", controlled_tank->friction_coefficient},
+            {"wheel_mass", controlled_tank->wheel_mass},
+            {"contact_samples", controlled_tank->contact_samples},
             {"engine_force", controlled_tank->engine_force},
             {"brake_force", controlled_tank->brake_force},
+            {"idle_brake", controlled_tank->idle_brake},
             {"top_speed", controlled_tank->top_speed},
-            {"max_wheel_force", controlled_tank->max_wheel_force},
-            {"max_point_speed", controlled_tank->max_point_speed},
             {"max_roll_speed", controlled_tank->max_roll_speed},
         };
     }else if (vehicle == controlled_buggy && controlled_buggy){
@@ -794,14 +793,14 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
             {"suspension_rest_length", controlled_buggy->suspension_rest_length},
             {"suspension_travel", controlled_buggy->suspension_travel},
             {"lateral_friction", controlled_buggy->lateral_friction},
-            {"rolling_resistance", controlled_buggy->rolling_resistance},
             {"friction_coefficient", controlled_buggy->friction_coefficient},
+            {"wheel_mass", controlled_buggy->wheel_mass},
+            {"contact_samples", controlled_buggy->contact_samples},
             {"engine_force", controlled_buggy->engine_force},
             {"brake_force", controlled_buggy->brake_force},
             {"top_speed", controlled_buggy->top_speed},
             {"power_split_front", controlled_buggy->power_split_front},
             {"max_steer_angle_degrees", controlled_buggy->max_steer_angle_degrees},
-            {"max_point_speed", controlled_buggy->max_point_speed},
             {"max_roll_speed", controlled_buggy->max_roll_speed},
         };
     }
@@ -1068,10 +1067,13 @@ void ApplicationTank::RegisterMCPTools(){
             if (!vehicle){
                 return json{ {"error","no such vehicle"} };
             }
+            //Queued for the physics thread rather than applied here: this handler runs on the
+            //MCP thread, and a teleport racing the running physics step corrupts the vehicle -
+            //see Vehicle::RequestReset. Takes effect on the next tick (a tank_step while paused).
             if (vehicle == controlled_tank){
-                vehicle->ResetState(tank_start_position,tank_start_rotation);
+                vehicle->RequestReset(tank_start_position,tank_start_rotation);
             }else{
-                vehicle->ResetState(buggy_start_position,buggy_start_rotation);
+                vehicle->RequestReset(buggy_start_position,buggy_start_rotation);
             }
             return GetVehicleTelemetry(vehicle);
         });
@@ -1834,8 +1836,10 @@ void ApplicationTank::RenderVehicleWheelTable(Vehicle* vehicle){
 
             ImGui::TableSetColumnIndex(10);
             ImGui::SetNextItemWidth(80.0f);
+            //A Coulomb coefficient now (max sideways force = this * normal load), same units as
+            //Friction Coef - see Wheel::lateral_friction.
             float lateral_friction = vehicle->WheelLateralFriction(wheel);
-            if (ImGui::DragFloat("##lateral_friction",&lateral_friction,1.0f,0.0f,1000.0f,"%.0f")){
+            if (ImGui::DragFloat("##lateral_friction",&lateral_friction,0.01f,0.0f,3.0f,"%.2f")){
                 wheel.lateral_friction = lateral_friction;
             }
 
@@ -1892,7 +1896,7 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::Text("Reverse        : %s",controlled_tank->f_reverse ? "true" : "false");
 
             if (ImGui::Button("Reset Tank To Start")){
-                controlled_tank->ResetState(tank_start_position,tank_start_rotation);
+                controlled_tank->RequestReset(tank_start_position,tank_start_rotation); //render thread - applied by the physics thread, see Vehicle::RequestReset
             }
 
             if (ImGui::Checkbox("Show pink wheel debug visuals (vs. tracks mesh)",&f_show_wheel_debug_visuals)){
@@ -1921,7 +1925,7 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::DragFloat("Power Split (0=RWD, 1=FWD)",&controlled_buggy->power_split_front,0.01f,0.0f,1.0f,"%.2f");
 
             if (ImGui::Button("Reset Buggy To Start")){
-                controlled_buggy->ResetState(buggy_start_position,buggy_start_rotation);
+                controlled_buggy->RequestReset(buggy_start_position,buggy_start_rotation); //render thread - see Vehicle::RequestReset
             }
             ImGui::Separator();
             RenderVehicleWheelTable(controlled_buggy);

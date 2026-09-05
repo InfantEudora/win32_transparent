@@ -5,12 +5,12 @@
 #include <windows.h>
 #include <vector>
 
-//A plain 4-wheeled vehicle sharing TankCharacter's raycast-wheel suspension (see core/Wheel.h/
-//.cpp) but with a car's drivetrain instead of a tank's: only the front axle steers, and engine
-//power is split between the front and rear axles by power_split_front rather than between left
-//and right sides. 0.0 = rear-wheel drive, 1.0 = front-wheel drive, anything in between = that
-//fraction to the front axle and the rest to the rear - one knob covering RWD/FWD/AWD instead of
-//three separate drive modes.
+//A plain 4-wheeled vehicle sharing TankCharacter's wheel suspension (an rp3d VehicleConstraint,
+//see core/Vehicle.h) but with a car's drivetrain instead of a tank's: only the front axle
+//steers, and engine power is split between the front and rear axles by power_split_front rather
+//than between left and right sides. 0.0 = rear-wheel drive, 1.0 = front-wheel drive, anything
+//in between = that fraction to the front axle and the rest to the rear - one knob covering
+//RWD/FWD/AWD instead of three separate drive modes.
 class BuggyCharacter : public Vehicle{
 public:
     BuggyCharacter();
@@ -36,57 +36,45 @@ public:
         t.travel = wheel.travel > 0.0f ? wheel.travel : suspension_travel;
         t.stiffness = wheel.stiffness > 0.0f ? wheel.stiffness : suspension_stiffness;
         t.damping = wheel.damping > 0.0f ? wheel.damping : suspension_damping;
-        t.max_force = wheel.max_force > 0.0f ? wheel.max_force : max_wheel_force;
-        t.max_point_speed = wheel.max_point_speed > 0.0f ? wheel.max_point_speed : max_point_speed;
         t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
         t.lateral_friction = wheel.lateral_friction > 0.0f ? wheel.lateral_friction : lateral_friction;
-        t.rolling_resistance = wheel.rolling_resistance > 0.0f ? wheel.rolling_resistance : rolling_resistance;
+        t.mass = wheel.mass > 0.0f ? wheel.mass : wheel_mass;
         return t;
     }
 
-    //Default rolling radius - 0 degrades to the old point-contact model, same as TankCharacter.
-    //Set from the buggy wheel asset's own mesh extents once that asset exists.
+    //Default rolling radius - 0 degrades to a point-contact model, same as TankCharacter. Set
+    //from the buggy wheel assets' own mesh extents in ApplicationTank::Init.
     float wheel_radius = 0.0f;
 
     //0 = rear-wheel drive, 1 = front-wheel drive, in between = that fraction of engine_force to
     //the front axle, the rest to the rear - see this class's own header comment.
     float power_split_front = 0.0f;
 
-    //Front wheels only (Wheel::steerable) rotate their own rolling/tangential basis by up to
-    //this much, scaled by steering_position - see UpdatePhysicsState. 35 degrees is a
-    //conservative real-car lock angle.
+    //Front wheels only (Wheel::steerable) are turned about the body's up axis by up to this
+    //much, scaled by steering_position - see UpdatePhysicsState. 35 degrees is a conservative
+    //real-car lock angle.
     float max_steer_angle_degrees = 35.0f;
 
-    //Suspension tuning - same shape and role as TankCharacter's own fields, see UpdatePhysicsState
-    //for how these become a per-wheel spring+damper force via WheelSuspension::UpdateContact.
-    //Starting values are a plain guess (no real chassis mass/mesh to derive them from yet, unlike
-    //the tank's track-mesh-derived numbers) and expected to need live tuning once the buggy asset
-    //exists - see the stability-limit math in TankCharacter.h's own suspension_damping comment
-    //if retuning stiffness/damping: the same c_per_wheel < mass/(num_wheels*dt) bound applies here.
+    //Suspension tuning - same shape and role as TankCharacter's own fields, handed to the
+    //constraint per wheel by Vehicle::MakeWheelSettings. The numbers were a plain first guess
+    //(no real chassis mass/mesh to derive them from at the time) and are expected to be retuned
+    //live: 8000 N/m over 4 wheels carries the 45 kg body at ~0.014 m of compression; 200 N/(m/s)
+    //is a damping ratio of about 0.5 for the assembly (2 sqrt(k m) = 2 sqrt(32000 * 45) = ~2400),
+    //a soft, off-road sort of bounce. The constraint solves the spring implicitly, so any value
+    //here is stable - these are feel choices, not integrator limits.
     float suspension_rest_length = 0.15f;
     float suspension_travel = 0.10f;
     float suspension_stiffness = 8000.0f;
     float suspension_damping = 200.0f;
-    float max_wheel_force = 5000.0f;
-    //Default for any wheel that doesn't override its own Wheel::lateral_friction (0 = inherit,
-    //same pattern as every other tuning field here - see ResolveTuning above).
-    float lateral_friction = 100.0f;   //N per (m/s) of sideways slip, per grounded wheel
-    //Default for any wheel that doesn't override its own Wheel::rolling_resistance (0 = inherit).
-    //Deliberately its own, much smaller number than lateral_friction - see Wheel's own comment
-    //on why a coasting wheel shouldn't resist forward motion nearly that hard.
-    float rolling_resistance = 15.0f;  //N per (m/s) of forward-axis speed, per coasting wheel
-    float friction_coefficient = 1.0f; //Coulomb - see TankCharacter's own field for why this exists
-    float max_point_speed = 2.0f;
-    float max_roll_speed = 3.0f;
+    //Coulomb friction along the rolling direction (drive/brake) and sideways (cornering) - the
+    //most force a tire puts into the ground is the coefficient times its normal load. 1.0 each
+    //is a grippy tire on dry ground: at these the buggy corners rather than slides, and brakes
+    //until a wheel locks. Drop lateral_friction towards 0.5 for a loose, drifty surface.
+    float friction_coefficient = 1.0f;
+    float lateral_friction = 1.0f;
 
-    //How fast a DRIVEN wheel with no ground contact revs up under throttle - a free-spinning
-    //wheel still has an engine trying to turn it, it just has nothing to grip, so it accelerates
-    //toward its own free-spin limit instead of sitting inert (see UpdatePhysicsState). That limit
-    //is top_speed carried through the wheel's own radius (rad/s = m/s / m), the same governor
-    //normal driving is already capped by, rather than a separate number to keep in sync with it.
-    float free_spin_acceleration = 60.0f; //rad/s^2
-    //How much friction is in the drivetrain
-    float free_spin_deceleration = 10.0f; //rad/s^2
+    //Last-resort safety net on the body's roll/pitch rate - see TankCharacter's own field.
+    float max_roll_speed = 3.0f;
 };
 
 #endif

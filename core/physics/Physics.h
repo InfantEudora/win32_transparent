@@ -87,6 +87,14 @@ public:
     //Joints
     void CreateBallAndSocketJoint(PhysicsBody* a, PhysicsBody* b,const vec3& wp);
 
+    //Vehicles: a raycast-wheel suspension on this body, simulated inside reactphysics3d (its
+    //VehicleConstraint - spring/damper per wheel along the contact normal, hard stop, tire
+    //friction along and across the rolling direction, all solved together with the rest of the
+    //world's constraints). Wheels are added on the returned constraint. Destroying this body
+    //destroys the vehicle too, so only call DestroyVehicle while the body still exists.
+    rp3d::VehicleConstraint* CreateVehicle(const rp3d::VehicleConstraintSettings& settings);
+    void DestroyVehicle(rp3d::VehicleConstraint* vehicle);
+
 };
 
 

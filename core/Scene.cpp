@@ -37,14 +37,19 @@ void Scene::UpdatePhysics(float delta_time){
         PausePhysics(!f_paused);
     }
 
+    //StepPhysics() queues these up from any thread (e.g. an MCP tool handler) - run exactly
+    //one queued tick per call here, same as this function would do unpaused, so the caller
+    //can single-step the simulation deterministically. The counter is decremented at the END
+    //of the tick, not here: a caller polling GetPendingPhysicsSteps() == 0 (tank_step) takes
+    //that as "the steps have happened" and immediately touches the simulation (a reset, a
+    //teleport) from its own thread - decrementing first let that land in the middle of the
+    //last step still running here, corrupting the state it was racing with.
+    bool consumed_pending_step = false;
     if (f_paused){
-        //StepPhysics() queues these up from any thread (e.g. an MCP tool handler) - run
-        //exactly one queued tick per call here, same as this function would do unpaused,
-        //so the caller can single-step the simulation deterministically.
         if (pending_physics_steps <= 0){
             return;
         }
-        pending_physics_steps--;
+        consumed_pending_step = true;
     }
 
     //Before the physics step, so this tick's simulation reacts to the new pose/velocity.
@@ -60,6 +65,10 @@ void Scene::UpdatePhysics(float delta_time){
 
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();
+    }
+
+    if (consumed_pending_step){
+        pending_physics_steps--;
     }
 };
 
