@@ -17,13 +17,19 @@ void Scene::UpdateInput(){
     inputcontroller->UpdateKeyState();
 };
 
-void Scene::UpdateAnimations(){
+void Scene::UpdateAnimations(float delta_time){
     if (!renderer){
         return;
     }
 
-    //Update all objects stored in the renderer.
+    //Animation timing is simulation state: since the root-motion rewrite the extracted deltas
+    //drive the character's motion, so a clip advancing by a hardcoded 20ms while the sim ticks at
+    //a different rate would desync the two. Each object's delta is refreshed from the simulation
+    //timestep every tick, unless it was deliberately overridden (the debug UI slider).
     for (Object* object:renderer->objects){
+        if (!object->f_animation_time_delta_override){
+            object->animation_time_delta = delta_time;
+        }
         object->ApplyAnimation(object->animation_time_delta); //Each object updates its own animation time
     }
 };
@@ -33,6 +39,7 @@ void Scene::UpdatePhysics(float delta_time){
     if (!renderer){
         return;
     }
+    physics_timestep = delta_time;
     if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
         PausePhysics(!f_paused);
     }
@@ -63,9 +70,19 @@ void Scene::UpdatePhysics(float delta_time){
     for (Object* object:renderer->objects){
         //debug->Info("Updating physics for obj->id %i\n",object->GetID());
 
+        //Hand the object this tick's real timestep, so per-tick logic doesn't have to assume one
+        //- see TankCharacter/BuggyCharacter::UpdatePhysicsState, which use it for the wheel
+        //readback, the drive-force governor and the turret slew.
+        object->physics_timestep = delta_time;
+
         //Copies object state and invalidates physics state
         object->UpdatePhysicsState();
     }
+
+    //A tick has now actually run, so advance the simulation clock. Deliberately last, for the
+    //same reason the pending-step decrement below is last: another thread watching this counter
+    //treats a change as "that tick is finished and the state is mine to read".
+    physics_tick++;
 
     if (consumed_pending_step){
         pending_physics_steps--;

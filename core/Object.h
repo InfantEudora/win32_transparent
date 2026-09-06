@@ -160,7 +160,19 @@ class Object{
     float animation_mask = 1.0f; // 0.0 = no animation, 1.0 = full animation
     float position_mask = 1.0f;
 
+    //Seconds of animation to advance per simulation tick. Refreshed from the simulation timestep
+    //every tick by Scene::UpdateAnimations, so it tracks the physics rate instead of assuming
+    //50Hz - animation timing is simulation state now that root motion drives character movement.
+    //The initialiser is only what holds until the first tick sets it.
     float animation_time_delta = 0.02f;
+    //Set when the debug UI slider is dragged, to stop the per-tick refresh above from immediately
+    //overwriting the hand-picked value. Distinct from f_animation_override, which is about
+    //stepping animation manually rather than about the size of the step.
+    bool f_animation_time_delta_override = false;
+
+    //This tick's simulation timestep in seconds, pushed in by Scene::UpdatePhysics before
+    //UpdatePhysicsState() runs, so per-tick logic never has to hardcode a rate.
+    float physics_timestep = 0.02f;
 
     float animation_transition_time = 0.0f;
     float animation_transition_time_max = 0.25f;    //Default blend time, used when no override matches

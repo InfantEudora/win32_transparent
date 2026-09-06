@@ -89,7 +89,7 @@ void ApplicationOCPP::Init(void){
     main_window->Resize(1024,768);
 
     main_scene = CreateNewScene("Main Scene");
-    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
+    main_scene->UpdatePhysics(GetPhysicsTimestep());
 
     //Create an HTTP server to listen for connections
     http_server = new HTTPServer(9090);

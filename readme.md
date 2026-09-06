@@ -26,7 +26,7 @@ It should kind of look like this:
 ### Folder structure
 `/core`         Contains all core files for this 'Engine'.
 `/shaders`      Contains default shaders.
-`/applications` Contain different applications that test / implement different things.
+`/apps`         Per-application makefile fragments; each `ApplicationX.cpp/.h` sits in the repo root, with its gameplay classes in a folder of their own (`/tank`, `/ship`, `/isoterrain`, ...). Pick one with `make APP=X`.
 `/3rdparty/*`   Contains external libraries source code, either as an entire repo or single files.
 
 ### Doing:

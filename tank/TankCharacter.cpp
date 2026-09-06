@@ -15,7 +15,9 @@ TankCharacter::~TankCharacter(){
 }
 
 void TankCharacter::UpdatePhysicsState(){
-    float timestep = 0.02f; // conservative default; if called more frequently it's fine
+    //The real simulation timestep, pushed in by Scene::UpdatePhysics - not a guess. Used below
+    //for the wheel readback, the drive-force governor and the turret slew.
+    float timestep = physics_timestep;
 
     //A reset asked for from another thread lands here, on the physics thread, before anything
     //else reads the body this tick - see Vehicle::RequestReset.

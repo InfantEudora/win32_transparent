@@ -893,7 +893,7 @@ json ApplicationTank::MaybeAttachScreenshot(json result, bool include_screenshot
 void ApplicationTank::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("tank_drive",
         "Drive the tank hull forward or reverse, or release the pedals. The input is held for "
-        "duration_ms of real time (re-asserted every physics tick server-side), not just for the "
+        "duration_ms, rounded up to whole physics ticks and re-asserted on each of them, not just for the "
         "instant of this call - a single MCP round-trip can't reliably out-pace the physics tick "
         "rate, so without this a call would produce almost no motion, the same way an unrealistically "
         "brief key tap wouldn't. Default duration is 100ms, about as short as a real key tap. This "
@@ -918,26 +918,27 @@ void ApplicationTank::RegisterMCPTools(){
             }
             float amount = args.value("amount",1.0f);
             float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
+            uint32_t duration_ticks = DurationMsToTicks(duration_ms);
             std::string direction = args.value("direction","stop");
             if (direction == "forward"){
-                vehicle->HoldDrive(false,amount,duration_ms);
+                vehicle->HoldDrive(false,amount,duration_ticks);
             }else if (direction == "reverse"){
-                vehicle->HoldDrive(true,amount,duration_ms);
+                vehicle->HoldDrive(true,amount,duration_ticks);
             }else if (direction == "brake"){
-                vehicle->HoldBrake(amount,duration_ms);
+                vehicle->HoldBrake(amount,duration_ticks);
             }else{
                 vehicle->ReleaseInputs();
             }
             //While paused (tank_pause) the hold plays out through tank_step instead, so there is
             //nothing to wait for here.
             if (!main_scene || !main_scene->IsPhysicsPaused()){
-                Sleep((DWORD)duration_ms);
+                Sleep(TicksToRealMs(duration_ticks));
             }
             return MaybeAttachScreenshot(GetVehicleTelemetry(vehicle),args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("tank_steer",
-        "Steer the tank hull left or right. Held for duration_ms of real time (re-asserted every "
+        "Steer the tank hull left or right. Held for duration_ms, rounded up to whole physics ticks (re-asserted on each of "
         "physics tick server-side) - default 100ms, about as short as a real key tap. This call "
         "blocks until duration_ms has elapsed and returns the resulting telemetry (same shape as "
         "tank_telemetry) - no need for a separate call to see the outcome. Set include_screenshot "
@@ -960,11 +961,12 @@ void ApplicationTank::RegisterMCPTools(){
             }
             float amount = args.value("amount",1.0f);
             float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
+            uint32_t duration_ticks = DurationMsToTicks(duration_ms);
             std::string direction = args.value("direction","left");
             float signed_amount = (direction == "right") ? amount : -amount;
-            vehicle->HoldSteer(signed_amount,duration_ms);
+            vehicle->HoldSteer(signed_amount,duration_ticks);
             if (!main_scene || !main_scene->IsPhysicsPaused()){
-                Sleep((DWORD)duration_ms);
+                Sleep(TicksToRealMs(duration_ticks));
             }
             return MaybeAttachScreenshot(GetVehicleTelemetry(vehicle),args.value("include_screenshot",false));
         });

@@ -67,7 +67,7 @@ void ApplicationShip::Init(void){
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
     main_scene = CreateEmptyScene();
-    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
+    main_scene->UpdatePhysics(GetPhysicsTimestep());
 
     assetmanager = new AssetManager();
     gltfloader.LoadGLTFFile("data/ships.glb");

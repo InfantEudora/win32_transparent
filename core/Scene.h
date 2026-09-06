@@ -32,7 +32,10 @@ public:
 
 
     void UpdateInput();
-    void UpdateAnimations();
+    //delta_time is the fixed simulation timestep - it becomes each object's animation_time_delta
+    //(unless that object opted out, see Object::f_animation_time_delta_override), so animation advances
+    //on simulated ticks rather than on a hardcoded 20ms.
+    void UpdateAnimations(float delta_time);
     void UpdatePhysics(float delta_time);
     void DrawFrame();
 
@@ -73,10 +76,25 @@ public:
     void StepPhysics(int num_steps){ pending_physics_steps += max(num_steps,0); }
     int GetPendingPhysicsSteps(){ return pending_physics_steps; }
 
+    //THE simulation clock: how many physics ticks have actually RUN. It advances only when a
+    //tick really executes, so it measures simulated time, not wall time - it does not move while
+    //paused, and single-stepping advances it by exactly num_steps. Anything in the simulation
+    //that has a duration (input hold-latches, timers, cooldowns) must be denominated in these
+    //ticks and never in GetTickCount64()/real milliseconds: real time is ~15.6ms-granular against
+    //a 20ms tick, and it keeps running while the sim is paused or single-stepped, so a wall-clock
+    //duration silently means something different every run. Written by the physics thread, read
+    //from any, hence atomic.
+    uint64_t GetPhysicsTick(){ return physics_tick; }
+
+    //The fixed simulation timestep in seconds, as last handed to UpdatePhysics. Objects read this
+    //instead of hardcoding 0.02f. It is a constant by design - see Application::GetPhysicsTimestep.
+    float GetPhysicsTimestep(){ return physics_timestep; }
+
     //Do we always need a handle to a single camera?
     Camera* camera = NULL;
 private:
-    uint64_t physics_ticks = 0;
+    std::atomic<uint64_t> physics_tick{0};
+    float physics_timestep = 0.02f;
     bool f_paused = false;
     std::atomic<int> pending_physics_steps{0}; //written from any thread, consumed by UpdatePhysics on the physics thread
 

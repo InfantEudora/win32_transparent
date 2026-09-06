@@ -107,6 +107,23 @@ public:
     //Which vehicle an MCP call is about: args["vehicle"] is "tank" (default, so every existing
     //caller keeps working unchanged) or "buggy". NULL if that vehicle doesn't exist.
     Vehicle* ResolveVehicleArg(const json& args);
+
+    //The MCP tools speak milliseconds because that is the human-facing unit a caller reasons in;
+    //the simulation speaks ticks. Convert here, at the boundary, and nowhere deeper - see the
+    //Vehicle::HoldDrive comment for why a duration must never reach the sim as wall-clock time.
+    //Rounded UP, so a duration shorter than one tick still yields one tick of input, never none.
+    uint32_t DurationMsToTicks(float duration_ms) const {
+        if (duration_ms <= 0.0f){
+            return 0;
+        }
+        float ticks = ceilf(duration_ms / 1000.0f * physics_tps);
+        return (uint32_t)max(ticks,1.0f);
+    }
+    //How much real time those ticks will take, for the blocking MCP calls to wait out. Ticks are
+    //paced by physics_time_factor, so this is not simply duration_ms again.
+    DWORD TicksToRealMs(uint32_t ticks) const {
+        return (DWORD)((float)ticks * GetPhysicsTimestep() * 1000.0f / max(physics_time_factor,0.01f));
+    }
     //Position/velocity/mass/centre of mass plus the per-wheel suspension and tire breakdown for
     //any Vehicle, and the vehicle-specific extras (turret, tuning) for the tank and buggy.
     json GetVehicleTelemetry(Vehicle* vehicle);

@@ -23,7 +23,7 @@ void ApplicationUI::Init(void){
     main_window->Resize(1024,768);
 
     main_scene = CreateNewScene("Main Scene");
-    main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics(GetPhysicsTimestep());
 
 }
 

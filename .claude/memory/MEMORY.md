@@ -1,3 +1,6 @@
+- [Project overview](project_overview.md) — what win32_transparent IS: hand-rolled C++17/OpenGL engine, one wind.exe with APP= selecting 1 of 10 apps, 3-thread main/render/physics split (read this first)
+- [Threading model](threading_model.md) — ONE coarse Renderer::physics_mutex, not the queue readme designs; UI-mutates-physics is safe, MCP handlers are NOT (must defer); InputController races outside the lock; TQueue.h ThreadSafeQueue exists but is unused
+- [Deterministic sim plan](deterministic_sim_plan.md) — AGREED DIRECTION: tick-driven lockstep sim, ALL mutation via tick-stamped input events, MCP+UI become "players"; same-machine replay only (cross-arch floats explicitly out of scope); 7-step plan; steps 1,2,4 DONE 2026-09-06 (tick counter, constant dt, tick latches), 3/5/6 open
 - [MCP native tools setup](mcp_native_tools_setup.md) — now documented in-repo at docs/mcp_server.md; check there first
 - [Build toolchain location](build_toolchain_location.md) — g++/make live at /c/msys64/mingw64, not on Bash tool's PATH; use mingw32-make.exe not usr/bin/make.exe; header deps ARE tracked now (-MMD -MP)
 - [No /mcp slash command in VSCode ext](mcp_vscode_reconnect_limitation.md) — /mcp just opens a panel that doesn't list locally-added servers

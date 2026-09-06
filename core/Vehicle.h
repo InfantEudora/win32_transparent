@@ -33,12 +33,19 @@ public:
 
     //For scripted/MCP control: a single external call can't realistically out-pace the physics
     //tick rate (gas_pedal/brake_pedal/steering_position all decay back to idle every tick unless
-    //re-asserted), so these latch the equivalent input as "held" for duration_ms of real time,
-    //re-asserted every tick until the latch expires - see ApplyHoldLatches, which every
-    //subclass's UpdatePhysicsState calls once near its own top.
-    void HoldDrive(bool reverse, float amount, float duration_ms);
-    void HoldBrake(float amount, float duration_ms);
-    void HoldSteer(float signed_amount, float duration_ms); //negative = left, positive = right
+    //re-asserted), so these latch the equivalent input as "held" for duration_ticks, re-asserted
+    //every tick until the latch runs out - see ApplyHoldLatches, which every subclass's
+    //UpdatePhysicsState calls once near its own top.
+    //
+    //The duration is in SIMULATION TICKS, not milliseconds. These used to expire against
+    //GetTickCount64(), which was wrong twice over: its ~15.6ms granularity is most of a 20ms
+    //tick, so "hold for 100ms" randomly meant 4, 5 or 6 ticks between runs; and it measures real
+    //time, which keeps running while the simulation is paused or single-stepped, so a hold
+    //expired before tank_step had advanced the sim at all. Callers that think in milliseconds
+    //(the MCP tools) convert at their own boundary - see ApplicationTank's DurationMsToTicks.
+    void HoldDrive(bool reverse, float amount, uint32_t duration_ticks);
+    void HoldBrake(float amount, uint32_t duration_ticks);
+    void HoldSteer(float signed_amount, uint32_t duration_ticks); //negative = left, positive = right
     void ReleaseInputs(); //cancels all latches and releases the pedals immediately
 
     //Re-asserts whichever hold-latch is still active, exactly as if RunLogic had just called
@@ -132,14 +139,17 @@ public:
     float steering_position = 0.0f; //From -1 to +1
     bool f_reverse = false;
 
-    //Hold-latches backing HoldDrive/HoldBrake/HoldSteer, timestamped with GetTickCount64().
+    //Hold-latches backing HoldDrive/HoldBrake/HoldSteer, counted down one per simulation tick by
+    //ApplyHoldLatches (which every subclass calls exactly once per UpdatePhysicsState). A plain
+    //countdown rather than a deadline: it needs no clock at all, and it can only advance when the
+    //simulation does, so pause/single-step/replay are correct for free.
     float gas_latch_amount = 0.0f;
     bool gas_latch_reverse = false;
-    unsigned long long gas_latch_until_ms = 0;
+    uint32_t gas_latch_ticks = 0;
     float brake_latch_amount = 0.0f;
-    unsigned long long brake_latch_until_ms = 0;
+    uint32_t brake_latch_ticks = 0;
     float steer_latch_amount = 0.0f;
-    unsigned long long steer_latch_until_ms = 0;
+    uint32_t steer_latch_ticks = 0;
 
     //Settings
     //Total drive force at the treads (N) at full throttle, shared out over the driven wheels by

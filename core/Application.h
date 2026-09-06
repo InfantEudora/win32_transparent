@@ -91,11 +91,19 @@ public:
     //Physics Settings
     float physics_tps           = 50.0f; //Target physics ticks per second
     double physics_us_per_tick  = 20000.0f;
-    float physics_time_factor   = 1.0f; //Used to speed up or slow down physics globally
+    //Speeds up or slows down physics globally by running ticks more or less OFTEN. It must never
+    //scale the timestep: a simulation stepped with a varying dt is not reproducible, and the goal
+    //is that a recorded run replays to the identical state. Slow motion means fewer ticks per
+    //second of real time, each still exactly GetPhysicsTimestep() long.
+    float physics_time_factor   = 1.0f;
     void SetPhysicsTPS(float tps){
         physics_tps = tps;
         physics_us_per_tick = 1000000.0f / physics_tps;
     }
+
+    //The one and only simulation timestep, in seconds. Constant for the life of the run - every
+    //caller of Scene::UpdatePhysics/UpdateAnimations passes this, nothing computes its own.
+    float GetPhysicsTimestep() const { return 1.0f / physics_tps; }
 
 
     //Generic Object placement and selection

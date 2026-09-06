@@ -47,10 +47,10 @@ void Vehicle::Reverse(float factor){
     gas_pedal = clamp(factor,0.0f,1.0f);
 }
 
-void Vehicle::HoldDrive(bool reverse,float amount,float duration_ms){
+void Vehicle::HoldDrive(bool reverse,float amount,uint32_t duration_ticks){
     gas_latch_amount = clamp(amount,0.0f,1.0f);
     gas_latch_reverse = reverse;
-    gas_latch_until_ms = GetTickCount64() + (unsigned long long)max(duration_ms,0.0f);
+    gas_latch_ticks = duration_ticks;
     //Apply immediately too, rather than waiting for the next tick's latch check.
     if (reverse){
         Reverse(gas_latch_amount);
@@ -59,15 +59,15 @@ void Vehicle::HoldDrive(bool reverse,float amount,float duration_ms){
     }
 }
 
-void Vehicle::HoldBrake(float amount,float duration_ms){
+void Vehicle::HoldBrake(float amount,uint32_t duration_ticks){
     brake_latch_amount = clamp(amount,0.0f,1.0f);
-    brake_latch_until_ms = GetTickCount64() + (unsigned long long)max(duration_ms,0.0f);
+    brake_latch_ticks = duration_ticks;
     Brake(brake_latch_amount);
 }
 
-void Vehicle::HoldSteer(float signed_amount,float duration_ms){
+void Vehicle::HoldSteer(float signed_amount,uint32_t duration_ticks){
     steer_latch_amount = clamp(signed_amount,-1.0f,1.0f);
-    steer_latch_until_ms = GetTickCount64() + (unsigned long long)max(duration_ms,0.0f);
+    steer_latch_ticks = duration_ticks;
     if (steer_latch_amount < 0.0f){
         SteerLeft(-steer_latch_amount);
     }else{
@@ -76,9 +76,9 @@ void Vehicle::HoldSteer(float signed_amount,float duration_ms){
 }
 
 void Vehicle::ReleaseInputs(){
-    gas_latch_until_ms = 0;
-    brake_latch_until_ms = 0;
-    steer_latch_until_ms = 0;
+    gas_latch_ticks = 0;
+    brake_latch_ticks = 0;
+    steer_latch_ticks = 0;
     //Both pedals, explicitly. This used to call Brake(0) alone in the belief that it released
     //the gas too - it doesn't, Brake() only writes brake_pedal - which the tank masked by
     //zeroing gas_pedal itself every tick, while the buggy kept driving on whatever throttle it
@@ -112,19 +112,23 @@ float Vehicle::GovernedDriveForce(const Wheel& wheel,const WheelTuning& tuning,f
     return direction * min(fabs(requested_force),max_force);
 }
 
+//Exactly one call per simulation tick per vehicle (from each subclass's UpdatePhysicsState), so
+//"one decrement per call" is "one decrement per tick" - that is the whole clock this needs.
 void Vehicle::ApplyHoldLatches(){
-    unsigned long long now_ms = GetTickCount64();
-    if (now_ms < gas_latch_until_ms){
+    if (gas_latch_ticks > 0){
+        gas_latch_ticks--;
         if (gas_latch_reverse){
             Reverse(gas_latch_amount);
         }else{
             Accelerate(gas_latch_amount);
         }
     }
-    if (now_ms < brake_latch_until_ms){
+    if (brake_latch_ticks > 0){
+        brake_latch_ticks--;
         Brake(brake_latch_amount);
     }
-    if (now_ms < steer_latch_until_ms){
+    if (steer_latch_ticks > 0){
+        steer_latch_ticks--;
         if (steer_latch_amount < 0.0f){
             SteerLeft(-steer_latch_amount);
         }else{

@@ -574,7 +574,7 @@ void ApplicationGrid::Init(){
 
     main_scene = test_scene;
 
-    main_scene->UpdatePhysics();
+    main_scene->UpdatePhysics(GetPhysicsTimestep());
 
     BinaryAsset::DumpBinaryAssets();
     assetmanager->ListAssets();

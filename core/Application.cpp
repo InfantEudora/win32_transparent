@@ -144,7 +144,7 @@ void Application::Init(){
     BinaryAsset::DumpBinaryAssets();
 
     //Just so the current items show on the first frame...?
-    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
+    main_scene->UpdatePhysics(GetPhysicsTimestep());
 }
 
 void Application::DrawImGuiUI(){
@@ -258,11 +258,16 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     //Setup debugging to run from this thread:
     app->debug_physics = new Debugger("App.Physics", DEBUG_ALL);
 
-    uint32_t physics_ticks = 0;
-    double us_looptime_desired = app->physics_us_per_tick;
     double last_sleep = 0;
     while (1){
         if (app->main_scene){
+            //How long one tick should take in REAL time. physics_time_factor stretches or
+            //compresses this interval only - the timestep handed to the simulation stays
+            //GetPhysicsTimestep() no matter what, so slow motion is "fewer ticks per second",
+            //never "smaller ticks". Recomputed every loop because the UI slider can change it
+            //mid-run. Clamped low so a factor near zero can't produce an infinite interval.
+            double us_looptime_desired = app->physics_us_per_tick / max(app->physics_time_factor,0.01f);
+
             app->UpdateInput();
 
             //Time spent on aquiring a lock
@@ -297,8 +302,10 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             timeEndPeriod(1);
             debug->Warn("No main scene for physics thread to work on!\n");
         }
-        //debug->Ok("Physics Loop %lu completed\n",physics_ticks);
-        physics_ticks++;
+        //This loop deliberately keeps no tick count of its own: it would count loop iterations
+        //(which happen while paused too) rather than simulated ticks. Scene::GetPhysicsTick() is
+        //the authoritative clock.
+        //debug->Ok("Physics Loop %llu completed\n",app->main_scene ? app->main_scene->GetPhysicsTick() : 0);
     }
     debug->Info("Thread terminated\n");
     return 0;
@@ -313,14 +320,14 @@ void Application::UpdateAnimations(){
     if (!main_scene){
         return;
     }
-    main_scene->UpdateAnimations();
+    main_scene->UpdateAnimations(GetPhysicsTimestep());
 }
 
 void Application::UpdatePhysics(){
     if (!main_scene){
         return;
     }
-    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
+    main_scene->UpdatePhysics(GetPhysicsTimestep());
 }
 
 //--- Generic object MCP tools -------------------------------------------------------------
@@ -714,9 +721,11 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
         if (ImGui::DragFloat3("Gravity (m/s^2)",(float*)&gravity,0.1f,-20,20)){
             physics_world->SetGravity(gravity);
         }
-        if (ImGui::DragFloat("Global Time Factor",&physics_time_factor,0.01f,0.1f,2.0f)){
-            //Nothing to do here, it's applied in the physics update loop.
+        if (ImGui::DragFloat("Time Factor (tick rate)",&physics_time_factor,0.01f,0.1f,2.0f)){
+            //Nothing to do here, it's applied in the physics update loop - and it changes how
+            //OFTEN a tick runs, not how long a tick is. The timestep stays GetPhysicsTimestep().
         }
+        ImGui::SetItemTooltip("Runs ticks more/less often in real time. The simulation timestep itself never changes.");
         float tps = physics_tps;
         if (ImGui::DragFloat("Target Physics TPS",&tps,1.0f,1.0f,200.0f)){
             SetPhysicsTPS(tps);
@@ -1747,7 +1756,17 @@ void ApplicationGrid::RenderAnimationUI(){
 
         }
         if (ImGui::DragFloat("Animation Time Delta", (float*)&character->animation_time_delta, 0.005f, -1.0f, 1.0f)){
-
+            //Dragging this pins the value: Scene::UpdateAnimations otherwise rewrites it from the
+            //simulation timestep every tick, which would undo the drag immediately.
+            character->f_animation_time_delta_override = true;
+        }
+        ImGui::SameLine();
+        if (character->f_animation_time_delta_override){
+            if (ImGui::SmallButton("Follow tick rate")){
+                character->f_animation_time_delta_override = false;
+            }
+        }else{
+            ImGui::TextDisabled("(follows tick rate)");
         }
     }
 

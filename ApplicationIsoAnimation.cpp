@@ -103,7 +103,7 @@ void ApplicationIsoAnimation::Init(void){
     renderer->deferred_shader_custom->uniform_callback = std::bind(&ApplicationIsoAnimation::SetCharacterUniforms,this);
 
     main_scene = CreateEmptyScene();
-    main_scene->UpdatePhysics(1.0f / physics_tps * physics_time_factor);
+    main_scene->UpdatePhysics(GetPhysicsTimestep());
 
     //Randomise the randomiser
     rrand = new RRandom();

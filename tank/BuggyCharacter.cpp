@@ -15,7 +15,7 @@ BuggyCharacter::~BuggyCharacter(){
 }
 
 void BuggyCharacter::UpdatePhysicsState(){
-    float timestep = 0.02f;
+    float timestep = physics_timestep; //see TankCharacter::UpdatePhysicsState
 
     ApplyPendingReset(); //see Vehicle::RequestReset
     ApplyHoldLatches();
