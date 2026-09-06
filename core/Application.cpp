@@ -268,10 +268,15 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             //mid-run. Clamped low so a factor near zero can't produce an infinite interval.
             double us_looptime_desired = app->physics_us_per_tick / max(app->physics_time_factor,0.01f);
 
-            app->UpdateInput();
-
             //Time spent on aquiring a lock
             app->renderer->physics_mutex.lock();
+
+            //Input sampling moved INSIDE the lock: it writes KeyState (via
+            //InputController::ApplyPendingEvents), and the render thread reads that same KeyState
+            //from DrawImGuiUI - which holds this mutex. Sampling outside it was an unsynchronised
+            //write against those reads. Polling ~17 keys costs microseconds, so paying for it
+            //under the lock is free next to a physics tick.
+            app->UpdateInput();
 
             //Time spent on logic + physics
             app->tmr_physics->Restart();
@@ -295,7 +300,14 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             timeEndPeriod(1);
             last_sleep = app->tmr_physics_sleep->Stop();
 
+            //Clearing the per-tick edge flags stays HERE, after the sleep, rather than moving
+            //inside the tick's critical section above: the render thread consumes mouse deltas
+            //(UpdateUICameraControls -> GetDelta) during this window, and clearing them at the end
+            //of the tick would leave the UI reading zeroes and break camera mouse-look. It only
+            //needs the lock so the write itself is synchronised against those reads.
+            app->renderer->physics_mutex.lock();
             app->NextInput();
+            app->renderer->physics_mutex.unlock();
         }else{
             timeBeginPeriod(1);
             Sleep(5);

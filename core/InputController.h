@@ -6,6 +6,7 @@ class InputController;
 #include "stdint.h"
 #include <vector>
 #include <atomic>
+#include <mutex>
 #include "Object.h"
 #include "type_int2.h"
 
@@ -41,6 +42,25 @@ typedef enum{
     INPUT_LAST
 }keycode_t;
 
+//One discrete input change, as a plain value type. POD on purpose: the deterministic-simulation
+//direction needs input that can be written to a file, replayed tick for tick, and eventually sent
+//over a network - none of which a polled snapshot or a std::function command can do. Everything
+//that wants to move the simulation ends up here: the window message thread today, and later a
+//raw-input thread, the debug UI, and the MCP server (which becomes just another "player").
+typedef enum{
+    INPUT_EVENT_NONE = 0,
+    INPUT_EVENT_KEY_DOWN,       //mapped_keycode is down
+    INPUT_EVENT_KEY_UP,         //mapped_keycode is up
+    INPUT_EVENT_AXIS_ABSOLUTE,  //value IS the axis's new value (polled mouse position today)
+    INPUT_EVENT_AXIS_RELATIVE   //value is ADDED to the axis (mouse wheel today, raw mouse later)
+}inputeventtype_t;
+
+struct InputEvent{
+    uint16_t type = INPUT_EVENT_NONE;       //inputeventtype_t
+    uint16_t mapped_keycode = INPUT_NONE;   //keycode_t this event is about
+    int32_t value = 0;
+};
+
 struct KeyState{
     int                     f_isdown = 0;
     bool                    f_was_released = false;
@@ -59,12 +79,46 @@ struct KeyMap{
     KeyState* state = NULL;        // The state. Multiple maps can refer to the same state.
 };
 
+//Everything the window message thread hands over. Kept out of KeyState so that the fields two
+//threads genuinely share are in one place behind one lock, rather than scattered.
+struct WindowInputState{
+    int2 window_position = {};      //WM_MOVE
+    bool f_mouse_over_window = false;
+    vec3 hovered_normal = {};       //written by the render thread after the ID/normal readback
+    vec3 hovered_position = {};
+};
+
 class InputController{
     public:
     InputController();
 
-    //Can be called from any thread
+    //Physics thread, once at the top of a tick: samples the devices and folds everything
+    //submitted since the last call into the KeyState that gameplay code reads. Equivalent to
+    //PollDevices() followed by ApplyPendingEvents().
     void UpdateKeyState();
+
+    //--- The input event stream ---------------------------------------------------------------
+    //Callable from ANY thread. This is the only sanctioned way for something outside the physics
+    //thread to affect input, and eventually the only way to affect the simulation at all.
+    void SubmitEvent(const InputEvent& event);
+    //Physics thread only. Drains everything submitted since the last call, applies it to KeyState,
+    //and keeps it as this tick's input.
+    void ApplyPendingEvents();
+    //What ApplyPendingEvents just applied: the exact input this tick ran with. A recorder writes
+    //this out; a replay submits it back. Physics thread only, valid until the next call.
+    const std::vector<InputEvent>& GetTickEvents() const { return tick_events; }
+    //Samples the OS devices and turns them into events. Transitional: it polls GetAsyncKeyState /
+    //GetCursorPos, so it re-states each key's LEVEL every tick rather than reporting edges. That
+    //is deliberate for now - it reproduces the old polling behaviour exactly, including its
+    //multi-mapping quirks - and is what moving to Raw Input replaces with real edges.
+    void PollDevices();
+
+    //False while another application is in the foreground. Input is not sampled then, so the
+    //simulation doesn't respond to keys pressed in whatever the user alt-tabbed to. Maintained
+    //from WM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUS in HandleMessage. Note ImGui does NOT come through
+    //here (imgui_impl_win32 has its own handler), so the debug UI is unaffected by this gate.
+    bool HasFocus(){ return f_has_focus; }
+
     //Called from thread that created the window
     void HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -86,7 +140,7 @@ class InputController{
     vec3    GetHoveredNormal();
     void    SetHoveredPosition(vec3 pos);
     vec3    GetHoveredPosition();
-    bool    IsMouseOverWindow(){return f_mouse_over_window;};
+    bool    IsMouseOverWindow();
 
     //There needs to be at least some form of feedback from UI which object was selected/hovered.
 
@@ -95,13 +149,24 @@ class InputController{
     std::vector<KeyMap>keymap;
 
 protected:
-    int2 mouse_position;
-    int2 window_position;   //Stored here seperately
-    bool f_mouse_over_window = false;
+    //Guards ONLY the cross-thread handoff: the pending event queue and the WindowInputState the
+    //window/render threads write. KeyState is deliberately not in here - it is written and read
+    //solely by the physics thread (inside Application's physics_mutex), so the hot IsKeyDown /
+    //GetDelta path that gameplay code hits many times a tick stays lock-free. This replaces the
+    //old "atomicise the odd field and hope" approach, and the `hovered_normal` TODO with it.
+    std::mutex state_mutex;
+    void SetMouseOverWindow(bool over); //window thread; takes state_mutex
+    std::vector<InputEvent> pending_events; //producers append, the physics thread drains
+    std::vector<InputEvent> tick_events;    //physics thread only: this tick's applied input
+    WindowInputState window_state;
+
+    //Read on the physics thread every poll, written from the window thread, and only ever a plain
+    //flag - atomic is enough and avoids taking the lock in the polling hot path.
+    std::atomic<bool> f_has_focus{true};
+
+    int2 mouse_position;    //physics thread only, from the polled cursor position
 
     std::atomic<objectid_t>hovered_object = {OBJECTID_INVALID};
-    vec3 hovered_normal = vec3(); //TODO: How to atomicise this? Doest it need to be?
-    vec3 hovered_position = vec3(); //World-space position under the mouse cursor, read back from the deferred position buffer.
 };
 
 #endif
