@@ -40,6 +40,16 @@ public:
     Skeleton* selected_skeleton = NULL;
 
     Object* target_indicator = NULL;
+
+    //Hand/foot landing-spot debug tool: click a surface to place a target (hand target on a
+    //wall-like surface, foot target on a floor-like one, classified by the hit normal), and compare
+    //it against where the previewed animation's hands/feet actually end up.
+    bool f_mode_place_target = false;
+    Object* hand_target = NULL;   //Where you want the hands to land (set by clicking a wall-like surface)
+    Object* foot_target = NULL;   //Where you want the feet to land (set by clicking a floor-like surface)
+    Object* hand_landing = NULL;  //Where the previewed animation's hands actually are right now (midpoint of both hands)
+    Object* foot_landing = NULL;  //Where the previewed animation's feet actually are right now (midpoint of both feet)
+    void UpdateHandFootLandingMarkers();
 private:
     vec3 camera_target = {};
     bool f_filemodal = false;

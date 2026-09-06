@@ -292,6 +292,16 @@ void Animation::Retarget(Object* target){
     LinkObjects(target);
 }
 
+void Animation::CopyConfigFrom(Animation* source){
+    if (!source){
+        return;
+    }
+    looped = source->looped;
+    interruptible = source->interruptible;
+    extract_horizontal_root_motion = source->extract_horizontal_root_motion;
+    extract_vertical_root_motion = source->extract_vertical_root_motion;
+}
+
 void Animation::SetRootBone(const std::string& name){
     root_bone_name = name;
     root_track = FindObjectAnimation(name);

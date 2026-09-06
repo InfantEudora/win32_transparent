@@ -51,6 +51,14 @@ class Animation{
     //transition to this animation instead of pausing on the last frame.
     Animation* auto_continue_to = NULL;
 
+    //Copies the gameplay configuration (looped/interruptible/extract flags) from another Animation
+    //of the same clip loaded onto a different skeleton - e.g. a hands/feet preview copy that was
+    //loaded fresh from the glTF and needs the same settings as the main character's copy, without
+    //redoing that setup by hand per skeleton. Deliberately does NOT touch object_animations/keyframes
+    //(each skeleton's own linked bone data) or auto_continue_to (points at the SOURCE's own Animation*
+    //instances, which wouldn't resolve correctly here, and preview-only skeletons don't chain anyway).
+    void CopyConfigFrom(Animation* source);
+
     //The root/hip bone's animation track, resolved once via SetRootBone(). NULL if this clip has no
     //track for the character's root bone name.
     std::string root_bone_name;

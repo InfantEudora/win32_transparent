@@ -12,3 +12,4 @@ imgui.ini
 BinaryAssetMemory.cpp
 .current_app
 __pycache__/
+.claude/scratch/

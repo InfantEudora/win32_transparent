@@ -269,21 +269,6 @@ void ApplicationIsoAnimation::Init(void){
         second_character->AttachChild(bottom);
     }
 
-    //We'll attach a handgun to the character, and manually place it.
-    Object* handgun = assetmanager->GetObjectFromAsset("pistol");
-    if (handgun){
-        character->handgun = handgun;
-        character->AttachChild(handgun);
-        Bone* hand_bone = character->FindBone("mixamorig:RightHand");
-        if (hand_bone){
-            hand_bone->AttachChild(handgun);
-            handgun->SetPosition(vec3(0,0,0));
-
-        }else{
-            debug->Err("Could not find hand bone to attach handgun to.\n");
-        }
-    }
-
     //Describe animation behaviour for this character: which clips loop, which auto-continue into
     //another clip once they finish, any non-default blend times between specific pairs, and which
     //clips' root motion should drive the character (see docs/animation_root_motion.md). Any pair not
@@ -328,10 +313,27 @@ void ApplicationIsoAnimation::Init(void){
     }
     if (Animation* animation = character->FindAnimation("RunupClimbing")){
         animation->extract_horizontal_root_motion = true;
+        animation->extract_vertical_root_motion = true;
     }
     if (Animation* animation = character->FindAnimation("MidJumpToHang")){
         animation->extract_horizontal_root_motion = true;
     }
+
+    //The hands/feet preview skeletons loaded their own separate copies of every animation above
+    //(each Animation is linked to one specific skeleton's bones, so the clip data itself can't be
+    //shared) - but the gameplay configuration just set on character's copies is a property of the
+    //clip, not of which skeleton plays it, so copy it across rather than repeating every flag/loop/
+    //blend-time call two more times.
+    auto CopyConfigFromCharacter = [this](PlayerCharacter* preview){
+        if (!preview){
+            return;
+        }
+        for (Animation* animation : preview->animations){
+            animation->CopyConfigFrom(character->FindAnimation(animation->name));
+        }
+    };
+    CopyConfigFromCharacter(hands);
+    CopyConfigFromCharacter(feet);
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -344,6 +346,28 @@ void ApplicationIsoAnimation::Init(void){
 
     target_indicator = assetmanager->GetObjectFromAsset("indicator");
     main_scene->AddObject(target_indicator);
+
+    hand_target = assetmanager->GetObjectFromAsset("indicator");
+    hand_target->name = "Hand Target";
+    hand_target->SetVisibility(false);
+    main_scene->AddObject(hand_target);
+
+    foot_target = assetmanager->GetObjectFromAsset("indicator");
+    foot_target->name = "Foot Target";
+    foot_target->SetVisibility(false);
+    main_scene->AddObject(foot_target);
+
+    hand_landing = assetmanager->GetObjectFromAsset("indicator");
+    hand_landing->name = "Hand Landing";
+    hand_landing->SetScale(vec3(0.5f,0.5f,0.5f));
+    hand_landing->SetVisibility(false);
+    main_scene->AddObject(hand_landing);
+
+    foot_landing = assetmanager->GetObjectFromAsset("indicator");
+    foot_landing->name = "Foot Landing";
+    foot_landing->SetScale(vec3(0.5f,0.5f,0.5f));
+    foot_landing->SetVisibility(false);
+    main_scene->AddObject(foot_landing);
 
     Object* plane = assetmanager->GetObjectFromAsset("plane");
     plane->name = "Test Plane";
@@ -575,6 +599,52 @@ void ApplicationIsoAnimation::RunLogic(){
             plane->SetPosition(pos);
         }
     }
+
+    //Hand/foot landing-spot debug tool: click a surface to place a target. A hit whose normal
+    //points mostly sideways (a wall/ledge face) sets the hand target; one whose normal points
+    //mostly up (a floor/box top) sets the foot target.
+    if (f_mode_place_target && input->WasKeyReleased(INPUT_CLICK_LEFT)){
+        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+        vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
+        vec3 hov_pos = main_scene->inputcontroller->GetHoveredPosition();
+        if (fabs(hov_normal.y) > 0.5f){
+            if (foot_target){
+                foot_target->SetPosition(hov_pos);
+                foot_target->SetVisibility(true);
+            }
+        }else{
+            if (hand_target){
+                hand_target->SetPosition(hov_pos);
+                hand_target->SetVisibility(true);
+            }
+        }
+    }
+    UpdateHandFootLandingMarkers();
+}
+
+//Reads the previewed animation's current hand/foot bone world positions off the hands/feet preview
+//skeletons (midpoint of left+right) and updates the landing markers - live while it plays, and
+//naturally settling on the clip's final pose once it finishes (non-looping preview clips pause on
+//their last frame instead of looping back).
+void ApplicationIsoAnimation::UpdateHandFootLandingMarkers(){
+    if (hands && hand_landing){
+        Bone* hand_l = hands->FindBone("mixamorig:Hand.L");
+        Bone* hand_r = hands->FindBone("mixamorig:Hand.R");
+        if (hand_l && hand_r){
+            vec3 mid = (hand_l->GetWorldPosition(STATE_ACCESS_PHYSICS) + hand_r->GetWorldPosition(STATE_ACCESS_PHYSICS)) * 0.5f;
+            hand_landing->SetPosition(mid);
+            hand_landing->SetVisibility(true);
+        }
+    }
+    if (feet && foot_landing){
+        Bone* foot_l = feet->FindBone("mixamorig:Foot.L");
+        Bone* foot_r = feet->FindBone("mixamorig:Foot.R");
+        if (foot_l && foot_r){
+            vec3 mid = (foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS) + foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS)) * 0.5f;
+            foot_landing->SetPosition(mid);
+            foot_landing->SetVisibility(true);
+        }
+    }
 }
 
 void ApplicationIsoAnimation::RenderDebugMenuBarClass(){
@@ -747,6 +817,15 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
             feet->TransitionToAnimation("StandToFreeHang");
         }
     }
+    if (ImGui::Button("RunupClimbing")){
+        sync_hands_feet_to_character();
+        if (hands){
+            hands->TransitionToAnimation("RunupClimbing");
+        }
+        if (feet){
+            feet->TransitionToAnimation("RunupClimbing");
+        }
+    }
     if (ImGui::Button("Idle")){
         sync_hands_feet_to_character();
         if (hands){
@@ -754,6 +833,26 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         }
         if (feet){
             feet->TransitionToAnimation("Idle");
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::Checkbox("Place Hand/Foot Target (left-click a surface)",&f_mode_place_target);
+    ImGui::TextWrapped("Click a wall-like surface to place the hand target, a floor-like surface for the foot target. Compare against the small landing markers, which track where the previewed animation's hands/feet currently are.");
+    if (hand_target && hand_target->IsVisible() && hand_landing && hand_landing->IsVisible()){
+        float dist = (hand_target->GetPosition(STATE_ACCESS_RENDERER) - hand_landing->GetPosition(STATE_ACCESS_RENDERER)).length();
+        ImGui::Text("Hand target <-> landing distance: %.3f",dist);
+    }
+    if (foot_target && foot_target->IsVisible() && foot_landing && foot_landing->IsVisible()){
+        float dist = (foot_target->GetPosition(STATE_ACCESS_RENDERER) - foot_landing->GetPosition(STATE_ACCESS_RENDERER)).length();
+        ImGui::Text("Foot target <-> landing distance: %.3f",dist);
+    }
+    if (ImGui::Button("Clear Hand/Foot Targets")){
+        if (hand_target){
+            hand_target->SetVisibility(false);
+        }
+        if (foot_target){
+            foot_target->SetVisibility(false);
         }
     }
 
