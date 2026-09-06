@@ -14,12 +14,45 @@ BuggyCharacter::BuggyCharacter(){
 BuggyCharacter::~BuggyCharacter(){
 }
 
+
+//Turns the abstract driver inputs - throttle/steer/brake, each a scalar, set by a key, a stick or
+//a scripted player alike - into the pedal and steering state this drivetrain actually runs on.
+//A car needs the translation because its controls are not the same shape as its inputs: the
+//throttle arrives as ONE signed axis but the drivetrain wants a magnitude plus a gear, and the
+//steering arrives as a lock to hold but the front wheels reach it over time rather than snapping.
+//The tank needs no equivalent - its tracks take a signed command per side directly.
+void BuggyCharacter::InputToPedals(){
+    //Throttle: the sign picks the gear, the magnitude is how far the pedal goes down. Note this
+    //selects reverse the moment the input goes negative, with no "brake to a stop first" rule -
+    //the drive force simply opposes the current motion, which decelerates the body before it ever
+    //moves the other way, the same as a real vehicle being driven badly.
+    Reverse(throttle_input < 0.0f);
+    Accelerate(fabs(throttle_input));
+
+    //Already unsigned - Vehicle::BrakeInput takes the absolute value - so this is a straight copy.
+    Brake(brake_input);
+
+    //Steering is a POSITION that ramps toward what is being asked for, not a demand that snaps to
+    //it: steer_input is the lock the driver wants and steering_position walks there by at most
+    //steering_speed per tick. Both halves matter. Ramping keeps a digital key from reaching full
+    //lock in one tick, which is what SteerLeft/SteerRight gave before these inputs existed.
+    //Target-seeking is what makes a half-deflected stick - or a scripted 0.5 - settle at half lock:
+    //simply calling SteerRight(0.5) each tick would move it by steering_speed*0.5, which against
+    //DecaySteering()'s pull back toward centre nets zero, leaving the wheels stuck wherever they
+    //happened to be rather than at half lock.
+    //
+    //DecaySteering() has already run this tick (see UpdatePhysicsState), so a held input nets the
+    //difference between the two rates - and a released one is left to centre on its own.
+    float steer_delta = clamp(steer_input - steering_position,-steering_speed,steering_speed);
+    steering_position = clamp(steering_position + steer_delta,-1.0f,1.0f);
+}
+
 void BuggyCharacter::UpdatePhysicsState(){
     float timestep = physics_timestep; //see TankCharacter::UpdatePhysicsState
 
     ApplyPendingReset(); //see Vehicle::RequestReset
-    ApplyHoldLatches();
     DecaySteering();
+    InputToPedals(); //see Vehicle::ThrottleInput/BrakeInput/SteerInput
 
     float reverse_multiplier = f_reverse ? -1.0f : 1.0f;
     float max_steer_angle = max_steer_angle_degrees * TYPE_PI / 180.0f;
@@ -84,7 +117,7 @@ void BuggyCharacter::UpdatePhysicsState(){
             int axle_driven_count = wheel.is_front_side ? num_front_driven : num_rear_driven;
             float drive_force = 0.0f;
             if (wheel.driven && axle_fraction > 0.0f && !drive_capped && drive_command != 0.0f && axle_driven_count > 0){
-                drive_force = GovernedDriveForce(wheel,tuning,(engine_force * axle_fraction / axle_driven_count) * drive_command,timestep);
+                drive_force = GovernedDriveForce(wheel,tuning,(engine_force * axle_fraction / axle_driven_count) * drive_command,timestep,fabs(drive_command));
             }
             w.setDriveTorque(drive_force * tuning.radius);
             w.setBrakeTorque(brake_force_per_wheel * tuning.radius);

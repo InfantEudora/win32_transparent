@@ -24,6 +24,8 @@ public:
     //the front two are marked steerable.
     void SetupWheels(float track_half_width, float half_wheelbase, float mount_height);
 
+    void InputToPedals(); //Applies the current throttle/brake/steer inputs to the wheels
+
     //Turns a Wheel's per-field 0s into real numbers by falling back to the buggy's own shared
     //defaults below - see Vehicle::ResolveTuning's comment for why. Deliberately a separate set
     //of defaults from TankCharacter's, even though several start at the same value: a buggy's

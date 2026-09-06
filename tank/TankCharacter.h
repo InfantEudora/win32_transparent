@@ -84,6 +84,17 @@ public:
     //and is stable for any value, so this is now purely a feel choice, not a stability bound.
     float suspension_damping = 400.0f;    //N per (m/s) of compression rate
 
+    //Track drag, in Newtons, shared over the wheels: what a track resists rolling with when its
+    //own lever sits at neutral, fading to nothing as that lever is pushed (see UpdatePhysicsState).
+    //This is friction, not a brake input - it stands for track tension, road wheel bearings and
+    //the ground being churned, all of which a real track has whether or not the driver asks for
+    //anything. It does two jobs: it is what lets ONE lever forward swing the nose, because the
+    //loose track drags while the driven one pushes, and it is what brings the tank to rest when
+    //both levers come back to neutral. Too low and the tank coasts like a car and a single lever
+    //barely turns it; too high and it feels like driving through mud and fights its own engine on
+    //the way off neutral. Tune against engine_force (2000 N) and the ~804 N of available traction.
+    float rolling_resistance = 150.0f;
+
     //Coulomb friction coefficient along the track: the most drive or brake force each contact
     //can put into the ground is this times its current normal load. 1.0 is high for real
     //steel-on-dirt (0.5-0.7 would be typical) but the tracks are wide and this keeps the hull
@@ -106,18 +117,6 @@ public:
     //Last-resort safety net on the hull's roll/pitch rate, applied after each tick - see the
     //comment where it is applied in UpdatePhysicsState. Dead code in any drivable configuration.
     float max_roll_speed = 3.0f;  //rad/s ceiling on the hull's roll+pitch angular speed
-
-    //Standing rolling resistance: the brake pedal position the tank idles at when nothing is
-    //pressed, so releasing the controls brings it to a stop instead of coasting forever. Only
-    //applied while nothing is driving either track - a brake torque and a drive torque on the
-    //same wheel is the brake winning (the constraint only ever lets the brake decelerate), so
-    //idling the brake on WHILE driving would leave the tank unable to move at all.
-    float idle_brake = 0.1f;
-
-    //How strongly steering_position biases each side's drive command relative to the other.
-    //1.0 = full authority: opposite full-power tracks (gas_pedal 0, steering_position +-1)
-    //pivot the hull in place, same as a real tank turning on its tracks.
-    float steer_authority = 1.0f;
 
     //Turret tracking: turns towards turret_target at a constant angular speed.
     Object* turret = NULL;

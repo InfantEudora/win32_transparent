@@ -2,23 +2,13 @@
 #include "Debug.h"
 static Debugger* debug = new Debugger("Input",DEBUG_INFO);
 
-void KeyState::Up(){
-    if (f_isdown == 1){
-        f_was_released = true;
-    }
-    if (f_isdown > 0)
-        f_isdown--;
-}
-
-void KeyState::Down(){
-    f_isdown = num_mappings;
-}
-
 InputController::InputController(){
     //Mouse mapping is handled different from keys, but are read in the same way once mapped.
     AddKeyMap(0,INPUT_MOUSE_X);
     AddKeyMap(0,INPUT_MOUSE_Y);
     AddKeyMap(0,INPUT_MOUSE_WHEEL);
+    AddKeyMap(0,INPUT_MOUSE_DELTA_X);
+    AddKeyMap(0,INPUT_MOUSE_DELTA_Y);
 
     AddKeyMap(VK_UP,INPUT_MOVE_UP);
     AddKeyMap(VK_DOWN,INPUT_MOVE_DOWN);
@@ -65,9 +55,9 @@ KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
     return &keymap.back();
 }
 
-void InputController::UpdateKeyState(){
+void InputController::UpdateKeyState(uint64_t sim_tick){
     PollDevices();
-    ApplyPendingEvents();
+    ApplyPendingEvents(sim_tick);
 }
 
 void InputController::SubmitEvent(const InputEvent& event){
@@ -75,47 +65,99 @@ void InputController::SubmitEvent(const InputEvent& event){
     pending_events.push_back(event);
 }
 
-//Samples the OS devices into events.
-//
-//This reports each key's LEVEL every tick rather than its edges, which is not what the event
-//stream ultimately wants but is exactly what keeps this step behaviour-identical to the polling
-//loop it replaces - quirks included. Down() is idempotent while Up() only decrements, so a
-//keycode with two mappings (LSHIFT and RSHIFT both map to INPUT_SHIFT) still reads as down for
-//one extra tick after release, and the wheel's dummy mapping still gets a pointless
-//GetAsyncKeyState(0) that resolves to "up". Raw Input is where levels become real edges, and
-//where that multi-mapping counting bug gets fixed on purpose instead of by accident.
-void InputController::PollDevices(){
-    //Batched into a local first, so the whole poll costs one lock acquisition rather than one per
-    //key.
+void InputController::SetRawInputActive(bool active){
+    f_raw_input_active = active;
+}
+
+//keymap is only ever built during setup (AddKeyMap) and read afterwards, so walking it from the
+//raw input thread is safe. f_held is touched only by the physics thread in ApplyPendingEvents.
+void InputController::SubmitSystemKey(uint32_t system_keycode, bool down){
+    //Unfocused, a key going down is somebody typing in another application. A key coming UP is
+    //always honoured, so anything already held can still release.
+    if (down && !f_has_focus){
+        return;
+    }
+
     std::vector<InputEvent> events;
-    events.reserve(keymap.size() + 1);
+    for (KeyMap& map: keymap){
+        if (map.system_keycode != system_keycode){
+            continue;
+        }
+        InputEvent e;
+        e.type = down ? INPUT_EVENT_KEY_DOWN : INPUT_EVENT_KEY_UP;
+        e.mapped_keycode = (uint16_t)map.mapped_keycode;
+        //Which physical key this came from. Lets ApplyPendingEvents count each mapping of a
+        //multiply-mapped action separately instead of guessing.
+        e.value = (int32_t)system_keycode;
+        events.push_back(e);
+    }
+    if (events.empty()){
+        return;
+    }
+    std::lock_guard<std::mutex> lock(state_mutex);
+    pending_events.insert(pending_events.end(),events.begin(),events.end());
+}
+
+void InputController::SubmitAxisDelta(uint32_t mapped_keycode, int32_t delta){
+    if (delta == 0){
+        return;
+    }
+    InputEvent e;
+    e.type = INPUT_EVENT_AXIS_RELATIVE;
+    e.mapped_keycode = (uint16_t)mapped_keycode;
+    e.value = delta;
+    SubmitEvent(e);
+}
+
+//Samples whatever still has to be polled.
+//
+//The absolute cursor position always: Raw Input reports MOVEMENT, not a cursor, and the cursor is
+//what picking and the debug UI need. Keys only when raw input isn't running - if RawInputSource
+//failed to start we fall back to GetAsyncKeyState, still emitting edges (by diffing against each
+//mapping's f_held) so the rest of the pipeline behaves identically either way.
+void InputController::PollDevices(){
+    std::vector<InputEvent> events;
 
     POINT p;
     bool mousepoint_valid = GetCursorPos(&p);
-
-    //Whether to sample the simulation's keys at all. The cursor position below is view data
-    //(picking, the debug UI) rather than simulation input, so it keeps tracking either way.
-    bool sample_keys = f_has_focus;
-
-    for (KeyMap& map: keymap){
-        InputEvent e;
-        if (map.mapped_keycode == INPUT_MOUSE_X || map.mapped_keycode == INPUT_MOUSE_Y){
-            if (!mousepoint_valid){
+    if (mousepoint_valid){
+        for (KeyMap& map: keymap){
+            if (map.mapped_keycode != INPUT_MOUSE_X && map.mapped_keycode != INPUT_MOUSE_Y){
                 continue;
             }
+            InputEvent e;
             e.type = INPUT_EVENT_AXIS_ABSOLUTE;
             e.mapped_keycode = (uint16_t)map.mapped_keycode;
             e.value = (map.mapped_keycode == INPUT_MOUSE_X) ? p.x : p.y;
             events.push_back(e);
-            continue;
         }
-        //Unfocused keys are reported as UP rather than simply not sampled: a key held down while
-        //the user alt-tabs away must release, not stay latched at its last polled level.
-        e.type = (sample_keys && GetAsyncKeyState(map.system_keycode)) ? INPUT_EVENT_KEY_DOWN : INPUT_EVENT_KEY_UP;
-        e.mapped_keycode = (uint16_t)map.mapped_keycode;
-        events.push_back(e);
     }
 
+    if (!f_raw_input_active){
+        bool sample_keys = f_has_focus;
+        for (KeyMap& map: keymap){
+            if (map.system_keycode == 0){
+                continue;   //the mouse axes and wheel have no system key to poll
+            }
+            bool down = sample_keys && (GetAsyncKeyState(map.system_keycode) & 0x8000) != 0;
+            if (down == map.f_held){
+                continue;   //no edge, nothing to report
+            }
+            InputEvent e;
+            e.type = down ? INPUT_EVENT_KEY_DOWN : INPUT_EVENT_KEY_UP;
+            e.mapped_keycode = (uint16_t)map.mapped_keycode;
+            e.value = (int32_t)map.system_keycode;
+            events.push_back(e);
+        }
+    }
+
+    //Sampled here so the gamepad is read once per tick along with everything else, rather than by
+    //each app calling its own controller from its own update function.
+    PollGamepad();
+
+    if (events.empty() && !mousepoint_valid){
+        return;
+    }
     std::lock_guard<std::mutex> lock(state_mutex);
     if (mousepoint_valid){
         mouse_position = {p.x,p.y};
@@ -126,26 +168,77 @@ void InputController::PollDevices(){
 //Physics thread, top of the tick. Everything submitted since the last call becomes this tick's
 //input - including whatever the window message thread pushed in from its own thread, which is the
 //handoff that used to be an unsynchronised write straight into KeyState.
-void InputController::ApplyPendingEvents(){
+void InputController::ApplyPendingEvents(uint64_t sim_tick){
+    //Scripted holds go first, and emit into the same queue as everything else, so a recording of
+    //this tick cannot tell a scripted press from a real one. Only ever advanced once per SIMULATED
+    //tick - see the declaration for why counting calls instead would be a wall-clock bug.
+    if (!f_hold_tick_valid || sim_tick != last_hold_tick){
+        f_hold_tick_valid = true;
+        last_hold_tick = sim_tick;
+        AdvanceSyntheticHolds();
+    }
     {
         std::lock_guard<std::mutex> lock(state_mutex);
         tick_events.swap(pending_events);
         pending_events.clear();
     }
 
+    //Focus was lost since the last tick: drop everything that was held. Done before the events so
+    //a key-up that did arrive is simply a no-op afterwards.
+    if (f_release_all_keys.exchange(false)){
+        for (KeyMap& km: keymap){
+            if (!km.f_held){
+                continue;
+            }
+            km.f_held = false;
+            if (km.state && km.state->f_isdown > 0){
+                km.state->f_isdown--;
+                if (km.state->f_isdown == 0){
+                    km.state->f_was_released = true;
+                }
+            }
+        }
+    }
+
     for (const InputEvent& e: tick_events){
-        //Multiple mappings of one keycode share a single KeyState, so resolving by mapped code is
-        //correct here: Down()/Up() act on that shared state exactly as the old loop did.
-        KeyMap* m = GetByMappedKey(e.mapped_keycode);
+        KeyMap* m = NULL;
+        if ((e.type == INPUT_EVENT_KEY_DOWN || e.type == INPUT_EVENT_KEY_UP) && e.value != 0){
+            //A hardware key: resolve the exact mapping it came from, so that a keycode driven by
+            //several physical keys (VK_LSHIFT and VK_RSHIFT both -> INPUT_SHIFT) counts each of
+            //them once and only reads as released when the last one comes up.
+            for (KeyMap& km: keymap){
+                if (km.mapped_keycode == e.mapped_keycode && km.system_keycode == (uint32_t)e.value){
+                    m = &km;
+                    break;
+                }
+            }
+        }
+        if (!m){
+            //Axis events, and synthetic key events with no system key behind them (what the UI and
+            //the MCP server will submit once they become "players").
+            m = GetByMappedKey(e.mapped_keycode);
+        }
         if (!m || !m->state){
             continue;
         }
         switch (e.type){
             case INPUT_EVENT_KEY_DOWN:
-                m->state->Down();
+                //Edge, not level: a repeat while already held is ignored rather than re-counted.
+                if (!m->f_held){
+                    m->f_held = true;
+                    m->state->f_isdown++;
+                }
             break;
             case INPUT_EVENT_KEY_UP:
-                m->state->Up();
+                if (m->f_held){
+                    m->f_held = false;
+                    if (m->state->f_isdown > 0){
+                        m->state->f_isdown--;
+                    }
+                    if (m->state->f_isdown == 0){
+                        m->state->f_was_released = true;
+                    }
+                }
             break;
             case INPUT_EVENT_AXIS_ABSOLUTE:
                 m->state->delta = e.value - m->state->value;
@@ -157,11 +250,256 @@ void InputController::ApplyPendingEvents(){
                 m->state->delta += e.value;
                 m->state->f_processed = false;
             break;
+            case INPUT_EVENT_AXIS_SCALAR:
+                m->state->fvalue = e.fvalue;
+                m->state->f_processed = false;
+            break;
             default:
             break;
         }
     }
 }
+
+//--- Scripted input -----------------------------------------------------------------------------
+
+void InputController::HoldKey(uint32_t mapped_keycode, uint32_t duration_ticks){
+    AddSyntheticHold(mapped_keycode,false,0.0f,duration_ticks);
+}
+
+void InputController::HoldAxis(uint32_t mapped_keycode, float value, uint32_t duration_ticks){
+    AddSyntheticHold(mapped_keycode,true,value,duration_ticks);
+}
+
+void InputController::AddSyntheticHold(uint32_t mapped_keycode, bool axis, float value, uint32_t duration_ticks){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    for (size_t i=0;i<synthetic_holds.size();i++){
+        if (synthetic_holds[i].mapped_keycode != mapped_keycode){
+            continue;
+        }
+        if (duration_ticks == 0){
+            //Releasing: leave the hold in place with no time left, so the next tick emits its
+            //key-up / zero properly rather than dropping it and stranding the control held.
+            synthetic_holds[i].ticks_remaining = 0;
+            return;
+        }
+        //Re-asserting the same control refreshes it. f_started is deliberately left alone: an
+        //ongoing press must not produce a second key-down.
+        synthetic_holds[i].f_axis = axis;
+        synthetic_holds[i].value = value;
+        synthetic_holds[i].ticks_remaining = duration_ticks;
+        return;
+    }
+    if (duration_ticks == 0){
+        return; //nothing was held, nothing to release
+    }
+    SyntheticHold h;
+    h.mapped_keycode = mapped_keycode;
+    h.f_axis = axis;
+    h.value = value;
+    h.ticks_remaining = duration_ticks;
+    synthetic_holds.push_back(h);
+}
+
+void InputController::ReleaseSynthetic(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    for (SyntheticHold& h: synthetic_holds){
+        h.ticks_remaining = 0;  //next tick emits the release
+    }
+}
+
+void InputController::AdvanceSyntheticHolds(){
+    std::vector<InputEvent> events;
+    std::lock_guard<std::mutex> lock(state_mutex);
+
+    for (size_t i=0;i<synthetic_holds.size();){
+        SyntheticHold& h = synthetic_holds[i];
+
+        if (!h.f_started){
+            h.f_started = true;
+            InputEvent e;
+            e.mapped_keycode = (uint16_t)h.mapped_keycode;
+            if (h.f_axis){
+                e.type = INPUT_EVENT_AXIS_SCALAR;
+                e.fvalue = h.value;
+            }else{
+                e.type = INPUT_EVENT_KEY_DOWN;
+            }
+            events.push_back(e);
+        }
+
+        //ticks_remaining counts ticks still to be held INCLUDING this one, so a hold of 1 is down
+        //for exactly one tick and releases on the next.
+        if (h.ticks_remaining > 0){
+            h.ticks_remaining--;
+            i++;
+            continue;
+        }
+
+        InputEvent e;
+        e.mapped_keycode = (uint16_t)h.mapped_keycode;
+        if (h.f_axis){
+            e.type = INPUT_EVENT_AXIS_SCALAR;
+            e.fvalue = 0.0f;
+        }else{
+            e.type = INPUT_EVENT_KEY_UP;
+        }
+        events.push_back(e);
+        synthetic_holds.erase(synthetic_holds.begin() + i);
+    }
+
+    pending_events.insert(pending_events.end(),events.begin(),events.end());
+}
+
+float InputController::GetAxis(uint32_t mapped_keycode){
+    KeyMap* m = GetByMappedKey(mapped_keycode);
+    if (!m || !m->state){
+        return 0.0f;
+    }
+    return m->state->fvalue;
+}
+
+//--- Gamepad (XInput) ---------------------------------------------------------------------------
+
+void InputController::ListDevices(){
+    debug->Info("X-Input: Checking for contollers using X-Input\n");
+    XINPUT_STATE state;
+    ZeroMemory(&state,sizeof(XINPUT_STATE));
+
+    //All four slots now, not just slot 0.
+    for (DWORD i=0;i<XUSER_MAX_COUNT;i++){
+        if (XInputGetState(i,&state) != ERROR_SUCCESS){
+            continue;
+        }
+        debug->Info("X-Input: Controller at %lu\n",i);
+        if (dev_index < 0){
+            dev_index = (int)i;
+        }
+        XINPUT_CAPABILITIES cap;
+        if (XInputGetCapabilities(i,0,&cap) == ERROR_SUCCESS){
+            debug->Info("X-Input: Got Capabilities\n");
+            debug->Info("X-Input:  - Flags %lu\n",cap.Flags);
+        }
+    }
+    if (dev_index < 0){
+        debug->Warn("No Game Controller was found using XInput\n");
+    }
+}
+
+GamePadMap* InputController::AddGamePadMap(int analog_index, uint32_t mapped){
+    GamePadMap m;
+    m.analog_index = analog_index;
+    m.mapped_keycode = mapped;
+    gamepad_map.push_back(m);
+    return &gamepad_map.back();
+}
+
+void InputController::PollGamepad(){
+    XINPUT_STATE state;
+    ZeroMemory(&state,sizeof(XINPUT_STATE));
+
+    if (dev_index < 0){
+        //Nothing connected: look again, but only every GAMEPAD_RESCAN_TICKS - see the comment on
+        //that define for why probing empty slots every tick is not free.
+        if (gamepad_rescan_countdown > 0){
+            gamepad_rescan_countdown--;
+            return;
+        }
+        gamepad_rescan_countdown = GAMEPAD_RESCAN_TICKS;
+        for (DWORD i=0;i<XUSER_MAX_COUNT;i++){
+            if (XInputGetState(i,&state) == ERROR_SUCCESS){
+                dev_index = (int)i;
+                debug->Ok("X-Input: controller connected at index %lu\n",i);
+                break;
+            }
+        }
+        if (dev_index < 0){
+            return;
+        }
+    }else if (XInputGetState((DWORD)dev_index,&state) != ERROR_SUCCESS){
+        debug->Warn("X-Input: controller at index %i disconnected\n",dev_index);
+        dev_index = -1;
+        //Zeroed, so a yanked cable can't leave a stick stuck at its last deflection. The old code
+        //left the last values in place and never looked for the pad again.
+        for (int i=0;i<GAMEPAD_MAX_ANALOG_VALUES;i++){
+            analog_values[i] = 0;
+        }
+        gamepad_rescan_countdown = GAMEPAD_RESCAN_TICKS;
+        return;
+    }
+
+    if (!f_has_focus){
+        //Same rule as the keyboard: another application is in front, so this is not our input.
+        for (int i=0;i<GAMEPAD_MAX_ANALOG_VALUES;i++){
+            analog_values[i] = 0;
+        }
+        return;
+    }
+
+    //Indices and scaling exactly as the old GamePadController had them, so every existing
+    //AddGamePadMap(index,...) in the apps keeps meaning the same thing.
+    analog_values[0] = state.Gamepad.sThumbLX;
+    analog_values[1] = state.Gamepad.sThumbLY;
+    analog_values[2] = state.Gamepad.sThumbRX;
+    analog_values[3] = state.Gamepad.sThumbRY;
+    analog_values[4] = (SHORT)state.Gamepad.bLeftTrigger * 128;
+    analog_values[5] = (SHORT)state.Gamepad.bRightTrigger * 128;
+
+    //Rumble decay, unchanged.
+    bool send_disable = false;
+    if (lmotor > 0){
+        lmotor = clamp(lmotor - 1000,0,65000);
+        if (lmotor == 0){
+            send_disable = true;
+        }
+    }
+    if (rmotor > 0){
+        rmotor = clamp(rmotor - 1000,0,65000);
+        if (rmotor == 0){
+            send_disable = true;
+        }
+    }
+    if ((rmotor > 0) || (lmotor > 0) || send_disable){
+        SendMotorData(lmotor,rmotor);
+    }
+}
+
+float InputController::GetNormalizedAnalogValue(uint32_t mapped_key){
+    if (dev_index == -1){
+        return 0.0f;
+    }
+    for (GamePadMap& map: gamepad_map){
+        if (map.mapped_keycode != mapped_key){
+            continue;
+        }
+        if (map.analog_index >= 0 && map.analog_index < GAMEPAD_MAX_ANALOG_VALUES){
+            int raw_value = analog_values[map.analog_index];
+            int32_t zero_offset = map.zero_offset;
+            int32_t dead_zone = map.dead_zone;
+            float normalized = 0.0f;
+            raw_value = raw_value - zero_offset;
+            if (raw_value > dead_zone){
+                normalized = (float)(raw_value - dead_zone) / (32767.0f - dead_zone);
+            }else if (raw_value < -dead_zone){
+                normalized = (float)(raw_value + dead_zone) / (32768.0f - dead_zone);
+            }
+            return normalized;
+        }
+    }
+    return 0.0f;
+}
+
+//Conclusion: Sending things with the HID interface does not work.
+void InputController::SendMotorData(int l, int r){
+    if (dev_index < 0){
+        return;
+    }
+    XINPUT_VIBRATION v;
+    v.wLeftMotorSpeed = l;
+    v.wRightMotorSpeed = r;
+    XInputSetState((DWORD)dev_index,&v);
+}
+
+//--- Lookups ------------------------------------------------------------------------------------
 
 //Return the first keystate that has the keycode specified
 KeyMap* InputController::GetBySystemKey(uint32_t sys_keycode){
@@ -235,6 +573,16 @@ void InputController::SetMouseOverWindow(bool over){
     window_state.f_mouse_over_window = over;
 }
 
+void InputController::SetFocused(bool focused){
+    bool was = f_has_focus.exchange(focused);
+    if (was && !focused){
+        //Ask the next tick to release everything held. The key-up for a key still down when the
+        //user alt-tabs does normally arrive (raw input is registered RIDEV_INPUTSINK, so it keeps
+        //being delivered), but relying on that alone would leave the key stuck if it didn't.
+        f_release_all_keys = true;
+    }
+}
+
 void InputController::SetHoveredObjectID(objectid_t id){
     hovered_object = id;
 }
@@ -296,26 +644,25 @@ void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
         //debug->Trace("WM_MOUSEWHEEL x,y = %li,%li delta=%i\n",x,y,d);
         //The wheel is the one input that has always been genuinely event-driven, and it used to be
         //written straight into KeyState from this thread while the physics thread was reading and
-        //clearing it. Now it goes through the queue like everything else.
-        InputEvent e;
-        e.type = INPUT_EVENT_AXIS_RELATIVE;
-        e.mapped_keycode = INPUT_MOUSE_WHEEL;
-        e.value = d;
-        SubmitEvent(e);
+        //clearing it. Now it goes through the queue like everything else - unless raw input is
+        //live, in which case RI_MOUSE_WHEEL already reported this same scroll and counting it here
+        //too would double every notch.
+        if (!f_raw_input_active){
+            SubmitAxisDelta(INPUT_MOUSE_WHEEL,d);
+        }
         SetMouseOverWindow(true);
     }else if (msg == WM_MOUSELEAVE){
         debug->Trace("WM_MOUSELEAVE wParam= %li\n",wParam);
         SetMouseOverWindow(false);
     }else if (msg == WM_ACTIVATE){
-        //Losing the foreground stops the simulation's input being sampled at all - the next
-        //PollDevices reports every key as up, so nothing stays latched. ImGui is unaffected; it
-        //has its own Win32 handler.
-        f_has_focus = (LOWORD(wParam) != WA_INACTIVE);
+        //Losing the foreground stops the simulation seeing key presses at all, and releases
+        //anything still held. ImGui is unaffected; it has its own Win32 handler.
+        SetFocused(LOWORD(wParam) != WA_INACTIVE);
         debug->Trace("WM_ACTIVATE focus=%i\n",(int)f_has_focus);
     }else if (msg == WM_SETFOCUS){
-        f_has_focus = true;
+        SetFocused(true);
     }else if (msg == WM_KILLFOCUS){
-        f_has_focus = false;
+        SetFocused(false);
     }else if (msg == WM_SETCURSOR){
     }else if (msg == WM_CHAR){
     }else if (msg == WM_CAPTURECHANGED){

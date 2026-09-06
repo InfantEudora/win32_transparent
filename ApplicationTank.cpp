@@ -14,6 +14,13 @@
 #define GAMEPAD_L2             INPUT_LAST+10
 #define GAMEPAD_R2             INPUT_LAST+11
 
+//Scalar control axes. Any source can drive these - today it is the MCP tools acting as a scripted
+//player (see InputController::HoldAxis); the gamepad sticks and the keyboard still go straight to
+//the Vehicle below. Drive is signed: positive accelerates, negative reverses.
+#define INPUT_AXIS_DRIVE       INPUT_LAST+20
+#define INPUT_AXIS_STEER       INPUT_LAST+21
+#define INPUT_AXIS_BRAKE       INPUT_LAST+22
+
 static Debugger *debug = new Debugger("ApplicationTank", DEBUG_ALL);
 
 ApplicationTank::ApplicationTank():Application(){
@@ -46,6 +53,9 @@ void ApplicationTank::Init(void){
     //We make an assetmanager which we use to load/build all assets from:
     assetmanager = new AssetManager();
 
+    rrand = new RRandom();
+    rrand->Generate(512,512);
+
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics(1/50.0f);
     main_scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_FIRE);
@@ -54,7 +64,7 @@ void ApplicationTank::Init(void){
     main_scene->physics_world->SetGravity(vec3(0,-9.81,0));
     main_scene->physics_world->SetDebugRendering(false);
 
-    gamepad_controller = new GamePadController();
+    gamepad_controller = main_window->inputcontroller;
     gamepad_controller->ListDevices();
     gamepad_controller->AddGamePadMap(0,GAMEPAD_LEFT_STICK_X);
     gamepad_controller->AddGamePadMap(1,GAMEPAD_LEFT_STICK_Y);
@@ -62,6 +72,11 @@ void ApplicationTank::Init(void){
     gamepad_controller->AddGamePadMap(3,GAMEPAD_RIGHT_STICK_Y);
     gamepad_controller->AddGamePadMap(4,GAMEPAD_L2);
     gamepad_controller->AddGamePadMap(5,GAMEPAD_R2);
+
+    //System keycode 0: nothing on a keyboard produces these, they only ever carry a scalar.
+    gamepad_controller->AddKeyMap(0,INPUT_AXIS_DRIVE);
+    gamepad_controller->AddKeyMap(0,INPUT_AXIS_STEER);
+    gamepad_controller->AddKeyMap(0,INPUT_AXIS_BRAKE);
 
     {
         //Setup sun light
@@ -485,12 +500,6 @@ void ApplicationTank::Init(void){
     //The default vehicle
     SetControlledVehicle(controlled_buggy);
 
-    //Placeholder impact effect for Fire() (see RunLogic): bursts copies of the target marker
-    //itself outward from the target's position. Needs its own RRandom, same as every other
-    //app's particle emitter (ParticleEmitter::EmitParticles hard-fails without one).
-    rrand = new RRandom();
-    rrand->Generate(512,512);
-
     fire_impact_emitter = new ParticleEmitter(main_scene->physics_world);
     fire_impact_emitter->name = "Fire Impact Emitter";
     fire_impact_emitter->target_scene = main_scene;
@@ -684,6 +693,17 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
         {"forward", json::array({forward.x,forward.y,forward.z})},
         {"up", json::array({up.x,up.y,up.z})},
         {"forward_speed", vehicle->forward_speed},
+        //Whether the window had focus: hardware control (keyboard/gamepad) is only applied when it
+        //does, and a released gamepad trigger writes Brake(0) - which wipes TankCharacter's idle
+        //brake. So the same scripted drive coasts differently focused vs not. Reported so a
+        //baseline comparison can tell the two apart instead of looking like a physics change.
+        {"window_focus", main_window ? main_window->f_has_focus : false},
+        //The driver-facing inputs as the vehicle actually received them, before any drivetrain
+        //turns them into pedals or per-track commands - so a scripted run can tell "the input
+        //never arrived" apart from "the input arrived and the physics ignored it".
+        {"throttle_input", vehicle->throttle_input},
+        {"steer_input", vehicle->steer_input},
+        {"brake_input", vehicle->brake_input},
         {"gas_pedal", vehicle->gas_pedal},
         {"brake_pedal", vehicle->brake_pedal},
         {"steering_position", vehicle->steering_position},
@@ -782,7 +802,6 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
             {"contact_samples", controlled_tank->contact_samples},
             {"engine_force", controlled_tank->engine_force},
             {"brake_force", controlled_tank->brake_force},
-            {"idle_brake", controlled_tank->idle_brake},
             {"top_speed", controlled_tank->top_speed},
             {"max_roll_speed", controlled_tank->max_roll_speed},
         };
@@ -920,13 +939,22 @@ void ApplicationTank::RegisterMCPTools(){
             float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
             uint32_t duration_ticks = DurationMsToTicks(duration_ms);
             std::string direction = args.value("direction","stop");
+            //MCP is a player: it holds a control on the InputController exactly as a person would,
+            //and RunLogic drives whichever vehicle is being controlled. So "which vehicle" means
+            //"take control of it" - there is no separate back door into a vehicle any more.
+            SetControlledVehicle(vehicle);
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
             if (direction == "forward"){
-                vehicle->HoldDrive(false,amount,duration_ticks);
+                input->HoldAxis(INPUT_AXIS_DRIVE,amount,duration_ticks);
             }else if (direction == "reverse"){
-                vehicle->HoldDrive(true,amount,duration_ticks);
+                input->HoldAxis(INPUT_AXIS_DRIVE,-amount,duration_ticks);
             }else if (direction == "brake"){
-                vehicle->HoldBrake(amount,duration_ticks);
+                input->HoldAxis(INPUT_AXIS_BRAKE,amount,duration_ticks);
             }else{
+                input->ReleaseSynthetic();
                 vehicle->ReleaseInputs();
             }
             //While paused (tank_pause) the hold plays out through tank_step instead, so there is
@@ -964,7 +992,12 @@ void ApplicationTank::RegisterMCPTools(){
             uint32_t duration_ticks = DurationMsToTicks(duration_ms);
             std::string direction = args.value("direction","left");
             float signed_amount = (direction == "right") ? amount : -amount;
-            vehicle->HoldSteer(signed_amount,duration_ticks);
+            SetControlledVehicle(vehicle);
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            input->HoldAxis(INPUT_AXIS_STEER,signed_amount,duration_ticks);
             if (!main_scene || !main_scene->IsPhysicsPaused()){
                 Sleep(TicksToRealMs(duration_ticks));
             }
@@ -1330,7 +1363,6 @@ void ApplicationTank::AddTestSceneObjects(){
 
     //A handful of static obstacles scattered across the ground plane above - fixed seed, so the
     //layout is the same every run (same reproducibility goal as the flat plane itself).
-    srand(1337);
     for (int i = 0; i < 3; i++){
         Object* obstacle = assetmanager->GetObjectFromAsset("cube");
         if (!obstacle){
@@ -1344,11 +1376,13 @@ void ApplicationTank::AddTestSceneObjects(){
         if (Physics* physics = obstacle->GetPhysics()){
             physics->AddBoxCollider(obstacle_extent,vec3(0,0,0),quat().identity(),1.0f); //density irrelevant, static
             physics->SetFrictionCoefficient(0.8f);
-            physics->SetBounciness(0.0f);
-            physics->SetStatic(true);
+            physics->SetBounciness(0.1f);
+            physics->SetStatic(false);
+            physics->SetMass(10.0f);
+            physics->SetGravityEnabled(true);
         }
-        float x = ((float)(rand() % 1600)) / 100.0f - 8.0f; //-8..8, safely inside the 20x20 plane
-        float z = ((float)(rand() % 1600)) / 100.0f - 8.0f;
+        float x = rrand->GetFloat(-8.0f,8.0f); //-8..8, safely inside the 20x20 plane
+        float z = rrand->GetFloat(-8.0f,8.0f); //-8..8, safely inside the 20x20 plane
         obstacle->SetPosition(vec3(x,obstacle_extent.y,z)); //sits with its bottom on the plane's top face (y=0)
     }
 
@@ -1518,36 +1552,44 @@ void ApplicationTank::RunLogic(){
     }
     UpdateBuggyWheelSpinParticles();
 
-    //Only when in focus
-    if (!main_window->f_has_focus){
-        return;
-    }
+    //Focus is no longer a reason to skip this whole function. It used to return here, which was
+    //fine while MCP drove the vehicles behind RunLogic's back through Vehicle::HoldDrive - but MCP
+    //is a player now, and its input arrives through InputController like anyone else's. Returning
+    //early would silence scripted control exactly when the window ISN'T in front, which is every
+    //automated run. Hardware input is already suppressed while unfocused inside InputController
+    //(keys report up, gamepad axes zero), so nothing stale can leak in; scripted input is not from
+    //the OS and deliberately isn't gated. What still needs the check is the cursor-driven work
+    //below, which would otherwise track a mouse being used in another application.
+    bool has_focus = main_window->f_has_focus;
 
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
-    gamepad_controller->UpdateKeyState();
+    //Gamepad sampling now happens once per tick inside InputController::PollDevices, with the
+    //keyboard and mouse - no separate per-app poll.
 
     //Track the target on the terrain under the mouse cursor. If the cursor isn't over the
     //terrain (eg. over the sky, or over the tank itself), leave the target where it is.
     if ((controlled_vehicle == controlled_tank) && target && heightmap_mesh_test){
         target->SetVisibility(true);
-        if (input->GetHoveredObjectID() != OBJECTID_INVALID){
+        //Only while focused - otherwise the target chases a cursor being used elsewhere.
+        if (has_focus && input->GetHoveredObjectID() != OBJECTID_INVALID){
             target->SetPosition(input->GetHoveredPosition());
         }
     }else{
         target->SetVisibility(false);
     }
 
-    //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
-        //Clear mouse delta
-        input->GetDelta(INPUT_MOUSE_WHEEL);
-        return;
+    //Cursor-driven work only: picking and selection. Skipped when the window isn't focused, or
+    //when the pointer is over a UI element. Vehicle control continues below either way, so a
+    //scripted drive isn't cancelled by the operator happening to mouse over a debug panel.
+    if (has_focus && !ImGui::GetIO().WantCaptureMouse){
+        CheckObjectSelection();
     }
-
-    CheckObjectSelection();
+    if (ImGui::GetIO().WantCaptureMouse){
+        input->GetDelta(INPUT_MOUSE_WHEEL); //clear the wheel delta so it doesn't apply later
+    }
 
     //Routed to whichever vehicle is currently selected (see the "Controlling" toggle in
     //RenderTankWheelDebugUI) - Accelerate/Reverse/SteerLeft/SteerRight are on Vehicle, shared by
@@ -1555,40 +1597,68 @@ void ApplicationTank::RunLogic(){
     //Firing stays tank-only: BuggyCharacter has no turret.
     if (controlled_vehicle){
 
-        float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
-        float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
-        float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
-        float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
-        float gp_l2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_L2);
-        float gp_r2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2);
+        //HARDWARE control - keyboard and gamepad - only while this window is in front. This gate
+        //is load-bearing beyond just ignoring stray keys: the gamepad block below writes the pedals
+        //UNCONDITIONALLY (Brake(gp_r2), Accelerate(0)), so with a controller plugged in and its
+        //triggers at rest it zeroes the idle brake that TankCharacter re-asserts at the end of
+        //every tick. Letting that run during an unfocused scripted drive stopped the tank braking
+        //when it coasted - it rolled 1.2m instead of 0.16m. Scripted input below is deliberately
+        //outside this gate: it isn't from the OS, and an automated run is never in the foreground.
+        if (has_focus){
+            //Analog inputs
+            float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
+            float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
+            float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
+            float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
+            float gp_l2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_L2);
+            float gp_r2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2);
 
-        //debug->Info("Gamepad: left stick (%.3f,%.3f) right stick (%.3f,%.3f) triggers %.3f\n",gp_lx,gp_ly,gp_rx,gp_ry,gp_l2r2);
-        controlled_vehicle->SteerRight(gp_lx);
-        if (gp_ry > 0.0f){
-            controlled_vehicle->Accelerate(gp_ry);
-        }else if (gp_ry < 0.0f){
-            controlled_vehicle->Reverse(-gp_ry);
-        }else{
-            controlled_vehicle->Accelerate(0);
-        }
-        //debug->Info("Gamepad: gp_r2 %.3f\n",gp_r2);
+            //debug->Info("Gamepad: left stick (%.3f,%.3f) right stick (%.3f,%.3f) triggers %.3f\n",gp_lx,gp_ly,gp_rx,gp_ry,gp_l2r2);
+            float steer_input = gp_lx;
+            float throttle_input = gp_ry;
+            float brake_input = gp_r2;
 
-        controlled_vehicle->Brake(gp_r2);
+            controlled_vehicle->ThrottleInput(throttle_input);
+            controlled_vehicle->SteerInput(steer_input);
+            controlled_vehicle->BrakeInput(brake_input);
 
+            //Overriden by keyboard
+            if (input->IsKeyDown(INPUT_TURN_UP)){
+                controlled_vehicle->ThrottleInput(1.0f);
+            }
+            if (input->IsKeyDown(INPUT_TURN_DOWN)){
+                controlled_vehicle->ThrottleInput(-1.0f);
+            }
+            if (input->IsKeyDown(INPUT_TURN_LEFT)){
+                controlled_vehicle->SteerInput(-1.0f);
+            }
+            if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+                controlled_vehicle->SteerInput(1.0f);
+            }
+        }
 
-        if (input->IsKeyDown(INPUT_TURN_UP)){
-            controlled_vehicle->Accelerate(1.0f);
+        //Scripted input - the MCP tools acting as a player - applied last so it layers over the
+        //gamepad/keyboard the way a second controller would, and outside the focus gate above
+        //because it doesn't come from the OS. The axes are already in exactly the units the
+        //vehicle inputs take (drive and steer signed -1..+1, brake 0..1), which is the point of
+        //defining them that way: a scripted player commands the same three things a human does,
+        //and each drivetrain decides for itself what they mean.
+        //
+        //Only applied when non-zero, so releasing a scripted hold hands control straight back to
+        //whatever else is driving rather than pinning the input at 0.
+        float ax_drive = input->GetAxis(INPUT_AXIS_DRIVE);
+        float ax_steer = input->GetAxis(INPUT_AXIS_STEER);
+        float ax_brake = input->GetAxis(INPUT_AXIS_BRAKE);
+        if (ax_drive != 0.0f){
+            controlled_vehicle->ThrottleInput(ax_drive);
         }
-        if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            controlled_vehicle->Reverse(1.0f);
+        if (ax_steer != 0.0f){
+            controlled_vehicle->SteerInput(ax_steer);
         }
-        if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            controlled_vehicle->SteerLeft(1.0f);
+        if (ax_brake != 0.0f){
+            controlled_vehicle->BrakeInput(ax_brake);
         }
-        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-            controlled_vehicle->SteerRight(1.0f);
-        }
-        if (input->WasKeyReleased(INPUT_FIRE) && controlled_vehicle == controlled_tank && controlled_tank){
+        if (has_focus && input->WasKeyReleased(INPUT_FIRE) && controlled_vehicle == controlled_tank && controlled_tank){
             controlled_tank->Fire();
             if (fire_impact_emitter && target){
                 //Local, not world, position - target is a root object (added straight to

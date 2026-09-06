@@ -14,7 +14,7 @@ void Scene::UpdateInput(){
     if (!inputcontroller){
         return;
     }
-    inputcontroller->UpdateKeyState();
+    inputcontroller->UpdateKeyState(physics_tick);
 };
 
 void Scene::UpdateAnimations(float delta_time){

@@ -10,10 +10,20 @@ Vehicle::~Vehicle(){
     DestroyVehicleConstraint();
 }
 
+//A number -1 to +1
+void Vehicle::ThrottleInput(float input){
+    throttle_input = clamp(input,-1.0f,1.0f);
+}
+//A number -1 to +1
+void Vehicle::SteerInput(float input){
+    steer_input = clamp(input,-1.0f,1.0f);
+}
+//A number -1 to +1
+void Vehicle::BrakeInput(float input){
+    brake_input = clamp(abs(input),0.0f,1.0f);
+}
+
 void Vehicle::Accelerate(float factor){
-    //No "brake to stop first" state machine needed - a real opposing force naturally
-    //decelerates the body before it starts moving the other way, same as an actual vehicle.
-    f_reverse = false;
     gas_pedal = clamp(factor,0.0f,1.0f);
 }
 
@@ -21,70 +31,31 @@ void Vehicle::Brake(float factor){
     brake_pedal = clamp(factor,0.0f,1.0f);
 }
 
-//Both clamp to the FULL [-1,+1] range, not to their own half of it. Clamping SteerLeft to
-//[-1,0] (and SteerRight to [0,+1]) meant any input opposing the current deflection collapsed
-//straight to centre instead of travelling there: held at +0.8 and pressing left gave
-//clamp(0.7,-1,0) = 0, a full-lock-to-centre jump in a single tick. That showed up three ways -
-//left and right held together snapped to centre, releasing full left and immediately pressing
-//right snapped through centre before moving, and any quick direction change lost its whole
-//travel time - all of which are the same one-line bug, and all of which are why the wheels
-//moved gradually away from centre but instantly back to it.
-//
-//Crossing zero smoothly is the whole point: steering_position is a POSITION, and the only
-//thing that should ever move it discontinuously is ResetState.
+//Steer left right move the steering position toward either -1 or +1
 void Vehicle::SteerLeft(float factor){
-    float delta = 0.10f * factor;
+    float delta = steering_speed * factor;
     steering_position = clamp(steering_position - delta,-1.0f,1.0f);
 }
 
 void Vehicle::SteerRight(float factor){
-    float delta = 0.10f * factor;
+    float delta = steering_speed * factor;
     steering_position = clamp(steering_position + delta,-1.0f,1.0f);
 }
 
-void Vehicle::Reverse(float factor){
-    f_reverse = true;
-    gas_pedal = clamp(factor,0.0f,1.0f);
-}
-
-void Vehicle::HoldDrive(bool reverse,float amount,uint32_t duration_ticks){
-    gas_latch_amount = clamp(amount,0.0f,1.0f);
-    gas_latch_reverse = reverse;
-    gas_latch_ticks = duration_ticks;
-    //Apply immediately too, rather than waiting for the next tick's latch check.
-    if (reverse){
-        Reverse(gas_latch_amount);
-    }else{
-        Accelerate(gas_latch_amount);
-    }
-}
-
-void Vehicle::HoldBrake(float amount,uint32_t duration_ticks){
-    brake_latch_amount = clamp(amount,0.0f,1.0f);
-    brake_latch_ticks = duration_ticks;
-    Brake(brake_latch_amount);
-}
-
-void Vehicle::HoldSteer(float signed_amount,uint32_t duration_ticks){
-    steer_latch_amount = clamp(signed_amount,-1.0f,1.0f);
-    steer_latch_ticks = duration_ticks;
-    if (steer_latch_amount < 0.0f){
-        SteerLeft(-steer_latch_amount);
-    }else{
-        SteerRight(steer_latch_amount);
-    }
+void Vehicle::Reverse(bool reverse){
+    f_reverse = reverse;
 }
 
 void Vehicle::ReleaseInputs(){
-    gas_latch_ticks = 0;
-    brake_latch_ticks = 0;
-    steer_latch_ticks = 0;
     //Both pedals, explicitly. This used to call Brake(0) alone in the belief that it released
     //the gas too - it doesn't, Brake() only writes brake_pedal - which the tank masked by
     //zeroing gas_pedal itself every tick, while the buggy kept driving on whatever throttle it
     //last had after every "stop".
     gas_pedal = 0.0f;
     brake_pedal = 0.0f;
+    steer_input = 0.0f;
+    throttle_input = 0.0f;
+    brake_input = 0.0f;
 }
 
 //A rev limiter in force terms: the most drive force this wheel may get this tick without its
@@ -95,14 +66,23 @@ void Vehicle::ReleaseInputs(){
 //after the throttle is cut - and in a pivot turn, where the hull's forward speed stays 0,
 //nothing else limits how fast the tracks spin at all. Clamping the torque to what reaches
 //the limit exactly (I * dw / dt) puts the wheel at top_speed and holds it there.
-float Vehicle::GovernedDriveForce(const Wheel& wheel,const WheelTuning& tuning,float requested_force,float timestep) const{
+float Vehicle::GovernedDriveForce(const Wheel& wheel,const WheelTuning& tuning,float requested_force,float timestep,float speed_fraction) const{
     if (requested_force == 0.0f || tuning.radius <= 0.0f || timestep <= 0.0f){
         return requested_force;
     }
     float direction = requested_force > 0.0f ? 1.0f : -1.0f;
     //Surface speed in the commanded direction - this engine's sign flipped, see Wheel::angular_velocity.
     float surface_speed = -wheel.angular_velocity * tuning.radius * direction;
-    float headroom = top_speed - surface_speed; //m/s of surface speed still allowed
+    //The speed THIS control position is asking for, not just the vehicle's maximum. Governing
+    //every wheel to the same top_speed regardless of how far its lever/pedal was pushed made the
+    //control a direction switch and nothing more: the force limit below sits far under what the
+    //engine asks for at almost any position (about 50 N against 333 N at full lever on the tank),
+    //so every command from roughly 0.15 upwards produced the IDENTICAL force. Two tracks pushed
+    //different amounts in the same direction therefore ended up at exactly the same speed, which
+    //is why a tank could pivot on opposed levers but could not steer while driving - there was no
+    //differential left to steer with.
+    float target_speed = top_speed * clamp(fabs(speed_fraction),0.0f,1.0f);
+    float headroom = target_speed - surface_speed; //m/s of surface speed still allowed
     if (headroom <= 0.0f){
         return 0.0f;
     }
@@ -110,31 +90,6 @@ float Vehicle::GovernedDriveForce(const Wheel& wheel,const WheelTuning& tuning,f
     //Torque that spins the wheel up by exactly headroom/radius over this tick, as a force at the tread.
     float max_force = inertia * (headroom / tuning.radius) / timestep / tuning.radius;
     return direction * min(fabs(requested_force),max_force);
-}
-
-//Exactly one call per simulation tick per vehicle (from each subclass's UpdatePhysicsState), so
-//"one decrement per call" is "one decrement per tick" - that is the whole clock this needs.
-void Vehicle::ApplyHoldLatches(){
-    if (gas_latch_ticks > 0){
-        gas_latch_ticks--;
-        if (gas_latch_reverse){
-            Reverse(gas_latch_amount);
-        }else{
-            Accelerate(gas_latch_amount);
-        }
-    }
-    if (brake_latch_ticks > 0){
-        brake_latch_ticks--;
-        Brake(brake_latch_amount);
-    }
-    if (steer_latch_ticks > 0){
-        steer_latch_ticks--;
-        if (steer_latch_amount < 0.0f){
-            SteerLeft(-steer_latch_amount);
-        }else{
-            SteerRight(steer_latch_amount);
-        }
-    }
 }
 
 void Vehicle::DecaySteering(float step){
@@ -147,7 +102,7 @@ void Vehicle::DecaySteering(float step){
 
 void Vehicle::ResetState(const vec3& pos,const quat& rot){
     ReleaseInputs();
-    steering_position = 0.0f; //ReleaseInputs only cancels latches - this normally decays
+    steering_position = 0.0f; //ReleaseInputs only clears the pedals - this normally decays
                                //toward 0 over several ticks (see DecaySteering), too slow for a
                                //reset that's supposed to be instant.
     f_reverse = false;
@@ -159,7 +114,7 @@ void Vehicle::ResetState(const vec3& pos,const quat& rot){
         physics->SetVelocity(vec3());
         physics->SetAngularVelocity(vec3());
         physics->WakeUp(); //a sleeping body ignores this teleport's next tick of forces too -
-                            //same issue as gas/brake/steer, see ApplyHoldLatches
+                            //same issue as gas/brake/steer
     }
 
     for (size_t i = 0; i < wheels.size(); i++){

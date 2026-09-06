@@ -65,6 +65,20 @@ void Application::Start(void){
 
     main_window->Show(SW_SHOWDEFAULT);
 
+    //Keyboard and mouse acquisition onto its own thread, before anything starts reading input.
+    //THIS thread is about to become the window message pump below, and that pump stops dead for
+    //the duration of a title-bar drag or a resize (DefWindowProc runs a nested modal loop), which
+    //is exactly why rendering and physics are already elsewhere. Raw input on a message-only
+    //window of its own is what keeps input alive through that - see core/RawInput.h.
+    if (raw_input.Start(main_window->inputcontroller)){
+        main_window->inputcontroller->SetRawInputActive(true);
+        debug->Ok("Raw input active: key edges and unaccelerated mouse deltas\n");
+    }else{
+        //Not fatal. InputController keeps polling GetAsyncKeyState, which still produces edges,
+        //just sampled once a tick and without raw deltas.
+        debug->Warn("Raw input unavailable, falling back to polled input\n");
+    }
+
     //We release the window's context from this thread
     wglMakeCurrent(main_window->hDC, NULL);
 

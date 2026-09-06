@@ -5,7 +5,6 @@
 #include "ship/Asteroid.h"
 #include "ship/ShipCharacter.h"
 #include "ship/ShipCollisionMasks.h"
-#include "GamePadController.h"
 #include "AsteroidExplosion.h"
 
 class ApplicationShip : public Application, public rp3d::EventListener{
@@ -22,7 +21,9 @@ public:
     std::vector<Asteroid*> asteroids;
 
     Scene* CreateEmptyScene();
-    GamePadController* gamepad_controller = NULL;
+    //The one InputController, reached under its old name so the gamepad call sites read the same.
+    //It IS main_window->inputcontroller - the separate GamePadController class is gone.
+    InputController* gamepad_controller = NULL;
 
     std::vector<AsteroidExplosion*>active_asteroid_explosions;
     std::vector<AsteroidExplosion*>new_asteroid_explosions;

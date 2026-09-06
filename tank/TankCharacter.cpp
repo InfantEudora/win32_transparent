@@ -23,10 +23,9 @@ void TankCharacter::UpdatePhysicsState(){
     //else reads the body this tick - see Vehicle::RequestReset.
     ApplyPendingReset();
 
-    //Re-assert any still-active hold-latch, exactly as if RunLogic had just called
-    //Accelerate/Reverse/Brake/SteerLeft/SteerRight this tick from a held key, and let steering
-    //converge back toward 0 - both shared with any other Vehicle, see core/Vehicle.cpp.
-    ApplyHoldLatches();
+    //Let steering converge back toward 0 - shared with any other Vehicle, see core/Vehicle.cpp.
+    //Nothing re-asserts input here any more: scripted holds are ordinary input events now, applied
+    //in RunLogic with the keyboard and gamepad (see InputController::HoldAxis).
     DecaySteering();
 
     float reverse_multiplier = f_reverse ? -1.0f : 1.0f;
@@ -68,16 +67,28 @@ void TankCharacter::UpdatePhysicsState(){
         ReadBackWheels(timestep);
         SyncWheelSettings();
 
-        //Differential drive: steering comes from the two tracks being pushed with different
-        //(possibly opposite) torque, not from directly rotating the hull. steering_position > 0
-        //(SteerRight) biases the left track stronger and the right track weaker/reversed, which
-        //swings the nose right - same as a real tank pivoting on its tracks. This works even
-        //with gas_pedal at 0 (a pure pivot-in-place turn), since it doesn't depend on gas_pedal.
-        float base_command = reverse_multiplier * gas_pedal;
-        float left_command  = clamp(base_command + steering_position * steer_authority,-1.0f,1.0f);
-        float right_command = clamp(base_command - steering_position * steer_authority,-1.0f,1.0f);
-        bool drive_capped = fabs(forward_speed) >= top_speed;
-        bool driving = (left_command != 0.0f) || (right_command != 0.0f);
+        //Two levers, one per track - which is what a real tank actually has, and what this now
+        //models. Each lever is a SIGNED command for its own side: forward, neutral, or pulled
+        //back. throttle/steer are just the driver-facing way of naming the pair, mixed here:
+        //
+        //    left  = throttle + steer      right = throttle - steer
+        //
+        //Every position the levers can take is reachable, which is the point:
+        //  both levers forward    throttle 1.0, steer 0.0  -> left +1, right +1  straight ahead
+        //  gentle bend right      throttle 0.9, steer 0.1  -> left +1, right +0.8
+        //  left lever only        throttle 0.5, steer 0.5  -> left +1, right  0  swings right
+        //  levers opposed         throttle 0.0, steer 1.0  -> left +1, right -1  pivot in place
+        //
+        //The previous mixing multiplied BOTH sides by the steering magnitude, so with steer at 0
+        //both commands were zero and with steer at full one side was always zero - which is why
+        //only straight-ahead and pivot-in-place were reachable and nothing in between.
+        //
+        //Clamped per side rather than rescaled together: a lever hits its stop, and pushing the
+        //other one further is how you get more turn. That means asking for throttle 1.0 AND steer
+        //1.0 saturates the outer track and turns less sharply than from a standstill - which is
+        //also how the real thing behaves.
+        float left_command  = clamp(throttle_input + steer_input,-1.0f,1.0f);
+        float right_command = clamp(throttle_input - steer_input,-1.0f,1.0f);
 
         //Each side's engine share is split over the wheels that actually take drive (the road
         //wheels - the raised idler/sprocket are contact-capable but undriven, see AddRaisedWheel).
@@ -87,11 +98,8 @@ void TankCharacter::UpdatePhysicsState(){
             if (wheel.is_left_side){ num_left_driven++; }else{ num_right_driven++; }
         }
 
-        //Braking: an even share of brake_force per wheel, as a brake torque at its own radius.
-        //The idle brake (rolling resistance) only while nothing is driving - a brake torque on a
-        //driven wheel would simply win, see idle_brake's own comment.
-        float brake_command = (driving && brake_pedal <= idle_brake) ? 0.0f : brake_pedal;
-        float brake_force_per_wheel = wheels.empty() ? 0.0f : brake_command * brake_force / (float)wheels.size();
+        float wheel_count = wheels.empty() ? 1.0f : (float)wheels.size();
+        float brake_force_per_wheel = brake_pedal * brake_force / wheel_count;
 
         size_t count = min(wheels.size(),(size_t)rp_vehicle->getNbWheels());
         for (size_t i = 0; i < count; i++){
@@ -116,9 +124,36 @@ void TankCharacter::UpdatePhysicsState(){
             float command = wheel.is_left_side ? left_command : right_command;
             int side_count = wheel.is_left_side ? num_left_driven : num_right_driven;
             float drive_force = 0.0f;
-            if (wheel.driven && !drive_capped && command != 0.0f && side_count > 0){
-                drive_force = GovernedDriveForce(wheel,tuning,(engine_force / side_count) * command,timestep);
+            //No whole-vehicle speed cap here any more. GovernedDriveForce already limits each
+            //wheel to top_speed in the direction IT was commanded, which a single hull-speed test
+            //cannot do: at top speed that test cut all drive torque, so a tank at speed lost its
+            //differential entirely and could not turn at all until it slowed down.
+            if (wheel.driven && command != 0.0f && side_count > 0){
+                drive_force = GovernedDriveForce(wheel,tuning,(engine_force / side_count) * command,timestep,fabs(command));
             }
+
+            //Track drag on the side whose lever is near neutral. Without it an undriven track
+            //free-wheels, so "left lever forward, right lever neutral" barely turns - the hull
+            //just pushes the loose track along. A real track always resists: its own tension, the
+            //road wheel bearings, the ground it churns. That resistance is what lets one lever
+            //swing the nose, and what brings the tank to rest when both come back to neutral.
+            //
+            //Applied as a retarding DRIVE torque, NOT as a brake torque. In rp3d the brake torque
+            //dominates the drive torque instead of summing with it, so routing this through
+            //setBrakeTorque made even a fraction of a Newton stop the tire transmitting anything:
+            //the track span up to top_speed, longitudinal force collapsed to zero and the tank
+            //would only turn at exactly full lock, where the drag happened to be zero. Through the
+            //drive channel the two simply add, as they should.
+            //
+            //Only once the wheel is actually turning - a static track is held by the tire's own
+            //grip, and pushing a retarding force against a stationary wheel just makes it hunt.
+            float drag = rolling_resistance * (1.0f - min(fabs(command),1.0f)) / wheel_count;
+            if (fabs(wheel.angular_velocity) > 0.01f){
+                //angular_velocity is NEGATIVE while rolling forward (see Wheel), and a positive
+                //drive force rolls forward, so opposing the motion means taking its sign.
+                drive_force += (wheel.angular_velocity > 0.0f ? 1.0f : -1.0f) * drag;
+            }
+
             //Torque at the tread: force * radius. Positive rolls the vehicle forward (rp3d's
             //convention, and command's).
             w.setDriveTorque(drive_force * tuning.radius);
@@ -182,12 +217,6 @@ void TankCharacter::UpdatePhysicsState(){
             physics->SetAngularVelocity(up * yaw_rate + tilt_rate * (max_roll_speed / tilt_speed));
         }
     }
-
-    //Permanent idle brake/rolling resistance: without it, releasing all controls would leave
-    //the tank coasting at constant velocity forever. Re-asserted every tick; a real brake input
-    //from RunLogic/ApplyHoldLatches overrides it before the next tick reads it.
-    brake_pedal = idle_brake;
-    gas_pedal = 0.0f;
 
     if (turret && turret_target){
         //Same facing-angle-difference approach as PlayerCharacter::ComputeFacingAngles,

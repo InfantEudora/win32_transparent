@@ -6,12 +6,13 @@
 #include <windows.h>
 #include <vector>
 #include <atomic>
+#include "stdbool.h"
 
 //Shared base for a physics-driven, wheeled character - factored out of TankCharacter once a
-//second vehicle (front-steered, power-split buggy) needed the same pedal/steering-latch
-//plumbing and per-wheel tuning resolution it already had.
+//second vehicle (front-steered, power-split buggy) needed the same pedal/steering plumbing
+//and per-wheel tuning resolution it already had.
 //
-//What's shared here is the INPUT surface (pedals, steering position, MCP hold-latches), the
+//What's shared here is the INPUT surface (pedals, steering position), the
 //wheel array/reset bookkeeping, and the bridge to the physics: the wheels are simulated by a
 //reactphysics3d VehicleConstraint on this object's rigidbody (see CreateVehicleConstraint),
 //built from `wheels` and kept in step with them every tick. What is NOT shared is the
@@ -25,40 +26,31 @@ public:
     //Manual movement: sets the pedal/steering state only. Each subclass's own
     //UpdatePhysicsState is what turns that into wheel torques - identical here regardless of
     //what the drivetrain does with it.
-    void Accelerate(float factor);
-    void Brake(float factor);
-    void SteerLeft(float factor);
-    void SteerRight(float factor);
-    void Reverse(float factor);
+    void ThrottleInput(float factor); //0.0 = no throttle, +1.0 = full throttle
+    void SteerInput(float factor); //-1.0 = full left, +1.0 = full right
+    void BrakeInput(float factor); //0.0 = no brake, +1.0 = full brake
 
-    //For scripted/MCP control: a single external call can't realistically out-pace the physics
-    //tick rate (gas_pedal/brake_pedal/steering_position all decay back to idle every tick unless
-    //re-asserted), so these latch the equivalent input as "held" for duration_ticks, re-asserted
-    //every tick until the latch runs out - see ApplyHoldLatches, which every subclass's
-    //UpdatePhysicsState calls once near its own top.
-    //
-    //The duration is in SIMULATION TICKS, not milliseconds. These used to expire against
-    //GetTickCount64(), which was wrong twice over: its ~15.6ms granularity is most of a 20ms
-    //tick, so "hold for 100ms" randomly meant 4, 5 or 6 ticks between runs; and it measures real
-    //time, which keeps running while the simulation is paused or single-stepped, so a hold
-    //expired before tank_step had advanced the sim at all. Callers that think in milliseconds
-    //(the MCP tools) convert at their own boundary - see ApplicationTank's DurationMsToTicks.
-    void HoldDrive(bool reverse, float amount, uint32_t duration_ticks);
-    void HoldBrake(float amount, uint32_t duration_ticks);
-    void HoldSteer(float signed_amount, uint32_t duration_ticks); //negative = left, positive = right
-    void ReleaseInputs(); //cancels all latches and releases the pedals immediately
+    //Modify pedal and steering position
+    void Accelerate(float factor); //0-1
+    void Brake(float factor);   // 0-1
+    void SteerLeft(float factor); // 0-1
+    void SteerRight(float factor); //0-1
+    void Reverse(bool reverse); //true = reverse, false = forward
 
-    //Re-asserts whichever hold-latch is still active, exactly as if RunLogic had just called
-    //Accelerate/Reverse/Brake/SteerLeft/SteerRight this tick from a held key. Called once near
-    //the top of every subclass's UpdatePhysicsState.
-    void ApplyHoldLatches();
+    //Scripted control does NOT live here any more. HoldDrive/HoldBrake/HoldSteer used to latch
+    //an input for a duration because an MCP round trip cannot out-pace the tick rate - but that is
+    //the same problem a synthetic key press has, so it is solved once, generically, in
+    //InputController::HoldKey/HoldAxis. MCP is a player now; it holds a control and RunLogic drives
+    //the vehicle from it like it does for a keyboard or a gamepad.
+    void ReleaseInputs(); //releases the pedals and steering immediately
+
     //Steering converges toward 0 by step per call - same per-tick relaxation TankCharacter had
     //inline before this was shared. Called once per UpdatePhysicsState tick.
     void DecaySteering(float step = 0.05f);
 
     //Teleports the body to pos/rot, zeroes velocity/angular velocity, wakes the body (a
     //stationary rigidbody put to sleep by rp3d would otherwise ignore the teleport's own next
-    //tick of forces), releases every pedal/steering/hold-latch, and clears each wheel's
+    //tick of forces), releases the pedals and steering, and clears each wheel's
     //transient per-tick state (roll_angle/compression/grounded/steer_angle, and the
     //constraint's own spin/torques) so nothing looks mid-spin or mid-bounce right after the
     //reset. Virtual so a subclass with extra reset-worthy state (TankCharacter's turret recoil)
@@ -114,7 +106,11 @@ public:
     //Clamps a drive force at the tread so this wheel's surface speed does not pass top_speed in
     //the commanded direction this tick (a rev limiter on the engine) - see the .cpp for why a
     //plain on/off check at top_speed isn't enough.
-    float GovernedDriveForce(const Wheel& wheel, const WheelTuning& tuning, float requested_force, float timestep) const;
+    //speed_fraction is how far this wheel's own control is pushed, 0..1: the governor holds it to
+    //top_speed * that, so two wheels driven by different amounts settle at different speeds and a
+    //differential actually exists. Defaulting it to 1 would restore the old behaviour where the
+    //control only chose a direction - pass the real command.
+    float GovernedDriveForce(const Wheel& wheel, const WheelTuning& tuning, float requested_force, float timestep, float speed_fraction) const;
     //One Wheel, fully resolved through ResolveTuning, as the constraint wants it. Conventions:
     //the vehicle's up is ref_up (+Y) and its forward ref_forward (-Z); a positive steer angle
     //turns a wheel to the left - the same convention Wheel::steer_angle already used.
@@ -134,22 +130,20 @@ public:
     //extra sample is one more raycast per wheel per tick.
     int contact_samples = 1;
 
+    //Input mapped from either button or a gamepad, or something else.
+    //Get clamped to [-1,1].
+    float throttle_input = 0.0f;
+    float steer_input = 0.0f;
+    float brake_input = 0.0f;
+
     float gas_pedal = 0.0f;
     float brake_pedal = 0.0f;
+
     float steering_position = 0.0f; //From -1 to +1
+    float steering_speed = 0.1f;
+
     bool f_reverse = false;
 
-    //Hold-latches backing HoldDrive/HoldBrake/HoldSteer, counted down one per simulation tick by
-    //ApplyHoldLatches (which every subclass calls exactly once per UpdatePhysicsState). A plain
-    //countdown rather than a deadline: it needs no clock at all, and it can only advance when the
-    //simulation does, so pause/single-step/replay are correct for free.
-    float gas_latch_amount = 0.0f;
-    bool gas_latch_reverse = false;
-    uint32_t gas_latch_ticks = 0;
-    float brake_latch_amount = 0.0f;
-    uint32_t brake_latch_ticks = 0;
-    float steer_latch_amount = 0.0f;
-    uint32_t steer_latch_ticks = 0;
 
     //Settings
     //Total drive force at the treads (N) at full throttle, shared out over the driven wheels by

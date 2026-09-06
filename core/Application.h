@@ -16,6 +16,7 @@
 #include "GLTFLoader.h"
 #include "RRandom.h"
 #include "ObjectCollider.h"
+#include "RawInput.h"
 #include "skeleton/PlayerCharacter.h"
 
 /*
@@ -87,6 +88,9 @@ public:
     PerfTimer* tmr_render_loop = NULL;      // Used for timing how long the entire render loop costs, should yield FPS.
 
     RRandom* rrand = NULL;
+
+    //Keyboard/mouse acquisition on its own thread. Started in Start(); stops itself on destruction.
+    RawInputSource raw_input;
 
     //Physics Settings
     float physics_tps           = 50.0f; //Target physics ticks per second

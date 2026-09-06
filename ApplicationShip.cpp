@@ -144,7 +144,7 @@ void ApplicationShip::Init(void){
 
     main_window->Resize(1680,900);
 
-    gamepad_controller = new GamePadController();
+    gamepad_controller = main_window->inputcontroller;
     gamepad_controller->ListDevices();
     gamepad_controller->AddGamePadMap(0,GAMEPAD_LEFT_STICK_X);
     gamepad_controller->AddGamePadMap(1,GAMEPAD_LEFT_STICK_Y);
@@ -346,7 +346,8 @@ void ApplicationShip::RunLogic(){
     }
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 
-    gamepad_controller->UpdateKeyState();
+    //Gamepad sampling now happens once per tick inside InputController::PollDevices, with the
+    //keyboard and mouse - no separate per-app poll.
 
 
     //Character input with gamepad

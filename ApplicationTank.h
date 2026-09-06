@@ -9,7 +9,6 @@
 #include "ParticleEmitter.h"
 #include "tinygltf/json.hpp"
 #include <vector>
-#include "GamePadController.h"
 
 using json = nlohmann::json;
 
@@ -137,7 +136,9 @@ public:
     //a bridge already exists or the asset/asset manager isn't available.
     bool SpawnBridge(const vec3& pos, float yaw_degrees);
 
-    GamePadController* gamepad_controller = NULL;
+    //The one InputController, reached under its old name so the gamepad call sites read the same.
+    //It IS main_window->inputcontroller - the separate GamePadController class is gone.
+    InputController* gamepad_controller = NULL;
 
     TankCharacter* controlled_tank = NULL;
     BuggyCharacter* controlled_buggy = NULL;
