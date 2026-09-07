@@ -205,6 +205,7 @@ void RawInputSource::HandleRawInput(HRAWINPUT raw_handle){
         }else if (m.lLastX || m.lLastY){
             //The real prize: unaccelerated, unclipped, device-resolution movement. Unlike a
             //cursor-position delta this keeps working at the edge of the screen.
+            debug->Info("Raw mouse delta %d,%d\n",m.lLastX,m.lLastY);
             input->SubmitAxisDelta(INPUT_MOUSE_DELTA_X,m.lLastX);
             input->SubmitAxisDelta(INPUT_MOUSE_DELTA_Y,m.lLastY);
         }

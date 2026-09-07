@@ -305,7 +305,8 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
         }
         if (blink_animation->HasFinished()){
             blink_animation->time_index = 0;
-            blink_interval = RandFloat(2.0f,5.0f);
+            //Use RRand if you want a random interval.
+            blink_interval = 4.0f;//RandFloat(2.0f,5.0f);
         }
     }
 

@@ -549,6 +549,18 @@ int32_t InputController::GetDelta(uint32_t mapped, KeyMap** map_out){
     return m->state->delta;
 }
 
+int32_t InputController::GetValue(uint32_t mapped, KeyMap** map_out){
+    KeyMap* m = GetByMappedKey(mapped);
+    if (!m){
+        return 0;
+    }
+    if (map_out){
+        *map_out = m;
+    }
+    m->state->f_processed = true;
+    return m->state->value;
+}
+
 //The remaining accessors below are all genuinely cross-thread - the render thread reads the mouse
 //position for picking and writes the hovered normal/position after its buffer readback, while the
 //physics thread polls and reads. They take the lock rather than relying on a scattering of

@@ -827,10 +827,6 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
 }
 
 //Creates the bridge from its asset, gives it a static box collider sized to its own mesh
-//extents (same "bottom sits at local Y=0" modelling convention as the tank's own assets - see
-//the tank_tracks/hull collider setup above), and places it. Shared by Init()'s permanent
-//placement and the bridge_spawn MCP tool's ad hoc one. Returns false (bridge left NULL)
-//if one already exists or the asset/asset manager isn't available.
 bool ApplicationTank::SpawnBridge(const vec3& pos, float yaw_degrees){
     if (bridge || !assetmanager){
         return false;
@@ -1164,77 +1160,6 @@ void ApplicationTank::RegisterMCPTools(){
         [this](const json & /*args*/) -> json {
             return GetCraneTelemetry();
         });
-
-    MCPServer::Get()->RegisterTool("bridge_spawn",
-        "Drop a new bridge prop into the scene from the 'bridge' asset (same asset the editor's "
-        "Add Object -> Objects From Assets -> bridge menu entry places), with a static box "
-        "collider sized to the bridge mesh's own extents so the tank can drive over it. Only "
-        "works once per session - if a bridge already exists, use bridge_transform to move the "
-        "existing one instead of calling this again. Position/yaw default to the origin/0 ; "
-        "expect to follow up with bridge_transform once you can see where it landed.",
-        json{
-            {"type","object"},
-            {"properties", {
-                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position, default [0,0,0]"}}},
-                {"yaw_degrees", {{"type","number"},{"description","rotation around the world up axis, in degrees, default 0"}}},
-                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
-            }}
-        },
-        [this](const json &args) -> json {
-            if (bridge){
-                return json{ {"error","bridge already spawned - use bridge_transform to move it"} };
-            }
-            json posarr = args.value("position",json::array({0,0,0}));
-            vec3 pos = vec3(posarr.at(0).get<float>(),posarr.at(1).get<float>(),posarr.at(2).get<float>());
-            float yaw_degrees = args.value("yaw_degrees",0.0f);
-            if (!SpawnBridge(pos,yaw_degrees)){
-                return json{ {"error","no asset manager, or 'bridge' asset not found"} };
-            }
-            return MaybeAttachScreenshot(GetBridgeTelemetry(),args.value("include_screenshot",false));
-        });
-
-    MCPServer::Get()->RegisterTool("bridge_transform",
-        "Move and/or rotate the already-spawned bridge (call bridge_spawn first). Only the "
-        "fields supplied are changed - omit position to leave it where it is, omit yaw_degrees "
-        "to leave the rotation alone. Returns the resulting position/rotation so it can be "
-        "noted down once the crossing looks right.",
-        json{
-            {"type","object"},
-            {"properties", {
-                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position"}}},
-                {"yaw_degrees", {{"type","number"},{"description","rotation around the world up axis, in degrees"}}},
-                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
-            }}
-        },
-        [this](const json &args) -> json {
-            if (!bridge){
-                return json{ {"error","no bridge - call bridge_spawn first"} };
-            }
-            if (args.contains("position")){
-                json posarr = args.at("position");
-                vec3 pos = vec3(posarr.at(0).get<float>(),posarr.at(1).get<float>(),posarr.at(2).get<float>());
-                bridge->SetPosition(pos);
-            }
-            if (args.contains("yaw_degrees")){
-                bridge_yaw_degrees = args.at("yaw_degrees").get<float>();
-                bridge->SetRotation(quat(vec3(0,1,0),bridge_yaw_degrees * TYPE_PI / 180.0f));
-            }
-            return MaybeAttachScreenshot(GetBridgeTelemetry(),args.value("include_screenshot",false));
-        });
-
-    MCPServer::Get()->RegisterTool("bridge_telemetry",
-        "Report the bridge's current position and rotation (yaw in degrees, plus the raw "
-        "rotation quaternion) without changing anything. Set include_screenshot to also get a "
-        "PNG of the current frame.",
-        json{
-            {"type","object"},
-            {"properties", {
-                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the current frame, default false"}}}
-            }}
-        },
-        [this](const json &args) -> json {
-            return MaybeAttachScreenshot(GetBridgeTelemetry(),args.value("include_screenshot",false));
-        });
 }
 
 //Debug helper: write a small hand-picked grid of known heights to a PNG, read it back,
@@ -1407,8 +1332,8 @@ void ApplicationTank::AddTestSceneObjects(){
             physics->SetBounciness(0.0f);
             physics->SetStatic(true);
         }
-        float x = ((float)(rand() % 1600)) / 100.0f - 8.0f;
-        float z = ((float)(rand() % 1600)) / 100.0f - 8.0f;
+        float x = rrand->GetFloat(-8.0f,8.0f);
+        float z = rrand->GetFloat(-8.0f,8.0f);
         float half_total_height = capsule_height * 0.5f + capsule_radius; //cylinder half + one hemisphere cap
         capsule_obstacle->SetPosition(vec3(x,half_total_height,z));
     }
@@ -1673,8 +1598,8 @@ void ApplicationTank::RunLogic(){
 
     //Camera rotation moving
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
-        int dx = input->GetDelta(INPUT_MOUSE_X);
-        int dy = input->GetDelta(INPUT_MOUSE_Y);
+        int dx = input->GetValue(INPUT_MOUSE_DELTA_X);
+        int dy = input->GetValue(INPUT_MOUSE_DELTA_Y);
         if (input->IsKeyDown(INPUT_SHIFT)){
             //Move the camera
             vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
