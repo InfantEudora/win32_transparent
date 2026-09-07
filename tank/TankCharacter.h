@@ -2,6 +2,7 @@
 #define _TANK_CHARACTER_H_
 
 #include "Vehicle.h"
+#include "type_helpers.h" //clamp(), used by TrackInput below
 #include <windows.h>
 #include <vector>
 
@@ -117,6 +118,34 @@ public:
     //Last-resort safety net on the hull's roll/pitch rate, applied after each tick - see the
     //comment where it is applied in UpdatePhysicsState. Dead code in any drivable configuration.
     float max_roll_speed = 3.0f;  //rad/s ceiling on the hull's roll+pitch angular speed
+
+    //--- Direct per-track control (test rig) ----------------------------------------------
+    //Bypasses the throttle/steer mixing in UpdatePhysicsState entirely and commands each track
+    //from its own stick, so a differential can be dialled in exactly rather than being inferred
+    //from a mix. This is the harness for the open "won't yaw on a same-direction differential"
+    //question: with it on you can hold, say, left 1.0 / right 0.6 indefinitely and watch whether
+    //any yaw develops, which the mixed path cannot express cleanly (throttle 0.8 + steer 0.2
+    //gets there, but clamping and the steering decay both muddy what you actually commanded).
+    //
+    //Off by default - normal driving is unaffected until it is switched on.
+    bool direct_track_control = true;
+
+    //Signed command per track, -1 (full reverse) to +1 (full forward), used in place of the
+    //mixed left/right commands while direct_track_control is set. These are the SAME quantity
+    //the mix produces, so everything downstream - the governor, track drag, the idle brake -
+    //behaves identically; only where the number comes from changes.
+    float left_track_input = 0.0f;
+    float right_track_input = 0.0f;
+
+    //Clears the track commands on top of the pedals/steering Vehicle releases, so switching
+    //away from the tank or resetting it does not leave a track driving.
+    void ReleaseInputs() override;
+
+    //Set both track commands at once. Clamped like every other Vehicle input.
+    void TrackInput(float left, float right){
+        left_track_input = clamp(left,-1.0f,1.0f);
+        right_track_input = clamp(right,-1.0f,1.0f);
+    }
 
     //Turret tracking: turns towards turret_target at a constant angular speed.
     Object* turret = NULL;

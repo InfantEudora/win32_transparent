@@ -36,4 +36,31 @@ Speed clearly responds to the commands, so the two sides ARE receiving different
 - A `tank_steer`/`tank_drive` hold lasts `duration_ms` worth of TICKS. A hold longer than the steps taken stays active into the NEXT test case and silently contaminates it. Always `tank_drive direction=stop` then `tank_reset` between cases, and size the duration to the steps about to be run.
 - `vehicle_mcp`'s `App` has no `stop()`, so a probe script leaves `wind.exe` running. The next build then fails with `cannot open output file wind.exe: Permission denied`. Kill strays before building.
 
+**In-game test rig added 2026-09-07.** `TankCharacter::direct_track_control` (checkbox in the Tank debug UI) bypasses the throttle/steer mix entirely: left stick Y commands the left track, right stick Y the right, straight into the same signed per-side commands the mix would have produced. Arrow keys work too (up/down both tracks, left/right hold one back). This is the manual counterpart to the scripted probe above and sidesteps its contamination gotchas. Note MCP `tank_drive`/`tank_steer` do NOT work while it is on - they feed `throttle_input`/`steer_input`, which the direct path ignores.
+
+**RE-MEASURED 2026-09-07 against the new tire model - MOSTLY FIXED.** Same probe, via the new
+`tank_track_drive` MCP tool (paused, reset + 40 settle steps + 80 driven steps per case), yaw taken
+as the angular velocity projected on the hull's own up:
+
+| left / right | forward speed | yaw rate (was) | yaw rate (now) |
+|---|---|---|---|
+| +1.00 / +1.00 | 0.933 | 0.000 | -0.0000 |
+| +1.00 / +0.80 | 0.833 | 0.000 | **-0.0367** |
+| +0.75 / +0.25 | 0.481 | 0.000 | **-0.0393** |
+| +1.00 /  0.00 | 0.690 | 0.000 | **-0.0758** |
+| +1.00 / -1.00 | -0.013 | -1.420 | -1.4876 |
+| +0.50 / -0.50 | -0.008 | 0.000 | -0.0004 |
+
+A same-direction differential now yaws at all, and monotonically in the size of the difference -
+that part of the bug is gone, fixed by `corneringStiffness` in the rp3d fork's new tire model, not
+by anything in this repo. TWO THINGS REMAIN:
+- **The yaw is weak.** One track fully stopped gives 0.076 rad/s (~4.4 deg/s) against the pivot's
+  1.49 - a factor of 20. A real tank with one track held swings round it noticeably. Worth raising
+  `corneringStiffness` (default 7.0) and re-running before concluding anything about the geometry.
+- **Opposed-at-partial-magnitude is still dead:** +0.50/-0.50 yaws -0.0004, i.e. nothing, while
+  +1.00/-1.00 works. This is the separate `GovernedDriveForce` regression already noted below and
+  it did NOT come back with the new tire model.
+
+**Superseded note (kept for context).** The rp3d fork's `VehicleConstraint` gained `corneringStiffness` (slip-angle-based lateral force, default 7.0) in the Sep 7 library build. Its own header says a skid-steered vehicle can now hold a steady arc on a torque difference alone - which is exactly the missing behaviour - so re-measure the table above before doing any more work on this. The bug may already be gone.
+
 Related: [[rp3d-vehicle-constraint-plan]], [[rp3d-local-fork-hinge-motor-patch]], [[deterministic-sim-plan]].

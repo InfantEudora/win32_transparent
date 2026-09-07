@@ -112,6 +112,21 @@ struct VehicleWheelSettings {
         /// is at most this times the normal impulse.
         decimal lateralFriction;
 
+        /// Sideways force the tire builds per radian of slip angle, as a multiple of the normal
+        /// force: the lateral force is corneringStiffness * slipAngle * N, saturating at the grip
+        /// still available sideways. The tire reaches its limit at a slip angle of about
+        /// lateralFriction / corneringStiffness, some 8 degrees with the defaults.
+        ///
+        /// Slip is what generates the force, so it is allowed to persist rather than being
+        /// cancelled outright. That leaves a proportional band instead of an on/off grip cliff: a
+        /// skid-steered vehicle can hold a steady arc on a torque difference alone, and a car
+        /// leans into understeer as it approaches the limit.
+        ///
+        /// The two friction directions also share one grip budget, so the pair stays inside the
+        /// friction ellipse (Flong / longitudinalFriction.N)^2 + (Flat / lateralFriction.N)^2 <= 1
+        /// and a tire already driving or braking at its limit has little grip left sideways.
+        decimal corneringStiffness;
+
         /// If true, tire forces are applied at suspensionForcePoint (fixed on the chassis) instead
         /// of at the contact point. Less accurate against dynamic ground, more stable.
         bool enableSuspensionForcePoint;
@@ -148,7 +163,7 @@ struct VehicleWheelSettings {
               suspensionMinLength(decimal(0.3)), suspensionMaxLength(decimal(0.5)), suspensionPreloadLength(decimal(0.0)),
               suspensionSpring(SpringSettings::fromFrequencyAndDampingRatio(decimal(1.5), decimal(0.5))),
               radius(decimal(0.3)), width(decimal(0.1)), inertia(decimal(0.9)), angularDamping(decimal(0.2)),
-              longitudinalFriction(decimal(1.0)), lateralFriction(decimal(1.0)),
+              longitudinalFriction(decimal(1.0)), lateralFriction(decimal(1.0)), corneringStiffness(decimal(7.0)),
               enableSuspensionForcePoint(false), suspensionForcePoint(0, 0, 0),
               enabled(true), numContactSamples(1), contactSampleHalfAngle(PI_RP3D / decimal(4.0)) {}
 };
@@ -213,6 +228,10 @@ class VehicleWheel {
 
         /// Current suspension length (m) from the attachment point along the suspension direction
         decimal mSuspensionLength;
+
+        /// Slip angle (rad, in [0, pi/2]) between where the tire points and where it is actually
+        /// travelling, measured from the velocities at the start of the step
+        decimal mLateralSlipAngle;
 
         /// Rotation speed of the wheel about its axle (rad/s), positive when it rolls the vehicle forward
         decimal mAngularVelocity;
@@ -302,6 +321,10 @@ class VehicleWheel {
 
         /// Return the impulse (N.s) applied sideways this step (positive pushes the vehicle to the right)
         decimal getLateralImpulse() const;
+
+        /// Return the slip angle (rad) the sideways tire force was built from this step: the angle
+        /// between where the tire points and where it is actually going. Zero when it rolls true.
+        decimal getLateralSlipAngle() const;
 
         /// Return the rotation speed of the wheel about its axle (rad/s), positive when rolling the vehicle forward
         decimal getAngularVelocity() const;
@@ -612,6 +635,11 @@ RP3D_FORCE_INLINE decimal VehicleWheel::getLongitudinalImpulse() const {
 // Return the impulse applied sideways this step
 RP3D_FORCE_INLINE decimal VehicleWheel::getLateralImpulse() const {
     return mLateralPart.getTotalLambda();
+}
+
+// Return the slip angle the sideways tire force was built from this step
+RP3D_FORCE_INLINE decimal VehicleWheel::getLateralSlipAngle() const {
+    return mLateralSlipAngle;
 }
 
 // Return the rotation speed of the wheel about its axle

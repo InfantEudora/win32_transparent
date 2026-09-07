@@ -171,6 +171,8 @@ public:
     float camera_behind_blend_rate = 0.05f;
 private:
     vec3 camera_target = {};
+    //Lets the core camera_get/camera_set MCP tools see the orbit pivot - see Application.
+    vec3* GetCameraTargetPtr() override{ return &camera_target; }
 };
 
 #endif

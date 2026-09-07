@@ -435,6 +435,37 @@ static bool RotationFromArgs(const json& args,quat& out,std::string& error){
     return false;
 }
 
+//Shared by camera_get and camera_set so the two cannot drift apart. camera_target is the app's
+//orbit pivot (see Application::GetCameraTargetPtr) and may be NULL for an app that has none.
+static json CameraToJson(Camera* camera,vec3* camera_target){
+    //GetPosition, not GetWorldPosition: the latter defaults to STATE_ACCESS_RENDERER, which on
+    //this (MCP) thread is last frame's copy and reads stale straight after a camera_set - it
+    //reported the camera's old position while forward already showed the new aim. GetPosition
+    //defaults to STATE_ACCESS_PHYSICS, and is also exactly what the middle-mouse orbit reads and
+    //writes, so what these tools report is what that code sees. The camera is a root object, so
+    //local and world are the same thing anyway.
+    vec3 pos = camera->GetPosition();
+    vec3 forward = camera->GetForward();
+    json result = {
+        {"position", Vec3ToJson(pos)},
+        //Where it points, one unit out - the argument camera_set's look_at takes back.
+        {"look_at", Vec3ToJson(pos + forward)},
+        {"forward", Vec3ToJson(forward)},
+        {"up", Vec3ToJson(camera->GetUp())},
+        {"left", Vec3ToJson(camera->GetLeft())},
+        {"rotation", QuatToJson(camera->GetRotation())},
+        {"fov", camera->viewport.fov},
+        {"znear", camera->viewport.znear},
+        {"zfar", camera->viewport.zfar},
+        {"aspect", camera->viewport.aspect},
+    };
+    if (camera_target){
+        result["camera_target"] = Vec3ToJson(*camera_target);
+        result["target_distance"] = (pos - *camera_target).length();
+    }
+    return result;
+}
+
 static json ObjectToJson(Object* object,bool verbose){
     json result = {
         {"id", object->GetID()},
@@ -633,6 +664,79 @@ void Application::RegisterCoreMCPTools(){
             }
             result["object"] = ObjectToJson(object,true);
             return result;
+        });
+
+    //--- Camera -------------------------------------------------------------------------------
+    //The camera is an Object, so object_get/object_set_transform can already reach it by name -
+    //but only in terms of position and a quaternion. What the orbit controls actually work in is
+    //a position, a point being looked AT, and the pivot they turn around, so these report and
+    //accept exactly that. Written for debugging the middle-mouse orbit: camera_get before and
+    //after a drag says whether a runaway came from the input delta or from the orbit maths.
+    MCPServer::Get()->RegisterTool("camera_get",
+        "Report the active scene camera: world position, the point it is looking at, its "
+        "forward/up/left vectors, its rotation quaternion, the orbit pivot (camera_target) the "
+        "middle-mouse orbit and zoom turn around, the distance from the camera to that pivot, and "
+        "the perspective viewport settings.",
+        json{ {"type","object"}, {"properties", json::object()} },
+        [this](const json &args) -> json {
+            if (!main_scene || !main_scene->camera){
+                return json{ {"error","no camera"} };
+            }
+            return CameraToJson(main_scene->camera,GetCameraTargetPtr());
+        });
+
+    MCPServer::Get()->RegisterTool("camera_set",
+        "Place the active scene camera. Only the fields given are changed. `position` moves it, "
+        "`look_at` aims it at a world point (applied after position, so giving both aims from the "
+        "new place), `up` is an optional up hint for that aim, and `camera_target` moves the orbit "
+        "pivot the middle-mouse orbit and zoom turn around. Setting position and camera_target to "
+        "a known pair is how you put the orbit into a repeatable state before testing it. Returns "
+        "the resulting camera, same shape as camera_get.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position"}}},
+                {"look_at", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world point to aim at"}}},
+                {"up", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] up hint used with look_at"}}},
+                {"camera_target", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] orbit/zoom pivot"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!main_scene || !main_scene->camera){
+                return json{ {"error","no camera"} };
+            }
+            Camera* camera = main_scene->camera;
+            vec3 v;
+            if (args.contains("position")){
+                if (!JsonToVec3(args.at("position"),v)){
+                    return json{ {"error","position must be [x,y,z]"} };
+                }
+                camera->SetPosition(v);
+            }
+            if (args.contains("look_at")){
+                vec3 look_at;
+                if (!JsonToVec3(args.at("look_at"),look_at)){
+                    return json{ {"error","look_at must be [x,y,z]"} };
+                }
+                vec3 up;
+                bool f_up = args.contains("up") && JsonToVec3(args.at("up"),up);
+                if (args.contains("up") && !f_up){
+                    return json{ {"error","up must be [x,y,z]"} };
+                }
+                camera->SetLookAt(look_at,f_up ? &up : NULL);
+            }
+            if (args.contains("camera_target")){
+                vec3* target = GetCameraTargetPtr();
+                if (!target){
+                    return json{ {"error","this application has no camera_target"} };
+                }
+                if (!JsonToVec3(args.at("camera_target"),v)){
+                    return json{ {"error","camera_target must be [x,y,z]"} };
+                }
+                *target = v;
+            }
+            camera->CalculateLookatMatrix();
+            return CameraToJson(camera,GetCameraTargetPtr());
         });
 }
 

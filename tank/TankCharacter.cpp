@@ -46,7 +46,14 @@ void TankCharacter::UpdatePhysicsState(){
         //Any actual input intent needs to wake it first, or the tank goes completely unresponsive
         //the moment it's sat still long enough for rp3d to put it to sleep - not just an issue for
         //scripted/MCP control, this would affect normal keyboard play too.
-        if (gas_pedal > 0.0f || brake_pedal > 0.0f || steering_position != 0.0f){
+        //throttle_input/steer_input and the direct track commands were missing from this test:
+        //on a gamepad they are the only thing driving the tank, so a hull rp3d had put to sleep
+        //stayed asleep under a stick that was pushed but never touched a pedal. Direct track
+        //control is exactly that case, so what is tested here is the commands, not the pedals
+        //alone.
+        if (gas_pedal > 0.0f || brake_pedal > 0.0f || steering_position != 0.0f ||
+            throttle_input != 0.0f || steer_input != 0.0f ||
+            (direct_track_control && (left_track_input != 0.0f || right_track_input != 0.0f))){
             physics->WakeUp();
         }
 
@@ -87,8 +94,18 @@ void TankCharacter::UpdatePhysicsState(){
         //other one further is how you get more turn. That means asking for throttle 1.0 AND steer
         //1.0 saturates the outer track and turns less sharply than from a standstill - which is
         //also how the real thing behaves.
-        float left_command  = clamp(throttle_input + steer_input,-1.0f,1.0f);
-        float right_command = clamp(throttle_input - steer_input,-1.0f,1.0f);
+        //With direct_track_control the mix above is skipped entirely and each track takes its
+        //own stick straight through (see TankCharacter.h). Nothing downstream changes: these are
+        //the same signed per-side commands the mix would have produced, so the governor, the
+        //track drag and the brakes all treat them identically.
+        float left_command, right_command;
+        if (direct_track_control){
+            left_command  = clamp(left_track_input,-1.0f,1.0f);
+            right_command = clamp(right_track_input,-1.0f,1.0f);
+        }else{
+            left_command  = clamp(throttle_input + steer_input,-1.0f,1.0f);
+            right_command = clamp(throttle_input - steer_input,-1.0f,1.0f);
+        }
 
         //Each side's engine share is split over the wheels that actually take drive (the road
         //wheels - the raised idler/sprocket are contact-capable but undriven, see AddRaisedWheel).
@@ -253,6 +270,12 @@ void TankCharacter::UpdatePhysicsState(){
     }
 
     Object::UpdatePhysicsState();
+}
+
+void TankCharacter::ReleaseInputs(){
+    Vehicle::ReleaseInputs();
+    left_track_input = 0.0f;
+    right_track_input = 0.0f;
 }
 
 void TankCharacter::Fire(){

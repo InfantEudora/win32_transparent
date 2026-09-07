@@ -42,7 +42,11 @@ public:
     //the same problem a synthetic key press has, so it is solved once, generically, in
     //InputController::HoldKey/HoldAxis. MCP is a player now; it holds a control and RunLogic drives
     //the vehicle from it like it does for a keyboard or a gamepad.
-    void ReleaseInputs(); //releases the pedals and steering immediately
+    //Virtual because a subclass may hold input state of its own that this has to clear too -
+    //TankCharacter's direct per-track commands, which would otherwise stay latched and leave a
+    //vehicle you switched away from driving on forever (the exact failure the comment on
+    //ApplicationTank::SetControlledVehicle describes).
+    virtual void ReleaseInputs(); //releases the pedals and steering immediately
 
     //Steering converges toward 0 by step per call - same per-tick relaxation TankCharacter had
     //inline before this was shared. Called once per UpdatePhysicsState tick.

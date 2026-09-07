@@ -55,6 +55,12 @@ public:
     //every app right after Init(), before the MCP server starts accepting requests.
     void RegisterCoreMCPTools();
 
+    //The point the app's camera orbits and zooms around, if it has one. Every app subclass keeps
+    //its own `camera_target` (a copy-pasted field, not shared state), so the core camera MCP
+    //tools cannot see it directly - this is the one-line opt-in that lets them read and write it.
+    //Returning NULL just means camera_target is absent from those tools' view for this app.
+    virtual vec3* GetCameraTargetPtr(){ return NULL; }
+
     //Physics thread
     virtual void UpdateInput(void);
     virtual void UpdateAnimations(void);

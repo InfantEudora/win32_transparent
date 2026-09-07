@@ -20,6 +20,12 @@
 #define INPUT_AXIS_DRIVE       INPUT_LAST+20
 #define INPUT_AXIS_STEER       INPUT_LAST+21
 #define INPUT_AXIS_BRAKE       INPUT_LAST+22
+//Per-track commands for the direct-track test rig (TankCharacter::direct_track_control), signed
+//like drive. These bypass the throttle/steer mix, so a scripted player can command an exact
+//differential - the case the mixed axes cannot express cleanly, and the one the open
+//"won't yaw on a same-direction differential" question needs.
+#define INPUT_AXIS_TRACK_L     INPUT_LAST+23
+#define INPUT_AXIS_TRACK_R     INPUT_LAST+24
 
 static Debugger *debug = new Debugger("ApplicationTank", DEBUG_ALL);
 
@@ -77,6 +83,8 @@ void ApplicationTank::Init(void){
     gamepad_controller->AddKeyMap(0,INPUT_AXIS_DRIVE);
     gamepad_controller->AddKeyMap(0,INPUT_AXIS_STEER);
     gamepad_controller->AddKeyMap(0,INPUT_AXIS_BRAKE);
+    gamepad_controller->AddKeyMap(0,INPUT_AXIS_TRACK_L);
+    gamepad_controller->AddKeyMap(0,INPUT_AXIS_TRACK_R);
 
     {
         //Setup sun light
@@ -603,7 +611,7 @@ void ApplicationTank::Init(void){
     //Need an inital step to show everything.
     main_scene->StepPhysics(1);
 
-    main_scene->PausePhysics(true);
+    main_scene->PausePhysics(false);
 }
 
 //Shared by all three MCP tools below - same fields tank_telemetry reports on its own,
@@ -709,6 +717,16 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
         {"steering_position", vehicle->steering_position},
         {"reverse", vehicle->f_reverse},
     };
+    //The per-track rig's own state, when this is the tank and the rig is on: what each track was
+    //actually commanded, which under direct control is the whole input and is NOT derivable from
+    //throttle_input/steer_input (those are bypassed and read 0).
+    if (vehicle == controlled_tank && controlled_tank){
+        result["direct_track_control"] = controlled_tank->direct_track_control;
+        if (controlled_tank->direct_track_control){
+            result["left_track_input"] = controlled_tank->left_track_input;
+            result["right_track_input"] = controlled_tank->right_track_input;
+        }
+    }
     if (Physics *physics = vehicle->GetPhysics()){
         vec3 vel = physics->GetVelocity();
         vec3 angvel = physics->GetAngularVelocity();
@@ -998,6 +1016,57 @@ void ApplicationTank::RegisterMCPTools(){
                 Sleep(TicksToRealMs(duration_ticks));
             }
             return MaybeAttachScreenshot(GetVehicleTelemetry(vehicle),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("tank_track_drive",
+        "Drive the tank's two tracks INDEPENDENTLY, bypassing the throttle/steer mix entirely - "
+        "the scripted equivalent of the Tank UI's 'Direct track control' rig, and the way to "
+        "command an exact differential. left and right are signed -1..1 (positive drives that "
+        "track forward). Switches the rig on automatically and takes control of the tank; call "
+        "with enable=false to switch it back off and return to normal tank_drive/tank_steer "
+        "mixing. Held for duration_ms, rounded up to whole physics ticks and re-asserted on each, "
+        "for the same reason tank_drive holds. Blocks until it has played out and returns the "
+        "resulting telemetry, which reports left_track_input/right_track_input alongside the yaw "
+        "rate in angular_velocity. Note tank_drive/tank_steer do nothing while the rig is on.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"left", {{"type","number"},{"description","-1..1 command for the LEFT track, default 0"}}},
+                {"right", {{"type","number"},{"description","-1..1 command for the RIGHT track, default 0"}}},
+                {"duration_ms", {{"type","number"},{"description","how long to hold the input and block for, default 100, capped at 15000"}}},
+                {"enable", {{"type","boolean"},{"description","turn the direct-track rig on (default true); false switches it off and ignores left/right"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG screenshot of the resulting frame, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!controlled_tank){
+                return json{ {"error","no tank"} };
+            }
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            //Same "which vehicle means take control of it" rule the other tools follow - the rig
+            //is only read for the vehicle RunLogic is actually driving.
+            SetControlledVehicle(controlled_tank);
+            bool enable = args.value("enable",true);
+            if (!enable){
+                controlled_tank->direct_track_control = false;
+                controlled_tank->ReleaseInputs();
+                input->ReleaseSynthetic();
+                return MaybeAttachScreenshot(GetVehicleTelemetry(controlled_tank),args.value("include_screenshot",false));
+            }
+            controlled_tank->direct_track_control = true;
+            float left = clamp(args.value("left",0.0f),-1.0f,1.0f);
+            float right = clamp(args.value("right",0.0f),-1.0f,1.0f);
+            float duration_ms = clamp(args.value("duration_ms",100.0f),0.0f,15000.0f);
+            uint32_t duration_ticks = DurationMsToTicks(duration_ms);
+            input->HoldAxis(INPUT_AXIS_TRACK_L,left,duration_ticks);
+            input->HoldAxis(INPUT_AXIS_TRACK_R,right,duration_ticks);
+            if (!main_scene || !main_scene->IsPhysicsPaused()){
+                Sleep(TicksToRealMs(duration_ticks));
+            }
+            return MaybeAttachScreenshot(GetVehicleTelemetry(controlled_tank),args.value("include_screenshot",false));
         });
 
     MCPServer::Get()->RegisterTool("tank_telemetry",
@@ -1543,22 +1612,49 @@ void ApplicationTank::RunLogic(){
             float throttle_input = gp_ry;
             float brake_input = gp_r2;
 
-            controlled_vehicle->ThrottleInput(throttle_input);
-            controlled_vehicle->SteerInput(steer_input);
-            controlled_vehicle->BrakeInput(brake_input);
+            //Direct per-track test rig: with it on, each stick's Y drives its own track and the
+            //throttle/steer mix is bypassed entirely (see TankCharacter::direct_track_control).
+            //Left stick Y -> left track, right stick Y -> right track, stick forward = track
+            //forward. Tank only - the buggy is front-steered and has no per-track command.
+            //Steering and brake are left on their normal inputs so the tank stays stoppable.
+            if (controlled_tank && controlled_vehicle == controlled_tank &&
+                controlled_tank->direct_track_control){
+                controlled_tank->TrackInput(gp_ly,gp_ry);
+                controlled_tank->ThrottleInput(0.0f);
+                controlled_tank->SteerInput(0.0f);
+                controlled_tank->BrakeInput(brake_input);
+            }else{
+                controlled_vehicle->ThrottleInput(throttle_input);
+                controlled_vehicle->SteerInput(steer_input);
+                controlled_vehicle->BrakeInput(brake_input);
+            }
 
-            //Overriden by keyboard
-            if (input->IsKeyDown(INPUT_TURN_UP)){
-                controlled_vehicle->ThrottleInput(1.0f);
-            }
-            if (input->IsKeyDown(INPUT_TURN_DOWN)){
-                controlled_vehicle->ThrottleInput(-1.0f);
-            }
-            if (input->IsKeyDown(INPUT_TURN_LEFT)){
-                controlled_vehicle->SteerInput(-1.0f);
-            }
-            if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-                controlled_vehicle->SteerInput(1.0f);
+            //Overriden by keyboard. In direct-track mode the arrow keys drive the tracks
+            //instead: up/down move BOTH together, left/right hold one back, so the rig is
+            //still drivable with no controller plugged in.
+            if (controlled_tank && controlled_vehicle == controlled_tank &&
+                controlled_tank->direct_track_control){
+                float kb_left = 0.0f, kb_right = 0.0f;
+                if (input->IsKeyDown(INPUT_TURN_UP)){ kb_left += 1.0f; kb_right += 1.0f; }
+                if (input->IsKeyDown(INPUT_TURN_DOWN)){ kb_left -= 1.0f; kb_right -= 1.0f; }
+                if (input->IsKeyDown(INPUT_TURN_LEFT)){ kb_left -= 1.0f; }
+                if (input->IsKeyDown(INPUT_TURN_RIGHT)){ kb_right -= 1.0f; }
+                if (kb_left != 0.0f || kb_right != 0.0f){
+                    controlled_tank->TrackInput(kb_left,kb_right);
+                }
+            }else{
+                if (input->IsKeyDown(INPUT_TURN_UP)){
+                    controlled_vehicle->ThrottleInput(1.0f);
+                }
+                if (input->IsKeyDown(INPUT_TURN_DOWN)){
+                    controlled_vehicle->ThrottleInput(-1.0f);
+                }
+                if (input->IsKeyDown(INPUT_TURN_LEFT)){
+                    controlled_vehicle->SteerInput(-1.0f);
+                }
+                if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+                    controlled_vehicle->SteerInput(1.0f);
+                }
             }
         }
 
@@ -1583,6 +1679,20 @@ void ApplicationTank::RunLogic(){
         if (ax_brake != 0.0f){
             controlled_vehicle->BrakeInput(ax_brake);
         }
+
+        //Scripted per-track commands, the direct-track rig's equivalent of drive/steer above.
+        //Applied only to the tank and only while the rig is on - the mix is what the other axes
+        //feed, and running both at once would just have them fight. Unlike drive/steer these are
+        //applied even at exactly 0: "hold this track still while the other drives" is a command
+        //in its own right here, and it is precisely the case being measured.
+        if (controlled_tank && controlled_vehicle == controlled_tank &&
+            controlled_tank->direct_track_control){
+            float ax_track_l = input->GetAxis(INPUT_AXIS_TRACK_L);
+            float ax_track_r = input->GetAxis(INPUT_AXIS_TRACK_R);
+            if (ax_track_l != 0.0f || ax_track_r != 0.0f){
+                controlled_tank->TrackInput(ax_track_l,ax_track_r);
+            }
+        }
         if (has_focus && input->WasKeyReleased(INPUT_FIRE) && controlled_vehicle == controlled_tank && controlled_tank){
             controlled_tank->Fire();
             if (fire_impact_emitter && target){
@@ -1596,10 +1706,24 @@ void ApplicationTank::RunLogic(){
         }
     }
 
-    //Camera rotation moving
+    //Camera rotation moving.
+    //
+    //Read with GetDelta, and read EVERY tick whether or not the drag is active - both halves of
+    //that matter, and getting either wrong makes the camera spin out:
+    //
+    //  GetDelta, not GetValue. For a relative axis (INPUT_EVENT_AXIS_RELATIVE) the KeyMap keeps
+    //  two numbers: `delta`, this tick's movement, cleared by InputController::Tick once read,
+    //  and `value`, a running total that is NEVER reset. GetValue returns that lifetime total,
+    //  so the camera was rotating by every raw mouse count accumulated since the process started,
+    //  once per frame, growing without bound - the instant runaway spin.
+    //
+    //  Read unconditionally. Tick only clears `delta` for maps that were actually read this tick
+    //  (f_processed), so leaving these behind the IsKeyDown gate let movement pile up for the
+    //  whole time the button was NOT held, and the first frame of a drag then applied all of it
+    //  at once. Draining it here keeps a drag starting from rest.
+    int dx = input->GetDelta(INPUT_MOUSE_DELTA_X);
+    int dy = input->GetDelta(INPUT_MOUSE_DELTA_Y);
     if (input->IsKeyDown(INPUT_CLICK_MIDDLE)){
-        int dx = input->GetValue(INPUT_MOUSE_DELTA_X);
-        int dy = input->GetValue(INPUT_MOUSE_DELTA_Y);
         if (input->IsKeyDown(INPUT_SHIFT)){
             //Move the camera
             vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
@@ -1891,6 +2015,18 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::Text("Brake Pedal    : %.2f",controlled_tank->brake_pedal);
             ImGui::Text("Steering       : %.2f",controlled_tank->steering_position);
             ImGui::Text("Reverse        : %s",controlled_tank->f_reverse ? "true" : "false");
+
+            //Direct per-track test rig - see TankCharacter::direct_track_control. Toggling it
+            //releases the inputs so neither control path is left latched from the other.
+            if (ImGui::Checkbox("Direct track control (L stick Y = left, R stick Y = right)",
+                                &controlled_tank->direct_track_control)){
+                controlled_tank->ReleaseInputs();
+            }
+            if (controlled_tank->direct_track_control){
+                ImGui::Text("  Left Track   : %+.2f",controlled_tank->left_track_input);
+                ImGui::Text("  Right Track  : %+.2f",controlled_tank->right_track_input);
+                ImGui::TextDisabled("  Steering mix bypassed. Arrows also work: up/down both, left/right hold one back.");
+            }
 
             if (ImGui::Button("Reset Tank To Start")){
                 controlled_tank->RequestReset(tank_start_position,tank_start_rotation); //render thread - applied by the physics thread, see Vehicle::RequestReset
