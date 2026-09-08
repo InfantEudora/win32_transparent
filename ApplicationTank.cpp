@@ -596,6 +596,7 @@ void ApplicationTank::Init(void){
     crane = new CraneCharacter(assetmanager,main_scene->physics_world,main_scene,vec3(3.5f,0.0f,2.0f));
     main_scene->AddObject(crane);
 
+    RegisterCommandHandlers();
     RegisterMCPTools();
 
     main_window->Resize(1600,800);
@@ -790,6 +791,7 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
             {"longitudinal_force", wheel.longitudinal_force},
             {"lateral_force", wheel.lateral_force},
             {"friction_budget", wheel.friction_budget},
+            {"lateral_slip_angle_deg", wheel.lateral_slip_angle * 180.0f / TYPE_PI},
             {"friction_saturated", wheel.friction_saturated},
             {"steer_angle", wheel.steer_angle},
             {"angular_velocity", wheel.angular_velocity},
@@ -923,6 +925,55 @@ json ApplicationTank::MaybeAttachScreenshot(json result, bool include_screenshot
 //and returning immediately. A caller otherwise has no way to know when the hold has actually
 //played out without a separate tank_telemetry round-trip guessing at a wait in between -
 //this collapses "apply input, wait it out, read the result" into one call.
+SimCommand ApplicationTank::MakeVehicleResetCommand(Vehicle* vehicle) const{
+    SimCommand cmd;
+    if (!vehicle){
+        return cmd; //SIM_CMD_NONE
+    }
+    cmd.type = TANK_CMD_VEHICLE_RESET;
+    cmd.target = vehicle->GetID();
+    //The pose travels IN the command rather than being looked up by the handler, so the command
+    //says everything about what it does. A replayed reset then reproduces the original pose even
+    //if the app's recorded spawn point has since been moved in code.
+    cmd.flags = SIM_CMD_FLAG_POSITION | SIM_CMD_FLAG_ROTATION;
+    if (vehicle == controlled_buggy){
+        cmd.position = buggy_start_position;
+        cmd.rotation = buggy_start_rotation;
+    }else{
+        cmd.position = tank_start_position;
+        cmd.rotation = tank_start_rotation;
+    }
+    return cmd;
+}
+
+void ApplicationTank::RegisterCommandHandlers(){
+    if (!main_scene){
+        debug_frame->Err("No scene to register tank command handlers on\n");
+        return;
+    }
+    //Runs on the physics thread, at the top of the tick, with physics_mutex held - so ResetState
+    //(which teleports the body, zeroes its velocities and clears every wheel) is safe to call
+    //directly here, and that is the only place it ever is.
+    main_scene->RegisterCommandHandler(TANK_CMD_VEHICLE_RESET,
+        [this](const SimCommand& cmd) -> objectid_t {
+            //Matched by ID against the vehicles this app owns rather than downcast from whatever
+            //FindObjectByID returns: the command carries an id, and only these two objects are
+            //Vehicles that this handler has any business resetting.
+            Vehicle* vehicle = NULL;
+            if (controlled_tank && cmd.target == controlled_tank->GetID()){
+                vehicle = controlled_tank;
+            }else if (controlled_buggy && cmd.target == controlled_buggy->GetID()){
+                vehicle = controlled_buggy;
+            }
+            if (!vehicle){
+                debug_physics->Err("vehicle_reset: id %u is not a vehicle of this app\n",cmd.target);
+                return OBJECTID_INVALID;
+            }
+            vehicle->ResetState(cmd.position,cmd.rotation);
+            return vehicle->GetID();
+        });
+}
+
 void ApplicationTank::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("tank_drive",
         "Drive the tank hull forward or reverse, or release the pedals. The input is held for "
@@ -1167,15 +1218,96 @@ void ApplicationTank::RegisterMCPTools(){
             if (!vehicle){
                 return json{ {"error","no such vehicle"} };
             }
-            //Queued for the physics thread rather than applied here: this handler runs on the
-            //MCP thread, and a teleport racing the running physics step corrupts the vehicle -
-            //see Vehicle::RequestReset. Takes effect on the next tick (a tank_step while paused).
-            if (vehicle == controlled_tank){
-                vehicle->RequestReset(tank_start_position,tank_start_rotation);
-            }else{
-                vehicle->RequestReset(buggy_start_position,buggy_start_rotation);
+            //Submitted as a command rather than applied here: this handler runs on the MCP
+            //thread, and a teleport racing the running physics step corrupts the vehicle. Waiting
+            //for it means the telemetry below describes the state AFTER the reset, which is what
+            //a scripted scenario starting from a known pose needs - the old RequestReset returned
+            //the pre-reset state and left the caller to guess when it had landed.
+            if (SubmitCommandAndWait(MakeVehicleResetCommand(vehicle)) == OBJECTID_INVALID){
+                return json{ {"error","the reset command was not applied - see the log"} };
             }
             return GetVehicleTelemetry(vehicle);
+        });
+
+    MCPServer::Get()->RegisterTool("buggy_tune",
+        "Read or set the buggy's drivetrain and suspension tuning - the same knobs the Buggy "
+        "Controls debug window exposes. Only the fields given are changed; every call returns the "
+        "full resulting tuning, so calling it with no arguments just reads it. suspension_hz is a "
+        "ride frequency (f = sqrt(k/m)/2pi over the mass one corner carries) and is written back "
+        "as a per-wheel stiffness override on every wheel, exactly as the UI slider does.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"power_split_front", {{"type","number"},{"description","0 = RWD, 1 = FWD, in between splits engine_force between the axles"}}},
+                {"brake_split_front", {{"type","number"},{"description","0 = all braking on the rear axle, 1 = all on the front, 0.5 = even"}}},
+                {"engine_force", {{"type","number"},{"description","total drive force at the tires (N) at full throttle"}}},
+                {"top_speed", {{"type","number"},{"description","soft speed cap (m/s) beyond which no more drive torque is added"}}},
+                {"suspension_hz", {{"type","number"},{"description","ride frequency (Hz) - converted to a spring stiffness against the per-corner sprung mass"}}},
+                {"suspension_damping", {{"type","number"},{"description","damping coefficient c, N per (m/s) of compression rate"}}},
+                {"friction_coefficient", {{"type","number"},{"description","Coulomb friction along the rolling direction (drive/brake)"}}},
+                {"lateral_friction", {{"type","number"},{"description","Coulomb friction sideways (cornering)"}}},
+                {"sliding_friction_ratio", {{"type","number"},{"description","fraction of its grip a SLIDING tire keeps; 1.0 disables the falloff (pre-falloff behaviour)"}}},
+                {"peak_slip_ratio", {{"type","number"},{"description","longitudinal slip ratio at which grip peaks, ~0.12 for tarmac"}}},
+                {"max_steer_angle_degrees", {{"type","number"},{"description","front wheel lock angle in degrees"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!controlled_buggy){
+                return json{ {"error","no buggy"} };
+            }
+            BuggyCharacter* buggy = controlled_buggy;
+            if (args.contains("power_split_front")){ buggy->power_split_front = clamp(args.at("power_split_front").get<float>(),0.0f,1.0f); }
+            if (args.contains("brake_split_front")){ buggy->brake_split_front = clamp(args.at("brake_split_front").get<float>(),0.0f,1.0f); }
+            if (args.contains("engine_force")){ buggy->engine_force = max(args.at("engine_force").get<float>(),0.0f); }
+            if (args.contains("top_speed")){ buggy->top_speed = max(args.at("top_speed").get<float>(),0.0f); }
+            if (args.contains("suspension_damping")){ buggy->suspension_damping = max(args.at("suspension_damping").get<float>(),0.0f); }
+            if (args.contains("friction_coefficient")){ buggy->friction_coefficient = max(args.at("friction_coefficient").get<float>(),0.0f); }
+            if (args.contains("lateral_friction")){ buggy->lateral_friction = max(args.at("lateral_friction").get<float>(),0.0f); }
+            if (args.contains("sliding_friction_ratio")){ buggy->sliding_friction_ratio = clamp(args.at("sliding_friction_ratio").get<float>(),0.0f,1.0f); }
+            if (args.contains("peak_slip_ratio")){ buggy->peak_slip_ratio = max(args.at("peak_slip_ratio").get<float>(),0.0001f); }
+            if (args.contains("max_steer_angle_degrees")){ buggy->max_steer_angle_degrees = args.at("max_steer_angle_degrees").get<float>(); }
+
+            //Same conversion the Susp. Freq slider does, and written the same way: onto each
+            //wheel's own stiffness override, so it survives ResolveTuning's 0-means-inherit rule
+            //rather than being masked by a per-wheel value already set.
+            float corner_mass = 0.0f;
+            if (Physics* physics = buggy->GetPhysics()){
+                if (!buggy->wheels.empty()){
+                    corner_mass = physics->GetMass() / (float)buggy->wheels.size();
+                }
+            }
+            if (args.contains("suspension_hz")){
+                if (corner_mass <= 0.0f){
+                    return json{ {"error","buggy has no mass or no wheels - cannot convert a frequency to a stiffness"} };
+                }
+                float omega = 2.0f * TYPE_PI * max(args.at("suspension_hz").get<float>(),0.01f);
+                float stiffness = corner_mass * omega * omega;
+                buggy->suspension_stiffness = stiffness;
+                for (Wheel& wheel : buggy->wheels){
+                    wheel.stiffness = stiffness;
+                }
+            }
+
+            float resolved_stiffness = buggy->wheels.empty() ? buggy->suspension_stiffness :
+                                       buggy->WheelStiffness(buggy->wheels[0]);
+            json result = {
+                {"power_split_front", buggy->power_split_front},
+                {"brake_split_front", buggy->brake_split_front},
+                {"engine_force", buggy->engine_force},
+                {"top_speed", buggy->top_speed},
+                {"suspension_stiffness", resolved_stiffness},
+                {"suspension_damping", buggy->suspension_damping},
+                {"friction_coefficient", buggy->friction_coefficient},
+                {"lateral_friction", buggy->lateral_friction},
+                {"sliding_friction_ratio", buggy->sliding_friction_ratio},
+                {"peak_slip_ratio", buggy->peak_slip_ratio},
+                {"max_steer_angle_degrees", buggy->max_steer_angle_degrees},
+                {"corner_mass_kg", corner_mass},
+            };
+            if (corner_mass > 0.0f){
+                result["suspension_hz"] = sqrtf(max(resolved_stiffness,0.0f) / corner_mass) / (2.0f * TYPE_PI);
+            }
+            return result;
         });
 
     MCPServer::Get()->RegisterTool("crane_speed",
@@ -2029,7 +2161,10 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             }
 
             if (ImGui::Button("Reset Tank To Start")){
-                controlled_tank->RequestReset(tank_start_position,tank_start_rotation); //render thread - applied by the physics thread, see Vehicle::RequestReset
+                //Submitted and NOT waited on: DrawImGuiUI already holds physics_mutex, so
+                //blocking here for the physics thread to apply it would deadlock. The reset
+                //shows up next frame - see Application::SubmitCommandAndWait.
+                main_scene->SubmitCommand(MakeVehicleResetCommand(controlled_tank));
             }
 
             if (ImGui::Checkbox("Show pink wheel debug visuals (vs. tracks mesh)",&f_show_wheel_debug_visuals)){
@@ -2058,7 +2193,7 @@ void ApplicationTank::RenderTankWheelDebugUI(){
             ImGui::DragFloat("Power Split (0=RWD, 1=FWD)",&controlled_buggy->power_split_front,0.01f,0.0f,1.0f,"%.2f");
 
             if (ImGui::Button("Reset Buggy To Start")){
-                controlled_buggy->RequestReset(buggy_start_position,buggy_start_rotation); //render thread - see Vehicle::RequestReset
+                main_scene->SubmitCommand(MakeVehicleResetCommand(controlled_buggy)); //see the tank's button above
             }
             ImGui::Separator();
             RenderVehicleWheelTable(controlled_buggy);
@@ -2133,10 +2268,19 @@ void ApplicationTank::RenderBuggyControlDebugUI(){
     ImGui::SliderFloat("Power Split (0=RWD, 1=FWD)",&controlled_buggy->power_split_front,0.0f,1.0f,"%.2f");
     ImGui::SliderFloat("Engine Power (N)",&controlled_buggy->engine_force,0.0f,8000.0f,"%.0f");
     ImGui::SliderFloat("Top Speed (m/s)",&controlled_buggy->top_speed,0.0f,20.0f,"%.1f");
-    ImGui::Text("Inputs");
-    ImGui::Text("  Gas Pedal      : %.2f",controlled_buggy->gas_pedal);
-    ImGui::Text("  Brake Pedal    : %.2f",controlled_buggy->brake_pedal);
-    ImGui::Text("  Steering       : %.2f",controlled_buggy->steering_position);
+    //Brake bias, the braking counterpart of Power Split above - see BuggyCharacter::brake_split_front.
+    ImGui::SliderFloat("Brake Bias (0=rear, 1=front)",&controlled_buggy->brake_split_front,0.0f,1.0f,"%.2f");
+    //Tire grip falloff once sliding - see BuggyCharacter::sliding_friction_ratio. Vehicle-wide
+    //rather than per-wheel (the wheel blocks below already carry the per-wheel friction override):
+    //these describe the tire compound, which is the same on all four corners.
+    //
+    //Set the ratio to 1.00 to switch the falloff off entirely and get the single-coefficient
+    //behaviour from before it existed - the quickest A/B for whether a handling change came from
+    //this model or from something else.
+    ImGui::SliderFloat("Sliding Grip Ratio (1=no falloff)",&controlled_buggy->sliding_friction_ratio,0.1f,1.0f,"%.2f");
+    ImGui::SliderFloat("Peak Slip Ratio",&controlled_buggy->peak_slip_ratio,0.02f,0.5f,"%.3f");
+    ImGui::Text("Inputs   Gas %.2f   Brake %.2f   Steer %+.2f",
+                controlled_buggy->gas_pedal,controlled_buggy->brake_pedal,controlled_buggy->steering_position);
 
 
     if (Physics* physics = controlled_buggy->GetPhysics()){
@@ -2163,8 +2307,21 @@ void ApplicationTank::RenderBuggyControlDebugUI(){
         }
         return NULL;
     };
-    auto WheelBlock = [this](const char* label,Wheel* wheel){
-        ImGui::BeginChild(label,ImVec2(240,220),true);
+    //Sprung mass carried by one corner - what turns this wheel's spring rate into a ride
+    //frequency below. The body's mass over the wheel count is the same "N wheels carry the body"
+    //reading BuggyCharacter's own suspension comments use.
+    float corner_mass = 0.0f;
+    if (Physics* physics = controlled_buggy->GetPhysics()){
+        if (!controlled_buggy->wheels.empty()){
+            corner_mass = physics->GetMass() / (float)controlled_buggy->wheels.size();
+        }
+    }
+    //AutoResizeY rather than a fixed height: the block is exactly as tall as its contents, so it
+    //cannot scroll whatever the font size is and adding another readout later can't reintroduce
+    //the scrollbar. Width stays fixed so the two columns line up, and the sliders get an explicit
+    //item width so their labels aren't clipped against the child's edge.
+    auto WheelBlock = [this,corner_mass](const char* label,Wheel* wheel){
+        ImGui::BeginChild(label,ImVec2(350,0),ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
         ImGui::Text("%s",label);
         int id = 0;
         if (wheel){
@@ -2199,8 +2356,39 @@ void ApplicationTank::RenderBuggyControlDebugUI(){
             //or this shows 0 until dragged even though the resolved value (1.0 by default) is
             //what's really being applied.
             float friction_coefficient = controlled_buggy->WheelFrictionCoefficient(*wheel);
+            ImGui::SetNextItemWidth(140.0f);
             if (ImGui::DragFloat("Friction Coef.",&friction_coefficient,0.01f,0.0f,3.0f,"%.2f")){
                 wheel->friction_coefficient = friction_coefficient;
+            }
+            ImGui::PopID();
+
+            //Suspension expressed as a RIDE FREQUENCY rather than a raw spring rate, because
+            //that is the number that describes how the car feels and the only one that stays
+            //meaningful when the mass changes: f = sqrt(k/m)/2pi for the mass this corner
+            //carries. ~1 Hz is a soft road car, ~2.5 Hz a stiff racing one. Dragging it converts
+            //straight back to the stiffness the tuning actually stores (k = m*(2*pi*f)^2), so
+            //nothing downstream has to know about frequency.
+            //
+            //The range runs to 8 Hz because the buggy's own default is already 4.24 Hz (8000 N/m
+            //over a 11.25 kg corner - the same arithmetic BuggyCharacter's suspension comment
+            //does), i.e. very stiff indeed. A tighter, more car-like range would have clamped the
+            //starting value and made the slider jump the moment it was touched.
+            //
+            //Reads the RESOLVED stiffness through WheelStiffness(), not wheel->stiffness - the
+            //latter is the 0-means-inherit override and would show 0 Hz until first dragged, the
+            //same trap the friction slider above documents.
+            ImGui::PushID(id++);
+            if (corner_mass > 0.0f){
+                float stiffness = controlled_buggy->WheelStiffness(*wheel);
+                float frequency = sqrtf(max(stiffness,0.0f) / corner_mass) / (2.0f * TYPE_PI);
+                ImGui::SetNextItemWidth(140.0f);
+                if (ImGui::DragFloat("Susp. Freq (Hz)",&frequency,0.02f,0.5f,8.0f,"%.2f")){
+                    float omega = 2.0f * TYPE_PI * max(frequency,0.01f);
+                    wheel->stiffness = corner_mass * omega * omega;
+                }
+                ImGui::TextDisabled("  %.0f N/m",controlled_buggy->WheelStiffness(*wheel));
+            }else{
+                ImGui::TextDisabled("Susp. Freq: (no mass)");
             }
             ImGui::PopID();
         }else{

@@ -50,7 +50,6 @@ void BuggyCharacter::InputToPedals(){
 void BuggyCharacter::UpdatePhysicsState(){
     float timestep = physics_timestep; //see TankCharacter::UpdatePhysicsState
 
-    ApplyPendingReset(); //see Vehicle::RequestReset
     DecaySteering();
     InputToPedals(); //see Vehicle::ThrottleInput/BrakeInput/SteerInput
 
@@ -84,10 +83,13 @@ void BuggyCharacter::UpdatePhysicsState(){
         //Wheel::friction_saturated), same as too much throttle spins one.
         bool drive_capped = fabs(forward_speed) >= top_speed;
         float drive_command = reverse_multiplier * gas_pedal;
-        float brake_force_per_wheel = wheels.empty() ? 0.0f : brake_pedal * brake_force / (float)wheels.size();
-
         int num_front_driven = 0, num_rear_driven = 0;
+        //Brakes are on every wheel, driven or not, so the brake bias counts ALL of them per axle
+        //rather than reusing the driven counts - on a rear-wheel-drive buggy the front axle has
+        //no driven wheels at all and would otherwise get no brakes either.
+        int num_front = 0, num_rear = 0;
         for (Wheel& wheel : wheels){
+            if (wheel.is_front_side){ num_front++; }else{ num_rear++; }
             if (!wheel.driven){ continue; }
             if (wheel.is_front_side){ num_front_driven++; }else{ num_rear_driven++; }
         }
@@ -119,8 +121,16 @@ void BuggyCharacter::UpdatePhysicsState(){
             if (wheel.driven && axle_fraction > 0.0f && !drive_capped && drive_command != 0.0f && axle_driven_count > 0){
                 drive_force = GovernedDriveForce(wheel,tuning,(engine_force * axle_fraction / axle_driven_count) * drive_command,timestep,fabs(drive_command));
             }
+            //Brake share for this wheel: its axle's fraction of brake_force (see
+            //brake_split_front), split over the wheels on that axle. At the default 0.5 with two
+            //wheels an axle this is brake_force/4 each, exactly the even split it replaces.
+            float brake_axle_fraction = wheel.is_front_side ? brake_split_front : (1.0f - brake_split_front);
+            int axle_wheel_count = wheel.is_front_side ? num_front : num_rear;
+            float brake_force_this_wheel = axle_wheel_count > 0 ?
+                brake_pedal * brake_force * brake_axle_fraction / (float)axle_wheel_count : 0.0f;
+
             w.setDriveTorque(drive_force * tuning.radius);
-            w.setBrakeTorque(brake_force_per_wheel * tuning.radius);
+            w.setBrakeTorque(brake_force_this_wheel * tuning.radius);
         }
 
         //Visual follow: bob/spin from WheelSuspension::UpdateVisual, then layer the steer yaw on

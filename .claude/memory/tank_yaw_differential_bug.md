@@ -61,6 +61,22 @@ by anything in this repo. TWO THINGS REMAIN:
   +1.00/-1.00 works. This is the separate `GovernedDriveForce` regression already noted below and
   it did NOT come back with the new tire model.
 
+**RESOLVED 2026-09-08 by the rp3d sliding-friction fix.** The fork's friction rework (branch
+`vehicle-constraint`: friction direction follows slip velocity as the tire saturates, plus
+`slidingFrictionRatio`/`peakSlipRatio` and an explicit longitudinal/lateral grip share) landed in
+`libs/libreactphysics3d.a` and both remaining complaints above are gone:
+
+| left / right | 2026-09-07 | 2026-09-08 |
+|---|---|---|
+| +1.00 / +0.00 | -0.0758 | **-0.1338** |
+| +1.00 / -1.00 | -1.4876 | **-2.0103** |
+| +0.50 / -0.50 | -0.0004 (dead) | **-0.5110** |
+
+The opposed-at-partial-magnitude case that had been dead since the `GovernedDriveForce` change now
+works, and the weak same-direction differential nearly doubled. Straight-line speed is unchanged
+(0.933 m/s both), so none of this came at the cost of drive force. Re-measure with
+`tools/vehicle_mcp.py` + `tank_track_drive` if it regresses.
+
 **Superseded note (kept for context).** The rp3d fork's `VehicleConstraint` gained `corneringStiffness` (slip-angle-based lateral force, default 7.0) in the Sep 7 library build. Its own header says a skid-steered vehicle can now hold a steady arc on a torque difference alone - which is exactly the missing behaviour - so re-measure the table above before doing any more work on this. The bug may already be gone.
 
 Related: [[rp3d-vehicle-constraint-plan]], [[rp3d-local-fork-hinge-motor-patch]], [[deterministic-sim-plan]].

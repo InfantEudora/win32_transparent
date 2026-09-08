@@ -2,6 +2,7 @@
 #define _APPLICATION_TANK_H_
 
 #include "Application.h"
+#include "SimCommand.h"
 #include "TankCharacter.h"
 #include "BuggyCharacter.h"
 #include "CraneCharacter.h"
@@ -11,6 +12,16 @@
 #include <vector>
 
 using json = nlohmann::json;
+
+//SimCommand types this app adds to core's set, numbered from SIM_CMD_LAST up - the same
+//convention the input keycodes use with INPUT_LAST. Core carries and orders these like any other
+//command without knowing what they mean; the meaning lives entirely in the handler registered in
+//RegisterCommandHandlers, which is free to close over TankCharacter/BuggyCharacter. That is the
+//whole point of the command-is-data/handler-is-code split - see core/SimCommand.h.
+//
+//Teleport a vehicle back to rest at the pose in the command's position/rotation. `target` is the
+//vehicle's object id.
+#define TANK_CMD_VEHICLE_RESET  (SIM_CMD_LAST + 0)
 
 /*
     An attempt at an application that overrides the default, and shows a compass.
@@ -103,6 +114,14 @@ public:
     void TestHeightmapMesh();
     void AddTestSceneObjects();
     void RegisterMCPTools();
+    //Handlers for this app's own SimCommand types (TANK_CMD_*). Called from Init(), next to
+    //RegisterMCPTools, since the tools submit the commands these handle.
+    void RegisterCommandHandlers();
+    //Builds the reset command for a vehicle, picking the right recorded spawn pose. Shared by the
+    //tank_reset MCP tool (which waits for it via SubmitCommandAndWait) and the debug UI's reset
+    //buttons (which must NOT wait - see Application::SubmitCommandAndWait for why). Returns a
+    //command with type SIM_CMD_NONE if the vehicle isn't one of ours.
+    SimCommand MakeVehicleResetCommand(Vehicle* vehicle) const;
     //Which vehicle an MCP call is about: args["vehicle"] is "tank" (default, so every existing
     //caller keeps working unchanged) or "buggy". NULL if that vehicle doesn't exist.
     Vehicle* ResolveVehicleArg(const json& args);

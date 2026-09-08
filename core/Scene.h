@@ -8,6 +8,7 @@
 #include <atomic>
 #include <mutex>
 #include <functional>
+#include <unordered_map>
 
 #include "type_fmat3.h"
 #include "type_fmat4.h"
@@ -17,6 +18,7 @@
 #include "Shader.h"
 
 #include "PhysicsWorld.h"
+#include "SimCommand.h"
 
 #include "imgui.h"
 
@@ -64,6 +66,47 @@ public:
     //handler); consumed on the physics thread.
     void MoveObjectOverTicks(Object* object,const vec3* target_position,const quat* target_rotation,int ticks);
     int GetPendingObjectMotions();
+
+    //--- Simulation commands ------------------------------------------------------------------
+    //Changes to the simulation that are NOT input (create/teleport/destroy an object, reset a
+    //vehicle), coming from the render thread (debug UI) or the MCP thread. See SimCommand.h for
+    //why they are data rather than virtual objects, and for the command/handler split that lets
+    //an app add its own types without core knowing them.
+    //
+    //Callable from ANY thread. Returns the command's sequence number: 1 for the first command
+    //ever submitted, and up from there. The command has NOT run yet when this returns.
+    uint32_t SubmitCommand(const SimCommand& cmd);
+
+    //The sequence number of the last command that has been APPLIED on the physics thread. A
+    //submitter that needs to report the result waits for this to reach its own sequence:
+    //   uint32_t seq = scene->SubmitCommand(cmd);
+    //   while (scene->GetAppliedCommandSequence() < seq && !timed_out){ Sleep(5); }
+    //Commands are applied in submission order, so this single number covers every earlier one
+    //too. It advances while PAUSED as well (commands drain before the pause check), so a caller
+    //waiting on it does not hang against a paused editor.
+    uint32_t GetAppliedCommandSequence(){ return applied_command_sequence; }
+
+    //The object a given applied command created or acted on, or OBJECTID_INVALID. This is how a
+    //spawn reports back WHAT it spawned - the submitter cannot know the id in advance, because
+    //ids are handed out on the physics thread in tick order (which is what makes them
+    //reproducible). Only the most recent handful of results are kept; a sequence older than that
+    //returns OBJECTID_INVALID, so read it promptly after the wait above.
+    objectid_t GetCommandResult(uint32_t sequence);
+
+    //Installs the code for one command type. The handler runs on the PHYSICS THREAD, inside the
+    //tick, with the renderer's physics_mutex already held - so it may touch objects and physics
+    //bodies freely, and must not take that lock itself or block. It returns the object it created
+    //or acted on (OBJECTID_INVALID if none), which is what GetCommandResult reports.
+    //
+    //Registering a type twice replaces the handler. Core's own types are registered by
+    //Application::RegisterCoreCommandHandlers (not here, because spawning needs the
+    //AssetManager, which Scene has no business knowing about); an app registers its own from
+    //Init() alongside its MCP tools.
+    void RegisterCommandHandler(uint16_t type, std::function<objectid_t(const SimCommand&)> handler);
+
+    //How many submitted commands have not been applied yet. For a caller that wants to poll
+    //rather than compare sequences.
+    int GetPendingCommands();
 
     bool IsPhysicsPaused(){return f_paused;}
     void PausePhysics(bool paused){f_paused = paused;}
@@ -119,6 +162,30 @@ private:
     std::vector<ObjectMotion> object_motions;
     std::mutex object_motions_mutex;
     void AdvanceObjectMotions(float delta_time); //one tick's worth, physics thread only
+
+    //See SubmitCommand. The queue is swapped out wholesale under the lock and the handlers then
+    //run unlocked, so a handler is free to submit further commands (they land on the next tick)
+    //without deadlocking on this mutex.
+    struct QueuedCommand{
+        uint32_t sequence = 0;
+        SimCommand cmd;
+    };
+    std::vector<QueuedCommand> pending_commands;
+    std::mutex commands_mutex;
+    std::atomic<uint32_t> command_sequence{0};          //last sequence HANDED OUT by SubmitCommand
+    std::atomic<uint32_t> applied_command_sequence{0};  //last sequence actually applied
+    std::unordered_map<uint16_t,std::function<objectid_t(const SimCommand&)>> command_handlers;
+    //Ring of the last COMMAND_RESULT_RING results, indexed by sequence % size. A ring rather than
+    //a growing map because this exists only to hand a spawn's object id back to a caller that is
+    //actively waiting on it - nobody asks about a command from a thousand ticks ago, and an
+    //unbounded map of every command ever submitted would just leak for the life of the run.
+    static const int COMMAND_RESULT_RING = 64;
+    struct CommandResult{
+        uint32_t sequence = 0;
+        objectid_t object = OBJECTID_INVALID;
+    };
+    CommandResult command_results[COMMAND_RESULT_RING];
+    void DrainCommands(); //physics thread only, top of UpdatePhysics
 };
 
 #endif

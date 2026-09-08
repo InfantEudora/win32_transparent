@@ -154,6 +154,34 @@ struct VehicleWheelSettings {
         /// reaching further than the tire's own rim could). Unused when numContactSamples <= 1.
         decimal contactSampleHalfAngle;
 
+        // New settings are appended here rather than inserted above: an application that
+        // fills a VehicleWheelSettings compiled against a different copy of this header
+        // would otherwise read every following field from the wrong offset, which fails
+        // silently (a garbage numContactSamples hangs the raycast loop rather than
+        // erroring), so keep additions at the end and the struct stays compatible.
+
+        /// Fraction of the peak friction coefficients (longitudinal and lateral alike) a fully
+        /// sliding tire keeps, in [0, 1]. Grip peaks at a small slip and falls away beyond it:
+        /// up to the peak the contact patch shears elastically and grips, past it the patch is
+        /// sliding on the road and only plain kinetic friction is left. Around 0.8 for a road
+        /// tire on dry tarmac, 0.7 for a performance tire (a sharper peak), lower still in the
+        /// wet; 1.0 restores the old behaviour of a single coefficient that never falls off.
+        ///
+        /// The falloff is what makes breaking traction cost something: a locked wheel stops the
+        /// car less well than one braked at the limit, a spinning wheel pushes less hard, and a
+        /// tire already sliding sideways does not recover its full grip the instant the throttle
+        /// closes, so a slide runs on instead of snapping straight. Default 0.8.
+        decimal slidingFrictionRatio;
+
+        /// Longitudinal slip ratio at which grip peaks, the rolling-direction counterpart of the
+        /// peak slip angle that corneringStiffness implies. Slip ratio is the tread speed of the
+        /// tire against the road as a fraction of the faster of road speed and tread speed, so 0
+        /// is a wheel rolling freely and 1 is one fully locked or spinning against a standing
+        /// car. Around 0.1 for tarmac, higher on loose ground where the tire wants to dig in.
+        /// Only used when slidingFrictionRatio is below 1. Default 0.12.
+        decimal peakSlipRatio;
+
+
         // -------------------- Methods -------------------- //
 
         /// Constructor
@@ -165,7 +193,8 @@ struct VehicleWheelSettings {
               radius(decimal(0.3)), width(decimal(0.1)), inertia(decimal(0.9)), angularDamping(decimal(0.2)),
               longitudinalFriction(decimal(1.0)), lateralFriction(decimal(1.0)), corneringStiffness(decimal(7.0)),
               enableSuspensionForcePoint(false), suspensionForcePoint(0, 0, 0),
-              enabled(true), numContactSamples(1), contactSampleHalfAngle(PI_RP3D / decimal(4.0)) {}
+              enabled(true), numContactSamples(1), contactSampleHalfAngle(PI_RP3D / decimal(4.0)),
+              slidingFrictionRatio(decimal(0.8)), peakSlipRatio(decimal(0.12)) {}
 };
 
 // Class VehicleWheel
@@ -232,6 +261,35 @@ class VehicleWheel {
         /// Slip angle (rad, in [0, pi/2]) between where the tire points and where it is actually
         /// travelling, measured from the velocities at the start of the step
         decimal mLateralSlipAngle;
+
+        /// Combined slip of the tire at the start of the step, as a multiple of the slip at which
+        /// grip peaks: below 1 the tire grips, above 1 it is sliding and losing grip. Both
+        /// directions are normalized by their own peak slip and combined, so slip in one
+        /// direction costs grip in the other as well.
+        decimal mCombinedSlip;
+
+        /// Fraction of its peak friction coefficients the tire has left at mCombinedSlip, in
+        /// [slidingFrictionRatio, 1]. Both friction limits of the step are scaled by this.
+        decimal mGripScale;
+
+        /// How much of the contact patch is sliding rather than gripping, in [0, 1]: 0 while the
+        /// tire is within its peak slip, rising towards 1 as the slip runs past it. It is how far
+        /// the friction of the step is blended from the elastic behaviour of a gripping tire
+        /// (each direction with its own stiffness and its own claim on the grip) towards that of
+        /// a sliding one (a single force opposing the way the patch slides).
+        decimal mSlidingFraction;
+
+        /// Component along the rolling direction of the unit vector the contact patch is sliding
+        /// in, in [0, 1]. It is the share of the friction ellipse that belongs to this direction
+        /// once the tire slides: a sliding tire's friction opposes its own sliding, so a locked
+        /// wheel running straight ahead owes all of the grip to the rolling direction and none
+        /// sideways, and one sliding sideways the other way round.
+        decimal mLongitudinalGripShare;
+
+        /// Component across the rolling direction of the unit vector the contact patch is sliding
+        /// in (see mLongitudinalGripShare). The two are the components of a unit vector, so a
+        /// fully sliding pair at its shares sits exactly on the friction ellipse.
+        decimal mLateralGripShare;
 
         /// Rotation speed of the wheel about its axle (rad/s), positive when it rolls the vehicle forward
         decimal mAngularVelocity;
@@ -326,6 +384,25 @@ class VehicleWheel {
         /// between where the tire points and where it is actually going. Zero when it rolls true.
         decimal getLateralSlipAngle() const;
 
+        /// Return the combined slip of the tire this step, as a multiple of the slip at which grip
+        /// peaks: below 1 the tire grips, above 1 it is sliding
+        decimal getCombinedSlip() const;
+
+        /// Return the fraction of its peak friction coefficients the tire had left this step,
+        /// in [slidingFrictionRatio, 1] (always 1 when the falloff is disabled)
+        decimal getGripScale() const;
+
+        /// Return how much of the contact patch was sliding rather than gripping this step, in
+        /// [0, 1] (see mSlidingFraction)
+        decimal getSlidingFraction() const;
+
+        /// Return the share of the friction ellipse the rolling direction owns while the tire
+        /// slides: the component along it of the direction the patch is sliding in
+        decimal getLongitudinalGripShare() const;
+
+        /// Return the share of the friction ellipse the sideways direction owns while the tire slides
+        decimal getLateralGripShare() const;
+
         /// Return the rotation speed of the wheel about its axle (rad/s), positive when rolling the vehicle forward
         decimal getAngularVelocity() const;
 
@@ -403,7 +480,9 @@ struct VehicleConstraintSettings {
  *    friction coefficient times the normal impulse. The longitudinal one couples the spin of
  *    the wheel to the ground: a free wheel spins up to roll without slipping, a driven wheel
  *    pushes the vehicle (or spins if the tire cannot hold the torque) and a braked wheel stops
- *    the vehicle up to what the brake and the tire can transmit.
+ *    the vehicle up to what the brake and the tire can transmit. Both coefficients fall off
+ *    once the tire slips past its peak (VehicleWheelSettings::slidingFrictionRatio), so
+ *    breaking traction costs grip in both directions until the slip comes back down.
  *
  * Driving is done per wheel: VehicleWheel::setSteerAngle(), setDriveTorque() and
  * setBrakeTorque(). How an engine, gearbox and differential distribute torque between the
@@ -640,6 +719,31 @@ RP3D_FORCE_INLINE decimal VehicleWheel::getLateralImpulse() const {
 // Return the slip angle the sideways tire force was built from this step
 RP3D_FORCE_INLINE decimal VehicleWheel::getLateralSlipAngle() const {
     return mLateralSlipAngle;
+}
+
+// Return the combined slip of the tire this step, relative to the slip at which grip peaks
+RP3D_FORCE_INLINE decimal VehicleWheel::getCombinedSlip() const {
+    return mCombinedSlip;
+}
+
+// Return the fraction of its peak friction coefficients the tire had left this step
+RP3D_FORCE_INLINE decimal VehicleWheel::getGripScale() const {
+    return mGripScale;
+}
+
+// Return how much of the contact patch was sliding rather than gripping this step
+RP3D_FORCE_INLINE decimal VehicleWheel::getSlidingFraction() const {
+    return mSlidingFraction;
+}
+
+// Return the share of the friction ellipse the rolling direction owns while the tire slides
+RP3D_FORCE_INLINE decimal VehicleWheel::getLongitudinalGripShare() const {
+    return mLongitudinalGripShare;
+}
+
+// Return the share of the friction ellipse the sideways direction owns while the tire slides
+RP3D_FORCE_INLINE decimal VehicleWheel::getLateralGripShare() const {
+    return mLateralGripShare;
 }
 
 // Return the rotation speed of the wheel about its axle

@@ -187,6 +187,9 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     }
 
     app->Init();
+    //Before RegisterCoreMCPTools: those tools submit commands, so the handlers have to be in
+    //place before any of them can be called.
+    app->RegisterCoreCommandHandlers();
     app->RegisterCoreMCPTools();
 
     //Only now, after the concrete app's Init() has fully returned (and so
@@ -504,6 +507,87 @@ static json ObjectToJson(Object* object,bool verbose){
     return result;
 }
 
+//--- Simulation commands ------------------------------------------------------------------
+
+void Application::RegisterCoreCommandHandlers(){
+    if (!main_scene){
+        debug->Err("No scene to register core command handlers on\n");
+        return;
+    }
+
+    //Teleport. Only the fields the flags mark as present are written - a command that just wants
+    //to rotate something must not also stamp a zeroed position over it.
+    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SET_TRANSFORM,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Object* object = main_scene->FindObjectByID(cmd.target);
+            if (!object){
+                debug->Err("SimCommand set_transform: no object with id %u\n",cmd.target);
+                return OBJECTID_INVALID;
+            }
+            if (cmd.flags & SIM_CMD_FLAG_POSITION){
+                object->SetPosition(cmd.position);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_ROTATION){
+                object->SetRotation(cmd.rotation);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_SCALE){
+                object->SetScale(cmd.scale);
+            }
+            return object->GetID();
+        });
+
+    //Spawn. Same three lines the debug UI's Add > Asset menu runs (build from the asset, take
+    //the asset's name, add to the scene) - only now on the physics thread, on a defined tick, so
+    //the id handed out is reproducible.
+    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_ASSET,
+        [this](const SimCommand& cmd) -> objectid_t {
+            if (!assetmanager){
+                debug->Err("SimCommand spawn_asset: no asset manager\n");
+                return OBJECTID_INVALID;
+            }
+            Asset* asset = assetmanager->GetAssetByID(cmd.asset); //logs its own error if missing
+            if (!asset){
+                return OBJECTID_INVALID;
+            }
+            Object* object = assetmanager->GetObjectFromAssetID(cmd.asset);
+            if (!object){
+                return OBJECTID_INVALID;
+            }
+            object->name = asset->name;
+            if (cmd.flags & SIM_CMD_FLAG_POSITION){
+                object->SetPosition(cmd.position);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_ROTATION){
+                object->SetRotation(cmd.rotation);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_SCALE){
+                object->SetScale(cmd.scale);
+            }
+            main_scene->AddObject(object);
+            return object->GetID();
+        });
+}
+
+objectid_t Application::SubmitCommandAndWait(const SimCommand& cmd, int timeout_ms){
+    if (!main_scene){
+        return OBJECTID_INVALID;
+    }
+    uint32_t sequence = main_scene->SubmitCommand(cmd);
+    //Polled rather than signalled: the physics thread drains commands at the top of its tick and
+    //a condition variable there would mean it has to know whether anyone is waiting. A command
+    //lands within one tick (~20ms) and the callers are debug tooling, so a 5ms poll is free.
+    //Commands drain before the pause check, so this also completes against a PAUSED scene.
+    for (int waited_ms = 0; waited_ms < timeout_ms; waited_ms += 5){
+        if (main_scene->GetAppliedCommandSequence() >= sequence){
+            return main_scene->GetCommandResult(sequence);
+        }
+        Sleep(5);
+    }
+    debug->Err("SimCommand type %u (sequence %u) was not applied within %d ms\n",
+               cmd.type,sequence,timeout_ms);
+    return OBJECTID_INVALID;
+}
+
 void Application::RegisterCoreMCPTools(){
     const json object_selector_properties = {
         {"id", {{"type","number"},{"description","object id, as reported by object_list (preferred - unique)"}}},
@@ -560,7 +644,9 @@ void Application::RegisterCoreMCPTools(){
         "value into the Generic Object UI. Only the fields given are changed. Rotation can be given "
         "as `rotation` [x,y,z,w], `axis_degrees` [x,y,z] (applied X then Y then Z, like the UI's "
         "'Axis Degrees' mode) or `yaw_degrees`. A physics body is teleported along with it: use "
-        "object_move instead if it should push things out of the way on its way there.",
+        "object_move instead if it should push things out of the way on its way there. Applied on "
+        "the physics thread at the start of a tick (a SimCommand), so it cannot land in the middle "
+        "of a physics step - it takes effect within a tick, or on the next step if paused.",
         json{
             {"type","object"},
             {"properties", {
@@ -575,28 +661,40 @@ void Application::RegisterCoreMCPTools(){
         },
         [this](const json &args) -> json {
             std::string error;
+            //Resolved here only to turn a name into an id and to report a bad selector straight
+            //back to the caller. The command itself carries the ID, never this pointer - see
+            //SimCommand::target.
             Object* object = ResolveObjectArg(main_scene,args,error);
             if (!object){
                 return json{ {"error",error} };
             }
-            vec3 v;
+            SimCommand cmd;
+            cmd.type = SIM_CMD_OBJECT_SET_TRANSFORM;
+            cmd.target = object->GetID();
             if (args.contains("position")){
-                if (!JsonToVec3(args.at("position"),v)){
+                if (!JsonToVec3(args.at("position"),cmd.position)){
                     return json{ {"error","position must be [x,y,z]"} };
                 }
-                object->SetPosition(v);
+                cmd.flags |= SIM_CMD_FLAG_POSITION;
             }
-            quat q;
-            if (RotationFromArgs(args,q,error)){
-                object->SetRotation(q);
+            if (RotationFromArgs(args,cmd.rotation,error)){
+                cmd.flags |= SIM_CMD_FLAG_ROTATION;
             }else if (!error.empty()){
                 return json{ {"error",error} };
             }
             if (args.contains("scale")){
-                if (!JsonToVec3(args.at("scale"),v)){
+                if (!JsonToVec3(args.at("scale"),cmd.scale)){
                     return json{ {"error","scale must be [x,y,z]"} };
                 }
-                object->SetScale(v);
+                cmd.flags |= SIM_CMD_FLAG_SCALE;
+            }
+            if (cmd.flags == 0){
+                return json{ {"error","give a position, rotation and/or scale"} };
+            }
+            //This handler runs on an MCP thread, which holds no locks, so it can wait for the
+            //physics thread to apply the command and then report the real resulting state.
+            if (SubmitCommandAndWait(cmd) == OBJECTID_INVALID){
+                return json{ {"error","the transform command was not applied - see the log"} };
             }
             return ObjectToJson(object,true);
         });
@@ -664,6 +762,91 @@ void Application::RegisterCoreMCPTools(){
             }
             result["object"] = ObjectToJson(object,true);
             return result;
+        });
+
+    MCPServer::Get()->RegisterTool("asset_list",
+        "List the loaded assets - the things object_spawn can build an object from - with the "
+        "stable id each one is addressed by. The id is a hash of the asset's name (not a load "
+        "order index), so it stays the same across runs and across changes to what else is "
+        "loaded.",
+        json{ {"type","object"}, {"properties", json::object()} },
+        [this](const json &args) -> json {
+            if (!assetmanager){
+                return json{ {"error","no asset manager"} };
+            }
+            json assets = json::array();
+            for (Asset* asset:assetmanager->assets){
+                assets.push_back(json{
+                    {"name",asset->name},
+                    {"id",asset->id},
+                    {"has_mesh",asset->mesh != NULL}
+                });
+            }
+            return json{ {"assets",assets}, {"count",(int)assets.size()} };
+        });
+
+    MCPServer::Get()->RegisterTool("object_spawn",
+        "Create an object from a loaded asset and add it to the scene - the same as the debug UI's "
+        "Add > Asset menu. Give `asset` (the name) or `asset_id` (from asset_list), and optionally "
+        "a position/rotation/scale; rotation is given as in object_set_transform. The object is "
+        "created on the physics thread at the start of a tick, so the id it gets is reproducible; "
+        "that id is returned along with the object's full state. No physics body is added - use "
+        "an app-specific tool if the thing needs a collider.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"asset", {{"type","string"},{"description","asset name, as listed by asset_list"}}},
+                {"asset_id", {{"type","number"},{"description","asset id, as listed by asset_list - wins over `asset`"}}},
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position"}}},
+                {"rotation", {{"type","array"},{"items",{{"type","number"}}},{"minItems",4},{"maxItems",4},{"description","[x,y,z,w] quaternion"}}},
+                {"axis_degrees", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] rotation in degrees about each axis, applied X, Y, Z"}}},
+                {"yaw_degrees", {{"type","number"},{"description","rotation about world up, degrees"}}},
+                {"scale", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] scale"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            SimCommand cmd;
+            cmd.type = SIM_CMD_OBJECT_SPAWN_ASSET;
+            //A name is hashed HERE, at the boundary, so the command itself only ever carries the
+            //id - the same rule the MCP tools follow for durations (milliseconds in, ticks
+            //onwards). Nothing deeper in the simulation sees the string.
+            if (args.contains("asset_id") && args.at("asset_id").is_number()){
+                cmd.asset = (assetid_t)args.at("asset_id").get<uint32_t>();
+            }else if (args.contains("asset") && args.at("asset").is_string()){
+                cmd.asset = AssetIDFromName(args.at("asset").get<std::string>().c_str());
+            }else{
+                return json{ {"error","give an asset name or asset_id - see asset_list"} };
+            }
+            std::string error;
+            if (args.contains("position")){
+                if (!JsonToVec3(args.at("position"),cmd.position)){
+                    return json{ {"error","position must be [x,y,z]"} };
+                }
+                cmd.flags |= SIM_CMD_FLAG_POSITION;
+            }
+            if (RotationFromArgs(args,cmd.rotation,error)){
+                cmd.flags |= SIM_CMD_FLAG_ROTATION;
+            }else if (!error.empty()){
+                return json{ {"error",error} };
+            }
+            if (args.contains("scale")){
+                if (!JsonToVec3(args.at("scale"),cmd.scale)){
+                    return json{ {"error","scale must be [x,y,z]"} };
+                }
+                cmd.flags |= SIM_CMD_FLAG_SCALE;
+            }
+            //The whole reason a command reports a result: the caller cannot know the new object's
+            //id in advance, because ids are handed out on the physics thread in tick order, which
+            //is what makes them reproducible in the first place.
+            objectid_t created = SubmitCommandAndWait(cmd);
+            if (created == OBJECTID_INVALID){
+                return json{ {"error","nothing was spawned - no such asset, or the command was not applied (see the log)"} };
+            }
+            Object* object = main_scene->FindObjectByID(created);
+            if (!object){
+                return json{ {"error","spawned object " + std::to_string(created) + " could not be found again"} };
+            }
+            return json{ {"id",created}, {"object",ObjectToJson(object,true)} };
         });
 
     //--- Camera -------------------------------------------------------------------------------

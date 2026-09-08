@@ -34,12 +34,102 @@ void Scene::UpdateAnimations(float delta_time){
     }
 };
 
+//--- Simulation commands ------------------------------------------------------------------------
+
+uint32_t Scene::SubmitCommand(const SimCommand& cmd){
+    QueuedCommand queued;
+    queued.cmd = cmd;
+    std::lock_guard<std::mutex> lock(commands_mutex);
+    //Assigned under the lock, not with a bare atomic increment: the sequence has to match the
+    //order commands sit in the queue, and two threads incrementing then pushing could interleave
+    //those two steps and produce a queue that is out of order with respect to its own sequences.
+    queued.sequence = ++command_sequence;
+    pending_commands.push_back(queued);
+    return queued.sequence;
+}
+
+void Scene::RegisterCommandHandler(uint16_t type, std::function<objectid_t(const SimCommand&)> handler){
+    std::lock_guard<std::mutex> lock(commands_mutex);
+    command_handlers[type] = handler;
+}
+
+int Scene::GetPendingCommands(){
+    std::lock_guard<std::mutex> lock(commands_mutex);
+    return (int)pending_commands.size();
+}
+
+objectid_t Scene::GetCommandResult(uint32_t sequence){
+    if (sequence == 0){
+        return OBJECTID_INVALID;
+    }
+    std::lock_guard<std::mutex> lock(commands_mutex);
+    const CommandResult& result = command_results[sequence % COMMAND_RESULT_RING];
+    //The sequence check is what makes the ring safe: the slot may since have been reused by a
+    //newer command, in which case this one's result is simply gone rather than wrong.
+    return (result.sequence == sequence) ? result.object : OBJECTID_INVALID;
+}
+
+void Scene::DrainCommands(){
+    //Swap the whole queue out under the lock and run the handlers unlocked. A handler runs
+    //arbitrary app code which may itself submit commands (and will take the same mutex), so
+    //holding it across the dispatch would deadlock.
+    std::vector<QueuedCommand> commands;
+    {
+        std::lock_guard<std::mutex> lock(commands_mutex);
+        if (pending_commands.empty()){
+            return;
+        }
+        commands.swap(pending_commands);
+    }
+
+    for (const QueuedCommand& queued:commands){
+        //A version mismatch means the struct this command was built against is not the struct
+        //being read - refuse it rather than acting on fields at the wrong offsets. Today this can
+        //only fire across a stale recording; it is here from the start so a replay reader has one
+        //defined behaviour to rely on.
+        if (queued.cmd.version != SIM_COMMAND_VERSION){
+            debug->Err("Dropping SimCommand type %u: version %u, expected %u\n",
+                       queued.cmd.type,queued.cmd.version,SIM_COMMAND_VERSION);
+        }else{
+            std::function<objectid_t(const SimCommand&)> handler;
+            {
+                std::lock_guard<std::mutex> lock(commands_mutex);
+                auto it = command_handlers.find(queued.cmd.type);
+                if (it != command_handlers.end()){
+                    handler = it->second; //copied out, then called unlocked
+                }
+            }
+            objectid_t result = OBJECTID_INVALID;
+            if (handler){
+                result = handler(queued.cmd);
+            }else{
+                debug->Err("No handler registered for SimCommand type %u\n",queued.cmd.type);
+            }
+            std::lock_guard<std::mutex> lock(commands_mutex);
+            CommandResult& slot = command_results[queued.sequence % COMMAND_RESULT_RING];
+            slot.sequence = queued.sequence;
+            slot.object = result;
+        }
+        //Advanced per command and only after its result is stored, so a submitter that sees its
+        //own sequence here can immediately read the result back.
+        applied_command_sequence = queued.sequence;
+    }
+}
+
 void Scene::UpdatePhysics(float delta_time){
     //We need a renderer because that's were we store our objects that need to be rendered.
     if (!renderer){
         return;
     }
     physics_timestep = delta_time;
+
+    //Commands drain BEFORE the pause check below, deliberately. A paused simulation is exactly
+    //when the debug UI and a scripted MCP session do most of their creating and teleporting, and
+    //if commands only ran on a tick that actually stepped, a paused editor would freeze solid and
+    //every caller waiting on GetAppliedCommandSequence() would time out. The cost is that a
+    //command applied while paused lands between ticks rather than on one - fine, because
+    //GetPhysicsTick() is unchanged by it, so it is unambiguous which tick it precedes.
+    DrainCommands();
     if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
         PausePhysics(!f_paused);
     }

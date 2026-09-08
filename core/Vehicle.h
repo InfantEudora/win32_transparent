@@ -61,16 +61,14 @@ public:
     //can call Vehicle::ResetState first, then handle its own on top.
     virtual void ResetState(const vec3& pos, const quat& rot);
 
-    //ResetState from another thread than the physics thread (an MCP tool handler, the debug UI
-    //on the render thread) races the physics step that may be running at that moment: a
-    //teleport and velocity reset landing in the middle of the solver, or of the vehicle
-    //constraint reading its wheels back, leaves the body and wheels in a corrupt state
-    //(observed as wheels spinning at hundreds of rad/s with no torque after a reset). This
-    //queues the reset instead; the physics thread applies it at the top of its next
-    //UpdatePhysicsState via ApplyPendingReset, before anything else that tick reads the body.
-    void RequestReset(const vec3& pos, const quat& rot);
-    //Called first thing in every subclass's UpdatePhysicsState (physics thread).
-    void ApplyPendingReset();
+    //ResetState is PHYSICS THREAD ONLY. Calling it from an MCP tool handler or the debug UI races
+    //the physics step that may be running at that moment: a teleport and velocity reset landing
+    //in the middle of the solver, or of the vehicle constraint reading its wheels back, leaves the
+    //body and wheels corrupt (observed as wheels spinning at hundreds of rad/s with no torque
+    //after a reset). This used to be handled by a RequestReset/ApplyPendingReset pair of its own -
+    //a private, one-off deferral queue for exactly one operation. That is now a SimCommand: an
+    //app submits its own reset command type and resets from the handler, which core runs on the
+    //physics thread at the top of the tick. See ApplicationTank's TANK_CMD_VEHICLE_RESET.
 
     //Turns a Wheel's per-field 0s into real numbers by falling back to this vehicle's own shared
     //defaults - see Wheel's own comment for why the fields are 0-means-inherit in the first
@@ -85,6 +83,10 @@ public:
     float WheelTravel(const Wheel& wheel) const { return ResolveTuning(wheel).travel; }
     float WheelFrictionCoefficient(const Wheel& wheel) const { return ResolveTuning(wheel).friction_coefficient; }
     float WheelLateralFriction(const Wheel& wheel) const { return ResolveTuning(wheel).lateral_friction; }
+    float WheelStiffness(const Wheel& wheel) const { return ResolveTuning(wheel).stiffness; }
+    float WheelDamping(const Wheel& wheel) const { return ResolveTuning(wheel).damping; }
+    float WheelSlidingFrictionRatio(const Wheel& wheel) const { return ResolveTuning(wheel).sliding_friction_ratio; }
+    float WheelPeakSlipRatio(const Wheel& wheel) const { return ResolveTuning(wheel).peak_slip_ratio; }
 
     //--- The physics bridge ---
     //Creates the rp3d VehicleConstraint on this object's rigidbody, one constraint wheel per
@@ -164,12 +166,6 @@ public:
     //Statistics
     float forward_speed = 0.0f; //m/s, read from the physics engine each tick, for telemetry/debug UI
 
-private:
-    //Backing state for RequestReset/ApplyPendingReset. The pose is written before the flag is
-    //set and read after it is seen, so the flag alone needs to be atomic.
-    std::atomic<bool> f_reset_requested{false};
-    vec3 reset_position = {};
-    quat reset_rotation = {};
 };
 
 #endif

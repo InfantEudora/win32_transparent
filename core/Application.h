@@ -50,6 +50,25 @@ public:
     virtual void Start(void);   // Creates 2 threads
     virtual void Init(void);    // Called from Frame Thread
 
+    //Handlers for core's own SimCommand types (see core/SimCommand.h) - object_set_transform and
+    //asset spawning. Registered on main_scene right after Init(), for the same reason
+    //RegisterCoreMCPTools is: the scene has to exist. It lives on Application rather than on
+    //Scene because spawning needs the AssetManager, which Scene has no business knowing about -
+    //and keeping Scene as pure queue-and-dispatch is what lets an app register handlers that
+    //close over its own types.
+    void RegisterCoreCommandHandlers();
+
+    //Submit a SimCommand and block until the physics thread has applied it, then return the
+    //object it created or acted on (OBJECTID_INVALID on timeout, or if the handler made nothing).
+    //This is what an MCP tool handler wants: the tool has to report the resulting state, and
+    //the command has not run when SubmitCommand returns.
+    //
+    //ONLY callable from a thread that does NOT hold renderer->physics_mutex. The MCP threads
+    //qualify. THE DEBUG UI DOES NOT: DrawImGuiUI runs with that mutex held, so waiting here for
+    //the physics thread - which needs the same mutex to reach DrawCommands - would deadlock
+    //instantly. UI code submits and returns; it sees the result on a later frame.
+    objectid_t SubmitCommandAndWait(const SimCommand& cmd, int timeout_ms = 2000);
+
     //Generic, app-independent MCP tools (object_list/object_get/object_set_transform/
     //object_move) - the MCP counterpart of the Generic Object UI panel. Registered for
     //every app right after Init(), before the MCP server starts accepting requests.

@@ -19,10 +19,6 @@ void TankCharacter::UpdatePhysicsState(){
     //for the wheel readback, the drive-force governor and the turret slew.
     float timestep = physics_timestep;
 
-    //A reset asked for from another thread lands here, on the physics thread, before anything
-    //else reads the body this tick - see Vehicle::RequestReset.
-    ApplyPendingReset();
-
     //Let steering converge back toward 0 - shared with any other Vehicle, see core/Vehicle.cpp.
     //Nothing re-asserts input here any more: scripted holds are ordinary input events now, applied
     //in RunLogic with the keyboard and gamepad (see InputController::HoldAxis).

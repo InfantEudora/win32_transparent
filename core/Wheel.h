@@ -54,6 +54,13 @@ struct Wheel{
     //was set by an explicit-integration stability limit rather than by how much grip was
     //wanted - see TankCharacter::lateral_friction for what replaced that reasoning.)
     float lateral_friction = 0.0f;
+    //How much grip a SLIDING tire keeps, as a fraction of what a gripping one has, and the slip
+    //at which grip peaks - rp3d's slidingFrictionRatio/peakSlipRatio. 1.0 for the ratio restores
+    //a single coefficient that never falls off (the behaviour before the falloff existed). Both
+    //are 0-means-inherit overrides like everything else here; 0 is not a useful setting for
+    //either (a tire with no sliding grip at all, or one that peaks at no slip).
+    float sliding_friction_ratio = 0.0f;
+    float peak_slip_ratio = 0.0f;
     //kg. Sets the wheel's spin inertia (a solid disc: 0.5 * mass * radius^2), i.e. how quickly
     //drive torque spins it up when it has no grip, and how hard the tire has to pull to bring
     //a landing wheel up to ground speed.
@@ -153,6 +160,12 @@ struct Wheel{
     float longitudinal_force = 0.0f;  //N the tire actually put into the ground along its rolling direction, signed (drive, brake or passive grip)
     float lateral_force = 0.0f;       //N the tire put into the ground sideways, positive towards the vehicle's LEFT
     float friction_budget = 0.0f;     //N, friction_coefficient * spring_force - the most this contact can transmit along the rolling direction
+    //Angle (rad) between where the tire POINTS and where it is actually travelling, as the
+    //constraint measured it. This is what the sideways tire force is built from (see rp3d's
+    //corneringStiffness), so it separates "the tire isn't asked to corner" from "the tire is
+    //asked to corner and has no grip left to do it with" - which read identically in
+    //lateral_force alone, both being 0.
+    float lateral_slip_angle = 0.0f;
     bool friction_saturated = false;  //true when the tire is at its friction limit along either direction (wheelspin, a locked wheel, a sliding tire)
 };
 
@@ -168,6 +181,8 @@ struct WheelTuning{
     float friction_coefficient = 1.0f;
     float lateral_friction = 1.0f;
     float mass = 2.0f;
+    float sliding_friction_ratio = 0.8f;  //rp3d default
+    float peak_slip_ratio = 0.12f;        //rp3d default
 };
 
 namespace WheelSuspension{

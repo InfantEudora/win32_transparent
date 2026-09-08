@@ -135,18 +135,6 @@ void Vehicle::ResetState(const vec3& pos,const quat& rot){
     }
 }
 
-void Vehicle::RequestReset(const vec3& pos,const quat& rot){
-    reset_position = pos;
-    reset_rotation = rot;
-    f_reset_requested = true;
-}
-
-void Vehicle::ApplyPendingReset(){
-    if (f_reset_requested.exchange(false)){
-        ResetState(reset_position,reset_rotation);
-    }
-}
-
 //--- The physics bridge -------------------------------------------------------------------------
 
 rp3d::VehicleWheelSettings Vehicle::MakeWheelSettings(const Wheel& wheel) const{
@@ -192,6 +180,10 @@ rp3d::VehicleWheelSettings Vehicle::MakeWheelSettings(const Wheel& wheel) const{
 
     s.longitudinalFriction = max(t.friction_coefficient,0.0f);
     s.lateralFriction = max(t.lateral_friction,0.0f);
+    //Grip falloff once the tire slides (see Wheel::sliding_friction_ratio). Left at rp3d's own
+    //defaults until something sets them, so behaviour is unchanged unless deliberately tuned.
+    s.slidingFrictionRatio = clamp(t.sliding_friction_ratio,0.0f,1.0f);
+    s.peakSlipRatio = max(t.peak_slip_ratio,0.0001f);
     s.enabled = wheel.can_contact_ground;
     s.numContactSamples = (rp3d::uint32)max(contact_samples,1);
     return s;
@@ -266,6 +258,8 @@ void Vehicle::ReadBackWheels(float timestep){
         //rp3d's lateral axis points to the vehicle's RIGHT; this engine has always reported
         //lateral force along the driver's left (see Wheel::is_left_side on which is which).
         wheel.lateral_force = wheel.grounded ? -(float)w.getLateralImpulse() * inv_dt : 0.0f;
+        //Unsigned, and unaffected by the axis-direction flip above - it is an angle, not a force.
+        wheel.lateral_slip_angle = wheel.grounded ? (float)w.getLateralSlipAngle() : 0.0f;
         //What was asked of this wheel, at the tread - the torque the drivetrain set on it.
         wheel.drive_force = (wheel.grounded && t.radius > 0.0f) ? (float)w.getDriveTorque() / t.radius : 0.0f;
 

@@ -52,6 +52,8 @@ public:
         t.damping = wheel.damping > 0.0f ? wheel.damping : suspension_damping;
         t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
         t.lateral_friction = wheel.lateral_friction > 0.0f ? wheel.lateral_friction : lateral_friction;
+        t.sliding_friction_ratio = wheel.sliding_friction_ratio > 0.0f ? wheel.sliding_friction_ratio : sliding_friction_ratio;
+        t.peak_slip_ratio = wheel.peak_slip_ratio > 0.0f ? wheel.peak_slip_ratio : peak_slip_ratio;
         t.mass = wheel.mass > 0.0f ? wheel.mass : wheel_mass;
         return t;
     }
@@ -114,6 +116,14 @@ public:
     //slope. (Before the move into rp3d this was a viscous rate whose value was an integrator
     //stability limit, not a grip choice - see Wheel::lateral_friction.)
     float lateral_friction = 0.5f;
+    //How much of its grip a tire keeps once it is SLIDING rather than gripping, and the slip at
+    //which grip peaks (rp3d's slidingFrictionRatio/peakSlipRatio - it scales the friction budget
+    //down past the peak instead of holding it flat). This is what makes breaking traction cost
+    //something: a locked wheel stops the car less well than one braked right at the limit, and a
+    //spinning one pushes less hard. 1.0 restores a single coefficient that never falls off, which
+    //is the behaviour from before the falloff existed - useful for an A/B.
+    float sliding_friction_ratio = 0.8f;
+    float peak_slip_ratio = 0.12f;
 
     //Last-resort safety net on the hull's roll/pitch rate, applied after each tick - see the
     //comment where it is applied in UpdatePhysicsState. Dead code in any drivable configuration.

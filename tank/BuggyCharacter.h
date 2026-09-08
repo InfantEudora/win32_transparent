@@ -40,6 +40,8 @@ public:
         t.damping = wheel.damping > 0.0f ? wheel.damping : suspension_damping;
         t.friction_coefficient = wheel.friction_coefficient > 0.0f ? wheel.friction_coefficient : friction_coefficient;
         t.lateral_friction = wheel.lateral_friction > 0.0f ? wheel.lateral_friction : lateral_friction;
+        t.sliding_friction_ratio = wheel.sliding_friction_ratio > 0.0f ? wheel.sliding_friction_ratio : sliding_friction_ratio;
+        t.peak_slip_ratio = wheel.peak_slip_ratio > 0.0f ? wheel.peak_slip_ratio : peak_slip_ratio;
         t.mass = wheel.mass > 0.0f ? wheel.mass : wheel_mass;
         return t;
     }
@@ -52,21 +54,39 @@ public:
     //the front axle, the rest to the rear - see this class's own header comment.
     float power_split_front = 0.0f;
 
+    //Front/rear BRAKE bias, the same shape as power_split_front above but for brake_force:
+    //0 = all braking on the rear axle, 1 = all on the front, 0.5 = an even split. Each axle's
+    //share is then divided over the wheels on it, so the default 0.5 across two wheels per axle
+    //reproduces exactly the even brake_force/4 per wheel this used before the bias existed.
+    //
+    //Braking is where a car's weight transfers forward, so the front tires have the most load
+    //(and so the most grip) to spend just when the rears have least: a real car brakes forward-
+    //biased, typically 0.6-0.7, and biasing it the other way locks the rears and spins the car.
+    //Each wheel's brake torque is still capped by its own tire, so an over-biased axle shows up
+    //as Wheel::friction_saturated on that axle rather than as more stopping power.
+    float brake_split_front = 0.5f;
+
     //Front wheels only (Wheel::steerable) are turned about the body's up axis by up to this
     //much, scaled by steering_position - see UpdatePhysicsState. 35 degrees is a conservative
     //real-car lock angle.
     float max_steer_angle_degrees = 35.0f;
 
     //Suspension tuning - same shape and role as TankCharacter's own fields, handed to the
-    //constraint per wheel by Vehicle::MakeWheelSettings. The numbers were a plain first guess
-    //(no real chassis mass/mesh to derive them from at the time) and are expected to be retuned
-    //live: 8000 N/m over 4 wheels carries the 45 kg body at ~0.014 m of compression; 200 N/(m/s)
-    //is a damping ratio of about 0.5 for the assembly (2 sqrt(k m) = 2 sqrt(32000 * 45) = ~2400),
-    //a soft, off-road sort of bounce. The constraint solves the spring implicitly, so any value
-    //here is stable - these are feel choices, not integrator limits.
+    //constraint per wheel by Vehicle::MakeWheelSettings. The constraint solves the spring
+    //implicitly, so any value here is stable - these are feel choices, not integrator limits.
+    //
+    //4000 N/m is a RIDE FREQUENCY of 3.0 Hz on this car: each of the 4 wheels carries 11.25 kg of
+    //the 45 kg body, and f = sqrt(k/m)/2pi = sqrt(4000/11.25)/2pi = 3.00. That is the number the
+    //Buggy Controls' "Susp. Freq" slider shows and the one worth tuning by - it stays meaningful
+    //when the mass changes, where a raw N/m does not. It settles at ~0.028 m of static
+    //compression. This was 8000 N/m (4.24 Hz), which drove noticeably worse: stiff enough that
+    //the tires skated over bumps instead of following the ground.
+    //
+    //200 N/(m/s) leaves a damping ratio of ~0.47 for the assembly at this stiffness
+    //(c_total / 2 sqrt(k_total m) = 800 / 2 sqrt(16000 * 45)), a soft, off-road sort of bounce.
     float suspension_rest_length = 0.15f;
     float suspension_travel = 0.10f;
-    float suspension_stiffness = 8000.0f;
+    float suspension_stiffness = 4000.0f;
     float suspension_damping = 200.0f;
     //Coulomb friction along the rolling direction (drive/brake) and sideways (cornering) - the
     //most force a tire puts into the ground is the coefficient times its normal load. 1.0 each
@@ -74,6 +94,14 @@ public:
     //until a wheel locks. Drop lateral_friction towards 0.5 for a loose, drifty surface.
     float friction_coefficient = 1.0f;
     float lateral_friction = 1.0f;
+    //How much of its grip a tire keeps once it is SLIDING rather than gripping, and the slip at
+    //which grip peaks (rp3d's slidingFrictionRatio/peakSlipRatio - it scales the friction budget
+    //down past the peak instead of holding it flat). This is what makes breaking traction cost
+    //something: a locked wheel stops the car less well than one braked right at the limit, and a
+    //spinning one pushes less hard. 1.0 restores a single coefficient that never falls off, which
+    //is the behaviour from before the falloff existed - useful for an A/B.
+    float sliding_friction_ratio = 0.8f;
+    float peak_slip_ratio = 0.12f;
 
     //Last-resort safety net on the body's roll/pitch rate - see TankCharacter's own field.
     float max_roll_speed = 3.0f;
