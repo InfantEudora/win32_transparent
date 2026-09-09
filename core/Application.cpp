@@ -2,6 +2,7 @@
 #include "glad.h"
 
 #include "Application.h"
+#include "PrecisionSleeper.h"
 #include "OBJLoader.h"
 #include "MCPServer.h"
 
@@ -107,7 +108,17 @@ void Application::Start(void){
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }else{
-            Sleep(1);
+            //Nothing queued. Block until something arrives rather than polling on a Sleep(1):
+            //that Sleep was only ever ~1ms because the physics thread happened to be holding the
+            //system timer resolution at 1ms, and now that nothing raises it, the same call would
+            //idle for up to ~15.6ms. Waiting on the queue instead wakes the instant a message
+            //lands and costs no CPU at all in between.
+            //MWMO_INPUTAVAILABLE closes the race where a message arrives after the PeekMessage
+            //above returned FALSE but before this wait starts - without it that message would not
+            //re-signal the queue and the wait would sit out its full timeout.
+            //The timeout exists only so f_should_quit, which other threads set, is still noticed
+            //when no messages are coming through at all.
+            MsgWaitForMultipleObjectsEx(0,NULL,50,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         }
     }
 }
@@ -275,7 +286,14 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     //Setup debugging to run from this thread:
     app->debug_physics = new Debugger("App.Physics", DEBUG_ALL);
 
-    double last_sleep = 0;
+    //Paces this loop. Constructed on the thread that uses it so its timer handle - and, on the
+    //fallback path, the raised system timer period - lives exactly as long as the thread does.
+    PrecisionSleeper sleeper;
+    if (!sleeper.IsHighResolution()){
+        app->debug_physics->Warn("Physics pacing is on the low-resolution timer path\n");
+    }
+    sleeper.ResetSchedule();
+
     while (1){
         if (app->main_scene){
             //How long one tick should take in REAL time. physics_time_factor stretches or
@@ -303,19 +321,21 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             app->tmr_physics->Stop();
             app->renderer->physics_mutex.unlock();
 
-            double us_loop = app->tmr_physics_loop->Stop();
+            //Restarted BEFORE the sleep, so what it reports is the whole period including it.
+            app->tmr_physics_loop->Stop();
             app->tmr_physics_loop->Restart();
-            //debug->Info("Physics Looptime was %f us including %f sleeping\n",us_loop,last_sleep);
-            double us_sleep = us_looptime_desired - us_loop;
 
-            double newsleep = clamp(last_sleep + us_sleep,0,us_looptime_desired);
-            //debug->Info("Sleeping for additional %f us totalling %f\n",us_sleep,newsleep);
-
+            //This used to compute its own sleep as clamp(last_sleep + (desired - us_loop),...),
+            //which reads like an integral controller but is not one: us_loop already contained
+            //last_sleep, the two cancelled algebraically, and what was left was the plain
+            //feedforward "sleep = desired - work". With no integral term there was nothing to
+            //absorb the up-to-999us that Sleep()'s whole-millisecond argument discarded every
+            //tick, so it became a permanent bias - the loop measured ~51Hz at a 50Hz setting.
+            //SleepUntilNextTick paces against an absolute deadline, where that error has
+            //nowhere to accumulate, and does it without touching the global timer resolution.
             app->tmr_physics_sleep->Restart();
-            timeBeginPeriod(1);
-            Sleep(newsleep / 1000.0f);
-            timeEndPeriod(1);
-            last_sleep = app->tmr_physics_sleep->Stop();
+            sleeper.SleepUntilNextTick(us_looptime_desired);
+            app->tmr_physics_sleep->Stop();
 
             //Clearing the per-tick edge flags stays HERE, after the sleep, rather than moving
             //inside the tick's critical section above: the render thread consumes mouse deltas
@@ -326,9 +346,10 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             app->NextInput();
             app->renderer->physics_mutex.unlock();
         }else{
-            timeBeginPeriod(1);
-            Sleep(5);
-            timeEndPeriod(1);
+            sleeper.SleepUs(5000);
+            //Nothing was being paced while there was no scene, so the first real tick must not
+            //come out of this looking late.
+            sleeper.ResetSchedule();
             debug->Warn("No main scene for physics thread to work on!\n");
         }
         //This loop deliberately keeps no tick count of its own: it would count loop iterations

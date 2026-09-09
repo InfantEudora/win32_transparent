@@ -134,6 +134,8 @@ void GLSelectGPU(){
         if (!wglEnumGpusNV){
             debug->Warn("GPU selection with wglEnumGpusNV unsupported\n");
             return;
+        }else{
+            debug->Info("wglEnumGpusNV supported\n");
         }
         debug->Info("Looking for GPU %i\n",gpu_id);
         if (!wglEnumGpusNV(gpu_id, &hGPU)){
@@ -141,10 +143,14 @@ void GLSelectGPU(){
             break;
         }
 
-        GPU_DEVICE gpuDevice;
-        gpuDevice.cb = sizeof(gpuDevice);
-        const bool found = wglEnumGpuDevicesNV(hGPU, 0, &gpuDevice);
-        debug->Info("GPU: %s\n",gpuDevice.DeviceString);
+        if (wglEnumGpuDevicesNV){
+            GPU_DEVICE gpuDevice;
+            gpuDevice.cb = sizeof(gpuDevice);
+            const bool found = wglEnumGpuDevicesNV(hGPU, 0, &gpuDevice);
+            debug->Info("GPU: %s\n",gpuDevice.DeviceString);
+        }else{
+            debug->Warn("wglEnumGpuDevicesNV unsupported\n");
+        }
     }
 }
 

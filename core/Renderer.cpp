@@ -89,6 +89,7 @@ bool Renderer::Init(int _pipeline){
 
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
 
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
     glDebugMessageCallback(opengl_message_callback, nullptr);
 
     tmr_frame = new PerfTimer("Frame Time");

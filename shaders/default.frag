@@ -347,6 +347,8 @@ void main(){
     //ivec2 mouse_coord = ivec2(data_in[0],data_in[1]);
     //ivec2 frag_coord = ivec2(gl_FragCoord.xy);
     color = final;
+    //color = vec4(float(vmatindex) / 8.0, float(m.diffuse_texture) / 32.0, 1, 1);
+    //return;
 
     //This is quite slow.
     /*

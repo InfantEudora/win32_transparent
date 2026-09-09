@@ -9,6 +9,8 @@
 
 #include "Debug.h"
 
+extern "C" { __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001; }
+
 //Would be the name of the application
 #include APP_HEADER
 

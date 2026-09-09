@@ -28,7 +28,10 @@ CFLAGS += -lXinput9_1_0
 #CFLAGS += $(FNOCONSOLE)
 CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
 #CFLAGS += -Wcast-align=strict
-CFLAGS += -lOpenAL32 -DAL_LIBTYPE_STATIC -lole32 -lwinmm
+#Sound (OpenAL) is optional - see the USE_SOUND block below the apps/ include.
+#Nothing outside it links winmm any more: core/PrecisionSleeper resolves
+#timeBeginPeriod from winmm.dll at run time, and only on pre-Win10-1803 machines
+#where the high-resolution waitable timer is unavailable.
 
 
 PROJECT = wind
@@ -81,6 +84,22 @@ APP ?= Ship
 
 include apps/$(APP).mk
 
+#Sound is opt-in per app. libs/libOpenAL32.a is a prebuilt static library; when
+#it hasn't been rebuilt with the current toolchain it won't link (mismatched
+#libstdc++ TLS symbols: `undefined reference to __emutls_v._ZSt11__once_call`).
+#Apps that never touch SoundSystem shouldn't pay for that, so an app opts in
+#with `USE_SOUND := 1` in its apps/*.mk (or `make USE_SOUND=1` on the command
+#line). When it's off, core/SoundSystem.cpp and core/WaveFile.cpp are dropped
+#from SRCS and -lOpenAL32 is not passed, so nothing references OpenAL at all.
+USE_SOUND ?= 0
+ifeq ($(USE_SOUND), 1)
+CFLAGS += -DUSE_SOUND -lOpenAL32 -DAL_LIBTYPE_STATIC -lole32 -lwinmm
+else
+#Paths here must match the ./-prefixed form the wildcard below produces.
+SRCS_NOSOUND += ./core/SoundSystem.cpp
+SRCS_NOSOUND += ./core/WaveFile.cpp
+endif
+
 CFLAGS += -DAPP_HEADER=\"$(APP_HEADER)\"
 CFLAGS += -DAPP_CLASS=$(APP_CLASS)
 
@@ -105,7 +124,7 @@ main.o: $(APP_MARKER)
 #app yet - add `SRCS += ImCurveEdit.cpp` / `ImSequencer.cpp` to an apps/*.mk
 #when one of them starts using a curve editor / sequencer widget.
 
-SRCS += $(wildcard $(addsuffix /*.cpp, $(DIR_SRC)))
+SRCS += $(filter-out $(SRCS_NOSOUND), $(wildcard $(addsuffix /*.cpp, $(DIR_SRC))))
 
 ifeq ($(DUMP_BINARYASSETS), 1)
 CFLAGS += -DDUMP_BINARYASSETS
@@ -169,7 +188,7 @@ reset:
 	-rm -rf main.o ApplicationShip.o ship/ShipCharacter.o
 
 clean:
-	-rm -rf $(OBJS) $(OBJ_LIBIMGUI) $(OBJ_LIBTHIRDPARTY)
+	-rm -rf $(OBJS) $(OBJ_LIBIMGUI) $(OBJ_LIBTHIRDPARTY) $(patsubst %.cpp, %.o, $(SRCS_NOSOUND))
 	-rm -f $(DEPS)
 	-rm -f $(APP_MARKER)
 

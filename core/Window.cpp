@@ -198,6 +198,13 @@ bool Window::InitOpenGL(){
 
     const char* gl_version = (const char*)glGetString(GL_VERSION);
     debug->Info("OpenGL Version: %s\n", gl_version);
+
+    //Which GPU did we actually get? On hybrid-graphics laptops Optimus decides this
+    //per-process, so we can silently end up on the iGPU instead of the discrete card.
+    const char* gl_vendor = (const char*)glGetString(GL_VENDOR);
+    const char* gl_renderer = (const char*)glGetString(GL_RENDERER);
+    debug->Info("OpenGL Vendor: %s\n", gl_vendor ? gl_vendor : "(null)");
+    debug->Info("OpenGL Renderer: %s\n", gl_renderer ? gl_renderer : "(null)");
     return true;
 }
 

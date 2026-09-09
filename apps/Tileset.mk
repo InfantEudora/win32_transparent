@@ -6,3 +6,6 @@ IPATHS  += -Iisoterrain/
 DIR_SRC += ./isoterrain
 IPATHS  += -Iisocity/
 DIR_SRC += ./isocity
+
+#Uses SoundSystem -> needs OpenAL linked in.
+USE_SOUND := 1

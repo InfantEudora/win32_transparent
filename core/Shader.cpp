@@ -80,6 +80,12 @@ int Shader::CompileVertex(char* vert_data, size_t size){
 		debug->Fatal("CompileVertex: error: %s\n", errormsg);
 		free(errormsg);
 		return 0;
+	}
+	if (infolen > 1){
+		char* errormsg = (char*)malloc(infolen+1);
+		glGetShaderInfoLog(id, infolen, NULL, errormsg);
+		debug->Warn("CompileVertex: warning: %s\n", errormsg);
+		free(errormsg);
 	}else{
 		debug->Ok("Vertex shader compiled\n");
 	}
@@ -104,6 +110,12 @@ int Shader::CompileFragment(char* frag_data, size_t size){
 		debug->Fatal("CompileFragment: error: %s\n", errormsg);
 		free(errormsg);
 		return 0;
+	}
+	if (infolen > 1){
+		char* errormsg = (char*)malloc(infolen+1);
+		glGetShaderInfoLog(id, infolen, NULL, errormsg);
+		debug->Warn("CompileFragment: warning: %s\n", errormsg);
+		free(errormsg);
 	}else{
 		debug->Ok("Fragment shader compiled\n");
 	}
@@ -125,9 +137,15 @@ int Shader::CompileCompute(char* comp_data, size_t size){
 	if (!result){
 		char* errormsg = (char*)malloc(infolen+1);
 		glGetShaderInfoLog(id, infolen, NULL, errormsg);
-		debug->Fatal("CompileFragment: error: %s\n", errormsg);
+		debug->Fatal("CompileCompute: error: %s\n", errormsg);
 		free(errormsg);
 		return 0;
+	}
+	if (infolen > 1){
+		char* errormsg = (char*)malloc(infolen+1);
+		glGetShaderInfoLog(id, infolen, NULL, errormsg);
+		debug->Warn("CompileCompute: warning: %s\n", errormsg);
+		free(errormsg);
 	}else{
 		debug->Ok("Compute shader compiled\n");
 	}
@@ -160,6 +178,12 @@ int Shader::LinkProgram(int count, ...){
 		debug->Fatal("LinkProgram: error: %s\n", errormsg);
 		free(errormsg);
 		return 0;
+	}
+	if (infolen > 1){
+		char* errormsg = (char*)malloc(infolen+1);
+		glGetProgramInfoLog(programid, infolen, NULL, errormsg);
+		debug->Warn("LinkProgram: warning: %s\n", errormsg);
+		free(errormsg);
 	}else{
 		debug->Info("LinkProgram: Linked! ID: %i\n",programid);
 	}

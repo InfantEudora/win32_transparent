@@ -42,8 +42,6 @@ It should kind of look like this:
 
 ### ToDo's
 
-- [ ] Select GPU Intel or Nvidia. Maybe using WGL_NV_gpu_affinity:
-        https://github.com/Eyescale/Equalizer/blob/master/tools/affinityCheck/affinityCheck.cpp
 - [ ] Using XInput detect controller hotplug?
 - [ ] Will we be using OBJLoader ever again? Maybe remove it.
 - [x] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
@@ -158,6 +156,11 @@ An application can perform multithread drawing by making different rendering con
 https://www.shadertoy.com/view/ld2Gz3
 
 Deferred shading from LearnOpenGL, or anything, doesn't use MSAA. Because... what's the position or normal for a fragment that's a blend of different fragments...? Actually... why wouldn't it? It can blend normals, the blended edges just get a curved normal. Blending to transparent would probably be weird...
+
+There is no way that works, for selecting a GPU at runtime:
+Maybe using WGL_NV_gpu_affinity: https://github.com/Eyescale/Equalizer/blob/master/tools/affinityCheck/affinityCheck.cpp
+
+No. Nothing seems to work. You can set it via Windows in the Windows Graphics Settings per EXE, or extern "C" { __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001; } to get the NVidia GPU instead of the Intel one.
 
 ### ImGui:
 Checked out docking branch commit: 8d0723c2c36c7200d317fe1285ab86d24068c342
