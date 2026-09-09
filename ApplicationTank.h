@@ -22,11 +22,20 @@ using json = nlohmann::json;
 //Teleport a vehicle back to rest at the pose in the command's position/rotation. `target` is the
 //vehicle's object id.
 #define TANK_CMD_VEHICLE_RESET  (SIM_CMD_LAST + 0)
+//Switch the crane's electromagnet on (value[0] != 0) or off. Off drops whatever is held.
+//A command rather than a plain setter because turning the magnet off DESTROYS a joint, and the
+//callers - the debug UI's checkbox, a key, an MCP tool - are all on the wrong thread for that;
+//this lands it on the physics thread at the top of a tick. See core/SimCommand.h.
+#define TANK_CMD_CRANE_MAGNET   (SIM_CMD_LAST + 1)
 
 /*
     An attempt at an application that overrides the default, and shows a compass.
 */
-class ApplicationTank : public Application{
+//rp3d::EventListener is inherited for onTrigger alone: it is how the crane's magnet learns what
+//is inside its field (see CraneCharacter's header comment). A world has exactly one listener, so
+//it has to live here on the app rather than on the crane - the same arrangement ApplicationDozer
+//and ApplicationTileset already use for their own triggers.
+class ApplicationTank : public Application, public rp3d::EventListener{
 public:
     ApplicationTank();
 
@@ -40,9 +49,14 @@ public:
     //of which are vehicle-specific, so one function renders it for whichever Vehicle is passed.
     void RenderVehicleWheelTable(Vehicle* vehicle);
 
-    //The crane's own section of the Vehicle Debug window: the four velocity commands, what each
-    //joint currently reads back, and the key legend for driving it from the keyboard.
+    //The crane's own section of the Vehicle Debug window: the velocity commands, the magnet,
+    //what each joint currently reads back, and the key legend for driving it from the keyboard.
     void RenderCraneDebugUI(void);
+
+    //reactphysics3d::EventListener. Called from INSIDE PhysicsWorld::Update, on the physics
+    //thread: forwards each overlap involving the crane's magnet field collider to the crane,
+    //which records it and defers every decision to after the step.
+    void onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData) override;
 
     //A separate, focused control panel - only visible while the buggy is the actively controlled
     //vehicle (see SetControlledVehicle/controlled_vehicle) - as opposed to RenderTankWheelDebugUI's
@@ -154,6 +168,10 @@ public:
     //Handlers for this app's own SimCommand types (TANK_CMD_*). Called from Init(), next to
     //RegisterMCPTools, since the tools submit the commands these handle.
     void RegisterCommandHandlers();
+    //Builds the magnet command. Trivial, but it exists for the same reason
+    //MakeVehicleResetCommand does: three callers (the UI checkbox, the G key, the MCP tool) must
+    //not each hand-assemble the payload.
+    SimCommand MakeCraneMagnetCommand(bool on) const;
     //Builds the reset command for a vehicle, picking the right recorded spawn pose. Shared by the
     //tank_reset MCP tool (which waits for it via SubmitCommandAndWait) and the debug UI's reset
     //buttons (which must NOT wait - see Application::SubmitCommandAndWait for why). Returns a

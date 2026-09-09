@@ -15,6 +15,9 @@
 #define INPUT_CRANE_RETRACT     INPUT_LAST+3
 #define INPUT_CRANE_HOOK_DOWN   INPUT_LAST+4
 #define INPUT_CRANE_HOOK_UP     INPUT_LAST+5
+//Toggles the magnet - a latching switch, not a held actuator like the four above, so it is read
+//on the key's RELEASE edge (same as INPUT_FIRE) rather than while it is down.
+#define INPUT_CRANE_MAGNET      INPUT_LAST+12
 
 #define GAMEPAD_LEFT_STICK_X    INPUT_LAST+6
 #define GAMEPAD_LEFT_STICK_Y    INPUT_LAST+7
@@ -113,6 +116,7 @@ void ApplicationTank::Init(void){
     main_scene->inputcontroller->AddKeyMap('Q',INPUT_CRANE_RETRACT);
     main_scene->inputcontroller->AddKeyMap('F',INPUT_CRANE_HOOK_DOWN);
     main_scene->inputcontroller->AddKeyMap('R',INPUT_CRANE_HOOK_UP);
+    main_scene->inputcontroller->AddKeyMap('G',INPUT_CRANE_MAGNET);
 
     main_scene->physics_world = new PhysicsWorld();
     main_scene->physics_world->SetGravity(vec3(0,-9.81,0));
@@ -644,6 +648,10 @@ void ApplicationTank::Init(void){
     crane = new CraneCharacter(assetmanager,main_scene->physics_world,main_scene,vec3(3.5f,0.0f,2.0f));
     main_scene->AddObject(crane);
 
+    //Only for the crane magnet's field trigger - see onTrigger. Set after the crane exists so
+    //there is never a callback into a half-built one.
+    main_scene->physics_world->rp_world->setEventListener(this);
+
     RegisterCommandHandlers();
     RegisterMCPTools();
 
@@ -663,6 +671,38 @@ void ApplicationTank::Init(void){
     main_scene->PausePhysics(false);
 }
 
+//reactphysics3d::EventListener - the crane magnet's proximity query. Runs on the physics thread
+//from inside PhysicsWorld::Update, so this does no more than hand the crane the other half of
+//each pair; the crane records it and decides afterwards, between steps (CraneCharacter's header
+//comment says why that split is not optional).
+void ApplicationTank::onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData){
+    if (!crane || !crane->magnet_collider){
+        return;
+    }
+    for (uint8_t i = 0; i < callbackData.getNbOverlappingPairs(); i++){
+        rp3d::OverlapCallback::OverlapPair pair = callbackData.getOverlappingPair(i);
+        //OverlapExit is the pair that has just STOPPED touching - reporting it as a candidate
+        //would let the magnet grab something on its way out of the field.
+        if (pair.getEventType() == rp3d::OverlapCallback::OverlapPair::EventType::OverlapExit){
+            continue;
+        }
+        //Identified by collider pointer, not category bits: the hook carries two colliders (its
+        //own box and the magnet sphere) and only one of them is the field.
+        if (pair.getCollider1() == crane->magnet_collider){
+            crane->OnMagnetFieldOverlap(pair.getCollider2());
+        }else if (pair.getCollider2() == crane->magnet_collider){
+            crane->OnMagnetFieldOverlap(pair.getCollider1());
+        }
+    }
+}
+
+SimCommand ApplicationTank::MakeCraneMagnetCommand(bool on) const{
+    SimCommand cmd;
+    cmd.type = TANK_CMD_CRANE_MAGNET;
+    cmd.value[0] = on ? 1.0f : 0.0f;
+    return cmd;
+}
+
 //Shared by all three MCP tools below - same fields tank_telemetry reports on its own,
 //reused so tank_drive/tank_steer can hand back the resulting state without a separate call.
 json ApplicationTank::GetCraneTelemetry(){
@@ -673,6 +713,13 @@ json ApplicationTank::GetCraneTelemetry(){
         {"speed_command", crane_piston_speed},
         {"slew_speed_command", crane_slew_speed},
         {"slew_heading_deg", crane->GetSlewAngle() * 180.0f / TYPE_PI},
+        {"magnet_enabled", crane->IsMagnetEnabled()},
+        {"magnet_radius_m", crane->magnet_radius},
+        {"magnet_max_mass_kg", crane->magnet_max_mass},
+        {"magnet_grabbed", crane->GetGrabbedObject() ? json(crane->GetGrabbedObject()->name) : json(nullptr)},
+        {"magnet_grabbed_mass_kg", crane->GetGrabbedMass()},
+        {"magnet_in_field", crane->magnet_in_field},
+        {"magnet_grabbable_in_field", crane->magnet_grabbable_in_field},
         {"hinge_angle_deg", crane->boom_hinge->getAngle() * 180.0f / TYPE_PI},
         {"limit_min_deg", crane->boom_min_angle * 180.0f / TYPE_PI},
         {"limit_max_deg", crane->boom_max_angle * 180.0f / TYPE_PI},
@@ -1004,6 +1051,17 @@ void ApplicationTank::RegisterCommandHandlers(){
     //Runs on the physics thread, at the top of the tick, with physics_mutex held - so ResetState
     //(which teleports the body, zeroes its velocities and clears every wheel) is safe to call
     //directly here, and that is the only place it ever is.
+    //Runs on the physics thread at the top of the tick, BEFORE the step - so switching the
+    //magnet off here (which is what drops the load) can never land mid-solve. The joint itself is
+    //made and broken a little later in the same tick, in CraneCharacter::UpdateMagnet.
+    main_scene->RegisterCommandHandler(TANK_CMD_CRANE_MAGNET,
+        [this](const SimCommand& cmd) -> objectid_t {
+            if (crane){
+                crane->SetMagnetEnabled(cmd.value[0] != 0.0f);
+            }
+            return OBJECTID_INVALID;
+        });
+
     main_scene->RegisterCommandHandler(TANK_CMD_VEHICLE_RESET,
         [this](const SimCommand& cmd) -> objectid_t {
             //Matched by ID against the vehicles this app owns rather than downcast from whatever
@@ -1398,6 +1456,44 @@ void ApplicationTank::RegisterMCPTools(){
             }
             if (args.contains("slew_speed")){
                 crane_slew_speed = clamp(args.value("slew_speed",0.0f),-1.0f,1.0f);
+            }
+            return GetCraneTelemetry();
+        });
+
+    MCPServer::Get()->RegisterTool("crane_magnet",
+        "Switch the crane's electromagnet on or off. While on, it grabs the nearest DYNAMIC body "
+        "that enters the field under the hook (a sphere of magnet_radius_m over the pad) and welds "
+        "it there with a fixed joint; switching it off drops whatever is held. Static and kinematic "
+        "bodies (the terrain, the crane's own parts) and anything over magnet_max_mass_kg are "
+        "ignored. Blocks until the switch has been applied AND the tick that acts on it has run, "
+        "so the returned crane_telemetry already reports magnet_grabbed. While the simulation is "
+        "paused (tank_pause) that tick has to come from tank_step instead, so there the grab shows "
+        "up on the following call. Returns crane_telemetry.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"on", {{"type","boolean"},{"description","true switches the magnet on, false drops the load"}}}
+            }},
+            {"required", json::array({"on"})}
+        },
+        [this](const json &args) -> json {
+            if (!crane){
+                return json{ {"error","no crane"} };
+            }
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            //SubmitCommandAndWait, unlike the debug UI's own path: an MCP handler is on the MCP
+            //thread and holds no physics lock, so it can afford to wait for the tick that applies
+            //it - and a caller that asked to grab something wants the result, not a promise.
+            SubmitCommandAndWait(MakeCraneMagnetCommand(args.value("on",false)));
+            //SubmitCommandAndWait returns as soon as the HANDLER has run, and the handler only
+            //moves the flag - the grab itself happens in CraneCharacter::UpdateMagnet, after the
+            //step of that same tick. Waiting a couple more ticks is the difference between this
+            //tool reporting what it picked up and always reporting null. Skipped while paused,
+            //where no tick is coming without tank_step - same as tank_drive's own wait.
+            if (!main_scene->IsPhysicsPaused()){
+                Sleep(TicksToRealMs(2));
             }
             return GetCraneTelemetry();
         });
@@ -1953,6 +2049,14 @@ void ApplicationTank::RunLogic(){
             ApplyHardwareCraneAxis(PickStronger(kb_slew,gp_slew),crane_hw_slew,crane_slew_speed);
             ApplyHardwareCraneAxis(PickStronger(kb_extension,gp_extension),crane_hw_extension,crane_extension_speed);
             ApplyHardwareCraneAxis(PickStronger(kb_hook,gp_hook),crane_hw_hook,crane_hook_speed);
+
+            //The magnet is a latch, not an actuator, so it goes through the command queue rather
+            //than the crane_*_speed machinery above - and on the release edge, so holding G does
+            //not toggle it once per tick. Submitted, never waited on: RunLogic is called from the
+            //frame thread with physics_mutex held, same as the reset buttons.
+            if (input->WasKeyReleased(INPUT_CRANE_MAGNET)){
+                main_scene->SubmitCommand(MakeCraneMagnetCommand(!crane->IsMagnetEnabled()));
+            }
         }
 
         //The one place the crane's commands are handed to the crane. Every other writer - the
@@ -2389,10 +2493,29 @@ void ApplicationTank::RenderCraneDebugUI(){
     }
     ImGui::PushID("crane_section");
     if (f_crane_controlled){
-        ImGui::TextDisabled("Keys: W/S boom, A/D slew, E/Q extend, F/R hook. Sliders hold whatever a key last set.");
+        ImGui::TextDisabled("Keys: W/S boom, A/D slew, E/Q extend, F/R hook, G magnet. Sliders hold whatever a key last set.");
     }else{
         ImGui::TextDisabled("Select 'Crane' above to drive it from the keyboard.");
     }
+
+    //Read back from the crane, not from a UI-side copy: the flag is only ever changed by the
+    //command handler on the physics thread, so this checkbox shows what the simulation actually
+    //has rather than what was last clicked (they differ for the one frame in between).
+    bool magnet_on = crane->IsMagnetEnabled();
+    if (ImGui::Checkbox("Magnet",&magnet_on)){
+        main_scene->SubmitCommand(MakeCraneMagnetCommand(magnet_on)); //not waited on - see the reset buttons
+    }
+    ImGui::SameLine();
+    if (Object* held = crane->GetGrabbedObject()){
+        ImGui::Text("holding %s (%.1f kg)",held->name.c_str(),crane->GetGrabbedMass());
+    }else if (crane->IsMagnetEnabled()){
+        ImGui::TextDisabled("on - nothing in range");
+    }else{
+        ImGui::TextDisabled("off");
+    }
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::DragFloat("Max Grab Mass (kg)",&crane->magnet_max_mass,1.0f,0.0f,500.0f,"%.0f");
+    ImGui::Separator();
 
     //Velocity commands - 0 holds that actuator where it is (its motor runs at speed 0 rather
     //than switching off, so it keeps holding station against gravity).

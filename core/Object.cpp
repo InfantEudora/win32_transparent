@@ -170,6 +170,15 @@ Physics* Object::AddPhysics(PhysicsWorld* world){
         physics->SetBodyWorldOrientation(GetRotation());
         physics->SetStatic(true);
         physics->SetGravityEnabled(false);
+        //Stamp the body with the Object that owns it. Every collision/trigger callback in the
+        //codebase already casts getUserData() straight back to an Object* (ApplicationDozer and
+        //ApplicationShip's onContact, ApplicationTileset's onTrigger, CraneCharacter's magnet) -
+        //but until now only the copy path above and Particle actually set it, so everyone else
+        //was reading NULL and silently doing nothing. Set it here and the invariant is simply
+        //true: any body in a world built through AddPhysics knows its Object.
+        if (physics->body && physics->body->rigidbody){
+            physics->body->rigidbody->setUserData(this);
+        }
         return physics;
     }
     return NULL;

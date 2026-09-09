@@ -6,6 +6,7 @@
 #include "physics/PhysicsWorld.h"
 #include "Scene.h"
 #include "type_helpers.h"
+#include <vector>
 
 //A small test rig for reactphysics3d's joint types, built entirely from the "cube" asset (no
 //dedicated crane mesh exists yet). First attempt was a real closed physical loop - the boom on
@@ -44,6 +45,24 @@
 //anchor and axis rp3d stores in each body's own local frame, carries the boom around with the
 //base smoothly, rather than leaving the solver a position error to repair after the fact on
 //every tick. Same reason Scene::MoveObjectOverTicks goes kinematic instead of teleporting.
+//
+//Fifth: an electromagnet on the underside of the hook, which is two mechanisms rather than one.
+//
+//  FINDING something to grab. rp3d has no sphere cast, but it does not need one: a second,
+//  TRIGGER collider on the hook body (magnet_collider - a sphere over the pad) is the field, and
+//  the engine already reports what is inside a trigger every step through
+//  rp3d::EventListener::onTrigger. The app owns that listener (only one per world) and forwards
+//  each overlap here - see OnMagnetFieldOverlap. A trigger collider produces no contact response,
+//  so the field itself never pushes the load away.
+//
+//  HOLDING it: a FixedJoint between the hook and the load, anchored at the pad. Fixed rather than
+//  BallAndSocket on purpose - a flat magnet pad holds its load's orientation; a ball joint would
+//  let a grabbed crate spin freely underneath, which is a winch hook, not a magnet.
+//
+//The two halves run at different points in the tick and that split is load-bearing. onTrigger
+//fires from INSIDE PhysicsWorld::Update, so it may only record candidates; creating or destroying
+//a joint there would mutate the world mid-solve. All of it is reconciled afterwards in
+//UpdatePhysicsState, which runs between steps - see UpdateMagnet.
 class CraneCharacter : public Object{
 public:
     CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, const vec3& base_position);
@@ -68,6 +87,50 @@ public:
     //Current base heading in radians. Read back off the body's actual orientation rather than
     //integrated from the command, so it stays honest whatever else ever moves the base.
     float GetSlewAngle();
+
+    //--- Magnet. See this class's header comment for the two halves and why they are split.
+    //
+    //Switch the electromagnet on or off. Switching it OFF drops whatever is held. Only the flag
+    //moves here; the joint is made and broken in UpdateMagnet, on the physics thread between
+    //steps, so this is safe to call from a command handler.
+    void SetMagnetEnabled(bool enabled);
+    bool IsMagnetEnabled() const { return magnet_enabled; }
+    //What the magnet currently holds, or NULL. Not owned - it is just another scene object.
+    Object* GetGrabbedObject() const { return grabbed_object; }
+    //Mass of that object in kg, or 0 if nothing is held.
+    float GetGrabbedMass() const;
+    //Centre of the magnet pad in world space - where the field is measured from and where a
+    //grabbed load is anchored.
+    vec3 GetMagnetWorldPosition();
+
+    //Called by the app's rp3d::EventListener::onTrigger with the OTHER collider of a pair that
+    //involved magnet_collider - i.e. from inside the physics step. Records a candidate and
+    //nothing else; UpdateMagnet decides. Public only because the listener lives on the app.
+    void OnMagnetFieldOverlap(rp3d::Collider* other_collider);
+
+    //The field: a trigger sphere over the pad, a second collider on the HOOK's body. Kept as a
+    //pointer because that pointer is the identity test in onTrigger - the hook has two colliders
+    //and only this one is the magnet. (Collision category bits would be the tidier filter, but
+    //every other body in this scene is on the default category, so a mask would exclude nothing
+    //that matters; what is and is not grabbable is decided in IsGrabbable instead.)
+    rp3d::Collider* magnet_collider = NULL;
+    float magnet_radius = 0.35f;        //m - reach of the field below the pad
+    //Refuses anything heavier. The winch (hook_max_motor_force) is what ultimately has to hold
+    //the load up, so grabbing more than it can lift just sags the cable to its limit.
+    float magnet_max_mass = 60.0f;      //kg
+    //The pad, in the HOOK's own local space - its bottom face. Stored rather than recomputed
+    //because the hook's half-height is a construction-time local, same as the piston's anchors.
+    vec3 magnet_local_offset = {};
+
+    //Makes the joint match the flag: grabs the nearest candidate when the magnet is on and empty,
+    //drops the load when it is switched off. Called once per tick from UpdatePhysicsState, which
+    //is between physics steps - the only point at which a joint may be created or destroyed.
+    void UpdateMagnet();
+    //Whether the magnet is allowed to pick this up. Excludes the crane's own parts (welding the
+    //hook to its own boom would lock the mechanism), anything that is not a DYNAMIC body (a
+    //FixedJoint to the static terrain would pin the whole crane to the ground, or tear it apart),
+    //and anything over magnet_max_mass.
+    bool IsGrabbable(Object* candidate) const;
 
     //Root-level Object - own physics body, own AddObject call into target_scene from this
     //constructor - joined to `this` (the base) only through boom_hinge, NOT a parent/child
@@ -123,6 +186,22 @@ public:
     //Cosmetic cable between the swivel and the hook's top, stretched/reoriented every tick.
     Object* cable_visual = NULL;
     float cable_radius = 0.03f;
+
+    bool magnet_enabled = false;
+    //How many bodies the field reported last tick, and how many of those were actually grabbable.
+    //Reported in crane_telemetry: the difference between "the magnet sees nothing" and "the magnet
+    //sees it but refuses it" is otherwise invisible from outside.
+    int magnet_in_field = 0;
+    int magnet_grabbable_in_field = 0;
+    Object* grabbed_object = NULL;
+    rp3d::FixedJoint* magnet_joint = NULL;
+    //Written by OnMagnetFieldOverlap during the step, read and cleared by UpdateMagnet after it.
+    //Both run on the physics thread within one tick, so no lock: the step has finished producing
+    //these before anything reads them, and nothing else ever touches the vector.
+    std::vector<Object*> magnet_candidates;
+    //Kept so the magnet can create and destroy joints long after construction. The constructor
+    //already takes it; before the magnet, nothing needed it afterwards.
+    PhysicsWorld* physics_world = NULL;
 
     float slew_speed_command = 0.0f;    //+-1, from SetSlewSpeed
     float slew_max_rate = 0.6f;         //rad/s at SetSlewSpeed's +-1 (~34 deg/s) - slow enough that

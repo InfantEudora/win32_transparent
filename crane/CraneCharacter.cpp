@@ -36,6 +36,7 @@ static vec3 PointOnAngledAxis(float angle,float z_local){
 
 CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, const vec3& base_position):Object(){
     name = "Crane";
+    physics_world = physicsworld; //the magnet creates and destroys joints long after this returns
 
     //--- Base: a slab that can turn on the spot. This Object IS the base (own mesh/collider,
     //not a child) - same role as DozerCharacter itself being its own chassis body.
@@ -214,6 +215,24 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
                 cinfo.maxMotorForce = hook_max_motor_force;
                 hook_slider = dynamic_cast<rp3d::SliderJoint*>(physicsworld->rp_world->createJoint(cinfo));
 
+                //--- The magnet's field: a second collider on the HOOK's body, a sphere sitting
+                //over its bottom face, marked as a TRIGGER so it reports overlaps without ever
+                //pushing anything. This is the "sphere cast" - see the class header comment.
+                magnet_local_offset = vec3(0,-hook_height * 0.5f,0);
+                if (Physics* p = hook->GetPhysics()){
+                    //Density near zero, NOT the hook's: Physics::AddSphereCollider ends with
+                    //updateMassPropertiesFromColliders(), which sums every collider on the body
+                    //whether or not it is a trigger. At the hook's own density this sensor would
+                    //silently add tens of kg to the thing the winch has to lift.
+                    p->AddSphereCollider(magnet_radius,magnet_local_offset,quat().identity(),0.0001f);
+                    if (p->body){
+                        magnet_collider = p->body->last_collider;
+                        if (magnet_collider){
+                            magnet_collider->setIsTrigger(true);
+                        }
+                    }
+                }
+
                 cable_visual = MakeCraneBox(assetmanager,cable_radius * 2.0f,cable_radius * 2.0f,hook_cable_min_length);
                 if (cable_visual){
                     cable_visual->name = "Crane Cable (visual)";
@@ -255,6 +274,133 @@ void CraneCharacter::SetHookSpeed(float speed){
 
 void CraneCharacter::SetSlewSpeed(float speed){
     slew_speed_command = clamp(speed,-1.0f,1.0f);
+}
+
+void CraneCharacter::SetMagnetEnabled(bool enabled){
+    magnet_enabled = enabled;
+}
+
+float CraneCharacter::GetGrabbedMass() const{
+    if (!grabbed_object){
+        return 0.0f;
+    }
+    Physics* p = grabbed_object->GetPhysics();
+    return p ? p->GetMass() : 0.0f;
+}
+
+vec3 CraneCharacter::GetMagnetWorldPosition(){
+    if (!hook){
+        return GetWorldPosition(STATE_ACCESS_PHYSICS);
+    }
+    //STATE_ACCESS_PHYSICS for the same reason the piston visual uses it: this is only ever read
+    //from the physics thread, where the render state is a tick stale.
+    return hook->GetWorldPosition(STATE_ACCESS_PHYSICS) + (hook->GetWorldRotation() * magnet_local_offset);
+}
+
+//Inside the physics step - record only. See the class header comment.
+void CraneCharacter::OnMagnetFieldOverlap(rp3d::Collider* other_collider){
+    if (!other_collider){
+        return;
+    }
+    //Recorded even while the magnet is off or already holding something. Nothing acts on the
+    //list in those cases, but it still feeds magnet_in_field, and "what can the magnet see right
+    //now" is exactly what you want to read while working out why it did not pick something up.
+    rp3d::Body* body = other_collider->getBody();
+    if (!body){
+        return;
+    }
+    //Every Object with physics stamps itself here - see Object::AddPhysics. A body without it
+    //is not something this scene knows how to hold on to.
+    Object* candidate = (Object*)body->getUserData();
+    if (candidate){
+        magnet_candidates.push_back(candidate);
+    }
+}
+
+bool CraneCharacter::IsGrabbable(Object* candidate) const{
+    if (!candidate || candidate == this || candidate == boom || candidate == extension ||
+        candidate == swivel || candidate == hook){
+        return false; //the crane's own parts - welding the hook to them would lock the mechanism
+    }
+    Physics* p = candidate->GetPhysics();
+    if (!p || !p->body || !p->body->rigidbody){
+        return false;
+    }
+    //STATIC and KINEMATIC bodies have infinite mass. A FixedJoint to the terrain does not lift
+    //the terrain, it pins the hook - and through the hook, the whole boom - to the world.
+    if (p->body->rigidbody->getType() != rp3d::BodyType::DYNAMIC){
+        return false;
+    }
+    float mass = p->GetMass();
+    return mass > 0.0f && mass <= magnet_max_mass;
+}
+
+//Between physics steps (called from UpdatePhysicsState), which is the only point in the tick at
+//which a joint may be created or destroyed - see the class header comment.
+void CraneCharacter::UpdateMagnet(){
+    if (!physics_world || !physics_world->rp_world){
+        magnet_candidates.clear();
+        return;
+    }
+
+    //Switched off (or the load stopped being holdable) - drop it.
+    if (magnet_joint && !magnet_enabled){
+        physics_world->rp_world->destroyJoint(magnet_joint);
+        magnet_joint = NULL;
+        grabbed_object = NULL;
+    }
+
+    magnet_in_field = (int)magnet_candidates.size();
+    magnet_grabbable_in_field = 0;
+    for (Object* candidate:magnet_candidates){
+        if (IsGrabbable(candidate)){
+            magnet_grabbable_in_field++;
+        }
+    }
+
+    if (magnet_enabled && !magnet_joint && hook && !magnet_candidates.empty()){
+        //Nearest to the pad wins. Several bodies can be in the field at once, and the one the
+        //operator is aiming at is the one they have lowered the magnet onto.
+        vec3 pad = GetMagnetWorldPosition();
+        Object* best = NULL;
+        float best_distance = 0.0f;
+        for (Object* candidate:magnet_candidates){
+            if (!IsGrabbable(candidate)){
+                continue;
+            }
+            float distance = (candidate->GetWorldPosition(STATE_ACCESS_PHYSICS) - pad).length();
+            if (!best || distance < best_distance){
+                best = candidate;
+                best_distance = distance;
+            }
+        }
+        if (best){
+            //Anchored at the pad rather than at either body's origin, so the load hangs from the
+            //face that picked it up and keeps whatever pose it was lying in - a magnet does not
+            //snap its load square.
+            vec3 anchor = pad;
+            rp3d::FixedJointInfo info(hook->GetRigidBody(),best->GetRigidBody(),(rp3d::Vector3&)anchor);
+            //Same reason the boom hinge disables it: the load is held right against the hook's
+            //own box collider, so left enabled the two would be resolving a real penetration
+            //every tick on top of the joint holding them together - the pair fight, and it shows
+            //up as the load buzzing against the pad.
+            info.isCollisionEnabled = false;
+            magnet_joint = dynamic_cast<rp3d::FixedJoint*>(physics_world->rp_world->createJoint(info));
+            if (magnet_joint){
+                grabbed_object = best;
+                //A body that had settled and gone to sleep would otherwise stay asleep, joint or
+                //no joint, and be dragged along a tick behind everything else.
+                if (Physics* p = best->GetPhysics()){
+                    p->WakeUp();
+                }
+            }
+        }
+    }
+
+    //Consumed, whether or not anything was grabbed: these are this tick's overlaps. Cleared here
+    //rather than at the start of onTrigger because onTrigger is not called at all on a tick with
+    //no overlaps anywhere in the world, which would leave a stale candidate to grab later.
+    magnet_candidates.clear();
 }
 
 float CraneCharacter::GetSlewAngle(){
@@ -314,6 +460,7 @@ void CraneCharacter::UpdatePhysicsState(){
         float taper = clamp(remaining / hook_limit_margin,0.0f,1.0f);
         hook_slider->setMotorSpeed(hook_speed_command * hook_max_rate * taper);
     }
+    UpdateMagnet();
     if (swivel && hook && cable_visual){
         vec3 hook_top = hook->GetWorldPosition(STATE_ACCESS_PHYSICS) + (hook->GetWorldRotation() * vec3(0,0.15f,0));
         SpanVisual(cable_visual,swivel->GetWorldPosition(STATE_ACCESS_PHYSICS),hook_top,cable_radius);
