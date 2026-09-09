@@ -336,15 +336,18 @@ void ApplicationShip::RunLogic(){
         }
     }*/
 
-    //Mouse wheel for zoom
+    //Mouse wheel for zoom, focused only - otherwise it tracks a wheel being used in another
+    //application. InputController drops the delta while unfocused as well.
     static float mouse_delta_sum = 0;
-    if (mouse_delta_sum != 0){
-        zoom_target -= mouse_delta_sum * 0.5f;
-        if (zoom_target < 5.0f) zoom_target = 5.0f;
-        if (zoom_target > 80.0f) zoom_target = 80.0f;
-        mouse_delta_sum = 0;
+    if (main_window->f_has_focus){
+        if (mouse_delta_sum != 0){
+            zoom_target -= mouse_delta_sum * 0.5f;
+            if (zoom_target < 5.0f) zoom_target = 5.0f;
+            if (zoom_target > 80.0f) zoom_target = 80.0f;
+            mouse_delta_sum = 0;
+        }
+        mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
-    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 
     //Gamepad sampling now happens once per tick inside InputController::PollDevices, with the
     //keyboard and mouse - no separate per-app poll.

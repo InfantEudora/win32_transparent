@@ -33,6 +33,17 @@
 //SliderJoint to the swivel along the swivel's own down axis - that slider IS the rigid cable, its
 //motor is the winch (positive = pay out/lower). The cable you see is cosmetic, stretched between
 //the swivel and the hook every tick, same trick as the piston.
+//
+//Fourth axis, and the only one that is NOT a joint: the base slews (turns on its own vertical
+//axis), carrying the whole mechanism above it around. There is no rp3d joint for it because
+//there is nothing to join it TO - the base is the root of the mechanism. Instead the base body
+//is KINEMATIC rather than STATIC and is turned by setting its angular velocity every tick,
+//exactly the way Scene::AdvanceObjectMotions moves an object: a kinematic body still has
+//infinite mass (so nothing hanging off the boom can shove the base around), but unlike a static
+//body being setTransform()ed it presents a real VELOCITY to the solver - so boom_hinge, whose
+//anchor and axis rp3d stores in each body's own local frame, carries the boom around with the
+//base smoothly, rather than leaving the solver a position error to repair after the fact on
+//every tick. Same reason Scene::MoveObjectOverTicks goes kinematic instead of teleporting.
 class CraneCharacter : public Object{
 public:
     CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, const vec3& base_position);
@@ -48,6 +59,15 @@ public:
     void SetExtensionSpeed(float speed);
     //And the hook's winch: +-1, positive LOWERS (pays out cable), negative raises, 0 holds.
     void SetHookSpeed(float speed);
+    //The base turning on its own vertical axis, carrying boom/extension/hook around with it:
+    //+-1, positive turns counter-clockwise seen from above (a positive right-hand rotation about
+    //world +Y - the same convention every quat(axis,angle) in this engine uses), 0 holds.
+    //Stored only; UpdatePhysicsState turns it into the base body's angular velocity each tick.
+    //Deliberately unlimited - a real crane slews continuously, and nothing here winds up.
+    void SetSlewSpeed(float speed);
+    //Current base heading in radians. Read back off the body's actual orientation rather than
+    //integrated from the command, so it stays honest whatever else ever moves the base.
+    float GetSlewAngle();
 
     //Root-level Object - own physics body, own AddObject call into target_scene from this
     //constructor - joined to `this` (the base) only through boom_hinge, NOT a parent/child
@@ -103,6 +123,11 @@ public:
     //Cosmetic cable between the swivel and the hook's top, stretched/reoriented every tick.
     Object* cable_visual = NULL;
     float cable_radius = 0.03f;
+
+    float slew_speed_command = 0.0f;    //+-1, from SetSlewSpeed
+    float slew_max_rate = 0.6f;         //rad/s at SetSlewSpeed's +-1 (~34 deg/s) - slow enough that
+                                        //the boom's hinge and the hook's ball joint track the turn
+                                        //rather than being whipped around by it
 
     //Purely cosmetic - no physics, no joint. A separate root-level Object (same reasoning as
     //boom - see above), repositioned/reoriented/rescaled every tick in UpdatePhysicsState to

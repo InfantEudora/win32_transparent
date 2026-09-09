@@ -40,6 +40,10 @@ public:
     //of which are vehicle-specific, so one function renders it for whichever Vehicle is passed.
     void RenderVehicleWheelTable(Vehicle* vehicle);
 
+    //The crane's own section of the Vehicle Debug window: the four velocity commands, what each
+    //joint currently reads back, and the key legend for driving it from the keyboard.
+    void RenderCraneDebugUI(void);
+
     //A separate, focused control panel - only visible while the buggy is the actively controlled
     //vehicle (see SetControlledVehicle/controlled_vehicle) - as opposed to RenderTankWheelDebugUI's
     //"Buggy" section above, which stays visible any time the buggy exists at all.
@@ -102,12 +106,45 @@ public:
 
     //A joint-based test rig, unrelated to the tank/buggy - see CraneCharacter's own header
     //comment for what it's testing. Not a Vehicle (no wheels/pedals/steering), so it stays
-    //outside the controlled_tank/controlled_buggy/controlled_vehicle machinery entirely; driven
-    //directly by the "Crane" panel in RenderTankWheelDebugUI via crane_piston_speed.
+    //outside the controlled_tank/controlled_buggy/controlled_vehicle machinery - but it IS one of
+    //the three rigs the "Controlling" selector in RenderTankWheelDebugUI can hand the keyboard
+    //to; see f_crane_controlled below.
+    //
+    //These four floats are the crane's whole command state, and the ONE source of truth for it:
+    //the debug panel's sliders, the crane_speed MCP tool and the keyboard/gamepad all write
+    //them, and RunLogic pushes them into the crane every tick. Nothing calls CraneCharacter's
+    //Set*Speed with a value that isn't one of these.
     CraneCharacter* crane = NULL;
     float crane_piston_speed = 0.0f;
     float crane_extension_speed = 0.0f; //same, for the telescoping extension's slider motor
     float crane_hook_speed = 0.0f;      //same, for the hook's winch (positive lowers)
+    float crane_slew_speed = 0.0f;      //same, for the base turning on the spot (positive = CCW from above)
+
+    //The third state of the "Controlling" selector. The crane isn't a Vehicle so it cannot live
+    //in controlled_vehicle, and exactly one rig has the keyboard at a time - so this flag and
+    //controlled_vehicle are mutually exclusive, and SetControlledCrane/SetControlledVehicle are
+    //what keep them that way. Never write either by hand: each releases the outgoing rig's
+    //inputs, without which it would carry on running on whatever it was last commanded.
+    bool f_crane_controlled = false;
+    void SetControlledCrane();
+    //Zeroes all four crane_*_speed commands (and the hardware latches below) and pushes them to
+    //the crane - the crane's equivalent of Vehicle::ReleaseInputs, and used for the same reason:
+    //switching away mid-slew must not leave the base turning forever.
+    void ReleaseCraneInputs();
+    //Whichever rig currently has the keyboard - the controlled vehicle, or the crane's base.
+    //What the camera snap/follow pivots on, so "Follow" works while driving the crane too.
+    Object* GetControlledObject();
+
+    //The crane command each hardware axis (keyboard/gamepad) asked for on the PREVIOUS tick.
+    //A hardware command overwrites its crane_*_speed only while it is nonzero, plus the single
+    //tick on which it returns to zero - which is what releasing the key does. Sitting on the
+    //value every tick instead would work, but it would also mean an idle keyboard permanently
+    //pinned the debug panel's sliders (and any crane_speed MCP call) to 0 for as long as the
+    //crane happened to be the selected rig. See ApplyHardwareCraneAxis in ApplicationTank.cpp.
+    float crane_hw_slew = 0.0f;
+    float crane_hw_boom = 0.0f;
+    float crane_hw_extension = 0.0f;
+    float crane_hw_hook = 0.0f;
 
     void DumpTerrainVertices();
     void TestHeightmapRoundTrip();

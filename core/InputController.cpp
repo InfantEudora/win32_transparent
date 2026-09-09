@@ -98,8 +98,15 @@ void InputController::SubmitSystemKey(uint32_t system_keycode, bool down){
     pending_events.insert(pending_events.end(),events.begin(),events.end());
 }
 
+//Unfocused, this is the mouse being used in another application. Raw Input is registered
+//RIDEV_INPUTSINK and so keeps delivering regardless of which window is in front - it has to, a
+//message-only window can never BE the foreground window - which means the focus filtering the OS
+//used to do for us (WM_MOUSEWHEEL only ever reaches the focused window) is now ours. Unlike a key
+//there is no "always honour the up edge" concern: a relative axis latches nothing, so dropping it
+//outright cannot leave anything stuck. Scripted input is unaffected - AdvanceSyntheticHolds writes
+//into pending_events directly and never comes through here.
 void InputController::SubmitAxisDelta(uint32_t mapped_keycode, int32_t delta){
-    if (delta == 0){
+    if (delta == 0 || !f_has_focus){
         return;
     }
     InputEvent e;

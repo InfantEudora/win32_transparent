@@ -7,6 +7,15 @@
 
 #define INPUT_FIRE INPUT_LAST+1
 
+//Crane-only actuator keys. The boom's elevation and the base's slew reuse the same WASD the
+//vehicles drive with (a crane's boom is its "forward/back" and its slew is its "left/right", so
+//the mapping reads the same way whichever rig has the keyboard - see RunLogic); these two pairs
+//are the axes a vehicle has no equivalent of, so they need keys of their own.
+#define INPUT_CRANE_EXTEND      INPUT_LAST+2
+#define INPUT_CRANE_RETRACT     INPUT_LAST+3
+#define INPUT_CRANE_HOOK_DOWN   INPUT_LAST+4
+#define INPUT_CRANE_HOOK_UP     INPUT_LAST+5
+
 #define GAMEPAD_LEFT_STICK_X    INPUT_LAST+6
 #define GAMEPAD_LEFT_STICK_Y    INPUT_LAST+7
 #define GAMEPAD_RIGHT_STICK_X   INPUT_LAST+8
@@ -43,7 +52,40 @@ void ApplicationTank::SetControlledVehicle(Vehicle* vehicle){
     if (controlled_vehicle && controlled_vehicle != vehicle){
         controlled_vehicle->ReleaseInputs();
     }
+    //Same reasoning one rig over: the crane's actuators are velocity commands that hold until
+    //something changes them, so handing the keyboard to a vehicle while the base is mid-slew
+    //would leave it turning for good.
+    if (f_crane_controlled){
+        f_crane_controlled = false;
+        ReleaseCraneInputs();
+    }
     controlled_vehicle = vehicle;
+}
+
+//The other half of the same switch - see SetControlledVehicle above. Passing NULL there rather
+//than duplicating the release is deliberate: there is exactly one place that lets go of a
+//vehicle's pedals, and this goes through it.
+void ApplicationTank::SetControlledCrane(){
+    SetControlledVehicle(NULL);
+    f_crane_controlled = true;
+}
+
+void ApplicationTank::ReleaseCraneInputs(){
+    crane_slew_speed = crane_piston_speed = crane_extension_speed = crane_hook_speed = 0.0f;
+    crane_hw_slew = crane_hw_boom = crane_hw_extension = crane_hw_hook = 0.0f;
+    if (crane){
+        crane->SetSlewSpeed(0.0f);
+        crane->SetPistonSpeed(0.0f);
+        crane->SetExtensionSpeed(0.0f);
+        crane->SetHookSpeed(0.0f);
+    }
+}
+
+Object* ApplicationTank::GetControlledObject(){
+    if (f_crane_controlled){
+        return crane; //the base - everything else on the crane hangs off it
+    }
+    return controlled_vehicle;
 }
 
 void ApplicationTank::Init(void){
@@ -65,6 +107,12 @@ void ApplicationTank::Init(void){
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics(1/50.0f);
     main_scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_FIRE);
+    //Crane-only keys - see the INPUT_CRANE_* defines. Only read while the crane is the rig the
+    //"Controlling" selector has handed the keyboard to, so they cost the vehicles nothing.
+    main_scene->inputcontroller->AddKeyMap('E',INPUT_CRANE_EXTEND);
+    main_scene->inputcontroller->AddKeyMap('Q',INPUT_CRANE_RETRACT);
+    main_scene->inputcontroller->AddKeyMap('F',INPUT_CRANE_HOOK_DOWN);
+    main_scene->inputcontroller->AddKeyMap('R',INPUT_CRANE_HOOK_UP);
 
     main_scene->physics_world = new PhysicsWorld();
     main_scene->physics_world->SetGravity(vec3(0,-9.81,0));
@@ -623,6 +671,8 @@ json ApplicationTank::GetCraneTelemetry(){
     }
     json result = {
         {"speed_command", crane_piston_speed},
+        {"slew_speed_command", crane_slew_speed},
+        {"slew_heading_deg", crane->GetSlewAngle() * 180.0f / TYPE_PI},
         {"hinge_angle_deg", crane->boom_hinge->getAngle() * 180.0f / TYPE_PI},
         {"limit_min_deg", crane->boom_min_angle * 180.0f / TYPE_PI},
         {"limit_max_deg", crane->boom_max_angle * 180.0f / TYPE_PI},
@@ -1313,40 +1363,41 @@ void ApplicationTank::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("crane_speed",
         "Set the crane's velocity commands (-1..1 each): `speed` for the boom's hinge motor "
         "(positive raises), `extension_speed` for the telescoping extension's slider motor "
-        "(positive extends), `hook_speed` for the hook's winch (positive LOWERS the hook). 0 holds. "
+        "(positive extends), `hook_speed` for the hook's winch (positive LOWERS the hook), and "
+        "`slew_speed` for the base turning on the spot (positive turns counter-clockwise seen "
+        "from above), which carries boom, extension and hook round with it. 0 holds. "
         "Same values the Crane debug panel's sliders set; only the ones given are changed, and they "
-        "persist until changed again. Returns crane_telemetry.",
+        "persist until changed again. Note that while the 'Controlling' selector is on Crane AND "
+        "the window has focus, a key press overrides these - drive the crane from here with the "
+        "window in the background, or with another rig selected. Returns crane_telemetry.",
         json{
             {"type","object"},
             {"properties", {
                 {"speed", {{"type","number"},{"description","-1..1 boom velocity command, positive raises"}}},
                 {"extension_speed", {{"type","number"},{"description","-1..1 extension velocity command, positive extends"}}},
-                {"hook_speed", {{"type","number"},{"description","-1..1 winch velocity command, positive lowers the hook"}}}
+                {"hook_speed", {{"type","number"},{"description","-1..1 winch velocity command, positive lowers the hook"}}},
+                {"slew_speed", {{"type","number"},{"description","-1..1 base slew velocity command, positive turns counter-clockwise seen from above"}}}
             }}
         },
         [this](const json &args) -> json {
-            if (!args.contains("speed") && !args.contains("extension_speed") && !args.contains("hook_speed")){
-                return json{ {"error","give speed, extension_speed and/or hook_speed"} };
+            if (!args.contains("speed") && !args.contains("extension_speed") &&
+                !args.contains("hook_speed") && !args.contains("slew_speed")){
+                return json{ {"error","give speed, extension_speed, hook_speed and/or slew_speed"} };
             }
+            //Only the command members are written here - RunLogic is what hands them to the
+            //crane, every tick, from these same members (see its crane block). That's also why
+            //the debug panel can't overwrite them back: it edits these too.
             if (args.contains("hook_speed")){
                 crane_hook_speed = clamp(args.value("hook_speed",0.0f),-1.0f,1.0f);
-                if (crane){
-                    crane->SetHookSpeed(crane_hook_speed);
-                }
             }
-            //Goes through the same members the debug panel writes/re-applies every frame, so the
-            //panel doesn't immediately overwrite them back.
             if (args.contains("speed")){
                 crane_piston_speed = clamp(args.value("speed",0.0f),-1.0f,1.0f);
-                if (crane){
-                    crane->SetPistonSpeed(crane_piston_speed);
-                }
             }
             if (args.contains("extension_speed")){
                 crane_extension_speed = clamp(args.value("extension_speed",0.0f),-1.0f,1.0f);
-                if (crane){
-                    crane->SetExtensionSpeed(crane_extension_speed);
-                }
+            }
+            if (args.contains("slew_speed")){
+                crane_slew_speed = clamp(args.value("slew_speed",0.0f),-1.0f,1.0f);
             }
             return GetCraneTelemetry();
         });
@@ -1355,8 +1406,9 @@ void ApplicationTank::RegisterMCPTools(){
         "Report the crane boom's hinge angle (deg, relative to its spawn pose), the motor's "
         "current target speed and applied torque, the boom body's world position/velocity, the "
         "current speed commands, the telescoping extension's slider translation (m), motor "
-        "target speed/force and body state, and the hook's cable pay-out (m), winch force and "
-        "hook/swivel positions.",
+        "target speed/force and body state, the hook's cable pay-out (m), winch force and "
+        "hook/swivel positions, and the base's slew command and heading (deg from its spawn "
+        "heading, +-180, positive counter-clockwise seen from above).",
         json{ {"type","object"}, {"properties", json::object()} },
         [this](const json & /*args*/) -> json {
             return GetCraneTelemetry();
@@ -1665,6 +1717,30 @@ void ApplicationTank::DumpTerrainVertices(){
     }
 }
 
+//Whichever of a key-derived and a stick-derived command for the same crane axis is asking for
+//more, so a controller and the keyboard can both be plugged in without one pinning the other to
+//0. Sign is kept, not magnitudes summed - these are velocity commands, not accumulators.
+static float PickStronger(float a,float b){
+    return fabsf(b) > fabsf(a) ? b : a;
+}
+
+//Applies one tick of hardware input to one crane command. `hardware` is what the keys/stick are
+//asking for now, `previous` the same axis's hardware value from last tick (kept per axis on the
+//app), `command` the crane_*_speed this axis owns.
+//
+//The write is conditional on purpose. Writing every tick would be simpler but would mean that
+//merely HAVING the crane selected held all four commands at 0 whenever no key was down - which
+//would fight the debug panel's sliders, and silently swallow a crane_speed MCP call. Writing
+//only when nonzero is the other obvious wrong answer: letting go of a key would then leave the
+//motor running on the last value. So: hardware owns the command while it is nonzero, plus the
+//one tick it drops back to zero, and lets go of it entirely after that.
+static void ApplyHardwareCraneAxis(float hardware,float& previous,float& command){
+    if (hardware != 0.0f || previous != 0.0f){
+        command = hardware;
+    }
+    previous = hardware;
+}
+
 //Called before update physics
 void ApplicationTank::RunLogic(){
     //Before every early-out below, deliberately. The vehicle keeps moving whether or not the
@@ -1838,6 +1914,57 @@ void ApplicationTank::RunLogic(){
         }
     }
 
+    //Crane control - the third rig the "Controlling" selector can hand the keyboard to (see
+    //SetControlledCrane). Deliberately its own block rather than sharing the throttle/steer/brake
+    //plumbing above: a Vehicle has one drivetrain fed by three mixed inputs, whereas a crane is
+    //four independent velocity-commanded actuators, and every key here just holds one of them
+    //open. Runs whether or not the crane is the selected rig, because the push at the bottom is
+    //what applies the debug panel's sliders and the crane_speed MCP tool as well.
+    if (crane){
+        //Hardware only while focused and only while the crane is the selected rig - same gate,
+        //for the same reasons, as the vehicle block above.
+        if (f_crane_controlled && has_focus){
+            //WASD, matching the vehicles' own layout as closely as the mechanism allows: W/S is
+            //the boom (the crane's "forward/back"), A/D is the slew (its "left/right"). A turns
+            //the base counter-clockwise seen from above, which is the direction the boom visibly
+            //swings to the viewer's left from the default camera.
+            float kb_boom = 0.0f, kb_slew = 0.0f, kb_extension = 0.0f, kb_hook = 0.0f;
+            if (input->IsKeyDown(INPUT_TURN_UP)){ kb_boom += 1.0f; }
+            if (input->IsKeyDown(INPUT_TURN_DOWN)){ kb_boom -= 1.0f; }
+            if (input->IsKeyDown(INPUT_TURN_LEFT)){ kb_slew += 1.0f; }
+            if (input->IsKeyDown(INPUT_TURN_RIGHT)){ kb_slew -= 1.0f; }
+            if (input->IsKeyDown(INPUT_CRANE_EXTEND)){ kb_extension += 1.0f; }
+            if (input->IsKeyDown(INPUT_CRANE_RETRACT)){ kb_extension -= 1.0f; }
+            if (input->IsKeyDown(INPUT_CRANE_HOOK_DOWN)){ kb_hook += 1.0f; }  //positive pays cable out
+            if (input->IsKeyDown(INPUT_CRANE_HOOK_UP)){ kb_hook -= 1.0f; }
+
+            //Gamepad, laid out the same way the vehicles' is: left stick drives the "vehicle"
+            //(here, boom and slew), the right stick and triggers take what's left. Stick X is
+            //positive to the RIGHT, and right is a NEGATIVE (clockwise) slew, hence the flip.
+            float gp_boom = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
+            float gp_slew = -gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
+            float gp_hook = -gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y); //stick back lowers
+            //Triggers are unsigned 0..1 each, so the extension takes their difference: R2 out,
+            //L2 in, both together cancelling out to a hold.
+            float gp_extension = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2) -
+                                 gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_L2);
+
+            ApplyHardwareCraneAxis(PickStronger(kb_boom,gp_boom),crane_hw_boom,crane_piston_speed);
+            ApplyHardwareCraneAxis(PickStronger(kb_slew,gp_slew),crane_hw_slew,crane_slew_speed);
+            ApplyHardwareCraneAxis(PickStronger(kb_extension,gp_extension),crane_hw_extension,crane_extension_speed);
+            ApplyHardwareCraneAxis(PickStronger(kb_hook,gp_hook),crane_hw_hook,crane_hook_speed);
+        }
+
+        //The one place the crane's commands are handed to the crane. Every other writer - the
+        //keys above, the debug panel's sliders, the crane_speed MCP tool - only ever moves the
+        //crane_*_speed floats, so there is a single, obvious answer to "what is the crane doing
+        //and who asked for it", and a collapsed debug panel doesn't stop the crane responding.
+        crane->SetPistonSpeed(crane_piston_speed);
+        crane->SetExtensionSpeed(crane_extension_speed);
+        crane->SetHookSpeed(crane_hook_speed);
+        crane->SetSlewSpeed(crane_slew_speed);
+    }
+
     //Camera rotation moving.
     //
     //Read with GetDelta, and read EVERY tick whether or not the drag is active - both halves of
@@ -1889,21 +2016,30 @@ void ApplicationTank::RunLogic(){
         }
     }
 
-    //Mouse wheel for zoom
+    //Mouse wheel for zoom. Cursor-driven, so focused only - the same rule as the picking above.
+    //InputController drops the wheel delta while unfocused anyway; the check here is what stops
+    //the decay below from coasting the zoom on for a few frames after the user alt-tabs away.
     static float mouse_delta_sum = 0;
-    if (mouse_delta_sum != 0){
-        vec3 diff = camera->GetForward() - camera_target;
-        float dist = diff.length() * mouse_delta_sum;
+    if (has_focus){
+        if (mouse_delta_sum != 0){
+            vec3 diff = camera->GetForward() - camera_target;
+            float dist = diff.length() * mouse_delta_sum;
 
-        camera->MoveForwardBy(dist / 50.0f);
+            camera->MoveForwardBy(dist / 50.0f);
 
-        mouse_delta_sum /= 1.1;
+            mouse_delta_sum /= 1.1;
+        }
+        mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
-    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 }
 
 void ApplicationTank::SnapCameraToControlledVehicle(){
-    if (!controlled_vehicle || !main_scene || !main_scene->camera){
+    //Whatever the "Controlling" selector currently points at - the crane's base included. Both
+    //things wanted below are plain Object reads (world position and forward), so nothing here
+    //ever needed a Vehicle; for the crane the "heading" chased is the base's own, which means
+    //the camera swings around with a slew exactly as it does with a vehicle turning.
+    Object* controlled = GetControlledObject();
+    if (!controlled || !main_scene || !main_scene->camera){
         return;
     }
     //Render-state position (the default read), not STATE_ACCESS_PHYSICS: this runs on the frame
@@ -1911,7 +2047,7 @@ void ApplicationTank::SnapCameraToControlledVehicle(){
     //state by a frame, but taking the fresher one would put the camera a frame ahead of the
     //vehicle in the same image, which reads as the vehicle jittering against a camera that has
     //already moved - worse than a lag both share.
-    vec3 vehicle_pos = controlled_vehicle->GetWorldPosition();
+    vec3 vehicle_pos = controlled->GetWorldPosition();
     //Translate the camera by the same delta rather than re-aiming it: the pivot moves, the
     //viewing angle and distance the user set with the mouse are left exactly as they were.
     vec3 delta = vehicle_pos - camera_target;
@@ -1926,7 +2062,7 @@ void ApplicationTank::SnapCameraToControlledVehicle(){
     //zoom/orbit set them; only the horizontal angle is nudged, and only partway each call (see
     //camera_behind_blend_rate) rather than snapped, so a sharp turn doesn't whip the view around
     //in one frame.
-    vec3 vehicle_forward = controlled_vehicle->GetWorldForward(); //render-state, same reasoning as vehicle_pos above
+    vec3 vehicle_forward = controlled->GetWorldForward(); //render-state, same reasoning as vehicle_pos above
     vehicle_forward.y = 0.0f;
     float vehicle_forward_length = vehicle_forward.length();
     if (vehicle_forward_length < 0.0001f){
@@ -2121,13 +2257,22 @@ void ApplicationTank::RenderTankWheelDebugUI(){
         SetControlledVehicle(controlled_buggy);
     }
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    //The crane is not a Vehicle, so its "selected" state is f_crane_controlled rather than a
+    //comparison against controlled_vehicle - see the flag's own comment for why the two are
+    //separate and how they're kept mutually exclusive.
+    ImGui::BeginDisabled(crane == NULL);
+    if (ImGui::RadioButton("Crane",f_crane_controlled) && crane){
+        SetControlledCrane();
+    }
+    ImGui::EndDisabled();
 
     //Camera pivot. Both act on camera_target, the point the middle-mouse orbit and the wheel
     //zoom already work relative to - so following leaves every existing camera control working
     //exactly as before, just around a moving point instead of a fixed one.
     ImGui::Text("Camera:");
     ImGui::SameLine();
-    ImGui::BeginDisabled(controlled_vehicle == NULL);
+    ImGui::BeginDisabled(GetControlledObject() == NULL);
     if (ImGui::Button("Snap To Vehicle")){
         SnapCameraToControlledVehicle();
     }
@@ -2225,34 +2370,50 @@ void ApplicationTank::RenderTankWheelDebugUI(){
         }
     }
 
-    if (crane){
-        if (ImGui::CollapsingHeader("Crane",ImGuiTreeNodeFlags_DefaultOpen)){
-            ImGui::PushID("crane_section");
-            //Velocity command - 0 holds the boom in place (motor at speed 0). Set every frame;
-            //it's a state setter, not an accumulator, so that's harmless.
-            ImGui::SliderFloat("Boom Speed (+-1)",&crane_piston_speed,-1.0f,1.0f,"%.2f");
-            crane->SetPistonSpeed(crane_piston_speed);
-            if (crane->boom_hinge){
-                ImGui::Text("Boom Angle : %.1f deg",crane->boom_hinge->getAngle() * 180.0f / TYPE_PI);
-                ImGui::Text("Motor Torque : %.0f N.m",crane->boom_hinge->getMotorTorque(1.0f/physics_tps));
-            }
-            ImGui::SliderFloat("Extension Speed (+-1)",&crane_extension_speed,-1.0f,1.0f,"%.2f");
-            crane->SetExtensionSpeed(crane_extension_speed);
-            if (crane->extension_slider){
-                ImGui::Text("Extension : %.2f m",crane->extension_slider->getTranslation());
-                ImGui::Text("Motor Force : %.0f N",crane->extension_slider->getMotorForce(1.0f/physics_tps));
-            }
-            ImGui::SliderFloat("Hook Speed (+-1, + lowers)",&crane_hook_speed,-1.0f,1.0f,"%.2f");
-            crane->SetHookSpeed(crane_hook_speed);
-            if (crane->hook_slider){
-                ImGui::Text("Cable Paid Out : %.2f m",crane->hook_slider->getTranslation());
-                ImGui::Text("Winch Force : %.0f N",crane->hook_slider->getMotorForce(1.0f/physics_tps));
-            }
-            ImGui::PopID();
-        }
-    }
+    RenderCraneDebugUI();
 
     ImGui::End();
+}
+
+//The crane's section of the Vehicle Debug window. Unlike the tank/buggy sections above, none of
+//the sliders here push their value into the crane: RunLogic does that for all four commands
+//every tick (see its crane block), so this only has to move the crane_*_speed floats - which
+//also means the panel and the keyboard and the crane_speed MCP tool are all editing the same
+//numbers rather than each having their own path into the mechanism.
+void ApplicationTank::RenderCraneDebugUI(){
+    if (!crane){
+        return;
+    }
+    if (!ImGui::CollapsingHeader("Crane",ImGuiTreeNodeFlags_DefaultOpen)){
+        return;
+    }
+    ImGui::PushID("crane_section");
+    if (f_crane_controlled){
+        ImGui::TextDisabled("Keys: W/S boom, A/D slew, E/Q extend, F/R hook. Sliders hold whatever a key last set.");
+    }else{
+        ImGui::TextDisabled("Select 'Crane' above to drive it from the keyboard.");
+    }
+
+    //Velocity commands - 0 holds that actuator where it is (its motor runs at speed 0 rather
+    //than switching off, so it keeps holding station against gravity).
+    ImGui::SliderFloat("Slew Speed (+-1, + turns left)",&crane_slew_speed,-1.0f,1.0f,"%.2f");
+    ImGui::Text("Base Heading : %.1f deg",crane->GetSlewAngle() * 180.0f / TYPE_PI);
+    ImGui::SliderFloat("Boom Speed (+-1)",&crane_piston_speed,-1.0f,1.0f,"%.2f");
+    if (crane->boom_hinge){
+        ImGui::Text("Boom Angle : %.1f deg",crane->boom_hinge->getAngle() * 180.0f / TYPE_PI);
+        ImGui::Text("Motor Torque : %.0f N.m",crane->boom_hinge->getMotorTorque(1.0f/physics_tps));
+    }
+    ImGui::SliderFloat("Extension Speed (+-1)",&crane_extension_speed,-1.0f,1.0f,"%.2f");
+    if (crane->extension_slider){
+        ImGui::Text("Extension : %.2f m",crane->extension_slider->getTranslation());
+        ImGui::Text("Motor Force : %.0f N",crane->extension_slider->getMotorForce(1.0f/physics_tps));
+    }
+    ImGui::SliderFloat("Hook Speed (+-1, + lowers)",&crane_hook_speed,-1.0f,1.0f,"%.2f");
+    if (crane->hook_slider){
+        ImGui::Text("Cable Paid Out : %.2f m",crane->hook_slider->getTranslation());
+        ImGui::Text("Winch Force : %.0f N",crane->hook_slider->getMotorForce(1.0f/physics_tps));
+    }
+    ImGui::PopID();
 }
 
 //A focused control panel for the buggy - unlike RenderTankWheelDebugUI's own "Buggy" section

@@ -185,17 +185,20 @@ void ApplicationSim::RunLogic(){
 
     CheckObjectSelection();
 
-    //Mouse zoom
+    //Mouse zoom, focused only - otherwise it tracks a wheel being used in another application.
+    //InputController drops the delta while unfocused as well.
     static float mouse_delta_sum = 0;
-    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
-    if (mouse_delta_sum != 0){
-        if (camera->type == CAMERA_TYPE_ORTHOGRAPHIC){
-            camera->viewport.zoom -= mouse_delta_sum / 10.0f;
-            mouse_delta_sum /= 1.1;
-            camera->viewport.zoom = clamp(camera->viewport.zoom,2,50);
-        }else{
-            camera->MoveForwardBy(mouse_delta_sum / 10.0f);
-            mouse_delta_sum /= 1.1;
+    if (main_window->f_has_focus){
+        mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
+        if (mouse_delta_sum != 0){
+            if (camera->type == CAMERA_TYPE_ORTHOGRAPHIC){
+                camera->viewport.zoom -= mouse_delta_sum / 10.0f;
+                mouse_delta_sum /= 1.1;
+                camera->viewport.zoom = clamp(camera->viewport.zoom,2,50);
+            }else{
+                camera->MoveForwardBy(mouse_delta_sum / 10.0f);
+                mouse_delta_sum /= 1.1;
+            }
         }
     }
 

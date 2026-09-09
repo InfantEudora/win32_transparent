@@ -494,18 +494,21 @@ void ApplicationIsoAnimation::RunLogic(){
         }
     }
 
-    //Mouse wheel for zoom
+    //Mouse wheel for zoom, focused only - otherwise it tracks a wheel being used in another
+    //application. InputController drops the delta while unfocused as well.
     static float mouse_delta_sum = 0;
-    if (mouse_delta_sum != 0){
-        vec3 diff = camera->GetForward() - camera_target;
-        float dist = diff.length() * mouse_delta_sum;
-        float delta = dist / 50.0f;
+    if (main_window->f_has_focus){
+        if (mouse_delta_sum != 0){
+            vec3 diff = camera->GetForward() - camera_target;
+            float dist = diff.length() * mouse_delta_sum;
+            float delta = dist / 50.0f;
 
-        camera->MoveForwardBy(dist / 50.0f);
+            camera->MoveForwardBy(dist / 50.0f);
 
-        mouse_delta_sum /= 1.1;
+            mouse_delta_sum /= 1.1;
+        }
+        mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
-    mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 
     //Character input
     if (character && main_window->f_has_focus){

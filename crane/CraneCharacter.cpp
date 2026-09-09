@@ -37,8 +37,8 @@ static vec3 PointOnAngledAxis(float angle,float z_local){
 CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physicsworld, Scene* target_scene, const vec3& base_position):Object(){
     name = "Crane";
 
-    //--- Base: a static slab. This Object IS the base (own mesh/collider, not a child) - same
-    //role as DozerCharacter itself being its own chassis body.
+    //--- Base: a slab that can turn on the spot. This Object IS the base (own mesh/collider,
+    //not a child) - same role as DozerCharacter itself being its own chassis body.
     const float base_half_x = 1.0f, base_half_y = 0.3f, base_half_z = 1.0f;
     if (Object* base_visual = MakeCraneBox(assetmanager,base_half_x*2.0f,base_half_y*2.0f,base_half_z*2.0f)){
         SetMesh(base_visual->GetMesh());
@@ -50,7 +50,17 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     AddPhysics(physicsworld);
     if (physics){
         physics->AddBoxCollider(vec3(base_half_x,base_half_y,base_half_z),vec3(0,0,0),quat().identity());
-        physics->SetStatic(true);
+        //KINEMATIC, not STATIC - see this class's header comment on the slew axis. Infinite mass
+        //either way, so the boom still cannot push the base; the difference is that the solver
+        //sees the slew as a velocity it can carry the hinged boom along with. The collider is
+        //centred on this body's origin, so the angular velocity turns it about its own centre.
+        physics->SetBodyType(rp3d::BodyType::KINEMATIC);
+        //A kinematic body that stopped for a moment would otherwise be allowed to fall asleep,
+        //and a sleeping body ignores the angular velocity set on it - the slew would simply not
+        //start again. Same reason every dynamic body below does this.
+        if (physics->body && physics->body->rigidbody){
+            physics->body->rigidbody->setIsAllowedToSleep(false);
+        }
     }
 
     //--- Geometry: elevation angle from horizontal, boom length, and where the boom's hinge and
@@ -243,6 +253,19 @@ void CraneCharacter::SetHookSpeed(float speed){
     hook_speed_command = clamp(speed,-1.0f,1.0f);
 }
 
+void CraneCharacter::SetSlewSpeed(float speed){
+    slew_speed_command = clamp(speed,-1.0f,1.0f);
+}
+
+float CraneCharacter::GetSlewAngle(){
+    //From the base's own forward vector, not quat::get_yaw() - that one is an asin(), so it folds
+    //back on itself past +-90 degrees, and this axis is explicitly allowed to turn all the way
+    //round. atan2 of the heading gives the full +-180. 0 = the crane's spawn heading, since the
+    //base is created unrotated and only ever turned about Y from there.
+    vec3 forward = GetWorldRotation() * vec3(0,0,-1);
+    return atan2f(-forward.x,-forward.z);
+}
+
 //Stretches a cosmetic box (its long axis = local +Z) between two world points.
 static void SpanVisual(Object* visual,const vec3& from,const vec3& to,float radius){
     vec3 delta = to - from;
@@ -257,6 +280,13 @@ static void SpanVisual(Object* visual,const vec3& from,const vec3& to,float radi
 }
 
 void CraneCharacter::UpdatePhysicsState(){
+    if (physics){
+        //The slew "motor". Set unconditionally, including at 0 - a kinematic body keeps whatever
+        //velocity it was last given forever (nothing damps it, and no force acts on it), so
+        //writing it only when the command is nonzero would leave the crane spinning after the
+        //key came up. Purely angular: the base turns, it never travels.
+        physics->SetAngularVelocity(vec3(0,slew_speed_command * slew_max_rate,0));
+    }
     if (boom_hinge){
         //Negative rotation about the hinge's X axis increases elevation (see ElevationRotation),
         //so a POSITIVE command needs a NEGATIVE motor speed to raise the boom, and raising moves
