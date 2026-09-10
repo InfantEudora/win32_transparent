@@ -65,9 +65,13 @@ public:
     //
     //ONLY callable from a thread that does NOT hold renderer->physics_mutex. The MCP threads
     //qualify. THE DEBUG UI DOES NOT: DrawImGuiUI runs with that mutex held, so waiting here for
-    //the physics thread - which needs the same mutex to reach DrawCommands - would deadlock
-    //instantly. UI code submits and returns; it sees the result on a later frame.
+    //the physics thread - which needs the same mutex to reach DrainCommands - would deadlock
+    //instantly. UI code uses SubmitUICommand below instead.
     objectid_t SubmitCommandAndWait(const SimCommand& cmd, int timeout_ms = 2000);
+
+    //What every debug-UI control that changes the simulation calls: submit and return, never
+    //wait. See the deadlock note above, and the implementation's own comment.
+    void SubmitUICommand(const SimCommand& cmd);
 
     //Generic, app-independent MCP tools (object_list/object_get/object_set_transform/
     //object_move) - the MCP counterpart of the Generic Object UI panel. Registered for
@@ -165,22 +169,42 @@ protected:
     objectid_t hovered_objid = OBJECTID_INVALID;
     objectid_t dragged_objid = OBJECTID_INVALID;
     void CheckObjectSelection();
-    //UI
+
+    //--- Debug UI ---------------------------------------------------------------------------
+    //RenderApplicationUI is still the single call an app's DrawImGuiUI makes; it now hosts a
+    //dockspace and the three windows below rather than being one panel of its own. See the
+    //section comment in Application.cpp for why it was split up and which controls go through
+    //the SimCommand queue.
+    void RenderApplicationUI();
+    void RenderSceneWindow();
+    void RenderInspectorWindow();
+    void RenderEngineWindow();
+
+    //One per Inspector tab. Each takes the object rather than reading selected_object, so a tab
+    //cannot disagree with the header about what it is showing.
+    void RenderInspectorTransformTab(Object* object);
+    void RenderInspectorPhysicsTab(Object* object);
+    void RenderInspectorRenderTab(Object* object);
+    void RenderInspectorAnimationTab(Object* object);
+    void RenderInspectorDebugTab(Object* object);
+    //Eight checkboxes for an 8-bit collision mask. Returns true (and writes `mask`) on a change.
+    bool RenderBitmaskCheckboxes(const char* id, uint32_t& mask);
+
+    //Which of the three windows are up. Toggled from the menu bar's View menu; an app may also
+    //set them before/inside Init() if it wants a different default.
+    bool f_show_scene_window = true;
+    bool f_show_inspector_window = true;
+    bool f_show_engine_window = true;
+
     void UpdateUICameraControls(Camera* camera, int id);
     virtual void RenderDebugMenuBarClass(void);
     void RenderDebugMenuBar();
     void RenderRandTestWindow();
     void RenderShaderUI(Shader* shader);
-    void RenderApplicationUI();
-    void RenderSelectedObjectUI(Object* objec, int ui_camera_id);
-
     void UpdateUIWorldPhysics(PhysicsWorld* physics_world);
-    void UpdateUIPhysics(Physics* world_physics);
 private:
     bool SetupConsole();
     static bool WINAPI ConsoleHandler(DWORD console_event);
-    //UI
-    void UpdateUISceneObjectTree(Scene* scene);
     void UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked);
 };
 

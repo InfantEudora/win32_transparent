@@ -2,6 +2,7 @@
 #include "glad.h"
 
 #include "Application.h"
+#include "imgui_internal.h" //DockBuilder* and ImHashStr, for the default dock layout
 #include "PrecisionSleeper.h"
 #include "OBJLoader.h"
 #include "MCPServer.h"
@@ -587,6 +588,201 @@ void Application::RegisterCoreCommandHandlers(){
             main_scene->AddObject(object);
             return object->GetID();
         });
+
+    //Every physics property the Inspector can change, in one handler. Same shape as
+    //SET_TRANSFORM: one `if` per flag, so a command carrying one property leaves the other eight
+    //alone. The boolean values live at the same bit positions in bool_values as their own flags,
+    //which is what keeps this to one line each - see SimCommand.h.
+    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SET_PHYSICS,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Object* object = main_scene->FindObjectByID(cmd.target);
+            if (!object){
+                debug->Err("SimCommand set_physics: no object with id %u\n",cmd.target);
+                return OBJECTID_INVALID;
+            }
+            //The collision masks live on the Object, not the Physics, so they are reachable even
+            //on an object that has no body yet.
+            if (cmd.flags & SIM_CMD_FLAG_CATEGORY_BITS){
+                object->SetCollisionCategoryBits(cmd.collision_category_bits);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_COLLIDE_BITS){
+                object->SetCollideWithMaskBits(cmd.collide_with_bits);
+            }
+            Physics* physics = object->GetPhysics();
+            if (!physics){
+                //Not an error worth logging: the masks above may well have been the whole point.
+                return object->GetID();
+            }
+            if (cmd.flags & SIM_CMD_FLAG_STATIC){
+                physics->SetStatic(!!(cmd.bool_values & SIM_CMD_FLAG_STATIC));
+            }
+            if (cmd.flags & SIM_CMD_FLAG_GRAVITY){
+                physics->SetGravityEnabled(!!(cmd.bool_values & SIM_CMD_FLAG_GRAVITY));
+            }
+            if (cmd.flags & SIM_CMD_FLAG_ACTIVE){
+                physics->SetActive(!!(cmd.bool_values & SIM_CMD_FLAG_ACTIVE));
+            }
+            if (cmd.flags & SIM_CMD_FLAG_WAKE_UP){
+                physics->WakeUp();
+            }
+            if (cmd.flags & SIM_CMD_FLAG_VELOCITY){
+                physics->SetVelocity(cmd.velocity);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_ANGULAR_VELOCITY){
+                physics->SetAngularVelocity(cmd.angular_velocity);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_FRICTION){
+                physics->SetFrictionCoefficient(cmd.value[0]);
+                //Friction only takes effect on contacts that get re-evaluated, and a pile that has
+                //gone to sleep never re-evaluates - so without this the new value appears to do
+                //nothing until something else disturbs the stack.
+                if (main_scene->physics_world){
+                    main_scene->physics_world->WakeUpEveryone();
+                }
+            }
+            if (cmd.flags & SIM_CMD_FLAG_BOUNCINESS){
+                physics->SetBounciness(cmd.value[1]);
+            }
+            return object->GetID();
+        });
+
+    //The engine's own object types, for the things that come from no asset (Add > Empty/Camera/
+    //Light). Only the scene INSERTION is a command; anything that needs the GL context or the
+    //GLTF loader (importing a skinned mesh, say) stays on the render thread and hands the
+    //finished asset to SPAWN_ASSET afterwards.
+    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_PRIMITIVE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Object* object = NULL;
+            switch (cmd.subtype){
+                case SIM_PRIMITIVE_EMPTY:{
+                    object = new Object();
+                    object->name = "Empty";
+                    break;
+                }
+                case SIM_PRIMITIVE_CAMERA:{
+                    Camera* camera = new Camera();
+                    camera->name = "New Camera";
+                    //A mesh so the thing can be seen and picked in the viewport. Copying an
+                    //asset's mesh pointer touches no GL state, so it is safe here.
+                    if (assetmanager && assetmanager->GetObjectFromAsset("editor_camera",camera)){
+                        camera->material_slot[0] = 3;
+                    }
+                    camera->SetPosition(vec3(1,2,1));
+                    camera->SetLookAt(vec3());
+                    camera->SetupPerspective(renderer->width,renderer->height,45,0.1,100);
+                    object = camera;
+                    break;
+                }
+                case SIM_PRIMITIVE_DIRECTIONAL_LIGHT:{
+                    DirectionalLight* light = new DirectionalLight();
+                    light->name = "Directional Light";
+                    object = light;
+                    break;
+                }
+                case SIM_PRIMITIVE_POINT_LIGHT:{
+                    PointLight* light = new PointLight();
+                    light->name = "Point Light";
+                    object = light;
+                    break;
+                }
+                default:{
+                    debug->Err("SimCommand spawn_primitive: unknown subtype %u\n",cmd.subtype);
+                    return OBJECTID_INVALID;
+                }
+            }
+            //After construction, so an explicit placement wins over the type's own default.
+            if (cmd.flags & SIM_CMD_FLAG_POSITION){
+                object->SetPosition(cmd.position);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_ROTATION){
+                object->SetRotation(cmd.rotation);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_SCALE){
+                object->SetScale(cmd.scale);
+            }
+            main_scene->AddObject(object);
+            return object->GetID();
+        });
+
+    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_DUPLICATE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Object* source = main_scene->FindObjectByID(cmd.target);
+            if (!source){
+                debug->Err("SimCommand duplicate: no object with id %u\n",cmd.target);
+                return OBJECTID_INVALID;
+            }
+            Object* duplicated = new Object(source);
+            main_scene->AddObject(duplicated);
+            //Deliberately AFTER AddObject, and only when the submitter asked for it: a copy that
+            //starts inactive can be dragged into place before it begins falling, which is why the
+            //Inspector's Duplicate button clears the flag.
+            Physics* physics = duplicated->GetPhysics();
+            if (physics && (cmd.flags & SIM_CMD_FLAG_ACTIVE)){
+                physics->SetActive(!!(cmd.bool_values & SIM_CMD_FLAG_ACTIVE));
+            }
+            return duplicated->GetID();
+        });
+
+    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_DESTROY,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Object* object = main_scene->FindObjectByID(cmd.target);
+            if (!object){
+                debug->Err("SimCommand destroy: no object with id %u\n",cmd.target);
+                return OBJECTID_INVALID;
+            }
+            objectid_t id = object->GetID();
+            //MARKS it - see the note on SIM_CMD_OBJECT_DESTROY. Waking the world first, while the
+            //body still exists, is what lets anything resting on it start falling.
+            Physics* physics = object->GetPhysics();
+            if (physics && physics->world){
+                physics->world->WakeUpEveryone();
+            }
+            object->Destroy();
+            return id;
+        });
+
+    main_scene->RegisterCommandHandler(SIM_CMD_WORLD_SET_GRAVITY,
+        [this](const SimCommand& cmd) -> objectid_t {
+            if (!main_scene->physics_world){
+                debug->Err("SimCommand set_gravity: scene has no physics world\n");
+                return OBJECTID_INVALID;
+            }
+            main_scene->physics_world->SetGravity(cmd.velocity);
+            return OBJECTID_INVALID; //no object involved - the sequence alone says it landed
+        });
+
+    //The collider gizmo resolves its rp3d::Collider* HERE, on the physics thread, from the index
+    //the command carried - which is the point: the pointer never travels, so it cannot be stale
+    //and cannot end up in a recording.
+    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_COLLIDER_GIZMO,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Object* object = main_scene->FindObjectByID(cmd.target);
+            Physics* physics = object ? object->GetPhysics() : NULL;
+            if (!physics || !physics->body || !physics->body->rigidbody){
+                debug->Err("SimCommand collider_gizmo: object %u has no rigidbody\n",cmd.target);
+                return OBJECTID_INVALID;
+            }
+            if (cmd.subtype >= physics->body->rigidbody->getNbColliders()){
+                debug->Err("SimCommand collider_gizmo: object %u has no collider %u\n",
+                           cmd.target,cmd.subtype);
+                return OBJECTID_INVALID;
+            }
+            ObjectCollider* gizmo = new ObjectCollider();
+            gizmo->HookTargetCollider(physics->body->rigidbody->getCollider(cmd.subtype));
+            main_scene->AddObject(gizmo);
+            return gizmo->GetID();
+        });
+}
+
+//Every UI path that changes the simulation goes through here. The UI must NEVER wait for a
+//command: DrawImGuiUI runs with renderer->physics_mutex held, and the physics thread needs that
+//same mutex to reach Scene::DrainCommands, so blocking on it deadlocks on the spot. So this is
+//deliberately fire-and-forget, and the panel simply shows the new value on a later frame - which
+//is exactly how an ImGui widget behaves anyway, since it re-reads the object every frame.
+void Application::SubmitUICommand(const SimCommand& cmd){
+    if (main_scene){
+        main_scene->SubmitCommand(cmd);
+    }
 }
 
 objectid_t Application::SubmitCommandAndWait(const SimCommand& cmd, int timeout_ms){
@@ -785,6 +981,197 @@ void Application::RegisterCoreMCPTools(){
             return result;
         });
 
+    //The raw queue, exposed. Every OTHER command-shaped tool here (object_set_transform,
+    //object_spawn, tank_reset) is a friendly wrapper that builds one specific SimCommand; this is
+    //the generic one, and it exists for two reasons. It is how the command handlers get TESTED -
+    //most of them are otherwise only reachable by clicking a button in the Inspector, so they
+    //would ship unexercised - and it is what a future record/replay harness needs, since a
+    //recording is a stream of exactly these.
+    MCPServer::Get()->RegisterTool("sim_command",
+        "Submit a raw SimCommand to the simulation's command queue and wait for the physics "
+        "thread to apply it. `type` is a command name (object_set_transform, object_set_physics, "
+        "object_spawn_asset, object_spawn_primitive, object_duplicate, object_destroy, "
+        "world_set_gravity, object_spawn_collider_gizmo) or a raw number for an app's own type. "
+        "Any other field given is carried in the command and its presence flag set; fields left "
+        "out are not touched by the command. Returns the applied sequence number and the id of "
+        "the object the handler created or acted on.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"type", {{"description","command name, or a raw type number for an app-specific command"}}},
+                {"subtype", {{"type","number"},{"description","variant within the type: primitive kind for object_spawn_primitive (0 empty, 1 camera, 2 directional light, 3 point light), collider index for object_spawn_collider_gizmo"}}},
+                {"target", {{"type","number"},{"description","object id the command is about"}}},
+                {"asset", {{"type","string"},{"description","asset name - hashed to its id here, see asset_list"}}},
+                {"asset_id", {{"type","number"},{"description","asset id, wins over `asset`"}}},
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}},
+                {"rotation", {{"type","array"},{"items",{{"type","number"}}},{"minItems",4},{"maxItems",4},{"description","[x,y,z,w] quaternion"}}},
+                {"axis_degrees", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","rotation in degrees about each axis, applied X, Y, Z"}}},
+                {"yaw_degrees", {{"type","number"}}},
+                {"scale", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}},
+                {"velocity", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","linear velocity, and the gravity vector for world_set_gravity"}}},
+                {"angular_velocity", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}},
+                {"static", {{"type","boolean"}}},
+                {"gravity", {{"type","boolean"},{"description","whether the body reacts to gravity"}}},
+                {"active", {{"type","boolean"}}},
+                {"wake_up", {{"type","boolean"},{"description","true to wake the body - a trigger, not a state"}}},
+                {"category_bits", {{"type","number"},{"description","collision category mask"}}},
+                {"collide_with_bits", {{"type","number"},{"description","collide-with mask"}}},
+                {"friction", {{"type","number"}}},
+                {"bounciness", {{"type","number"}}}
+            }},
+            {"required", json::array({"type"})}
+        },
+        [this](const json &args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            SimCommand cmd;
+
+            //--- type ---
+            if (!args.contains("type")){
+                return json{ {"error","give a command type"} };
+            }
+            const json& type_arg = args.at("type");
+            if (type_arg.is_number()){
+                cmd.type = (uint16_t)type_arg.get<uint32_t>();
+            }else if (type_arg.is_string()){
+                //Names rather than numbers at the boundary, for the same reason durations are
+                //milliseconds here and ticks inside: a caller should not have to know the enum.
+                const std::string name = type_arg.get<std::string>();
+                if (name == "object_set_transform")            cmd.type = SIM_CMD_OBJECT_SET_TRANSFORM;
+                else if (name == "object_set_physics")          cmd.type = SIM_CMD_OBJECT_SET_PHYSICS;
+                else if (name == "object_spawn_asset")          cmd.type = SIM_CMD_OBJECT_SPAWN_ASSET;
+                else if (name == "object_spawn_primitive")      cmd.type = SIM_CMD_OBJECT_SPAWN_PRIMITIVE;
+                else if (name == "object_duplicate")            cmd.type = SIM_CMD_OBJECT_DUPLICATE;
+                else if (name == "object_destroy")              cmd.type = SIM_CMD_OBJECT_DESTROY;
+                else if (name == "world_set_gravity")           cmd.type = SIM_CMD_WORLD_SET_GRAVITY;
+                else if (name == "object_spawn_collider_gizmo") cmd.type = SIM_CMD_OBJECT_SPAWN_COLLIDER_GIZMO;
+                else return json{ {"error","unknown command type '" + name + "'"} };
+            }else{
+                return json{ {"error","type must be a command name or a number"} };
+            }
+
+            //--- payload. Presence in the JSON is what sets the flag, which is exactly the
+            //contract the struct itself has: a field nobody mentioned is not written. ---
+            std::string error;
+            vec3 v;
+            if (args.contains("subtype")){
+                cmd.subtype = (uint32_t)args.at("subtype").get<uint32_t>();
+            }
+            if (args.contains("target")){
+                cmd.target = (objectid_t)args.at("target").get<uint32_t>();
+            }
+            if (args.contains("asset_id")){
+                cmd.asset = (assetid_t)args.at("asset_id").get<uint32_t>();
+            }else if (args.contains("asset")){
+                cmd.asset = AssetIDFromName(args.at("asset").get<std::string>().c_str());
+            }
+            if (args.contains("position")){
+                if (!JsonToVec3(args.at("position"),cmd.position)){
+                    return json{ {"error","position must be [x,y,z]"} };
+                }
+                cmd.flags |= SIM_CMD_FLAG_POSITION;
+            }
+            if (RotationFromArgs(args,cmd.rotation,error)){
+                cmd.flags |= SIM_CMD_FLAG_ROTATION;
+            }else if (!error.empty()){
+                return json{ {"error",error} };
+            }
+            if (args.contains("scale")){
+                if (!JsonToVec3(args.at("scale"),cmd.scale)){
+                    return json{ {"error","scale must be [x,y,z]"} };
+                }
+                cmd.flags |= SIM_CMD_FLAG_SCALE;
+            }
+            if (args.contains("velocity")){
+                if (!JsonToVec3(args.at("velocity"),cmd.velocity)){
+                    return json{ {"error","velocity must be [x,y,z]"} };
+                }
+                cmd.flags |= SIM_CMD_FLAG_VELOCITY;
+            }
+            if (args.contains("angular_velocity")){
+                if (!JsonToVec3(args.at("angular_velocity"),cmd.angular_velocity)){
+                    return json{ {"error","angular_velocity must be [x,y,z]"} };
+                }
+                cmd.flags |= SIM_CMD_FLAG_ANGULAR_VELOCITY;
+            }
+            //The booleans, whose value lives at the same bit position as their own flag.
+            struct BoolArg{ const char* name; uint32_t flag; };
+            const BoolArg bool_args[] = {
+                {"static",  SIM_CMD_FLAG_STATIC},
+                {"gravity", SIM_CMD_FLAG_GRAVITY},
+                {"active",  SIM_CMD_FLAG_ACTIVE},
+            };
+            for (const BoolArg& b:bool_args){
+                if (args.contains(b.name)){
+                    cmd.flags |= b.flag;
+                    if (args.at(b.name).get<bool>()){
+                        cmd.bool_values |= b.flag;
+                    }
+                }
+            }
+            if (args.value("wake_up",false)){
+                cmd.flags |= SIM_CMD_FLAG_WAKE_UP; //a trigger, so nothing in bool_values
+            }
+            if (args.contains("category_bits")){
+                cmd.collision_category_bits = (uint32_t)args.at("category_bits").get<uint32_t>();
+                cmd.flags |= SIM_CMD_FLAG_CATEGORY_BITS;
+            }
+            if (args.contains("collide_with_bits")){
+                cmd.collide_with_bits = (uint32_t)args.at("collide_with_bits").get<uint32_t>();
+                cmd.flags |= SIM_CMD_FLAG_COLLIDE_BITS;
+            }
+            if (args.contains("friction")){
+                cmd.value[0] = args.at("friction").get<float>();
+                cmd.flags |= SIM_CMD_FLAG_FRICTION;
+            }
+            if (args.contains("bounciness")){
+                cmd.value[1] = args.at("bounciness").get<float>();
+                cmd.flags |= SIM_CMD_FLAG_BOUNCINESS;
+            }
+
+            //Submitted and waited on, so the reply can describe what actually happened. Safe
+            //here: an MCP handler holds no locks - see SubmitCommandAndWait.
+            uint32_t sequence = main_scene->SubmitCommand(cmd);
+            objectid_t result = OBJECTID_INVALID;
+            bool applied = false;
+            for (int waited_ms = 0; waited_ms < 2000; waited_ms += 5){
+                if (main_scene->GetAppliedCommandSequence() >= sequence){
+                    result = main_scene->GetCommandResult(sequence);
+                    applied = true;
+                    break;
+                }
+                Sleep(5);
+            }
+            json out;
+            out["sequence"] = sequence;
+            out["applied"] = applied;
+            out["version"] = cmd.version;
+            out["flags"] = cmd.flags;
+            if (!applied){
+                out["error"] = "the command was not applied within 2000 ms";
+                return out;
+            }
+            out["object_id"] = result;
+            if (result != OBJECTID_INVALID){
+                if (Object* object = main_scene->FindObjectByID(result)){
+                    out["object"] = ObjectToJson(object,true);
+                }else{
+                    //A destroy reports the id it acted on, and that object is gone by now.
+                    out["note"] = "the object is no longer in the scene";
+                }
+            }else if (cmd.type != SIM_CMD_WORLD_SET_GRAVITY){
+                //"applied" only means the queue drained it. A handler that found no such object,
+                //or no handler at all, still counts as applied - so say so, or a caller reads a
+                //declined command as a successful one. world_set_gravity is the legitimate case
+                //of a command that concerns no object.
+                out["note"] = "the command was drained but its handler acted on nothing - "
+                              "bad target, unknown subtype, or no handler for this type. "
+                              "See the application log.";
+            }
+            return out;
+        });
+
     MCPServer::Get()->RegisterTool("asset_list",
         "List the loaded assets - the things object_spawn can build an object from - with the "
         "stable id each one is addressed by. The id is a hash of the asset's name (not a load "
@@ -962,7 +1349,10 @@ void Application::UpdateUICameraControls(Camera* camera,int id){
     std::string title = camera->name + "##" + std::to_string(id) +   " Camera Controls";
 
     if (ImGui::CollapsingHeader(title.c_str())){
-        float znear = main_scene->camera->viewport.znear;
+        //From THIS camera, not main_scene's - the panel also renders for a selected camera
+        //object, and seeding the widget from the main camera used to write the main camera's
+        //znear onto whichever camera was being inspected.
+        float znear = camera->viewport.znear;
         if (ImGui::DragFloat("Camera ZNear",&znear,0.01,0.0,10.0)){
             camera->viewport.znear = znear;
             camera->CalculateLookatMatrix();
@@ -1009,15 +1399,6 @@ void Application::UpdateUICameraControls(Camera* camera,int id){
     }
 }
 
-void Application::UpdateUISceneObjectTree(Scene* scene){
-    if (ImGui::TreeNode("Scene Root")){
-        for (Object* object:scene->renderer->objects){
-            UpdateUISceneObjectTreeNode(object,NULL);
-        }
-        ImGui::TreePop();
-    }
-}
-
 //Renders all things related to world physics
 void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
     if (!physics_world){
@@ -1051,9 +1432,15 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
             ImGui::SameLine();
             ImGui::Text("(%i pending)",pending_steps);
         }
+        //Gravity is simulation state, so it goes through the queue like everything else that
+        //is. Pause/step/time factor/TPS below do NOT: they change how often a tick runs in real
+        //time, never what a tick computes, so they are not part of what a replay reproduces.
         vec3 gravity = physics_world->GetGravity();
         if (ImGui::DragFloat3("Gravity (m/s^2)",(float*)&gravity,0.1f,-20,20)){
-            physics_world->SetGravity(gravity);
+            SimCommand cmd;
+            cmd.type = SIM_CMD_WORLD_SET_GRAVITY;
+            cmd.velocity = gravity;
+            SubmitUICommand(cmd);
         }
         if (ImGui::DragFloat("Time Factor (tick rate)",&physics_time_factor,0.01f,0.1f,2.0f)){
             //Nothing to do here, it's applied in the physics update loop - and it changes how
@@ -1067,71 +1454,39 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
     }
 
 }
-//Renders all things related to world physics
-void Application::UpdateUIPhysics(Physics* physics){
-
-}
-
-void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked){
-    objectid_t id = object->GetID();
-    long long p = id; //To suppress warning from 32-bit pointer
-    Object* child = object->GetChild(0);
-    if (child){
-        if (ImGui::TreeNodeEx((void*)p,0 , "Object #%i - %s",id,object->name.c_str())){
-            if (ImGui::IsItemClicked() && (lastclicked == NULL)){
-                selected_object = object;
-                lastclicked = object;
-                debug->Info("Tree -> Selected %s\n",object->name.c_str());
-            }
-            for (Object* child:object->children){
-                UpdateUISceneObjectTreeNode(child,lastclicked);
-            }
-            ImGui::TreePop();
-        }
-    }else{
-        if (ImGui::TreeNodeEx((void*)p,ImGuiTreeNodeFlags_Bullet , "Object #%i - %s",id,object->name.c_str())){
-            if (ImGui::IsItemClicked() && (lastclicked == NULL)){
-                selected_object = object;
-                lastclicked = object;
-                debug->Info("Tree -> Selected %s\n",object->name.c_str());
-            }
-            ImGui::TreePop();
-        }
-    }
-}
-
 void Application::RenderDebugMenuBarClass(){
     return;
 }
 
 void Application::RenderDebugMenuBar(){
     if (ImGui::BeginMainMenuBar()){
+        //Creating an object is a change to the simulation, so every item here submits a command
+        //and the object appears on the next tick - see the Debug UI section comment. The one
+        //exception is the GLTF import below, which cannot be a command.
         if (main_scene && ImGui::BeginMenu("Add Object")){
             if (ImGui::MenuItem("Empty")){
-                Object* empty = new Object();
-                main_scene->AddObject(empty);
+                SimCommand cmd;
+                cmd.type = SIM_CMD_OBJECT_SPAWN_PRIMITIVE;
+                cmd.subtype = SIM_PRIMITIVE_EMPTY;
+                SubmitUICommand(cmd);
             }
             if (ImGui::MenuItem("Camera")){
-                Camera* camera = new Camera();
-                camera->name = "New Camera";
-                main_scene->AddObject(camera);
-                if (assetmanager && assetmanager->GetObjectFromAsset("editor_camera",camera)){
-                    camera->SetPosition(vec3(1,2,1));
-                    camera->material_slot[0] = 3;
-
-                }
-                camera->SetLookAt(vec3());
-                camera->SetupPerspective(main_scene->renderer->width,main_scene->renderer->height,45,0.1,100);
+                SimCommand cmd;
+                cmd.type = SIM_CMD_OBJECT_SPAWN_PRIMITIVE;
+                cmd.subtype = SIM_PRIMITIVE_CAMERA;
+                SubmitUICommand(cmd);
             }
             if (ImGui::MenuItem("DirectionalLight")){
-                DirectionalLight* l = new DirectionalLight();
-                l->name = "Directional Light";
-                main_scene->AddObject(l);
+                SimCommand cmd;
+                cmd.type = SIM_CMD_OBJECT_SPAWN_PRIMITIVE;
+                cmd.subtype = SIM_PRIMITIVE_DIRECTIONAL_LIGHT;
+                SubmitUICommand(cmd);
             }
             if (ImGui::MenuItem("PointLight")){
-                PointLight* l = new PointLight();
-                l->name = "Point Light";
-                main_scene->AddObject(l);
+                SimCommand cmd;
+                cmd.type = SIM_CMD_OBJECT_SPAWN_PRIMITIVE;
+                cmd.subtype = SIM_PRIMITIVE_POINT_LIGHT;
+                SubmitUICommand(cmd);
             }
             ImGui::Separator();
             if (ImGui::BeginMenu("Objects From Assets")){
@@ -1140,9 +1495,12 @@ void Application::RenderDebugMenuBar(){
                 }else{
                     for (Asset* asset:assetmanager->assets){
                         if (ImGui::MenuItem(asset->name.c_str())){
-                            Object* object = assetmanager->GetObjectFromAsset(asset->name.c_str());
-                            object->name = asset->name;
-                            main_scene->AddObject(object);
+                            //By id, not by name: the id IS the name, hashed, and it is what fits
+                            //in a fixed payload - see AssetIDFromName in AssetManager.h.
+                            SimCommand cmd;
+                            cmd.type = SIM_CMD_OBJECT_SPAWN_ASSET;
+                            cmd.asset = asset->id;
+                            SubmitUICommand(cmd);
                         }
                     }
                 }
@@ -1161,6 +1519,14 @@ void Application::RenderDebugMenuBar(){
                             std::vector<std::string>skinned_meshes = gltfloader.GetSkinnedMeshNames();
                             for (std::string skinned_mesh_name:skinned_meshes){
                                 if (ImGui::MenuItem(skinned_mesh_name.c_str())){
+                                    //DELIBERATELY NOT a command. Importing from the GLTF loader
+                                    //builds meshes, which is render-thread work (see
+                                    //GetAssetsFromGLTF, which Fatal()s off it), and a pointer to
+                                    //the result cannot travel in a SimCommand. Asset import is
+                                    //authoring, not simulation - it happens outside the tick and
+                                    //is not part of what a replay reproduces. Once imported, the
+                                    //asset spawns through SIM_CMD_OBJECT_SPAWN_ASSET like any
+                                    //other.
                                     PlayerCharacter* character = new PlayerCharacter();
                                     Skeleton* skeleton = dynamic_cast<Skeleton*>(character);
                                     gltfloader.GetSkeleton(name.c_str(),assetmanager,skeleton);
@@ -1204,6 +1570,13 @@ void Application::RenderDebugMenuBar(){
                 }
                 ImGui::EndMenu();
             }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("View")){
+            ImGui::MenuItem("Scene","",&f_show_scene_window);
+            ImGui::MenuItem("Inspector","",&f_show_inspector_window);
+            ImGui::MenuItem("Engine","",&f_show_engine_window);
             ImGui::EndMenu();
         }
 
@@ -1336,616 +1709,731 @@ void Application::RenderShaderUI(Shader* shader){
     ImGui::End();
 }
 
+//--- Debug UI -----------------------------------------------------------------------------------
+//
+//Three windows, not one: a Scene tree, an Inspector for whatever is selected, and an Engine panel
+//for everything that is application- or scene-wide. They used to be one "Generic Object UI"
+//window, which had grown to the point where half of it was renderer/performance/material settings
+//and selecting an object unrolled fifteen collapsing headers of property names down the screen.
+//
+//The Inspector uses a TAB BAR rather than a stack of collapsing headers, which is the whole fix
+//for that: one line of tabs, one section's worth of controls on screen, and a tab that does not
+//apply (no mesh, no physics, no skeleton) simply is not there - as opposed to the three disabled
+//"No Mesh"/"No Physics"/"No Skeleton" headers that used to spend three lines each saying what an
+//object ISN'T.
+//
+//EVERY control here that changes the simulation submits a SimCommand (see core/SimCommand.h)
+//instead of touching the object. Note this was never a RACE - DrawImGuiUI runs with
+//renderer->physics_mutex held, so it is already mutually exclusive with the whole physics tick.
+//The reason is determinism: a mutation applied from here lands at a defined point in a defined
+//tick and can be recorded, which is what makes a run replayable. Controls that only affect what
+//is DRAWN (renderer flags, materials, material slots, light colour, the camera) stay direct -
+//they are not simulation state and putting them in the stream would perturb a replay.
+
+//Builds the shell of a command for one object, so the call sites below stay one or two lines.
+static SimCommand ObjectCommand(uint16_t type, objectid_t target){
+    SimCommand cmd;
+    cmd.type = type;
+    cmd.target = target;
+    return cmd;
+}
+
+//A boolean property is a PAIR of bits - the flag says "I am setting this", the bit at the same
+//position in bool_values says what to. See the SIM_CMD_FLAG_* comment in SimCommand.h.
+static void SetCommandBool(SimCommand& cmd, uint32_t flag, bool value){
+    cmd.flags |= flag;
+    if (value){
+        cmd.bool_values |= flag;
+    }else{
+        cmd.bool_values &= ~flag;
+    }
+}
+
 void Application::RenderApplicationUI(){
-    //For generic Objects and parameters
-    ImGui::Begin("Generic Object UI");
-    if (ImGui::CollapsingHeader("Application")){
-        if (main_scene){
-            ImGui::Text("Main Scene             : %s",main_scene->name.c_str());
+    //One dockspace covering the viewport, with a transparent central node so the 3D scene shows
+    //through it and the mouse still reaches the world for picking (see CheckObjectSelection,
+    //which gates on ImGui::GetIO().WantCaptureMouse). Without PassthruCentralNode the host window
+    //would paint over the whole viewport and swallow every click.
+    const ImGuiID dockspace_id = ImHashStr("WindMainDockSpace");
+
+    //Default layout, once, and only if imgui.ini restored nothing - otherwise a layout the user
+    //arranged by hand would be thrown away on every start. Everything docks LEFT: Scene and
+    //Engine share the upper node as tabs, the Inspector takes the lower one, which is the
+    //arrangement that keeps the tree visible while properties are being edited.
+    static bool dock_layout_checked = false;
+    if (!dock_layout_checked){
+        dock_layout_checked = true;
+        if (ImGui::DockBuilderGetNode(dockspace_id) == NULL){
+            ImGui::DockBuilderAddNode(dockspace_id,ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspace_id,ImGui::GetMainViewport()->WorkSize);
+            ImGuiID left_id = 0;
+            ImGuiID centre_id = 0;
+            ImGui::DockBuilderSplitNode(dockspace_id,ImGuiDir_Left,0.24f,&left_id,&centre_id);
+            ImGuiID left_top_id = 0;
+            ImGuiID left_bottom_id = 0;
+            ImGui::DockBuilderSplitNode(left_id,ImGuiDir_Up,0.40f,&left_top_id,&left_bottom_id);
+            ImGui::DockBuilderDockWindow("Scene",left_top_id);
+            ImGui::DockBuilderDockWindow("Engine",left_top_id);
+            ImGui::DockBuilderDockWindow("Inspector",left_bottom_id);
+            ImGui::DockBuilderFinish(dockspace_id);
+        }
+    }
+    ImGui::DockSpaceOverViewport(dockspace_id,NULL,ImGuiDockNodeFlags_PassthruCentralNode);
+
+    if (f_show_scene_window){
+        RenderSceneWindow();
+    }
+    if (f_show_inspector_window){
+        RenderInspectorWindow();
+    }
+    if (f_show_engine_window){
+        RenderEngineWindow();
+    }
+}
+
+//--- Scene window -------------------------------------------------------------------------------
+
+void Application::RenderSceneWindow(){
+    ImGui::Begin("Scene",&f_show_scene_window);
+    if (scenes.empty()){
+        ImGui::TextDisabled("No scenes");
+        ImGui::End();
+        return;
+    }
+
+    //A name filter, because the tree is the primary way to find things and a real scene runs to
+    //dozens of objects (the tank scene is 59). While it has text the tree is replaced by a FLAT
+    //list of every match at any depth - filtering a tree in place would either hide the matches
+    //inside collapsed parents or force every parent open.
+    static char name_filter[64] = {};
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##ObjectFilter","filter by name",name_filter,sizeof(name_filter));
+    bool filtering = (name_filter[0] != 0);
+
+    for (Scene* scene:scenes){
+        ImGui::PushID(scene);
+        int num_objects = scene->renderer ? (int)scene->renderer->objects.size() : 0;
+        const char* active = (scene == main_scene) ? " (active)" : "";
+        ImGui::SeparatorText((scene->name + active).c_str());
+
+        if (filtering){
+            int matches = 0;
+            scene->ForEachObject([&](Object* object){
+                if (object->name.find(name_filter) == std::string::npos){
+                    return;
+                }
+                matches++;
+                bool selected = (object == selected_object);
+                //snprintf, not sprintf: unlike every other label here this one interpolates an
+                //object NAME, whose length comes from an asset or a GLTF file.
+                char label[160];
+                snprintf(label,sizeof(label),"#%lu %s",(unsigned long)object->GetID(),object->name.c_str());
+                if (ImGui::Selectable(label,selected)){
+                    selected_object = object;
+                }
+            });
+            ImGui::TextDisabled("%i of %i objects match",matches,num_objects);
         }else{
-            ImGui::Text("Main Scene             : NULL");
-        }
-        ImGui::Separator();
-        ImGui::Text("Scenes");
-        for (Scene* scene:scenes){
-            ImGui::Text("Scene             : %s",scene->name.c_str());
-            UpdateUISceneObjectTree(scene);
-        }
-    }
-
-    //So the same camera panel has a different ImGUI ID.
-    int ui_camid = 0;
-    if (main_scene){
-        UpdateUICameraControls(main_scene->camera ,ui_camid);
-        UpdateUIWorldPhysics(main_scene->physics_world);
-    }
-
-
-    if (ImGui::CollapsingHeader("Input")){
-        ImGui::Text("Window In Focus          : %s",main_window->f_has_focus ? "True" : "False");
-        ImGui::Text("Mouser Over Window       : %s",main_window->inputcontroller->IsMouseOverWindow() ? "True" : "False");
-        ImGui::Text("ImGui.WantCaptureMouse   : %s",ImGui::GetIO().WantCaptureMouse ? "True" : "False");
-
-        vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
-        ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
-
-        vec3 hov_pos = main_scene->inputcontroller->GetHoveredPosition();
-        ImGui::Text("Position at mouse : %.3f, %.3f, %.3f",hov_pos.x,hov_pos.y,hov_pos.z);
-
-        if (!hovered_object){
-            ImGui::Text("No Object Hovered");
-        }else{
-            ImGui::Text("Hovered Object Name: %s",hovered_object->name.c_str());
-        }
-    }
-
-
-    if (ImGui::CollapsingHeader("Performance")){
-        bool sync = renderer->GetVSync();
-        if (ImGui::Checkbox("V-Sync", &sync)){
-            renderer->SetVSync(sync);
-        }
-        ImGui::Text("Renderer Time : %8.1f us  (%5.2f ms)", renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f);
-        ImGui::Text("Frame Time    : %8.2f FPS (%5.2f ms)", 1000000.0f/tmr_render_loop->avg,tmr_render_loop->avg/1000.0f );
-
-        ImGui::Text("Physics Loop  : %8.2f TPS (%5.2f ms)", 1000000.0f/tmr_physics_loop->avg,tmr_physics_loop->avg/1000.0f );
-        ImGui::Text("Physics Sleep : %8.1f us  (%5.2f ms)", tmr_physics_sleep->avg,tmr_physics_sleep->avg/1000.0f );
-        ImGui::Text("Physics Time  : %8.1f us  (%5.2f ms)", tmr_physics->avg,tmr_physics->avg/1000.0f );
-
-        ImGui::Text("Scene - Renderable Objects  : %i", main_scene->renderer->renderable_objects.size());
-        ImGui::Text("Scene - Unique Meshes       : %i", main_scene->renderer->unique_meshes.size());
-        ImGui::Text("Scene - Batches             : %i", main_scene->renderer->unique_mesh_batches.size());
-    }
-
-    if (ImGui::CollapsingHeader("Renderer")){
-        ImGui::Text(    "Normal Mapping     :");ImGui::SameLine();
-        ImGui::Checkbox("##1", &renderer->f_normal_mapping);
-        ImGui::Text(    "SSAO               :");ImGui::SameLine();
-        ImGui::Checkbox("##2", &renderer->f_ssao);
-        ImGui::Text(    "Render Skybox      :");ImGui::SameLine();
-        ImGui::Checkbox("##3", &renderer->f_render_skybox);
-        ImGui::Text(    "Render Reflections :");ImGui::SameLine();
-        ImGui::Checkbox("##4", &renderer->f_use_reflections);
-
-        int view_buffer = renderer->view_buffer;
-        if (ImGui::SliderInt("View Buffer      : ",&view_buffer,0,8)){
-            renderer->SelectViewBuffer(view_buffer);
-        }
-
-        int num_samples = renderer->aa_samples;
-        if (ImGui::SliderInt("MSAA Num Samples : ",&num_samples,1,16)){
-            renderer->SetNumAASamples(num_samples);
-        }
-
-        if (ImGui::SliderFloat("Alpha Clip     : ",&renderer->alpha_clip,0.0f,1.0f)){
-
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Window")){
-        ImGui::Text(    "Current Size   : %i x %i", main_window->width,main_window->height);
-    }
-
-    if (ImGui::CollapsingHeader("Assets")){
-        for (Asset* asset: assetmanager->assets){
-            ImGui::Text("Asset  : %s", asset->name.c_str());
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Materials")){
-        ImGui::Text(    "Num Materials  : %i", renderer->GetNumMaterials());
-        int n =0;
-        for (Material& material: renderer->materials){
-            ImGui::Text("Material  : %s", material.name.c_str());
-            ImGui::Text("GLSL Material Properties");
-            ImGui::Text(" diffuse_texture  : %i", material.glsl_material.diffuse_texture);
-
-            ImGui::PushID(n++);
-            ImGui::DragFloat(" Metallic", (float*)&material.glsl_material.metallic,0.01f,0,1);
-            ImGui::DragFloat(" Roughness", (float*)&material.glsl_material.roughness,0.01f,0,1);
-            ImGui::DragFloat(" Brightness", (float*)&material.glsl_material.brightness,0.01f,0,10);
-            ImGui::ColorEdit4(" GLSL Color", (float*)&material.glsl_material.color, ImGuiColorEditFlags_DisplayRGB);
-            ImGui::PopID();
-
-        }
-    }
-
-    if (ImGui::CollapsingHeader("[TEST] Ray - Plane Intersection")){
-        plane& p = projection_plane;
-
-        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
-
-        ray r = main_scene->camera->GetPixelRay(px);
-        ImGui::BeginDisabled();
-        ImGui::DragInt2("Mouse Position", (int*)&px, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Ray Origin", (float*)&r.origin, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Ray Direction", (float*)&r.direction, 0.01f, -1.0f, 1.0f);
-        ImGui::EndDisabled();
-        ImGui::Separator();
-
-
-        ImGui::DragFloat3("Plane Origin", (float*)&p.pos, 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat3("Plane Normal", (float*)&p.normal, 0.01f, -1.0f, 1.0f);
-
-        vec3 at = {};
-        bool intersect = r.intersects_plane(p,at);
-
-        if (intersect){
-            ImGui::DragFloat3("Intersection at", (float*)&at, 0.01f, -1.0f, 1.0f);
-            //Move the object there?
-            if (selected_object){
-                selected_object->SetPosition(at);
+            ImGui::TextDisabled("%i root objects",num_objects);
+            for (Object* object:scene->renderer->objects){
+                UpdateUISceneObjectTreeNode(object,NULL);
             }
-        }else{
-            ImGui::Text("No intersection");
         }
+        ImGui::PopID();
     }
-
-    RenderSelectedObjectUI(selected_object, ui_camid);
-
-
     ImGui::End();
 }
 
-//Renders a set of collapsing headers for supplied object
-void Application::RenderSelectedObjectUI(Object* object, int ui_camera_id){
+void Application::UpdateUISceneObjectTreeNode(Object* object, Object* lastclicked){
+    objectid_t id = object->GetID();
+    long long p = id; //To suppress warning from 32-bit pointer
 
-    ImGui::Separator();
+    //Highlighting the selected row is what makes the tree usable as a selection widget rather
+    //than just a listing - before this, nothing in it showed what was selected.
+    ImGuiTreeNodeFlags flags = 0;
+    if (object == selected_object){
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+    if (object->GetChild(0) == NULL){
+        flags |= ImGuiTreeNodeFlags_Bullet;
+    }
+
+    if (ImGui::TreeNodeEx((void*)p,flags,"Object #%i - %s",id,object->name.c_str())){
+        if (ImGui::IsItemClicked() && (lastclicked == NULL)){
+            selected_object = object;
+            lastclicked = object;
+            debug->Info("Tree -> Selected %s\n",object->name.c_str());
+        }
+        for (Object* child:object->children){
+            UpdateUISceneObjectTreeNode(child,lastclicked);
+        }
+        ImGui::TreePop();
+    }
+}
+
+//--- Inspector ----------------------------------------------------------------------------------
+
+void Application::RenderInspectorWindow(){
+    ImGui::Begin("Inspector",&f_show_inspector_window);
+    Object* object = selected_object;
     if (object == NULL){
-        ImGui::Text("No Object is Selected");
+        ImGui::TextDisabled("Nothing selected.");
+        ImGui::TextDisabled("Click an object in the viewport or in the Scene tree.");
+        ImGui::End();
         return;
     }
-    ImGui::Text("Selected Object");
-    ImGui::Separator();
-    ImGui::Text("Object Name     : %s",object->name.c_str());
-    ImGui::Text("Object ID       : %lu",object->GetID());
 
-    if (object->GetParent()){
-        ImGui::Text("Parent          : ID: %lu Name: %s",object->GetParent()->GetID(),object->GetParent()->name.c_str());
-        if (ImGui::Button("Select Root Node")){
-            Object* o = object->GetParent();
-            while(o->GetParent()){
-                o = o->GetParent();
+    //--- Identity, and the two things that apply to any object at all ---
+    ImGui::Text("%s",object->name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("#%lu",(unsigned long)object->GetID());
+    if (Object* parent = object->GetParent()){
+        ImGui::TextDisabled("child of #%lu %s",(unsigned long)parent->GetID(),parent->name.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Select root")){
+            Object* root = parent;
+            while (root->GetParent()){
+                root = root->GetParent();
             }
-            selected_object = o;
+            selected_object = root;
         }
+    }else if (object->GetNumChildren() > 0){
+        ImGui::TextDisabled("root, %i children",object->GetNumChildren());
     }else{
-        ImGui::Text("Parent          : Has No Parent");
+        ImGui::TextDisabled("root, no children");
     }
-    ImGui::Text("Children        : %i",object->GetNumChildren());
 
+    //Visibility is a RENDER flag (Object::SetVisibility only touches f_visible), so it stays a
+    //direct call - it changes what is drawn, not what is simulated.
     bool obj_visible = object->IsVisible();
     if (ImGui::Checkbox("Visible",&obj_visible)){
         object->SetVisibility(obj_visible);
     }
-
-    if (ImGui::Button("Duplicate(Linked)")){
-        //This might need to happen in the physics thread..
-
-        Object* duplicated = new Object(object);
-        main_scene->AddObject(duplicated);
-        Physics* physics = duplicated->GetPhysics();
-        if (physics){
-            physics->SetActive(false); //Helps with placement
-        }
-        selected_object = duplicated;
+    ImGui::SameLine();
+    if (ImGui::Button("Duplicate")){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_DUPLICATE,object->GetID());
+        //Inactive, so the copy can be dragged into place before it starts falling.
+        SetCommandBool(cmd,SIM_CMD_FLAG_ACTIVE,false);
+        SubmitUICommand(cmd);
+        //Deliberately NOT selecting the copy: its id is only handed out when the physics thread
+        //applies the command, so it does not exist yet. Scene::GetCommandResult can report it,
+        //but reading that means waiting for the tick, and UI code must never wait (see
+        //SubmitUICommand). The copy appears in the tree next frame.
     }
     ImGui::SameLine();
     if (ImGui::Button("Destroy")){
-        object->Destroy();
-        Physics* physics = object->GetPhysics();
-        if (physics){
-            physics->world->WakeUpEveryone();
-        }
+        SubmitUICommand(ObjectCommand(SIM_CMD_OBJECT_DESTROY,object->GetID()));
         selected_object = NULL;
     }
 
-    Camera* cam = dynamic_cast<Camera*>(object);
-    if (cam){
-        UpdateUICameraControls(cam,++ui_camera_id);
+    //--- The tabs. A tab is only submitted when the object actually has that aspect. ---
+    if (ImGui::BeginTabBar("InspectorTabs")){
+        if (ImGui::BeginTabItem("Transform")){
+            RenderInspectorTransformTab(object);
+            ImGui::EndTabItem();
+        }
+        if (object->GetPhysics() && ImGui::BeginTabItem("Physics")){
+            RenderInspectorPhysicsTab(object);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Render")){
+            RenderInspectorRenderTab(object);
+            ImGui::EndTabItem();
+        }
+        if (!object->animations.empty() && ImGui::BeginTabItem("Animation")){
+            RenderInspectorAnimationTab(object);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Debug")){
+            RenderInspectorDebugTab(object);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    ImGui::End();
+}
+
+void Application::RenderInspectorTransformTab(Object* object){
+    objectid_t id = object->GetID();
+
+    //Absolute position. The widget reads the object every frame and only submits on an actual
+    //edit, so it tracks the simulation while idle and does not fight it while being dragged.
+    vec3 position = object->GetPosition();
+    if (ImGui::DragFloat3("Position",(float*)&position,0.01f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_TRANSFORM,id);
+        cmd.flags |= SIM_CMD_FLAG_POSITION;
+        cmd.position = position;
+        SubmitUICommand(cmd);
     }
 
-        Light* light = dynamic_cast<Light*>(object);
-        if (light && ImGui::CollapsingHeader("Light Properties")){
-            vec3 pos = object->GetPosition();
+    //Relative nudges, resolved to an ABSOLUTE pose here rather than sent as a delta. Two reasons:
+    //a command carrying "move 0.1 forward" would apply against whatever pose the object has when
+    //the physics thread gets to it, and "forward" is the object's own axis, which only the caller
+    //knows. Reading the pose here is safe - DrawImGuiUI holds physics_mutex.
+    vec3 nudge = {};
+    if (ImGui::DragFloat3("Move by",(float*)&nudge,0.01f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_TRANSFORM,id);
+        cmd.flags |= SIM_CMD_FLAG_POSITION;
+        cmd.position = object->GetPosition() + nudge;
+        SubmitUICommand(cmd);
+    }
+    ImGui::SetItemTooltip("Drag to nudge along the world axes. Snaps back to 0 - it is a delta.");
+
+    float along[3] = {0,0,0};
+    if (ImGui::DragFloat3("Fwd / Left / Up",along,0.01f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_TRANSFORM,id);
+        cmd.flags |= SIM_CMD_FLAG_POSITION;
+        cmd.position = object->GetPosition()
+                     + object->GetForward() * along[0]
+                     + object->GetLeft() * along[1]
+                     + object->GetUp() * along[2];
+        SubmitUICommand(cmd);
+    }
+    ImGui::SetItemTooltip("Same, but along the object's OWN axes.");
+
+    ImGui::SeparatorText("Rotation");
+    //Shown as a quaternion, and edited by deltas or by absolute axis-degrees - deliberately NOT
+    //as euler angles. quat::get_pitch/get_yaw/get_roll do not invert the q1*q2*q3 composition
+    //used below (measured: 30 deg about X reads back as 27.7, and [10,80,10] as [63,68,63]), so a
+    //euler box would drift and jump the moment it round-tripped. Fixing that means settling the
+    //quaternion conventions in type_quat.h, which is its own job.
+    ImGui::BeginDisabled();
+    quat current = object->GetRotation();
+    ImGui::DragFloat4("Quaternion",(float*)&current,0.01f);
+    ImGui::EndDisabled();
+
+    //One row of three deltas instead of the three separate "Roll By"/"Pitch By"/"Yaw By" drags.
+    float rotate_by[3] = {0,0,0};
+    if (ImGui::DragFloat3("Pitch/Yaw/Roll by",rotate_by,0.01f)){
+        //Composed onto the CURRENT rotation here, so the command still carries an absolute pose.
+        quat q = object->GetRotation();
+        if (rotate_by[0] != 0.0f){
+            quat d; d.set_rotation(object->GetLeft(),rotate_by[0]); q = d * q;
+        }
+        if (rotate_by[1] != 0.0f){
+            quat d; d.set_rotation(object->GetUp(),rotate_by[1]); q = d * q;
+        }
+        if (rotate_by[2] != 0.0f){
+            quat d; d.set_rotation(object->GetForward(),rotate_by[2]); q = d * q;
+        }
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_TRANSFORM,id);
+        cmd.flags |= SIM_CMD_FLAG_ROTATION;
+        cmd.rotation = q.normalize();
+        SubmitUICommand(cmd);
+    }
+    ImGui::SetItemTooltip("Rotates about the object's own left/up/forward. Radians, and a delta.");
+
+    //Absolute, and the same composition order the object_set_transform MCP tool uses for its
+    //axis_degrees argument, so the two agree.
+    static vec3 axis_degrees = {};
+    ImGui::DragFloat3("Axis degrees",(float*)&axis_degrees,1.0f,-180.0f,180.0f);
+    ImGui::SameLine();
+    if (ImGui::Button("Set")){
+        quat qx; qx.set_rotation(vec3(1,0,0),toradians(axis_degrees.x));
+        quat qy; qy.set_rotation(vec3(0,1,0),toradians(axis_degrees.y));
+        quat qz; qz.set_rotation(vec3(0,0,1),toradians(axis_degrees.z));
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_TRANSFORM,id);
+        cmd.flags |= SIM_CMD_FLAG_ROTATION;
+        cmd.rotation = qx * qy * qz;
+        SubmitUICommand(cmd);
+    }
+
+    ImGui::SeparatorText("Scale");
+    vec3 scale = object->GetScale();
+    if (ImGui::DragFloat3("Scale",(float*)&scale,0.01f,0.01f,100.0f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_TRANSFORM,id);
+        cmd.flags |= SIM_CMD_FLAG_SCALE;
+        cmd.scale = scale;
+        SubmitUICommand(cmd);
+    }
+    float scale_all = 1.0f;
+    if (ImGui::DragFloat("Scale all by",&scale_all,0.01f,0.01f,10.0f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_TRANSFORM,id);
+        cmd.flags |= SIM_CMD_FLAG_SCALE;
+        cmd.scale = object->GetScale() * scale_all;
+        SubmitUICommand(cmd);
+    }
+    ImGui::SetItemTooltip("Colliders and their offsets follow; mass is kept and inertia recomputed.");
+}
+
+void Application::RenderInspectorPhysicsTab(Object* object){
+    Physics* physics = object->GetPhysics();
+    if (!physics){
+        return; //the tab is not submitted in this case, so this is belt and braces
+    }
+    objectid_t id = object->GetID();
+
+    bool f_static = physics->IsStatic();
+    if (ImGui::Checkbox("Static",&f_static)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        SetCommandBool(cmd,SIM_CMD_FLAG_STATIC,f_static);
+        SubmitUICommand(cmd);
+    }
+    bool f_gravity = physics->IsGravityEnabled();
+    if (ImGui::Checkbox("Reacts to gravity",&f_gravity)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        SetCommandBool(cmd,SIM_CMD_FLAG_GRAVITY,f_gravity);
+        SubmitUICommand(cmd);
+    }
+    bool f_active = physics->IsActive();
+    if (ImGui::Checkbox("Active",&f_active)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        SetCommandBool(cmd,SIM_CMD_FLAG_ACTIVE,f_active);
+        SubmitUICommand(cmd);
+    }
+    ImGui::Text("Sleeping : %s",physics->IsSleeping() ? "yes" : "no");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Wake up")){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        cmd.flags |= SIM_CMD_FLAG_WAKE_UP; //a trigger, so no bool_values bit
+        SubmitUICommand(cmd);
+    }
+    ImGui::Text("Mass     : %.3f kg",physics->GetMass());
+
+    ImGui::SeparatorText("Velocity");
+    vec3 velocity = physics->GetVelocity();
+    if (ImGui::DragFloat3("Linear",(float*)&velocity,0.01f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        cmd.flags |= SIM_CMD_FLAG_VELOCITY;
+        cmd.velocity = velocity;
+        SubmitUICommand(cmd);
+    }
+    vec3 angular = physics->GetAngularVelocity();
+    if (ImGui::DragFloat3("Angular",(float*)&angular,0.01f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        cmd.flags |= SIM_CMD_FLAG_ANGULAR_VELOCITY;
+        cmd.angular_velocity = angular;
+        SubmitUICommand(cmd);
+    }
+
+    ImGui::SeparatorText("Surface");
+    float friction = physics->GetFrictionCoefficient();
+    if (ImGui::DragFloat("Friction",&friction,0.01f,0.0f,2.0f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        cmd.flags |= SIM_CMD_FLAG_FRICTION;
+        cmd.value[0] = friction;
+        SubmitUICommand(cmd);
+    }
+    ImGui::SetItemTooltip("The handler wakes the whole world after this - a sleeping pile would "
+                          "otherwise keep its old friction until something disturbed it.");
+    float bounciness = physics->GetBounciness();
+    if (ImGui::DragFloat("Bounciness",&bounciness,0.01f,0.0f,1.0f)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        cmd.flags |= SIM_CMD_FLAG_BOUNCINESS;
+        cmd.value[1] = bounciness;
+        SubmitUICommand(cmd);
+    }
+
+    ImGui::SeparatorText("Collision masks");
+    uint32_t category_bits = object->collision_category_bits;
+    if (RenderBitmaskCheckboxes("Cat",category_bits)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        cmd.flags |= SIM_CMD_FLAG_CATEGORY_BITS;
+        cmd.collision_category_bits = category_bits;
+        SubmitUICommand(cmd);
+    }
+    ImGui::SameLine();
+    ImGui::Text("category %08X",object->collision_category_bits);
+
+    uint32_t collide_bits = object->collide_with_bits;
+    if (RenderBitmaskCheckboxes("Col",collide_bits)){
+        SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SET_PHYSICS,id);
+        cmd.flags |= SIM_CMD_FLAG_COLLIDE_BITS;
+        cmd.collide_with_bits = collide_bits;
+        SubmitUICommand(cmd);
+    }
+    ImGui::SameLine();
+    ImGui::Text("collides with %08X",object->collide_with_bits);
+
+    ImGui::SeparatorText("Colliders");
+    int num_colliders = physics->GetNumColliders();
+    ImGui::Text("%i collider(s)",num_colliders);
+    if (physics->body && physics->body->rigidbody){
+        for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
+            rp3d::Collider* collider = physics->body->rigidbody->getCollider(i);
+            if (collider->getCollisionShape()->getName() != rp3d::CollisionShapeName::BOX){
+                continue;
+            }
+            char caption[48];
+            sprintf(caption,"Edit box collider %lu",(unsigned long)i);
+            if (ImGui::Button(caption)){
+                //Spawns an ObjectCollider gizmo hooked onto this collider. The command carries
+                //the collider's INDEX, not its pointer - an rp3d::Collider* is neither
+                //recordable nor safe to hand across a tick boundary.
+                SimCommand cmd = ObjectCommand(SIM_CMD_OBJECT_SPAWN_COLLIDER_GIZMO,id);
+                cmd.subtype = i;
+                SubmitUICommand(cmd);
+            }
+        }
+    }
+}
+
+//Eight checkboxes for one 8-bit mask, returning true when any of them changed. Two of these used
+//to be written out twice in full, inline, at 20 lines each.
+bool Application::RenderBitmaskCheckboxes(const char* id, uint32_t& mask){
+    bool modified = false;
+    uint32_t result = 0;
+    ImGui::PushID(id);
+    for (int i=0;i<8;i++){
+        bool bit = !!(mask & (1<<i));
+        char boxid[16];
+        sprintf(boxid,"##bit%i",i);
+        if (ImGui::Checkbox(boxid,&bit)){
+            modified = true;
+        }
+        result |= ((uint32_t)bit) << i;
+        if (i < 7){
+            ImGui::SameLine();
+        }
+    }
+    ImGui::PopID();
+    if (modified){
+        mask = result;
+    }
+    return modified;
+}
+
+void Application::RenderInspectorRenderTab(Object* object){
+    //Everything in this tab is about what gets DRAWN, so it all stays direct - none of it is
+    //simulation state and none of it belongs in a recording.
+    if (Camera* camera = dynamic_cast<Camera*>(object)){
+        int ui_camera_id = 1;
+        UpdateUICameraControls(camera,ui_camera_id);
+    }
+
+    if (Light* light = dynamic_cast<Light*>(object)){
+        ImGui::SeparatorText("Light");
+        ImGui::DragFloat3("Colour",(float*)&light->color,0.01f,0.0f,1.0f);
+        ImGui::DragFloat("Brightness",(float*)&light->brightness,0.01f,0.0f,10.0f);
+        ImGui::DragFloat("Shadow bias",(float*)&light->shadow_bias,0.0001f,0.0f,1.0f);
+    }
+
+    ImGui::SeparatorText("Materials");
+    for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
+        char label[32];
+        sprintf(label,"Slot %i",i);
+        ImGui::DragInt(label,&object->material_slot[i],1,-1,20);
+        if (!object->material_names[i].empty()){
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s",object->material_names[i].c_str());
+        }
+    }
+
+    if (Mesh* mesh = object->GetMesh()){
+        ImGui::SeparatorText("Mesh");
+        ImGui::Text("id %lu, %lu vertices, %lu materials",mesh->GetID(),mesh->num_vertices,mesh->num_materials);
+        ImGui::TextDisabled("%s, %lu references, %lu morph targets",
+                            mesh->IsSkinnedMesh() ? "skinned" : "static",
+                            mesh->num_references,mesh->num_morph_targets);
+    }else{
+        ImGui::SeparatorText("Mesh");
+        ImGui::TextDisabled("No mesh - this object is not drawn.");
+    }
+}
+
+void Application::RenderInspectorAnimationTab(Object* object){
+    //NOT on the command queue yet, and this is the one remaining hole in step 6 of the
+    //determinism plan: since the root-motion rewrite an animation's extracted deltas DRIVE the
+    //object's motion, which makes clip selection simulation state. Putting it on the queue needs
+    //a way to name a clip inside a fixed payload (a hash of the clip name, the same trick
+    //assetid_t uses), which is a deliberate later step.
+    ImGui::TextDisabled("Direct calls - not on the command queue yet.");
+
+    ImGui::SeparatorText("Morph factors");
+    for (int i=0;i<4;i++){
+        char label[24];
+        sprintf(label,"Target %i",i+1);
+        ImGui::DragFloat(label,&object->morph_factors[i],0.01f,0,1);
+    }
+
+    ImGui::SeparatorText("Clips");
+    ImGui::DragFloat("Transition time max",&object->animation_transition_time_max,0.01f,0,3);
+    if (ImGui::Button("NULL (reference pose)")){
+        object->SwitchToAnimation(NULL);
+    }
+    int button_id = 1;
+    for (Animation* animation:object->animations){
+        if (ImGui::Button(animation->name.c_str())){
+            object->TransitionToAnimation(animation);
+        }
+        button_id++;
+        if (button_id % 4 != 0){
+            ImGui::SameLine();
+        }
+    }
+    ImGui::NewLine();
+
+    if (object->current_animation){
+        Animation* current = object->current_animation;
+        ImGui::Text("Playing : %s @ %.2f / %.2f",current->name.c_str(),current->time_index,current->duration);
+        ImGui::Checkbox("Looping",&current->looped);
+        ImGui::Checkbox("Extract horizontal root motion",&current->extract_horizontal_root_motion);
+        ImGui::Checkbox("Extract vertical root motion",&current->extract_vertical_root_motion);
+    }else{
+        ImGui::TextDisabled("Playing : nothing");
+    }
+    if (object->transition_to){
+        ImGui::Text("Blending to %s (factor %.3f)",object->transition_to->name.c_str(),
+                    object->animation_transition_factor);
+    }
+    ImGui::TextDisabled("state %i, wanted '%s'",object->animation_state,
+                        object->dbg_desired_animation_name.c_str());
+
+    if (!object->animation_blend_overrides.empty()){
+        ImGui::SeparatorText("Blend time overrides");
+        for (Object::AnimationBlendOverride& o:object->animation_blend_overrides){
+            ImGui::Text("%s --> %s : %.2fs",o.from.empty() ? "*" : o.from.c_str(),o.to.c_str(),o.blend_time);
+        }
+    }
+}
+
+void Application::RenderInspectorDebugTab(Object* object){
+    //Read-only internals. They live behind their own tab so they stop competing for screen space
+    //with the controls - which is most of why the old single-column panel ran off the bottom of
+    //the screen the moment anything was selected.
+    ImGui::Text("Address : %p",(void*)object);
+    ImGui::Text("Visible (renderer) : %s",object->IsVisible() ? "yes" : "no");
+    ImGui::Text("Destroyed          : %s",object->IsDestroyed() ? "yes" : "no");
+
+    if (Bone* bone = dynamic_cast<Bone*>(object)){
+        ImGui::SeparatorText("Bone");
+        ImGui::Text("bone_index %i, unpacked %i, node %i, initial length %.2f",
+                    bone->bone_index,bone->bone_unpacked_index,bone->node_index,bone->initial_length);
+        if (ImGui::TreeNode("inverse_bind_matrix")){
             ImGui::BeginDisabled();
-            ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
-            ImGui::EndDisabled();
-            ImGui::DragFloat3("Color", (float*)&light->color, 0.01f, 0.0f, 1.0f);
-            ImGui::DragFloat("Brightness", (float*)&light->brightness, 0.01f, 0.0f, 10.0f);
-            ImGui::DragFloat("Shadow Bias", (float*)&light->shadow_bias, 0.0001f, 0.0f, 1.0f);
-        }
-
-        if (object->GetMesh()){
-            if (ImGui::CollapsingHeader("Mesh")){
-                Mesh* mesh = object->GetMesh();
-                ImGui::Text(" ID                : %lu",mesh->GetID());
-                mesh->IsSkinnedMesh() ? ImGui::Text(" IsSkinned         : Yes") : ImGui::Text(" IsSkinned         : No");
-                ImGui::Text(" num_vertices      : %lu",mesh->num_vertices);
-                ImGui::Text(" num_materials     : %lu",mesh->num_materials);
-                ImGui::Text(" num_references    : %lu",mesh->num_references);
-                ImGui::Text(" num_morph_targets : %lu",mesh->num_morph_targets);
+            for (int i=0;i<4;i++){
+                char label[8];
+                sprintf(label,"V%i",i+1);
+                ImGui::DragFloat4(label,(float*)&bone->inverse_bind_matrix.vertex[i],0.01f);
             }
-        }else{
+            ImGui::EndDisabled();
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNode("world_transform_scale_matrix")){
+            fmat4 m = bone->GetWorldTransformScaleMatrix();
             ImGui::BeginDisabled();
-            ImGui::CollapsingHeader("No Mesh");
+            for (int i=0;i<4;i++){
+                char label[8];
+                sprintf(label,"V%i",i+1);
+                ImGui::DragFloat4(label,(float*)&m.vertex[i],0.01f);
+            }
             ImGui::EndDisabled();
+            ImGui::TreePop();
         }
+    }
 
-        Bone* bone = dynamic_cast<Bone*>(object);
-        if (bone){
-            if (ImGui::CollapsingHeader("Bone")){
-                ImGui::Text("bone_index          : %i",bone->bone_index);
-                ImGui::Text("bone_unpacked_index : %i",bone->bone_unpacked_index);
-                ImGui::Text("node_index          : %i",bone->node_index);
-                ImGui::Text("initial_length      : %.2f",bone->initial_length);
-                ImGui::Text("inverse_bind_matrix : ");
-                ImGui::BeginDisabled();
-                ImGui::DragFloat4("V1", (float*)&bone->inverse_bind_matrix.vertex[0], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V2", (float*)&bone->inverse_bind_matrix.vertex[1], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V3", (float*)&bone->inverse_bind_matrix.vertex[2], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V4", (float*)&bone->inverse_bind_matrix.vertex[3], 0.01f, -1.0f, 1.0f);
-                ImGui::EndDisabled();
-                fmat4 m = bone->GetWorldTransformScaleMatrix();
-                ImGui::Text("world_transform_scale_matrix : ");
-                ImGui::BeginDisabled();
-                ImGui::DragFloat4("V1", (float*)&m.vertex[0], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V2", (float*)&m.vertex[1], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V3", (float*)&m.vertex[2], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V4", (float*)&m.vertex[3], 0.01f, -1.0f, 1.0f);
-                ImGui::EndDisabled();
-                m.inverse_transform();
-                ImGui::Text("world_transform_scale_matrix.inverse_transform() : ");
-                ImGui::BeginDisabled();
-                ImGui::DragFloat4("V1", (float*)&m.vertex[0], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V2", (float*)&m.vertex[1], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V3", (float*)&m.vertex[2], 0.01f, -1.0f, 1.0f);
-                ImGui::DragFloat4("V4", (float*)&m.vertex[3], 0.01f, -1.0f, 1.0f);
-                ImGui::EndDisabled();
-            }
+    if (Skeleton* skeleton = dynamic_cast<Skeleton*>(object)){
+        ImGui::SeparatorText("Skeleton");
+        ImGui::Text("Root bone : %s",skeleton->root_bone_name.c_str());
+        static char bone_name[64] = {};
+        ImGui::InputText("Set root bone",bone_name,sizeof(bone_name));
+        ImGui::SameLine();
+        if (ImGui::Button("Apply")){
+            skeleton->root_bone_name = bone_name;
         }
-
-        if (ImGui::CollapsingHeader("Position")){
-            vec3 delta = {0,0,0};
-            if (ImGui::DragFloat3("Move Position", (float*)&delta, 0.01f, -1.0f, 1.0f)){
-                object->MoveBy(delta);
+        std::vector<Bone*> bones;
+        skeleton->GetAllBones(skeleton,bones);
+        if (ImGui::TreeNode((void*)"bones","%i bones",(int)bones.size())){
+            for (Bone* b:bones){
+                ImGui::TextDisabled("%s",b->name.c_str());
             }
-
-            vec3 pos = object->GetPosition();
-            if (ImGui::DragFloat3("Position", (float*)&pos, 0.01f, -1.0f, 1.0f)){
-                object->SetPosition(pos);
-            }
-
-
-            float forward = 0.0f;
-            if (ImGui::DragFloat("Move Forward/Backward", (float*)&forward, 0.01f, -1.0f, 1.0f)){
-                object->MoveForwardBy(forward);
-            }
-            float left = 0.0f;
-            if (ImGui::DragFloat("Move Left/Right", (float*)&left, 0.01f, -1.0f, 1.0f)){
-                object->MoveSidewaysBy(left);
-            }
-            float up = 0.0f;
-            if (ImGui::DragFloat("Move Up/Down", (float*)&up, 0.01f, -1.0f, 1.0f)){
-                object->MoveUpBy(up);
-            }
+            ImGui::TreePop();
         }
-        if (ImGui::CollapsingHeader("Rotation")){
-            static int option = 0;
-            ImGui::Text("Input By:");
-            ImGui::RadioButton("None", &option, 0); ImGui::SameLine();
-            ImGui::RadioButton("Vector + Rotation", &option, 1); ImGui::SameLine();
-            ImGui::RadioButton("Target, Position, Up", &option, 2);
-            ImGui::RadioButton("Axis Degrees", &option, 3);
-            ImGui::Separator();
+    }
+}
 
-            ImGui::BeginDisabled();
-            quat q = object->GetRotation();
-            ImGui::DragFloat4("Current Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
-            ImGui::EndDisabled();
+//--- Engine window ------------------------------------------------------------------------------
 
-            bool set_rotation = false;
+void Application::RenderEngineWindow(){
+    ImGui::Begin("Engine",&f_show_engine_window);
 
-            float roll_by = 0;
-            if (ImGui::DragFloat("Roll By", (float*)&roll_by, 0.01f, -1.0f, 1.0f)){
-                object->RollBy(roll_by);
-            }
-            float pitch_by = 0;
-            if (ImGui::DragFloat("Pitch By", (float*)&pitch_by, 0.01f, -1.0f, 1.0f)){
-                object->PitchBy(pitch_by);
-            }
-            float yaw_by = 0;
-            if (ImGui::DragFloat("Yaw By", (float*)&yaw_by, 0.01f, -1.0f, 1.0f)){
-                object->YawBy(yaw_by);
-            }
+    if (main_scene){
+        UpdateUIWorldPhysics(main_scene->physics_world);
+        int ui_camera_id = 0;
+        UpdateUICameraControls(main_scene->camera,ui_camera_id);
+    }
 
-
-            if (option == 1){
-                static vec3 quatinp = {0,0,0};
-                ImGui::DragFloat3("Quat Input Vector", (float*)&quatinp, 0.01f, -1.0f, 1.0f);
-                static float quatroll = 0.0f;
-                ImGui::DragFloat("Quat Roll", (float*)&quatroll, 0.01f, -TYPE_PI, TYPE_PI);
-                ImGui::BeginDisabled();
-                vec3 quatn = quatinp;
-                quatn.normalize();
-                ImGui::DragFloat3("Quat Normalized Vector", (float*)&quatn, 0.01f, -1.0f, 1.0f);
-                q = quat(quatn,quatroll);
-                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
-                ImGui::EndDisabled();
-
-            }else if (option == 2){
-                static vec3 target = {0,0,-1};
-                if (ImGui::DragFloat3("Target Vector", (float*)&target, 0.01f, -5.0f, 5.0f)){
-                    set_rotation = true;
-                }
-                static vec3 position = {0,0,0};
-                if (ImGui::DragFloat3("Position", (float*)&position, 0.01f, -5.0f, 5.0f)){
-                    set_rotation = true;
-                }
-                static vec3 worldup = {0,1,0};
-                if (ImGui::DragFloat3("World Up", (float*)&worldup, 0.01f, -1.0f, 1.0f)){
-                    set_rotation = true;
-                }
-                ImGui::BeginDisabled();
-                q = quat::getquat(target,position,worldup);
-                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
-                ImGui::EndDisabled();
-            }else if (option == 3){
-                static vec3 axis_degrees = {0,0,0};
-                if (ImGui::DragFloat3("Axis Degrees", (float*)&axis_degrees, 1.0f, -180.0f, 180.0f)){
-                    set_rotation = true;
-                }
-                ImGui::BeginDisabled();
-                //Let's do them in order?
-                quat q1; q1.set_rotation(vec3(1,0,0),toradians(axis_degrees.x));
-                quat q2; q2.set_rotation(vec3(0,1,0),toradians(axis_degrees.y));
-                quat q3; q3.set_rotation(vec3(0,0,1),toradians(axis_degrees.z));
-
-                q = q1 * q2 * q3;
-                ImGui::DragFloat4("Resulting Quaternion", (float*)&q, 0.01f, -1.0f, 1.0f);
-                ImGui::EndDisabled();
-            }
-
-            if (ImGui::Button("Set Rotation")){
-                set_rotation = true;
-            }
-            if (ImGui::Button("Rotate By")){
-                object->RotateBy(q);
-            }
-            if (set_rotation){
-                object->SetRotation(q);
-            }
+    if (ImGui::CollapsingHeader("Performance")){
+        bool sync = renderer->GetVSync();
+        if (ImGui::Checkbox("V-Sync",&sync)){
+            renderer->SetVSync(sync);
         }
-        if (ImGui::CollapsingHeader("Scale")){
-            vec3 scale = object->GetScale();
-            float scale_all = 1.0f;
-            if (ImGui::DragFloat("Scale All", (float*)&scale_all, 0.01f, 0.01f, 10.0f)){
-                object->SetScale(scale * scale_all);
-            }
-
-            if (ImGui::DragFloat3("Scale Vector", (float*)&scale, 0.01f, 0.01f, 10.0f)){
-                object->SetScale(scale);
-            }
+        ImGui::Text("Renderer Time : %8.1f us  (%5.2f ms)",renderer->tmr_frame->avg,renderer->tmr_frame->avg/1000.0f);
+        ImGui::Text("Frame Time    : %8.2f FPS (%5.2f ms)",1000000.0f/tmr_render_loop->avg,tmr_render_loop->avg/1000.0f);
+        ImGui::Text("Physics Loop  : %8.2f TPS (%5.2f ms)",1000000.0f/tmr_physics_loop->avg,tmr_physics_loop->avg/1000.0f);
+        ImGui::Text("Physics Sleep : %8.1f us  (%5.2f ms)",tmr_physics_sleep->avg,tmr_physics_sleep->avg/1000.0f);
+        ImGui::Text("Physics Time  : %8.1f us  (%5.2f ms)",tmr_physics->avg,tmr_physics->avg/1000.0f);
+        if (main_scene && main_scene->renderer){
+            ImGui::Text("Renderable Objects : %i",(int)main_scene->renderer->renderable_objects.size());
+            ImGui::Text("Unique Meshes      : %i",(int)main_scene->renderer->unique_meshes.size());
+            ImGui::Text("Batches            : %i",(int)main_scene->renderer->unique_mesh_batches.size());
         }
-
-        if (object->GetPhysics()){
-            if (ImGui::CollapsingHeader("Physics",ImGuiTreeNodeFlags_DefaultOpen)){
-                Physics* physics = object->GetPhysics();
-                bool f_static = physics->IsStatic();
-                if (ImGui::Checkbox("Static", &f_static)){
-                    physics->SetStatic(f_static);
-                }
-                bool f_gravity = physics->IsGravityEnabled();
-                if (ImGui::Checkbox("Reacts to Grativy", &f_gravity)){
-                    physics->SetGravityEnabled(f_gravity);
-                }
-                bool f_active = physics->IsActive();
-                if (ImGui::Checkbox("Active", &f_active)){
-                    physics->SetActive(f_active);
-                }
-                bool f_sleeping = physics->IsSleeping();
-                if (ImGui::Checkbox("Sleeping", &f_sleeping)){
-                    physics->WakeUp();
-                }
-                int num_colliders = physics->GetNumColliders();
-                float mass = physics->GetMass();
-                ImGui::Text("Number of colliders : %i",num_colliders);
-                for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
-                    if (physics->body->rigidbody->getCollider(i)->getCollisionShape()->getName() == rp3d::CollisionShapeName::BOX){
-                        //Testing. Spawn an object that 'attaches' to the collider of this object so we can modify it.
-                        char caption[32];
-                        sprintf(caption, "Modify Box Collider %lu",i);
-                        if (ImGui::Button(caption)){
-                            ObjectCollider* oc = new ObjectCollider();
-                            oc->HookTargetCollider(physics->body->rigidbody->getCollider(i));
-                            main_scene->AddObject(oc);
-                            selected_object = oc;
-                        }
-                    }
-                }
-                ImGui::Text("Mass                : %.3f kg",mass);
-                ImGui::Text("Collision Cat Bits  : %08X",object->collision_category_bits);
-                ImGui::Separator();
-                bool bits[8];
-                bool cat_wasmodified = false;
-                for (int i=0;i<8;i++){
-                    bits[i] = !!(object->collision_category_bits & (1<<i));
-                    char boxid[32];
-                    sprintf(boxid,"##CatBit%i",i);
-                    if (ImGui::Checkbox(boxid,&bits[i])){
-                        cat_wasmodified = true;
-                    }
-                    if (i < 7)
-                        ImGui::SameLine();
-                }
-                if (cat_wasmodified){
-                    uint32_t mask = 0;
-                    for (int i=0;i<8;i++){
-                        mask |= (bits[i]<<i);
-                    }
-                    object->SetCollisionCategoryBits(mask);
-                }
-
-                ImGui::Text("Collide Wtih  Bits  : %08X",object->collide_with_bits);
-
-                bool col_wasmodified = false;
-                for (int i=0;i<8;i++){
-                    bits[i] = !!(object->collide_with_bits & (1<<i));
-                    char boxid[32];
-                    sprintf(boxid,"##ColBit%i",i);
-                    if (ImGui::Checkbox(boxid,&bits[i])){
-                        col_wasmodified = true;
-                    }
-                    if (i < 7)
-                        ImGui::SameLine();
-                }
-                if (col_wasmodified){
-                    uint32_t mask = 0;
-                    for (int i=0;i<8;i++){
-                        mask |= (bits[i]<<i);
-                    }
-                    object->SetCollideWithMaskBits(mask);
-                }
-
-                vec3 v = physics->GetVelocity();
-                vec3 a = physics->GetAngularVelocity();
-                //ImGui::BeginDisabled();
-                if (ImGui::DragFloat3("Velocity", (float*)&v, 0.01f, -1.0f, 1.0f)){
-                    physics->SetVelocity(v);
-                }
-                if (ImGui::DragFloat3("Angular Velocity", (float*)&a, 0.01f, -1.0f, 1.0f)){
-                    physics->SetAngularVelocity(a);
-                }
-                //ImGui::EndDisabled();
-
-                float collider_friction = physics->GetFrictionCoefficient();
-                if (ImGui::DragFloat("Friction Coefficient", (float*)&collider_friction, 0.01f, 0.0f, 2.0f)){
-                    physics->SetFrictionCoefficient(collider_friction);
-                    main_scene->physics_world->WakeUpEveryone();
-                }
-
-                float collider_bounciness = physics->GetBounciness();
-                if (ImGui::DragFloat("Bounciness", (float*)&collider_bounciness, 0.01f, 0.0f, 1.0f)){
-                    physics->SetBounciness(collider_bounciness);
-                }
-
-                rp3d::Collider* collider = NULL;
-
-
-            }
-        }else{
-            ImGui::BeginDisabled();
-            ImGui::CollapsingHeader("No Physics");
-            ImGui::EndDisabled();
+        if (main_scene){
+            ImGui::Text("Physics Tick       : %llu",(unsigned long long)main_scene->GetPhysicsTick());
+            ImGui::Text("Pending Commands   : %i",main_scene->GetPendingCommands());
+            ImGui::Text("Applied Commands   : %u",main_scene->GetAppliedCommandSequence());
         }
+    }
 
+    if (ImGui::CollapsingHeader("Renderer")){
+        ImGui::Checkbox("Normal mapping",&renderer->f_normal_mapping);
+        ImGui::Checkbox("SSAO",&renderer->f_ssao);
+        ImGui::Checkbox("Render skybox",&renderer->f_render_skybox);
+        ImGui::Checkbox("Render reflections",&renderer->f_use_reflections);
 
-        if (ImGui::CollapsingHeader("Material")){
-            ImGui::Text("Renderer Materials: %i",renderer->materials.size());
-            ImGui::Separator();
-
-            ImGui::DragInt("Material Slot 0",&object->material_slot[0],1,-1,20);
-            ImGui::DragInt("Material Slot 1",&object->material_slot[1],1,-1,20);
-            ImGui::DragInt("Material Slot 2",&object->material_slot[2],1,-1,20);
-            ImGui::DragInt("Material Slot 3",&object->material_slot[3],1,-1,20);
-
-            ImGui::Text("Material Name 0 : %s",object->material_names[0].c_str());
-            ImGui::Text("Material Name 1 : %s",object->material_names[1].c_str());
-            ImGui::Text("Material Name 2 : %s",object->material_names[2].c_str());
-            ImGui::Text("Material Name 3 : %s",object->material_names[3].c_str());
+        int view_buffer = renderer->view_buffer;
+        if (ImGui::SliderInt("View buffer",&view_buffer,0,8)){
+            renderer->SelectViewBuffer(view_buffer);
         }
-        Skeleton* skeleton = dynamic_cast<Skeleton*>(object);
-        if (!skeleton){
-            ImGui::BeginDisabled();
-            ImGui::CollapsingHeader("No Skeleton");
-            ImGui::EndDisabled();
-        }else{
-            if (ImGui::CollapsingHeader("Skeleton")){
-                ImGui::Text("Root Bone Name: %s",skeleton->root_bone_name.c_str());
-                static char bone_name[64] = {};
-                ImGui::InputText("Set Root Bone Name",bone_name, 64);
-                if (ImGui::Button("Apply Name")){
-                    skeleton->root_bone_name = bone_name;
-                }
-                std::vector<Bone*> bones;
-                skeleton->GetAllBones(skeleton,bones);
-                ImGui::Text("Num Bones: %i",bones.size());
-                for (Bone* bone:bones){
-                    ImGui::Text("Bone Name: %s",bone->name.c_str());
-                }
-
-            }
+        int num_samples = renderer->aa_samples;
+        if (ImGui::SliderInt("MSAA samples",&num_samples,1,16)){
+            renderer->SetNumAASamples(num_samples);
         }
+        ImGui::SliderFloat("Alpha clip",&renderer->alpha_clip,0.0f,1.0f);
+    }
 
-        if (ImGui::CollapsingHeader("Animations")){
-            ImGui::Text("Morph Factors");
-            ImGui::DragFloat("Target 1",&object->morph_factors[0],0.01,0,1);
-            ImGui::DragFloat("Target 2",&object->morph_factors[1],0.01,0,1);
-            ImGui::DragFloat("Target 3",&object->morph_factors[2],0.01,0,1);
-            ImGui::DragFloat("Target 4",&object->morph_factors[3],0.01,0,1);
-
-            ImGui::DragFloat("Animation Transistion Time Max",&object->animation_transition_time_max,0.01,0,3);
-
-            if (object->animations.size() == 0){
-                ImGui::Text("Object has no animations");
-            }else{
-                ImGui::Text("Object Animations");
-
-                if (ImGui::Button("NULL")){
-                    object->SwitchToAnimation(NULL);
-                }
-                ImGui::SameLine();
-
-
-                int button_id = 1;
-                for (Animation* animation:object->animations){
-                    if (ImGui::Button(animation->name.c_str())){
-                        object->TransitionToAnimation(animation);
-                    }
-                    button_id++;
-                    if (button_id % 4 != 0)
-                        ImGui::SameLine();
-                }
-
-                if (object->current_animation){
-                    ImGui::Text("Current Animation : %s @ %.2f / %.2f",object->current_animation->name.c_str(),object->current_animation->time_index,object->current_animation->duration);
-                    bool looping = object->current_animation->looped;
-                    if (ImGui::Checkbox("  - Looping",&looping)){
-                        object->current_animation->looped = looping;
-                    }
-                    ImGui::Checkbox("  - Extract Horizontal Root Motion",&object->current_animation->extract_horizontal_root_motion);
-                    ImGui::Checkbox("  - Extract Vertical Root Motion",&object->current_animation->extract_vertical_root_motion);
-                }else{
-                    ImGui::Text("Current Animation : NULL");
-                }
-                if (object->transition_to){
-                    if (object->current_animation){
-                        ImGui::Text("Transition->From  : %s @ %.2f / %.2f",object->current_animation->name.c_str(),object->current_animation->time_index,object->current_animation->duration);
-                    }else{
-                        ImGui::Text("Transition->From  : NULL (Reference Pose)");
-                    }
-                    ImGui::Text("Transition->To    : %s @ %.2f / %.2f",object->transition_to->name.c_str(),object->transition_to->time_index,object->transition_to->duration);
-                }else{
-                    ImGui::Text("Transition->From  : NULL");
-                    ImGui::Text("Transition->To    : NULL");
-                }
-                ImGui::Text("Current Animation State : %i\n",object->animation_state);
-                ImGui::Text("Desired Animation       : %s\n",object->dbg_desired_animation_name.c_str());
-                ImGui::Text("Anim Transition Factor  : %.3f\n",object->animation_transition_factor);
-
-            }
-
-            if (object->animation_blend_overrides.size() != 0){
-                ImGui::Text("Animation Blend Time Overrides");
-                int id = 0;
-                for (Object::AnimationBlendOverride& o : object->animation_blend_overrides){
-                    ImGui::PushID(id++);
-                    ImGui::Text("%s --> %s : %.2fs",o.from.empty() ? "*" : o.from.c_str(),o.to.c_str(),o.blend_time);
-                    ImGui::PopID();
-                }
-            }
+    if (ImGui::CollapsingHeader("Input")){
+        ImGui::Text("Window in focus        : %s",main_window->f_has_focus ? "yes" : "no");
+        ImGui::Text("Mouse over window      : %s",main_window->inputcontroller->IsMouseOverWindow() ? "yes" : "no");
+        ImGui::Text("ImGui.WantCaptureMouse : %s",ImGui::GetIO().WantCaptureMouse ? "yes" : "no");
+        if (main_scene && main_scene->inputcontroller){
+            vec3 hov_normal = main_scene->inputcontroller->GetHoveredNormal();
+            vec3 hov_pos = main_scene->inputcontroller->GetHoveredPosition();
+            ImGui::Text("Normal at mouse   : %.3f, %.3f, %.3f",hov_normal.x,hov_normal.y,hov_normal.z);
+            ImGui::Text("Position at mouse : %.3f, %.3f, %.3f",hov_pos.x,hov_pos.y,hov_pos.z);
         }
+        ImGui::Text("Hovered object    : %s",hovered_object ? hovered_object->name.c_str() : "none");
+    }
 
+    if (ImGui::CollapsingHeader("Window")){
+        ImGui::Text("Current size : %i x %i",main_window->width,main_window->height);
+    }
+
+    if (assetmanager && ImGui::CollapsingHeader("Assets")){
+        //With ids, because that is how object_spawn and any SimCommand refers to an asset - see
+        //AssetIDFromName in AssetManager.h for why it is a hash of the name.
+        for (Asset* asset:assetmanager->assets){
+            ImGui::Text("%-28s %10u",asset->name.c_str(),asset->id);
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Materials")){
+        ImGui::Text("%i materials",(int)renderer->GetNumMaterials());
+        int n = 0;
+        for (Material& material:renderer->materials){
+            ImGui::PushID(n++);
+            if (ImGui::TreeNode((void*)"mat","%s",material.name.c_str())){
+                ImGui::TextDisabled("diffuse_texture %i",material.glsl_material.diffuse_texture);
+                ImGui::DragFloat("Metallic",(float*)&material.glsl_material.metallic,0.01f,0,1);
+                ImGui::DragFloat("Roughness",(float*)&material.glsl_material.roughness,0.01f,0,1);
+                ImGui::DragFloat("Brightness",(float*)&material.glsl_material.brightness,0.01f,0,10);
+                ImGui::ColorEdit4("Colour",(float*)&material.glsl_material.color,ImGuiColorEditFlags_DisplayRGB);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::End();
 }
 
 //For showing how RRandom would work.

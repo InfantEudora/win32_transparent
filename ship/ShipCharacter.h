@@ -28,9 +28,7 @@ class ShipCharacter : public Object{
     void TurnRightBy(float angle);
     void ShootLaser();
 
-    float forward_thrust = 0.0f;
-    float tilt_thrust = 0.0f;
-    float rotation_thrust = 0.0f;
+
 
 };
 

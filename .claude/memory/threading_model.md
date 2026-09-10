@@ -30,3 +30,11 @@ The three threads described in [[project-overview]] synchronise with **one coars
 **How to apply:** Before touching object or physics state, work out which thread the code runs on. Render/UI path — already covered by `physics_mutex`, leave it. MCP path — defer it. Anything rate-based — do it per physics tick, not per frame or per millisecond of wall clock. The user's own remark on how the MCP layer got here: it was added by Claude agents without this overview existing first, which is how it ended up bypassing the lock. Prefer wiring `TQueue.h`'s existing `ThreadSafeQueue` into a real deferred-command buffer (drained at the top of `Scene::UpdatePhysics`, before `AdvanceObjectMotions`) over inventing another per-feature deferral.
 
 Related: [[project-overview]], [[rp3d-vehicle-constraint-plan]], [[mcp-native-tools-setup]].
+
+**SUPERSEDED IN PRACTICE (2026-09-10).** The advice above - that UI mutation is safe under the
+coarse lock while MCP handlers must defer - is still true about LOCKING, but it is no longer how
+the code works. Both now go through the SimCommand queue: every mutation of simulation state from
+either thread is submitted and applied on the physics thread at the top of a tick. See
+[[deterministic-sim-plan]] steps 5 and 6. The rule to carry forward is the one that bit us: the UI
+must SUBMIT and never WAIT (DrawImGuiUI holds physics_mutex, the physics thread needs it to drain),
+whereas an MCP handler holds no locks and may wait for its command to land.

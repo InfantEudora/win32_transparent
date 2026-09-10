@@ -92,9 +92,7 @@ void ShipCharacter::MoveForwardBy(float force){
         lift = q * lift;
         physics->AddWorldForceAt(lift,wp);
         vec3 vel = GetVelocity();
-        //debug->Info("Force applied       : %.1f, %.1f, %.1f Newton\n",f.x,f.y,f.z);
 
-        forward_thrust = force;
     }
     exhaust_emitter->EmitParticles(8);
 }
@@ -103,13 +101,13 @@ void ShipCharacter::MoveForwardBy(float force){
 void ShipCharacter::MoveBackwardBy(float force){
 
     if (physics){
-        vec3 lf = vec3(0,0,-force);
+        vec3 lf = vec3(0,0,force);
         vec3 vel = GetVelocity();
         quat q = GetRotation();
         vec3 rf = q * lf;
         //SetVelocity(vel + rf*0.00125);
-        physics->AddLocalForce(vec3(0,0,-force));
-        forward_thrust = -force;
+        physics->AddLocalForce(vec3(0,0,force));
+
     }
 }
 

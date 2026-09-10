@@ -215,6 +215,12 @@ bool Window::InitImGui(){
 
     ImGuiIO& io = ImGui::GetIO();
 
+    //Docking. The submodule is on imgui's docking branch, but the flag was never set, so nothing
+    //could actually be docked - Application::RenderApplicationUI builds a default left-hand
+    //layout on top of this. Enabling it makes EVERY ImGui window in every app dockable, which is
+    //the intent: an app'''s own panels can be dragged into the same layout as the core ones.
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
 

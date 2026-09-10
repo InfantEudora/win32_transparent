@@ -291,51 +291,6 @@ void ApplicationShip::RunLogic(){
     }
 
 
-
-
-
-
-
-    //Camera rotation moving
-    /*
-    if (main_window->f_has_focus && input->IsKeyDown(INPUT_CLICK_MIDDLE)){
-        //f_show_rightclick_menu = false;
-        int dx = input->GetDelta(INPUT_MOUSE_X);
-        int dy = input->GetDelta(INPUT_MOUSE_Y);
-        if (input->IsKeyDown(INPUT_SHIFT)){
-            //Move the camera
-            vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
-            d += camera->MoveUpBy(dy/100.0f);
-            camera_target += d;
-        }else{
-            //If we move left/right, we rotate the camera around the camera target.
-            vec3 p = camera->GetPosition() - camera_target;
-            vec3 axis = camera->GetLeft();
-
-            //Get the axis towards the camera.
-            quat q(axis,-dy/50.0f);
-
-            //Rotate the camera position around the camera target
-            p = q * p;
-            //We update the position
-            camera->SetPosition(p+camera_target);
-
-            //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
-            vec3 up = camera->GetUp();
-            //up = vec3(0,1,0);
-            camera->SetLookAt(camera_target,&up);
-
-            //Now we rotate around the Y-axis
-            p = camera->GetPosition()-camera_target;
-            axis = vec3(0,1,0);
-            q.set_rotation(axis,-dx/50.0f);
-            p = q * p;
-            camera->SetPosition(p+camera_target);
-            //The lookat should make the same rotation around the y axis
-            camera->RotateBy(q);
-        }
-    }*/
-
     //Mouse wheel for zoom, focused only - otherwise it tracks a wheel being used in another
     //application. InputController drops the delta while unfocused as well.
     static float mouse_delta_sum = 0;
@@ -349,13 +304,9 @@ void ApplicationShip::RunLogic(){
         mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
 
-    //Gamepad sampling now happens once per tick inside InputController::PollDevices, with the
-    //keyboard and mouse - no separate per-app poll.
-
 
     //Character input with gamepad
     if (ship_character && main_window->f_has_focus){
-
         float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
         float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
         float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
@@ -366,10 +317,10 @@ void ApplicationShip::RunLogic(){
         y = clamp(y,-1.0f,1.0f);
 
         if (y > 0.01f){
-            ship_character->MoveBackwardBy(y * 100);
+            ship_character->MoveForwardBy(y * 100);
         }
         if (y < -0.01f){
-            ship_character->MoveForwardBy(-y * 100);
+            ship_character->MoveBackwardBy(y * 100);
         }
         if (gp_rx > 0.01f){
             ship_character->RollBy(-gp_rx * 0.05f);
@@ -459,8 +410,6 @@ void ApplicationShip::DrawImGuiUI(){
 
     ImGui::Begin("Ship Settings");
     if (ship_character){
-        ImGui::Checkbox("Enable Manual Animations",&ship_character->f_animation_override);
-        ImGui::Checkbox("Grab Mode",&f_mode_grab);
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Checkbox("Lock Ship Axis",&f_lock_ship_axis);
         ImGui::Text("Ship Up              : (%.2f, %.2f, %.2f)",ship_character->GetUp(STATE_ACCESS_RENDERER).x,ship_character->GetUp(STATE_ACCESS_RENDERER).y,ship_character->GetUp(STATE_ACCESS_RENDERER).z);
