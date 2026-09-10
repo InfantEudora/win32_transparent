@@ -13,7 +13,6 @@ Object::Object(){
     GenerateUniqueID();
     world_transform_scale_matrix.identity();
     local_transform_scale_matrix.identity();
-    state_physics.rotation.identity();
     state.rotation.identity();
 }
 
@@ -24,7 +23,7 @@ Object::Object(Object* object):Object(){
     name = object->name;
     //Direct assignment, not SetScale(): the collider cloned below is already the source's
     //scaled size, and SetScale would rescale it by this factor a second time.
-    state_physics.scale = object->GetScale();
+    state.scale = object->GetScale();
     Physics* p = object->GetPhysics();
     if (p){
         AddPhysics(p->world);
@@ -107,8 +106,10 @@ void Object::DeleteDestroyedChildren(){
 }
 
 void Object::SetVisibility(bool flag){
-    state_physics.f_visible = flag;
-    state_physics.f_was_transformed = true;
+    //No f_was_transformed here: that flag only guards local_transform_scale_matrix, which does
+    //not depend on visibility. It was set when this wrote a separate physics-side state, back
+    //when the flag doubled as "this copy has pending changes".
+    state.f_visible = flag;
 }
 
 void Object::Hide(){
@@ -125,12 +126,8 @@ void Object::Show(){
     }
 }
 
-bool Object::IsVisible(ObjectStateAccessType t){
-    if (t == STATE_ACCESS_PHYSICS){
-        return state_physics.f_visible;
-    }else{
-        return state.f_visible;
-    }
+bool Object::IsVisible(){
+    return state.f_visible;
 }
 
 void Object::SetPickability(bool flag){
@@ -240,21 +237,21 @@ void Object::RotateAroundAxis(const vec3& target_axis,float by){
 
 //Update objects rotation with supplied quaternion.
 void Object::SetRotation(const quat& q, bool f_write_physics){
-    state_physics.f_was_transformed = true;
-    state_physics.rotation = q;
+    state.f_was_transformed = true;
+    state.rotation = q;
     if (f_write_physics && physics){
         physics->SetBodyWorldOrientation(q);
     }
 }
 
 void Object::RotateBy(const quat& r){
-    quat nq = r * state_physics.rotation;
+    quat nq = r * state.rotation;
     SetRotation(nq);
 }
 
 void Object::SetPosition(const vec3& newpos,bool f_write_physics){
-    state_physics.f_was_transformed = true;
-    state_physics.position = newpos;
+    state.f_was_transformed = true;
+    state.position = newpos;
     if (f_write_physics && physics){
         physics->SetBodyWorldPosition(GetPosition());
     }
@@ -274,7 +271,7 @@ void Object::SetLookAt(const vec3& target, const vec3* optional_up){
     }else{
         up = ref_up;
     }
-    quat lq = quat::getquat(target,state_physics.position,up);
+    quat lq = quat::getquat(target,state.position,up);
     lq.normalize();
     SetRotation(lq);
 }
@@ -286,7 +283,7 @@ void Object::SetWorldLookat(const vec3& target,const vec3& world_up){
         return;
     }
      //Compute the target in world coordinates.
-    vec3 delta = GetWorldPosition(STATE_ACCESS_PHYSICS) - target ;
+    vec3 delta = GetWorldPosition() - target ;
 
     //Rotate by the inverse of our current world rotation
     fmat4 r = parent->GetWorldTransformScaleMatrix().inverse_transform().rotationmatrix();
@@ -298,7 +295,7 @@ void Object::SetWorldLookat(const vec3& target,const vec3& world_up){
 
 //Move object by a vector
 void Object::MoveBy(const vec3& delta){
-    SetPosition(state_physics.position + delta);
+    SetPosition(state.position + delta);
 }
 
 //Returns the vector by which is was moved.
@@ -337,9 +334,9 @@ void Object::PitchBy(float by){
 
 //The size of the object in 3 dimensions
 void Object::SetScale(const vec3& newscale){
-    vec3 oldscale = state_physics.scale;
-    state_physics.scale = newscale;
-    state_physics.f_was_transformed = true;
+    vec3 oldscale = state.scale;
+    state.scale = newscale;
+    state.f_was_transformed = true;
     //Colliders follow the visual: rescaled by the RATIO to the previous scale, so it doesn't
     //matter what size they were created at (colliders added after a SetScale are sized to the
     //already-scaled object by their callers, and stay right when the scale changes again).
@@ -355,7 +352,7 @@ void Object::SetScale(const vec3& newscale){
 }
 
 vec3 Object::GetScale(){
-    return state_physics.scale;
+    return state.scale;
 }
 
 //Looks up material_names in a list and updates material_slots
@@ -380,20 +377,6 @@ void Object::UpdateMaterials(std::vector<Material>& global_list){
         index++;
     }
 }
-
-//Copies physics state over to this state.
-//Called by rendering
-void Object::UpdateState(){
-    state = state_physics_prev;
-
-    state_completed = true;
-    state_physics_prev_completed = 0;
-
-    for (Object* child:children) {
-        child->UpdateState();
-    }
-}
-
 
 /*//TODO: Some kind of list thing, event.. whatever... that tells all object about the destruction of
 another object.
@@ -422,27 +405,8 @@ void Object::UpdatePhysicsState(){
     for (Object* child:children) {
         child->UpdatePhysicsState();
     }
-
-    //Done
-    state_physics_completed++;
-
-    //Checks to see if we can swap state
-    if (state_physics_prev_completed == 0){
-        state_physics_prev = state_physics;
-        state_physics_prev_completed = true;
-        state_physics_completed = 0;
-        state_physics.f_was_transformed = false;
-    }
-
-    //Dont know where to put this one yet.
-    state_physics.f_was_transformed = true;
 }
 
-bool Object::PhysicsCompleted(){
-    return !!state_physics_prev_completed;
-}
-
-//STATE_ACCESS_PHYSICS
 vec3 Object::GetCenterofMass(){
     if (!physics){
         return vec3();
@@ -451,60 +415,46 @@ vec3 Object::GetCenterofMass(){
 }
 
 //Returns local position (within parent)
-vec3 Object::GetPosition(ObjectStateAccessType t){
-    if (t == STATE_ACCESS_PHYSICS)
-        return state_physics.position;
-    //if (t == STATE_ACCESS_RENDERER)
+vec3 Object::GetPosition(){
     return state.position;
 }
 
-//Computes and gets the world position. Currently always reads from render state
-//TODO Read physics state?
-vec3 Object::GetWorldPosition(ObjectStateAccessType t){
-    if (t == STATE_ACCESS_RENDERER){
-        fmat4 wt = GetWorldTransformScaleMatrix();
-        return world_transform_scale_matrix.vertex[3].xyz();
-    }else{
-        //Compute from physics state
-        if (!parent){
-            return state_physics.position;
-        }else{
-            //Get parent's world position and rotation
-            vec3 parent_wp = parent->GetWorldPosition(STATE_ACCESS_PHYSICS);
-            quat parent_wr = parent->GetWorldRotation();
-
-            //Rotate our local position by parent's world rotation
-            vec3 rotated_pos = parent_wr * state_physics.position;
-
-            return parent_wp + rotated_pos;
-        }
-    }
+//Computes and gets the world position, by walking the transform chain.
+//This used to have a second implementation for the physics thread, which composed
+//parent_world_rotation * local_position + parent_world_position instead. That existed only
+//because world_transform_scale_matrix was refreshed once per frame by the now-deleted
+//Object::UpdateState, so it was stale everywhere except inside DrawFrame. The matrix is rebuilt
+//on demand from `state` now, so it is live on either thread and one path serves both.
+//Note the two were never equivalent: the composed version dropped any ancestor SCALE, so a
+//child of a scaled object reported a world position the renderer did not draw it at. The
+//matrix is what the renderer draws with, so it is the one that survives.
+vec3 Object::GetWorldPosition(){
+    return GetWorldTransformScaleMatrix().vertex[3].xyz();
 }
 
-vec3 Object::GetForward(ObjectStateAccessType t){
-    return state_physics.rotation * ref_forward;
+vec3 Object::GetForward(){
+    return state.rotation * ref_forward;
 }
 
-vec3 Object::GetWorldForward(ObjectStateAccessType t){
+vec3 Object::GetWorldForward(){
     return GetWorldRotation() * ref_forward;
 }
 
-//Only for physics state
-vec3 Object::GetUp(ObjectStateAccessType t){
-    return state_physics.rotation * ref_up;
+vec3 Object::GetUp(){
+    return state.rotation * ref_up;
 }
 
-vec3 Object::GetWorldUp(ObjectStateAccessType t){
+vec3 Object::GetWorldUp(){
     return GetWorldRotation() * ref_up;
 }
 
 vec3 Object::GetLeft(){
-    return state_physics.rotation * ref_left;
+    return state.rotation * ref_left;
 }
 
 //Returns the local rotation
 quat Object::GetRotation(){
-    return state_physics.rotation;
+    return state.rotation;
 }
 
 quat Object::WorldRotationToLocal(const quat& world_rotation_in){
@@ -538,7 +488,7 @@ void Object::UpdateTransformMatrix(){
 
     local_transform_scale_matrix.set_position(state.position);
 
-    //state.f_was_transformed = false;
+    state.f_was_transformed = false;
 }
 
 fmat4& Object::GetLocalTransformScaleMatrix(){

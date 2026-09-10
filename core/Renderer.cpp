@@ -119,7 +119,7 @@ void Renderer::GetAllVisibleSubLights(Object* object,std::vector<Light*>&lights)
     for (int i=0;i<object->children.size();i++){
         Object* child = object->GetChild(i);
         Light* light = dynamic_cast<Light*>(child);
-        if (light && light->IsVisible(STATE_ACCESS_RENDERER)){
+        if (light && light->IsVisible()){
             lights.push_back(light);
         }
     }
@@ -172,44 +172,11 @@ void Renderer::CullLights(){
     visible_lights.clear();
     for (Object* object:objects){
         Light* light = dynamic_cast<Light*>(object);
-        if (light && light->IsVisible(STATE_ACCESS_RENDERER)){
+        if (light && light->IsVisible()){
             visible_lights.push_back(light);
             continue;
         }
         GetAllVisibleSubLights(object,visible_lights);
-    }
-}
-
-//This checks if all objects we are interested in have completed.
-void Renderer::UpdateState(){
-    bool all_completed = true;
-    for (Object* object:objects){
-
-        if (!object->PhysicsCompleted()){
-            all_completed = false;
-            break;
-        }
-    }
-
-    if (!all_completed){
-        //debug->Warn("Not all objects have complete state_physics_prev\n");
-
-        //Physics is still modifying the current and/or previous state.
-        //We are rendering faster than physics.
-        //Draw the current state.
-        //return;
-    }
-
-    //We take the completed state, copy it over and mark it as incomplete.
-    //Physics is allowed to swap when a state is incomplete.
-    for (Object* object:objects){
-        //This was previously tested, and it's now broken....?
-        if (!object->PhysicsCompleted()){
-            //debug->Fatal("Previously set complete state now incomplete.\n");
-        }
-        //Copies object state and invalidates physics state
-        object->UpdateState();
-
     }
 }
 
@@ -412,9 +379,10 @@ void Renderer::PrepareObjects(){
     //First, we cull all objects we are sure of are not visible.
     //Then we make a list of all objects that need to be rendered.
     //Of those objects, we make a list for each unique mesh with object attributes and object ids.
+    //No per-object state copy here any more: an object carries a single ObjectState, written by
+    //the physics thread under physics_mutex - which DrawFrame holds across this whole call.
     CullObjects();
     CullLights();
-    UpdateState();
     UpdateObjectMaterials();
     RebuildUniqueMeshList();
     ClearBatches();
@@ -557,7 +525,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     ClearDepthPasses();
     if (skinned_shader){
         skinned_shader->Use();
-        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
+        vec3 p = camera->GetPosition();
         skinned_shader->Setvec3("eye_position",p);
         if (!skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
             debug->Fatal("Could not set f_normal_mapping in skinned shader\n");
@@ -569,7 +537,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     {//Depth pass with default shader.
         shader->Use();
-        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
+        vec3 p = camera->GetPosition();
         shader->Setvec3("eye_position",p);
         if (!shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
             debug->Fatal("Could not set f_normal_mapping in default shader\n");
@@ -630,7 +598,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     if (skinned_shader && camera){
         skinned_shader->Use();
-        vec3 p = camera->GetPosition(STATE_ACCESS_RENDERER);
+        vec3 p = camera->GetPosition();
         skinned_shader->Setvec3("eye_position",p);
         skinned_shader->Setmat4("mat_worldcam",camera->mat_cam);
         if (!skinned_shader->Setint("f_normal_mapping",(int)f_normal_mapping)){
@@ -837,6 +805,11 @@ bool Renderer::RebuildShadowFBO(int shadow_width, int shadow_height){
     glTextureStorage2D(shadow_tex_id, 1, GL_DEPTH_COMPONENT32F, shadow_width, shadow_height);
     glTextureParameteri(shadow_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(shadow_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    //Default wrap is GL_REPEAT, which tiles the depth map over everything outside the light's
+    //ortho box and fakes shadows there. CalcShadow now rejects out-of-range lookups outright, so
+    //this is only a safety net - clamping is still a great deal saner than tiling.
+    glTextureParameteri(shadow_tex_id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(shadow_tex_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glNamedFramebufferTexture(shadow_fbo_id, GL_DEPTH_ATTACHMENT, shadow_tex_id, 0);
     return CheckFrameBuffer();
 }

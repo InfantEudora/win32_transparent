@@ -23,10 +23,14 @@ Scene* ApplicationShip::CreateEmptyScene(){
     //Make a sun
     sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
-    sun->SetPosition(vec3(-10,10,10));
+    //Position no longer affects the shading angle (that comes from the light's forward), it only
+    //places the shadow frustum. Keep the sun well clear of the grid so the whole 40x40 of it sits
+    //between the shadow camera's near and far planes.
+    sun->SetPosition(vec3(-50,50,50));
     sun->color = vec3(1,0.8,0.6);
     sun->brightness = 7.0;
-    sun->viewport.zoom = 10;
+    //Half-extent 30 covers the 40x40 grid; anything outside is simply unshadowed.
+    sun->SetupOrthographic(4096,4096,30.0f,1.0f,200.0f);
     sun->SetLookAt(vec3());
     scene->AddObject(sun);
 
@@ -202,8 +206,8 @@ void ApplicationShip::RunLogic(){
         float local_zoom_target = zoom_target + fact;
 
         //We'll make the camera track the ship
-        vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_PHYSICS);
-        vec3 p = camera->GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 ship_pos = ship_character->GetPosition();
+        vec3 p = camera->GetPosition();
         vec3 camera_target = ship_pos + vec3(0,local_zoom_target,0);
         vec3 diff = p.lerp(camera_target,0.04f);
         camera->SetPosition(diff);
@@ -213,7 +217,7 @@ void ApplicationShip::RunLogic(){
         //This will also rotate the camera to look at the ship
         /*
         quat r = camera->GetRotation();
-        quat t = quat::getquat(ship_pos,camera->GetWorldPosition(STATE_ACCESS_PHYSICS),-Object::ref_forward);
+        quat t = quat::getquat(ship_pos,camera->GetWorldPosition(),-Object::ref_forward);
         t.normalize();
         r = quat::slerp(r,t,0.15f);
         camera->SetRotation(r);
@@ -231,7 +235,7 @@ void ApplicationShip::RunLogic(){
         //We attempt to keep the ship upright
         quat ship_rot = ship_character->GetRotation();
 
-        vec3 fwd = ship_character->GetForward(STATE_ACCESS_PHYSICS);
+        vec3 fwd = ship_character->GetForward();
         //We want the forward vector to have no y component
         vec3 corrected_fwd = vec3(fwd.x,0,fwd.z).normalize();
 
@@ -242,7 +246,7 @@ void ApplicationShip::RunLogic(){
         ship_character->SetRotation(q2);
 
         //We also attempt to keep the ship at y=0
-        vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 ship_pos = ship_character->GetPosition();
         if (ship_pos.y < -0.1f || ship_pos.y > 0.1f){
             vec3 v = ship_character->GetVelocity();
             ship_character->SetVelocity(v - vec3(0,ship_pos.y * 0.1f,0));
@@ -259,7 +263,7 @@ void ApplicationShip::RunLogic(){
         Asteroid* asteroid = dynamic_cast<Asteroid*>(object);
         if (asteroid){
             vec3 center_pos = vec3();
-            vec3 asteroid_pos = asteroid->GetPosition(STATE_ACCESS_PHYSICS);
+            vec3 asteroid_pos = asteroid->GetPosition();
             vec3 diff = asteroid_pos - center_pos;
             float dist = diff.length();
             if (dist > 20.0f){
@@ -316,6 +320,29 @@ void ApplicationShip::RunLogic(){
         float y = gp_ly + gp_ry;
         y = clamp(y,-1.0f,1.0f);
 
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            y = 1;
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            y = -1;
+        }
+        if (input->IsKeyDown(INPUT_Q)){
+            gp_rx = -1;
+        }
+        if (input->IsKeyDown(INPUT_E)){
+            gp_rx = 1;
+        }
+
+        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+           gp_lx = 1;
+        }
+        if (input->IsKeyDown(INPUT_TURN_LEFT)){
+            gp_lx = -1;
+        }
+        if (input->IsKeyDown(INPUT_SHOOT)){
+            gp_l2r2 = 1;
+        }
+
         if (y > 0.01f){
             ship_character->MoveForwardBy(y * 100);
         }
@@ -338,45 +365,9 @@ void ApplicationShip::RunLogic(){
             ship_character->TurnLeftBy((gp_lx*gp_lx) * 0.04f);
             ship_character->RollBy(-gp_lx * 0.05f);
         }
-
         if (gp_l2r2 > 0.01f){
             ship_character->ShootLaser();
             gamepad_controller->rmotor = 5000;
-        }
-
-    }
-
-    //With keyboard / mouse
-    if (ship_character && main_window->f_has_focus){
-        if (input->IsKeyDown(INPUT_TURN_UP)){
-            ship_character->MoveForwardBy(100);
-        }
-        if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            ship_character->MoveBackwardBy(100);
-        }
-        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-            ship_character->TurnRightBy(0.04f);
-            ship_character->RollBy(-0.05f);
-        }
-        if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            ship_character->TurnLeftBy(0.04f);
-            ship_character->RollBy(0.05f);
-        }
-        if (input->IsKeyDown(INPUT_Q)){
-            ship_character->RollBy(0.05f);
-        }
-        if (input->IsKeyDown(INPUT_E)){
-            ship_character->RollBy(-0.05f);
-        }
-        if (input->IsKeyDown(INPUT_F)){
-            ship_character->f_animation_override = true;
-            ship_character->animation_override_ticks++;
-        }
-        if (input->WasKeyReleased(INPUT_G)){
-            f_mode_grab = !f_mode_grab;
-        }
-        if (input->IsKeyDown(INPUT_SHOOT)){
-            ship_character->ShootLaser();
         }
     }
 
@@ -412,11 +403,9 @@ void ApplicationShip::DrawImGuiUI(){
     if (ship_character){
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Checkbox("Lock Ship Axis",&f_lock_ship_axis);
-        ImGui::Text("Ship Up              : (%.2f, %.2f, %.2f)",ship_character->GetUp(STATE_ACCESS_RENDERER).x,ship_character->GetUp(STATE_ACCESS_RENDERER).y,ship_character->GetUp(STATE_ACCESS_RENDERER).z);
-        ImGui::Text("Ship Y-Pos           : %.2f",ship_character->GetPosition(STATE_ACCESS_RENDERER).y);
-        ImGui::Text("Ship Forward Thrust  : %.2f N",ship_character->forward_thrust);
-        ImGui::Text("Ship Tilt Thrust     : %.2f N",ship_character->tilt_thrust);
-        ImGui::Text("Ship Rotation Thrust : %.2f N",ship_character->rotation_thrust);
+        ImGui::Text("Ship Up              : (%.2f, %.2f, %.2f)",ship_character->GetUp().x,ship_character->GetUp().y,ship_character->GetUp().z);
+        ImGui::Text("Ship Y-Pos           : %.2f",ship_character->GetPosition().y);
+
         if (ImGui::Button("Reset Ship Position")){
             ship_character->SetPosition(vec3(0,0,0));
             ship_character->SetRotation(quat().identity());
@@ -424,7 +413,7 @@ void ApplicationShip::DrawImGuiUI(){
         if (ImGui::Button("Add Asteroid")){
             Asteroid* asteroid = new Asteroid(assetmanager,main_scene->physics_world,main_scene,rrand);
             if (asteroid){
-                vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_RENDERER);
+                vec3 ship_pos = ship_character->GetPosition();
                 vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
                 asteroid->SetPosition(ship_pos + offset);
                 asteroid->SetScale(vec3(rrand->GetFloat(0.8f,2.5f)));
@@ -440,7 +429,7 @@ void ApplicationShip::DrawImGuiUI(){
             Object* capsule = new Object();
             if (capsule){
                 assetmanager->GetObjectFromAsset("capsule",capsule);
-                vec3 ship_pos = ship_character->GetPosition(STATE_ACCESS_RENDERER);
+                vec3 ship_pos = ship_character->GetPosition();
                 vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
                 capsule->SetPosition(ship_pos + offset);
                 capsule->SetScale(vec3(2.0f,2.0f,2.0f));
@@ -452,20 +441,8 @@ void ApplicationShip::DrawImGuiUI(){
                 main_scene->AddObject(capsule);
             }
         }
-
-        static int lspeed = 0;
-        static int rspeed = 0;
-        ImGui::SliderInt("Left Motor Speed",&lspeed,0,65535);
-        ImGui::SliderInt("Right Motor Speed",&rspeed,0,65535);
-
-        if (ImGui::Button("Send Data")){
-            if (gamepad_controller){
-                gamepad_controller->SendMotorData(lspeed,rspeed);
-            }
-        }
         ImGui::End();
     }
-
 
     if (f_filemodal){
         ImGui::OpenPopup("Attempt to import assets?");

@@ -290,11 +290,11 @@ float CraneCharacter::GetGrabbedMass() const{
 
 vec3 CraneCharacter::GetMagnetWorldPosition(){
     if (!hook){
-        return GetWorldPosition(STATE_ACCESS_PHYSICS);
+        return GetWorldPosition();
     }
-    //STATE_ACCESS_PHYSICS for the same reason the piston visual uses it: this is only ever read
-    //from the physics thread, where the render state is a tick stale.
-    return hook->GetWorldPosition(STATE_ACCESS_PHYSICS) + (hook->GetWorldRotation() * magnet_local_offset);
+    //Only ever read from the physics thread, and GetWorldPosition is now live on it - there is a
+    //single ObjectState, so this is the hook's current pose and not a tick-old render copy.
+    return hook->GetWorldPosition() + (hook->GetWorldRotation() * magnet_local_offset);
 }
 
 //Inside the physics step - record only. See the class header comment.
@@ -368,7 +368,7 @@ void CraneCharacter::UpdateMagnet(){
             if (!IsGrabbable(candidate)){
                 continue;
             }
-            float distance = (candidate->GetWorldPosition(STATE_ACCESS_PHYSICS) - pad).length();
+            float distance = (candidate->GetWorldPosition() - pad).length();
             if (!best || distance < best_distance){
                 best = candidate;
                 best_distance = distance;
@@ -462,16 +462,14 @@ void CraneCharacter::UpdatePhysicsState(){
     }
     UpdateMagnet();
     if (swivel && hook && cable_visual){
-        vec3 hook_top = hook->GetWorldPosition(STATE_ACCESS_PHYSICS) + (hook->GetWorldRotation() * vec3(0,0.15f,0));
-        SpanVisual(cable_visual,swivel->GetWorldPosition(STATE_ACCESS_PHYSICS),hook_top,cable_radius);
+        vec3 hook_top = hook->GetWorldPosition() + (hook->GetWorldRotation() * vec3(0,0.15f,0));
+        SpanVisual(cable_visual,swivel->GetWorldPosition(),hook_top,cable_radius);
     }
     if (boom && piston_visual){
-        //STATE_ACCESS_PHYSICS, not the default RENDERER - this runs on the physics thread, same
-        //reasoning as ApplicationTank's own UpdateBuggyWheelSpinParticles comment on the same
-        //distinction, just the opposite direction (physics code reading stale render state would
-        //be a tick behind the boom's actual current pose here).
-        vec3 boom_anchor_world = boom->GetWorldPosition(STATE_ACCESS_PHYSICS) + (boom->GetWorldRotation() * piston_boom_anchor_local);
-        vec3 base_anchor_world = GetWorldPosition(STATE_ACCESS_PHYSICS) + (GetWorldRotation() * piston_base_anchor_local);
+        //Runs on the physics thread, and reads the boom's current pose: with one ObjectState per
+        //object there is no longer a tick-old render copy to accidentally read instead.
+        vec3 boom_anchor_world = boom->GetWorldPosition() + (boom->GetWorldRotation() * piston_boom_anchor_local);
+        vec3 base_anchor_world = GetWorldPosition() + (GetWorldRotation() * piston_base_anchor_local);
         //No assumption about which plane the mechanism lies in, so this survives the base being
         //moved or yawed (the box is symmetric, so which end is which doesn't matter).
         SpanVisual(piston_visual,base_anchor_world,boom_anchor_world,piston_radius);

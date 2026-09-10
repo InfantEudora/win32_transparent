@@ -29,22 +29,28 @@ typedef uint32_t objectid_t;
 #define ANIMATION_STATE_TRANSITION_BACK     4
 #define ANIMATION_STATE_LOAD_DEFAULT_POSE   5
 
-typedef enum ObjectStateAccess{
-    STATE_ACCESS_PHYSICS = 1,
-    STATE_ACCESS_RENDERER = 2
-}ObjectStateAccessType;
-
-//All variables that affect the object's appearance, which are modified/read by different threads
+//Everything about an object that decides where and how it is drawn. There is exactly ONE of
+//these per object: the render thread and the physics thread are already mutually exclusive
+//through Renderer::physics_mutex - the physics tick in Application::PhysicsThreadFunction and
+//Renderer::DrawFrame both hold it - so neither can ever observe a half-written state, and there
+//is nothing left for a second copy to protect. This used to be a triple buffer
+//(state/state_physics/state_physics_prev) behind an atomic completion handshake, from a design
+//where one object's next state was computed while its previous one was still being drawn. Both
+//the physics solver and the render batcher need every object at once, though, so a per-object
+//handshake never bought anything - it had already been commented out of Renderer::UpdateState.
 struct ObjectState{
-    bool f_was_transformed = false;
+    //Dirty flag for local_transform_scale_matrix. Set by every setter below, cleared when
+    //UpdateTransformMatrix rebuilds the matrix. Starts true so the first read always builds one,
+    //which also covers state written without a setter (the duplication constructor's scale).
+    bool f_was_transformed = true;
     bool f_visible = true;
     vec3 position = vec3(0,0,0);
     quat rotation;
     vec3 scale = vec3(1,1,1);
 };
 
-//All Set/Get functions may only be set from physics. And update the state_physics.
-//Render thread will only read ObjectState state.
+//Setters are for the physics thread, or for the render thread while it holds physics_mutex
+//(which is the whole of Application::DrawImGuiUI) - see Renderer::physics_mutex.
 class Object{
     public:
     Object();
@@ -103,7 +109,7 @@ class Object{
     void YawBy(float by);
 
     //Physics/state
-    void UpdateState(); //Called from render thread before rendering
+    //Syncs this object, and its children, from its rigid body once per simulation tick.
     virtual void UpdatePhysicsState();
 
     std::string name;
@@ -116,14 +122,14 @@ class Object{
     static vec3 ref_left;
     static vec3 ref_forward;
 
-    bool IsVisible(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
+    bool IsVisible();
     vec3 GetCenterofMass();
-    vec3 GetPosition(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);
-    vec3 GetWorldPosition(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
-    vec3 GetForward(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);          // Returns the forward or normalized lookat direction
-    vec3 GetWorldForward(ObjectStateAccessType t = STATE_ACCESS_RENDERER);
-    vec3 GetUp(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);               // Returns the local vector pointing up.
-    vec3 GetWorldUp(ObjectStateAccessType t = STATE_ACCESS_RENDERER);          //
+    vec3 GetPosition();         // Local position, within parent
+    vec3 GetWorldPosition();    // Position in world space, off the transform chain
+    vec3 GetForward();          // Returns the forward or normalized lookat direction
+    vec3 GetWorldForward();
+    vec3 GetUp();               // Returns the local vector pointing up.
+    vec3 GetWorldUp();
 
     vec3 GetLeft();             // Return the vector pointing left
     quat GetRotation();         // Returns a copy of the rotation
@@ -138,9 +144,6 @@ class Object{
     std::array<std::string,NUM_MATERIAL_SLOTS>material_names; // List of material names the object should pick into it's material slots.
     bool f_update_materials = true; //In this render cycle, lookup materials from names and place them in slots.
     void UpdateMaterials(std::vector<Material>& global_list); // Set material ID's by looking up name in the supplied list
-
-    //For checking if the state_physics_prev is complete
-    bool PhysicsCompleted();
 
     //Lighting properties
 
@@ -202,14 +205,6 @@ class Object{
     void SwitchToAnimation(const std::string& name);                   // Does not need a animation transistion
     void SwitchToAnimation(Animation* animation);                      // Instantly switches to the next animation, without blending
 
-    //Maybe we want some place for the current object transforms, that may be rendered.
-    //And some place where the new ones are calculated.
-    //They can be moved to a 'front' buffer, so the next frame may get them.
-    // While that is taking place, the new one's can already be calculated.
-    // A thread will be iterating over objects, and updating random things in random order.
-    // So, one render function will iterate over all objects... see if all their last physics states are completed.
-    // And copy them over. During this time, physics will have to wait.
-
     //Physics & Collision
     Physics*            GetPhysics();
     Physics*            AddPhysics(PhysicsWorld* world);
@@ -245,13 +240,7 @@ protected:
 
     Physics* physics = NULL;
 
-    ObjectState state;              //<- State that may be rendered this frame
-    ObjectState state_physics;      //<- State physics may update.
-    ObjectState state_physics_prev; //<- Last complete state the physics has calculated.
-
-    std::atomic<int>state_completed = {0};  //If this state is completed.
-    std::atomic<int>state_physics_completed = {0};
-    std::atomic<int>state_physics_prev_completed = {0};
+    ObjectState state;  //Where this object is. Guarded by Renderer::physics_mutex.
 
     Mesh*           mesh            = NULL;
     objectid_t      id              = OBJECTID_INVALID;

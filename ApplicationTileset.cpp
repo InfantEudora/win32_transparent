@@ -676,7 +676,7 @@ void ApplicationTileset::PlaceCar(IsoCell* target_cell){
 
     assetmanager->GetObjectFromAsset(asset_name, car);
     if (car){
-        car->SetPosition(target_cell->GetWorldPosition(STATE_ACCESS_PHYSICS));
+        car->SetPosition(target_cell->GetWorldPosition());
         car->AddPhysics(main_scene->physics_world);
         if (Physics* physics = car->GetPhysics()){
             vec3 extent = car->GetMesh()->GetExtents()*0.5f;
@@ -717,7 +717,7 @@ void ApplicationTileset::PlaceHouse(IsoCell* target_cell){
     IsoHouse* house = new IsoHouse();
     assetmanager->GetObjectFromAsset("house_1", house);
     if (house){
-        vec3 pos = target_cell->GetWorldPosition(STATE_ACCESS_PHYSICS);
+        vec3 pos = target_cell->GetWorldPosition();
         house->SetPosition(pos);
         house->AddPhysics(main_scene->physics_world);
         if (Physics* physics = house->GetPhysics()){

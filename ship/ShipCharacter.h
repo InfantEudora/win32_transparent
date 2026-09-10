@@ -27,9 +27,6 @@ class ShipCharacter : public Object{
     void TurnLeftBy(float angle);
     void TurnRightBy(float angle);
     void ShootLaser();
-
-
-
 };
 
 #endif

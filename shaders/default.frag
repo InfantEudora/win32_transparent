@@ -178,8 +178,16 @@ vec3 CalcDirectionalPBRLight(vec3 albedo, vec3 lightdirection, vec3 color, float
     vec3 radiance     = color * brightness;
 
     // cook-torrance brdf
-    float NDF = DistributionGGX(N, H, m.roughness + 0.0001); //Some base roughness to prevent /0
-    float G   = GeometrySmith(N, V, L, m.roughness + 0.0001);
+    //glTF stores *perceptual* roughness. GGX wants alpha = roughness^2, and Smith's
+    //direct-lighting geometry term wants k = (roughness+1)^2 / 8. Feeding roughness straight
+    //into both (as this used to) renders every material rougher than it was authored.
+    //The floor is only there to keep a perfect mirror from dividing by zero.
+    float rough = max(m.roughness, 0.03);
+    float alpha = rough * rough;
+    float k     = ((rough + 1.0) * (rough + 1.0)) / 8.0;
+
+    float NDF = DistributionGGX(N, H, alpha);
+    float G   = GeometrySmith(N, V, L, k);
     vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     vec3 kS = F;
@@ -214,6 +222,13 @@ float GetTransparency(){
 float CalcShadow(vec4 vposinshadow){
     //Linearise
     vec3 pos_proj = vposinshadow.xyz / vposinshadow.w;
+
+    //Anything outside the sun's ortho box has no depth information, so it cannot be shadowed.
+    //Without this the lookup below samples outside [0,1] and returns a meaningless depth, which
+    //painted a bright patch onto the scene that tracked the light's position.
+    if (any(greaterThan(abs(pos_proj.xy), vec2(1.0))) || (pos_proj.z > 1.0)){
+        return 1.0;
+    }
 
     //Map to UV coordinates
     vec2 uvshadow;
@@ -267,7 +282,10 @@ vec4 CalcPBRLighting(){
     }
 
     for (int i = 0; i < lights.length(); i++){
-        vec3 lightdirection = lights[i].position;
+        //Vector from the surface towards the light. For a directional light that is the negated
+        //light forward - constant everywhere, so the rays stay parallel and the light's position
+        //does not affect the shading. The point light case below overwrites it per fragment.
+        vec3 lightdirection = -lights[i].direction;
         vec3 light = lightdirection;
         float direction_len = dot(lights[i].direction,lights[i].direction);
         float falloff = 1.0f;

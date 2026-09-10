@@ -27,7 +27,7 @@ void IsoCar::SetTargetCell(IsoCell* cell){
     }
 
     // Determine starting cell under car
-    vec3 carpos = GetPosition(STATE_ACCESS_PHYSICS);
+    vec3 carpos = GetPosition();
     current_cell = terrain->FindCellByWorldPosition(carpos);
 
     IsoCell* startRoad = current_cell && current_cell->road_object ? current_cell : IsoPath::FindClosestRoadCell(terrain, current_cell ? current_cell : cell);
@@ -233,7 +233,7 @@ void IsoCar::UpdatePhysicsState(){
     if (close_car){
         //debug->Info("Car [%s] is close to car [%s]\n",name.c_str(),close_car->name.c_str());
         //Figure out which one will yield
-        vec3 diff = close_car->GetPosition(STATE_ACCESS_PHYSICS) - GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 diff = close_car->GetPosition() - GetPosition();
         diff.normalize();
         int other_dir = IsoDirection::NormalToDirection(diff);
         //debug->Info("Our direction: (%s) Other car direction %d (%s)\n",IsoDirection::ToString(direction).c_str(),other_dir,IsoDirection::ToString(other_dir).c_str());
@@ -276,7 +276,7 @@ void IsoCar::UpdatePhysicsState(){
 
     debug->Debug("Car moving towards target position (%5.2f,%5.2f,%5.2f)\n",target_position.x,target_position.y,target_position.z);
 
-    vec3 current_position = GetPosition(STATE_ACCESS_PHYSICS);
+    vec3 current_position = GetPosition();
     vec3 diff = target_position - current_position;
 
     float dist = diff.length();

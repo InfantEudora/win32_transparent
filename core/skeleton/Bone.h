@@ -17,8 +17,8 @@ public:
     float length = 0.0f;
 
 
-    vec3 GetHeadWorldPosition(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);    // Where the bone starts and attaches to parent
-    vec3 GetTailWorldPosition(ObjectStateAccessType t = STATE_ACCESS_PHYSICS);    // Where the bone ends and children sit
+    vec3 GetHeadWorldPosition();    // Where the bone starts and attaches to parent
+    vec3 GetTailWorldPosition();    // Where the bone ends and children sit
 
     Bone* parent_bone = NULL;
     Bone* child_bone = NULL;

@@ -57,14 +57,14 @@ void Bone::IKExtend(const vec3& target,int depth,float decay, std::vector<Bone*>
             debug->Info(" Chain bone: %s\n",b->name.c_str());
             debug->Info("Extending Bone %s len=%.2f by factor %.1f\n",b->name.c_str(),length, resulting_decay);
             debug->Info(" Target wp : %.2f %.2f %.2f\n",target.x,target.y,target.z);
-            vec3 tail_wp = b->GetTailWorldPosition(STATE_ACCESS_PHYSICS);
+            vec3 tail_wp = b->GetTailWorldPosition();
             debug->Info(" Tail wp   : %.2f %.2f %.2f\n",tail_wp.x,tail_wp.y,tail_wp.z);
 
             //The bone now points somewhere in space
             //quat q = b->GetWorldRotation();
 
             //And it should rotate to point at target
-            quat q_target = quat::getquat(b->GetWorldPosition(STATE_ACCESS_PHYSICS),target,vec3(0,1,0));
+            quat q_target = quat::getquat(b->GetWorldPosition(),target,vec3(0,1,0));
             //We now have the target rotation in world space.
             //Convert to local space
             quat local_rotation = b->WorldRotationToLocal(q_target);
@@ -81,13 +81,13 @@ void Bone::IKExtend(const vec3& target,int depth,float decay, std::vector<Bone*>
     }
 }
 
-vec3 Bone::GetHeadWorldPosition(ObjectStateAccessType t){
-    return GetWorldPosition(t);
+vec3 Bone::GetHeadWorldPosition(){
+    return GetWorldPosition();
 }
 
-vec3 Bone::GetTailWorldPosition(ObjectStateAccessType t){
+vec3 Bone::GetTailWorldPosition(){
     if (child_bone){
-        return child_bone->GetWorldPosition(t);
+        return child_bone->GetWorldPosition();
     }
     return vec3();
 }

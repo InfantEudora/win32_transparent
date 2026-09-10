@@ -463,12 +463,11 @@ static bool RotationFromArgs(const json& args,quat& out,std::string& error){
 //Shared by camera_get and camera_set so the two cannot drift apart. camera_target is the app's
 //orbit pivot (see Application::GetCameraTargetPtr) and may be NULL for an app that has none.
 static json CameraToJson(Camera* camera,vec3* camera_target){
-    //GetPosition, not GetWorldPosition: the latter defaults to STATE_ACCESS_RENDERER, which on
-    //this (MCP) thread is last frame's copy and reads stale straight after a camera_set - it
-    //reported the camera's old position while forward already showed the new aim. GetPosition
-    //defaults to STATE_ACCESS_PHYSICS, and is also exactly what the middle-mouse orbit reads and
+    //GetPosition, not GetWorldPosition: this is exactly what the middle-mouse orbit reads and
     //writes, so what these tools report is what that code sees. The camera is a root object, so
-    //local and world are the same thing anyway.
+    //local and world are the same thing anyway. (This used to matter for a second reason -
+    //GetWorldPosition read a once-per-frame copy that was stale on this MCP thread straight
+    //after a camera_set. There is one ObjectState now, so both are equally fresh.)
     vec3 pos = camera->GetPosition();
     vec3 forward = camera->GetForward();
     json result = {
@@ -505,7 +504,7 @@ static json ObjectToJson(Object* object,bool verbose){
     if (!verbose){
         return result;
     }
-    result["world_position"] = Vec3ToJson(object->GetWorldPosition(STATE_ACCESS_PHYSICS));
+    result["world_position"] = Vec3ToJson(object->GetWorldPosition());
     result["rotation"] = QuatToJson(object->GetRotation());
     result["forward"] = Vec3ToJson(object->GetForward());
     result["up"] = Vec3ToJson(object->GetUp());
@@ -676,6 +675,10 @@ void Application::RegisterCoreCommandHandlers(){
                 case SIM_PRIMITIVE_DIRECTIONAL_LIGHT:{
                     DirectionalLight* light = new DirectionalLight();
                     light->name = "Directional Light";
+                    //Shading follows the light's forward, so give a freshly spawned one a
+                    //sensible downward angle instead of the default horizontal -Z.
+                    light->SetPosition(vec3(-10,10,10));
+                    light->SetLookAt(vec3());
                     object = light;
                     break;
                 }

@@ -199,12 +199,12 @@ void ApplicationAnimation::RunLogic(){
         if (f_mode_camera_track){
             Bone* neck = character->FindBone("mixamorig:Neck");
             Bone* head = character->FindBone("mixamorig:Head");
-            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - 3 * head->GetWorldForward(STATE_ACCESS_PHYSICS);
-            vec3 p = camera->GetPosition(STATE_ACCESS_PHYSICS);
+            vec3 head_wp = head->GetWorldPosition() - 3 * head->GetWorldForward();
+            vec3 p = camera->GetPosition();
             vec3 diff = p.lerp(head_wp,0.04f);
             camera->SetPosition(diff);
             quat r = camera->GetRotation();
-            quat t = quat::getquat(neck->GetWorldPosition(STATE_ACCESS_PHYSICS),camera->GetWorldPosition(STATE_ACCESS_PHYSICS),Object::ref_up);
+            quat t = quat::getquat(neck->GetWorldPosition(),camera->GetWorldPosition(),Object::ref_up);
             t.normalize();
             r = quat::slerp(r,t,0.15f);
             camera->SetRotation(r);
@@ -222,18 +222,18 @@ void ApplicationAnimation::RunLogic(){
         //Let the bone track the character
         if (f_chain_track_head && (chain.size() > 0) && character){
             Bone* head = character->FindBone("mixamorig:Head");
-            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - head->GetWorldForward(STATE_ACCESS_PHYSICS);
-            vec3 p = chain.at(0)->GetPosition(STATE_ACCESS_PHYSICS);
+            vec3 head_wp = head->GetWorldPosition() - head->GetWorldForward();
+            vec3 p = chain.at(0)->GetPosition();
             vec3 diff = p.lerp(head_wp,0.04f);
             chain.at(0)->SetPosition(diff);
         }
 
         if (character->f_move_by_feet_placement){
-            vec3 fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS);
+            vec3 fpl = character->tracked_foot_l->GetWorldPosition();
             bool left_foot_on_ground = (fpl.y < 0.01f);
 
 
-            vec3 fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS);
+            vec3 fpr = character->tracked_foot_r->GetWorldPosition();
             bool right_foot_on_ground = (fpr.y < 0.01f);
 
 
@@ -242,7 +242,7 @@ void ApplicationAnimation::RunLogic(){
 
             //Show which foot is leading
             //Get the forward direction
-            vec3 forward = character->GetForward(STATE_ACCESS_PHYSICS);
+            vec3 forward = character->GetForward();
             float left_foot_fwd = forward.dot(fpl);
             float right_foot_fwd = forward.dot(fpr);
 
@@ -256,7 +256,7 @@ void ApplicationAnimation::RunLogic(){
                 delta.y = 0;
                 debug->Info("Left foot on ground. Moving character by left foot delta %.2f.\n",delta.length());
                 character->MoveBy(-delta);
-                fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS);
+                fpl = character->tracked_foot_l->GetWorldPosition();
                 character->left_foot_prev_wpos = fpl;
                 character->right_foot_prev_wpos = fpr;
             }else if (right_foot_on_ground && (left_foot_on_ground == false)){
@@ -264,7 +264,7 @@ void ApplicationAnimation::RunLogic(){
                 delta.y = 0;
                 debug->Info("Right foot on ground. Moving character by right foot delta %.2f.\n",delta.length());
                 character->MoveBy(-delta);
-                fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS);
+                fpr = character->tracked_foot_r->GetWorldPosition();
                 character->left_foot_prev_wpos = fpl;
                 character->right_foot_prev_wpos = fpr;
             }else if (left_foot_on_ground && right_foot_on_ground){
@@ -276,8 +276,8 @@ void ApplicationAnimation::RunLogic(){
                 vec3 delta = (delta_l + delta_r) * 0.5f;
                 debug->Info("Both feet on ground. Moving character by average foot delta %.2f.\n",delta.length());
                 character->MoveBy(-delta);
-                fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS);
-                fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS);
+                fpl = character->tracked_foot_l->GetWorldPosition();
+                fpr = character->tracked_foot_r->GetWorldPosition();
                 character->left_foot_prev_wpos = fpl;
                 character->right_foot_prev_wpos = fpr;
             }else{
@@ -295,7 +295,7 @@ void ApplicationAnimation::RunLogic(){
         }
 
         if (hand_r && (chain.size() > 0)){
-            vec3 target_pos = chain.at(0)->GetWorldPosition(STATE_ACCESS_PHYSICS);
+            vec3 target_pos = chain.at(0)->GetWorldPosition();
             hand_r->IKExtend(target_pos,2,0.5f);
         }
     }
@@ -445,14 +445,14 @@ void ApplicationAnimation::DrawImGuiUI(){
         //ImGui::Text("moving_right   : %s",character->character_state.moving_right ? "Yes" : "No");
 
         if (character->tracked_foot_l && character->tracked_foot_r){
-            vec3 fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_RENDERER);
+            vec3 fpl = character->tracked_foot_l->GetWorldPosition();
             ImGui::Text("Left Foot Pos: %.2f, %.2f, %.2f",fpl.x,fpl.y,fpl.z);
             if (fpl.y < 0.01f){
                 ImGui::TextColored(ImVec4(1,0,0,1),"Left foot is on ground");
             }else{
                 ImGui::TextColored(ImVec4(0,1,0,1),"Left foot is above ground.");
             }
-            vec3 fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_RENDERER);
+            vec3 fpr = character->tracked_foot_r->GetWorldPosition();
             ImGui::Text("Right Foot Pos : %.2f, %.2f, %.2f",fpr.x,fpr.y,fpr.z);
             if (fpr.y < 0.01f){
                 ImGui::TextColored(ImVec4(1,0,0,1),"Right foot is on ground");
@@ -464,7 +464,7 @@ void ApplicationAnimation::DrawImGuiUI(){
             ImGui::Text("Distance between feet : %.2f",foot_dist);
             //Show which foot is leading
             //Get the forward direction
-            vec3 forward = character->GetForward(STATE_ACCESS_RENDERER);
+            vec3 forward = character->GetForward();
             float left_foot_fwd = forward.dot(fpl);
             float right_foot_fwd = forward.dot(fpr);
             if (left_foot_fwd < right_foot_fwd){
@@ -489,13 +489,13 @@ void ApplicationAnimation::DrawImGuiUI(){
         Bone* hips = character->FindBone("mixamorig:Hips");
         if (hips){
             ImGui::Text("Hip Bone");
-            vec3 wp = hips->GetWorldPosition(STATE_ACCESS_RENDERER);
-            vec3 pos = hips->GetPosition(STATE_ACCESS_RENDERER);
+            vec3 wp = hips->GetWorldPosition();
+            vec3 pos = hips->GetPosition();
             ImGui::BeginDisabled();
             ImGui::DragFloat3("Local Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
             ImGui::DragFloat3("World Position", (float*)&wp, 0.01f, -1.0f, 1.0f);
-            vec3 wfwd = hips->GetWorldForward(STATE_ACCESS_RENDERER);
-            vec3 fwd = hips->GetForward(STATE_ACCESS_RENDERER);
+            vec3 wfwd = hips->GetWorldForward();
+            vec3 fwd = hips->GetForward();
             ImGui::DragFloat3("Local Forward", (float*)&fwd, 0.01f, -1.0f, 1.0f);
             ImGui::DragFloat3("World Forward", (float*)&wfwd, 0.01f, -1.0f, 1.0f);
             ImGui::EndDisabled();

@@ -77,8 +77,8 @@ void ApplicationIsoAnimation::SetCharacterUniforms(void){
     if (character && renderer->deferred_shader_custom){
         float angle_facing = 0;
         float angle_target_diff = 0;
-        vec3 target = target_indicator->GetPosition(STATE_ACCESS_RENDERER);
-        character->ComputeFacingAngles(STATE_ACCESS_RENDERER,target,angle_facing,angle_target_diff);
+        vec3 target = target_indicator->GetPosition();
+        character->ComputeFacingAngles(target,angle_facing,angle_target_diff);
 
 
         // Arc always runs CCW from the lower angle to the higher one.
@@ -416,12 +416,12 @@ void ApplicationIsoAnimation::RunLogic(){
         if (f_mode_camera_track){
             Bone* neck = character->FindBone("mixamorig:Neck");
             Bone* head = character->FindBone("mixamorig:Head");
-            vec3 head_wp = head->GetWorldPosition(STATE_ACCESS_PHYSICS) - 3 * head->GetWorldForward(STATE_ACCESS_PHYSICS);
-            vec3 p = camera->GetPosition(STATE_ACCESS_PHYSICS);
+            vec3 head_wp = head->GetWorldPosition() - 3 * head->GetWorldForward();
+            vec3 p = camera->GetPosition();
             vec3 diff = p.lerp(head_wp,0.04f);
             camera->SetPosition(diff);
             quat r = camera->GetRotation();
-            quat t = quat::getquat(neck->GetWorldPosition(STATE_ACCESS_PHYSICS),camera->GetWorldPosition(STATE_ACCESS_PHYSICS),Object::ref_up);
+            quat t = quat::getquat(neck->GetWorldPosition(),camera->GetWorldPosition(),Object::ref_up);
             t.normalize();
             r = quat::slerp(r,t,0.15f);
             camera->SetRotation(r);
@@ -577,8 +577,8 @@ void ApplicationIsoAnimation::RunLogic(){
 
         float angle_facing = 0;
         float angle_target_diff = 0;
-        vec3 target = target_indicator->GetPosition(STATE_ACCESS_PHYSICS);
-        character->ComputeFacingAngles(STATE_ACCESS_PHYSICS,target,angle_facing,angle_target_diff);
+        vec3 target = target_indicator->GetPosition();
+        character->ComputeFacingAngles(target,angle_facing,angle_target_diff);
         character->hips_turn_direction = clamp(-angle_target_diff,toradians(-35),toradians(35));
 
         //When we are in action mode, left clicking will make the character swing a weapon
@@ -634,7 +634,7 @@ void ApplicationIsoAnimation::UpdateHandFootLandingMarkers(){
         Bone* hand_l = hands->FindBone("mixamorig:Hand.L");
         Bone* hand_r = hands->FindBone("mixamorig:Hand.R");
         if (hand_l && hand_r){
-            vec3 mid = (hand_l->GetWorldPosition(STATE_ACCESS_PHYSICS) + hand_r->GetWorldPosition(STATE_ACCESS_PHYSICS)) * 0.5f;
+            vec3 mid = (hand_l->GetWorldPosition() + hand_r->GetWorldPosition()) * 0.5f;
             hand_landing->SetPosition(mid);
             hand_landing->SetVisibility(true);
         }
@@ -643,7 +643,7 @@ void ApplicationIsoAnimation::UpdateHandFootLandingMarkers(){
         Bone* foot_l = feet->FindBone("mixamorig:Foot.L");
         Bone* foot_r = feet->FindBone("mixamorig:Foot.R");
         if (foot_l && foot_r){
-            vec3 mid = (foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS) + foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS)) * 0.5f;
+            vec3 mid = (foot_l->GetWorldPosition() + foot_r->GetWorldPosition()) * 0.5f;
             foot_landing->SetPosition(mid);
             foot_landing->SetVisibility(true);
         }
@@ -737,14 +737,14 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         //ImGui::Text(" moving_right   : %s",character->character_state.moving_right ? "Yes" : "No");
 
         if (character->tracked_foot_l && character->tracked_foot_r){
-            vec3 fpl = character->tracked_foot_l->GetWorldPosition(STATE_ACCESS_RENDERER);
+            vec3 fpl = character->tracked_foot_l->GetWorldPosition();
             ImGui::Text("Left Foot Pos: %.2f, %.2f, %.2f",fpl.x,fpl.y,fpl.z);
             if (fpl.y < 0.01f){
                 ImGui::TextColored(ImVec4(1,0,0,1),"Left foot is on ground");
             }else{
                 ImGui::TextColored(ImVec4(0,1,0,1),"Left foot is above ground.");
             }
-            vec3 fpr = character->tracked_foot_r->GetWorldPosition(STATE_ACCESS_RENDERER);
+            vec3 fpr = character->tracked_foot_r->GetWorldPosition();
             ImGui::Text("Right Foot Pos : %.2f, %.2f, %.2f",fpr.x,fpr.y,fpr.z);
             if (fpr.y < 0.01f){
                 ImGui::TextColored(ImVec4(1,0,0,1),"Right foot is on ground");
@@ -756,7 +756,7 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
             ImGui::Text("Distance between feet : %.2f",foot_dist);
             //Show which foot is leading
             //Get the forward direction
-            vec3 forward = character->GetForward(STATE_ACCESS_RENDERER);
+            vec3 forward = character->GetForward();
             float left_foot_fwd = forward.dot(fpl);
             float right_foot_fwd = forward.dot(fpr);
             if (left_foot_fwd < right_foot_fwd){
@@ -782,13 +782,13 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         Bone* hips = character->FindBone("mixamorig:Hips");
         if (hips){
             ImGui::Text("Hip Bone");
-            vec3 wp = hips->GetWorldPosition(STATE_ACCESS_RENDERER);
-            vec3 pos = hips->GetPosition(STATE_ACCESS_RENDERER);
+            vec3 wp = hips->GetWorldPosition();
+            vec3 pos = hips->GetPosition();
             ImGui::BeginDisabled();
             ImGui::DragFloat3("Local Position", (float*)&pos, 0.01f, -1.0f, 1.0f);
             ImGui::DragFloat3("World Position", (float*)&wp, 0.01f, -1.0f, 1.0f);
-            vec3 wfwd = hips->GetWorldForward(STATE_ACCESS_RENDERER);
-            vec3 fwd = hips->GetForward(STATE_ACCESS_RENDERER);
+            vec3 wfwd = hips->GetWorldForward();
+            vec3 fwd = hips->GetForward();
             ImGui::DragFloat3("Local Forward", (float*)&fwd, 0.01f, -1.0f, 1.0f);
             ImGui::DragFloat3("World Forward", (float*)&wfwd, 0.01f, -1.0f, 1.0f);
             ImGui::EndDisabled();
@@ -843,11 +843,11 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
     ImGui::Checkbox("Place Hand/Foot Target (left-click a surface)",&f_mode_place_target);
     ImGui::TextWrapped("Click a wall-like surface to place the hand target, a floor-like surface for the foot target. Compare against the small landing markers, which track where the previewed animation's hands/feet currently are.");
     if (hand_target && hand_target->IsVisible() && hand_landing && hand_landing->IsVisible()){
-        float dist = (hand_target->GetPosition(STATE_ACCESS_RENDERER) - hand_landing->GetPosition(STATE_ACCESS_RENDERER)).length();
+        float dist = (hand_target->GetPosition() - hand_landing->GetPosition()).length();
         ImGui::Text("Hand target <-> landing distance: %.3f",dist);
     }
     if (foot_target && foot_target->IsVisible() && foot_landing && foot_landing->IsVisible()){
-        float dist = (foot_target->GetPosition(STATE_ACCESS_RENDERER) - foot_landing->GetPosition(STATE_ACCESS_RENDERER)).length();
+        float dist = (foot_target->GetPosition() - foot_landing->GetPosition()).length();
         ImGui::Text("Foot target <-> landing distance: %.3f",dist);
     }
     if (ImGui::Button("Clear Hand/Foot Targets")){

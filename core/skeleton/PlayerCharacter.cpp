@@ -357,10 +357,10 @@ void PlayerCharacter::ApplyAnimation(float time_delta){
 
     //Update the foot trackers
     if (foot_tracker_l && tracked_foot_l){
-        foot_tracker_l->SetPosition(tracked_foot_l->GetWorldPosition(STATE_ACCESS_PHYSICS));
+        foot_tracker_l->SetPosition(tracked_foot_l->GetWorldPosition());
     }
     if (foot_tracker_r && tracked_foot_r){
-        foot_tracker_r->SetPosition(tracked_foot_r->GetWorldPosition(STATE_ACCESS_PHYSICS));
+        foot_tracker_r->SetPosition(tracked_foot_r->GetWorldPosition());
     }
 }
 
@@ -422,16 +422,16 @@ void PlayerCharacter::TurnLookDown(){
     head_turn_direction_ud = clamp(head_turn_direction_ud-0.05f,-1.0,1.0);
 }
 
-void PlayerCharacter::ComputeFacingAngles(ObjectStateAccessType state_access, const vec3& target, float& out_facing, float& out_diff){
+void PlayerCharacter::ComputeFacingAngles(const vec3& target, float& out_facing, float& out_diff){
     //We get the direction forward in the zx plane.
-    vec3 forward = GetForward(state_access);
+    vec3 forward = GetForward();
     forward.y = 0;
     forward.normalize();
 
     // Convert facing direction to the shader's atan2(uv.y, uv.x) space.
     float facing = atan2(forward.x, -forward.z) + TYPE_PI/2;
     //Get the direction to the target
-    vec3 to_target = GetPosition(state_access) - target;
+    vec3 to_target = GetPosition() - target;
     to_target.y = 0;
     to_target.normalize();
     float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;

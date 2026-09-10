@@ -21,7 +21,7 @@ void ParticleEmitter::UpdatePhysicsState(){
     std::vector<Particle*>::iterator it = emitted_particles.begin();
     for ( ; it != emitted_particles.end(); ) {
         Particle* particle = *it;
-        if (particle->IsVisible(STATE_ACCESS_PHYSICS) == false){
+        if (particle->IsVisible() == false){
             //Particle will also destroy itself next tick
             particle->Destroy();
             it = emitted_particles.erase(it);
@@ -42,14 +42,12 @@ void ParticleEmitter::SetParticle(Particle* particle){
     p.y = rrand->GetFloat(-0.1,0.1);
     p.z = rrand->GetFloat(-0.1,0.1);
 
-    //STATE_ACCESS_PHYSICS, not the default STATE_ACCESS_RENDERER: GetWorldPosition's renderer
-    //branch reads world_transform_scale_matrix, which UpdateState() only refreshes once per
-    //frame elsewhere - a frame behind any SetPosition() this emitter's caller just made (e.g.
-    //ApplicationTank repositioning a one-shot impact emitter right before EmitParticles), so
-    //particles would spawn at where the emitter WAS, not where it was just moved to. Rotation
-    //below already reads state_physics via GetWorldRotation()/GetRotation() - this just makes
-    //position consistent with that same always-fresh source instead of a stale copy.
-    particle->SetPosition(GetWorldPosition(STATE_ACCESS_PHYSICS) + p);
+    //GetWorldPosition is live: it rebuilds world_transform_scale_matrix from the object's single
+    //ObjectState on demand, so it already reflects any SetPosition() this emitter's caller just
+    //made (e.g. ApplicationTank repositioning a one-shot impact emitter right before
+    //EmitParticles). It used to read a copy that UpdateState() refreshed once per frame, and had
+    //to be asked for the physics state explicitly or particles spawned where the emitter WAS.
+    particle->SetPosition(GetWorldPosition() + p);
     particle->SetScale(rrand->GetFloat(emission_properties.particle_size_min,emission_properties.particle_size_max));
 
     vec3 v = emission_properties.emission_direction * rrand->GetFloat(emission_properties.emission_speed_min,emission_properties.emission_speed_max);
@@ -93,7 +91,7 @@ void ParticleEmitter::EmitParticles(int amount){
     int amount_extra = amount;
     //Figure out if we can maybe reuse existing particles.
     for (Particle* particle:emitted_particles){
-        if (particle->IsVisible(STATE_ACCESS_PHYSICS) == false){
+        if (particle->IsVisible() == false){
             SetParticle(particle);
             particle->Show();
             //Extra step...

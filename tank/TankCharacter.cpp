@@ -54,7 +54,7 @@ void TankCharacter::UpdatePhysicsState(){
         }
 
         //Orientation read straight off the rigidbody rather than through GetRotation()/
-        //GetForward()/GetUp(): those all return state_physics.rotation, which
+        //GetForward()/GetUp(): those all return the object's ObjectState rotation, which
         //Object::UpdatePhysicsState() only refreshes at the END of this function, so they are
         //a full tick behind. The tank is a root object with no parent, so local == world.
         quat rotation = physics->GetBodyWorldOrientation();
@@ -234,12 +234,12 @@ void TankCharacter::UpdatePhysicsState(){
     if (turret && turret_target){
         //Same facing-angle-difference approach as PlayerCharacter::ComputeFacingAngles,
         //reimplemented here since that method lives on PlayerCharacter, not on Object.
-        vec3 forward = turret->GetWorldForward(STATE_ACCESS_PHYSICS);
+        vec3 forward = turret->GetWorldForward();
         forward.y = 0;
         forward.normalize();
         float facing = atan2(forward.x,-forward.z) + TYPE_PI/2;
 
-        vec3 to_target = turret_target->GetWorldPosition(STATE_ACCESS_PHYSICS) - turret->GetWorldPosition(STATE_ACCESS_PHYSICS);
+        vec3 to_target = turret_target->GetWorldPosition() - turret->GetWorldPosition();
         to_target.y = 0;
         to_target.normalize();
         float target_angle = atan2(to_target.x,-to_target.z) + TYPE_PI/2;
@@ -256,12 +256,12 @@ void TankCharacter::UpdatePhysicsState(){
     //Spring the barrel back towards rest after a shot - see Fire().
     if (turret){
         if (!turret_rest_pos_captured){
-            turret_rest_local_pos = turret->GetPosition(STATE_ACCESS_PHYSICS);
+            turret_rest_local_pos = turret->GetPosition();
             turret_rest_pos_captured = true;
         }
         if (turret_recoil_offset > 0.0f){
             turret_recoil_offset = max(turret_recoil_offset - turret_recoil_recover_speed * timestep,0.0f);
-            turret->SetPosition(turret_rest_local_pos - turret->GetForward(STATE_ACCESS_PHYSICS) * turret_recoil_offset);
+            turret->SetPosition(turret_rest_local_pos - turret->GetForward() * turret_recoil_offset);
         }
     }
 
@@ -284,7 +284,7 @@ void TankCharacter::Fire(){
         //Same "forces/velocity changes do nothing to a sleeping body" issue as gas/brake/steer -
         //see UpdatePhysicsState's comment on AddLocalForce - so wake it first.
         physics->WakeUp();
-        vec3 kick_dir = -turret->GetWorldForward(STATE_ACCESS_PHYSICS);
+        vec3 kick_dir = -turret->GetWorldForward();
         kick_dir.y = 0; //Same yaw-only convention as the turret tracking above.
         if (kick_dir.length() > 0.0001f){
             kick_dir.normalize();

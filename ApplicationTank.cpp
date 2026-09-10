@@ -905,7 +905,7 @@ json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
     //without a separate lookup or a rebuild to check what the constants currently are.
     if (vehicle == controlled_tank && controlled_tank){
         if (controlled_tank->turret){
-            vec3 turret_forward = controlled_tank->turret->GetWorldForward(STATE_ACCESS_RENDERER);
+            vec3 turret_forward = controlled_tank->turret->GetWorldForward();
             result["turret_forward"] = json::array({turret_forward.x,turret_forward.y,turret_forward.z});
         }
         result["tuning"] = json{
@@ -2004,7 +2004,7 @@ void ApplicationTank::RunLogic(){
                 //main_scene, no parent), so the two are the same, and local is fresh (just set
                 //a few lines up in this same function) where GetWorldPosition's default render-
                 //state read would still be lagging a frame behind.
-                fire_impact_emitter->SetPosition(target->GetPosition(STATE_ACCESS_PHYSICS));
+                fire_impact_emitter->SetPosition(target->GetPosition());
                 fire_impact_emitter->EmitParticles(32);
             }
         }
@@ -2146,11 +2146,11 @@ void ApplicationTank::SnapCameraToControlledVehicle(){
     if (!controlled || !main_scene || !main_scene->camera){
         return;
     }
-    //Render-state position (the default read), not STATE_ACCESS_PHYSICS: this runs on the frame
-    //thread and the camera should sit on the vehicle as DRAWN. The render state lags the physics
-    //state by a frame, but taking the fresher one would put the camera a frame ahead of the
-    //vehicle in the same image, which reads as the vehicle jittering against a camera that has
-    //already moved - worse than a lag both share.
+    //The camera has to sit on the vehicle as DRAWN, or the vehicle jitters against a camera that
+    //has already moved. That used to mean deliberately picking the render copy of the state over
+    //the fresher physics one; there is a single ObjectState now, and this runs on the frame
+    //thread under physics_mutex, so the position read here is by construction the one this frame
+    //draws the vehicle at.
     vec3 vehicle_pos = controlled->GetWorldPosition();
     //Translate the camera by the same delta rather than re-aiming it: the pivot moves, the
     //viewing angle and distance the user set with the mouse are left exactly as they were.
@@ -2207,7 +2207,7 @@ void ApplicationTank::UpdateBuggyWheelSpinParticles(){
             continue;
         }
         if (wheel.visual){
-            emitter->SetPosition(wheel.visual->GetPosition(STATE_ACCESS_PHYSICS));
+            emitter->SetPosition(wheel.visual->GetPosition());
         }
         //Wheelspin specifically - driven AND friction-saturated, the exact condition
         //BuggyCharacter::UpdatePhysicsState's own free-spin blend uses (see its comment) - not a

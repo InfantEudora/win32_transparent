@@ -69,7 +69,7 @@ ShipCharacter::~ShipCharacter(){
 void ShipCharacter::StrafeBy(float force){
     if (physics){
         vec3 f = vec3(force,0,0);
-        vec3 wp = GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 wp = GetPosition();
         vec3 cm = GetCenterofMass();
         quat q = GetRotation();
         wp += q * cm;
@@ -86,7 +86,7 @@ void ShipCharacter::MoveForwardBy(float force){
 
         //We also want a force that slightly lifts the ship up when moving forward
         quat q = GetRotation();
-        vec3 wp = GetPosition(STATE_ACCESS_PHYSICS);
+        vec3 wp = GetPosition();
         wp += q * vec3(0,0,-1);
         vec3 lift = vec3(0,-force/100,0);
         lift = q * lift;
@@ -120,7 +120,7 @@ void ShipCharacter::UpdatePhysicsState(){
             if (!laser_emitter->emitted_particles.at(i)->IsVisible()){
                 continue;
             }
-            center += laser_emitter->emitted_particles.at(i)->GetPosition(STATE_ACCESS_PHYSICS);
+            center += laser_emitter->emitted_particles.at(i)->GetPosition();
             count++;
         }
         if (count > 0){
