@@ -166,6 +166,10 @@ class InputController{
     void HoldKey(uint32_t mapped_keycode, uint32_t duration_ticks);
     void HoldAxis(uint32_t mapped_keycode, float value, uint32_t duration_ticks);
     void ReleaseSynthetic();    //cancel every scripted hold, releasing each properly
+    //Whether any scripted hold is currently live. For an app whose input handling is gated on the
+    //window having focus: that gate is there to stop OS input meant for another application from
+    //driving the game, and a scripted hold is not OS input - see the note above. Any thread.
+    bool HasSyntheticHolds();
     //Current value of a scalar axis. 0 when nothing is driving it.
     float GetAxis(uint32_t mapped_keycode);
     //Physics thread only. Drains everything submitted since the last call, applies it to KeyState,

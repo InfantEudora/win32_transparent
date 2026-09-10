@@ -1,4 +1,5 @@
 #include "ApplicationShip.h"
+#include "MCPServer.h"
 #include "Debug.h"
 
 static Debugger *debug = new Debugger("ApplicationShip", DEBUG_ALL);
@@ -50,6 +51,15 @@ Scene* ApplicationShip::CreateEmptyScene(){
     return scene;
 }
 
+//One door panel on a fixed vertical hinge - see ship/HingedDoor.h. The door adds its own hinge
+//post to the scene; only the panel goes in `doors`, since that is the body anything interacts with.
+HingedDoor* ApplicationShip::AddDoor(const vec3& hinge_position, float yaw){
+    HingedDoor* door = new HingedDoor(assetmanager,main_scene->physics_world,main_scene,hinge_position,yaw);
+    main_scene->AddObject(door);
+    doors.push_back(door);
+    return door;
+}
+
 void ApplicationShip::Init(void){
     //Create a renderer with initial size
     int2 dimensions = GetDisplaySettings();
@@ -61,7 +71,7 @@ void ApplicationShip::Init(void){
     renderer->alpha_clip = 0.5f;
     renderer->f_render_skybox = false;
 
-    SetPhysicsTPS(60.0f);
+    SetPhysicsTPS(50.0f);
 
     //Randomise the randomiser
     rrand = new RRandom();
@@ -101,7 +111,7 @@ void ApplicationShip::Init(void){
         assetmanager->GetObjectFromAsset("laser_particle",laser_particle);
         vec3 sz = laser_particle->GetMesh()->GetExtents();
         laser_particle->GetPhysics()->AddBoxCollider(sz/2,vec3(0,0,0),quat().identity(),0.1f);
-        laser_particle->SetCollideWithMaskBits(COLLISION_CATEGORY_ASTEROID);
+        laser_particle->SetCollideWithMaskBits(COLLISION_CATEGORY_ASTEROID|COLLISION_CATEGORY_DOOR);
         laser_particle->SetCollisionCategoryBits(COLLISION_CATEGORY_LASER);
         laser_particle->GetPhysics()->SetActive(false); //We don't want it to interfere until fired.
         laser_particle->name = "laser_particle";
@@ -138,6 +148,9 @@ void ApplicationShip::Init(void){
     }
     main_scene->AddObject(grid);
 
+    //A door panel to bump into, shoot at, and watch the asteroids swing around.
+    AddDoor(vec3(4,0,-5),0.0f);
+
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
         debug->Info("File callback received with file %s\n",filename.c_str());
@@ -156,20 +169,422 @@ void ApplicationShip::Init(void){
     gamepad_controller->AddGamePadMap(3,GAMEPAD_RIGHT_STICK_Y);
     gamepad_controller->AddGamePadMap(4,GAMEPAD_R2L2);
 
+    RegisterCommandHandlers();
+    RegisterMCPTools();
+
     BinaryAsset::DumpBinaryAssets();
     assetmanager->ListAssets();
+}
+
+//Everything a door did since it was last asked, plus what the last knock on it was - which is
+//the whole point of the tool: a knock's direction is the thing that is easy to get wrong.
+json ApplicationShip::GetDoorTelemetry(HingedDoor* door){
+    if (!door){
+        return json{ {"error","no such door"} };
+    }
+    vec3 angular_velocity = door->GetPhysics() ? door->GetPhysics()->GetAngularVelocity() : vec3();
+    vec3 p = door->GetPosition();
+    vec3 kd = door->last_knock_direction;
+    vec3 kp = door->last_knock_point;
+    return json{
+        {"angle_degrees",door->GetAngle() * 180.0f / TYPE_PI},
+        {"swing_rate",angular_velocity.y},
+        {"position",json::array({p.x,p.y,p.z})},
+        {"knock_count",door->knock_count},
+        {"last_knock_direction",json::array({kd.x,kd.y,kd.z})},
+        {"last_knock_point",json::array({kp.x,kp.y,kp.z})},
+        {"spring_stiffness",door->spring_stiffness},
+        {"knock_force",door->knock_force},
+    };
+}
+
+//Walks the scene rather than the `asteroids` vector, which holds stale pointers by design - see
+//the note on that member.
+//The running collected totals, by kind name. See ApplicationShip::collected_totals.
+json ApplicationShip::GetCollectedTotals(){
+    return json{
+        {"energy",collected_totals[PICKUP_KIND_ENERGY]},
+        {"ammo",collected_totals[PICKUP_KIND_AMMO]},
+        {"health",collected_totals[PICKUP_KIND_HEALTH]},
+    };
+}
+
+json ApplicationShip::GetAsteroidTelemetry(){
+    json out = json::array();
+    for (Object* object:renderer->objects){
+        Asteroid* asteroid = dynamic_cast<Asteroid*>(object);
+        if (!asteroid){
+            continue;
+        }
+        vec3 p = asteroid->GetPosition();
+        out.push_back(json{
+            {"id",asteroid->GetID()},
+            {"health",asteroid->health},
+            {"position",json::array({p.x,p.y,p.z})},
+        });
+    }
+    return out;
+}
+
+SimCommand ApplicationShip::MakeSpawnAsteroidCommand(const vec3& position, float scale,
+                                                     const vec3& velocity, const vec3& angular_velocity) const{
+    SimCommand cmd;
+    cmd.type = SHIP_CMD_SPAWN_ASTEROID;
+    cmd.flags = SIM_CMD_FLAG_POSITION | SIM_CMD_FLAG_SCALE | SIM_CMD_FLAG_VELOCITY | SIM_CMD_FLAG_ANGULAR_VELOCITY;
+    cmd.position = position;
+    cmd.scale = vec3(scale);
+    cmd.velocity = velocity;
+    cmd.angular_velocity = angular_velocity;
+    return cmd;
+}
+
+SimCommand ApplicationShip::MakeSpawnDoorCommand(const vec3& hinge_position, float yaw) const{
+    SimCommand cmd;
+    cmd.type = SHIP_CMD_SPAWN_DOOR;
+    cmd.flags = SIM_CMD_FLAG_POSITION | SIM_CMD_FLAG_ROTATION;
+    cmd.position = hinge_position;
+    cmd.rotation = quat(vec3(0,1,0),yaw);
+    return cmd;
+}
+
+SimCommand ApplicationShip::MakeSpawnPickupCommand(const vec3& position, float scale, const vec3& angular_velocity,
+                                                   PickupKind kind, float amount) const{
+    SimCommand cmd;
+    cmd.type = SHIP_CMD_SPAWN_PICKUP;
+    cmd.flags = SIM_CMD_FLAG_POSITION | SIM_CMD_FLAG_SCALE | SIM_CMD_FLAG_ANGULAR_VELOCITY;
+    cmd.position = position;
+    cmd.scale = vec3(scale);
+    cmd.angular_velocity = angular_velocity;
+    cmd.subtype = (uint32_t)kind;
+    cmd.value[0] = amount;
+    return cmd;
+}
+
+void ApplicationShip::RegisterCommandHandlers(){
+    if (!main_scene){
+        debug->Err("No scene to register ship command handlers on\n");
+        return;
+    }
+    //Runs on the physics thread, at the top of the tick, before the step, with physics_mutex
+    //already held - so creating a rigid body and adding it to the scene is safe here, and this is
+    //the only place either is done for an asteroid that something OUTSIDE the simulation asked
+    //for. Note Scene::DrainCommands runs well before the per-object UpdatePhysicsState loop, so
+    //the AddObject here is not mutating a vector that is being iterated.
+    main_scene->RegisterCommandHandler(SHIP_CMD_SPAWN_ASTEROID,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Asteroid* asteroid = new Asteroid(assetmanager,main_scene->physics_world,main_scene,rrand);
+            if (!asteroid || !asteroid->GetPhysics()){
+                debug->Err("spawn_asteroid: could not build an asteroid\n");
+                return OBJECTID_INVALID;
+            }
+            if (cmd.flags & SIM_CMD_FLAG_POSITION){
+                asteroid->SetPosition(cmd.position);
+            }
+            //Before the velocities: SetScale rescales the collider and recomputes the inertia.
+            if (cmd.flags & SIM_CMD_FLAG_SCALE){
+                asteroid->SetScale(cmd.scale);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_ANGULAR_VELOCITY){
+                asteroid->GetPhysics()->SetAngularVelocity(cmd.angular_velocity);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_VELOCITY){
+                asteroid->GetPhysics()->SetVelocity(cmd.velocity);
+            }
+            asteroid->UpdatePhysicsState();
+            main_scene->AddObject(asteroid);
+            return asteroid->GetID();
+        });
+
+    //Same thread and timing guarantees as the asteroid handler above, which is what makes it safe
+    //to create the panel, the post and the joint that ties them together from here.
+    main_scene->RegisterCommandHandler(SHIP_CMD_SPAWN_DOOR,
+        [this](const SimCommand& cmd) -> objectid_t {
+            //The command's rotation is a turn about world up, so the yaw comes straight back out
+            //of the quaternion's y/w pair - the same extraction HingedDoor::GetAngle uses, rather
+            //than quat::get_yaw, so this cannot disagree with the angle the door reports.
+            float yaw = 2.0f * atan2f(cmd.rotation.y,cmd.rotation.w);
+            HingedDoor* door = AddDoor(cmd.position,yaw);
+            return door ? door->GetID() : OBJECTID_INVALID;
+        });
+
+    main_scene->RegisterCommandHandler(SHIP_CMD_SPAWN_PICKUP,
+        [this](const SimCommand& cmd) -> objectid_t {
+            PickupKind kind = (cmd.subtype <= PICKUP_KIND_HEALTH) ? (PickupKind)cmd.subtype : PICKUP_KIND_NONE;
+            Pickup* pickup = new Pickup(assetmanager,main_scene->physics_world,main_scene,kind,cmd.value[0]);
+            if (!pickup || !pickup->GetPhysics()){
+                debug->Err("spawn_pickup: could not build a pickup\n");
+                return OBJECTID_INVALID;
+            }
+            if (cmd.flags & SIM_CMD_FLAG_POSITION){
+                pickup->SetPosition(cmd.position);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_SCALE){
+                pickup->SetScale(cmd.scale);
+            }
+            if (cmd.flags & SIM_CMD_FLAG_ANGULAR_VELOCITY){
+                pickup->GetPhysics()->SetAngularVelocity(cmd.angular_velocity);
+            }
+            pickup->UpdatePhysicsState();
+            main_scene->AddObject(pickup);
+            return pickup->GetID();
+        });
+}
+
+//Called from within the physics step, exactly like onContact - so this only RECORDS which pickups
+//were flown into and RunLogic is what banks and removes them. Object::Destroy would in fact be
+//safe here (it only sets a flag), but the moment a pickup actually adds to something on the ship
+//that will not be, and one rule for both callbacks is worth more than the shortcut.
+void ApplicationShip::onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData){
+    for (uint32_t i = 0; i < callbackData.getNbOverlappingPairs(); i++){
+        rp3d::OverlapCallback::OverlapPair pair = callbackData.getOverlappingPair(i);
+        //OverlapStart only. A pickup is collected the instant it is touched, and the ship stays
+        //inside the trigger volume for several ticks afterwards - every one of which would be
+        //reported again as OverlapStay. Same lesson as the laser's ContactStart, see onContact.
+        if (pair.getEventType() != rp3d::OverlapCallback::OverlapPair::EventType::OverlapStart){
+            continue;
+        }
+        Object* d1 = (Object*)pair.getBody1()->getUserData();
+        Object* d2 = (Object*)pair.getBody2()->getUserData();
+        if (!d1 || !d2){
+            continue;
+        }
+        //Either order - rp3d does not promise which body of the pair is which.
+        Pickup* pickup = dynamic_cast<Pickup*>(d1);
+        Object* other = d2;
+        if (!pickup){
+            pickup = dynamic_cast<Pickup*>(d2);
+            other = d1;
+        }
+        if (!pickup || pickup->f_collected){
+            continue;
+        }
+        //The mask pair already restricts this to the ship, so this cast is a belt-and-braces
+        //check rather than the thing doing the filtering.
+        if (!dynamic_cast<ShipCharacter*>(other)){
+            continue;
+        }
+        //Claimed here rather than in RunLogic, so a second overlap in the same tick (or the
+        //OverlapStart of the ship's other collider - it has two) cannot bank it twice.
+        pickup->f_collected = true;
+        pending_collected_pickups.push_back(pickup);
+    }
+}
+
+void ApplicationShip::RegisterMCPTools(){
+    MCPServer::Get()->RegisterTool("asteroid_spawn",
+        "Add asteroids to the scene, the same way the 'Add Asteroid' button in the Ship Settings "
+        "window does - both go through the simulation's command queue, so the spawn lands on the "
+        "physics thread at the top of a tick. Default position is a little way in front of the "
+        "ship, and default velocity is zero: a drifting asteroid wanders out of a scripted line of "
+        "fire. Blocks until each spawn has been applied, then returns the telemetry of every "
+        "asteroid in the scene, including the new ones and their health.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position, default 6 units ahead of the ship"}}},
+                {"count", {{"type","number"},{"description","how many to add, default 1, capped at 20. More than one are spaced 2 units apart along X, deliberately not scattered - see the handler"}}},
+                {"scale", {{"type","number"},{"description","uniform scale, default 1. The collider is a 0.4-radius sphere scaled with it"}}},
+                {"velocity", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] initial velocity, default none"}}},
+                {"angular_velocity", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] initial spin in rad/s, default none"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!ship_character || !main_scene){
+                return json{ {"error","scene not ready"} };
+            }
+            uint32_t count = (uint32_t)clamp(args.value("count",1.0f),1.0f,20.0f);
+            float scale = clamp(args.value("scale",1.0f),0.1f,10.0f);
+            vec3 position = ship_character->GetPosition() + vec3(0,0,-6);
+            vec3 velocity = {};
+            vec3 angular_velocity = {};
+            auto read_vec3 = [&args](const char* key, vec3& out){
+                if (args.contains(key) && args[key].is_array() && args[key].size() == 3){
+                    out = vec3(args[key][0],args[key][1],args[key][2]);
+                }
+            };
+            read_vec3("position",position);
+            read_vec3("velocity",velocity);
+            read_vec3("angular_velocity",angular_velocity);
+            json spawned = json::array();
+            for (uint32_t i = 0;i < count;i++){
+                //Spaced, not scattered. The obvious thing is a random offset per asteroid, but
+                //rrand is the SIMULATION's generator: drawing from it here would be an
+                //unsynchronised read from the MCP thread AND would shift every draw the physics
+                //thread makes afterwards (the Asteroid constructor picks its model from it), so a
+                //scripted run would stop being reproducible. A caller who wants scatter passes
+                //explicit positions, one call each.
+                vec3 offset = vec3(2.0f * (float)i,0,0);
+                //Not SubmitUICommand: an MCP handler is on the MCP thread, holds no lock, and has
+                //to report what it made - so it can wait for the physics thread to apply this and
+                //hand back the id. The debug UI cannot (it holds physics_mutex) - see
+                //Application::SubmitCommandAndWait.
+                objectid_t id = SubmitCommandAndWait(MakeSpawnAsteroidCommand(position + offset,scale,velocity,angular_velocity));
+                if (id == OBJECTID_INVALID){
+                    return json{ {"error","spawn command was not applied"}, {"spawned",spawned}, {"asteroids",GetAsteroidTelemetry()} };
+                }
+                spawned.push_back(id);
+            }
+            return json{ {"spawned",spawned}, {"asteroids",GetAsteroidTelemetry()} };
+        });
+
+    MCPServer::Get()->RegisterTool("ship_shoot",
+        "Fire the ship's laser. RunLogic emits one laser particle per physics tick that the shoot "
+        "input is held, so `shots` is simply how many ticks to hold it - 1 is a single laser. "
+        "Blocks until the shots have been fired and the given settle_ms has passed, then returns "
+        "the telemetry of every door in the scene, so a single call is enough to see what the shot "
+        "did to one. Aim the ship with object_set_transform first.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"shots", {{"type","number"},{"description","physics ticks to hold the trigger, i.e. laser particles fired. Default 1, capped at 60"}}},
+                {"settle_ms", {{"type","number"},{"description","how long to keep waiting after the last shot so the hit has landed, default 500, capped at 10000"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            uint32_t shots = (uint32_t)clamp(args.value("shots",1.0f),1.0f,60.0f);
+            float settle_ms = clamp(args.value("settle_ms",500.0f),0.0f,10000.0f);
+            //Same "MCP is a player" route the tank tools take: hold the mapped input for a number
+            //of ticks and let RunLogic do exactly what it does for a person holding the key. Note
+            //RunLogic gates shooting on the window having focus, so this needs the app focused.
+            input->HoldKey(INPUT_SHOOT,shots);
+            if (!main_scene->IsPhysicsPaused()){
+                Sleep((DWORD)(shots * GetPhysicsTimestep() * 1000.0f) + (DWORD)settle_ms);
+            }
+            json out = json::array();
+            for (HingedDoor* door:doors){
+                out.push_back(GetDoorTelemetry(door));
+            }
+            return json{ {"doors",out}, {"asteroids",GetAsteroidTelemetry()}, {"window_focused",main_window->f_has_focus} };
+        });
+
+    MCPServer::Get()->RegisterTool("pickup_spawn",
+        "Float a pickup capsule in the scene for the ship to fly through, the same way the "
+        "'Add Pickup' button does - through the simulation's command queue. A pickup's collider is "
+        "a trigger, so the ship passes through it and collects it instead of bouncing off. Blocks "
+        "until the spawn has been applied and returns the new object's id plus what has been "
+        "collected so far.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"position", {{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3},{"description","[x,y,z] world position, default 6 units ahead of the ship"}}},
+                {"kind", {{"type","string"},{"enum", json::array({"energy","ammo","health"})},{"description","what it is worth, default energy. Nothing consumes this yet - see Pickup.h"}}},
+                {"amount", {{"type","number"},{"description","how much of that it is worth, default 25"}}},
+                {"scale", {{"type","number"},{"description","uniform scale, default 2"}}},
+                {"spin", {{"type","number"},{"description","spin about world up in rad/s, default 1"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!ship_character || !main_scene){
+                return json{ {"error","scene not ready"} };
+            }
+            vec3 position = ship_character->GetPosition() + vec3(0,0,-6);
+            if (args.contains("position") && args["position"].is_array() && args["position"].size() == 3){
+                position = vec3(args["position"][0],args["position"][1],args["position"][2]);
+            }
+            std::string kind_name = args.value("kind",std::string("energy"));
+            PickupKind kind = PICKUP_KIND_ENERGY;
+            if (kind_name == "ammo"){
+                kind = PICKUP_KIND_AMMO;
+            }else if (kind_name == "health"){
+                kind = PICKUP_KIND_HEALTH;
+            }
+            float amount = args.value("amount",25.0f);
+            float scale = clamp(args.value("scale",2.0f),0.1f,10.0f);
+            vec3 spin = vec3(0,args.value("spin",1.0f),0);
+            objectid_t id = SubmitCommandAndWait(MakeSpawnPickupCommand(position,scale,spin,kind,amount));
+            if (id == OBJECTID_INVALID){
+                return json{ {"error","spawn command was not applied"} };
+            }
+            return json{ {"spawned",id}, {"collected",GetCollectedTotals()} };
+        });
+
+    MCPServer::Get()->RegisterTool("pickup_status",
+        "What pickups are floating in the scene, and the running totals of what the ship has "
+        "collected. Those totals are the placeholder for the energy / ammo / health the ship does "
+        "not have yet - nothing else reads them.",
+        json{ {"type","object"},{"properties",json::object()} },
+        [this](const json &args) -> json {
+            json out = json::array();
+            for (Object* object:renderer->objects){
+                Pickup* pickup = dynamic_cast<Pickup*>(object);
+                if (!pickup){
+                    continue;
+                }
+                vec3 p = pickup->GetPosition();
+                out.push_back(json{
+                    {"id",pickup->GetID()},
+                    {"kind",pickup->KindName()},
+                    {"amount",pickup->amount},
+                    {"collected",pickup->f_collected},
+                    {"is_trigger",pickup->GetPhysics() ? pickup->GetPhysics()->IsTrigger() : false},
+                    {"position",json::array({p.x,p.y,p.z})},
+                });
+            }
+            return json{ {"pickups",out}, {"collected",GetCollectedTotals()} };
+        });
+
+    MCPServer::Get()->RegisterTool("door_telemetry",
+        "Swing angle, swing rate and last-knock details for every hinged door panel in the scene.",
+        json{ {"type","object"},{"properties",json::object()} },
+        [this](const json &args) -> json {
+            json out = json::array();
+            for (HingedDoor* door:doors){
+                out.push_back(GetDoorTelemetry(door));
+            }
+            return json{ {"doors",out} };
+        });
 }
 
 //Called before update physics after update animations
 void ApplicationShip::RunLogic(){
     //Does anything need to be created / destroyed before we run any logic on it?
-    //We add any asteroids explisions to the scene:
-    for (AsteroidExplosion* explosion:new_asteroid_explosions){
+    //An asteroid that took its killing shot becomes an explosion HERE, not in the contact callback
+    //that spotted the hit. onContact runs from inside rp_world->update(), and constructing an
+    //AsteroidExplosion creates three rigid bodies - its own (AddPhysics), its fragment emitter's,
+    //and its particle template's - so building one there adds bodies to the world while the world
+    //is part-way through iterating its own component arrays. RunLogic runs on the same physics
+    //thread but sits between ticks, which makes it the earliest safe point. This used to stage an
+    //already-constructed explosion, which deferred the AddObject but not the part that mattered.
+    //
+    //Deliberately NOT a SimCommand, even though the UI and the MCP tools spawn things that way. A
+    //command is for a mutation arriving from OUTSIDE the simulation: another thread's, and - for
+    //the record/replay plan - a tick-stamped note of external intent. An explosion is a
+    //consequence of the simulation's own state, so a replay reproduces it by reproducing the
+    //collision that caused it; recorded as a command it would land a second time on top of that.
+    for (Asteroid* asteroid:pending_asteroid_explosions){
+        //Nothing else destroys a claimed asteroid (health -1 marks it as spoken for) and
+        //DeleteDestroyedObjects has not run yet this tick, so this pointer is still live.
+        if (!asteroid || asteroid->IsDestroyed()){
+            continue;
+        }
+        AsteroidExplosion* explosion = new AsteroidExplosion(assetmanager,main_scene->physics_world,main_scene,rrand);
+        explosion->target_asteroid = asteroid;
         main_scene->AddObject(explosion);
         explosion->StartExplosion();
         active_asteroid_explosions.push_back(explosion);
     }
-    new_asteroid_explosions.clear();
+    pending_asteroid_explosions.clear();
+
+    //Pickups the ship flew into last tick. "Instantly vanish" in the sense that matters - the
+    //trigger already stopped it colliding, and Destroy() here takes it out of the scene on this
+    //same tick's DeleteDestroyedObjects below, one tick after the touch.
+    for (Pickup* pickup:pending_collected_pickups){
+        if (!pickup){
+            continue;
+        }
+        //Where the pickup's actual effect will go once the ship HAS an energy/ammo/health to add
+        //it to. Until then this total is the only evidence it was collected - see Pickup.h.
+        if (pickup->kind < 4){
+            collected_totals[pickup->kind] += pickup->amount;
+        }
+        debug->Ok("Collected %s pickup worth %.0f (total %.0f)\n",pickup->KindName(),pickup->amount,collected_totals[pickup->kind]);
+        pickup->Destroy();
+    }
+    pending_collected_pickups.clear();
 
     if (selected_object && selected_object->IsDestroyed()){
         selected_object = NULL;
@@ -309,8 +724,11 @@ void ApplicationShip::RunLogic(){
     }
 
 
-    //Character input with gamepad
-    if (ship_character && main_window->f_has_focus){
+    //Character input with gamepad. The focus check keeps a background window from flying the ship
+    //on input meant for another application - but a scripted hold (an MCP tool, later a replay)
+    //does not come from the OS, and an unfocused window is exactly when those run, so it has to
+    //be let through. See InputController's note on SyntheticHold.
+    if (ship_character && (main_window->f_has_focus || input->HasSyntheticHolds())){
         float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
         float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
         float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
@@ -411,34 +829,66 @@ void ApplicationShip::DrawImGuiUI(){
             ship_character->SetRotation(quat().identity());
         }
         if (ImGui::Button("Add Asteroid")){
-            Asteroid* asteroid = new Asteroid(assetmanager,main_scene->physics_world,main_scene,rrand);
-            if (asteroid){
-                vec3 ship_pos = ship_character->GetPosition();
-                vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
-                asteroid->SetPosition(ship_pos + offset);
-                asteroid->SetScale(vec3(rrand->GetFloat(0.8f,2.5f)));
-                asteroid->GetPhysics()->SetAngularVelocity(vec3(rrand->GetFloat(-0.5,0.5),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-0.5,0.5)));
-                asteroid->GetPhysics()->SetVelocity(vec3(rrand->GetFloat(-1,1),0,rrand->GetFloat(-1,1)));
-                asteroid->UpdatePhysicsState();
-                main_scene->AddObject(asteroid);
-                asteroids.push_back(asteroid);
-            }
+            //The dice are rolled HERE and the results travel in the command, rather than the
+            //handler rolling them - so the command fully describes the asteroid it makes, and a
+            //replay reproduces this one instead of a fresh roll. See SHIP_CMD_SPAWN_ASTEROID.
+            //(Drawing from rrand on this thread is safe - DrawImGuiUI holds physics_mutex - but it
+            //does consume from the simulation's own generator at a moment that is not tied to a
+            //tick, which is a reproducibility hole this app has always had and this does not fix.)
+            vec3 ship_pos = ship_character->GetPosition();
+            vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
+            float scale = rrand->GetFloat(0.8f,2.5f);
+            vec3 angular_velocity = vec3(rrand->GetFloat(-0.5,0.5),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-0.5,0.5));
+            vec3 velocity = vec3(rrand->GetFloat(-1,1),0,rrand->GetFloat(-1,1));
+            //Submit and return, never wait: this runs with physics_mutex held, and the physics
+            //thread needs that same lock to reach DrainCommands.
+            SubmitUICommand(MakeSpawnAsteroidCommand(ship_pos + offset,scale,velocity,angular_velocity));
         }
         ImGui::SameLine();
-        if (ImGui::Button("Add Capsule")){
-            Object* capsule = new Object();
-            if (capsule){
-                assetmanager->GetObjectFromAsset("capsule",capsule);
-                vec3 ship_pos = ship_character->GetPosition();
-                vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
-                capsule->SetPosition(ship_pos + offset);
-                capsule->SetScale(vec3(2.0f,2.0f,2.0f));
-                capsule->AddPhysics(main_scene->physics_world);
-                capsule->GetPhysics()->SetStatic(false);
-                capsule->GetPhysics()->SetAngularVelocity(vec3(rrand->GetFloat(-1,1),rrand->GetFloat(-1,1),rrand->GetFloat(-1,1)));
+        if (ImGui::Button("Add Door Panel")){
+            //Off to the ship's right, far enough out that the leaf cannot spawn inside the ship.
+            //Queued, not built here - see the Add Asteroid button above and SHIP_CMD_SPAWN_DOOR.
+            vec3 hinge = ship_character->GetPosition() + ship_character->GetLeft() * -4.0f;
+            hinge.y = 0;
+            SubmitUICommand(MakeSpawnDoorCommand(hinge,rrand->GetFloat(-TYPE_PI,TYPE_PI)));
+        }
+        if (ImGui::Button("Add Pickup")){
+            //Was "Add Capsule", building a plain Object inline. It is a Pickup now (a trigger the
+            //ship flies through), and like the other two spawn buttons the dice are rolled here
+            //and the results travel in the command - see SHIP_CMD_SPAWN_PICKUP.
+            vec3 ship_pos = ship_character->GetPosition();
+            vec3 offset = vec3(rrand->GetFloat(-10,10),rrand->GetFloat(-0.2,0.2),rrand->GetFloat(-10,10));
+            vec3 spin = vec3(rrand->GetFloat(-1,1),rrand->GetFloat(-1,1),rrand->GetFloat(-1,1));
+            PickupKind kind = (PickupKind)(PICKUP_KIND_ENERGY + rrand->GetInt(0,2));
+            SubmitUICommand(MakeSpawnPickupCommand(ship_pos + offset,2.0f,spin,kind,25.0f));
+        }
 
-                capsule->UpdatePhysicsState();
-                main_scene->AddObject(capsule);
+        if (!doors.empty()){
+            ImGui::SeparatorText("Door Panels");
+            //Safe to read and write the doors from here: DrawImGuiUI runs with
+            //renderer->physics_mutex held, so it cannot overlap a physics tick.
+            HingedDoor* first = doors.front();
+            float stiffness = first->spring_stiffness;
+            float damping = first->spring_damping;
+            float knock = first->knock_force;
+            bool changed = false;
+            changed |= ImGui::SliderFloat("Spring Nm/rad",&stiffness,0.0f,300.0f);
+            changed |= ImGui::SliderFloat("Spring Damping",&damping,0.0f,100.0f);
+            changed |= ImGui::SliderFloat("Laser Knock N",&knock,0.0f,5000.0f);
+            if (changed){
+                for (HingedDoor* door:doors){
+                    door->spring_stiffness = stiffness;
+                    door->spring_damping = damping;
+                    door->knock_force = knock;
+                }
+            }
+            if (ImGui::Button("Reset Doors")){
+                for (HingedDoor* door:doors){
+                    door->Reset();
+                }
+            }
+            for (size_t i = 0;i < doors.size();i++){
+                ImGui::Text("Door %zu swing         : %.1f deg",i,doors[i]->GetAngle() * 180.0f / TYPE_PI);
             }
         }
         ImGui::End();
@@ -520,19 +970,43 @@ void ApplicationShip::onContact(const rp3d::CollisionCallback::CallbackData& cal
             other = d1;
         }
         if (laser){
+            //Everything a laser hit does - knock a door, take a point off an asteroid - is per
+            //HIT, so it happens on ContactStart and on no other event. That is load-bearing, not
+            //tidiness. rp3d reports contacts from PhysicsWorld::update() BEFORE it solves them,
+            //then keeps re-reporting the same contact as ContactStay for every tick the particle
+            //is still inside whatever it hit - three or four of them for something this fast and
+            //light. So an unfiltered handler fires several times per shot, and on all but the
+            //first the solver has already bounced the laser back the way it came: reading its
+            //velocity there knocked the door TOWARD the shooter (the stay knocks outnumbered and
+            //outlasted the one good one), and an asteroid lost several health to a single shot.
+            if (contactPair.getEventType() != CollisionCallback::ContactPair::EventType::ContactStart){
+                continue;
+            }
+
+            //A laser particle weighs almost nothing, so its own impact impulse would barely
+            //register on an 8kg door - the door gets told about the hit instead and gives itself
+            //a knock worth seeing. Queued, not applied: we are inside the physics step here.
+            HingedDoor* door = dynamic_cast<HingedDoor*>(other);
+            if (door){
+                vec3 direction = laser->GetVelocity();
+                if (direction.length() < 0.0001f){
+                    //Shouldn't happen to a laser in flight, but a knock still needs a direction.
+                    direction = door->GetPosition() - laser->GetPosition();
+                }
+                door->QueueKnock(laser->GetPosition(),direction);
+            }
+
             Asteroid* asteroid = dynamic_cast<Asteroid*>(other);
             if (asteroid){
                 if (asteroid->health > 0){
                     asteroid->health = clamp(asteroid->health-1.0,0,100);
                     //debug->Info("Laser hit on asteroid. Health = %.1f\n",asteroid->health);
                 }else if (asteroid->health == 0){
-                    debug->Ok("Laser hit on asteroid. Creating new explosion. Destroying asteroid.\n");
-                    //This should be created not in the callback, but outside.
-
-
-                    AsteroidExplosion* explosion = new AsteroidExplosion(assetmanager,main_scene->physics_world,main_scene,rrand);
-                    explosion->target_asteroid = asteroid;
-                    new_asteroid_explosions.push_back(explosion);
+                    debug->Ok("Laser hit on asteroid. Staging explosion.\n");
+                    //Only the fact that this asteroid died is recorded; RunLogic builds the
+                    //explosion, because building one here would create rigid bodies inside
+                    //rp_world->update(). health = -1 claims it, so it cannot be staged twice.
+                    pending_asteroid_explosions.push_back(asteroid);
                     asteroid->health = -1;
                 }
             }

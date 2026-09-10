@@ -152,3 +152,28 @@ The user reshaped the vehicle input surface: `Vehicle::ThrottleInput/SteerInput/
 **STILL OPEN - the tank does not yaw on a same-direction track differential.** Full symptom table, everything ruled out by measurement, and the agreed plan to reproduce it in rp3d's own testbed now live in [[tank-yaw-differential-bug]]. Note the speed-proportional governor above also cost the half-magnitude pivot, likely the same underlying threshold.
 
 **Probe gotcha that produced two wrong conclusions before this was sorted out:** a `tank_steer`/`tank_drive` hold lasts `duration_ms` worth of TICKS, so a hold longer than the steps taken stays active into the next test case and contaminates it. Always `tank_drive direction=stop` + `tank_reset` between cases, and size the duration to the steps. Also `vehicle_mcp`'s `App` has no `stop()`, so probe scripts leave `wind.exe` running and the next link fails with "cannot open output file wind.exe: Permission denied" - kill strays before building.
+
+**Scope rule for the command queue (2026-09-10):** a SimCommand is for a mutation arriving from
+OUTSIDE the simulation - another thread's (UI, MCP), and for step 7 a tick-stamped note of external
+intent. Mutation the sim causes itself must NOT go on the queue: a replay reproduces it by
+reproducing the cause, so a recorded command would apply it a second time on top. Ask "who decided this?" - a person or a tool: queue
+it; the simulation itself: keep it in-sim and defer it to a safe point in the tick.
+
+ApplicationShip is now the worked example of both halves (2026-09-10). External: `SHIP_CMD_SPAWN_ASTEROID`
+(= SIM_CMD_LAST+0), `SHIP_CMD_SPAWN_DOOR` (+1) and `SHIP_CMD_SPAWN_PICKUP` (+2), registered in
+`RegisterCommandHandlers`, used by the "Add Asteroid"/"Add Door Panel"/"Add Pickup" buttons via
+`SubmitUICommand` and by the `asteroid_spawn`/`pickup_spawn` MCP tools via `SubmitCommandAndWait`.
+None could be `SIM_CMD_OBJECT_SPAWN_ASSET`, which deliberately makes no physics body - an Asteroid
+carries a sphere collider and the ship's masks, a door is two bodies plus a hinge joint, and a
+Pickup's collider is a trigger. The pickup command shows what `subtype` and `value[]` are for: the
+PickupKind rides in `subtype` and the amount in `value[0]`, no struct change needed. Internal: the asteroid explosion is spawned from a staging vector
+(`pending_asteroid_explosions`) drained at the top of `RunLogic`, NOT via a command - what needed
+deferring there was re-entering rp3d from inside `onContact`, not crossing a thread.
+
+Two things that follow from making the command self-describing: a caller that rolls dice must roll
+them itself and put the RESULTS in the command (the Add Asteroid button does), or a replay would
+re-roll; and note the roll still consumes from the sim's shared `rrand` at a moment not tied to a
+tick, which is a pre-existing reproducibility hole in that button. The `asteroid_spawn` MCP tool
+sidesteps it by spacing multiple spawns deterministically instead of scattering them - drawing from
+`rrand` on the MCP thread would be an unsynchronised read AND would shift every draw the physics
+thread makes after it.

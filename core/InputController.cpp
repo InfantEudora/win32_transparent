@@ -314,6 +314,11 @@ void InputController::ReleaseSynthetic(){
     }
 }
 
+bool InputController::HasSyntheticHolds(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    return !synthetic_holds.empty();
+}
+
 void InputController::AdvanceSyntheticHolds(){
     std::vector<InputEvent> events;
     std::lock_guard<std::mutex> lock(state_mutex);

@@ -31,7 +31,9 @@ ShipCharacter::ShipCharacter(AssetManager* assetmanager, PhysicsWorld* physicswo
         physics->body->rigidbody->setMass(10);
     }
 
-    SetCollideWithMaskBits(COLLISION_CATEGORY_ASTEROID);
+    //PICKUP is in here for the trigger, not for a collision: rp3d filters trigger overlaps
+    //through this same mask, so without it the ship would fly through a pickup unnoticed.
+    SetCollideWithMaskBits(COLLISION_CATEGORY_ASTEROID|COLLISION_CATEGORY_DOOR|COLLISION_CATEGORY_PICKUP);
     SetCollisionCategoryBits(COLLISION_CATEGORY_SHIP);
 
     exhaust_emitter = new ParticleEmitter(physicsworld);
