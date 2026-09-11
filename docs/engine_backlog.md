@@ -290,10 +290,35 @@ Last updated 2026-09-11.
   `UpdateCameraShake` unconditionally re-asserts the camera position from `camera_target` every
   tick, so the write was overwritten by the next tick rather than lost. Confirmed by pausing first,
   where it moves exactly as asked. Same shape as the `SyncBoardView` false alarm under item 32.
-- [ ] **19. A screenshot path that includes ImGui.** Capture happens inside `Renderer::DrawFrame`
-  (`core/Renderer.cpp:801`); ImGui is drawn afterwards into the default framebuffer. Since ImGui is
-  the engine's only text rendering, everything written in words is invisible to the one client that
-  cannot look at the monitor. *Later.*
+- [x] **19. A screenshot path that includes ImGui.** **Done**, and it was a capture-point problem
+  rather than the compositing problem this entry assumed. ImGui does not draw into the default
+  framebuffer: it draws into whatever is bound, and `Renderer::DrawFrame` leaves `resolve_fbo_id`
+  bound when it returns. Both window paths then present that same buffer — the layered one via
+  `CopyBufferToImage`'s `glReadPixels`, the plain one via `CopyBufferToBackBuffer`'s blit — so the
+  panels were already landing in the buffer the screenshot reads. The capture simply ran too early,
+  inside `DrawFrame`, before `Window::ImGuiRenderDrawData` had drawn them.
+
+  So there are two useful moments to read one buffer, and `RequestScreenshot(f_include_ui)` picks
+  between them: `CaptureScreenshotIfRequested(bool f_after_ui)` is now called at both, and services
+  a request only at the point it asked for. The second call site is in `Application::DrawFrame`,
+  after `ImGuiRenderDrawData` and before `SwapWindowBuffers` — it has to be between those two,
+  because before ImGui there are no panels and after the swap the buffer's contents are no longer
+  guaranteed.
+
+  Default is **include_ui = true**, which makes the tool match the description it always carried
+  ("what comes back is the window as it is now"). `include_ui: false` gives the old scene-only
+  capture, for checking geometry or colour without panels in the way.
+
+  Verified on Tetris: `include_ui: false` renders the board alone, `true` adds the Tetris panel with
+  its score, tick counter, gravity rate, buttons, checkboxes and key legend — none of which was
+  reachable by screenshot before.
+
+  **This entry's premise is now out of date in one respect**, worth recording rather than quietly
+  fixing: it said ImGui is the engine's only text rendering. `core/TextMesh.{h,cpp}` exists as of
+  2026-09-11 (item 24, in progress) and Tetris already renders HOLD/NEXT/SCORE/LINES/LEVEL as scene
+  geometry — they show up in an `include_ui: false` capture. The reason to include the UI is
+  narrower than "text": it is that the debug panels, the inspector and the telemetry readouts exist
+  nowhere but ImGui. That wording was corrected in `CLAUDE.md` and in the code comments.
 - [-] **20. Dual-stack MCP bind.** **Decided against.** IPv4-only is deliberate — this endpoint is
   reached from the same machine and a dual-stack listener is extra surface for nothing. Closed by
   documenting `127.0.0.1` everywhere instead (item 4).

@@ -148,7 +148,9 @@ Generic tools every app gets for free: `status`, `object_list`, `object_get`,
 `object_set_transform`, `object_move`, `sim_pause`, `sim_step`, `sim_command`, `asset_list`,
 `object_spawn`, `screenshot`, `camera_get`, `camera_set`.
 `screenshot` returns a PNG of the current frame as an MCP image block — **use it.** It is the
-fastest way to see that your well is the right shape and your pieces are the right colour.
+fastest way to see that your well is the right shape and your pieces are the right colour. It
+includes the ImGui debug panels by default, which is how you read anything your own UI prints;
+pass `include_ui: false` for the clean 3D scene when the panels are in the way of the board.
 
 **`sim_pause` and `sim_step` are the other two to reach for immediately.** A tool handler holds no
 lock, so reading a free-running simulation races the physics thread; pause first and that problem

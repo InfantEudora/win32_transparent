@@ -93,9 +93,9 @@ resolves to `::1` first, every call pays a failed IPv6 connect — measured at 2
 
 Generic tools in every app: `status`, `object_list`, `object_get`, `object_set_transform`,
 `object_move`, `sim_pause`, `sim_step`, `sim_command`, `asset_list`, `object_spawn`, `camera_get`,
-`camera_set`, `screenshot`. `screenshot` returns a PNG and is the fastest way to check visual work —
-though note it captures the 3D scene only, **not** ImGui, which is the engine's only text rendering
-(backlog item 19).
+`camera_set`, `screenshot`. `screenshot` returns a PNG and is the fastest way to check visual work.
+It includes the ImGui debug panels by default — telemetry, the inspector, buttons and sliders exist
+only there — so pass `include_ui: false` when you want the clean 3D scene instead.
 
 **Pause before you measure.** A tool handler holds no lock, so reading a free-running simulation
 races the physics thread. `sim_pause` freezes the simulation while leaving the render loop running

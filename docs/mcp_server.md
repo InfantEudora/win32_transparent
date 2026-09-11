@@ -28,6 +28,7 @@ Never wait on the physics thread (a command, a step) or on the render thread (a 
 inside that lambda - both deadlock. `ApplicationTetris` still publishes a per-tick snapshot instead,
 which stays the right call for state that every tool call reads.
 
+- `screenshot` (`include_ui`, default true) - a PNG of the current frame. The ImGui debug panels are included by default: telemetry readouts, the object inspector, buttons and sliders exist only there, so a capture without them silently drops all of it. Pass `include_ui: false` for the clean 3D scene. The two are captured at different points in the same frame, out of the same buffer - see `Renderer::RequestScreenshot`.
 - `sim_pause` (`paused`) - freeze or resume the simulation. While paused the render loop keeps running, so the window stays responsive, the camera still works and `screenshot` still works; no tick runs, so no physics, no animation and no gameplay logic advance. **Pause before reading scene state you care about**: a tool handler holds no lock, so reading a free-running simulation races the physics thread.
 - `sim_step` (`num_ticks`, default 1; `include_screenshot`) - advance a paused simulation by exactly that many ticks. A tick here is a *whole* tick - input, animation, the app's `RunSimulationTick`, then the physics step - so this advances the entire simulation, not just the physics. Blocks until the physics thread has consumed them and reports `ticks_advanced`, which is the value to trust: short of `num_ticks` means the call timed out and the rest is still queued.
 
