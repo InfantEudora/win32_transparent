@@ -316,12 +316,17 @@ void InputController::ReleaseSynthetic(){
 
 bool InputController::HasSyntheticHolds(){
     std::lock_guard<std::mutex> lock(state_mutex);
-    return !synthetic_holds.empty();
+    //...or the tick a hold released on, which is the tick its edge is readable. See the header.
+    return !synthetic_holds.empty() || f_synthetic_release_tick;
 }
 
 void InputController::AdvanceSyntheticHolds(){
     std::vector<InputEvent> events;
     std::lock_guard<std::mutex> lock(state_mutex);
+
+    //Cleared here rather than where it is read, because this runs exactly once per simulated tick
+    //and a reader may ask any number of times within one.
+    f_synthetic_release_tick = false;
 
     for (size_t i=0;i<synthetic_holds.size();){
         SyntheticHold& h = synthetic_holds[i];
@@ -357,6 +362,7 @@ void InputController::AdvanceSyntheticHolds(){
         }
         events.push_back(e);
         synthetic_holds.erase(synthetic_holds.begin() + i);
+        f_synthetic_release_tick = true;
     }
 
     pending_events.insert(pending_events.end(),events.begin(),events.end());

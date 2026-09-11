@@ -14,17 +14,12 @@ void ApplicationUI::Init(void){
         debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
 
-    //Create a renderer for this window
-    renderer = new Renderer(main_window->width,main_window->height);
-    renderer->Init();
-
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
     main_window->Resize(1024,768);
 
     main_scene = CreateNewScene("Main Scene");
     main_scene->UpdatePhysics(GetPhysicsTimestep());
-
 }
 
 //Called before update physics

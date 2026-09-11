@@ -169,6 +169,14 @@ class InputController{
     //Whether any scripted hold is currently live. For an app whose input handling is gated on the
     //window having focus: that gate is there to stop OS input meant for another application from
     //driving the game, and a scripted hold is not OS input - see the note above. Any thread.
+    //
+    //This deliberately stays TRUE for the one further tick on which the last hold's RELEASE is
+    //delivered. A hold is erased in the same AdvanceSyntheticHolds call that emits its key-up, so
+    //without this it reads false on exactly the tick WasKeyReleased() reports the release - and an
+    //app gating on `!HasFocus() && !HasSyntheticHolds()` would silently drop every edge-triggered
+    //scripted action (a rotate, a fire, a hard drop) while never missing a held one. That is the
+    //one case the gate exists to allow, so the flag has to outlive the hold by the tick that
+    //carries its edge.
     bool HasSyntheticHolds();
     //Current value of a scalar axis. 0 when nothing is driving it.
     float GetAxis(uint32_t mapped_keycode);
@@ -269,6 +277,9 @@ protected:
     bool f_hold_tick_valid = false;
     void AddSyntheticHold(uint32_t mapped_keycode, bool axis, float value, uint32_t duration_ticks);
     std::vector<SyntheticHold> synthetic_holds; //guarded by state_mutex
+    //Raised when a hold emits its key-up and is erased, cleared by the NEXT AdvanceSyntheticHolds
+    //- so it marks exactly the tick on which that release is readable. See HasSyntheticHolds.
+    bool f_synthetic_release_tick = false;       //guarded by state_mutex
     std::vector<InputEvent> pending_events; //producers append, the physics thread drains
     std::vector<InputEvent> tick_events;    //physics thread only: this tick's applied input
     WindowInputState window_state;

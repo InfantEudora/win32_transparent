@@ -1163,20 +1163,24 @@ bool Renderer::GetVSync(){
     return f_vsync;
 }
 
-//Add's materials to global list, omitting duplicates by name. Returns the index where the material was added.
+//Add's materials to global list, omitting duplicates by name. Returns the index of the material
+//with that name - the one just appended, or the EXISTING one when the name was already taken.
+//
+//It used to return materials.size()-1 either way, i.e. the index of the LAST material rather than
+//of the matching one, so a caller adding a material under a name that already existed silently got
+//a handle on somebody else's material. Fixed rather than worked around because a wrong index is
+//indistinguishable from a right one at the call site, and the failure only ever shows up as an
+//object rendering in another object's colour. No existing caller changes behaviour: AddMaterials
+//ignores the return value, and every other call site adds a name that is new.
 int Renderer::AddMaterial(Material& newmat){
-    bool isnew = true;
-    for (Material& mat:materials){
-        if (newmat.name.compare(mat.name) == 0){
-            debug->Info("Already have material %s\n",mat.name.c_str());
-            isnew = false;
-            break;
+    for (int index = 0; index < (int)materials.size(); index++){
+        if (newmat.name.compare(materials[index].name) == 0){
+            debug->Info("Already have material %s\n",newmat.name.c_str());
+            return index;
         }
     }
-    if (isnew){
-        materials.push_back(newmat);
-    }
-    return materials.size() - 1;
+    materials.push_back(newmat);
+    return (int)materials.size() - 1;
 }
 
 //Add's materials to global list, omitting duplicates by name.

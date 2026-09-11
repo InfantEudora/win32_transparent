@@ -1,0 +1,1111 @@
+#include "ApplicationTetris.h"
+#include "Debug.h"
+#include "type_helpers.h"
+#include "MCPServer.h"
+
+static Debugger* debug = new Debugger("ApplicationTetris",DEBUG_ALL);
+
+/*
+    Where the board sits in the world. Cell (x,y) is a 1x1x1 cube centred on the integer point
+    (x,y,0), so board coordinates ARE world coordinates and nothing needs converting. The well's
+    walls and floor are the same cube, scaled.
+
+    The camera is orthographic and looks straight down -Z at this plane, which is what makes a 3D
+    scene read as a 2D playfield - see SetupCamera, and §5 of docs/tetris_agent_brief.md for why
+    that is the right shape on an engine with no 2D renderer at all.
+*/
+#define BOARD_ORIGIN_Z      0.0f
+#define CELL_VISUAL_SCALE   0.92f   //a hair under 1, so neighbouring blocks have a seam
+#define GHOST_VISUAL_SCALE  0.55f   //the ghost is a small marker, not a solid block
+
+//Where the previews live, in the same world coordinates. To the RIGHT of the well, because the
+//engine's own debug panels dock to the LEFT (Application::RenderApplicationUI) and would cover
+//anything put there.
+#define PREVIEW_X           13.5f
+#define HOLD_Y              17.0f
+#define NEXT_Y              12.0f
+#define NEXT_SPACING_Y      3.5f
+
+static vec3 CellWorldPosition(int x, int y){
+    return vec3((float)x,(float)y,BOARD_ORIGIN_Z);
+}
+
+//A preview piece's four cubes, centred on `anchor`. The piece's cells are offsets into a box of
+//GetTetrominoBoxSize, so centring is just subtracting half that box.
+static vec3 PreviewCellPosition(const vec3& anchor, int type, int index){
+    const TetrominoCell* cells = GetTetrominoCells(type,0);
+    float half = (GetTetrominoBoxSize(type) - 1) * 0.5f;
+    return vec3(anchor.x + cells[index].x - half,
+                anchor.y + cells[index].y - half,
+                anchor.z);
+}
+
+ApplicationTetris::ApplicationTetris():Application(){
+    debug->Info("Created new application.\n");
+}
+
+ApplicationTetris::~ApplicationTetris(){
+}
+
+//--- Setup ----------------------------------------------------------------------------------
+
+void ApplicationTetris::Init(void){
+    //Deferred rather than MSAA: it is what gives the object-id buffer, and so mouse picking and
+    //the Inspector. A Tetris board does not strictly need picking, but being able to click a
+    //block and read it in the Inspector paid for itself twice while getting the layout right.
+    renderer = new Renderer(main_window->width,main_window->height);
+    if (!renderer->Init(PIPELINE_DEFERRED)){
+        debug->Fatal("Failed to initialise rendering pipeline\n");
+    }
+    renderer->SetVSync(true);
+
+    default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+
+    assetmanager = new AssetManager();
+    //data/unit_cube.obj is a true 1x1x1 cube centred on its own origin - the engine has no
+    //primitive generators at all, so this file is the only cube there is.
+    assetmanager->AddNewAssetFromOBJFile("block","data/unit_cube.obj");
+
+    main_scene = CreateNewScene("Tetris");
+    main_scene->physics_world = new PhysicsWorld();
+    main_scene->physics_world->SetGravity(vec3(0,-14.0f,0));
+    main_scene->physics_world->SetDebugRendering(false);
+
+    {   //Without a light everything renders black. Aimed at the middle of the well, with the
+        //shadow ortho (viewport.zoom) wide enough to cover the board AND the previews, or the
+        //previews fall outside the shadow map and go dark.
+        DirectionalLight* sun = new DirectionalLight();
+        sun->name = "Sun";
+        sun->SetPosition(vec3(-6,24,16));
+        sun->SetLookAt(vec3(5,10,0));
+        sun->color = vec3(1.0f,0.96f,0.90f);
+        sun->brightness = 4.5f;
+        sun->viewport.zoom = 26;            //half-extent in world units; the board alone is 20 tall
+        main_scene->AddObject(sun);
+    }
+    {   //A dim fill from the front so the faces pointing at the camera are not pure shadow. A
+        //second directional light costs one entry in the light SSBO and nothing else.
+        DirectionalLight* fill = new DirectionalLight();
+        fill->name = "Fill";
+        fill->SetPosition(vec3(14,6,20));
+        fill->SetLookAt(vec3(5,10,0));
+        fill->color = vec3(0.6f,0.7f,1.0f);
+        fill->brightness = 1.2f;
+        fill->f_casts_shadow = false;
+        fill->viewport.zoom = 26;
+        main_scene->AddObject(fill);
+    }
+
+    soundsystem = new SoundSystem();
+    soundsystem->Initialise();
+    //Six handles over four files. Deliberately: SoundSystem gives each HANDLE its own OpenAL
+    //source, and a source cannot overlap itself - registering the same file twice is the only way
+    //a move and a lock landing on the same tick can both be heard. See docs/tetris_findings.md.
+    soundsystem->AppendFile("data/sound/click.wav","move");
+    soundsystem->AppendFile("data/sound/click.wav","lock");
+    soundsystem->AppendFile("data/sound/bleep.wav","rotate");
+    soundsystem->AppendFile("data/sound/bleep.wav","hold");
+    soundsystem->AppendFile("data/sound/floop.wav","clear");
+    soundsystem->AppendFile("data/sound/hax.wav","gameover");
+
+    BuildMaterials();
+    BuildWell();
+    BuildViewObjects();
+    SetupCamera();
+    SetupInput();
+    RegisterCommandHandlers();
+    RegisterMCPTools();
+
+    //60 ticks per second, not the engine's default 50. The classic gravity table in
+    //Playfield.cpp is denominated in 60Hz frames, so at 60 ticks the table means exactly what it
+    //meant on the hardware it came from, and every other duration in this app (DAS, lock delay,
+    //the clear flash) is a count of these same ticks.
+    SetPhysicsTPS(60.0f);
+
+    NewGame(current_seed);
+
+    main_window->Resize(1200,900);
+
+    //One tick so the first frame is not an empty board.
+    main_scene->StepPhysics(1);
+}
+
+void ApplicationTetris::BuildMaterials(){
+    //One material per tetromino, in the colours everybody expects. emissive.w is what actually
+    //makes a block glow - emissive.rgb alone is clamped to 1 and so can never be brighter than a
+    //fully lit white surface (see core/Material.h).
+    struct PieceColour{
+        const char* name;
+        vec4 color;
+    };
+    static const PieceColour piece_colours[TETROMINO_COUNT] = {
+        { "tetris_i", vec4(0.00f,0.82f,0.92f,1.0f) },   //cyan
+        { "tetris_j", vec4(0.13f,0.29f,0.85f,1.0f) },   //blue
+        { "tetris_l", vec4(0.95f,0.52f,0.08f,1.0f) },   //orange
+        { "tetris_o", vec4(0.95f,0.83f,0.10f,1.0f) },   //yellow
+        { "tetris_s", vec4(0.20f,0.80f,0.25f,1.0f) },   //green
+        { "tetris_t", vec4(0.65f,0.22f,0.85f,1.0f) },   //purple
+        { "tetris_z", vec4(0.90f,0.18f,0.22f,1.0f) },   //red
+    };
+
+    for (int i = 0; i < TETROMINO_COUNT; i++){
+        Material m;
+        m.name = piece_colours[i].name;
+        m.glsl_material.color = piece_colours[i].color;
+        m.glsl_material.metallic = 0.15f;
+        m.glsl_material.roughness = 0.45f;
+        //A little self-illumination so a block in the shadow of the stack above it still reads
+        //as its own colour rather than as a dark grey lump.
+        m.glsl_material.emissive = vec4(piece_colours[i].color.x,
+                                        piece_colours[i].color.y,
+                                        piece_colours[i].color.z,
+                                        0.18f);
+        renderer->AddMaterial(m);
+        //Looked up by name rather than taken from AddMaterial's return value: that returns
+        //materials.size()-1 even when the name already existed, so it is only correct for a
+        //material that is genuinely new. See docs/tetris_findings.md.
+        material_piece[i] = renderer->FindMaterialIndex(m.name);
+    }
+
+    {   //The ghost: dark, unlit, barely there - it marks a position, it is not a block.
+        Material m;
+        m.name = "tetris_ghost";
+        m.glsl_material.color = vec4(0.55f,0.58f,0.65f,1.0f);
+        m.glsl_material.metallic = 0.0f;
+        m.glsl_material.roughness = 1.0f;
+        m.glsl_material.emissive = vec4(0.5f,0.55f,0.7f,0.5f);
+        renderer->AddMaterial(m);
+        material_ghost = renderer->FindMaterialIndex(m.name);
+    }
+    {   //What a completed row turns into while it flashes.
+        Material m;
+        m.name = "tetris_flash";
+        m.glsl_material.color = vec4(1.0f,1.0f,1.0f,1.0f);
+        m.glsl_material.metallic = 0.0f;
+        m.glsl_material.roughness = 0.2f;
+        m.glsl_material.emissive = vec4(1.0f,1.0f,1.0f,3.0f);
+        renderer->AddMaterial(m);
+        material_flash = renderer->FindMaterialIndex(m.name);
+    }
+    {   //The well's walls and floor.
+        Material m;
+        m.name = "tetris_frame";
+        m.glsl_material.color = vec4(0.32f,0.34f,0.40f,1.0f);
+        m.glsl_material.metallic = 0.6f;
+        m.glsl_material.roughness = 0.35f;
+        renderer->AddMaterial(m);
+        material_frame = renderer->FindMaterialIndex(m.name);
+    }
+    {   //The back panel the blocks cast their shadows onto. Dark, so lit blocks pop off it.
+        Material m;
+        m.name = "tetris_back";
+        m.glsl_material.color = vec4(0.06f,0.07f,0.10f,1.0f);
+        m.glsl_material.metallic = 0.0f;
+        m.glsl_material.roughness = 0.9f;
+        renderer->AddMaterial(m);
+        material_back = renderer->FindMaterialIndex(m.name);
+    }
+}
+
+//Every view object in this app is the same unit cube with a scale, a position and one material
+//slot, so this is the one place that knows how to make one.
+static Object* MakeCube(AssetManager* assetmanager, Scene* scene, const char* name,
+                        const vec3& position, const vec3& scale, int material_index){
+    Object* object = assetmanager->GetObjectFromAsset("block");
+    if (!object){
+        return NULL;
+    }
+    object->name = name;
+    object->SetPosition(position);
+    object->SetScale(scale);
+    object->material_slot[0] = material_index;
+    //GetObjectFromAsset copies the OBJ's own material NAMES onto the object, and the renderer
+    //would resolve those over the slot just assigned on the next frame. This app picks its
+    //materials by index, so the name path is switched off rather than fought with.
+    object->material_names[0].clear();
+    object->f_update_materials = false;
+    scene->AddObject(object);
+    return object;
+}
+
+void ApplicationTetris::BuildWell(){
+    //Walls and floor are single scaled cubes, and they carry static box colliders so the debris
+    //spawned by a line clear has something to land in rather than falling through the world.
+    struct WellPart{
+        const char* name;
+        vec3 position;
+        vec3 scale;
+    };
+    static const WellPart parts[] = {
+        { "Well Left",  vec3(-1.0f, 9.5f, 0.0f), vec3(1.0f,22.0f,2.0f) },
+        { "Well Right", vec3(10.0f, 9.5f, 0.0f), vec3(1.0f,22.0f,2.0f) },
+        { "Well Floor", vec3( 4.5f,-1.0f, 0.0f), vec3(13.0f,1.0f,2.0f) },
+    };
+    for (int i = 0; i < (int)(sizeof(parts)/sizeof(parts[0])); i++){
+        Object* part = MakeCube(assetmanager,main_scene,parts[i].name,parts[i].position,parts[i].scale,material_frame);
+        if (!part){
+            continue;
+        }
+        Physics* p = part->AddPhysics(main_scene->physics_world);
+        if (p){
+            //A body from AddPhysics starts STATIC with gravity off, which is exactly what a wall
+            //wants - so there is nothing to opt into here. The collider's half extents are in the
+            //object's LOCAL space, and the object is scaled, so they are half the scale.
+            p->AddBoxCollider(parts[i].scale * 0.5f,vec3(),quat().identity(),1.0f);
+            p->SetBounciness(0.2f);
+            p->SetFrictionCoefficient(0.8f);
+        }
+    }
+    //The back panel. No collider: debris is meant to tumble forward out of the well, and a wall
+    //behind it only ever produced blocks wedged in a corner.
+    MakeCube(assetmanager,main_scene,"Well Back",vec3(4.5f,9.5f,-1.2f),vec3(12.0f,22.0f,0.4f),material_back);
+}
+
+void ApplicationTetris::BuildViewObjects(){
+    //The board: one cube per cell, made once and hidden while its cell is empty. 200 objects is
+    //nothing to this renderer, and it means a piece landing never allocates.
+    for (int y = 0; y < TETRIS_BOARD_H; y++){
+        for (int x = 0; x < TETRIS_BOARD_W; x++){
+            char name[32];
+            snprintf(name,sizeof(name),"Cell %i,%i",x,y);
+            Object* cell = MakeCube(assetmanager,main_scene,name,CellWorldPosition(x,y),
+                                    vec3(CELL_VISUAL_SCALE),material_piece[0]);
+            if (cell){
+                cell->Hide();
+            }
+            cell_objects[y][x] = cell;
+        }
+    }
+    for (int i = 0; i < 4; i++){
+        piece_objects[i] = MakeCube(assetmanager,main_scene,"Piece Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
+        ghost_objects[i] = MakeCube(assetmanager,main_scene,"Ghost Cell",vec3(),vec3(GHOST_VISUAL_SCALE),material_ghost);
+        hold_objects[i]  = MakeCube(assetmanager,main_scene,"Hold Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
+        if (piece_objects[i]){ piece_objects[i]->Hide(); }
+        if (ghost_objects[i]){ ghost_objects[i]->Hide(); }
+        if (hold_objects[i]){ hold_objects[i]->Hide(); }
+        //The ghost must not be clickable: it sits in front of the stack and would swallow every
+        //pick aimed at a real block.
+        if (ghost_objects[i]){ ghost_objects[i]->SetPickability(false); }
+    }
+    for (int n = 0; n < TETRIS_NEXT_QUEUE_SHOWN; n++){
+        for (int i = 0; i < 4; i++){
+            next_objects[n][i] = MakeCube(assetmanager,main_scene,"Next Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
+            if (next_objects[n][i]){
+                next_objects[n][i]->Hide();
+            }
+        }
+    }
+}
+
+void ApplicationTetris::SetupCamera(){
+    Camera* camera = main_scene->camera;
+    camera->SetType(CAMERA_TYPE_ORTHOGRAPHIC);
+    //zoom is the VERTICAL half-extent in world units; the horizontal follows from the aspect
+    //ratio. 11.5 shows the 20-row well plus a margin above and below.
+    camera->SetupOrthographic(renderer->width,renderer->height,11.5f,0.1f,120.0f);
+    camera->SetPosition(vec3(camera_target.x,camera_target.y,40.0f));
+    camera->SetLookAt(camera_target);
+    camera->CalculateLookatMatrix();
+}
+
+void ApplicationTetris::SetupInput(){
+    InputController* input = main_scene->inputcontroller;
+
+    //Two mappings for most actions, because muscle memory differs: arrows are the classic
+    //arcade layout and Z/X/C the guideline one. KeyState::f_isdown counts HELD MAPPINGS rather
+    //than being a boolean, so an action stays down while either of its keys is.
+    input->AddKeyMap(VK_LEFT,INPUT_TETRIS_LEFT);
+    input->AddKeyMap(VK_RIGHT,INPUT_TETRIS_RIGHT);
+    input->AddKeyMap(VK_DOWN,INPUT_TETRIS_SOFT_DROP);
+    input->AddKeyMap(VK_UP,INPUT_TETRIS_ROTATE_CW);
+    input->AddKeyMap('X',INPUT_TETRIS_ROTATE_CW);
+    input->AddKeyMap('Z',INPUT_TETRIS_ROTATE_CCW);
+    input->AddKeyMap(VK_CONTROL,INPUT_TETRIS_ROTATE_CCW);
+    input->AddKeyMap(VK_SPACE,INPUT_TETRIS_HARD_DROP);
+    input->AddKeyMap('C',INPUT_TETRIS_HOLD);
+    input->AddKeyMap(VK_SHIFT,INPUT_TETRIS_HOLD);
+    input->AddKeyMap('R',INPUT_TETRIS_RESTART);
+    input->AddKeyMap(VK_F1,INPUT_TETRIS_TOGGLE_UI);
+    //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
+    //INPUT_PAUSE is handled by Scene::UpdatePhysics itself, so this is the whole feature.
+    input->AddKeyMap('P',INPUT_PAUSE);
+
+    //Gamepad: the left stick's X axis steers, which is the one analog control a Tetris has. The
+    //D-pad arrives through XInput as buttons rather than as an analog index, so it is not mapped
+    //here - see docs/tetris_findings.md on what that costs.
+    input->AddGamePadMap(0,INPUT_TETRIS_LEFT);
+}
+
+void ApplicationTetris::RegisterCommandHandlers(){
+    //Restarting is intent from outside the simulation - the HUD button, an MCP call, later a
+    //replay - so it goes on the command queue rather than being done on the caller's thread. The
+    //handler runs on the physics thread at the top of a tick with physics_mutex held, which is
+    //the only place it is safe to throw the board away.
+    main_scene->RegisterCommandHandler(TETRIS_CMD_RESTART,
+        [this](const SimCommand& cmd) -> objectid_t {
+            //The seed travels IN the command, so a recorded restart deals the same pieces on
+            //replay - the same reason ApplicationTank's vehicle reset carries its pose.
+            uint32_t seed = (uint32_t)cmd.value[0];
+            NewGame(seed ? seed : next_auto_seed++);
+            return OBJECTID_INVALID;
+        });
+}
+
+void ApplicationTetris::NewGame(uint32_t seed){
+    current_seed = seed;
+    game.NewGame(seed);
+    //Throw away everything the previous game left in the world.
+    for (size_t i = 0; i < debris.size(); i++){
+        if (debris[i].object){
+            debris[i].object->Destroy();
+        }
+    }
+    debris.clear();
+    renderer->DeleteDestroyedObjects();
+    f_collapse_animating = false;
+    last_piece_type = -1;
+    das_direction = 0;
+    das_ticks_left = 0;
+    arr_ticks_left = 0;
+    shake_amount = 0.0f;
+    shake_ticks = 0;
+    SyncBoardView();
+    SyncPieceView();
+    SyncPreviewView();
+    PublishSnapshot();
+    debug->Ok("New game, seed %u\n",seed);
+}
+
+//--- The tick -------------------------------------------------------------------------------
+
+void ApplicationTetris::RunLogic(void){
+    if (!main_scene){
+        return;
+    }
+    /*
+        RunLogic is called on every pass of the physics thread's loop, NOT once per simulated
+        tick: the loop keeps spinning while the simulation is paused (so that a key can unpause
+        it), and Scene::UpdatePhysics - which runs after this - is where the pause and the
+        single-step counter are actually honoured. Game logic that ran here unguarded would keep
+        playing while the sim was paused, and single-stepping would advance it by an unknown
+        number of ticks. So this predicate has to mirror the one in Scene::UpdatePhysics exactly.
+    */
+    bool f_tick_will_run = !main_scene->IsPhysicsPaused() || (main_scene->GetPendingPhysicsSteps() > 0);
+    if (!f_tick_will_run){
+        return;
+    }
+
+    InputController* input = main_scene->inputcontroller;
+
+    //F1 and R are UI/meta rather than gameplay, so they are read whether or not a game is in
+    //progress and are not part of the TetrisInput the rules see.
+    if (input->WasKeyReleased(INPUT_TETRIS_TOGGLE_UI)){
+        f_show_engine_ui = !f_show_engine_ui;
+        f_show_scene_window = f_show_engine_ui;
+        f_show_inspector_window = f_show_engine_ui;
+        f_show_engine_window = f_show_engine_ui;
+    }
+    if (input->WasKeyReleased(INPUT_TETRIS_RESTART)){
+        //Already on the physics thread inside the tick - so this is a direct call, not a command.
+        //A command would be a round trip through the queue to arrive back here one tick later.
+        NewGame(next_auto_seed++);
+    }
+
+    TetrisInput actions;
+    GatherInput(actions);
+
+    TetrisEvents events;
+    game.Tick(actions,events);
+    HandleEvents(events);
+
+    SyncBoardView();
+    SyncPieceView();
+    SyncPreviewView();
+    UpdateDebris();
+    UpdateCameraShake();
+    PublishSnapshot();
+}
+
+void ApplicationTetris::GatherInput(TetrisInput& out){
+    InputController* input = main_scene->inputcontroller;
+
+    //Most apps gate input on main_window->f_has_focus so keys meant for another application do
+    //not drive the game. A scripted hold does not come from the OS, so it must come through that
+    //gate anyway - otherwise every MCP-driven test does nothing, which is exactly when the window
+    //is not in front. InputController::HasSyntheticHolds is the sanctioned way to ask.
+    if (!main_window->f_has_focus && !input->HasSyntheticHolds()){
+        das_direction = 0;
+        das_ticks_left = 0;
+        arr_ticks_left = 0;
+        return;
+    }
+
+    //Edge-triggered actions: one press, one action, no matter how long the key is held.
+    out.f_rotate_cw  = input->WasKeyReleased(INPUT_TETRIS_ROTATE_CW);
+    out.f_rotate_ccw = input->WasKeyReleased(INPUT_TETRIS_ROTATE_CCW);
+    out.f_hard_drop  = input->WasKeyReleased(INPUT_TETRIS_HARD_DROP);
+    out.f_hold       = input->WasKeyReleased(INPUT_TETRIS_HOLD);
+
+    //Level-triggered: soft drop is "gravity is fast while this is down".
+    out.f_soft_drop = input->IsKeyDown(INPUT_TETRIS_SOFT_DROP);
+
+    /*
+        DAS/ARR. A held left or right moves once immediately, then pauses for TETRIS_DAS_TICKS,
+        then repeats every TETRIS_ARR_TICKS. Both are tick counts, so the feel of the controls is
+        identical whether the simulation is running freely, single-stepped, or replayed - which
+        would not be true of a millisecond timer, and is the single most important reason this
+        translation lives on the physics thread rather than in the window message handler.
+    */
+    bool f_left = input->IsKeyDown(INPUT_TETRIS_LEFT);
+    bool f_right = input->IsKeyDown(INPUT_TETRIS_RIGHT);
+    //Both down: the most recent one wins, which here means "keep doing what we were doing".
+    int direction = 0;
+    if (f_left && !f_right){
+        direction = -1;
+    }else if (f_right && !f_left){
+        direction = +1;
+    }else if (f_left && f_right){
+        direction = das_direction;
+    }
+
+    if (direction == 0){
+        das_direction = 0;
+        das_ticks_left = 0;
+        arr_ticks_left = 0;
+        return;
+    }
+    if (direction != das_direction){
+        //A fresh press: move at once, then wait out the DAS delay before repeating.
+        das_direction = direction;
+        das_ticks_left = TETRIS_DAS_TICKS;
+        arr_ticks_left = 0;
+        if (direction < 0){ out.f_move_left = true; }else{ out.f_move_right = true; }
+        return;
+    }
+    if (das_ticks_left > 0){
+        das_ticks_left--;
+        return;
+    }
+    if (arr_ticks_left > 0){
+        arr_ticks_left--;
+        return;
+    }
+    arr_ticks_left = TETRIS_ARR_TICKS;
+    if (direction < 0){ out.f_move_left = true; }else{ out.f_move_right = true; }
+}
+
+void ApplicationTetris::HandleEvents(const TetrisEvents& events){
+    if (f_sound_enabled && soundsystem){
+        //One sound per event, and each on its own handle: SoundSystem gives a handle exactly one
+        //OpenAL source, so two events sharing a handle would cut each other off.
+        if (events.f_moved){        soundsystem->Play("move",false,0.35f); }
+        if (events.f_rotated){      soundsystem->Play("rotate",false,0.35f); }
+        if (events.f_held){         soundsystem->Play("hold",false,0.5f); }
+        if (events.f_locked){       soundsystem->Play("lock",false,0.6f); }
+        if (events.lines_cleared){  soundsystem->Play("clear",false,0.9f); }
+        if (events.f_game_over){    soundsystem->Play("gameover",false,1.0f); }
+    }
+
+    if (events.f_hard_dropped && events.hard_drop_cells > 0){
+        //A slam should be felt. Scaled by how far it fell, capped so a full-height drop does not
+        //throw the camera off the board.
+        shake_amount = min(0.06f * events.hard_drop_cells,0.35f);
+        shake_ticks = 10;
+    }
+    if (events.lines_cleared > 0){
+        shake_amount = max(shake_amount,0.08f * events.lines_cleared);
+        shake_ticks = max(shake_ticks,14);
+        SpawnClearDebris();
+    }
+    if (events.lines_cleared > 0 || events.f_locked){
+        //A new piece is coming, so the next slide must not be interpolated from the old one.
+        last_piece_type = -1;
+    }
+    if (events.f_game_over){
+        debug->Info("Game over: score %i, %i lines, level %i\n",game.score,game.lines,game.level);
+    }
+}
+
+//--- The view -------------------------------------------------------------------------------
+
+void ApplicationTetris::SyncBoardView(){
+    /*
+        The board array is the truth and these cubes are a view of it, rebuilt from scratch every
+        tick. That is 200 cheap assignments and it removes a whole class of bug: there is no
+        incremental update to get wrong, so the display can never disagree with the rules.
+
+        The exception is the collapse animation, which drives the same objects through
+        Scene::MoveObjectOverTicks. While that is running the array has not changed yet (the rows
+        are removed when the animation finishes), so syncing would fight the motion.
+    */
+    if (f_collapse_animating){
+        if (game.phase != TETRIS_PHASE_COLLAPSING){
+            //The animation is over: put every cube back on its exact grid position and let the
+            //array take over again. Snapping here rather than trusting the interpolation to have
+            //landed exactly is deliberate - a view that is 0.001 off the grid looks wrong.
+            f_collapse_animating = false;
+            for (int y = 0; y < TETRIS_BOARD_H; y++){
+                for (int x = 0; x < TETRIS_BOARD_W; x++){
+                    if (cell_objects[y][x]){
+                        cell_objects[y][x]->SetPosition(CellWorldPosition(x,y));
+                    }
+                }
+            }
+        }else{
+            return;
+        }
+    }
+    if (game.phase == TETRIS_PHASE_COLLAPSING && !f_collapse_animating){
+        StartCollapseAnimation();
+        return;
+    }
+
+    //Is this row one of the ones flashing? Small enough a linear scan beats anything cleverer.
+    for (int y = 0; y < TETRIS_BOARD_H; y++){
+        bool f_flashing = false;
+        if (game.phase == TETRIS_PHASE_CLEARING){
+            for (size_t i = 0; i < game.clearing_rows.size(); i++){
+                if (game.clearing_rows[i] == y){
+                    f_flashing = true;
+                    break;
+                }
+            }
+        }
+        for (int x = 0; x < TETRIS_BOARD_W; x++){
+            Object* cell = cell_objects[y][x];
+            if (!cell){
+                continue;
+            }
+            int8_t type = game.board[y][x];
+            if (type < 0){
+                cell->Hide();
+                continue;
+            }
+            cell->Show();
+            cell->material_slot[0] = f_flashing ? material_flash : material_piece[type];
+        }
+    }
+}
+
+void ApplicationTetris::StartCollapseAnimation(){
+    /*
+        The cleared rows vanish and everything above them slides down by however many rows were
+        cleared beneath it. Scene::MoveObjectOverTicks does the whole thing in one call per cube:
+        it interpolates over exactly N TICKS, so the animation length is simulation time and a
+        single-stepped or replayed run shows the identical motion. This is the nicest API in the
+        engine for a game and it is worth saying so.
+    */
+    f_collapse_animating = true;
+    for (int y = 0; y < TETRIS_BOARD_H; y++){
+        int drop = 0;
+        bool f_cleared = false;
+        for (size_t i = 0; i < game.clearing_rows.size(); i++){
+            if (game.clearing_rows[i] == y){
+                f_cleared = true;
+            }else if (game.clearing_rows[i] < y){
+                drop++;
+            }
+        }
+        for (int x = 0; x < TETRIS_BOARD_W; x++){
+            Object* cell = cell_objects[y][x];
+            if (!cell){
+                continue;
+            }
+            if (f_cleared){
+                //Its debris is already falling out of the well - the cube itself just goes.
+                cell->Hide();
+                continue;
+            }
+            if (game.board[y][x] < 0 || drop == 0){
+                continue;
+            }
+            vec3 target = CellWorldPosition(x,y - drop);
+            main_scene->MoveObjectOverTicks(cell,&target,NULL,TETRIS_COLLAPSE_TICKS);
+        }
+    }
+}
+
+void ApplicationTetris::SyncPieceView(){
+    bool f_falling = (game.phase == TETRIS_PHASE_FALLING);
+    if (!f_falling){
+        for (int i = 0; i < 4; i++){
+            if (piece_objects[i]){ piece_objects[i]->Hide(); }
+            if (ghost_objects[i]){ ghost_objects[i]->Hide(); }
+        }
+        return;
+    }
+
+    const TetrominoCell* cells = GetTetrominoCells(game.piece_type,game.piece_rotation);
+    int ghost_y = game.GetGhostY();
+    //A piece that has just spawned, or just been swapped out by hold, must not be interpolated
+    //from wherever the last one happened to be - it teleports.
+    bool f_snap = (last_piece_type != game.piece_type);
+
+    for (int i = 0; i < 4; i++){
+        vec3 target = CellWorldPosition(game.piece_x + cells[i].x,game.piece_y + cells[i].y);
+        Object* cube = piece_objects[i];
+        if (cube){
+            cube->Show();
+            cube->material_slot[0] = material_piece[game.piece_type];
+            if (f_snap){
+                cube->SetPosition(target);
+            }else if ((target - piece_cell_targets[i]).length() > 0.01f){
+                //Only when the target actually CHANGES: MoveObjectOverTicks replaces an
+                //in-flight motion with the new one, so re-requesting the same move every tick
+                //would restart it every tick and the cube would never arrive.
+                main_scene->MoveObjectOverTicks(cube,&target,NULL,TETRIS_SLIDE_TICKS);
+            }
+        }
+        piece_cell_targets[i] = target;
+
+        Object* ghost = ghost_objects[i];
+        if (ghost){
+            //Hidden when it would sit under the piece itself - a ghost drawn inside the piece is
+            //just z-fighting with extra steps.
+            if (ghost_y >= game.piece_y){
+                ghost->Hide();
+            }else{
+                ghost->Show();
+                ghost->SetPosition(CellWorldPosition(game.piece_x + cells[i].x,ghost_y + cells[i].y));
+            }
+        }
+    }
+    last_piece_type = game.piece_type;
+}
+
+void ApplicationTetris::SyncPreviewView(){
+    for (int i = 0; i < 4; i++){
+        Object* cube = hold_objects[i];
+        if (!cube){
+            continue;
+        }
+        if (game.hold_type < 0){
+            cube->Hide();
+            continue;
+        }
+        cube->Show();
+        //Dimmed to the ghost material while it cannot be used again this piece, so the rule is
+        //visible instead of being something the player has to remember.
+        cube->material_slot[0] = game.f_hold_used ? material_ghost : material_piece[game.hold_type];
+        cube->SetPosition(PreviewCellPosition(vec3(PREVIEW_X,HOLD_Y,0),game.hold_type,i));
+    }
+
+    for (int n = 0; n < TETRIS_NEXT_QUEUE_SHOWN; n++){
+        int type = (n < (int)game.next_queue.size()) ? game.next_queue[n] : -1;
+        vec3 anchor = vec3(PREVIEW_X,NEXT_Y - n * NEXT_SPACING_Y,0);
+        for (int i = 0; i < 4; i++){
+            Object* cube = next_objects[n][i];
+            if (!cube){
+                continue;
+            }
+            if (type < 0){
+                cube->Hide();
+                continue;
+            }
+            cube->Show();
+            cube->material_slot[0] = material_piece[type];
+            cube->SetPosition(PreviewCellPosition(anchor,type,i));
+        }
+    }
+}
+
+//--- Physics garnish ------------------------------------------------------------------------
+
+void ApplicationTetris::SpawnClearDebris(){
+    /*
+        One dynamic cube per cleared cell, thrown forward out of the well. Purely cosmetic: the
+        board is still a plain array and nothing here can affect the rules, which is the only
+        way to have physics in a Tetris without ruining it.
+
+        Safe to create bodies here because RunLogic is not inside the physics step - the rule
+        (core/SimCommand.h, ApplicationShip.cpp:995) is that a body must never be created from
+        inside a contact callback, where rp3d is mid-iteration over its own arrays.
+    */
+    if (!f_debris_enabled || !main_scene->physics_world){
+        return;
+    }
+    uint64_t now = main_scene->GetPhysicsTick();
+    for (size_t r = 0; r < game.clearing_rows.size(); r++){
+        int y = game.clearing_rows[r];
+        for (int x = 0; x < TETRIS_BOARD_W; x++){
+            int8_t type = game.board[y][x];
+            if (type < 0){
+                continue;
+            }
+            Object* chunk = MakeCube(assetmanager,main_scene,"Debris",
+                                     CellWorldPosition(x,y) + vec3(0,0,0.2f),
+                                     vec3(0.5f),material_piece[type]);
+            if (!chunk){
+                continue;
+            }
+            chunk->SetPickability(false);
+            Physics* p = chunk->AddPhysics(main_scene->physics_world);
+            if (p){
+                p->AddBoxCollider(vec3(0.25f),vec3(),quat().identity(),1.0f);
+                //A body starts STATIC with gravity off - dynamics is opt-in.
+                p->SetStatic(false);
+                p->SetGravityEnabled(true);
+                p->SetBounciness(0.35f);
+                p->SetFrictionCoefficient(0.4f);
+                //Thrown out towards the camera and away from the centre of the row, so the row
+                //bursts outwards instead of dropping straight down in a slab. Deterministic: it
+                //is a function of the cell's position, not of a random draw.
+                float sideways = ((float)x - (TETRIS_BOARD_W - 1) * 0.5f) * 0.8f;
+                p->SetVelocity(vec3(sideways,2.5f,4.0f + (x & 1)));
+                p->SetAngularVelocity(vec3(sideways,2.0f,-sideways));
+            }
+            TetrisDebris entry;
+            entry.object = chunk;
+            entry.reap_tick = now + TETRIS_DEBRIS_LIFETIME_TICKS;
+            debris.push_back(entry);
+        }
+    }
+}
+
+void ApplicationTetris::UpdateDebris(){
+    uint64_t now = main_scene->GetPhysicsTick();
+    bool f_any_destroyed = false;
+    for (size_t i = 0; i < debris.size(); ){
+        Object* object = debris[i].object;
+        //Also reaped once it has fallen well below the well, so a chunk that missed the floor
+        //does not survive on the far side of the world just because its timer has not run out.
+        bool f_expired = (now >= debris[i].reap_tick) || (object && object->GetWorldPosition().y < -12.0f);
+        if (!f_expired){
+            i++;
+            continue;
+        }
+        if (object){
+            object->Destroy();
+            f_any_destroyed = true;
+        }
+        debris.erase(debris.begin() + i);
+    }
+    if (f_any_destroyed){
+        //Object::Destroy only MARKS. Without this the cubes stop rendering but their rigid bodies
+        //stay in the physics world for the life of the run - only two of the eleven apps in this
+        //repo call it, which is a trap rather than a feature. Safe here: RunLogic holds
+        //physics_mutex, so the render thread is not walking the object list.
+        renderer->DeleteDestroyedObjects();
+    }
+}
+
+void ApplicationTetris::UpdateCameraShake(){
+    Camera* camera = main_scene->camera;
+    if (!camera){
+        return;
+    }
+    if (shake_ticks <= 0){
+        shake_amount = 0.0f;
+        camera->SetPosition(vec3(camera_target.x,camera_target.y,40.0f));
+        return;
+    }
+    shake_ticks--;
+    //A decaying square wave on alternating ticks - cheap, and at 60Hz it reads as a jolt rather
+    //than as a wobble. Driven off the simulation tick so it replays identically.
+    float decay = shake_amount * ((float)shake_ticks / 14.0f);
+    float sign = (main_scene->GetPhysicsTick() & 1) ? 1.0f : -1.0f;
+    camera->SetPosition(vec3(camera_target.x + decay * sign * 0.5f,
+                             camera_target.y - decay,
+                             40.0f));
+}
+
+//--- Telemetry ------------------------------------------------------------------------------
+
+void ApplicationTetris::PublishSnapshot(){
+    //Filled on the physics thread and read by MCP tool handlers, which hold no lock of their own
+    //- see the comment on TetrisSnapshot. The mutex is this app's, not the engine's: taking
+    //physics_mutex from an MCP thread would be the other option, and it would stall the
+    //simulation for the length of every telemetry call.
+    std::lock_guard<std::mutex> lock(snapshot_mutex);
+    snapshot.tick = main_scene->GetPhysicsTick();
+    snapshot.game_ticks = game.ticks_elapsed;
+    snapshot.score = game.score;
+    snapshot.lines = game.lines;
+    snapshot.level = game.level;
+    snapshot.phase = game.phase;
+    snapshot.pieces_placed = game.pieces_placed;
+    snapshot.piece_type = (game.phase == TETRIS_PHASE_FALLING) ? game.piece_type : -1;
+    snapshot.piece_rotation = game.piece_rotation;
+    snapshot.piece_x = game.piece_x;
+    snapshot.piece_y = game.piece_y;
+    snapshot.ghost_y = (game.phase == TETRIS_PHASE_FALLING) ? game.GetGhostY() : 0;
+    snapshot.hold_type = game.hold_type;
+    snapshot.f_hold_used = game.f_hold_used;
+    snapshot.f_paused = main_scene->IsPhysicsPaused();
+    snapshot.debris_count = (int)debris.size();
+    snapshot.seed = current_seed;
+    snapshot.next_types = game.next_queue;
+    snapshot.rows = game.ToAsciiRows();
+}
+
+static const char* PhaseName(int phase){
+    switch (phase){
+        case TETRIS_PHASE_SPAWN:      return "spawn";
+        case TETRIS_PHASE_FALLING:    return "falling";
+        case TETRIS_PHASE_CLEARING:   return "clearing";
+        case TETRIS_PHASE_COLLAPSING: return "collapsing";
+        case TETRIS_PHASE_GAMEOVER:   return "gameover";
+    }
+    return "?";
+}
+
+//--- MCP ------------------------------------------------------------------------------------
+
+void ApplicationTetris::RegisterMCPTools(){
+    //Registered from Init(). The server only starts accepting requests after Init() returns, so
+    //registration can never race a client's tools/list.
+
+    //One action name -> one mapped keycode, shared by tetris_input and its schema so the two
+    //cannot drift apart.
+    struct ActionMap{
+        const char* name;
+        uint32_t mapped;
+    };
+    static const ActionMap actions[] = {
+        { "left",       INPUT_TETRIS_LEFT },
+        { "right",      INPUT_TETRIS_RIGHT },
+        { "soft_drop",  INPUT_TETRIS_SOFT_DROP },
+        { "hard_drop",  INPUT_TETRIS_HARD_DROP },
+        { "rotate_cw",  INPUT_TETRIS_ROTATE_CW },
+        { "rotate_ccw", INPUT_TETRIS_ROTATE_CCW },
+        { "hold",       INPUT_TETRIS_HOLD },
+    };
+    static const int num_actions = (int)(sizeof(actions)/sizeof(actions[0]));
+
+    MCPServer::Get()->RegisterTool("tetris_state",
+        "The whole game state: the board as 20 ASCII rows (top row first, '.' empty, an uppercase "
+        "letter for a settled block of that piece, lowercase for the four cells of the piece the "
+        "player is still steering), plus score, level, lines, the active piece, the ghost's "
+        "landing row, the hold slot and the next queue. Read from a snapshot the physics thread "
+        "publishes at the end of every tick, so it never disturbs the game it is measuring. Set "
+        "include_screenshot to also get a PNG of the current frame.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG of the current frame, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("tetris_input",
+        "Press a control for a number of SIMULATION TICKS and block until it has played out, then "
+        "return the resulting state. This is how a program plays the game: the hold emits ordinary "
+        "input events, so the simulation cannot tell it from a person's finger. The game runs at "
+        "60 ticks per second. Edge-triggered actions (rotate_cw, rotate_ccw, hard_drop, hold) fire "
+        "once on RELEASE, so a 1-tick hold is one rotation; level-triggered ones (left, right, "
+        "soft_drop) act for as long as they are held, with the same auto-repeat a human gets. "
+        "While the simulation is paused the hold does not count down - use tetris_step to advance "
+        "it.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"action", {{"type","string"},{"enum", json::array({"left","right","soft_drop","hard_drop","rotate_cw","rotate_ccw","hold"})}}},
+                {"ticks", {{"type","number"},{"description","how many simulation ticks to hold it, default 2, capped at 600"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG of the resulting frame, default false"}}}
+            }},
+            {"required", json::array({"action"})}
+        },
+        [this](const json& args) -> json {
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            std::string action = args.value("action","");
+            uint32_t mapped = 0;
+            for (int i = 0; i < num_actions; i++){
+                if (action == actions[i].name){
+                    mapped = actions[i].mapped;
+                    break;
+                }
+            }
+            if (!mapped){
+                return json{ {"error","unknown action"} };
+            }
+            int ticks = (int)clamp(args.value("ticks",2.0f),1.0f,600.0f);
+            uint64_t start_tick = main_scene->GetPhysicsTick();
+            input->HoldKey(mapped,(uint32_t)ticks);
+
+            //Wait for the hold to have played out AND for the release edge to have been consumed
+            //by a tick - an edge-triggered action is read with WasKeyReleased, which only becomes
+            //true on the tick after the hold ends. Bounded, and it gives up rather than hanging
+            //if the simulation is paused with nothing stepping it.
+            uint64_t target_tick = start_tick + (uint64_t)ticks + 2;
+            for (int waited_ms = 0; waited_ms < 4000 && main_scene->GetPhysicsTick() < target_tick; waited_ms += 4){
+                Sleep(4);
+            }
+            return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("tetris_pause",
+        "Pause or resume the simulation. While paused the window keeps redrawing but no tick runs: "
+        "nothing falls, no input is consumed and the tick counter stops. Pair it with tetris_step "
+        "to watch the game one tick at a time.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"paused", {{"type","boolean"},{"description","true to pause, false to resume"}}}
+            }},
+            {"required", json::array({"paused"})}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            main_scene->PausePhysics(args.value("paused",true));
+            return BuildStateJson();
+        });
+
+    MCPServer::Get()->RegisterTool("tetris_step",
+        "Advance the paused simulation by exactly num_ticks ticks and return the resulting state. "
+        "Requires tetris_pause first. Every duration in this game is a tick count, so stepping is "
+        "exact: 48 steps at level 1 is exactly one cell of gravity.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"num_ticks", {{"type","number"},{"description","how many ticks to advance, default 1"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG of the resulting frame, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            if (!main_scene->IsPhysicsPaused()){
+                return json{ {"error","not paused - call tetris_pause with paused=true first"} };
+            }
+            int num_ticks = max((int)args.value("num_ticks",1.0f),0);
+            main_scene->StepPhysics(num_ticks);
+            int timeout_ms = max(2000,num_ticks * 30);
+            for (int waited_ms = 0; waited_ms < timeout_ms && main_scene->GetPendingPhysicsSteps() > 0; waited_ms += 5){
+                Sleep(5);
+            }
+            return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("tetris_restart",
+        "Throw the current game away and start a new one. The piece order is a pure function of "
+        "the seed, so the same seed always deals the same game - which is what makes a scripted "
+        "run reproducible. Goes through the simulation command queue, so it lands at the top of a "
+        "tick on the physics thread rather than in the middle of one.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"seed", {{"type","number"},{"description","piece-order seed; omit or 0 for a fresh one"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            SimCommand cmd;
+            cmd.type = TETRIS_CMD_RESTART;
+            cmd.value[0] = args.value("seed",0.0f);
+            //SubmitCommandAndWait, not SubmitUICommand: an MCP handler holds no lock, so it may
+            //wait - and it has to, or it would report the state of the game it just replaced.
+            SubmitCommandAndWait(cmd);
+            return BuildStateJson();
+        });
+}
+
+json ApplicationTetris::BuildStateJson(){
+    TetrisSnapshot copy;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        copy = snapshot;
+    }
+    json next = json::array();
+    for (size_t i = 0; i < copy.next_types.size() && i < TETRIS_NEXT_QUEUE_SHOWN; i++){
+        next.push_back(GetTetrominoName(copy.next_types[i]));
+    }
+    json rows = json::array();
+    for (size_t i = 0; i < copy.rows.size(); i++){
+        rows.push_back(copy.rows[i]);
+    }
+    //Everything else comes from the snapshot, but "paused" is read live: the snapshot is only
+    //written by a tick, and pausing is precisely the thing that stops ticks happening - so a
+    //snapshotted value would report the state from BEFORE the pause and never update.
+    bool f_paused = main_scene ? main_scene->IsPhysicsPaused() : copy.f_paused;
+    return json{
+        {"tick",copy.tick},
+        {"game_ticks",copy.game_ticks},
+        {"paused",f_paused},
+        {"phase",PhaseName(copy.phase)},
+        {"score",copy.score},
+        {"lines",copy.lines},
+        {"level",copy.level},
+        {"pieces_placed",copy.pieces_placed},
+        {"seed",copy.seed},
+        {"piece",copy.piece_type >= 0 ? json(GetTetrominoName(copy.piece_type)) : json(nullptr)},
+        {"piece_rotation",copy.piece_rotation},
+        {"piece_x",copy.piece_x},
+        {"piece_y",copy.piece_y},
+        {"ghost_y",copy.ghost_y},
+        {"hold",copy.hold_type >= 0 ? json(GetTetrominoName(copy.hold_type)) : json(nullptr)},
+        {"hold_used",copy.f_hold_used},
+        {"next",next},
+        {"debris_bodies",copy.debris_count},
+        {"board",rows}
+    };
+}
+
+//--- HUD ------------------------------------------------------------------------------------
+
+void ApplicationTetris::DrawImGuiUI(void){
+    //Runs on the RENDER thread with physics_mutex held, so reading the simulation directly here
+    //is safe - and is the reason this reads `game` rather than the snapshot the MCP tools use.
+    if (f_show_engine_ui){
+        RenderApplicationUI();
+    }
+    RenderTetrisHUD();
+}
+
+void ApplicationTetris::RenderTetrisHUD(){
+    //Anchored top-left and kept narrow, because the engine's debug panels dock into the same
+    //corner when F1 is on and the two should not fight over it.
+    ImGui::SetNextWindowPos(ImVec2(f_show_engine_ui ? 320.0f : 16.0f,16.0f),ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(250,0),ImGuiCond_Always);
+    ImGui::Begin("Tetris",NULL,ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse);
+
+    ImGui::Text("SCORE  %i",game.score);
+    ImGui::Text("LEVEL  %i",game.level);
+    ImGui::Text("LINES  %i",game.lines);
+    ImGui::Separator();
+    ImGui::Text("piece  %s",game.phase == TETRIS_PHASE_FALLING ? GetTetrominoName(game.piece_type) : "-");
+    ImGui::Text("tick   %llu",(unsigned long long)main_scene->GetPhysicsTick());
+    ImGui::Text("gravity %i ticks/cell",Playfield::GravityTicksForLevel(game.level));
+
+    if (game.phase == TETRIS_PHASE_GAMEOVER){
+        //The engine has no world-space text of any kind - one 13px ImGui font is the whole text
+        //rendering story - so "GAME OVER" is a HUD line rather than something on the board.
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1,0.3f,0.3f,1),"GAME OVER");
+    }
+    if (main_scene->IsPhysicsPaused()){
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1,0.85f,0.2f,1),"PAUSED");
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("New game")){
+        //SubmitUICommand, never SubmitCommandAndWait: this runs with physics_mutex held, and the
+        //physics thread needs that same lock to drain the queue - waiting here deadlocks.
+        SimCommand cmd;
+        cmd.type = TETRIS_CMD_RESTART;
+        cmd.value[0] = 0.0f;   //0 means "pick a fresh seed"
+        SubmitUICommand(cmd);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(main_scene->IsPhysicsPaused() ? "Resume" : "Pause")){
+        main_scene->PausePhysics(!main_scene->IsPhysicsPaused());
+    }
+    ImGui::Checkbox("Sound",&f_sound_enabled);
+    ImGui::SameLine();
+    ImGui::Checkbox("Debris",&f_debris_enabled);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("arrows move/soft drop");
+    ImGui::TextDisabled("Z/X or up rotate");
+    ImGui::TextDisabled("space hard drop, C hold");
+    ImGui::TextDisabled("R restart, P pause, F1 panels");
+
+    ImGui::End();
+}
