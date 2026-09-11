@@ -101,6 +101,7 @@
 #define GL_BGRA 0x80E1
 #define GL_RGB16F 0x881B
 #define GL_RGBA16F 0x881A
+#define GL_RG16F 0x822F
 #define GL_RGBA32F 0x8814
 #define GL_RGB32F 0x8815
 #define GL_R32I 0x8235
@@ -294,6 +295,16 @@ typedef void (APIENTRYP PFNGLNAMEDFRAMEBUFFERDRAWBUFFERSPROC)(GLuint framebuffer
 GLAPI PFNGLNAMEDFRAMEBUFFERDRAWBUFFERSPROC glNamedFramebufferDrawBuffers;
 typedef void (APIENTRYP PFNGLNAMEDFRAMEBUFFERTEXTUREPROC)(GLuint framebuffer, GLenum attachment, GLuint texture, GLint level);
 GLAPI PFNGLNAMEDFRAMEBUFFERTEXTUREPROC glNamedFramebufferTexture;
+
+//Blending. GL 1.1's glBlendFunc is exported by opengl32 and needs no loading; the EQUATION does,
+//and MIN/MAX are the reason it is here - they reduce a target rather than compositing into it,
+//which is how the occluder field collapses a whole column of geometry into one texel in a single
+//pass (Renderer::RenderFieldPass). Note that both ignore the blend factors entirely.
+#define GL_FUNC_ADD 0x8006
+#define GL_MIN      0x8007
+#define GL_MAX      0x8008
+typedef void (APIENTRYP PFNGLBLENDEQUATIONSEPARATEPROC)(GLenum modeRGB, GLenum modeAlpha);
+GLAPI PFNGLBLENDEQUATIONSEPARATEPROC glBlendEquationSeparate;
 
 //Shaders
 typedef void (APIENTRYP PFNGLSHADERSOURCEPROC)(GLuint shader, GLsizei count, const char *const*string, const GLint *length);

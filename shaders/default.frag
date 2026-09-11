@@ -88,6 +88,16 @@ uniform int f_materialindex_is_color = 0;
 layout (binding = 26) uniform sampler3D cloud_shadow_texture;
 uniform mat4 mat_cloud_shadow;
 uniform int f_cloud_shadows = 0;
+//Occluder field: the top-down min/max height map built by shaders/field.frag, bound by the
+//renderer at TEXUNIT_FIELD_SHADOW. This is what shadows POINT lights - see CalcFieldShadow.
+//Off unless an app called Renderer::EnableFieldShadows.
+layout (binding = 27) uniform sampler2D field_texture;
+uniform mat4 mat_field;
+uniform vec3 field_axis = vec3(0,0,1);
+uniform int f_field_shadows = 0;
+uniform int field_shadow_steps = 64;
+uniform float field_normal_bias = 0.15;
+uniform float field_light_radius = 0.30;
 uniform float alpha_clip = 1.0f;
 //Width of a cone light's soft edge, in cosine space - the `epsilon` of the reference
 //shader. Shared with raymarch_volume.frag so a cone matches between surfaces and fog.
@@ -306,6 +316,114 @@ float CalcCloudShadow(vec3 world_position){
     return texture(cloud_shadow_texture,proj * 0.5 + 0.5).r;
 }
 
+/*
+    Is anything standing between this point and a point light?
+
+    The third kind of occlusion test in this file, and the only one that is a march. CalcShadow
+    compares against a depth written from the light's own viewpoint, which a point light cannot
+    have without six of them; CalcCloudShadow integrates along a fixed direction, which a point
+    light does not have either. So this one walks the actual segment from the surface to the
+    light and asks a view-independent description of the world what it passes through.
+
+    That description is the occluder field (shaders/field.frag): a top-down texture holding, per
+    column, the height of the highest and lowest surface in it. A column is therefore treated as
+    a SLAB - one solid block between those two heights - which is exact for anything extruded
+    from the ground and conservative for anything else. A stack of blocks with a gap in it fills
+    its own gap in, and a light shining through that gap is shadowed when it should not be. That
+    is the price of a description that costs one texture rather than six per light, and in a
+    fixed top-down view it is very hard to see.
+
+    Deliberately view-independent: the field knows nothing about any light, so a scene with ten
+    point lights builds it once and marches it ten times.
+
+    This sphere-traces rather than stepping evenly, using the distance channel the jump flood
+    filled (shaders/field_jfa.comp). That channel does two separate jobs here, and they must not
+    be confused with each other - see the two quantities inside the loop.
+*/
+float CalcFieldShadow(vec3 world_position, vec3 normal, vec3 light_position){
+    if ((f_field_shadows == 0) || (field_shadow_steps <= 0)){
+        return 1.0;
+    }
+    //A receiver sits ON a surface, so at t=0 it is inside that surface's own slab and every
+    //fragment shadows itself. Stepping off along the normal first is the fix, and is the same
+    //trick - for the same reason - as the depth map's shadow_bias.
+    vec3 origin = world_position + normal * field_normal_bias;
+
+    vec3 to_light = light_position - origin;
+    float dist = length(to_light);
+    if (dist < 0.0001){
+        return 1.0;
+    }
+    vec3 dir = to_light / dist;
+
+    /*
+        A floor under the step size, and the reason field_shadow_steps survived becoming a sphere
+        trace. The distance field is zero everywhere directly above an occluder, so a ray running
+        along the top of a wall would step by nothing and stall a few centimetres from where it
+        started - and a march that stops early reports "unoccluded", which is the wrong answer in
+        exactly the place that has the most geometry. With this floor, the worst case degrades to
+        the even spacing the first version used and still reaches the light.
+    */
+    float min_step = dist / float(field_shadow_steps);
+
+    float visibility = 1.0;
+    float t = min_step;
+
+    for (int i = 0; (i < field_shadow_steps) && (t < dist); i++){
+        vec3 p = origin + dir * t;
+
+        vec4 clip = mat_field * vec4(p,1.0);
+        vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+        //Outside the field's box there is no information at all. Reporting "unoccluded" is the
+        //only honest answer and matches what CalcShadow does off the edge of the depth map -
+        //clamping would instead smear the border column across everything beyond it.
+        if ((uv.x < 0.0) || (uv.x > 1.0) || (uv.y < 0.0) || (uv.y > 1.0)){
+            t += min_step;
+            continue;
+        }
+
+        //R is the top of this column's slab, A the bottom, G the 2D distance to the nearest
+        //occupied column. An empty column kept the clear values - a very low top and a very high
+        //bottom - so `clearance` below comes out enormous and the tests simply miss, which is
+        //why the field needs no separate occupancy flag.
+        vec4 field = texture(field_texture,uv);
+        float h = dot(p,field_axis);
+
+        //Distance above the top of this column's slab, or below its bottom. Negative inside it.
+        float clearance = max(h - field.r,field.a - h);
+        if (clearance < 0.0){
+            return 0.0;
+        }
+
+        /*
+            Two different distances, and the whole correctness of this loop is in keeping them
+            apart.
+
+            The STEP may only use field.g. A 2D distance to the nearest footprint is a genuine
+            lower bound on the 3D distance to any occluder, because projecting onto the ground
+            plane cannot lengthen anything - so jumping that far can never pass through something.
+            The vertical clearance is NOT such a bound: it describes this column only, and a
+            neighbouring column one texel away may rise to just under the ray. Stepping by it
+            would tunnel straight through that neighbour.
+
+            The PENUMBRA estimate wants the opposite reading, and may be a heuristic because it
+            only shades an edge. Above an occupied column field.g is zero while the real occluder
+            is `clearance` below; over an empty one clearance is the meaningless sentinel while
+            field.g is the real answer. So each case takes the other's value.
+        */
+        float occupied = (field.r >= field.a) ? 1.0 : 0.0;
+        float occluder_distance = mix(field.g,clearance,occupied);
+
+        //The standard sphere-trace penumbra: a ray that passes close to an occluder while still
+        //far from the surface it is shading is a soft edge, and how soft is set by how big the
+        //light is. This is the term that makes these read as lit by a lamp rather than stencilled.
+        visibility = min(visibility,occluder_distance / max(field_light_radius * t,0.0001));
+
+        t += max(field.g,min_step);
+    }
+    return clamp(visibility,0.0,1.0);
+}
+
 
 vec4 CalcPBRLighting(){
     vec4 final;
@@ -349,6 +467,14 @@ vec4 CalcPBRLighting(){
 
             if (brightness < 0.01){
                 continue;
+            }
+            //The one light type the depth shadow map cannot serve, and the reason the occluder
+            //field exists. Gated on the light's own flag so a fill light can stay cheap.
+            if (lights[i].shadow != 0){
+                brightness *= CalcFieldShadow(vposition,normalize(vnormal),lights[i].position);
+                if (brightness < 0.01){
+                    continue;
+                }
             }
             light_value = brightness;
         }else if (lights[i].cos_angle > 0.0){

@@ -132,6 +132,7 @@ void ApplicationTetris::Init(void){
     BuildWell();
     BuildViewObjects();
     BuildTextLabels();
+    SetupFieldShadows();
     SetupCamera();
     SetupInput();
     RegisterCommandHandlers();
@@ -481,6 +482,65 @@ void ApplicationTetris::PreRender(void){
 
     //Text or no text is the whole of the banner's state.
     SetLabelText(TETRIS_LABEL_GAMEOVER,f_gameover ? "GAME OVER\nPRESS R" : "");
+}
+
+/*
+    A point light over the well, and the occluder field that shadows it.
+
+    The sun and the fill are directional, and a directional light is the one kind the engine could
+    already shadow: one depth map rendered from its own viewpoint covers every receiver, because
+    every ray is parallel. A point light has no single viewpoint, and the textbook answer - six
+    faces of a cube map, per light, per frame - buys omnidirectionality that a board seen from a
+    fixed orthographic camera cannot spend. So this light is shadowed by marching the occluder
+    field instead: one top-down texture of what is where, built once and reusable by any number of
+    lights. See Renderer::RenderFieldPass and CalcFieldShadow in shaders/default.frag.
+
+    Tetris is a good first host for it because the board is already the flat, extruded, top-down
+    arrangement the field describes exactly - a stack of 1x1x1 cubes on a plane is a prism field
+    and nothing else.
+*/
+void ApplicationTetris::SetupFieldShadows(){
+    //In front of the board and above centre, so the stack throws long shadows down the back panel
+    //rather than short ones hidden behind the blocks casting them. A scene object with a name, so
+    //it can be dragged in the Inspector or moved with object_set_transform to see the shadows
+    //sweep - which is most of how this gets checked.
+    lamp = new PointLight();
+    lamp->name = "Lamp";
+    lamp->SetPosition(vec3(4.5f,10.0f,7.0f));
+    lamp->color = vec3(1.0f,0.86f,0.60f);
+    //Bright for a point light, because the shader applies a point light's brightness twice - once
+    //as the distance falloff and again as radiance - and because it has to hold its own against a
+    //sun at 4.5. See the note on shading_brightness in default.frag.
+    lamp->brightness = 3.5f;
+    lamp->f_casts_shadow = true;
+    main_scene->AddObject(lamp);
+
+    /*
+        The field's own camera. Orthographic down -Z, because THIS app's world is the XY plane
+        with Z up - the engine fixes no up axis and most other apps are the other way round,
+        which is why the axis is passed to the renderer explicitly rather than assumed.
+
+        Not the scene camera, tempting as that is: it is already an orthographic top-down camera
+        over the same board. UpdateCameraShake moves it on a line clear, and that would drag the
+        field's world mapping under the shadows for as long as the shake lasted.
+
+        zoom is a half-extent in world units, and the map is square. 13 around the camera target
+        reaches x [-7,19] and y [-3.5,22.5], which covers the well, the previews and the labels
+        with room to spare. At 512 texels that is ~20 per world unit, so a 0.92-unit block is
+        about 18 texels across - and since the jump flood runs log2(size)+2 passes over every
+        texel of this map every frame, doubling the resolution quadruples the only part of this
+        that costs anything. 512 is where that stopped being free and the edges still look right.
+    */
+    field_camera = new Camera();
+    field_camera->name = "Field Camera";
+    field_camera->SetupOrthographic(512,512,13.0f,0.1f,120.0f);
+    field_camera->SetPosition(vec3(camera_target.x,camera_target.y,40.0f));
+    field_camera->SetLookAt(vec3(camera_target.x,camera_target.y,0.0f));
+    field_camera->CalculateLookatMatrix();
+
+    if (!renderer->EnableFieldShadows(field_camera,vec3(0,0,1),512)){
+        debug->Err("Failed to enable field shadows\n");
+    }
 }
 
 void ApplicationTetris::SetupCamera(){

@@ -273,6 +273,16 @@ void Application::DrawFrame(){
     //Finish ImGui
     main_window->ImGuiRenderDrawData();
 
+    //The UI-inclusive capture point. ImGui renders into whatever framebuffer is bound and nothing
+    //above rebinds, so resolve_fbo_id now holds the scene with the panels composited on top -
+    //which is exactly what SwapWindowBuffers is about to present. It has to happen HERE: before
+    //ImGui there are no panels to capture, and after the swap the buffer's contents are no longer
+    //guaranteed. A request that asked for the scene alone was already served inside
+    //Renderer::DrawFrame and this is a no-op for it.
+    if (renderer){
+        renderer->CaptureScreenshotIfRequested(true);
+    }
+
     //Copy to screen and finish
     main_window->SwapWindowBuffers();
 }
@@ -840,7 +850,7 @@ objectid_t Application::SubmitCommandAndWait(const SimCommand& cmd, int timeout_
 //Moved here from ApplicationTank, which had one of these, while ApplicationShip had a
 //second, near-identical copy wrapped in a tool of its own. Nothing about capturing a frame is
 //app-specific, and every app has a renderer.
-json Application::MaybeAttachScreenshot(json result, bool include_screenshot){
+json Application::MaybeAttachScreenshot(json result, bool include_screenshot, bool include_ui){
     if (!include_screenshot){
         return result;
     }
@@ -848,7 +858,7 @@ json Application::MaybeAttachScreenshot(json result, bool include_screenshot){
         result["screenshot_error"] = "no renderer";
         return result;
     }
-    std::vector<uint8_t> png = renderer->RequestScreenshot();
+    std::vector<uint8_t> png = renderer->RequestScreenshot(include_ui);
     if (png.empty()){
         result["screenshot_error"] = "timed out waiting for the render thread to capture a frame";
         return result;
@@ -1588,18 +1598,23 @@ void Application::RegisterCoreMCPTools(){
     MCPServer::Get()->RegisterTool("screenshot",
         "Capture the app's current frame as a PNG. Blocks until the render thread has drawn and "
         "encoded a frame, so what comes back is the window as it is now - the only way to check "
-        "anything about how an app LOOKS rather than what its numbers say. Available in every app; "
-        "an app's own tools may also take an include_screenshot argument to return one alongside "
-        "their telemetry, which saves a second round trip.",
+        "anything about how an app LOOKS rather than what its numbers say. The ImGui debug panels "
+        "are included by default - telemetry readouts, the object inspector, buttons and sliders "
+        "exist only there, so a capture without them silently drops all of it. Pass "
+        "include_ui=false for the clean 3D scene when the panels would be in the way. Available in "
+        "every app; an app's own tools may also take an include_screenshot argument to return one "
+        "alongside their telemetry, which saves a second round trip.",
         json{
             {"type","object"},
-            {"properties", json::object()}
+            {"properties", {
+                {"include_ui", {{"type","boolean"},{"description","include the ImGui panels, default true; false captures the 3D scene alone"}}}
+            }}
         },
         [this](const json &args) -> json {
             //MaybeAttachScreenshot reports a failure in a field, which is right when there is a
             //telemetry payload to keep - but here the picture IS the result, so an empty one is
             //an error and worth saying so plainly.
-            json result = MaybeAttachScreenshot(json::object(),true);
+            json result = MaybeAttachScreenshot(json::object(),true,args.value("include_ui",true));
             if (result.contains("screenshot_error")){
                 return json{ {"error",result["screenshot_error"]} };
             }
@@ -2672,6 +2687,21 @@ void Application::RenderEngineWindow(){
             renderer->SetNumAASamples(num_samples);
         }
         ImGui::SliderFloat("Alpha clip",&renderer->alpha_clip,0.0f,1.0f);
+
+        //Only an app that called EnableFieldShadows has anything to show here, which is one of
+        //them - the controls would otherwise be four dead widgets in every other app's panel.
+        if (renderer->field_camera){
+            ImGui::SeparatorText("Point light shadows (occluder field)");
+            ImGui::Checkbox("Field shadows",&renderer->f_field_shadows);
+            //Watch "Renderer Time" above while toggling that: it is the honest A/B for what the
+            //extra geometry pass and the jump flood actually cost in this scene.
+            ImGui::SliderInt("Max march steps",&renderer->field_shadow_steps,0,128);
+            //How big the lamp is, in world units. It sets how fast a shadow edge softens with
+            //distance from what casts it; 0 is a point source and a hard edge.
+            ImGui::SliderFloat("Light radius",&renderer->field_light_radius,0.0f,2.0f);
+            ImGui::SliderFloat("Normal bias",&renderer->field_normal_bias,0.0f,0.5f);
+            ImGui::Text("Field map: %i x %i",renderer->field_texture_size,renderer->field_texture_size);
+        }
     }
 
     if (ImGui::CollapsingHeader("Input")){

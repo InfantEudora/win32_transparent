@@ -90,7 +90,10 @@ public:
     //the caller asked for the telemetry first and the picture second. Lives here rather than per
     //app because nothing about it is app-specific - it was written twice before it was moved.
     //The `screenshot` core MCP tool is this with an empty result.
-    json MaybeAttachScreenshot(json result, bool include_screenshot);
+    //include_ui defaults to true: the debug UI is ImGui and exists nowhere else, so a capture
+    //without it silently drops every readout, inspector field and button from the one caller that
+    //cannot look at the monitor. Pass false for the clean 3D scene.
+    json MaybeAttachScreenshot(json result, bool include_screenshot, bool include_ui = true);
 
     //The simulation clock, as the core sim_pause/sim_step tools report it: tick, paused,
     //pending_steps, timestep. Deliberately the CLOCK and nothing else - an app with telemetry

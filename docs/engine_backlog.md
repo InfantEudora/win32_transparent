@@ -622,3 +622,54 @@ object happened to construct first.
   normal rather than dividing. Half a dozen lines in one place. *Small, but it should be done
   before anyone normal-maps an imported mesh, because the symptom — black or exploded shading on
   some triangles and not others — points nowhere near the loader.*
+
+---
+
+## Added 2026-09-11, with the occluder field
+
+Point lights cast shadows without a cube map. `Renderer::EnableFieldShadows` builds a single
+top-down `RGBA16F` texture per frame holding, per world column, the height of the highest surface
+(R), the lowest (A), and the 2D distance to the nearest occupied column (G, jump-flooded by
+`shaders/field_jfa.comp`). `CalcFieldShadow` in `shaders/default.frag` sphere-traces the segment
+from a receiver to a point light against it, stepping by that distance and using it again for the
+penumbra estimate. The map mentions no light, so N lights cost N marches against one texture
+rather than N shadow maps. `APP=Tetris` is the first user - see
+`ApplicationTetris::SetupFieldShadows`, and the Engine panel's Renderer section for the live
+controls.
+
+Measured on the Tetris board at 512x512, vsync off, by alternating `f_field_shadows` every 300
+frames inside one process: **349.5 us per frame with it on against 259.3 us off**, so about 90 us
+for the geometry pass, eleven jump-flood dispatches and the per-fragment march together. That is
+CPU-side frame time (`tmr_frame`), which for dispatches is submission rather than execution, so
+treat it as an upper bound on what it costs the frame, not a GPU profile.
+
+What is still approximate, in the order it is worth caring about:
+
+- [ ] **39. A column is one slab, so it fills in its own gaps.** R and A are the extremes of
+  everything in a column, so a falling piece above a stack merges with it and light cannot pass
+  between the two. Exact for anything extruded from the ground, conservative for everything else,
+  and hard to see in a fixed top-down view - but it is the reason this is not a general shadow
+  technique. Two more channels would carry a second slab if an app ever needs it.
+
+- [ ] **40. The march still has a step floor, and it is load-bearing.** The distance field is zero
+  everywhere directly above an occluder, so a ray running along the top of a wall would step by
+  nothing, stall, and report "unoccluded" - the wrong answer in the place with the most geometry.
+  `min_step = dist / field_shadow_steps` stops that, at the price of degrading to the old even
+  spacing for such rays. The real fix is a max-mipmap pyramid over the height channel, which would
+  give a conservative vertical bound to go with the horizontal one; the 2D distance alone cannot,
+  because a neighbouring column one texel away may rise to just under the ray.
+
+- [ ] **41. One light radius for the whole renderer.** `field_light_radius` sets how fast every
+  shadow edge softens, because `light_t` has no size field to read it from. Adding one is the
+  natural next step the moment two lights in a scene want different softness.
+
+- [ ] **42. Skinned meshes do not cast into the field.** `RenderFieldPass` draws
+  `MESH_MODE_NORMAL` only; a skinned mesh would need its own variant of `shaders/field.vert`
+  applying the bone transforms, exactly as `default_skinned.vert` does. A skinned character
+  receives field shadows but does not cast one. Nothing that uses the field has skinned geometry
+  yet.
+
+- [ ] **43. The field is rebuilt every frame with no dirty flag.** One geometry pass plus
+  log2(size)+2 dispatches, all of it repeated whether or not anything moved. Its share of the
+  90 us above was not measured separately from the march's, so that is the first thing to find
+  out - but either way an app whose world changes rarely is paying for a map that did not change.

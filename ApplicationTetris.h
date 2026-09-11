@@ -129,6 +129,7 @@ private:
     void BuildMaterials();
     void BuildWell();
     void BuildViewObjects();
+    void SetupFieldShadows();
     void SetupCamera();
     void SetupInput();
     void RegisterCommandHandlers();
@@ -168,6 +169,13 @@ private:
     Object* ghost_objects[4] = {};      //where it would land
     Object* hold_objects[4] = {};
     Object* next_objects[TETRIS_NEXT_QUEUE_SHOWN][4] = {};
+
+    //The omnidirectional light the occluder field exists to shadow, and the camera that defines
+    //where that field covers. The light is a scene object so it can be dragged in the Inspector
+    //or moved over MCP; the camera is not, for the same reason the ship app's cloud shadow
+    //camera is not - nothing should be able to select it. See SetupFieldShadows.
+    PointLight* lamp = NULL;
+    Camera* field_camera = NULL;
 
     //Last position each active-piece cube was asked to move to, so a slide is only requested when
     //the target actually changes (Scene::MoveObjectOverTicks replaces an in-flight motion, so

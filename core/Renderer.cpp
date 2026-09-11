@@ -536,6 +536,28 @@ void Renderer::UploadCloudShadow(Shader* s){
     s->Setint("f_cloud_shadows",1);
 }
 
+/*
+    Hands one shader the occluder field. Same shape as UploadCloudShadow above, and the same
+    reason for the f_ flag: a shader must never be left marching a map that no longer describes
+    the scene in front of it.
+*/
+void Renderer::UploadFieldShadow(Shader* s){
+    if (!s){
+        return;
+    }
+    if (!f_field_shadows || (field_tex_id == (GLuint)-1)){
+        s->Setint("f_field_shadows",0);
+        return;
+    }
+    glBindTextureUnit(TEXUNIT_FIELD_SHADOW,field_tex_id);
+    s->Setmat4("mat_field",mat_field);
+    s->Setvec3("field_axis",field_axis);
+    s->Setfloat("field_normal_bias",field_normal_bias);
+    s->Setfloat("field_light_radius",field_light_radius);
+    s->Setint("field_shadow_steps",field_shadow_steps);
+    s->Setint("f_field_shadows",1);
+}
+
 //Uses a compute shader and uses the textures from deferred pass.
 void Renderer::SSAOPass(Camera* camera){
     ssao_compute_shader->Use();
@@ -658,6 +680,11 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         FinishDepthPasses();
     }
 
+    //The occluder field, for apps that asked for one. Before the deferred pass rather than after
+    //it only because both rebind the framebuffer and the viewport, and this keeps all of the
+    //off-screen passes together ahead of the colour pass that consumes them.
+    RenderFieldPass();
+
     //The deferred G-buffer, filled BEFORE the color pass rather than after it.
     //
     //It used to run at the end of the frame, purely so the mouse-over readback below had an
@@ -708,6 +735,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     shader->Setfloat("cone_softness",cone_softness);
     shader->Setint("f_materialindex_is_color",0);
     UploadCloudShadow(shader);
+    UploadFieldShadow(shader);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
     shader->Setint("f_materialindex_is_color",1);
     RenderUniqueMeshes(MESH_MODE_LINE);
@@ -728,6 +756,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",0);
         UploadCloudShadow(skinned_shader);
+        UploadFieldShadow(skinned_shader);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
 
@@ -806,7 +835,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     //resolve_fbo_id's GL_COLOR_ATTACHMENT0 now holds this frame's fully-resolved output
     //(see ResolveAA/BlitBufferTarget, which always blit into it) - the right place to grab
     //a screenshot from, before anything else gets a chance to rebind the framebuffer.
-    CaptureScreenshotIfRequested();
+    //
+    //This is the scene-only capture point. The UI-inclusive one is in Application::DrawFrame,
+    //after ImGui has drawn into this same buffer; a request picks one or the other.
+    CaptureScreenshotIfRequested(false);
 
     ClearObjectBatches();
 
@@ -815,9 +847,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     }
 }
 
-std::vector<uint8_t> Renderer::RequestScreenshot(int timeout_ms){
+std::vector<uint8_t> Renderer::RequestScreenshot(bool f_include_ui, int timeout_ms){
     std::unique_lock<std::mutex> lock(screenshot_mutex);
     screenshot_requested = true;
+    screenshot_include_ui = f_include_ui;
     screenshot_ready = false;
     bool got = screenshot_cv.wait_for(lock,std::chrono::milliseconds(timeout_ms),[this]{ return screenshot_ready; });
     if (!got){
@@ -827,9 +860,10 @@ std::vector<uint8_t> Renderer::RequestScreenshot(int timeout_ms){
     return screenshot_png; //copy out while still holding the lock
 }
 
-void Renderer::CaptureScreenshotIfRequested(){
+void Renderer::CaptureScreenshotIfRequested(bool f_after_ui){
     std::unique_lock<std::mutex> lock(screenshot_mutex);
-    if (!screenshot_requested){
+    //Both capture points call this every frame; only the one the request asked for services it.
+    if (!screenshot_requested || (screenshot_include_ui != f_after_ui)){
         return;
     }
     screenshot_requested = false;
@@ -936,6 +970,171 @@ bool Renderer::RebuildShadowFBO(int shadow_width, int shadow_height){
     glTextureParameteri(shadow_tex_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glNamedFramebufferTexture(shadow_fbo_id, GL_DEPTH_ATTACHMENT, shadow_tex_id, 0);
     return CheckFrameBuffer();
+}
+
+bool Renderer::RebuildFieldFBO(int size){
+    debug->Info("(Re)Building buffers for the occluder field: %i x %i\n",size,size);
+    if (field_fbo_id == (GLuint)-1){
+        glCreateFramebuffers(1, &field_fbo_id);
+    }
+    if (field_tex_id != (GLuint)-1){
+        glDeleteTextures(1, &field_tex_id);
+    }
+    glCreateTextures(GL_TEXTURE_2D, 1, &field_tex_id);
+
+    //RGBA16F, not a depth format: see shaders/field.frag for what the four channels mean. Half
+    //floats are plenty - these are world heights in a scene a few tens of units across, and the
+    //clear sentinels below sit nowhere near half's 65504 ceiling.
+    glTextureStorage2D(field_tex_id, 1, GL_RGBA16F, size, size);
+    //LINEAR would interpolate a height across the gap between an occluder and thin air, putting
+    //a ramp of fictional geometry around every edge. The march wants the texel it landed in.
+    glTextureParameteri(field_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(field_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTextureParameteri(field_tex_id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(field_tex_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glNamedFramebufferTexture(field_fbo_id, GL_COLOR_ATTACHMENT0, field_tex_id, 0);
+    GLenum field_draw_buffer = GL_COLOR_ATTACHMENT0;
+    glNamedFramebufferDrawBuffers(field_fbo_id, 1, &field_draw_buffer);
+
+    //The jump flood's ping-pong pair. Not attached to any framebuffer - they are only ever bound
+    //as images to the compute shader, and they hold seed coordinates rather than anything that
+    //could be displayed.
+    for (int i = 0; i < 2; i++){
+        if (field_seed_tex_id[i] != (GLuint)-1){
+            glDeleteTextures(1, &field_seed_tex_id[i]);
+        }
+        glCreateTextures(GL_TEXTURE_2D, 1, &field_seed_tex_id[i]);
+        glTextureStorage2D(field_seed_tex_id[i], 1, GL_RG16F, size, size);
+        glTextureParameteri(field_seed_tex_id[i], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(field_seed_tex_id[i], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+
+    field_texture_size = size;
+    return CheckFrameBuffer();
+}
+
+bool Renderer::EnableFieldShadows(Camera* camera, const vec3& axis, int size){
+    if (!camera){
+        debug->Err("EnableFieldShadows called without a camera\n");
+        return false;
+    }
+    if (!field_shader){
+        field_shader = new Shader("shaders/field.vert","shaders/field.frag");
+    }
+    if (!field_jfa_shader){
+        field_jfa_shader = new Shader();
+        field_jfa_shader->CreateComputeShader("shaders/field_jfa.comp");
+    }
+    if ((field_tex_id == (GLuint)-1) || (size != field_texture_size)){
+        if (!RebuildFieldFBO(size)){
+            return false;
+        }
+    }
+    field_camera = camera;
+    field_axis = axis;
+    f_field_shadows = true;
+    return true;
+}
+
+/*
+    Fills the occluder field for this frame.
+
+    One pass, no depth buffer, no culling, no sorting: MIN/MAX blending does the reduction, so
+    every fragment of every surface can arrive in any order and the texel still ends up holding
+    the highest and lowest of them. Back faces are wanted here, which is the other reason the
+    depth pass could not have been reused - that one culls them on purpose.
+
+    Rebuilt every frame. Nothing here caches against a dirty flag yet; the pass is one extra draw
+    of the same geometry at a fixed resolution, and an app whose world only changes occasionally
+    can skip frames by toggling f_field_shadows once that becomes worth measuring.
+*/
+void Renderer::RenderFieldPass(){
+    if (!f_field_shadows || !field_camera || !field_shader){
+        return;
+    }
+    //Square, so aspect is 1 and the camera's zoom is a half-extent in world units on both axes.
+    //Set here rather than trusted from the app because CalculateLookatMatrix divides by these.
+    field_camera->viewport.width  = (float)field_texture_size;
+    field_camera->viewport.height = (float)field_texture_size;
+    field_camera->CalculateLookatMatrix();
+    mat_field = field_camera->mat_cam;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, field_fbo_id);
+    //R very low and A very high, so an untouched column reads as a slab that contains nothing -
+    //CalcFieldShadow needs no separate occupancy test. G starts at 0 for the jump flood.
+    float clear[4] = {-1000.0f,0.0f,0.0f,1000.0f};
+    glClearNamedFramebufferfv(field_fbo_id,GL_COLOR,0,clear);
+    glViewport(0,0,field_texture_size,field_texture_size);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    //Blending is enabled globally (SetOpenGLState), so only the equation changes. MIN and MAX
+    //ignore the blend factors entirely, which is why glBlendFunc is left as it is.
+    glBlendEquationSeparate(GL_MAX,GL_MIN);
+
+    field_shader->Use();
+    field_shader->Setmat4("mat_field",mat_field);
+    field_shader->Setvec3("field_axis",field_axis);
+    //Skinned meshes are deliberately absent: they would need their own variant of field.vert to
+    //apply the bone transforms, and nothing that uses this has any yet. A skinned character
+    //currently receives field shadows but does not cast one.
+    RenderUniqueMeshes(MESH_MODE_NORMAL);
+
+    glBlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_DEPTH_TEST);
+
+    FieldDistancePass();
+}
+
+/*
+    Turns the heights just rasterised into a distance field, in the channel field.frag left at
+    zero. See shaders/field_jfa.comp for the algorithm and for why it is a jump flood.
+
+    log2(size) + 2 dispatches: seed, one flood per halving jump distance, resolve. The barrier
+    between them is not optional - each pass reads every texel the previous one wrote, including
+    texels owned by other workgroups, which is exactly the case glMemoryBarrier exists for.
+*/
+void Renderer::FieldDistancePass(){
+    if (!field_jfa_shader || (field_tex_id == (GLuint)-1)){
+        return;
+    }
+    const int groups = (field_texture_size + 7) / 8;    //local_size is 8x8
+    //The ortho box is square and `zoom` is its half-extent, so this is the world size of one
+    //texel on both axes. It is the only thing that turns the flood's texel counts into the world
+    //units everything else in the field is measured in.
+    float world_per_texel = (2.0f * field_camera->viewport.zoom) / (float)field_texture_size;
+
+    field_jfa_shader->Use();
+    glBindImageTexture(0, field_tex_id, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA16F);
+    field_jfa_shader->Setfloat("world_per_texel",world_per_texel);
+
+    //Seed: occupied texels become their own seed, in [0].
+    glBindImageTexture(2, field_seed_tex_id[0], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RG16F);
+    field_jfa_shader->Setint("stage",0);
+    glDispatchCompute(groups,groups,1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+    //Flood, halving the jump each round until neighbours are adjacent. Starting at half the map
+    //rather than the whole of it is what makes this log2(size) passes and not size passes.
+    int src = 0;
+    for (int jump = field_texture_size / 2; jump >= 1; jump /= 2){
+        glBindImageTexture(1, field_seed_tex_id[src],   0, GL_FALSE, 0, GL_READ_ONLY,  GL_RG16F);
+        glBindImageTexture(2, field_seed_tex_id[1-src], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RG16F);
+        field_jfa_shader->Setint("stage",1);
+        field_jfa_shader->Setint("jump",jump);
+        glDispatchCompute(groups,groups,1);
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        src = 1 - src;
+    }
+
+    //Resolve: seed coordinates become a world-space distance, written back into the field's G.
+    glBindImageTexture(1, field_seed_tex_id[src], 0, GL_FALSE, 0, GL_READ_ONLY, GL_RG16F);
+    field_jfa_shader->Setint("stage",2);
+    glDispatchCompute(groups,groups,1);
+    //Against the TEXTURE fetch bit, not the image one: the next reader is default.frag sampling
+    //this through a sampler2D, which is a different path to the one the dispatches above used.
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 }
 
 bool Renderer::RebuildDeferredFBO(){
@@ -1268,6 +1467,11 @@ void Renderer::UploadLights(){
     glsl_lights.clear();
     for (Light* l:visible_lights){
         light_t light;
+        //light_t has carried this field since it was written and nothing ever filled it, so
+        //f_casts_shadow stopped at the CPU. Only the point light path reads it so far, to decide
+        //whether to march the occluder field; the sun ignores it and still shadows through the
+        //depth map, which is the behaviour every existing scene is tuned around.
+        light.shadow = l->f_casts_shadow ? 1 : 0;
         DirectionalLight* directional_light = dynamic_cast<DirectionalLight*>(l);
         if (directional_light){
             //World, for the same reason as the cone light below - a directional light

@@ -39,6 +39,10 @@ class Renderer;
 //above the cubemap - it is the next free unit going up, well clear of the material textures.
 #define TEXUNIT_CLOUD_SHADOW      26
 
+//Occluder field: the top-down min/max height map an app may ask the renderer to build, sampled
+//by default.frag's CalcFieldShadow to shadow point lights without a cube map. Next unit up.
+#define TEXUNIT_FIELD_SHADOW      27
+
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
     int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
@@ -129,6 +133,8 @@ class Renderer{
     void CustomShaderPass(Camera* camera);
     //Binds the cloud shadow map (if an app supplied one) and tells `s` whether to use it.
     void UploadCloudShadow(Shader* s);
+    //Binds the occluder field (if an app enabled one) and tells `s` whether to use it.
+    void UploadFieldShadow(Shader* s);
 
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
@@ -143,6 +149,18 @@ class Renderer{
     bool RebuildDeferredFBO();
 
     bool RebuildShadowFBO(int shadow_width, int shadow_height);
+
+    /*
+        Turns on the occluder field. `camera` is an orthographic camera the APP owns and aims
+        down the field axis over the area worth having shadows in - the renderer only reads it.
+        `axis` is world up for that app. Safe to call again to re-aim or resize.
+    */
+    bool EnableFieldShadows(Camera* camera, const vec3& axis, int size = 1024);
+    bool RebuildFieldFBO(int size);
+    void RenderFieldPass();
+    //Jump-floods the field's distance channel. Called by RenderFieldPass once the heights are in.
+    void FieldDistancePass();
+
     void ClearDepthPasses();
     void RenderSingleDepthPass(Camera* camera, Shader* shader, int mesh_mode);
     void RenderDepthPasses(Shader* shader, int mesh_mode);
@@ -162,8 +180,26 @@ class Renderer{
     //called from DrawFrame at the end of the render thread's next frame, has captured and
     //PNG-encoded resolve_fbo_id's fully-resolved color output and signalled it's ready.
     //Returns an empty vector on timeout (render thread not running or stuck).
-    std::vector<uint8_t> RequestScreenshot(int timeout_ms = 2000);
-    void CaptureScreenshotIfRequested();
+    /*
+        f_include_ui chooses WHERE in the frame the capture happens, not what is drawn.
+
+        ImGui renders into whatever framebuffer is bound, and Renderer::DrawFrame leaves
+        resolve_fbo_id bound when it returns - so that one buffer holds the resolved scene at the
+        end of DrawFrame, and the scene with the panels composited on top once
+        Window::ImGuiRenderDrawData has run. Both window paths then present that same buffer. So
+        there are two useful moments to read it, and this picks between them.
+
+        true (the default) is what the window actually looks like, which is what a caller who
+        cannot see the monitor almost always wants. Everything the debug UI shows - telemetry
+        readouts, the object inspector, buttons, sliders - is ImGui and exists nowhere else, so a
+        capture without it silently drops all of it. false gives the clean 3D scene, for checking
+        geometry or colour without panels in the way.
+    */
+    std::vector<uint8_t> RequestScreenshot(bool f_include_ui = true, int timeout_ms = 2000);
+
+    //Called at BOTH capture points - f_after_ui says which one this is. A pending request is
+    //serviced only at the point it asked for, so the other call is a cheap no-op.
+    void CaptureScreenshotIfRequested(bool f_after_ui);
 
     void UploadMaterials();
     void UploadLights();
@@ -221,6 +257,50 @@ class Renderer{
     */
     GLuint cloud_shadow_tex_id = -1;
     fmat4 mat_cloud_shadow;
+
+    /*
+        The occluder field: a single top-down texture describing where the world's occluders are,
+        which default.frag then MARCHES to shadow point lights. It exists because the obvious way
+        to shadow an omnidirectional light - six faces of a cube map per light, per frame - buys
+        generality that a fixed overhead view cannot use. Drop to a top-down view and an occluder
+        is well described by a prism: a footprint extruded between two heights. Both of those fit
+        in one texture, and that texture is light-INDEPENDENT, so N lights cost N marches against
+        it rather than N shadow maps.
+
+        Enabled per app via EnableFieldShadows and off everywhere else, because it is a whole
+        extra geometry pass that only pays for itself when something actually samples it.
+
+        The camera is not owned here. It is the app's, because only the app knows which part of
+        its world is worth covering, and pointing it at a live scene camera would be a mistake -
+        anything that moves the camera (Tetris shakes its own on a line clear) would drag the
+        field's world mapping along under the shadows.
+    */
+    GLuint field_fbo_id = -1;
+    GLuint field_tex_id = -1;
+    int    field_texture_size = 1024;
+    bool   f_field_shadows = false;
+    Camera* field_camera = NULL;
+    vec3   field_axis = vec3(0,0,1);
+    fmat4  mat_field;
+    Shader* field_shader = NULL;
+    //The jump flood that fills the distance channel, and the ping-pong pair it runs on. The pair
+    //holds seed COORDINATES, not distances - see shaders/field_jfa.comp.
+    Shader* field_jfa_shader = NULL;
+    GLuint field_seed_tex_id[2] = {(GLuint)-1,(GLuint)-1};
+    //Maximum samples along the ray from surface to light. An upper bound rather than a count now
+    //that the march sphere-traces: over open space it steps by the distance field and reaches the
+    //light in a handful, and only a ray running along a surface uses its whole budget. It is also
+    //the floor on step size (dist/steps), which is what stops such a ray stalling short of the
+    //light. 0 disables the lookup without rebuilding anything.
+    int    field_shadow_steps = 64;
+    //How far along the surface normal the march starts. A receiver is by definition ON an
+    //occluder's surface, so at t=0 it is inside its own slab and shadows itself - this is the
+    //field's version of shadow_bias.
+    float  field_normal_bias = 0.15f;
+    //Radius of the light source in world units, for the penumbra estimate. Not a property of any
+    //particular light yet: light_t has no size field, and giving it one is the natural next step
+    //if two lights in a scene ever want different softness. 0 gives hard shadows.
+    float  field_light_radius = 0.30f;
 
     Shader* deferred_shader = NULL;         // Shader that outputs data to textures
     Shader* deferred_shader_skinned = NULL; // Shader that outputs data to textures
@@ -290,6 +370,7 @@ class Renderer{
     std::mutex screenshot_mutex;
     std::condition_variable screenshot_cv;
     bool screenshot_requested = false;
+    bool screenshot_include_ui = true;
     bool screenshot_ready = false;
     std::vector<uint8_t> screenshot_png;
 };
