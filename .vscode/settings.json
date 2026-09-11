@@ -98,6 +98,11 @@
             "icon": "terminal-powershell"
         }
     },
+    "files.exclude": {
+        "**/*.d": true,
+        "**/*.o": true
+    },
+
     "terminal.integrated.automationProfile.windows": {},
     "terminal.integrated.scrollback": 8000,
     "cmake.ignoreCMakeListsMissing": true

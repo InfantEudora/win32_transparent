@@ -170,10 +170,7 @@ PickupKind rides in `subtype` and the amount in `value[0]`, no struct change nee
 (`pending_asteroid_explosions`) drained at the top of `RunLogic`, NOT via a command - what needed
 deferring there was re-entering rp3d from inside `onContact`, not crossing a thread.
 
-Two things that follow from making the command self-describing: a caller that rolls dice must roll
+One thing that follows from making the command self-describing: a caller that rolls dice must roll
 them itself and put the RESULTS in the command (the Add Asteroid button does), or a replay would
-re-roll; and note the roll still consumes from the sim's shared `rrand` at a moment not tied to a
-tick, which is a pre-existing reproducibility hole in that button. The `asteroid_spawn` MCP tool
-sidesteps it by spacing multiple spawns deterministically instead of scattering them - drawing from
-`rrand` on the MCP thread would be an unsynchronised read AND would shift every draw the physics
-thread makes after it.
+re-roll. That does not close the hole that the roll itself consumes from the sim's shared generator
+off-tick - see [[rrand-shared-stream-todo]], still open.

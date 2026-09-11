@@ -30,6 +30,9 @@ struct Material{
     //sampler2D handle_normal;
     uvec2 handle_diffuse;
     uvec2 handle_normal;
+    //Self-emitted light: xyz is glTF's emissiveFactor, w a strength multiplier. Must stay last
+    //to match material_t in Material.h - see the comment there.
+    vec4 emissive;
 };
 
 #define PI 	3.14159265359

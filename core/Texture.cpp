@@ -41,6 +41,27 @@ void Texture::Create2D(int target, int depth){
     glTextureStorage2D(texture_id, 1, storage_format, width, height);
 }
 
+void Texture::Create3D(int size, GLenum format){
+    width = size;
+    height = size;
+    depth = size;
+    storage_format = format;
+
+    glCreateTextures(GL_TEXTURE_3D, 1, &texture_id);
+    debug->Info("Create3D: %s %ix%ix%i texture_id: %li\n",name.c_str(),width,height,depth,texture_id);
+
+    //LINEAR, so a volume marching through this does not see the voxel grid, and REPEAT on every
+    //axis so the noise can be sampled at any scale without a seam - which is the whole reason
+    //the generator makes it tileable.
+    glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_R, GL_REPEAT);
+
+    glTextureStorage3D(texture_id, 1, storage_format, width, height, depth);
+}
+
 //Uses the first cubemap file to create an image. The second one uses the main image handle.
 void Texture::LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map){
     if (depth_in > 0){

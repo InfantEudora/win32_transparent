@@ -203,7 +203,6 @@ public:
     json GetTankTelemetry();
     json GetCraneTelemetry();
     json GetBridgeTelemetry();
-    json MaybeAttachScreenshot(json result, bool include_screenshot);
 
     //Shared by Init() (the recorded, permanent placement) and the bridge_spawn MCP tool
     //(an ad hoc one for scouting a new crossing). Fails (returns false, bridge left NULL) if

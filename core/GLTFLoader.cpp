@@ -654,6 +654,38 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 m.glsl_material.color.b = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(2);
                 m.glsl_material.color.a = gltfmaterial->pbrMetallicRoughness.baseColorFactor.at(3);
 
+                //Emission. Was logged above and then thrown away, so anything authored as
+                //emissive in Blender came in unlit.
+                m.glsl_material.emissive.r = gltfmaterial->emissiveFactor.at(0);
+                m.glsl_material.emissive.g = gltfmaterial->emissiveFactor.at(1);
+                m.glsl_material.emissive.b = gltfmaterial->emissiveFactor.at(2);
+
+                //emissiveFactor is clamped to 0..1, so on its own it can never be brighter than
+                //a fully lit white surface. Anything meant to actually glow carries the real
+                //multiplier in KHR_materials_emissive_strength - data/ships.glb's "explosion"
+                //asks for 10 - which is what .w holds.
+                float emissive_strength = 1.0f;
+                auto emissive_ext = gltfmaterial->extensions.find("KHR_materials_emissive_strength");
+                if (emissive_ext != gltfmaterial->extensions.end() && emissive_ext->second.Has("emissiveStrength")){
+                    emissive_strength = (float)emissive_ext->second.Get("emissiveStrength").GetNumberAsDouble();
+                    debug->Info("Material %s emissive strength %.2f\n",m.name.c_str(),emissive_strength);
+                }
+                m.glsl_material.emissive.a = emissive_strength;
+
+                //An emissive TEXTURE modulates that factor per texel, and we do not load one
+                //yet. Applying the factor by itself would be much worse than ignoring it:
+                //data/ships.glb's "metal_material" is emissiveFactor (1,1,1) plus a texture,
+                //which unmodulated turns the whole surface into a solid white glow. So drop the
+                //emission for those and say so, rather than quietly wrecking the material.
+                if (gltfmaterial->emissiveTexture.index != -1){
+                    debug->Warn("Material %s has an emissive texture, which is not loaded yet - "
+                                "ignoring its emissiveFactor (it would glow at full strength "
+                                "everywhere). Set it by hand in the material UI if needed.\n",m.name.c_str());
+                    m.glsl_material.emissive.r = 0;
+                    m.glsl_material.emissive.g = 0;
+                    m.glsl_material.emissive.b = 0;
+                }
+
                 //If the material has a diffuse texture, we load that here
                 if (gltfmaterial->pbrMetallicRoughness.baseColorTexture.index != -1){
                     //This material uses texture with index

@@ -13,3 +13,5 @@
 - [Running app is user-driven](running_app_is_user_driven.md) — unexplained motion in MCP telemetry is usually the user at the controls, not a bug
 - [rp3d contact callback velocities](rp3d_contact_callback_velocities.md) — contacts are reported BEFORE the solver runs; read a velocity in onContact only on ContactStart, ContactStay sees the bounce
 - [Scene::AddObject during a tick](scene_addobject_during_tick.md) — AddObject from an UpdatePhysicsState override push_backs the vector Scene::UpdatePhysics is range-for-ing; stage it in RunLogic instead
+- [rrand shared stream TODO](rrand_shared_stream_todo.md) — OPEN: one RRandom shared by sim + UI/MCP threads; off-tick draws shift the stream and block deterministic replay; no design chosen, ask first
+- [Raymarch volume stage plan](raymarch_volume_stage_plan.md) — clouds as a material, not a post pass: working clouds lit by sun/point/cone lights; includes the glUniform-writes-to-the-bound-program trap, the never-normalise-a-direction-in-object-space rule, and how to verify visuals in this app

@@ -74,7 +74,7 @@ void ApplicationIsoAnimation::BuildTestEnvironment(){
 
 //This function is called from inside the renderer.
 void ApplicationIsoAnimation::SetCharacterUniforms(void){
-    if (character && renderer->deferred_shader_custom){
+    if (character && indicator_shader){
         float angle_facing = 0;
         float angle_target_diff = 0;
         vec3 target = target_indicator->GetPosition();
@@ -82,8 +82,8 @@ void ApplicationIsoAnimation::SetCharacterUniforms(void){
 
 
         // Arc always runs CCW from the lower angle to the higher one.
-        renderer->deferred_shader_custom->Setfloat("circle_start", angle_facing + fmin(angle_target_diff, 0.0f));
-        renderer->deferred_shader_custom->Setfloat("circle_end",   angle_facing + fmax(angle_target_diff, 0.0f));
+        indicator_shader->Setfloat("circle_start", angle_facing + fmin(angle_target_diff, 0.0f));
+        indicator_shader->Setfloat("circle_end",   angle_facing + fmax(angle_target_diff, 0.0f));
     }
 }
 
@@ -99,8 +99,11 @@ void ApplicationIsoAnimation::Init(void){
     renderer->f_render_skybox = false;
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
-    renderer->deferred_shader_custom = new Shader("shaders/default.vert","shaders/custom.frag");
-    renderer->deferred_shader_custom->uniform_callback = std::bind(&ApplicationIsoAnimation::SetCharacterUniforms,this);
+    indicator_shader = new Shader("shaders/default.vert","shaders/custom.frag");
+    indicator_shader->uniform_callback = std::bind(&ApplicationIsoAnimation::SetCharacterUniforms,this);
+    //Index 0, which is Mesh::custom_shader_index's default, so the test plane below needs no
+    //further tagging beyond MESH_MODE_SHADER.
+    renderer->AddCustomShader(indicator_shader);
 
     main_scene = CreateEmptyScene();
     main_scene->UpdatePhysics(GetPhysicsTimestep());

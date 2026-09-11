@@ -201,6 +201,20 @@ void Shader::Use(){
 	glUseProgram(progid);
 }
 
+/*
+    The uniform setters all name their own program (glProgramUniform*) rather than writing to
+    whichever one is bound (glUniform*). That is not a style preference: with glUniform, asking
+    shader A to set a uniform while shader B is bound silently writes it into B - the location
+    was looked up in A, so it lands on whatever uniform happens to live at that index in B. It
+    fails without any error, and the result can look plausible: inserting a pass that bound a
+    different program ahead of one such call left the entire colour pass rendering from the sun's
+    shadow matrix, which read as an odd camera angle rather than as a bug.
+
+    Two consequences worth knowing. Uniform sets no longer care about bind order, so Use() is
+    only needed before drawing. And any call site that was previously relying on the old
+    behaviour - naming one Shader while meaning the bound one - is now actually broken and has to
+    be corrected; see RenderDepthPasses(skinned_shader,...) in Renderer::DrawFrame.
+*/
 //Set a uniform int
 bool Shader::Setint(const char* name, int value){
 	GLuint intid = glGetUniformLocation(progid, name);
@@ -209,7 +223,7 @@ bool Shader::Setint(const char* name, int value){
 		debug->Err("Could not set %i's int %s\n",progid,name);
 		return false;
 	}
-	glUniform1i(intid,(GLint)value);
+	glProgramUniform1i(progid,intid,(GLint)value);
 	return true;
 }
 
@@ -221,7 +235,7 @@ void Shader::Setfloat(const char* name, const float& value){
 	}else{
 		//debug->Info("Uniform %s at location %i\n",name,fid);
 	}
-	glUniform1fv(fid,1,(GLfloat*)&value);
+	glProgramUniform1fv(progid,fid,1,(GLfloat*)&value);
 
 }
 
@@ -233,7 +247,7 @@ void Shader::Setvec3(const char* name, const vec3& value){
 	}else{
 		//debug->Info("Uniform %s at location %i\n",name,fid);
 	}
-	glUniform3fv(fid,1,(const GLfloat*)&value);
+	glProgramUniform3fv(progid,fid,1,(const GLfloat*)&value);
 	//glUniform3f(fid,value.x,value.y,value.z);
 }
 
@@ -243,7 +257,7 @@ void Shader::Setmat3(const char* name, const fmat3& matrix){
 		debug->Fatal("Could not set %i's mat4 %s\n",progid,name);
 		return;
 	}
-	glUniformMatrix3fv(matid,1,GL_FALSE,(GLfloat*)&matrix);
+	glProgramUniformMatrix3fv(progid,matid,1,GL_FALSE,(GLfloat*)&matrix);
 }
 
 void Shader::Setmat4(const char* name, const fmat4& matrix){
@@ -252,5 +266,5 @@ void Shader::Setmat4(const char* name, const fmat4& matrix){
 		debug->Fatal("Could not set %i's mat4 %s\n",progid,name);
 		return;
 	}
-	glUniformMatrix4fv(matid,1,GL_FALSE,(GLfloat*)&matrix);
+	glProgramUniformMatrix4fv(progid,matid,1,GL_FALSE,(GLfloat*)&matrix);
 }

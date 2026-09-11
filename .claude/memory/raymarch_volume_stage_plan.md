@@ -1,0 +1,139 @@
+---
+name: raymarch-volume-stage-plan
+description: "Raymarched volume material in ApplicationShip - steps 1 and 2 done 2026-09-10; only the cloud content (3D noise, phase function) is left"
+metadata: 
+  node_type: memory
+  type: project
+  originSessionId: 8982ea9a-a226-4342-b91e-141dae3f216d
+  modified: 2026-09-10T14:38:52.023Z
+---
+
+Seb Lague-style raymarched clouds (github.com/SebLague/Clouds), built as a reusable render stage
+rather than a fullscreen post pass, so only the volume's own pixels march.
+
+**Working clouds as of 2026-09-10.** The reusable stage, the scene-depth clamp and 3D worley
+density are all in and verified in-app. What is left: a Henyey-Greenstein phase function (for
+sun-facing silver lining), and performance work - the cost is view_steps x light_steps 3D
+texture fetches per pixel and has NOT been measured, because the `screenshot` MCP path costs
+~250ms in readback+PNG encode and swamps the frame time. Use the in-app PerfTimer UI for that.
+
+`shaders/noise3d.comp` generates the density: 3D worley, inverted so cell centres are dense,
+four doubling frequencies packed in RGBA so `density_at()` builds an FBM from ONE fetch. It is
+tileable - cell lookups wrap modulo the cell count - which matters because the wind scrolls
+`uvw` past 1.0 within seconds and a non-tiling texture would put a hard plane through the cloud.
+Generated once at startup into a 128^3 RGBA8 `GL_TEXTURE_3D` (`Texture::Create3D`, LINEAR +
+REPEAT on all three axes) and bound at `TEXUNIT_APP_RESERVED` (25, above the cubemap at 24;
+`UploadMaterials` now warns if material textures grow that far). Shape comes from three things,
+all on sliders in the Volume panel: the FBM weights, a threshold that cuts most of the box to
+empty air (without it the box just fogs up uniformly), and an object-space edge falloff so the
+cloud has no flat sides.
+
+## Lights in the volume (2026-09-10)
+
+The march is lit by the sun AND every point/cone light, following the user's reference shader
+(pasted at `shaders/shadertoy_smoke_lights.hsls` - Shadertoy URLs 403 to WebFetch, so ask for a
+paste rather than trying to fetch one). Deliberately NO per-light culling: at most about three
+are ever active because the lasers and particles condense into one light, so a reach test would
+cost more than it saves.
+
+Two things here are easy to get wrong:
+
+- **Never normalise a light direction in object space.** The whole shader depends on `t` being a
+  world distance, and under non-uniform scale the normalised local vector is not the local image
+  of the normalised world one. Divide the object-space offset by its WORLD length instead: that
+  gives the local vector whose world image is a unit vector, and the same length is the falloff
+  distance. `mat3(mat_transformscale)` does the offset conversion.
+- **`light_march` has to stop AT a point light**, not at the box face, or density behind the
+  light shadows it.
+
+`light_energy` is a vec3 now, since lights of different colours must be accumulated coloured.
+
+Falloff is `brightness/pow(dist,light_falloff)` with light_falloff defaulting to 2 (the
+reference's inverse square). NOTE that default.frag lights SURFACES with an exponent of 1, so a
+light reads dimmer at range in fog than on a hull beside it - the slider is there to match them.
+
+The sun's own `brightness` was ignored by the volume until 2026-09-10 - only its colour was
+read - so dragging Brightness in the light inspector did nothing to the clouds. It is now
+multiplied in, and `sun_intensity` (0.15) is a SCALE on it rather than a replacement: a scale is
+needed at all because a surface turns radiance into pixels through a BRDF and an NdotL while the
+volume integrates over density and step length. 0.15 x the sun's 7.0 reproduces the previous
+look. Point and cone lights always used brightness; the sun was the only one that did not.
+
+**Cone lights**: `ConeLight` had existed in Light.h all along with nothing using it, so
+`UploadLights` had no case and one in a scene was silently dropped. Added, with `cos_angle` =
+cosine of the HALF angle (cone_angle is the full opening angle in degrees), clamped below 180
+because cos(90)=0 is how the shaders recognise a plain point light. `default.frag` needed a cone
+branch too - a cone has a direction, so without one it was shaded AS the sun. Its `light_value`
+already carries the full intensity, so that branch passes 1.0 as the shading brightness; the
+point and sun paths still double-apply brightness (once in light_value, again as radiance in
+CalcDirectionalPBRLight) and were left alone because every existing light is tuned around it.
+
+The ship carries a `headlight` ConeLight at the nose. Its local rotation is a half turn about up
+because `Object::ref_forward` is (0,0,-1) while the ship model's nose is local +Z (the laser
+emitter sits at +2 on that axis, the exhaust at -1) - without it the beam shines out of the tail.
+
+**`Object::GetForward()` uses only the object's OWN rotation**, so for a child it is relative to
+the parent - `GetWorldForward()` is the composed one. `UploadLights` was pairing a world
+`GetWorldPosition()` with a local `GetForward()`, so the ship's headlight pointed in a fixed
+direction and never followed the hull. Both the cone and directional cases use
+`GetWorldForward()` now. The sun was unaffected only because it happens to be a root object.
+
+That bug survived a round of "verification" because every test had the ship at identity
+rotation, AND because `object_get` reported `forward` from the LOCAL rotation - so the readback
+looked right. `world_forward`/`world_up` are reported alongside now. Check a child's world axis,
+not its `forward`, and always test a parented thing at a NON-zero parent rotation.
+
+Design points worth not re-deriving:
+
+- **The volume's box IS the Object's transform**, read in the fragment shader from
+  `instance_data[vmatselect].mat_transformscale` (`default.vert` passes `vmatselect` =
+  `gl_InstanceID` at location 9). No box uniforms, and volumes still batch.
+- The ray is taken to object space **without renormalising**, so `t` stays a world-space
+  distance. Renormalising silently breaks non-uniformly scaled volumes.
+- `Renderer::custom_shaders` + `AddCustomShader()` returning an index that goes in
+  `Mesh::custom_shader_index`. Replaced the single `deferred_shader_custom` slot; both
+  ApplicationShip's volume and ApplicationIsoAnimation's targeting arc now coexist.
+- `CustomShaderPass` runs LAST of the geometry passes (after skinned) and binds the G-buffer on
+  `TEXUNIT_GBUFFER_*` (units 1-3: 0 is the shadow map, materials start at 4, 24 is the cubemap).
+  `DeferredPass` moved to BEFORE the color pass to make that possible. `MESH_MODE_SHADER` meshes
+  are no longer drawn in `DeferredPass` at all.
+- The march clamps to the **position** buffer, not the depth buffer - a world-space point needs
+  no inverse projection. Depth is read only as the "is there geometry here" test, because the
+  position attachment clears to (0,0,0), which is a real place.
+
+## The trap that cost the most time
+
+`Shader::Setmat4` / `Setint` / `Setvec3` look the uniform location up in their own `progid` but
+then call `glUniform*`, **which writes to whatever program is currently bound**. Setting a
+uniform on a shader that is not bound silently writes it into a different shader. Inserting
+`DeferredPass` (which binds `deferred_shader`) ahead of `shader->Setmat4("mat_worldcam", ...)` in
+`DrawFrame` sent the scene camera into the wrong program and left the main pass rendering from
+the sun's shadow matrix - the whole scene drawn from the sun's viewpoint, which looked like a
+plausible isometric view rather than an obvious error. Always `Use()` before setting uniforms.
+**Fixed 2026-09-10**: the setters now use `glProgramUniform*` (added to `core/glad.h`/`.cpp` by
+hand, following that file's typedef + GLAPI + wglGetProcAddress convention; the context is 4.5
+core so 4.1 entry points are guaranteed). Uniform sets no longer depend on bind order.
+
+That change breaks any call site that was relying on the old behaviour, and there was exactly
+one: `RenderDepthPasses(shader,MESH_MODE_SKINNED)` passed the DEFAULT shader while
+`skinned_shader` was bound, and only worked because the write landed in the bound program. It
+now passes `skinned_shader`. Verified by checking skinned character shadows still render in
+ApplicationIsoAnimation - the Ship app has no skinned meshes, so it cannot catch this.
+
+## Verifying visual work in this app
+
+- `screenshot` and `camera_get`/`camera_set` are CORE MCP tools (the user promoted them
+  2026-09-10). `camera_set` only holds BRIEFLY in ApplicationShip - `RunLogic` pulls the camera
+  back toward the tracked ship every frame, so it is fine for grabbing one screenshot but not
+  for a multi-step A/B. Drive those by moving OBJECTS instead, and re-read `camera_get` rather
+  than assuming where the camera is.
+- **The grid cells are outline geometry only** - the cell interiors write nothing to the
+  G-buffer. Do not use "over the grid" pixels as a stand-in for solid geometry; the ship and the
+  door panel are the solid things in that scene. This invalidated two measurement attempts.
+- The volume shader's `f_show_box` uniform (Volume panel > Debug View) has a G-buffer readout
+  mode: red where the depth buffer says geometry, blue where it does not. All blue means the
+  G-buffer is not reaching the shader.
+- The app's `uniform_callback` overwrites shader uniform defaults every frame, so changing a
+  default in the .frag does nothing while the app pushes its own value.
+
+Related: [[project-overview]], [[running-app-is-user-driven]], [[mcp-native-tools-setup]].

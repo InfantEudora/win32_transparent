@@ -64,6 +64,12 @@ public:
     int     num_morph_targets = 0;
     int     mesh_mode = MESH_MODE_INVALID;
 
+    //Which of the renderer's custom shaders draws this mesh, for MESH_MODE_SHADER meshes only -
+    //an index into Renderer::custom_shaders, as handed out by Renderer::AddCustomShader. Ignored
+    //in every other mesh mode. Defaults to 0 so an app that registers a single custom shader
+    //never has to set it.
+    int custom_shader_index = 0;
+
     int32_t batch_index = -1;
     int32_t batch_num_instances = 0;
 

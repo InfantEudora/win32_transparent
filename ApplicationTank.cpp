@@ -989,26 +989,6 @@ json ApplicationTank::GetBridgeTelemetry(){
     };
 }
 
-//If requested, blocks (Renderer::RequestScreenshot) until the render thread has captured
-//and PNG-encoded the current frame, and attaches it to result as an MCP image content
-//block. A no-op passthrough otherwise, so every MCP tool below can opt into a screenshot
-//with the same one line.
-json ApplicationTank::MaybeAttachScreenshot(json result, bool include_screenshot){
-    if (!include_screenshot){
-        return result;
-    }
-    if (!renderer){
-        result["screenshot_error"] = "no renderer";
-        return result;
-    }
-    std::vector<uint8_t> png = renderer->RequestScreenshot();
-    if (png.empty()){
-        result["screenshot_error"] = "timed out waiting for the render thread to capture a frame";
-        return result;
-    }
-    return MCPServer::AttachImagePNG(result,png);
-}
-
 //Exposes the tank's existing input methods (the same ones RunLogic already calls for
 //keyboard input) and its live physics state over MCP. Handlers run on MCPServer's own
 //stdin-reading thread, writing the same gas_pedal/brake_pedal/steering_position floats

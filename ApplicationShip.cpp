@@ -60,6 +60,171 @@ HingedDoor* ApplicationShip::AddDoor(const vec3& hinge_position, float yaw){
     return door;
 }
 
+//A unit cube spanning -0.5..0.5 on every axis, which is the box raymarch_volume.frag marches.
+//Sized that way so an Object scale of (10,4,10) reads as a 10x4x10 volume in world units.
+//
+//Built here rather than taken from the GLTF "cube" asset for two reasons: asset meshes are
+//shared by pointer, so tagging one MESH_MODE_SHADER would affect everything else using it, and
+//the shader's BOX_MIN/BOX_MAX have to agree with the mesh's actual extents - which is a
+//guarantee worth having in code next to the shader rather than in a .glb someone might edit.
+Mesh* ApplicationShip::BuildVolumeCube(){
+    //Per face: the outward normal, and two edge vectors with cross(u,v) == n, so walking
+    //corner -> +u -> +u+v -> +v comes out counter-clockwise seen from outside the cube. That
+    //winding is what makes the renderer's default GL_BACK culling cull the inside faces (and,
+    //once the volume pass flips to GL_FRONT, keep exactly the inside ones).
+    const vec3 face_normal[6] = {
+        vec3( 1, 0, 0), vec3(-1, 0, 0),
+        vec3( 0, 1, 0), vec3( 0,-1, 0),
+        vec3( 0, 0, 1), vec3( 0, 0,-1),
+    };
+    const vec3 face_u[6] = {
+        vec3( 0, 0,-1), vec3( 0, 0, 1),
+        vec3( 1, 0, 0), vec3( 1, 0, 0),
+        vec3( 1, 0, 0), vec3(-1, 0, 0),
+    };
+    const vec3 face_v[6] = {
+        vec3( 0, 1, 0), vec3( 0, 1, 0),
+        vec3( 0, 0,-1), vec3( 0, 0, 1),
+        vec3( 0, 1, 0), vec3( 0, 1, 0),
+    };
+
+    std::vector<vertex>verts;
+    for (int f = 0;f < 6;f++){
+        vec3 n = face_normal[f];
+        vec3 u = face_u[f];
+        vec3 v = face_v[f];
+        vec3 corner = (n * 0.5f) - (u * 0.5f) - (v * 0.5f);
+
+        //The quad's four corners in winding order, with matching UVs.
+        vec3 p[4] = {corner, corner + u, corner + u + v, corner + v};
+        vec2 uv[4] = {vec2(0,0), vec2(1,0), vec2(1,1), vec2(0,1)};
+        const int order[6] = {0,1,2, 0,2,3};
+
+        for (int i = 0;i < 6;i++){
+            vertex vert;
+            vert.pos = p[order[i]];
+            vert.normal = n;
+            vert.tangent = u;
+            vert.uv = uv[order[i]];
+            //The volume shader reads no material, and the object's slot 0 is -1 anyway.
+            vert.matid = 0;
+            verts.push_back(vert);
+        }
+    }
+
+    Mesh* mesh = new Mesh();
+    mesh->SetMeshData(&verts.at(0),verts.size());
+    //SetMeshData leaves the mesh in MESH_MODE_NORMAL; this is what moves it out of the main
+    //geometry pass and into the renderer's custom shader pass.
+    mesh->mesh_mode = MESH_MODE_SHADER;
+    return mesh;
+}
+
+/*
+    Fills volume_noise by running shaders/noise3d.comp over it once. Generated rather than
+    loaded from disk because it is procedural, tiny in code, and the parameters (cell count,
+    resolution) are things worth changing while looking at the result - a 128^3 RGBA8 file would
+    be 8 MB of asset to re-export every time.
+
+    Cheap enough to be unnoticeable at startup: one dispatch over 128^3 texels.
+*/
+void ApplicationShip::BuildVolumeNoise(void){
+    if (!volume_noise_shader){
+        volume_noise_shader = new Shader();
+        volume_noise_shader->CreateComputeShader("shaders/noise3d.comp");
+    }
+    if (!volume_noise){
+        volume_noise = new Texture();
+        volume_noise->name = "volume_noise";
+        volume_noise->Create3D(volume_noise_resolution,GL_RGBA8);
+    }
+
+    volume_noise_shader->Use();
+    volume_noise_shader->Setint("cells_base",volume_noise_cells);
+    //layered=GL_TRUE for a 3D image: the shader writes the whole volume, not one slice.
+    glBindImageTexture(0,volume_noise->texture_id,0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA8);
+
+    //local_size is 8x8x8 in the shader, so one work group per 8 texels per axis.
+    int groups = volume_noise_resolution / 8;
+    glDispatchCompute(groups,groups,groups);
+    //The volume shader samples this as a texture, not as an image, so wait for the writes to be
+    //visible to texture fetches specifically.
+    glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+
+    debug->Info("Built %i^3 volume noise, %i base worley cells\n",volume_noise_resolution,volume_noise_cells);
+}
+
+//Called by the renderer from inside the MESH_MODE_SHADER pass, with volume_shader bound.
+void ApplicationShip::SetVolumeUniforms(void){
+    if (!volume_shader){
+        return;
+    }
+    volume_shader->Setfloat("volume_density",volume_density);
+    volume_shader->Setfloat("light_absorption",volume_light_absorption);
+    volume_shader->Setfloat("sun_intensity",volume_sun_intensity);
+    volume_shader->Setint("num_view_steps",volume_view_steps);
+    volume_shader->Setint("num_light_steps",volume_light_steps);
+    volume_shader->Setint("num_point_light_steps",volume_point_light_steps);
+    volume_shader->Setfloat("light_falloff",volume_light_falloff);
+    volume_shader->Setfloat("max_radiance",volume_max_radiance);
+    //One value shared with the surface shaders - see Renderer::cone_softness.
+    volume_shader->Setfloat("cone_softness",renderer->cone_softness);
+    volume_shader->Setint("f_show_box",volume_debug_view);
+
+    volume_shader->Setfloat("noise_scale",volume_noise_scale);
+    volume_shader->Setfloat("density_threshold",volume_density_threshold);
+    volume_shader->Setfloat("edge_falloff",volume_edge_falloff);
+
+    //Drift the noise through the box. Integrated here rather than in RunLogic because this is
+    //the one place that runs exactly once per rendered frame, and the drift is purely visual -
+    //it is not part of the simulation and deliberately does not go through a tick.
+    float dt = 1.0f / 60.0f;
+    if (tmr_render_loop && tmr_render_loop->delta > 0){
+        //delta is microseconds. Clamped so a hitch or a breakpoint does not teleport the cloud.
+        dt = fminf((float)(tmr_render_loop->delta / 1000000.0),0.1f);
+    }
+    volume_noise_offset += volume_wind * dt;
+    volume_shader->Setvec3("noise_offset",volume_noise_offset);
+
+    if (volume_noise){
+        glBindTextureUnit(TEXUNIT_APP_RESERVED,volume_noise->texture_id);
+    }
+
+    //Render the box's INSIDE faces only, and do not write depth.
+    //
+    //Back faces rather than front is what makes the volume survive the camera being inside the
+    //box - with front faces there would be nothing left to rasterise once you fly into it - and
+    //it also guarantees exactly one fragment per pixel, so the volume is blended once instead
+    //of twice. The shader intersects the box analytically, so it does not care which of the two
+    //it was handed. No depth write because a volume must not occlude anything drawn after it.
+    //
+    //Renderer::DrawFrame restores GL_BACK / depth writes right after this pass, so this does
+    //not leak into the skinned pass or the next frame's depth passes.
+    glCullFace(GL_FRONT);
+    glDepthMask(GL_FALSE);
+}
+
+void ApplicationShip::ReloadVolumeShader(void){
+    Shader* reloaded = new Shader("shaders/default.vert","shaders/raymarch_volume.frag");
+    reloaded->uniform_callback = std::bind(&ApplicationShip::SetVolumeUniforms,this);
+    //Only swap once the new one is known good. In practice a bad shader never gets this far -
+    //Shader's compile path calls debug->Fatal - but this keeps the old program bound if that
+    //ever becomes a soft failure.
+    if (reloaded->progid != -1){
+        Shader* previous = volume_shader;
+        volume_shader = reloaded;
+        //Replace it at the index the volume's mesh already points at, rather than registering
+        //another one - AddCustomShader would append, and the mesh would keep drawing with the
+        //stale shader while the new one drew nothing.
+        renderer->custom_shaders.at(volume_shader_index) = volume_shader;
+        delete previous;
+        debug->Info("Reloaded shaders/raymarch_volume.frag (program %i)\n",volume_shader->progid);
+    }else{
+        debug->Err("Failed to reload shaders/raymarch_volume.frag, keeping the old program\n");
+        delete reloaded;
+    }
+}
+
 void ApplicationShip::Init(void){
     //Create a renderer with initial size
     int2 dimensions = GetDisplaySettings();
@@ -150,6 +315,32 @@ void ApplicationShip::Init(void){
 
     //A door panel to bump into, shoot at, and watch the asteroids swing around.
     AddDoor(vec3(4,0,-5),0.0f);
+
+    //One raymarched volume, sitting over the grid where the ship flies through it.
+    volume_shader = new Shader("shaders/default.vert","shaders/raymarch_volume.frag");
+    volume_shader->uniform_callback = std::bind(&ApplicationShip::SetVolumeUniforms,this);
+    volume_shader_index = renderer->AddCustomShader(volume_shader);
+    BuildVolumeNoise();
+
+    volume = new Object();
+    volume->name = "Raymarch Volume";
+    Mesh* volume_mesh = BuildVolumeCube();
+    //Says WHICH custom shader draws this mesh. Only matters once more than one is registered,
+    //but setting it from the index the renderer handed back is what keeps that true.
+    volume_mesh->custom_shader_index = volume_shader_index;
+    volume->SetMesh(volume_mesh);
+    //Off to one side rather than centred: at the default zoom the camera looks down through
+    //anything above the ship, so a volume at the origin turns the whole app into permanent
+    //haze. Here it is a cloud bank to fly into instead.
+    volume->SetPosition(vec3(0,3,-18));
+    volume->SetScale(vec3(20,6,20));
+    //No material: the shader computes its own colour and never touches the material buffer.
+    volume->material_slot[0] = -1;
+    //Belt and braces. MESH_MODE_SHADER meshes no longer go through DeferredPass at all, so the
+    //box does not reach the object-id buffer and could not be picked anyway - but nothing about
+    //a fog box is meant to be clickable.
+    volume->SetPickability(false);
+    main_scene->AddObject(volume);
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -890,6 +1081,69 @@ void ApplicationShip::DrawImGuiUI(){
             for (size_t i = 0;i < doors.size();i++){
                 ImGui::Text("Door %zu swing         : %.1f deg",i,doors[i]->GetAngle() * 180.0f / TYPE_PI);
             }
+        }
+        ImGui::End();
+    }
+
+    //Its own window rather than a section of "Ship Settings", whose End() sits inside the
+    //if (ship_character) above.
+    if (volume){
+        ImGui::Begin("Volume");
+        if (ImGui::Checkbox("Visible",&f_volume_visible)){
+            volume->SetVisibility(f_volume_visible);
+        }
+        const char* debug_views[] = {"Off","Marched interval","G-buffer input"};
+        ImGui::Combo("Debug View",&volume_debug_view,debug_views,3);
+
+        //Safe to move the volume from here: DrawImGuiUI runs with renderer->physics_mutex held.
+        vec3 p = volume->GetPosition();
+        vec3 s = volume->GetScale();
+        if (ImGui::DragFloat3("Position",(float*)&p,0.1f)){
+            volume->SetPosition(p);
+        }
+        if (ImGui::DragFloat3("Size",(float*)&s,0.1f,0.1f,200.0f)){
+            volume->SetScale(s);
+        }
+
+        ImGui::SeparatorText("Shape");
+        ImGui::SliderFloat("Noise Scale",&volume_noise_scale,0.25f,8.0f);
+        ImGui::SliderFloat("Threshold",&volume_density_threshold,0.0f,0.95f);
+        ImGui::SliderFloat("Edge Falloff",&volume_edge_falloff,0.0f,0.5f);
+        ImGui::DragFloat3("Wind",(float*)&volume_wind,0.005f,-0.5f,0.5f);
+        //Regenerating is a single dispatch, so it is fine to do on a slider release.
+        bool rebuild = false;
+        rebuild |= ImGui::SliderInt("Worley Cells",&volume_noise_cells,2,16);
+        if (rebuild){
+            BuildVolumeNoise();
+        }
+
+        ImGui::SeparatorText("March");
+        ImGui::SliderFloat("Density",&volume_density,0.0f,3.0f);
+        ImGui::SliderFloat("Absorption",&volume_light_absorption,0.0f,5.0f);
+        ImGui::SliderFloat("Sun Intensity",&volume_sun_intensity,0.0f,4.0f);
+        ImGui::SliderInt("View Steps",&volume_view_steps,1,128);
+        ImGui::SliderInt("Sun Light Steps",&volume_light_steps,0,32);
+
+        ImGui::SeparatorText("Point / cone lights");
+        //Per light, so the whole march costs
+        //view_steps * (sun_steps + active_lights * point_steps).
+        ImGui::SliderInt("Light Steps",&volume_point_light_steps,0,16);
+        ImGui::SliderFloat("Falloff Exp",&volume_light_falloff,0.5f,3.0f);
+        ImGui::SliderFloat("Cone Softness",&renderer->cone_softness,0.01f,0.6f);
+        ImGui::SliderFloat("Max Radiance",&volume_max_radiance,1.0f,50.0f);
+        if (ship_character && ship_character->headlight){
+            ConeLight* hl = ship_character->headlight;
+            bool on = hl->IsVisible();
+            if (ImGui::Checkbox("Ship Headlight",&on)){
+                hl->SetVisibility(on);
+            }
+            ImGui::SliderFloat("Headlight Power",&hl->brightness,0.0f,200.0f);
+            ImGui::SliderFloat("Headlight Angle",&hl->cone_angle,5.0f,170.0f);
+        }
+
+        if (ImGui::Button("Reload Shader")){
+            //Recompiles from disk. A shader error exits the app - see ReloadVolumeShader.
+            ReloadVolumeShader();
         }
         ImGui::End();
     }

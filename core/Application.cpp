@@ -506,8 +506,15 @@ static json ObjectToJson(Object* object,bool verbose){
     }
     result["world_position"] = Vec3ToJson(object->GetWorldPosition());
     result["rotation"] = QuatToJson(object->GetRotation());
+    //`forward`/`up` come from the object's OWN rotation, so for a child they are relative to the
+    //parent - next to a `world_position` that is absolute, which is a genuinely confusing pair.
+    //The world versions are reported alongside rather than replacing them, because "the axis in
+    //my parent's frame" is what a caller manipulating a child wants. For a root object the two
+    //are identical.
     result["forward"] = Vec3ToJson(object->GetForward());
+    result["world_forward"] = Vec3ToJson(object->GetWorldForward());
     result["up"] = Vec3ToJson(object->GetUp());
+    result["world_up"] = Vec3ToJson(object->GetWorldUp());
     result["scale"] = Vec3ToJson(object->GetScale());
     result["visible"] = object->IsVisible();
     json children = json::array();
@@ -806,6 +813,25 @@ objectid_t Application::SubmitCommandAndWait(const SimCommand& cmd, int timeout_
     debug->Err("SimCommand type %u (sequence %u) was not applied within %d ms\n",
                cmd.type,sequence,timeout_ms);
     return OBJECTID_INVALID;
+}
+
+//Moved here from ApplicationTank, which had one of these, while ApplicationShip had a
+//second, near-identical copy wrapped in a tool of its own. Nothing about capturing a frame is
+//app-specific, and every app has a renderer.
+json Application::MaybeAttachScreenshot(json result, bool include_screenshot){
+    if (!include_screenshot){
+        return result;
+    }
+    if (!renderer){
+        result["screenshot_error"] = "no renderer";
+        return result;
+    }
+    std::vector<uint8_t> png = renderer->RequestScreenshot();
+    if (png.empty()){
+        result["screenshot_error"] = "timed out waiting for the render thread to capture a frame";
+        return result;
+    }
+    return MCPServer::AttachImagePNG(result,png);
 }
 
 void Application::RegisterCoreMCPTools(){
@@ -1331,6 +1357,27 @@ void Application::RegisterCoreMCPTools(){
             }
             camera->CalculateLookatMatrix();
             return CameraToJson(camera,GetCameraTargetPtr());
+        });
+
+    MCPServer::Get()->RegisterTool("screenshot",
+        "Capture the app's current frame as a PNG. Blocks until the render thread has drawn and "
+        "encoded a frame, so what comes back is the window as it is now - the only way to check "
+        "anything about how an app LOOKS rather than what its numbers say. Available in every app; "
+        "an app's own tools may also take an include_screenshot argument to return one alongside "
+        "their telemetry, which saves a second round trip.",
+        json{
+            {"type","object"},
+            {"properties", json::object()}
+        },
+        [this](const json &args) -> json {
+            //MaybeAttachScreenshot reports a failure in a field, which is right when there is a
+            //telemetry payload to keep - but here the picture IS the result, so an empty one is
+            //an error and worth saying so plainly.
+            json result = MaybeAttachScreenshot(json::object(),true);
+            if (result.contains("screenshot_error")){
+                return json{ {"error",result["screenshot_error"]} };
+            }
+            return result;
         });
 }
 
@@ -2431,6 +2478,12 @@ void Application::RenderEngineWindow(){
                 ImGui::DragFloat("Roughness",(float*)&material.glsl_material.roughness,0.01f,0,1);
                 ImGui::DragFloat("Brightness",(float*)&material.glsl_material.brightness,0.01f,0,10);
                 ImGui::ColorEdit4("Colour",(float*)&material.glsl_material.color,ImGuiColorEditFlags_DisplayRGB);
+                //Emission: the colour comes in from glTF's emissiveFactor and is clamped 0..1, so
+                //the strength next to it is what makes something actually glow. Both are edited
+                //in place on renderer->materials, which UploadMaterials rebuilds the SSBO from
+                //every frame, so edits show up immediately.
+                ImGui::ColorEdit3("Emissive",(float*)&material.glsl_material.emissive,ImGuiColorEditFlags_DisplayRGB);
+                ImGui::DragFloat("Emissive Strength",(float*)&material.glsl_material.emissive.w,0.05f,0,20);
                 ImGui::TreePop();
             }
             ImGui::PopID();

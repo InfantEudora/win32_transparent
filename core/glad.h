@@ -108,6 +108,10 @@
 #define GL_DEPTH_COMPONENT32F 0x8CAC
 #define GL_RED_INTEGER 0x8D94
 
+//GL 1.2, so not in the <GL/gl.h> this header sits on top of. Needed by Texture::Create3D.
+#define GL_TEXTURE_3D 0x806F
+#define GL_TEXTURE_WRAP_R 0x8072
+
 #define GL_READ_FRAMEBUFFER 0x8CA8
 #define GL_DRAW_FRAMEBUFFER 0x8CA9
 
@@ -335,6 +339,21 @@ typedef void (APIENTRYP PFNGLUNIFORMMATRIX3FVPROC)(GLint location, GLsizei count
 GLAPI PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv;
 typedef void (APIENTRYP PFNGLUNIFORMMATRIX4FVPROC)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 GLAPI PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv;
+
+//The same setters, but naming the program instead of writing to whichever one happens to be
+//bound. glUniform* silently lands in the currently bound program, so setting a uniform on a
+//shader you have not Use()d writes it into a different shader - see Shader::Setint and friends,
+//which all take the program they mean. GL 4.1; the context here is 4.5 core (Window.cpp).
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORM1IPROC)(GLuint program, GLint location, GLint v0);
+GLAPI PFNGLPROGRAMUNIFORM1IPROC glProgramUniform1i;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORM1FVPROC)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
+GLAPI PFNGLPROGRAMUNIFORM1FVPROC glProgramUniform1fv;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORM3FVPROC)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
+GLAPI PFNGLPROGRAMUNIFORM3FVPROC glProgramUniform3fv;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORMMATRIX3FVPROC)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+GLAPI PFNGLPROGRAMUNIFORMMATRIX3FVPROC glProgramUniformMatrix3fv;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORMMATRIX4FVPROC)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+GLAPI PFNGLPROGRAMUNIFORMMATRIX4FVPROC glProgramUniformMatrix4fv;
 
 //VBO/VAO
 typedef void (APIENTRYP PFNGLVERTEXATTRIBPOINTERPROC)(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer);

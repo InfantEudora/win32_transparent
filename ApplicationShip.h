@@ -48,6 +48,33 @@ public:
     DirectionalLight* sun = NULL;
     ShipCharacter* ship_character = NULL;
 
+    //Raymarched volume material - see shaders/raymarch_volume.frag. The volume is an ordinary
+    //Object whose mesh is tagged MESH_MODE_SHADER, so it goes through the renderer's custom
+    //shader pass and the march happens only on the pixels the box covers. Its transform IS the
+    //box the shader marches, so moving/scaling/rotating this object moves the volume.
+    Shader* volume_shader = NULL;
+    //Where volume_shader sits in Renderer::custom_shaders, and therefore what goes in the
+    //volume mesh's custom_shader_index. Kept so a shader reload can replace that entry
+    //instead of appending a second one.
+    int volume_shader_index = 0;
+    Object* volume = NULL;
+    //A cube of its OWN, not assetmanager's "cube": Mesh pointers are shared between every
+    //object built from an asset (see AssetManager::GetObjectFromAsset), so tagging the shared
+    //cube MESH_MODE_SHADER would turn the hinged door panels into volumes too.
+    Mesh* BuildVolumeCube();
+    //Pushed to volume_shader through Shader::uniform_callback, i.e. called by the renderer on
+    //the render thread with the shader already bound.
+    void SetVolumeUniforms(void);
+    //Recompiles raymarch_volume.frag from disk so the shader can be iterated on without a
+    //restart. Careful: Shader's compile errors go through debug->Fatal, which exits - so a
+    //typo in the shader takes the app down with it.
+    void ReloadVolumeShader(void);
+    //Runs shaders/noise3d.comp once to fill volume_noise with tileable 3D worley. Called from
+    //Init on the render thread, which is the only thread that may touch GL.
+    void BuildVolumeNoise(void);
+    Texture* volume_noise = NULL;
+    Shader* volume_noise_shader = NULL;
+
     //std::vector<Asteroid*> asteroids;
     std::vector<HingedDoor*> doors;
 
@@ -101,6 +128,38 @@ private:
     bool f_mode_grab = false;
     bool f_mode_camera_track = true;
     bool f_lock_ship_axis = true;
+
+    //Volume tweakables, driven from the "Volume" ImGui panel and pushed by SetVolumeUniforms.
+    float volume_density = 1.2f;    //Density where the noise is solid. Most of the box is now
+                                    // empty air, so this is much higher than the constant-
+                                    // density value it replaces (0.15) for a similar look.
+    float volume_noise_scale = 1.0f;
+    float volume_density_threshold = 0.45f;
+    float volume_edge_falloff = 0.15f;
+    int volume_noise_cells = 4;             //Worley cells per axis in the lowest-frequency channel
+    int volume_noise_resolution = 128;      //Texture is this cubed - 128^3 RGBA8 is 8 MB
+    //Wind, in noise-space units per second, integrated into volume_noise_offset every frame.
+    //Noise space, not world space: at noise_scale 1 the box is one tile across, so 0.01 here
+    //drifts the cloud through 1% of the box per second whatever size the box is.
+    vec3 volume_wind = {0.015f,0.0f,0.006f};
+    vec3 volume_noise_offset = {};
+    float volume_light_absorption = 1.2f;
+    //Scale on the sun's OWN brightness, not a replacement for it. 0.15 x the sun's 7.0
+    //reproduces the look from when the volume ignored sun brightness and used 1.0 flat.
+    float volume_sun_intensity = 0.15f;
+    int volume_view_steps = 32;
+    int volume_light_steps = 6;
+    //Per point/cone light, per view step - so this one multiplies by the number of active
+    //lights. Kept lower than the sun's because a local light's reach is short.
+    int volume_point_light_steps = 3;
+    //2 is the inverse square the reference shader uses. default.frag lights SURFACES with an
+    //exponent of 1, so at 2 a light reads dimmer at range in fog than on a hull beside it.
+    float volume_light_falloff = 2.0f;
+    float volume_max_radiance = 10.0f;
+    //Volume debug view: 0 off, 1 the marched interval, 2 the G-buffer the shader reads.
+    //Matches the f_show_box uniform in shaders/raymarch_volume.frag.
+    int volume_debug_view = 0;
+    bool f_volume_visible = true;
 
     void onContact(const rp3d::CollisionCallback::CallbackData& callbackData) override;
     void onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData) override;

@@ -19,6 +19,21 @@ class Renderer;
 #define NUM_MATERIAL_SLOTS  4
 #define NUM_MORPH_FACTOR_SLOTS	4
 
+//Texture units CustomShaderPass binds the deferred G-buffer to, so a custom material can see
+//what the scene looks like behind it (a raymarched volume needs it to stop the march at solid
+//geometry). Units 1-3: unit 0 is the shadow map, material textures are handed out from 4 up
+//(see UploadMaterials) and 24 is the skybox cubemap, so these three are the gap in between.
+//Kept as defines because the same numbers appear in the custom shaders' layout(binding = N).
+#define TEXUNIT_GBUFFER_DEPTH     1
+#define TEXUNIT_GBUFFER_POSITION  2
+#define TEXUNIT_GBUFFER_NORMAL    3
+
+//Above the skybox cubemap at 24, so it is clear of the material textures growing up from 4.
+//An app binds its own data here (currently the ship app's 3D cloud noise); UploadMaterials warns
+//if the material textures ever reach this far, since the collision would otherwise show up as a
+//volume sampling somebody's diffuse map.
+#define TEXUNIT_APP_RESERVED      25
+
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
     int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
@@ -88,7 +103,19 @@ class Renderer{
 
     void DrawSkyBox(Camera* camera);
 
-    void RenderUniqueMeshes(int normal_or_skinned); //0 renders norma meshes, 1 renders only skinned meshes.
+    //0 renders normal meshes, 1 renders only skinned meshes. For MESH_MODE_SHADER, pass the
+    //custom shader index to draw only the meshes assigned to that shader; -1 draws all of them
+    //regardless, which is only useful when the bound shader does not matter.
+    void RenderUniqueMeshes(int normal_or_skinned, int custom_shader_index = -1);
+
+    //Registers a shader for the custom-material pass and returns its index, which is what goes
+    //in Mesh::custom_shader_index. Several can be live at once - one app's ground decal and
+    //another's raymarched volume are separate entries, not a single global slot.
+    int AddCustomShader(Shader* shader);
+    Shader* GetCustomShader(int index);
+    //Draws every MESH_MODE_SHADER mesh, one sub-pass per registered custom shader. Runs last of
+    //the geometry passes, with the deferred G-buffer bound as input - see the definition.
+    void CustomShaderPass(Camera* camera);
 
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
@@ -171,7 +198,9 @@ class Renderer{
 
     Shader* deferred_shader = NULL;         // Shader that outputs data to textures
     Shader* deferred_shader_skinned = NULL; // Shader that outputs data to textures
-    Shader* deferred_shader_custom = NULL;
+    //Shaders for the custom-material pass, indexed by Mesh::custom_shader_index. Use
+    //AddCustomShader rather than pushing here, so the index the caller stores is the real one.
+    std::vector<Shader*> custom_shaders;
     Shader* ssao_compute_shader = NULL;
     Shader* line_shader = NULL;             // Seperate shader for rendering line meshes.
 
@@ -185,6 +214,10 @@ class Renderer{
     //Settings
     int aa_samples = 1;
     float alpha_clip = 0.5f;          // At what value pixels with alpha will get discarded in fragment shader
+    //Width of a cone light's soft edge, in cosine space. Pushed to the surface shaders here and
+    //to the volume shader by whichever app owns it, so a cone's edge matches between the hull
+    //it lights and the fog around it.
+    float cone_softness = 0.15f;
     int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering

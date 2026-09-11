@@ -30,6 +30,17 @@ typedef struct {
     int pad[3];
     uint64_t handle_diffuse = 0;    // The texture handle for OpenGL Bindless Textures
     uint64_t handle_normal = 0;     // The texture handle for OpenGL Bindless Textures
+    // Light the surface emits on its own, added to the lit result and unaffected by any light or
+    // shadow. xyz is glTF's emissiveFactor (0..1), w a strength multiplier on top of it, which is
+    // what actually lets something glow - emissiveFactor alone is clamped to 1 and so can never be
+    // brighter than a fully lit white surface. Distinct from `brightness` above, which scales the
+    // light a surface REFLECTS: crank that and an unlit object stays black.
+    //
+    // Appended at the end of the struct on purpose. This layout is repeated by hand in five
+    // shaders (default/deferred/custom .frag, default/default_skinned .vert), and adding a field
+    // here instead of filling pad[3] keeps every existing offset - including the two 8-byte
+    // texture handles - exactly where it was. std430: vec4 at offset 64, struct grows 64 -> 80.
+    vec4 emissive = {0,0,0,1};
 }material_t;
 
 //We want to know more about the material than GLSL

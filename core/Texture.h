@@ -42,6 +42,12 @@ public:
     bool IsEmpty();
 
     void Create2D(int target = GL_TEXTURE_2D, int depth_in = 1);    //Creates a 2D openGL texture, but does not transfer any data
+
+    //Allocates an empty GL_TEXTURE_3D of size^3 for something else to fill - a compute shader
+    //writing into it as an image, in the one case there is so far (the cloud noise in
+    //shaders/noise3d.comp). Unlike Create2D this filters LINEAR and wraps on all three axes,
+    //because a volume samples it at arbitrary scales and NEAREST would show the voxel grid.
+    void Create3D(int size, GLenum format = GL_RGBA8);
     void UploadTexture(GLenum _format = GL_RGB, int target = GL_TEXTURE_2D);
 
     void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);

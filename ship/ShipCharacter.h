@@ -20,6 +20,9 @@ class ShipCharacter : public Object{
     ParticleEmitter* laser_emitter = NULL;
     PointLight* engine_light = NULL;
     PointLight* laser_light = NULL;
+    //Forward-facing cone light at the nose. The engine has had a ConeLight class all along
+    //but nothing used one, so nothing uploaded it either - see Renderer::UploadLights.
+    ConeLight* headlight = NULL;
 
     void StrafeBy(float force);
     void MoveForwardBy(float force);

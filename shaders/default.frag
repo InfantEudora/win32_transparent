@@ -50,6 +50,9 @@ struct Material{
     //sampler2D handle_normal;
     uvec2 handle_diffuse;
     uvec2 handle_normal;
+    //Self-emitted light: xyz is glTF's emissiveFactor, w a strength multiplier. Must stay last
+    //to match material_t in Material.h - see the comment there.
+    vec4 emissive;
 };
 
 //All the light types fall together into a single light struct
@@ -80,6 +83,9 @@ uniform vec3 eye_position;
 uniform int f_normal_mapping = 1;
 uniform int f_materialindex_is_color = 0;
 uniform float alpha_clip = 1.0f;
+//Width of a cone light's soft edge, in cosine space - the `epsilon` of the reference
+//shader. Shared with raymarch_volume.frag so a cone matches between surfaces and fog.
+uniform float cone_softness = 0.15;
 
 //This gets set when lighting calculation is done, and is this fragments resulting normal.
 vec3 sampled_normal = vec3(0,0,0);
@@ -290,6 +296,14 @@ vec4 CalcPBRLighting(){
         float direction_len = dot(lights[i].direction,lights[i].direction);
         float falloff = 1.0f;
         float light_value = 1.0;
+        //What gets handed to CalcDirectionalPBRLight as the light's brightness. For the
+        //point and sun paths this stays lights[i].brightness, which means brightness is
+        //applied TWICE for a point light - once here in light_value and again as radiance
+        //inside that function. That is long-standing behaviour and every existing light is
+        //tuned around it, so it is left alone. The cone path below sets this to 1 instead,
+        //because its light_value already carries the full intensity - squaring a headlight
+        //at brightness 30 blows a panel out to a flat colour.
+        float shading_brightness = lights[i].brightness;
 
         if (direction_len < 0.1){
             //Makes it a point light instead of direction
@@ -302,12 +316,38 @@ vec4 CalcPBRLighting(){
                 continue;
             }
             light_value = brightness;
+        }else if (lights[i].cos_angle > 0.0){
+            /*
+                Cone light. It has a direction like the sun, so without this branch it would be
+                treated AS a sun - lighting everything from that direction with a shadow lookup
+                into the one shadow map - which is what happened before cone lights were uploaded
+                at all (see Renderer::UploadLights).
+
+                `direction` is the way the light travels, so -direction is the cone axis measured
+                from the lit point back towards the source, and theta is 1 on the axis falling
+                off outwards. Same test and same cosine-space soft edge as the volume uses, so a
+                cone reads the same on a surface as it does in fog.
+            */
+            vec3 to_light = lights[i].position - vposition;
+            float dist = length(to_light);
+            float theta = dot(to_light / max(dist,0.0001),normalize(-lights[i].direction));
+            if (theta < lights[i].cos_angle){
+                continue;
+            }
+            float edge = clamp((theta - lights[i].cos_angle) / max(cone_softness,0.0001),0.0,1.0);
+            float brightness = lights[i].brightness / pow(dist,falloff);
+            if (brightness * edge < 0.01){
+                continue;
+            }
+            lightdirection = to_light;
+            light_value = brightness * edge;
+            shading_brightness = 1.0;
         }else{
             float shadow = CalcShadow(vshadow);
             light_value = shadow;
         }
 
-        light = light_value * CalcDirectionalPBRLight(albedo,lightdirection,lights[i].color,lights[i].brightness);
+        light = light_value * CalcDirectionalPBRLight(albedo,lightdirection,lights[i].color,shading_brightness);
         total_light += light;
     }
 
@@ -329,6 +369,10 @@ vec4 CalcPBRLighting(){
     //total_light *= 0.51f;
     //total_light += vshadow.xyz;
 
+    //What the surface emits by itself. Added after every light, the ambient term and the
+    //reflections, and deliberately not multiplied by any of them: an emissive surface glows in
+    //full shadow, which is the whole difference between this and m.brightness.
+    total_light += m.emissive.rgb * m.emissive.w;
 
     float alpha = 1 - step(GetTransparency(),alpha_clip);
     //if (alpha < alpha_clip){
@@ -351,10 +395,19 @@ void main(){
         if (vmatindex > -1){
             m = materials[vmatindex];
         }else{
-            //Default invalid material
+            //Default invalid material - the obvious magenta, so a missing material shows up as
+            //itself rather than as something plausible.
             m.diffuse_texture = -1;
             m.normal_texture = -1;
             m.color = vec4(0.9,0.0,0.5,1.0);
+            //The rest of the struct was left uninitialised here, which the compiler warns about
+            //("m.emissive might be used before being initialized"). It mattered less when every
+            //unset field only scaled the lit result; emission is ADDED, so garbage here would
+            //show up as an arbitrary glow on anything with no material.
+            m.brightness = 1.0;
+            m.metallic = 0.0;
+            m.roughness = 0.5;
+            m.emissive = vec4(0.0,0.0,0.0,1.0);
         }
     }
 

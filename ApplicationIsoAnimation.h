@@ -41,6 +41,11 @@ public:
 
     Object* target_indicator = NULL;
 
+    //The targeting-arc decal's shader, registered with Renderer::AddCustomShader. Held here
+    //rather than reached through the renderer: there is no single custom-shader slot any
+    //more, and SetCharacterUniforms needs to push uniforms into THIS one.
+    Shader* indicator_shader = NULL;
+
     //Hand/foot landing-spot debug tool: click a surface to place a target (hand target on a
     //wall-like surface, foot target on a floor-like one, classified by the hit normal), and compare
     //it against where the previewed animation's hands/feet actually end up.

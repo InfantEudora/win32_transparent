@@ -18,6 +18,10 @@
 #include "ObjectCollider.h"
 #include "RawInput.h"
 #include "skeleton/PlayerCharacter.h"
+//For MaybeAttachScreenshot's signature below. json.hpp only (not MCPServer.h): this is pure C++
+//with no winsock in it, so it sidesteps the include-order trap MCPServer.h documents.
+#include "tinygltf/json.hpp"
+using json = nlohmann::json;
 
 /*
     The thing that ties everything together.
@@ -74,9 +78,19 @@ public:
     void SubmitUICommand(const SimCommand& cmd);
 
     //Generic, app-independent MCP tools (object_list/object_get/object_set_transform/
-    //object_move) - the MCP counterpart of the Generic Object UI panel. Registered for
-    //every app right after Init(), before the MCP server starts accepting requests.
+    //object_move/screenshot/...) - the MCP counterpart of the Generic Object UI panel. Registered
+    //for every app right after Init(), before the MCP server starts accepting requests.
     void RegisterCoreMCPTools();
+
+    //If requested, blocks (Renderer::RequestScreenshot) until the render thread has captured and
+    //PNG-encoded the current frame, and attaches it to `result` as an MCP image content block. A
+    //no-op passthrough otherwise, so any MCP tool in any app can offer a screenshot with one line:
+    //  return MaybeAttachScreenshot(MyTelemetry(),args.value("include_screenshot",false));
+    //A failure is reported in a "screenshot_error" field rather than replacing the result, since
+    //the caller asked for the telemetry first and the picture second. Lives here rather than per
+    //app because nothing about it is app-specific - it was written twice before it was moved.
+    //The `screenshot` core MCP tool is this with an empty result.
+    json MaybeAttachScreenshot(json result, bool include_screenshot);
 
     //The point the app's camera orbits and zooms around, if it has one. Every app subclass keeps
     //its own `camera_target` (a copy-pasted field, not shared state), so the core camera MCP

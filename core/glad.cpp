@@ -91,6 +91,12 @@ PFNGLUNIFORM3FVPROC glUniform3fv = NULL;
 PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv = NULL;
 PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = NULL;
 
+PFNGLPROGRAMUNIFORM1IPROC glProgramUniform1i = NULL;
+PFNGLPROGRAMUNIFORM1FVPROC glProgramUniform1fv = NULL;
+PFNGLPROGRAMUNIFORM3FVPROC glProgramUniform3fv = NULL;
+PFNGLPROGRAMUNIFORMMATRIX3FVPROC glProgramUniformMatrix3fv = NULL;
+PFNGLPROGRAMUNIFORMMATRIX4FVPROC glProgramUniformMatrix4fv = NULL;
+
 PFNGLGETINTEGERI_VPROC glGetIntegeri_v = NULL;
 
 PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback = NULL;
@@ -247,6 +253,12 @@ bool InitGLExtensions(void){
     glUniform3fv = (PFNGLUNIFORM3FVPROC)wglGetProcAddress("glUniform3fv");
     glUniformMatrix3fv = (PFNGLUNIFORMMATRIX3FVPROC)wglGetProcAddress("glUniformMatrix3fv");
     glUniformMatrix4fv = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
+
+    glProgramUniform1i = (PFNGLPROGRAMUNIFORM1IPROC)wglGetProcAddress("glProgramUniform1i");
+    glProgramUniform1fv = (PFNGLPROGRAMUNIFORM1FVPROC)wglGetProcAddress("glProgramUniform1fv");
+    glProgramUniform3fv = (PFNGLPROGRAMUNIFORM3FVPROC)wglGetProcAddress("glProgramUniform3fv");
+    glProgramUniformMatrix3fv = (PFNGLPROGRAMUNIFORMMATRIX3FVPROC)wglGetProcAddress("glProgramUniformMatrix3fv");
+    glProgramUniformMatrix4fv = (PFNGLPROGRAMUNIFORMMATRIX4FVPROC)wglGetProcAddress("glProgramUniformMatrix4fv");
 
     glGetIntegeri_v = (PFNGLGETINTEGERI_VPROC)wglGetProcAddress("glGetIntegeri_v");
 

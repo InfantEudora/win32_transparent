@@ -62,6 +62,19 @@ ShipCharacter::ShipCharacter(AssetManager* assetmanager, PhysicsWorld* physicswo
     laser_light->color = vec3(1.0,0.2,0.0);
     laser_light->brightness = 5.0f;
 
+    headlight = new ConeLight();
+    headlight->name = "Headlight";
+    headlight->color = vec3(0.7,0.85,1.0);
+    headlight->brightness = 12.0f;
+    headlight->cone_angle = 45.0f;   //Full opening angle in degrees
+    //At the nose, which is local +Z - the laser emitter sits at +2 on that axis and the
+    //exhaust at -1. Object::ref_forward is (0,0,-1) though, and UploadLights sends
+    //GetForward(), so with no local rotation this cone would shine out of the tail. Hence the
+    //half turn about up.
+    headlight->SetPosition(vec3(0.0,0.1,1.5));
+    headlight->SetRotation(quat(vec3(0,1,0),TYPE_PI));
+    AttachChild(headlight);
+
 }
 
 ShipCharacter::~ShipCharacter(){

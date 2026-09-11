@@ -255,7 +255,7 @@ void Renderer::FillBactches(){
 }
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
-void Renderer::RenderUniqueMeshes(int rendering_mode){
+void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index){
     debug->Trace("Rendering Meshes rendering_mode = %i\n",rendering_mode);
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
@@ -275,6 +275,11 @@ void Renderer::RenderUniqueMeshes(int rendering_mode){
             continue;
         }
         if ((rendering_mode == MESH_MODE_SHADER) && (mesh->mesh_mode != MESH_MODE_SHADER)){
+            continue;
+        }
+        //One sub-pass per custom shader, so a mesh is drawn only while ITS shader is bound.
+        if ((rendering_mode == MESH_MODE_SHADER) && (custom_shader_index >= 0)
+            && (mesh->custom_shader_index != custom_shader_index)){
             continue;
         }
 
@@ -419,10 +424,13 @@ void Renderer::DeferredPass(Camera* camera){
     //UploadMaterials();
     //UploadLights();
     RenderUniqueMeshes(MESH_MODE_NORMAL);
-    //A seperate render pass for meshes that use a custom shader.
-    if (deferred_shader_custom && camera){
-        RenderUniqueMeshes(MESH_MODE_SHADER);
-    }
+
+    //MESH_MODE_SHADER meshes are deliberately NOT drawn here. They used to be, with
+    //deferred_shader still bound - so a custom material wrote position/normal/objectid/depth as
+    //if it were solid geometry. For a volume that is actively wrong twice over: it made the box
+    //swallow every hover pick made through it, and now that CustomShaderPass reads this same
+    //G-buffer to find the geometry in front of it, the box would have occluded itself.
+    //A custom material that genuinely wants to be in the G-buffer needs its own deferred variant.
 
     if (deferred_shader_skinned && camera){
         deferred_shader_skinned->Use();
@@ -437,6 +445,70 @@ void Renderer::DeferredPass(Camera* camera){
     }
 
 
+}
+
+int Renderer::AddCustomShader(Shader* shader){
+    if (!shader){
+        debug->Err("AddCustomShader called with no shader\n");
+        return -1;
+    }
+    custom_shaders.push_back(shader);
+    int index = (int)custom_shaders.size() - 1;
+    debug->Info("Registered custom shader %s as index %i\n",shader->fname.c_str(),index);
+    return index;
+}
+
+Shader* Renderer::GetCustomShader(int index){
+    if ((index < 0) || (index >= (int)custom_shaders.size())){
+        return NULL;
+    }
+    return custom_shaders.at(index);
+}
+
+/*
+    The custom-material pass: everything tagged MESH_MODE_SHADER, one sub-pass per registered
+    shader. Called last of the geometry passes in DrawFrame, after the skinned meshes, because a
+    custom material is typically translucent and has to blend over everything solid - a volume
+    with a character standing in it must be drawn after that character, not before.
+
+    Every sub-pass gets the deferred G-buffer bound as texture input (see TEXUNIT_GBUFFER_*),
+    which is why DeferredPass now runs BEFORE the main color pass. That is the only way a shader
+    here can know how far away the scene is: msaa_fbo's depth is a multisampled renderbuffer and
+    cannot be sampled at all, and the position buffer is what a raymarcher actually wants anyway
+    (a world-space point, no inverse projection needed).
+
+    A shader's uniform_callback may change cull face and depth mask - a volume wants inside faces
+    and no depth write, a ground decal wants the defaults - and both are restored after each
+    sub-pass, so nothing leaks into the next sub-pass or the next frame's depth passes.
+*/
+void Renderer::CustomShaderPass(Camera* camera){
+    if (custom_shaders.empty() || !camera){
+        return;
+    }
+    vec3 eye = camera->GetPosition();
+    for (int i = 0;i < (int)custom_shaders.size();i++){
+        Shader* shader = custom_shaders.at(i);
+        if (!shader){
+            continue;
+        }
+        shader->Use();
+        shader->Setmat4("mat_worldcam",camera->mat_cam);
+        //A custom shader that reconstructs a ray - anything raymarched - needs the ray origin,
+        //which the default shaders get under this same name.
+        shader->Setvec3("eye_position",eye);
+
+        glBindTextureUnit(TEXUNIT_GBUFFER_DEPTH,deferred_depth_tex_id);
+        glBindTextureUnit(TEXUNIT_GBUFFER_POSITION,deferred_position_tex_id);
+        glBindTextureUnit(TEXUNIT_GBUFFER_NORMAL,deferred_normal_tex_id);
+
+        //We'd like a callback so the custom shader can set its own uniforms and such.
+        if (shader->uniform_callback){
+            shader->uniform_callback();
+        }
+        RenderUniqueMeshes(MESH_MODE_SHADER,i);
+        glCullFace(GL_BACK);
+        glDepthMask(GL_TRUE);
+    }
 }
 
 //Uses a compute shader and uses the textures from deferred pass.
@@ -532,7 +604,12 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         }
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",1); //Abusing this to bypass everything
-        RenderDepthPasses(shader,MESH_MODE_SKINNED);
+        //skinned_shader, not shader: RenderSingleDepthPass sets mat_worldcam/mat_shadow on
+        //whatever it is handed, and the skinned meshes below are drawn with skinned_shader
+        //bound. This used to pass `shader` and worked anyway, because glUniform wrote into the
+        //bound program regardless of which Shader object was asked - now that Shader uses
+        //glProgramUniform the two have to actually agree.
+        RenderDepthPasses(skinned_shader,MESH_MODE_SKINNED);
     }
 
     {//Depth pass with default shader.
@@ -549,7 +626,26 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         FinishDepthPasses();
     }
 
+    //The deferred G-buffer, filled BEFORE the color pass rather than after it.
+    //
+    //It used to run at the end of the frame, purely so the mouse-over readback below had an
+    //object-id buffer to read - hence the "do we even want these passes?" note that used to sit
+    //on it. Where it sits now it does the same job (nothing between here and the readback
+    //touches its attachments) and additionally gives CustomShaderPass a depth/position/normal
+    //texture of the solid scene, which the color pass itself cannot offer: msaa_fbo's depth is a
+    //multisampled renderbuffer and is not samplable.
+    //
+    //It is a second full geometry pass either way. If that ever needs to go, the fix is to make
+    //the color pass write the G-buffer as extra render targets - not to move this back.
+    if (pipeline == PIPELINE_DEFERRED){
+        DeferredPass(camera);
+    }
+
     glBindTextureUnit(0, shadow_tex_id);
+    //Lands in `shader` even though DeferredPass above left deferred_shader bound - Shader's
+    //setters name their own program (glProgramUniform), so uniform sets no longer depend on the
+    //bind order. They did until 2026-09-10, and moving DeferredPass here quietly redirected this
+    //matrix into deferred_shader, leaving the whole colour pass drawn from the sun's viewpoint.
     shader->Setmat4("mat_worldcam",camera->mat_cam);
 
     //Select the mutisampled framebuffer
@@ -577,6 +673,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     UploadLights();
 
     shader->Setint("f_environment_reflections",f_use_reflections);
+    shader->Setfloat("cone_softness",cone_softness);
     shader->Setint("f_materialindex_is_color",0);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
     shader->Setint("f_materialindex_is_color",1);
@@ -584,17 +681,6 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     shader->Setint("f_materialindex_is_color",0);
 
 
-
-    //A seperate render pass for meshes that use a custom shader.
-    if (deferred_shader_custom && camera){
-        deferred_shader_custom->Use();
-        deferred_shader_custom->Setmat4("mat_worldcam",camera->mat_cam);
-        //We'd like a callback so the custom shader can set its own uniforms and such.
-        if (deferred_shader_custom->uniform_callback){
-            deferred_shader_custom->uniform_callback();
-        }
-        RenderUniqueMeshes(MESH_MODE_SHADER);
-    }
 
     if (skinned_shader && camera){
         skinned_shader->Use();
@@ -605,22 +691,26 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
             debug->Fatal("Could not set f_normal_mapping in skinned shader\n");
         }
         skinned_shader->Setint("f_environment_reflections",f_use_reflections);
+        skinned_shader->Setfloat("cone_softness",cone_softness);
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",0);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
 
+    //Custom materials go last of the geometry passes, AFTER the skinned meshes: they are
+    //typically translucent and do not write depth, so anything solid has to already be in the
+    //buffer for them to blend over. A character standing inside a volume was previously drawn
+    //on top of it at full strength.
+    CustomShaderPass(camera);
+
     ResolveAA();
-
-
-    //We use a deferred pass for object ID, amongst many other things.
-    //TODO: These passes need to be fixed... do we even want them?
-    if (pipeline == PIPELINE_DEFERRED){
-        DeferredPass(camera);
-    }
 
     //Now we can read the normal and object ID:
     if ((pipeline == PIPELINE_DEFERRED && input)){
+        //DeferredPass ran near the top of the frame and left its own framebuffer bound; it no
+        //longer does, and ResolveAA has since pointed the read framebuffer at msaa_fbo. So say
+        //explicitly which framebuffer these glReadPixels come from.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, deferred_fbo_id);
         glReadBuffer(GL_COLOR_ATTACHMENT3);
         int32_t id_pixeldata[4] = {-1,-1,-1,-1};
         float  normal_pixeldata[4] = {0,0,0,0};
@@ -1098,6 +1188,16 @@ void Renderer::UploadMaterials(){
         glsl_materials.push_back(mat.glsl_material);
     }
 
+    //Material textures are handed units from 4 upwards with no upper bound, so a scene with
+    //enough of them will walk into the units reserved above - the skybox cubemap at 24 and
+    //whatever an app bound at TEXUNIT_APP_RESERVED. Silently overwriting one of those is very
+    //hard to recognise from the resulting image, so say it out loud.
+    if (last_texture_unit > cubemap_texture_unit){
+        debug->Warn("Material textures reached unit %i, past the reserved units at %i and %i - "
+                    "they are now overwriting each other\n",
+                    last_texture_unit,cubemap_texture_unit,TEXUNIT_APP_RESERVED);
+    }
+
     if (glsl_materials.size() > 0){
         //glInvalidateBufferData(materialdata_ssbo);
         glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_STREAM_DRAW);
@@ -1132,10 +1232,36 @@ void Renderer::UploadLights(){
         light_t light;
         DirectionalLight* directional_light = dynamic_cast<DirectionalLight*>(l);
         if (directional_light){
-            light.direction = directional_light->GetForward();
+            //World, for the same reason as the cone light below - a directional light
+            //parented to something would otherwise ignore the parent. Currently the sun
+            //is a root object, so this changes nothing for it today.
+            light.direction = directional_light->GetWorldForward();
             light.position = directional_light->GetWorldPosition();
             light.color = directional_light->color;
             light.brightness = directional_light->brightness;
+            glsl_lights.push_back(light);
+            continue;
+        }
+        //ConeLight has existed in Light.h all along but had no case here, so one in a scene was
+        //silently dropped from the SSBO. Tried before PointLight because they are siblings - the
+        //casts do not cross - and after DirectionalLight, which is the one that is also a Camera.
+        ConeLight* cone_light = dynamic_cast<ConeLight*>(l);
+        if (cone_light){
+            //GetWorldForward, not GetForward: the latter uses only the object's OWN
+            //rotation, so a cone light parented to something - the ship's headlight is a
+            //child of the hull - would keep pointing wherever its local rotation says and
+            //never follow its parent. The position below is already a world one, so
+            //taking a local direction here also mixed the two spaces.
+            light.direction = cone_light->GetWorldForward();
+            light.position = cone_light->GetWorldPosition();
+            light.color = cone_light->color;
+            light.brightness = cone_light->brightness;
+            //cone_angle is the FULL opening angle in degrees; cos_angle is the cosine of the
+            //HALF angle, because that is what a dot product against the cone axis compares
+            //against. Clamped below 180 because cos(90) is 0, and 0 is how the shaders
+            //recognise a plain point light (see light_t) - a 180 degree cone would turn into one.
+            float half_angle = fminf(cone_light->cone_angle,179.0f) * 0.5f;
+            light.cos_angle = cosf(half_angle * (TYPE_PI / 180.0f));
             glsl_lights.push_back(light);
             continue;
         }
