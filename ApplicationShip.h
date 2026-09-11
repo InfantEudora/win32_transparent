@@ -57,7 +57,13 @@ public:
     //volume mesh's custom_shader_index. Kept so a shader reload can replace that entry
     //instead of appending a second one.
     int volume_shader_index = 0;
-    Object* volume = NULL;
+    //Every raymarched volume in the scene. They all share ONE mesh and one shader, so the
+    //renderer draws the lot in a single instanced call - each instance marches its own box,
+    //taken from its own transform rather than from a uniform.
+    std::vector<Object*> volumes;
+    Mesh* volume_mesh = NULL;
+    //Builds one volume Object sharing volume_mesh and adds it to the scene.
+    Object* AddVolume(const char* name, const vec3& position, const vec3& size);
     //A cube of its OWN, not assetmanager's "cube": Mesh pointers are shared between every
     //object built from an asset (see AssetManager::GetObjectFromAsset), so tagging the shared
     //cube MESH_MODE_SHADER would turn the hinged door panels into volumes too.
@@ -119,13 +125,31 @@ public:
     //is somewhere obvious for those stats to replace. Index with a PickupKind.
     float collected_totals[4] = {0,0,0,0};
 
+    //Lets the core camera_get/camera_set MCP tools see the orbit pivot - see Application.
+    vec3* GetCameraTargetPtr() override{ return &camera_target; }
+
 private:
+    //What the free camera (middle mouse, tracking off) orbits, pans and zooms around. Tracking
+    //mode keeps it on the ship, so turning tracking off starts orbiting the point already in
+    //view. See RunLogic.
     vec3 camera_target = {};
+    //The straight-down orientation tracking mode holds the camera at, captured in
+    //CreateEmptyScene from the one lookat that defines it (see the note there).
+    quat overhead_rotation = {};
+    //Tracking: how high above the ship the camera rides. Free camera: unused, the wheel dollies
+    //the camera itself instead.
     float zoom_target = 20.0f;
     bool f_filemodal = false;
     std::string filemodal_filename;
     bool f_import_file = false;
     bool f_mode_grab = false;
+    //Which way the camera looks, independent of what it follows. On: straight down from above,
+    //the wheel setting its height. Off: free rotation, the tank application's camera - middle
+    //mouse orbits, the wheel dollies in and out. Shift+middle pans in both.
+    bool f_camera_overhead = true;
+    //What the camera is pointed at. On: the ship, which it follows. Off: a fixed point, which
+    //shift+middle moves. Independent of f_camera_overhead - see the four combinations listed in
+    //RunLogic.
     bool f_mode_camera_track = true;
     bool f_lock_ship_axis = true;
 
@@ -159,7 +183,9 @@ private:
     //Volume debug view: 0 off, 1 the marched interval, 2 the G-buffer the shader reads.
     //Matches the f_show_box uniform in shaders/raymarch_volume.frag.
     int volume_debug_view = 0;
-    bool f_volume_visible = true;
+    //Which entry of `volumes` the panel's transform controls edit. Everything else in that
+    //panel is a uniform on the shared shader and so applies to all of them.
+    int volume_selected = 0;
 
     void onContact(const rp3d::CollisionCallback::CallbackData& callbackData) override;
     void onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData) override;

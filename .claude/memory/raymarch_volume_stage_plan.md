@@ -87,7 +87,15 @@ Design points worth not re-deriving:
 
 - **The volume's box IS the Object's transform**, read in the fragment shader from
   `instance_data[vmatselect].mat_transformscale` (`default.vert` passes `vmatselect` =
-  `gl_InstanceID` at location 9). No box uniforms, and volumes still batch.
+  `gl_InstanceID` at location 9). No box uniforms, and volumes still batch - N volumes are N
+  instances of ONE shared mesh in a single draw call (`ApplicationShip::AddVolume`).
+- **`vmatselect` was DECLARED in default.vert but never assigned** until 2026-09-11. Every
+  instance therefore read `instance_data[0]` and drew at the first one's transform. Invisible
+  with a single volume, which is why it survived all of step 1's verification - the second
+  volume added a year later rendered nothing at all. If instanced custom-shader geometry ever
+  goes missing again, check that the varying is actually written, not just declared.
+- Volumes are NOT depth sorted (one instanced draw) and write no depth, so two that OVERLAP on
+  screen blend in instance order rather than back to front. Keep them apart.
 - The ray is taken to object space **without renormalising**, so `t` stays a world-space
   distance. Renormalising silently breaks non-uniformly scaled volumes.
 - `Renderer::custom_shaders` + `AddCustomShader()` returning an index that goes in
@@ -135,5 +143,37 @@ ApplicationIsoAnimation - the Ship app has no skinned meshes, so it cannot catch
   G-buffer is not reaching the shader.
 - The app's `uniform_callback` overwrites shader uniform defaults every frame, so changing a
   default in the .frag does nothing while the app pushes its own value.
+
+## Volume occlusion: the depth TEST had to go (2026-09-11)
+
+The volume rasterises the box's BACK faces, so its fragment depth is the box's FAR side. With
+`GL_DEPTH_TEST` on (set once in `Renderer::SetOpenGLState` and never turned off), anything solid
+standing INSIDE the volume is nearer than that far face and the fixed-function test threw the
+fragment away - on exactly the pixels that needed fog in front of it. The scene-depth clamp in
+`raymarch_volume.frag` was written for that case and could never run: it was only reached where
+the far face had already passed, i.e. where nothing solid was nearer than the box exit, and
+there it is a no-op.
+
+Fix: `glDisable(GL_DEPTH_TEST)` in `ApplicationShip::SetVolumeUniforms` alongside the existing
+`glCullFace(GL_FRONT)`/`glDepthMask(GL_FALSE)`, restored in `Renderer::CustomShaderPass` next to
+the cull/depth-mask restore. The shader then owns depth entirely - it clamps to the G-buffer
+world position and discards when the scene is in front of the box. Cost is the loss of early-Z
+for a volume hidden behind a wall; those pixels now run the prologue and discard before the
+march loop.
+
+Two things NOT to redo here:
+
+- **Do not add `MESH_MODE_LINE` to `DeferredPass`.** It looks like the obvious follow-up (the
+  G-buffer is now the only thing stopping the volume painting over something) but the ONLY line
+  mesh in the codebase is the rp3d debug wireframe built in `Scene.cpp` - a transient,
+  deliberately non-pickable debug overlay. Putting it in the G-buffer would let a debug overlay
+  occlude clouds and would pollute hover picking and SSAO. The grid is `gridcell` assets, i.e.
+  ordinary `MESH_MODE_NORMAL` meshes, and was always in the G-buffer.
+- **The grid is not a test case for volume occlusion.** It sits at y=-1, below the big bank's
+  box (y 0..6), so it is beyond the box's far face and always passed the depth test - it was
+  correctly fogged before this change too. Measuring grid pixels proves nothing about it. The
+  test case is something INSIDE the box, and because the density threshold makes the noise very
+  patchy, a ship parked at one spot often sits in a clear column and looks crisp either way.
+  Let the wind drift cloud over a stationary object, or pick the spot by measurement.
 
 Related: [[project-overview]], [[running-app-is-user-driven]], [[mcp-native-tools-setup]].

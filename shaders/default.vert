@@ -150,6 +150,12 @@ void main(){
 	//vtangent = mat_rotate * tangent;
 
 	vobjid = instance_data[gl_InstanceID].objectid;
+	//Which instance this fragment belongs to, for a fragment shader that needs this
+	//instance's own row of instance_data - the raymarched volume reads its box transform
+	//out of it. Declared since forever but never actually written, which nothing noticed
+	//while only one volume existed: every instance then read instance_data[0] and drew at
+	//the first one's transform.
+	vmatselect = gl_InstanceID;
 
 	gl_Position = (mat_worldcam * world_position);
 }

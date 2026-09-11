@@ -477,9 +477,11 @@ Shader* Renderer::GetCustomShader(int index){
     cannot be sampled at all, and the position buffer is what a raymarcher actually wants anyway
     (a world-space point, no inverse projection needed).
 
-    A shader's uniform_callback may change cull face and depth mask - a volume wants inside faces
-    and no depth write, a ground decal wants the defaults - and both are restored after each
-    sub-pass, so nothing leaks into the next sub-pass or the next frame's depth passes.
+    A shader's uniform_callback may change cull face, depth mask and the depth test - a volume
+    wants inside faces, no depth write and no depth test (it resolves occlusion itself, against
+    the G-buffer below; see ApplicationShip::SetVolumeUniforms for why the test has to go), a
+    ground decal wants the defaults - and all three are restored after each sub-pass, so nothing
+    leaks into the next sub-pass or the next frame's depth passes.
 */
 void Renderer::CustomShaderPass(Camera* camera){
     if (custom_shaders.empty() || !camera){
@@ -508,6 +510,7 @@ void Renderer::CustomShaderPass(Camera* camera){
         RenderUniqueMeshes(MESH_MODE_SHADER,i);
         glCullFace(GL_BACK);
         glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
     }
 }
 

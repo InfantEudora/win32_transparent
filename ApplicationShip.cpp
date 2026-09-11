@@ -42,6 +42,11 @@ Scene* ApplicationShip::CreateEmptyScene(){
     scene->inputcontroller->AddKeyMap('E',INPUT_E);
     scene->camera->SetPosition(vec3(0,25,0));
     scene->camera->SetLookAt(vec3(0,0.0,0));
+    //The straight-down pose tracking mode keeps the camera in. Remembered rather than rebuilt
+    //later because a lookat straight down the world up axis is degenerate (the cross product that
+    //makes the camera's left axis collapses), so the orientation that comes out of THIS call is
+    //the only definition of "overhead" this app has. See RunLogic, which eases back to it.
+    overhead_rotation = scene->camera->GetRotation();
 
     //Add phyics
     scene->physics_world = new PhysicsWorld();
@@ -121,6 +126,42 @@ Mesh* ApplicationShip::BuildVolumeCube(){
 }
 
 /*
+    One raymarched volume Object.
+
+    They all share volume_mesh on purpose. The box a volume marches comes from its own
+    transform, read per instance in the shader, not from a uniform - so N volumes are N
+    instances of one mesh and the renderer emits a single draw call for all of them. Giving each
+    its own mesh would split that into N draws and buy nothing.
+
+    The catch of sharing one draw call: the instances are not depth sorted, and a volume writes
+    no depth, so two that OVERLAP on screen blend in instance order rather than back to front.
+    Keep them apart, or sort them if that ever stops being true.
+*/
+Object* ApplicationShip::AddVolume(const char* name, const vec3& position, const vec3& size){
+    if (!volume_mesh){
+        volume_mesh = BuildVolumeCube();
+        //Says WHICH custom shader draws this mesh. Only matters once more than one is
+        //registered, but setting it from the index the renderer handed back keeps that true.
+        volume_mesh->custom_shader_index = volume_shader_index;
+    }
+
+    Object* v = new Object();
+    v->name = name;
+    v->SetMesh(volume_mesh);
+    v->SetPosition(position);
+    v->SetScale(size);
+    //No material: the shader computes its own colour and never touches the material buffer.
+    v->material_slot[0] = -1;
+    //Belt and braces. MESH_MODE_SHADER meshes no longer go through DeferredPass at all, so the
+    //box does not reach the object-id buffer and could not be picked anyway - but nothing about
+    //a fog box is meant to be clickable.
+    v->SetPickability(false);
+    main_scene->AddObject(v);
+    volumes.push_back(v);
+    return v;
+}
+
+/*
     Fills volume_noise by running shaders/noise3d.comp over it once. Generated rather than
     loaded from disk because it is procedural, tiny in code, and the parameters (cell count,
     resolution) are things worth changing while looking at the result - a 128^3 RGBA8 file would
@@ -190,7 +231,7 @@ void ApplicationShip::SetVolumeUniforms(void){
         glBindTextureUnit(TEXUNIT_APP_RESERVED,volume_noise->texture_id);
     }
 
-    //Render the box's INSIDE faces only, and do not write depth.
+    //Render the box's INSIDE faces only, write no depth, and do not depth TEST either.
     //
     //Back faces rather than front is what makes the volume survive the camera being inside the
     //box - with front faces there would be nothing left to rasterise once you fly into it - and
@@ -198,10 +239,24 @@ void ApplicationShip::SetVolumeUniforms(void){
     //of twice. The shader intersects the box analytically, so it does not care which of the two
     //it was handed. No depth write because a volume must not occlude anything drawn after it.
     //
-    //Renderer::DrawFrame restores GL_BACK / depth writes right after this pass, so this does
-    //not leak into the skinned pass or the next frame's depth passes.
+    //The depth TEST has to go for a different reason, and it is the whole reason a ship inside
+    //a cloud was not fogged at all. Rasterising back faces puts this fragment's depth at the
+    //FAR side of the box, so anything solid standing inside the volume is nearer and the
+    //fixed-function test threw the fragment away - on exactly the pixels that needed fog in
+    //front of the ship. The clamp in raymarch_volume.frag was written for that case and could
+    //never be reached: it only ran where the far face had already passed the test, i.e. where
+    //nothing solid was nearer than the box exit, and there the clamp is a no-op.
+    //
+    //With the test off the shader owns depth entirely - it clamps the march to the G-buffer's
+    //world position and discards when the scene is in front of the box. The cost is that we
+    //lose early-Z rejection for a volume hidden behind a wall; that path now runs the shader
+    //prologue and discards before the march loop.
+    //
+    //Renderer::CustomShaderPass restores GL_BACK / depth writes / the depth test right after
+    //this pass, so this does not leak into the next frame's depth passes.
     glCullFace(GL_FRONT);
     glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
 }
 
 void ApplicationShip::ReloadVolumeShader(void){
@@ -302,11 +357,11 @@ void ApplicationShip::Init(void){
     grid->name = "Grid of Cells";
     for (int x = -10; x <= 10; x++){
         for (int z = -10; z <= 10; z++){
-            Object* cell = assetmanager->GetObjectFromAsset("gridcell");
+            Object* cell = assetmanager->GetObjectFromAsset("cube");
             cell->name = "Grid Cell";
             grid->AttachChild(cell);
             if (cell){
-                cell->SetPosition(vec3(x * 2,-1,z * 2));
+                cell->SetPosition(vec3(x * 2,-2,z * 2));
 
             }
         }
@@ -316,31 +371,20 @@ void ApplicationShip::Init(void){
     //A door panel to bump into, shoot at, and watch the asteroids swing around.
     AddDoor(vec3(4,0,-5),0.0f);
 
-    //One raymarched volume, sitting over the grid where the ship flies through it.
     volume_shader = new Shader("shaders/default.vert","shaders/raymarch_volume.frag");
     volume_shader->uniform_callback = std::bind(&ApplicationShip::SetVolumeUniforms,this);
     volume_shader_index = renderer->AddCustomShader(volume_shader);
     BuildVolumeNoise();
 
-    volume = new Object();
-    volume->name = "Raymarch Volume";
-    Mesh* volume_mesh = BuildVolumeCube();
-    //Says WHICH custom shader draws this mesh. Only matters once more than one is registered,
-    //but setting it from the index the renderer handed back is what keeps that true.
-    volume_mesh->custom_shader_index = volume_shader_index;
-    volume->SetMesh(volume_mesh);
-    //Off to one side rather than centred: at the default zoom the camera looks down through
-    //anything above the ship, so a volume at the origin turns the whole app into permanent
-    //haze. Here it is a cloud bank to fly into instead.
-    volume->SetPosition(vec3(0,3,-18));
-    volume->SetScale(vec3(20,6,20));
-    //No material: the shader computes its own colour and never touches the material buffer.
-    volume->material_slot[0] = -1;
-    //Belt and braces. MESH_MODE_SHADER meshes no longer go through DeferredPass at all, so the
-    //box does not reach the object-id buffer and could not be picked anyway - but nothing about
-    //a fog box is meant to be clickable.
-    volume->SetPickability(false);
-    main_scene->AddObject(volume);
+    //Two cloud banks on opposite sides of the grid, off to the sides rather than centred: at the
+    //default zoom the camera looks down through anything above the ship, so a volume at the
+    //origin turns the whole app into permanent haze. These are banks to fly into instead.
+    //
+    //Still ONE draw call between them - see AddVolume. They share the shader's shape and march
+    //settings too, since those are uniforms; only the transform is per volume, which is what
+    //makes the second one a different size without any extra plumbing.
+    AddVolume("Raymarch Volume",vec3(0,3,-18),vec3(20,6,20));
+    AddVolume("Raymarch Volume Small",vec3(0,4,17),vec3(10,4,10));
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -804,30 +848,55 @@ void ApplicationShip::RunLogic(){
         }
     }
 
-    if (f_mode_camera_track && ship_character){
-        //We use a slight zoom depending on speed
-        vec3 vel = ship_character->GetVelocity();
-        float fact = vel.length();
-        fact = clamp(fact,0.0f,5.0f);
-        float local_zoom_target = zoom_target + fact;
+    //Camera. Two independent switches - which way it looks, and whether it follows the ship - so
+    //all four combinations mean something:
+    //
+    //  Overhead + Track     the default: hangs straight over the ship and goes where it goes.
+    //  Overhead + no Track  the same top-down view over a fixed point, panned around the map
+    //                       with shift+middle. The ship flies out of frame and stays out.
+    //  Free + Track         chase cam: the pivot rides the ship and the camera is carried along
+    //                       with it, at whatever angle and distance the mouse was left at.
+    //  Free + no Track      a camera that stays exactly where it is put.
+    //
+    //Both branches work on camera_target, the pivot the middle-mouse orbit/pan and the wheel
+    //further down all act on - so tracking is only ever a question of what moves that point.
+    if (f_camera_overhead){
+        //Overhead owns both the camera's rotation and its height; the mouse only gets to move
+        //the pivot (the shift+middle pan below). Tracking decides whether that pivot is the
+        //ship or wherever it was last panned to.
+        float local_zoom_target = zoom_target;
+        if (f_mode_camera_track && ship_character){
+            camera_target = ship_character->GetPosition();
+            //We use a slight zoom depending on speed. Only while tracking: with the pivot
+            //standing still there is nothing for the extra height to keep ahead of.
+            vec3 vel = ship_character->GetVelocity();
+            float fact = vel.length();
+            fact = clamp(fact,0.0f,5.0f);
+            local_zoom_target += fact;
+        }
 
-        //We'll make the camera track the ship
-        vec3 ship_pos = ship_character->GetPosition();
         vec3 p = camera->GetPosition();
-        vec3 camera_target = ship_pos + vec3(0,local_zoom_target,0);
-        vec3 diff = p.lerp(camera_target,0.04f);
+        vec3 camera_goal = camera_target + vec3(0,local_zoom_target,0);
+        vec3 diff = p.lerp(camera_goal,0.04f);
         camera->SetPosition(diff);
 
-
-
-        //This will also rotate the camera to look at the ship
-        /*
+        //Ease back to looking straight down. A no-op for as long as the view has been overhead,
+        //since nothing else touches the rotation then - but free rotation leaves the camera at
+        //whatever angle it was orbited to, and this is what swings the overhead view back when
+        //the mode is switched, rather than snapping it.
         quat r = camera->GetRotation();
-        quat t = quat::getquat(ship_pos,camera->GetWorldPosition(),-Object::ref_forward);
-        t.normalize();
-        r = quat::slerp(r,t,0.15f);
-        camera->SetRotation(r);
-        */
+        camera->SetRotation(quat::slerp(r,overhead_rotation,0.05f));
+    }else if (f_mode_camera_track && ship_character){
+        //Free rotation with tracking on. Carry the camera by the same delta the pivot moves
+        //rather than re-aiming it: the angle and distance the mouse set are left exactly as they
+        //were, and the ship stays put in the middle of the view. This is what
+        //ApplicationTank::SnapCameraToControlledVehicle does, minus its chase-behind-the-heading
+        //blend - a ship that rolls and yaws as freely as this one would have the view constantly
+        //swinging around after it.
+        vec3 ship_pos = ship_character->GetPosition();
+        vec3 delta = ship_pos - camera_target;
+        camera->SetPosition(camera->GetPosition() + delta);
+        camera_target = ship_pos;
     }
 
     if (f_lock_ship_axis && ship_character){
@@ -901,15 +970,75 @@ void ApplicationShip::RunLogic(){
     }
 
 
+    //Mouse camera: middle mouse orbits around camera_target, shift+middle pans both camera and
+    //pivot. Same scheme, same sensitivities as ApplicationTank - see the block at the end of its
+    //RunLogic.
+    //
+    //Read with GetDelta, and read EVERY tick whether or not the drag is active. Both halves
+    //matter and getting either wrong makes the camera spin out, exactly as it did in the tank:
+    //GetValue on a relative axis returns a running total that is never reset (so the camera would
+    //rotate by every mouse count since process start, once per frame), and InputController only
+    //clears the delta of a map that was actually read this tick - so a read behind the button
+    //gate lets movement pile up for the whole time the button is NOT held, and the first frame of
+    //a drag applies all of it at once. Draining it here keeps a drag starting from rest.
+    int cam_dx = input->GetDelta(INPUT_MOUSE_DELTA_X);
+    int cam_dy = input->GetDelta(INPUT_MOUSE_DELTA_Y);
+    if (main_window->f_has_focus && input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+        if (input->IsKeyDown(INPUT_SHIFT)){
+            //Move the camera, carrying the pivot with it so the viewing angle is left alone.
+            //Overhead included - there this is what slides the top-down view across the map,
+            //since the camera's up axis lies flat when it is looking straight down. With
+            //tracking on the pan is simply undone next tick, when the pivot goes back on the
+            //ship.
+            vec3 d = camera->MoveSidewaysBy(-cam_dx/100.0f);
+            d += camera->MoveUpBy(cam_dy/100.0f);
+            camera_target += d;
+        }else if (!f_camera_overhead){
+            //Orbiting is free rotation only: overhead owns the camera's rotation, and a drag
+            //there would just be eased back out by the slerp above.
+            //
+            //Up/down rotates the camera position around the camera's own left axis.
+            vec3 p = camera->GetPosition() - camera_target;
+            vec3 axis = camera->GetLeft();
+            quat q(axis,-cam_dy/50.0f);
+            p = q * p;
+            camera->SetPosition(p+camera_target);
+
+            //Re-aim at the pivot keeping the current up, which allows a full 360 over the top.
+            vec3 up = camera->GetUp();
+            camera->SetLookAt(camera_target,&up);
+
+            //Left/right rotates around the world Y axis, lookat included.
+            p = camera->GetPosition()-camera_target;
+            axis = vec3(0,1,0);
+            q.set_rotation(axis,-cam_dx/50.0f);
+            p = q * p;
+            camera->SetPosition(p+camera_target);
+            camera->RotateBy(q);
+        }
+    }
+
     //Mouse wheel for zoom, focused only - otherwise it tracks a wheel being used in another
     //application. InputController drops the delta while unfocused as well.
     static float mouse_delta_sum = 0;
     if (main_window->f_has_focus){
         if (mouse_delta_sum != 0){
-            zoom_target -= mouse_delta_sum * 0.5f;
-            if (zoom_target < 5.0f) zoom_target = 5.0f;
-            if (zoom_target > 80.0f) zoom_target = 80.0f;
-            mouse_delta_sum = 0;
+            if (f_camera_overhead){
+                //Overhead: the wheel sets how high above the pivot the camera rides.
+                zoom_target -= mouse_delta_sum * 0.5f;
+                if (zoom_target < 5.0f) zoom_target = 5.0f;
+                if (zoom_target > 80.0f) zoom_target = 80.0f;
+                mouse_delta_sum = 0;
+            }else{
+                //Free rotation: dolly along the view direction by a fraction of the distance to the
+                //pivot, so the step shrinks as it closes in. The tank measures that distance from
+                //GetForward() rather than GetPosition(), which makes its zoom speed depend on how
+                //far the pivot is from the world origin; this uses the camera's actual distance.
+                vec3 diff = camera->GetPosition() - camera_target;
+                float dist = diff.length() * mouse_delta_sum;
+                camera->MoveForwardBy(dist / 50.0f);
+                mouse_delta_sum /= 1.1f;
+            }
         }
         mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
@@ -1010,7 +1139,18 @@ void ApplicationShip::DrawImGuiUI(){
 
     ImGui::Begin("Ship Settings");
     if (ship_character){
+        ImGui::Checkbox("Overhead View",&f_camera_overhead);
+        if (f_camera_overhead){
+            ImGui::TextDisabled("(top down - wheel sets height, +shift pans)");
+        }else{
+            ImGui::TextDisabled("(free rotation - middle mouse orbits, +shift pans, wheel zooms)");
+        }
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
+        if (f_mode_camera_track){
+            ImGui::TextDisabled("(follows the ship)");
+        }else{
+            ImGui::TextDisabled("(camera stays where it is put)");
+        }
         ImGui::Checkbox("Lock Ship Axis",&f_lock_ship_axis);
         ImGui::Text("Ship Up              : (%.2f, %.2f, %.2f)",ship_character->GetUp().x,ship_character->GetUp().y,ship_character->GetUp().z);
         ImGui::Text("Ship Y-Pos           : %.2f",ship_character->GetPosition().y);
@@ -1087,10 +1227,24 @@ void ApplicationShip::DrawImGuiUI(){
 
     //Its own window rather than a section of "Ship Settings", whose End() sits inside the
     //if (ship_character) above.
-    if (volume){
+    if (!volumes.empty()){
         ImGui::Begin("Volume");
-        if (ImGui::Checkbox("Visible",&f_volume_visible)){
-            volume->SetVisibility(f_volume_visible);
+        //Only the transform below is per volume. Everything from "Shape" down is a uniform on
+        //the one shared shader, so it applies to all of them at once.
+        if (volumes.size() > 1){
+            ImGui::SliderInt("Volume",&volume_selected,0,(int)volumes.size() - 1);
+        }
+        if (volume_selected >= (int)volumes.size()){
+            volume_selected = 0;
+        }
+        Object* volume = volumes.at(volume_selected);
+        ImGui::TextDisabled("%s",volume->name.c_str());
+
+        //Read straight off the object rather than mirroring it in a member, so the checkbox
+        //cannot drift out of step when the selection changes.
+        bool visible = volume->IsVisible();
+        if (ImGui::Checkbox("Visible",&visible)){
+            volume->SetVisibility(visible);
         }
         const char* debug_views[] = {"Off","Marched interval","G-buffer input"};
         ImGui::Combo("Debug View",&volume_debug_view,debug_views,3);

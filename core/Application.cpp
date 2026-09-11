@@ -2710,12 +2710,24 @@ void Application::CheckObjectSelection(){
         return;
     }
 
-    if (!ImGui::GetIO().WantCaptureMouse){ //Mouse is not over an ImGUI Window
-        hovered_objid = input->GetHoveredObjectID();
-        if ((hovered_objid == OBJECTID_INVALID) && input->WasKeyReleased(INPUT_CLICK_LEFT)){
-            selected_object = NULL;
-            return;
-        }
+    //Cursor over an ImGui window: nothing in the scene is hovered, and no click here belongs to
+    //the world. Returning is the point - this used to be an `if (!WantCaptureMouse)` around the
+    //refresh below ONLY, and then fell through to the loop regardless, which went on matching
+    //the STALE hovered_objid left over from the last frame the cursor was over the scene. So
+    //clicking a button on a panel selected - and logged a "Clicked on ID" for - whatever object
+    //happened to be under the cursor before it moved onto the panel.
+    if (ImGui::GetIO().WantCaptureMouse){
+        hovered_objid = OBJECTID_INVALID;
+        //A press that began on an object and is released over a panel is abandoned, rather than
+        //completing as a click on that object once the button comes up.
+        dragged_objid = OBJECTID_INVALID;
+        return;
+    }
+
+    hovered_objid = input->GetHoveredObjectID();
+    if ((hovered_objid == OBJECTID_INVALID) && input->WasKeyReleased(INPUT_CLICK_LEFT)){
+        selected_object = NULL;
+        return;
     }
 
     for (Object* object:renderer->renderable_objects){
