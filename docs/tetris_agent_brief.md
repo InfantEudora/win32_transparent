@@ -139,7 +139,7 @@ Every app embeds an MCP server on **HTTP port 8765** (`docs/mcp_server.md` has t
 This is how you check your own work:
 
 ```bash
-curl -s -X POST http://localhost:8765/mcp -H "Content-Type: application/json" \
+curl -s -X POST http://127.0.0.1:8765/mcp -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"object_list","arguments":{}}}'
 ```
 
@@ -304,6 +304,23 @@ of the active piece to one empty `Object` and rotate the parent.
 
 Lifetime: `object->Destroy()` only **marks** it. `Renderer::DeleteDestroyedObjects()` does the
 actual reaping — see the trap in §8.
+
+**To hang your own data on an object, subclass it.** There is no `void* user_data`, and you do not
+need one: `GetObjectFromAsset` takes an optional target, so it will load an asset straight into a
+type of yours.
+
+```cpp
+class MyCell : public virtual Object{ public: int2 coordinate; };
+
+MyCell* cell = new MyCell();
+assetmanager->GetObjectFromAsset("block",cell);   //fills in mesh + material names
+main_scene->AddObject(cell);
+...
+MyCell* hit = dynamic_cast<MyCell*>(hovered_object);   //reverse lookup, no parallel array
+```
+
+`IsoCell` (which carries exactly this kind of grid coordinate), `ShipCharacter`, `Asteroid`,
+`HingedDoor` and `Pickup` are all built this way — copy any of them.
 
 ### 6.2 Meshes and assets
 

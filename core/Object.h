@@ -51,6 +51,37 @@ struct ObjectState{
 
 //Setters are for the physics thread, or for the render thread while it holds physics_mutex
 //(which is the whole of Application::DrawImGuiUI) - see Renderer::physics_mutex.
+//
+//--- HANGING YOUR OWN DATA ON AN OBJECT --------------------------------------------------------
+//There is deliberately no `void* user_data` here. SUBCLASS INSTEAD - that is the supported way,
+//and it is not the awkward option it might look like, because an asset can be loaded straight
+//INTO an object you already made:
+//
+//    class TetrisCell : public virtual Object{
+//    public:
+//        int2 board_coordinate;
+//    };
+//
+//    TetrisCell* cell = new TetrisCell();
+//    assetmanager->GetObjectFromAsset("block",cell);   //fills in mesh + material names
+//    main_scene->AddObject(cell);
+//
+//and the reverse lookup - "the user clicked an object, what is it?" - is then a cast rather than
+//a search through a parallel array:
+//
+//    TetrisCell* cell = dynamic_cast<TetrisCell*>(hovered_object);
+//
+//This is already how the engine's own gameplay types work: IsoCell (which carries exactly this
+//"which cell am I" coordinate), IsoWall, ShipCharacter, Asteroid, HingedDoor and Pickup all pass
+//`this` to GetObjectFromAsset. Look at any of them for a worked example.
+//
+//WHY NOT a user-data pointer: destruction here is deferred. Destroy() only MARKS an object, and
+//the actual delete happens later inside Renderer::DeleteDestroyedObjects - so an app that put an
+//owning pointer in a user_data field would get no hook at which to free what it pointed at, and
+//the duplicate constructor below would leave two objects owning one allocation. A subclass has
+//none of those problems: its members are destroyed by its own destructor, which the existing
+//delete already runs. If a raw field is ever genuinely wanted here, it should be an opaque
+//integer tag, never a pointer.
 class Object{
     public:
     Object();
@@ -136,14 +167,55 @@ class Object{
     quat GetWorldRotation();    // Calculates and returns world rotation
     quat WorldRotationToLocal(const quat& world_rotation); // Converts a world rotation to a local rotation for this object.
 
-    //Materials
-    void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list); //Picks materials and assigns them to material slots. Pick list from global_list
-    int material_slot[NUM_MATERIAL_SLOTS] = {};
+    /*
+        --- MATERIALS -------------------------------------------------------------------------
+        An object says which material each of its NUM_MATERIAL_SLOTS slots holds in one of two
+        ways, and they are alternatives, not layers:
+
+          BY NAME  - "slot 0 is whatever material is called Bricks". This is what a loader
+                     produces: a GLTF/OBJ file names its materials, several files may name the
+                     same one, and the renderer's global list is not complete until everything has
+                     been loaded. So the name is recorded now and turned into an index later, once
+                     there IS a global list to look in. SetMaterialName raises the "still needs
+                     resolving" flag; Renderer::UpdateObjectMaterials calls ResolveMaterialNames
+                     on the next frame, which does the lookup once and lowers it.
+
+          BY INDEX - "slot 0 is global material 7", or -1 for no material at all. This is what
+                     gameplay code does when it already knows the index (usually from
+                     Renderer::FindMaterialIndex). SetMaterialSlot lowers the resolve flag,
+                     because an index you supplied is the answer - there is nothing left to work
+                     out, and a name lookup must not come along afterwards and overwrite it.
+
+        Setting either one cancels the other, which is the whole invariant. It is enforced here
+        rather than documented because it used to be documented: both arrays were public, most
+        code assigned them directly, and an index written into a slot on an asset-loaded object
+        was silently replaced by the name lookup on the next frame. That is only invisible when
+        the name happens NOT to resolve, which is a terrible thing to depend on.
+    */
+    //Resolve every slot whose name matches something in global_list. No-op unless a name has been
+    //set since the last resolve. Renderer::UpdateObjectMaterials calls this once per frame.
+    void ResolveMaterialNames(std::vector<Material>& global_list);
+
+    //By index. Lowers the resolve flag - see above.
     void SetMaterialSlot(int slot, int material_id);
+    int GetMaterialSlot(int slot) const;
+    //The whole array, for the renderer's per-instance batch fill. A raw pointer rather than
+    //NUM_MATERIAL_SLOTS bounds-checked calls per object per frame.
+    const int* GetMaterialSlots() const { return material_slot; }
+
+    //By name. Raises the resolve flag - see above.
+    void SetMaterialName(int slot, const std::string& name);
+    void SetMaterialNames(const std::array<std::string,NUM_MATERIAL_SLOTS>& names);
+    const std::string& GetMaterialName(int slot) const;
+    const std::array<std::string,NUM_MATERIAL_SLOTS>& GetMaterialNames() const { return material_names; }
+
+    //Records the names of a loader's material list, in order, one per slot. Raises the resolve
+    //flag, so the names are turned into indices on the next frame even if nothing else happens.
     void TakeMaterialNames(std::vector<Material>& list);
-    std::array<std::string,NUM_MATERIAL_SLOTS>material_names; // List of material names the object should pick into it's material slots.
-    bool f_update_materials = true; //In this render cycle, lookup materials from names and place them in slots.
-    void UpdateMaterials(std::vector<Material>& global_list); // Set material ID's by looking up name in the supplied list
+    //Resolves `list` (a loader's own materials, in its own order) against global_list and assigns
+    //the results to slots by position. Lowers the resolve flag: this IS a resolve, just against a
+    //list the caller supplied rather than against the names stored on the object.
+    void PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list);
 
     //Lighting properties
 
@@ -233,6 +305,17 @@ class Object{
 protected:
     //Hierarchy
     Object* parent = NULL;              //Object we are a child of.
+
+    //Materials. PRIVATE TO THE PAIR OF SETTERS ABOVE - including for subclasses, which is why
+    //these are down here rather than in the protected block a subclass can reach. The invariant
+    //is "an index and a pending name lookup cannot both be live", and it is only worth anything
+    //if there is no way to write one of them without the other being cleared.
+    int material_slot[NUM_MATERIAL_SLOTS] = {};
+    std::array<std::string,NUM_MATERIAL_SLOTS>material_names;
+    //A name has been set that has not been looked up yet. Named for what it means: the SLOTS are
+    //stale with respect to the NAMES. (It was f_update_materials, which read like "my materials
+    //changed, re-upload them" - a different operation entirely, and one the renderer does.)
+    bool f_resolve_material_names = true;
 
     //Flags
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable

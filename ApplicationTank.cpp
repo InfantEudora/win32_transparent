@@ -104,6 +104,8 @@ void ApplicationTank::Init(void){
     //We make an assetmanager which we use to load/build all assets from:
     assetmanager = new AssetManager();
 
+    //If we want reproducable random numbers, we can either set a seed and generate one.
+    // or we can load a texture with random numbers in it. Both store as a texture.
     rrand = new RRandom();
     rrand->Generate(512,512);
 
@@ -581,7 +583,7 @@ void ApplicationTank::Init(void){
     Particle* target_particle = new Particle(main_scene->physics_world);
     target_particle->name = "Fire Impact Particle";
     target_particle->SetMesh(target->GetMesh());
-    target_particle->material_names = target->material_names;
+    target_particle->SetMaterialNames(target->GetMaterialNames());
     //Falls back to the ground once emitted, rather than just coasting outward on its burst
     //velocity forever - AddPhysics defaults gravity off, same as every Object, so this has to
     //be requested. Read back and re-applied to each actual clone by Particle's copy
@@ -617,7 +619,7 @@ void ApplicationTank::Init(void){
         //local would be.
         if (Object* cube_ref = assetmanager->GetObjectFromAsset("cube")){
             dust_particle->SetMesh(cube_ref->GetMesh());
-            dust_particle->material_names = cube_ref->material_names;
+            dust_particle->SetMaterialNames(cube_ref->GetMaterialNames());
             delete cube_ref;
         }
         dust_particle->GetPhysics()->SetGravityEnabled(true);

@@ -19,6 +19,42 @@ class InputController;
 #define GAMEPAD_RESCAN_TICKS 50
 #define GAMEPAD_MAX_ANALOG_VALUES 8
 
+/*
+    Gamepad BUTTONS, as synthetic system keycodes.
+
+    XInput delivers the D-pad, face buttons, bumpers, start/back and stick clicks as bits in
+    wButtons - none of which AddGamePadMap can reach, because that maps ANALOG indices. So the one
+    control layout a gamepad game usually wants (the D-pad) was not mappable at all.
+
+    Rather than a second mapping table with its own edge detection, each button gets a synthetic
+    "system keycode" here and travels the ordinary keyboard path: AddKeyMap to bind it,
+    SubmitSystemKey to report it. That means a button gets edge detection (WasKeyReleased),
+    multiple-mappings-per-action counting, the unfocused-input gate and recordability for free,
+    and an app binds one with the call it already knows:
+
+        input->AddKeyMap(GAMEPAD_KEY_DPAD_LEFT,INPUT_MOVE_LEFT);
+        input->AddKeyMap(VK_LEFT,INPUT_MOVE_LEFT);   //both, on the same action, is fine
+
+    The value is the XInput bit itself offset by the base, so there is no table to keep in step -
+    the define IS the mapping. The base is above 0xFFFF, and Win32 VK_ codes are 0..255, so these
+    can never collide with a real key.
+*/
+#define GAMEPAD_SYSKEY_BASE         0x10000
+#define GAMEPAD_KEY_DPAD_UP         (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_DPAD_UP)
+#define GAMEPAD_KEY_DPAD_DOWN       (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_DPAD_DOWN)
+#define GAMEPAD_KEY_DPAD_LEFT       (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_DPAD_LEFT)
+#define GAMEPAD_KEY_DPAD_RIGHT      (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_DPAD_RIGHT)
+#define GAMEPAD_KEY_START           (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_START)
+#define GAMEPAD_KEY_BACK            (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_BACK)
+#define GAMEPAD_KEY_LEFT_THUMB      (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_LEFT_THUMB)
+#define GAMEPAD_KEY_RIGHT_THUMB     (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_RIGHT_THUMB)
+#define GAMEPAD_KEY_LEFT_SHOULDER   (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_LEFT_SHOULDER)
+#define GAMEPAD_KEY_RIGHT_SHOULDER  (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_RIGHT_SHOULDER)
+#define GAMEPAD_KEY_A               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_A)
+#define GAMEPAD_KEY_B               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_B)
+#define GAMEPAD_KEY_X               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_X)
+#define GAMEPAD_KEY_Y               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_Y)
+
 struct GamePadMap{
     int analog_index = -1;
     uint32_t mapped_keycode = 0;   // Our keycode
@@ -269,6 +305,11 @@ protected:
     void SetMouseOverWindow(bool over); //window thread; takes state_mutex
     void SetFocused(bool focused);      //window thread; raises f_release_all_keys on focus loss
     void PollGamepad();                 //physics thread, from PollDevices
+    //Diffs `buttons` (an XInput wButtons word) against the last one seen and submits a key event
+    //for every bit that changed, so a pad button behaves exactly like a keyboard key. Called with
+    //0 when the pad is unplugged or the window loses focus, which releases anything still held.
+    void ApplyGamepadButtons(uint16_t buttons);
+    uint16_t gamepad_buttons = 0;       //last wButtons applied, for edge detection
     uint32_t gamepad_rescan_countdown = 0;
     //Physics thread, first thing in ApplyPendingEvents: advances every scripted hold by one tick,
     //emitting the ordinary events that start and end it.

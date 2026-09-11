@@ -158,7 +158,7 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
             format = AL_FORMAT_STEREO16;
         }
         //Load into buffer
-        alBufferData(buffers[buffer_index],AL_FORMAT_STEREO16,wav.wav_data,wav.GetDataLength(),wav.GetSampleRate());
+        alBufferData(buffers[buffer_index],format,wav.wav_data,wav.GetDataLength(),wav.GetSampleRate());
 
         map_handles[handle_name] = buffer_index;
 
@@ -166,31 +166,56 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
     }
 }
 
+//See the declaration for why this is not map_handles[handle_name].
+int SoundSystem::FindHandle(const char* handle_name){
+    if (!handle_name){
+        debug->Err("Sound handle is NULL\n");
+        return -1;
+    }
+    std::map<std::string,int>::const_iterator it = map_handles.find(handle_name);
+    if (it == map_handles.end()){
+        debug->Err("No sound registered under handle '%s' - was AppendFile called for it?\n",handle_name);
+        return -1;
+    }
+    debug->Trace("Lookup handle %s -> %i\n",handle_name,it->second);
+    return it->second;
+}
+
 void SoundSystem::Play(const char* handle_name, bool looping, float gain){
-    int handle = map_handles[handle_name];
-    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
+    int handle = FindHandle(handle_name);
+    if (handle < 0){
+        return;
+    }
     alSourcei(sources[handle], AL_BUFFER, buffers[handle]);
 
     alSourcei(sources[handle],AL_LOOPING,looping);
-    alSourcePlay(sources[handle]);
 
     alSourcef(sources[handle],AL_GAIN,gain);
+    alSourcePlay(sources[handle]);
 }
 
 void SoundSystem::Pause(const char* handle_name){
-    int handle = map_handles[handle_name];
-    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
+    int handle = FindHandle(handle_name);
+    if (handle < 0){
+        return;
+    }
     alSourcePause(sources[handle]);
 }
 void SoundSystem::Rewind(const char* handle_name){
-    int handle = map_handles[handle_name];
-    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
+    int handle = FindHandle(handle_name);
+    if (handle < 0){
+        return;
+    }
     alSourceRewind(sources[handle]);
 }
 
 bool SoundSystem::FinishedPlaying(const char* handle_name){
-    int handle = map_handles[handle_name];
-    debug->Trace("Lookup handle %s -> %i\n",handle_name,handle);
+    int handle = FindHandle(handle_name);
+    if (handle < 0){
+        //Nothing is playing under a name that does not exist. Reporting "still playing" would hang
+        //any caller that waits on this before moving on.
+        return true;
+    }
     int state = 0;
     alGetSourcei(sources[handle],AL_SOURCE_STATE,&state);
     if (state != AL_PLAYING){

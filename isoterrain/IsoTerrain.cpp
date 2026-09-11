@@ -57,7 +57,8 @@ void IsoTerrain::CreateTerrain(PhysicsWorld* world_in, RRandom* randgen_in, int 
                 //These two lists should know/update when a cell/or child gets destroyed... somehow
                 AttachChild(c);
 
-                c->f_update_materials = true;
+                //GetObjectFromAsset copies the asset's material names on and asks for them to
+                //be resolved, so there is nothing to raise by hand any more.
                 assetmanager->GetObjectFromAsset(base_tile.c_str(),c);
                 cells.push_back(c);
 

@@ -15,6 +15,22 @@ public:
 	Camera();
 
 	void SetType(int _type);
+
+	/*
+	    NOTE ON width AND height, for both of these: they are overwritten every frame.
+
+	    Renderer::DrawFrame assigns camera->viewport.width/height from the renderer's viewport
+	    (GetViewportWidth()/GetViewportHeight()) and calls CalculateLookatMatrix() before it draws
+	    anything, so whatever is passed here survives only until the first frame. That is the
+	    behaviour you want - it is what makes the camera track a window resize on its own, and no
+	    caller has to do anything about it - but it does mean the two arguments the signature leads
+	    with are not a setting. They only matter if something reads viewport.aspect BEFORE the
+	    first frame has been drawn (GetPixelRay does), so passing the real dimensions is still the
+	    right thing to do; just do not expect to control the aspect ratio with them.
+
+	    The arguments are kept rather than removed because they make the call self-documenting at
+	    the twenty-odd sites that already pass renderer->width/height.
+	*/
 	void SetupPerspective(float width, float height, float fov, float znear, float zfar);
 	void SetupOrthographic(float width, float height, float zoom, float znear, float zfar);
 	void CalculateLookatMatrix();

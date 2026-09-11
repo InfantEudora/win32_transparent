@@ -85,10 +85,8 @@ void ApplicationAnimation::Init(void){
         main_scene->AddObject(character->foot_tracker_l);
         main_scene->AddObject(character->foot_tracker_r);
 
-        character->foot_tracker_l->material_slot[0] = renderer->FindMaterialIndex("left_tracker");
-        character->foot_tracker_l->material_names[0] = "left_tracker";
-        character->foot_tracker_r->material_slot[0] = renderer->FindMaterialIndex("right_tracker");
-        character->foot_tracker_r->material_names[0] = "right_tracker";
+        character->foot_tracker_l->SetMaterialSlot(0,renderer->FindMaterialIndex("left_tracker"));
+        character->foot_tracker_r->SetMaterialSlot(0,renderer->FindMaterialIndex("right_tracker"));
         character->tracked_foot_l = character->FindChild("mixamorig:LeftToeBase");
         character->tracked_foot_r = character->FindChild("mixamorig:RightToeBase");
     }

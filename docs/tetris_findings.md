@@ -449,6 +449,64 @@ I did not confirm the leak, because I took the documented precaution: `UpdateDeb
 where `physics_mutex` is held. Worth restating that this is a trap, not a feature — a `Destroy()`
 that leaves a rigid body in the physics world forever will be found by everyone, once each.
 
+### 4.11 An object motion occupies `ticks + 1` ticks — CONFIRMED BY MEASUREMENT, and it cost me a real bug
+
+*Found after the first version of this report, from a bug Dick hit while playing: dropping a piece
+into the area where a line had just cleared made some of its blocks vanish a tick after it landed.*
+
+`Scene::MoveObjectOverTicks` is documented as moving an object "over exactly `ticks` physics
+ticks", and the extra tick is described in `ObjectMotion` as belonging to physics-driven motions
+only — *"The motion lives one tick past ticks_total for that (the velocity set on the last tick
+still has to play out)"*. Neither is true of a plain object. `AdvanceObjectMotions` tests
+`ticks_done >= ticks_total` at the **top** of the loop, so the completion branch (final
+`SetPosition(target)`, then erase) runs for **every** motion on the call after the last
+interpolating one. A 10-tick motion takes 11 calls, physics or not — and for a non-physics object
+the extra call buys nothing, because `factor` already reached 1.0 on the last interpolating tick.
+
+**How it broke the game.** My line-collapse animation ran `MoveObjectOverTicks(cell, ..., 10)` and
+the collapsing phase lasted exactly 10 ticks. So on the tick the phase ended, `SyncBoardView`
+restored every cube to its grid position — and then, later in that *same* tick,
+`AdvanceObjectMotions` made its 11th call and wrote the collapse target back over it. Since the
+normal sync path only set visibility and material and never re-asserted position, that cube stayed
+one row low **for the rest of the run**, drawn on top of its neighbour. Drop a piece into that
+region and its blocks appear to disappear a tick after landing, which is exactly the symptom
+reported.
+
+**Measured.** After 8 line clears, querying every `Cell x,y` object through the `object_get` MCP
+tool and comparing against its grid slot:
+
+| | displaced cubes |
+|---|---|
+| before the fix | **16** (each exactly one row low: `Cell 0,1` at y=0, `Cell 9,4` at y=3, …) |
+| after the fix | **0** |
+
+Re-checked over a longer run: 34 line clears, 0 displaced.
+
+**Two things were wrong and I fixed both, in my app:**
+
+1. `SyncBoardView`'s normal path now re-asserts each cube's position from the board array (guarded
+   by a compare, so it does not dirty 200 transforms a tick). This is the real fix: the comment at
+   the top of that function claimed the view was "rebuilt from scratch every tick", and position
+   was the one thing that was not — which is precisely the field that got corrupted. Any
+   displacement, from any cause, now self-heals on the next tick.
+2. The collapse motion is requested for `TETRIS_COLLAPSE_TICKS - 1`, so it retires *before* the
+   phase ends and there is no glitch frame to heal.
+
+**The engine half is `docs/engine_backlog.md` item 32.** The fix there is to retire a non-physics
+motion at `ticks_done == ticks_total`, keeping the extra tick only when `f_kinematic` — which is
+what the header already promises. It matters more now than it did: with `QueueObjectMotion` (item
+12) each queued leg pays the same extra tick, so a three-leg shake of 5 ticks each runs 18 ticks,
+not 15, and chained legs drift further apart the longer the chain.
+
+*Fixed in core on 2026-09-11, exactly as described above — see backlog item 32. Measured after the
+fix: a plain motion of N takes N ticks, a kinematic one still takes N+1, three queued legs of 5
+take 15, and a 45-piece / 16-line-clear bot run leaves 0 of 200 cell cubes displaced. The
+`TETRIS_COLLAPSE_TICKS - 1` workaround at `ApplicationTetris.cpp:641` is no longer needed.*
+
+**The lesson I would generalise:** a view that is "derived from the state" has to derive *every*
+field it owns, or the one field it does not derive is where the bugs live. I wrote the comment
+claiming that property before the code had it.
+
 ---
 
 ## 5. Changes to `core/` — three, all logged

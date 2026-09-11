@@ -21,17 +21,20 @@ void IsoCell::ApplyPreset(int preset){
 
 void IsoCell::SetTerrainType(int newtype){
     terrain_type = newtype;
-    material_slot[0] = 0;
     if (terrain_type == CELL_TERRAIN_WATER){
-        //Right now, just change the material
-        material_slot[0] = 1;
+        //Right now, just change the material.
+        //AFTER the asset load, not before: loading an asset copies its material NAMES onto this
+        //object and asks for them to be resolved, which would overwrite an index set first.
         assetmanager->GetObjectFromAsset("Tile.Water",this);
+        SetMaterialSlot(0,1);
     }else if (terrain_type == CELL_TERRAIN_NONE){
         // Get the correct mesh
         assetmanager->GetObjectFromAsset("Tile.1111",this);
+        SetMaterialSlot(0,0);
     }else if (terrain_type == CELL_TERRAIN_GRASS){
         // Get the correct mesh
         assetmanager->GetObjectFromAsset("Tile.1111.Grass",this);
+        SetMaterialSlot(0,0);
     }
 }
 
@@ -40,7 +43,6 @@ Object* IsoCell::PlaceFloor(const std::string& asset_name){
         object_floor = assetmanager->GetObjectFromAsset(asset_name.c_str());
         if (object_floor && AttachChild(object_floor)){
             debug->Ok("Placed some floor decoration\n");
-            object_floor->f_update_materials = true;
             object_floor->name = "Floor @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
         }
     }
@@ -52,8 +54,6 @@ Object* IsoCell::PlaceTree(const std::string& asset_name){
     if (props.size() < max_props){
         prop = assetmanager->GetObjectFromAsset(asset_name.c_str());
         AttachChild(prop);
-
-        prop->f_update_materials = true;
 
         prop->name = "Tree @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
 
@@ -176,7 +176,6 @@ IsoWall* IsoCell::PlacePillar(const std::string& asset_name,int direction){
         debug->Info("Setup pillar for cell\n");
         //Use our assetmanager to setup pillar
         assetmanager->GetObjectFromAsset(asset_name.c_str(),pillar);
-        pillar->f_update_materials = true;
         pillar->name = "Pillar " + std::to_string(pillar->coordinate.x) + "," + std::to_string(pillar->coordinate.y);
 
         pillar->SetPosition(vec3(pillar->coordinate.x - 0.5f,pillar->coordinate.z * terrain->height_factor,pillar->coordinate.y - 0.5f) + terrain->center_offset);
@@ -216,9 +215,8 @@ IsoWall* IsoCell::PlaceDoor(const std::string& asset_name,int direction){
         IsoWall* wall = new IsoWall();
 
         if (assetmanager->GetObjectFromAsset(asset_name.c_str(),wall) && AttachChild(wall)){
-            wall->material_names[0] = "Bricks";
-            wall->material_names[1] = "Concrete";
-            wall->f_update_materials = true;
+            wall->SetMaterialName(0,"Bricks");
+            wall->SetMaterialName(1,"Concrete");
             wall->cell = this;
             //The last one if the index.
             int child_index = children.size() - 1;
@@ -333,7 +331,6 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
         assetmanager->GetObjectFromAsset(new_asset_name.c_str(),road_object);
         if (road_object && AttachChild(road_object)){
             debug->Ok("Placed some road decoration\n");
-            road_object->f_update_materials = true;
             //road_object->name = "Road @ " + std::to_string(coordinate.x) + "," + std::to_string(coordinate.y);
             road_object->name = new_asset_name;
             road_object->SetRotation(roadq);
@@ -345,7 +342,6 @@ IsoRoad* IsoCell::PlaceRoad(const std::string& asset_name){
         if (road_object->name != new_asset_name){
             assetmanager->GetObjectFromAsset(new_asset_name.c_str(),road_object);
             debug->Ok("Updated road asset\n");
-            road_object->f_update_materials = true;
             road_object->name = new_asset_name;
             road_object->road_type = new_road_type;
             road_object->SetRotation(roadq);
@@ -386,7 +382,6 @@ IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
         debug->Info("Setup wall for cell\n");
         //Use our assetmanager to setup pillar
         assetmanager->GetObjectFromAsset(asset_name.c_str(),wall);
-        wall->f_update_materials = true;
         wall->name = "Wall " + std::to_string(wall->coordinate.x) + "," + std::to_string(wall->coordinate.y);
 
         //Add a collider to the wall:
@@ -454,9 +449,8 @@ IsoWall* IsoCell::PlaceWall(const std::string& asset_name,int direction){
         IsoWall* wall = new IsoWall();
 
         if (assetmanager->GetObjectFromAsset(asset_name.c_str(),wall) && AttachChild(wall)){
-            wall->material_names[0] = "Bricks";
-            wall->material_names[1] = "Concrete";
-            wall->f_update_materials = true;
+            wall->SetMaterialName(0,"Bricks");
+            wall->SetMaterialName(1,"Concrete");
             wall->cell = this;
             //The last one if the index.
             int child_index = children.size() - 1;

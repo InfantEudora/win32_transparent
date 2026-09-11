@@ -180,7 +180,7 @@ void ApplicationTileset::RunLogic(){
         if (cell && cell->road_object){
             IsoRoad* road = cell->road_object;
             Object* marker = road->PlaceNewMarker(assetmanager,RoadMarkerType::LANE,mouse_terrain_coord - road->GetWorldPosition());
-            marker->material_slot[0] = renderer->FindMaterialIndex("Sign Red");
+            marker->SetMaterialSlot(0,renderer->FindMaterialIndex("Sign Red"));
             f_place_road_marker = false;
         }
     }

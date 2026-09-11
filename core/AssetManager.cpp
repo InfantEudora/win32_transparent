@@ -11,7 +11,7 @@ Asset* AssetManager::AddNewAsset(const char* asset_name, Object* object){
     if (object){
         asset->mesh = object->GetMesh();
         asset->mesh->num_references++;
-        asset->material_names = object->material_names;
+        asset->material_names = object->GetMaterialNames();
     }
     debug->Info("Added new Asset: %s\n",asset_name);
     RegisterAsset(asset);
@@ -79,7 +79,7 @@ static Object* BuildObjectFromAsset(Asset* asset, Object* optional_target){
         object = new Object();
     }
     object->SetMesh(asset->mesh);
-    object->material_names = asset->material_names;
+    object->SetMaterialNames(asset->material_names);
     return object;
 }
 

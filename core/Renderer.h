@@ -90,7 +90,13 @@ class Renderer{
     //calls that use these, and the comment there for why ImGui isn't affected. -1 (the
     //default) means "use the full window", so every app that never touches these fields
     //renders exactly as before.
+    //viewport_y is measured from the BOTTOM of the window, because that is where GL's viewport
+    //origin is - a band along the bottom of the screen is viewport_y = 0, and a band along the top
+    //is viewport_y = height - viewport_height. It is deliberately not flipped to match the
+    //window's top-left convention: everything else here is passed straight to glViewport, and a
+    //silent flip in one of four numbers would be worse than the mismatch.
     int viewport_x = 0;
+    int viewport_y = 0;
     int viewport_width = -1;
     int viewport_height = -1;
     int GetViewportWidth() const { return viewport_width > 0 ? viewport_width : width; }

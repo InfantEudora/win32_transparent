@@ -362,16 +362,25 @@ vec3 Object::GetScale(){
     return state.scale;
 }
 
-//Looks up material_names in a list and updates material_slots
-void Object::UpdateMaterials(std::vector<Material>& global_list){
-    if (!f_update_materials){
+//Turns this object's material NAMES into slot indices, once. See the block in Object.h.
+void Object::ResolveMaterialNames(std::vector<Material>& global_list){
+    if (!f_resolve_material_names){
         return;
     }
-    f_update_materials = false;
+    f_resolve_material_names = false;
     int index = 0;
     for (std::string& mat_name:material_names){
         if (index >= NUM_MATERIAL_SLOTS){
             return;
+        }
+        //An empty name means "this slot was never set by name", so leave whatever index it has.
+        //Skipped explicitly rather than relying on no material being called "" - which is what
+        //this used to rely on, and is why setting a slot by index on an object whose names DID
+        //resolve was silently undone while the same code on an object whose names did not resolve
+        //worked perfectly.
+        if (mat_name.empty()){
+            index++;
+            continue;
         }
         for (int global_index=0;global_index<global_list.size();global_index++){
             Material& global_mat = global_list.at(global_index);
@@ -637,14 +646,49 @@ void Object::DetachChild(Object* targetchild){
     debug->Fatal("Unable to detach child object id=%i from parent. %p from %p\n",targetchild->id, this, parent);
 }
 
+//--- Materials. See the block in Object.h for the invariant these maintain. -------------------
+
+//By index: this IS the answer, so nothing may look a name up over it afterwards.
 void Object::SetMaterialSlot(int slot, int material_id){
     if ((slot >= 0) && (slot < NUM_MATERIAL_SLOTS)){
         material_slot[slot] = material_id;
-        f_update_materials = false;
+        f_resolve_material_names = false;
     }
 }
 
-//Find materials from list in global list, and assign them to the material slots as they are ordered in the list
+int Object::GetMaterialSlot(int slot) const{
+    if ((slot >= 0) && (slot < NUM_MATERIAL_SLOTS)){
+        return material_slot[slot];
+    }
+    return -1;
+}
+
+//By name: the index is not known yet, so ask for a lookup on the next frame.
+void Object::SetMaterialName(int slot, const std::string& name){
+    if ((slot >= 0) && (slot < NUM_MATERIAL_SLOTS)){
+        material_names[slot] = name;
+        f_resolve_material_names = true;
+    }
+}
+
+void Object::SetMaterialNames(const std::array<std::string,NUM_MATERIAL_SLOTS>& names){
+    material_names = names;
+    f_resolve_material_names = true;
+}
+
+const std::string& Object::GetMaterialName(int slot) const{
+    static const std::string empty;
+    if ((slot >= 0) && (slot < NUM_MATERIAL_SLOTS)){
+        return material_names[slot];
+    }
+    return empty;
+}
+
+//Find materials from list in global list, and assign them to the material slots as they are
+//ordered in the list. This is a resolve in its own right - just against the caller's list rather
+//than against the names stored here - so it settles the slots and lowers the flag. Callers pair it
+//with TakeMaterialNames(same list), which raises the flag; doing both leaves the object resolved
+//and the stored names still there for anyone who wants to read them.
 void Object::PickMaterials(std::vector<Material>& list, std::vector<Material>& global_list){
     for (int index=0;index<min((size_t)NUM_MATERIAL_SLOTS,list.size());index++){
         Material& mat = list.at(index);
@@ -657,18 +701,22 @@ void Object::PickMaterials(std::vector<Material>& list, std::vector<Material>& g
             }
         }
     }
+    f_resolve_material_names = false;
 }
 
-//Stores names of a supplied list of materials.
+//Stores names of a supplied list of materials, one per slot in list order.
 void Object::TakeMaterialNames(std::vector<Material>& list){
     int index = 0;
     for (Material& newmat:list){
         if (index >= NUM_MATERIAL_SLOTS){
-            return;
+            break;
         }
         material_names[index] = newmat.name;
         index++;
     }
+    //Names were set, so they need looking up. This used NOT to raise the flag, which is why nine
+    //places in IsoCell.cpp had to remember to raise it by hand after writing a name.
+    f_resolve_material_names = true;
 }
 
 void Object::AddAnimation(Animation* animation){

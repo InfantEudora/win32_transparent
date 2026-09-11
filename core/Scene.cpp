@@ -180,11 +180,6 @@ void Scene::UpdatePhysics(float delta_time){
 };
 
 void Scene::DrawFrame(){
-    /*if (camera){
-        camera->viewport.width = renderer->width;
-        camera->viewport.height = renderer->height;
-        camera->CalculateLookatMatrix();
-    }*/
 
     int2 m = inputcontroller->GetRelativeMousePosition();
 
@@ -312,12 +307,42 @@ void Scene::MoveObjectOverTicks(Object* object,const vec3* target_position,const
         motion.target_rotation = *target_rotation;
     }
     std::lock_guard<std::mutex> lock(object_motions_mutex);
-    for (ObjectMotion& existing:object_motions){
-        if (existing.object == object){
-            existing = motion; //a new request supersedes whatever was in flight
-            return;
+    //A new request supersedes whatever was in flight. Every queued leg for this object goes too,
+    //not just the first one found - once QueueObjectMotion can put several in here, leaving the
+    //rest would have the "replaced" motion resume as soon as the new one finished.
+    //
+    //An erased leg that had already started leaves the body KINEMATIC. That is deliberate and
+    //harmless: the replacement motion runs on the same object, sees ticks_done == 0, and records
+    //previous_body_type from the body as it is now - so the type that gets restored at the end is
+    //the one the erased motion would have restored, not KINEMATIC.
+    for (size_t i = 0; i < object_motions.size();){
+        if (object_motions[i].object == object){
+            object_motions.erase(object_motions.begin() + i);
+        }else{
+            i++;
         }
     }
+    object_motions.push_back(motion);
+}
+
+//See the header. Identical to MoveObjectOverTicks except that it appends rather than replacing;
+//AdvanceObjectMotions is what keeps one object's legs in order.
+void Scene::QueueObjectMotion(Object* object,const vec3* target_position,const quat* target_rotation,int ticks){
+    if (!object || (!target_position && !target_rotation)){
+        return;
+    }
+    ObjectMotion motion;
+    motion.object = object;
+    motion.ticks_total = max(ticks,1);
+    if (target_position){
+        motion.f_position = true;
+        motion.target_position = *target_position;
+    }
+    if (target_rotation){
+        motion.f_rotation = true;
+        motion.target_rotation = *target_rotation;
+    }
+    std::lock_guard<std::mutex> lock(object_motions_mutex);
     object_motions.push_back(motion);
 }
 
@@ -346,9 +371,47 @@ static vec3 AngularVelocityBetween(const quat& from,const quat& to,float delta_t
 
 void Scene::AdvanceObjectMotions(float delta_time){
     std::lock_guard<std::mutex> lock(object_motions_mutex);
+
+    //The last act of a motion: land exactly on the target (a lerp/slerp at factor 1.0 is not
+    //bit-exact, and an integrated body is further off than that), stop the body, and hand it back
+    //to whatever type it was before the motion took it over. Shared by the two places a motion can
+    //retire - see the comment on that split below.
+    auto FinishMotion = [](ObjectMotion& motion,Object* object,Physics* physics){
+        if (physics){
+            physics->SetVelocity(vec3(0,0,0));
+            physics->SetAngularVelocity(vec3(0,0,0));
+        }
+        if (motion.f_position){
+            object->SetPosition(motion.target_position);
+        }
+        if (motion.f_rotation){
+            object->SetRotation(motion.target_rotation);
+        }
+        if (physics && motion.f_kinematic){
+            physics->SetBodyType(motion.previous_body_type);
+        }
+    };
+
     for (size_t i = 0; i < object_motions.size();){
         ObjectMotion& motion = object_motions[i];
         Object* object = motion.object;
+
+        //Only the FIRST leg queued for an object is live; anything behind it waits its turn. The
+        //vector is in submission order and a finished leg is erased, so "first" is simply "no
+        //earlier entry names this object". Linear, but the list holds a handful of entries at
+        //most and this runs once per tick.
+        bool f_waiting_behind_another_leg = false;
+        for (size_t j = 0; j < i; j++){
+            if (object_motions[j].object == object){
+                f_waiting_behind_another_leg = true;
+                break;
+            }
+        }
+        if (f_waiting_behind_another_leg){
+            i++;
+            continue;
+        }
+
         Physics* physics = object->GetPhysics();
 
         if (motion.ticks_done == 0){
@@ -362,22 +425,27 @@ void Scene::AdvanceObjectMotions(float delta_time){
             }
         }
 
-        if (motion.ticks_done >= motion.ticks_total){
-            //The extra tick after the last velocity has played out: land exactly on the target
-            //(integration won't be bit-exact), stop, and hand the body back to whatever it was.
-            if (physics){
-                physics->SetVelocity(vec3(0,0,0));
-                physics->SetAngularVelocity(vec3(0,0,0));
-            }
-            if (motion.f_position){
-                object->SetPosition(motion.target_position);
-            }
-            if (motion.f_rotation){
-                object->SetRotation(motion.target_rotation);
-            }
-            if (physics && motion.f_kinematic){
-                physics->SetBodyType(motion.previous_body_type);
-            }
+        /*
+            A motion retires in one of two places, and WHICH one depends on whether it drives a
+            physics body. This is the whole of the fix for the ticks+1 bug (engine backlog item 32,
+            docs/tetris_findings.md 4.11), so it is worth being explicit:
+
+            - A KINEMATIC motion needs one call BEYOND its last interpolating tick. That tick set a
+              velocity; the solver has not run yet, so the body is not where it should be until it
+              has. Retiring here would restore the body type with the last step still unintegrated.
+
+            - A PLAIN object does not. Its last interpolating tick assigned the exact pose directly,
+              so there is nothing left to play out, and the extra call only made the motion outlive
+              the length it advertised - writing its target back over whatever the app did on that
+              tick. That is not theoretical: a line-collapse animation of N ticks, in a game phase
+              that also lasted N ticks, had its cubes shoved back down again after the phase had
+              restored them, and they stayed a row low for the rest of the run.
+
+            So the kinematic case still finishes here, at the top of the call after the last one;
+            the plain case finishes at the BOTTOM of the call that did its last interpolation.
+        */
+        if (motion.f_kinematic && (motion.ticks_done >= motion.ticks_total)){
+            FinishMotion(motion,object,physics);
             object_motions.erase(object_motions.begin() + i);
             continue;
         }
@@ -401,6 +469,18 @@ void Scene::AdvanceObjectMotions(float delta_time){
             }
             if (motion.f_rotation){
                 object->SetRotation(next_rotation);
+            }
+            //Non-physics: that was the last interpolation step, so the motion is done NOW. See the
+            //block above. FinishMotion only snaps to the exact target here - factor just reached
+            //1.0, so the pose is already right to within a float - and there is no body to restore.
+            //
+            //The !f_kinematic test makes this and the top-of-loop retire mutually exclusive rather
+            //than merely unlikely to overlap: a motion that DOES drive a body reaches this branch
+            //whenever delta_time is not positive, and it must still take its extra call.
+            if (!motion.f_kinematic && (motion.ticks_done >= motion.ticks_total)){
+                FinishMotion(motion,object,physics);
+                object_motions.erase(object_motions.begin() + i);
+                continue;
             }
         }
         i++;

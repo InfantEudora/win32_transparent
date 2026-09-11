@@ -56,7 +56,14 @@ bool TCPServer::Start()
 	if (!InitializeWinsock())
 		return false;
 
-	// Create server socket
+	// Create server socket.
+	//
+	// AF_INET - IPv4 only, and deliberately so: everything that talks to this server is on the
+	// same machine, and a dual-stack listener would be extra surface for no gain. The cost is that
+	// clients must be pointed at 127.0.0.1 and NOT at "localhost": where localhost resolves to ::1
+	// first (the Windows default), every connection pays a failed IPv6 attempt before falling back
+	// to IPv4 - about 2 seconds per request, while appearing to work perfectly. That is documented
+	// where people will actually hit it, in docs/mcp_server.md.
 	m_serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (m_serverSocket == INVALID_SOCKET)
 	{
@@ -250,12 +257,12 @@ void TCPServer::AcceptConnections(){
 		char clientIP[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
 
-		debug->Info("Client connected from %s:%d\n", clientIP, ntohs(clientAddr.sin_port));
+		debug->Trace("Client connected from %s:%d\n", clientIP, ntohs(clientAddr.sin_port));
 
 
 		// Call callback if set
 		if (m_onClientConnect){
-            debug->Info("Calling client connect callback\n");
+            debug->Trace("Calling client connect callback\n");
 			m_onClientConnect(clientSocket);
 		} else {
 			// No callback set, keep the socket connected

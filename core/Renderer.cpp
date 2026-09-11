@@ -163,7 +163,7 @@ void Renderer::CullObjects(){
 //Updates all the materials that need to be picked from the objects that need to be rendered.
 void Renderer::UpdateObjectMaterials(){
     for (Object* object:renderable_objects){
-        object->UpdateMaterials(materials);
+        object->ResolveMaterialNames(materials);
     }
 }
 
@@ -293,8 +293,9 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index){
 
             instancedata_t data;
             data.mat_transformscale = object->GetWorldTransformScaleMatrix();
+            const int* object_slots = object->GetMaterialSlots();
             for (int i=0;i<NUM_MATERIAL_SLOTS;i++){
-                data.material_slot[i] = object->material_slot[i];
+                data.material_slot[i] = object_slots[i];
             }
             if (object->IsPickable()){
                 data.objectindex = object_index;
@@ -409,7 +410,7 @@ void Renderer::DeferredPass(Camera* camera){
 
     //Viewport and clear - see the main color pass in DrawFrame for why this uses
     //GetViewportWidth/Height() (and the offset) instead of the raw width/height.
-    glViewport(viewport_x, 0, GetViewportWidth(), GetViewportHeight());
+    glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
     vec4 clr_clear = vec4(0,0,0,0);
     float depth = 1.0;
     glClearNamedFramebufferfv(deferred_fbo_id,GL_DEPTH,0,&depth);
@@ -686,7 +687,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     //Viewport - confines the actual 3D draw calls below to the (optionally smaller,
     //optionally offset) sub-rectangle set via viewport_x/viewport_width/viewport_height;
     //see Renderer.h's comment on those fields.
-    glViewport(viewport_x, 0, GetViewportWidth(), GetViewportHeight());
+    glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
 
     { //We draw skybox before other stuff
         DrawSkyBox(camera);

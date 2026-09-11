@@ -51,6 +51,15 @@ public:
     void Pause(const char* handle_name);
     void Rewind(const char* handle_name);
     bool FinishedPlaying(const char* handle_name);
+
+private:
+    //Looks a handle up, or returns -1 after logging which name failed.
+    //
+    //The four calls above used to index map_handles with operator[], which DEFAULT-CONSTRUCTS a
+    //missing key: a typo'd or never-registered name silently became handle 0 and played whatever
+    //sound was registered first, forever, with no way to tell from the outside. It also grew the
+    //map on every such call. A wrong sound is a baffling thing to debug; a log line is not.
+    int FindHandle(const char* handle_name);
 };
 
 #endif

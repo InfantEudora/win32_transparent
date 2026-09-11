@@ -43,7 +43,7 @@ CraneCharacter::CraneCharacter(AssetManager* assetmanager, PhysicsWorld* physics
     const float base_half_x = 1.0f, base_half_y = 0.3f, base_half_z = 1.0f;
     if (Object* base_visual = MakeCraneBox(assetmanager,base_half_x*2.0f,base_half_y*2.0f,base_half_z*2.0f)){
         SetMesh(base_visual->GetMesh());
-        material_names = base_visual->material_names;
+        SetMaterialNames(base_visual->GetMaterialNames());
         SetScale(base_visual->GetScale());
         delete base_visual; //borrowed for mesh/material/scale only, never added to the scene - same pattern as AddTestSceneObjects' own cube_ref
     }

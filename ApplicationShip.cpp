@@ -151,7 +151,7 @@ Object* ApplicationShip::AddVolume(const char* name, const vec3& position, const
     v->SetPosition(position);
     v->SetScale(size);
     //No material: the shader computes its own colour and never touches the material buffer.
-    v->material_slot[0] = -1;
+    v->SetMaterialSlot(0,-1);
     //Belt and braces. MESH_MODE_SHADER meshes no longer go through DeferredPass at all, so the
     //box does not reach the object-id buffer and could not be picked anyway - but nothing about
     //a fog box is meant to be clickable.

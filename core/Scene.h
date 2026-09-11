@@ -51,6 +51,14 @@ public:
     //Moves object from wherever it is when the first tick runs to the given target(s) over
     //exactly `ticks` physics ticks, interpolated (lerp/slerp). NULL leaves that component alone.
     //
+    //"Exactly `ticks`" is now true for an object WITHOUT physics: the motion is retired on the
+    //same tick as its last interpolation step. An object WITH a physics body still occupies one
+    //tick more, and must - the last tick sets a velocity that the solver has not integrated yet,
+    //so the body is not on target until the following tick. Budget ticks+1 for those.
+    //(It used to be ticks+1 for everything, including plain objects, where the extra tick did
+    //nothing but write the target back over whatever else had moved the object that tick. See
+    //docs/engine_backlog.md item 32 for the bug that caused.)
+    //
     //An object WITH a physics body is switched to KINEMATIC for the duration and driven by
     //velocity - each tick gets the linear/angular velocity that carries it to the next
     //interpolated pose, and on the tick after the last it's snapped to the exact target, its
@@ -65,6 +73,18 @@ public:
     //for an object that already has one replaces it. Callable from any thread (e.g. an MCP tool
     //handler); consumed on the physics thread.
     void MoveObjectOverTicks(Object* object,const vec3* target_position,const quat* target_rotation,int ticks);
+
+    //Same, but APPENDS instead of replacing: this leg starts from wherever the previous one left
+    //the object, on the tick after it finishes. Replacing is still the right default - a game
+    //re-issuing "go here" every tick wants the latest target, not a thousand queued legs - but it
+    //makes a there-and-back impossible to express, because only one leg of it survives. A camera
+    //shake, a piece bouncing as it lands, a panel sliding out and back: each is Queue, Queue.
+    //
+    //Legs for one object run strictly in submission order; legs for DIFFERENT objects are
+    //independent and run concurrently, exactly as separate motions always have.
+    //MoveObjectOverTicks clears the whole queue for that object, so it remains the way to cancel.
+    void QueueObjectMotion(Object* object,const vec3* target_position,const quat* target_rotation,int ticks);
+
     int GetPendingObjectMotions();
 
     //--- Simulation commands ------------------------------------------------------------------
@@ -156,6 +176,10 @@ private:
         int ticks_done = 0;
         //Physics-driven motions only: the body type to put back when done. The motion lives one
         //tick past ticks_total for that (the velocity set on the last tick still has to play out).
+        //This flag is therefore also what AdvanceObjectMotions dispatches on to decide WHERE a
+        //motion retires - a plain object finishes on its last interpolating tick instead, which is
+        //what makes `ticks` mean ticks for it. The claim above that the extra tick was for physics
+        //motions "only" was the intent but not the behaviour until that was fixed.
         bool f_kinematic = false;
         rp3d::BodyType previous_body_type = rp3d::BodyType::STATIC;
     };

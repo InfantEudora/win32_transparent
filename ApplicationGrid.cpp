@@ -130,7 +130,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
             physics->SetStatic(true);
         }
     }
-    character->SetNextAnimation("IdleStanding");
+    character->SwitchToAnimation("IdleStanding");
     character->SetPosition(vec3(0,0,0));
 
     //Load another hand, that uses the same mesh... preferably.
@@ -171,8 +171,8 @@ Scene* ApplicationGrid::CreateHandTestScene(){
                 }
             }
         }
-        character->SetNextAnimation("IdleStanding");
-         character->SetPosition(vec3(0,0,2));
+        character->SwitchToAnimation("IdleStanding");
+        character->SetPosition(vec3(0,0,2));
     }
 
 
@@ -191,7 +191,7 @@ Scene* ApplicationGrid::CreateHandTestScene(){
     if (selected_animation && cog_object){
         cog_object->AddAnimation(selected_animation);
         selected_animation->looped = true;
-        cog_object->SetNextAnimation("CogRotation");
+        cog_object->SwitchToAnimation("CogRotation");
     }
 
     // A character with Morphh targets and animations.
@@ -478,7 +478,7 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
         }
     }
 
-    character->SetNextAnimation("IdleBored");
+    character->SwitchToAnimation("IdleBored");
 
 
 
@@ -1100,11 +1100,11 @@ void ApplicationGrid::RenderRightClickMenu(){
     IsoCell* clicked_cell = dynamic_cast<IsoCell*>(rightclick_menu_object);
     IsoStairs* clicked_stairs = dynamic_cast<IsoStairs*>(rightclick_menu_object);
     if (clicked_stairs){
-        clicked_cell = dynamic_cast<IsoCell*>(clicked_stairs->parent);
+        clicked_cell = dynamic_cast<IsoCell*>(clicked_stairs->GetParent());
     }
     //Still nothing?
-    if (!clicked_cell && rightclick_menu_object && rightclick_menu_object->parent){
-        clicked_cell = dynamic_cast<IsoCell*>(rightclick_menu_object->parent);
+    if (!clicked_cell && rightclick_menu_object && rightclick_menu_object->GetParent()){
+        clicked_cell = dynamic_cast<IsoCell*>(rightclick_menu_object->GetParent());
     }
     if (clicked_cell){
         return RenderRightClickMenu_IsoCell(clicked_cell);
@@ -1184,11 +1184,11 @@ void ApplicationGrid::RenderGridUI(){
     IsoStairs* hovered_stairs = dynamic_cast<IsoStairs*>(hovered_object);
     if (hovered_stairs){
         ImGui::Text("Hovered Stairs");
-        hovered_cell = dynamic_cast<IsoCell*>(hovered_stairs->parent);
+        hovered_cell = dynamic_cast<IsoCell*>(hovered_stairs->GetParent());
     }
     //Still nothing?
-    if (!hovered_cell && hovered_object && hovered_object->parent){
-        hovered_cell = dynamic_cast<IsoCell*>(hovered_object->parent);
+    if (!hovered_cell && hovered_object && hovered_object->GetParent()){
+        hovered_cell = dynamic_cast<IsoCell*>(hovered_object->GetParent());
     }
 
     if (!hovered_cell){

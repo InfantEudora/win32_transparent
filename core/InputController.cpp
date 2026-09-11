@@ -146,6 +146,12 @@ void InputController::PollDevices(){
             if (map.system_keycode == 0){
                 continue;   //the mouse axes and wheel have no system key to poll
             }
+            if (map.system_keycode >= GAMEPAD_SYSKEY_BASE){
+                //A gamepad button, not a key. GetAsyncKeyState knows nothing about it and would
+                //return 0, which this loop would read as "released" and act on - cancelling every
+                //button press the instant PollGamepad reported it. PollGamepad owns these.
+                continue;
+            }
             bool down = sample_keys && (GetAsyncKeyState(map.system_keycode) & 0x8000) != 0;
             if (down == map.f_held){
                 continue;   //no edge, nothing to report
@@ -441,6 +447,8 @@ void InputController::PollGamepad(){
         for (int i=0;i<GAMEPAD_MAX_ANALOG_VALUES;i++){
             analog_values[i] = 0;
         }
+        //Same for the buttons: a pad unplugged mid-press must not leave the action latched down.
+        ApplyGamepadButtons(0);
         gamepad_rescan_countdown = GAMEPAD_RESCAN_TICKS;
         return;
     }
@@ -450,8 +458,13 @@ void InputController::PollGamepad(){
         for (int i=0;i<GAMEPAD_MAX_ANALOG_VALUES;i++){
             analog_values[i] = 0;
         }
+        ApplyGamepadButtons(0);
         return;
     }
+
+    //Buttons before the sticks, so a press and a stick deflection sampled in the same call reach
+    //the queue in a fixed order rather than depending on where this sits in the function.
+    ApplyGamepadButtons(state.Gamepad.wButtons);
 
     //Indices and scaling exactly as the old GamePadController had them, so every existing
     //AddGamePadMap(index,...) in the apps keeps meaning the same thing.
@@ -478,6 +491,36 @@ void InputController::PollGamepad(){
     }
     if ((rmotor > 0) || (lmotor > 0) || send_disable){
         SendMotorData(lmotor,rmotor);
+    }
+}
+
+//See the declaration. Deliberately routes through SubmitSystemKey rather than writing KeyState
+//directly: that is what gives a pad button the same edges, the same multi-mapping counting and the
+//same place in the recorded event stream as a key on the keyboard.
+void InputController::ApplyGamepadButtons(uint16_t buttons){
+    if (buttons == gamepad_buttons){
+        return;
+    }
+    //Every XInput button bit. 0x0400/0x0800 are unassigned by XInput and deliberately absent.
+    static const uint16_t button_bits[] = {
+        XINPUT_GAMEPAD_DPAD_UP,        XINPUT_GAMEPAD_DPAD_DOWN,
+        XINPUT_GAMEPAD_DPAD_LEFT,      XINPUT_GAMEPAD_DPAD_RIGHT,
+        XINPUT_GAMEPAD_START,          XINPUT_GAMEPAD_BACK,
+        XINPUT_GAMEPAD_LEFT_THUMB,     XINPUT_GAMEPAD_RIGHT_THUMB,
+        XINPUT_GAMEPAD_LEFT_SHOULDER,  XINPUT_GAMEPAD_RIGHT_SHOULDER,
+        XINPUT_GAMEPAD_A,              XINPUT_GAMEPAD_B,
+        XINPUT_GAMEPAD_X,              XINPUT_GAMEPAD_Y
+    };
+    uint16_t changed = buttons ^ gamepad_buttons;
+    //Updated BEFORE the submits, so this is consistent even if one of them is dropped by the
+    //focus gate inside SubmitSystemKey - the next poll still diffs against what the pad reported.
+    gamepad_buttons = buttons;
+    for (size_t i = 0;i < sizeof(button_bits)/sizeof(button_bits[0]);i++){
+        uint16_t bit = button_bits[i];
+        if (!(changed & bit)){
+            continue;
+        }
+        SubmitSystemKey(GAMEPAD_SYSKEY_BASE + bit,(buttons & bit) != 0);
     }
 }
 

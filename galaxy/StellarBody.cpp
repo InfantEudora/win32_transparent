@@ -356,7 +356,7 @@ StellarObject* StellarObject::CreateNewStar(AssetManager* assetmanager){
     StellarObject* star = new StellarObject();
     assetmanager->GetObjectFromAsset("sphere",star);
     Object* highlight = assetmanager->GetObjectFromAsset("sunhighlight");
-    highlight->material_slot[0] = 1;
+    highlight->SetMaterialSlot(0,1);
     star->AttachChild(highlight);
     star->stellarbody = new StellarBody();
     star->stellarbody->type = BODY_STAR;
@@ -372,7 +372,7 @@ StellarObject* StellarObject::CreateNewShip(AssetManager* assetmanager){
     }
     StellarObject* ship = new StellarObject();
     assetmanager->GetObjectFromAsset("ship",ship);
-    ship->material_slot[0] = 2;
+    ship->SetMaterialSlot(0,2);
     ship->stellarbody = new StellarBody();
     ship->stellarbody->type = BODY_SHIP;
     ship->stellarbody->colony = GenerateNewShipColony();
@@ -387,7 +387,7 @@ StellarObject* StellarObject::CreateNewBeacon(AssetManager* assetmanager){
     StellarObject* beacon = new StellarObject();
     assetmanager->GetObjectFromAsset("sphere",beacon);
     beacon->SetScale(vec3(0.5,0.5,0.5));
-    beacon->material_slot[0] = 2;
+    beacon->SetMaterialSlot(0,2);
     beacon->stellarbody = new StellarBody();
     beacon->stellarbody->type = BODY_BEACON;
     return beacon;

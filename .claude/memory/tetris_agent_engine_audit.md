@@ -42,5 +42,9 @@ removed `SetNextAnimation` — see [[animation_root_motion_rewrite]]).
 MCP over HTTP: use `127.0.0.1`, never `localhost` — the server binds IPv4 only, so `localhost`
 costs ~2s per call on this machine instead of ~15ms.
 
+**Follow-up backlog lives at `docs/engine_backlog.md`** - every item from the findings report,
+ordered by effort, with stable numbers and tick boxes. Refer to items by number. Check it before
+proposing engine work, and tick items there when they land.
+
 Related: [[project_overview]], [[threading_model]], [[deterministic_sim_plan]],
 [[animation_root_motion_rewrite]], [[rrand_shared_stream_todo]], [[build_toolchain_location]]

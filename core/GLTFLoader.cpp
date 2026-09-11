@@ -1112,8 +1112,7 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
     bone->name = node.name;
     bone->bone_index = bone_count;
     bone->node_index = node_index;
-    bone->material_names[0] = "bone_mat";
-    bone->f_update_materials = true;
+    bone->SetMaterialName(0,"bone_mat");
     bone->inverse_bind_matrix = invbinmatrices.at(bone->bone_index);
     bone_count++;
 

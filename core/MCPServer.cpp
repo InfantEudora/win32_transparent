@@ -239,7 +239,11 @@ void MCPServer::StartHttp(int port) {
         m_httpServer = nullptr;
         return;
     }
-    debug->Info("MCP server listening on http://localhost:%d/mcp\n", port);
+    //127.0.0.1, not localhost, and the log line says so because people copy it. TCPServer binds
+    //AF_INET only, so on a machine where localhost resolves to ::1 first, every request pays a
+    //failed IPv6 connect before falling back - ~2s per call instead of ~15ms, with nothing
+    //appearing to be wrong. See docs/mcp_server.md.
+    debug->Info("MCP server listening on http://127.0.0.1:%d/mcp\n", port);
 }
 
 // Case-insensitive substring search - HTTP header names are case-insensitive

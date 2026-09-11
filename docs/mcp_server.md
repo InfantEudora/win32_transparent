@@ -41,10 +41,34 @@ stdio ties the app's process lifecycle to whichever MCP client happens to be att
 
 HTTP decouples them completely: `wind.exe` binds port 8765 once at startup and keeps running and listening regardless of who's connected. An MCP client attaches/detaches over the network whenever it wants; none of that ever touches the app process. This is the transport to use for testing any long-running graphical app in this project - register it with `--transport http` (below), not stdio.
 
+## Always address it as `127.0.0.1`, never as `localhost`
+
+`TCPServer` creates an `AF_INET` socket and binds `INADDR_ANY` - it listens on IPv4 only, and that
+is deliberate: this endpoint exists to be reached from the same machine, and a dual-stack socket
+would be extra surface for nothing.
+
+The consequence is that `localhost` is the wrong name to use. On a machine where `localhost`
+resolves to `::1` ahead of `127.0.0.1` - which is the default on modern Windows - every request
+first attempts IPv6, waits for that to fail, and only then falls back to IPv4. Everything still
+works, so nothing looks broken; it is just enormously slower. Measured on this machine, same tool,
+same process, back to back:
+
+| URL | Latency |
+|---|---|
+| `http://127.0.0.1:8765/mcp` | **15 ms** |
+| `http://localhost:8765/mcp` | **2,058 ms** |
+
+That is 137x, and it is entirely invisible unless you go looking. It was first noticed as "the
+engine's tool dispatch is slow" during a scripted session making thousands of calls - it is not;
+the handler is straight-line code behind a 10 ms accept loop.
+
+So: **write `127.0.0.1` in every client config, every curl, and every script.** If a tool call
+seems to take about two seconds for no reason, this is why.
+
 ## Registering it as a Claude Code MCP server
 
 ```
-claude mcp add --scope local --transport http tank-app http://localhost:8765/mcp
+claude mcp add --scope local --transport http tank-app http://127.0.0.1:8765/mcp
 ```
 
 The app must already be running (launch it once, however you like - a build + run, or a stray instance from a previous session) before this will connect; unlike the stdio form, `claude mcp add` here does not launch anything itself.
@@ -84,11 +108,11 @@ taskkill //F //IM wind.exe                    # closing stdin does NOT kill the 
 The app just needs to already be running (see build/run below) - no coproc juggling, since the listener is independent of whoever's talking to it:
 
 ```bash
-curl -s -X POST http://localhost:8765/mcp -H "Content-Type: application/json" \
+curl -s -X POST http://127.0.0.1:8765/mcp -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
-curl -s -X POST http://localhost:8765/mcp -H "Content-Type: application/json" \
+curl -s -X POST http://127.0.0.1:8765/mcp -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' -w "\nHTTP_STATUS:%{http_code}\n"   # expect 202, empty body
-curl -s -X POST http://localhost:8765/mcp -H "Content-Type: application/json" \
+curl -s -X POST http://127.0.0.1:8765/mcp -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tank_telemetry","arguments":{}}}'
 ```
 

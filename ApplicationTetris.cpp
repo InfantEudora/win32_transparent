@@ -218,12 +218,13 @@ static Object* MakeCube(AssetManager* assetmanager, Scene* scene, const char* na
     object->name = name;
     object->SetPosition(position);
     object->SetScale(scale);
-    object->material_slot[0] = material_index;
+    object->SetMaterialSlot(0,material_index);
     //GetObjectFromAsset copies the OBJ's own material NAMES onto the object, and the renderer
     //would resolve those over the slot just assigned on the next frame. This app picks its
     //materials by index, so the name path is switched off rather than fought with.
-    object->material_names[0].clear();
-    object->f_update_materials = false;
+    //SetMaterialSlot above already settled this slot - an index is the answer, so no name lookup
+    //can come along and overwrite it. Clearing the asset's name by hand used to be necessary and
+    //is not any more; see docs/engine_backlog.md item 14.
     scene->AddObject(object);
     return object;
 }
@@ -539,21 +540,11 @@ void ApplicationTetris::SyncBoardView(){
         are removed when the animation finishes), so syncing would fight the motion.
     */
     if (f_collapse_animating){
-        if (game.phase != TETRIS_PHASE_COLLAPSING){
-            //The animation is over: put every cube back on its exact grid position and let the
-            //array take over again. Snapping here rather than trusting the interpolation to have
-            //landed exactly is deliberate - a view that is 0.001 off the grid looks wrong.
-            f_collapse_animating = false;
-            for (int y = 0; y < TETRIS_BOARD_H; y++){
-                for (int x = 0; x < TETRIS_BOARD_W; x++){
-                    if (cell_objects[y][x]){
-                        cell_objects[y][x]->SetPosition(CellWorldPosition(x,y));
-                    }
-                }
-            }
-        }else{
+        if (game.phase == TETRIS_PHASE_COLLAPSING){
             return;
         }
+        //The animation is over; the loop below puts every cube back on its grid position.
+        f_collapse_animating = false;
     }
     if (game.phase == TETRIS_PHASE_COLLAPSING && !f_collapse_animating){
         StartCollapseAnimation();
@@ -576,13 +567,35 @@ void ApplicationTetris::SyncBoardView(){
             if (!cell){
                 continue;
             }
+            /*
+                POSITION is re-asserted here, not just visibility and colour, and that is not
+                belt-and-braces - it is the fix for a real bug.
+
+                The collapse animation drives these same cubes through MoveObjectOverTicks, and a
+                motion outlives its own `ticks` by one tick: Scene::AdvanceObjectMotions checks
+                `ticks_done >= ticks_total` at the TOP of the loop, so the call that lands the
+                object exactly on its target comes AFTER the last interpolating one. If that final
+                call happens after this function has already decided the animation is over, it
+                writes the collapse target back over the grid position - and since nothing else
+                ever sets a cell's position again, that cube stays parked one row low for the rest
+                of the run, drawn on top of its neighbour. Dropping a piece into that region then
+                looks like the piece loses blocks a tick after it lands.
+
+                Re-asserting from the array every tick makes the view genuinely a function of the
+                board, which is what the comment at the top of this function claims. Guarded by a
+                compare so the usual case does not dirty 200 transform matrices a tick.
+            */
+            vec3 home = CellWorldPosition(x,y);
+            if ((cell->GetPosition() - home).length() > 0.001f){
+                cell->SetPosition(home);
+            }
             int8_t type = game.board[y][x];
             if (type < 0){
                 cell->Hide();
                 continue;
             }
             cell->Show();
-            cell->material_slot[0] = f_flashing ? material_flash : material_piece[type];
+            cell->SetMaterialSlot(0,f_flashing ? material_flash : material_piece[type]);
         }
     }
 }
@@ -620,6 +633,11 @@ void ApplicationTetris::StartCollapseAnimation(){
                 continue;
             }
             vec3 target = CellWorldPosition(x,y - drop);
+            //The full phase length. This used to ask for one tick less, to dodge an engine bug
+            //where a motion of N ticks occupied N+1 calls to Scene::AdvanceObjectMotions and the
+            //extra one snapped the cube back onto its target after this phase had already moved it
+            //home - see docs/engine_backlog.md item 32. A motion without physics now retires on
+            //its last interpolating tick, so N means N and the animation fills the phase exactly.
             main_scene->MoveObjectOverTicks(cell,&target,NULL,TETRIS_COLLAPSE_TICKS);
         }
     }
@@ -646,7 +664,7 @@ void ApplicationTetris::SyncPieceView(){
         Object* cube = piece_objects[i];
         if (cube){
             cube->Show();
-            cube->material_slot[0] = material_piece[game.piece_type];
+            cube->SetMaterialSlot(0,material_piece[game.piece_type]);
             if (f_snap){
                 cube->SetPosition(target);
             }else if ((target - piece_cell_targets[i]).length() > 0.01f){
@@ -686,7 +704,7 @@ void ApplicationTetris::SyncPreviewView(){
         cube->Show();
         //Dimmed to the ghost material while it cannot be used again this piece, so the rule is
         //visible instead of being something the player has to remember.
-        cube->material_slot[0] = game.f_hold_used ? material_ghost : material_piece[game.hold_type];
+        cube->SetMaterialSlot(0,game.f_hold_used ? material_ghost : material_piece[game.hold_type]);
         cube->SetPosition(PreviewCellPosition(vec3(PREVIEW_X,HOLD_Y,0),game.hold_type,i));
     }
 
@@ -703,7 +721,7 @@ void ApplicationTetris::SyncPreviewView(){
                 continue;
             }
             cube->Show();
-            cube->material_slot[0] = material_piece[type];
+            cube->SetMaterialSlot(0,material_piece[type]);
             cube->SetPosition(PreviewCellPosition(anchor,type,i));
         }
     }

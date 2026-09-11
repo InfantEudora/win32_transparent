@@ -39,8 +39,10 @@ Particle::Particle(Particle* particle):Particle(particle->GetPhysics()->world){
     }
     name = particle->name;
     //Copy the material names and slots
-    material_names[0] = particle->material_names[0];
-    material_slot[0] = particle->material_slot[0];
+    //Name first, then index: SetMaterialSlot lowers the resolve flag that SetMaterialName raised,
+    //so the copy keeps the original's resolved index instead of looking it up again next frame.
+    SetMaterialName(0,particle->GetMaterialName(0));
+    SetMaterialSlot(0,particle->GetMaterialSlot(0));
 }
 
 Particle::~Particle(){

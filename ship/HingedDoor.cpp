@@ -44,7 +44,7 @@ HingedDoor::HingedDoor(AssetManager* assetmanager, PhysicsWorld* physicsworld, S
     post = assetmanager->GetObjectFromAsset("cylinder");
     if (post){
         post->name = "Door Hinge Post";
-        post->material_names[0] = "metal_material";
+        post->SetMaterialName(0,"metal_material");
         ScaleAssetTo(post,vec3(post_radius * 2.0f,post_height,post_radius * 2.0f));
         post->SetPosition(hinge_position);
         post->AddPhysics(physicsworld);
@@ -63,7 +63,7 @@ HingedDoor::HingedDoor(AssetManager* assetmanager, PhysicsWorld* physicsworld, S
     //--- The panel: the "cube" asset squashed flat, hung off the post by one edge so the hinge
     //axis runs down that edge rather than through the middle of the leaf.
     assetmanager->GetObjectFromAsset("cube",this);
-    material_names[0] = "container_material";
+    SetMaterialName(0,"container_material");
     ScaleAssetTo(this,vec3(width,panel_height,panel_thickness));
     rest_position = hinge_position + door_rotation * vec3(width * 0.5f,0,0);
     rest_rotation = door_rotation;
