@@ -40,7 +40,8 @@ public:
     ApplicationTank();
 
     void Init(void) override;
-    void RunLogic() override;
+    void UpdateView() override;
+    void RunSimulationTick() override;
 
     void DrawImGuiUI(void) override;
     void RenderTankWheelDebugUI(void);
@@ -81,7 +82,7 @@ public:
     Object* bridge = NULL;
     float bridge_yaw_degrees = 0.0f;
 
-    //Fired on INPUT_FIRE (see RunLogic) - bursts a handful of copies of the target marker
+    //Fired on INPUT_FIRE (see RunSimulationTick) - bursts a handful of copies of the target marker
     //itself at the target's current position, as a placeholder impact effect until a real
     //explosion/muzzle-flash asset exists.
     ParticleEmitter* fire_impact_emitter = NULL;
@@ -126,7 +127,7 @@ public:
     //
     //These four floats are the crane's whole command state, and the ONE source of truth for it:
     //the debug panel's sliders, the crane_speed MCP tool and the keyboard/gamepad all write
-    //them, and RunLogic pushes them into the crane every tick. Nothing calls CraneCharacter's
+    //them, and RunSimulationTick pushes them into the crane every tick. Nothing calls CraneCharacter's
     //Set*Speed with a value that isn't one of these.
     CraneCharacter* crane = NULL;
     float crane_piston_speed = 0.0f;
@@ -199,9 +200,24 @@ public:
     }
     //Position/velocity/mass/centre of mass plus the per-wheel suspension and tire breakdown for
     //any Vehicle, and the vehicle-specific extras (turret, tuning) for the tank and buggy.
+    /*
+        Both telemetry builders read state the physics thread owns - wheel spring/drive/lateral
+        forces and the friction budget are written part-way through a tick - and every caller is an
+        MCP tool handler, which holds no lock. So the public entry points read at a tick boundary
+        and the Build* functions below them do the actual work with it held.
+
+        This matters more here than anywhere else in the repo: these numbers are what
+        tools/baseline_rp3d_*.json diff against, so a torn read does not just look odd, it reports
+        a wheel load that never occurred and invalidates a comparison.
+
+        Do not call the Build* forms from anywhere that already holds renderer->physics_mutex -
+        the debug UI, for instance. Nothing does today; the mutex is not recursive.
+    */
     json GetVehicleTelemetry(Vehicle* vehicle);
+    json BuildVehicleTelemetry(Vehicle* vehicle);
     json GetTankTelemetry();
     json GetCraneTelemetry();
+    json BuildCraneTelemetry();
     json GetBridgeTelemetry();
 
     //Shared by Init() (the recorded, permanent placement) and the bridge_spawn MCP tool
@@ -216,7 +232,8 @@ public:
     TankCharacter* controlled_tank = NULL;
     BuggyCharacter* controlled_buggy = NULL;
 
-    //Whichever of controlled_tank/controlled_buggy currently receives keyboard/RunLogic input -
+    //Whichever of controlled_tank/controlled_buggy currently receives keyboard/RunSimulationTick
+    //input -
     //toggled by the "Controlling" selector in RenderTankWheelDebugUI. Both vehicles exist and
     //simulate simultaneously; this only decides where the arrow keys/fire key go. NULL until
     //Init() has spawned at least one of them.

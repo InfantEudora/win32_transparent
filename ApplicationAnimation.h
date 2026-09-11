@@ -11,7 +11,8 @@ public:
     ApplicationAnimation();
 
     void Init(void) override;
-    void RunLogic() override;
+    void UpdateView() override;
+    void RunSimulationTick() override;
 
     void DrawImGuiUI(void) override;
     void RenderSkeletonUI();

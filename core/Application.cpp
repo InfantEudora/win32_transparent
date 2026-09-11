@@ -317,11 +317,26 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             //under the lock is free next to a physics tick.
             app->UpdateInput();
 
-            //Time spent on logic + physics
+            //One decision for the whole pass: does this pass simulate? Everything below reads that
+            //answer instead of re-deriving it, so animation, gameplay and physics cannot end up
+            //disagreeing about whether a tick happened. BeginPass also drains the command queue
+            //and services the pause key, both of which must happen on every pass. See Scene.h.
+            bool f_tick = app->main_scene->BeginPass();
+
+            //Time spent on this pass's work
             app->tmr_physics->Restart();
-            app->UpdateAnimations();
-            app->RunLogic();
-            app->UpdatePhysics();
+            if (f_tick){
+                app->UpdateAnimations();
+                app->RunSimulationTick();
+                app->UpdatePhysics();
+            }
+
+            //View work runs AFTER the tick, and on the passes that did not tick as well. After,
+            //because its whole job is to look at the simulation, so it should see the state this
+            //pass just produced rather than the previous one's - the old RunLogic ran before the
+            //step, which left every camera one tick stale. On paused passes too, because a paused
+            //editor still has to have a working camera.
+            app->UpdateView();
             app->tmr_physics->Stop();
             app->renderer->physics_mutex.unlock();
 
@@ -365,8 +380,12 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     return 0;
 }
 
-//Called after input update before update physics to run something...?
-void Application::RunLogic(){
+//Both hooks are empty by default - see Application.h for what belongs in which.
+void Application::UpdateView(){
+    return;
+}
+
+void Application::RunSimulationTick(){
     return;
 }
 
@@ -837,6 +856,76 @@ json Application::MaybeAttachScreenshot(json result, bool include_screenshot){
     return MCPServer::AttachImagePNG(result,png);
 }
 
+bool Application::ResolveObjectIdArg(const json& args, objectid_t& id_out, std::string& error){
+    if (!main_scene){
+        error = "no scene";
+        return false;
+    }
+    bool f_found = false;
+    main_scene->AtTickBoundary([&]{
+        Object* object = ResolveObjectArg(main_scene,args,error);
+        if (object){
+            id_out = object->GetID();
+            f_found = true;
+        }
+    });
+    if (!f_found && error.empty()){
+        error = "no scene";
+    }
+    return f_found;
+}
+
+json Application::ObjectJsonAtTickBoundary(objectid_t id, bool full){
+    json result;
+    bool f_found = false;
+    if (main_scene){
+        main_scene->AtTickBoundary([&]{
+            Object* object = main_scene->FindObjectByID(id);
+            if (object){
+                result = ObjectToJson(object,full);
+                f_found = true;
+            }
+        });
+    }
+    if (!f_found){
+        return json{ {"error","object " + std::to_string(id) + " no longer exists"} };
+    }
+    return result;
+}
+
+json Application::SimClockJson(){
+    if (!main_scene){
+        return json{ {"error","no scene"} };
+    }
+    return json{
+        {"tick", main_scene->GetPhysicsTick()},
+        {"paused", main_scene->IsPhysicsPaused()},
+        {"pending_steps", main_scene->GetPendingPhysicsSteps()},
+        {"timestep", main_scene->GetPhysicsTimestep()}
+    };
+}
+
+uint64_t Application::StepPhysicsAndWait(int num_ticks){
+    if (!main_scene){
+        return 0;
+    }
+    uint64_t tick_before = main_scene->GetPhysicsTick();
+    main_scene->StepPhysics(num_ticks);
+
+    //The physics thread runs at its own pace, so poll for it to actually consume what was just
+    //queued rather than guessing a fixed sleep. The budget scales with the request so a long step
+    //isn't cut short, with a floor for the case where the thread is briefly busy elsewhere.
+    //
+    //GetPendingPhysicsSteps() hitting zero is the right thing to wait on rather than the tick
+    //counter: Scene::UpdatePhysics decrements it at the END of the tick it ran, precisely so that
+    //a caller seeing zero knows the work is finished and the state is safe to read.
+    int timeout_ms = max(2000,num_ticks * 30);
+    for (int waited_ms = 0; waited_ms < timeout_ms && main_scene->GetPendingPhysicsSteps() > 0; waited_ms += 5){
+        Sleep(5);
+    }
+    return main_scene->GetPhysicsTick() - tick_before;
+}
+
 void Application::RegisterCoreMCPTools(){
     const json object_selector_properties = {
         {"id", {{"type","number"},{"description","object id, as reported by object_list (preferred - unique)"}}},
@@ -862,14 +951,20 @@ void Application::RegisterCoreMCPTools(){
             int limit = max((int)args.value("limit",200.0f),1);
             json objects = json::array();
             int total = 0;
-            main_scene->ForEachObject([&](Object* object){
-                if (!filter.empty() && object->name.find(filter) == std::string::npos){
-                    return;
-                }
-                total++;
-                if ((int)objects.size() < limit){
-                    objects.push_back(ObjectToJson(object,false));
-                }
+            //The whole walk inside one tick boundary, not one object at a time: the physics thread
+            //adds and destroys objects, so a walk that released the lock between entries could
+            //follow a pointer that had already been reaped, and would report a list that never
+            //existed at any single moment.
+            main_scene->AtTickBoundary([&]{
+                main_scene->ForEachObject([&](Object* object){
+                    if (!filter.empty() && object->name.find(filter) == std::string::npos){
+                        return;
+                    }
+                    total++;
+                    if ((int)objects.size() < limit){
+                        objects.push_back(ObjectToJson(object,false));
+                    }
+                });
             });
             return json{ {"objects",objects}, {"matched",total}, {"returned",(int)objects.size()} };
         });
@@ -880,12 +975,25 @@ void Application::RegisterCoreMCPTools(){
         "mass and velocities if it has one.",
         json{ {"type","object"}, {"properties", object_selector_properties} },
         [this](const json &args) -> json {
-            std::string error;
-            Object* object = ResolveObjectArg(main_scene,args,error);
-            if (!object){
-                return json{ {"error",error} };
+            if (!main_scene){
+                return json{ {"error","no scene"} };
             }
-            return ObjectToJson(object,true);
+            //Resolved and serialised in the SAME tick boundary, so the object cannot move or be
+            //destroyed between being found and being read.
+            std::string error;
+            json result;
+            bool f_found = false;
+            main_scene->AtTickBoundary([&]{
+                Object* object = ResolveObjectArg(main_scene,args,error);
+                if (object){
+                    result = ObjectToJson(object,true);
+                    f_found = true;
+                }
+            });
+            if (!f_found){
+                return json{ {"error",error.empty() ? "no scene" : error} };
+            }
+            return result;
         });
 
     MCPServer::Get()->RegisterTool("object_set_transform",
@@ -911,15 +1019,15 @@ void Application::RegisterCoreMCPTools(){
         [this](const json &args) -> json {
             std::string error;
             //Resolved here only to turn a name into an id and to report a bad selector straight
-            //back to the caller. The command itself carries the ID, never this pointer - see
-            //SimCommand::target.
-            Object* object = ResolveObjectArg(main_scene,args,error);
-            if (!object){
+            //back to the caller. The command itself carries the ID, never a pointer - see
+            //SimCommand::target - which is also why only the id survives the lock.
+            objectid_t target_id = OBJECTID_INVALID;
+            if (!ResolveObjectIdArg(args,target_id,error)){
                 return json{ {"error",error} };
             }
             SimCommand cmd;
             cmd.type = SIM_CMD_OBJECT_SET_TRANSFORM;
-            cmd.target = object->GetID();
+            cmd.target = target_id;
             if (args.contains("position")){
                 if (!JsonToVec3(args.at("position"),cmd.position)){
                     return json{ {"error","position must be [x,y,z]"} };
@@ -945,7 +1053,10 @@ void Application::RegisterCoreMCPTools(){
             if (SubmitCommandAndWait(cmd) == OBJECTID_INVALID){
                 return json{ {"error","the transform command was not applied - see the log"} };
             }
-            return ObjectToJson(object,true);
+            //Read back AFTER the wait and at its own tick boundary. Waiting inside one would
+            //deadlock: the physics thread applies the command, and it cannot run while this
+            //handler holds the lock it needs.
+            return ObjectJsonAtTickBoundary(target_id,true);
         });
 
     MCPServer::Get()->RegisterTool("object_move",
@@ -970,8 +1081,8 @@ void Application::RegisterCoreMCPTools(){
         },
         [this](const json &args) -> json {
             std::string error;
-            Object* object = ResolveObjectArg(main_scene,args,error);
-            if (!object){
+            objectid_t target_id = OBJECTID_INVALID;
+            if (!ResolveObjectIdArg(args,target_id,error)){
                 return json{ {"error",error} };
             }
             vec3 target_position;
@@ -991,7 +1102,22 @@ void Application::RegisterCoreMCPTools(){
                 return json{ {"error","give a target position and/or rotation"} };
             }
             int ticks = max((int)args.value("ticks",50.0f),1);
-            main_scene->MoveObjectOverTicks(object,f_position ? &target_position : NULL,f_rotation ? &target_rotation : NULL,ticks);
+            //A direct WRITE from this thread, and the reason it needs a tick boundary rather than
+            //just a careful read: MoveObjectOverTicks edits the object_motions vector that
+            //AdvanceObjectMotions is iterating on the physics thread. It has no SimCommand form,
+            //so the lock is the whole mechanism. Re-resolved inside, because the id was looked up
+            //under a different lock and the object could have been destroyed since.
+            bool f_moved = false;
+            main_scene->AtTickBoundary([&]{
+                Object* object = main_scene->FindObjectByID(target_id);
+                if (object){
+                    main_scene->MoveObjectOverTicks(object,f_position ? &target_position : NULL,f_rotation ? &target_rotation : NULL,ticks);
+                    f_moved = true;
+                }
+            });
+            if (!f_moved){
+                return json{ {"error","object " + std::to_string(target_id) + " no longer exists"} };
+            }
 
             json result;
             if (main_scene->IsPhysicsPaused()){
@@ -1009,8 +1135,74 @@ void Application::RegisterCoreMCPTools(){
                 }
                 result["waited_ms"] = waited_ms;
             }
-            result["object"] = ObjectToJson(object,true);
+            //Outside the wait above, which polls the physics thread and so must not hold the lock.
+            result["object"] = ObjectJsonAtTickBoundary(target_id,true);
             return result;
+        });
+
+    /*
+        Pause and single-step, for every app rather than for the two that happened to need it.
+
+        These are the read-side counterpart to sim_command: a tool handler holds no lock, so
+        anything it reads from a free-running simulation is a race it is going to lose eventually.
+        Pausing first turns "read the scene and hope" into "read the scene", and stepping turns
+        "sleep 200ms and guess how far it got" into an exact number of ticks. Every duration in this
+        engine is denominated in ticks (see Scene::GetPhysicsTick), so stepping is the unit the rest
+        of the simulation is already written in.
+
+        ApplicationTank and ApplicationTetris keep their own tank_pause/tank_step and
+        tetris_pause/tetris_step: those return app telemetry with the step, which is genuinely more
+        useful there than a bare clock. They now share the waiting logic below rather than each
+        carrying a copy of it.
+    */
+    MCPServer::Get()->RegisterTool("sim_pause",
+        "Pause or resume the simulation. While paused the render loop keeps running - the window "
+        "stays responsive, the camera still works and screenshots still work - but no physics tick "
+        "runs, no animation advances and no gameplay logic runs until sim_step advances it or this "
+        "is called again with paused=false. Pause before reading scene state you care about: an MCP "
+        "handler holds no lock, so reading a free-running simulation races the physics thread.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"paused", {{"type","boolean"},{"description","true to pause, false to resume free-running physics"}}}
+            }},
+            {"required", json::array({"paused"})}
+        },
+        [this](const json &args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            main_scene->PausePhysics(args.value("paused",true));
+            return SimClockJson();
+        });
+
+    MCPServer::Get()->RegisterTool("sim_step",
+        "Advance a paused simulation by exactly num_ticks ticks and return the resulting clock. "
+        "Each tick is the same fixed timestep a free-running one uses, and a tick here is a whole "
+        "tick - input, animation, the app's own per-tick logic and the physics step - so stepping "
+        "advances the entire simulation, not just the physics. Requires sim_pause first. Blocks "
+        "until the physics thread has consumed the steps, and reports ticks_advanced, which is the "
+        "value to trust: if it is short of num_ticks the call timed out and the rest is still queued.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"num_ticks", {{"type","number"},{"description","how many ticks to advance, default 1"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG of the resulting frame, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            if (!main_scene->IsPhysicsPaused()){
+                return json{ {"error","simulation is not paused - call sim_pause with paused=true first"} };
+            }
+            int num_ticks = max((int)args.value("num_ticks",1.0f),0);
+            uint64_t advanced = StepPhysicsAndWait(num_ticks);
+            json result = SimClockJson();
+            result["ticks_advanced"] = advanced;
+            result["requested_ticks"] = num_ticks;
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
         });
 
     //The raw queue, exposed. Every OTHER command-shaped tool here (object_set_transform,
@@ -1186,8 +1378,9 @@ void Application::RegisterCoreMCPTools(){
             }
             out["object_id"] = result;
             if (result != OBJECTID_INVALID){
-                if (Object* object = main_scene->FindObjectByID(result)){
-                    out["object"] = ObjectToJson(object,true);
+                json object_json = ObjectJsonAtTickBoundary(result,true);
+                if (!object_json.contains("error")){
+                    out["object"] = object_json;
                 }else{
                     //A destroy reports the id it acted on, and that object is gone by now.
                     out["note"] = "the object is no longer in the scene";
@@ -1282,11 +1475,7 @@ void Application::RegisterCoreMCPTools(){
             if (created == OBJECTID_INVALID){
                 return json{ {"error","nothing was spawned - no such asset, or the command was not applied (see the log)"} };
             }
-            Object* object = main_scene->FindObjectByID(created);
-            if (!object){
-                return json{ {"error","spawned object " + std::to_string(created) + " could not be found again"} };
-            }
-            return json{ {"id",created}, {"object",ObjectToJson(object,true)} };
+            return json{ {"id",created}, {"object",ObjectJsonAtTickBoundary(created,true)} };
         });
 
     //--- Camera -------------------------------------------------------------------------------
@@ -1305,7 +1494,14 @@ void Application::RegisterCoreMCPTools(){
             if (!main_scene || !main_scene->camera){
                 return json{ {"error","no camera"} };
             }
-            return CameraToJson(main_scene->camera,GetCameraTargetPtr());
+            //A camera is written every pass now - UpdateView is where the orbit, the chase and the
+            //overhead easing all live - so reading one off-tick returns a pose from part-way
+            //through whatever it was doing.
+            json result;
+            main_scene->AtTickBoundary([&]{
+                result = CameraToJson(main_scene->camera,GetCameraTargetPtr());
+            });
+            return result;
         });
 
     MCPServer::Get()->RegisterTool("camera_set",
@@ -1328,38 +1524,65 @@ void Application::RegisterCoreMCPTools(){
             if (!main_scene || !main_scene->camera){
                 return json{ {"error","no camera"} };
             }
-            Camera* camera = main_scene->camera;
-            vec3 v;
+            /*
+                Arguments are parsed BEFORE the tick boundary and applied inside it.
+
+                Parsing needs nothing from the scene, so doing it first means a malformed request
+                is rejected without ever stopping the simulation. It also makes the write
+                all-or-nothing: the old order set the position, then discovered look_at was
+                malformed and returned an error, leaving the camera half-moved by a call that
+                reported failure.
+            */
+            vec3 position, look_at, up, camera_target;
+            bool f_position = false, f_look_at = false, f_up = false, f_camera_target = false;
             if (args.contains("position")){
-                if (!JsonToVec3(args.at("position"),v)){
+                if (!JsonToVec3(args.at("position"),position)){
                     return json{ {"error","position must be [x,y,z]"} };
                 }
-                camera->SetPosition(v);
+                f_position = true;
             }
             if (args.contains("look_at")){
-                vec3 look_at;
                 if (!JsonToVec3(args.at("look_at"),look_at)){
                     return json{ {"error","look_at must be [x,y,z]"} };
                 }
-                vec3 up;
-                bool f_up = args.contains("up") && JsonToVec3(args.at("up"),up);
-                if (args.contains("up") && !f_up){
+                f_look_at = true;
+            }
+            if (args.contains("up")){
+                if (!JsonToVec3(args.at("up"),up)){
                     return json{ {"error","up must be [x,y,z]"} };
                 }
-                camera->SetLookAt(look_at,f_up ? &up : NULL);
+                f_up = true;
             }
             if (args.contains("camera_target")){
-                vec3* target = GetCameraTargetPtr();
-                if (!target){
+                if (!GetCameraTargetPtr()){
                     return json{ {"error","this application has no camera_target"} };
                 }
-                if (!JsonToVec3(args.at("camera_target"),v)){
+                if (!JsonToVec3(args.at("camera_target"),camera_target)){
                     return json{ {"error","camera_target must be [x,y,z]"} };
                 }
-                *target = v;
+                f_camera_target = true;
             }
-            camera->CalculateLookatMatrix();
-            return CameraToJson(camera,GetCameraTargetPtr());
+
+            //A camera is read by the render thread every frame and written by UpdateView every
+            //pass, so these writes land at a tick boundary rather than whenever this thread
+            //happens to be scheduled. The resulting state is read back inside the same boundary,
+            //so what comes back is what was actually set.
+            json result;
+            main_scene->AtTickBoundary([&]{
+                Camera* camera = main_scene->camera;
+                if (f_position){
+                    camera->SetPosition(position);
+                }
+                if (f_look_at){
+                    camera->SetLookAt(look_at,f_up ? &up : NULL);
+                }
+                if (f_camera_target){
+                    *GetCameraTargetPtr() = camera_target;
+                }
+                camera->CalculateLookatMatrix();
+                result = CameraToJson(camera,GetCameraTargetPtr());
+            });
+            return result;
         });
 
     MCPServer::Get()->RegisterTool("screenshot",

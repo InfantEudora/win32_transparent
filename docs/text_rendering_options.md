@@ -142,6 +142,58 @@ fixed to the glyphs you modelled; and it is much heavier per character.
 **D is not exclusive with B.** See §4 — they share all of the string-layout code and differ only in
 what geometry each glyph contributes. Build B first, add D later as a second glyph *source*.
 
+#### The glyph set exists (added 2026-09-11)
+
+`data/glyphs_unispace.glb` — 94 meshes, printable ASCII 0x20-0x7E, Unispace Bold, 8264 triangles
+in total. So the "become a typographer in Blender" half of the objection above is paid off already,
+and the metrics half is generated rather than invented. Three scripts in `tools/` rebuild it:
+
+```
+blender --background fonts.blend --python tools/blender_glyph_meshes.py
+blender --background fonts.blend --python tools/blender_glyph_export.py  -- --out data/glyphs_unispace.glb
+blender --background fonts.blend --python tools/blender_glyph_preview.py -- --out sheet.png --wire
+```
+
+The first is the one that matters: it rebuilds each glyph **from the font** into a `Glyphs`
+collection in `fonts.blend`, rather than cutting up the pre-converted `text_all` mesh. Splitting
+that mesh by loose parts looks fine on `A-Z0-9`, because a filled and extruded capital is one
+connected component, and then silently shatters `i j : = % ?` into two or more pieces each.
+Re-running is idempotent.
+
+What the layout loop in §4c needs is in `fonts_glyphs.json` next to the .blend, keyed by codepoint.
+Unispace is monospace, so per-glyph metrics are mostly a formality:
+
+| | |
+|---|---|
+| advance | 0.50917, uniform — `pen_x += advance`, no table lookup needed |
+| line height | 1.0 |
+| ascender / descender | 0.7967 / -0.2025 |
+| extrusion depth | 0.1 |
+
+Node names are `glyph_0041_A` and `glyph_002E` — codepoint as four hex digits, plus the character
+itself when it is alphanumeric, so `sscanf(name, "glyph_%4x", &cp)` reads either form. Space has an
+advance and no mesh.
+
+Two things worth knowing before regenerating:
+
+- **The glyphs are pre-rotated, and have to be.** A Blender text object lies in the XY plane, and
+  the exporter's +Y-up conversion is `gltf(x, y, z) = blender(x, z, -y)` — so an unrotated glyph
+  arrives with its vertical axis on **-Z**, lying flat like a floor decal. The generator rotates
+  each glyph onto Blender +Z first, which lands it upright: x from the pen origin, y up from the
+  baseline, z the extrusion depth, and an identity node transform. Bearing stays in the geometry,
+  so placing a glyph is `pos.x + pen_x` and nothing else.
+- **Decimation is a per-glyph triangle budget, not a flat ratio.** `text_all` carries Decimate at
+  0.125, which is right for a curve-tessellated glyph and destructive on a straight-stroked one:
+  `A` is only 48 triangles undecimated and `.` is 12, so a flat 0.125 leaves them with 6 and 1.
+  `--target-tris 144` (roughly what 0.125 gives a curved glyph) leaves the 42 straight-stroke
+  glyphs untouched and evens the density out — median 128 triangles. `--target-tris 0` restores the
+  flat `--ratio` behaviour. The modifier is left unapplied on each object, so the ratio stays
+  tweakable per glyph in the .blend; the exporter bakes it.
+
+The meshes carry no materials, matching `text_all`. Per §4c, drawing a string still means
+concatenating the chosen glyph meshes into one vertex buffer — the `.glb` is a glyph *source*, not
+a text system.
+
 ### E — Triangulated TTF outlines at load
 
 `stbtt_GetGlyphShape` gives contours; flatten the béziers and triangulate at load.
@@ -283,8 +335,8 @@ runs on the physics thread. So the API must not rebuild on assignment:
 ```cpp
 class TextMesh : public Object{
 public:
-    //Callable from ANY thread, including RunLogic. Stores the string and raises a dirty flag;
-    //nothing touches GL. Cheap enough to call every tick with an unchanged string.
+    //Callable from ANY thread, including RunSimulationTick. Stores the string and raises a dirty
+    //flag; nothing touches GL. Cheap enough to call every tick with an unchanged string.
     void SetText(const char* text);
 
     //Render thread, from Application::PreRender. Rebuilds and re-uploads only if dirty.
@@ -293,8 +345,8 @@ public:
 ```
 
 `Application::PreRender()` already exists for exactly this class of problem ("GL work that has to
-happen before the colour pass and cannot be hung off a shader's uniform_callback... RunLogic is NOT
-the place: it runs on the logic thread, which may not touch GL"). A `Scene::RebuildDirtyTextMeshes()`
+happen before the colour pass and cannot be hung off a shader's uniform_callback... UpdateView is
+NOT the place, close as it sounds: it runs on the physics thread, which may not touch GL"). A `Scene::RebuildDirtyTextMeshes()`
 called from there closes the loop.
 
 Two small core changes fall out and should be logged when they happen:
@@ -316,6 +368,35 @@ make HUD text legible over a scene — come out of the same shader for a few ext
 
 Then keep **F (the nixie shader) as a material** for one stylised readout, and add **D** later as a
 second glyph source when something wants physical letters, sharing B's layout code.
+
+---
+
+## 6. What was actually built (2026-09-11)
+
+**D, not B** — because between writing this note and building anything, Dick exported one mesh per
+glyph to `data/glyphs_unispace.glb` (`tools/blender_glyph_meshes.py`, Unispace Bold, 94 meshes,
+8,264 triangles). With the glyph source already in the tree, D stopped being the expensive option.
+
+`core/TextMesh.h` bakes a string into a single `Mesh`; `APP=Tetris` uses it for its captions,
+stats and game-over banner. Three things the exercise settled that this note had left open:
+
+- **§4's glyph-selection question does not arise for D at all.** There is no atlas and no UV
+  lookup: the glyph *is* the mesh, selected by an array index (`codepoint - 0x20`), and layout is
+  the pen arithmetic §4 describes minus the texture bookkeeping. The selection problem is
+  specific to the atlas options.
+- **What a font reduces to here is two floats.** `advance` 0.509167 and `line_height` 1.0, from
+  the JSON sidecar the export script writes, because glTF has nowhere to put metrics. Everything
+  else this note calls “atlas” was storage, not layout.
+- **The prediction in §5 held.** Depth is real — glyphs are 0.1-unit extrusions that light,
+  shadow and occlude like any other geometry, visibly so where the banner casts onto the back
+  panel — and the per-string vertex count is trivial: a 10-character label is about 900 vertices.
+
+B is still the recommendation for the *general* case and is still open (backlog item 24). It now
+has less to build than this note assumed: `BuildTextMesh`'s layout, alignment and string-relative
+UVs are source-agnostic, so an SDF path is a second loader and a second builder beside the first,
+not a replacement for it.
+
+---
 
 **For the Tetris app alone, A would have been enough** and roughly half the work: one small size for
 SCORE/LEVEL/LINES, two static labels, one big GAME OVER, and Consolas being monospace means layout

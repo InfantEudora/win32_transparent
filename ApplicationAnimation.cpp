@@ -133,10 +133,11 @@ void ApplicationAnimation::Init(void){
     main_window->Resize(1680,900);
 }
 
-//Called before update physics after update animations
-void ApplicationAnimation::RunLogic(){
-    //Shortcuts
-    Camera* camera = main_scene->camera;
+//The model: the chain's hand-rolled forces, the character's own motion, and the skeleton work that
+//feeds it. Runs once per tick that actually runs, so all of it pauses and single-steps with the
+//physics - which matters more here than anywhere else, because the feet-placement code below MOVES
+//the character out of the pose the animation left it in.
+void ApplicationAnimation::RunSimulationTick(){
     InputController* input = main_scene->inputcontroller;
 
     //We try manually doing physics on the chain,
@@ -177,46 +178,7 @@ void ApplicationAnimation::RunLogic(){
         link_index++;
     }
 
-    if (selected_object){
-        if (f_mode_grab){
-            //We use the camera left/right up down to move the character.
-            int dx = input->GetDelta(INPUT_MOUSE_X);
-            int dy = input->GetDelta(INPUT_MOUSE_Y);
-
-            vec3 vdx = camera->GetLeft() * dx * 0.01;
-            vec3 vdy = camera->GetUp() * -dy * 0.01;
-            selected_object->MoveBy(vdx + vdy);
-
-            if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
-                f_mode_grab = false;
-            }
-        }
-    }
-
     if (character){
-        if (f_mode_camera_track){
-            Bone* neck = character->FindBone("mixamorig:Neck");
-            Bone* head = character->FindBone("mixamorig:Head");
-            vec3 head_wp = head->GetWorldPosition() - 3 * head->GetWorldForward();
-            vec3 p = camera->GetPosition();
-            vec3 diff = p.lerp(head_wp,0.04f);
-            camera->SetPosition(diff);
-            quat r = camera->GetRotation();
-            quat t = quat::getquat(neck->GetWorldPosition(),camera->GetWorldPosition(),Object::ref_up);
-            t.normalize();
-            r = quat::slerp(r,t,0.15f);
-            camera->SetRotation(r);
-        }
-
-        //Get the sun position to the character.
-        if (sun){
-            vec3 delta = sun->GetPosition() - character->GetPosition();
-            //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
-            //Make sure it's always above our character
-            sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
-            sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
-        }
-
         //Let the bone track the character
         if (f_chain_track_head && (chain.size() > 0) && character){
             Bone* head = character->FindBone("mixamorig:Head");
@@ -298,6 +260,110 @@ void ApplicationAnimation::RunLogic(){
         }
     }
 
+    //Carried over from the old single hook, where this gate sat above the mouse-driven camera
+    //code and the character input fell under it only by being further down the function. A
+    //character that stops steering because the cursor is over a panel is almost certainly not
+    //wanted, but removing the gate is a behaviour change on its own merits, not part of this split.
+    if (ImGui::GetIO().WantCaptureMouse){
+        return;
+    }
+
+    //Character input
+    if (character && main_window->f_has_focus){
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            character->MoveForward();
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            character->MoveBackward();
+        }
+        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+            character->TurnRight();
+        }
+        if (input->IsKeyDown(INPUT_TURN_LEFT)){
+            character->TurnLeft();
+        }
+        if (input->IsKeyDown(INPUT_JUMP)){
+            character->Jump();
+        }
+        /*
+        if (input->WasKeyReleased(INPUT_TURN_UP)){
+            character->ToIdle();
+        }
+        if (input->WasKeyReleased(INPUT_TURN_RIGHT)){
+            character->ToIdle();
+        }
+        if (input->WasKeyReleased(INPUT_TURN_LEFT)){
+            character->ToIdle();
+        }*/
+        if (input->IsKeyDown(INPUT_MOVE_LEFT)){
+            character->TurnLookLeft();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
+            character->TurnLookRight();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_UP)){
+            character->TurnLookUp();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_DOWN)){
+            character->TurnLookDown();
+        }
+        if (input->IsKeyDown(INPUT_F)){
+            character->f_animation_override = true;
+            character->animation_override_ticks++;
+        }
+    }
+}
+
+//Camera, selection and the editor gestures. Runs on every pass, including the ones that simulate
+//nothing, so the view stays live over a paused simulation. Mouse deltas are read here and nowhere
+//else - GetDelta marks the sample processed, so splitting one across both hooks would apply the
+//same movement twice.
+void ApplicationAnimation::UpdateView(){
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+
+    if (selected_object){
+        if (f_mode_grab){
+            //We use the camera left/right up down to move the character.
+            int dx = input->GetDelta(INPUT_MOUSE_X);
+            int dy = input->GetDelta(INPUT_MOUSE_Y);
+
+            vec3 vdx = camera->GetLeft() * dx * 0.01;
+            vec3 vdy = camera->GetUp() * -dy * 0.01;
+            selected_object->MoveBy(vdx + vdy);
+
+            if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
+                f_mode_grab = false;
+            }
+        }
+    }
+
+    if (character){
+        if (f_mode_camera_track){
+            Bone* neck = character->FindBone("mixamorig:Neck");
+            Bone* head = character->FindBone("mixamorig:Head");
+            vec3 head_wp = head->GetWorldPosition() - 3 * head->GetWorldForward();
+            vec3 p = camera->GetPosition();
+            vec3 diff = p.lerp(head_wp,0.04f);
+            camera->SetPosition(diff);
+            quat r = camera->GetRotation();
+            quat t = quat::getquat(neck->GetWorldPosition(),camera->GetWorldPosition(),Object::ref_up);
+            t.normalize();
+            r = quat::slerp(r,t,0.15f);
+            camera->SetRotation(r);
+        }
+
+        //Get the sun position to the character.
+        if (sun){
+            vec3 delta = sun->GetPosition() - character->GetPosition();
+            //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
+            //Make sure it's always above our character
+            sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
+            sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
+        }
+
+    }
+
     //All further code requires the cursor not to be above an UI element
     if (ImGui::GetIO().WantCaptureMouse){
         //Clear mouse delta
@@ -362,55 +428,13 @@ void ApplicationAnimation::RunLogic(){
         mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
 
-    //Character input
+    //The grab toggle is editor state, so it stays on the view side - kept under the same
+    //character/focus test it was written beneath, incidental as that test is to a mode flag.
     if (character && main_window->f_has_focus){
-        if (input->IsKeyDown(INPUT_TURN_UP)){
-            character->MoveForward();
-        }
-        if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            character->MoveBackward();
-        }
-        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-            character->TurnRight();
-        }
-        if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            character->TurnLeft();
-        }
-        if (input->IsKeyDown(INPUT_JUMP)){
-            character->Jump();
-        }
-        /*
-        if (input->WasKeyReleased(INPUT_TURN_UP)){
-            character->ToIdle();
-        }
-        if (input->WasKeyReleased(INPUT_TURN_RIGHT)){
-            character->ToIdle();
-        }
-        if (input->WasKeyReleased(INPUT_TURN_LEFT)){
-            character->ToIdle();
-        }*/
-        if (input->IsKeyDown(INPUT_MOVE_LEFT)){
-            character->TurnLookLeft();
-        }
-        if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
-            character->TurnLookRight();
-        }
-        if (input->IsKeyDown(INPUT_MOVE_UP)){
-            character->TurnLookUp();
-        }
-        if (input->IsKeyDown(INPUT_MOVE_DOWN)){
-            character->TurnLookDown();
-        }
-        if (input->IsKeyDown(INPUT_F)){
-            character->f_animation_override = true;
-            character->animation_override_ticks++;
-        }
         if (input->WasKeyReleased(INPUT_G)){
             f_mode_grab = !f_mode_grab;
         }
     }
-
-
 }
 
 void ApplicationAnimation::DrawImGuiUI(){

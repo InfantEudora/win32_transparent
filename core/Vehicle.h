@@ -40,7 +40,8 @@ public:
     //Scripted control does NOT live here any more. HoldDrive/HoldBrake/HoldSteer used to latch
     //an input for a duration because an MCP round trip cannot out-pace the tick rate - but that is
     //the same problem a synthetic key press has, so it is solved once, generically, in
-    //InputController::HoldKey/HoldAxis. MCP is a player now; it holds a control and RunLogic drives
+    //InputController::HoldKey/HoldAxis. MCP is a player now; it holds a control and the app's
+    //RunSimulationTick drives
     //the vehicle from it like it does for a keyboard or a gamepad.
     //Virtual because a subclass may hold input state of its own that this has to clear too -
     //TankCharacter's direct per-track commands, which would otherwise stay latched and leave a

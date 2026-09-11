@@ -1,5 +1,6 @@
 #include "ApplicationShip.h"
 #include "MCPServer.h"
+#include "Primitives.h"
 #include "Debug.h"
 
 static Debugger *debug = new Debugger("ApplicationShip", DEBUG_ALL);
@@ -45,7 +46,7 @@ Scene* ApplicationShip::CreateEmptyScene(){
     //The straight-down pose tracking mode keeps the camera in. Remembered rather than rebuilt
     //later because a lookat straight down the world up axis is degenerate (the cross product that
     //makes the camera's left axis collapses), so the orientation that comes out of THIS call is
-    //the only definition of "overhead" this app has. See RunLogic, which eases back to it.
+    //the only definition of "overhead" this app has. See UpdateView, which eases back to it.
     overhead_rotation = scene->camera->GetRotation();
 
     //Add phyics
@@ -68,58 +69,21 @@ HingedDoor* ApplicationShip::AddDoor(const vec3& hinge_position, float yaw){
 //A unit cube spanning -0.5..0.5 on every axis, which is the box raymarch_volume.frag marches.
 //Sized that way so an Object scale of (10,4,10) reads as a 10x4x10 volume in world units.
 //
-//Built here rather than taken from the GLTF "cube" asset for two reasons: asset meshes are
+//Generated rather than taken from the GLTF "cube" asset for two reasons: asset meshes are
 //shared by pointer, so tagging one MESH_MODE_SHADER would affect everything else using it, and
-//the shader's BOX_MIN/BOX_MAX have to agree with the mesh's actual extents - which is a
-//guarantee worth having in code next to the shader rather than in a .glb someone might edit.
+//the box the shader marches has to agree with the mesh's actual extents - which is a guarantee
+//worth having in code next to the shader rather than in a .glb someone might edit. MakeBox
+//satisfies both: a fresh unshared mesh, built to exactly the size asked for.
 Mesh* ApplicationShip::BuildVolumeCube(){
-    //Per face: the outward normal, and two edge vectors with cross(u,v) == n, so walking
-    //corner -> +u -> +u+v -> +v comes out counter-clockwise seen from outside the cube. That
-    //winding is what makes the renderer's default GL_BACK culling cull the inside faces (and,
-    //once the volume pass flips to GL_FRONT, keep exactly the inside ones).
-    const vec3 face_normal[6] = {
-        vec3( 1, 0, 0), vec3(-1, 0, 0),
-        vec3( 0, 1, 0), vec3( 0,-1, 0),
-        vec3( 0, 0, 1), vec3( 0, 0,-1),
-    };
-    const vec3 face_u[6] = {
-        vec3( 0, 0,-1), vec3( 0, 0, 1),
-        vec3( 1, 0, 0), vec3( 1, 0, 0),
-        vec3( 1, 0, 0), vec3(-1, 0, 0),
-    };
-    const vec3 face_v[6] = {
-        vec3( 0, 1, 0), vec3( 0, 1, 0),
-        vec3( 0, 0,-1), vec3( 0, 0, 1),
-        vec3( 0, 1, 0), vec3( 0, 1, 0),
-    };
-
-    std::vector<vertex>verts;
-    for (int f = 0;f < 6;f++){
-        vec3 n = face_normal[f];
-        vec3 u = face_u[f];
-        vec3 v = face_v[f];
-        vec3 corner = (n * 0.5f) - (u * 0.5f) - (v * 0.5f);
-
-        //The quad's four corners in winding order, with matching UVs.
-        vec3 p[4] = {corner, corner + u, corner + u + v, corner + v};
-        vec2 uv[4] = {vec2(0,0), vec2(1,0), vec2(1,1), vec2(0,1)};
-        const int order[6] = {0,1,2, 0,2,3};
-
-        for (int i = 0;i < 6;i++){
-            vertex vert;
-            vert.pos = p[order[i]];
-            vert.normal = n;
-            vert.tangent = u;
-            vert.uv = uv[order[i]];
-            //The volume shader reads no material, and the object's slot 0 is -1 anyway.
-            vert.matid = 0;
-            verts.push_back(vert);
-        }
+    //A unit cube centred on the origin, so the shader's box is -0.5..+0.5 on every axis. MakeBox
+    //winds it counter-clockwise seen from outside, which is what makes the renderer's default
+    //GL_BACK culling drop the inside faces (and, once the volume pass flips to GL_FRONT, keep
+    //exactly the inside ones).
+    Mesh* mesh = MakeBox(vec3(1,1,1));
+    if (!mesh){
+        return NULL;
     }
-
-    Mesh* mesh = new Mesh();
-    mesh->SetMeshData(&verts.at(0),verts.size());
-    //SetMeshData leaves the mesh in MESH_MODE_NORMAL; this is what moves it out of the main
+    //MakeBox leaves the mesh in MESH_MODE_NORMAL; this is what moves it out of the main
     //geometry pass and into the renderer's custom shader pass.
     mesh->mesh_mode = MESH_MODE_SHADER;
     return mesh;
@@ -456,7 +420,7 @@ void ApplicationShip::PreRender(void){
         the thing casting it. PreRender is the one place that runs exactly once per frame before
         anything reads the offset.
 
-        Still not RunLogic: the drift is purely visual and deliberately outside the tick.
+        Still not RunSimulationTick: the drift is purely visual and deliberately outside the tick.
     */
     float dt = 1.0f / 60.0f;
     if (tmr_render_loop && tmr_render_loop->delta > 0){
@@ -779,7 +743,7 @@ void ApplicationShip::RegisterCommandHandlers(){
 }
 
 //Called from within the physics step, exactly like onContact - so this only RECORDS which pickups
-//were flown into and RunLogic is what banks and removes them. Object::Destroy would in fact be
+//were flown into and RunSimulationTick is what banks and removes them. Object::Destroy would in fact be
 //safe here (it only sets a flag), but the moment a pickup actually adds to something on the ship
 //that will not be, and one rule for both callbacks is worth more than the shortcut.
 void ApplicationShip::onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData){
@@ -811,7 +775,7 @@ void ApplicationShip::onTrigger(const rp3d::OverlapCallback::CallbackData& callb
         if (!dynamic_cast<ShipCharacter*>(other)){
             continue;
         }
-        //Claimed here rather than in RunLogic, so a second overlap in the same tick (or the
+        //Claimed here rather than in RunSimulationTick, so a second overlap in the same tick (or the
         //OverlapStart of the ship's other collider - it has two) cannot bank it twice.
         pickup->f_collected = true;
         pending_collected_pickups.push_back(pickup);
@@ -876,7 +840,8 @@ void ApplicationShip::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("ship_shoot",
-        "Fire the ship's laser. RunLogic emits one laser particle per physics tick that the shoot "
+        "Fire the ship's laser. RunSimulationTick emits one laser particle per physics tick that the "
+        "shoot "
         "input is held, so `shots` is simply how many ticks to hold it - 1 is a single laser. "
         "Blocks until the shots have been fired and the given settle_ms has passed, then returns "
         "the telemetry of every door in the scene, so a single call is enough to see what the shot "
@@ -896,8 +861,8 @@ void ApplicationShip::RegisterMCPTools(){
             uint32_t shots = (uint32_t)clamp(args.value("shots",1.0f),1.0f,60.0f);
             float settle_ms = clamp(args.value("settle_ms",500.0f),0.0f,10000.0f);
             //Same "MCP is a player" route the tank tools take: hold the mapped input for a number
-            //of ticks and let RunLogic do exactly what it does for a person holding the key. Note
-            //RunLogic gates shooting on the window having focus, so this needs the app focused.
+            //of ticks and let RunSimulationTick do exactly what it does for a person holding the key.
+            //Note it gates shooting on the window having focus, so this needs the app focused.
             input->HoldKey(INPUT_SHOOT,shots);
             if (!main_scene->IsPhysicsPaused()){
                 Sleep((DWORD)(shots * GetPhysicsTimestep() * 1000.0f) + (DWORD)settle_ms);
@@ -988,13 +953,18 @@ void ApplicationShip::RegisterMCPTools(){
 }
 
 //Called before update physics after update animations
-void ApplicationShip::RunLogic(){
+//The model: object lifetime, the ship's own stabilisation, the asteroid field, and flight input.
+//Runs once per tick that actually runs, immediately before the physics step. The lifetime work
+//stays at the top for the reason spelled out below it.
+void ApplicationShip::RunSimulationTick(){
+    InputController* input = main_scene->inputcontroller;
+
     //Does anything need to be created / destroyed before we run any logic on it?
     //An asteroid that took its killing shot becomes an explosion HERE, not in the contact callback
     //that spotted the hit. onContact runs from inside rp_world->update(), and constructing an
     //AsteroidExplosion creates three rigid bodies - its own (AddPhysics), its fragment emitter's,
     //and its particle template's - so building one there adds bodies to the world while the world
-    //is part-way through iterating its own component arrays. RunLogic runs on the same physics
+    //is part-way through iterating its own component arrays. RunSimulationTick runs on the same physics
     //thread but sits between ticks, which makes it the earliest safe point. This used to stage an
     //already-constructed explosion, which deferred the AddObject but not the part that mattered.
     //
@@ -1041,6 +1011,146 @@ void ApplicationShip::RunLogic(){
     renderer->DeleteDestroyedObjects();
 
 
+    if (f_lock_ship_axis && ship_character){
+        vec3 angular_vel = ship_character->GetPhysics()->GetAngularVelocity();
+        if (angular_vel.length() > 0.01f){
+            //Dampen the angular velocity
+            ship_character->GetPhysics()->SetAngularVelocity(angular_vel * 0.95f);
+        }
+
+
+        //We attempt to keep the ship upright
+        quat ship_rot = ship_character->GetRotation();
+
+        vec3 fwd = ship_character->GetForward();
+        //We want the forward vector to have no y component
+        vec3 corrected_fwd = vec3(fwd.x,0,fwd.z).normalize();
+
+        quat q1 = quat::getquat(corrected_fwd,vec3(),vec3(0,1,0));
+
+        quat q2 = quat::slerp(ship_rot,q1.normalize(),0.05f);
+
+        ship_character->SetRotation(q2);
+
+        //We also attempt to keep the ship at y=0
+        vec3 ship_pos = ship_character->GetPosition();
+        if (ship_pos.y < -0.1f || ship_pos.y > 0.1f){
+            vec3 v = ship_character->GetVelocity();
+            ship_character->SetVelocity(v - vec3(0,ship_pos.y * 0.1f,0));
+        }
+    }
+
+
+
+    //We keep the asteroids in a certain range around the ship
+    //Get all asteroids in the scene
+    for (Object* object:renderer->objects){
+        Asteroid* asteroid = dynamic_cast<Asteroid*>(object);
+        if (asteroid){
+            vec3 center_pos = vec3();
+            vec3 asteroid_pos = asteroid->GetPosition();
+            vec3 diff = asteroid_pos - center_pos;
+            float dist = diff.length();
+            if (dist > 20.0f){
+                asteroid_pos.y = 0;
+                //asteroid->SetPosition(asteroid_pos);
+                //We modify its velocity to head towards the ship
+                vec3 dir_to_ship = (center_pos - asteroid_pos).normalize();
+                float speed = asteroid->GetPhysics()->GetVelocity().length();
+                speed = clamp(speed,1.0f,5.0f);
+                asteroid->GetPhysics()->SetVelocity(dir_to_ship * speed);
+            }
+
+            bool update_pos = false;
+            if (asteroid_pos.y > 0.1f){
+                asteroid_pos.y = 0.1f;
+                update_pos = true;
+            }
+            if (asteroid_pos.y < -0.1f){
+                asteroid_pos.y = -0.1f;
+                update_pos = true;
+            }
+            if (update_pos){
+                vec3 vel = asteroid->GetVelocity();
+                asteroid->SetPosition(asteroid_pos);
+                asteroid->SetVelocity(vel);
+            }
+
+        }
+    }
+
+
+    //Character input with gamepad. The focus check keeps a background window from flying the ship
+    //on input meant for another application - but a scripted hold (an MCP tool, later a replay)
+    //does not come from the OS, and an unfocused window is exactly when those run, so it has to
+    //be let through. See InputController's note on SyntheticHold.
+    if (ship_character && (main_window->f_has_focus || input->HasSyntheticHolds())){
+        float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
+        float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
+        float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
+        float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
+        float gp_l2r2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2L2);
+
+        float y = gp_ly + gp_ry;
+        y = clamp(y,-1.0f,1.0f);
+
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            y = 1;
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            y = -1;
+        }
+        if (input->IsKeyDown(INPUT_Q)){
+            gp_rx = -1;
+        }
+        if (input->IsKeyDown(INPUT_E)){
+            gp_rx = 1;
+        }
+
+        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+           gp_lx = 1;
+        }
+        if (input->IsKeyDown(INPUT_TURN_LEFT)){
+            gp_lx = -1;
+        }
+        if (input->IsKeyDown(INPUT_SHOOT)){
+            gp_l2r2 = 1;
+        }
+
+        if (y > 0.01f){
+            ship_character->MoveForwardBy(y * 100);
+        }
+        if (y < -0.01f){
+            ship_character->MoveBackwardBy(y * 100);
+        }
+        if (gp_rx > 0.01f){
+            ship_character->RollBy(-gp_rx * 0.05f);
+            ship_character->StrafeBy(-gp_rx * 50.0f);
+        }
+        if (gp_rx < -0.01f){
+            ship_character->RollBy(-gp_rx * 0.05f);
+             ship_character->StrafeBy(-gp_rx * 50.0f);
+        }
+        if (gp_lx > 0.01f){
+            ship_character->TurnRightBy(gp_lx*gp_lx * 0.04f);
+            ship_character->RollBy(-gp_lx * 0.05f);
+        }
+        if (gp_lx < -0.01f){
+            ship_character->TurnLeftBy((gp_lx*gp_lx) * 0.04f);
+            ship_character->RollBy(-gp_lx * 0.05f);
+        }
+        if (gp_l2r2 > 0.01f){
+            ship_character->ShootLaser();
+            gamepad_controller->rmotor = 5000;
+        }
+    }
+
+}
+
+//Camera, selection and the grab gesture. Runs every pass, including the ones that simulate nothing,
+//so the view stays live over a paused simulation - and it runs AFTER the tick, so the chase camera
+//reads the pose this tick produced rather than the previous one's. Mouse deltas are read here only.
+void ApplicationShip::UpdateView(){
     //Shortcuts
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
@@ -1112,80 +1222,11 @@ void ApplicationShip::RunLogic(){
         camera_target = ship_pos;
     }
 
-    if (f_lock_ship_axis && ship_character){
-        vec3 angular_vel = ship_character->GetPhysics()->GetAngularVelocity();
-        if (angular_vel.length() > 0.01f){
-            //Dampen the angular velocity
-            ship_character->GetPhysics()->SetAngularVelocity(angular_vel * 0.95f);
-        }
-
-
-        //We attempt to keep the ship upright
-        quat ship_rot = ship_character->GetRotation();
-
-        vec3 fwd = ship_character->GetForward();
-        //We want the forward vector to have no y component
-        vec3 corrected_fwd = vec3(fwd.x,0,fwd.z).normalize();
-
-        quat q1 = quat::getquat(corrected_fwd,vec3(),vec3(0,1,0));
-
-        quat q2 = quat::slerp(ship_rot,q1.normalize(),0.05f);
-
-        ship_character->SetRotation(q2);
-
-        //We also attempt to keep the ship at y=0
-        vec3 ship_pos = ship_character->GetPosition();
-        if (ship_pos.y < -0.1f || ship_pos.y > 0.1f){
-            vec3 v = ship_character->GetVelocity();
-            ship_character->SetVelocity(v - vec3(0,ship_pos.y * 0.1f,0));
-        }
-    }
-
-
-
     CheckObjectSelection();
-
-    //We keep the asteroids in a certain range around the ship
-    //Get all asteroids in the scene
-    for (Object* object:renderer->objects){
-        Asteroid* asteroid = dynamic_cast<Asteroid*>(object);
-        if (asteroid){
-            vec3 center_pos = vec3();
-            vec3 asteroid_pos = asteroid->GetPosition();
-            vec3 diff = asteroid_pos - center_pos;
-            float dist = diff.length();
-            if (dist > 20.0f){
-                asteroid_pos.y = 0;
-                //asteroid->SetPosition(asteroid_pos);
-                //We modify its velocity to head towards the ship
-                vec3 dir_to_ship = (center_pos - asteroid_pos).normalize();
-                float speed = asteroid->GetPhysics()->GetVelocity().length();
-                speed = clamp(speed,1.0f,5.0f);
-                asteroid->GetPhysics()->SetVelocity(dir_to_ship * speed);
-            }
-
-            bool update_pos = false;
-            if (asteroid_pos.y > 0.1f){
-                asteroid_pos.y = 0.1f;
-                update_pos = true;
-            }
-            if (asteroid_pos.y < -0.1f){
-                asteroid_pos.y = -0.1f;
-                update_pos = true;
-            }
-            if (update_pos){
-                vec3 vel = asteroid->GetVelocity();
-                asteroid->SetPosition(asteroid_pos);
-                asteroid->SetVelocity(vel);
-            }
-
-        }
-    }
-
 
     //Mouse camera: middle mouse orbits around camera_target, shift+middle pans both camera and
     //pivot. Same scheme, same sensitivities as ApplicationTank - see the block at the end of its
-    //RunLogic.
+    //UpdateView.
     //
     //Read with GetDelta, and read EVERY tick whether or not the drag is active. Both halves
     //matter and getting either wrong makes the camera spin out, exactly as it did in the tank:
@@ -1256,71 +1297,6 @@ void ApplicationShip::RunLogic(){
         mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
 
-
-    //Character input with gamepad. The focus check keeps a background window from flying the ship
-    //on input meant for another application - but a scripted hold (an MCP tool, later a replay)
-    //does not come from the OS, and an unfocused window is exactly when those run, so it has to
-    //be let through. See InputController's note on SyntheticHold.
-    if (ship_character && (main_window->f_has_focus || input->HasSyntheticHolds())){
-        float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
-        float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
-        float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);
-        float gp_ry = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_Y);
-        float gp_l2r2 = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_R2L2);
-
-        float y = gp_ly + gp_ry;
-        y = clamp(y,-1.0f,1.0f);
-
-        if (input->IsKeyDown(INPUT_TURN_UP)){
-            y = 1;
-        }
-        if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            y = -1;
-        }
-        if (input->IsKeyDown(INPUT_Q)){
-            gp_rx = -1;
-        }
-        if (input->IsKeyDown(INPUT_E)){
-            gp_rx = 1;
-        }
-
-        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-           gp_lx = 1;
-        }
-        if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            gp_lx = -1;
-        }
-        if (input->IsKeyDown(INPUT_SHOOT)){
-            gp_l2r2 = 1;
-        }
-
-        if (y > 0.01f){
-            ship_character->MoveForwardBy(y * 100);
-        }
-        if (y < -0.01f){
-            ship_character->MoveBackwardBy(y * 100);
-        }
-        if (gp_rx > 0.01f){
-            ship_character->RollBy(-gp_rx * 0.05f);
-            ship_character->StrafeBy(-gp_rx * 50.0f);
-        }
-        if (gp_rx < -0.01f){
-            ship_character->RollBy(-gp_rx * 0.05f);
-             ship_character->StrafeBy(-gp_rx * 50.0f);
-        }
-        if (gp_lx > 0.01f){
-            ship_character->TurnRightBy(gp_lx*gp_lx * 0.04f);
-            ship_character->RollBy(-gp_lx * 0.05f);
-        }
-        if (gp_lx < -0.01f){
-            ship_character->TurnLeftBy((gp_lx*gp_lx) * 0.04f);
-            ship_character->RollBy(-gp_lx * 0.05f);
-        }
-        if (gp_l2r2 > 0.01f){
-            ship_character->ShootLaser();
-            gamepad_controller->rmotor = 5000;
-        }
-    }
 
     //All further code requires the cursor not to be above an UI element
     if (ImGui::GetIO().WantCaptureMouse){
@@ -1639,7 +1615,7 @@ void ApplicationShip::onContact(const rp3d::CollisionCallback::CallbackData& cal
                     //debug->Info("Laser hit on asteroid. Health = %.1f\n",asteroid->health);
                 }else if (asteroid->health == 0){
                     debug->Ok("Laser hit on asteroid. Staging explosion.\n");
-                    //Only the fact that this asteroid died is recorded; RunLogic builds the
+                    //Only the fact that this asteroid died is recorded; RunSimulationTick builds the
                     //explosion, because building one here would create rigid bodies inside
                     //rp_world->update(). health = -1 claims it, so it cannot be staged twice.
                     pending_asteroid_explosions.push_back(asteroid);

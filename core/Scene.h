@@ -34,6 +34,29 @@ public:
 
 
     void UpdateInput();
+
+    /*
+        Called once per pass of the physics loop, straight after UpdateInput and before anything
+        else in the pass. It drains the command queue, services the pause key, and decides whether
+        this pass runs a simulated tick - returning that decision, which stays readable for the
+        rest of the pass through IsTickingThisPass().
+
+        The decision is made HERE, once, rather than by each stage re-deriving it from f_paused and
+        pending_physics_steps. While UpdateAnimations and UpdatePhysics each tested for themselves,
+        a StepPhysics() call from another thread landing between the two tests made them disagree,
+        and that step ran its physics without its animation frame. One answer per pass cannot
+        disagree with itself.
+
+        Command draining and the pause key live here for a different reason: both have to happen on
+        EVERY pass, including the ones that do not tick. A paused editor still has to accept
+        commands and still has to see the key that unpauses it.
+    */
+    bool BeginPass();
+
+    //The answer BeginPass reached for the pass now running. False on a pass that is only spinning
+    //because the simulation is paused: view work still runs on those, simulation work must not.
+    bool IsTickingThisPass(){ return f_tick_this_pass; }
+
     //delta_time is the fixed simulation timestep - it becomes each object's animation_time_delta
     //(unless that object opted out, see Object::f_animation_time_delta_override), so animation advances
     //on simulated ticks rather than on a hardcoded 20ms.
@@ -42,6 +65,39 @@ public:
     void DrawFrame();
 
     void AddObject(Object* object);
+
+    /*
+        Run fn with the simulation held still. Returns whether it ran.
+
+        The read-side counterpart to SubmitCommand. A command is how another thread WRITES the
+        simulation; this is how it READS one. A tool handler on the MCP server's thread holds no
+        lock, so walking the object list or serialising a transform from there is a plain data race
+        against the physics thread - and an object it is half-way through reading can be moved, or
+        destroyed, underneath it.
+
+        It is called AtTickBoundary rather than "Lock" because of what the lock happens to mean
+        here. The physics thread holds renderer->physics_mutex across a whole pass - input, the
+        tick, then the view work - and releases it only between passes. So taking it does not
+        merely make the read atomic, it lands the read BETWEEN ticks: nothing fn sees is
+        half-stepped, and GetPhysicsTick() inside fn names the tick that produced the state fn is
+        looking at.
+
+        Writing from inside is allowed and is sometimes the only option - the debug UI has always
+        done exactly this, and Scene::MoveObjectOverTicks has no command form - but prefer a
+        SimCommand where one exists. A command is tick-stamped, and so survives into a replay;
+        a direct write is not and does not.
+
+        Two rules for fn, both of which deadlock if broken:
+          - It must not wait on the physics thread. No SubmitCommandAndWait, no StepPhysicsAndWait,
+            no polling GetPendingPhysicsSteps or GetPendingObjectMotions - the physics thread
+            cannot reach any of those while this call holds the lock it needs.
+          - It must not wait on the render thread either, which rules out screenshots:
+            Application::MaybeAttachScreenshot blocks on Renderer::RequestScreenshot, and the
+            render thread takes this same mutex to draw. Capture before or after, never inside.
+        Keep fn short for the same reason the debug UI keeps its work short: the simulation is
+        stopped for exactly as long as it runs.
+    */
+    bool AtTickBoundary(const std::function<void()>& fn);
 
     //All three walk the whole tree (children included), depth-first, in renderer->objects order.
     Object* FindObject(const std::string& name);
@@ -129,14 +185,33 @@ public:
     int GetPendingCommands();
 
     bool IsPhysicsPaused(){return f_paused;}
-    void PausePhysics(bool paused){f_paused = paused;}
+
+    void PausePhysics(bool paused){
+        f_paused = paused;
+        if (!paused){
+            //Resuming discards anything still queued. A step is a request to advance a STOPPED
+            //simulation; once it is running again that request has been granted and then some.
+            //Leaving them queued meant they fired as a burst of extra ticks at the START of the
+            //next pause - a pause that advanced a tick before it froze.
+            pending_physics_steps = 0;
+        }
+    }
 
     //While paused, queues up num_steps physics ticks (each a full physics_world->Update() +
     //every object's UpdatePhysicsState(), same as a normal unpaused tick) for the physics
     //thread to run one at a time - lets a caller single-step the simulation deterministically
     //instead of guessing how long to sleep and hoping nothing else advanced in the meantime.
-    //A no-op while not paused, since there's nothing to "step" - it's already running freely.
-    void StepPhysics(int num_steps){ pending_physics_steps += max(num_steps,0); }
+    void StepPhysics(int num_steps){
+        //Genuinely a no-op while running, which is what this always claimed to be and was not.
+        //It used to add to the counter regardless, and UpdatePhysics only ever decrements it on a
+        //paused tick, so a step queued against a running simulation sat there forever and then
+        //spent itself the moment someone paused. Found by the sim_pause/sim_step tools reporting
+        //pending_steps: 1 on a free-running scene.
+        if (!f_paused){
+            return;
+        }
+        pending_physics_steps += max(num_steps,0);
+    }
     int GetPendingPhysicsSteps(){ return pending_physics_steps; }
 
     //THE simulation clock: how many physics ticks have actually RUN. It advances only when a
@@ -158,8 +233,16 @@ public:
 private:
     std::atomic<uint64_t> physics_tick{0};
     float physics_timestep = 0.02f;
-    bool f_paused = false;
+    //Atomic for the same reason pending_physics_steps below is: an MCP tool handler runs on the
+    //server's own thread and holds no lock, so sim_pause writes this while the physics thread is
+    //reading it. A plain bool made that a data race - benign in practice on x86, but the fix is
+    //one word and the tools that write it are now core rather than one app's debug aid.
+    std::atomic<bool> f_paused{false};
     std::atomic<int> pending_physics_steps{0}; //written from any thread, consumed by UpdatePhysics on the physics thread
+
+    //Set by BeginPass, read by everything downstream in the same pass. Physics-thread-only, so it
+    //needs no synchronisation of its own - the whole pass runs under renderer->physics_mutex.
+    bool f_tick_this_pass = false;
 
     //See MoveObjectOverTicks. start_* are captured on the first tick the motion actually runs,
     //not when it was requested, so it always starts from the object's real current pose.

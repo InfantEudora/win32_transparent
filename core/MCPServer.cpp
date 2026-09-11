@@ -229,6 +229,10 @@ void MCPServer::StartHttp(int port) {
         return;
     }
     m_httpServer = new TCPServer(port);
+    //Loopback only. This is a local control channel - it drives the running application, so it has
+    //no business being reachable from the network, and the log line below has always claimed
+    //127.0.0.1 while the socket was in fact bound to 0.0.0.0.
+    m_httpServer->SetLoopbackOnly(true);
     m_httpServer->SetOnClientConnect([this](SOCKET clientSocket) {
         std::thread th(&MCPServer::HandleHttpConnection, this, clientSocket);
         th.detach();

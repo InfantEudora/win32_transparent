@@ -393,54 +393,15 @@ void ApplicationIsoAnimation::Init(void){
 
 }
 
-//Called before update physics after update animations
-void ApplicationIsoAnimation::RunLogic(){
-    //Shortcuts
-    Camera* camera = main_scene->camera;
+//The model: the character's own movement, its aim/target state, and the per-tick decay that goes
+//with it. Runs once per tick that actually runs.
+//
+//Note the target block reads a pixel ray from the camera, and the camera is view-owned - so a
+//simulated value here depends on where the view happened to be pointing. That is fine today and is
+//exactly the feedback path recorded as backlog item 35.3; it has to be sampled at a tick boundary
+//before any of this can be replayed.
+void ApplicationIsoAnimation::RunSimulationTick(){
     InputController* input = main_scene->inputcontroller;
-
-    if (selected_object){
-        if (f_mode_grab){
-            //We use the camera left/right up down to move the character.
-            int dx = input->GetDelta(INPUT_MOUSE_X);
-            int dy = input->GetDelta(INPUT_MOUSE_Y);
-
-            vec3 vdx = camera->GetLeft() * dx * 0.01;
-            vec3 vdy = camera->GetUp() * -dy * 0.01;
-            selected_object->MoveBy(vdx + vdy);
-
-            if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
-                f_mode_grab = false;
-            }
-        }
-    }
-
-    if (character){
-        if (f_mode_camera_track){
-            Bone* neck = character->FindBone("mixamorig:Neck");
-            Bone* head = character->FindBone("mixamorig:Head");
-            vec3 head_wp = head->GetWorldPosition() - 3 * head->GetWorldForward();
-            vec3 p = camera->GetPosition();
-            vec3 diff = p.lerp(head_wp,0.04f);
-            camera->SetPosition(diff);
-            quat r = camera->GetRotation();
-            quat t = quat::getquat(neck->GetWorldPosition(),camera->GetWorldPosition(),Object::ref_up);
-            t.normalize();
-            r = quat::slerp(r,t,0.15f);
-            camera->SetRotation(r);
-        }
-
-        //Get the sun position to the character.
-        if (sun){
-            vec3 delta = sun->GetPosition() - character->GetPosition();
-            //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
-            //Make sure it's always above our character
-            sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
-            sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
-        }
-
-
-    }
 
     if (selected_skeleton && f_ik_arm){
         Bone* hand_r = selected_skeleton->FindBone("mixamorig:RightHand");
@@ -449,68 +410,11 @@ void ApplicationIsoAnimation::RunLogic(){
         }
     }
 
-    //All further code requires the cursor not to be above an UI element
+    //Carried over from the old single hook, where this gate guarded the mouse-driven camera
+    //code and the character input sat under it only by being further down the function. Kept as
+    //it was: removing it is a behaviour change to argue on its own merits, not part of this split.
     if (ImGui::GetIO().WantCaptureMouse){
-        //Clear mouse delta
-        input->GetDelta(INPUT_MOUSE_WHEEL);
         return;
-    }
-
-    CheckObjectSelection();
-
-    //Camera rotation moving
-    if (main_window->f_has_focus && input->IsKeyDown(INPUT_CLICK_MIDDLE)){
-        //f_show_rightclick_menu = false;
-        int dx = input->GetDelta(INPUT_MOUSE_X);
-        int dy = input->GetDelta(INPUT_MOUSE_Y);
-        if (input->IsKeyDown(INPUT_SHIFT)){
-            //Move the camera
-            vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
-            d += camera->MoveUpBy(dy/100.0f);
-            camera_target += d;
-        }else{
-            //If we move left/right, we rotate the camera around the camera target.
-            vec3 p = camera->GetPosition() - camera_target;
-            vec3 axis = camera->GetLeft();
-
-            //Get the axis towards the camera.
-            quat q(axis,-dy/50.0f);
-
-            //Rotate the camera position around the camera target
-            p = q * p;
-            //We update the position
-            camera->SetPosition(p+camera_target);
-
-            //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
-            vec3 up = camera->GetUp();
-            //up = vec3(0,1,0);
-            camera->SetLookAt(camera_target,&up);
-
-            //Now we rotate around the Y-axis
-            p = camera->GetPosition()-camera_target;
-            axis = vec3(0,1,0);
-            q.set_rotation(axis,-dx/50.0f);
-            p = q * p;
-            camera->SetPosition(p+camera_target);
-            //The lookat should make the same rotation around the y axis
-            camera->RotateBy(q);
-        }
-    }
-
-    //Mouse wheel for zoom, focused only - otherwise it tracks a wheel being used in another
-    //application. InputController drops the delta while unfocused as well.
-    static float mouse_delta_sum = 0;
-    if (main_window->f_has_focus){
-        if (mouse_delta_sum != 0){
-            vec3 diff = camera->GetForward() - camera_target;
-            float dist = diff.length() * mouse_delta_sum;
-            float delta = dist / 50.0f;
-
-            camera->MoveForwardBy(dist / 50.0f);
-
-            mouse_delta_sum /= 1.1;
-        }
-        mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
 
     //Character input
@@ -594,6 +498,123 @@ void ApplicationIsoAnimation::RunLogic(){
             target_indicator->SetVisibility(false);
         }
         character->hips_turn_direction /= 2;
+    }
+
+}
+
+//Camera, selection, and the debug markers and placement tools around the character. Runs every
+//pass, including the ones that simulate nothing, so the view stays live over a paused simulation.
+//Mouse deltas are read here and nowhere else.
+void ApplicationIsoAnimation::UpdateView(){
+    //Shortcuts
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+
+    if (selected_object){
+        if (f_mode_grab){
+            //We use the camera left/right up down to move the character.
+            int dx = input->GetDelta(INPUT_MOUSE_X);
+            int dy = input->GetDelta(INPUT_MOUSE_Y);
+
+            vec3 vdx = camera->GetLeft() * dx * 0.01;
+            vec3 vdy = camera->GetUp() * -dy * 0.01;
+            selected_object->MoveBy(vdx + vdy);
+
+            if (input->WasKeyReleased(INPUT_CLICK_LEFT)){
+                f_mode_grab = false;
+            }
+        }
+    }
+
+    if (character){
+        if (f_mode_camera_track){
+            Bone* neck = character->FindBone("mixamorig:Neck");
+            Bone* head = character->FindBone("mixamorig:Head");
+            vec3 head_wp = head->GetWorldPosition() - 3 * head->GetWorldForward();
+            vec3 p = camera->GetPosition();
+            vec3 diff = p.lerp(head_wp,0.04f);
+            camera->SetPosition(diff);
+            quat r = camera->GetRotation();
+            quat t = quat::getquat(neck->GetWorldPosition(),camera->GetWorldPosition(),Object::ref_up);
+            t.normalize();
+            r = quat::slerp(r,t,0.15f);
+            camera->SetRotation(r);
+        }
+
+        //Get the sun position to the character.
+        if (sun){
+            vec3 delta = sun->GetPosition() - character->GetPosition();
+            //debug->Info("Sun Delta %.2f,%.2f,%.2f\n",delta.x,delta.y,delta.z);
+            //Make sure it's always above our character
+            sun->SetPosition(character->GetPosition() + vec3(-5,5,5));
+            sun->SetWorldLookat(character->GetPosition(),vec3(0,1,0));
+        }
+
+
+    }
+
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        //Clear mouse delta
+        input->GetDelta(INPUT_MOUSE_WHEEL);
+        return;
+    }
+
+    CheckObjectSelection();
+
+    //Camera rotation moving
+    if (main_window->f_has_focus && input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+        //f_show_rightclick_menu = false;
+        int dx = input->GetDelta(INPUT_MOUSE_X);
+        int dy = input->GetDelta(INPUT_MOUSE_Y);
+        if (input->IsKeyDown(INPUT_SHIFT)){
+            //Move the camera
+            vec3 d = camera->MoveSidewaysBy(-dx/100.0f);
+            d += camera->MoveUpBy(dy/100.0f);
+            camera_target += d;
+        }else{
+            //If we move left/right, we rotate the camera around the camera target.
+            vec3 p = camera->GetPosition() - camera_target;
+            vec3 axis = camera->GetLeft();
+
+            //Get the axis towards the camera.
+            quat q(axis,-dy/50.0f);
+
+            //Rotate the camera position around the camera target
+            p = q * p;
+            //We update the position
+            camera->SetPosition(p+camera_target);
+
+            //Reset the lookat to 0,0,0 with current camera up, allowing a full 360 rotation around left axis.
+            vec3 up = camera->GetUp();
+            //up = vec3(0,1,0);
+            camera->SetLookAt(camera_target,&up);
+
+            //Now we rotate around the Y-axis
+            p = camera->GetPosition()-camera_target;
+            axis = vec3(0,1,0);
+            q.set_rotation(axis,-dx/50.0f);
+            p = q * p;
+            camera->SetPosition(p+camera_target);
+            //The lookat should make the same rotation around the y axis
+            camera->RotateBy(q);
+        }
+    }
+
+    //Mouse wheel for zoom, focused only - otherwise it tracks a wheel being used in another
+    //application. InputController drops the delta while unfocused as well.
+    static float mouse_delta_sum = 0;
+    if (main_window->f_has_focus){
+        if (mouse_delta_sum != 0){
+            vec3 diff = camera->GetForward() - camera_target;
+            float dist = diff.length() * mouse_delta_sum;
+            float delta = dist / 50.0f;
+
+            camera->MoveForwardBy(dist / 50.0f);
+
+            mouse_delta_sum /= 1.1;
+        }
+        mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
     }
 
     if (character){

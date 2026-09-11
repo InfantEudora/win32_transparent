@@ -17,8 +17,45 @@ void Scene::UpdateInput(){
     inputcontroller->UpdateKeyState(physics_tick);
 };
 
+//One decision per pass of the physics loop - see the header for why it is not left to each stage
+//to work out for itself.
+bool Scene::BeginPass(){
+    //Commands drain BEFORE the pause check below, deliberately. A paused simulation is exactly
+    //when the debug UI and a scripted MCP session do most of their creating and teleporting, and
+    //if commands only ran on a tick that actually stepped, a paused editor would freeze solid and
+    //every caller waiting on GetAppliedCommandSequence() would time out. The cost is that a
+    //command applied while paused lands between ticks rather than on one - fine, because
+    //GetPhysicsTick() is unchanged by it, so it is unambiguous which tick it precedes.
+    DrainCommands();
+    if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
+        PausePhysics(!f_paused);
+    }
+
+    //Running freely ticks every pass. Paused, a pass ticks only if StepPhysics has queued one.
+    //Note this does NOT consume the queued step - UpdatePhysics does that, at the end of the tick
+    //it runs, so a caller polling GetPendingPhysicsSteps() never sees zero before the work is done.
+    f_tick_this_pass = (!f_paused) || (pending_physics_steps > 0);
+    return f_tick_this_pass;
+}
+
 void Scene::UpdateAnimations(float delta_time){
     if (!renderer){
+        return;
+    }
+
+    /*
+        Animation only advances on a tick that actually RUNS.
+
+        That was survivable when a clip only posed bones. Since the root-motion rewrite it is not:
+        PlayerCharacter::ApplyAnimation calls RotateBy/MoveBy with the delta extracted from the
+        root track, so a clip MOVES the character through the world. A paused simulation whose
+        characters keep walking is not paused, and a replay of it cannot reproduce anything.
+
+        The caller already gates on this, so the guard is a backstop rather than the mechanism -
+        it matters because Scene::UpdatePhysics/UpdateAnimations are public and an app can drive
+        them itself. Either way the answer comes from BeginPass and is the same one physics uses.
+    */
+    if (!f_tick_this_pass){
         return;
     }
 
@@ -123,31 +160,20 @@ void Scene::UpdatePhysics(float delta_time){
     }
     physics_timestep = delta_time;
 
-    //Commands drain BEFORE the pause check below, deliberately. A paused simulation is exactly
-    //when the debug UI and a scripted MCP session do most of their creating and teleporting, and
-    //if commands only ran on a tick that actually stepped, a paused editor would freeze solid and
-    //every caller waiting on GetAppliedCommandSequence() would time out. The cost is that a
-    //command applied while paused lands between ticks rather than on one - fine, because
-    //GetPhysicsTick() is unchanged by it, so it is unambiguous which tick it precedes.
-    DrainCommands();
-    if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
-        PausePhysics(!f_paused);
+    //Whether this pass ticks was settled in BeginPass, at the top of the pass. Command draining
+    //and the pause key went with it, because both must happen on every pass, ticking or not.
+    if (!f_tick_this_pass){
+        return;
     }
 
-    //StepPhysics() queues these up from any thread (e.g. an MCP tool handler) - run exactly
-    //one queued tick per call here, same as this function would do unpaused, so the caller
-    //can single-step the simulation deterministically. The counter is decremented at the END
-    //of the tick, not here: a caller polling GetPendingPhysicsSteps() == 0 (tank_step) takes
-    //that as "the steps have happened" and immediately touches the simulation (a reset, a
-    //teleport) from its own thread - decrementing first let that land in the middle of the
-    //last step still running here, corrupting the state it was racing with.
-    bool consumed_pending_step = false;
-    if (f_paused){
-        if (pending_physics_steps <= 0){
-            return;
-        }
-        consumed_pending_step = true;
-    }
+    //Ticking while paused means this tick came out of the queue StepPhysics() fills from any
+    //thread (e.g. an MCP tool handler), so it is one of those and must be accounted for. The
+    //counter is decremented at the END of the tick, not here: a caller polling
+    //GetPendingPhysicsSteps() == 0 (tank_step) takes that as "the steps have happened" and
+    //immediately touches the simulation (a reset, a teleport) from its own thread - decrementing
+    //first let that land in the middle of the last step still running here, corrupting the state
+    //it was racing with.
+    bool consumed_pending_step = f_paused;
 
     //Before the physics step, so this tick's simulation reacts to the new pose/velocity.
     AdvanceObjectMotions(delta_time);
@@ -174,7 +200,9 @@ void Scene::UpdatePhysics(float delta_time){
     //treats a change as "that tick is finished and the state is mine to read".
     physics_tick++;
 
-    if (consumed_pending_step){
+    //Guarded rather than a bare decrement: PausePhysics(false) can zero the counter from another
+    //thread while this tick is still running, and an unguarded decrement would leave it at -1.
+    if (consumed_pending_step && (pending_physics_steps > 0)){
         pending_physics_steps--;
     }
 };
@@ -248,6 +276,16 @@ void Scene::DrawFrame(){
     renderer->DrawFrame(camera, shader,inputcontroller);
     renderer->physics_mutex.unlock();
 };
+
+bool Scene::AtTickBoundary(const std::function<void()>& fn){
+    //The mutex lives on the renderer because that is what owns the object list it protects.
+    if (!renderer || !fn){
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(renderer->physics_mutex);
+    fn();
+    return true;
+}
 
 void Scene::AddObject(Object* object){
     if (object && renderer){

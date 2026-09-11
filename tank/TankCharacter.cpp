@@ -21,7 +21,7 @@ void TankCharacter::UpdatePhysicsState(){
 
     //Let steering converge back toward 0 - shared with any other Vehicle, see core/Vehicle.cpp.
     //Nothing re-asserts input here any more: scripted holds are ordinary input events now, applied
-    //in RunLogic with the keyboard and gamepad (see InputController::HoldAxis).
+    //in RunSimulationTick with the keyboard and gamepad (see InputController::HoldAxis).
     DecaySteering();
 
     float reverse_multiplier = f_reverse ? -1.0f : 1.0f;

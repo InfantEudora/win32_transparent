@@ -11,7 +11,6 @@ public:
     ApplicationUI();
 
     void Init(void) override;
-    void RunLogic() override;
 
     void DrawImGuiUI(void) override;
 };

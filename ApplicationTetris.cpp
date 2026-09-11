@@ -1,5 +1,6 @@
 #include "ApplicationTetris.h"
 #include "Debug.h"
+#include "Primitives.h"
 #include "type_helpers.h"
 #include "MCPServer.h"
 
@@ -25,6 +26,13 @@ static Debugger* debug = new Debugger("ApplicationTetris",DEBUG_ALL);
 #define HOLD_Y              17.0f
 #define NEXT_Y              12.0f
 #define NEXT_SPACING_Y      3.5f
+
+//The text column, in those same world coordinates. Left-aligned a little inside the preview
+//column so the captions line up with each other rather than with the pieces they label.
+//TEXT_SCALE is in ems and one em is one world unit per line, so 0.8 makes a line of text a
+//little shorter than a block is tall - see core/TextMesh.h.
+#define TEXT_X              11.6f
+#define TEXT_SCALE          0.8f
 
 static vec3 CellWorldPosition(int x, int y){
     return vec3((float)x,(float)y,BOARD_ORIGIN_Z);
@@ -61,10 +69,22 @@ void ApplicationTetris::Init(void){
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
+    //Still constructed even though this app loads no assets: the engine reaches for it
+    //unguarded in places (the Scene panel's asset list, the object_spawn command handler).
     assetmanager = new AssetManager();
-    //data/unit_cube.obj is a true 1x1x1 cube centred on its own origin - the engine has no
-    //primitive generators at all, so this file is the only cube there is.
-    assetmanager->AddNewAssetFromOBJFile("block","data/unit_cube.obj");
+
+    //One 1x1x1 cube centred on its own origin, shared by every object in the app. This used to
+    //be data/unit_cube.obj loaded through the OBJ loader, purely because the engine had no way
+    //to make a cube; backlog item 16 removed that reason, and with it this app's only asset file.
+    block_mesh = MakeBox(vec3(1,1,1));
+    if (!block_mesh){
+        debug->Fatal("Failed to build the block mesh\n");
+    }
+    //A reference for the app's own pointer, the same way AssetManager holds one for an asset's
+    //mesh. Object::DeleteMesh deletes the mesh when its last Object lets go, and a line clear
+    //can destroy a lot of cubes at once - without this, the count could reach zero while
+    //block_mesh is still about to be handed to the next Object.
+    block_mesh->num_references++;
 
     main_scene = CreateNewScene("Tetris");
     main_scene->physics_world = new PhysicsWorld();
@@ -111,6 +131,7 @@ void ApplicationTetris::Init(void){
     BuildMaterials();
     BuildWell();
     BuildViewObjects();
+    BuildTextLabels();
     SetupCamera();
     SetupInput();
     RegisterCommandHandlers();
@@ -196,6 +217,29 @@ void ApplicationTetris::BuildMaterials(){
         renderer->AddMaterial(m);
         material_frame = renderer->FindMaterialIndex(m.name);
     }
+    {   //Text. Emissive because a label sits in front of the dark back panel with no light of
+        //its own aimed at it, and unlit letterforms at this size read as grey smudges.
+        Material m;
+        m.name = "tetris_text";
+        m.glsl_material.color = vec4(0.86f,0.89f,0.96f,1.0f);
+        m.glsl_material.metallic = 0.1f;
+        m.glsl_material.roughness = 0.5f;
+        m.glsl_material.emissive = vec4(0.86f,0.89f,0.96f,0.5f);
+        renderer->AddMaterial(m);
+        material_text = renderer->FindMaterialIndex(m.name);
+    }
+    {   //The one label that has to shout. emissive.w is a multiplier, so it has to stay near 1
+        //here: at the 2-3 the flashing row uses, every channel clips and the red comes out white.
+        //A banner that is merely bright is not worth losing its colour for.
+        Material m;
+        m.name = "tetris_text_hot";
+        m.glsl_material.color = vec4(1.0f,0.35f,0.30f,1.0f);
+        m.glsl_material.metallic = 0.0f;
+        m.glsl_material.roughness = 0.4f;
+        m.glsl_material.emissive = vec4(1.0f,0.22f,0.16f,1.0f);
+        renderer->AddMaterial(m);
+        material_text_hot = renderer->FindMaterialIndex(m.name);
+    }
     {   //The back panel the blocks cast their shadows onto. Dark, so lit blocks pop off it.
         Material m;
         m.name = "tetris_back";
@@ -208,23 +252,22 @@ void ApplicationTetris::BuildMaterials(){
 }
 
 //Every view object in this app is the same unit cube with a scale, a position and one material
-//slot, so this is the one place that knows how to make one.
-static Object* MakeCube(AssetManager* assetmanager, Scene* scene, const char* name,
+//slot, so this is the one place that knows how to make one. `mesh` is shared by pointer across
+//every cube - SetMesh takes a reference, so the mesh outlives any individual object.
+static Object* MakeCube(Mesh* mesh, Scene* scene, const char* name,
                         const vec3& position, const vec3& scale, int material_index){
-    Object* object = assetmanager->GetObjectFromAsset("block");
-    if (!object){
+    if (!mesh){
         return NULL;
     }
+    Object* object = new Object();
+    object->SetMesh(mesh);
     object->name = name;
     object->SetPosition(position);
     object->SetScale(scale);
+    //A generated mesh carries no material names, so unlike the asset-loaded cube this replaced
+    //there is nothing for Renderer::UpdateObjectMaterials to resolve over this slot on the next
+    //frame. The index is simply the answer. See docs/engine_backlog.md item 14 for the invariant.
     object->SetMaterialSlot(0,material_index);
-    //GetObjectFromAsset copies the OBJ's own material NAMES onto the object, and the renderer
-    //would resolve those over the slot just assigned on the next frame. This app picks its
-    //materials by index, so the name path is switched off rather than fought with.
-    //SetMaterialSlot above already settled this slot - an index is the answer, so no name lookup
-    //can come along and overwrite it. Clearing the asset's name by hand used to be necessary and
-    //is not any more; see docs/engine_backlog.md item 14.
     scene->AddObject(object);
     return object;
 }
@@ -243,7 +286,7 @@ void ApplicationTetris::BuildWell(){
         { "Well Floor", vec3( 4.5f,-1.0f, 0.0f), vec3(13.0f,1.0f,2.0f) },
     };
     for (int i = 0; i < (int)(sizeof(parts)/sizeof(parts[0])); i++){
-        Object* part = MakeCube(assetmanager,main_scene,parts[i].name,parts[i].position,parts[i].scale,material_frame);
+        Object* part = MakeCube(block_mesh,main_scene,parts[i].name,parts[i].position,parts[i].scale,material_frame);
         if (!part){
             continue;
         }
@@ -259,7 +302,7 @@ void ApplicationTetris::BuildWell(){
     }
     //The back panel. No collider: debris is meant to tumble forward out of the well, and a wall
     //behind it only ever produced blocks wedged in a corner.
-    MakeCube(assetmanager,main_scene,"Well Back",vec3(4.5f,9.5f,-1.2f),vec3(12.0f,22.0f,0.4f),material_back);
+    MakeCube(block_mesh,main_scene,"Well Back",vec3(4.5f,9.5f,-1.2f),vec3(12.0f,22.0f,0.4f),material_back);
 }
 
 void ApplicationTetris::BuildViewObjects(){
@@ -269,7 +312,7 @@ void ApplicationTetris::BuildViewObjects(){
         for (int x = 0; x < TETRIS_BOARD_W; x++){
             char name[32];
             snprintf(name,sizeof(name),"Cell %i,%i",x,y);
-            Object* cell = MakeCube(assetmanager,main_scene,name,CellWorldPosition(x,y),
+            Object* cell = MakeCube(block_mesh,main_scene,name,CellWorldPosition(x,y),
                                     vec3(CELL_VISUAL_SCALE),material_piece[0]);
             if (cell){
                 cell->Hide();
@@ -278,9 +321,9 @@ void ApplicationTetris::BuildViewObjects(){
         }
     }
     for (int i = 0; i < 4; i++){
-        piece_objects[i] = MakeCube(assetmanager,main_scene,"Piece Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
-        ghost_objects[i] = MakeCube(assetmanager,main_scene,"Ghost Cell",vec3(),vec3(GHOST_VISUAL_SCALE),material_ghost);
-        hold_objects[i]  = MakeCube(assetmanager,main_scene,"Hold Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
+        piece_objects[i] = MakeCube(block_mesh,main_scene,"Piece Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
+        ghost_objects[i] = MakeCube(block_mesh,main_scene,"Ghost Cell",vec3(),vec3(GHOST_VISUAL_SCALE),material_ghost);
+        hold_objects[i]  = MakeCube(block_mesh,main_scene,"Hold Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
         if (piece_objects[i]){ piece_objects[i]->Hide(); }
         if (ghost_objects[i]){ ghost_objects[i]->Hide(); }
         if (hold_objects[i]){ hold_objects[i]->Hide(); }
@@ -290,12 +333,154 @@ void ApplicationTetris::BuildViewObjects(){
     }
     for (int n = 0; n < TETRIS_NEXT_QUEUE_SHOWN; n++){
         for (int i = 0; i < 4; i++){
-            next_objects[n][i] = MakeCube(assetmanager,main_scene,"Next Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
+            next_objects[n][i] = MakeCube(block_mesh,main_scene,"Next Cell",vec3(),vec3(CELL_VISUAL_SCALE),material_piece[0]);
             if (next_objects[n][i]){
                 next_objects[n][i]->Hide();
             }
         }
     }
+}
+
+/*
+    The world-space labels.
+
+    Everything the board says in words goes through here. It is deliberately NOT ImGui: ImGui is
+    the debug layer, it does not appear in a screenshot (backlog item 19), and a game should be
+    able to ship without it. These are meshes in the scene like everything else.
+*/
+void ApplicationTetris::BuildTextLabels(){
+    /*
+        The advance and the line height come from fonts_glyphs.json, which the export script
+        writes beside the .glb because glTF has nowhere to put font metrics. This set is
+        monospaced, so one advance covers all 95 characters - that is the whole of what an atlas
+        would have carried, and why there is no atlas here (see core/TextMesh.h).
+    */
+    if (!LoadGlyphSetFromGLB(glyphs,"data/glyphs_unispace.glb",0.509167f,1.0f)){
+        //Not fatal. Without glyphs the board still plays perfectly; it just says nothing, which
+        //is exactly the state this app was in before there was any text at all.
+        debug->Warn("No glyphs loaded - the board will play without labels\n");
+        return;
+    }
+
+    struct LabelSetup{
+        int         id;
+        vec3        position;
+        float       scale;
+        int         align;
+        int         material;
+        const char* text;
+    };
+    static const LabelSetup setup[] = {
+        //Captions sit just above the thing they name.
+        { TETRIS_LABEL_HOLD,     vec3(TEXT_X,HOLD_Y + 2.0f,0.0f), TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "HOLD" },
+        { TETRIS_LABEL_NEXT,     vec3(TEXT_X,NEXT_Y + 2.0f,0.0f), TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "NEXT" },
+        //The stats go below the next queue, which ends at NEXT_Y - 2*NEXT_SPACING_Y = 5.0.
+        //Score gets two lines because it is the number people actually look at.
+        { TETRIS_LABEL_SCORE,    vec3(TEXT_X, 3.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "SCORE\n0" },
+        { TETRIS_LABEL_LINES,    vec3(TEXT_X, 1.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LINES 0" },
+        { TETRIS_LABEL_LEVEL,    vec3(TEXT_X,-0.1f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LEVEL 1" },
+        //Centred over the middle of the well (cells 0..9, so x 4.5) and in FRONT of the stack -
+        //the blocks reach z +0.46, so 1.2 clears them with room for the glyphs' own 0.1 depth.
+        { TETRIS_LABEL_GAMEOVER, vec3(4.5f,11.0f,1.2f),           1.30f,      TEXT_ALIGN_CENTER, 1, "GAME OVER\nPRESS R" },
+    };
+
+    for (int i = 0; i < (int)(sizeof(setup)/sizeof(setup[0])); i++){
+        const LabelSetup& ls = setup[i];
+        TetrisLabel& label = labels[ls.id];
+
+        label.object = new Object();
+        label.object->name = "Label";
+        label.object->SetPosition(ls.position);
+        label.object->SetMaterialSlot(0,ls.material ? material_text_hot : material_text);
+        //Text must not swallow a pick aimed at the board behind it, and there is nothing useful
+        //to inspect about a label anyway.
+        label.object->SetPickability(false);
+        label.scale = ls.scale;
+        label.align = ls.align;
+
+        //Before AddObject, so the object is never in the scene without a mesh for the renderer
+        //to batch. SetLabelText is what actually builds it.
+        SetLabelText(ls.id,ls.text);
+        main_scene->AddObject(label.object);
+    }
+
+    //Built with its text so it has a mesh, then emptied so it starts hidden. Giving a label no
+    //text is how it is switched off - BuildTextMesh returns NULL for a string with no ink, which
+    //is a documented outcome rather than a failure.
+    SetLabelText(TETRIS_LABEL_GAMEOVER,"");
+}
+
+void ApplicationTetris::SetLabelText(int label_id, const char* text){
+    if (label_id < 0 || label_id >= TETRIS_LABEL_COUNT || !text){
+        return;
+    }
+    TetrisLabel& label = labels[label_id];
+    if (!label.object){
+        return;
+    }
+    //Most frames change nothing. Comparing the string is cheaper than rebuilding a mesh by a
+    //wide margin, and it is what keeps this safe to call unconditionally every single frame.
+    if (strncmp(label.text,text,sizeof(label.text)) == 0){
+        return;
+    }
+    snprintf(label.text,sizeof(label.text),"%s",text);
+
+    TextLayout layout;
+    layout.scale = label.scale;
+    layout.align = label.align;
+    //Slot 0, which is where this Object's material was assigned. The glyph meshes carry matid 0
+    //themselves, but the string is rebuilt from scratch so it has to be restated.
+    layout.matid = 0;
+
+    Mesh* mesh = BuildTextMesh(glyphs,label.text,layout,label.mesh);
+    if (!mesh){
+        //No ink: the empty string, or spaces. Hide rather than draw nothing, and keep the mesh -
+        //it still holds the last thing this label said, ready to be overwritten.
+        label.object->Hide();
+        return;
+    }
+    if (!label.mesh){
+        label.mesh = mesh;
+        label.object->SetMesh(mesh);
+    }
+    label.object->Show();
+}
+
+/*
+    Frame thread, once per frame, before the scene is drawn and while no lock is held.
+
+    This is where text gets built, because building it ends in glNamedBufferData and the physics
+    thread may not touch GL. What crosses the thread boundary is the SNAPSHOT - plain numbers,
+    published under snapshot_mutex at the end of every tick - and the strings are formatted here,
+    on this side of it. Nothing has to be published as text, and the simulation never waits.
+*/
+void ApplicationTetris::PreRender(void){
+    if (!glyphs.IsValid()){
+        return;
+    }
+
+    int score = 0;
+    int lines = 0;
+    int level = 1;
+    bool f_gameover = false;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        score = snapshot.score;
+        lines = snapshot.lines;
+        level = snapshot.level;
+        f_gameover = (snapshot.phase == TETRIS_PHASE_GAMEOVER);
+    }
+
+    char text[64];
+    snprintf(text,sizeof(text),"SCORE\n%i",score);
+    SetLabelText(TETRIS_LABEL_SCORE,text);
+    snprintf(text,sizeof(text),"LINES %i",lines);
+    SetLabelText(TETRIS_LABEL_LINES,text);
+    snprintf(text,sizeof(text),"LEVEL %i",level);
+    SetLabelText(TETRIS_LABEL_LEVEL,text);
+
+    //Text or no text is the whole of the banner's state.
+    SetLabelText(TETRIS_LABEL_GAMEOVER,f_gameover ? "GAME OVER\nPRESS R" : "");
 }
 
 void ApplicationTetris::SetupCamera(){
@@ -379,33 +564,40 @@ void ApplicationTetris::NewGame(uint32_t seed){
 
 //--- The tick -------------------------------------------------------------------------------
 
-void ApplicationTetris::RunLogic(void){
+//Chrome only. This used to sit inside the gameplay hook behind the pause predicate, which meant
+//the UI toggle did nothing while the game was paused - exactly when you most want to open a panel.
+//It is not gameplay by its own description, so it moved here and now works whether or not the
+//simulation is running.
+void ApplicationTetris::UpdateView(void){
     if (!main_scene){
         return;
     }
-    /*
-        RunLogic is called on every pass of the physics thread's loop, NOT once per simulated
-        tick: the loop keeps spinning while the simulation is paused (so that a key can unpause
-        it), and Scene::UpdatePhysics - which runs after this - is where the pause and the
-        single-step counter are actually honoured. Game logic that ran here unguarded would keep
-        playing while the sim was paused, and single-stepping would advance it by an unknown
-        number of ticks. So this predicate has to mirror the one in Scene::UpdatePhysics exactly.
-    */
-    bool f_tick_will_run = !main_scene->IsPhysicsPaused() || (main_scene->GetPendingPhysicsSteps() > 0);
-    if (!f_tick_will_run){
-        return;
-    }
-
     InputController* input = main_scene->inputcontroller;
 
-    //F1 and R are UI/meta rather than gameplay, so they are read whether or not a game is in
-    //progress and are not part of the TetrisInput the rules see.
     if (input->WasKeyReleased(INPUT_TETRIS_TOGGLE_UI)){
         f_show_engine_ui = !f_show_engine_ui;
         f_show_scene_window = f_show_engine_ui;
         f_show_inspector_window = f_show_engine_ui;
         f_show_engine_window = f_show_engine_ui;
     }
+}
+
+/*
+    The game. This function used to open with a hand-rolled copy of Scene::UpdatePhysics's pause
+    predicate, because the old RunLogic ran on every pass of the physics loop rather than once per
+    simulated tick, and unguarded gameplay would have kept playing through a pause and advanced by
+    an unknown number of ticks under single-stepping. That guard is gone: the engine now makes that
+    decision once per pass in Scene::BeginPass and only calls this hook on the passes that tick.
+*/
+void ApplicationTetris::RunSimulationTick(void){
+    if (!main_scene){
+        return;
+    }
+
+    InputController* input = main_scene->inputcontroller;
+
+    //Restart is a game action, so it stays here and is read whether or not a game is in progress.
+    //It is deliberately not part of the TetrisInput the rules see.
     if (input->WasKeyReleased(INPUT_TETRIS_RESTART)){
         //Already on the physics thread inside the tick - so this is a direct call, not a command.
         //A command would be a round trip through the queue to arrive back here one tick later.
@@ -735,7 +927,7 @@ void ApplicationTetris::SpawnClearDebris(){
         board is still a plain array and nothing here can affect the rules, which is the only
         way to have physics in a Tetris without ruining it.
 
-        Safe to create bodies here because RunLogic is not inside the physics step - the rule
+        Safe to create bodies here because RunSimulationTick is not inside the physics step - the rule
         (core/SimCommand.h, ApplicationShip.cpp:995) is that a body must never be created from
         inside a contact callback, where rp3d is mid-iteration over its own arrays.
     */
@@ -750,7 +942,7 @@ void ApplicationTetris::SpawnClearDebris(){
             if (type < 0){
                 continue;
             }
-            Object* chunk = MakeCube(assetmanager,main_scene,"Debris",
+            Object* chunk = MakeCube(block_mesh,main_scene,"Debris",
                                      CellWorldPosition(x,y) + vec3(0,0,0.2f),
                                      vec3(0.5f),material_piece[type]);
             if (!chunk){
@@ -801,7 +993,7 @@ void ApplicationTetris::UpdateDebris(){
     if (f_any_destroyed){
         //Object::Destroy only MARKS. Without this the cubes stop rendering but their rigid bodies
         //stay in the physics world for the life of the run - only two of the eleven apps in this
-        //repo call it, which is a trap rather than a feature. Safe here: RunLogic holds
+        //repo call it, which is a trap rather than a feature. Safe here: RunSimulationTick holds
         //physics_mutex, so the render thread is not walking the object list.
         renderer->DeleteDestroyedObjects();
     }
@@ -978,7 +1170,8 @@ void ApplicationTetris::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("tetris_step",
         "Advance the paused simulation by exactly num_ticks ticks and return the resulting state. "
         "Requires tetris_pause first. Every duration in this game is a tick count, so stepping is "
-        "exact: 48 steps at level 1 is exactly one cell of gravity.",
+        "exact: 48 steps at level 1 is exactly one cell of gravity. sim_step is the same stepping "
+        "without the board state.",
         json{
             {"type","object"},
             {"properties", {
@@ -994,11 +1187,8 @@ void ApplicationTetris::RegisterMCPTools(){
                 return json{ {"error","not paused - call tetris_pause with paused=true first"} };
             }
             int num_ticks = max((int)args.value("num_ticks",1.0f),0);
-            main_scene->StepPhysics(num_ticks);
-            int timeout_ms = max(2000,num_ticks * 30);
-            for (int waited_ms = 0; waited_ms < timeout_ms && main_scene->GetPendingPhysicsSteps() > 0; waited_ms += 5){
-                Sleep(5);
-            }
+            //Shared with the core sim_step tool - see Application::StepPhysicsAndWait.
+            StepPhysicsAndWait(num_ticks);
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
         });
 

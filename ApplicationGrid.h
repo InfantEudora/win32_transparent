@@ -23,7 +23,8 @@ public:
     void Init(void) override;
 
     void DrawImGuiUI(void) override;
-    void RunLogic() override;
+    void UpdateView() override;
+    void RunSimulationTick() override;
 
     vec3 camera_target = {};
 

@@ -92,6 +92,30 @@ public:
     //The `screenshot` core MCP tool is this with an empty result.
     json MaybeAttachScreenshot(json result, bool include_screenshot);
 
+    //The simulation clock, as the core sim_pause/sim_step tools report it: tick, paused,
+    //pending_steps, timestep. Deliberately the CLOCK and nothing else - an app with telemetry
+    //worth returning already has its own tool for it, and a core tool that tried to summarise
+    //eleven different simulations would be wrong in ten of them.
+    json SimClockJson();
+
+    //Turn an {id|name} tool argument into an id, reading the scene at a tick boundary. The
+    //POINTER is deliberately not returned: it is only valid while the lock is held, and every
+    //caller here goes on to submit a command and wait, which must happen with the lock released.
+    //An id stays meaningful across that gap, and ObjectJsonAtTickBoundary below resolves it again.
+    bool ResolveObjectIdArg(const json& args, objectid_t& id_out, std::string& error);
+
+    //Serialise one object by id, at a tick boundary. Reports a clear error rather than crashing if
+    //the object stopped existing in between - which is a real outcome once a command has been
+    //applied, since object_destroy is one of the commands.
+    json ObjectJsonAtTickBoundary(objectid_t id, bool full);
+
+    //Queue num_ticks single-steps and block until the physics thread has actually consumed them,
+    //returning how many ticks REALLY ran. That return value is the honest answer and worth
+    //checking: a timeout leaves the remainder queued to run later, so a caller that assumed it got
+    //what it asked for would be reading the wrong state. Requires the simulation to be paused -
+    //StepPhysics is a no-op otherwise, since a running sim is already stepping.
+    uint64_t StepPhysicsAndWait(int num_ticks);
+
     //The point the app's camera orbits and zooms around, if it has one. Every app subclass keeps
     //its own `camera_target` (a copy-pasted field, not shared state), so the core camera MCP
     //tools cannot see it directly - this is the one-line opt-in that lets them read and write it.
@@ -101,7 +125,35 @@ public:
     //Physics thread
     virtual void UpdateInput(void);
     virtual void UpdateAnimations(void);
-    virtual void RunLogic(void);
+
+    /*
+        The app's two per-pass hooks. Both run on the physics thread with renderer->physics_mutex
+        held; what separates them is HOW OFTEN.
+
+        UpdateView()        - every pass of the physics loop, including the passes that simulate
+                              nothing because the sim is paused. For work whose job is to LOOK at
+                              the simulation rather than to be part of it: moving the camera,
+                              picking, editor gizmos, keeping a debug marker on something. It must
+                              not change anything a tick will read - it runs a number of times that
+                              depends on loop pacing and on how long the game sat paused, so
+                              anything it writes into the simulation is unreproducible by
+                              construction.
+
+        RunSimulationTick() - exactly once per tick that actually runs, immediately before
+                              Scene::UpdatePhysics steps the world. Gameplay goes here. It does not
+                              run while paused, and single-stepping runs it exactly once per step,
+                              so what it does is paused, stepped and replayed along with the physics.
+
+        These replace the old RunLogic(), which was documented as the per-tick hook but was really
+        called on every pass - so gameplay written the obvious way kept playing through a pause, and
+        single-stepping advanced it by loop iterations rather than by ticks.
+
+        The test for which one a piece of code belongs in: if running it twice for a single tick
+        would change the outcome, it is simulation, and it goes in RunSimulationTick.
+    */
+    virtual void UpdateView(void);
+    virtual void RunSimulationTick(void);
+
     virtual void UpdatePhysics(void);
     virtual void NextInput(void);
 
@@ -113,8 +165,8 @@ public:
         The hook exists because an app sometimes has GL work that has to happen before the colour
         pass and cannot be hung off a shader's uniform_callback - that fires while the shader is
         already bound, mid-pass, which is too late to fill a texture the pass will sample. The
-        ship app builds its cloud shadow map here. RunLogic is NOT the place: it runs on the
-        logic thread, which may not touch GL at all.
+        ship app builds its cloud shadow map here. UpdateView is NOT the place, close as it sounds:
+        it runs on the physics thread, which may not touch GL at all.
     */
     virtual void PreRender(void){};
     virtual void DrawFrame(void);

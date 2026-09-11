@@ -32,8 +32,9 @@ Files added:
 | `tetris/Playfield.{h,cpp}` | the rules. A plain array and tick counters, no engine types at all |
 | `tools/tetris_bot.py` | plays the game through MCP over HTTP, for testing |
 
-Three files in `core/` were changed. All three are logged in §5, and one of them is the finding I
-would most want the author to read.
+Four files in `core/` were changed — three in the original pass, plus `Camera` for backlog item 31
+afterwards. All are logged in §5, and one of them is the finding I would most want the author to
+read.
 
 **The headline is good news.** A complete, deterministic, animated, sounded, physics-garnished
 game took one session on this engine, and most of that was gameplay code that would have been the
@@ -509,7 +510,7 @@ claiming that property before the code had it.
 
 ---
 
-## 5. Changes to `core/` — three, all logged
+## 5. Changes to `core/` — four patches and one addition, all logged
 
 ### 5.1 `core/InputController.{h,cpp}` — `HasSyntheticHolds()` now covers the release tick
 
@@ -571,7 +572,105 @@ rewrite and the `Object` encapsulation that landed before I started: every error
 `ApplicationGrid.cpp`, and nothing in my three-file diff touches `PlayerCharacter`, `Object`, or
 either symbol. Flagging it because it is a broken app in the tree, not because I broke it.
 
-### 5.4 No other core files were touched
+### 5.4 `core/Camera.{h,cpp}` + `core/Renderer.cpp` — `GetPixelRay` is viewport-aware, and the orthographic branch uses the camera's basis
+
+*Added after the report, working backlog item 31. Two distinct changes in one function; both are
+logged separately below because they have different blast radii.*
+
+**(a) The viewport offset.** `Camera::viewport` gains `px_offset_x`/`px_offset_y`;
+`Renderer::DrawFrame` writes them next to `width`/`height`; `GetPixelRay` subtracts them before
+normalising. The fields are in **cursor space** (top-left origin, like `GetRelativeMousePosition`),
+not `Renderer::viewport_y`'s bottom-origin convention — deliberately, since their only consumer is
+a mouse pixel. They are named differently from the renderer's pair so the mismatch reads as a
+decision rather than an oversight, and `DrawFrame` performs the single flip
+(`height - (viewport_y + GetViewportHeight())`). Both default to `0.0f` in the header, because
+`GetPixelRay` may legitimately run before the first frame and the rest of the `viewport` struct has
+no initialisers at all.
+
+*Why:* `GetPixelRay` divided by the viewport's size but took a window pixel, so any app combining a
+restricted viewport with picking got a skewed picture. Measured with the checks below: a 300px
+offset on a 900px viewport puts a perspective pick **67% of the way to the frustum edge**, and an
+orthographic one **7.7 board cells** off.
+
+*Blast radius:* none today. All seven `GetPixelRay` call sites (Animation, Grid ×2, IsoAnimation
+×2, Sim, Tileset) run full-window, where both offsets compute to exactly 0 and the arithmetic is
+identical to before. The one app that restricts its viewport (Tank) does not pick. That is why the
+bug was latent rather than reported.
+
+**(b) The orthographic branch.** It hardcoded
+`GetPosition() + vec3(-w*zoom*aspect, 0, h*zoom)` — screen-right to world -X, screen-up to world
++Z, the camera's orientation ignored, with a `TODO` admitting it. That is correct only for a camera
+looking straight down -Y. Now built from the camera's own basis
+(`GetLeft()*w*zoom*aspect + GetUp()*h*zoom`), matching the perspective branch directly below it,
+which the checks confirm agree on screen-right being +X.
+
+*Blast radius:* none. The only orthographic **scene** camera in the repo is Tetris's — Ship's two
+are shadow/cloud cameras that never pick, and Sim's `SetupOrthographic` is commented out (its
+`CAMERA_TYPE_ORTHOGRAPHIC` branch at `ApplicationSim.cpp:194` is a mouse-wheel zoom, not a pick).
+So this branch was effectively dead code that would have failed the moment anyone pointed an
+orthographic camera at anything other than the ground.
+
+**What was deliberately NOT changed:** the object-id picking path. `Renderer::DrawFrame`'s
+`glReadPixels(mouse.x, height - mouse.y, ...)` reads a window pixel from a full-window-sized
+G-buffer, into which the scene is rasterised at its true window position — it is offset-correct by
+construction, and "fixing" it to subtract the offset would break it. Said here because it is the
+obvious next thing someone would change.
+
+**Verification: `tools/camera_ray_test.cpp`.** `GetPixelRay` is pure maths on the camera's own
+state — no GL, no window, no simulation — so it links the ordinary core objects into a console
+program and is checkable without moving a mouse. 11 checks covering perspective and orthographic,
+offset and not, including a viewport banded along the *bottom* of the window (the case where the
+top/bottom origin flip has to be right). All pass; the build line is in the file's header comment.
+It caught a wrong expectation in its own first draft, which is the point of writing it.
+
+### 5.5 `core/TextMesh.{h,cpp}` + `core/TextMeshGLB.cpp` — text as geometry (an ADDITION, 2026-09-11)
+
+New files, not a patch. **Nothing existing changed**, so no app can behave differently: the two
+translation units are compiled and linked into every app and export three functions nobody else
+calls. This is the geometry half of backlog item 24, done after the report at Dick's direction
+because he had already exported one mesh per glyph to `data/glyphs_unispace.glb`.
+
+`BuildTextMesh` bakes a string into a single `Mesh` — each glyph's triangles copied, shifted along
+a pen and welded into one vertex buffer. `APP=Tetris` now says `HOLD`, `NEXT`, `SCORE`, `LINES`,
+`LEVEL` and `GAME OVER` in the world instead of through ImGui, which also means §4.4 (screenshots
+do not capture ImGui) no longer hides the game's own text from a client that cannot look at the
+monitor.
+
+Three decisions that are really about where the seams go:
+
+- **No atlas, and that is not an omission.** An atlas is texture bookkeeping — it exists so a quad
+  knows which rectangle of pixels to sample. Glyphs that are geometry have no pixels. What a
+  layout needs from a font is *metrics*, and for this monospaced set those are two floats
+  (`advance` 0.509167, `line_height` 1.0, from `fonts_glyphs.json`). The SDF/quad path item 24
+  still wants will share this file's *layout* and none of its storage.
+- **It is not in `Mesh`, and it loads nothing.** `Mesh.h` includes glad, stdint and
+  `type_vertex.h`; a `Mesh::BuildTextMesh` would have made the vertex-buffer class know about
+  tinygltf and a path under `data/`. Instead the builder is handed a `GlyphSet`, and
+  `LoadGlyphSetFromGLB` — the one function that knows what glTF is — sits in its own translation
+  unit. Deleting that file costs a convenience, not a feature.
+- **It rebuilds in place.** `Mesh` has no destructor, so `delete`ing one drops its VBO and VAO on
+  the floor; a score label rebuilt by delete/new would leak two GL objects per point scored.
+  `BuildTextMesh` takes the mesh to refill, and `SetMeshData` re-uploads into the same buffer
+  because `InitVBOVAO` is a no-op once `vbo` is non-zero.
+
+Two engine facts fell out of writing it, both recorded rather than patched:
+
+- `Mesh::SetMeshData(verts, 0)` reaches `vertices.at(0)` on an empty vector, and this build has
+  exceptions off. So an empty string cannot be expressed as an empty mesh; `BuildTextMesh` returns
+  `NULL` for a string with no ink and the caller hides the object. That is how the game-over
+  banner is switched off.
+- `GLTFLoader` ships `inf`/`NaN` tangents for triangles with zero UV area — **5,149 of the 8,264
+  in the glyph file, 62%** — and says nothing. `BuildTextMesh` writes its own tangent (+X, correct
+  for a plane facing +Z) rather than carrying the glyph's over. Filed as **backlog item 38**; it is
+  invisible today only because `default.frag` reads the tangent solely for normal-mapped
+  materials.
+
+Verified by playing: 30 bot pieces to `SCORE 2474 / LINES 11 / LEVEL 2` with the labels matching
+the tool output exactly (so the in-place rebuild survives the string getting longer), then a
+forced top-out for the centred two-line banner, then a restart to confirm the empty-string hide
+and re-show. `APP=Ship` builds and links unchanged.
+
+### 5.6 No other core files were touched
 
 `Application`, `Scene`, `Object`, `Physics`, `SoundSystem`, `RRandom`, `MCPServer` and the shaders
 are untouched. In particular I did **not** patch §3.2 (the `RunLogic` pause predicate), §4.4

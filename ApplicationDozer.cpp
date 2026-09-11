@@ -58,9 +58,15 @@ void ApplicationDozer::Init(){
     main_window->Resize(1600,800);
 }
 
-//Called before update physics from the physics Thread
-void ApplicationDozer::RunLogic(){
-    //Camera pivot around point
+//The model. Runs once per tick that actually runs, immediately before the physics step - which
+//matters for the contact counter below, whose whole contract is "zeroed before the step, filled by
+//the step's callbacks".
+//
+//The two early returns are carried over unchanged from the old single hook. Neither really belongs
+//on simulation work (a dozer should not stop dead because the window lost focus or because the
+//cursor is over a panel) but both were the behaviour before this split, and changing them is a
+//separate decision from moving the code.
+void ApplicationDozer::RunSimulationTick(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
@@ -91,6 +97,69 @@ void ApplicationDozer::RunLogic(){
 
     //Can't just call this... the renderer might be rendering. Now it needs a mutex around everything
     renderer->DeleteDestroyedObjects();
+
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        return;
+    }
+
+    //character
+    if (dozer){
+        if (input->IsKeyDown(INPUT_MOVE_UP)){
+            dozer->MoveForward();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_DOWN)){
+            dozer->MoveBackward();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
+            dozer->TurnRight();
+        }
+        if (input->IsKeyDown(INPUT_MOVE_LEFT)){
+            dozer->TurnLeft();
+        }
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            dozer->ArmUp();
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            dozer->ArmDown();
+        }
+    }
+
+    if (input->WasKeyReleased(INPUT_B)){
+        for (int i=0;i<50;i++){
+        int r = rand()%4;
+        if (r == 0)
+            SpawnAssetAt("Box", vec3(0,5,0));
+        if (r == 1)
+            SpawnAssetAt("Crate", vec3(0,5,0));
+        if (r == 2)
+            SpawnAssetAt("Barrel", vec3(0,5,0));
+        if (r == 3)
+            SpawnAssetAt("TrafficCone", vec3(0,6,0));
+        }
+    }
+
+    if (input->WasKeyReleased(INPUT_E)){
+        if (dozer->IsEngineRunning()){
+            dozer->StartStopEngine(false);
+        }else{
+            dozer->StartStopEngine(true);
+        }
+    }
+}
+
+//Camera, selection and the editor gestures. Runs every pass, including while paused, so the view
+//stays live over a frozen simulation. Mouse deltas are read here and nowhere else - GetDelta marks
+//the sample processed, so sharing one across both hooks would apply the same movement twice.
+void ApplicationDozer::UpdateView(){
+    //Camera pivot around point
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+
+    //Only when in focus
+    if (!main_window->f_has_focus){
+        return;
+    }
 
     //All further code requires the cursor not to be above an UI element
     if (ImGui::GetIO().WantCaptureMouse){
@@ -184,50 +253,6 @@ void ApplicationDozer::RunLogic(){
                 physics->world->WakeUpEveryone();
             }
             selected_object = NULL;
-        }
-    }
-
-    //character
-    if (dozer){
-        if (input->IsKeyDown(INPUT_MOVE_UP)){
-            dozer->MoveForward();
-        }
-        if (input->IsKeyDown(INPUT_MOVE_DOWN)){
-            dozer->MoveBackward();
-        }
-        if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
-            dozer->TurnRight();
-        }
-        if (input->IsKeyDown(INPUT_MOVE_LEFT)){
-            dozer->TurnLeft();
-        }
-        if (input->IsKeyDown(INPUT_TURN_UP)){
-            dozer->ArmUp();
-        }
-        if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            dozer->ArmDown();
-        }
-    }
-
-    if (input->WasKeyReleased(INPUT_B)){
-        for (int i=0;i<50;i++){
-        int r = rand()%4;
-        if (r == 0)
-            SpawnAssetAt("Box", vec3(0,5,0));
-        if (r == 1)
-            SpawnAssetAt("Crate", vec3(0,5,0));
-        if (r == 2)
-            SpawnAssetAt("Barrel", vec3(0,5,0));
-        if (r == 3)
-            SpawnAssetAt("TrafficCone", vec3(0,6,0));
-        }
-    }
-
-    if (input->WasKeyReleased(INPUT_E)){
-        if (dozer->IsEngineRunning()){
-            dozer->StartStopEngine(false);
-        }else{
-            dozer->StartStopEngine(true);
         }
     }
 

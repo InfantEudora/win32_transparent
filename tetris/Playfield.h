@@ -106,7 +106,7 @@ public:
     void NewGame(uint32_t seed);
 
     //One simulation tick. The ONLY way the state ever changes. Must be called exactly once per
-    //physics tick that actually runs (never while paused) - see ApplicationTetris::RunLogic.
+    //physics tick that actually runs (never while paused) - see ApplicationTetris::RunSimulationTick.
     void Tick(const TetrisInput& input, TetrisEvents& events);
 
     //--- Reading the state --------------------------------------------------------------------

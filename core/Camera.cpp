@@ -76,13 +76,28 @@ ray Camera::GetRay(){
 ray Camera::GetPixelRay(int2& px_coord){
 	ray r;
 	//The end of the ray is on the far clipping plane
-	//Convert the pixel coord to a -0.5/0.5 space
-	float w = (px_coord.x - (viewport.width * 0.5)) / (viewport.width * 0.5);
-	float h = (viewport.height-px_coord.y - (viewport.height * 0.5)) / (viewport.height * 0.5);
+	//Convert the pixel coord to a -0.5/0.5 space.
+	//
+	//px_coord is a WINDOW pixel (that is what GetRelativeMousePosition returns), while width and
+	//height are the VIEWPORT's. Subtract the viewport's origin first or the two disagree the
+	//moment an app restricts its viewport: the picture gets skewed by the offset and every pick
+	//lands in the wrong place. See Camera::viewport.px_offset_x on which corner these measure from.
+	float vx = px_coord.x - viewport.px_offset_x;
+	float vy = px_coord.y - viewport.px_offset_y;
+	float w = (vx - (viewport.width * 0.5)) / (viewport.width * 0.5);
+	float h = (viewport.height - vy - (viewport.height * 0.5)) / (viewport.height * 0.5);
 
 	if (type == CAMERA_TYPE_ORTHOGRAPHIC){
-		//TODO: Take rotation and camera direction into account
-		r.origin = GetPosition() + vec3(-w*viewport.zoom * viewport.aspect,0,h*viewport.zoom);
+		//An orthographic ray starts on the image plane and runs along the camera's forward axis -
+		//there is no single origin the way there is for a perspective camera.
+		//
+		//Built from the camera's OWN basis, like the perspective branch below. This used to be
+		//`GetPosition() + vec3(-w*zoom*aspect, 0, h*zoom)`, which hardcoded screen-right to world
+		//-X and screen-up to world +Z and ignored the camera's orientation entirely (there was a
+		//TODO here saying so). That is correct only for a camera looking straight down -Y, and
+		//wrong for every other orientation - an orthographic camera looking down -Z, which is how
+		//you point one at a 2D-looking playfield, got a ray that slid along the wrong axes.
+		r.origin = GetPosition() + (GetLeft() * w * viewport.zoom * viewport.aspect) + (GetUp() * h * viewport.zoom);
 		r.direction = GetForward();
 		return r;
 	}

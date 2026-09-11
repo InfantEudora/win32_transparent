@@ -134,8 +134,48 @@ static unsigned long long g_lastTick = GetTickCount64();
 static int g_frames = 0;
 static int g_lastFPS = 0;
 
-//Called before update physics
-void ApplicationTileset::RunLogic(){
+//The model. The only thing in this app that carries state from tick to tick under its own power is
+//the car being driven - placing roads, trees and houses is editing, and editing should keep working
+//while the simulation is paused, so all of it stayed on the view side.
+//
+//Both gates below are carried over from the old single hook rather than reconsidered here.
+void ApplicationTileset::RunSimulationTick(){
+    InputController* input = main_scene->inputcontroller;
+
+    //Only when in focus
+    if (!main_window->f_has_focus){
+        return;
+    }
+
+    //All further code requires the cursor not to be above an UI element
+    if (ImGui::GetIO().WantCaptureMouse){
+        return;
+    }
+
+    if (controlled_car){
+        if (input->IsKeyDown(INPUT_TURN_UP)){
+            controlled_car->Accelerate(1.0f);
+            controlled_car->f_has_target = false;
+        }
+        if (input->IsKeyDown(INPUT_TURN_DOWN)){
+            controlled_car->Reverse(1.0f);
+            controlled_car->f_has_target = false;
+        }
+        if (input->IsKeyDown(INPUT_TURN_LEFT)){
+            controlled_car->SteerLeft(1.0f);
+            controlled_car->f_has_target = false;
+        }
+        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
+            controlled_car->SteerRight(1.0f);
+            controlled_car->f_has_target = false;
+        }
+    }
+
+}
+
+//Camera, selection, the FPS counter and the whole placement toolset. Runs every pass, including the
+//ones that simulate nothing. Mouse deltas are read here and nowhere else.
+void ApplicationTileset::UpdateView(){
     // Count frames and update FPS once per second
     g_frames++;
     unsigned long long now = GetTickCount64();
@@ -197,25 +237,6 @@ void ApplicationTileset::RunLogic(){
             camera_target = selected_object->GetWorldPosition();
             vec3 up = up = vec3(0,1,0);
             camera->SetLookAt(camera_target,&up);
-        }
-    }
-
-    if (controlled_car){
-        if (input->IsKeyDown(INPUT_TURN_UP)){
-            controlled_car->Accelerate(1.0f);
-            controlled_car->f_has_target = false;
-        }
-        if (input->IsKeyDown(INPUT_TURN_DOWN)){
-            controlled_car->Reverse(1.0f);
-            controlled_car->f_has_target = false;
-        }
-        if (input->IsKeyDown(INPUT_TURN_LEFT)){
-            controlled_car->SteerLeft(1.0f);
-            controlled_car->f_has_target = false;
-        }
-        if (input->IsKeyDown(INPUT_TURN_RIGHT)){
-            controlled_car->SteerRight(1.0f);
-            controlled_car->f_has_target = false;
         }
     }
 

@@ -19,10 +19,10 @@ Known in-loop callers as of 2026-09-10: `AsteroidExplosion::UpdatePhysicsState` 
 particle every tick of an explosion (via `ParticleEmitter::EmitParticles` ->
 `target_scene->AddObject`) and 2-3 fragment asteroids when the morph completes. The other
 `EmitParticles` call sites in the Ship app are safe by accident of where they are called:
-`ShipCharacter::MoveForwardBy` (exhaust) and `ShootLaser` both run from `RunLogic`, which is before
+`ShipCharacter::MoveForwardBy` (exhaust) and `ShootLaser` both run from `RunSimulationTick`, which is before
 the object loop, not inside it. `ApplicationTank.cpp` has its own call sites that were not checked.
 
-**How to apply:** Prefer a staging vector drained at the top of `RunLogic` (see ApplicationShip's
+**How to apply:** Prefer a staging vector drained at the top of `RunSimulationTick` (see ApplicationShip's
 `pending_asteroid_explosions`) over calling `Scene::AddObject` from inside `UpdatePhysicsState`. A
 real fix would be either an index-based loop over a snapshot of the size, or a deferred-add queue
 inside `Scene` itself; the user has not asked for either, so don't do it unprompted - but don't add

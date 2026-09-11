@@ -28,6 +28,17 @@ public:
 	// Set callback for when a client connects (receives socket descriptor)
 	void SetOnClientConnect(std::function<void(SOCKET)> callback);
 
+	/*
+	    Bind 127.0.0.1 instead of every interface. Call BEFORE Start().
+
+	    Off by default, because two of the three servers in this repo are meant to be reached from
+	    the network: ApplicationOCPP serves real chargers and ApplicationTileset serves a browser
+	    that may not be on this machine. The MCP server is the opposite - it is a local control
+	    channel, its own source comment says "everything that talks to this server is on the same
+	    machine", and it was nevertheless listening on 0.0.0.0.
+	*/
+	void SetLoopbackOnly(bool loopback_only){ f_loopback_only = loopback_only; }
+
 	// Get connected clients
 	std::vector<SOCKET> GetConnectedClients() const;
 
@@ -36,6 +47,7 @@ public:
 
 private:
 	int m_port;
+	bool f_loopback_only = false;
 	SOCKET m_serverSocket;
 	std::atomic<bool> m_running = false;
 	HANDLE m_acceptThread;

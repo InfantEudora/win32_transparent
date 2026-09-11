@@ -329,7 +329,7 @@ Scene* ApplicationGrid::CreateTestScene(){
 
     scene->renderer->skybox = skybox;
     scene->renderer->skybox_shader = new Shader("shaders/skybox.vert","shaders/skybox.frag");
-    scene->renderer->skybox_mesh = OBJLoader::ParseOBJFile("data/unit_cube.obj");
+    scene->renderer->skybox_mesh = //TODO: a cube mesh for the skybox.
     */
 
     //And update the map for terrain types
@@ -584,8 +584,110 @@ void ApplicationGrid::Init(){
     grid_settings.f_delete = false;
 }
 
-//Called before update physics
-void ApplicationGrid::RunLogic(){
+//The model: the character's own movement, and the cursor-tracking pose that aims it. Runs once per
+//tick that actually runs, so both pause and single-step with the physics - which matters for the
+//pose work especially, since it writes bone rotations that the animation system also writes, and
+//animation is tick-gated now too.
+void ApplicationGrid::RunSimulationTick(){
+    InputController* input = main_scene->inputcontroller;
+
+    //Focus gate carried over from the old single hook, which returned here before doing anything.
+    if (!main_window->f_has_focus){
+        return;
+    }
+
+    //The other half of the f_camera_control test in UpdateView, kept as its inverse so the two
+    //branches still cannot both run in one pass. Driving the camera is view work; driving the
+    //character with the same keys is not.
+    if (!grid_settings.f_camera_control){
+        if (character){
+            if (input->IsKeyDown(INPUT_MOVE_UP)){
+                character->MoveForward();
+            }
+            if (input->IsKeyDown(INPUT_MOVE_DOWN)){
+                character->MoveBackward();
+            }
+            if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
+                character->TurnRight();
+            }
+            if (input->IsKeyDown(INPUT_MOVE_LEFT)){
+                character->TurnLeft();
+            }
+        }
+    }
+
+    //Gate carried over: in the old single hook this sat above the cursor-tracking block below.
+    if (ImGui::GetIO().WantCaptureMouse){
+        return;
+    }
+
+    if (f_track_cursor){
+        //The picking ray is recomputed here rather than shared with UpdateView, which needs its
+        //own copy for the placement tools. Note this feeds a view-owned camera into simulated bone
+        //rotations - the feedback path recorded as backlog item 35.3, which has to be sampled at a
+        //tick boundary before any of this can be replayed.
+        int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
+        ray r = main_scene->camera->GetPixelRay(px);
+        vec3 at = {};
+        r.intersects_plane(projection_plane,at);
+
+        const std::string target_name = "character_armature";
+        Skeleton* skeleton = FindSkeletonInScene(main_scene,target_name);
+        if (!skeleton){
+            return;
+        }
+
+        Bone* bone_hips = skeleton->FindBone("Hips");
+        if (bone_hips){
+            quat q = bone_hips->GetRotation();
+            bone_hips->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_hips->GetRotation();
+            quat r = q.slerp(q,qn,0.005,true);
+            bone_hips->SetRotation(r);
+        }
+
+        Bone* bone_abdomen = skeleton->FindBone("Abdomen");
+        if (bone_abdomen){
+            quat q = bone_abdomen->GetRotation();
+            bone_abdomen->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_abdomen->GetRotation();
+            quat r = q.slerp(q,qn,0.02,true);
+            bone_abdomen->SetRotation(r);
+        }
+
+        Bone* bone_torso = skeleton->FindBone("Torso");
+        if (bone_torso){
+            quat q = bone_torso->GetRotation();
+            bone_torso->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_torso->GetRotation();
+            quat r = q.slerp(q,qn,0.02,true);
+            bone_torso->SetRotation(r);
+        }
+
+        Bone* bone_head = skeleton->FindBone("Head");
+        if (bone_head){
+            quat q = bone_head->GetRotation();
+            quat wr = bone_head->GetWorldRotation();
+            //vec3 head_up = wr * bone_head->ref_up;
+
+            bone_head->SetWorldLookat(at,vec3(0,1,0));
+            quat qn = bone_head->GetRotation();
+            quat r = q.slerp(q,qn,0.03,true);
+            bone_head->SetRotation(r);
+        }
+
+        Object* target = main_scene->FindObject("target_vis");
+        if (target){
+            vec3 p = target->GetPosition();
+            p = p.lerp(at,0.05);
+            target->SetPosition(p);
+        }
+    }
+}
+
+//Camera, selection, and the whole cell placement/deletion editor. Runs every pass, including the
+//ones that simulate nothing - this app is mostly an editor, so nearly all of it belongs here.
+void ApplicationGrid::UpdateView(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
 
@@ -650,23 +752,7 @@ void ApplicationGrid::RunLogic(){
             vec3 d = camera->MoveForwardBy(-0.1f);
             camera_target += d;
         }
-    }else{
-        if (character){
-            if (input->IsKeyDown(INPUT_MOVE_UP)){
-                character->MoveForward();
-            }
-            if (input->IsKeyDown(INPUT_MOVE_DOWN)){
-                character->MoveBackward();
-            }
-            if (input->IsKeyDown(INPUT_MOVE_RIGHT)){
-                character->TurnRight();
-            }
-            if (input->IsKeyDown(INPUT_MOVE_LEFT)){
-                character->TurnLeft();
-            }
-        }
     }
-
 
     if (input->WasKeyReleased(INPUT_TURN_UP)){
         grid_settings.grid_level++;
@@ -887,59 +973,6 @@ void ApplicationGrid::RunLogic(){
 
     }
 
-    if (f_track_cursor){
-        const std::string target_name = "character_armature";
-        Skeleton* skeleton = FindSkeletonInScene(main_scene,target_name);
-        if (!skeleton){
-            return;
-        }
-
-        Bone* bone_hips = skeleton->FindBone("Hips");
-        if (bone_hips){
-            quat q = bone_hips->GetRotation();
-            bone_hips->SetWorldLookat(at,vec3(0,1,0));
-            quat qn = bone_hips->GetRotation();
-            quat r = q.slerp(q,qn,0.005,true);
-            bone_hips->SetRotation(r);
-        }
-
-        Bone* bone_abdomen = skeleton->FindBone("Abdomen");
-        if (bone_abdomen){
-            quat q = bone_abdomen->GetRotation();
-            bone_abdomen->SetWorldLookat(at,vec3(0,1,0));
-            quat qn = bone_abdomen->GetRotation();
-            quat r = q.slerp(q,qn,0.02,true);
-            bone_abdomen->SetRotation(r);
-        }
-
-        Bone* bone_torso = skeleton->FindBone("Torso");
-        if (bone_torso){
-            quat q = bone_torso->GetRotation();
-            bone_torso->SetWorldLookat(at,vec3(0,1,0));
-            quat qn = bone_torso->GetRotation();
-            quat r = q.slerp(q,qn,0.02,true);
-            bone_torso->SetRotation(r);
-        }
-
-        Bone* bone_head = skeleton->FindBone("Head");
-        if (bone_head){
-            quat q = bone_head->GetRotation();
-            quat wr = bone_head->GetWorldRotation();
-            //vec3 head_up = wr * bone_head->ref_up;
-
-            bone_head->SetWorldLookat(at,vec3(0,1,0));
-            quat qn = bone_head->GetRotation();
-            quat r = q.slerp(q,qn,0.03,true);
-            bone_head->SetRotation(r);
-        }
-
-        Object* target = main_scene->FindObject("target_vis");
-        if (target){
-            vec3 p = target->GetPosition();
-            p = p.lerp(at,0.05);
-            target->SetPosition(p);
-        }
-    }
 }
 
 

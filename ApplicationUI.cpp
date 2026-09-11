@@ -22,11 +22,6 @@ void ApplicationUI::Init(void){
     main_scene->UpdatePhysics(GetPhysicsTimestep());
 }
 
-//Called before update physics
-void ApplicationUI::RunLogic(){
-
-}
-
 void ApplicationUI::DrawImGuiUI(){
     //UI
     ImGui::Begin("Hi there!");

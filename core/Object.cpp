@@ -176,6 +176,13 @@ Physics* Object::AddPhysics(PhysicsWorld* world){
         if (physics->body && physics->body->rigidbody){
             physics->body->rigidbody->setUserData(this);
         }
+        //Catches the "parent first, body second" ordering. Note the two SetBody* calls above
+        //already assume this object is a root: they seed the body from the LOCAL transform.
+        if (parent){
+            debug->Err("Object '%s' (id=%i) has a rigid body AND a parent '%s' (id=%i). leave "
+                 "this child visual-only, or detach it with DetachChildToWorld.\n",
+                 name.c_str(),id,parent->name.c_str(),parent->id);
+        }
         return physics;
     }
     return NULL;
@@ -408,6 +415,7 @@ void Object::UpdatePhysicsState(){
 
     //If physics from colliders etc. was updated:
     if (physics){
+
         vec3 physics_wp = physics->GetBodyWorldPosition();
         //We set the local position
         SetPosition(physics_wp,false);
@@ -623,6 +631,15 @@ bool Object::AttachChild(Object* newchild){
     children.push_back(newchild);
     newchild->parent = this;
 
+    //Catches the "body first, parent second" ordering.
+    if (newchild->physics){
+        debug->Err("Object '%s' (id=%i) has a rigid body AND a parent '%s' (id=%i). "
+                "Put the body on the parent and leave "
+             "this child visual-only, or detach it with DetachChildToWorld.\n",
+             newchild->name.c_str(),newchild->id,name.c_str(),id);
+    }
+
+
     //Either we alway need to traverse a tree to find renderable objects from root.
     //Has the benefit of auto rendering if you add siblings
     //Or we add them here to objrenderer, where we need to also seperately delete them
@@ -633,17 +650,53 @@ bool Object::AttachChild(Object* newchild){
 
 //Removes child from array.
 void Object::DetachChild(Object* targetchild){
-    debug->Trace("Child already has a parent, detaching\n");
+    debug->Trace("Detaching child\n");
 
     std::list<Object*>::iterator it;
     for (it = children.begin();it != children.end();it++){
         if (*it == targetchild) {
             it = children.erase(it);
+            //Clearing the back-pointer is the whole of the detach. Without it the child is gone
+            //from this list but still names us as its parent, so GetWorldTransformScaleMatrix
+            //keeps composing our transform into it forever and GetParent() lies. That went
+            //unnoticed because the only caller was AttachChild, which overwrites parent on the
+            //very next line - a standalone detach, which DetachChildToWorld does, needs this.
+            targetchild->parent = NULL;
             debug->Trace("Detached child\n");
             return;
         }
     }
     debug->Fatal("Unable to detach child object id=%i from parent. %p from %p\n",targetchild->id, this, parent);
+}
+
+//Detaches a child and leaves it exactly where it was being drawn. See the header.
+bool Object::DetachChildToWorld(Object* targetchild){
+    if (!targetchild){
+        debug->Err("DetachChildToWorld: unable to detach NULL.\n");
+        return false;
+    }
+    if (targetchild->parent != this){
+        debug->Err("DetachChildToWorld: '%s' is not a child of '%s'.\n",
+                   targetchild->name.c_str(),name.c_str());
+        return false;
+    }
+
+    //Both of these walk the parent chain, so they have to be read BEFORE it is cut.
+    vec3 world_position = targetchild->GetWorldPosition();
+    quat world_rotation = targetchild->GetWorldRotation();
+
+    DetachChild(targetchild);
+
+    //Now that parent is NULL these ARE the local transform. f_write_physics is left at its
+    //default: if the child has a body it must be moved too, or the next UpdatePhysicsState would
+    //overwrite both of these with the body's stale transform.
+    targetchild->SetPosition(world_position);
+    targetchild->SetRotation(world_rotation);
+
+    //Ancestor SCALE is deliberately not baked. state.scale is a per-axis vec3, and a rotated
+    //ancestor scale is not expressible as one, so there is no honest value to write - callers
+    //that need it have to scale the child themselves.
+    return true;
 }
 
 //--- Materials. See the block in Object.h for the invariant these maintain. -------------------

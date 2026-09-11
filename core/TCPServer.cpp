@@ -71,9 +71,22 @@ bool TCPServer::Start()
 		return false;
 	}
 
-	// Allow socket reuse
+	// Claim the port EXCLUSIVELY.
+	//
+	// This used to set SO_REUSEADDR, which on Windows does not mean what the same name means on
+	// Unix. Here it lets a socket bind a port another socket is ALREADY listening on, and which of
+	// the two a given connection reaches is indeterminate. The effect was that a second copy of
+	// this application started cleanly, logged "TCP Server started on port 8765" exactly like the
+	// first, and silently shared the endpoint - so MCP tool calls went to whichever process had
+	// bound first. That is worse than a failure: a scripted test then measures a stale build and
+	// passes for the wrong reason, which is precisely what happened on 2026-09-11.
+	//
+	// SO_EXCLUSIVEADDRUSE makes the second bind fail with WSAEADDRINUSE instead, which the caller
+	// reports and acts on. Note it does not reintroduce the problem SO_REUSEADDR is usually there
+	// to solve: that is about a LISTENING socket being blocked by connections left in TIME_WAIT,
+	// and Windows does not block a fresh exclusive bind on those once the owning process is gone.
 	int optval = 1;
-	if (setsockopt(m_serverSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&optval, sizeof(optval)) < 0)
+	if (setsockopt(m_serverSocket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&optval, sizeof(optval)) < 0)
 	{
 		debug->Err("setsockopt() failed: %d", WSAGetLastError());
 		closesocket(m_serverSocket);
@@ -81,15 +94,27 @@ bool TCPServer::Start()
 		return false;
 	}
 
-	// Bind socket
+	// Bind socket. Loopback only if the owner asked for it - see SetLoopbackOnly.
 	sockaddr_in serverAddr;
 	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	serverAddr.sin_addr.s_addr = htonl(f_loopback_only ? INADDR_LOOPBACK : INADDR_ANY);
 	serverAddr.sin_port = htons(m_port);
 
 	if (bind(m_serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0)
 	{
-		debug->Err("bind() failed: %d", WSAGetLastError());
+		int bind_error = WSAGetLastError();
+		if (bind_error == WSAEADDRINUSE)
+		{
+			//Worth spelling out rather than printing an error number: with the old SO_REUSEADDR
+			//this case did not fail at all, so anyone who hits it now is meeting it for the first
+			//time and the cause is almost always the obvious one.
+			debug->Err("Port %i is already in use - another instance of this application is "
+				"most likely still running. This server will not be available.\n", m_port);
+		}
+		else
+		{
+			debug->Err("bind() failed: %d", bind_error);
+		}
 		closesocket(m_serverSocket);
 		m_serverSocket = INVALID_SOCKET;
 		return false;

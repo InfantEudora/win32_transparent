@@ -293,9 +293,21 @@ class Object{
     uint32_t collision_category_bits = 0;
 
     //Hierarchy
+    //
+    //A PHYSICS OBJECT CANNOT BE A CHILD. UpdatePhysicsState writes the body's WORLD transform
+    //into this object's LOCAL state, and AddPhysics seeds the body from the local one as though
+    //it were world - so a parent transform gets applied on top of a position that is already
+    //final, and the object ends up where neither the solver nor the scene tree thinks it is.
+    //Both AttachChild and AddPhysics call debug->Fatal rather than let that happen silently.
+    //Give the body to the PARENT and leave children visual-only, or use DetachChildToWorld.
     std::list<Object*>children;
     bool    AttachChild(Object* newchild); //Attaches an object as a child.
     void    DetachChild(Object* targetchild);
+    //Detaches a child and leaves it exactly where it was being drawn, by baking the world
+    //transform it had inside the parent into its own local state. This is what "take this letter
+    //off the word and let it fall" needs: plain DetachChild keeps the local transform, so the
+    //child jumps to wherever that means once the parent is no longer contributing.
+    bool    DetachChildToWorld(Object* targetchild);
     void    GetAllSubObjects(std::vector<Object*>& objects); //Add's all objects attached to this object into a vector.
     Object* GetLastChild();
     Object* GetParent();

@@ -121,18 +121,42 @@ void HTTPServer::HandleHTTPConnection(SOCKET clientSocket){
 }
 
 void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
-	char buffer[4096];
-	int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+	/*
+	    Read until the blank line that ends the headers, rather than taking whatever one recv
+	    happened to return.
 
-	if (bytesReceived <= 0){
-		http_debug->Info("Nothing reveived.\n ");
-		return;
+	    This used to be a single recv of up to 4095 bytes, treated as the whole request. One recv
+	    returns one TCP segment's worth of whatever has arrived so far, so a request carrying more
+	    header than that - or merely one split across segments, which is legal at any size and is
+	    what happens over a real network rather than over loopback - was silently truncated and then
+	    misparsed into a 404 or a failed WebSocket upgrade. Intermittent, and easy to blame on the
+	    client.
+
+	    Headers only: nothing below this consumes a body, it just parses the request line and looks
+	    up header values. MCPServer::HandleHttpConnection runs the same loop and then reads
+	    Content-Length bytes as well, because that one does have a body to parse.
+	*/
+	const size_t max_header_bytes = 65536;
+	std::string request;
+	char buffer[4096];
+	size_t header_end = std::string::npos;
+
+	while (header_end == std::string::npos){
+		int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+		if (bytesReceived <= 0){
+			http_debug->Info("Nothing reveived.\n ");
+			return;
+		}
+		request.append(buffer, bytesReceived);
+		header_end = request.find("\r\n\r\n");
+		if ((header_end == std::string::npos) && (request.size() > max_header_bytes)){
+			http_debug->Warn("HTTP request headers passed %llu bytes with no end of headers, dropping connection\n",
+				(unsigned long long)max_header_bytes);
+			return;
+		}
 	}
 
-	buffer[bytesReceived] = '\0';
-	std::string request(buffer);
-
-	http_debug->Info("HTTP Request received:\n%s\n", buffer);
+	http_debug->Info("HTTP Request received:\n%.*s\n", (int)header_end, request.c_str());
 
 	// Determine requested path (keep query string separate)
 	std::string fullPath = ParseHTTPRequest(request);

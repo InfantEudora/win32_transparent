@@ -132,7 +132,7 @@ ApplicationIsoAnimation - the Ship app has no skinned meshes, so it cannot catch
 ## Verifying visual work in this app
 
 - `screenshot` and `camera_get`/`camera_set` are CORE MCP tools (the user promoted them
-  2026-09-10). `camera_set` only holds BRIEFLY in ApplicationShip - `RunLogic` pulls the camera
+  2026-09-10). `camera_set` only holds BRIEFLY in ApplicationShip - `UpdateView` pulls the camera
   back toward the tracked ship every frame, so it is fine for grabbing one screenshot but not
   for a multi-step A/B. Drive those by moving OBJECTS instead, and re-read `camera_get` rather
   than assuming where the camera is.
@@ -245,6 +245,6 @@ Both programs get the shape uniforms from `ApplicationShip::SetSharedDensityUnif
 New virtual, called at the top of `Application::DrawFrame` on the FRAME thread. For app GL work
 that must happen before the colour pass and so cannot hang off a shader's `uniform_callback`
 (that fires mid-pass, with the shader already bound - too late to fill a texture the pass will
-sample). RunLogic is not an option: it is the logic thread and may not touch GL.
+sample). Neither physics-thread hook is an option: they may not touch GL.
 
 Related: [[project-overview]], [[running-app-is-user-driven]], [[mcp-native-tools-setup]].

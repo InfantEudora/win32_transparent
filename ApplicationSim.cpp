@@ -175,13 +175,13 @@ void ApplicationSim::Init(void){
 
 static int popticks = -1;
 
-//Called before update physics
-void ApplicationSim::RunLogic(){
+//Camera, selection and the mouse-driven editing gestures. Everything here reads the simulation or
+//drives chrome around it; nothing here advances the model, so it keeps working while paused - which
+//is what you want of an editor, and is why the click-to-place and route-building gestures stayed
+//here rather than moving to the tick with the rest of the model.
+void ApplicationSim::UpdateView(){
     Camera* camera = main_scene->camera;
     InputController* input = main_scene->inputcontroller;
-
-    tmr_physics->Stop();
-    tmr_physics->Restart();
 
     CheckObjectSelection();
 
@@ -247,6 +247,19 @@ void ApplicationSim::RunLogic(){
         }
     }
 
+}
+
+//The model: everything whose state carries from one tick to the next. Runs once per tick that
+//actually runs, so it pauses and single-steps with the physics.
+void ApplicationSim::RunSimulationTick(){
+    InputController* input = main_scene->inputcontroller;
+
+    tmr_physics->Stop();
+    tmr_physics->Restart();
+
+    //The WantCaptureMouse gate is kept exactly as it was. It is incidental to keyboard steering -
+    //hovering a panel has no business stopping the ship - but removing it is a behaviour change on
+    //its own merits, not part of this split.
     if (controlling_ship && (!ImGui::GetIO().WantCaptureMouse)){
         StellarObject* ship = controlling_ship;
 

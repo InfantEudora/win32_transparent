@@ -101,8 +101,16 @@ void ApplicationOCPP::Init(void){
 
 }
 
-//Called before update physics
-void ApplicationOCPP::RunLogic(){
+/*
+    This app has no simulation, so it has no RunSimulationTick - everything below is websocket
+    traffic and the rate limits around it, paced by GetTickCount() against real charger backends.
+    None of it is the engine's model: pausing the physics must not stop a charging session or stall
+    a handshake, and single-stepping must not send a meter value. So it all lives on the every-pass
+    hook, wall-clock timing and all - the one case in this codebase where a duration in real
+    milliseconds is the correct unit rather than a tick count, because the thing being timed is
+    outside the simulation entirely.
+*/
+void ApplicationOCPP::UpdateView(){
     // Check if any OCPP clients need charging profile updates
     if (http_server) {
         DWORD now_ms = GetTickCount();

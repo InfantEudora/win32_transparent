@@ -617,6 +617,13 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
 
     camera->viewport.width = GetViewportWidth();
     camera->viewport.height = GetViewportHeight();
+    //...and where that viewport starts, so GetPixelRay can turn a window pixel into a ray. The
+    //y flip is the whole point of these two fields: viewport_y above is measured from the BOTTOM
+    //of the window because glViewport wants it that way, and the mouse is measured from the TOP,
+    //so somebody has to convert and this is the one place that knows both. See the comment on
+    //Camera::viewport.px_offset_x.
+    camera->viewport.px_offset_x = (float)viewport_x;
+    camera->viewport.px_offset_y = (float)(height - (viewport_y + GetViewportHeight()));
     camera->CalculateLookatMatrix();
 
     ClearDepthPasses();

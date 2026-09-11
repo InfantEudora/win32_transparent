@@ -53,7 +53,7 @@ Three threads, created in this order:
 |---|---|---|---|
 | **Main** | `WinMain` | `Application::Start()` message pump | Win32 window messages only. Blocks during title-bar drags. |
 | **Render** | `Application::Start()` | `Init()` once, then `DrawFrame()` forever | The OpenGL context. **All GL calls must happen here.** |
-| **Physics** | render thread, after `Init()` returns | `UpdateInput` -> `UpdateAnimations` -> `RunLogic` -> `UpdatePhysics`, paced to `physics_tps` | The simulation. |
+| **Physics** | render thread, after `Init()` returns | `UpdateInput` -> `BeginPass` -> (`UpdateAnimations` -> `RunSimulationTick` -> `UpdatePhysics`, only on a pass that ticks) -> `UpdateView`, paced to `physics_tps` | The simulation. |
 
 A fourth thread does Raw Input acquisition, and the MCP server adds one or two more. Neither
 touches simulation state except through the queues described below.
@@ -64,7 +64,8 @@ touches simulation state except through the queues described below.
 - The render thread holds it for the entire `DrawImGuiUI()` call.
 - `Renderer::DrawFrame` takes it around the actual drawing.
 
-So: **your `RunLogic()` may touch anything. Your `DrawImGuiUI()` may read anything.** Anything
+So: **your `RunSimulationTick()` and `UpdateView()` may touch anything. Your `DrawImGuiUI()` may
+read anything.** Anything
 else — an MCP tool handler, a worker thread — may touch *nothing* directly and must go through
 `Scene::SubmitCommand` (§6.9) or `InputController::SubmitEvent` (§6.4).
 
@@ -144,13 +145,21 @@ curl -s -X POST http://127.0.0.1:8765/mcp -H "Content-Type: application/json" \
 ```
 
 Generic tools every app gets for free: `status`, `object_list`, `object_get`,
-`object_set_transform`, `object_move`, `screenshot`, `camera_get`, `camera_set`.
+`object_set_transform`, `object_move`, `sim_pause`, `sim_step`, `sim_command`, `asset_list`,
+`object_spawn`, `screenshot`, `camera_get`, `camera_set`.
 `screenshot` returns a PNG of the current frame as an MCP image block — **use it.** It is the
 fastest way to see that your well is the right shape and your pieces are the right colour.
 
-Register your own tools in `Init()` (§6.10). A `tetris_state` tool that dumps the board as ASCII,
-a `tetris_input` tool that presses a key for N ticks, and `tetris_step` for single-stepping will
-pay for themselves within the first hour.
+**`sim_pause` and `sim_step` are the other two to reach for immediately.** A tool handler holds no
+lock, so reading a free-running simulation races the physics thread; pause first and that problem
+goes away. `sim_step` then advances by an exact number of *whole* ticks — input, animation, your
+`RunSimulationTick`, physics — instead of sleeping and guessing how far it got. Since every duration
+in this engine is denominated in ticks, "48 ticks is exactly one cell of gravity at level 1" is a
+statement you can actually test.
+
+Register your own tools in `Init()` (§6.10). A `tetris_state` tool that dumps the board as ASCII and
+a `tetris_input` tool that presses a key for N ticks will pay for themselves within the first hour.
+You do not need your own pause/step — you get those.
 
 ---
 
@@ -236,14 +245,35 @@ Override list for a game like this:
 
 ```cpp
 void Init(void) override;          //render thread, once
-void RunLogic(void) override;      //physics thread, every tick - your game loop lives here
+void RunSimulationTick(void) override; //physics thread, once per tick that RUNS - the game loop
+void UpdateView(void) override;    //physics thread, EVERY pass incl. paused - camera/picking
 void DrawImGuiUI(void) override;   //render thread, physics_mutex held - HUD only
 void PreRender(void) override;     //render thread, before the scene draws - GL work only
 vec3* GetCameraTargetPtr() override; //one-liner that lets the camera MCP tools see your pivot
 ```
 
-`RunLogic()` runs **before** `UpdatePhysics()` in the tick, on the physics thread, with the lock
-held. That is where the entire game goes.
+`RunSimulationTick()` runs **before** `UpdatePhysics()` in the tick, on the physics thread, with the
+lock held. That is where the entire game goes.
+
+The two hooks differ only in how often they are called, and that difference is the whole point:
+
+- `RunSimulationTick()` is called **exactly once per tick that actually runs**. It does not run
+  while the simulation is paused, and single-stepping calls it exactly once per step. Anything with
+  a duration, anything that accumulates, anything you would want to replay: here.
+- `UpdateView()` is called on **every pass of the physics loop**, including the passes that simulate
+  nothing because the sim is paused. Camera, picking, editor gizmos, debug markers - things whose
+  job is to look at the simulation rather than be part of it. It runs *after* the tick, so it sees
+  the state this pass produced.
+
+The test for which one a piece of code belongs in: **if running it twice for a single tick would
+change the outcome, it is simulation.** Put it in `RunSimulationTick`.
+
+Mouse deltas are a worked example. `InputController::GetDelta` marks a sample processed rather than
+zeroing it, so reading the same delta from both hooks would apply the same movement twice. Read
+deltas in `UpdateView` and nowhere else.
+
+Both hooks run outside the physics step, so `Scene::AddObject` and `renderer->DeleteDestroyedObjects()`
+are safe in either.
 
 ---
 
@@ -393,7 +423,7 @@ main_scene->inputcontroller->AddKeyMap(VK_SPACE,INPUT_HARD_DROP);
 Several system keys may map to one action (`AddKeyMap(VK_UP,INPUT_ROTATE_CW)` as well as `'X'`) —
 `f_isdown` is a count of held mappings, so the action is down while any of them is.
 
-Read it in `RunLogic()`:
+Read it in `RunSimulationTick()`:
 
 ```cpp
 InputController* input = main_scene->inputcontroller;
@@ -464,7 +494,7 @@ Two hard-won rules from the existing code, both of which will bite you:
 - **In `onContact`, contacts are reported BEFORE the solver runs.** Read a velocity on
   `ContactStart` only; by `ContactStay` you are seeing the post-bounce value.
 - **Never create or destroy a body from inside a physics callback.** rp3d is mid-iteration over
-  its own arrays. Stage it in a vector and act on it at the top of the next `RunLogic()`.
+  its own arrays. Stage it in a vector and act on it at the top of the next `RunSimulationTick()`.
   `ApplicationShip.cpp:995-1041` is the canonical worked example.
 
 ### 6.7 Sound
@@ -527,7 +557,7 @@ Submitting:
 - From **`DrawImGuiUI`**: `Application::SubmitUICommand(cmd)` — submit and return, never wait.
   **Waiting there deadlocks instantly**, because `DrawImGuiUI` already holds `physics_mutex` and
   the physics thread needs it to drain the queue.
-- From **`RunLogic`**: don't. You are already on the physics thread inside the tick — just call
+- From **`RunSimulationTick`**: don't. You are already on the physics thread inside the tick — just call
   the function.
 
 A consequence of the simulation's own state (a line clearing because a piece locked) is **not** a
@@ -542,17 +572,40 @@ MCPServer::Get()->RegisterTool(
     "Current board as ASCII rows, plus score, level, lines and the active piece.",
     json{{"type","object"},{"properties",json::object()}},
     [this](const json& args) -> json {
-        json result = BuildStateJson();                     //read-only: safe from this thread?
+        json result = BuildStateJson();                     //see below: this one reads a snapshot
         return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
     });
 ```
+
+**A handler runs on the MCP server's own thread and holds no lock**, so touching the scene from one
+races the physics thread — the object you are half-way through serialising can move, or be
+destroyed, underneath you. Wrap the read:
+
+```cpp
+json result;
+main_scene->AtTickBoundary([&]{
+    result = ObjectToJson(main_scene->FindObject("Well Back"),true);
+});
+```
+
+That takes the lock the physics thread holds across a whole pass, so the read lands *between* ticks:
+nothing you see is half-stepped. Two things must not happen inside the lambda, both of which
+deadlock — **waiting on the physics thread** (`SubmitCommandAndWait`, `StepPhysicsAndWait`, polling
+`GetPendingPhysicsSteps`) and **waiting on the render thread**, which means no
+`MaybeAttachScreenshot`. Capture the screenshot outside, as the snippet above does. Keep the lambda
+short: the simulation is stopped for exactly as long as it runs.
+
+For state you read on *every* tool call — a board, a scoreboard — a snapshot your tick hook fills
+behind its own small mutex is still worth it, which is what this app does: it costs one copy per
+tick and never stops the simulation. `AtTickBoundary` is the general answer; a snapshot is the
+optimisation for the hot one.
 
 Register from `Init()`. The server starts only after `Init()` returns, so registration can never
 race a client's `tools/list`.
 
 **A tool handler runs on an MCP thread and holds no lock.** Reading scene state from there is a
 data race against the physics thread. The safe patterns are: (a) keep a snapshot struct that
-`RunLogic` fills each tick behind a small mutex of your own, and serve tools from that; or (b)
+`RunSimulationTick` fills each tick behind a small mutex of your own, and serve tools from that; or (b)
 pause the sim and step it explicitly, which is what the tank tools do. Pick one deliberately and
 say which in your report — this is a genuine sharp edge in the current design.
 
@@ -610,7 +663,7 @@ place to stop and write findings.
 9. **Physics garnish.** *Now* bring rp3d in, and keep it strictly cosmetic — the board stays an
    array. A cleared row spawns dynamic debris cubes that fall out of the well and are reaped after
    N ticks; a game over topples the stack. Remember: stage every body creation for the top of
-   `RunLogic`, never inside a callback.
+   `RunSimulationTick`, never inside a callback.
 10. **Skeletal animation — a probe, not a feature.** Optional, last, and only if the game is done.
     Put an animated character beside the board (`data/gwen_anim.glb` or `data/elf.glb` with
     `gltfloader.GetSkeleton(...)` + `LoadAnimation(...)` + `object->AddAnimation(...)` +
@@ -659,13 +712,13 @@ a head start, not a complete list — find more.
   running scene, so no save-game.
 - **`Object::Destroy()` only marks.** The actual reaping is
   `Renderer::DeleteDestroyedObjects()`, which **only two apps call** (Ship, Dozer). Call it
-  yourself, once per tick, from `RunLogic` — otherwise destroyed objects stop rendering but their
+  yourself, once per tick, from `RunSimulationTick` — otherwise destroyed objects stop rendering but their
   rigid bodies stay in the physics world forever. If you spawn debris (step 9), this matters.
 - **`Scene::AddObject` during a tick invalidates the iteration.** `Scene::UpdatePhysics`
   range-for's `renderer->objects`; an `AddObject` from inside an `UpdatePhysicsState()` override
-  `push_back`s the same vector. Stage additions and perform them in `RunLogic` instead.
-- **MCP tool handlers hold no lock** (§6.10). Reading scene state from one is a race. There is no
-  sanctioned read-side equivalent of `SubmitCommand` — this is a real gap and a good finding.
+  `push_back`s the same vector. Stage additions and perform them in `RunSimulationTick` instead.
+- **MCP tool handlers hold no lock** (§6.10). Reading scene state from one is a race, so wrap the
+  read in `Scene::AtTickBoundary` — see §6.10.
 
 ### Mid-rewrite / fragile areas
 
@@ -679,7 +732,7 @@ a head start, not a complete list — find more.
 - **`RRandom` is not safe for a deterministic sim.** One generator instance is shared by the
   physics thread and by UI/MCP code, and any off-tick draw shifts the stream for everyone. No
   design has been chosen yet; do not try to fix it. **Give your piece bag its own `RRandom`
-  instance**, drawn from only inside `RunLogic`, and note in your report that you had to.
+  instance**, drawn from only inside `RunSimulationTick`, and note in your report that you had to.
 - **reactphysics3d is a locally patched fork.** `libs/libreactphysics3d-0.10.2.a` carries three
   local patches plus a merged PR, built from `C:/code/reactphysics3d` (branch `vehicle-constraint`)
   with CMake + Ninja — *not* MSYS make. **Never overwrite it with a stock build.** You should not
@@ -689,7 +742,7 @@ a head start, not a complete list — find more.
 ### Small things that will cost you time
 
 - Anything that needs GL — texture upload, shader compile, glTF load — must happen on the render
-  thread, meaning in `Init()` or `PreRender()`. `RunLogic` must never touch GL.
+  thread, meaning in `Init()` or `PreRender()`. Neither physics-thread hook may touch GL.
 - `renderer->viewport_x` / `viewport_width` / `viewport_height` confine the 3D draw to a
   sub-rectangle of the window while ImGui keeps the whole canvas. `ApplicationTank::Init()` uses
   this to reserve a left-hand panel strip. Handy for a HUD-beside-board layout.

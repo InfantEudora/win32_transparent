@@ -10,7 +10,7 @@ metadata:
 The three threads described in [[project-overview]] synchronise with **one coarse mutex, `Renderer::physics_mutex`** (`core/Renderer.h:62`) — not with the input queue `readme.md` designs. It is taken in exactly four places:
 
 - render thread: around `renderer->DrawFrame()` (`Scene.cpp:145`), around the physics debug-mesh rebuild (`Scene.cpp:86`), and around the **whole** `DrawImGuiUI()` call (`Application.cpp:237`, whose comment reads *"This will access and modify physics, globally... all over the place."*)
-- physics thread: around `UpdateAnimations() → RunLogic() → UpdatePhysics()` (`Application.cpp:269-277`)
+- physics thread: around `BeginPass() → [UpdateAnimations() → RunSimulationTick() → UpdatePhysics()] → UpdateView()` (`Application.cpp`, `PhysicsThreadFunction`)
 
 **Consequence: UI code mutating physics is NOT a data race.** ImGui is immediate-mode, so button/slider interaction is registered while the UI is being built, and the base `Application` UI freely calls `SetPosition`/`SetRotation`/`AddObject`/`Destroy()` from the render thread (`RenderSelectedObjectUI` and friends). That is safe *only* because the physics thread is locked out for the entire UI build. Don't "fix" it as if it were a race.
 
@@ -38,3 +38,19 @@ either thread is submitted and applied on the physics thread at the top of a tic
 [[deterministic-sim-plan]] steps 5 and 6. The rule to carry forward is the one that bit us: the UI
 must SUBMIT and never WAIT (DrawImGuiUI holds physics_mutex, the physics thread needs it to drain),
 whereas an MCP handler holds no locks and may wait for its command to land.
+
+**READ SIDE CLOSED (2026-09-11).** Point 2 above said MCP handlers "ignore the lock entirely", and
+that was still true of every READ right up until now: `object_list`, `object_get`, `camera_get` and
+`ApplicationTank`'s telemetry all walked the scene from the MCP thread with no `physics_mutex`, and
+`camera_set` and `object_move` were writing without it. There is a sanctioned API now —
+**`Scene::AtTickBoundary(fn)`** — which takes `physics_mutex` and so runs fn *between* ticks, since
+the physics thread holds that lock across a whole pass. All the core `object_*`/`camera_*` tools and
+Tank's telemetry go through it. Two rules, both deadlocks: fn must not wait on the physics thread
+(`SubmitCommandAndWait`, `StepPhysicsAndWait`, polling the step/motion counters) and must not wait
+on the render thread, which rules out screenshots. A per-tick snapshot (what `ApplicationTetris`
+publishes) is still the better answer for state that every tool call reads, because `AtTickBoundary`
+stops the simulation for as long as it runs.
+
+Also 2026-09-11: `sim_pause`/`sim_step` are core MCP tools now, so pausing and stepping is available
+in every app rather than the two that rolled their own, and `Scene::f_paused` is atomic because
+those tools write it from the MCP thread.

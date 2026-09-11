@@ -41,9 +41,10 @@ public:
     ApplicationShip();
 
     void Init(void) override;
-    void RunLogic() override;
+    void UpdateView() override;
+    void RunSimulationTick() override;
     //Frame thread, before the scene draws - where the cloud shadow map is built. See
-    //Application::PreRender for why this cannot live in RunLogic.
+    //Application::PreRender for why this cannot live in either physics-thread hook.
     void PreRender(void) override;
 
     void DrawImGuiUI(void) override;
@@ -141,11 +142,11 @@ public:
     //Append-only and never read, same caveat as the commented-out `asteroids` vector: an
     //explosion Destroy()s itself once it has shrunk away, without being removed from here.
     std::vector<AsteroidExplosion*>active_asteroid_explosions;
-    //Asteroids that took their killing shot, staged by onContact for RunLogic to turn into
-    //explosions. Only the FACT is staged, not a constructed explosion - see RunLogic for why.
+    //Asteroids that took their killing shot, staged by onContact for RunSimulationTick to turn
+    //into explosions. Only the FACT is staged, not a constructed explosion - see there for why.
     std::vector<Asteroid*>pending_asteroid_explosions;
-    //Pickups the ship flew into, staged by onTrigger for RunLogic to bank and remove. Same rule as
-    //above: a physics callback records what happened, RunLogic is what acts on it.
+    //Pickups the ship flew into, staged by onTrigger for RunSimulationTick to bank and remove. Same
+    //rule as above: a physics callback records what happened, the tick hook is what acts on it.
     std::vector<Pickup*>pending_collected_pickups;
     //Running total of what has been collected, per PickupKind - the placeholder for the energy /
     //ammo / health the ship does not have yet, so the trigger path can be seen to work and there
@@ -158,7 +159,7 @@ public:
 private:
     //What the free camera (middle mouse, tracking off) orbits, pans and zooms around. Tracking
     //mode keeps it on the ship, so turning tracking off starts orbiting the point already in
-    //view. See RunLogic.
+    //view. See UpdateView.
     vec3 camera_target = {};
     //The straight-down orientation tracking mode holds the camera at, captured in
     //CreateEmptyScene from the one lookat that defines it (see the note there).
@@ -176,7 +177,7 @@ private:
     bool f_camera_overhead = true;
     //What the camera is pointed at. On: the ship, which it follows. Off: a fixed point, which
     //shift+middle moves. Independent of f_camera_overhead - see the four combinations listed in
-    //RunLogic.
+    //UpdateView.
     bool f_mode_camera_track = true;
     bool f_lock_ship_axis = true;
 

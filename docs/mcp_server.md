@@ -19,7 +19,26 @@ Generic tools every app gets (`Application::RegisterCoreMCPTools()`, called righ
 - `object_list` (optional `name_filter`, `limit`) - every object in the active scene, children included, with id/name/parent/position/physics flags. Ids are unique, names are not - use ids.
 - `object_get` (`id` or `name`) - full transform, forward/up, scale, children, physics state.
 - `object_set_transform` (`id`/`name`, any of `position`, `rotation` [x,y,z,w], `axis_degrees` [x,y,z] (X, Y, Z order, same as the UI's "Axis Degrees" mode), `yaw_degrees`, `scale`) - instant, teleports the physics body along.
-- `object_move` (same targets, plus `ticks`, default 50) - interpolates the transform one step per physics tick (`Scene::MoveObjectOverTicks`), which is what dragging the UI's position slider does frame by frame: a collider on the moved object pushes dynamic bodies out of the way instead of passing through them. Blocks until done; returns immediately with a note if physics is paused (the motion then plays out via `tank_step`).
+- `object_move` (same targets, plus `ticks`, default 50) - interpolates the transform one step per physics tick (`Scene::MoveObjectOverTicks`), which is what dragging the UI's position slider does frame by frame: a collider on the moved object pushes dynamic bodies out of the way instead of passing through them. Blocks until done; returns immediately with a note if physics is paused (the motion then plays out via `sim_step`).
+All of the object and camera tools above read (and write) the scene inside `Scene::AtTickBoundary`,
+which takes the mutex the physics thread holds across a whole pass - so a read lands between ticks
+rather than part-way through one, and `object_move`'s direct edit of the motion list cannot race
+`AdvanceObjectMotions`. An app's own tools should do the same; `ApplicationTank`'s telemetry does.
+Never wait on the physics thread (a command, a step) or on the render thread (a screenshot) from
+inside that lambda - both deadlock. `ApplicationTetris` still publishes a per-tick snapshot instead,
+which stays the right call for state that every tool call reads.
+
+- `sim_pause` (`paused`) - freeze or resume the simulation. While paused the render loop keeps running, so the window stays responsive, the camera still works and `screenshot` still works; no tick runs, so no physics, no animation and no gameplay logic advance. **Pause before reading scene state you care about**: a tool handler holds no lock, so reading a free-running simulation races the physics thread.
+- `sim_step` (`num_ticks`, default 1; `include_screenshot`) - advance a paused simulation by exactly that many ticks. A tick here is a *whole* tick - input, animation, the app's `RunSimulationTick`, then the physics step - so this advances the entire simulation, not just the physics. Blocks until the physics thread has consumed them and reports `ticks_advanced`, which is the value to trust: short of `num_ticks` means the call timed out and the rest is still queued.
+
+The endpoint binds **127.0.0.1 only**, and binds it **exclusively**: a second copy of the app fails
+to claim the port and says so (`Port 8765 is already in use - another instance of this application
+is most likely still running`), rather than quietly sharing it. It used to set `SO_REUSEADDR`, which
+on Windows means "bind a port someone else is already listening on" - so two instances both reported
+success and tool calls reached whichever had bound first. The app itself still runs when the bind
+fails; only its MCP server is unavailable.
+
+Both return the simulation clock: `tick`, `paused`, `pending_steps`, `timestep`. `tank_pause`/`tank_step` and `tetris_pause`/`tetris_step` still exist and are worth using in those apps, because they return vehicle telemetry and board state along with the step; they share the waiting logic (`Application::StepPhysicsAndWait`).
 
 Tank app tools (`ApplicationTank::RegisterMCPTools()`, called from `ApplicationTank::Init()`): `tank_drive`, `tank_steer`, `tank_telemetry`, `tank_screenshot`, `tank_pause`, `tank_step`, `tank_reset`, `bridge_*`, `crane_speed` (`speed` for the boom hinge motor and/or `extension_speed` for the telescoping extension's slider motor, `hook_speed` for the hook's winch - all -1..1 velocity commands), `crane_telemetry`.
 

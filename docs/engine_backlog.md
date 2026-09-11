@@ -120,20 +120,176 @@ Last updated 2026-09-11.
 
 ## Band C — one to three hours each
 
-- [ ] **16. Primitive mesh generators** — `MakeBox` / `MakeQuad` / `MakeSphere`. `data/unit_cube.obj`
-  is currently the only cube in the engine, and hand-building a cube is 45 lines
-  (`ApplicationShip.cpp:80-125`). ~30 lines each, zero risk, removes a file dependency from every
-  app. *Later.*
-- [ ] **17. A hook that runs once per simulated tick.** `RunLogic` is documented as the per-tick
-  gameplay hook but is called on every pass of the physics loop, which keeps spinning while paused
-  so a key can unpause it; the pause and single-step counters are honoured one function later in
-  `Scene::UpdatePhysics`. So gameplay written the obvious way keeps playing while paused, and
-  single-stepping advances it by loop iterations rather than by ticks. Proposal is a second,
-  **additive** virtual (`RunSimulationTick`) so no existing app changes behaviour. **Open for
-  discussion.**
-- [ ] **18. `Scene::ReadAtTickBoundary(fn)`** — the read-side mirror of `SubmitCommand`. An MCP
-  tool handler holds no lock, so reading scene state races the physics thread. Without this every
-  app grows its own hand-maintained snapshot that drifts. *Later.*
+- [x] **16. Primitive mesh generators** — **Done.** `core/Primitives.h` / `.cpp`: `MakeBox`,
+  `MakeQuad`, `MakeSphere`, `MakeCylinder`, `MakeCone`. `data/unit_cube.obj` was the only cube in
+  the engine, and hand-building one was 45 lines (`ApplicationShip.cpp:80-125`). Five shapes was
+  Dick's call and is the right cut — it covers every debug marker, placeholder and collider
+  visualisation without anyone reaching for a `.obj`.
+
+  **Conventions, deliberately identical across all five**, because the value of a primitive set is
+  not having to remember which one is the odd one out:
+  - **Centred on the origin.** A box of size `(2,2,2)` spans -1..+1 on every axis; a cylinder of
+    height 2 spans y -1..+1. That is what makes the matching collider
+    `AddBoxCollider(size * 0.5f, vec3(), ...)` with no offset to get wrong.
+  - **Sizes are full extents**, not halves. `radius` is still a radius.
+  - **+Y is the axis of revolution** for sphere, cylinder and cone — the engine's up axis, and
+    `AddCapsuleCollider`'s axis too.
+  - **`MakeQuad` lies in XY facing +Z**, the same frame as a glyph or a billboard, so it drops
+    straight into the text work (see `text_rendering_options.md` §4a). Rotate -90° about X for a
+    floor.
+  - **Wound counter-clockwise seen from outside**, so the renderer's default `GL_BACK` culling
+    removes the away-facing half. Every quad comes from a corner plus two edge vectors `u,v` with
+    `cross(u,v) == n`, which is the trick that makes that true by construction rather than by
+    trial and error. The face table is lifted from `BuildVolumeCube`, the code this replaces.
+  - **Smooth normals where the surface is smooth, flat where it is not** — a cylinder's flank
+    rounds off while its lid keeps a hard rim. Cone flank normals are the true slant normals, so
+    a squat cone is not shaded like a tall one, and each triangle's apex vertex takes its own
+    segment's mid-azimuth normal (a cone tip has no single normal; sharing one averaged normal
+    there is what makes tips look pinched).
+  - Tangents along increasing azimuth, `matid` 0, NULL + a `debug->Err` on nonsense arguments.
+
+  **Render thread only** — they end in `Mesh::SetMeshData`, which calls `glNamedBufferData`
+  immediately (`Mesh.cpp:51`). `Application::Init` and `PreRender` are fine; `RunSimulationTick`
+  is not. Each returns a `new Mesh` the caller owns, like `CreateMeshFromHeightmap`.
+
+  **Verified** by a throwaway harness linking the real generator against a stubbed `Mesh` and
+  `Debugger` (no GL needed), checking the thing that is actually easy to get wrong: summing
+  `dot(p0, cross(p1-p0, p2-p0)) / 6` over every triangle gives the enclosed volume *only* if the
+  mesh is closed and wound outward, so one number catches a flipped face, a missing cap or an
+  inverted normal. `MakeBox(2,3,4)` gives exactly 24.000000; sphere/cylinder/cone come in at
+  -0.7%/-0.29%/-0.29% of analytic, under it as an inscribed faceted solid must be. Plus: no
+  degenerate triangles (the UV sphere's pole rows are emitted as triangles, not quads with a
+  zero-area half), every vertex normal unit length, and the geometric face normal agreeing with
+  the authored vertex normals everywhere (worst dot 0.9995).
+
+  **Both existing cubes converted, and `data/unit_cube.obj` is now dead.**
+
+  - `ApplicationShip::BuildVolumeCube` was 45 lines of face tables; it is now `MakeBox(vec3(1,1,1))`
+    plus `mesh_mode = MESH_MODE_SHADER`. Both reasons its comment gave for not using the GLTF
+    "cube" asset — asset meshes are shared by pointer so tagging one `MESH_MODE_SHADER` would
+    affect every other user, and the box the shader marches has to agree with the mesh's real
+    extents — are satisfied by a generator, which hands back a fresh unshared mesh built to the
+    size asked for.
+  - `ApplicationTetris` no longer touches the OBJ loader. It loaded `data/unit_cube.obj` only
+    because the engine could not make a cube; now `Init` generates one `block_mesh` and every
+    cube in the app shares it by pointer. `MakeCube` takes the mesh instead of the `AssetManager`,
+    and the comment about switching off the name path went with it: a generated mesh carries no
+    material names, so there is nothing for `ResolveMaterialNames` to overwrite the slot with.
+    The `AssetManager` itself stays — the engine reaches for it unguarded in places (the asset
+    list in the Scene panel, the `object_spawn` command handler), so an app dropping it would
+    crash the engine, not itself. The mesh takes one reference of its own, the same way
+    `AssetManager::AddNewAsset` does: a line clear destroys a lot of cubes at once, and
+    `Object::DeleteMesh` frees the mesh when the last holder lets go.
+  - `data/unit_cube.obj` now has no live references. The only mention left in code is inside the
+    commented-out skybox block in `ApplicationGrid.cpp:332`, which would take `MakeBox` as-is if
+    it were ever revived (the skybox pass does `glDisable(GL_CULL_FACE)`, so winding is moot
+    there). The file can go whenever someone wants to delete it.
+
+  **Verified on screen, not just compiled.** Both apps build with no warnings, and both were run
+  and screenshotted through the MCP `screenshot` tool:
+  - `APP=Tetris` — well frame, back panel, board cells, the falling piece with its shadow, the
+    ghost, and all three next-previews, all correctly lit. Every cube in that picture is generated.
+  - `APP=Ship` — the raymarched volume still renders, which is the strongest winding check
+    available: that pass flips to `GL_FRONT` and keeps the *inside* faces, so an outward-wound
+    cube that was actually inward would render nothing at all. Moving it to the origin showed the
+    box at its `(20,6,20)` object scale with the ship inside it, confirming the unit-cube-at-±0.5
+    contract makes an Object scale read directly as world units.
+- [x] **17. A hook that runs once per simulated tick.** **Done.** `RunLogic` was documented as the
+  per-tick gameplay hook but was called on every pass of the physics loop, which keeps spinning
+  while paused so a key can unpause it; the pause and single-step counters were honoured one
+  function later in `Scene::UpdatePhysics`. So gameplay written the obvious way kept playing while
+  paused, and single-stepping advanced it by loop iterations rather than by ticks. `RunLogic` was
+  *replaced*, not supplemented, by two virtuals with honest names — `UpdateView()` every pass of
+  the loop (camera, picking, editor) and `RunSimulationTick()` exactly once per tick that actually
+  runs. Replacing rather than adding is the point: all 11 apps say `override`, so removing the base
+  declaration is a compile error at every site and forces each body to be triaged into view work or
+  tick work, instead of leaving them silently on the wrong one. Fixes the residual race noted in
+  item 33 for free, because one decision per pass is then made in one place and handed to both
+  animation and physics. See item 35 for what this opens up afterwards.
+
+  **As built.** `Scene::BeginPass()` is the new first call of every pass: it drains the command
+  queue, services the pause key, and decides once whether this pass ticks (`IsTickingThisPass()`).
+  The physics loop then runs `UpdateAnimations` + `RunSimulationTick` + `UpdatePhysics` only on a
+  pass that ticks, and `UpdateView` on every pass - *after* the tick, so view code sees the state
+  the pass produced rather than the previous one's, which the old `RunLogic` could not (it ran
+  before the step, leaving every camera a tick stale).
+
+  Triage of the eleven apps, using "if running it twice for one tick would change the outcome, it
+  is simulation":
+  - `Tetris` opened with a hand-written copy of the pause predicate to work around the old
+    behaviour; that workaround is deleted. Its F1 panel toggle moved to `UpdateView`, so it now
+    works while paused - it was chrome sitting behind the gameplay gate.
+  - `OCPP` has no simulation at all. Everything it does is websocket traffic paced by
+    `GetTickCount()` against real charger backends, so it has only an `UpdateView` - the one place
+    in the repo where a real-millisecond duration is the right unit.
+  - `Grid` and `Tileset` are mostly editors: only character movement / the driven car are
+    simulation, and placement tools stay on the view side so they keep working while paused.
+  - `UI`'s override was an empty body, so it is gone; the base class default is identical.
+  - `Animation`, `IsoAnimation`, `Dozer`, `Sim`, `Ship`, `Tank` split down the middle.
+
+  Behaviour deliberately preserved rather than fixed in passing: several apps gate keyboard control
+  on `ImGui::GetIO().WantCaptureMouse` only because that check sat above them in the old single
+  function. A character stopping because the cursor is over a panel is almost certainly unwanted,
+  but each is flagged in a comment rather than silently changed. Two comments in `ApplicationTank`
+  that misattributed this hook to the "main"/"frame" thread were corrected - it has always run on
+  the physics thread.
+
+  Verified: all 11 apps build. Live on Tetris - paused for 1.5 s with zero tick advance, then steps
+  of 1/5/20/48 landing exactly, and 48 ticks moving the piece exactly one gravity cell as its tool
+  documents. Live on Ship - `UpdateView` eases the camera back from a yank to (60,60,60) at its 0.04
+  lerp per pass, so the every-pass hook is demonstrably running and doing its work.
+
+  `UpdateView` running *while paused* was the one case left unobserved here, for want of a pause
+  tool in an app with an observable view. Item 34 supplied it and it is now measured: with Ship
+  paused, the camera yanked to (60,60,60) eased itself back to (0.09,20.06,0.09) over five samples
+  while `tick` stayed at 252 throughout. The view hook runs on non-ticking passes.
+- [x] **18. `Scene::AtTickBoundary(fn)`** — the read-side mirror of `SubmitCommand`. **Done.** An
+  MCP tool handler holds no lock, so reading scene state races the physics thread. Without this
+  every app grows its own hand-maintained snapshot that drifts.
+
+  **Named `AtTickBoundary`, not `ReadAtTickBoundary`.** Two of the things that needed it are writes:
+  `camera_set` was writing the camera from the MCP thread, and `object_move` calls
+  `Scene::MoveObjectOverTicks`, which edits the `object_motions` vector that `AdvanceObjectMotions`
+  is iterating on the physics thread. That one is the worst of the set — a write race, not a read
+  race — and it has no SimCommand form, so the lock is the entire mechanism. A name saying "read"
+  would have been wrong at two of its call sites on day one.
+
+  It takes `renderer->physics_mutex`, which the physics thread holds across a whole pass. So it does
+  not merely make a read atomic: it lands the read *between* ticks, and `GetPhysicsTick()` inside it
+  names the tick that produced the state being read. Two rules, both documented on the declaration
+  and both deadlocks if broken — fn must not wait on the physics thread (`SubmitCommandAndWait`,
+  `StepPhysicsAndWait`, polling the step/motion counters) and must not wait on the render thread,
+  which rules out `MaybeAttachScreenshot`, since the render thread takes this same mutex to draw.
+
+  Converted: `object_list`, `object_get`, `object_set_transform`, `object_move`, `object_spawn`,
+  `sim_command`, `camera_get`, `camera_set`, plus `ApplicationTank`'s `GetVehicleTelemetry` and
+  `GetCraneTelemetry` — that app's numbers are what `tools/baseline_rp3d_*.json` diff against, so a
+  torn read there reports a wheel load that never occurred and invalidates the comparison. All its
+  callers were checked to be lock-free first; the mutex is not recursive.
+
+  Two helpers keep the resolve/submit/read-back tools honest: `Application::ResolveObjectIdArg`
+  returns an **id**, never a pointer, because the pointer is only valid while the lock is held and
+  every one of those handlers then submits a command and waits with it released;
+  `ObjectJsonAtTickBoundary` re-resolves that id afterwards and reports cleanly if the object is
+  gone. `ApplicationTetris` keeps its per-tick snapshot, which stays the right call for state every
+  tool call reads: `AtTickBoundary` is correct but stops the simulation for as long as it runs.
+
+  `camera_set` also became all-or-nothing while it was being converted. It used to apply `position`,
+  then discover `look_at` was malformed and return an error, leaving the camera half-moved by a call
+  that reported failure. Arguments are now parsed before the boundary and applied inside it.
+
+  Verified on Tetris and Tank. Functionally: every converted tool round-trips, including
+  spawn → set_transform → move → destroy, and reads against a destroyed id return an error instead
+  of crashing. Against deadlock, which is the real risk of putting a lock in an MCP handler: six
+  threads hammering a mix of `object_list`, `object_get`, `camera_get`, `object_set_transform` and
+  `sim_step` managed 1871 calls free-running and 1840 paused with no hang, and a second run mixing
+  `tank_telemetry`/`crane_telemetry` with the core reads managed 2254. `object_set_transform` is the
+  one that matters there — it locks, unlocks, waits on the physics thread, then locks again.
+
+  One false alarm worth recording: `camera_set` appeared to do nothing on Tetris. That app's
+  `UpdateCameraShake` unconditionally re-asserts the camera position from `camera_target` every
+  tick, so the write was overwritten by the next tick rather than lost. Confirmed by pausing first,
+  where it moves exactly as asked. Same shape as the `SyncBoardView` false alarm under item 32.
 - [ ] **19. A screenshot path that includes ImGui.** Capture happens inside `Renderer::DrawFrame`
   (`core/Renderer.cpp:801`); ImGui is drawn afterwards into the default framebuffer. Since ImGui is
   the engine's only text rendering, everything written in words is invisible to the one client that
@@ -177,7 +333,27 @@ Last updated 2026-09-11.
   `smoothstep` each, and one atlas serves every size. Copy the header out of `3rdparty/imgui/`
   first: a font system that includes from ImGui's folder has not achieved an ImGui-less build.
   Build the text primitive before any UI layer — it is useful on its own, and the UI framework
-  (layout, hit-testing, focus) is weeks rather than days. *Later.*
+  (layout, hit-testing, focus) is weeks rather than days.
+
+  **The GEOMETRY half is done** (2026-09-11), which is option D of that note rather than the
+  recommended B, because Dick had already exported one mesh per glyph to
+  `data/glyphs_unispace.glb` from `tools/blender_glyph_meshes.py`. `core/TextMesh.h` bakes a
+  string into a single `Mesh` — glyph triangles copied along a pen and welded into one vertex
+  buffer. `APP=Tetris` uses it for its captions, its three stats and its game-over banner, so the
+  board no longer says anything through ImGui.
+
+  Two things about its shape are worth keeping when the SDF atlas arrives:
+  - **There is no atlas in it, and that is not an omission.** An atlas is texture bookkeeping.
+    What a layout needs from a font is *metrics*, and for a monospaced set that is two floats
+    (`advance` 0.509167, `line_height` 1.0, from `fonts_glyphs.json`). The two paths will share
+    the *layout* and none of the storage; letting “atlas” into this API would have welded them.
+  - **The builder loads nothing.** It takes a `GlyphSet` and depends on `Mesh` alone;
+    `LoadGlyphSetFromGLB` is the only part that knows what glTF is and lives in its own
+    translation unit. An SDF path is a second loader and a second builder, not a rewrite.
+
+  Still open: the SDF/quad path itself, and everything above the primitive — layout, hit-testing,
+  focus. Also still true that `imstb_truetype.h` must be copied out of `3rdparty/imgui/` before it
+  is used, or an ImGui-less build has not been achieved. *Later.*
 
 ## Band E — multi-day, strategic
 
@@ -201,11 +377,29 @@ Last updated 2026-09-11.
 - [x] **30. `Renderer::AddMaterial` returned the wrong index for an existing name.** Returned
   `materials.size()-1` rather than the matching index, so adding under a taken name silently
   handed back somebody else's material. *Fixed in core by the Tetris agent.*
-- [ ] **31. `Camera::GetPixelRay` is not viewport-offset aware.** It divides by
-  `viewport.width/height` (the viewport's size) but takes a pixel coordinate relative to the
-  *window*, so with a non-zero `viewport_x`/`viewport_y` the caller must subtract the offset
-  itself. Pre-existing — `viewport_x` has always had this — and item 10 does not make it worse, but
-  it should either take viewport-relative coordinates or subtract the offset itself. *Later.*
+- [x] **31. `Camera::GetPixelRay` was not viewport-offset aware.** It divided by
+  `viewport.width/height` (the viewport's size) but took a pixel coordinate relative to the
+  *window*, so with a non-zero `viewport_x`/`viewport_y` every pick was skewed by the offset.
+  Fixed: `Camera::viewport` gained `px_offset_x`/`px_offset_y`, written by `Renderer::DrawFrame`
+  next to `width`/`height`, and `GetPixelRay` subtracts them first. Those two are deliberately in
+  **cursor space** (top-left origin, like the mouse) rather than `Renderer::viewport_y`'s
+  bottom-origin convention; they are named differently so the mismatch reads as intentional, and
+  `DrawFrame` does the one flip. *Fixed by the Tetris agent — logged in `docs/tetris_findings.md`
+  §5.4, checks in `tools/camera_ray_test.cpp` (11 pass, headless, no GL).*
+
+  Two things found while doing it, both worth knowing:
+  - **The orthographic branch ignored the camera's orientation entirely** (there was a `TODO`
+    saying so): it hardcoded `vec3(-w*zoom*aspect, 0, h*zoom)`, mapping screen-right to world -X
+    and screen-up to world +Z, which is correct only for a camera looking straight down -Y. Now
+    built from the camera's own basis, like the perspective branch. No existing app is affected —
+    the only orthographic *scene* camera in the repo is Tetris's (Ship's are shadow/cloud cameras,
+    Sim's `SetupOrthographic` is commented out and its `CAMERA_TYPE_ORTHOGRAPHIC` branch is a
+    mouse-wheel zoom, not a pick).
+  - **The object-id picking path needs no equivalent fix and should be left alone.**
+    `Renderer::DrawFrame`'s `glReadPixels(mouse.x, height - mouse.y, ...)` reads a *window* pixel
+    from a *full-window-sized* G-buffer, into which the scene is rasterised at its true window
+    position — so it is offset-correct by construction. Only the normalisation in `GetPixelRay`
+    ever needed to know where the rectangle was.
 - [x] **32. An object motion occupied `ticks + 1` ticks, not `ticks`, and the header said otherwise.**
   `AdvanceObjectMotions` tested `ticks_done >= ticks_total` at the top of the loop, so the
   completion branch — final `SetPosition(target)`, then erase — ran for **every** motion on the call
@@ -232,6 +426,132 @@ Last updated 2026-09-11.
   `ApplicationTetris.cpp:641` asks for `TETRIS_COLLAPSE_TICKS - 1` to dodge the old behaviour. That
   is now unnecessary, though harmless — it just retires a tick earlier than it needs to.
 
+
+- [x] **33. Animation advanced while the simulation was paused.** `Scene::UpdateAnimations` had no
+  pause check and is called on every pass of the physics loop, which keeps spinning while paused so
+  a key can unpause it - only `UpdatePhysics`, two calls later, honoured the pause and step
+  counters. Harmless when a clip only posed bones; not since the root-motion rewrite, because
+  `PlayerCharacter::ApplyAnimation` calls `RotateBy`/`MoveBy` from the extracted root delta. So a
+  paused simulation's characters kept walking, and single-stepping advanced animation by loop
+  iterations rather than by the steps requested. Gated on the same predicate `UpdatePhysics` uses.
+  Deliberately does not consume the step counter - `UpdatePhysics` still does that.
+
+  The residual race this originally left - another thread calling `StepPhysics` between the two
+  separate checks, so one step ran its physics without its animation frame - **is now fixed** by
+  item 17's `Scene::BeginPass`. There is one decision per pass and both stages read it.
+
+  Verification status, now that item 34 exists. Still not observed directly: a bone freezing. No
+  app starts a clip on its own - `Object::SwitchToAnimation` is reachable only from the Inspector
+  UI, and the Animation app's character sits in T-pose until driven - so `sim_step` has nothing
+  animating to step. What *has* been measured is the gate itself: exactly 0 ticks while paused and
+  exactly N per step. That is stronger evidence than it was, because `UpdateAnimations` no longer
+  evaluates its own predicate - it reads the same `f_tick_this_pass` that physics reads - so
+  "physics froze" and "animation froze" are now one fact rather than two that could disagree. A
+  core `object_animate` tool (switch an object to a named clip) would close it properly and is
+  cheap; not done, since nothing else needs it yet.
+
+- [x] **34. Core has no generic pause/step MCP tools.** **Done.** `ApplicationTank` and `ApplicationTetris`
+  each rolled their own (`tank_pause`/`tank_step`, `tetris_pause`/`tetris_step`) over
+  `Scene::PausePhysics`/`StepPhysics`, which are core facilities every app has. Nothing app-specific
+  about them. This has a concrete cost: item 33 could not be verified live, because no app pairs a
+  pause tool with a visibly animating object. It then blocked verification a second time on item 17,
+  where the un-observed case was `UpdateView` running while paused.
+
+  **As built.** `sim_pause` (`paused`) and `sim_step` (`num_ticks`, `include_screenshot`) in
+  `RegisterCoreMCPTools`, both returning the simulation clock — `tick`, `paused`, `pending_steps`,
+  `timestep`. `sim_step` also returns `ticks_advanced`, which is the value to trust: short of
+  `num_ticks` means the wait timed out and the remainder is still queued, and a caller that assumed
+  otherwise would be reading the wrong state.
+
+  The waiting logic is now `Application::StepPhysicsAndWait`, shared rather than copied —
+  `tank_step` and `tetris_step` each carried their own copy of the same poll loop and now call it.
+  Those app tools stay: they return vehicle telemetry and board state *with* the step, which is more
+  useful in those apps than a bare clock.
+
+  `Scene::f_paused` became `std::atomic<bool>`, for the same reason `pending_physics_steps` already
+  was: an MCP handler holds no lock, so `sim_pause` writes it while the physics thread reads it.
+  Benign on x86 as a plain bool, but the fix is one word and these tools are core now.
+
+  **Bug found by the new tools, and fixed.** `sim_pause` reported `pending_steps: 1` on a
+  free-running scene, and pausing then advanced one tick before freezing. `StepPhysics` documented
+  itself as "a no-op while not paused" but actually accumulated regardless, and `UpdatePhysics` only
+  ever decrements on a paused tick — so a step queued against a running simulation sat there
+  forever and spent itself as a burst of extra ticks the moment someone paused. Both halves closed:
+  `StepPhysics` now genuinely no-ops while running, and `PausePhysics(false)` discards whatever is
+  still queued, since a step is a request to advance a *stopped* simulation. The decrement in
+  `UpdatePhysics` is now guarded, because a concurrent resume can zero the counter mid-tick and an
+  unguarded decrement would leave it at -1.
+
+  Verified: pause freezes the engine tick *and* the game; steps of 1/5/20/48 land exactly, with
+  `tetris_state.game_ticks` advancing by the same amount — so a step is a whole tick, not just a
+  physics step. The leak fix was tested discriminatingly: 440 steps still queued mid-`sim_step`,
+  resumed, queue went to 0 and the next pause did not burst. Tools confirmed registered in Ship and
+  Animation, neither of which had any pause tool before.
+- [ ] **35. Transform ownership, once `UpdateView` runs at framerate.** Item 17 keeps `UpdateView` on
+  the physics thread under the lock, so it changes nothing here. Moving it to the render thread —
+  which is where camera work belongs, since a camera should be smooth at display rate and not at
+  50 Hz — raises three things, in increasing order of difficulty:
+  1. **Writes.** An `Object`'s local transform needs exactly one writer. The mechanism already
+     exists and is per-object: `Object::UpdatePhysicsState` writes the transform only `if
+     (physics)`, and recurses into children without writing theirs. So the rule is simply *`physics`
+     set means the tick owns the transform and the view may only read it; `physics` null means the
+     view owns it and the tick already never touches it*. A camera that should follow a physics body
+     is therefore **parented to it, not given a body of its own** — the parent's local transform
+     stays tick-owned, the camera's local offset stays view-owned, and `GetWorldTransformScaleMatrix`
+     composes the two. That covers chase and cockpit cameras with no new machinery. Worth an assert
+     in the view path rather than a type restriction, so the genuinely physical camera stays possible.
+  2. **Reads, and judder.** The view reading tick state at framerate is *safe* under `physics_mutex`
+     (the render thread already holds it across `Renderer::DrawFrame` and `DrawImGuiUI`) but it is
+     not *smooth*: a 50 Hz sim sampled at 144 Hz gives a chase camera a target that jumps 50 times a
+     second, and camera smoothing will show it. Wants the previous tick's pose kept on `Object` and
+     an interpolation alpha in `DrawFrame`. This is the real work of the item, larger than (1).
+  3. **Feedback into the sim.** Camera-relative controls ("forward" meaning camera-forward) make a
+     view-owned, framerate-driven orientation into simulation input, which breaks replay (item 25).
+     Whatever the sim reads must be sampled at a tick boundary. Cheap to get right if it is designed
+     in, nasty to retrofit.
+
+  Nothing in the repo attaches physics to a `Camera` today, so all of this is latent. Note
+  `Application::UpdateUICameraControls` is already a render-thread camera writer, called from
+  `DrawImGuiUI` under the lock — the pattern half-exists and is correctly synchronised. *Later.*
+- [x] **36. Two instances silently shared the MCP port, and it bound every interface.** **Done.**
+  `TCPServer::Start` set `SO_REUSEADDR`, which on Windows does not mean what the same name means on
+  Unix: it permits binding a port another socket is **already listening on**, with no error, and
+  which of the two a given connection reaches is indeterminate. Both copies logged `TCP Server
+  started on port 8765` and `netstat` showed two `0.0.0.0:8765` listeners. This is worse than a
+  failure — on 2026-09-11 a scripted test of the item-34 step-counter fix ran against a stale
+  instance that had bound first, and passed for the wrong reason; the test had to be rebuilt to
+  discriminate. Now `SO_EXCLUSIVEADDRUSE`, so the second bind fails with `WSAEADDRINUSE` and says
+  so in words; the app still runs, only its MCP server is unavailable.
+
+  The same bind used `INADDR_ANY`, so the MCP endpoint was reachable from the LAN — while its own
+  source comment said "everything that talks to this server is on the same machine" and the startup
+  line printed `http://127.0.0.1:8765/mcp`. Loopback is now an opt-in on `TCPServer`
+  (`SetLoopbackOnly`) that `MCPServer` sets, rather than a blanket change: `ApplicationOCPP` serves
+  real chargers on 9090 and `ApplicationTileset` serves a browser that need not be on this machine,
+  and both must stay on every interface.
+
+  Verified: one `127.0.0.1:8765` listener where there were two on `0.0.0.0`; second instance refused
+  with the new message; 9090 still on `0.0.0.0`; and kill-and-restart-immediately survived four
+  cycles with live MCP connections each time, which was the risk worth checking — exclusive bind
+  can in principle collide with sockets left in `TIME_WAIT`.
+
+- [x] **37. `HTTPServer` read requests with a single 4095-byte `recv`.** **Done.** It took whatever
+  one `recv` returned and treated that as the entire request. A `recv` returns one TCP segment's
+  worth of what has arrived, so a request with more header than that — or merely one split across
+  segments, which is legal at any size and is what a real network does rather than loopback — was
+  truncated and misparsed into a 404 or a failed WebSocket upgrade. Intermittent, and it looks like
+  the client's fault. Now loops to the `\r\n\r\n` that ends the headers, with a 64 KB cap.
+
+  **Not an MCP bug**, contrary to how this was first reported: `MCPServer::HandleHttpConnection` is
+  a separate handler on a raw `TCPServer` and already did this correctly, header loop and
+  `Content-Length` body read included. The broken one serves `ApplicationOCPP`'s charger endpoint
+  and `ApplicationTileset`'s web UI. Headers only is the right fix there — nothing downstream
+  consumes a body.
+
+  Verified discriminatingly, on the second attempt: a `/status` GET with 30 KB of padding passed
+  both before and after, because the request line sits in the first 4095 bytes either way. The test
+  that actually separates them is a WebSocket upgrade with `Sec-WebSocket-Key` pushed to offset
+  6083, past the old buffer — now `101 Switching Protocols`.
 ---
 
 ## Assessment of item 22 (`RRandom`)
@@ -276,3 +596,29 @@ rest of the process.
 
 Worth doing before item 25: replay cannot be built on a generator whose stream depends on which
 object happened to construct first.
+
+---
+
+## Added 2026-09-11, while building the text meshes
+
+- [ ] **38. `GLTFLoader` produces inf/NaN tangents for any mesh with degenerate UVs.** It solves
+  tangents per triangle from the UVs and divides by the UV triangle's signed area
+  (`core/GLTFLoader.cpp`, the `f = 1.0f / (deltaUV1.x * deltaUV2.y - ...)` lines), with no check
+  that the area is non-zero. Any triangle whose three UVs are collinear — which includes every
+  face of an untextured extrusion — divides by zero and the vertex ships a tangent of `inf` or
+  `NaN`. It is silent: nothing logs, and the mesh loads.
+
+  Measured on `data/glyphs_unispace.glb`: **5,149 of 8,264 triangles, 62% of the file**, because a
+  Blender text object gives its extruded sides no UV area at all. Not hypothetical, and not rare
+  either — it will be true of most modelled-but-not-unwrapped geometry.
+
+  Nothing visibly broke, which is the interesting part: `shaders/default.frag` only reaches for
+  the tangent on a material carrying a normal map, so a NaN sits in the buffer until the day
+  somebody assigns one. `core/TextMesh.cpp` sidesteps it by writing its own tangent (+X, which is
+  correct for a plane facing +Z) rather than carrying the glyph's over, so the text path is not
+  waiting on this.
+
+  The fix is a guard: when the UV area is near zero, fall back to any vector perpendicular to the
+  normal rather than dividing. Half a dozen lines in one place. *Small, but it should be done
+  before anyone normal-maps an imported mesh, because the symptom — black or exploded shading on
+  some triangles and not others — points nowhere near the loader.*

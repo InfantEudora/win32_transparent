@@ -39,7 +39,7 @@ public:
     ApplicationOCPP();
 
     void Init(void) override;
-    void RunLogic() override;
+    void UpdateView() override;
     void DrawImGuiUI(void) override;
 
     void RenderOCPPServerUI();

@@ -9,7 +9,8 @@
 
 //Crane-only actuator keys. The boom's elevation and the base's slew reuse the same WASD the
 //vehicles drive with (a crane's boom is its "forward/back" and its slew is its "left/right", so
-//the mapping reads the same way whichever rig has the keyboard - see RunLogic); these two pairs
+//the mapping reads the same way whichever rig has the keyboard - see RunSimulationTick); these
+//two pairs
 //are the axes a vehicle has no equivalent of, so they need keys of their own.
 #define INPUT_CRANE_EXTEND      INPUT_LAST+2
 #define INPUT_CRANE_RETRACT     INPUT_LAST+3
@@ -708,6 +709,14 @@ SimCommand ApplicationTank::MakeCraneMagnetCommand(bool on) const{
 //Shared by all three MCP tools below - same fields tank_telemetry reports on its own,
 //reused so tank_drive/tank_steer can hand back the resulting state without a separate call.
 json ApplicationTank::GetCraneTelemetry(){
+    json result;
+    if (main_scene && main_scene->AtTickBoundary([&]{ result = BuildCraneTelemetry(); })){
+        return result;
+    }
+    return json{ {"error","no scene"} };
+}
+
+json ApplicationTank::BuildCraneTelemetry(){
     if (!crane || !crane->boom_hinge || !crane->boom){
         return json{ {"error","no crane"} };
     }
@@ -789,6 +798,14 @@ json ApplicationTank::GetTankTelemetry(){
 }
 
 json ApplicationTank::GetVehicleTelemetry(Vehicle* vehicle){
+    json result;
+    if (main_scene && main_scene->AtTickBoundary([&]{ result = BuildVehicleTelemetry(vehicle); })){
+        return result;
+    }
+    return json{ {"error","no scene"} };
+}
+
+json ApplicationTank::BuildVehicleTelemetry(Vehicle* vehicle){
     if (!vehicle){
         return json{ {"error","no such vehicle"} };
     }
@@ -991,12 +1008,12 @@ json ApplicationTank::GetBridgeTelemetry(){
     };
 }
 
-//Exposes the tank's existing input methods (the same ones RunLogic already calls for
+//Exposes the tank's existing input methods (the same ones RunSimulationTick already calls for
 //keyboard input) and its live physics state over MCP. Handlers run on MCPServer's own
 //stdin-reading thread, writing the same gas_pedal/brake_pedal/steering_position floats
-//RunLogic writes from the main thread and UpdatePhysicsState reads/resets on the physics
-//thread - unsynchronized, but no more so than that existing main/physics-thread relationship
-//already is, and a stale/torn single frame here is harmless for a control input.
+//RunSimulationTick writes from the physics thread and UpdatePhysicsState reads/resets on that
+//same thread - so this MCP handler is the only unsynchronized writer, and a stale or torn single
+//frame here is harmless for a control input.
 //
 //tank_drive/tank_steer block for duration_ms (Sleep on this call's own TCPServer receive
 //thread - the HTTP transport is already one-request-at-a-time synchronous, so this doesn't
@@ -1095,7 +1112,7 @@ void ApplicationTank::RegisterMCPTools(){
             uint32_t duration_ticks = DurationMsToTicks(duration_ms);
             std::string direction = args.value("direction","stop");
             //MCP is a player: it holds a control on the InputController exactly as a person would,
-            //and RunLogic drives whichever vehicle is being controlled. So "which vehicle" means
+            //and RunSimulationTick drives whichever vehicle is being controlled. So "which vehicle" means
             //"take control of it" - there is no separate back door into a vehicle any more.
             SetControlledVehicle(vehicle);
             InputController* input = main_scene ? main_scene->inputcontroller : NULL;
@@ -1188,7 +1205,7 @@ void ApplicationTank::RegisterMCPTools(){
                 return json{ {"error","no input controller"} };
             }
             //Same "which vehicle means take control of it" rule the other tools follow - the rig
-            //is only read for the vehicle RunLogic is actually driving.
+            //is only read for the vehicle RunSimulationTick is actually driving.
             SetControlledVehicle(controlled_tank);
             bool enable = args.value("enable",true);
             if (!enable){
@@ -1264,7 +1281,7 @@ void ApplicationTank::RegisterMCPTools(){
         "telemetry - lets you single-step the simulation deterministically rather than driving "
         "for some guessed duration and polling. Requires physics to already be paused via "
         "tank_pause; returns an error otherwise. Blocks until the physics thread has actually "
-        "consumed the requested steps.",
+        "consumed the requested steps. sim_step is the same stepping without the vehicle telemetry.",
         json{
             {"type","object"},
             {"properties", {
@@ -1281,14 +1298,8 @@ void ApplicationTank::RegisterMCPTools(){
                 return json{ {"error","physics is not paused - call tank_pause with paused=true first"} };
             }
             int num_steps = max((int)args.value("num_steps",1.0f),0);
-            main_scene->StepPhysics(num_steps);
-
-            //Physics ticks run on their own thread at its own pace - poll briefly for it to
-            //actually consume what was just queued rather than guessing a fixed sleep.
-            int timeout_ms = max(2000,num_steps * 30);
-            for (int waited_ms = 0; waited_ms < timeout_ms && main_scene->GetPendingPhysicsSteps() > 0; waited_ms += 5){
-                Sleep(5);
-            }
+            //Shared with the core sim_step tool - see Application::StepPhysicsAndWait.
+            StepPhysicsAndWait(num_steps);
             return MaybeAttachScreenshot(GetVehicleTelemetry(ResolveVehicleArg(args)),args.value("include_screenshot",false));
         });
 
@@ -1424,7 +1435,7 @@ void ApplicationTank::RegisterMCPTools(){
                 !args.contains("hook_speed") && !args.contains("slew_speed")){
                 return json{ {"error","give speed, extension_speed, hook_speed and/or slew_speed"} };
             }
-            //Only the command members are written here - RunLogic is what hands them to the
+            //Only the command members are written here - RunSimulationTick is what hands them to the
             //crane, every tick, from these same members (see its crane block). That's also why
             //the debug panel can't overwrite them back: it edits these too.
             if (args.contains("hook_speed")){
@@ -1820,20 +1831,24 @@ static void ApplyHardwareCraneAxis(float hardware,float& previous,float& command
 }
 
 //Called before update physics
-void ApplicationTank::RunLogic(){
-    //Before every early-out below, deliberately. The vehicle keeps moving whether or not the
-    //window has focus and whether or not the cursor happens to be over a debug panel, so a
-    //follow that sat further down would let the camera fall behind exactly while the panel is
-    //being used to watch something - which is most of the time this is on. Doing it first also
-    //means this frame's own orbit/zoom pivots around where the vehicle is NOW, not where it was
-    //last frame.
-    if (f_camera_follow_vehicle){
-        SnapCameraToControlledVehicle();
-    }
-    UpdateBuggyWheelSpinParticles();
+/*
+    The model: the vehicles, the crane, the aim target and the wheelspin particles. Runs once per
+    tick that actually runs, immediately before the physics step, so all of it pauses and
+    single-steps with the physics that this app's own tank_pause/tank_step tools drive.
+
+    The aim target stayed on this side even though a cursor is what moves it: it is what the gun
+    shoots at, so it is simulation input, and the Fire() block below depends on it having been set
+    THIS pass. That does mean a view-owned pointer feeds a simulated value - the feedback path
+    recorded as backlog item 35.3.
+*/
+void ApplicationTank::RunSimulationTick(){
+    InputController* input = main_scene->inputcontroller;
+
+    //Gamepad sampling now happens once per tick inside InputController::PollDevices, with the
+    //keyboard and mouse - no separate per-app poll.
 
     //Focus is no longer a reason to skip this whole function. It used to return here, which was
-    //fine while MCP drove the vehicles behind RunLogic's back through Vehicle::HoldDrive - but MCP
+    //fine while MCP drove the vehicles behind this hook's back through Vehicle::HoldDrive - but MCP
     //is a player now, and its input arrives through InputController like anyone else's. Returning
     //early would silence scripted control exactly when the window ISN'T in front, which is every
     //automated run. Hardware input is already suppressed while unfocused inside InputController
@@ -1842,12 +1857,7 @@ void ApplicationTank::RunLogic(){
     //below, which would otherwise track a mouse being used in another application.
     bool has_focus = main_window->f_has_focus;
 
-    //Shortcuts
-    Camera* camera = main_scene->camera;
-    InputController* input = main_scene->inputcontroller;
-
-    //Gamepad sampling now happens once per tick inside InputController::PollDevices, with the
-    //keyboard and mouse - no separate per-app poll.
+    UpdateBuggyWheelSpinParticles();
 
     //Track the target on the terrain under the mouse cursor. If the cursor isn't over the
     //terrain (eg. over the sky, or over the tank itself), leave the target where it is.
@@ -1859,16 +1869,6 @@ void ApplicationTank::RunLogic(){
         }
     }else{
         target->SetVisibility(false);
-    }
-
-    //Cursor-driven work only: picking and selection. Skipped when the window isn't focused, or
-    //when the pointer is over a UI element. Vehicle control continues below either way, so a
-    //scripted drive isn't cancelled by the operator happening to mouse over a debug panel.
-    if (has_focus && !ImGui::GetIO().WantCaptureMouse){
-        CheckObjectSelection();
-    }
-    if (ImGui::GetIO().WantCaptureMouse){
-        input->GetDelta(INPUT_MOUSE_WHEEL); //clear the wheel delta so it doesn't apply later
     }
 
     //Routed to whichever vehicle is currently selected (see the "Controlling" toggle in
@@ -2034,8 +2034,9 @@ void ApplicationTank::RunLogic(){
 
             //The magnet is a latch, not an actuator, so it goes through the command queue rather
             //than the crane_*_speed machinery above - and on the release edge, so holding G does
-            //not toggle it once per tick. Submitted, never waited on: RunLogic is called from the
-            //frame thread with physics_mutex held, same as the reset buttons.
+            //not toggle it once per tick. Submitted, never waited on: RunSimulationTick runs on the
+            //physics thread, which is the thread that drains the queue, so waiting here would
+            //deadlock against itself.
             if (input->WasKeyReleased(INPUT_CRANE_MAGNET)){
                 main_scene->SubmitCommand(MakeCraneMagnetCommand(!crane->IsMagnetEnabled()));
             }
@@ -2049,6 +2050,36 @@ void ApplicationTank::RunLogic(){
         crane->SetExtensionSpeed(crane_extension_speed);
         crane->SetHookSpeed(crane_hook_speed);
         crane->SetSlewSpeed(crane_slew_speed);
+    }
+
+}
+
+//Camera and picking. Runs every pass, including the ones that simulate nothing, so the view stays
+//live over a paused simulation - which is what makes tank_pause/tank_step usable to look around a
+//frozen scene. Mouse deltas are read here and nowhere else.
+void ApplicationTank::UpdateView(){
+    //Shortcuts
+    Camera* camera = main_scene->camera;
+    InputController* input = main_scene->inputcontroller;
+    bool has_focus = main_window->f_has_focus;
+
+    //Before every early-out below, deliberately. The vehicle keeps moving whether or not the
+    //window has focus and whether or not the cursor happens to be over a debug panel, so a
+    //follow that sat further down would let the camera fall behind exactly while the panel is
+    //being used to watch something - which is most of the time this is on. Doing it first also
+    //means this frame's own orbit/zoom pivots around where the vehicle is NOW, not where it was
+    //last frame.
+    if (f_camera_follow_vehicle){
+        SnapCameraToControlledVehicle();
+    }
+    //Cursor-driven work only: picking and selection. Skipped when the window isn't focused, or
+    //when the pointer is over a UI element. Vehicle control continues below either way, so a
+    //scripted drive isn't cancelled by the operator happening to mouse over a debug panel.
+    if (has_focus && !ImGui::GetIO().WantCaptureMouse){
+        CheckObjectSelection();
+    }
+    if (ImGui::GetIO().WantCaptureMouse){
+        input->GetDelta(INPUT_MOUSE_WHEEL); //clear the wheel delta so it doesn't apply later
     }
 
     //Camera rotation moving.
@@ -2462,7 +2493,8 @@ void ApplicationTank::RenderTankWheelDebugUI(){
 }
 
 //The crane's section of the Vehicle Debug window. Unlike the tank/buggy sections above, none of
-//the sliders here push their value into the crane: RunLogic does that for all four commands
+//the sliders here push their value into the crane: RunSimulationTick does that for all four
+//commands
 //every tick (see its crane block), so this only has to move the crane_*_speed floats - which
 //also means the panel and the keyboard and the crane_speed MCP tool are all editing the same
 //numbers rather than each having their own path into the mechanism.

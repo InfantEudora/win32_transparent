@@ -49,6 +49,33 @@ public:
 		float 	width;
 		float 	height;
 		float 	aspect;
+
+		/*
+		    Where this camera's viewport starts within the window, in pixels, for GetPixelRay.
+
+		    DELIBERATELY IN CURSOR SPACE: measured from the TOP-LEFT of the window, which is what
+		    GetRelativeMousePosition returns and so the space the pixel handed to GetPixelRay is
+		    already in. That is NOT the convention Renderer::viewport_y uses - that one is measured
+		    from the BOTTOM, because it feeds glViewport and GL's origin is down there.
+
+		    The two are named differently (px_offset_* here, viewport_* there) precisely so the
+		    mismatch cannot be mistaken for an oversight: one number talks to OpenGL, the other
+		    talks to the mouse, and they are the same edge of the same rectangle measured from
+		    opposite ends of the window. Renderer::DrawFrame does the flip once, next to where it
+		    already writes width and height:
+
+		        camera->viewport.px_offset_y = height - (viewport_y + GetViewportHeight());
+
+		    Like width and height, these are overwritten every frame, so nothing needs to set them.
+		    They are zero for an app that never restricts its viewport, which is all of them but
+		    ApplicationTank.
+		*/
+		//Initialised here, unlike the fields above, because GetPixelRay may legitimately run
+		//before the first frame has been drawn (the note on SetupPerspective says so) and an
+		//uninitialised offset would put the ray somewhere in the next county rather than merely
+		//at the wrong aspect ratio.
+		float	px_offset_x = 0.0f;
+		float	px_offset_y = 0.0f;
 	}viewport;
 
 	fmat4		mat_cam;		//Final camera matrix
