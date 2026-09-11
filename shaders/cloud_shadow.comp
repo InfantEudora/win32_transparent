@@ -1,0 +1,150 @@
+#version 430 core
+
+/*
+    Cloud shadow map: how much sunlight survives the raymarched volumes on its way to any point
+    in the world.
+
+    A "Beer shadow map" - the volumetric equivalent of the ordinary depth shadow map, and NOT a
+    replacement for it. That one stores the depth of the nearest opaque blocker and is compared
+    against; this one stores accumulated TRANSMITTANCE and is multiplied in. default.frag uses
+    both (see CalcShadow / CalcCloudShadow).
+
+    The output is a 3D texture, not a 2D one, and the third axis is what makes it worth doing:
+
+      XY - position in the sun's orthographic frame, exactly like the depth shadow map
+      Z  - how far along the sun ray the RECEIVER is
+
+    A flat 2D map only answers "how much sun reaches the ground". That is wrong the moment
+    something is inside or above the cloud layer - a ship flying over a bank would be shadowed by
+    cloud underneath it. Storing the running transmittance per slice costs one march either way,
+    because the march already walks front to back; it is only extra imageStores.
+
+    Cheap compared to the view march in raymarch_volume.frag for two reasons: it is decoupled from
+    screen resolution (cloud shadows are soft and low frequency, so a few hundred texels across is
+    plenty), and there is no inner light loop - the ray IS the light ray, so it is one march
+    rather than view_steps x light_steps.
+
+    One invocation owns one XY column and writes every slice of it.
+*/
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+//Transmittance, 0 (fully shadowed) to 1 (clear sky). r8 is enough: this is a multiplier on
+//sunlight that ends up in an 8-bit image anyway, and the gradients are soft. If banding ever
+//shows up on a large flat receiver, this and the texture's storage format go to r16f together.
+layout (r8, binding = 0) writeonly uniform image3D img_cloud_shadow;
+
+//density_at(), ray_box_dst(), the noise sampler and the shape uniforms - the SAME file
+//raymarch_volume.frag includes, so the shadow cannot describe a different cloud than the one
+//being drawn.
+#include "density.glsl"
+
+//World-to-local transform of each volume, uploaded already inverted by
+//ApplicationShip::DispatchCloudShadow - once per volume per frame, where this shader had been
+//inverting once per volume for every column of the map. It used to arrive as a forward transform
+//for a reason: fmat4::inverse_transform only handled RIGID transforms, and these boxes are
+//scaled (20x6x20), so inverting on the CPU silently produced the wrong box. It accounts for
+//scale now - see core/type_fmat4.h. raymarch_volume.frag still inverts per fragment: its matrix
+//comes from the shared instance buffer, which carries no inverse.
+//Bindings 0-3 are taken by the instance, material, light and readback buffers.
+layout (std430, binding = 4) buffer VolumeBuffer{
+    mat4 volume_inverse_transform[];
+};
+
+//The sun's orthographic view-projection for THIS map. Deliberately not the depth shadow map's
+//`mat_shadow`: that frustum is fitted to the whole scene (near 1, far 200), and spreading the
+//slices over 200 world units would put several units of depth in every slice while the cloud
+//layer is only a handful thick. This one is refitted every frame to just the volumes, so the
+//slices land where there is actually cloud. default.frag is given the same matrix.
+uniform mat4 mat_cloud_shadow;
+
+uniform int num_volumes = 0;
+//Steps taken THROUGH EACH VOLUME's box, not along the whole ray. Marching the full near-to-far
+//span would spend almost all its samples in the empty air between banks; intersecting each box
+//and marching only inside it puts every sample where there can be density.
+uniform int num_march_steps = 32;
+uniform float light_absorption = 1.0;
+//Art control, applied here rather than in default.frag so it costs nothing per pixel. 1 is the
+//physical result, 0 disables the shadow without disabling the pass.
+uniform float shadow_strength = 1.0;
+
+//Slices along the sun ray. The array is indexed dynamically, so it has to have a compile-time
+//bound; the texture's actual depth is what the loops use.
+#define MAX_SLICES 64
+
+void main(){
+    ivec3 size = imageSize(img_cloud_shadow);
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    if ((gid.x >= size.x) || (gid.y >= size.y)){
+        return;
+    }
+    int num_slices = min(size.z,MAX_SLICES);
+
+    //Optical depth accumulated WITHIN each slice, before it is turned into transmittance. Kept
+    //per slice rather than as one running total because a volume further along the ray may be
+    //marched before a nearer one - the boxes are visited in buffer order, not depth order - so
+    //there is no front-to-back sweep to accumulate into directly.
+    float slab[MAX_SLICES];
+    for (int k = 0;k < num_slices;k++){
+        slab[k] = 0.0;
+    }
+
+    //The ray for this column, straight out of the matrix so nothing here assumes a particular
+    //handedness or how the frustum was fitted. The sun is orthographic, so every column is
+    //parallel and `depth` below is linear in world distance - which is what lets the slices be
+    //evenly spaced and lets default.frag index them with its own projected depth.
+    vec2 uv = (vec2(gid) + 0.5) / vec2(size.xy);
+    vec2 ndc = uv * 2.0 - 1.0;
+    mat4 to_world = inverse(mat_cloud_shadow);
+    vec4 pn = to_world * vec4(ndc,-1.0,1.0);
+    vec4 pf = to_world * vec4(ndc, 1.0,1.0);
+    vec3 near_p = pn.xyz / pn.w;
+    vec3 far_p  = pf.xyz / pf.w;
+
+    vec3 seg = far_p - near_p;
+    float ray_len = length(seg);
+    if (ray_len < 0.0001){
+        return;
+    }
+    vec3 dir = seg / ray_len;
+
+    for (int v = 0;v < num_volumes;v++){
+        mat4 to_local = volume_inverse_transform[v];
+        vec3 local_origin = (to_local * vec4(near_p,1.0)).xyz;
+        //NOT normalised - same rule as the view march. The transform is affine, so the same t
+        //describes the world ray and the local one, and because `dir` is a world unit vector
+        //every t (and so every step length) stays a world distance. Normalising here would break
+        //any non-uniformly scaled volume, and these are scaled 20x6x20.
+        vec3 local_dir = mat3(to_local) * dir;
+
+        vec2 hit = ray_box_dst(local_origin,1.0 / local_dir);
+        if (hit.y <= 0.0){
+            continue;
+        }
+        float step_size = hit.y / float(max(num_march_steps,1));
+        //Half a step in, so samples sit in the middle of the slabs they represent.
+        float t = hit.x + step_size * 0.5;
+        vec3 p = local_origin + local_dir * t;
+
+        for (int i = 0;i < num_march_steps;i++){
+            float density = density_at(p);
+            if (density > 0.0){
+                int k = clamp(int((t / ray_len) * float(num_slices)),0,num_slices - 1);
+                slab[k] += density * step_size;
+            }
+            p += local_dir * step_size;
+            t += step_size;
+        }
+    }
+
+    //Prefix sum into transmittance. The value written for slice k is what a receiver at the
+    //CENTRE of that slice sees, so it carries everything before the slice plus half of the slice
+    //itself - the texel centre is where a LINEAR sample of this texture lands.
+    float cumulative = 0.0;
+    for (int k = 0;k < num_slices;k++){
+        float tau = cumulative + slab[k] * 0.5;
+        float transmittance = mix(1.0,exp(-tau * light_absorption),clamp(shadow_strength,0.0,1.0));
+        imageStore(img_cloud_shadow,ivec3(gid,k),vec4(transmittance));
+        cumulative += slab[k];
+    }
+}

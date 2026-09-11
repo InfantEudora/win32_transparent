@@ -42,6 +42,9 @@ public:
 
     void Init(void) override;
     void RunLogic() override;
+    //Frame thread, before the scene draws - where the cloud shadow map is built. See
+    //Application::PreRender for why this cannot live in RunLogic.
+    void PreRender(void) override;
 
     void DrawImGuiUI(void) override;
 
@@ -80,6 +83,30 @@ public:
     void BuildVolumeNoise(void);
     Texture* volume_noise = NULL;
     Shader* volume_noise_shader = NULL;
+    //The shape uniforms density.glsl declares, pushed to whichever program is being set up.
+    //Shared by the volume shader and the cloud shadow compute shader precisely so the shadow
+    //describes the same cloud that gets drawn.
+    void SetSharedDensityUniforms(Shader* s);
+
+    /*
+        Cloud shadows: a 3D transmittance map of the volumes, seen from the sun, handed to the
+        renderer so default.frag can attenuate sunlight with it. See shaders/cloud_shadow.comp
+        for what is in the map and why it has a third axis.
+
+        The renderer owns none of this - it just takes a texture id and a matrix.
+    */
+    void BuildCloudShadowResources(void);   //Once, from Init, on the frame thread.
+    void DispatchCloudShadow(void);         //Every frame, from PreRender.
+    //Refits the shadow camera's orthographic box around the visible volumes. False if there is
+    //nothing to fit, which is the caller's cue to switch the map off rather than render garbage.
+    bool FitCloudShadowCamera(void);
+    Texture* cloud_shadow_map = NULL;
+    Shader* cloud_shadow_shader = NULL;
+    //Its own camera, NOT the sun. Same position and orientation, but a near/far fitted to the
+    //volumes instead of to the whole scene - see the note on mat_cloud_shadow in the comp shader.
+    Camera* cloud_shadow_camera = NULL;
+    //Holds the volumes' world transforms for the compute shader. std430 binding 4.
+    uint32_t cloud_shadow_ssbo = (uint32_t)-1;
 
     //std::vector<Asteroid*> asteroids;
     std::vector<HingedDoor*> doors;
@@ -186,6 +213,24 @@ private:
     //Which entry of `volumes` the panel's transform controls edit. Everything else in that
     //panel is a uniform on the shared shader and so applies to all of them.
     int volume_selected = 0;
+
+    //Cloud shadow tweakables, driven from the Volume panel.
+    bool f_cloud_shadows = true;
+    //Texels across the sun's frame. Low on purpose: cloud shadows are soft and low frequency, so
+    //this buys nothing above a few hundred. 256x256x32 at R8 is 2 MB, against the 64 MB the
+    //opaque depth shadow map already costs at 4096^2.
+    int cloud_shadow_resolution = 256;
+    //Slices along the sun ray. This is the axis that makes the map correct for a receiver INSIDE
+    //the cloud layer rather than only on the ground.
+    int cloud_shadow_slices = 32;
+    //Steps taken through each volume's box. Per box, not per ray - see the comp shader.
+    int cloud_shadow_march_steps = 32;
+    //1 is the physical answer; lower fades the shadow out without turning the pass off.
+    float cloud_shadow_strength = 1.0f;
+    //Last fitted depth range, metres along the sun axis - shown in the UI because it is the
+    //number that says whether the slices are landing anywhere useful.
+    float cloud_shadow_fit_near = 0.0f;
+    float cloud_shadow_fit_far = 0.0f;
 
     void onContact(const rp3d::CollisionCallback::CallbackData& callbackData) override;
     void onTrigger(const rp3d::OverlapCallback::CallbackData& callbackData) override;

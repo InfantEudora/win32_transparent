@@ -250,25 +250,48 @@ inline void fmat4::print(){
 // https://graphics.stanford.edu/courses/cs248-98-fall/Final/q4.html
 inline fmat4& fmat4::inverse_transform(){
 	fmat4 m;
-	//m.vertex[0].x
 
-	float d1 = -vertex[0].dot(vertex[3]);
-	float d2 = -vertex[1].dot(vertex[3]);
-	float d3 = -vertex[2].dot(vertex[3]);
+	//SCALE. vertex[0..2] are the object's own axes, each one scaled by that axis' scale s_i - so
+	//an axis' squared length IS s_i*s_i, and the scale can be taken back out here without
+	//decomposing anything. The inverse of the 3x3 is axis i divided by s_i*s_i: this used to be
+	//the bare transpose, which is only the inverse when every s_i is 1, because a transpose
+	//leaves each row multiplied BY s_i where the inverse needs it divided by s_i - out by a
+	//factor s_i*s_i. A rigid matrix has s_i = 1 and so still takes exactly the path it did
+	//before; a volume box scaled (20,6,20) no longer inverts to a box thousands of times too
+	//big. Negative scale (a mirrored object) is fine, only the square of it is ever used.
+	//
+	//What this still assumes is that those axes are PERPENDICULAR - rotation, scale and
+	//translation, no shear. A sheared matrix needs a general inverse, which this is not.
+	float s1 = (vertex[0].x*vertex[0].x)+(vertex[0].y*vertex[0].y)+(vertex[0].z*vertex[0].z);
+	float s2 = (vertex[1].x*vertex[1].x)+(vertex[1].y*vertex[1].y)+(vertex[1].z*vertex[1].z);
+	float s3 = (vertex[2].x*vertex[2].x)+(vertex[2].y*vertex[2].y)+(vertex[2].z*vertex[2].z);
 
-	m.vertex[0].x = vertex[0].x;
-	m.vertex[1].x = vertex[0].y;
-	m.vertex[2].x = vertex[0].z;
+	//An axis scaled to nothing has no inverse. Collapsing it to zero keeps the result finite
+	//rather than seeding an infinity that turns into NaN in the first multiply downstream.
+	s1 = (s1 > 0) ? (1.0f / s1) : 0.0f;
+	s2 = (s2 > 0) ? (1.0f / s2) : 0.0f;
+	s3 = (s3 > 0) ? (1.0f / s3) : 0.0f;
+
+	//Translation: the inverse of the 3x3 applied to -position, so it picks up the same divide.
+	//The dot is over xyz only - vertex[3].w is 1, and a transform matrix's axes carry w = 0, so
+	//vec4::dot would add nothing here, but this does not depend on that being true.
+	float d1 = -((vertex[0].x*vertex[3].x)+(vertex[0].y*vertex[3].y)+(vertex[0].z*vertex[3].z)) * s1;
+	float d2 = -((vertex[1].x*vertex[3].x)+(vertex[1].y*vertex[3].y)+(vertex[1].z*vertex[3].z)) * s2;
+	float d3 = -((vertex[2].x*vertex[3].x)+(vertex[2].y*vertex[3].y)+(vertex[2].z*vertex[3].z)) * s3;
+
+	m.vertex[0].x = vertex[0].x * s1;
+	m.vertex[1].x = vertex[0].y * s1;
+	m.vertex[2].x = vertex[0].z * s1;
 	m.vertex[3].x = d1;
 
-	m.vertex[0].y = vertex[1].x;
-	m.vertex[1].y = vertex[1].y;
-	m.vertex[2].y = vertex[1].z;
+	m.vertex[0].y = vertex[1].x * s2;
+	m.vertex[1].y = vertex[1].y * s2;
+	m.vertex[2].y = vertex[1].z * s2;
 	m.vertex[3].y = d2;
 
-	m.vertex[0].z = vertex[2].x;
-	m.vertex[1].z = vertex[2].y;
-	m.vertex[2].z = vertex[2].z;
+	m.vertex[0].z = vertex[2].x * s3;
+	m.vertex[1].z = vertex[2].y * s3;
+	m.vertex[2].z = vertex[2].z * s3;
 	m.vertex[3].z = d3;
 
 	m.vertex[0].w = 0;

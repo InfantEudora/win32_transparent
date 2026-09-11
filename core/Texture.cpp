@@ -41,23 +41,27 @@ void Texture::Create2D(int target, int depth){
     glTextureStorage2D(texture_id, 1, storage_format, width, height);
 }
 
+//LINEAR so a volume marching through this does not see the voxel grid, and REPEAT on every axis
+//so the noise can be sampled at any scale without a seam - which is the whole reason the
+//generator makes it tileable.
 void Texture::Create3D(int size, GLenum format){
-    width = size;
-    height = size;
-    depth = size;
+    Create3D(size,size,size,format,GL_REPEAT,GL_LINEAR);
+}
+
+void Texture::Create3D(int w, int h, int d, GLenum format, GLenum wrap, GLenum filter){
+    width = w;
+    height = h;
+    depth = d;
     storage_format = format;
 
     glCreateTextures(GL_TEXTURE_3D, 1, &texture_id);
     debug->Info("Create3D: %s %ix%ix%i texture_id: %li\n",name.c_str(),width,height,depth,texture_id);
 
-    //LINEAR, so a volume marching through this does not see the voxel grid, and REPEAT on every
-    //axis so the noise can be sampled at any scale without a seam - which is the whole reason
-    //the generator makes it tileable.
-    glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_R, GL_REPEAT);
+    glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, filter);
+    glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, filter);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_S, wrap);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, wrap);
+    glTextureParameteri(texture_id, GL_TEXTURE_WRAP_R, wrap);
 
     glTextureStorage3D(texture_id, 1, storage_format, width, height, depth);
 }

@@ -48,6 +48,11 @@ public:
     //shaders/noise3d.comp). Unlike Create2D this filters LINEAR and wraps on all three axes,
     //because a volume samples it at arbitrary scales and NEAREST would show the voxel grid.
     void Create3D(int size, GLenum format = GL_RGBA8);
+    //The general form. The cubic one above is this with REPEAT wrapping, which is what tiling
+    //noise wants; a lookup table like a cloud shadow map wants CLAMP_TO_EDGE instead, so that
+    //sampling past either end returns the nearest real value rather than wrapping around to the
+    //far side of the volume.
+    void Create3D(int w, int h, int d, GLenum format, GLenum wrap, GLenum filter);
     void UploadTexture(GLenum _format = GL_RGB, int target = GL_TEXTURE_2D);
 
     void LoadCubeMapFile(const char* filename, int depth_in, Texture* first_map);

@@ -34,6 +34,11 @@ class Renderer;
 //volume sampling somebody's diffuse map.
 #define TEXUNIT_APP_RESERVED      25
 
+//Cloud shadow map: the volumetric transmittance map an app may hand the renderer, sampled by
+//default.frag's CalcCloudShadow. Above TEXUNIT_APP_RESERVED for the same reason that one is
+//above the cubemap - it is the next free unit going up, well clear of the material textures.
+#define TEXUNIT_CLOUD_SHADOW      26
+
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
     int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
@@ -116,6 +121,8 @@ class Renderer{
     //Draws every MESH_MODE_SHADER mesh, one sub-pass per registered custom shader. Runs last of
     //the geometry passes, with the deferred G-buffer bound as input - see the definition.
     void CustomShaderPass(Camera* camera);
+    //Binds the cloud shadow map (if an app supplied one) and tells `s` whether to use it.
+    void UploadCloudShadow(Shader* s);
 
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
@@ -195,6 +202,19 @@ class Renderer{
     //Shadow
     GLuint shadow_fbo_id = -1;  // Framebuffer for getting depth of a light sournce
     GLuint shadow_tex_id = -1;  // Texture where shadow depth info is stored
+
+    /*
+        Cloud shadows. The renderer does not build this and knows nothing about volumes - an app
+        fills a 3D transmittance texture and drops its id here, and the renderer binds it and
+        hands default.frag the matrix that projects a world position into it. -1 means no map,
+        which is the case for every app but the ship one, and then f_cloud_shadows goes to the
+        shaders as 0 and CalcCloudShadow returns 1.
+
+        mat_cloud_shadow is deliberately its own matrix rather than the depth map's mat_shadow:
+        the two frustums are fitted to different things. See shaders/cloud_shadow.comp.
+    */
+    GLuint cloud_shadow_tex_id = -1;
+    fmat4 mat_cloud_shadow;
 
     Shader* deferred_shader = NULL;         // Shader that outputs data to textures
     Shader* deferred_shader_skinned = NULL; // Shader that outputs data to textures

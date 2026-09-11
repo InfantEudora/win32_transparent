@@ -514,6 +514,27 @@ void Renderer::CustomShaderPass(Camera* camera){
     }
 }
 
+/*
+    Hands one shader the cloud shadow map. Called for every shader that lights with the sun,
+    which is the default and skinned ones - they share default.frag.
+
+    Setmat4 goes through debug->Fatal if the uniform is missing, so it is only called when there
+    is a map to point at. f_cloud_shadows is always set, so a shader cannot be left sampling a
+    stale map from a previous scene.
+*/
+void Renderer::UploadCloudShadow(Shader* s){
+    if (!s){
+        return;
+    }
+    if (cloud_shadow_tex_id == (GLuint)-1){
+        s->Setint("f_cloud_shadows",0);
+        return;
+    }
+    glBindTextureUnit(TEXUNIT_CLOUD_SHADOW,cloud_shadow_tex_id);
+    s->Setmat4("mat_cloud_shadow",mat_cloud_shadow);
+    s->Setint("f_cloud_shadows",1);
+}
+
 //Uses a compute shader and uses the textures from deferred pass.
 void Renderer::SSAOPass(Camera* camera){
     ssao_compute_shader->Use();
@@ -678,6 +699,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     shader->Setint("f_environment_reflections",f_use_reflections);
     shader->Setfloat("cone_softness",cone_softness);
     shader->Setint("f_materialindex_is_color",0);
+    UploadCloudShadow(shader);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
     shader->Setint("f_materialindex_is_color",1);
     RenderUniqueMeshes(MESH_MODE_LINE);
@@ -697,6 +719,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         skinned_shader->Setfloat("cone_softness",cone_softness);
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",0);
+        UploadCloudShadow(skinned_shader);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
     }
 

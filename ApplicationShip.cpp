@@ -200,7 +200,6 @@ void ApplicationShip::SetVolumeUniforms(void){
     if (!volume_shader){
         return;
     }
-    volume_shader->Setfloat("volume_density",volume_density);
     volume_shader->Setfloat("light_absorption",volume_light_absorption);
     volume_shader->Setfloat("sun_intensity",volume_sun_intensity);
     volume_shader->Setint("num_view_steps",volume_view_steps);
@@ -212,20 +211,10 @@ void ApplicationShip::SetVolumeUniforms(void){
     volume_shader->Setfloat("cone_softness",renderer->cone_softness);
     volume_shader->Setint("f_show_box",volume_debug_view);
 
-    volume_shader->Setfloat("noise_scale",volume_noise_scale);
-    volume_shader->Setfloat("density_threshold",volume_density_threshold);
-    volume_shader->Setfloat("edge_falloff",volume_edge_falloff);
-
-    //Drift the noise through the box. Integrated here rather than in RunLogic because this is
-    //the one place that runs exactly once per rendered frame, and the drift is purely visual -
-    //it is not part of the simulation and deliberately does not go through a tick.
-    float dt = 1.0f / 60.0f;
-    if (tmr_render_loop && tmr_render_loop->delta > 0){
-        //delta is microseconds. Clamped so a hitch or a breakpoint does not teleport the cloud.
-        dt = fminf((float)(tmr_render_loop->delta / 1000000.0),0.1f);
-    }
-    volume_noise_offset += volume_wind * dt;
-    volume_shader->Setvec3("noise_offset",volume_noise_offset);
+    //Shape, density and the wind offset - the uniforms density.glsl declares. Shared with the
+    //cloud shadow compute shader, which is the point: it has to march the same cloud. The wind
+    //itself is advanced in PreRender, before the shadow map is built.
+    SetSharedDensityUniforms(volume_shader);
 
     if (volume_noise){
         glBindTextureUnit(TEXUNIT_APP_RESERVED,volume_noise->texture_id);
@@ -257,6 +246,226 @@ void ApplicationShip::SetVolumeUniforms(void){
     glCullFace(GL_FRONT);
     glDepthMask(GL_FALSE);
     glDisable(GL_DEPTH_TEST);
+}
+
+//The uniforms shaders/density.glsl declares. Pushed to every program that includes it, because
+//the cloud those programs describe has to be the same cloud - raymarch_volume.frag draws it and
+//cloud_shadow.comp decides where its shadow falls.
+void ApplicationShip::SetSharedDensityUniforms(Shader* s){
+    if (!s){
+        return;
+    }
+    s->Setfloat("noise_scale",volume_noise_scale);
+    s->Setfloat("density_threshold",volume_density_threshold);
+    s->Setfloat("edge_falloff",volume_edge_falloff);
+    s->Setfloat("volume_density",volume_density);
+    s->Setvec3("noise_offset",volume_noise_offset);
+}
+
+//Called once from Init, on the frame thread - the only thread allowed to touch GL.
+void ApplicationShip::BuildCloudShadowResources(void){
+    if (!cloud_shadow_shader){
+        cloud_shadow_shader = new Shader();
+        cloud_shadow_shader->CreateComputeShader("shaders/cloud_shadow.comp");
+    }
+    if (!cloud_shadow_camera){
+        //Not added to the scene: nothing should be able to select it, and it is refitted from
+        //the sun every frame anyway.
+        cloud_shadow_camera = new Camera();
+        cloud_shadow_camera->name = "Cloud Shadow Camera";
+    }
+    if (cloud_shadow_ssbo == (uint32_t)-1){
+        GLuint ssbo = 0;
+        glCreateBuffers(1,&ssbo);
+        cloud_shadow_ssbo = ssbo;
+    }
+    if (!cloud_shadow_map){
+        cloud_shadow_map = new Texture();
+        cloud_shadow_map->name = "cloud_shadow";
+        //CLAMP_TO_EDGE matters most on R, the depth axis: it is what makes a receiver above the
+        //layer read the first slice (nothing in front of it yet) and one below the layer read
+        //the last (the whole column of cloud in front of it), with no bounds test in the
+        //shader. See CalcCloudShadow in default.frag.
+        cloud_shadow_map->Create3D(cloud_shadow_resolution,cloud_shadow_resolution,
+                                   cloud_shadow_slices,GL_R8,GL_CLAMP_TO_EDGE,GL_LINEAR);
+    }
+    debug->Info("Cloud shadow map: %ix%ix%i R8, %i KB\n",
+                cloud_shadow_resolution,cloud_shadow_resolution,cloud_shadow_slices,
+                (cloud_shadow_resolution * cloud_shadow_resolution * cloud_shadow_slices) / 1024);
+}
+
+/*
+    Point the shadow camera where the sun points, then shrink its orthographic box onto the
+    volumes.
+
+    The refit is the whole reason this is not just the sun's own shadow camera. That one is
+    fitted to the scene - half-extent 30, near 1, far 200 - and spreading 32 slices over 200
+    world units would put six units of depth in every slice while a cloud bank is six units
+    thick, so every receiver would land in the same slice and the third axis would buy nothing.
+    Fitted to the volumes, the slices land where there is actually cloud.
+*/
+bool ApplicationShip::FitCloudShadowCamera(void){
+    if (!cloud_shadow_camera || !sun){
+        return false;
+    }
+    //Same viewpoint and direction as the sun, so the map's rays ARE the rays that light the
+    //scene. Only the frustum differs.
+    cloud_shadow_camera->SetPosition(sun->GetPosition());
+    cloud_shadow_camera->SetRotation(sun->GetRotation());
+
+    vec3 origin  = cloud_shadow_camera->GetPosition();
+    vec3 forward = cloud_shadow_camera->GetForward();
+    vec3 up      = cloud_shadow_camera->GetUp();
+    vec3 left    = cloud_shadow_camera->GetLeft();
+
+    float half_extent = 0.0f;
+    float near_dst = 0.0f;
+    float far_dst = 0.0f;
+    bool found = false;
+
+    for (Object* v : volumes){
+        if (!v || !v->IsVisible()){
+            continue;
+        }
+        fmat4 m = v->GetWorldTransformScaleMatrix();
+        for (int c = 0;c < 8;c++){
+            //Corners of the unit cube, which is exactly what the shader marches - so this
+            //bounds the real volume however it is scaled or rotated, not an axis-aligned guess.
+            vec3 corner((c & 1) ? 0.5f : -0.5f,
+                        (c & 2) ? 0.5f : -0.5f,
+                        (c & 4) ? 0.5f : -0.5f);
+            vec3 d = (m * corner) - origin;
+            //Measured against the camera's own axes rather than by inverting its matrix, so
+            //this does not depend on which handedness lookatmatrix happens to use. The box is
+            //symmetric (SetupOrthographic takes one half-size for both sides), so the sign of
+            //`left` does not matter either.
+            float along = d.dot(forward);
+            half_extent = fmaxf(half_extent,fmaxf(fabsf(d.dot(left)),fabsf(d.dot(up))));
+            if (!found){
+                near_dst = along;
+                far_dst  = along;
+                found = true;
+            }else{
+                near_dst = fminf(near_dst,along);
+                far_dst  = fmaxf(far_dst,along);
+            }
+        }
+    }
+    if (!found || (half_extent <= 0.0f)){
+        return false;
+    }
+
+    //A margin, so a cloud sitting exactly on the boundary is not clipped by half a texel and
+    //the edge falloff has somewhere to land.
+    half_extent *= 1.05f;
+    near_dst -= 1.0f;
+    far_dst  += 1.0f;
+    //znear has to stay positive: the depth parameterisation IS distance along the view axis,
+    //and an orthographic matrix with znear <= 0 folds. Clamping rather than failing covers the
+    //sun ending up inside a volume.
+    if (near_dst < 0.1f){
+        near_dst = 0.1f;
+    }
+    if (far_dst <= near_dst + 0.1f){
+        far_dst = near_dst + 0.1f;
+    }
+    cloud_shadow_fit_near = near_dst;
+    cloud_shadow_fit_far  = far_dst;
+
+    //Square, so aspect is 1 and `zoom` is the half-extent on both axes. SetupOrthographic
+    //recalculates mat_cam itself.
+    cloud_shadow_camera->SetupOrthographic((float)cloud_shadow_resolution,
+                                           (float)cloud_shadow_resolution,
+                                           half_extent,near_dst,far_dst);
+    return true;
+}
+
+/*
+    Build this frame's cloud shadow map and hand it to the renderer.
+
+    Runs from PreRender, so the map is complete before the colour pass samples it. Anything that
+    means "no usable map" clears the renderer's texture id instead of leaving the last good one
+    bound - Renderer::UploadCloudShadow then tells the shaders to skip the lookup, rather than
+    shadowing the scene with a stale frame.
+*/
+void ApplicationShip::DispatchCloudShadow(void){
+    if (!renderer){
+        return;
+    }
+    if (!f_cloud_shadows || !cloud_shadow_shader || !cloud_shadow_map || !volume_noise
+        || volumes.empty() || !FitCloudShadowCamera()){
+        renderer->cloud_shadow_tex_id = (GLuint)-1;
+        return;
+    }
+
+    //World-to-local for each volume, which is what the shader marches in. Inverted HERE - once
+    //per volume per frame - rather than in the shader, which had to do it once per volume for
+    //every column of the shadow map. That was a workaround for fmat4::inverse_transform assuming
+    //a rigid transform, which quietly gave a wrong box for anything scaled (these are 20x6x20);
+    //it accounts for scale now, see core/type_fmat4.h.
+    //
+    //The copy into `m` is load-bearing. GetWorldTransformScaleMatrix returns a REFERENCE to the
+    //object's cached world matrix and inverse_transform mutates in place, so inverting the
+    //returned reference directly would leave the volume itself holding an inverted transform
+    //until something moved it again.
+    std::vector<fmat4> inverse_transforms;
+    for (Object* v : volumes){
+        if (v && v->IsVisible()){
+            fmat4 m = v->GetWorldTransformScaleMatrix();
+            inverse_transforms.push_back(m.inverse_transform());
+        }
+    }
+    if (inverse_transforms.empty()){
+        renderer->cloud_shadow_tex_id = (GLuint)-1;
+        return;
+    }
+    glNamedBufferData(cloud_shadow_ssbo,sizeof(fmat4) * inverse_transforms.size(),
+                      inverse_transforms.data(),GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,4,cloud_shadow_ssbo);
+
+    cloud_shadow_shader->Use();
+    SetSharedDensityUniforms(cloud_shadow_shader);
+    cloud_shadow_shader->Setmat4("mat_cloud_shadow",cloud_shadow_camera->mat_cam);
+    cloud_shadow_shader->Setint("num_volumes",(int)inverse_transforms.size());
+    cloud_shadow_shader->Setint("num_march_steps",cloud_shadow_march_steps);
+    //The same extinction the volume shades itself with. It is the same medium: a mismatch shows
+    //up as a shadow darker or lighter than the cloud casting it.
+    cloud_shadow_shader->Setfloat("light_absorption",volume_light_absorption);
+    cloud_shadow_shader->Setfloat("shadow_strength",cloud_shadow_strength);
+
+    glBindTextureUnit(TEXUNIT_APP_RESERVED,volume_noise->texture_id);
+    //layered=GL_TRUE for a 3D image: one invocation writes down the whole depth of it.
+    glBindImageTexture(0,cloud_shadow_map->texture_id,0,GL_TRUE,0,GL_WRITE_ONLY,GL_R8);
+
+    int groups = (cloud_shadow_resolution + 7) / 8;
+    glDispatchCompute(groups,groups,1);
+    //default.frag samples this as a texture later in the frame, not as an image.
+    glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+
+    renderer->cloud_shadow_tex_id = cloud_shadow_map->texture_id;
+    renderer->mat_cloud_shadow = cloud_shadow_camera->mat_cam;
+}
+
+void ApplicationShip::PreRender(void){
+    /*
+        Drift the noise through the box.
+
+        Integrated here rather than in SetVolumeUniforms, which is where it used to live: that
+        callback fires during the colour pass, which is AFTER the cloud shadow map has been
+        built, so the shadow would march last frame's cloud and sit permanently one frame behind
+        the thing casting it. PreRender is the one place that runs exactly once per frame before
+        anything reads the offset.
+
+        Still not RunLogic: the drift is purely visual and deliberately outside the tick.
+    */
+    float dt = 1.0f / 60.0f;
+    if (tmr_render_loop && tmr_render_loop->delta > 0){
+        //delta is microseconds. Clamped so a hitch or a breakpoint does not teleport the cloud.
+        dt = fminf((float)(tmr_render_loop->delta / 1000000.0),0.1f);
+    }
+    volume_noise_offset += volume_wind * dt;
+
+    DispatchCloudShadow();
 }
 
 void ApplicationShip::ReloadVolumeShader(void){
@@ -385,6 +594,10 @@ void ApplicationShip::Init(void){
     //makes the second one a different size without any extra plumbing.
     AddVolume("Raymarch Volume",vec3(0,3,-18),vec3(20,6,20));
     AddVolume("Raymarch Volume Small",vec3(0,4,17),vec3(10,4,10));
+
+    //Cloud shadows. Built after the volumes exist because the shadow camera is fitted to them,
+    //and after BuildVolumeNoise because the compute shader samples that same noise.
+    BuildCloudShadowResources();
 
     //A handler for dropping files onto the window
     main_window->SetOnFileDropped([this](std::string filename){
@@ -1277,6 +1490,21 @@ void ApplicationShip::DrawImGuiUI(){
         ImGui::SliderFloat("Sun Intensity",&volume_sun_intensity,0.0f,4.0f);
         ImGui::SliderInt("View Steps",&volume_view_steps,1,128);
         ImGui::SliderInt("Sun Light Steps",&volume_light_steps,0,32);
+
+        ImGui::SeparatorText("Cloud shadows");
+        ImGui::Checkbox("Cast Shadows",&f_cloud_shadows);
+        if (f_cloud_shadows){
+            ImGui::SliderFloat("Shadow Strength",&cloud_shadow_strength,0.0f,1.0f);
+            ImGui::SliderInt("Shadow Steps",&cloud_shadow_march_steps,4,128);
+            //The fitted depth range, which is the number that says whether the slices are
+            //landing anywhere useful: (far - near) / slices is how many world units of cloud
+            //end up in one slice.
+            float span = cloud_shadow_fit_far - cloud_shadow_fit_near;
+            ImGui::TextDisabled("%ix%ix%i, depth %.1f..%.1f (%.2f/slice)",
+                                cloud_shadow_resolution,cloud_shadow_resolution,
+                                cloud_shadow_slices,cloud_shadow_fit_near,cloud_shadow_fit_far,
+                                span / (float)cloud_shadow_slices);
+        }
 
         ImGui::SeparatorText("Point / cone lights");
         //Per light, so the whole march costs

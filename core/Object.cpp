@@ -285,8 +285,15 @@ void Object::SetWorldLookat(const vec3& target,const vec3& world_up){
      //Compute the target in world coordinates.
     vec3 delta = GetWorldPosition() - target ;
 
-    //Rotate by the inverse of our current world rotation
-    fmat4 r = parent->GetWorldTransformScaleMatrix().inverse_transform().rotationmatrix();
+    //Rotate by the inverse of our current world rotation.
+    //
+    //Through a COPY, deliberately: GetWorldTransformScaleMatrix hands back a reference to the
+    //parent's cached world matrix, and inverse_transform mutates in place - so inverting it
+    //straight off the getter left the PARENT itself holding an inverted world transform, until
+    //whatever next marked it transformed rebuilt the cache. Everything that read it in between
+    //(the renderer included) got the inverse.
+    fmat4 parent_world = parent->GetWorldTransformScaleMatrix();
+    fmat4 r = parent_world.inverse_transform().rotationmatrix();
     delta = r * delta;
     vec3 rotated_up = r * world_up;
 

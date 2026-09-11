@@ -82,6 +82,12 @@ struct InstanceData{
 uniform vec3 eye_position;
 uniform int f_normal_mapping = 1;
 uniform int f_materialindex_is_color = 0;
+//Cloud shadows: the transmittance map built by shaders/cloud_shadow.comp, bound by the renderer
+//at TEXUNIT_CLOUD_SHADOW. Off unless an app has actually given the renderer a map, which only
+//the ship app does - see Renderer::UploadCloudShadow.
+layout (binding = 26) uniform sampler3D cloud_shadow_texture;
+uniform mat4 mat_cloud_shadow;
+uniform int f_cloud_shadows = 0;
 uniform float alpha_clip = 1.0f;
 //Width of a cone light's soft edge, in cosine space - the `epsilon` of the reference
 //shader. Shared with raymarch_volume.frag so a cone matches between surfaces and fog.
@@ -271,6 +277,35 @@ float CalcShadow(vec4 vposinshadow){
 */
 }
 
+/*
+    How much sunlight survives the raymarched clouds on its way to this point.
+
+    Multiplies the sun term; it does not replace CalcShadow. That one asks "is an opaque surface
+    in the way", this one asks "how much light got through the fog", and the answers compose.
+    Being an integral rather than a compare, it is already soft - there is no penumbra to fake.
+
+    The map is a 3D texture (shaders/cloud_shadow.comp): XY across the sun's frame, Z along the
+    sun ray. Sampling it needs both, and one mat4 multiply produces both - the same projection
+    the depth shadow map does, into a frustum fitted to the volumes rather than to the scene.
+
+    Note what is NOT clamped. Outside the map in XY there is no cloud at all, so 1.0. In Z there
+    is deliberately no test, because CLAMP_TO_EDGE already gives the right answer at both ends:
+    a receiver in front of the layer clamps to the first slice, which nothing has shadowed yet,
+    and one past the layer clamps to the last, which has the whole column's worth of cloud in
+    front of it. Adding a bounds check there would break the second case.
+*/
+float CalcCloudShadow(vec3 world_position){
+    if (f_cloud_shadows == 0){
+        return 1.0;
+    }
+    vec4 clip = mat_cloud_shadow * vec4(world_position,1.0);
+    vec3 proj = clip.xyz / clip.w;
+    if (any(greaterThan(abs(proj.xy),vec2(1.0)))){
+        return 1.0;
+    }
+    return texture(cloud_shadow_texture,proj * 0.5 + 0.5).r;
+}
+
 
 vec4 CalcPBRLighting(){
     vec4 final;
@@ -343,8 +378,11 @@ vec4 CalcPBRLighting(){
             light_value = brightness * edge;
             shading_brightness = 1.0;
         }else{
+            //Sun. Two independent occluders: opaque geometry through the depth shadow map, and
+            //cloud through the transmittance map. They multiply - one is a compare, the other an
+            //integral, and neither can express the other.
             float shadow = CalcShadow(vshadow);
-            light_value = shadow;
+            light_value = shadow * CalcCloudShadow(vposition);
         }
 
         light = light_value * CalcDirectionalPBRLight(albedo,lightdirection,lights[i].color,shading_brightness);

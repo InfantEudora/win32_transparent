@@ -253,6 +253,9 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
 }
 
 void Application::DrawFrame(){
+    //Any GL work the app needs done before the scene is drawn - see Application::PreRender.
+    PreRender();
+
     //Tell ImGui to start a new frame
     main_window->ImGuiNewFrame();
 

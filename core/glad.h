@@ -105,6 +105,11 @@
 #define GL_RGB32F 0x8815
 #define GL_R32I 0x8235
 #define GL_R32UI 0x8236
+//Single-channel 8-bit. GL 3.0, so not in the <GL/gl.h> this sits on top of, which only knows
+//the 1.1 formats. The cloud shadow map stores transmittance in it.
+#define GL_R8 0x8229
+//The r16f upgrade path for that map, if 8 bits ever bands on a large flat receiver.
+#define GL_R16F 0x822D
 #define GL_DEPTH_COMPONENT32F 0x8CAC
 #define GL_RED_INTEGER 0x8D94
 

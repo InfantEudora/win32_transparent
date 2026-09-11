@@ -106,6 +106,17 @@ public:
     virtual void NextInput(void);
 
     //Frame thread
+    /*
+        Called at the top of DrawFrame, on the FRAME THREAD, before the scene renders anything.
+        Empty by default.
+
+        The hook exists because an app sometimes has GL work that has to happen before the colour
+        pass and cannot be hung off a shader's uniform_callback - that fires while the shader is
+        already bound, mid-pass, which is too late to fill a texture the pass will sample. The
+        ship app builds its cloud shadow map here. RunLogic is NOT the place: it runs on the
+        logic thread, which may not touch GL at all.
+    */
+    virtual void PreRender(void){};
     virtual void DrawFrame(void);
     virtual void DrawImGuiUI(void);
 

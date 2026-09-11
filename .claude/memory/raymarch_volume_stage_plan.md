@@ -1,6 +1,6 @@
 ---
 name: raymarch-volume-stage-plan
-description: "Raymarched volume material in ApplicationShip - steps 1 and 2 done 2026-09-10; only the cloud content (3D noise, phase function) is left"
+description: "Raymarched volume material in ApplicationShip - clouds, depth occlusion and cloud shadows all working; Henyey-Greenstein phase function and a perf measurement are what is left"
 metadata: 
   node_type: memory
   type: project
@@ -11,8 +11,9 @@ metadata:
 Seb Lague-style raymarched clouds (github.com/SebLague/Clouds), built as a reusable render stage
 rather than a fullscreen post pass, so only the volume's own pixels march.
 
-**Working clouds as of 2026-09-10.** The reusable stage, the scene-depth clamp and 3D worley
-density are all in and verified in-app. What is left: a Henyey-Greenstein phase function (for
+**Working clouds as of 2026-09-11.** The reusable stage, the scene-depth clamp, 3D worley
+density, occlusion of geometry inside the volume and cloud shadows onto the world are all in and
+verified in-app. What is left: a Henyey-Greenstein phase function (for
 sun-facing silver lining), and performance work - the cost is view_steps x light_steps 3D
 texture fetches per pixel and has NOT been measured, because the `screenshot` MCP path costs
 ~250ms in readback+PNG encode and swamps the frame time. Use the in-app PerfTimer UI for that.
@@ -175,5 +176,75 @@ Two things NOT to redo here:
   test case is something INSIDE the box, and because the density threshold makes the noise very
   patchy, a ship parked at one spot often sits in a clear column and looks crisp either way.
   Let the wind drift cloud over a stationary object, or pick the spot by measurement.
+
+## Cloud shadows: a Beer shadow map (2026-09-11)
+
+Clouds now cast onto the world. `shaders/cloud_shadow.comp` builds a 3D transmittance map from
+the sun, `default.frag`'s `CalcCloudShadow` multiplies it into the sun term next to `CalcShadow`.
+Verified in-app: soft cloud-shaped shadows land on the ground, and the map allocates at exactly
+the predicted 256x256x32 R8 = 2048 KB.
+
+**It does NOT replace the depth shadow map** (4096^2 DEPTH_COMPONENT32F, ~67 MB,
+`Renderer::shadow_texture_size`). The two store different quantities - nearest opaque blocker,
+compared against, versus accumulated transmittance, multiplied in - and neither can express the
+other. They multiply. The cloud map is ~3% of the depth map's memory.
+
+**Why it is 3D.** XY is position in the sun's frame like any shadow map; Z is how far along the
+sun ray the RECEIVER is. A flat 2D map only answers "how much sun reaches the ground", which is
+wrong the moment the ship is inside or above a bank - it would be shadowed by cloud beneath it.
+The march already walks front to back, so storing running transmittance per slice is only extra
+imageStores, not a second march.
+
+The elegant part: **CLAMP_TO_EDGE on R is what makes the ends correct**, so `CalcCloudShadow`
+bounds-checks XY but deliberately NOT Z. A receiver in front of the layer clamps to slice 0
+(nothing in front of it yet); one below clamps to the last slice (the whole column). Adding a Z
+bounds test breaks the second case.
+
+**It is per light, like the existing one.** The third axis buys receiver depth, not more casters.
+The engine is single-caster anyway: `RenderDepthPasses` takes the first `DirectionalLight` and
+returns. Point/cone lights are deliberately not done - the volume's own `light_march` already
+self-shadows from them, and they are all short-range things on the ship. Many lights would want
+a froxel grid (per camera, not per light), not N of these.
+
+**Its camera is NOT the sun's.** `ApplicationShip::FitCloudShadowCamera` refits an ortho box onto
+the volumes' 8 corners every frame. The sun's own frustum is fitted to the scene (half-extent 30,
+near 1, far 200) and spreading 32 slices over 200 units puts ~6 units in each slice while a bank
+is 6 units thick - every receiver would land in one slice and the depth axis would buy nothing.
+The fit measures corners against the camera's own forward/up/left rather than inverting its
+matrix, so it does not depend on which handedness `lookatmatrix` uses.
+
+Things that cost time or would:
+
+- **`fmat4::inverse_transform()` only inverts RIGID transforms** - it is a transpose plus a
+  translation, with no scale handling. The volumes are scaled 20x6x20, so inverting a volume
+  transform with it silently gives the wrong box. The compute shader uploads FORWARD transforms
+  and inverts in GLSL instead. The user said 2026-09-11 they would patch that function; check
+  whether it handles scale before trusting it.
+- **`GL_R8` is not in scope** in this project. It sits on the 1.1 `<GL/gl.h>`, so sized formats
+  past that are hand-added to `core/glad.h`. `GL_R8` and `GL_R16F` are there now. `GL_R16F` is
+  unused - it is the one-line upgrade (with the texture's storage format) if 8 bits ever bands
+  on a large flat receiver, which is the thing to look at first if the shadows look stepped.
+- **The wind moved out of `SetVolumeUniforms` into `PreRender`.** That callback fires during the
+  colour pass, which is after the shadow map is built, so the shadow marched last frame's cloud
+  and sat permanently one frame behind its caster.
+
+## GLSL #include now exists
+
+`Shader::ResolveIncludes` (core/Shader.cpp) handles `#include "x.glsl"` relative to the including
+file, with `#line` directives so compile errors keep real line numbers - an error in the main
+file reports as `0(line)`, one in an include as `<n>(line)`. An included file must not carry its
+own `#version`.
+
+It exists so `density_at()` has ONE definition (`shaders/density.glsl`), shared by
+raymarch_volume.frag and cloud_shadow.comp. If those two ever describe different clouds the
+shadow lands where the cloud is not, and it reads as a subtle misregistration rather than a bug.
+Both programs get the shape uniforms from `ApplicationShip::SetSharedDensityUniforms`.
+
+## Application::PreRender
+
+New virtual, called at the top of `Application::DrawFrame` on the FRAME thread. For app GL work
+that must happen before the colour pass and so cannot hang off a shader's `uniform_callback`
+(that fires mid-pass, with the shader already bound - too late to fill a texture the pass will
+sample). RunLogic is not an option: it is the logic thread and may not touch GL.
 
 Related: [[project-overview]], [[running-app-is-user-driven]], [[mcp-native-tools-setup]].
