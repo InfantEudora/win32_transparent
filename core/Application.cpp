@@ -2696,8 +2696,10 @@ void Application::RenderEngineWindow(){
             //extra geometry pass and the jump flood actually cost in this scene.
             ImGui::SliderInt("Max march steps",&renderer->field_shadow_steps,0,128);
             //How big the lamp is, in world units. It sets how fast a shadow edge softens with
-            //distance from what casts it; 0 is a point source and a hard edge.
-            ImGui::SliderFloat("Light radius",&renderer->field_light_radius,0.0f,2.0f);
+            //distance from what casts it; 0 is a point source and a hard edge. This is the
+            //scene's default - a light that has set its own Light::radius ignores it and will
+            //not move with this slider.
+            ImGui::SliderFloat("Default light radius",&renderer->field_light_radius,0.0f,2.0f);
             ImGui::SliderFloat("Normal bias",&renderer->field_normal_bias,0.0f,0.5f);
             ImGui::Text("Field map: %i x %i",renderer->field_texture_size,renderer->field_texture_size);
         }

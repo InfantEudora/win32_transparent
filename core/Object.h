@@ -97,6 +97,12 @@ class Object{
     void SetPickability(bool flag);
     bool IsPickable(){return f_pickable;};
 
+    //Whether this object appears in the shadow depth passes and the occluder field. Clearing it
+    //leaves the object drawn and lit and stops it throwing a shadow - see f_casts_shadow below
+    //for what that is for and why it is per object rather than per light.
+    void SetCastsShadow(bool flag){f_casts_shadow = flag;};
+    bool CastsShadow(){return f_casts_shadow;};
+
     meshid_t GetMeshID();
     objectid_t GetID();
 
@@ -339,6 +345,27 @@ protected:
     //Flags
     bool f_pickable = true;         // If the mesh should output it's id and is thus pickable
     bool f_is_destroyed = false;    // Someone should clean it up.
+
+    /*
+        Whether this object is an OCCLUDER: whether it appears in the shadow depth passes and in
+        the occluder field. Clear it and the object is still drawn and still lit, it simply stops
+        throwing a shadow.
+
+        It is per object and not per light, which is the distinction that made it worth having.
+        Light::f_casts_shadow turns a whole light's shadows off; this says "that thing is not the
+        kind of thing that blocks light", which is a property of the object.
+
+        Text is the case that asked for it. A label is real extruded geometry, so a caption held a
+        couple of units clear of the panel behind it throws a crisp, perfectly legible second copy
+        of itself onto that panel - it reads as a rendering fault rather than as a shadow. Before
+        this existed the only fix was to press the label flat against its backdrop so the offset
+        collapsed to a few pixels, which also pins it to a plane it might not want to be on.
+        Markers, highlights and HUD geometry in a 3D scene all have the same problem.
+
+        Cheap: the object is skipped while the depth pass builds its instance list, so it costs
+        nothing to draw rather than being drawn and discarded.
+    */
+    bool f_casts_shadow = true;
 
     Physics* physics = NULL;
 

@@ -255,7 +255,7 @@ void Renderer::FillBactches(){
 }
 
 //Each unique mesh gets a single drawcall with an associated SSBO with all object parameters per instance.
-void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index){
+void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, bool f_occluder_pass){
     debug->Trace("Rendering Meshes rendering_mode = %i\n",rendering_mode);
     for (int i = 0;i<unique_meshes.size();i++){
         instancedata.clear();
@@ -301,6 +301,13 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index){
         }
         for (uint32_t object_index : *unique_mesh_batches.at(batch_index)){
             Object* object = renderable_objects.at(object_index);
+            //Not an occluder, and this is a shadow pass. Skipping it HERE rather than with a
+            //per-object test at draw time is the whole reason this is cheap: depth passes batch
+            //per mesh and draw every instance in one call, so the only way to leave one object
+            //out is to leave it out of the instance list being built.
+            if (f_occluder_pass && !object->CastsShadow()){
+                continue;
+            }
             debug->Trace("Object (mesh_index %i) obj_index: %lu object->GetID() %lu\n",batch_index,object_index,object->GetID());
 
             instancedata_t data;
@@ -362,6 +369,13 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index){
             instancedata.push_back(data);
 
         }
+        //Every instance of this mesh was filtered out - a mesh used only by objects that cast no
+        //shadow, during a shadow pass. Nothing to upload and nothing to draw, and .at(0) below
+        //would be reading an empty vector.
+        if (instancedata.empty()){
+            continue;
+        }
+
         //glInvalidateBufferData(instdata_ssbo);
         glNamedBufferData(instdata_ssbo,instancedata.size()*sizeof(instancedata_t) , &instancedata.at(0),GL_STREAM_DRAW);
 
@@ -375,8 +389,12 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index){
             }
         }
 
-        debug->Trace("Rendering %i instances of mesh->id %i\n",mesh->batch_num_instances,mesh->GetID());
-        mesh->RenderInstances(mesh->batch_num_instances);
+        //instancedata.size(), not mesh->batch_num_instances. They are the same number in every
+        //pass that draws the whole batch, but a shadow pass may have filtered some out, and the
+        //draw count has to match what was actually uploaded above - otherwise the extra instances
+        //read off the end of the buffer and draw whatever is there.
+        debug->Trace("Rendering %zu instances of mesh->id %i\n",instancedata.size(),mesh->GetID());
+        mesh->RenderInstances((int)instancedata.size());
     }
 }
 
@@ -600,7 +618,6 @@ void Renderer::UploadFieldShadow(Shader* s){
     s->Setmat4("mat_field",mat_field);
     s->Setvec3("field_axis",field_axis);
     s->Setfloat("field_normal_bias",field_normal_bias);
-    s->Setfloat("field_light_radius",field_light_radius);
     s->Setint("field_shadow_steps",field_shadow_steps);
     s->Setint("f_field_shadows",1);
 }
@@ -637,7 +654,7 @@ void Renderer::RenderSingleDepthPass(Camera* camera,Shader* shader, int mesh_mod
     shader->Setmat4("mat_worldcam",camera->mat_cam);
     shader->Setmat4("mat_shadow",camera->mat_cam);
 
-    RenderUniqueMeshes(mesh_mode);
+    RenderUniqueMeshes(mesh_mode,-1,true);      //true: occluders only (Object::f_casts_shadow)
 }
 
 void Renderer::ClearDepthPasses(){
@@ -1127,7 +1144,7 @@ void Renderer::RenderFieldPass(){
     //Skinned meshes are deliberately absent: they would need their own variant of field.vert to
     //apply the bone transforms, and nothing that uses this has any yet. A skinned character
     //currently receives field shadows but does not cast one.
-    RenderUniqueMeshes(MESH_MODE_NORMAL);
+    RenderUniqueMeshes(MESH_MODE_NORMAL,-1,true);   //true: occluders only (Object::f_casts_shadow)
 
     glBlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     glEnable(GL_CULL_FACE);
@@ -1521,6 +1538,10 @@ void Renderer::UploadLights(){
         //whether to march the occluder field; the sun ignores it and still shadows through the
         //depth map, which is the behaviour every existing scene is tuned around.
         light.shadow = l->f_casts_shadow ? 1 : 0;
+        //Resolved here rather than in the shader so the sentinel never leaves the CPU: what goes
+        //into the SSBO is always a real radius. See Light::radius on why negative means "use the
+        //scene-wide default" and why that is a safe thing to encode in the value.
+        light.radius = (l->radius >= 0.0f) ? l->radius : field_light_radius;
         DirectionalLight* directional_light = dynamic_cast<DirectionalLight*>(l);
         if (directional_light){
             //World, for the same reason as the cone light below - a directional light

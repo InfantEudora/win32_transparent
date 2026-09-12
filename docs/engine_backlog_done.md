@@ -614,6 +614,54 @@ Status key: `[x]` done · `[-]` decided against.
   triangles did, because "this mesh was never unwrapped" and "my normal map is broken" are the two
   readings of the same symptom and only one of them is actionable.
 
+- [x] **41. One light radius for the whole renderer.** **Done 2026-09-12.** `light_t` has a
+  `radius`, `Light` has one to set, and `CalcFieldShadow` marches with the radius of the lamp it is
+  marching for instead of a single uniform shared by every light in the scene.
+
+  **The scene-wide value survives as a DEFAULT, not as the only answer.** `Light::radius` starts
+  negative, meaning "use `Renderer::field_light_radius`", and `UploadLights` resolves that on the
+  way into the SSBO so the sentinel never reaches a shader. Two consequences, both wanted: every
+  existing scene looks exactly as it did and the Engine panel's slider still softens all of them at
+  once, while a light that sets its own radius simply stops listening to it. A negative radius is
+  not something anything could legitimately want, which is what makes it safe to encode "unset" in
+  the value rather than carrying a second flag - unlike `custom_shader_index`, where 0 was both
+  "unset" and a real index (item 57).
+
+  `field_light_radius` is no longer a uniform at all. The shader is marching for one particular
+  lamp and has no business knowing there is a scene-wide anything.
+
+  **The cost the item warned about was the real work: `light_t`'s layout is written out by hand in
+  every shader that reads a light, and there is no compiler to catch a copy that drifted.** Four
+  of them, all updated:
+
+  ```
+  shared_assets/shaders/default.frag               (the one that uses it)
+  apps/ship/assets/shaders/raymarch_volume.frag
+  shaders/breakout_shield.frag
+  shaders/custom.frag
+  ```
+
+  The field is **appended last**, which is the discipline `Material.h` documents for its own struct
+  and the reason this was safe to do while the tree was mid-reshuffle: every existing field keeps
+  the offset it had, so a copy that had been missed would still read position, direction, colour
+  and cos_angle correctly - it just would not see the new field. Measured rather than assumed:
+
+  ```
+  sizeof(light_t)  = 64   (was 48; std430 rounds a vec3-aligned struct to 16)
+  offset of radius = 48   (the new 16-byte slot)
+  offset cos_angle = 44   (unmoved)
+  ```
+
+  The three floats of padding are not decoration. Each vec3 in this struct is followed by a scalar
+  so that it exactly fills a 16-byte slot, which is what lets it match std430 with no alignment
+  attributes on either side; the new field needs a fourth slot and has to fill it.
+
+  **Verified.** The ten apps that currently build all compile and link. `APP=Tetris` - which uses
+  the occluder field - renders identically to before with no missing-uniform warnings, confirming
+  the default path. Then, with the scene default left at 0.30 and only the lamp's own radius
+  changed: `radius = 0.0` gives a crisp silhouette, `radius = 2.0` a broad soft penumbra, same
+  scene, same slider. The lamp's value drives it and the global does not.
+
 - [x] **44. `Shader` has no `Setvec2`, `Setvec4`, `Setbool` or array setters.** The ranked-worst
   finding of the Breakout run, and the only missing feature that visibly changed what that app
   shipped. `core/Shader.h` offers exactly five setters: `Setint`, `Setfloat`, `Setvec3`, `Setmat3`,
@@ -692,6 +740,52 @@ Status key: `[x]` done · `[-]` decided against.
   that the natural shape is a `vec2` origin, a `vec2` size and one `vec4` array of ripples carrying
   intensity in the fourth component. Anyone editing that file should reshape it rather than adding
   a `ripple3`.
+
+- [x] **45. No per-object "does not cast a shadow".** **Done 2026-09-12.** `Object` has
+  `f_casts_shadow`, defaulting true, with `SetCastsShadow`/`CastsShadow` alongside the existing
+  pickability pair. Clear it and the object is still drawn and still lit; it simply stops throwing
+  a shadow.
+
+  Per OBJECT, not per light, which is the distinction that made it worth having:
+  `Light::f_casts_shadow` says "this light does not do shadows", while this says "that thing is
+  not the kind of thing that blocks light", which is a property of the object.
+
+  **Both occluder passes honour it** - `RenderSingleDepthPass` for the shadow maps and
+  `RenderFieldPass` for the occluder field - through a third parameter on `RenderUniqueMeshes`,
+  `f_occluder_pass`, which only those two set. A parameter rather than a renderer flag so there is
+  no state to leave switched on, and the two call sites read
+  `RenderUniqueMeshes(mesh_mode,-1,true)` with the reason on the line.
+
+  **The instance list is where the filtering has to happen, and that is what made this Band B
+  rather than Band A.** Depth passes batch per mesh and draw every instance in one call, so a
+  single object can only be left out by leaving it out of the list being built. Two things in that
+  loop had to change with it, and both would have been silent corruption rather than a compile
+  error:
+
+  - `glNamedBufferData(...,&instancedata.at(0),...)` reads element 0 of a vector that can now be
+    empty - a mesh used only by non-casters, during a shadow pass. It returns early instead.
+  - the draw count was `mesh->batch_num_instances`, the size of the whole batch, where the buffer
+    just uploaded may now be shorter. It is `instancedata.size()` now, which is the same number in
+    every pass that draws the whole batch and the right one when a pass has filtered. Left as it
+    was, the extra instances would have read off the end of the buffer and drawn whatever was
+    there.
+
+  **Breakout's labels use it**, which is the case that raised the item. Demonstrated by pushing
+  `TEXT_Z` temporarily from `BACK_Z + 0.40` out to `BACK_Z + 2.20` so the effect is unmissable:
+  before, a second perfectly legible "PRESS SPACE" and a duplicate of every stat is stamped across
+  the back panel - it reads as a rendering fault, not as a shadow. With `SetCastsShadow(false)` on
+  the labels, the text is drawn and lit exactly as before and the copies are gone, with the
+  paddle's shadow, the ball light and the shield shader all untouched. `TEXT_Z` is back at its
+  original value; what changed is that it is no longer *held* there by the shadow, and the comment
+  above it says so. A banner that wants to float in front of the arena now can.
+
+  **Verified.** The ten apps that currently build all do (`APP=Ship` and `APP=Tank` are mid-move
+  into `apps/`, untouched and unbuilt). `APP=Dozer` renders with every shadow present - pillars,
+  walls, blade - which is the check that matters for the draw-count change, since that touches
+  every pass and not just the shadow ones.
+
+  Also the precondition item 52's neighbourhood wanted: a brick that stops casting the moment it
+  begins dissolving no longer has to keep a shadow it has visually left behind.
 
 - [x] **46. `Physics` did not expose the axis locks, and a flat game in a 3D solver needs them.**
   **Done 2026-09-12.** Eight one-line forwards on `core/physics/Physics`:
@@ -1232,6 +1326,22 @@ Status key: `[x]` done · `[-]` decided against.
   `SubmitAxisDelta` drops deltas outright when unfocused. The accumulation is purely the
   unbounded-grace bug above, and it happens while FOCUSED and not reading - which a pause
   guarantees.*
+
+- [-] **60. `debug->Fatal` on the render thread produces no window and no visible reason.**
+  **Declined 2026-09-12 — deliberately left as it is.** Dick's call: no MessageBox at this point.
+
+  Nothing about the diagnosis has changed. A shader typo still calls `debug->Fatal` → `exit(1)`
+  from inside `Init()` before any window exists, and the result is still a program that appears not
+  to start with the explanation only in a stderr log somebody has to know to go and look at. It is
+  still the thing most likely to make a newcomer conclude the build is broken.
+
+  What has changed is how often you land there. Item 44 removed one of the two routes - a missing
+  uniform no longer calls `Fatal` - leaving the compile and link failures, which are a mistake in a
+  file you have just edited rather than a surprise from the engine.
+
+  The item is not wrong, it is just not worth a platform dialog in this engine today. If it comes
+  back it should come back as the other half of the suggestion - a `wind_fatal.log` written next to
+  the exe, which costs nothing and needs no UI - rather than as a MessageBox.
 
 - [x] **62. The custom-shader pass's contract is documented in the wrong place.** **Done
   2026-09-12.** Both halves are now closed.

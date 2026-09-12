@@ -31,7 +31,7 @@ It should kind of look like this:
 `/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder.
 `/3rdparty/*`       Contains external libraries source code, either as an entire repo or single files.
 
-**Two build systems are live during the migration.** Apps that have moved (`/apps/tank`) build from
+**Two build systems are live during the migration.** Apps that have moved (`/apps/tank`, `/apps/ship`, `/apps/breakout`) build from
 their own folder into their own exe. The rest still build through the root `makefile` into a single
 `wind.exe`, selected with `make APP=X` from the `apps/*.mk` fragments, and still load out of `/data`
 and `/shaders`. `docs/asset_layout_plan.md` tracks what has moved and what has not.
@@ -83,7 +83,7 @@ and `/shaders`. `docs/asset_layout_plan.md` tracks what has moved and what has n
 - [x] Use header stb lib to load png/jpg with/without Alpha.
 - [x] Figure out how to do sound?
 - [ ] LoadFile may load an asset from memory. The returned data may not be freed? Check and Fix.
-- [ ] Some kind of project structure, where different games/applications can exist and you can build one or more of them.
+- [x] Some kind of project structure, where different games/applications can exist and you can build one or more of them. Each app is now a folder under `/apps` with its own makefile, `main.cpp`, assets and exe; `core/` is shared and app-agnostic. Tank and Ship are across - see `docs/asset_layout_plan.md`.
 - [ ] Maybe have some kind of test / example thing.
 - [ ] Most application / game things we have in mind have a 2D asthetic. Maybe 2D physics are interesting in a 3D rendered environment.
 - [ ] Bindless textures are a pain and broken. Texture Arrays are nicer, and can at least be debugged. We can implement atlas in a normal texture, or in a texture array. https://ktstephano.github.io/rendering/opengl/bindless

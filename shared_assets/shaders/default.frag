@@ -63,6 +63,12 @@ struct Light{
     float   brightness;
     vec3    color;
     float   cos_angle; 	// 0 means its a point light, else it becomes a cone light
+    //Size of the source in world units, for the penumbra estimate. Appended last, and the
+    //next one must be too - see core/light_t, which this is a hand copy of.
+    float   radius;
+    float   pad0;
+    float   pad1;
+    float   pad2;
 };
 //Multiple of 4 for padding
 #define NUM_MATERIAL_SLOTS  4
@@ -97,7 +103,6 @@ uniform vec3 field_axis = vec3(0,0,1);
 uniform int f_field_shadows = 0;
 uniform int field_shadow_steps = 64;
 uniform float field_normal_bias = 0.15;
-uniform float field_light_radius = 0.30;
 uniform float alpha_clip = 1.0f;
 //Width of a cone light's soft edge, in cosine space - the `epsilon` of the reference
 //shader. Shared with raymarch_volume.frag so a cone matches between surfaces and fog.
@@ -340,7 +345,7 @@ float CalcCloudShadow(vec3 world_position){
     filled (shaders/field_jfa.comp). That channel does two separate jobs here, and they must not
     be confused with each other - see the two quantities inside the loop.
 */
-float CalcFieldShadow(vec3 world_position, vec3 normal, vec3 light_position){
+float CalcFieldShadow(vec3 world_position, vec3 normal, vec3 light_position, float light_radius){
     if ((f_field_shadows == 0) || (field_shadow_steps <= 0)){
         return 1.0;
     }
@@ -417,7 +422,7 @@ float CalcFieldShadow(vec3 world_position, vec3 normal, vec3 light_position){
         //The standard sphere-trace penumbra: a ray that passes close to an occluder while still
         //far from the surface it is shading is a soft edge, and how soft is set by how big the
         //light is. This is the term that makes these read as lit by a lamp rather than stencilled.
-        visibility = min(visibility,occluder_distance / max(field_light_radius * t,0.0001));
+        visibility = min(visibility,occluder_distance / max(light_radius * t,0.0001));
 
         t += max(field.g,min_step);
     }
@@ -471,7 +476,7 @@ vec4 CalcPBRLighting(){
             //The one light type the depth shadow map cannot serve, and the reason the occluder
             //field exists. Gated on the light's own flag so a fill light can stay cheap.
             if (lights[i].shadow != 0){
-                brightness *= CalcFieldShadow(vposition,normalize(vnormal),lights[i].position);
+                brightness *= CalcFieldShadow(vposition,normalize(vnormal),lights[i].position,lights[i].radius);
                 if (brightness < 0.01){
                     continue;
                 }

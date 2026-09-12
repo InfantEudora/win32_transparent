@@ -8,10 +8,10 @@ Written 2026-09-12 from a walk through the tree. Every fact below was measured a
 source, not recalled — line numbers are as of that date.
 
 **Status.** §1.4 (65 MB of dead assets out of `data/`) and §4 (the `LoadFile` search path) are
-done. §6.3 — each app its own makefile, exe and `main.cpp`, with `core/` compiled once and shared —
-is **built and proven on Tank**, which is fully across. Ship has its shaders across. The other ten
-apps still build through the old root `makefile` and `APP=`; the two systems run side by side and
-both are verified. §5 (`DUMP_BINARYASSETS`) and §5b (`OBJLoader`) are not started.
+done. §6.3 — each app its own folder, makefile, `main.cpp` and exe, with `core/` compiled once and
+shared — is built and proven: **Tank and Ship are fully across**. The other ten apps still build
+through the old root `makefile` and `APP=`; the two systems run side by side and both are verified
+after every step. §5 (`DUMP_BINARYASSETS`) and §5b (`OBJLoader`) are not started.
 
 ---
 
@@ -445,9 +445,11 @@ it harmlessly. What marks the end of the migration is `data/` being empty, not a
 
 | App | State |
 |---|---|
-| **Ship** | shaders only — `assets/ship/shaders/` (4 files). Verified: all four resolve through the root, `density.glsl` included, clouds render. `ships.glb` still to move. |
-| **Tank** | **done, and fully restructured** — own makefile, own `main.cpp`, own `tank.exe`, sources and assets under `apps/tank/`. See §6.3. |
-| others | not started |
+| **Tank** | **done** — `apps/tank/` holds its makefile, `main.cpp`, sources, `assets/` and `build/tank.exe`. 8 assets resolve, 0 failures, renders unchanged. |
+| **Ship** | **done** — `apps/ship/` likewise, `build/ship.exe`. 11 assets resolve: 6 shared, 5 its own (`ships.glb` + the four cloud shaders). Clouds render unchanged. |
+| **Breakout** | **done** — `apps/breakout/`, `build/breakout.exe`. 15 assets resolve: **14 shared, 1 its own** (`breakout_shield.frag`). First app on `USE_SOUND` under `engine.mk`; OpenAL links. Bricks, glyph text and the shield all render. |
+| **Tetris** | assets migrated, app not yet — its literals now use the shared `meshes/` and `sound/` names, because it shares the glyph mesh and the four `.wav`s with Breakout and those moved to `shared_assets`. Verified resolving; still builds via the root `makefile`. |
+| others | not started — still on the root `makefile` via `APP=` |
 
 **`tank/heightmap_roundtrip_test.png` was deliberately left where it is.** It is not an asset —
 `ApplicationTank::TestHeightmapRoundTrip` **writes** it with `SaveHeightmapPNG` and reads it back
@@ -544,7 +546,42 @@ default shaders and fonts through the search path. Verified: `APP=Ship` resolves
 cloud shaders from `assets/ship` and the six shared ones from `shared_assets`, with no failures.
 
 An app leaves the old system when it gains an `apps/<name>/makefile`; `apps/<Name>.mk` is deleted
-at that point (`apps/Tank.mk` is gone). The root `makefile` disappears when the last app moves.
+at that point (`apps/Tank.mk` and `apps/Ship.mk` are gone, and the root makefile's `APP ?=` default
+moved off Ship to Grid, since a default naming a deleted fragment fails a bare `make`). The root
+`makefile` disappears when the last app moves.
+
+#### One gotcha per app: include prefixes
+
+Moving `ship/*.cpp` up into `apps/ship/` broke `ApplicationShip.h`, which included its neighbours
+as `"ship/Asteroid.h"` — a prefix that made sense when the app sat at the repo root and the
+makefile added `-Iship/`. Now they are siblings and `-I.` finds them by plain name, so the prefix
+has to come off. Tank had no such problem because `ApplicationTank.h` already included
+`"CraneCharacter.h"` unprefixed.
+
+Worth grepping for `#include "<oldfolder>/` as the first step of each remaining app.
+
+#### `CORE_CFLAGS`: the line between shared and per-app flags
+
+Breakout is the first app with `USE_SOUND := 1`, and it exposed a trap in the shared core
+objects. The old makefile put `-DUSE_SOUND` into `CFLAGS`, which compiles **every** object —
+so under the new arrangement a sound app and a silent app would compile the *same shared core
+object* with different flags. Make compares timestamps, not flags: whichever app built first
+would win, every other app would link objects compiled for someone else, and nothing would
+rebuild or warn.
+
+It was harmless today only by luck — **nothing in the tree actually tests `USE_SOUND`** (checked;
+zero `#ifdef USE_SOUND` anywhere). The first person to write one would have hit a genuinely
+baffling bug.
+
+`engine.mk` now draws the line structurally. `CORE_CFLAGS` freezes the app-invariant flags at a
+marked point; core objects compile with `CORE_CFLAGS` and nothing else, while `CFLAGS` carries
+anything app-specific and reaches only the app's own objects and the link. `-DAL_LIBTYPE_STATIC`
+moved *above* the line and is now unconditional — it is needed by `core/SoundSystem.cpp` and
+`core/WaveFile.cpp`, which are core sources, and is inert everywhere else.
+
+Note `USE_SOUND` *adds two objects* to the shared core directory rather than changing any
+existing one, so a sound app and a silent app coexist there cleanly — the silent one simply never
+links the two it did not ask for.
 
 #### Known limitation
 

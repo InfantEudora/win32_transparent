@@ -71,23 +71,50 @@ IPATHS += -I$(ROOT)/3rdparty/reactphysics3d/
 #The app's own folder, so its headers find each other by plain name.
 IPATHS += -I.
 
-#Sound is opt-in per app. libs/libOpenAL32.a is a prebuilt static library; when it hasn't
-#been rebuilt with the current toolchain it won't link (mismatched libstdc++ TLS symbols:
-#`undefined reference to __emutls_v._ZSt11__once_call`). Apps that never touch SoundSystem
-#shouldn't pay for that, so an app opts in with `USE_SOUND := 1` in its makefile. When it's
-#off, core/SoundSystem.cpp and core/WaveFile.cpp are dropped and -lOpenAL32 is not passed,
-#so nothing references OpenAL at all.
-USE_SOUND ?= 0
-ifeq ($(USE_SOUND), 1)
-CFLAGS += -DUSE_SOUND -lOpenAL32 -DAL_LIBTYPE_STATIC -lole32 -lwinmm
-else
-CORE_SRCS_NOSOUND += $(ROOT)/core/SoundSystem.cpp
-CORE_SRCS_NOSOUND += $(ROOT)/core/WaveFile.cpp
-endif
+#AL_LIBTYPE_STATIC has to be seen by anything that includes the OpenAL headers, which is
+#core/SoundSystem.cpp and core/WaveFile.cpp and nothing else. It is set UNCONDITIONALLY and
+#not inside the USE_SOUND block below, because those two are core sources and core has to
+#compile the same way for every app - see CORE_CFLAGS. It is inert everywhere else.
+CFLAGS += -DAL_LIBTYPE_STATIC
 
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #O3 highest optimisation #-s to strip symbols
 CFLAGS += $(DFLAGS)
+
+#---------------------------------------------------------------------------------------
+# THE LINE BETWEEN SHARED AND PER-APP FLAGS
+#
+# Everything above is app-invariant, and CORE_CFLAGS freezes it here. Core objects are
+# compiled with CORE_CFLAGS and NOTHING ELSE, which is what makes it safe to share one set
+# of them between every app in $(ROOT)/build/core.
+#
+# That guarantee has to be structural rather than a promise, because make cannot see it.
+# Objects are compared by timestamp, not by the flags they were built with: if an app
+# added a -D to the core compile, whichever app built first would win and every other app
+# would silently link objects compiled for someone else. Nothing would rebuild and nothing
+# would warn. Adding a flag below this line cannot cause that; adding one above it can.
+#
+# So: an app-specific compile flag goes in CFLAGS (below), never in CORE_CFLAGS.
+#---------------------------------------------------------------------------------------
+CORE_CFLAGS := $(CFLAGS)
+
+#Sound is opt-in per app. libs/libOpenAL32.a is a prebuilt static library; when it hasn't
+#been rebuilt with the current toolchain it won't link (mismatched libstdc++ TLS symbols:
+#`undefined reference to __emutls_v._ZSt11__once_call`). Apps that never touch SoundSystem
+#shouldn't pay for that, so an app opts in with `USE_SOUND := 1` in its makefile. When it's
+#off, core/SoundSystem.cpp and core/WaveFile.cpp are dropped from the core sources this app
+#links and -lOpenAL32 is not passed, so nothing references OpenAL at all.
+#
+#Note this adds two objects to the shared core directory rather than changing any existing
+#one, so a sound app and a silent app can share that directory without interfering: the
+#silent app simply does not link the two it never asked for.
+USE_SOUND ?= 0
+ifeq ($(USE_SOUND), 1)
+CFLAGS += -DUSE_SOUND -lOpenAL32 -lole32 -lwinmm
+else
+CORE_SRCS_NOSOUND += $(ROOT)/core/SoundSystem.cpp
+CORE_SRCS_NOSOUND += $(ROOT)/core/WaveFile.cpp
+endif
 
 #---------------------------------------------------------------------------------------
 # Sources
@@ -139,9 +166,10 @@ $(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 
+#CORE_CFLAGS, not CFLAGS - these objects are shared between apps. See the note above it.
 $(CORE_BUILD_DIR)/%.o: $(ROOT)/%.cpp
 	@mkdir -p $(dir $@)
-	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
+	$(CC) -c $(DEPFLAGS) $(CORE_CFLAGS) $(IPATHS) $< -o $@
 
 -include $(DEPS)
 

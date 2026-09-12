@@ -57,6 +57,12 @@ struct Light{
     float   brightness;
     vec3    color;
     float   cos_angle;  //0 means a point light, otherwise a cone
+    //Size of the source in world units, for the penumbra estimate. Appended last, and the
+    //next one must be too - see core/light_t, which this is a hand copy of.
+    float   radius;
+    float   pad0;
+    float   pad1;
+    float   pad2;
 };
 layout (std430, binding = 2) buffer LightBuffer{
     Light lights[];

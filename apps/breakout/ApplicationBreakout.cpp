@@ -40,14 +40,15 @@ static Debugger* debug = new Debugger("ApplicationBreakout",DEBUG_ALL);
     panel, offset by the sun. It reads as a rendering fault, not as a shadow. Pressing the labels
     up against the panel collapses the offset to nothing.
 
-    The alternative would have been to stop them casting at all, and there is no way to say that:
-    Light::f_casts_shadow turns a whole LIGHT off, and an Object has no say in whether it appears
-    in a depth pass. See docs/breakout_findings.md 5.
+    THAT IS NO LONGER WHY THIS VALUE IS SMALL. The alternative was to stop the labels casting at
+    all, and there was no way to say it - Light::f_casts_shadow turns a whole LIGHT off, and an
+    Object had no say in whether it appeared in a depth pass (docs/breakout_findings.md 5). There
+    is now: Object::SetCastsShadow, and every label here calls it. So the labels are free to sit
+    wherever they look best, and a banner that wants to float in front of the arena can.
 
-    The panel's front face is at BACK_Z + 0.25 (it is a 0.5-thick slab centred on BACK_Z), so this
-    clears it by 0.15 - far enough that the glyphs, which are 0.1 deep themselves, are not fighting
-    the panel for the same depth, and close enough that the shadow lands within a few pixels of the
-    letter that threw it.
+    What still holds this value down is the other half: the panel's front face is at BACK_Z + 0.25
+    (it is a 0.5-thick slab centred on BACK_Z), so this clears it by 0.15 - far enough that the
+    glyphs, which are 0.1 deep themselves, are not fighting the panel for the same depth.
 */
 #define TEXT_Z              (BACK_Z + 0.40f)
 
@@ -192,14 +193,14 @@ void ApplicationBreakout::Init(void){
         itself, so a ball breaking two bricks on one tick through one handle is ONE sound. The
         three brick handles below are round-robined for exactly that reason.
     */
-    soundsystem->AppendFile("data/sound/bleep.wav","brick_a");
-    soundsystem->AppendFile("data/sound/bleep.wav","brick_b");
-    soundsystem->AppendFile("data/sound/bleep.wav","brick_c");
-    soundsystem->AppendFile("data/sound/click.wav","paddle");
-    soundsystem->AppendFile("data/sound/click.wav","wall");
-    soundsystem->AppendFile("data/sound/floop.wav","shield");
-    soundsystem->AppendFile("data/sound/floop.wav","powerup");
-    soundsystem->AppendFile("data/sound/hax.wav","lost");
+    soundsystem->AppendFile("sound/bleep.wav","brick_a");
+    soundsystem->AppendFile("sound/bleep.wav","brick_b");
+    soundsystem->AppendFile("sound/bleep.wav","brick_c");
+    soundsystem->AppendFile("sound/click.wav","paddle");
+    soundsystem->AppendFile("sound/click.wav","wall");
+    soundsystem->AppendFile("sound/floop.wav","shield");
+    soundsystem->AppendFile("sound/floop.wav","powerup");
+    soundsystem->AppendFile("sound/hax.wav","lost");
 
     BuildMaterials();
     BuildArena();
@@ -631,7 +632,7 @@ void ApplicationBreakout::BuildTextLabels(){
         layer: a game should be able to ship without it, and these labels are lit and shadowed
         like a brick and appear in an include_ui:false screenshot, which the panels do not.
     */
-    if (!LoadGlyphSetFromGLB(glyphs,"data/glyphs_unispace.glb",0.509167f,1.0f)){
+    if (!LoadGlyphSetFromGLB(glyphs,"meshes/glyphs_unispace.glb",0.509167f,1.0f)){
         //Not fatal. Without glyphs the game still plays perfectly; it just says nothing.
         debug->Warn("No glyphs loaded - the game will play without labels\n");
         return;
@@ -667,6 +668,12 @@ void ApplicationBreakout::BuildTextLabels(){
         //Text must not swallow a pick aimed at a brick behind it, and there is nothing useful to
         //inspect about a label.
         label.object->SetPickability(false);
+        //Nor should it throw a shadow. A caption is extruded geometry, so held any distance clear
+        //of the panel it drops a crisp second copy of itself onto it, which reads as a rendering
+        //fault rather than as a shadow. TEXT_Z presses the labels almost flat against the panel
+        //to keep that offset down to a few pixels; this is the part of that workaround the engine
+        //can now do properly, and it is what frees a caption to sit anywhere it looks best.
+        label.object->SetCastsShadow(false);
         label.scale = ls.scale;
         label.align = ls.align;
 

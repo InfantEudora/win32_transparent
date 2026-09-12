@@ -2,11 +2,11 @@
 #define _APPLICATION_ANIMATION_H_
 
 #include "Application.h"
-#include "ship/Asteroid.h"
-#include "ship/ShipCharacter.h"
-#include "ship/HingedDoor.h"
-#include "ship/Pickup.h"
-#include "ship/ShipCollisionMasks.h"
+#include "Asteroid.h"
+#include "ShipCharacter.h"
+#include "HingedDoor.h"
+#include "Pickup.h"
+#include "ShipCollisionMasks.h"
 #include "AsteroidExplosion.h"
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;

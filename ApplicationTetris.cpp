@@ -121,12 +121,12 @@ void ApplicationTetris::Init(void){
     //Six handles over four files. Deliberately: SoundSystem gives each HANDLE its own OpenAL
     //source, and a source cannot overlap itself - registering the same file twice is the only way
     //a move and a lock landing on the same tick can both be heard. See docs/tetris_findings.md.
-    soundsystem->AppendFile("data/sound/click.wav","move");
-    soundsystem->AppendFile("data/sound/click.wav","lock");
-    soundsystem->AppendFile("data/sound/bleep.wav","rotate");
-    soundsystem->AppendFile("data/sound/bleep.wav","hold");
-    soundsystem->AppendFile("data/sound/floop.wav","clear");
-    soundsystem->AppendFile("data/sound/hax.wav","gameover");
+    soundsystem->AppendFile("sound/click.wav","move");
+    soundsystem->AppendFile("sound/click.wav","lock");
+    soundsystem->AppendFile("sound/bleep.wav","rotate");
+    soundsystem->AppendFile("sound/bleep.wav","hold");
+    soundsystem->AppendFile("sound/floop.wav","clear");
+    soundsystem->AppendFile("sound/hax.wav","gameover");
 
     BuildMaterials();
     BuildWell();
@@ -357,7 +357,7 @@ void ApplicationTetris::BuildTextLabels(){
         monospaced, so one advance covers all 95 characters - that is the whole of what an atlas
         would have carried, and why there is no atlas here (see core/TextMesh.h).
     */
-    if (!LoadGlyphSetFromGLB(glyphs,"data/glyphs_unispace.glb",0.509167f,1.0f)){
+    if (!LoadGlyphSetFromGLB(glyphs,"meshes/glyphs_unispace.glb",0.509167f,1.0f)){
         //Not fatal. Without glyphs the board still plays perfectly; it just says nothing, which
         //is exactly the state this app was in before there was any text at all.
         debug->Warn("No glyphs loaded - the board will play without labels\n");

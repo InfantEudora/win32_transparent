@@ -17,7 +17,7 @@
     sample. Glyphs that are geometry have no pixels, so there is nothing to pack and nothing to
     look up. What a layout actually needs from a font is METRICS - how far the pen moves per
     character, and how far down a newline goes - and for the monospaced set in
-    data/glyphs_unispace.glb those are two floats (see fonts_glyphs.json).
+    meshes/glyphs_unispace.glb those are two floats (see fonts_glyphs.json).
 
     The distinction is worth keeping because an SDF-atlas text path is still wanted (item 24 and
     docs/text_rendering_options.md recommend it). That one will share this file's LAYOUT and none

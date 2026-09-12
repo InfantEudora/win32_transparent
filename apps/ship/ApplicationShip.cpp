@@ -507,7 +507,7 @@ void ApplicationShip::Init(void){
     main_scene->UpdatePhysics(GetPhysicsTimestep());
 
     assetmanager = new AssetManager();
-    gltfloader.LoadGLTFFile("data/ships.glb");
+    gltfloader.LoadGLTFFile("meshes/ships.glb");
     GetAllAssetsFromGLTF();
 
     //Let's load in the ship

@@ -9,7 +9,7 @@ static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
 
     The standard solve divides by the signed area of the triangle in UV space. That area is zero
     whenever the three UVs are collinear, which is not an exotic case: it is every face of an
-    extrusion nobody unwrapped, and 62% of the triangles in data/glyphs_unispace.glb. Dividing
+    extrusion nobody unwrapped, and 62% of the triangles in meshes/glyphs_unispace.glb. Dividing
     anyway ships inf/NaN into the vertex buffer, where it does nothing at all until the mesh is
     given a normal map - shaders/default.frag only reaches for the tangent then - and at that
     point it shades black or explodes on some triangles and not others, pointing nowhere near

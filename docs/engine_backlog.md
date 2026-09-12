@@ -1,7 +1,7 @@
 # Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
-`docs/engine_backlog_done.md` — 48 closed items, with their verification notes intact, because
+`docs/engine_backlog_done.md` — 51 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
 Items are drawn from two runs in which an agent built a game on this engine as an audit of it:
@@ -19,7 +19,7 @@ item that moves between bands keeps its number.
 
 Status key: `[ ]` open · `[~]` partially done.
 
-Last updated 2026-09-12, after closing item 47.
+Last updated 2026-09-12, after closing item 41 and declining 60.
 
 ---
 
@@ -27,52 +27,11 @@ Last updated 2026-09-12, after closing item 47.
 
 *Empty. Everything in this band has been done; new items land here as they are found.*
 
-- [ ] **41. One light radius for the whole renderer.** `field_light_radius` sets how fast every
-  shadow edge softens, because `light_t` has no size field to read it from. Adding one is the
-  natural next step the moment two lights in a scene want different softness.
-
-  *Note on cost:* `light_t`'s layout is repeated by hand in several shaders, so growing it means
-  keeping those in step — the same care `Material.h` documents for its own struct, where the
-  `emissive` field was appended last precisely so no existing offset moved. See the occluder field
-  reference at the bottom.
-
 - [ ] **43. The field is rebuilt every frame with no dirty flag.** One geometry pass plus
   log2(size)+2 dispatches, all of it repeated whether or not anything moved. Its share of the
   90 us (see the reference at the bottom) was not measured separately from the march's, so that is
   the first thing to find out - but either way an app whose world changes rarely is paying for a
   map that did not change.
-
-- [ ] **45. No per-object "does not cast a shadow".** Text is geometry, so a label casts a real
-  shadow — and a label two units clear of the panel behind it throws a crisp, perfectly legible
-  second copy of itself onto that panel. It reads as a rendering fault rather than as a shadow.
-
-  There is no way to say "this object is not an occluder". `Light::f_casts_shadow` turns a whole
-  light off; `Object` has no say in whether it appears in a depth pass. Breakout worked around it
-  by pressing every label up against the back panel (`TEXT_Z = BACK_Z + 0.40f`) so the offset
-  collapses to a few pixels — which also pins the labels to a plane, and its "GAME OVER" banner
-  would genuinely have looked better floating in front of the arena.
-
-  What it should look like: `bool f_casts_shadow = true;` on `Object`, tested in
-  `Renderer::RenderSingleDepthPass` next to the mesh-mode test already there, and in
-  `RenderFieldPass` for the occluder field. The one subtlety that makes this Band B rather than
-  Band A: depth passes batch per mesh and draw every instance, so skipping a single *object*
-  means filtering the instance list rather than adding one `if`.
-
-  Ranked second of seven in what the Breakout author would do to the engine next, and it is a
-  precondition for the brick-dissolve effect they cut (see item 52's neighbourhood): a brick that
-  stopped casting a shadow the moment it began dissolving would look worse than one that simply
-  vanished.
-
-- [ ] **60. `debug->Fatal` on the render thread produces no window and no visible reason.** A
-  shader typo calls `debug->Fatal` (`core/Shader.cpp:175,205,235,273`) → `exit(1)` from inside
-  `Init()`, before any window is shown. The result is a program that appears not to start, with the
-  explanation only in a stderr log the user has to know to go and find. It is documented, and it is
-  still the thing most likely to make a newcomer conclude the build is broken.
-
-  Cheapest useful fix is a `MessageBox` on a fatal when no window exists yet, or a
-  `wind_fatal.log` written next to the exe. **Item 44 removed one of the two ways to land here** —
-  a missing uniform no longer calls `Fatal` — but the compile and link failures at the line numbers
-  above are the common case and still do, so this stands on its own.
 
 - [ ] **61. A core `shader_reload` MCP tool.** `ApplicationShip::ReloadVolumeShader` is the
   hot-reload pattern and it transfers directly, but every app that registers a custom shader has to

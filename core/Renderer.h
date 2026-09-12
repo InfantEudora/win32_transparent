@@ -141,7 +141,11 @@ class Renderer{
     //0 renders normal meshes, 1 renders only skinned meshes. For MESH_MODE_SHADER, pass the
     //custom shader index to draw only the meshes assigned to that shader; -1 draws all of them
     //regardless, which is only useful when the bound shader does not matter.
-    void RenderUniqueMeshes(int normal_or_skinned, int custom_shader_index = -1);
+    //`f_occluder_pass` marks a pass that is building shadows rather than the picture - the depth
+    //passes and the occluder field. Objects with f_casts_shadow false are left out of the instance
+    //list for those, and only those, so clearing that flag removes an object's shadow without
+    //removing the object. See Object::f_casts_shadow.
+    void RenderUniqueMeshes(int normal_or_skinned, int custom_shader_index = -1, bool f_occluder_pass = false);
 
     /*
         Registers a shader for the custom-material pass and returns its INDEX, which is the tag
@@ -366,9 +370,14 @@ class Renderer{
     //occluder's surface, so at t=0 it is inside its own slab and shadows itself - this is the
     //field's version of shadow_bias.
     float  field_normal_bias = 0.15f;
-    //Radius of the light source in world units, for the penumbra estimate. Not a property of any
-    //particular light yet: light_t has no size field, and giving it one is the natural next step
-    //if two lights in a scene ever want different softness. 0 gives hard shadows.
+    //The scene's DEFAULT light radius in world units, for the penumbra estimate: 0 gives hard
+    //shadows and bigger is softer. Every light starts out deferring to this, so moving it still
+    //softens the whole scene at once - but it is no longer the only answer available. A light
+    //that sets its own Light::radius is not affected by it.
+    //
+    //Not a uniform. It is resolved per light in UploadLights and travels in the SSBO, because the
+    //shader is marching for one particular lamp and has no business knowing there is a
+    //scene-wide anything.
     float  field_light_radius = 0.30f;
 
     Shader* deferred_shader = NULL;         // Shader that outputs data to textures

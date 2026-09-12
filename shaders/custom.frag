@@ -57,6 +57,12 @@ struct Light{
     float   brightness;
     vec3    color;
     float   cos_angle; 	// 0 means its a point light, else it becomes a cone light
+    //Size of the source in world units, for the penumbra estimate. Appended last, and the
+    //next one must be too - see core/light_t, which this is a hand copy of.
+    float   radius;
+    float   pad0;
+    float   pad1;
+    float   pad2;
 };
 //Multiple of 4 for padding
 #define NUM_MATERIAL_SLOTS  4

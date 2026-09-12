@@ -77,10 +77,16 @@ else
 	SRCS += BinaryAssetMemoryEmpty.cpp
 endif
 
-#Active application: pick one of the names under apps/ (Animation, IsoAnimation,
-#Grid, Dozer, Tileset, Sim, UI, OCPP, Ship, Tank). Override per-build with `make APP=Grid`
+#Active application: pick one of the names under apps/ (Animation, Breakout, Dozer, Grid,
+#IsoAnimation, OCPP, Sim, Tetris, Tileset, UI). Override per-build with `make APP=Grid`
 #without touching this file, or just change the default here.
-APP ?= Ship
+#
+#THIS MAKEFILE IS BEING RETIRED. An app that has moved to the new arrangement has its own
+#makefile, its own exe and its own assets under apps/<name>/ - build it by running make in
+#that folder, not here. Tank and Ship have moved and their apps/*.mk are gone, which is why
+#the default below is no longer Ship. When the last apps/*.mk goes, so does this file.
+#See docs/asset_layout_plan.md section 6.3.
+APP ?= Grid
 
 include apps/$(APP).mk
 

@@ -144,7 +144,7 @@ Mesh* BuildTextMesh(const GlyphSet& glyphs, const char* text, const TextLayout& 
                 v.matid = layout.matid;
                 //Fixed rather than carried over, and not a precaution: GLTFLoader solves tangents
                 //from the mesh's UVs and divides by the UV triangle's area, which is ZERO for
-                //5149 of the 8264 triangles in data/glyphs_unispace.glb - 62% of them, because a
+                //5149 of the 8264 triangles in meshes/glyphs_unispace.glb - 62% of them, because a
                 //Blender text object gives its extrusion sides no UV area at all. Those tangents
                 //arrive as inf or NaN. Text is a plane facing +Z, so +X is the right tangent
                 //across all of it, and it is at least a number.
