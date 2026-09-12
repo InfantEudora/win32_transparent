@@ -230,6 +230,15 @@ bool Window::InitImGui(){
     config.OversampleV = 2;
     sprintf(config.Name,"Consola TTF");
 
+    /*
+        AddFontFromMemoryTTF takes ownership of what it is given by default and frees it with the
+        atlas - which would be the file layer's buffer, freed out from under a cache that is still
+        handing that pointer out (see File.h). So we keep ownership, which is also the arrangement
+        ImGui prefers since 1.92: it no longer copies for this flag, and it requires the data to
+        outlive the atlas. Being lent something that lives as long as the process is exactly that.
+    */
+    config.FontDataOwnedByAtlas = false;
+
     size_t size = 0;
     uint8_t* data = LoadFile("fonts/consola.ttf",&size);
     ImFont* font = NULL;

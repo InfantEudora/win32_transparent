@@ -78,6 +78,51 @@ public:
     vec3 GetVelocity();
     void SetAngularVelocity(const vec3& v);
     vec3 GetAngularVelocity();
+
+    /*
+        --- DAMPING ---------------------------------------------------------------------------
+        Velocity bled off per second, independent of any contact: 0 leaves a body coasting
+        forever, higher values bring it to rest on its own.
+
+        These exist because you almost certainly need to UNDO something. AddBoxCollider and
+        AddCapsuleCollider set both dampings to 0.5 behind your back (and box friction to 1.0);
+        AddSphereCollider sets neither. So two bodies built the obvious way behave differently
+        for reasons nothing states, and until now there was no setter anywhere to put it back -
+        the only route was reaching through Object::GetRigidBody(). Whether those defaults should
+        exist at all is backlog item 47 and is a separate decision; this is the means to override
+        them either way.
+    */
+    void SetLinearDamping(float damping);
+    float GetLinearDamping();
+    void SetAngularDamping(float damping);
+    float GetAngularDamping();
+
+    /*
+        --- AXIS LOCKS ------------------------------------------------------------------------
+        A per-axis multiplier on how much this body is allowed to move: 1 leaves an axis free,
+        0 pins it. Applied by the solver, so a locked axis stays locked through collisions,
+        joints and forces alike rather than being corrected afterwards.
+
+        THE REASON THIS IS WORTH KNOWING ABOUT: a flat game built on a 3D solver needs it on its
+        first day. Anything given a nudge out of the play plane - and a spawn impulse, a glancing
+        contact or an off-centre collider will do it - drifts along the axis nobody is watching.
+        In APP=Breakout a power-up capsule drifted a little over a unit out of plane during its
+        fall, passed the far face of the paddle's collider, and sailed straight through a paddle
+        sitting directly underneath it, generating no contact at all. Every readout in that app
+        was two-dimensional, so the capsule and the paddle agreed perfectly in x and y right up
+        to the miss; it took printing the third axis to see it.
+
+            //Pin a body to the XY plane, and let it spin only about Z (the axis facing the camera)
+            physics->SetLinearLockAxis(vec3(1,1,0));
+            physics->SetAngularLockAxis(vec3(0,0,1));
+
+        The capability was always there in reactphysics3d - what was missing was any way to find
+        out, which is why these are one-line forwards rather than anything cleverer.
+    */
+    void SetLinearLockAxis(const vec3& factor);
+    vec3 GetLinearLockAxis();
+    void SetAngularLockAxis(const vec3& factor);
+    vec3 GetAngularLockAxis();
     vec3 GetCenterofMass();
     float GetFrictionCoefficient();
     void SetFrictionCoefficient(float v);

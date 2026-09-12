@@ -5,10 +5,12 @@
 static Debugger* debug = new Debugger("Playfield",DEBUG_ALL);
 
 /*
-    Gravity, in ticks per cell, by level. These are the NES frame counts, which is why the app
-    runs its simulation at 60 ticks/second (ApplicationTetris::Init) - at 60Hz the table means
-    exactly what it meant on the original hardware, and level 19 really is the wall everybody
-    remembers. Index 0 is unused; levels are 1-based.
+    Gravity, in ticks per cell, by level. These are the NES frame counts, and THIS TABLE is why
+    TETRIS_TPS is 60: at 60 ticks a second it means exactly what it meant on the original
+    hardware, and level 19 really is the wall everybody remembers. Change one without the other
+    and every number here quietly means something else, which is the whole reason the rate is a
+    constant the rules declare rather than a literal the app picks - see TETRIS_TPS in
+    Playfield.h. Index 0 is unused; levels are 1-based.
 */
 static const int gravity_table[] = {
     0, 48, 43, 38, 33, 28, 23, 18, 13, 8, 6,
@@ -23,6 +25,10 @@ static const int gravity_table[] = {
 #define SOFT_DROP_DIVISOR   20
 
 Playfield::Playfield(){
+    //Allocate the bag's noise once, here, rather than per game: NewGame re-seeds it, and
+    //RRandom::SetSeed refills a private buffer in place at the size it already has. Without this
+    //first Generate there would be no buffer for that to refill, and every draw would return 0.
+    random.Generate(TETRIS_RANDOM_BYTES);
     NewGame(1);
 }
 
@@ -76,7 +82,7 @@ void Playfield::RefillBag(){
     for (int i = 0; i < TETROMINO_COUNT; i++){
         bag.push_back(i);
     }
-    //Fisher-Yates, drawing from this object's own generator only - see TetrisRandom.
+    //Fisher-Yates, drawing from this object's own generator only - see the RRandom member.
     for (int i = (int)bag.size() - 1; i > 0; i--){
         int j = random.GetInt(0,i);
         int swap = bag[i];

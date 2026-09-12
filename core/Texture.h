@@ -8,6 +8,7 @@
 #include "glad.h"
 #include "type_int2.h"
 #include "type_vec3.h"
+#include "RRandom.h"
 
 #define TEXTURE_DONT_UPLOAD -1
 
@@ -59,6 +60,11 @@ public:
     void LoadFromMemory(uint8_t* data, size_t length, int target, int depth);
     void LoadFromFile(const char* filename, int target = GL_TEXTURE_2D, int depth_in = 0);
     void LoadHDRFromFile(const char* filename, int depth_in = TEXTURE_DONT_UPLOAD);
+    //Load an image and point `rrand` at its pixels, so one decode serves both the GPU and the
+    //simulation. The bytes stay this Texture's - it must outlive the generator. Pass
+    //TEXTURE_DONT_UPLOAD as depth_in for CPU-side noise with no GL object. See the definition for
+    //why the dependency runs this way round rather than RRandom loading its own file.
+    void LoadIntoRRandomNoiseFile(const char* filename, int target = GL_TEXTURE_2D, int depth_in = 0, RRandom* rrand = NULL);
 
     vec3 GetValueAt(float x, float y);  // Returns pixel value [0..255] (LDR)
     vec3 GetValueAtF(float x, float y); // Returns pixel value as float (HDR), bilinear filtered

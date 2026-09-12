@@ -38,7 +38,8 @@ static std::string DirectoryOf(const std::string& path){
 	somewhere misleading, which is worse than having no includes at all.
 */
 static std::string ResolveIncludes(const std::string& path, const char* data, size_t size,
-								   int depth, int* source_index){
+								   int depth, int* source_index,
+								   std::vector<std::string>* files_used){
 	if (depth > 8){
 		debug->Err("Shader include nesting too deep at %s - a cycle?\n",path.c_str());
 		return std::string(data,size);
@@ -72,9 +73,12 @@ static std::string ResolveIncludes(const std::string& path, const char* data, si
 							   path.c_str(),full.c_str());
 					return out + src.substr(pos);
 				}
+				if (files_used){
+					files_used->push_back(full);
+				}
 				int my_index = ++(*source_index);
 				out += "#line 1 " + std::to_string(my_index) + "\n";
-				out += ResolveIncludes(full,(const char*)inc_data,inc_sz,depth + 1,source_index);
+				out += ResolveIncludes(full,(const char*)inc_data,inc_sz,depth + 1,source_index,files_used);
 				out += "\n#line " + std::to_string(line_number + 1) + " 0\n";
 				handled = true;
 			}
@@ -94,14 +98,17 @@ static std::string ResolveIncludes(const std::string& path, const char* data, si
 }
 
 //Reads a shader file and splices in whatever it #includes. Empty if the file could not be read.
-static std::string LoadShaderSource(const char* path){
+static std::string LoadShaderSource(const char* path, std::vector<std::string>* files_used){
 	size_t sz = 0;
 	uint8_t* data = LoadFile(path,&sz);
 	if (!data){
 		return std::string();
 	}
+	if (files_used){
+		files_used->push_back(path);
+	}
 	int source_index = 0;
-	return ResolveIncludes(path,(const char*)data,sz,0,&source_index);
+	return ResolveIncludes(path,(const char*)data,sz,0,&source_index,files_used);
 }
 
 Shader::Shader(){
@@ -110,7 +117,7 @@ Shader::Shader(){
 
 void Shader::CreateComputeShader(const char* comp_path){
 	debug->Info("Load and compile: %s ...\n",comp_path);
-	std::string comp_src = LoadShaderSource(comp_path);
+	std::string comp_src = LoadShaderSource(comp_path,&source_files);
 	if (comp_src.empty()){
 		return;
 	}
@@ -127,11 +134,11 @@ void Shader::CreateComputeShader(const char* comp_path){
 Shader::Shader(const char* vert_path,const char* frag_path):Shader(){
     debug->Info("Load and compile: %s, %s ...\n",vert_path,frag_path);
 
-	std::string vert_src = LoadShaderSource(vert_path);
+	std::string vert_src = LoadShaderSource(vert_path,&source_files);
 	if (vert_src.empty()){
 		return;
 	}
-	std::string frag_src = LoadShaderSource(frag_path);
+	std::string frag_src = LoadShaderSource(frag_path,&source_files);
 	if (frag_src.empty()){
 		return;
 	}
@@ -251,6 +258,11 @@ int Shader::LinkProgram(int count, ...){
 	GLint result = GL_FALSE;
 	int infolen = 0;
 
+	//A relink is a different program with a different set of surviving uniforms, so the warn-once
+	//record starts over - otherwise a hot reload that introduces a missing uniform stays silent
+	//about it, which is exactly the reload you want to hear about.
+	reported_missing.clear();
+
 	GLuint programid = glCreateProgram();
 	va_list arglist;
     va_start(arglist,count);
@@ -310,56 +322,164 @@ void Shader::Use(){
     behaviour - naming one Shader while meaning the bound one - is now actually broken and has to
     be corrected; see RenderDepthPasses(skinned_shader,...) in Renderer::DrawFrame.
 */
+/*
+	One lookup, so there is one policy about a missing uniform instead of one per setter.
+
+	That policy is: warn once, never die. The setters used to disagree with each other - Setmat3
+	and Setmat4 went through debug->Fatal and so exit(1), Setint logged an error, Setfloat and
+	Setvec3 logged a warning - for the same mistake. Three reasons the survivor is the mild one:
+
+	  - A missing uniform is not evidence of a bug. GLSL strips a uniform that is declared but
+	    never used, so "missing" is the ordinary outcome for a shader that legitimately does not
+	    need a value the engine offers every shader generically.
+	  - The fatal one fired on shaders this engine does not own. Renderer::CustomShaderPass sets
+	    mat_worldcam on every registered custom shader every frame, so "all fatal" would mean any
+	    custom shader with its own vertex stage that happens not to use the camera matrix killed
+	    the process on the first frame - no window, and a message only on stderr.
+	  - It is a render-loop call whose success depends on what the shader compiler decided to
+	    eliminate. That is a poor place for exit(1).
+
+	A caller that truly requires a uniform checks the returned bool and decides for itself, where
+	the name still means something.
+
+	Everything funnels through here, which is also the one place to add a location cache if the
+	per-set glGetUniformLocation ever shows up in a profile. It has not yet.
+*/
+int Shader::UniformLocation(const char* name){
+	//GLint, not GLuint: the not-found value is -1, which an unsigned type cannot hold. The old
+	//code compared a GLuint against -1 and only worked because both sides converted to 0xFFFFFFFF.
+	GLint id = glGetUniformLocation(progid, name);
+	if (id == -1){
+		if (reported_missing.insert(name).second){
+			debug->Warn("Program %i has no uniform '%s' (declared-but-unused uniforms are stripped by the GLSL compiler)\n",progid,name);
+		}
+	}
+	return id;
+}
+
 //Set a uniform int
 bool Shader::Setint(const char* name, int value){
-	GLuint intid = glGetUniformLocation(progid, name);
-	if (intid == -1){
-		//Warn once.
-		debug->Err("Could not set %i's int %s\n",progid,name);
+	int id = UniformLocation(name);
+	if (id == -1){
 		return false;
 	}
-	glProgramUniform1i(progid,intid,(GLint)value);
+	glProgramUniform1i(progid,id,(GLint)value);
 	return true;
 }
 
-void Shader::Setfloat(const char* name, const float& value){
-	GLuint fid = glGetUniformLocation(progid, name);
-	if (fid == -1){
-		debug->Warn("Could not set %i's vec3 %s\n",progid,name);
-		return;
-	}else{
-		//debug->Info("Uniform %s at location %i\n",name,fid);
-	}
-	glProgramUniform1fv(progid,fid,1,(GLfloat*)&value);
-
+//GLSL has no bool on the wire - a uniform bool is set as an int.
+bool Shader::Setbool(const char* name, bool value){
+	return Setint(name,value ? 1 : 0);
 }
 
-void Shader::Setvec3(const char* name, const vec3& value){
-	GLuint fid = glGetUniformLocation(progid, name);
-	if (fid == -1){
-		debug->Warn("Could not set %i's vec3 %s\n",progid,name);
-		return;
-	}else{
-		//debug->Info("Uniform %s at location %i\n",name,fid);
+bool Shader::Setfloat(const char* name, float value){
+	int id = UniformLocation(name);
+	if (id == -1){
+		return false;
 	}
-	glProgramUniform3fv(progid,fid,1,(const GLfloat*)&value);
-	//glUniform3f(fid,value.x,value.y,value.z);
+	glProgramUniform1f(progid,id,(GLfloat)value);
+	return true;
 }
 
-void Shader::Setmat3(const char* name, const fmat3& matrix){
-	GLuint matid = glGetUniformLocation(progid, name);
-	if (matid == -1){
-		debug->Fatal("Could not set %i's mat4 %s\n",progid,name);
-		return;
+/*
+	vec2/vec3/vec4 are plain contiguous floats - the unions inside them alias x with r, they do not
+	change the layout - so both the scalar and the array forms hand the address straight to GL with
+	no repacking.
+*/
+bool Shader::Setvec2(const char* name, const vec2& value){
+	int id = UniformLocation(name);
+	if (id == -1){
+		return false;
 	}
-	glProgramUniformMatrix3fv(progid,matid,1,GL_FALSE,(GLfloat*)&matrix);
+	glProgramUniform2fv(progid,id,1,(const GLfloat*)&value);
+	return true;
 }
 
-void Shader::Setmat4(const char* name, const fmat4& matrix){
-	GLuint matid = glGetUniformLocation(progid, name);
-	if (matid == -1){
-		debug->Fatal("Could not set %i's mat4 %s\n",progid,name);
-		return;
+bool Shader::Setvec3(const char* name, const vec3& value){
+	int id = UniformLocation(name);
+	if (id == -1){
+		return false;
 	}
-	glProgramUniformMatrix4fv(progid,matid,1,GL_FALSE,(GLfloat*)&matrix);
+	glProgramUniform3fv(progid,id,1,(const GLfloat*)&value);
+	return true;
+}
+
+bool Shader::Setvec4(const char* name, const vec4& value){
+	int id = UniformLocation(name);
+	if (id == -1){
+		return false;
+	}
+	glProgramUniform4fv(progid,id,1,(const GLfloat*)&value);
+	return true;
+}
+
+bool Shader::Setmat3(const char* name, const fmat3& matrix){
+	int id = UniformLocation(name);
+	if (id == -1){
+		return false;
+	}
+	glProgramUniformMatrix3fv(progid,id,1,GL_FALSE,(const GLfloat*)&matrix);
+	return true;
+}
+
+bool Shader::Setmat4(const char* name, const fmat4& matrix){
+	int id = UniformLocation(name);
+	if (id == -1){
+		return false;
+	}
+	glProgramUniformMatrix4fv(progid,id,1,GL_FALSE,(const GLfloat*)&matrix);
+	return true;
+}
+
+/*
+	The array forms. count is elements, not floats.
+
+	Name the uniform without a subscript - "ripples", not "ripples[0]" - and GL writes the whole
+	run from the array's base location. Setting more elements than the shader declares is undefined
+	rather than diagnosed, so the count must come from the same constant the GLSL does; keeping
+	that constant in one header shared by both is the only thing that makes these safe to use.
+*/
+bool Shader::Setintv(const char* name, const int* values, int count){
+	int id = UniformLocation(name);
+	if (id == -1 || count <= 0 || !values){
+		return false;
+	}
+	glProgramUniform1iv(progid,id,count,(const GLint*)values);
+	return true;
+}
+
+bool Shader::Setfloatv(const char* name, const float* values, int count){
+	int id = UniformLocation(name);
+	if (id == -1 || count <= 0 || !values){
+		return false;
+	}
+	glProgramUniform1fv(progid,id,count,(const GLfloat*)values);
+	return true;
+}
+
+bool Shader::Setvec2v(const char* name, const vec2* values, int count){
+	int id = UniformLocation(name);
+	if (id == -1 || count <= 0 || !values){
+		return false;
+	}
+	glProgramUniform2fv(progid,id,count,(const GLfloat*)values);
+	return true;
+}
+
+bool Shader::Setvec3v(const char* name, const vec3* values, int count){
+	int id = UniformLocation(name);
+	if (id == -1 || count <= 0 || !values){
+		return false;
+	}
+	glProgramUniform3fv(progid,id,count,(const GLfloat*)values);
+	return true;
+}
+
+bool Shader::Setvec4v(const char* name, const vec4* values, int count){
+	int id = UniformLocation(name);
+	if (id == -1 || count <= 0 || !values){
+		return false;
+	}
+	glProgramUniform4fv(progid,id,count,(const GLfloat*)values);
+	return true;
 }

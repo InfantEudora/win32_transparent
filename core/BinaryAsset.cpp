@@ -1,38 +1,83 @@
 #include <stdio.h>
+#include <vector>
 #include "BinaryAsset.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("BinaryAsset", DEBUG_ALL);
 
-std::vector<BinaryAsset>BinaryAsset::file_assets;
+std::deque<BinaryAsset>BinaryAsset::file_assets;
 
 //Should be called when a file was loaded from disk and we want to make it into an asset.
-void BinaryAsset::StoreBinaryAsset(const char* filename, uint8_t* data, size_t sz){
+BinaryAsset* BinaryAsset::StoreBinaryAsset(const char* filename, uint8_t* data, size_t sz){
     //Find in file assets
     for (BinaryAsset& asset:file_assets){
         if (asset.name.compare(filename) == 0){
-            //Already marked. File loaded twice?
-            debug->Warn("Reloaded previously marked asset.\n");
-            return;
+            if (!asset.data){
+                //An entry ReleaseBinaryAsset emptied, being filled back in. Re-used rather than
+                //appended to so there is still exactly one entry per name - which is what
+                //DumpBinaryAssets walks to build the pack, and it must not see this file twice.
+                asset.data = data;
+                asset.size = sz;
+                return &asset;
+            }
+            //Already here. Whoever read the file again went round LoadFile to do it, so the only
+            //question is which buffer survives, and it has to be the one already in the cache:
+            //every caller served since it was stored is pointing at it.
+            debug->Warn("StoreBinaryAsset: %s is already stored, keeping the copy we handed out.\n",filename);
+            free(data);
+            return &asset;
         }
     }
 
     BinaryAsset a;
     a.name = filename;
-    // +1/[sz]=0: LoadFile()'s fresh-disk-read buffer is null-terminated
-    // (it calloc's sz+1 bytes), so callers that treat the result as a C
-    // string work on first load. Without preserving that here, every
-    // *cached* re-fetch of the same asset would hand back this
-    // undersized, non-null-terminated copy instead -- silently correct
-    // for binary data, silently broken (reads past the end into
-    // whatever's next on the heap) for anything text-like, e.g. GLSL
-    // shader source.
-    uint8_t* local_copy = new uint8_t[sz + 1];
-    memcpy(local_copy,data,sz);
-    local_copy[sz] = 0;
-    a.data = local_copy;
+    // ADOPTED, not copied. This is the only copy of the file that will exist, and LoadFile
+    // hands out a pointer to it rather than to a duplicate - see File.h on who owns what.
+    // The sz+1-with-a-zero shape is the caller's promise (LoadFile calloc's it) and it is what
+    // makes an asset safe to treat as a C string: GLSL source is loaded this way, and
+    // DumpBinaryAssets compresses size+1 bytes so a baked-in asset keeps the same guarantee.
+    a.data = data;
     a.size = sz;
     file_assets.push_back(a);
+    return &file_assets.back();
+}
+
+/*
+    Searched in the same order as GetBinaryAsset, and that ordering is the whole answer here: a
+    packed build finds the embedded copy first and so never reads the file from disk at all, which
+    is precisely why "I have released it, now re-read it" cannot mean anything there.
+*/
+FileRelease BinaryAsset::ReleaseBinaryAsset(const char* filename){
+    for (BinaryAsset& asset:file_assets){
+        if (asset.name.compare(filename) == 0){
+            if (!asset.data){
+                debug->Trace("ReleaseBinaryAsset: %s is already released\n",filename);
+                return FILE_RELEASE_FAILED;
+            }
+            free(asset.data);
+            asset.data = NULL;
+            asset.size = 0;
+            debug->Info("Released BinaryAsset %s; it will be read from file again\n",filename);
+            return FILE_RELEASED;
+        }
+    }
+
+    for (int i = 0;i < num_memory_assets;i++){
+        if (assets[i].name.compare(filename) == 0){
+            /*
+                Embedded, so no. Note that this says no even once Uncompress has put a heap buffer
+                in front of it: that buffer could be freed, but doing so would reclaim memory
+                rather than pick up an edit - the bytes behind it are a static array in this
+                executable and cannot have changed. Dropping decompressed copies under memory
+                pressure is a real thing to want and a different decision from this one.
+            */
+            debug->Info("BinaryAsset %s is embedded in the executable - nothing to release\n",filename);
+            return FILE_RELEASE_EMBEDDED;
+        }
+    }
+
+    debug->Trace("ReleaseBinaryAsset: nothing held for %s\n",filename);
+    return FILE_RELEASE_FAILED;
 }
 
 void BinaryAsset::ListBinaryAssets(){
@@ -64,7 +109,18 @@ BinaryAsset* BinaryAsset::GetBinaryAsset(const char* filename){
     //Find in file assets
     for (BinaryAsset& asset:file_assets){
         if (asset.name.compare(filename) == 0){
+            if (!asset.data){
+                //Released, and not read again since. The ENTRY stays (emptying it in place is
+                //what keeps every other element of the deque where it is), but it is no longer an
+                //answer to anything: say we have nothing so the caller goes back to the file, and
+                //StoreBinaryAsset will fill this same entry back in. Names are unique here, so
+                //there is no second one to keep looking for.
+                debug->Trace("BinaryAsset %s was released; going back to the file\n",asset.name.c_str());
+                break;
+            }
             debug->Info("Got BinaryAsset %s from cache\n",asset.name.c_str());
+            //A pointer into file_assets, which outlives every caller. That it survives the
+            //next StoreBinaryAsset is the deque's doing - see BinaryAsset.h.
             return &asset;
         }
     }
@@ -82,7 +138,22 @@ BinaryAsset* BinaryAsset::GetBinaryAsset(const char* filename){
 
 #ifdef DUMP_BINARYASSETS
 void BinaryAsset::DumpBinaryAssets(){
-    int num_file_assets = file_assets.size();
+    /*
+        Only entries that still hold their bytes. ReleaseBinaryAsset empties an entry in place and
+        the next load fills it back in, so an empty one here means a file was released and never
+        read again - baking that into the pack would produce a zero-length asset that fails at
+        run time in a build where there is no file to fall back to. Skipped and named instead.
+    */
+    std::vector<BinaryAsset*> to_dump;
+    for (BinaryAsset& asset:file_assets){
+        if (!asset.data){
+            debug->Warn("DumpBinaryAssets: %s was released and not read again - left out of the pack\n",asset.name.c_str());
+            continue;
+        }
+        to_dump.push_back(&asset);
+    }
+
+    int num_file_assets = to_dump.size();
     if (num_file_assets == 0){
         return;
     }
@@ -100,7 +171,8 @@ void BinaryAsset::DumpBinaryAssets(){
 
     //Build the binary blob, keep track off assets and offsets.
     size_t offset = 0;
-    for (BinaryAsset& asset:file_assets){
+    for (BinaryAsset* asset_ptr:to_dump){
+        BinaryAsset& asset = *asset_ptr;
         debug->Info("Dump BinaryAsset: %s\n",asset.name.c_str());
         //We compress them
         if (1){
@@ -129,7 +201,8 @@ void BinaryAsset::DumpBinaryAssets(){
     }
     fprintf(file,"};\n");
     fprintf(file,"BinaryAsset BinaryAsset::assets[] = {\n");
-    for (BinaryAsset& asset:file_assets){
+    for (BinaryAsset* asset_ptr:to_dump){
+        BinaryAsset& asset = *asset_ptr;
         fprintf(file,"{\n");
         fprintf(file,".name=\"%s\",\n",asset.name.c_str());
         fprintf(file,".iscompressed=%d,\n",asset.iscompressed);

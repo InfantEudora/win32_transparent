@@ -2,15 +2,14 @@
 #include "Debug.h"
 #include "type_helpers.h"
 
+#include <math.h>
+#include <stdlib.h>
+
 static Debugger* debug = new Debugger("RRandom",DEBUG_ALL);
 
 //Alternatively, the rand() from stlib is quite easy. And there are some easy float implementations:
 //https://iquilezles.org/articles/sfrand/
 
-
-//The buffer shared by every instance that goes through LoadFromTexture. See the header.
-Texture* RRandom::shared_texture = NULL;
-std::string RRandom::shared_texture_filename;
 
 RRandom::RRandom(int seed){
     this->seed = (uint32_t)seed;
@@ -18,12 +17,18 @@ RRandom::RRandom(int seed){
 }
 
 RRandom::~RRandom(){
-    //Only a buffer from Generate belongs to this instance. The shared one is left alone - other
-    //instances are still reading it, and it is meant to outlive all of them.
-    if (f_owns_texture && rnd_texture){
-        delete rnd_texture;
+    ReleaseBuffer();
+}
+
+//Only a buffer from Generate belongs to this instance. One handed over by UseNoise is left
+//alone: its owner is still using it, and is meant to outlive this generator.
+void RRandom::ReleaseBuffer(){
+    if (f_owns_buffer && buffer){
+        free(buffer);
     }
-    rnd_texture = NULL;
+    buffer = NULL;
+    buffer_sz = 0;
+    f_owns_buffer = false;
 }
 
 //Places this instance's cursor at an offset derived from its seed, so two instances sharing one
@@ -31,73 +36,73 @@ RRandom::~RRandom(){
 //into the CONTENTS instead, and starting that at a non-zero offset would mean the first draws of a
 //fresh private stream came from the middle of it for no reason.
 void RRandom::SetStartOffset(){
-    if (rnd_texture && (rnd_texture->img_data_sz > 0)){
-        state = (uint32_t)(seed % rnd_texture->img_data_sz);
+    if (buffer_sz > 0){
+        state = (uint32_t)(seed % buffer_sz);
     }else{
         state = 0;
     }
 }
 
-//Attaches this instance to the ONE shared noise buffer, loading it on first use. The seed becomes
-//the starting offset rather than choosing the contents - the whole point here is that everybody
-//samples the same noise.
-void RRandom::LoadFromTexture(const std::string& filename){
+//See the header for why each of the three cases does what it does.
+void RRandom::SetSeed(uint32_t new_seed){
+    seed = new_seed;
+    if (f_owns_buffer && buffer && (buffer_sz > 0)){
+        //Taken by value first: Generate releases the buffer before it allocates the new one, so
+        //reading buffer_sz inside the call would be reading a member that is about to be zeroed.
+        size_t size = buffer_sz;
+        Generate(size);
+    }else if (buffer && (buffer_sz > 0)){
+        SetStartOffset();
+    }
+}
+
+//Side of a square holding the buffer. Derived, never stored - noise has no meaningful shape, so
+//there is nothing to remember. floor, so side*side never runs off the end of the buffer.
+int RRandom::GetSquareSide() const{
+    if (buffer_sz == 0){
+        return 0;
+    }
+    return (int)sqrt((double)buffer_sz);
+}
+
+//Points this instance at noise somebody else owns - see the header, and
+//Texture::LoadIntoRRandomNoiseFile, which is what calls it. Nothing is copied and nothing will be
+//freed here: f_owns_buffer stays false, so the destructor leaves the owner's memory alone.
+void RRandom::UseNoise(uint8_t* data, size_t size){
     //A previous Generate on this instance left a private buffer behind; it is about to become
     //unreachable, so free it rather than leak it.
-    if (f_owns_texture && rnd_texture){
-        delete rnd_texture;
-    }
-    rnd_texture = NULL;
-    f_owns_texture = false;
+    ReleaseBuffer();
 
-    if (shared_texture == NULL){
-        shared_texture = new Texture();
-        //TEXTURE_DONT_UPLOAD: this is CPU-side noise. An app that wants it on the GPU as well
-        //uploads it itself - doing it here would need a GL context on whatever thread called.
-        //(The filename is now actually used. It used to be ignored in favour of a hardcoded
-        //"data/textures/noise.png", so every caller got that file whatever it asked for.)
-        shared_texture->LoadFromFile(filename.c_str(),GL_TEXTURE_2D,TEXTURE_DONT_UPLOAD);
-        shared_texture_filename = filename;
-    }else if (shared_texture_filename.compare(filename) != 0){
-        //Deliberately not a second buffer: the contract of this function is that everyone shares
-        //one. Warn rather than silently hand back noise from a file the caller did not name.
-        debug->Warn("RRandom: shared noise already loaded from '%s', ignoring request for '%s'\n",
-                    shared_texture_filename.c_str(),filename.c_str());
-    }
-
-    rnd_texture = shared_texture;
-    if (!rnd_texture || (rnd_texture->img_data_sz == 0)){
-        debug->Err("RRandom: no usable noise loaded from '%s' - every draw will return 0\n",filename.c_str());
+    if (!data || (size == 0)){
+        debug->Err("RRandom::UseNoise given %s - every draw will return 0\n",
+                   data ? "a zero-length buffer" : "no buffer");
         return;
     }
+    buffer = data;
+    buffer_sz = size;
+    f_owns_buffer = false;
+    //The seed means an OFFSET here rather than contents: several instances on one buffer are
+    //meant to sample the same noise from different places.
     SetStartOffset();
+    //A fresh buffer deserves a fresh complaint if it turns out to be unusable.
+    f_warned_empty = false;
 }
 
 //Builds a buffer belonging to THIS instance, filled from its seed. Two instances generated with
 //different seeds therefore share nothing at all.
-void RRandom::Generate(int w, int h){
-    if (f_owns_texture && rnd_texture){
-        delete rnd_texture;
-    }
-    rnd_texture = NULL;
-    f_owns_texture = false;
+void RRandom::Generate(size_t num_bytes){
+    ReleaseBuffer();
 
-    size_t size = (size_t)max(w,0) * (size_t)max(h,0);
-    if (size == 0){
-        debug->Err("RRandom::Generate called with %ix%i - every draw will return 0\n",w,h);
+    if (num_bytes == 0){
+        debug->Err("RRandom::Generate called with 0 bytes - every draw will return 0\n");
         return;
     }
 
-    Texture* texture = new Texture();
-    texture->img_data = (uint8_t*)malloc(size);
-    if (!texture->img_data){
-        debug->Err("RRandom::Generate could not allocate %llu bytes\n",(unsigned long long)size);
-        delete texture;
+    uint8_t* data = (uint8_t*)malloc(num_bytes);
+    if (!data){
+        debug->Err("RRandom::Generate could not allocate %llu bytes\n",(unsigned long long)num_bytes);
         return;
     }
-    texture->img_data_sz = size;
-    texture->width = w;
-    texture->height = h;
 
     //xorshift32 rather than srand()/rand(). Two reasons, both of which matter to a class whose
     //entire purpose is reproducibility: rand() is one global stream, so seeding it here silently
@@ -121,33 +126,54 @@ void RRandom::Generate(int w, int h){
         s ^= s >> 17;
         s ^= s << 5;
     }
-    for (size_t i=0;i<size;i++){
+    for (size_t i=0;i<num_bytes;i++){
         s ^= s << 13;
         s ^= s >> 17;
         s ^= s << 5;
-        texture->img_data[i] = (uint8_t)(s >> 24);
+        data[i] = (uint8_t)(s >> 24);
     }
 
-    rnd_texture = texture;
-    f_owns_texture = true;
+    buffer = data;
+    buffer_sz = num_bytes;
+    f_owns_buffer = true;
     //A private buffer starts at the beginning: the seed is already expressed in its contents.
     state = 0;
 }
 
+//The 2D spelling, for callers already thinking in a width and a height. The shape is not kept -
+//see the header - so this is only a multiply.
+void RRandom::Generate(int w, int h){
+    if ((w <= 0) || (h <= 0)){
+        debug->Err("RRandom::Generate called with %ix%i - every draw will return 0\n",w,h);
+        ReleaseBuffer();
+        return;
+    }
+    Generate((size_t)w * (size_t)h);
+}
+
 //Returns a random uint8_t
 uint8_t RRandom::Get_uint8(){
-    if (!rnd_texture || (rnd_texture->img_data_sz == 0) || !rnd_texture->img_data){
+    if (!buffer || (buffer_sz == 0)){
+        //Once, not per draw - this is called thousands of times a second and the point is to be
+        //noticed, not to bury the log. Silently returning 0 forever is the failure an instance
+        //that was never Generate()d produces, and from the outside it looks like a generator
+        //that simply always rolls the minimum, which is a miserable thing to track down.
+        if (!f_warned_empty){
+            f_warned_empty = true;
+            debug->Err("RRandom: drawing from an empty generator - call Generate() or "
+                       "UseNoise() first. Every draw returns 0.\n");
+        }
         return 0;
     }
     //Reads at the cursor and THEN advances, so the offset SetStartOffset picked is genuinely the
     //first byte this instance draws. (This used to advance first, which meant byte 0 was only ever
     //reached by wrapping around, and a seeded offset would have been off by one.)
-    if (state >= rnd_texture->img_data_sz){
+    if (state >= buffer_sz){
         state = 0;  //buffer replaced by a smaller one since the cursor was last set
     }
-    uint8_t r = rnd_texture->img_data[state];
+    uint8_t r = buffer[state];
     state++;
-    if (state >= rnd_texture->img_data_sz){
+    if (state >= buffer_sz){
         state = 0;
     }
     return r;
@@ -237,5 +263,3 @@ vec3 RRandom::GetVec3(float min, float max){
     r.z = GetFloat(min,max);
     return r;
 }
-
-

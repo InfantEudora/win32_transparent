@@ -91,11 +91,16 @@ inline vec3& vec3::normalize(){
 }
 
 inline vec3 vec3::orthogonal() const{
-    float x = abs(x);
-    float y = abs(y);
-    float z = abs(z);
+    //The locals used to be named x/y/z, which shadowed the members and so initialised each one
+    //from its own indeterminate value rather than from the vector. Nothing called this, so it
+    //never showed up - and the build carries no -Wall to have caught it.
+    float ax = fabsf(x);
+    float ay = fabsf(y);
+    float az = fabsf(z);
 
-    vec3 other = x < y ? (x < z ? vec3(1,0,0) : vec3(0,0,1)) : (y < z ? vec3(0,1,0) : vec3(0,0,1));
+    //Cross against whichever axis we point along least: that is the pairing least likely to be
+    //near-parallel to us, and so the one that leaves the most length in the result.
+    vec3 other = ax < ay ? (ax < az ? vec3(1,0,0) : vec3(0,0,1)) : (ay < az ? vec3(0,1,0) : vec3(0,0,1));
     return cross(other);
 }
 

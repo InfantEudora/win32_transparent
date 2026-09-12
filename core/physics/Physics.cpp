@@ -1,4 +1,3 @@
-#include "glad.h"
 #include <vector>
 #include "Physics.h"
 #include "PhysicsWorld.h"
@@ -338,6 +337,45 @@ vec3 Physics::GetVelocity(){
 vec3 Physics::GetAngularVelocity(){
 	rp3d::Vector3 v = body->rigidbody->getAngularVelocity();
 	return vec3(v.x,v.y,v.z);
+}
+
+//--- Damping and axis locks -------------------------------------------------------------------
+//Plain forwards. See the header for why they are worth having: the damping pair exists mostly to
+//undo what Add*Collider sets without saying so, and the lock pair is the thing a flat game needs
+//and cannot find.
+
+void Physics::SetLinearDamping(float damping){
+	body->rigidbody->setLinearDamping(damping);
+}
+
+float Physics::GetLinearDamping(){
+	return (float)body->rigidbody->getLinearDamping();
+}
+
+void Physics::SetAngularDamping(float damping){
+	body->rigidbody->setAngularDamping(damping);
+}
+
+float Physics::GetAngularDamping(){
+	return (float)body->rigidbody->getAngularDamping();
+}
+
+void Physics::SetLinearLockAxis(const vec3& factor){
+	body->rigidbody->setLinearLockAxisFactor(rp3d::Vector3(factor.x,factor.y,factor.z));
+}
+
+vec3 Physics::GetLinearLockAxis(){
+	const rp3d::Vector3& f = body->rigidbody->getLinearLockAxisFactor();
+	return vec3(f.x,f.y,f.z);
+}
+
+void Physics::SetAngularLockAxis(const vec3& factor){
+	body->rigidbody->setAngularLockAxisFactor(rp3d::Vector3(factor.x,factor.y,factor.z));
+}
+
+vec3 Physics::GetAngularLockAxis(){
+	const rp3d::Vector3& f = body->rigidbody->getAngularLockAxisFactor();
+	return vec3(f.x,f.y,f.z);
 }
 
 vec3 Physics::GetForce(){

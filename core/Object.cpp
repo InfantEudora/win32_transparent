@@ -925,7 +925,7 @@ void Object::ApplyAnimation(float time_delta){
     }else if (animation_state == ANIMATION_STATE_TRANSITION){
         animation_transition_time += time_delta;
         if (animation_transition_time > animation_transition_time_max){
-            animation_transition_time = animation_transition_time;
+            animation_transition_time = animation_transition_time_max;
             //current_animation = next_animation;
             animation_state = ANIMATION_STATE_LOOPING;
         }

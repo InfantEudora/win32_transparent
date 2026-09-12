@@ -433,6 +433,36 @@ void ApplicationShip::PreRender(void){
 }
 
 void ApplicationShip::ReloadVolumeShader(void){
+    /*
+        Give the files back before reading them, or this reloads nothing.
+
+        LoadFile answers from the BinaryAsset table, and until ReleaseFile existed there was no
+        way to tell that table a file had changed - so this function compiled the bytes read at
+        start-up every time and produced an identical program. It has said "recompiles from disk"
+        and not done so since the cache was added.
+
+        The whole source set, not just the two filenames: shaders/density.glsl arrives through an
+        #include, and being able to edit it is most of the point of hot-reloading this shader at
+        all. Shader::source_files is that set, which is why it is recorded.
+
+        FILE_RELEASE_EMBEDDED is not a failure - it is a packed build telling us there is no file
+        behind the asset, so there is nothing to reload and we should say so rather than rebuild
+        an identical program and claim success.
+    */
+    if (volume_shader){
+        int num_embedded = 0;
+        for (const std::string& path:volume_shader->source_files){
+            if (ReleaseFile(path.c_str()) == FILE_RELEASE_EMBEDDED){
+                num_embedded++;
+            }
+        }
+        if (num_embedded > 0){
+            debug->Info("Not reloading: %i of this shader's %zu source files are baked into this build\n",
+                        num_embedded,volume_shader->source_files.size());
+            return;
+        }
+    }
+
     Shader* reloaded = new Shader("shaders/default.vert","shaders/raymarch_volume.frag");
     reloaded->uniform_callback = std::bind(&ApplicationShip::SetVolumeUniforms,this);
     //Only swap once the new one is known good. In practice a bad shader never gets this far -
@@ -1080,11 +1110,10 @@ void ApplicationShip::RunSimulationTick(){
     }
 
 
-    //Character input with gamepad. The focus check keeps a background window from flying the ship
-    //on input meant for another application - but a scripted hold (an MCP tool, later a replay)
-    //does not come from the OS, and an unfocused window is exactly when those run, so it has to
-    //be let through. See InputController's note on SyntheticHold.
-    if (ship_character && (main_window->f_has_focus || input->HasSyntheticHolds())){
+    //Character input with gamepad. The gate keeps a background window from flying the ship on
+    //input meant for another application, while letting a scripted hold through - see
+    //InputController::IsInputLive, which is that predicate.
+    if (ship_character && input->IsInputLive()){
         float gp_lx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_X);
         float gp_ly = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_LEFT_STICK_Y);
         float gp_rx = gamepad_controller->GetNormalizedAnalogValue(GAMEPAD_RIGHT_STICK_X);

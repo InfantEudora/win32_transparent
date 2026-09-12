@@ -8,9 +8,12 @@ WaveFile::WaveFile(){
 }
 
 WaveFile::~WaveFile(){
-    if (file_data){
-        free(file_data);
-    }
+    //Nothing to release. file_data came from LoadFile, which lends rather than gives: the file
+    //layer owns it and keeps it for the life of the process (see File.h). header and wav_data
+    //are just offsets into it, so they go the same way.
+    file_data = NULL;
+    wav_data = NULL;
+    header = NULL;
 }
 
 bool WaveFile::LoadWaveFile(const char* filename){

@@ -14,9 +14,10 @@ Texture::~Texture(){
     if (img_data){
         free(img_data);
     }
-    if (file_data){
-        free(file_data);
-    }
+    //file_data is NOT ours to free - LoadFile lends it out and the file layer keeps it for the
+    //life of the process (see File.h). img_data next to it IS ours: stb decoded that for us.
+    file_data = NULL;
+    file_data_sz = 0;
     if (hdr_data){
         stbi_image_free(hdr_data);
     }
@@ -156,10 +157,11 @@ void Texture::LoadFromMemory(uint8_t* data, size_t length, int target, int depth
 */
 void Texture::LoadFromFile(const char* filename, int target, int depth_in){
     if (file_data_sz > 0){
+        //Dropping a borrowed pointer, not releasing anything - the file layer owns it (File.h).
         debug->Info("LoadFromFile: Overwriting existing file data\n");
-        free(file_data);
     }
 
+    file_data = NULL;
     file_data_sz = 0;
     file_data = LoadFile(filename,&file_data_sz);
     if (!file_data){
@@ -315,13 +317,50 @@ void Texture::AppendTexture(Texture* target, int2 at){
     width = new_image_width;
     height = new_image_height;
     //Image format should already match or be set.
-    //Free any existing data
+    //Free any existing data. file_data is only let go of, never freed: it belongs to the file
+    //layer, which lent it to us and keeps it (File.h).
     free(img_data);
     img_data = NULL;
-    free(file_data);
     file_data = NULL;
     file_data_sz = 0;
     free(empty_line);
     img_data = new_img_data;
     img_data_sz = new_image_data_sz;
+}
+
+
+/*
+    Loads an image and hands its pixels to `rrand` to draw from - one decode feeding both the GPU
+    and the simulation.
+
+    This direction of the dependency is the point. RRandom used to hold a Texture*, which made
+    core/RRandom.h include glad.h, so asking for a seeded integer pulled in the whole OpenGL
+    loader - and a rules layer (tetris/Playfield.h, breakout/Field.h) could not include it at all.
+    Both wrote their own copy of the same xorshift32 instead. Now Texture knows about RRandom and
+    RRandom knows nothing about textures, files or GL.
+
+    The bytes stay THIS texture's: RRandom::UseNoise does not copy them and will never free them,
+    so this Texture must outlive every generator pointed at it. Several generators may share one
+    noise texture - each keeps its own cursor, and its seed picks where in the buffer it starts.
+
+    `depth_in` is passed straight through, so TEXTURE_DONT_UPLOAD gives CPU-side noise with no GL
+    object at all - which is what a caller wanting this only for the simulation should pass.
+
+    Note the buffer handed over is the DECODED image, so it is width*height*channels bytes, not
+    one byte per pixel. That is not a problem for noise - every byte is as random as every other -
+    but it does mean RRandom::GetSquareSide() describes the buffer rather than this image; the
+    real dimensions are this object's own width and height.
+*/
+void Texture::LoadIntoRRandomNoiseFile(const char* filename, int target, int depth_in, RRandom* rrand){
+    LoadFromFile(filename,target,depth_in);
+    if (!rrand){
+        return;
+    }
+    if (!img_data || (img_data_sz == 0)){
+        //LoadFromFile has already said which file and why. Saying it again as a generator problem
+        //is what stops this looking like "the random numbers are broken" later on.
+        debug->Err("LoadIntoRRandomNoiseFile: %s yielded no pixels, generator left empty\n",filename);
+        return;
+    }
+    rrand->UseNoise(img_data,img_data_sz);
 }

@@ -138,11 +138,12 @@ void ApplicationTetris::Init(void){
     RegisterCommandHandlers();
     RegisterMCPTools();
 
-    //60 ticks per second, not the engine's default 50. The classic gravity table in
-    //Playfield.cpp is denominated in 60Hz frames, so at 60 ticks the table means exactly what it
-    //meant on the hardware it came from, and every other duration in this app (DAS, lock delay,
-    //the clear flash) is a count of these same ticks.
-    SetPhysicsTPS(60.0f);
+    //60 ticks per second, not the engine's default 50, and taken from the RULES rather than
+    //written here as a literal: the gravity table in Playfield.cpp is denominated in 60Hz frames,
+    //so the rate is the rules' to declare and this app's to apply. See TETRIS_TPS in Playfield.h
+    //for why the dependency runs that way. Written as a literal, changing one and not the other
+    //would leave the table quietly meaning something it does not say.
+    SetPhysicsTPS(TETRIS_TPS);
 
     NewGame(current_seed);
 
@@ -682,11 +683,10 @@ void ApplicationTetris::RunSimulationTick(void){
 void ApplicationTetris::GatherInput(TetrisInput& out){
     InputController* input = main_scene->inputcontroller;
 
-    //Most apps gate input on main_window->f_has_focus so keys meant for another application do
-    //not drive the game. A scripted hold does not come from the OS, so it must come through that
-    //gate anyway - otherwise every MCP-driven test does nothing, which is exactly when the window
-    //is not in front. InputController::HasSyntheticHolds is the sanctioned way to ask.
-    if (!main_window->f_has_focus && !input->HasSyntheticHolds()){
+    //Keys meant for another application must not drive the game, but a scripted hold is not OS
+    //input and has to come through - otherwise every MCP-driven test does nothing, which is
+    //exactly when the window is not in front. See InputController::IsInputLive.
+    if (!input->IsInputLive()){
         das_direction = 0;
         das_ticks_left = 0;
         arr_ticks_left = 0;

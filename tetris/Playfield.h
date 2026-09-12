@@ -5,12 +5,18 @@
 #include <vector>
 #include <string>
 #include "Tetromino.h"
+#include "RRandom.h"
 
 /*
-    The rules of Tetris, and nothing else. No engine types appear in this header on purpose: the
-    board is a plain array and every duration is a count of SIMULATION TICKS, so the whole game
-    is a pure function of (previous state, this tick's input). That is what makes it replayable,
-    and it is also what lets it be reasoned about without a window on the screen.
+    The rules of Tetris, and nothing else. The board is a plain array and every duration is a
+    count of SIMULATION TICKS, so the whole game is a pure function of (previous state, this
+    tick's input). That is what makes it replayable, and it is also what lets it be reasoned
+    about without a window on the screen.
+
+    Nothing here reaches the renderer, the scene or GL. `RRandom` is the one engine header it
+    includes, and it can be: it holds a byte buffer and depends on nothing but the vector types.
+    (It used to hold a `Texture`, and so pull in `glad.h` - which is why this file carried its own
+    copy of the same xorshift32 that RRandom::Generate uses. See core/RRandom.h.)
 
     The Application owns the other half: turning held keys into the one-shot actions below
     (DAS/ARR), and turning the board array into cubes.
@@ -18,6 +24,34 @@
 
 #define TETRIS_BOARD_W  10
 #define TETRIS_BOARD_H  20
+
+/*
+    Ticks per second this game is simulated at. The app hands it to Application::SetPhysicsTPS -
+    see ApplicationTetris::Init - rather than picking its own number.
+
+    IT LIVES HERE, WITH THE RULES, AND THE DIRECTION MATTERS. The obvious instinct is the other
+    way round: let the rules ask the engine what rate they are running at. That is backwards,
+    because the rules OWN the rate - the gravity table in Playfield.cpp is the NES frame counts,
+    so 60 is not a preference the engine grants, it is what makes that table mean what it says.
+    Every other duration here (DAS, lock delay, the clear flash) is a count of these same ticks.
+    So the rules declare it and the app applies it: one direction, one source of truth, nothing
+    to drift.
+
+    The rules also cannot ask, which is the same fact seen from the other side: nothing in this
+    header may reach an engine type, so there is no Scene here to call GetPhysicsTimestep() on.
+    That is a feature. A rules layer that is a pure function of (previous state, this tick's
+    input) is what makes the game replayable, and a rate it fetched at runtime would be one more
+    input to record.
+
+    And it should not be passed in per tick either, tempting as `Tick(dt, ...)` looks: the engine
+    deliberately keeps the timestep CONSTANT for the life of a run (Application::GetPhysicsTimestep;
+    physics_time_factor scales how OFTEN ticks run and never how long one is) precisely so a
+    recorded run replays. Handing the rules a per-tick dt reopens that door for nothing.
+
+    `breakout/Field.h` does the same thing with BREAKOUT_TPS. See engine backlog item 51, which was
+    declined for these reasons.
+*/
+#define TETRIS_TPS      60.0f
 
 //Tuning, all in ticks. The app runs at 60 ticks/second (Application::SetPhysicsTPS), which is
 //also the unit the classic gravity table below is denominated in, so these read as frames.
@@ -69,32 +103,12 @@ struct TetrisEvents{
 };
 
 /*
-    A tiny xorshift32, private to the piece bag.
-
-    core/RRandom.h is the engine's "reproducable random" and would have been the obvious choice,
-    but it cannot be used for this: its noise buffer is a process-wide static shared by every
-    RRandom instance, its state member is left uninitialised by the constructor, and SetSeed
-    writes a `seed` field that nothing ever reads. So two RRandom instances are one stream, that
-    stream starts at an indeterminate offset, and it cannot be seeded. See docs/tetris_findings.md.
+    Bytes of noise the piece bag draws from. The bag is a Fisher-Yates shuffle of seven, so it
+    spends six GetInt calls - 24 bytes - per seven pieces, and this covers roughly 19,000 pieces
+    before the stream wraps and starts repeating (see core/RRandom.h). A long game is a couple of
+    thousand, so the margin is deliberate and 64 KB is nothing.
 */
-struct TetrisRandom{
-    uint32_t state = 0x12345678u;
-    void SetSeed(uint32_t seed){
-        state = seed ? seed : 0x12345678u;   //xorshift is stuck at zero forever
-    }
-    uint32_t Next(){
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        return state;
-    }
-    int GetInt(int imin, int imax){          //inclusive both ends
-        if (imax <= imin){
-            return imin;
-        }
-        return imin + (int)(Next() % (uint32_t)(imax - imin + 1));
-    }
-};
+#define TETRIS_RANDOM_BYTES 65536
 
 class Playfield{
 public:
@@ -155,7 +169,9 @@ public:
     std::vector<std::string> ToAsciiRows() const;
 
 private:
-    TetrisRandom random;
+    //The bag's own stream. Seeded per game by NewGame; drawn from nowhere but RefillBag, on
+    //the simulation thread, which is what keeps the piece order reproducible.
+    RRandom random;
     std::vector<int> bag;           //the current 7-bag, drawn down to empty then refilled
 
     int gravity_ticks = 0;          //ticks until the piece falls one more cell

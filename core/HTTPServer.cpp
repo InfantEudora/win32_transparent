@@ -85,17 +85,19 @@ void HTTPServer::SetHTMLContent(const std::string& html)
 
 bool HTTPServer::LoadHTMLFromFile(const std::string& filename)
 {
-	size_t sz = 0;
-	uint8_t* data = LoadFile(filename.c_str(), &sz,true);
-	if (!data || sz == 0) {
+	// ReadFileToString rather than LoadFile, and both halves of that matter here. The page is
+	// edited while the server is running, so it must NOT be served out of a cache that has no
+	// way of being told it is stale; and it is allowed not to exist, which LoadFile answers by
+	// calling Fatal and ending the process - the "not found" path below could never run.
+	std::string contents;
+	if (!ReadFileToString(filename.c_str(), contents) || contents.empty()) {
 		http_debug->Trace("LoadHTMLFromFile: not found %s\n", filename.c_str());
 		return false;
 	}
 
-	// Safe copy into std::string
-	m_htmlContent.assign((char*)data, sz);
+	m_htmlContent = contents;
 	m_htmlFilePath = filename;
-	http_debug->Info("Loaded HTML from file: %s (%zu bytes)\n", filename.c_str(), sz);
+	http_debug->Info("Loaded HTML from file: %s (%zu bytes)\n", filename.c_str(), m_htmlContent.size());
 	return true;
 }
 
@@ -471,10 +473,12 @@ handle_get:
 	{
 		// Serve a few static files (like /modes.json)
 		if (path == "/modes.json") {
-			size_t sz = 0;
-			uint8_t* data = LoadFile("data/modes.json", &sz);
-			if (data && sz > 0) {
-				std::string body((char*)data, sz);
+			// Read fresh and non-fatally, like the page itself: a file served to a remote client
+			// must be allowed to be missing (LoadFile answers that by exiting the process, so the
+			// 404 below was unreachable) and is edited while the server runs.
+			std::string file_body;
+			if (ReadFileToString("data/modes.json", file_body) && !file_body.empty()) {
+				std::string body = file_body;
 				std::ostringstream response;
 				response << "HTTP/1.1 200 OK\r\n";
 				response << "Content-Type: application/json; charset=UTF-8\r\n";
@@ -505,10 +509,10 @@ handle_get:
 		}
 		// The main page (data/www/index.html) references style.css as a sibling file.
 		if (path == "/style.css") {
-			size_t sz = 0;
-			uint8_t* data = LoadFile("data/www/style.css", &sz);
-			if (data && sz > 0) {
-				std::string body((char*)data, sz);
+			// Same reasoning as /modes.json above.
+			std::string file_body;
+			if (ReadFileToString("data/www/style.css", file_body) && !file_body.empty()) {
+				std::string body = file_body;
 				std::ostringstream response;
 				response << "HTTP/1.1 200 OK\r\n";
 				response << "Content-Type: text/css; charset=UTF-8\r\n";

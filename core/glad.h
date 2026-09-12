@@ -362,10 +362,18 @@ GLAPI PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv;
 //which all take the program they mean. GL 4.1; the context here is 4.5 core (Window.cpp).
 typedef void (APIENTRYP PFNGLPROGRAMUNIFORM1IPROC)(GLuint program, GLint location, GLint v0);
 GLAPI PFNGLPROGRAMUNIFORM1IPROC glProgramUniform1i;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORM1IVPROC)(GLuint program, GLint location, GLsizei count, const GLint *value);
+GLAPI PFNGLPROGRAMUNIFORM1IVPROC glProgramUniform1iv;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORM1FPROC)(GLuint program, GLint location, GLfloat v0);
+GLAPI PFNGLPROGRAMUNIFORM1FPROC glProgramUniform1f;
 typedef void (APIENTRYP PFNGLPROGRAMUNIFORM1FVPROC)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
 GLAPI PFNGLPROGRAMUNIFORM1FVPROC glProgramUniform1fv;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORM2FVPROC)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
+GLAPI PFNGLPROGRAMUNIFORM2FVPROC glProgramUniform2fv;
 typedef void (APIENTRYP PFNGLPROGRAMUNIFORM3FVPROC)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
 GLAPI PFNGLPROGRAMUNIFORM3FVPROC glProgramUniform3fv;
+typedef void (APIENTRYP PFNGLPROGRAMUNIFORM4FVPROC)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
+GLAPI PFNGLPROGRAMUNIFORM4FVPROC glProgramUniform4fv;
 typedef void (APIENTRYP PFNGLPROGRAMUNIFORMMATRIX3FVPROC)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 GLAPI PFNGLPROGRAMUNIFORMMATRIX3FVPROC glProgramUniformMatrix3fv;
 typedef void (APIENTRYP PFNGLPROGRAMUNIFORMMATRIX4FVPROC)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);

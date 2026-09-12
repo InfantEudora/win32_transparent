@@ -1,4 +1,3 @@
-#include "glad.h"
 #include <vector>
 #include "PhysicsBody.h"
 #include "Debug.h"

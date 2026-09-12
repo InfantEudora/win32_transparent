@@ -4,6 +4,46 @@
 #include "Debug.h"
 static Debugger *debug = new Debugger("GLTFLoader", DEBUG_WARN);
 
+/*
+    Solve a triangle's tangent from its UV parametrisation.
+
+    The standard solve divides by the signed area of the triangle in UV space. That area is zero
+    whenever the three UVs are collinear, which is not an exotic case: it is every face of an
+    extrusion nobody unwrapped, and 62% of the triangles in data/glyphs_unispace.glb. Dividing
+    anyway ships inf/NaN into the vertex buffer, where it does nothing at all until the mesh is
+    given a normal map - shaders/default.frag only reaches for the tangent then - and at that
+    point it shades black or explodes on some triangles and not others, pointing nowhere near
+    this loader. vec3::normalize() does not rescue it either: it guards s <= 0, and a NaN fails
+    that test and survives the square root.
+
+    When there is no UV area there is no *correct* tangent to find - handedness is meaningless
+    without UVs - so any vector perpendicular to the normal will do. The only job of the fallback
+    is to be finite and unit length.
+
+    Returns true when the tangent was solved from the UVs, false when it came from the fallback,
+    so the caller can count how much of a mesh arrived without a usable unwrap.
+*/
+static bool SolveTangent(const vec3& edge1, const vec3& edge2, const vec2& deltaUV1, const vec2& deltaUV2, const vec3& normal, vec3* out){
+    float area = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+    if (fabsf(area) > 1e-10f){
+        vec3 tangent = (edge1 * deltaUV2.y - edge2 * deltaUV1.y) * (1.0f / area);
+
+        //Gram-Schmidt against the normal. A tangent parallel to the normal is useless even when
+        //it is finite, and this is where such a one collapses to zero length and gets rejected
+        //below rather than being normalised into a direction that means nothing.
+        vec3 ortho = tangent - normal * normal.dot(tangent);
+
+        //An area that is small but above the threshold can still overflow the divide, so the
+        //result is checked rather than trusted.
+        if (isfinite(ortho.x) && isfinite(ortho.y) && isfinite(ortho.z) && ortho.length() > 1e-6f){
+            *out = ortho.normalize();
+            return true;
+        }
+    }
+    *out = normal.orthogonal().normalize();
+    return false;
+}
+
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
     mode_strings[TINYGLTF_MODE_POINTS] = "TINYGLTF_MODE_POINTS";
@@ -778,6 +818,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
 
         //Assemble the triangles:
         int vertex_index = 0;
+        int unwrapped_tangents = 0; //Triangles with no UV area, reported once per primitive below.
         for (int t=0;t<triangle_count;t++){
             if (skinned){
                 skinned_vertex vert1 = GetSkinnedVertex(position_bufferview,normal_bufferview,uv_bufferview,bones_bufferview,weights_bufferview, GetIndex(indexAccessor,vertex_index + 0));
@@ -790,9 +831,9 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 vec2 deltaUV1 = vert2.uv - vert1.uv;
                 vec2 deltaUV2 = vert3.uv - vert1.uv;
 
-                float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-                vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
-                vert1.tangent.normalize();
+                if (!SolveTangent(edge1,edge2,deltaUV1,deltaUV2,vert1.normal,&vert1.tangent)){
+                    unwrapped_tangents++;
+                }
                 vert2.tangent = vert1.tangent;
                 vert3.tangent = vert1.tangent;
 
@@ -815,9 +856,9 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 vec2 deltaUV1 = vert2.uv - vert1.uv;
                 vec2 deltaUV2 = vert3.uv - vert1.uv;
 
-                float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
-                vert1.tangent = (edge1 * deltaUV2.y   - edge2 * deltaUV1.y)*f;
-                vert1.tangent.normalize();
+                if (!SolveTangent(edge1,edge2,deltaUV1,deltaUV2,vert1.normal,&vert1.tangent)){
+                    unwrapped_tangents++;
+                }
                 vert2.tangent = vert1.tangent;
                 vert3.tangent = vert1.tangent;
 
@@ -831,6 +872,13 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 verts.push_back(vert3);
             }
             vertex_index += 3;
+        }
+
+        //The old code was silent about this and the mesh loaded looking fine, which is most of why
+        //it went unnoticed. Say it out loud: it is the difference between "my normal map is broken"
+        //and "this mesh was never unwrapped".
+        if (unwrapped_tangents){
+            debug->Warn("%i of %i triangles have no UV area; their tangents are placeholders. Normal mapping this mesh will not work.\n",unwrapped_tangents,triangle_count);
         }
 
         //In addition to attibutes, it has 'targets' which are effectively the same, they form meshes.

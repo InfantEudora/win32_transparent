@@ -31,7 +31,14 @@ InputController::InputController(){
     AddKeyMap(VK_RSHIFT,INPUT_SHIFT);
 }
 
-KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
+//One mapping, whatever kind of hardware drives it. A second mapping for an action it already
+//knows shares that action's KeyState, which is what lets several keys (or a key and a stick) hold
+//one action between them.
+//
+//NOTE the returned pointer is into `keymap`, so it is invalidated by the next mapping added. It is
+//safe to use immediately and not worth keeping - which is why AddGamePadMap takes its dead zone as
+//an argument rather than expecting the caller to write it through this pointer afterwards.
+KeyMap* InputController::AddMapping(uint32_t syskey, uint32_t mapped, int analog_index){
     bool new_mapping = true;
     KeyMap* same_map = NULL;
     for (KeyMap& map: keymap){
@@ -45,6 +52,7 @@ KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
     KeyMap m;
     m.system_keycode = syskey;
     m.mapped_keycode = mapped;
+    m.analog_index = analog_index;
     if (new_mapping){
         m.state = new KeyState();
     }else{
@@ -53,6 +61,10 @@ KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
     }
     keymap.push_back(m);
     return &keymap.back();
+}
+
+KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
+    return AddMapping(syskey,mapped,-1);
 }
 
 void InputController::UpdateKeyState(uint64_t sim_tick){
@@ -295,8 +307,23 @@ void InputController::AddSyntheticHold(uint32_t mapped_keycode, bool axis, float
             synthetic_holds[i].ticks_remaining = 0;
             return;
         }
-        //Re-asserting the same control refreshes it. f_started is deliberately left alone: an
-        //ongoing press must not produce a second key-down.
+        /*
+            Re-asserting the same control refreshes it.
+
+            f_started is deliberately left alone for a BUTTON: an ongoing press must not produce a
+            second key-down. An AXIS is not the same case, and treating it as one was a bug. An
+            axis event's VALUE is its entire content, so a re-assert that changes the value has to
+            emit again - otherwise h.value is updated, nothing is sent, and KeyState::fvalue keeps
+            the old value for as long as the hold keeps being refreshed.
+
+            That is exactly what a scripted player does when it changes direction: hold steer at
+            +1, then at -1 before the first hold has expired. The second command was accepted and
+            silently did nothing, which reads as a control that has stuck - and it defeats any bot
+            that steers by re-issuing a hold, which is how both of this repo's bots steer.
+        */
+        if (axis && (synthetic_holds[i].value != value)){
+            synthetic_holds[i].f_started = false;
+        }
         synthetic_holds[i].f_axis = axis;
         synthetic_holds[i].value = value;
         synthetic_holds[i].ticks_remaining = duration_ticks;
@@ -409,12 +436,66 @@ void InputController::ListDevices(){
     }
 }
 
-GamePadMap* InputController::AddGamePadMap(int analog_index, uint32_t mapped){
-    GamePadMap m;
-    m.analog_index = analog_index;
-    m.mapped_keycode = mapped;
-    gamepad_map.push_back(m);
-    return &gamepad_map.back();
+//See the header. System keycode 0 because no KEY drives this mapping - the analog index is what
+//names its hardware.
+KeyMap* InputController::AddGamePadMap(int analog_index, uint32_t mapped, int32_t dead_zone, int32_t zero_offset){
+    if ((analog_index < 0) || (analog_index >= GAMEPAD_MAX_ANALOG_VALUES)){
+        debug->Err("AddGamePadMap: analog index %i is outside 0..%i, mapping ignored\n",
+                   analog_index,GAMEPAD_MAX_ANALOG_VALUES - 1);
+        return NULL;
+    }
+    KeyMap* m = AddMapping(0,mapped,analog_index);
+    if (m){
+        m->dead_zone = dead_zone;
+        m->zero_offset = zero_offset;
+    }
+    return m;
+}
+
+//The raw XInput short, through the mapping's zero offset and dead zone, to -1..1. One copy of the
+//arithmetic; it used to live inside GetNormalizedAnalogValue, which was the only reader.
+static float NormalizeAnalog(int raw_value, int32_t zero_offset, int32_t dead_zone){
+    raw_value = raw_value - zero_offset;
+    if (raw_value > dead_zone){
+        return (float)(raw_value - dead_zone) / (32767.0f - dead_zone);
+    }
+    if (raw_value < -dead_zone){
+        return (float)(raw_value + dead_zone) / (32768.0f - dead_zone);
+    }
+    return 0.0f;
+}
+
+/*
+    Turns the sticks into ordinary axis events.
+
+    ONLY ON A CHANGE, which is the whole reason this is not a plain per-tick write. A gamepad is
+    polled, so it has a value every tick whether or not anyone touched it; an event stream is not,
+    and a centred stick submitting 0.0 every tick would overwrite whatever else was driving that
+    action - which in practice means every scripted HoldAxis stops working the moment a controller
+    is plugged in. Reporting only transitions makes the two sources coexist: last writer wins, and
+    a stick nobody is touching is not a writer.
+
+    It also keeps a recording honest and small: what gets written down is the thumb actually
+    moving, not fifty identical samples a second of it resting.
+*/
+void InputController::SubmitAnalogAxes(){
+    for (KeyMap& map: keymap){
+        if (!map.IsAnalog()){
+            continue;
+        }
+        float value = NormalizeAnalog(analog_values[map.analog_index],map.zero_offset,map.dead_zone);
+        if (map.f_analog_sent && (value == map.last_analog_value)){
+            continue;
+        }
+        map.last_analog_value = value;
+        map.f_analog_sent = true;
+
+        InputEvent e;
+        e.type = INPUT_EVENT_AXIS_SCALAR;
+        e.mapped_keycode = (uint16_t)map.mapped_keycode;
+        e.fvalue = value;
+        SubmitEvent(e);
+    }
 }
 
 void InputController::PollGamepad(){
@@ -447,6 +528,9 @@ void InputController::PollGamepad(){
         for (int i=0;i<GAMEPAD_MAX_ANALOG_VALUES;i++){
             analog_values[i] = 0;
         }
+        //...and report the way back to centre, or an axis stays at its last deflection in every
+        //KeyState that was reading it.
+        SubmitAnalogAxes();
         //Same for the buttons: a pad unplugged mid-press must not leave the action latched down.
         ApplyGamepadButtons(0);
         gamepad_rescan_countdown = GAMEPAD_RESCAN_TICKS;
@@ -458,6 +542,7 @@ void InputController::PollGamepad(){
         for (int i=0;i<GAMEPAD_MAX_ANALOG_VALUES;i++){
             analog_values[i] = 0;
         }
+        SubmitAnalogAxes();
         ApplyGamepadButtons(0);
         return;
     }
@@ -474,6 +559,9 @@ void InputController::PollGamepad(){
     analog_values[3] = state.Gamepad.sThumbRY;
     analog_values[4] = (SHORT)state.Gamepad.bLeftTrigger * 128;
     analog_values[5] = (SHORT)state.Gamepad.bRightTrigger * 128;
+
+    //And into the event stream, so a stick reaches gameplay by the same route a key does.
+    SubmitAnalogAxes();
 
     //Rumble decay, unchanged.
     bool send_disable = false;
@@ -524,29 +612,15 @@ void InputController::ApplyGamepadButtons(uint16_t buttons){
     }
 }
 
+//An alias for GetAxis, kept because four apps call it by this name.
+//
+//It used to walk `gamepad_map` and normalise the raw value on the spot, which meant a gamepad
+//axis could ONLY be read through this function - a scripted HoldAxis on the same action was
+//invisible to it, and GetAxis was in turn blind to the stick. PollGamepad now submits the stick
+//as an ordinary axis event, so both land in one KeyState and there is a single place to read an
+//axis from, whoever is driving it.
 float InputController::GetNormalizedAnalogValue(uint32_t mapped_key){
-    if (dev_index == -1){
-        return 0.0f;
-    }
-    for (GamePadMap& map: gamepad_map){
-        if (map.mapped_keycode != mapped_key){
-            continue;
-        }
-        if (map.analog_index >= 0 && map.analog_index < GAMEPAD_MAX_ANALOG_VALUES){
-            int raw_value = analog_values[map.analog_index];
-            int32_t zero_offset = map.zero_offset;
-            int32_t dead_zone = map.dead_zone;
-            float normalized = 0.0f;
-            raw_value = raw_value - zero_offset;
-            if (raw_value > dead_zone){
-                normalized = (float)(raw_value - dead_zone) / (32767.0f - dead_zone);
-            }else if (raw_value < -dead_zone){
-                normalized = (float)(raw_value + dead_zone) / (32768.0f - dead_zone);
-            }
-            return normalized;
-        }
-    }
-    return 0.0f;
+    return GetAxis(mapped_key);
 }
 
 //Conclusion: Sending things with the HID interface does not work.
@@ -691,8 +765,31 @@ void InputController::Tick(){
         km.state->f_was_released = false;
 
         if (km.state->f_processed){
+            //Somebody read it this pass, so it has done its job.
             km.state->delta = 0;
             km.state->f_processed = false;
+            km.state->delta_unread_passes = 0;
+        }else if (km.state->delta != 0){
+            /*
+                Nobody read it. Hold it briefly - the render thread consumes mouse deltas for
+                camera mouse-look during the window after this call, and clearing immediately
+                would leave it reading zeroes - but not forever.
+
+                Forever is what this used to be, and it is a real bug rather than a tidiness
+                point: a relative axis ACCUMULATES, so anything that stops the readers banks
+                movement. A paused simulation is the obvious case (no tick runs, so no gameplay
+                reads) and an app whose input gate returns early is another. The delta then
+                arrives in one lump on the first read after the resume, and whatever it drives
+                teleports. Measured in APP=Breakout as the paddle snapping to the wall on the
+                first scripted step after a pause.
+            */
+            km.state->delta_unread_passes++;
+            if (km.state->delta_unread_passes > INPUT_DELTA_GRACE_PASSES){
+                km.state->delta = 0;
+                km.state->delta_unread_passes = 0;
+            }
+        }else{
+            km.state->delta_unread_passes = 0;
         }
     }
 }

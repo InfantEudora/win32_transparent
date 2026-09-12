@@ -55,12 +55,10 @@ class InputController;
 #define GAMEPAD_KEY_X               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_X)
 #define GAMEPAD_KEY_Y               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_Y)
 
-struct GamePadMap{
-    int analog_index = -1;
-    uint32_t mapped_keycode = 0;   // Our keycode
-    int32_t zero_offset = 0;
-    int32_t dead_zone = 50;
-};
+//GamePadMap is gone: an analog stick is now a KeyMap like everything else - see the analog block
+//in KeyMap below, and AddGamePadMap. It used to be a parallel table with its own lookup, which
+//meant a gamepad axis had no KeyState, so GetAxis returned 0 for it forever and a scripted
+//HoldAxis on it was dropped without a word.
 
 /*
     Handles input messages from a window message queue,
@@ -139,6 +137,22 @@ struct SyntheticHold{
     bool f_started = false;         //the press/set has already been emitted
 };
 
+/*
+    How many physics passes a RELATIVE axis delta may sit unread before Tick() throws it away.
+
+    It cannot be zero. A delta is not necessarily consumed by the simulation: the render thread
+    reads mouse deltas for camera mouse-look (Application::UpdateUICameraControls -> GetDelta) at
+    framerate, and Tick() runs at the end of a physics pass, so a delta has to survive at least
+    long enough for that window to open or mouse-look loses motion.
+
+    It must also not be unbounded, which is what it was. Deltas ACCUMULATE (INPUT_EVENT_AXIS_RELATIVE
+    adds), and the clear was conditional on somebody having read them - so across anything that
+    stops the readers, a pause above all, the movement piled up silently and arrived as one jump on
+    the tick after the resume. Two passes is ~40 ms at 50 Hz: several frames of grace for the render
+    thread, and a hard cap on how much travel a pause can bank.
+*/
+#define INPUT_DELTA_GRACE_PASSES 2
+
 struct KeyState{
     //Number of MAPPINGS currently held, not a boolean - several physical keys can drive one
     //keycode (VK_LSHIFT and VK_RSHIFT both map to INPUT_SHIFT), and the action is down while any
@@ -149,17 +163,52 @@ struct KeyState{
     int32_t                 value = 0;
     float                   fvalue = 0.0f;
     std::atomic<int32_t>    delta = {0};          // Delta value this tick
+    //Physics passes this delta has sat unread. Tick() drops it past INPUT_DELTA_GRACE_PASSES, so
+    //an axis nobody is consuming cannot bank movement indefinitely. Physics thread only.
+    int                     delta_unread_passes = 0;
     int                     num_mappings = 1;   // Amount of keys that are mapped to this state.
 };
 
+/*
+    One physical thing driving one action. Several may point at the same KeyState (VK_LSHIFT and
+    VK_RSHIFT both -> INPUT_SHIFT), which is what lets an action be held by any of them.
+
+    A mapping is either a KEY or an ANALOG AXIS, and `analog_index` is what says which. The two
+    used to live in separate tables with separate lookups; they are one table now, because the
+    only real difference between them is WHICH PIECE OF HARDWARE the mapping listens to, and
+    everything downstream - the KeyState, the event stream, recordability, the focus gate - wants
+    to treat them identically. See AddGamePadMap.
+*/
 struct KeyMap{
-    uint32_t system_keycode = 0;   // The system keycode.
+    uint32_t system_keycode = 0;   // The system keycode, for a KEY mapping.
     uint32_t mapped_keycode = 0;   // Our keycode
     KeyState* state = NULL;        // The state. Multiple maps can refer to the same state.
     //Whether THIS mapping's key is currently held. Tracked per mapping so f_isdown can be an
     //honest count: the old code re-asserted a level every tick and decremented once per poll,
     //which left a two-mapping keycode reading as down for an extra tick after release.
     bool f_held = false;
+
+    //--- Analog source ----------------------------------------------------------------------
+    //Which gamepad analog drives this action, or -1 when this mapping is an ordinary key. This
+    //is the analog counterpart of system_keycode above: it names the hardware, and the two are
+    //mutually exclusive on any one mapping.
+    int     analog_index = -1;
+    //Applied before the dead zone, for a stick whose rest position is not centred.
+    int32_t zero_offset = 0;
+    //Deflection below which the axis reads as zero. The default is nearly nothing; a worn
+    //thumbstick wants a few thousand, or its rest position registers as a steady push.
+    int32_t dead_zone = 50;
+    //The last value PollGamepad actually SUBMITTED for this mapping, and whether it ever has.
+    //Kept per mapping, next to the hardware description it belongs to.
+    //
+    //This is what makes polling and events coexist: an axis event is submitted only when the
+    //stick's normalised value CHANGES, so a centred (or absent) stick goes quiet after one zero
+    //instead of stamping 0.0 over the action every single tick - which would silently defeat
+    //every scripted HoldAxis the moment a controller happened to be plugged in.
+    float   last_analog_value = 0.0f;
+    bool    f_analog_sent = false;
+
+    bool IsAnalog() const { return analog_index >= 0; }
 };
 
 //Everything the window message thread hands over. Kept out of KeyState so that the fields two
@@ -248,6 +297,34 @@ class InputController{
     //here (imgui_impl_win32 has its own handler), so the debug UI is unaffected by this gate.
     bool HasFocus(){ return f_has_focus; }
 
+    /*
+        THE predicate for "should this app act on input at all right now" - use this rather than
+        writing the gate by hand.
+
+            if (!input->IsInputLive()){
+                return;     //somebody else's keystrokes; not ours
+            }
+
+        It is `HasFocus() || HasSyntheticHolds()`, and the second half is the part that was got
+        wrong by hand. Gating on focus alone looks obviously right and silently breaks every
+        scripted run: an MCP- or replay-driven session is precisely the case where this window is
+        NOT in front, so a focus-only gate drops the input that automation exists to deliver.
+        Scripted input does not come from the OS, so the reason for the gate does not apply to it.
+
+        Three apps wrote this predicate out by hand and had to get both halves right; the fourth
+        (`ApplicationTank`) deliberately does something different, and that difference is worth
+        knowing - it puts its HARDWARE handling behind HasFocus() and its scripted handling outside
+        any gate at all, because its gamepad block writes the pedals unconditionally and would
+        otherwise fight a scripted drive. Either shape is fine. Writing `!HasFocus()` and stopping
+        there is the one that is not.
+
+        WHEN NOT TO USE IT: cursor-driven work. "Where is the mouse pointing" is meaningless while
+        another application owns the pointer, and a scripted hold must not make a camera chase a
+        cursor being used elsewhere - so picking, click-drag, mouse-look and wheel zoom stay on
+        plain HasFocus(). The rule is that this predicate is about ACTIONS, not about the cursor.
+    */
+    bool IsInputLive(){ return HasFocus() || HasSyntheticHolds(); }
+
     //Called from thread that created the window
     void HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -282,15 +359,41 @@ class InputController{
     //decay, so existing mappings keep their meaning - but sampled once per tick with the rest of
     //the input, across all four XInput slots instead of a hardcoded slot 0, and with reconnect.
     void ListDevices();
-    GamePadMap* AddGamePadMap(int analog_index, uint32_t mapped);
+
+    /*
+        Bind a gamepad analog to an action. This is AddKeyMap for a stick: it makes an ordinary
+        entry in `keymap` with an ordinary KeyState, so the axis is readable with GetAxis, can be
+        driven by HoldAxis, and is recorded like any other input.
+
+        That it did NOT do those things is the bug this replaced. AddGamePadMap used to fill a
+        separate `gamepad_map` and create no KeyState at all, so the obvious one-liner
+
+            input->AddGamePadMap(0,INPUT_MY_STEER);   //looks complete, was not
+
+        left GetAxis returning 0 forever and every scripted HoldAxis on that action dropped on the
+        floor, with nothing logged anywhere. Apps worked around it by ALSO calling
+        AddKeyMap(0,action) to force a KeyState into existence - an idiom that was never written
+        down. That extra call is now unnecessary (harmless if left in; it just adds a second
+        mapping onto the same state).
+
+        dead_zone and zero_offset are here rather than left to be poked into the returned pointer
+        because the returned pointer is only valid until the next mapping is added - `keymap` is a
+        vector. Pass them and keep nothing.
+    */
+    KeyMap* AddGamePadMap(int analog_index, uint32_t mapped, int32_t dead_zone = 50, int32_t zero_offset = 0);
+
+    //Current value of a gamepad analog, -1..1. EXACTLY GetAxis now: a stick's value is applied to
+    //the same KeyState as every other scalar axis, so there is one place to read an axis from
+    //whether a thumb, a script or a replay is driving it. Kept as a name because four apps call it.
     float GetNormalizedAnalogValue(uint32_t mapped_key);
     void SendMotorData(int l, int r);
 
+    //Raw, unnormalised XInput values as of the last poll, indexed by analog_index. The mapped,
+    //dead-zoned, -1..1 value is what GetAxis gives you; this is the hardware underneath it.
     int analog_values[GAMEPAD_MAX_ANALOG_VALUES] = {0};
     int lmotor = 0;
     int rmotor = 0;
     int dev_index = -1;     //XInput user index in use, -1 when no controller is connected
-    std::vector<GamePadMap>gamepad_map;
 
     //Mouse position is also stored in keymap, and seperately
     std::vector<KeyMap>keymap;
@@ -305,6 +408,14 @@ protected:
     void SetMouseOverWindow(bool over); //window thread; takes state_mutex
     void SetFocused(bool focused);      //window thread; raises f_release_all_keys on focus loss
     void PollGamepad();                 //physics thread, from PollDevices
+    //The shared body of AddKeyMap and AddGamePadMap: makes one mapping, giving it a fresh
+    //KeyState or sharing the one an existing mapping for the same action already has.
+    KeyMap* AddMapping(uint32_t syskey, uint32_t mapped, int analog_index);
+    //Turns this poll's analog_values into INPUT_EVENT_AXIS_SCALAR events, one per analog mapping
+    //whose value CHANGED. Called from PollGamepad, including on the disconnect and lost-focus
+    //paths after they zero the values - so a stick held at full deflection when the cable is
+    //pulled reports its way back to centre instead of staying latched.
+    void SubmitAnalogAxes();
     //Diffs `buttons` (an XInput wButtons word) against the last one seen and submits a key event
     //for every bit that changed, so a pad button behaves exactly like a keyboard key. Called with
     //0 when the pad is unplugged or the window loses focus, which releases anything still held.

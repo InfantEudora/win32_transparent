@@ -2,7 +2,8 @@
 
 Short notes for anyone driving this project from a terminal. The engine itself is described in
 `readme.md`; `docs/` holds the deeper write-ups; `docs/engine_backlog.md` is the current work list
-and `docs/tetris_agent_brief.md` is the best single tour of the core API.
+(open items only — closed ones, with their verification notes, are in
+`docs/engine_backlog_done.md`).
 
 ---
 
