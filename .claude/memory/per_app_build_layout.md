@@ -40,6 +40,10 @@ screenshot showing the wrong game is always this.** `netstat -ano | grep 8765` n
 hot-reload watcher, `Texture::LoadHDRFromFile` (`stbi_loadf` opens its own file). A fourth would
 present as a missing file that is plainly on disk.
 
-Still open: `DUMP_BINARYASSETS` removal (see [[asset-layout-plan]] §5), deleting `OBJLoader`
-itself (§5b - still used by Grid and Sim, needs 14 .obj converted to .glb), and moving the rest of
-`temp/` into `reference/`.
+`reference/` now holds the non-compilable material (`shaders/` for the shadertoy excerpts,
+`code_snippets/` for what was in `temp/`); `temp/` and `obs_handgame/` are gone and `.blend`
+sources live in `art_source/`. Authoring sources that belong to one app stayed with it -
+`apps/dozer/audio_source/`, `apps/sim/icon_source/`.
+
+Still open: `DUMP_BINARYASSETS` removal (see [[asset-layout-plan]] §5) and deleting `OBJLoader`
+itself (§5b - still used by Grid and Sim, needs 14 .obj converted to .glb).

@@ -26,8 +26,10 @@ ones, where the second had its extension misspelled `.hsls` - decent evidence th
 ever loaded it. **Neither carries any attribution yet.** Whoever knows where they came from
 should add a header before either gets used.
 
-## Still to move here
+### `code_snippets/`
 
-`docs/asset_layout_plan.md` §7 lists the rest, none of it moved yet: most of `temp/` (`PieMenu`,
-`RobotDogD1*`, `UsbHidIO`, `glad_wgl`, `interp.h`, `perlin`, `noisegen`, `miniz.cpp`, and the
-whole `glview/` viewer), `tools/camera_ray_test.cpp`, and the `obs_handgame/` design vault.
+What used to be loose in `temp/`: `PieMenu`, `glad_wgl`, `interp.h`, `perlin`, `noisegen`, and the
+`ImCurveEdit`/`ImSequencer` widgets that sat in the repo root for years wired into nothing. All of
+it was tracked in git and built by no app.
+
+Most of it has no provenance header yet - see rule 2.

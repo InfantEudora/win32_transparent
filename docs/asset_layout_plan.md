@@ -663,35 +663,35 @@ build overwriting the single `wind.exe` that someone else was running.
 
 ---
 
-## 7. `reference/` — material that is not build input
+## 7. `reference/` — material that is not build input — DONE
 
-Not `examples/`: the apps *are* the examples this engine ships with, which is the framing in
-`readme.md`, so that name is taken. `reference/` is for the shadertoy excerpt, the snippet from
-another engine, the design notes — things kept to read, never to compile.
+Not `examples/`: the apps under `/apps` *are* the examples this engine ships with, so that name is
+taken. `reference/` is for the shadertoy excerpt, the snippet from another engine, the technique
+worth keeping — things kept to read, never to compile.
 
-Already in the tree and belonging there:
+Created and filled 2026-09-12:
 
-| Now | Why |
-|---|---|
-| `shaders/shadertoy_nixie_tube.hlsl` | HLSL in the GLSL folder |
-| `shaders/shadertoy_smoke_lights.hsls` | ditto — and the extension is misspelled, which is good evidence nothing has ever loaded it |
-| `temp/PieMenu.cpp/.h`, `RobotDogD1*`, `UsbHidIO.*` | tracked in git, built by nothing |
-| `temp/glad_wgl.*`, `interp.h`, `perlin.cpp/.h`, `noisegen.cpp`, `miniz.cpp` | loose third-party sources |
-| `temp/glview/` | a whole third-party viewer, with its own CMakeLists and `.sln` |
-| `tools/camera_ray_test.cpp` | a lone `.cpp` among Python scripts |
-| `data/www_example/` | reference HTML for the OCPP web UI; only `data/www/` is served |
-| `obs_handgame/` | an Obsidian vault of design notes — reference of a different kind, still not build input |
+- `reference/shaders/` — the two shadertoy files that had been sitting among the real GLSL, one
+  of them with its extension misspelled `.hsls`, which was decent evidence nothing had ever
+  loaded it.
+- `reference/code_snippets/` — what used to be loose in `temp/`: `PieMenu`, `glad_wgl`,
+  `interp.h`, `perlin`, `noisegen`, plus the `ImCurveEdit`/`ImSequencer` widgets that sat in the
+  repo root wired into nothing. All tracked in git, all built by no app.
 
-Two rules, so it does not rot into a second `temp/`:
+Two rules keep it from rotting into another `temp/`, and they are written in
+`reference/readme.md`:
 
-1. **Nothing under `reference/` ever appears in `DIR_SRC`, `IPATHS`, `SRCS` or a `LoadFile`
-   call.** The build cannot reach it, so it cannot silently break, and that is the whole
-   difference between this folder and `temp/`.
+1. **Nothing here ever appears in `APP_SRCS`, `LIB_DIRS`, `IPATHS` or a `LoadFile` call.** The
+   build cannot reach it, so it cannot silently break — that is the whole difference between this
+   folder and the one it replaces.
 2. **Every file gets a provenance header** — where it came from, its licence, why it is kept.
-   The two shadertoy files carry no attribution at all today, which stops being a tidiness
-   question the moment any of it is pasted into a shader that ships.
+   Most of it still has none; the two shadertoy files in particular carry no attribution at all,
+   which stops being a tidiness question the moment any of it is pasted into something that ships.
 
----
+`temp/` and `obs_handgame/` are gone. The `.blend` sources moved to `art_source/`, alongside the
+same distinction the apps make internally with `apps/dozer/audio_source/` and
+`apps/sim/icon_source/`: authoring sources are kept, but never where a build could mistake them
+for input.
 
 ## 8. Loose ends found on the way
 
