@@ -10,6 +10,9 @@ Items are drawn from two runs in which an agent built a game on this engine as a
 - `docs/breakout_findings.md` — `APP=Breakout`, items 44-62, plus new notes on 15, 23, 25 and 39.
   Items 63, 64 and 65 came out of reviewing and working on that run rather than out of the report.
 
+Item 67 is the first that came from neither: it is a design decision taken up front, before any of
+the code it describes exists.
+
 Ordered by **implementation effort, not by importance** — that is what the bands are, and it is
 deliberate: this list is read when someone has an hour free as often as when someone is deciding
 what matters. Where an item is more important than its band suggests, it says so in its own text.
@@ -19,7 +22,7 @@ item that moves between bands keeps its number.
 
 Status key: `[ ]` open · `[~]` partially done.
 
-Last updated 2026-09-12, after closing item 63.
+Last updated 2026-09-13, adding item 67.
 
 ---
 
@@ -221,6 +224,27 @@ Last updated 2026-09-12, after closing item 63.
   spacing for such rays. The real fix is a max-mipmap pyramid over the height channel, which would
   give a conservative vertical bound to go with the horizontal one; the 2D distance alone cannot,
   because a neighbouring column one texel away may rise to just under the ray.
+
+- [ ] **67. On-screen input buttons, for Android.** Full plan in `docs/touch_input_plan.md`; this
+  is the pointer, not a summary of it. The design in one line: a third input family alongside
+  `AddKeyMap` and `AddGamePadMap`, so `input->AddTouchButton(rect,INPUT_TETRIS_LEFT)` sits next to
+  the other two and **`ApplicationTetris::SetupInput` is the only app code that changes**.
+
+  Both mechanisms that suggest themselves are disqualified by multi-touch, which a game pad layout
+  must have: picking is a 1x1 `glReadPixels` at the cursor (`Renderer.cpp:849`) and ImGui is
+  single-pointer. ImGui stays right for menus and the F1 panels, which need one finger.
+
+  The band is for steps 1-4 of the plan — the rect list, `SubmitPointer`, the Tetris bindings and
+  an `ImDrawList` to draw them. **All four are on Windows and none of them need an Android build**,
+  which is the point of putting the seam at `SubmitPointer`: the desktop mouse drives it as pointer
+  0. Physical-unit layout and the lifecycle wiring land with the port itself.
+
+  Two things in here are worth reading before touching input for any other reason. A key event with
+  `value == 0` falls through to the *first* mapping for its action (`InputController.cpp:242`), so
+  any new input source that skips allocating itself a synthetic system keycode will silently share
+  `f_held` with the keyboard. And there is no `WasKeyPressed` — only `IsKeyDown` and
+  `WasKeyReleased` — which is why Tetris fires rotate and hard drop on the release edge, fine on a
+  keyboard and wrong under a thumb.
 
 ## Band E — multi-day, strategic
 

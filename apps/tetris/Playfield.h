@@ -100,6 +100,16 @@ struct TetrisEvents{
     bool f_level_up = false;
     bool f_game_over = false;
     bool f_collapsed = false;       //the tick the cleared rows actually vanish from the board
+
+    //What the clear was WORTH, alongside what it was. The app announces this over the board, and
+    //that is the whole reason these are events rather than something the view recomputes: the
+    //bonuses below compose (a back-to-back tetris that is also a combo and also a perfect clear
+    //is one number arrived at four ways), and a second implementation of that arithmetic in the
+    //view would be a second implementation to get wrong.
+    int  score_awarded = 0;         //points this clear scored, every bonus included
+    int  combo = 0;                 //how many clears deep the run is; 0 on the first of a run
+    bool f_back_to_back = false;    //this clear EXTENDED a back-to-back chain and was paid for it
+    bool f_perfect_clear = false;   //it also left the board completely empty
 };
 
 /*
@@ -142,6 +152,24 @@ public:
     int lines = 0;
     int level = 1;
     int pieces_placed = 0;
+
+    /*
+        The two pieces of state that make a good run worth more than the same clears scattered
+        about. Both are part of the RULES rather than of the presentation, because both change
+        the score - see AwardLineScore.
+
+        `combo` counts the unbroken run of placements that cleared something: -1 between runs, 0
+        on the first clear of a run, 1 on the second. That off-by-one is deliberate and it is why
+        the field is not simply a count - the value IS the multiplier the bonus wants, so the
+        first clear of a run pays no combo and nothing has to subtract one.
+
+        `f_back_to_back` remembers that the last clear was a "difficult" one, which in this game
+        means a tetris (a T-spin would count too, if this game detected them - see §7 of
+        docs/tetris_findings.md). A difficult clear that follows another scores half again. It is
+        what stops the best-scoring strategy being to farm singles forever.
+    */
+    int combo = -1;
+    bool f_back_to_back = false;
     uint64_t ticks_elapsed = 0;     //ticks this game has run, for telemetry
 
     std::vector<int> next_queue;    //front() is the piece that spawns next
@@ -162,6 +190,29 @@ public:
 
     //Rows the level's gravity takes to fall one cell, at 60 ticks/second.
     static int GravityTicksForLevel(int level);
+
+    /*
+        The scoring table, and the name a clear goes by. Both static and public because THE HUD
+        PRINTS THEM, and that is the point: a player who cannot see that a tetris is worth eight
+        times a single has no reason to build a well, and a game that never says what a combo is
+        worth has a scoring system the player can only guess at. A second copy of these numbers
+        in the UI would be a second copy to get wrong, so there is one table and the view reads
+        it - the same direction the rest of this header takes (see TETRIS_TPS).
+
+        `base` is before the level multiplier, the combo and the back-to-back bonus; the full
+        arithmetic is in AwardLineScore and is the only thing that touches `score`.
+    */
+    static int LineClearBaseScore(int num_lines, bool f_perfect_clear);
+    static const char* LineClearName(int num_lines);
+
+    //Points per cell for the two drops, so the HUD can print those too rather than repeat them.
+    static int SoftDropCellScore(){ return 1; }
+    static int HardDropCellScore(){ return 2; }
+
+    //Flat points a combo pays per step, before the level multiplier, and how much a back-to-back
+    //chain adds to the base as a percentage.
+    static int ComboStepScore(){ return 50; }
+    static int BackToBackBonusPercent(){ return 50; }
 
     //The board plus the active piece, as TETRIS_BOARD_H strings of TETRIS_BOARD_W characters,
     //top row first ('.' empty, the piece letter otherwise, lowercase for the active piece). For
@@ -185,7 +236,10 @@ private:
     bool TryRotate(bool f_clockwise, TetrisEvents& events);
     void LockPiece(TetrisEvents& events);
     void CollapseClearedRows();
-    void AwardLineScore(int num_lines, TetrisEvents& events);
+    void AwardLineScore(int num_lines, bool f_perfect_clear, TetrisEvents& events);
+    //Would the board be completely empty once `clearing_rows` are taken out? Asked while those
+    //rows are still in place, because that is when the score is awarded.
+    bool WouldBePerfectClear() const;
     void UpdateFalling(const TetrisInput& input, TetrisEvents& events);
 };
 

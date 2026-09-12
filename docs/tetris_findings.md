@@ -760,11 +760,28 @@ right in intent and the code did not support it. Worth a note in the brief for t
 4. **World-space text** (§3.4), starting with a single `DrawWorldText`. Half the polish a game
    wants is words in the right place, and right now none of it is reachable.
 
-5. **Make the debris matter, carefully.** The physics is currently pure garnish and the brief was
-   right that it should be. But there is a nice half-step: let cleared-row debris knock against the
-   *previous* clear's debris piling up in a tray beside the well, so the player accumulates visible
-   evidence of a good game without any of it touching the rules. That is the shape physics should
-   take in a game whose rules must stay exact.
+5. **Make the debris matter, carefully.** — BUILT, 2026-09-12. The physics is currently pure
+   garnish and the brief was right that it should be. But there is a nice half-step: let
+   cleared-row debris knock against the *previous* clear's debris piling up in a tray beside the
+   well, so the player accumulates visible evidence of a good game without any of it touching the
+   rules. That is the shape physics should take in a game whose rules must stay exact.
+
+   > Done as described. The tray is four static boxes to the left of the well and slightly in
+   > front of it in z — the camera is orthographic and looks down -Z, so the depth is free on
+   > screen and it is what lets a chunk leave the well without clearing a 22-unit wall. The
+   > lifetime reap became a **count** (`TETRIS_DEBRIS_MAX`), which is the whole of it: bounded by
+   > size rather than by a clock, the pile accumulates instead of evaporating, and the cost is
+   > flat however long the game runs. See `TRAY_*` in `ApplicationTetris.cpp` and
+   > `ApplicationTetris::BuildDebrisTray`.
+   >
+   > One thing worth recording, because the first version got it wrong and looked plausible: the
+   > chunks are **aimed**, not shoved. Giving each one a leftward push proportional to its column
+   > — on the reasoning that the ones with furthest to go should travel fastest — landed every
+   > chunk in a row within a unit of every other. The reasoning was right and the arithmetic
+   > cancelled: making the speed proportional to the distance makes the landing point very nearly
+   > constant. Solving the ballistic flight time against the known shelf height and dividing the
+   > distance by it fans the row out across the tray, and stays a pure function of the cell's
+   > position, so it is still replay-safe.
 
 6. **The skeletal-animation probe** (step 10), which I deliberately did not start. The brief
    budgets an hour and warns it is mid-rewrite with a `debug->Fatal` waiting in

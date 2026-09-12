@@ -22,3 +22,4 @@
 - [Shared build output coordination](shared_build_output_coordination.md) — ASK BEFORE BUILDING when another agent is active; the one-wind.exe collision is now FIXED by [per-app build layout](per_app_build_layout.md), but build/core is still shared so build one app at a time
 - [Tank viewport black half](tank_viewport_offset_black_half.md) — APP=Tank screenshots are half black BY DESIGN (viewport_x offset); judge Tank renders on the right half only
 - [Per-app build layout](per_app_build_layout.md) — DONE 2026-09-12: one exe per app under apps/<name>/, root makefile+main.cpp+data/+shaders/ deleted, core/ app-agnostic; READ THIS before any build (supersedes the APP= arrangement)
+- [Touch input plan](touch_input_plan.md) — PROPOSED 2026-09-13, nothing built: on-screen buttons as a third input family (AddTouchButton), not picking and not ImGui; docs/touch_input_plan.md

@@ -34,6 +34,52 @@ static Debugger* debug = new Debugger("ApplicationTetris",DEBUG_ALL);
 #define TEXT_X              11.6f
 #define TEXT_SCALE          0.8f
 
+/*
+    The debris tray - docs/tetris_findings.md §7.5.
+
+    A shelf to the LEFT of the well and a little in FRONT of it, which is the arrangement that
+    makes the whole idea cheap. The camera is orthographic and looks straight down -Z, so depth
+    costs nothing on screen: putting the shelf at z 1..5 and launching the chunks from z 1.8 puts
+    them past the well's left wall (which is only 2 deep) without any of them having to clear a
+    22-unit obstacle, and without a single extra pixel of the board being covered.
+
+    The x range is bounded by what the CAMERA can see, not by taste. Init resizes the window to
+    1200x900 and the orthographic zoom is the vertical half-extent, so the visible width is
+    11.5 * 4/3 = 15.33 either side of the camera target at x 6 - that is x -9.33 on the left, and
+    the far wall has to stand inside that. A tray any wider would pile chunks up off the edge of
+    the screen, which is the one thing a feature whose entire point is "the player can see what
+    they did" must not do.
+
+    The DEPTH is chosen for the same reason from the other direction. The camera is looking along
+    z, so depth is the one dimension the player cannot see - a tray 4 deep swallowed the whole cap
+    in a single layer and read as a stripe. 2.2 holds about a third of it per layer, so the pile
+    grows UPWARD, which is the direction that shows.
+
+    Nothing here is reachable from the well: the shelf sits in front of it in z, the board is a
+    plain array, and no board cube has a collider at all. The rules cannot be touched from in
+    here even by accident, which is the condition the finding attaches to the idea.
+*/
+#define TRAY_X_MIN          -8.0f
+#define TRAY_X_MAX          -1.0f
+#define TRAY_Z_MIN           1.4f
+#define TRAY_Z_MAX           3.6f
+#define TRAY_FLOOR_Y        -1.0f   //the same shelf height as the well's own floor
+#define TRAY_SHELF_Y        -0.5f   //...so this is the surface chunks come to rest on
+#define TRAY_WALL_TOP        2.5f   //only as tall as a full tray needs; a taller one is a grey slab
+#define TRAY_LIP_TOP         0.2f   //the front lip is kept LOW, or it would hide the pile it holds
+
+//Where a chunk is born. In front of the well's left wall (which ends at z +1) so it can simply
+//fly left, and in front of the blocks (which reach z +0.46) so it is never briefly inside one.
+#define DEBRIS_SPAWN_Z       1.8f
+//The widest column index, so the fan-out below spans the tray exactly rather than by a fudge.
+#define TRAY_BOARD_SPREAD   (TETRIS_BOARD_W - 1)
+
+//Where a score popup floats, in front of everything else on the board. The game-over banner is
+//at z 1.2 and the debris passes through z ~1.8, so 2.6 is the first depth nothing else uses.
+#define POPUP_Z              2.6f
+#define POPUP_X              4.5f    //the middle of the well, cells 0..9
+#define POPUP_TEXT_SCALE     0.85f
+
 static vec3 CellWorldPosition(int x, int y){
     return vec3((float)x,(float)y,BOARD_ORIGIN_Z);
 }
@@ -130,6 +176,7 @@ void ApplicationTetris::Init(void){
 
     BuildMaterials();
     BuildWell();
+    BuildDebrisTray();
     BuildViewObjects();
     BuildTextLabels();
     SetupFieldShadows();
@@ -307,6 +354,65 @@ void ApplicationTetris::BuildWell(){
     MakeCube(block_mesh,main_scene,"Well Back",vec3(4.5f,9.5f,-1.2f),vec3(12.0f,22.0f,0.4f),material_back);
 }
 
+/*
+    The tray the cleared rows end up in.
+
+    Five static boxes, all of them ordinary scaled cubes like the well. What makes this worth its
+    own function rather than three more rows in BuildWell's table is what it is FOR: the well's
+    walls exist so the game can be played, and these exist so the game can be looked back on. See
+    the TRAY_* block at the top of this file for the geometry and for why it is where it is.
+
+    The lips at the front and back are deliberately short - TRAY_LIP_TOP, barely a chunk high.
+    They only have to stop a chunk rolling out sideways in z, and the front one is between the
+    camera and the pile, so anything taller would hide the thing it is there to keep.
+*/
+void ApplicationTetris::BuildDebrisTray(){
+    float mid_x = (TRAY_X_MIN + TRAY_X_MAX) * 0.5f;
+    float mid_z = (TRAY_Z_MIN + TRAY_Z_MAX) * 0.5f;
+    float width = TRAY_X_MAX - TRAY_X_MIN;
+    float depth = TRAY_Z_MAX - TRAY_Z_MIN;
+    float wall_h = TRAY_WALL_TOP - (TRAY_FLOOR_Y - 0.5f);
+    float wall_y = (TRAY_WALL_TOP + TRAY_FLOOR_Y - 0.5f) * 0.5f;
+    float lip_h = TRAY_LIP_TOP - (TRAY_FLOOR_Y - 0.5f);
+    float lip_y = (TRAY_LIP_TOP + TRAY_FLOOR_Y - 0.5f) * 0.5f;
+
+    struct TrayPart{
+        const char* name;
+        vec3 position;
+        vec3 scale;
+    };
+    const TrayPart parts[] = {
+        { "Tray Floor", vec3(mid_x,TRAY_FLOOR_Y,mid_z),         vec3(width,1.0f,depth) },
+        //The far wall, at the left-hand end. Chunks from the right of a row arrive fastest and
+        //this is what stops them; the ones that reach it stack against it, which is exactly the
+        //shape a full tray should have.
+        { "Tray Left",  vec3(TRAY_X_MIN,wall_y,mid_z),          vec3(1.0f,wall_h,depth) },
+        { "Tray Back",  vec3(mid_x,lip_y,TRAY_Z_MIN),           vec3(width,lip_h,0.4f) },
+        { "Tray Front", vec3(mid_x,lip_y,TRAY_Z_MAX),           vec3(width,lip_h,0.4f) },
+    };
+    for (int i = 0; i < (int)(sizeof(parts)/sizeof(parts[0])); i++){
+        Object* part = MakeCube(block_mesh,main_scene,parts[i].name,parts[i].position,parts[i].scale,material_frame);
+        if (!part){
+            continue;
+        }
+        //Nothing in the tray is worth selecting, and the front lip sits in front of the pile -
+        //leaving it pickable would make it swallow every click aimed at a chunk behind it.
+        part->SetPickability(false);
+        Physics* p = part->AddPhysics(main_scene->physics_world);
+        if (p){
+            p->AddBoxCollider(parts[i].scale * 0.5f,vec3(),quat().identity(),1.0f);
+            //Deader than the well: a chunk that has arrived should settle and go to sleep rather
+            //than keep bouncing. Sleeping bodies are what make the cap affordable at all.
+            p->SetBounciness(0.05f);
+            p->SetFrictionCoefficient(0.9f);
+        }
+    }
+    //Dark backing so the pile reads against something, exactly like the well's. No collider - it
+    //sits behind the back lip, which is what actually keeps the chunks in.
+    MakeCube(block_mesh,main_scene,"Tray Back Panel",
+             vec3(mid_x,wall_y,TRAY_Z_MIN - 0.6f),vec3(width + 1.0f,wall_h,0.4f),material_back);
+}
+
 void ApplicationTetris::BuildViewObjects(){
     //The board: one cube per cell, made once and hidden while its cell is empty. 200 objects is
     //nothing to this renderer, and it means a piece landing never allocates.
@@ -381,6 +487,10 @@ void ApplicationTetris::BuildTextLabels(){
         { TETRIS_LABEL_SCORE,    vec3(TEXT_X, 3.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "SCORE\n0" },
         { TETRIS_LABEL_LINES,    vec3(TEXT_X, 1.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LINES 0" },
         { TETRIS_LABEL_LEVEL,    vec3(TEXT_X,-0.1f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LEVEL 1" },
+        //The run bonuses, under the stats and in the hot material, because they are the two
+        //numbers that are TEMPORARY - a player who cannot see the combo is about to break has no
+        //reason to care that it exists. Empty (and so hidden) whenever no run is going.
+        { TETRIS_LABEL_COMBO,    vec3(TEXT_X,-1.3f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   1, "COMBO x9" },
         //Centred over the middle of the well (cells 0..9, so x 4.5) and in FRONT of the stack -
         //the blocks reach z +0.46, so 1.2 clears them with room for the glyphs' own 0.1 depth.
         { TETRIS_LABEL_GAMEOVER, vec3(4.5f,11.0f,1.2f),           1.30f,      TEXT_ALIGN_CENTER, 1, "GAME OVER\nPRESS R" },
@@ -410,6 +520,177 @@ void ApplicationTetris::BuildTextLabels(){
     //text is how it is switched off - BuildTextMesh returns NULL for a string with no ink, which
     //is a documented outcome rather than a failure.
     SetLabelText(TETRIS_LABEL_GAMEOVER,"");
+    SetLabelText(TETRIS_LABEL_COMBO,"");
+
+    //The banner is the other label that sits over the stack rather than beside it, so it wants
+    //the same exemption the popups do - see BuildPopups.
+    if (labels[TETRIS_LABEL_GAMEOVER].object){
+        labels[TETRIS_LABEL_GAMEOVER].object->SetCastsShadow(false);
+    }
+
+    BuildPopups();
+}
+
+/*
+    The score popups, made once and reused.
+
+    Each is built holding the longest string it will ever be asked to spell, for one reason:
+    Mesh::SetMeshData re-uploads into a buffer that already exists, so a pool primed at full size
+    never grows a buffer again for the rest of the run. The text is then emptied and the object
+    hidden, which is the same "no text means off" convention the game-over banner uses.
+*/
+void ApplicationTetris::BuildPopups(){
+    for (int i = 0; i < TETRIS_POPUP_SLOTS; i++){
+        TetrisPopup& popup = popups[i];
+        popup.object = new Object();
+        popup.object->name = "Score Popup";
+        popup.object->SetMaterialSlot(0,material_text_hot);
+        popup.object->SetPickability(false);
+        //A popup floats OVER the stack, which is the one place in this app where letting text
+        //throw a shadow goes wrong: the lamp is above the well, so "TETRIS" lands as a dark
+        //smear across the blocks underneath it and reads as a rendering fault rather than as a
+        //shadow. The side labels never showed this because nothing is behind them.
+        popup.object->SetCastsShadow(false);
+
+        TextLayout layout;
+        layout.scale = POPUP_TEXT_SCALE;
+        layout.align = TEXT_ALIGN_CENTER;
+        layout.matid = 0;
+        popup.mesh = BuildTextMesh(glyphs,"PERFECT CLEAR\n+99999\nB2B COMBO x99",layout,NULL);
+        if (popup.mesh){
+            popup.object->SetMesh(popup.mesh);
+        }
+        popup.object->Hide();
+        main_scene->AddObject(popup.object);
+    }
+}
+
+/*
+    What a clear says. The wording is the entire point of the feature - "+1200" on its own does
+    not tell anyone WHY it was 1200 - so every bonus that contributed gets named on the third
+    line rather than being folded silently into the total.
+*/
+void ApplicationTetris::FormatClearText(const TetrisClearEvent& clear, char* out, size_t out_size) const{
+    //Line 3 first, because it is the one that may be empty and an empty line at the end of a
+    //string is a line of nothing that still pushes the popup's origin around.
+    char bonus[32] = {};
+    if (clear.f_back_to_back && clear.combo > 0){
+        snprintf(bonus,sizeof(bonus),"\nB2B COMBO x%i",clear.combo);
+    }else if (clear.f_back_to_back){
+        snprintf(bonus,sizeof(bonus),"\nBACK TO BACK");
+    }else if (clear.combo > 0){
+        snprintf(bonus,sizeof(bonus),"\nCOMBO x%i",clear.combo);
+    }
+    //A perfect clear is announced by name: it is rare, it is worth eight times an ordinary
+    //single, and a player who is never told it exists will never go looking for it.
+    const char* name = clear.f_perfect_clear ? "PERFECT CLEAR" : Playfield::LineClearName(clear.lines);
+    snprintf(out,out_size,"%s\n+%i%s",name,clear.points,bonus);
+}
+
+/*
+    RENDER THREAD. Takes whatever the simulation scored since the last frame, gives each one a
+    slot, and ages the ones already up.
+
+    `tick` is the simulation tick, not a frame count, and that is what makes a popup last the
+    same length of time on any machine - and makes it freeze, rather than race away, when the
+    game is paused or single-stepped. It is the same reason the camera shake is a tick counter.
+*/
+void ApplicationTetris::UpdatePopups(uint64_t tick){
+    std::vector<TetrisClearEvent> fresh;
+    uint64_t flush_tick = 0;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        fresh.swap(pending_clears);
+        flush_tick = popup_flush_tick;
+    }
+
+    for (size_t i = 0; i < fresh.size(); i++){
+        /*
+            A new announcement RETIRES the ones already up.
+
+            They are all centred on the same column over the well, and a clear arrives about
+            every 50 ticks while a popup lives for 130 - so left to overlap they print straight
+            through each other and neither can be read. Which is the point at which the feature
+            stops telling the player anything, which was the whole reason for it.
+
+            Overlapping them was the first version and it looked like a fault. The pool stays at
+            three slots even so: the cost is three hidden objects, and a spawn that has to find a
+            free slot cannot be the thing that drops an announcement on a frame that ran long.
+        */
+        int slot = 0;
+        for (int s = 0; s < TETRIS_POPUP_SLOTS; s++){
+            if (popups[s].f_active){
+                popups[s].f_active = false;
+                if (popups[s].object){
+                    popups[s].object->Hide();
+                }
+            }else{
+                slot = s;
+            }
+        }
+        TetrisPopup& popup = popups[slot];
+        if (!popup.object){
+            continue;
+        }
+
+        char text[80];
+        FormatClearText(fresh[i],text,sizeof(text));
+
+        TextLayout layout;
+        layout.scale = POPUP_TEXT_SCALE;
+        layout.align = TEXT_ALIGN_CENTER;
+        layout.matid = 0;
+        Mesh* mesh = BuildTextMesh(glyphs,text,layout,popup.mesh);
+        if (!mesh){
+            continue;
+        }
+        if (!popup.mesh){
+            popup.mesh = mesh;
+            popup.object->SetMesh(mesh);
+        }
+        //A tetris, a back-to-back or a perfect clear is the game going well and should look
+        //different from a single scraped off the bottom.
+        bool f_special = (fresh[i].lines == 4) || fresh[i].f_back_to_back || fresh[i].f_perfect_clear;
+        popup.object->SetMaterialSlot(0,f_special ? material_text_hot : material_text);
+        popup.spawn_tick = fresh[i].tick;
+        popup.origin_y = fresh[i].world_y;
+        popup.f_active = true;
+    }
+
+    for (int s = 0; s < TETRIS_POPUP_SLOTS; s++){
+        TetrisPopup& popup = popups[s];
+        if (!popup.f_active || !popup.object){
+            continue;
+        }
+        //Ticks elapsed. Unsigned, so a restart that rewinds nothing still cannot wrap: the
+        //spawn tick is the SCENE's tick, which only ever goes up.
+        uint64_t age = (tick > popup.spawn_tick) ? (tick - popup.spawn_tick) : 0;
+        //Older than the current game, or simply expired - either way it comes down.
+        if (age >= TETRIS_POPUP_TICKS || popup.spawn_tick < flush_tick){
+            popup.object->Hide();
+            popup.f_active = false;
+            continue;
+        }
+        float t = (float)age / (float)TETRIS_POPUP_TICKS;
+        popup.object->SetPosition(vec3(POPUP_X,popup.origin_y + TETRIS_POPUP_RISE * t,POPUP_Z));
+
+        /*
+            Scale stands in for a fade. The material is shared with every other label, so turning
+            one popup transparent would turn all of them transparent - and a per-popup material
+            would be a material per slot for the sake of two seconds of alpha. Snapping up on the
+            way in and collapsing to nothing on the way out reads as the same thing and costs a
+            transform.
+        */
+        float scale = 1.0f;
+        if (age < TETRIS_POPUP_GROW_TICKS){
+            scale = 0.55f + 0.45f * ((float)age / (float)TETRIS_POPUP_GROW_TICKS);
+        }else if (age > TETRIS_POPUP_TICKS - TETRIS_POPUP_SHRINK_TICKS){
+            uint64_t left = TETRIS_POPUP_TICKS - age;
+            scale = (float)left / (float)TETRIS_POPUP_SHRINK_TICKS;
+        }
+        popup.object->SetScale(vec3(scale));
+        popup.object->Show();
+    }
 }
 
 void ApplicationTetris::SetLabelText(int label_id, const char* text){
@@ -464,12 +745,16 @@ void ApplicationTetris::PreRender(void){
     int score = 0;
     int lines = 0;
     int level = 1;
+    int combo = -1;
+    bool f_back_to_back = false;
     bool f_gameover = false;
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex);
         score = snapshot.score;
         lines = snapshot.lines;
         level = snapshot.level;
+        combo = snapshot.combo;
+        f_back_to_back = snapshot.f_back_to_back;
         f_gameover = (snapshot.phase == TETRIS_PHASE_GAMEOVER);
     }
 
@@ -481,8 +766,23 @@ void ApplicationTetris::PreRender(void){
     snprintf(text,sizeof(text),"LEVEL %i",level);
     SetLabelText(TETRIS_LABEL_LEVEL,text);
 
+    //The run bonuses, shown only while there is a run. A combo of 0 is the first clear of a run
+    //and pays nothing, so it is not worth a line of screen either - Playfield::combo is offset by
+    //one precisely so "is there a combo" and "what does it multiply" are the same test.
+    text[0] = 0;
+    if (combo > 0 && f_back_to_back){
+        snprintf(text,sizeof(text),"COMBO x%i B2B",combo);
+    }else if (combo > 0){
+        snprintf(text,sizeof(text),"COMBO x%i",combo);
+    }else if (f_back_to_back){
+        snprintf(text,sizeof(text),"B2B READY");
+    }
+    SetLabelText(TETRIS_LABEL_COMBO,text);
+
     //Text or no text is the whole of the banner's state.
     SetLabelText(TETRIS_LABEL_GAMEOVER,f_gameover ? "GAME OVER\nPRESS R" : "");
+
+    UpdatePopups(main_scene ? main_scene->GetPhysicsTick() : 0);
 }
 
 /*
@@ -609,6 +909,16 @@ void ApplicationTetris::NewGame(uint32_t seed){
     }
     debris.clear();
     renderer->DeleteDestroyedObjects();
+    //The popups belong to the game that scored them. Emptying the queue here (rather than
+    //letting the last game's "TETRIS +3200" float over an empty board) is the whole of it; the
+    //slots themselves are hidden by the frame, which is the only thread allowed to touch them.
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        pending_clears.clear();
+        popup_flush_tick = main_scene->GetPhysicsTick();
+        snapshot.last_clear_lines = 0;
+        snapshot.last_clear_points = 0;
+    }
     f_collapse_animating = false;
     last_piece_type = -1;
     das_direction = 0;
@@ -769,6 +1079,34 @@ void ApplicationTetris::HandleEvents(const TetrisEvents& events){
         shake_amount = max(shake_amount,0.08f * events.lines_cleared);
         shake_ticks = max(shake_ticks,14);
         SpawnClearDebris();
+
+        /*
+            Hand the frame something to announce. This is the answer to "what was that worth" -
+            a score that only ever appears as a bigger total teaches the player nothing, and
+            without it there is no way to find out that a tetris pays eight times a single, that
+            a combo pays at all, or that emptying the board is worth going for.
+
+            The rules worked the number out (Playfield::AwardLineScore); this only carries it
+            across the thread boundary, with the row it happened on so the popup starts there.
+        */
+        float row_sum = 0.0f;
+        for (size_t i = 0; i < game.clearing_rows.size(); i++){
+            row_sum += (float)game.clearing_rows[i];
+        }
+        TetrisClearEvent clear;
+        clear.lines = events.lines_cleared;
+        clear.points = events.score_awarded;
+        clear.combo = events.combo;
+        clear.f_back_to_back = events.f_back_to_back;
+        clear.f_perfect_clear = events.f_perfect_clear;
+        clear.world_y = game.clearing_rows.empty() ? 1.0f : (row_sum / (float)game.clearing_rows.size()) + 1.0f;
+        clear.tick = main_scene->GetPhysicsTick();
+        {
+            std::lock_guard<std::mutex> lock(snapshot_mutex);
+            snapshot.last_clear_lines = clear.lines;
+            snapshot.last_clear_points = clear.points;
+            pending_clears.push_back(clear);
+        }
     }
     if (events.lines_cleared > 0 || events.f_locked){
         //A new piece is coming, so the next slide must not be interpolated from the old one.
@@ -983,9 +1321,10 @@ void ApplicationTetris::SyncPreviewView(){
 
 void ApplicationTetris::SpawnClearDebris(){
     /*
-        One dynamic cube per cleared cell, thrown forward out of the well. Purely cosmetic: the
-        board is still a plain array and nothing here can affect the rules, which is the only
-        way to have physics in a Tetris without ruining it.
+        One dynamic cube per cleared cell, thrown out of the well and to the left, into the tray.
+        Purely cosmetic: the board is still a plain array, no board cube has a collider, and the
+        tray sits in front of the well in z - so there is no path by which any of this can reach
+        the rules. That constraint is the whole reason the physics is allowed to be here at all.
 
         Safe to create bodies here because RunSimulationTick is not inside the physics step - the rule
         (core/SimCommand.h, ApplicationShip.cpp:995) is that a body must never be created from
@@ -1003,7 +1342,7 @@ void ApplicationTetris::SpawnClearDebris(){
                 continue;
             }
             Object* chunk = MakeCube(block_mesh,main_scene,"Debris",
-                                     CellWorldPosition(x,y) + vec3(0,0,0.2f),
+                                     vec3((float)x,(float)y,DEBRIS_SPAWN_Z),
                                      vec3(0.5f),material_piece[type]);
             if (!chunk){
                 continue;
@@ -1015,32 +1354,75 @@ void ApplicationTetris::SpawnClearDebris(){
                 //A body starts STATIC with gravity off - dynamics is opt-in.
                 p->SetStatic(false);
                 p->SetGravityEnabled(true);
-                p->SetBounciness(0.35f);
-                p->SetFrictionCoefficient(0.4f);
-                //Thrown out towards the camera and away from the centre of the row, so the row
-                //bursts outwards instead of dropping straight down in a slab. Deterministic: it
-                //is a function of the cell's position, not of a random draw.
-                float sideways = ((float)x - (TETRIS_BOARD_W - 1) * 0.5f) * 0.8f;
-                p->SetVelocity(vec3(sideways,2.5f,4.0f + (x & 1)));
-                p->SetAngularVelocity(vec3(sideways,2.0f,-sideways));
+                p->SetBounciness(0.25f);
+                p->SetFrictionCoefficient(0.5f);
+                /*
+                    AIMED, not shoved. The first version of this gave each chunk a leftward push
+                    proportional to its column, on the reasoning that the ones with furthest to
+                    go should travel fastest - and every chunk in the row landed within a unit of
+                    every other, in a heap against the near end of the tray. The reasoning was
+                    right and the arithmetic cancelled: making the speed proportional to the
+                    distance makes the LANDING POINT very nearly constant.
+
+                    So solve it instead. The flight is a plain ballistic arc, the shelf height is
+                    known, and the only unknown is the time to reach it - which the quadratic
+                    below gives exactly. Dividing the distance by that time lands a chunk on the
+                    spot it was aimed at, so the row fans out across the tray instead of piling
+                    up where it fell out of the well.
+
+                    Every number here is a function of the cell's position and of nothing else.
+                    That is not fussiness: the piece bag is seeded and every duration in this app
+                    is a tick count, so a random draw here would be the ONE thing standing between
+                    this game and a replay that matches - see §7.1 of docs/tetris_findings.md.
+                    The gravity is asked of the world rather than written down for the same
+                    reason - a number copied here would be a number to get out of step.
+                */
+                float lift = 4.5f + (x & 1) * 1.2f;
+                float g = -main_scene->physics_world->GetGravity().y;
+                if (g < 0.01f){
+                    g = 9.81f;      //a world with no gravity has nothing to aim in; fall back
+                }
+                //Time to fall from the row to the shelf: 0.5*g*t^2 - lift*t - (y - shelf) = 0.
+                float drop = (float)y - TRAY_SHELF_Y;
+                float flight = (lift + sqrtf(lift * lift + 2.0f * g * drop)) / g;
+
+                //Column 0 lands nearest the well, column 9 nearest the far wall, the rows of a
+                //multi-row clear a little deeper into the tray than one another - so a tetris
+                //arrives as four ranks rather than as forty chunks in one line.
+                float span = (TRAY_X_MAX - TRAY_X_MIN) - 2.0f;
+                float target_x = (TRAY_X_MAX - 1.0f) - span * ((float)x / (float)(TRAY_BOARD_SPREAD));
+                float target_z = TRAY_Z_MIN + 1.2f + (float)(r % 4) * 0.7f;
+
+                p->SetVelocity(vec3((target_x - (float)x) / flight,
+                                    lift,
+                                    (target_z - DEBRIS_SPAWN_Z) / flight));
+                p->SetAngularVelocity(vec3(2.0f,2.0f,-4.0f - (float)x * 0.5f));
             }
             TetrisDebris entry;
             entry.object = chunk;
-            entry.reap_tick = now + TETRIS_DEBRIS_LIFETIME_TICKS;
+            entry.spawn_tick = now;
             debris.push_back(entry);
         }
     }
 }
 
 void ApplicationTetris::UpdateDebris(){
-    uint64_t now = main_scene->GetPhysicsTick();
+    /*
+        What bounds the pile is a COUNT, not a clock - see TETRIS_DEBRIS_MAX.
+
+        The old rule reaped every chunk TETRIS_DEBRIS_LIFETIME_TICKS after it was born, which made
+        the physics a firework: it went off, it was pretty, and four seconds later there was no
+        evidence any of it had happened. Trimming by size instead lets the tray fill up, so a
+        clear lands on the last clear's chunks and a good game leaves something to look at. The
+        cost is flat either way, because `debris` is in spawn order and the oldest is the front.
+    */
     bool f_any_destroyed = false;
+
+    //A chunk that missed the tray is gone the moment it is below the world, whatever the cap
+    //says. Without this a bad bounce would hold a slot in the pile forever, out of sight.
     for (size_t i = 0; i < debris.size(); ){
         Object* object = debris[i].object;
-        //Also reaped once it has fallen well below the well, so a chunk that missed the floor
-        //does not survive on the far side of the world just because its timer has not run out.
-        bool f_expired = (now >= debris[i].reap_tick) || (object && object->GetWorldPosition().y < -12.0f);
-        if (!f_expired){
+        if (object && object->GetWorldPosition().y > TETRIS_DEBRIS_FLOOR_Y){
             i++;
             continue;
         }
@@ -1050,6 +1432,15 @@ void ApplicationTetris::UpdateDebris(){
         }
         debris.erase(debris.begin() + i);
     }
+
+    while ((int)debris.size() > TETRIS_DEBRIS_MAX){
+        if (debris.front().object){
+            debris.front().object->Destroy();
+            f_any_destroyed = true;
+        }
+        debris.erase(debris.begin());
+    }
+
     if (f_any_destroyed){
         //Object::Destroy only MARKS. Without this the cubes stop rendering but their rigid bodies
         //stay in the physics world for the life of the run - only two of the eleven apps in this
@@ -1102,6 +1493,8 @@ void ApplicationTetris::PublishSnapshot(){
     snapshot.hold_type = game.hold_type;
     snapshot.f_hold_used = game.f_hold_used;
     snapshot.f_paused = main_scene->IsPhysicsPaused();
+    snapshot.combo = game.combo;
+    snapshot.f_back_to_back = game.f_back_to_back;
     snapshot.debris_count = (int)debris.size();
     snapshot.seed = current_seed;
     snapshot.next_types = game.next_queue;
@@ -1300,6 +1693,14 @@ json ApplicationTetris::BuildStateJson(){
         {"score",copy.score},
         {"lines",copy.lines},
         {"level",copy.level},
+        //The run bonuses, so a scripted player can actually play FOR them - without these a bot
+        //can see that the score went up and has no way to find out which of the three reasons it
+        //was. `combo` is the multiplier, so -1 is "no run" and 0 is "one clear in, paying
+        //nothing yet"; see Playfield::combo.
+        {"combo",copy.combo},
+        {"back_to_back",copy.f_back_to_back},
+        {"last_clear_lines",copy.last_clear_lines},
+        {"last_clear_points",copy.last_clear_points},
         {"pieces_placed",copy.pieces_placed},
         {"seed",copy.seed},
         {"piece",copy.piece_type >= 0 ? json(GetTetrominoName(copy.piece_type)) : json(nullptr)},
@@ -1330,16 +1731,47 @@ void ApplicationTetris::RenderTetrisHUD(){
     //Anchored top-left and kept narrow, because the engine's debug panels dock into the same
     //corner when F1 is on and the two should not fight over it.
     ImGui::SetNextWindowPos(ImVec2(f_show_engine_ui ? 320.0f : 16.0f,16.0f),ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(250,0),ImGuiCond_Always);
+    //290 rather than 250: the scoring table below is the widest thing in here and a reference
+    //that wraps its own last column is not much of a reference.
+    ImGui::SetNextWindowSize(ImVec2(290,0),ImGuiCond_Always);
     ImGui::Begin("Tetris",NULL,ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse);
 
     ImGui::Text("SCORE  %i",game.score);
     ImGui::Text("LEVEL  %i",game.level);
     ImGui::Text("LINES  %i",game.lines);
+    //The two bonuses that are about to expire, so they are worth seeing while they are live.
+    if (game.combo > 0){
+        ImGui::TextColored(ImVec4(1,0.6f,0.3f,1),"COMBO  x%i%s",game.combo,game.f_back_to_back ? "   B2B" : "");
+    }else if (game.f_back_to_back){
+        ImGui::TextColored(ImVec4(1,0.6f,0.3f,1),"B2B READY");
+    }
     ImGui::Separator();
     ImGui::Text("piece  %s",game.phase == TETRIS_PHASE_FALLING ? GetTetrominoName(game.piece_type) : "-");
     ImGui::Text("tick   %llu",(unsigned long long)main_scene->GetPhysicsTick());
     ImGui::Text("gravity %i ticks/cell",Playfield::GravityTicksForLevel(game.level));
+
+    /*
+        The scoring table, printed from the same functions the rules score with rather than from a
+        copy of the numbers. A player who has never been told that a tetris is worth eight times a
+        single has no reason to build a well, and the popup over the board only ever answers "what
+        was THAT worth" - this is the part that answers "what is anything worth".
+
+        OPEN by default, and collapsible for anyone who has read it once. A reference nobody can
+        see is the state this app was already in.
+    */
+    if (ImGui::CollapsingHeader("Scoring",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::TextDisabled("all line scores multiply by LEVEL");
+        for (int n = 1; n <= 4; n++){
+            ImGui::Text("%-7s %4d      perfect %4d",
+                        Playfield::LineClearName(n),
+                        Playfield::LineClearBaseScore(n,false),
+                        Playfield::LineClearBaseScore(n,true));
+        }
+        ImGui::Text("combo   +%d per clear after the 1st",Playfield::ComboStepScore());
+        ImGui::Text("b2b     +%d%% tetris after a tetris",Playfield::BackToBackBonusPercent());
+        ImGui::Text("drops   %d/cell soft, %d/cell hard",
+                    Playfield::SoftDropCellScore(),Playfield::HardDropCellScore());
+    }
 
     if (game.phase == TETRIS_PHASE_GAMEOVER){
         //The engine has no world-space text of any kind - one 13px ImGui font is the whole text

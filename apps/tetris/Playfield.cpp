@@ -58,6 +58,8 @@ void Playfield::NewGame(uint32_t seed){
     lines = 0;
     level = 1;
     pieces_placed = 0;
+    combo = -1;
+    f_back_to_back = false;
     ticks_elapsed = 0;
     gravity_ticks = 0;
     lock_ticks = 0;
@@ -193,15 +195,99 @@ int Playfield::GetGhostY() const{
     return y;
 }
 
-void Playfield::AwardLineScore(int num_lines, TetrisEvents& events){
-    //Guideline scoring: a tetris is worth more than four singles by a wide margin, which is the
-    //whole reason to build a well and wait.
-    static const int line_score[5] = { 0, 100, 300, 500, 800 };
-    if (num_lines < 0 || num_lines > 4){
+/*
+    Guideline scoring: a tetris is worth more than four singles by a wide margin, which is the
+    whole reason to build a well and wait. The perfect-clear column REPLACES the normal award
+    rather than adding to it, and is large enough that emptying the board is worth going for on
+    purpose instead of being a curiosity nobody notices happening.
+*/
+int Playfield::LineClearBaseScore(int num_lines, bool f_perfect_clear){
+    if (num_lines < 1 || num_lines > 4){
+        return 0;
+    }
+    static const int normal[5]  = { 0, 100,  300,  500,  800 };
+    static const int perfect[5] = { 0, 800, 1200, 1800, 2000 };
+    return f_perfect_clear ? perfect[num_lines] : normal[num_lines];
+}
+
+const char* Playfield::LineClearName(int num_lines){
+    switch (num_lines){
+        case 1: return "SINGLE";
+        case 2: return "DOUBLE";
+        case 3: return "TRIPLE";
+        case 4: return "TETRIS";
+    }
+    return "";
+}
+
+bool Playfield::WouldBePerfectClear() const{
+    //Every filled cell has to be in a row that is about to go. Walking the rows and skipping the
+    //clearing ones is the same linear scan the flash does; the board is 200 cells, so nothing
+    //cleverer is worth the words to explain it.
+    for (int y = 0; y < TETRIS_BOARD_H; y++){
+        bool f_clearing = false;
+        for (size_t i = 0; i < clearing_rows.size(); i++){
+            if (clearing_rows[i] == y){
+                f_clearing = true;
+                break;
+            }
+        }
+        if (f_clearing){
+            continue;
+        }
+        for (int x = 0; x < TETRIS_BOARD_W; x++){
+            if (board[y][x] >= 0){
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/*
+    The one place `score` grows by a line clear, and the one place the two run bonuses are
+    applied. Everything it decides also comes back out in `events`, because the app announces the
+    number over the board the moment it is scored - a score that only ever appears as a larger
+    total is a score the player cannot learn anything from.
+
+    Order matters here. The back-to-back bonus is a percentage OF THE BASE, so it is taken before
+    the flat combo bonus is added; doing it the other way would quietly pay 50% on the combo too.
+*/
+void Playfield::AwardLineScore(int num_lines, bool f_perfect_clear, TetrisEvents& events){
+    if (num_lines < 1 || num_lines > 4){
         return;
     }
-    score += line_score[num_lines] * level;
+
+    //"Difficult" is the guideline's word for the clears the chain is built from. Here that is a
+    //tetris and nothing else - add T-spins to this predicate and the whole bonus follows.
+    bool f_difficult = (num_lines == 4);
+    //The FIRST difficult clear starts a chain, it does not already extend one, so it is not paid.
+    bool f_chained = f_difficult && f_back_to_back;
+
+    int base = LineClearBaseScore(num_lines,f_perfect_clear);
+    int points = base * level;
+    if (f_chained){
+        points += base * level * BackToBackBonusPercent() / 100;
+    }
+    //A clear that is not difficult breaks the chain; a difficult one (re)starts it.
+    f_back_to_back = f_difficult;
+
+    //The combo runs on PLACEMENTS, not on rows: two clears in a row is a combo whether they were
+    //singles or tetrises. Incremented here because this function is only reached by a clear, and
+    //reset to -1 by the placement that clears nothing (see LockPiece).
+    combo++;
+    if (combo > 0){
+        points += ComboStepScore() * combo * level;
+    }
+
+    score += points;
     lines += num_lines;
+
+    events.score_awarded = points;
+    events.combo = combo;
+    events.f_back_to_back = f_chained;
+    events.f_perfect_clear = f_perfect_clear;
+
     int new_level = 1 + (lines / 10);
     if (new_level > level){
         level = new_level;
@@ -243,11 +329,16 @@ void Playfield::LockPiece(TetrisEvents& events){
 
     if (!clearing_rows.empty()){
         events.lines_cleared = (int)clearing_rows.size();
-        AwardLineScore((int)clearing_rows.size(),events);
+        //Asked NOW, while the completed rows are still on the board: once they collapse there is
+        //no longer any way to tell a perfect clear from an ordinary one.
+        AwardLineScore((int)clearing_rows.size(),WouldBePerfectClear(),events);
         phase = TETRIS_PHASE_CLEARING;
         phase_ticks = TETRIS_CLEAR_FLASH_TICKS;
         return;
     }
+    //A placement that cleared nothing ends the combo run. Both bonuses are about keeping a run
+    //going, so both are decided at the moment a piece sets rather than at the moment a row goes.
+    combo = -1;
     phase = TETRIS_PHASE_SPAWN;
     phase_ticks = TETRIS_SPAWN_DELAY_TICKS;
 }
@@ -319,7 +410,7 @@ void Playfield::UpdateFalling(const TetrisInput& input, TetrisEvents& events){
         int landed_y = GetGhostY();
         int cells = piece_y - landed_y;
         piece_y = landed_y;
-        score += cells * 2;                 //guideline: 2 points a cell for a hard drop
+        score += cells * HardDropCellScore();    //guideline: 2 points a cell for a hard drop
         events.f_hard_dropped = true;
         events.hard_drop_cells = cells;
         LockPiece(events);                  //a hard drop sets instantly, with no lock delay
@@ -341,7 +432,7 @@ void Playfield::UpdateFalling(const TetrisInput& input, TetrisEvents& events){
         gravity_ticks = interval;
         if (TryMove(0,-1)){
             if (input.f_soft_drop){
-                score += 1;
+                score += SoftDropCellScore();
             }
             lock_ticks = 0;                 //it is falling freely again
         }

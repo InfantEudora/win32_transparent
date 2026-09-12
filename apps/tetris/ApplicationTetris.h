@@ -55,8 +55,35 @@
 //looking like it is teleporting and short enough that it never lags behind the input.
 #define TETRIS_SLIDE_TICKS          2
 
-//Debris cubes spawned per cleared cell live this long before they are reaped.
-#define TETRIS_DEBRIS_LIFETIME_TICKS 260
+/*
+    How many debris cubes the tray beside the well holds before the oldest are thrown away.
+
+    A COUNT, not a lifetime, and that is the whole of docs/tetris_findings.md §7.5: chunks from a
+    cleared row used to be reaped on a timer, so the physics was garnish that appeared and
+    vanished and left nothing behind. Bounding the pile by its size instead lets it ACCUMULATE -
+    the next clear's chunks land on the last one's - so the player ends a good game looking at
+    visible evidence of it, while the cost stays flat no matter how long the game runs. 150
+    sleeping boxes is nothing; an unbounded pile after a thousand rows would not be.
+*/
+#define TETRIS_DEBRIS_MAX           150
+
+//A chunk that missed the tray is still reaped the moment it is below the world, so a bad bounce
+//does not hold a slot in the pile forever.
+#define TETRIS_DEBRIS_FLOOR_Y       -12.0f
+
+/*
+    The score popup: "TETRIS +3200", over the board, on the tick it is scored.
+
+    In ticks, like everything else that takes time here, so it reads identically whether the game
+    is running, being single-stepped or replayed. Three slots because a clear cannot happen more
+    often than about every 50 ticks (the flash, the collapse and the spawn delay all have to pass
+    first), so three is already one more than can overlap.
+*/
+#define TETRIS_POPUP_TICKS          130
+#define TETRIS_POPUP_SLOTS          3
+#define TETRIS_POPUP_RISE           5.0f    //world units it travels upward over its life
+#define TETRIS_POPUP_GROW_TICKS     8       //the snap on the way in
+#define TETRIS_POPUP_SHRINK_TICKS   16      //...and the way out, which is how it "fades"
 
 //The world-space labels. Numbered rather than named so one array and one update function cover
 //all of them; the captions never change, the three stats change when the game says so, and the
@@ -66,8 +93,28 @@
 #define TETRIS_LABEL_SCORE      2
 #define TETRIS_LABEL_LINES      3
 #define TETRIS_LABEL_LEVEL      4
-#define TETRIS_LABEL_GAMEOVER   5
-#define TETRIS_LABEL_COUNT      6
+#define TETRIS_LABEL_COMBO      5
+#define TETRIS_LABEL_GAMEOVER   6
+#define TETRIS_LABEL_COUNT      7
+
+/*
+    One line clear worth announcing, handed from the tick that scored it to the frame that draws
+    it.
+
+    NUMBERS ONLY. The string is formatted in PreRender for the same reason the score label's is:
+    building a text mesh ends in glNamedBufferData and the physics thread may not touch GL. The
+    tick decides WHAT happened and the frame decides how to say it, which also means changing the
+    wording never touches the simulation.
+*/
+struct TetrisClearEvent{
+    int      lines = 0;
+    int      points = 0;
+    int      combo = 0;
+    bool     f_back_to_back = false;
+    bool     f_perfect_clear = false;
+    float    world_y = 0.0f;        //middle of the rows that went, so the popup starts there
+    uint64_t tick = 0;              //when, so the frame can age it without a clock
+};
 
 /*
     What the MCP tools are allowed to see.
@@ -98,6 +145,10 @@ struct TetrisSnapshot{
     int hold_type = -1;
     bool f_hold_used = false;
     bool f_paused = false;
+    int combo = -1;
+    bool f_back_to_back = false;
+    int last_clear_lines = 0;       //what the most recent clear was and paid, for the tools
+    int last_clear_points = 0;
     int debris_count = 0;
     uint32_t seed = 1;
     std::vector<int> next_types;
@@ -128,6 +179,7 @@ private:
     //--- Setup, all on the render thread from Init() ---------------------------------------
     void BuildMaterials();
     void BuildWell();
+    void BuildDebrisTray();
     void BuildViewObjects();
     void SetupFieldShadows();
     void SetupCamera();
@@ -221,6 +273,32 @@ private:
     GlyphSet glyphs;
     TetrisLabel labels[TETRIS_LABEL_COUNT];
 
+    /*
+        The score popups. A small pool rather than objects made and destroyed per clear, for the
+        same reason the board is a fixed grid of cubes: a popup that allocated would churn the
+        renderer's object list every few seconds, and a Mesh rebuilt by delete/new would leak a
+        VBO and a VAO every time (Mesh has no destructor - see TetrisLabel above).
+
+        Animated entirely from the simulation TICK, never from a frame count: PreRender runs once
+        per frame at whatever rate the display manages, and the age of a popup has to be the same
+        number on a 30fps machine, a 240fps one and a single-stepped one.
+    */
+    struct TetrisPopup{
+        Object*  object = NULL;
+        Mesh*    mesh = NULL;
+        uint64_t spawn_tick = 0;
+        float    origin_y = 0.0f;
+        bool     f_active = false;
+    };
+    TetrisPopup popups[TETRIS_POPUP_SLOTS];
+    void BuildPopups();
+    //Consumes `pending_clears`, gives each one a slot, and ages the ones already up. RENDER
+    //THREAD - it builds text meshes.
+    void UpdatePopups(uint64_t tick);
+    //Formats what one clear should say. Split out because it is the only part anyone will want
+    //to change, and it has no business being tangled with the pool bookkeeping.
+    void FormatClearText(const TetrisClearEvent& clear, char* out, size_t out_size) const;
+
     //Materials, resolved once by name in Init. Indices, because that is what Object::material_slot
     //takes - and because Renderer::AddMaterial cannot be trusted to return the right one (see
     //docs/tetris_findings.md).
@@ -233,9 +311,15 @@ private:
     int material_text_hot = 0;
 
     //--- Physics garnish ---------------------------------------------------------------------
+    /*
+        The tray, oldest chunk first - which is what makes trimming to TETRIS_DEBRIS_MAX a pop
+        from the front rather than a search. Still garnish: nothing in here has a collider that
+        can reach the well, and the board is a plain array that no rigid body has any way to
+        touch. That is the only way to have physics in a Tetris without ruining it.
+    */
     struct TetrisDebris{
         Object* object = NULL;
-        uint64_t reap_tick = 0;
+        uint64_t spawn_tick = 0;
     };
     std::vector<TetrisDebris> debris;
 
@@ -253,6 +337,14 @@ private:
     //--- Cross-thread ------------------------------------------------------------------------
     TetrisSnapshot snapshot;
     std::mutex snapshot_mutex;
+    //Clears the simulation has scored and the frame has not announced yet. Guarded by
+    //snapshot_mutex, because it crosses exactly the same boundary the snapshot does and a second
+    //lock for one vector would only be a second lock to take in the wrong order.
+    std::vector<TetrisClearEvent> pending_clears;
+    //The tick a new game started. A popup older than this belongs to the game before it, and the
+    //frame takes it down: the simulation cannot hide one itself, because the popup objects are
+    //the render thread's and nothing else may touch them.
+    uint64_t popup_flush_tick = 0;
     uint32_t current_seed = 1;
     //Bumped by the restart command so a fresh game gets fresh pieces when nobody names a seed.
     uint32_t next_auto_seed = 2;
