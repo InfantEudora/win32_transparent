@@ -24,7 +24,10 @@ DozerCharacter::DozerCharacter(AssetManager* assetmanager, PhysicsWorld* physics
         physics->AddCapsuleCollider(0.25,1,vec3(0,0.25,-0.8),r);
         physics->SetStatic(false);
         physics->SetGravityEnabled(true);
-        physics->body->rigidbody->setLinearDamping(0.5);
+        //Asked for, not inherited. AddBoxCollider used to set both dampings to 0.5 behind the
+        //caller's back and no longer does (backlog 47), so this is the one that was wanted
+        //stated where it can be seen. Angular damping is deliberately left at the library's 0.
+        physics->SetLinearDamping(0.5);
         physics->body->rigidbody->setUserData(this);
         physics->body->rigidbody->setIsAllowedToSleep(false);
         physics->body->rigidbody->updateMassPropertiesFromColliders();

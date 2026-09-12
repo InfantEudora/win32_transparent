@@ -4,7 +4,6 @@
 #include "Application.h"
 #include "imgui_internal.h" //DockBuilder* and ImHashStr, for the default dock layout
 #include "PrecisionSleeper.h"
-#include "OBJLoader.h"
 #include "MCPServer.h"
 
 #include "Window.h"

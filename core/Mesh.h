@@ -66,9 +66,18 @@ public:
 
     //Which of the renderer's custom shaders draws this mesh, for MESH_MODE_SHADER meshes only -
     //an index into Renderer::custom_shaders, as handed out by Renderer::AddCustomShader. Ignored
-    //in every other mesh mode. Defaults to 0 so an app that registers a single custom shader
-    //never has to set it.
-    int custom_shader_index = 0;
+    //in every other mesh mode.
+    //
+    //-1 MEANS NOT ASSIGNED, AND IS THE DEFAULT ON PURPOSE. It used to default to 0, which saved
+    //an app with exactly one custom shader from tagging its mesh - and cost every app with two,
+    //because forgetting to tag a mesh then silently drew it with the FIRST shader instead. A
+    //mesh drawn by the wrong shader looks like a shader bug and is hunted as one; a mesh that
+    //draws nothing and says why in the log is found in a minute. Renderer::RenderUniqueMeshes
+    //skips an untagged mesh and warns once.
+    int custom_shader_index = -1;
+
+    //So the warning above is one line and not one line per frame.
+    bool f_warned_no_custom_shader = false;
 
     int32_t batch_index = -1;
     int32_t batch_num_instances = 0;

@@ -45,6 +45,28 @@ public:
     void SetBodyWorldPosition(const vec3& pos);
     void SetBodyWorldOrientation(const quat& q);
 
+    /*
+        Collision filtering for the WHOLE BODY: the category it is in, and the categories it
+        collides with.
+
+        THEY LIVE HERE, NOT ON THE COLLIDER, SO THAT ORDER DOES NOT MATTER. rp3d keeps these
+        per collider, so the obvious implementation - walk the colliders and set them - does
+        nothing at all on a body that has none yet, and AddPhysics deliberately hands back a body
+        with no colliders. Setting a filter before adding the shape is therefore the natural thing
+        to write and used to be silently ignored, leaving a body that ignores a filter you can see
+        set on it in the Inspector.
+
+        So these remember, and every Add*Collider applies what is remembered to the collider it
+        just made. Set them before or after, as many times as you like, in any order.
+
+        The defaults are rp3d's own (category 0x0001, collides with everything), so a body that
+        never touches them behaves exactly as an untouched rp3d body does.
+    */
+    void SetCollisionCategoryBits(uint32_t bits);
+    void SetCollideWithMaskBits(uint32_t bits);
+    uint32_t GetCollisionCategoryBits();
+    uint32_t GetCollideWithMaskBits();
+
     //Colliders
     uint32_t GetNumColliders();
     void AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation, float density = 1.0f);
@@ -140,6 +162,14 @@ public:
     rp3d::VehicleConstraint* CreateVehicle(const rp3d::VehicleConstraintSettings& settings);
     void DestroyVehicle(rp3d::VehicleConstraint* vehicle);
 
+private:
+    //See the setters above. rp3d's defaults, so remembering them changes nothing by itself.
+    uint32_t collision_category_bits = 0x0001;
+    uint32_t collide_with_bits = 0xFFFF;
+
+    //Stamps the remembered filter onto one collider. Called by every Add*Collider, which is what
+    //makes the filter a property of the body rather than of whichever shapes existed at the time.
+    void ApplyCollisionBits(rp3d::Collider* collider);
 };
 
 

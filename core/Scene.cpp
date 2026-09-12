@@ -1,7 +1,6 @@
 #include "glad.h"
 
 #include "Scene.h"
-#include "OBJLoader.h"
 #include "Debug.h"
 
 static Debugger *debug = new Debugger("Scene", DEBUG_ALL);

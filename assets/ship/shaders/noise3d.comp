@@ -1,0 +1,82 @@
+#version 430 core
+
+/*
+    Generates the 3D cloud noise the raymarched volume samples - run once at startup, not per
+    frame (see ApplicationShip::BuildVolumeNoise).
+
+    This is the voronoi/worley from shaders/texture.comp lifted into 3D, with one change that
+    matters: it is TILEABLE. The cell lookup wraps modulo the cell count, so the pattern repeats
+    exactly at the texture edge and the volume can sample it at any scale without a seam
+    crossing the cloud. Without that, `uvw * noise_scale` with a scale above 1 would show the
+    texture boundary as a hard plane through the middle of the cloud.
+
+    Worley is inverted (1 - distance) so the cell CENTRES are the dense parts: that gives the
+    billowy clumps clouds have, where plain perlin gives an even mush.
+
+    All four channels hold the same noise at doubling frequencies, which is what lets the volume
+    shader build an FBM from a single texture fetch instead of four.
+*/
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(rgba8, binding = 0) uniform image3D imgOut;
+
+//Number of worley cells across the texture for the lowest-frequency channel. Each later channel
+//doubles it, so channel 4 has CELLS_BASE*8 cells per axis - keep that under the texture size or
+//the cells get smaller than a texel and just turn into static.
+uniform int cells_base = 4;
+
+//Same hash as ssao_compute.comp uses - Dave Hoskins' hash without sine, which is stable across
+//drivers in a way sin(dot(...)) is not.
+vec3 hashwithoutsine33(vec3 p3){
+	p3 = fract(p3 * vec3(.1031, .1030, .0973));
+    p3 += dot(p3, p3.yxz + 33.33);
+    return fract((p3.xxy + p3.yxx) * p3.zyx);
+}
+
+/*
+    Distance to the nearest feature point, in cell units, over a grid of `cells` cells per axis.
+    Returns 0 at a feature point and approaches 1 in the gaps.
+
+    The feature point for a cell is derived from the cell index taken modulo `cells`, so cell
+    (cells, 0, 0) and cell (0,0,0) get the SAME point - that is the tiling. The point itself is
+    then placed at the unwrapped cell position, so the neighbour distances stay correct.
+*/
+float worley(vec3 p, int cells){
+    vec3 scaled = p * float(cells);
+    vec3 base = floor(scaled);
+
+    float min_dst = 1.0;
+    for (int z = -1;z <= 1;z++){
+        for (int y = -1;y <= 1;y++){
+            for (int x = -1;x <= 1;x++){
+                vec3 cell = base + vec3(x,y,z);
+                //mod() rather than a bitmask: cells need not be a power of two.
+                vec3 wrapped = mod(cell,vec3(float(cells)));
+                vec3 feature = cell + hashwithoutsine33(wrapped);
+                min_dst = min(min_dst,length(feature - scaled));
+            }
+        }
+    }
+    return min_dst;
+}
+
+void main(){
+    ivec3 texel = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 size = imageSize(imgOut);
+    if (any(greaterThanEqual(texel,size))){
+        return;
+    }
+
+    //Texel CENTRES, so the tiling is exact: with +0.5 the last texel of one tile and the first
+    //of the next are a full texel apart, the same as any other neighbouring pair.
+    vec3 uvw = (vec3(texel) + 0.5) / vec3(size);
+
+    vec4 octaves = vec4(
+        1.0 - worley(uvw,cells_base),
+        1.0 - worley(uvw,cells_base * 2),
+        1.0 - worley(uvw,cells_base * 4),
+        1.0 - worley(uvw,cells_base * 8));
+
+    imageStore(imgOut,texel,clamp(octaves,0.0,1.0));
+}

@@ -1,7 +1,7 @@
 # Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
-`docs/engine_backlog_done.md` — 41 closed items, with their verification notes intact, because
+`docs/engine_backlog_done.md` — 48 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
 Items are drawn from two runs in which an agent built a game on this engine as an audit of it:
@@ -19,73 +19,13 @@ item that moves between bands keeps its number.
 
 Status key: `[ ]` open · `[~]` partially done.
 
-Last updated 2026-09-12, after closing items 53 and 54.
+Last updated 2026-09-12, after closing item 47.
 
 ---
 
 ## Band A — minutes each, no risk
 
-- [ ] **55. `Physics::SetTrigger` / `IsTrigger` dereference a collider that may not exist.**
-  `core/physics/Physics.cpp:118` and `:122` both do `body->last_collider->...` with no null check,
-  unlike every other method in that file, which guards on `body && body->rigidbody`.
-  `last_collider` is only ever set by an `Add*Collider` call, and `AddPhysics` deliberately creates
-  a body and leaves colliders to the caller — so `SetTrigger` on a fresh body dereferences null.
-  *Inferred from reading; the Breakout app used no triggers, so it did not fire.*
-
-- [ ] **56. The deferred position buffer's clear value is a legal world position.**
-  `Renderer::DeferredPass` clears the position attachment to `(1,0,0,0)`
-  (`core/Renderer.cpp:418`) — a perfectly reasonable point about a metre from the origin. So a
-  custom shader sampling `gbuffer_position` to find out how far away the scene is **cannot
-  distinguish "nothing was drawn here" from "geometry one metre from the camera"**, and the
-  obvious soft-intersection fade dissolves the effect against the empty sky.
-
-  Not really a defect — a colour buffer has to be cleared to something — but it is a trap every
-  future user of that pass walks into, because the obvious implementation of the obvious effect
-  reaches for position first. Two fixes, either is fine: clear it to a position no scene will
-  occupy, or state next to the `TEXUNIT_GBUFFER_*` defines in `core/Renderer.h` that **depth is the
-  channel that answers "is there anything here" — its clear value of 1.0 is outside the range
-  anything real occupies — and position is only meaningful once depth has said yes.**
-
-  The Breakout run avoided this by reading `DeferredPass` before writing the fade rather than
-  after. That is ten minutes of reading against an afternoon of debugging, and it only happened
-  because the brief said to read the engine's source first.
-
-- [ ] **57. `Mesh::custom_shader_index` defaults to 0, so a forgotten tag draws with the wrong
-  shader.** `AddCustomShader` returning an index the caller must remember to put on the mesh is
-  fine. The default being a *valid index* is not: an app that registers a second custom shader and
-  forgets to tag its mesh silently gets the **first** one, which is a far worse outcome than
-  drawing nothing. A default of -1 meaning "not assigned" fails loudly and costs one line plus a
-  guard in `RenderUniqueMeshes`.
-
-- [ ] **58. `SetCollisionCategoryBits` must be called after the colliders exist, and nothing says
-  so.** `Object::SetCollisionCategoryBits` walks the body's existing colliders
-  (`core/Object.cpp:943`), so calling it before `Add*Collider` does nothing at all, silently. The
-  ordering is not stated on the declaration in `core/Object.h`.
-
-  Noticed by reading the implementation rather than by getting it wrong — but the failure mode if
-  you did is a body that ignores a filter you can *see* set on it in the Inspector, which is a bad
-  afternoon. Either document the ordering on the declaration, or have `Add*Collider` re-apply the
-  object's stored bits to the collider it just made, which removes the ordering requirement
-  instead of documenting it.
-
-- [~] **62. The custom-shader pass's contract is documented in the wrong place.** **The dangerous
-  half is fixed; the documentation half is still open.**
-
-  `Renderer::CustomShaderPass` calls `Setmat4("mat_worldcam", ...)` on every registered custom
-  shader every frame, and `Shader::Setmat4` on a missing uniform used to go through `debug->Fatal`
-  → `exit(1)`. GLSL strips a uniform that is declared but unused, so a custom shader with its own
-  vertex stage that happened not to use the camera matrix killed the process on the first frame —
-  no window, and a message only on stderr. **Item 44 settled that: every setter now warns once and
-  returns `false`, so the edge is gone** and reusing `shaders/default.vert` is a convenience rather
-  than the price of staying alive.
-
-  What remains is that the contract a custom shader signs up to is explained in a comment inside
-  `Renderer::UploadCloudShadow`, about a different function. It belongs on `AddCustomShader` and on
-  `CustomShaderPass`, next to the G-buffer texture units and the note from item 56 — there should
-  be one place that states it. Lower stakes now that the failure is a warning, but the G-buffer
-  binding and clear-value traps in that contract are still undocumented where anyone would look.
-
-## Band B — under an hour each
+*Empty. Everything in this band has been done; new items land here as they are found.*
 
 - [ ] **41. One light radius for the whole renderer.** `field_light_radius` sets how fast every
   shadow edge softens, because `light_t` has no size field to read it from. Adding one is the
@@ -122,21 +62,6 @@ Last updated 2026-09-12, after closing items 53 and 54.
   precondition for the brick-dissolve effect they cut (see item 52's neighbourhood): a brick that
   stopped casting a shadow the moment it began dissolving would look worse than one that simply
   vanished.
-
-- [ ] **47. `Add*Collider` sets damping and friction behind your back, and asymmetrically.**
-  `AddBoxCollider` and `AddCapsuleCollider` set linear and angular damping to 0.5 and friction to
-  1.0 (`core/physics/Physics.cpp:175-176`, and again at `:237`). `AddSphereCollider` sets neither
-  (`:183`). There is no damping setter anywhere on `Physics` to undo it (item 46).
-
-  Two bodies built the obvious way therefore behave differently for reasons nothing states, and
-  **two colliders on one body can disagree about whether the body is damped depending on which was
-  added last**. A shape swap from box to sphere silently changes a body's motion and nothing logs
-  it. Breakout did not fight it — its debris and capsules both want damping — but the asymmetry is
-  the part that will bite someone.
-
-  This needs a decision rather than a patch: either the defaults are deliberate and belong in one
-  place applied to every shape, or they are incidental and should be the caller's to set. Note
-  changing them alters the feel of every existing app, so whichever way it goes, say so loudly.
 
 - [ ] **60. `debug->Fatal` on the render thread produces no window and no visible reason.** A
   shader typo calls `debug->Fatal` (`core/Shader.cpp:175,205,235,273`) → `exit(1)` from inside

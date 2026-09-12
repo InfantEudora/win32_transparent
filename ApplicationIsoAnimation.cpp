@@ -101,9 +101,9 @@ void ApplicationIsoAnimation::Init(void){
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
     indicator_shader = new Shader("shaders/default.vert","shaders/custom.frag");
     indicator_shader->uniform_callback = std::bind(&ApplicationIsoAnimation::SetCharacterUniforms,this);
-    //Index 0, which is Mesh::custom_shader_index's default, so the test plane below needs no
-    //further tagging beyond MESH_MODE_SHADER.
-    renderer->AddCustomShader(indicator_shader);
+    //Keep the index: Mesh::custom_shader_index defaults to -1 ("not assigned") and the test plane
+    //below has to be tagged with this, even though it is the only custom shader here.
+    int indicator_shader_index = renderer->AddCustomShader(indicator_shader);
 
     main_scene = CreateEmptyScene();
     main_scene->UpdatePhysics(GetPhysicsTimestep());
@@ -375,6 +375,7 @@ void ApplicationIsoAnimation::Init(void){
     Object* plane = assetmanager->GetObjectFromAsset("plane");
     plane->name = "Test Plane";
     plane->GetMesh()->mesh_mode = MESH_MODE_SHADER;
+    plane->GetMesh()->custom_shader_index = indicator_shader_index;
     plane->SetPosition(vec3(0,0.01,0));
     main_scene->AddObject(plane);
 

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "AssetManager.h"
+#include "OBJLoader.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("AssetManager", DEBUG_INFO);

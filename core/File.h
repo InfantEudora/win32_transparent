@@ -9,6 +9,73 @@
 std::string GetBasePath(const char* filename);
 
 /*
+    THE ASSET SEARCH PATH.
+
+    A list of ROOT directories an asset name is looked up under, in order, exactly the way -I
+    works for headers. An asset is named by its CATEGORY and file - "shaders/default.vert",
+    "meshes/tank.glb" - never by where it physically lives, and the roots decide which copy of
+    that name the process actually gets.
+
+    Set from APP_ASSET_PATH, which apps/<App>.mk builds out of its APP_ASSETS list. So a typical
+    app resolves against its own root and then the shared one:
+
+        assets/ship,assets/shared
+
+    and "shaders/default.vert" is found at assets/shared/shaders/default.vert while
+    "shaders/raymarch_volume.frag" is found at assets/ship/shaders/raymarch_volume.frag.
+
+    ORDER IS THE FEATURE. An app that wants its own take on a shared shader drops a file with the
+    same name in its own root and nothing else changes - first match wins, and the app's root
+    comes first. That is the whole reason this is a list and not a single directory.
+
+    THE NAME AS GIVEN IS ALWAYS TRIED FIRST, before any root. Which means every path literal that
+    predates this mechanism - "data/cityandroads.glb", "shaders/default.vert", relative to the working
+    directory - still resolves exactly as it did, because the file is still there. Nothing has to
+    move for this to be safe, and assets can be migrated one app at a time. When the last of them
+    has moved, the old directories simply stop being found and the fallback costs one failed
+    stat per asset load.
+*/
+void AddAssetSearchRoot(const char* root);
+
+/*
+    The directory the running executable sits in, with no trailing separator.
+
+    Every path this engine resolves has historically been relative to the WORKING directory, which
+    is whatever the thing that launched the process happened to be pointing at. That is fine while
+    there is one exe built at the repo root and everyone runs it from there, and it stops being
+    fine the moment each app is its own exe in its own build folder: launched from a debugger, a
+    shortcut, or a script in another directory, the same binary would look for its assets
+    somewhere else entirely and fail with nothing obviously wrong.
+*/
+std::string GetExecutableDirectory();
+
+/*
+    Adds a search root given RELATIVE TO THE EXECUTABLE rather than to the working directory, so
+    an app can name its assets once and have them found however it was launched:
+
+        AddAssetSearchRootFromExe("../assets");             //apps/tank/assets
+        AddAssetSearchRootFromExe("../../../shared_assets");
+
+    This is what an app's own main() should use. AddAssetSearchRoot stays for a root that really
+    is meant to be working-directory relative, or one already absolute.
+*/
+void AddAssetSearchRootFromExe(const char* relative);
+
+/*
+    Turns an asset name into a path that exists on disk, following the search path above. True if
+    something was found, and `out` is then the path to open. False if nothing matched, and `out`
+    is left holding a description of everything that was tried - which is what a caller should put
+    in its error message, because "not found" without the list of places looked is the least
+    useful thing a file layer can say.
+
+    Exposed because not every kind of asset access can go through LoadFile: a directory scan
+    (Directory::GetFiles) needs the resolved FOLDER, and a library that wants to open a file
+    itself needs the resolved path. Anything that just wants bytes should call LoadFile and let
+    it do this.
+*/
+bool ResolveAssetPath(const char* name, std::string& out);
+
+/*
     Hands back the bytes of a file.
 
     THE FILE LAYER OWNS THE BUFFER. DO NOT free() IT. You are being lent a pointer, and it stays

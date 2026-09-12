@@ -289,8 +289,15 @@ class Object{
     float               GetMass();
     vec3                GetVelocity();
     void                SetVelocity(const vec3& newvel);
-    uint32_t collide_with_bits = 0; //Bits for the whole object that get applied to each collider.
-    uint32_t collision_category_bits = 0;
+    //Bits for the whole object that get applied to each collider, including colliders added
+    //later - Physics remembers them and every Add*Collider re-applies them, so the old "set these
+    //only AFTER the colliders exist" ordering rule is gone.
+    //
+    //Defaulted to rp3d's own values rather than to 0. 0 is not "unset", it is a real filter
+    //meaning "in no category, collides with nothing" - which the clone path below used to stamp
+    //onto every copy of an object that had never set them.
+    uint32_t collide_with_bits = 0xFFFF;
+    uint32_t collision_category_bits = 0x0001;
 
     //Hierarchy
     //

@@ -114,11 +114,29 @@ void Physics::SetBodyType(rp3d::BodyType type){
 	body->rigidbody->setIsActive(f_active);
 }
 
+/*
+	Guarded like SetBounciness/GetBounciness just above, and for the same reason: last_collider is
+	only ever set by an Add*Collider call, and AddPhysics deliberately creates a body and leaves
+	the colliders to the caller. So a body between those two calls has none, and these two were the
+	only methods here that dereferenced it anyway.
+
+	The asymmetry is deliberate. A SET that silently does nothing leaves the caller believing it
+	has a trigger, and the thing it was meant to do - stop generating contacts - looks like a
+	physics bug somewhere else entirely; that is worth a line in the log. A GET has a truthful
+	answer to give: a body with no collider is not a trigger.
+*/
 void Physics::SetTrigger(bool trigger){
+	if (!body || !body->last_collider){
+		debug->Err("SetTrigger on a body with no collider - add a collider first, or this does nothing\n");
+		return;
+	}
 	body->last_collider->setIsTrigger(trigger);
 }
 
 bool Physics::IsTrigger(){
+	if (!body || !body->last_collider){
+		return false;
+	}
 	return body->last_collider->getIsTrigger();
 }
 
@@ -161,6 +179,57 @@ void Physics::WakeUp(){
 	body->rigidbody->setIsSleeping(false);
 }
 
+/*
+	Collision filtering. See the block above the declarations in Physics.h for why the bits are
+	kept here rather than only pushed at the colliders.
+
+	The body is deactivated across the change because rp3d caches broad-phase pairs: an already
+	overlapping pair keeps its old filter until the pair is rebuilt, so a filter changed on a
+	live body can take effect a tick late or not at all. Cheaper than reasoning about when it
+	matters.
+*/
+void Physics::ApplyCollisionBits(rp3d::Collider* collider){
+	if (!collider){
+		return;
+	}
+	collider->setCollisionCategoryBits((unsigned short)collision_category_bits);
+	collider->setCollideWithMaskBits((unsigned short)collide_with_bits);
+}
+
+void Physics::SetCollisionCategoryBits(uint32_t bits){
+	collision_category_bits = bits;
+	if (!body || !body->rigidbody){
+		return;     //remembered; whatever collider comes next will get it
+	}
+	bool f_active = body->rigidbody->isActive();
+	body->rigidbody->setIsActive(false);
+	for (uint32_t i = 0;i < body->rigidbody->getNbColliders();i++){
+		body->rigidbody->getCollider(i)->setCollisionCategoryBits((unsigned short)bits);
+	}
+	body->rigidbody->setIsActive(f_active);
+}
+
+void Physics::SetCollideWithMaskBits(uint32_t bits){
+	collide_with_bits = bits;
+	if (!body || !body->rigidbody){
+		return;
+	}
+	bool f_active = body->rigidbody->isActive();
+	body->rigidbody->setIsActive(false);
+	for (uint32_t i = 0;i < body->rigidbody->getNbColliders();i++){
+		body->rigidbody->getCollider(i)->setCollideWithMaskBits((unsigned short)bits);
+	}
+	body->rigidbody->setIsActive(f_active);
+}
+
+uint32_t Physics::GetCollisionCategoryBits(){
+	return collision_category_bits;
+}
+
+uint32_t Physics::GetCollideWithMaskBits(){
+	return collide_with_bits;
+}
+
 void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation,float density){
     reactphysics3d::BoxShape* boxShape = PhysicsWorld::physicsCommon->createBoxShape((reactphysics3d::Vector3&)box);
 	reactphysics3d::Transform t = reactphysics3d::Transform::identity();
@@ -169,15 +238,36 @@ void Physics::AddBoxCollider(const vec3& box,const vec3& pos,const quat& orienta
 	//body->collision_shape = boxShape;
 	if (body->rigidbody){
 		body->last_collider = body->rigidbody->addCollider(boxShape, t);
+		ApplyCollisionBits(body->last_collider);
+		//Density is a parameter, so it is the caller's. Everything else is left at reactphysics3d's
+		//own defaults - see the note above AddSphereCollider.
 		body->last_collider->getMaterial().setMassDensity(density);
-		body->last_collider->getMaterial().setFrictionCoefficient(1.0);
-		body->rigidbody->setAngularDamping(0.5);
-		body->rigidbody->setLinearDamping(0.5);
 		body->rigidbody->updateMassPropertiesFromColliders();
 
 	}
 	//debug->Info("Box Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
+
+/*
+	A note that belongs to all four Add*Collider functions.
+
+	THEY SET NOTHING BUT THE DENSITY YOU PASSED. Friction, bounciness and the two dampings are left
+	wherever reactphysics3d puts them, which is friction 0.3 and bounciness 0.5 (PhysicsWorld's
+	WorldSettings) and damping 0.0 (RigidBodyComponents). If a body wants something else, it says
+	so - SetFrictionCoefficient, SetBounciness, SetLinearDamping, SetAngularDamping.
+
+	It was not always so. AddBoxCollider used to force friction to 1.0 and both dampings to 0.5,
+	AddCapsuleCollider the two dampings, and AddSphereCollider nothing at all - so two bodies built
+	the obvious way behaved differently for reasons nothing stated, a shape swap from box to sphere
+	silently changed how a body moved, and two colliders on one body could disagree about whether
+	the body was damped depending on which was added last (damping is per BODY, friction per
+	COLLIDER - so the last box added set the damping for everything on it). None of those numbers
+	was a decision anybody made; they were one app's tuning that never left.
+
+	The cost of removing them is that bodies slide further and tumble longer than they used to.
+	That is the library's behaviour, it is now visible at the call site, and an app that wants the
+	old feel asks for it in one line.
+*/
 
 //Creates a Sphere collision shape of size
 void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& orientation,float density){
@@ -188,9 +278,8 @@ void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& ori
 	//body->collision_shape = sphereShape;
 	if (body->rigidbody){
 		body->last_collider = body->rigidbody->addCollider(sphereShape, t);
+		ApplyCollisionBits(body->last_collider);
 		body->last_collider->getMaterial().setMassDensity(density);
-		//body_collider->getMaterial().setFrictionCoefficient(2);
-		//body_collider->getMaterial().setBounciness(0);
 		body->rigidbody->updateMassPropertiesFromColliders();
 	}
 	//debug->Info("Sphere Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
@@ -219,6 +308,7 @@ void Physics::AddHeightFieldCollider(const std::vector<float>& heights,int colum
     t.setOrientation((rp3d::Quaternion&)orientation);
     if (body->rigidbody){
         body->last_collider = body->rigidbody->addCollider(heightfieldShape, t);
+        ApplyCollisionBits(body->last_collider);
     }
 }
 
@@ -230,11 +320,8 @@ void Physics::AddCapsuleCollider(const float radius, const float height,const ve
 	t.setOrientation((rp3d::Quaternion&)orientation);
 	if (body->rigidbody){
 		body->last_collider = body->rigidbody->addCollider(capsuleShape, t);
+		ApplyCollisionBits(body->last_collider);
 		body->last_collider->getMaterial().setMassDensity(density);
-		//body_collider->getMaterial().setFrictionCoefficient(2);
-		//body_collider->getMaterial().setBounciness(0);
-		body->rigidbody->setAngularDamping(0.5);
-		body->rigidbody->setLinearDamping(0.5);
 		body->rigidbody->updateMassPropertiesFromColliders();
 	}
 	//debug->Info("Capsule Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());

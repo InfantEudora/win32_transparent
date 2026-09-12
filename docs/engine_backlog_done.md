@@ -6,7 +6,7 @@ been reworded: each entry is the text it carried when it was closed, including t
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
 
-Numbers are stable and are never reused. They run 1-65 across both files; **28 was never
+Numbers are stable and are never reused. They run 1-66 across both files; **28 was never
 assigned**.
 
 Sources: `docs/tetris_findings.md` (the `APP=Tetris` run) and `docs/breakout_findings.md` (the
@@ -740,6 +740,63 @@ Status key: `[x]` done · `[-]` decided against.
   the behaviour the escape-hatch version had. Nothing else in the repo used these calls, so there
   was nothing else to convert.
 
+- [x] **47. `Add*Collider` set damping and friction behind your back, and asymmetrically.**
+  **Decided and done 2026-09-12. The defaults are gone; the library's stand.** Dick's call, and the
+  reasoning was the short one: none of those numbers was deliberate, so the engine should stop
+  having an opinion and the setters from item 46 are there for anything that does.
+
+  **What reactphysics3d actually defaults to**, which is the question that settled it:
+
+  | | rp3d default | what `Add*Collider` used to force |
+  |---|---|---|
+  | linear damping  | `0.0` (`RigidBodyComponents.cpp:223`) | `0.5` on box and capsule |
+  | angular damping | `0.0` (`:224`)                        | `0.5` on box and capsule |
+  | friction        | `0.3` (`WorldSettings`)               | `1.0` on box only |
+  | bounciness      | `0.5` (`WorldSettings`)               | never touched |
+
+  So all four adders now set **only the density they were passed**, which is a parameter and
+  therefore the caller's. The commented-out `setFrictionCoefficient(2)` / `setBounciness(0)` pairs
+  in the sphere and capsule adders went too - same class of "did somebody mean this?" noise.
+
+  **Why the old arrangement was worse than just being undocumented.** Damping is a property of the
+  BODY and friction of the COLLIDER, so on a body with two box colliders the last one added set
+  the damping for the whole thing. A shape swap from box to sphere silently changed how a body
+  moved. And two bodies built the obvious way behaved differently with nothing anywhere saying so.
+
+  **Two call sites converted rather than left to inherit.** `DozerCharacter` and `ShipCharacter`
+  both already set linear damping to 0.5 themselves - through `rigidbody->setLinearDamping`, the
+  raw escape hatch item 46's setters exist to replace. They now say `physics->SetLinearDamping(0.5)`
+  next to the collider that used to hand it to them silently. Nothing else in the tree asked for
+  damping at all.
+
+  **What this changes, honestly.** Bodies slide further and tumble longer. Measured with a settle
+  probe - step 900 ticks, snapshot every object, step 300 more, count what moved:
+
+  ```
+  Dozer     29 objects | 2 physics bodies still creeping (Beam 0.025 over 300 ticks)
+  Tileset  200 objects | 0 still moving
+  Ship     200 objects | 0 physics bodies still moving
+  Tetris   200 objects | 0 still moving
+  Breakout 108 objects | 0 at rest; after a game, debris creeps ~0.05 over 300 ticks
+  ```
+
+  (The "Main Camera" that shows up in that probe is view-owned, not a body.) Every scene still
+  comes to rest and nothing slid off the world or fell through a floor - Dozer renders exactly as
+  before. What used to stop dead now drifts to a halt, which is the library's behaviour and is now
+  a thing an app can see and change.
+
+  **The part nobody has measured, and it is the big one: box friction went from 1.0 to 0.3.**
+  Floors are box colliders too, and rp3d combines the two surfaces, so every box-on-box contact in
+  the engine is less than a third as grippy as it was. Nothing settles differently in the probes
+  above, because static friction still holds a resting stack - but *pushing* things is Dozer's
+  entire job, and how that now feels is a judgement rather than a measurement. Any app that wants
+  the old grip asks for it: `SetFrictionCoefficient(1.0)`.
+
+  **Not verified: `APP=Tank`**, which was being moved to its own place while this was done. Its
+  hull is a box collider, so it loses 0.5/0.5 damping and its friction drops like everything
+  else - worth a look when it lands, and worth doing before item 64's investigation, so that one
+  is not chasing a change made here.
+
 - [x] **48. A scalar axis had to be declared by mapping a fake key to it, and nothing said so.**
   **Done 2026-09-12, together with item 49 — they were one bug.** `InputController::GetAxis` and
   the `INPUT_EVENT_AXIS_SCALAR` applier both looked the action up in `keymap`, which only
@@ -1036,6 +1093,115 @@ Status key: `[x]` done · `[-]` decided against.
   wav twice, which is the arrangement that found the heap corruption in `LoadFile` in the first
   place.
 
+- [x] **55. `Physics::SetTrigger` / `IsTrigger` dereferenced a collider that may not exist.**
+  **Done 2026-09-12.** Both now guard on `body && body->last_collider`, exactly as `SetBounciness`
+  and `GetBounciness` immediately above them already did — they were the only two methods in the
+  file that reached through `last_collider` without checking.
+
+  **The asymmetry between them is deliberate.** `IsTrigger` returns `false`: a body with no
+  collider genuinely is not a trigger, so there is a truthful answer to give and nothing to report.
+  `SetTrigger` logs an error, because a set that silently does nothing leaves the caller believing
+  it has a trigger, and the symptom — contacts still being generated — surfaces somewhere else
+  entirely, looking like a physics bug rather than an ordering mistake.
+
+  **It was a real crash, not an inferred one.** The original entry said *"inferred from reading;
+  the Breakout app used no triggers, so it did not fire."* Confirmed by building the same 9-check
+  harness twice, once against the guarded file and once against a copy with only these two guards
+  stripped:
+
+  ```
+  guarded:    9 checks, 0 failed
+  unguarded:  Segmentation fault (exit 139)
+  ```
+
+  The window is genuinely easy to hit: `AddPhysics` deliberately creates a body and leaves the
+  colliders to the caller, so every body is in this state between those two calls.
+
+- [x] **56. The deferred G-buffer's clear values cannot be tested for emptiness.**
+  **Done 2026-09-12 — documented, which is what the item asked for.** Stated at the
+  `TEXUNIT_GBUFFER_*` defines in `core/Renderer.h`, because that is what a custom shader author is
+  already looking at: **depth is the channel that answers "is there anything here"** — cleared to
+  1.0, outside the range any fragment can write, so `depth < 1.0` means geometry and nothing else
+  does — and **position and normal are only meaningful once depth has said yes.** With the working
+  pattern written out, since two shaders in the repo already use it.
+
+  **The item had the specifics wrong, and the truth is worse.** It said position was cleared to
+  `(1,0,0,0)`. Position is `COLOR_ATTACHMENT0` and is cleared to `(0,0,0,0)` — **the world
+  origin**, which is not merely a plausible place for geometry but, in a game built around the
+  origin, where all of it is. `(1,0,0,0)` is the *normal* buffer, where it is a unit +X normal and
+  just as legal. Nor is `w` an escape: `deferred.frag` writes the material's alpha there.
+
+  Reading an attachment number off that clear block wrongly is easy — see item 66, which is what
+  came of checking. The block now names every attachment and its clear value.
+
+- [x] **57. `Mesh::custom_shader_index` defaulted to 0, so a forgotten tag drew with the wrong
+  shader.** **Done 2026-09-12.** The default is now **-1, meaning not assigned**, and
+  `Renderer::RenderUniqueMeshes` skips such a mesh and says so once, naming the mesh id.
+
+  The old default saved an app with exactly one custom shader from tagging its mesh, and charged
+  every app with two: forgetting a tag silently drew the mesh with the **first** registered shader.
+  A mesh drawn by the wrong shader looks like a shader bug and gets hunted as one; a mesh that
+  draws nothing and explains itself in the log is found in a minute.
+
+  **One app was relying on the old default and had to be converted** —
+  `ApplicationIsoAnimation` registered its indicator shader, discarded the returned index and left
+  the test plane untagged, with a comment saying it was leaning on the default being 0. It now
+  keeps the index and tags the plane. That app *is* the case the old default existed to serve, and
+  converting it cost two lines.
+
+  **Verified both ways.** All twelve apps build; `APP=IsoAnimation` still draws its indicator arc
+  on the tiled plane and logs no warning. Then, deliberately, with the tag commented out again:
+
+  ```
+  [ err ] Renderer : Mesh id 1 is MESH_MODE_SHADER but has no custom_shader_index - set it
+                     to what Renderer::AddCustomShader returned, or it will not be drawn
+  ```
+
+  Exactly once, not once per frame, and the mesh vanished instead of borrowing a shader. Tag
+  restored afterwards.
+
+- [x] **58. `SetCollisionCategoryBits` had to be called after the colliders existed, and nothing
+  said so.** **Done 2026-09-12, by removing the ordering requirement rather than documenting it** —
+  Dick's call: re-apply the bits when a collider is added.
+
+  **The filter is now a property of the BODY.** `Physics` remembers the category and mask, every
+  `Add*Collider` stamps them onto the collider it just made, and the setters still reach every
+  collider that already exists. Set them before the shape, after it, or twice — it no longer
+  matters. `Object`'s setters keep a copy for the clone path and delegate to `Physics`, and
+  `Object::AddPhysics` hands the stored value to the body it creates, so setting a filter on an
+  object that has no body yet works too. That closes both orderings, not just the one the item
+  named.
+
+  **The defaults had to change from 0 to rp3d's own, and that is the interesting part.** `0` is
+  not "unset" — it is a real filter meaning *in no category, collides with nothing*. Re-applying a
+  stored 0 to every collider would have made every body in the engine non-colliding, so the fix
+  is only safe once `Object` and `Physics` start out holding `0x0001`/`0xFFFF`, which is exactly
+  what rp3d gives a collider it creates (`Body.cpp:90`, `RigidBody.cpp:685`). A body that never
+  touches these is therefore bit-for-bit as it was.
+
+  **It also fixes a latent bug in the clone path.** `Object`'s copy constructor already called
+  both setters with the source's stored bits — so cloning an object that had never set them
+  stamped category 0 / mask 0 onto the clone, giving it a body that collided with nothing. Nobody
+  had noticed because the apps that clone (Dozer especially) all set their filters on the source
+  first. Worth knowing that this changes behaviour for any clone of an unfiltered source: it used
+  to be a ghost and is now solid.
+
+  **Verified.** All twelve apps build. An 8-check harness over `Physics` with no window and no GL
+  proves the mechanism from both ends: filter-then-shape now lands on the collider (the order that
+  used to be silently wrong), shape-then-filter still works, a second and third collider added
+  later inherit the same filter, changing it afterwards reaches all three, and a body that never
+  asks keeps rp3d's defaults.
+
+  In-app, the risk was the clone-default change, so `APP=Dozer` — the heaviest cloner in the
+  repo — was stepped 600 ticks: 29 objects, nothing below y=-5, the lowest being the floors at
+  their designed -4.7. `APP=Breakout`, whose gameplay filters are load-bearing, plays normally.
+
+  *A note on that last one, because it looked like a regression and was not:*
+  `tools/breakout_bot.py capsules` caught 3 power-ups where an earlier run of the same scenario
+  caught 7. Three runs on the same unchanged build gave **3, 0 and 7**. The scenario is dominated
+  by run-to-run variance — which is item 25's finding, that MCP-driven input is not tick-aligned —
+  so its power-up count is not a regression test and should not be quoted as one.
+
 - [x] **59. A mouse delta accumulated across a pause arrived as one jump.** **Done 2026-09-12.**
   `InputController::Tick` cleared a delta only if something had read it that pass (`f_processed`),
   and a relative axis ACCUMULATES (`INPUT_EVENT_AXIS_RELATIVE` adds). So anything that stopped the
@@ -1066,6 +1232,61 @@ Status key: `[x]` done · `[-]` decided against.
   `SubmitAxisDelta` drops deltas outright when unfocused. The accumulation is purely the
   unbounded-grace bug above, and it happens while FOCUSED and not reading - which a pause
   guarantees.*
+
+- [x] **62. The custom-shader pass's contract is documented in the wrong place.** **Done
+  2026-09-12.** Both halves are now closed.
+
+  **The dangerous half was item 44's**, and is recorded there: `CustomShaderPass` sets
+  `mat_worldcam` on every registered custom shader every frame, and `Shader::Setmat4` on a missing
+  uniform used to go through `debug->Fatal` → `exit(1)`. GLSL strips a declared-but-unused
+  uniform, so a custom shader with its own vertex stage that happened not to use the camera matrix
+  killed the process on the first frame — no window, and a message only on stderr. Every setter
+  now warns once and returns `false`.
+
+  **This half was the documentation, and the item's own description of where it lived was out of
+  date.** It said the contract was explained inside `Renderer::UploadCloudShadow`, about a
+  different function; by the time this was picked up the pass mechanics had already been moved
+  onto `CustomShaderPass` itself. What was actually missing was anything at all on
+  `AddCustomShader` — which is the function an app author calls, and therefore the one they read.
+
+  **So the contract is stated once, on `AddCustomShader` in `core/Renderer.h`**, covering what a
+  custom shader is handed and what is expected of it:
+
+  - the two lines that tag a mesh (`mesh_mode` *and* `custom_shader_index`), and that -1 means
+    untagged since item 57, so an untagged mesh is skipped with a message rather than drawn by
+    whichever shader was registered first;
+  - what the engine sets on your shader every frame (`mat_worldcam`, `eye_position`) and what it
+    pointedly does not (the shadow matrices, the cloud-shadow and field uniforms) — so `vshadow`
+    is meaningless in a custom shader that reuses `default.vert`, which is a convenience and not a
+    requirement;
+  - that a missing uniform is a warning and not a death, and why that is the ordinary case rather
+    than a mistake;
+  - what is bound when it runs: the three G-buffer texture units, **with a pointer to the
+    `TEXUNIT_GBUFFER_*` block for item 56's trap** — depth is the only channel that can say
+    whether anything was drawn, and reaching for position first is the mistake everyone makes —
+    and SSBOs 0/1/2/4 (instance, material, light, bone), which `InitSSBO` binds once and which
+    stay bound;
+  - `uniform_callback` for your own uniforms, and that it may change cull face, depth mask and
+    depth test, all restored after each sub-pass;
+  - that indices never move, and that a hot reload replaces the entry at its index rather than
+    registering a second copy — which would leave every tagged mesh pointing at the stale shader.
+
+  `CustomShaderPass`'s own comment keeps the pass mechanics (why it runs last, why `DeferredPass`
+  moved before the colour pass) and points at the contract instead of restating it. The
+  three-line comment that used to sit above `AddCustomShader` is folded in, so there is one place
+  and not two.
+
+  **Cleanup: one stale claim, left behind by item 44.** `UploadCloudShadow`'s comment still said
+  *"Setmat4 goes through debug->Fatal if the uniform is missing, so it is only called when there
+  is a map to point at"* — the first clause has not been true since item 44, and it was the stated
+  reason for the second. The guard is still right, for a better reason (there is nothing
+  meaningful to hand over), and the comment now says that, with the history in brackets. Swept for
+  others: `Shader.cpp`'s long block also mentions the fatal behaviour but in the past tense,
+  describing why the policy changed, so it is history rather than a stale claim.
+
+  **Verified.** All twelve apps build. `APP=Breakout` renders identically to the reference capture
+  — its shield is a custom shader reading `gbuffer_depth` and `gbuffer_position`, so it exercises
+  the contract being described — with no warnings and no GL errors.
 
 - [x] **65. A scripted axis hold could not change its value.** **Found and fixed 2026-09-12 while
   verifying 48/49/59.** `AdvanceSyntheticHolds` emits an axis's value only on the tick it starts
@@ -1138,3 +1359,49 @@ rest of the process.
 
 Worth doing before item 25: replay cannot be built on a generator whose stream depends on which
 object happened to construct first.
+
+- [x] **66. The G-buffer clear addressed the wrong buffers, and the code carried a workaround for
+  the symptom.** **Found and fixed 2026-09-12 while documenting item 56.**
+
+  `glClearNamedFramebufferfv`'s third argument is a **draw buffer index, not an attachment
+  number** — it indexes the list handed to `glNamedFramebufferDrawBuffers`. That list is
+  `{ATTACHMENT0, ATTACHMENT1, ATTACHMENT3}`, so it skips ATTACHMENT2 and the indices shift:
+
+  ```
+  draw buffer 0 -> ATTACHMENT0  position
+  draw buffer 1 -> ATTACHMENT1  normal
+  draw buffer 2 -> ATTACHMENT3  object id      <- an INTEGER texture
+  draw buffer 3 -> nothing, the list has three entries
+  ```
+
+  The clear block read them as attachment numbers. So the **integer** object id texture was being
+  cleared by the **float** call at index 2 with `(1,0,0,0)`, and the integer clear meant for it,
+  aimed at index 3, addressed a draw buffer that is not set and silently did nothing.
+
+  **The codebase had already recorded the symptom without finding the cause.** In `DrawFrame`'s
+  readback:
+
+  ```cpp
+  //Somehow, -1 reads back as 3F800000
+  if ((id_pixeldata[0] != 0x3F800000) && (id_pixeldata[0] != -1)){
+  ```
+
+  `0x3F800000` is the IEEE-754 bit pattern of `1.0f`. That is precisely the float clear landing in
+  an integer texture. The "somehow" was this.
+
+  Fixed by clearing draw buffer 2 with `glClearNamedFramebufferiv`, and the readback now just
+  tests `!= -1`. The mis-aimed `fv` at index 3 is gone. Note this was never touching the SSAO
+  texture on ATTACHMENT2, which is not a draw buffer in this pass.
+
+  **No visible bug was being caused** — both sentinel values were excluded by the workaround, so
+  picking behaved — which is exactly why it survived: the cost was a magic number nobody could
+  explain and a type-mismatched clear whose result the spec does not define, working only because
+  this driver does the obvious thing.
+
+  **Verified.** All twelve apps build. With the workaround removed, a wrong mapping would spam
+  "Read back object index 1065353216 is out of bounds" on the first frame; sweeping the mouse
+  across five points of the `APP=Ship` viewport, including empty regions, produces **zero** such
+  errors and zero GL errors from the debug callback. Positively: clicking the ship selects
+  `Ship #22` in both the scene tree and the Inspector, so the id buffer still reads real objects.
+  `APP=Breakout` renders unchanged, custom shield shader included — it is the thing that reads
+  this G-buffer.

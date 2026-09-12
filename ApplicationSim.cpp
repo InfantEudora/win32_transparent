@@ -1,5 +1,4 @@
 #include "ApplicationSim.h"
-#include "OBJLoader.h"
 #include <stdlib.h>
 #include <string>
 #include "imgooey.h"

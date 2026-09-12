@@ -167,6 +167,10 @@ Physics* Object::AddPhysics(PhysicsWorld* world){
         physics->SetBodyWorldOrientation(GetRotation());
         physics->SetStatic(true);
         physics->SetGravityEnabled(false);
+        //Carry over any collision filter set on this object before it had a body. Both default to
+        //rp3d's own values, so for an object that never set them this changes nothing.
+        physics->SetCollisionCategoryBits(collision_category_bits);
+        physics->SetCollideWithMaskBits(collide_with_bits);
         //Stamp the body with the Object that owns it. Every collision/trigger callback in the
         //codebase already casts getUserData() straight back to an Object* (ApplicationDozer and
         //ApplicationShip's onContact, ApplicationTileset's onTrigger, CraneCharacter's magnet) -
@@ -932,32 +936,28 @@ void Object::ApplyAnimation(float time_delta){
     }
 }
 
-//This sets the category that this object belongs to.
+/*
+    Collision filtering, remembered on the Object and delegated to Physics, which is what actually
+    owns the colliders - see the block above the setters in core/physics/Physics.h.
+
+    Call these whenever you like. Before AddPhysics, before the colliders, after them, twice: the
+    Object keeps the value and AddPhysics hands it on, and Physics re-applies it to every collider
+    made from then on. They used to return silently unless a body with colliders already existed,
+    so "set the filter, then build the shape" - which is the order anyone writes - did nothing.
+*/
 void Object::SetCollisionCategoryBits(uint32_t bits){
-    if (!physics){
-        return;
-    }
-    bool f_active = physics->body->rigidbody->isActive();
-	physics->body->rigidbody->setIsActive(false);
-    for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
-        physics->body->rigidbody->getCollider(i)->setCollisionCategoryBits(bits);
-    }
     collision_category_bits = bits;
-    physics->body->rigidbody->setIsActive(f_active);
+    if (physics){
+        physics->SetCollisionCategoryBits(bits);
+    }
 }
 
 //This sets all categories that this object can collide with
 void Object::SetCollideWithMaskBits(uint32_t bits){
-    if (!physics){
-        return;
-    }
-    bool f_active = physics->body->rigidbody->isActive();
-	physics->body->rigidbody->setIsActive(false);
-    for (uint32_t i=0;i<physics->body->rigidbody->getNbColliders();i++){
-        physics->body->rigidbody->getCollider(i)->setCollideWithMaskBits(bits);
-    }
     collide_with_bits = bits;
-    physics->body->rigidbody->setIsActive(f_active);
+    if (physics){
+        physics->SetCollideWithMaskBits(bits);
+    }
 }
 
 void Object::SetMass(float mass){

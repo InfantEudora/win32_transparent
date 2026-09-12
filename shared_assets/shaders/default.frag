@@ -1,0 +1,622 @@
+#version 430 core
+
+//#version 460 core
+//#extension GL_ARB_bindless_texture : require
+
+//We get info from the deferred stage. When the fragment has full MSAA coverage, it's in the GBUFFEr.
+//Else, it's in a sperate buffer and we have to run code here. The edges cannot be looked up in the gbuffer.
+
+//When rendering to multiple color targets
+layout (location = 0) out vec4 color;
+
+//gl_Position = fragment position from camera view
+//in vec4 gl_FragCoord;  contains the window relative coordinate (x, y, z, 1/w)
+    //The z component is the depth value that would be used for the fragment's depth if no shader contained any writes to gl_FragDepth.
+//gl_FragDepth
+
+//Passed from vertex shader.
+layout (location = 0)  in vec3 vposition;       //Vertex position in world space, now fragment position in worldspace.
+layout (location = 1)  in vec3 vnormal;         //Vertex normals
+layout (location = 2)  in vec2 vuv;             //Texture UV coordinates
+layout (location = 3)  in mat3 TBN;			    //Normal mapping matrix
+
+layout (location = 6)  flat in int vmatindex;   //Material index
+layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
+
+layout (location = 8) in vec4 vshadow;    //This vertex' position as seen from sun light source
+
+
+
+
+//It's set with glBindTextureUnit
+
+layout (binding = 0) uniform sampler2D material_texture[24];   //Input texture
+//layout (binding = 1) uniform sampler2D shadow_texture;
+layout (binding = 24) uniform samplerCube environment_map;
+//Setting for using reflections from environment map
+uniform int f_environment_reflections = 1;
+
+struct Material{
+	vec4 color;
+    int diffuse_texture;
+    int normal_texture;
+    float brightness;
+    float metallic;
+    float roughness;
+    int pad2;
+    int pad3;
+    int pad4;
+    //sampler2D handle_diffuse;
+    //sampler2D handle_normal;
+    uvec2 handle_diffuse;
+    uvec2 handle_normal;
+    //Self-emitted light: xyz is glTF's emissiveFactor, w a strength multiplier. Must stay last
+    //to match material_t in Material.h - see the comment there.
+    vec4 emissive;
+};
+
+//All the light types fall together into a single light struct
+struct Light{
+    vec3    position;
+    int     shadow;     // Set if the the light produces a shadow
+    vec3    direction;	// Direction of 0 means its a point light
+    float   brightness;
+    vec3    color;
+    float   cos_angle; 	// 0 means its a point light, else it becomes a cone light
+};
+//Multiple of 4 for padding
+#define NUM_MATERIAL_SLOTS  4
+#define MAX_MORPH_TARGETS	4
+struct InstanceData{
+	mat4 mat_transformscale;
+	int material_slot[NUM_MATERIAL_SLOTS];
+	float morph_factors[MAX_MORPH_TARGETS];
+	int objectid;
+	int num_bones;
+	int vertex_count;
+	int num_morph_targets;
+};
+
+#define PI 	3.14159265359
+
+uniform vec3 eye_position;
+uniform int f_normal_mapping = 1;
+uniform int f_materialindex_is_color = 0;
+//Cloud shadows: the transmittance map built by shaders/cloud_shadow.comp, bound by the renderer
+//at TEXUNIT_CLOUD_SHADOW. Off unless an app has actually given the renderer a map, which only
+//the ship app does - see Renderer::UploadCloudShadow.
+layout (binding = 26) uniform sampler3D cloud_shadow_texture;
+uniform mat4 mat_cloud_shadow;
+uniform int f_cloud_shadows = 0;
+//Occluder field: the top-down min/max height map built by shaders/field.frag, bound by the
+//renderer at TEXUNIT_FIELD_SHADOW. This is what shadows POINT lights - see CalcFieldShadow.
+//Off unless an app called Renderer::EnableFieldShadows.
+layout (binding = 27) uniform sampler2D field_texture;
+uniform mat4 mat_field;
+uniform vec3 field_axis = vec3(0,0,1);
+uniform int f_field_shadows = 0;
+uniform int field_shadow_steps = 64;
+uniform float field_normal_bias = 0.15;
+uniform float field_light_radius = 0.30;
+uniform float alpha_clip = 1.0f;
+//Width of a cone light's soft edge, in cosine space - the `epsilon` of the reference
+//shader. Shared with raymarch_volume.frag so a cone matches between surfaces and fog.
+uniform float cone_softness = 0.15;
+
+//This gets set when lighting calculation is done, and is this fragments resulting normal.
+vec3 sampled_normal = vec3(0,0,0);
+
+//A material index comes in from a vertex, which matches a material specified in the OBJ file.
+//This matches our material slot, which looks up the global index.
+layout (std430, binding = 0) buffer InstanceDataBuffer{
+	InstanceData instance_data[];
+};
+
+layout (std430, binding = 1) buffer MaterialBuffer{
+	Material materials[];
+};
+
+layout (std430, binding = 2) buffer LightBuffer{
+	Light lights[];
+};
+
+//The material we pick from buffer, or set our selves
+Material m;
+
+layout (std430, binding = 3) buffer ReadbackBuffer{
+	int data_in[4];
+    int data_out[4];
+    float fdata_out[4];
+};
+
+float DistributionGGX(vec3 N, vec3 H, float a){
+    float a2     = a*a;
+    float NdotH  = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
+
+    float nom    = a2;
+    float denom  = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom        = PI * denom * denom;
+    return nom / denom;
+}
+
+float GeometrySchlickGGX(float NdotV, float k){
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float k){
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx1 = GeometrySchlickGGX(NdotV, k);
+    float ggx2 = GeometrySchlickGGX(NdotL, k);
+    return ggx1 * ggx2;
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0){
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+vec3 GetNormalMapNormal(){
+    //Bindless
+    //vec3 normal = texture(m.handle_normal,vuv).rgb;
+    //Default
+    vec3 normal = texture(material_texture[m.normal_texture],vuv).rgb;
+
+    normal = (2.0 * normal) - 1.0;
+    return normalize(normal);
+}
+
+//Returns the light intensity from a single directional light such as the sun
+vec3 CalcDirectionalPBRLight(vec3 albedo, vec3 lightdirection, vec3 color, float brightness){
+
+    vec3 N;
+    vec3 V;
+    vec3 L;
+    if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
+        N = GetNormalMapNormal();
+        mat3 iTBN = transpose(TBN);
+        V = normalize(iTBN * (eye_position- vposition));
+        L = normalize(iTBN * (lightdirection));
+    }else{
+        N = normalize(vnormal);
+        V = normalize(eye_position - vposition);
+        L = normalize(lightdirection);
+    }
+
+    sampled_normal = normalize(vnormal);
+
+    vec3 F0 = vec3(0.04); //Fresnell factor
+    F0 = mix(F0, albedo, m.metallic);
+
+    // reflectance equation
+    vec3 Lo = vec3(0.0);
+
+    // calculate per-light radiance
+    vec3 H = normalize(V + L);
+
+    vec3 radiance     = color * brightness;
+
+    // cook-torrance brdf
+    //glTF stores *perceptual* roughness. GGX wants alpha = roughness^2, and Smith's
+    //direct-lighting geometry term wants k = (roughness+1)^2 / 8. Feeding roughness straight
+    //into both (as this used to) renders every material rougher than it was authored.
+    //The floor is only there to keep a perfect mirror from dividing by zero.
+    float rough = max(m.roughness, 0.03);
+    float alpha = rough * rough;
+    float k     = ((rough + 1.0) * (rough + 1.0)) / 8.0;
+
+    float NDF = DistributionGGX(N, H, alpha);
+    float G   = GeometrySmith(N, V, L, k);
+    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - m.metallic;
+
+    vec3 numerator    = NDF * G * F;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+    vec3 specular     = numerator / denominator;
+
+    // add to outgoing radiance Lo
+    float NdotL = max(dot(N, L), 0.0);
+    //Use the original object normal to completely shadow back faces
+    //NdotL = min(dot(vnormal, normalize(lightpos - vposition)),NdotL );
+
+    Lo += (kD * albedo / PI + specular) * radiance * NdotL * m.brightness;
+    return Lo;
+}
+
+float GetTransparency(){
+    if (m.diffuse_texture >= 0){
+        //Bindless
+        //return texture(m.handle_diffuse,vuv).w;
+        //Default
+        return texture(material_texture[m.diffuse_texture], vuv).w;
+    }
+    return m.color.w;
+}
+
+
+//Compute shadow from sun shadowmap
+float CalcShadow(vec4 vposinshadow){
+    //Linearise
+    vec3 pos_proj = vposinshadow.xyz / vposinshadow.w;
+
+    //Anything outside the sun's ortho box has no depth information, so it cannot be shadowed.
+    //Without this the lookup below samples outside [0,1] and returns a meaningless depth, which
+    //painted a bright patch onto the scene that tracked the light's position.
+    if (any(greaterThan(abs(pos_proj.xy), vec2(1.0))) || (pos_proj.z > 1.0)){
+        return 1.0;
+    }
+
+    //Map to UV coordinates
+    vec2 uvshadow;
+	uvshadow.x 		= (0.5 * pos_proj.x) + (0.5);
+    uvshadow.y 		= (0.5 * pos_proj.y) + (0.5);
+
+    //Lookup this fragment's associated depth value from the lights point of view.
+    float closest_depth = texture(material_texture[0], uvshadow).r;
+    float current_depth = (0.5 * pos_proj.z) + (0.5);
+    float bias = 0.00025;
+
+    float shadow = (current_depth - bias) > closest_depth  ? 0.2 : 1.0;
+    return shadow;
+/*
+
+    vec3 sunpos = sun.position;
+    //vec3 lightvec = sunpos - vposition; //This would be the light vector if the sun had a perspective camera.
+    vec3 lightvec = sunpos;
+    vec3 nlightvec = normalize(lightvec);
+
+    //float bias = max(0.05 * (1.0 - dot(vnormal, nlightvec)), shadow_bias);
+    float bias = max(shadow_bias * (1.0 - dot(vnormal, nlightvec)), shadow_bias/32.0);
+    //bias = shadow_bias;
+    // check whether current frag pos is in shadow
+    //float shadow = (current_depth - bias) - closest_depth;
+
+    //if (shadow < 0){
+    //    return 1;
+    //}
+    //shadow = clamp(shadow,0,1);
+    float shadow = (current_depth - bias) > closest_depth  ? 0.0 : 1.0;
+    //float shadow =
+    return shadow;
+*/
+}
+
+/*
+    How much sunlight survives the raymarched clouds on its way to this point.
+
+    Multiplies the sun term; it does not replace CalcShadow. That one asks "is an opaque surface
+    in the way", this one asks "how much light got through the fog", and the answers compose.
+    Being an integral rather than a compare, it is already soft - there is no penumbra to fake.
+
+    The map is a 3D texture (shaders/cloud_shadow.comp): XY across the sun's frame, Z along the
+    sun ray. Sampling it needs both, and one mat4 multiply produces both - the same projection
+    the depth shadow map does, into a frustum fitted to the volumes rather than to the scene.
+
+    Note what is NOT clamped. Outside the map in XY there is no cloud at all, so 1.0. In Z there
+    is deliberately no test, because CLAMP_TO_EDGE already gives the right answer at both ends:
+    a receiver in front of the layer clamps to the first slice, which nothing has shadowed yet,
+    and one past the layer clamps to the last, which has the whole column's worth of cloud in
+    front of it. Adding a bounds check there would break the second case.
+*/
+float CalcCloudShadow(vec3 world_position){
+    if (f_cloud_shadows == 0){
+        return 1.0;
+    }
+    vec4 clip = mat_cloud_shadow * vec4(world_position,1.0);
+    vec3 proj = clip.xyz / clip.w;
+    if (any(greaterThan(abs(proj.xy),vec2(1.0)))){
+        return 1.0;
+    }
+    return texture(cloud_shadow_texture,proj * 0.5 + 0.5).r;
+}
+
+/*
+    Is anything standing between this point and a point light?
+
+    The third kind of occlusion test in this file, and the only one that is a march. CalcShadow
+    compares against a depth written from the light's own viewpoint, which a point light cannot
+    have without six of them; CalcCloudShadow integrates along a fixed direction, which a point
+    light does not have either. So this one walks the actual segment from the surface to the
+    light and asks a view-independent description of the world what it passes through.
+
+    That description is the occluder field (shaders/field.frag): a top-down texture holding, per
+    column, the height of the highest and lowest surface in it. A column is therefore treated as
+    a SLAB - one solid block between those two heights - which is exact for anything extruded
+    from the ground and conservative for anything else. A stack of blocks with a gap in it fills
+    its own gap in, and a light shining through that gap is shadowed when it should not be. That
+    is the price of a description that costs one texture rather than six per light, and in a
+    fixed top-down view it is very hard to see.
+
+    Deliberately view-independent: the field knows nothing about any light, so a scene with ten
+    point lights builds it once and marches it ten times.
+
+    This sphere-traces rather than stepping evenly, using the distance channel the jump flood
+    filled (shaders/field_jfa.comp). That channel does two separate jobs here, and they must not
+    be confused with each other - see the two quantities inside the loop.
+*/
+float CalcFieldShadow(vec3 world_position, vec3 normal, vec3 light_position){
+    if ((f_field_shadows == 0) || (field_shadow_steps <= 0)){
+        return 1.0;
+    }
+    //A receiver sits ON a surface, so at t=0 it is inside that surface's own slab and every
+    //fragment shadows itself. Stepping off along the normal first is the fix, and is the same
+    //trick - for the same reason - as the depth map's shadow_bias.
+    vec3 origin = world_position + normal * field_normal_bias;
+
+    vec3 to_light = light_position - origin;
+    float dist = length(to_light);
+    if (dist < 0.0001){
+        return 1.0;
+    }
+    vec3 dir = to_light / dist;
+
+    /*
+        A floor under the step size, and the reason field_shadow_steps survived becoming a sphere
+        trace. The distance field is zero everywhere directly above an occluder, so a ray running
+        along the top of a wall would step by nothing and stall a few centimetres from where it
+        started - and a march that stops early reports "unoccluded", which is the wrong answer in
+        exactly the place that has the most geometry. With this floor, the worst case degrades to
+        the even spacing the first version used and still reaches the light.
+    */
+    float min_step = dist / float(field_shadow_steps);
+
+    float visibility = 1.0;
+    float t = min_step;
+
+    for (int i = 0; (i < field_shadow_steps) && (t < dist); i++){
+        vec3 p = origin + dir * t;
+
+        vec4 clip = mat_field * vec4(p,1.0);
+        vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+        //Outside the field's box there is no information at all. Reporting "unoccluded" is the
+        //only honest answer and matches what CalcShadow does off the edge of the depth map -
+        //clamping would instead smear the border column across everything beyond it.
+        if ((uv.x < 0.0) || (uv.x > 1.0) || (uv.y < 0.0) || (uv.y > 1.0)){
+            t += min_step;
+            continue;
+        }
+
+        //R is the top of this column's slab, A the bottom, G the 2D distance to the nearest
+        //occupied column. An empty column kept the clear values - a very low top and a very high
+        //bottom - so `clearance` below comes out enormous and the tests simply miss, which is
+        //why the field needs no separate occupancy flag.
+        vec4 field = texture(field_texture,uv);
+        float h = dot(p,field_axis);
+
+        //Distance above the top of this column's slab, or below its bottom. Negative inside it.
+        float clearance = max(h - field.r,field.a - h);
+        if (clearance < 0.0){
+            return 0.0;
+        }
+
+        /*
+            Two different distances, and the whole correctness of this loop is in keeping them
+            apart.
+
+            The STEP may only use field.g. A 2D distance to the nearest footprint is a genuine
+            lower bound on the 3D distance to any occluder, because projecting onto the ground
+            plane cannot lengthen anything - so jumping that far can never pass through something.
+            The vertical clearance is NOT such a bound: it describes this column only, and a
+            neighbouring column one texel away may rise to just under the ray. Stepping by it
+            would tunnel straight through that neighbour.
+
+            The PENUMBRA estimate wants the opposite reading, and may be a heuristic because it
+            only shades an edge. Above an occupied column field.g is zero while the real occluder
+            is `clearance` below; over an empty one clearance is the meaningless sentinel while
+            field.g is the real answer. So each case takes the other's value.
+        */
+        float occupied = (field.r >= field.a) ? 1.0 : 0.0;
+        float occluder_distance = mix(field.g,clearance,occupied);
+
+        //The standard sphere-trace penumbra: a ray that passes close to an occluder while still
+        //far from the surface it is shading is a soft edge, and how soft is set by how big the
+        //light is. This is the term that makes these read as lit by a lamp rather than stencilled.
+        visibility = min(visibility,occluder_distance / max(field_light_radius * t,0.0001));
+
+        t += max(field.g,min_step);
+    }
+    return clamp(visibility,0.0,1.0);
+}
+
+
+vec4 CalcPBRLighting(){
+    vec4 final;
+
+    vec3 total_light = vec3(0,0,0);
+    vec3 albedo;
+    if (m.diffuse_texture >= 0){
+        //Bindless
+        //albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
+        //albedo = texture(m.handle_normal,vuv).xyz;// * m.color.xyz;
+        //Default
+        albedo = texture(material_texture[m.diffuse_texture], vuv).rgb;
+    }else{
+        albedo = m.color.xyz;
+    }
+
+    for (int i = 0; i < lights.length(); i++){
+        //Vector from the surface towards the light. For a directional light that is the negated
+        //light forward - constant everywhere, so the rays stay parallel and the light's position
+        //does not affect the shading. The point light case below overwrites it per fragment.
+        vec3 lightdirection = -lights[i].direction;
+        vec3 light = lightdirection;
+        float direction_len = dot(lights[i].direction,lights[i].direction);
+        float falloff = 1.0f;
+        float light_value = 1.0;
+        //What gets handed to CalcDirectionalPBRLight as the light's brightness. For the
+        //point and sun paths this stays lights[i].brightness, which means brightness is
+        //applied TWICE for a point light - once here in light_value and again as radiance
+        //inside that function. That is long-standing behaviour and every existing light is
+        //tuned around it, so it is left alone. The cone path below sets this to 1 instead,
+        //because its light_value already carries the full intensity - squaring a headlight
+        //at brightness 30 blows a panel out to a flat colour.
+        float shading_brightness = lights[i].brightness;
+
+        if (direction_len < 0.1){
+            //Makes it a point light instead of direction
+            lightdirection = lights[i].position - vposition;
+
+            float dist  = length(lights[i].position - vposition);
+            float brightness = lights[i].brightness / pow(dist,falloff);
+
+            if (brightness < 0.01){
+                continue;
+            }
+            //The one light type the depth shadow map cannot serve, and the reason the occluder
+            //field exists. Gated on the light's own flag so a fill light can stay cheap.
+            if (lights[i].shadow != 0){
+                brightness *= CalcFieldShadow(vposition,normalize(vnormal),lights[i].position);
+                if (brightness < 0.01){
+                    continue;
+                }
+            }
+            light_value = brightness;
+        }else if (lights[i].cos_angle > 0.0){
+            /*
+                Cone light. It has a direction like the sun, so without this branch it would be
+                treated AS a sun - lighting everything from that direction with a shadow lookup
+                into the one shadow map - which is what happened before cone lights were uploaded
+                at all (see Renderer::UploadLights).
+
+                `direction` is the way the light travels, so -direction is the cone axis measured
+                from the lit point back towards the source, and theta is 1 on the axis falling
+                off outwards. Same test and same cosine-space soft edge as the volume uses, so a
+                cone reads the same on a surface as it does in fog.
+            */
+            vec3 to_light = lights[i].position - vposition;
+            float dist = length(to_light);
+            float theta = dot(to_light / max(dist,0.0001),normalize(-lights[i].direction));
+            if (theta < lights[i].cos_angle){
+                continue;
+            }
+            float edge = clamp((theta - lights[i].cos_angle) / max(cone_softness,0.0001),0.0,1.0);
+            float brightness = lights[i].brightness / pow(dist,falloff);
+            if (brightness * edge < 0.01){
+                continue;
+            }
+            lightdirection = to_light;
+            light_value = brightness * edge;
+            shading_brightness = 1.0;
+        }else{
+            //Sun. Two independent occluders: opaque geometry through the depth shadow map, and
+            //cloud through the transmittance map. They multiply - one is a compare, the other an
+            //integral, and neither can express the other.
+            float shadow = CalcShadow(vshadow);
+            light_value = shadow * CalcCloudShadow(vposition);
+        }
+
+        light = light_value * CalcDirectionalPBRLight(albedo,lightdirection,lights[i].color,shading_brightness);
+        total_light += light;
+    }
+
+    //Add some ambient
+    total_light += 0.1f * albedo;
+
+    // Environment reflections from cubemap
+    if (f_environment_reflections > 0){
+        vec3 N = normalize(vnormal);
+        vec3 V = normalize(eye_position - vposition);
+        vec3 R = reflect(-V, N);
+        vec3 env = texture(environment_map, R).rgb;
+        // Metallic surfaces reflect the environment fully; rough surfaces don't.
+        float env_strength = m.metallic * (1.0 - m.roughness);
+        total_light += env * env_strength;
+    }
+
+
+    //total_light *= 0.51f;
+    //total_light += vshadow.xyz;
+
+    //What the surface emits by itself. Added after every light, the ambient term and the
+    //reflections, and deliberately not multiplied by any of them: an emissive surface glows in
+    //full shadow, which is the whole difference between this and m.brightness.
+    total_light += m.emissive.rgb * m.emissive.w;
+
+    float alpha = 1 - step(GetTransparency(),alpha_clip);
+    //if (alpha < alpha_clip){
+    //    discard;
+    //}
+    final = vec4(total_light ,alpha);
+
+    return final;
+}
+
+void main(){
+    //Select/Set the current material
+    if (f_materialindex_is_color > 0){
+       color = vec4(1,1,1,1);
+       return;
+    }else{
+        //We have to do this again here. We could use vmatindex... but intel.
+        //On intel, use matindex_out.
+        //On nvidia, use vmatindex.
+        if (vmatindex > -1){
+            m = materials[vmatindex];
+        }else{
+            //Default invalid material - the obvious magenta, so a missing material shows up as
+            //itself rather than as something plausible.
+            m.diffuse_texture = -1;
+            m.normal_texture = -1;
+            m.color = vec4(0.9,0.0,0.5,1.0);
+            //The rest of the struct was left uninitialised here, which the compiler warns about
+            //("m.emissive might be used before being initialized"). It mattered less when every
+            //unset field only scaled the lit result; emission is ADDED, so garbage here would
+            //show up as an arbitrary glow on anything with no material.
+            m.brightness = 1.0;
+            m.metallic = 0.0;
+            m.roughness = 0.5;
+            m.emissive = vec4(0.0,0.0,0.0,1.0);
+        }
+    }
+
+    vec4 final = CalcPBRLighting();
+
+
+
+    //ivec2 mouse_coord = ivec2(data_in[0],data_in[1]);
+    //ivec2 frag_coord = ivec2(gl_FragCoord.xy);
+    color = final;
+    //color = vec4(float(vmatindex) / 8.0, float(m.diffuse_texture) / 32.0, 1, 1);
+    //return;
+
+    //This is quite slow.
+    /*
+    float dist = length(frag_coord - mouse_coord);
+    if (dist < 4){
+        color = vec4(1,0,0,1);
+
+        //We do another Z-Test
+        //if ((mouse_coord.x == frag_coord.x) && (mouse_coord.y == frag_coord.y)){ // && (gl_SampleID == (gl_NumSamples-1))){
+            //Z-Value 0 ... 1
+            float z = gl_FragCoord.z;
+            //if (fdata_out[0] > z){
+                data_out[0] = vobjid;
+
+                //atomicCounterIncrement(zcount);
+
+                //data_out[1] += 1;//gl_NumSamples;
+
+                fdata_out[0] = z;
+                fdata_out[1] = sampled_normal.x;
+                fdata_out[2] = sampled_normal.y;
+                fdata_out[3] = sampled_normal.z;
+            //}
+        //}
+    }*/
+
+
+    //uint m = (1 << gl_SampleID);
+    //m = gl_SampleMaskIn[0] & m;
+
+    //gl_SampleMaskIn[0]
+    //gl_NumSamples
+    //gl_SampleID
+
+
+}

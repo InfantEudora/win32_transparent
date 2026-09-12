@@ -9,6 +9,7 @@
 
 #include "Debug.h"
 
+//Required for NVidia Optimus to use the discrete GPU on laptops with integrated graphics. Put this in the main.cpp of your application, and it will be picked up by the driver.
 extern "C" { __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001; }
 
 //Would be the name of the application

@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vector>
+#include <windows.h>        //GetModuleFileName - see GetExecutableDirectory
 #include "File.h"
 
 #include "Debug.h"
@@ -16,6 +18,172 @@ std::string GetBasePath(const char* filename){
 }
 
 /*
+    APP_ASSET_PATH is written by the makefile out of the selected app's APP_ASSETS list, the same
+    way APP_HEADER and APP_CLASS are. A build that does not set it gets an empty path and behaves
+    exactly as this engine did before the search path existed: every name resolves as a path
+    relative to the working directory, or not at all.
+*/
+#ifndef APP_ASSET_PATH
+#define APP_ASSET_PATH ""
+#endif
+
+static std::vector<std::string> asset_roots;
+static bool f_asset_roots_ready = false;
+
+//Trailing separators are stripped so that joining is one rule rather than two - see ResolveAssetPath.
+void AddAssetSearchRoot(const char* root){
+	if (!root || !*root){
+		return;
+	}
+	std::string r = root;
+	while (!r.empty() && ((r.back() == '/') || (r.back() == '\\'))){
+		r.pop_back();
+	}
+	if (r.empty()){
+		return;
+	}
+	for (const std::string& existing:asset_roots){
+		if (existing == r){
+			return;         //declaring a root twice is harmless, searching it twice is just slow
+		}
+	}
+	asset_roots.push_back(r);
+}
+
+/*
+    Splits APP_ASSET_PATH into roots, the first time anything asks for a file.
+
+    Lazily rather than in a constructor because the roots have to be in place before the FIRST
+    asset load, and a static initialiser here would be racing every other translation unit's
+    statics for that - including `debug` above, which this wants to log through. The first
+    LoadFile is comfortably after main() starts, so lazy is both simpler and correct.
+
+    A root added by hand before then keeps its place at the FRONT, ahead of the compiled-in ones,
+    because this only ever appends. That is the useful way round: a root chosen at run time is
+    more specific than one baked in at build time.
+*/
+static void InitAssetRoots(){
+	if (f_asset_roots_ready){
+		return;
+	}
+	f_asset_roots_ready = true;         //set first: AddAssetSearchRoot must not recurse back in here
+
+	/*
+	    Both ',' and ';' separate, because the makefile cannot use ';': it hands the compile and
+	    link commands to sh, which would read a ';' in the define as a command separator and cut
+	    the path in half - a link failure that names a directory and mentions nothing about a
+	    define. ',' is what actually arrives. ';' is accepted anyway because it is what a Windows
+	    PATH uses and so what anyone setting this by hand will reach for first.
+	*/
+	const char* path = APP_ASSET_PATH;
+	std::string entry;
+	for (const char* p = path;;p++){
+		if ((*p == ',') || (*p == ';') || (*p == '\0')){
+			AddAssetSearchRoot(entry.c_str());
+			entry.clear();
+			if (*p == '\0'){
+				break;
+			}
+			continue;
+		}
+		entry += *p;
+	}
+
+	if (asset_roots.empty()){
+		debug->Info("Asset search path is empty - names resolve against the working directory only\n");
+		return;
+	}
+	for (size_t i = 0;i < asset_roots.size();i++){
+		debug->Info("Asset search root %zu: %s\n",i,asset_roots[i].c_str());
+	}
+}
+
+std::string GetExecutableDirectory(){
+	//Worked out once. GetModuleFileName does not change over the life of the process, and the
+	//roots built from it are read on every failed as-given lookup.
+	static std::string dir;
+	static bool f_done = false;
+	if (f_done){
+		return dir;
+	}
+	f_done = true;
+
+	char buf[MAX_PATH] = {0};
+	DWORD n = GetModuleFileNameA(NULL,buf,MAX_PATH);
+	if ((n == 0) || (n >= MAX_PATH)){
+		//Nothing useful to fall back to but the working directory, which is the old behaviour.
+		debug->Err("GetExecutableDirectory: GetModuleFileName failed - exe-relative roots will be working-directory relative instead\n");
+		return dir;
+	}
+	dir = GetBasePath(buf);
+	return dir;
+}
+
+void AddAssetSearchRootFromExe(const char* relative){
+	if (!relative || !*relative){
+		return;
+	}
+	std::string base = GetExecutableDirectory();
+	if (base.empty()){
+		AddAssetSearchRoot(relative);       //see GetExecutableDirectory - degrade, do not drop it
+		return;
+	}
+	/*
+	    The ".." are left in rather than collapsed. Windows resolves them itself on every call that
+	    takes a path, so a root like C:/repo/apps/tank/build/../assets opens exactly what the tidy
+	    form would - and leaving them makes the logged root say plainly what it was built from,
+	    which is the thing worth reading when an asset is not found.
+	*/
+	AddAssetSearchRoot((base + "/" + relative).c_str());
+}
+
+static bool FileExists(const std::string& path){
+	FILE* f = fopen(path.c_str(),"rb");
+	if (!f){
+		return false;
+	}
+	fclose(f);
+	return true;
+}
+
+bool ResolveAssetPath(const char* name, std::string& out){
+	out.clear();
+	if (!name || !*name){
+		return false;
+	}
+	InitAssetRoots();
+
+	/*
+	    The name exactly as given comes first, and that ordering is what makes this safe to add to
+	    a tree full of working path literals: "data/cityandroads.glb" is found where it has always been,
+	    before a single root is consulted. It is also what lets a caller pass a path it resolved
+	    earlier - or an absolute one - straight back in without it being mangled.
+	*/
+	if (FileExists(name)){
+		out = name;
+		return true;
+	}
+
+	for (const std::string& root:asset_roots){
+		std::string candidate = root + "/" + name;
+		if (FileExists(candidate)){
+			out = candidate;
+			return true;
+		}
+	}
+
+	//Everything that was tried, in order, so the caller's error message can say where it looked.
+	//A bare "not found" sends people hunting for a file that is present but under a root nobody
+	//declared, which is the one failure this mechanism newly makes possible.
+	out = name;
+	for (const std::string& root:asset_roots){
+		out += ", ";
+		out += root + "/" + name;
+	}
+	return false;
+}
+
+/*
     Finds a file's bytes, wherever they happen to live, and lends them to the caller. See File.h
     for the ownership rule, which is the whole point of this function: what comes back belongs to
     the file layer and nobody frees it.
@@ -26,11 +194,29 @@ std::string GetBasePath(const char* filename){
     would have to care about a distinction that exists so it does not have to.
 */
 uint8_t* LoadFile(const char* filename, size_t* size){
+	/*
+	    CACHED UNDER THE NAME AS GIVEN, NEVER UNDER THE PATH IT RESOLVED TO. The search path is
+	    consulted below only to find bytes on a disk; it must not reach the key, and the reason is
+	    the packed build. An asset baked into the executable is looked up here by the name the
+	    caller asked for, because that is all a packed build has - there is no disk to have
+	    resolved against. If the cache key were the resolved path, the same "shaders/default.vert"
+	    would key as "assets/shared/shaders/default.vert" in a loose build and as itself in a
+	    packed one, and the two builds would silently disagree about what is already loaded.
+	    Keying on the name as given also means ReleaseFile - which only ever sees the name - stays
+	    able to find what LoadFile stored.
+	*/
 	BinaryAsset* asset = BinaryAsset::GetBinaryAsset(filename);
 	if (!asset){
-		FILE* file = fopen(filename, "rb");
+		std::string resolved;
+		if (!ResolveAssetPath(filename,resolved)){
+			debug->Fatal("LoadFile failed to load [%s] - looked in: %s\n",filename,resolved.c_str());
+			return NULL;
+		}
+
+		FILE* file = fopen(resolved.c_str(), "rb");
 		if(!file){
-			debug->Fatal("LoadFile failed to load: [%s]\n",filename);
+			//Resolution just proved this openable, so arriving here means it went away in between.
+			debug->Fatal("LoadFile failed to load: [%s] (resolved to %s)\n",filename,resolved.c_str());
 			return NULL;
 		}
 
@@ -39,7 +225,14 @@ uint8_t* LoadFile(const char* filename, size_t* size){
 		size_t sz = ftell(file);
 		rewind(file);
 
-		debug->Info("LoadFile: File %s is %li bytes\n",filename,sz);
+		//Both names when they differ: which root answered is the first thing anyone debugging an
+		//override or a half-migrated app needs, and it is invisible from the call site.
+		//(%zu, not %li - size_t is 64-bit here and long is not, so %li truncated it.)
+		if (resolved == filename){
+			debug->Info("LoadFile: File %s is %zu bytes\n",filename,sz);
+		}else{
+			debug->Info("LoadFile: File %s -> %s is %zu bytes\n",filename,resolved.c_str(),sz);
+		}
 
 		//calloc sz+1 so the last byte is a zero: that terminator is part of what StoreBinaryAsset
 		//is promised, and it is what lets a caller hand this straight to something expecting a C
@@ -76,9 +269,17 @@ FileRelease ReleaseFile(const char* filename){
 bool ReadFileToString(const char* filename, std::string& out){
 	out.clear();
 
-	FILE* file = fopen(filename, "rb");
+	//Resolved the same way as LoadFile, so an app that has moved its assets under a root keeps
+	//working for both kinds of read. Nothing is cached either way - that is still the difference.
+	std::string resolved;
+	if (!ResolveAssetPath(filename,resolved)){
+		debug->Trace("ReadFileToString: could not find %s - looked in: %s\n",filename,resolved.c_str());
+		return false;
+	}
+
+	FILE* file = fopen(resolved.c_str(), "rb");
 	if (!file){
-		debug->Trace("ReadFileToString: could not open %s\n",filename);
+		debug->Trace("ReadFileToString: could not open %s\n",resolved.c_str());
 		return false;
 	}
 

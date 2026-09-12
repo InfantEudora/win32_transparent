@@ -24,6 +24,26 @@ class Renderer;
 //geometry). Units 1-3: unit 0 is the shadow map, material textures are handed out from 4 up
 //(see UploadMaterials) and 24 is the skybox cubemap, so these three are the gap in between.
 //Kept as defines because the same numbers appear in the custom shaders' layout(binding = N).
+//
+//DEPTH IS THE CHANNEL THAT ANSWERS "IS THERE ANYTHING HERE". It is cleared to 1.0, which is
+//outside the range any drawn fragment can occupy, so `depth < 1.0` means geometry and nothing
+//else does. POSITION AND NORMAL ARE ONLY MEANINGFUL ONCE DEPTH HAS SAID YES.
+//
+//That matters because the obvious effect reaches for position first, and position cannot tell
+//you: its buffer is cleared to (0,0,0,0), and the world origin is a perfectly ordinary place for
+//geometry to be - in a game built around the origin it is where all of it is. So a shader that
+//samples position to find out how far away the scene is reads "the origin" for the empty sky,
+//and the soft-intersection fade everyone writes first dissolves the effect against the
+//background. Nor is w a way out: DEFERRED.FRAG WRITES THE MATERIAL'S ALPHA THERE, not a flag.
+//(The normal buffer is cleared to (1,0,0,0), a unit +X normal, which is just as legal a value.)
+//
+//The pattern, as used by shaders/breakout_shield.frag and shaders/raymarch_volume.frag:
+//
+//    float scene_depth = texture(gbuffer_depth,screen_uv).r;
+//    if (scene_depth < 1.0){                                  //something is there
+//        vec3 scene_world = texture(gbuffer_position,screen_uv).xyz;
+//        ...
+//    }
 #define TEXUNIT_GBUFFER_DEPTH     1
 #define TEXUNIT_GBUFFER_POSITION  2
 #define TEXUNIT_GBUFFER_NORMAL    3
@@ -123,9 +143,58 @@ class Renderer{
     //regardless, which is only useful when the bound shader does not matter.
     void RenderUniqueMeshes(int normal_or_skinned, int custom_shader_index = -1);
 
-    //Registers a shader for the custom-material pass and returns its index, which is what goes
-    //in Mesh::custom_shader_index. Several can be live at once - one app's ground decal and
-    //another's raymarched volume are separate entries, not a single global slot.
+    /*
+        Registers a shader for the custom-material pass and returns its INDEX, which is the tag
+        that puts a mesh in that shader's sub-pass. Several can be live at once - one app's ground
+        decal and another's raymarched volume are separate entries, not a single global slot.
+
+        This block is the contract a custom shader signs up to; Renderer::CustomShaderPass
+        explains how the pass itself is ordered.
+
+        TO DRAW SOMETHING WITH IT, two lines on the mesh:
+
+            mesh->mesh_mode = MESH_MODE_SHADER;
+            mesh->custom_shader_index = renderer->AddCustomShader(my_shader);
+
+        Both are needed. custom_shader_index defaults to -1, "not assigned", and an untagged
+        MESH_MODE_SHADER mesh is skipped with a message rather than drawn by whichever shader
+        happens to be registered first.
+
+        WHAT THE ENGINE SETS ON YOUR SHADER, every frame, before your callback:
+
+          mat_worldcam    the camera matrix
+          eye_position    the ray origin, for anything raymarched
+
+        And what it does NOT: the shadow matrices, the cloud-shadow and occluder-field uniforms.
+        Those go to the shaders the renderer owns. Reusing shaders/default.vert is a convenience
+        that hands you the usual varyings, not a requirement - but note that vshadow is then
+        meaningless here, because mat_shadow is never set.
+
+        A MISSING UNIFORM IS A WARNING, NOT A DEATH. GLSL strips a uniform that is declared but
+        unused, so a custom shader that does not happen to use mat_worldcam is the ordinary case,
+        not a mistake - it used to be fatal on the first frame. If your shader genuinely cannot
+        proceed without a value, check what the setter returns.
+
+        WHAT IS BOUND WHEN YOUR SHADER RUNS:
+
+          texture units   TEXUNIT_GBUFFER_DEPTH / _POSITION / _NORMAL, the deferred G-buffer, so
+                          you can see the solid scene behind you. READ THE TEXUNIT_GBUFFER_* BLOCK
+                          AT THE TOP OF THIS FILE BEFORE USING IT - depth is the only channel that
+                          can tell you whether anything was drawn at a pixel, and reaching for
+                          position first is the trap everyone falls into.
+          SSBO 0          instance data        SSBO 1  materials
+          SSBO 2          lights               SSBO 4  bone instances
+
+        YOUR OWN UNIFORMS go in Shader::uniform_callback, which is called after all of that and
+        before the draw. It may also change cull face, depth mask and the depth test - a volume
+        wants inside faces and no depth write; a ground decal wants the defaults - and all three
+        are put back after each sub-pass.
+
+        The renderer does not take ownership of the shader, and indices are handed out in
+        registration order and never move. To hot-reload one, replace the entry at its index
+        (see ApplicationShip::ReloadVolumeShader) rather than registering a second copy, which
+        would leave every tagged mesh pointing at the stale one.
+    */
     int AddCustomShader(Shader* shader);
     Shader* GetCustomShader(int index);
     //Draws every MESH_MODE_SHADER mesh, one sub-pass per registered custom shader. Runs last of

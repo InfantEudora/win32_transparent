@@ -1,5 +1,4 @@
 #include "IsoTerrain.h"
-#include "OBJLoader.h"
 
 #include "Debug.h"
 static Debugger* debug = new Debugger("IsoTerrain",DEBUG_INFO);

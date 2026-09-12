@@ -13,3 +13,6 @@ BinaryAssetMemory.cpp
 .current_app
 __pycache__/
 .claude/scratch/
+
+#Per-app build output (apps/<name>/build/) and the shared core objects.
+build/

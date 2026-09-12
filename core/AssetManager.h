@@ -7,7 +7,6 @@
 #include <string>
 #include <memory>
 #include "Object.h"
-#include "OBJLoader.h"
 
 /*
     Assets are simply obects that are re-used/loaded multiple times.

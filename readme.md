@@ -21,13 +21,20 @@ All code in this repository is supplied with the same copyright.
 
 It should kind of look like this:
 
-![screenshot](data/example_desktop.png)
+![screenshot](docs/images/example_desktop.png)
 
 ### Folder structure
-`/core`         Contains all core files for this 'Engine'.
-`/shaders`      Contains default shaders.
-`/apps`         Per-application makefile fragments; each `ApplicationX.cpp/.h` sits in the repo root, with its gameplay classes in a folder of their own (`/tank`, `/ship`, `/isoterrain`, ...). Pick one with `make APP=X`.
-`/3rdparty/*`   Contains external libraries source code, either as an entire repo or single files.
+`/core`             Contains all core files for this 'Engine'. Knows nothing about any particular app.
+`/engine.mk`        The shared build: toolchain, flags, core sources, rules. An app's makefile includes it.
+`/shared_assets`    Assets loaded by `/core` itself, or by two or more apps - default shaders and fonts. Nothing else belongs here.
+`/build/core`       Core objects, compiled once and shared by every app. Build one app at a time; concurrent builds race here.
+`/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder.
+`/3rdparty/*`       Contains external libraries source code, either as an entire repo or single files.
+
+**Two build systems are live during the migration.** Apps that have moved (`/apps/tank`) build from
+their own folder into their own exe. The rest still build through the root `makefile` into a single
+`wind.exe`, selected with `make APP=X` from the `apps/*.mk` fragments, and still load out of `/data`
+and `/shaders`. `docs/asset_layout_plan.md` tracks what has moved and what has not.
 
 ### Doing:
 - [x] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.

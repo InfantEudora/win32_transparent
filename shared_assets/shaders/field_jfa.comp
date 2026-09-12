@@ -1,0 +1,112 @@
+#version 430 core
+
+/*
+    Fills the occluder field's distance channel: for every texel, how far away in world units the
+    nearest occupied column is.
+
+    This is what turns CalcFieldShadow from a fixed-step march into a sphere trace. The distance
+    to the nearest FOOTPRINT is a lower bound on the distance to the nearest occluder in 3D -
+    projecting onto the ground plane can only shorten a distance, never lengthen it - so the march
+    may safely jump that far in one go without passing through anything. Over the empty middle of
+    a Tetris well that is most of the way to the light in a single step. It is also what gives the
+    soft edge: a ray that passes close to an occluder and far from the receiver is a penumbra, and
+    this is the "close" in that sentence.
+
+    Computed with a jump flood rather than a distance transform. The reason is what the two cost
+    on a GPU: an exact transform (Felzenszwalb) is a pair of sequential scans along rows and then
+    columns, which is a bad shape for a compute shader, while the jump flood is log2(N) fully
+    parallel passes of nine samples each. It is approximate - a handful of texels in a whole image
+    can pick a seed that is not quite the nearest - and that does not matter here at all, since an
+    error of one texel moves a shadow edge by one texel.
+
+    The algorithm: every occupied texel starts as its own seed. Then, at halving jump distances,
+    each texel looks at its eight neighbours that far away and keeps whichever seed is nearest.
+    After log2(size) rounds, information from any seed has had a chance to reach any texel.
+
+    Three stages in one file, selected by `stage`, because they share the addressing and the
+    sentinel and would otherwise be three files that must agree about both.
+*/
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+//The field itself - read for occupancy in the seed stage, written in the resolve stage. See
+//shaders/field.frag for what the four channels mean.
+layout (rgba16f, binding = 0) uniform image2D img_field;
+
+//Ping-pong pair holding, per texel, the coordinates of the nearest seed found so far. rg16f is
+//enough and not a compromise: a half float represents every integer up to 2048 exactly, so a
+//texel coordinate in a map up to 2048 across survives the round trip unchanged.
+layout (rg16f, binding = 1) uniform image2D img_seed_src;
+layout (rg16f, binding = 2) uniform image2D img_seed_dst;
+
+#define STAGE_SEED      0
+#define STAGE_FLOOD     1
+#define STAGE_RESOLVE   2
+
+//A texel that has not found any seed. Negative, which no real coordinate is.
+#define NO_SEED         -1.0
+
+uniform int stage = STAGE_SEED;
+uniform int jump = 1;
+uniform float world_per_texel = 1.0;
+//What to write where nothing was ever found - only possible if the field holds no geometry at
+//all. Large enough that the march treats it as wide open, small enough to survive a half float.
+#define EMPTY_DISTANCE  10000.0
+
+void main(){
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(img_field);
+    if ((px.x >= size.x) || (px.y >= size.y)){
+        return;
+    }
+
+    if (stage == STAGE_SEED){
+        vec4 f = imageLoad(img_field,px);
+        //Occupied means something rasterised into this column. The clear value put the top BELOW
+        //the bottom (-1000 against +1000) and any fragment at all makes the top the higher of the
+        //two, so this one comparison is the occupancy test - no extra channel needed for it.
+        vec2 seed = (f.r >= f.a) ? vec2(px) : vec2(NO_SEED);
+        imageStore(img_seed_dst,px,vec4(seed,0.0,0.0));
+        return;
+    }
+
+    if (stage == STAGE_FLOOD){
+        vec2 best = imageLoad(img_seed_src,px).xy;
+        //Squared distances throughout: the comparison is all this needs and a square root per
+        //neighbour per round is nine of them per texel per pass for no information.
+        float best_d2 = (best.x < 0.0) ? 3.0e30 : dot(vec2(px) - best,vec2(px) - best);
+
+        for (int dy = -1; dy <= 1; dy++){
+            for (int dx = -1; dx <= 1; dx++){
+                ivec2 q = px + ivec2(dx,dy) * jump;
+                if ((q.x < 0) || (q.y < 0) || (q.x >= size.x) || (q.y >= size.y)){
+                    continue;
+                }
+                vec2 s = imageLoad(img_seed_src,q).xy;
+                if (s.x < 0.0){
+                    continue;
+                }
+                vec2 d = vec2(px) - s;
+                float d2 = dot(d,d);
+                if (d2 < best_d2){
+                    best_d2 = d2;
+                    best = s;
+                }
+            }
+        }
+        imageStore(img_seed_dst,px,vec4(best,0.0,0.0));
+        return;
+    }
+
+    //STAGE_RESOLVE. Texels to world units here rather than in the fragment shader, so everything
+    //the march reads out of this texture - both heights and this distance - is in one space and
+    //can be compared and stepped with directly.
+    vec2 seed = imageLoad(img_seed_src,px).xy;
+    float dist = (seed.x < 0.0) ? EMPTY_DISTANCE : (length(vec2(px) - seed) * world_per_texel);
+
+    //Read-modify-write of one texel by the invocation that owns it, so there is no hazard here
+    //even though the same image is both source and destination.
+    vec4 f = imageLoad(img_field,px);
+    f.g = dist;
+    imageStore(img_field,px,f);
+}

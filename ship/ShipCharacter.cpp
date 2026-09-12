@@ -24,7 +24,8 @@ ShipCharacter::ShipCharacter(AssetManager* assetmanager, PhysicsWorld* physicswo
 
         physics->SetStatic(false);
         physics->SetGravityEnabled(false);
-        physics->body->rigidbody->setLinearDamping(0.5);
+        //See DozerCharacter: stated rather than inherited from AddCapsuleCollider (backlog 47).
+        physics->SetLinearDamping(0.5);
         physics->body->rigidbody->setUserData(this);
         physics->body->rigidbody->setIsAllowedToSleep(false);
         physics->body->rigidbody->updateMassPropertiesFromColliders();

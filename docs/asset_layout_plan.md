@@ -7,7 +7,11 @@ Plan for splitting the one shared `data/` and `shaders/` into per-app asset fold
 Written 2026-09-12 from a walk through the tree. Every fact below was measured against this
 source, not recalled — line numbers are as of that date.
 
-Nothing here is implemented yet. Section 4 is the agreed first step.
+**Status.** §1.4 (65 MB of dead assets out of `data/`) and §4 (the `LoadFile` search path) are
+done. §6.3 — each app its own makefile, exe and `main.cpp`, with `core/` compiled once and shared —
+is **built and proven on Tank**, which is fully across. Ship has its shaders across. The other ten
+apps still build through the old root `makefile` and `APP=`; the two systems run side by side and
+both are verified. §5 (`DUMP_BINARYASSETS`) and §5b (`OBJLoader`) are not started.
 
 ---
 
@@ -58,52 +62,78 @@ So the tree already carries **two competing conventions** — assets next to the
 assets in the root `data/` — with no rule saying which applies. Dozer, Sim and Tileset use both at
 once. Picking one is overdue; the question is only which.
 
-### 1.4 What nothing loads at all
+### 1.4 What nothing loads at all — DONE 2026-09-12
 
-`data/` is 205 MB. A large slice of it is referenced nowhere in the tree — not code, not
-`tools/`, not `docs/`:
+`data/` was 205 MB, of which **65 MB was referenced nowhere in the tree** — not code, not
+`tools/`, not `docs/`. Moved to `stale/` (not deleted: `narration/` in particular looks like it
+was recorded for something), to be taken out of the repo entirely:
 
-- **`data/narration/` — 42 MB, 15 wavs, zero references.**
-- **`girlgun.glb` — 23 MB, zero references.** Also `plant.glb` (2.6 MB),
-  `panorama_studio.png` (3 MB), `test.glb`, `ship_003.obj`, `chara.obj`.
-- Most of `data/textures/` (41 MB) is reachable only through the `.mtl` files of those orphaned
-  `.obj`s.
-- `example_desktop.png` and `performance_2070.png` are **readme screenshots** living in the
-  runtime asset tree. They belong under `docs/`.
-- `win32_transparent_msvc.zip` — a zip in the asset folder. Gitignored, so local clutter only.
-- `data/www_example/` — reference HTML for the OCPP web UI. Only `data/www/` is ever served.
+- **`narration/` — 42 MB, 15 wavs.**
+- **`girlgun.glb` — 23 MB.** Also `plant.glb`, `panorama_studio.png`, `test.glb`,
+  `ship_003.obj`+`.mtl`, `chara.obj`, `sphere.obj`, `outline.png`, `preact.html`.
+- **17 of the 28 files in `data/textures/`** — `dirt_001`, `grass_001`, `concrete*`, `stone_001`,
+  `metal*`, `bone_001`, `bricks`, `checkerboard`, `noise`, `planks`, `pinetexture*`, the `.avif`.
+- `win32_transparent_msvc.zip`, `www_example/`.
 
-Roughly a third of `data/` is dead before a single file moves. Deleting it is independent of
-everything else here and can happen first.
+`example_desktop.png` and `performance_2070.png` were readme screenshots living in the runtime
+asset tree; they went to `docs/images/` instead, and `readme.md`'s link was updated.
+
+**Correction to an earlier draft of this section:** it claimed most of `data/textures/` was
+reachable only through orphaned `.obj`s. Wrong — **11 of those textures are live**, reached
+through the `.mtl` files of Grid's ten `.obj` meshes (`brickwall`, `Rock030_*`, `mossy-ground*`,
+`broken_down_concrete2_*`, `pinebarklogs`, `pineleaves001`, `selection`), plus
+`test_texture_4096.png` loaded directly. The `.mtl` chain has to be walked, not assumed — a
+basename grep gives false positives in both directions. Verified after the move: every remaining
+`.mtl` names a texture that still exists.
+
+**Deliberately not moved:** the four `*_original.psd` in `data/icons/` (1.1 MB). `ApplicationSim`
+scans that folder for `*.png` only, so the `.psd`s are never loaded — but they are *authoring
+sources*, not stale assets, and losing a layered source is worse than losing a render. They want
+an art repo, not `stale/`. Open call.
+
+**Noticed while verifying:** `core/HTTPServer.cpp:480` reads `data/modes.json`, which **does not
+exist and never did** in this tree — the only `modes.json` was `data/www_example/modes.json`, now
+in `stale/`. It fails silently because the read goes through `ReadFileToString`, which tolerates
+a missing file by design. Whether the OCPP web UI is meant to serve one is an open question.
 
 ---
 
 ## 2. The target layout
 
+An app owns a **folder**, and its assets live inside it next to its code. Only what genuinely
+serves more than one app is shared, and that sits at the root under its own name:
+
 ```
-assets/
-  shared/          # loaded by core/, or by two or more apps
-    shaders/       default.vert  default.frag  default_skinned.vert  deferred.frag
+shared_assets/     # loaded by core/, or by two or more apps - nothing else
+  shaders/         default.vert  default.frag  default_skinned.vert  deferred.frag
                    skybox.vert  skybox.frag  field.vert  field.frag
                    field_jfa.comp  ssao_compute.comp  texture.comp
-    fonts/         consola.ttf  CascadiaMono.ttf
-    meshes/        glyphs_unispace.glb
-    sound/         bleep.wav  click.wav  floop.wav  hax.wav
-  grid/            tiles, trees, elf, hand, arrows, skybox/, test_texture_4096.png
-  ship/            ships.glb + shaders/{raymarch_volume.frag,cloud_shadow.comp,
-                                        noise3d.comp,density.glsl}
-  breakout/        shaders/breakout_shield.frag
-  isoanimation/    isoanim.glb, christmas_photo_studio_01_2k.hdr, shaders/custom.frag
-  tank/            tank.glb, the two heightmap pngs
-  tileset/         cityandroads.glb
-  animation/       gwen_anim.glb
-  dozer/           the ten wavs + dozer.glb   (moved out of dozer/data/)
-  sim/             icons/ + galaxy meshes
-  ocpp/            www/, modes.json
+  fonts/           consola.ttf  CascadiaMono.ttf
+  meshes/          glyphs_unispace.glb        (Tetris + Breakout)
+  sound/           bleep  click  floop  hax   (Tetris + Breakout)
+
+apps/tank/         makefile, main.cpp, ApplicationTank + its gameplay classes
+  assets/
+    meshes/tank.glb
+    textures/export_terrain_photoshop.png
+  build/tank.exe
+
+apps/ship/         ships.glb + shaders/{raymarch_volume,cloud_shadow,noise3d,density}
+apps/grid/         tiles, trees, elf, hand, arrows, skybox/, test_texture_4096.png
+apps/breakout/     shaders/breakout_shield.frag
+apps/isoanimation/ isoanim.glb, christmas_photo_studio_01_2k.hdr, shaders/custom.frag
+apps/tileset/      cityandroads.glb
+apps/animation/    gwen_anim.glb
+apps/dozer/        the ten wavs + dozer.glb
+apps/sim/          icons/ + the galaxy meshes
+apps/ocpp/         www/, modes.json
 ```
 
-One tree, not the `assets/` + `shared_assets/` sibling pair: two top-level asset trees read as
-two unrelated things, where a nested `shared/` says *same tree, wider scope* in the path itself.
+The earlier draft of this section proposed one `assets/` tree with a nested `shared/`. Superseded
+2026-09-12: an app folder that holds its code, its assets, its makefile and its exe is
+self-contained in a way a split tree is not — you can read one app without knowing the repo, and
+the membership question answers itself, because an asset only one app uses has nowhere else to go.
+`shared_assets/` earns a name of its own precisely because it is the exception.
 
 ### 2.1 Why keyed on `APP` and not on the source folder
 
@@ -123,7 +153,11 @@ That leaves three real scopes, and all three already exist in the tree:
 | library | a folder used by several apps | `isoterrain/data/tile_terrain.obj`, `isocity/data/icons/` |
 | app | one app | `tank.glb`, `breakout_shield.frag` |
 
-Library assets stay next to their library. Only app-owned files move under `assets/<app>/`.
+Library assets stay next to their library. Only app-owned files move under `apps/<app>/assets/`.
+
+Note that §6.3 shrinks this question: once each app owns a folder, a "library" used by exactly one
+app (`crane/` was, for Tank) simply moves into that app. Only a folder genuinely shared between
+apps — `isoterrain/`, `isocity/` — stays a library with assets of its own.
 
 ### 2.2 The membership rule
 
@@ -152,21 +186,28 @@ APP_ASSETS += isoterrain/data
 
 with `assets/shared` appended by the makefile for every app. The list is passed to the compiler
 as one define next to the existing `-DAPP_HEADER` / `-DAPP_CLASS` — the same mechanism, already
-proven in that file:
+proven in that file. As built:
 
 ```make
 empty :=
 space := $(empty) $(empty)
-CFLAGS += -DAPP_ASSET_PATH=\"$(subst $(space),;,$(APP_ASSETS) assets/shared)\"
+comma := ,
+APP_ASSETS += assets/shared
+CFLAGS += -DAPP_ASSET_PATH=\"$(subst $(space),$(comma),$(strip $(APP_ASSETS)))\"
 ```
 
-(`$(space)` is not built in — make has no literal for it, so the two lines above are how you get
-one. Without them the `subst` silently does nothing and the define comes out space-separated.)
+(`$(space)` is not built in — make has no literal for it, so those two lines are how you get one.
+Without them the `subst` silently matches nothing and the define arrives space-separated, making
+the whole path one unusable root. On the comma, see §4.2b.)
 
-App code then names an asset with **no prefix at all**: `LoadMesh("tank.glb")`,
-`Shader("default.vert","breakout_shield.frag")`. First match along the path wins, so an app that
-wants its own take on a shared shader drops a same-named file in its own folder and nothing else
-changes. That override is a genuine feature, not a side effect of tidying.
+**An asset is named `<category>/<file>`** — `shaders/default.vert`, `meshes/tank.glb`,
+`sound/bleep.wav` — and the roots decide which copy of that name the process gets. Keeping the
+category *in the name* rather than folding it into the roots is what keeps the path two entries
+long instead of eight, and what makes every pre-existing literal resolve unchanged (§4.1).
+
+First match wins and the app's own root comes first, so an app that wants its own take on a shared
+shader drops a same-named file in its own folder and nothing else changes. That override is a
+genuine feature, not a side effect of tidying.
 
 ---
 
@@ -184,25 +225,52 @@ asset actually moves.
 A search path is precisely that, and putting it anywhere else re-introduces the question
 `LoadFile` exists to answer.
 
+**Implemented 2026-09-12.** `AddAssetSearchRoot` / `ResolveAssetPath` in `core/File.{h,cpp}`,
+with `LoadFile` and `ReadFileToString` both going through it.
+
 ### 4.1 Order of resolution
 
-1. Exact name, as given — so an already-resolved or absolute path still works.
-2. Each entry of `APP_ASSET_PATH`, in order.
-3. **`data/` and `shaders/`, as the last two entries.**
+1. **Exact name, as given.**
+2. Each root of `APP_ASSET_PATH`, in order, as `<root>/<name>`.
 
-Step 3 is the migration hinge. With those fallbacks in place every literal in the tree today keeps
-resolving, so the resolver can land on its own, be verified on its own, and be committed on its
-own. Apps then move one at a time. The fallbacks come out when the last app is across, and their
-removal is the thing that proves the migration finished.
+The planned third step — `data/` and `shaders/` as explicit fallback entries — **turned out to be
+unnecessary**, and that is worth understanding because it is what made this safe to land in one
+go. Keep the *category* in the asset name (`shaders/default.vert`, not `default.vert`) and let the
+search path hold only **roots**, and then step 1 already is the fallback: `"shaders/default.vert"`
+is found in `./shaders/` exactly as it always was, before any root is consulted. No fallback
+entry, no removal step later, and nothing to forget to take out.
 
-### 4.2 The cache key question
+It also means **moving a file can require no code change at all.** Ship's four cloud shaders moved
+to `assets/ship/shaders/` with `ApplicationShip.cpp` untouched — the name `shaders/noise3d.comp`
+still names them, the root just changed which copy answers. Only a name whose *category* changes
+(`data/tank.glb` → `meshes/tank.glb`) needs the literal edited.
 
-`LoadFile` stores into `BinaryAsset` under the name it was handed (`core/File.cpp:58`), and
-`GetBinaryAsset` looks up by the same string. If the resolver caches under the **name as given**
-(`"tank.glb"`) rather than the path it resolved to, then the key is stable no matter where the
-file physically sits — which is what the packer in §5 needs, and what makes a baked build and a
-loose-files build agree. Decide this deliberately; it is easy to get backwards and the symptom is
-a baked build silently falling through to disk.
+Verified on both sides: `APP=Ship` logs all four resolving through `assets/ship`, including
+`density.glsl` reached through the GLSL `#include` mechanism, and the clouds render. `APP=Tetris`,
+which declares no root of its own, loads all 14 of its files with zero resolution failures.
+
+### 4.2 The cache key — settled: the name as given
+
+`LoadFile` keys `BinaryAsset` on the name it was handed, never on the path resolution produced.
+The reason is the packed build: an asset baked into the executable can only be found by the name
+the caller asked for, because there is no disk to have resolved against. Key on the resolved path
+and `"shaders/default.vert"` keys as `assets/shared/shaders/default.vert` in a loose build and as
+itself in a packed one — the two builds then disagree about what is already loaded, silently.
+Keying on the name as given also keeps `ReleaseFile`, which only ever sees the name, able to find
+what `LoadFile` stored. This is the constraint the generator in §5.4 has to match.
+
+### 4.2b Two traps this hit, both now commented in place
+
+- **`;` cannot separate the roots.** make hands the whole compile and link command to `sh`, which
+  reads a `;` in the define as a command separator and cuts the path in half. It fails at the
+  *link* step with `assets/shared": No such file or directory` and `Error 127`, which points
+  nowhere near a `-D` flag. The separator is `,`; `core/File.cpp` parses both, because `;` is what
+  anyone used to a Windows `PATH` will reach for.
+- **`core/File.o` needs the `.current_app` marker**, for the same reason `main.o` already did: it
+  bakes `APP_ASSET_PATH` in at compile time, and that string changes with `APP` while
+  `core/File.cpp` does not. A stale one links and runs and merely searches the *previous* app's
+  roots — so the symptom is a missing asset, or worse, silently loading another app's copy of a
+  name they both define. Added next to the existing `main.o` rule.
 
 ### 4.3 Fix `OBJLoader` at the same time
 
@@ -306,20 +374,184 @@ packer wants to emit a pack file rather than a `.cpp`, at which point the swap g
 
 ---
 
+## 5b. Removing `OBJLoader` — a conversion job, not a delete
+
+Intent (2026-09-12): `OBJLoader` goes, superseded by glTF. `readme.md` has carried
+*"Will we be using OBJLoader ever again? Maybe remove it."* for a long time.
+
+**It is still in use.** That is the thing to know before planning it out — measured, not assumed:
+
+| Caller | How |
+|---|---|
+| `ApplicationGrid.cpp` | **10 direct `OBJLoader::ParseOBJFile` calls** (`:246`–`:540`) |
+| `ApplicationSim.cpp` `:123`–`:126` | 4 calls via `AssetManager::AddNewAssetFromOBJFile` |
+| `core/AssetManager.cpp:26` | `AddNewAssetFromOBJFile` — the only core API that touches it, and Sim is its only caller |
+
+So removing it costs **14 `.obj` meshes converted to `.glb`**, plus their `.mtl` materials and the
+11 textures those `.mtl`s name:
+
+- Grid: `tile_001`, `tile_002`, `border_rock`, `editor_camera`, `tile_gate`, `arrows`,
+  `test_cube`, `tree_001`, `wall_segment`, `selection_tile`
+- Sim: `galaxy/data/meshes/{sphere,sunhighlight,ship,plane}.obj`
+
+That is a Blender export pass and a re-check of Grid's materials, not a code change. It is also
+the natural moment to do it — the meshes have to be touched by §6 anyway.
+
+### 5b.1 Done already: the dead includes
+
+Five files included `OBJLoader.h` without using a single symbol from it. Removed 2026-09-12,
+`APP=Grid`, `APP=Sim` and `APP=Ship` all verified to build clean afterwards:
+
+`core/Application.cpp`, `core/Scene.cpp`, `isoterrain/IsoTerrain.cpp`, `ApplicationSim.cpp`, and
+`core/AssetManager.h` — the last one was a transitive-include crutch in a *header*, so every
+translation unit that touched `AssetManager.h` was dragging `OBJLoader.h`, `Mesh.h`,
+`Material.h` and the vector/int3/vec2/vec3 types in behind it. The include moved down into
+`core/AssetManager.cpp`, which is the only file that actually calls the parser.
+
+This shrinks the removal surface from seven files to three and costs nothing. The remaining
+three all genuinely call into it.
+
+### 5b.2 Order
+
+Do it **after** §4 (the resolver) and alongside §6, per app: convert Sim's four meshes with Sim's
+move, Grid's ten with Grid's. `AddNewAssetFromOBJFile` is deleted with Sim's conversion — it is
+the only core-side caller and nothing else uses it. `core/OBJLoader.{cpp,h}` (360 lines) goes
+when Grid's last `.obj` does.
+
+The `"data/" + name` bug at `core/OBJLoader.cpp:241`/`:275` (§4.3) then needs **no fix at all** —
+the file it lives in is gone. If §4 lands well before the conversion, patch it; if the
+conversion is close behind, skip it.
+
+---
+
 ## 6. Step three: move the assets
 
 Mechanical and per-app, because the literals are grouped one app per file. For each app:
 
-1. `git mv` its files under `assets/<app>/`.
-2. Add `APP_ASSETS` to `apps/<App>.mk`.
-3. Strip the `data/` and `shaders/` prefixes from the literals in `ApplicationX.cpp`.
-4. `mingw32-make.exe APP=X -j8`, run it, `screenshot` over MCP to confirm it still looks right.
+1. `git mv` its files under `assets/<app>/<category>/`.
+2. Add `APP_ASSETS += assets/<app>` to `apps/<App>.mk`.
+3. Re-prefix the literals in `ApplicationX.cpp` to `<category>/<file>` — **and only where the
+   category actually changes.** A `shaders/...` name is already in the right shape and needs no
+   edit at all (§4.1); `data/tank.glb` → `meshes/tank.glb` does.
+4. Build, run, `screenshot` over MCP to confirm it still looks right.
 
 Suggested order — smallest surface first, so the resolver is proven before Grid's 22 files:
 **Tank → Tileset → Animation → Breakout → Tetris → Ship → IsoAnimation → Sim → Dozer → OCPP → Grid.**
 
-Delete the `data/` and `shaders/` fallbacks after Grid. Anything still resolving through them at
-that point was never found by the audit in §1.2 and wants investigating rather than moving.
+There is no fallback entry to delete afterwards — see §4.1, step 1 does that job and keeps doing
+it harmlessly. What marks the end of the migration is `data/` being empty, not a makefile edit.
+
+### 6.1 Progress
+
+| App | State |
+|---|---|
+| **Ship** | shaders only — `assets/ship/shaders/` (4 files). Verified: all four resolve through the root, `density.glsl` included, clouds render. `ships.glb` still to move. |
+| **Tank** | **done, and fully restructured** — own makefile, own `main.cpp`, own `tank.exe`, sources and assets under `apps/tank/`. See §6.3. |
+| others | not started |
+
+**`tank/heightmap_roundtrip_test.png` was deliberately left where it is.** It is not an asset —
+`ApplicationTank::TestHeightmapRoundTrip` **writes** it with `SaveHeightmapPNG` and reads it back
+to check the round trip. Moving it under `assets/` would put generated test output in the asset
+tree, and the resolver cannot help a *write* anyway: it finds files that already exist. It wants
+a scratch directory, or to stop being committed at all — not an asset root.
+
+### 6.2 Blocked on the shared build output
+
+**Another agent builds apps in this same working copy.** With one `wind.exe` and one makefile for
+all twelve apps, concurrent builds collide: the linker cannot overwrite a running binary, whoever
+builds last owns it regardless of the other's `APP=`, and the `taskkill //F //IM wind.exe` that
+precedes a build kills the other agent's running app. This is not hypothetical — it took out a
+verified-good Tank run mid-session, with a half-black screenshot and nothing wrong in its own log.
+
+So **ask before building** until §6.3 lands.
+
+### 6.3 Per-app executable and makefile
+
+Agreed direction 2026-09-12: each app gets **its own output binary and its own makefile**, instead
+of one `wind.exe` selected by `APP=`.
+
+It is worth doing for its own sake and not only for the collision above:
+
+- Two people, or two agents, can build different apps at once with nothing shared to fight over.
+- `main.o` and `core/File.o` currently need the `.current_app` sentinel purely because they bake
+  `APP`-dependent values in (`APP_HEADER`/`APP_CLASS`, and now `APP_ASSET_PATH`) while their
+  `.cpp` never changes. Per-app object and output directories make that whole mechanism
+  unnecessary rather than merely correct.
+- It removes the stale-object class of failure the makefile already documents — the one whose
+  symptom was heap corruption (`c0000374`) after an `APP` switch.
+
+**Built and proven on Tank, 2026-09-12.** The layout:
+
+```
+engine.mk                  the shared engine: toolchain, CFLAGS, core sources, rules
+build/core/**.o            core objects, compiled ONCE and shared by every app
+shared_assets/
+  shaders/                 default.*, deferred, skybox, field*, ssao_compute, texture
+  fonts/                   consola.ttf, CascadiaMono.ttf
+apps/tank/
+  makefile                 ROOT, PROJECT, APP_SRCS, then `include $(ROOT)/engine.mk`
+  main.cpp                 names ApplicationTank directly; declares the asset roots
+  ApplicationTank.cpp/.h   moved from the repo root
+  TankCharacter/BuggyCharacter/Heightmap/CraneCharacter   moved from tank/ and crane/
+  assets/
+    meshes/tank.glb
+    textures/export_terrain_photoshop.png
+  build/
+    tank.exe               and this app's own objects
+```
+
+An app makefile is now four lines of actual content:
+
+```make
+ROOT     := ../..
+PROJECT  := tank
+APP_SRCS += main.cpp ApplicationTank.cpp TankCharacter.cpp ...
+include $(ROOT)/engine.mk
+```
+
+#### What made the shared core objects possible
+
+**Only `core/File.cpp` was app-coupled**, across all 51 core sources — through `APP_ASSET_PATH`.
+(`main.cpp` was the other coupling, through `APP_HEADER`/`APP_CLASS`, and a per-app `main.cpp`
+removes it by definition.) Move the roots from a compile-time define to a **runtime call in the
+app's own `main.cpp`** and `core/` stops knowing which app is building at all — which is what lets
+its objects be compiled once into `build/core` and shared.
+
+That also **retires the `.current_app` sentinel completely.** It existed only to force `main.o`
+(and later `core/File.o`) to rebuild when `APP` changed while their `.cpp` had not. Nothing
+app-dependent is compiled into a shared object any more, so there is nothing left to go stale —
+the failure class whose symptom was `c0000374` heap corruption after an `APP` switch is gone by
+construction rather than guarded against.
+
+#### Roots are relative to the executable, not the working directory
+
+`main.cpp` calls `AddAssetSearchRootFromExe("../assets")` and
+`AddAssetSearchRootFromExe("../../../shared_assets")`. With each app in its own `build/` folder,
+resolving against the working directory would mean the binary only found its assets when launched
+from one particular place — a debugger, a shortcut or a script elsewhere would fail with nothing
+obviously wrong. `GetExecutableDirectory()` in `core/File.h` is the new primitive;
+`AddAssetSearchRoot` stays for a root that really is working-directory relative.
+
+Verified: `apps/tank/build/tank.exe` resolves all eight of its assets — five shared shaders and
+the font out of `shared_assets`, the mesh and heightmap out of `apps/tank/assets` — with zero
+failures, and renders identically to the pre-restructure build.
+
+#### The two systems coexist during the migration
+
+The old root `makefile` still builds the other eleven apps into `wind.exe` via `APP=`. Its
+`APP_ASSETS` now appends `shared_assets` instead of `assets/shared`, so those apps find the moved
+default shaders and fonts through the search path. Verified: `APP=Ship` resolves its own four
+cloud shaders from `assets/ship` and the six shared ones from `shared_assets`, with no failures.
+
+An app leaves the old system when it gains an `apps/<name>/makefile`; `apps/<Name>.mk` is deleted
+at that point (`apps/Tank.mk` is gone). The root `makefile` disappears when the last app moves.
+
+#### Known limitation
+
+`build/core` is shared deliberately, so **two apps must not be built at the same time** — they
+would race on the same object files. This is written at the top of `engine.mk`. It is a smaller
+problem than the old one: the collision is now limited to concurrent builds, rather than every
+build overwriting the single `wind.exe` that someone else was running.
 
 ---
 
@@ -378,6 +610,10 @@ Independent of everything above; each is a few minutes.
 4. **Shared sound and glyphs** — one copy in `assets/shared/`, or duplicated into Tetris and
    Breakout so every app folder is self-contained. Self-containment matters more than the 400 KB
    if apps are ever to be extracted individually.
-5. **The 65 MB of dead assets** (§1.4) — delete, or move to `reference/`? They are not reference
-   material in any useful sense, but `narration/` in particular looks like it was recorded for
-   something.
+5. ~~**The 65 MB of dead assets**~~ — settled: moved to `stale/`, on their way out of the repo.
+6. **The four `*_original.psd` in `data/icons/`** — authoring sources, never loaded. An art repo
+   rather than `stale/`, but that is a call about where art lives, not about this tree.
+7. **`core/HTTPServer.cpp:480` reads `data/modes.json`, which does not exist** and never did here.
+   It fails silently by design (`ReadFileToString`). Should the OCPP web UI be serving one?
+8. **Per-app exe and makefile (§6.3)** — agreed in principle; the shape above is a sketch, not a
+   decision. Worth settling before the remaining ten apps migrate.

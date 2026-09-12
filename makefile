@@ -103,6 +103,26 @@ endif
 CFLAGS += -DAPP_HEADER=\"$(APP_HEADER)\"
 CFLAGS += -DAPP_CLASS=$(APP_CLASS)
 
+#The asset search path - roots an asset NAME is looked up under, in order, exactly the way IPATHS
+#works for headers. An app adds its own with `APP_ASSETS += assets/ship` in its apps/*.mk; every
+#app gets assets/shared appended after them, so "shaders/default.vert" falls through to the shared
+#copy while "shaders/raymarch_volume.frag" is found in the app's own root first. See core/File.h.
+#
+#make has no literal for a space, so `empty`/`space` below are how you get one to substitute on.
+#Without them the subst silently matches nothing and the define arrives space-separated, which
+#would make the whole path one unusable root.
+#
+#Separated with a COMMA and not the ';' a Windows PATH would use: make hands this whole command
+#line to sh, which reads ';' as a command separator and cuts the define in half. The symptom is
+#a link that dies with `assets/shared": No such file or directory` and Error 127, which points
+#nowhere near the define. core/File.cpp accepts both separators for exactly this reason - if you
+#write ';' here it will still parse, it just won't survive the shell to get there.
+empty :=
+space := $(empty) $(empty)
+comma := ,
+APP_ASSETS += shared_assets
+CFLAGS += -DAPP_ASSET_PATH=\"$(subst $(space),$(comma),$(strip $(APP_ASSETS)))\"
+
 #main.o only depends on main.cpp's mtime as far as make is concerned, but its
 #compiled output also depends on which APP is selected (APP_HEADER/APP_CLASS
 #above). Switching APP without touching main.cpp would otherwise leave a stale
@@ -119,6 +139,13 @@ $(APP_MARKER): FORCE
 	fi
 
 main.o: $(APP_MARKER)
+
+#core/File.o has exactly the same problem for exactly the same reason: it bakes APP_ASSET_PATH in
+#at compile time, and that string changes with APP while core/File.cpp does not. A stale one is
+#nastier than a stale main.o, because it links and runs and merely searches the PREVIOUS app's
+#asset roots - so the symptom is a missing asset, or worse, silently loading the wrong app's copy
+#of a name both of them define.
+core/File.o: $(APP_MARKER)
 
 #ImCurveEdit.cpp / ImSequencer.cpp exist in the repo but aren't wired into any
 #app yet - add `SRCS += ImCurveEdit.cpp` / `ImSequencer.cpp` to an apps/*.mk

@@ -277,6 +277,18 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index){
         if ((rendering_mode == MESH_MODE_SHADER) && (mesh->mesh_mode != MESH_MODE_SHADER)){
             continue;
         }
+        //A MESH_MODE_SHADER mesh nobody tagged. Drawing it with whatever shader happens to be
+        //bound is how this used to hide - see Mesh::custom_shader_index - so it draws nothing and
+        //says so, once.
+        if ((rendering_mode == MESH_MODE_SHADER) && (mesh->custom_shader_index < 0)){
+            if (!mesh->f_warned_no_custom_shader){
+                mesh->f_warned_no_custom_shader = true;
+                debug->Err("Mesh id %u is MESH_MODE_SHADER but has no custom_shader_index - set it "
+                           "to what Renderer::AddCustomShader returned, or it will not be drawn\n",
+                           mesh->GetID());
+            }
+            continue;
+        }
         //One sub-pass per custom shader, so a mesh is drawn only while ITS shader is bound.
         if ((rendering_mode == MESH_MODE_SHADER) && (custom_shader_index >= 0)
             && (mesh->custom_shader_index != custom_shader_index)){
@@ -411,15 +423,45 @@ void Renderer::DeferredPass(Camera* camera){
     //Viewport and clear - see the main color pass in DrawFrame for why this uses
     //GetViewportWidth/Height() (and the offset) instead of the raw width/height.
     glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
+    /*
+        Which attachment is which, because the numbers here are not self-describing and reading
+        them off wrongly is easy (see SetupDeferredBuffers for where they are attached):
+
+            DEPTH  depth              cleared to 1.0
+            0      position   RGBA16F cleared to (0,0,0,0), w is the material's alpha
+            1      normal     RGBA16F cleared to (1,0,0,0)
+            2      SSAO       RGBA16F cleared to (1,0,0,0), i.e. unoccluded
+            3      object id  int     cleared to -1, "no object"
+
+        Of these, ONLY DEPTH AND OBJECT ID CARRY A CLEAR VALUE THAT MEANS "NOTHING WAS DRAWN
+        HERE". 1.0 is outside the range a fragment can write and -1 is not an object; the colour
+        buffers are cleared to values that are perfectly legal things for real geometry to have
+        written, so they cannot be tested for emptiness. Anything sampling this G-buffer - a
+        custom shader especially - asks depth first. See the TEXUNIT_GBUFFER_* block in Renderer.h.
+
+        AND THE THIRD ARGUMENT BELOW IS A DRAW BUFFER INDEX, NOT AN ATTACHMENT NUMBER. It indexes
+        the list handed to glNamedFramebufferDrawBuffers just above, so here:
+
+            draw buffer 0 -> ATTACHMENT0 (position)
+            draw buffer 1 -> ATTACHMENT1 (normal)
+            draw buffer 2 -> ATTACHMENT3 (object id)   <- not 2, the list skips ATTACHMENT2
+            draw buffer 3 -> nothing at all, the list has only three entries
+
+        Reading it as an attachment number is what produced the mystery this code used to carry a
+        workaround for: the object id texture was being cleared by the FLOAT call at index 2 with
+        (1,0,0,0), so it came back holding 0x3F800000 - the bit pattern of 1.0f - and the integer
+        clear meant for it, aimed at index 3, silently cleared nothing. See the readback below,
+        which no longer has to know that number. The SSAO texture on ATTACHMENT2 is not a draw
+        buffer in this pass and never was being cleared here.
+    */
     vec4 clr_clear = vec4(0,0,0,0);
     float depth = 1.0;
     glClearNamedFramebufferfv(deferred_fbo_id,GL_DEPTH,0,&depth);
     glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,0,(float*)&clr_clear);
     clr_clear = vec4(1,0,0,0);
     glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,1,(float*)&clr_clear);
-    glClearNamedFramebufferfv(deferred_fbo_id,GL_COLOR,2,(float*)&clr_clear);
     GLint int_clear[4] = {-1,-1,-1,-1};
-    glClearNamedFramebufferiv(deferred_fbo_id,GL_COLOR,3,(GLint*)&int_clear);
+    glClearNamedFramebufferiv(deferred_fbo_id,GL_COLOR,2,(GLint*)&int_clear);
 
 
     //UploadMaterials();
@@ -468,9 +510,12 @@ Shader* Renderer::GetCustomShader(int index){
 
 /*
     The custom-material pass: everything tagged MESH_MODE_SHADER, one sub-pass per registered
-    shader. Called last of the geometry passes in DrawFrame, after the skinned meshes, because a
-    custom material is typically translucent and has to blend over everything solid - a volume
-    with a character standing in it must be drawn after that character, not before.
+    shader. What a custom shader is given and what is expected of it is stated once, on
+    Renderer::AddCustomShader in Renderer.h - this is about how the pass is ordered and why.
+
+    Called last of the geometry passes in DrawFrame, after the skinned meshes, because a custom
+    material is typically translucent and has to blend over everything solid - a volume with a
+    character standing in it must be drawn after that character, not before.
 
     Every sub-pass gets the deferred G-buffer bound as texture input (see TEXUNIT_GBUFFER_*),
     which is why DeferredPass now runs BEFORE the main color pass. That is the only way a shader
@@ -519,9 +564,11 @@ void Renderer::CustomShaderPass(Camera* camera){
     Hands one shader the cloud shadow map. Called for every shader that lights with the sun,
     which is the default and skinned ones - they share default.frag.
 
-    Setmat4 goes through debug->Fatal if the uniform is missing, so it is only called when there
-    is a map to point at. f_cloud_shadows is always set, so a shader cannot be left sampling a
-    stale map from a previous scene.
+    mat_cloud_shadow is only set when there is a map to point at - there is nothing meaningful to
+    hand over otherwise. (That used to be load-bearing: Setmat4 on a missing uniform went through
+    debug->Fatal. It warns and returns false now, so this is tidiness rather than survival.)
+    f_cloud_shadows is always set, so a shader cannot be left sampling a stale map from a previous
+    scene.
 */
 void Renderer::UploadCloudShadow(Shader* s){
     if (!s){
@@ -788,8 +835,10 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         glReadBuffer(GL_COLOR_ATTACHMENT0);
         glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RGB, GL_FLOAT, position_pixeldata);
 
-        //Somehow, -1 reads back as 3F800000
-        if ((id_pixeldata[0] != 0x3F800000) && (id_pixeldata[0] != -1)){
+        //-1 is the cleared value, i.e. the mouse is over nothing. It used to have to accept
+        //0x3F800000 as well, which is the bit pattern of 1.0f and was the object id buffer being
+        //cleared by a float call aimed at the wrong draw buffer - see DeferredPass's clear block.
+        if (id_pixeldata[0] != -1){
             int index = id_pixeldata[0];
             if (index > renderable_objects.size()){
                 debug->Err("Read back object index %i is out of bounds (max %i)\n",index,renderable_objects.size());
