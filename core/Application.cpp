@@ -2747,6 +2747,14 @@ void Application::RenderEngineWindow(){
                 //every frame, so edits show up immediately.
                 ImGui::ColorEdit3("Emissive",(float*)&material.glsl_material.emissive,ImGuiColorEditFlags_DisplayRGB);
                 ImGui::DragFloat("Emissive Strength",(float*)&material.glsl_material.emissive.w,0.05f,0,20);
+                //Unlit: the surface IS its colour, with every light, shadow and reflection above
+                //skipped. Here as well as in material_t because "why is this black" is asked at
+                //this panel, and the answer - a metallic surface in a scene with nothing to
+                //reflect - is one checkbox away from being ruled out.
+                bool f_unlit = (material.glsl_material.f_unlit != 0);
+                if (ImGui::Checkbox("Unlit",&f_unlit)){
+                    material.glsl_material.f_unlit = f_unlit ? 1 : 0;
+                }
                 ImGui::TreePop();
             }
             ImGui::PopID();

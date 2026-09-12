@@ -406,6 +406,64 @@ Status key: `[x]` done · `[-]` decided against.
   for the simulation regardless of how it is seeded. The class is not thread safe by design, and
   now says so.
 
+- [x] **23. `Destroy()` / reap policy.** **Settled 2026-09-12, and it turned out to be two
+  questions with different answers.**
+
+  **The policy: reaping stays OPT-IN, and what was missing was the paragraph, not the call.**
+  Dick's decision. The evidence pointed the other way at first - four apps (Dozer, Ship, Tetris,
+  Breakout) had each independently worked out the same thing and written their own comment about
+  it, Dozer's being *"Can't just call this... the renderer might be rendering"* - and four
+  identical answers usually mean a default is waiting to be written. But WHEN an object stops
+  existing is a gameplay decision: a tick that destroys something and then looks at it again is
+  doing something perfectly ordinary, and `ApplicationTetris::NewGame` wants everything gone at
+  one exact point before it rebuilds the level. An engine that reaped on its own schedule would
+  take that away to save a line.
+
+  So the rule is written where someone meets it instead:
+
+  - **`Object::Destroy`** says that it only MARKS - the object stops being drawn immediately,
+    which is why this looks finished and is not, and its rigid body goes on colliding with things
+    you can no longer see until somebody reaps it. Plus: clear your own pointers, with
+    `ApplicationShip`'s `selected_object` check named as the pattern.
+  - **`Renderer::DeleteDestroyedObjects`** says where it is safe to call from and why - it erases
+    from the same object list the render thread walks in `CullObjects`, so it belongs in the
+    simulation tick, where `physics_mutex` is already held for the whole tick and makes it
+    mutually exclusive with rendering for free. An MCP handler holds no lock and must go through a
+    `SimCommand`. It also says, in as many words, why it is not automatic - so the next person to
+    have this idea can see it was considered.
+
+  **The bug: reaping an object leaked 372 bytes, so the apps that did the right thing paid for
+  it.** This was found while looking at the policy and is the more urgent half.
+  `Object::~Object` reached past the wrapper to call `destroyRigidBody` itself and stopped there,
+  which left behind the `Physics`, the `PhysicsBody`, and **every collision shape**.
+
+  The shapes are the part that is not obvious: reactphysics3d keeps collision shapes in
+  `PhysicsCommon`, not on the body, and `destroyRigidBody` only calls `removeAllColliders` - so
+  the COLLIDERS go and the SHAPES stay, for the life of the process. Nothing in this repo had ever
+  called `destroyBoxShape` or its siblings, and `PhysicsBody::collision_shape` - the member that
+  would have tracked one - has its every assignment commented out.
+
+  `~Physics` now does the whole teardown and `~Object` just deletes it. Only the shapes that are
+  this body's own: `CloneShape` copies a box, a sphere and a capsule and SHARES anything else, and
+  `ScaleColliders` draws the same line and warns about it, so freeing a mesh or heightfield shape
+  could pull the collider out from under a second body that is using it. Those still leak,
+  deliberately - they belong to terrain created once, not to the spawned-and-reaped objects this
+  is about.
+
+  **Measured, 20,000 create/destroy rounds of a body with one box collider:**
+
+  ```
+  the old ~Object path                372 bytes per object   (+6896 KB, growing linearly)
+  delete Physics (the path now)        10 bytes per object   (+184 KB, flat)
+  ```
+
+  10 bytes is reactphysics3d's own pool growth and matches a full manual teardown exactly, so
+  nothing is left on the table.
+
+  **Verified.** Every app compiles and links. `apps/breakout` - the app that spawns and reaps
+  hardest, and the reason this matters - played three full games through its debris path with no
+  crash and no double free, its working set moving 91.4 MB to 92.8 MB across all three.
+
 - [x] **29. `HasSyntheticHolds()` was false on the exact tick a scripted release is readable.**
   A hold is erased in the same `AdvanceSyntheticHolds` call that emits its key-up, so the focus
   gate the engine's own design recommends silently dropped **every** edge-triggered scripted action
@@ -1070,6 +1128,61 @@ Status key: `[x]` done · `[-]` decided against.
   person who needs it is the one writing the next rules layer, and what they will be reading is a
   rules layer.
 
+- [x] **52. No way to express "unlit" or "emissive only".** **Done 2026-09-12.** Both halves.
+
+  **The flag: `material_t::f_unlit`.** Set it and the surface IS its albedo - the texture if there
+  is one, else `color` - with the light loop, the ambient term, the environment reflections and
+  every shadow lookup skipped. Emission is still added on top, because emission was never lighting
+  in the first place: it is what lets an unlit surface be BRIGHTER than its own colour rather than
+  exactly it. Alpha is resolved by the same `GetTransparency()/alpha_clip` rule the lit path uses,
+  so alpha clipping behaves identically.
+
+  It is the thing a HUD element, a marker or a stylised game actually wants, and which before this
+  could only be faked by making something emissive and hoping nothing lit it. `apps/tetris` is the
+  live example of the fake: its piece materials carry `emissive = colour * 0.18` with the comment
+  *"so a block in the shadow of the stack above it still reads as its own colour rather than as a
+  dark grey lump"* - which is this feature, approximated.
+
+  **It cost no space and moved no offset**, which is the nice part. `material_t` had `int pad[3]`
+  sitting at offsets 36/40/44, so the flag went in the first of them and became `int f_unlit; int
+  pad[2];`. That is why this one did NOT have to be appended at the end the way `emissive` was -
+  `emissive` is a vec4 and would have shifted the two 8-byte texture handles, a single int does
+  not. Measured:
+
+  ```
+  sizeof(material_t) = 80   unchanged
+  f_unlit   at 36           (was pad[0])
+  handles   at 48 and 56    unchanged
+  emissive  at 64           unchanged
+  ```
+
+  An `int` rather than a `bool` because the struct is mirrored in GLSL, where `bool` is not a
+  layout-compatible type. The mirror is by hand in exactly the five shaders `Material.h` names -
+  `custom.frag`, `default.frag`, `default.vert`, `default_skinned.vert`, `deferred.frag` - and all
+  five were updated. (Note when grepping: `breakout_shield.frag`, `raymarch_volume.frag` and
+  `field.vert` also contain a `pad2`, but it belongs to the LIGHT struct from item 41, not to this
+  one.)
+
+  **The cheap half, which is the part that actually bit somebody: the metallic trap is now written
+  down** where `metallic` is declared. Giving up the diffuse term only pays if there is something
+  to reflect, so with `f_render_skybox` false and no environment reflections a high metallic
+  surrenders its diffuse and gets nothing back - Breakout's tough bricks at 0.92 rendered almost
+  black and read correctly at 0.45 with a little emissive. That is what metallic means and is not
+  a bug, but it looks exactly like a material that failed to load, which is the expensive part.
+
+  **And a checkbox in the Materials panel**, next to Metallic and Roughness, because "why is this
+  black" gets asked at that panel and being able to rule lighting out in one click is worth more
+  than the flag being reachable only from code. Materials are edited in place and `UploadMaterials`
+  rebuilds the SSBO every frame, so it takes effect immediately.
+
+  **Verified.** Every app builds; the layout numbers above are measured, not assumed. The shader
+  branch was seen working - a build carrying a temporarily-defaulted `f_unlit = 1` rendered the
+  Tetris board completely flat, saturated colours with no face shading and no shadow, which is
+  only reachable through the new branch in `CalcPBRLighting`. That capture was taken from Dick's
+  own running build rather than one made for the purpose, because it happened to be holding the
+  MCP port at the time; the temporary default was reverted immediately afterwards and every app
+  rebuilt with `f_unlit = 0`.
+
 - [x] **53. The `LoadFile` / `BinaryAsset` ownership question, decided.** **Done 2026-09-12.**
   **`LoadFile` lends; it does not give.** What comes back belongs to the file layer, stays valid
   for the life of the process, and nobody frees it. If a caller wants bytes it can keep or change,
@@ -1397,6 +1510,75 @@ Status key: `[x]` done · `[-]` decided against.
   **Verified.** All twelve apps build. `APP=Breakout` renders identically to the reference capture
   — its shield is a custom shader reading `gbuffer_depth` and `gbuffer_position`, so it exercises
   the contract being described — with no warnings and no GL errors.
+
+- [x] **63. `SoundSystem` welded an OpenAL buffer to an OpenAL source, so a sound could not overlap
+  itself.** **Done 2026-09-12.** Buffers and voices are separate things now, and the API says which
+  one it means.
+
+  **The split, which is the whole fix.** A **name** identifies a BUFFER - what to play - and is
+  deduplicated by filename. A **handle** identifies a VOICE - which playing you mean - and `Play`
+  returns one. Before, a name meant both, because one buffer was welded to one source, and every
+  symptom followed from that: `alSourcePlay` on a playing source rewinds rather than layers, so the
+  second brick cut the first off mid-attack.
+
+  ```cpp
+  soundhandle_t Play(name, looping, gain, flags);   //flags: SOUND_ONESHOT (default) or SOUND_KEEP
+  void Stop / Pause / Resume / Rewind(handle);
+  bool FinishedPlaying(handle);
+  ```
+
+  **The handle is a COUNT, not a slot index**, which is what makes it safe to hold. Handle 987 is
+  the 987th sound the process started; the voice it ran on has long since been someone else's.
+  Every call finds the voice whose owner is still exactly that handle, so a handle for a sound
+  that finished, was stopped or was recycled is **inert** rather than dangerous. That is the part
+  worth keeping: without it a stale handle would quietly control whatever now occupies the slot -
+  pausing somebody else's explosion - which is the same class of bug as the `map_handles`
+  `operator[]` one already fixed here, and just as baffling. Generation solves identification; it
+  does not solve protection, which is what the flag is for.
+
+  **`SOUND_KEEP` is protection.** A one-shot is disposable: when every source is busy the OLDEST
+  one-shot is taken, because it is nearest its end and least missed. A kept voice is never taken,
+  because a voice stolen halfway through would restart from the beginning at an arbitrary moment -
+  far worse than a missed click. A kept voice holds its source until `Stop`, so an app that starts
+  them and never stops them will run out, but that is still strictly better than the old behaviour,
+  where EVERY registered sound held a source for the life of the process.
+
+  **What it fixes downstream.** `AppendFile` deduplicates by filename, so the three-names-for-one-wav
+  trick that was the only route to polyphony now costs one buffer and one load rather than three of
+  each - and the duplicate load that made item 53's heap corruption reachable is simply not
+  performed. `NUM_AL_BUFFERS` (files) and `NUM_AL_SOURCES` (simultaneous voices) are separate
+  ceilings rather than one shared 16, and `AppendFile`'s `debug->Fatal("I'm lazy: no more sound
+  buffers")` - which ended the process on the seventeenth registration - is now an ordinary error.
+
+  **Callers.** Every fire-and-forget `Play("name")` was left exactly as it was: names still name
+  buffers, so Tetris, Breakout, Sim and Tileset needed no edit at all. The two places that actually
+  controlled a voice were migrated to handles:
+
+  - `DozerCharacter` keeps five. `engine_idle` and `arm_up` are `SOUND_KEEP` - both are held across
+    many frames and stopped deliberately, so neither may be stolen by a door or a steel beam in
+    between. The other three are one-shots whose handles exist only to ask whether they have
+    finished, which is the retrigger guard that stops a held throttle layering rev-ups.
+  - Two `Rewind`-then-`Play` pairs disappeared (`arm_up`, and IsoCar's horn). They existed because
+    one name meant one source that had to be wound back first; a voice from the pool starts at the
+    beginning by definition. Two car horns can now sound at once instead of one cutting the other
+    off.
+  - Two `Pause` calls became `Stop`, which gives the source back. The old `Pause` held it anyway.
+
+  **Verified.** All twelve apps build. A 20-check harness with no window and no GL exercises the
+  pool against real OpenAL: three simultaneous voices of one sound (impossible before), two names
+  sharing one buffer, a handle staying valid while its voice plays and going inert afterwards, a
+  dead handle failing to disturb its neighbours, pause/resume, the oldest one-shot being recycled
+  when the pool fills, a kept voice surviving a storm of 48 one-shots, and an all-kept pool
+  refusing a new sound rather than stealing one.
+
+  In-app: `apps/breakout` registers 8 names across 4 files and loads **4**, logging which names
+  share. `apps/dozer` drives the real state machine - pressing E put the engine into STALLING and
+  `FinishedPlaying(snd_engine_stop)` stayed false for about three seconds, the length of the sound,
+  then flipped, which is a one-shot handle behaving correctly end to end.
+
+  *Noticed while testing, NOT caused by this and not chased: `apps/dozer` starts its engine on its
+  own at start-up. `engine_state` initialises to `ENGINE_STOPPED` and only the E key reaches
+  `ENGINE_STARTING`, so something is delivering a spurious key release on the first frames.*
 
 - [x] **65. A scripted axis hold could not change its value.** **Found and fixed 2026-09-12 while
   verifying 48/49/59.** `AdvanceSyntheticHolds` emits an axis's value only on the tick it starts

@@ -19,5 +19,6 @@
 - [Shell heredoc limit](shell_heredoc_limit.md) — quote the delimiter, and anything over ~30KB fails as a misleading ENAMETOOLONG; see CLAUDE.md
 - [Breakout agent run](breakout_agent_run.md) — second game-build audit; brief at docs/breakout_agent_brief.md written 2026-09-12, findings doc pending and should feed the backlog
 - [Asset layout plan](asset_layout_plan.md) — AGREED 2026-09-12: per-app assets/<app>/ + assets/shared/, LoadFile resolver first, DUMP_BINARYASSETS stripped entirely (separate packer instead); plan in docs/asset_layout_plan.md
-- [Shared build output coordination](shared_build_output_coordination.md) — ASK BEFORE BUILDING: another agent builds in this tree; one wind.exe + one makefile means concurrent builds kill each other; per-app exe+makefile is the agreed fix
+- [Shared build output coordination](shared_build_output_coordination.md) — ASK BEFORE BUILDING when another agent is active; the one-wind.exe collision is now FIXED by [per-app build layout](per_app_build_layout.md), but build/core is still shared so build one app at a time
 - [Tank viewport black half](tank_viewport_offset_black_half.md) — APP=Tank screenshots are half black BY DESIGN (viewport_x offset); judge Tank renders on the right half only
+- [Per-app build layout](per_app_build_layout.md) — DONE 2026-09-12: one exe per app under apps/<name>/, root makefile+main.cpp+data/+shaders/ deleted, core/ app-agnostic; READ THIS before any build (supersedes the APP= arrangement)

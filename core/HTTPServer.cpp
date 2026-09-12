@@ -22,7 +22,7 @@ HTTPServer::HTTPServer(int port)
 	InitializeCriticalSection(&m_wsLock);
 
 	// Try to load HTML from disk first (common locations). If not found, fall back to built-in default.
-	if (LoadHTMLFromFile("data/www/index.html")){
+	if (LoadHTMLFromFile("www/index.html")){
 		http_debug->Info("Using HTML loaded from file\n");
 
 		// Start watching the HTML file for changes
@@ -96,8 +96,24 @@ bool HTTPServer::LoadHTMLFromFile(const std::string& filename)
 	}
 
 	m_htmlContent = contents;
-	m_htmlFilePath = filename;
-	http_debug->Info("Loaded HTML from file: %s (%zu bytes)\n", filename.c_str(), m_htmlContent.size());
+
+	/*
+	    The RESOLVED path is what gets remembered, not the name we were asked for, because
+	    m_htmlFilePath is handed straight to FileWatcher - and a watcher needs a real directory
+	    and file on disk, not an asset name like "www/index.html" that only means something to
+	    the search path. Storing the name would leave the watcher pointed at a path that does not
+	    exist, so the page would load correctly and then silently never hot-reload again.
+
+	    ResolveAssetPath is exposed for exactly this: the caller that has to do something with the
+	    file itself rather than just read its bytes. See core/File.h.
+	*/
+	std::string resolved;
+	if (!ResolveAssetPath(filename.c_str(), resolved)) {
+		resolved = filename;        //it was readable a moment ago; keep what we were given
+	}
+	m_htmlFilePath = resolved;
+
+	http_debug->Info("Loaded HTML from file: %s (%zu bytes)\n", resolved.c_str(), m_htmlContent.size());
 	return true;
 }
 
@@ -477,7 +493,7 @@ handle_get:
 			// must be allowed to be missing (LoadFile answers that by exiting the process, so the
 			// 404 below was unreachable) and is edited while the server runs.
 			std::string file_body;
-			if (ReadFileToString("data/modes.json", file_body) && !file_body.empty()) {
+			if (ReadFileToString("modes.json", file_body) && !file_body.empty()) {
 				std::string body = file_body;
 				std::ostringstream response;
 				response << "HTTP/1.1 200 OK\r\n";
@@ -507,11 +523,11 @@ handle_get:
 				return;
 			}
 		}
-		// The main page (data/www/index.html) references style.css as a sibling file.
+		// The main page (www/index.html) references style.css as a sibling file.
 		if (path == "/style.css") {
 			// Same reasoning as /modes.json above.
 			std::string file_body;
-			if (ReadFileToString("data/www/style.css", file_body) && !file_body.empty()) {
+			if (ReadFileToString("www/style.css", file_body) && !file_body.empty()) {
 				std::string body = file_body;
 				std::ostringstream response;
 				response << "HTTP/1.1 200 OK\r\n";

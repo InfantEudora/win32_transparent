@@ -43,7 +43,7 @@ struct Material{
     float brightness;
     float metallic;
     float roughness;
-    int pad2;
+    int f_unlit;       //see material_t in core/Material.h; was pad2
     int pad3;
     int pad4;
     //sampler2D handle_diffuse;
@@ -445,6 +445,20 @@ vec4 CalcPBRLighting(){
         albedo = m.color.xyz;
     }
 
+    /*
+        Unlit: the surface IS its albedo. Everything below this - the light loop, the ambient
+        term, the reflections, the shadow lookups - is skipped, so the colour that reaches the
+        screen is the one in the material.
+
+        Emission is still added, because it is the one thing that was never lighting: it is what
+        lets an unlit surface be BRIGHTER than its own colour rather than exactly it. Alpha is
+        resolved the same way the lit path resolves it, so alpha clipping behaves identically.
+    */
+    if (m.f_unlit != 0){
+        float unlit_alpha = 1 - step(GetTransparency(),alpha_clip);
+        return vec4(albedo + m.emissive.rgb * m.emissive.w,unlit_alpha);
+    }
+
     for (int i = 0; i < lights.length(); i++){
         //Vector from the surface towards the light. For a directional light that is the negated
         //light forward - constant everywhere, so the rays stay parallel and the light's position
@@ -573,9 +587,15 @@ void main(){
             //("m.emissive might be used before being initialized"). It mattered less when every
             //unset field only scaled the lit result; emission is ADDED, so garbage here would
             //show up as an arbitrary glow on anything with no material.
+            //
+            //EVERY FIELD ADDED TO material_t HAS TO BE SET HERE. f_unlit is the worst of them so
+            //far: it is a BRANCH rather than a term, so uninitialised it decides whether this
+            //fragment is lit at all - and if it came up non-zero it would return the magenta
+            //flat, which is the one case where the magenta is trying to tell you something.
             m.brightness = 1.0;
             m.metallic = 0.0;
             m.roughness = 0.5;
+            m.f_unlit = 0;
             m.emissive = vec4(0.0,0.0,0.0,1.0);
         }
     }

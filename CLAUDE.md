@@ -67,25 +67,45 @@ source files; keep heredocs for throwaway scripts.
 
 ```bash
 export PATH="/c/msys64/mingw64/bin:$PATH"     # the toolchain is NOT on the default PATH
-mingw32-make.exe APP=Tetris -j8               # mingw32-make, not /usr/bin/make
-./wind.exe 2>wind_stderr.log &
+cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
+./build/tetris.exe 2>stderr.log &
 ```
 
-- One executable. `APP=` selects which `Application` subclass is built; the apps are the
-  `apps/*.mk` fragments (Animation, Dozer, Grid, IsoAnimation, OCPP, Ship, Sim, Tank, Tetris,
-  Tileset, UI).
-- **The linker cannot overwrite a running `wind.exe`.** A build while it is running fails with
-  `cannot open output file wind.exe: Permission denied`. Stop it first (`taskkill //F //IM
-  wind.exe`). The same error with nothing running means a stale lock — deleting `wind.exe` clears
-  it.
+- **One exe per app.** Each app is a folder under `apps/` with its own `makefile`, `main.cpp`,
+  `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the twelve
+  apps are `animation breakout dozer grid isoanimation ocpp ship sim tank tetris tileset ui`.
+- **`build/core` is shared between apps**, so **build one app at a time** - two concurrent builds
+  race on the same object files. When a core source changes, the next build of every app relinks;
+  that is a link, not a recompile, and is expected.
+- The linker cannot overwrite a running exe (`Permission denied`) - stop the app first
+  (`taskkill //F //IM tetris.exe`). The same error with nothing running means a stale lock;
+  deleting the exe clears it.
 - `stderr` carries all logging. `stdout` is reserved for the MCP stdio transport and must stay
   clean.
-- Header dependencies are tracked, so editing a header rebuilds its dependents. Unexplained heap
-  corruption (`c0000374`) after switching `APP` means stale objects: `mingw32-make.exe clean`.
+- Header dependencies are tracked, so editing a header rebuilds its dependents. `make clean` in an
+  app folder removes only that app; `make cleancore` clears the shared objects.
+
+### Assets
+
+An asset is named `<category>/<file>` - `meshes/tank.glb`, `shaders/default.vert`,
+`sound/bleep.wav` - never by where it sits. Each app's `main.cpp` declares the roots those names
+resolve against, its own first and then `shared_assets`, so an app can override a shared shader
+just by having one of its own. `shared_assets/` holds only what `core/` loads or what two or more
+apps use. See `core/File.h` and `docs/asset_layout_plan.md`.
+
+Anything that opens a file itself rather than going through `LoadFile` has to resolve the name
+first - `ResolveAssetPath` / `ResolveAssetDirectory`. Three places already do
+(`Directory::GetFiles`, `HTTPServer`'s hot-reload watcher, `Texture::LoadHDRFromFile`); a fourth
+would be a bug that looks like a missing file.
 
 ## Driving a running app
 
 Every app embeds an MCP server on **`http://127.0.0.1:8765/mcp`**.
+
+**Only one app at a time.** They all bind the same port, and a second app starts perfectly well
+while its server silently fails to bind - so `screenshot` then returns the FIRST app's window and
+nothing looks wrong. A screenshot showing the wrong game is this, every time. `netstat -ano | grep
+8765` names the process actually holding it.
 
 **Use `127.0.0.1`, never `localhost`.** The server binds IPv4 only, deliberately; where `localhost`
 resolves to `::1` first, every call pays a failed IPv6 connect — measured at 2,058 ms against

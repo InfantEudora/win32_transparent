@@ -31,7 +31,7 @@ struct Material{
     float brightness;
     float metallic;
     float roughness;
-    int pad2;
+    int f_unlit;       //see material_t in core/Material.h; was pad2
     int pad3;
     int pad4;
     //sampler2D handle_diffuse;

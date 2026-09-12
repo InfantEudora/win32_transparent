@@ -29,6 +29,11 @@
 # NOTE ON CONCURRENT BUILDS: $(ROOT)/build/core is shared between apps deliberately, so
 # core compiles once rather than twelve times. Two builds running at the same time can
 # therefore race on the same object files. Build one app at a time.
+#
+# The other consequence of sharing them is expected and harmless: when a core source or
+# header changes, the NEXT build of every app relinks, because its exe is now older than
+# an object it links. That is a link, not a recompile - the core objects themselves are
+# rebuilt once, by whichever app builds first.
 #=======================================================================================
 
 CC = g++
@@ -124,6 +129,21 @@ CORE_DIRS += $(ROOT)/core/skeleton
 CORE_DIRS += $(ROOT)/core/physics
 
 CORE_SRCS := $(filter-out $(CORE_SRCS_NOSOUND), $(wildcard $(addsuffix /*.cpp, $(CORE_DIRS))))
+
+#SHARED LIBRARIES: a folder at the repo root that more than one app builds, declared by an app as
+#
+#    LIB_DIRS += $(ROOT)/isoterrain
+#    IPATHS   += -I$(ROOT)/isoterrain
+#
+#They join the core sources rather than the app's own, and that is the whole point: like core,
+#their code does not vary by app, so they compile once with CORE_CFLAGS into the shared object
+#tree and every app that declares them links the same objects. Putting them in APP_SRCS instead
+#would not just duplicate the work - the objects would land at build/../../isoterrain/*.o, outside
+#the app's own build folder, because the pattern rule mirrors the source path.
+#
+#A folder used by only ONE app is not this: it belongs inside that app (isocity moved into
+#apps/tileset, crane into apps/tank). See docs/asset_layout_plan.md section 2.1.
+CORE_SRCS += $(wildcard $(addsuffix /*.cpp, $(LIB_DIRS)))
 
 #BinaryAssetMemoryEmpty.cpp is the empty asset table. A build that bakes its assets in
 #replaces it with generator output - see docs/asset_layout_plan.md section 5.

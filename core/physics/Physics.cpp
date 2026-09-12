@@ -16,8 +16,72 @@ Physics::Physics(PhysicsWorld* _world){
 	body->rigidbody->setIsDebugEnabled(true);
 }
 
-Physics::~Physics(){
+/*
+	Gives back everything this body took. It used to give back nothing: Object::~Object called
+	destroyRigidBody itself and this was empty, which left the Physics, the PhysicsBody and every
+	collision shape behind on each destroyed object. Measured at 372 bytes per object with one box
+	collider, growing linearly - which is a slow bleed in any app that spawns and reaps things, and
+	those are exactly the apps that call DeleteDestroyedObjects.
 
+	THE SHAPES ARE THE PART THAT IS NOT OBVIOUS. reactphysics3d keeps collision shapes in
+	PhysicsCommon, not on the body, and destroyRigidBody only calls removeAllColliders - so the
+	COLLIDERS go and the SHAPES stay, for the life of the process.
+
+	And only the shapes that are ours. CloneShape copies a box, a sphere and a capsule and SHARES
+	anything else, and ScaleColliders draws the same line for the same reason, so a mesh or
+	heightfield shape may well be a second body's as well; freeing one here would pull the collider
+	out from under that body. Those are still leaked, deliberately - they belong to static terrain
+	created once, not to the spawned-and-destroyed objects this is about.
+
+	Read the shapes BEFORE destroying the body, because destroying it takes the colliders - and the
+	only route to a shape - with it.
+*/
+Physics::~Physics(){
+	if (!body){
+		return;
+	}
+
+	if (body->rigidbody && world && world->rp_world){
+		std::vector<rp3d::CollisionShape*> own_shapes;
+		for (uint32_t i = 0;i < body->rigidbody->getNbColliders();i++){
+			rp3d::Collider* collider = body->rigidbody->getCollider(i);
+			rp3d::CollisionShape* shape = collider ? collider->getCollisionShape() : NULL;
+			if (!shape){
+				continue;
+			}
+			rp3d::CollisionShapeName name = shape->getName();
+			if ((name == rp3d::CollisionShapeName::BOX) ||
+				(name == rp3d::CollisionShapeName::SPHERE) ||
+				(name == rp3d::CollisionShapeName::CAPSULE)){
+				own_shapes.push_back(shape);
+			}
+		}
+
+		world->rp_world->destroyRigidBody(body->rigidbody);
+		body->rigidbody = NULL;
+		body->last_collider = NULL;
+
+		if (PhysicsWorld::physicsCommon){
+			for (rp3d::CollisionShape* shape:own_shapes){
+				switch (shape->getName()){
+					case rp3d::CollisionShapeName::BOX:
+						PhysicsWorld::physicsCommon->destroyBoxShape(static_cast<rp3d::BoxShape*>(shape));
+						break;
+					case rp3d::CollisionShapeName::SPHERE:
+						PhysicsWorld::physicsCommon->destroySphereShape(static_cast<rp3d::SphereShape*>(shape));
+						break;
+					case rp3d::CollisionShapeName::CAPSULE:
+						PhysicsWorld::physicsCommon->destroyCapsuleShape(static_cast<rp3d::CapsuleShape*>(shape));
+						break;
+					default:
+						break;
+				}
+			}
+		}
+	}
+
+	delete body;
+	body = NULL;
 }
 
 float Physics::GetMass(){

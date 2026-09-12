@@ -59,8 +59,12 @@ Object::Object(Object* object):Object(){
 Object::~Object(){
     //debug->Info("Destroyed Object %p\n",this);
     DeleteMesh();
+    //Hands the whole thing to ~Physics rather than reaching past it to destroy the rigid body and
+    //leaving the wrapper, the PhysicsBody and every collision shape behind - which is what this
+    //did, at 372 bytes an object. See core/physics/Physics.cpp.
     if (physics){
-        physics->world->rp_world->destroyRigidBody(physics->body->rigidbody);
+        delete physics;
+        physics = NULL;
     }
 
     //Delete all the child objects and their children

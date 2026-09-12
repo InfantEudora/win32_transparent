@@ -89,7 +89,23 @@ class Object{
     virtual ~Object();
     void DeleteDestroyedChildren();
     void GenerateUniqueID();
-    void Destroy(); //Marks it for deletion at a later time.
+    /*
+        MARKS THIS OBJECT FOR DELETION. IT DOES NOT DELETE IT, AND NOTHING DELETES IT FOR YOU.
+
+        The object stops being rendered immediately - Renderer::CullObjects skips a destroyed
+        object - which is why this looks finished and usually is not. Until somebody reaps it, it
+        is still in the scene's object list and ITS RIGID BODY IS STILL IN THE PHYSICS WORLD,
+        colliding with things you can no longer see.
+
+        Reaping is Renderer::DeleteDestroyedObjects, and calling it is the app's job. Where it is
+        safe to call from, and why it is deliberately not automatic, is written out there.
+
+        If you keep a pointer to an object you destroy, clear it yourself - the reap will delete
+        the object out from under it. ApplicationShip's `if (selected_object &&
+        selected_object->IsDestroyed()) selected_object = NULL;` immediately before its reap is
+        the pattern.
+    */
+    void Destroy();
     bool IsDestroyed(){return f_is_destroyed;};
     void Hide();
     void Show();

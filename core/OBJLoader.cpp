@@ -238,7 +238,15 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
             char* diff_name = (char*)line.c_str()+7;
 		    debug->Trace("Found diffuse texture: %s\n",diff_name);
             if (current_material){
-                std::string whole_path = "data/" + std::string(diff_name);
+                /*
+                    The name straight out of the .mtl, with no prefix bolted on. It already reads
+                    "textures/something.png" - which is exactly the <category>/<file> form every
+                    other asset here is named in - so the search path finds it in whichever app
+                    root owns it. The hardcoded "data/" this replaces looked in the ONE root
+                    folder regardless of where the .obj lived, so a mesh outside it (galaxy's, for
+                    one) had its textures looked up somewhere they could never be.
+                */
+                std::string whole_path = diff_name;
                 current_material->diff_texture = new Texture();
                 current_material->diff_texture->name = whole_path;
                 current_material->diff_texture->LoadFromFile(whole_path.c_str(),GL_TEXTURE_2D,1);
@@ -272,7 +280,7 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
                 break;
             }
             if (current_material){
-                std::string whole_path = "data/" + std::string(filename);
+                std::string whole_path = filename;      //see the map_Kd case above
                 current_material->norm_texture = new Texture();
                 current_material->norm_texture->name = whole_path;
                 current_material->norm_texture->LoadFromFile(whole_path.c_str(),GL_TEXTURE_2D,1);

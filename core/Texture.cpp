@@ -207,11 +207,26 @@ void Texture::LoadHDRFromFile(const char* filename, int depth_in){
     name     = filename;
     depth    = depth_in;
 
+    /*
+        stbi_loadf opens the file itself, so this is one of the few places that has to resolve a
+        name to a real path rather than hand it to LoadFile - see core/File.h. Without it the HDR
+        is only found when the working directory happens to be the one the name is relative to,
+        which stopped being true the moment each app got its own build folder.
+
+        The name is kept as given in `name` above: that is the asset's identity, and it is what a
+        second load of the same environment map should match on.
+    */
+    std::string resolved;
+    if (!ResolveAssetPath(filename, resolved)){
+        debug->Err("LoadHDRFromFile: no such file %s - looked in: %s\n", filename, resolved.c_str());
+        return;
+    }
+
     int w, h, channels;
     stbi_set_flip_vertically_on_load(false);
-    hdr_data = stbi_loadf(filename, &w, &h, &channels, 3); // force RGB
+    hdr_data = stbi_loadf(resolved.c_str(), &w, &h, &channels, 3); // force RGB
     if (!hdr_data){
-        debug->Err("LoadHDRFromFile: failed to load %s: %s\n", filename, stbi_failure_reason());
+        debug->Err("LoadHDRFromFile: failed to load %s: %s\n", resolved.c_str(), stbi_failure_reason());
         return;
     }
     width       = w;

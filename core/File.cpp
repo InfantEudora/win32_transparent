@@ -137,16 +137,20 @@ void AddAssetSearchRootFromExe(const char* relative){
 	AddAssetSearchRoot((base + "/" + relative).c_str());
 }
 
-static bool FileExists(const std::string& path){
-	FILE* f = fopen(path.c_str(),"rb");
-	if (!f){
+//GetFileAttributes rather than fopen: it answers for a directory as well as a file, and it does
+//not open anything - resolution can try several candidates per asset and only one of them exists.
+static bool PathExists(const std::string& path, bool f_want_directory){
+	DWORD attr = GetFileAttributesA(path.c_str());
+	if (attr == INVALID_FILE_ATTRIBUTES){
 		return false;
 	}
-	fclose(f);
-	return true;
+	bool f_is_directory = (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	return f_is_directory == f_want_directory;
 }
 
-bool ResolveAssetPath(const char* name, std::string& out){
+//The search itself. ResolveAssetPath and ResolveAssetDirectory are the same walk asking for a
+//different kind of thing at the end of it - see File.h for why they stay two functions.
+static bool ResolveAgainstRoots(const char* name, std::string& out, bool f_want_directory){
 	out.clear();
 	if (!name || !*name){
 		return false;
@@ -159,14 +163,14 @@ bool ResolveAssetPath(const char* name, std::string& out){
 	    before a single root is consulted. It is also what lets a caller pass a path it resolved
 	    earlier - or an absolute one - straight back in without it being mangled.
 	*/
-	if (FileExists(name)){
+	if (PathExists(name,f_want_directory)){
 		out = name;
 		return true;
 	}
 
 	for (const std::string& root:asset_roots){
 		std::string candidate = root + "/" + name;
-		if (FileExists(candidate)){
+		if (PathExists(candidate,f_want_directory)){
 			out = candidate;
 			return true;
 		}
@@ -181,6 +185,14 @@ bool ResolveAssetPath(const char* name, std::string& out){
 		out += root + "/" + name;
 	}
 	return false;
+}
+
+bool ResolveAssetPath(const char* name, std::string& out){
+	return ResolveAgainstRoots(name,out,false);
+}
+
+bool ResolveAssetDirectory(const char* name, std::string& out){
+	return ResolveAgainstRoots(name,out,true);
 }
 
 /*

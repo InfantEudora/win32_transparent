@@ -285,6 +285,30 @@ class Renderer{
     void AddMaterials(std::vector<Material>& list);
     int GetNumMaterials();
     void UpdateObjectMaterials();
+
+    /*
+        Deletes every object marked by Object::Destroy, and their destroyed children. This is the
+        only thing that actually frees them and takes their rigid bodies out of the physics world;
+        Destroy() alone just stops them being drawn.
+
+        CALL IT FROM THE SIMULATION TICK - RunSimulationTick, or anything else the physics loop
+        runs while it holds physics_mutex. That is the whole constraint: this erases from the same
+        object list the render thread walks in CullObjects and DrawFrame, so it must not run while
+        that thread is in there. The physics loop holds the mutex across the tick, so a call made
+        from inside the tick is mutually exclusive with rendering for free. A call from an MCP
+        handler or any render-thread code is NOT - use a SimCommand to get onto the tick instead.
+
+        IT IS DELIBERATELY NOT AUTOMATIC. The engine could call this at the end of every pass and
+        for a while it looked like it should - four apps had each worked out the same answer
+        independently (Dozer, Ship, Tetris, Breakout). It stays opt-in because WHEN an object
+        stops existing is a gameplay decision: a tick that destroys something and then looks at it
+        again is doing something ordinary, and an app that wants everything gone before it rebuilds
+        a level - ApplicationTetris::NewGame - wants to say exactly where that happens. What was
+        actually missing was this paragraph, not a call.
+
+        An app that creates objects at run time and never calls this leaks them and, worse, keeps
+        their colliders live in the physics world for the rest of the run.
+    */
     void DeleteDestroyedObjects();
 
     Texture* LoadTexture(const char* filename,int target = GL_TEXTURE_2D, int depth = 1);

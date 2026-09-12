@@ -7,11 +7,11 @@ Plan for splitting the one shared `data/` and `shaders/` into per-app asset fold
 Written 2026-09-12 from a walk through the tree. Every fact below was measured against this
 source, not recalled — line numbers are as of that date.
 
-**Status.** §1.4 (65 MB of dead assets out of `data/`) and §4 (the `LoadFile` search path) are
-done. §6.3 — each app its own folder, makefile, `main.cpp` and exe, with `core/` compiled once and
-shared — is built and proven: **Tank and Ship are fully across**. The other ten apps still build
-through the old root `makefile` and `APP=`; the two systems run side by side and both are verified
-after every step. §5 (`DUMP_BINARYASSETS`) and §5b (`OBJLoader`) are not started.
+**Status: the migration is complete.** All twelve apps are under `apps/<name>/` with their own
+makefile, `main.cpp`, assets and exe. `core/` is app-agnostic and compiles once into `build/core`.
+**`data/` is gone**, `shaders/` is gone, the root `makefile` and `main.cpp` are gone. `OBJLoader`'s
+hardcoded `"data/"` prefix is fixed (§4.3). Still open: §5 (`DUMP_BINARYASSETS`), §5b (removing
+`OBJLoader` itself), and the rest of §7's move into `reference/`.
 
 ---
 
@@ -272,20 +272,24 @@ what `LoadFile` stored. This is the constraint the generator in §5.4 has to mat
   roots — so the symptom is a missing asset, or worse, silently loading another app's copy of a
   name they both define. Added next to the existing `main.o` rule.
 
-### 4.3 Fix `OBJLoader` at the same time
+### 4.3 `OBJLoader`'s hardcoded `data/` — fixed
 
-`core/OBJLoader.cpp:241` and `:275` build texture paths by concatenating a literal:
+`core/OBJLoader.cpp` built texture paths by bolting a literal on the front:
 
 ```cpp
-std::string whole_path = "data/" + std::string(diff_name);
+std::string whole_path = "data/" + std::string(diff_name);   //map_Kd, and the same for map_Bump
 ```
 
-So a `.mtl` beside `galaxy/data/meshes/ship.obj` has its textures looked up in the **root**
-`data/`. That is already wrong today and becomes obviously wrong the moment anything moves.
-`GetBasePath()` (`core/File.cpp:9`) exists for this and makes the lookup relative to the `.obj`,
-which is what the format means.
+So a `.mtl` beside `galaxy/data/meshes/ship.obj` had its textures looked up in the **root**
+`data/` — wrong before any of this, and fatal once `data/` stopped existing.
 
----
+The fix turned out to need no path arithmetic at all: **a `.mtl` already writes its maps as
+`textures/brickwall.jpg`**, which is exactly the `<category>/<file>` form every asset here is
+named in. So the prefix simply comes off and the name goes to the loader as-is; the search path
+finds it in whichever app root owns it. `GetBasePath()` was not needed.
+
+Verified on Grid's test scene: all eleven `.mtl`-referenced textures load, including the
+`map_Bump` normal maps, and the geometry renders textured and normal-mapped.
 
 ## 5. Step two: remove `DUMP_BINARYASSETS`
 
@@ -441,15 +445,50 @@ Suggested order — smallest surface first, so the resolver is proven before Gri
 There is no fallback entry to delete afterwards — see §4.1, step 1 does that job and keeps doing
 it harmlessly. What marks the end of the migration is `data/` being empty, not a makefile edit.
 
-### 6.1 Progress
+### 6.1 Progress — all twelve done
 
-| App | State |
-|---|---|
-| **Tank** | **done** — `apps/tank/` holds its makefile, `main.cpp`, sources, `assets/` and `build/tank.exe`. 8 assets resolve, 0 failures, renders unchanged. |
-| **Ship** | **done** — `apps/ship/` likewise, `build/ship.exe`. 11 assets resolve: 6 shared, 5 its own (`ships.glb` + the four cloud shaders). Clouds render unchanged. |
-| **Breakout** | **done** — `apps/breakout/`, `build/breakout.exe`. 15 assets resolve: **14 shared, 1 its own** (`breakout_shield.frag`). First app on `USE_SOUND` under `engine.mk`; OpenAL links. Bricks, glyph text and the shield all render. |
-| **Tetris** | assets migrated, app not yet — its literals now use the shared `meshes/` and `sound/` names, because it shares the glyph mesh and the four `.wav`s with Breakout and those moved to `shared_assets`. Verified resolving; still builds via the root `makefile`. |
-| others | not started — still on the root `makefile` via `APP=` |
+| App | Own assets | Notes |
+|---|---|---|
+| **Tank** | mesh + heightmap texture | first one across; `crane/` moved in with it |
+| **Ship** | `ships.glb` + 4 cloud shaders | proved the same-category override (`shaders/raymarch_volume.frag` vs `shaders/default.vert`) |
+| **Breakout** | 1 shader | 14 of its 15 assets are shared; first `USE_SOUND` app, found the `CORE_CFLAGS` trap |
+| **Tetris** | none | owns nothing at all — one root, no `assets/` folder |
+| **UI** | none | owns nothing |
+| **OCPP** | `www/` | found the `FileWatcher` resolved-path bug |
+| **Animation** | `gwen_anim.glb` | |
+| **Dozer** | mesh + 9 sounds | 42 MB of raw audio split out to `audio_source/` |
+| **Tileset** | mesh, sound, icon folder | `isocity/` moved in; first `LIB_DIRS` user |
+| **IsoAnimation** | mesh, HDR, `custom.frag` | found the `stbi_loadf` direct-`fopen` bug |
+| **Sim** | 4 meshes + icon folder | `galaxy/` moved in; `.psd` sources split to `icon_source/` |
+| **Grid** | 22 — 10 `.obj`+`.mtl`, 5 `.glb`, skybox, 12 textures | the `OBJLoader` `map_Kd`/`map_Bump` path |
+
+Verified the same way each time: every asset resolving through the intended root, zero resolution
+failures, and a screenshot matching the pre-migration render.
+
+Grid needed one extra step. Its `Init` selects a scene by commenting a line, and the active one
+(`CreateHandTestScene`) loads a single `.glb` — so the ten `.obj` meshes and the eleven textures
+their `.mtl`s name were never touched, and neither was the `OBJLoader` fix. Sim exercises
+`OBJLoader` but its `.mtl` files declare no maps, so nothing in the tree covered `map_Kd` at all.
+`CreateTestScene` was switched on temporarily to verify (35 assets, 0 failures, textured and
+normal-mapped geometry rendering), then switched back.
+
+### 6.2 What the old system left behind
+
+Removed once the last app was across: the root `makefile`, the root `main.cpp`, every
+`apps/<Name>.mk`, the `.current_app` sentinel, and the `data/`, `shaders/`, `fonts/`, `tank/`,
+`ship/`, `tetris/`, `breakout/`, `dozer/`, `galaxy/`, `isocity/` and `crane/` folders.
+
+`isoterrain/` stays at the root: Grid, IsoAnimation and Tileset all build it, so it is a genuine
+shared library, declared with `LIB_DIRS` and compiled once into the shared object tree alongside
+core. It has no runtime assets of its own — `isoterrain/data/tile_terrain.obj` is referenced by
+nothing, so the "library assets" problem §2.1 anticipated never actually arose.
+
+**`apps/dozer/audio_source/` — 42 MB that is not build input.** `dozer/data/` held 22 files and
+the app loads 10. The rest is the raw multitrack the clips were cut from (`Bulldozer sounds.wav`
+at 25 MB, `Hydraulics.wav` at 16 MB), two unused takes, the `.pk`/`.asd` files the audio editor
+left behind, and a `desktop.ini`. Kept — deleting someone's source audio is not a call to make
+from a grep — but moved out of `assets/` and named so nothing mistakes it for runtime input.
+Same category as the four `*_original.psd` below: it wants a media repo, not this one.
 
 **`tank/heightmap_roundtrip_test.png` was deliberately left where it is.** It is not an asset —
 `ApplicationTank::TestHeightmapRoundTrip` **writes** it with `SaveHeightmapPNG` and reads it back
@@ -560,6 +599,23 @@ has to come off. Tank had no such problem because `ApplicationTank.h` already in
 
 Worth grepping for `#include "<oldfolder>/` as the first step of each remaining app.
 
+#### `ResolveAssetPath` earning its keep: the HTML hot-reload
+
+OCPP surfaced the first real caller for the *exposed* resolver rather than `LoadFile`.
+`HTTPServer::LoadHTMLFromFile` stored the name it was given in `m_htmlFilePath` and handed that
+straight to `FileWatcher`. A watcher needs a real directory and file on disk — an asset name like
+`"www/index.html"` means nothing to it — so keeping the name would have left the page loading
+correctly and then **silently never hot-reloading again**, which is the whole point of that
+watcher.
+
+It now stores the resolved path. Verified: the watcher reports
+`shared_assets/www/index.html`, not `www/index.html`. This is also a small fix to pre-existing
+behaviour — the old literal `data/www/index.html` was working-directory relative, so hot-reload
+only ever worked when the exe was launched from the repo root.
+
+That is exactly the case §4 anticipated when it made `ResolveAssetPath` public: *"not every kind
+of asset access can go through LoadFile."*
+
 #### `CORE_CFLAGS`: the line between shared and per-app flags
 
 Breakout is the first app with `USE_SOUND := 1`, and it exposed a trap in the shared core
@@ -582,6 +638,21 @@ moved *above* the line and is now unconditional — it is needed by `core/SoundS
 Note `USE_SOUND` *adds two objects* to the shared core directory rather than changing any
 existing one, so a sound app and a silent app coexist there cleanly — the silent one simply never
 links the two it did not ask for.
+
+#### The `.current_app` sentinel is itself a casualty of the shared output
+
+Verifying Tetris hit a link failure in the **old** makefile: `main.o` was still compiled for
+`ApplicationGrid` while `.current_app` read `Sim`, so `-DAPP_CLASS` and the object disagreed and
+the link died on `undefined reference to ApplicationGrid::ApplicationGrid()`.
+
+The sentinel only compares the `APP` of *this* invocation against the file. It cannot survive two
+builds interleaving, because there is a single `main.o` and a single marker for all of them —
+which is the same shared-output problem as §6.2, one level down. It is not worth fixing: a
+migrated app has its own `main.o` in its own `build/`, named its class directly, and needs no
+sentinel at all. The mechanism disappears with the root makefile.
+
+Symptom to recognise: a link error naming a **different app's** constructor than the one you asked
+for. The fix in the meantime is `rm main.o .current_app` and build again.
 
 #### Known limitation
 

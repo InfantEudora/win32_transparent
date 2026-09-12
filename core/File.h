@@ -76,6 +76,19 @@ void AddAssetSearchRootFromExe(const char* relative);
 bool ResolveAssetPath(const char* name, std::string& out);
 
 /*
+    The same, for a DIRECTORY rather than a file - "icons" finding apps/sim/assets/icons.
+
+    Separate from ResolveAssetPath rather than one function that accepts either, because the two
+    answer different questions and a caller always knows which it is asking. A name can in
+    principle be both a file and a folder in different roots, and silently handing back whichever
+    turned up first would be a bug that only appears once someone adds an innocuous file.
+
+    For Directory::GetFiles, which is how an app loads a whole folder of assets without naming
+    each one - the icon sheets in Sim and Tileset are built that way.
+*/
+bool ResolveAssetDirectory(const char* name, std::string& out);
+
+/*
     Hands back the bytes of a file.
 
     THE FILE LAYER OWNS THE BUFFER. DO NOT free() IT. You are being lent a pointer, and it stays

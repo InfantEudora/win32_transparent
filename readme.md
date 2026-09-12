@@ -24,17 +24,32 @@ It should kind of look like this:
 ![screenshot](docs/images/example_desktop.png)
 
 ### Folder structure
-`/core`             Contains all core files for this 'Engine'. Knows nothing about any particular app.
-`/engine.mk`        The shared build: toolchain, flags, core sources, rules. An app's makefile includes it.
-`/shared_assets`    Assets loaded by `/core` itself, or by two or more apps - default shaders and fonts. Nothing else belongs here.
-`/build/core`       Core objects, compiled once and shared by every app. Build one app at a time; concurrent builds race here.
-`/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder.
-`/3rdparty/*`       Contains external libraries source code, either as an entire repo or single files.
+`/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder. Twelve of them.
+`/core`             The engine. Knows nothing about any particular app.
+`/engine.mk`        The shared build: toolchain, flags, core sources, rules. An app's makefile sets three variables and includes it.
+`/shared_assets`    Assets loaded by `/core` itself, or by two or more apps - the default shaders, the fonts, the glyph mesh and sounds Tetris and Breakout share. Nothing else belongs here.
+`/isoterrain`       A shared library: Grid, IsoAnimation and Tileset all build it. Declared with `LIB_DIRS`.
+`/build/core`       Core and shared-library objects, compiled once and shared by every app. Build one app at a time; concurrent builds race here.
+`/reference`        Material kept to read, never to compile - a shadertoy excerpt, a snippet from elsewhere. Never build input.
+`/3rdparty/*`       External library source, either a whole repo or single files.
 
-**Two build systems are live during the migration.** Apps that have moved (`/apps/tank`, `/apps/ship`, `/apps/breakout`) build from
-their own folder into their own exe. The rest still build through the root `makefile` into a single
-`wind.exe`, selected with `make APP=X` from the `apps/*.mk` fragments, and still load out of `/data`
-and `/shaders`. `docs/asset_layout_plan.md` tracks what has moved and what has not.
+### Building
+
+```
+export PATH="/c/msys64/mingw64/bin:$PATH"     # the toolchain is NOT on the default PATH
+cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
+./build/tetris.exe 2>stderr.log &
+```
+
+An app's makefile is four lines of actual content - `ROOT`, `PROJECT`, `APP_SRCS`, then
+`include $(ROOT)/engine.mk`. An app names its assets by category (`meshes/tank.glb`,
+`shaders/default.vert`) and declares where to look for them in its own `main.cpp`; the first
+root that has the name wins, so an app can override a shared shader just by having one of its
+own. See `core/File.h` and `docs/asset_layout_plan.md`.
+
+**Every app binds the MCP server to 127.0.0.1:8765**, so only one can be driven at a time - a
+second one starts fine but its server never binds, and tools then talk to whichever got there
+first. Stop the previous app before starting the next.
 
 ### Doing:
 - [x] Load materials from OBJ file and store them somewhere so they can be indexed / adressed.

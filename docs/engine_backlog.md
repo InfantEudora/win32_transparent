@@ -1,7 +1,7 @@
 # Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
-`docs/engine_backlog_done.md` — 51 closed items, with their verification notes intact, because
+`docs/engine_backlog_done.md` — 54 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
 Items are drawn from two runs in which an agent built a game on this engine as an audit of it:
@@ -19,7 +19,7 @@ item that moves between bands keeps its number.
 
 Status key: `[ ]` open · `[~]` partially done.
 
-Last updated 2026-09-12, after closing item 41 and declining 60.
+Last updated 2026-09-12, after closing item 63.
 
 ---
 
@@ -80,77 +80,11 @@ Last updated 2026-09-12, after closing item 41 and declining 60.
 
 ## Band C — one to three hours each
 
-- [ ] **23. `Destroy()` / reap policy.** `Object::Destroy()` only marks; only 2 apps of 11 call
-  `Renderer::DeleteDestroyedObjects()`, so everywhere else a destroyed object leaves its rigid body
-  in the physics world forever. Needs a decision about *where* reaping safely happens, not just a
-  call added. *Later.*
-
-  *Breakout note (2026-09-12):* now **4 of 12** — Dozer, Ship, Tetris and Breakout. The trend is
-  itself the argument: every app that creates objects at runtime eventually discovers this and adds
-  the call by hand, in a place it has had to reason about independently (Breakout calls it from
-  `RunSimulationTick`, where the mutex is held and the render thread is not walking the object
-  list). Four independent correct answers to the same question is a default waiting to be written.
-
 - [ ] **42. Skinned meshes do not cast into the field.** `RenderFieldPass` draws
   `MESH_MODE_NORMAL` only; a skinned mesh would need its own variant of `shaders/field.vert`
   applying the bone transforms, exactly as `default_skinned.vert` does. A skinned character
   receives field shadows but does not cast one. Nothing that uses the field has skinned geometry
   yet.
-
-- [ ] **52. No way to express "unlit" or "emissive only".** With `f_render_skybox = false` there is
-  no environment to reflect, so a high `metallic` value gives up its diffuse term and gets nothing
-  back. `metallic = 0.92` rendered Breakout's tough bricks **almost black**; they read correctly at
-  0.45 with a little emissive.
-
-  That is not wrong — it is what metallic means — but the failure looks exactly like a material
-  that failed to load, and nothing in `core/Material.h` warns that a scene with no reflections
-  cannot afford metal. A one-line note there is the cheap half. The real item is a material flag
-  for "this surface is its own colour, do not light it", which is what a HUD element, a marker or a
-  stylised game actually wants, and which today can only be faked with emissive.
-
-- [ ] **63. `SoundSystem` welds an OpenAL buffer to an OpenAL source, so a sound cannot overlap
-  itself.** This is *why* item 53's heap corruption was reachable, and it is worth recording
-  separately: fixing `LoadFile` makes the workaround safe, it does not remove the reason anyone
-  reaches for it.
-
-  A **buffer** is immutable PCM data; a **source** is a voice with its own gain, pitch and play
-  state. Many sources may play one buffer at once — that split is how OpenAL expresses polyphony.
-  `SoundSystem` allocates `NUM_AL_BUFFERS` of each, pairs them 1:1 and keys both off one handle:
-
-  ```cpp
-  alGenBuffers(NUM_AL_BUFFERS, buffers);
-  alGenSources(NUM_AL_BUFFERS, sources);
-  map_handles[handle_name] = buffer_index;                 //one index means both
-  alSourcei(sources[handle], AL_BUFFER, buffers[handle]);  //fixed pairing
-  alSourcePlay(sources[handle]);
-  ```
-
-  So one sound is one voice. `alSourcePlay` on a source already in `AL_PLAYING` rewinds it rather
-  than layering, so two bricks breaking on the same tick do not overlap — the second cuts the first
-  off mid-attack, which is audible and reads as a dropout.
-
-  **The forced workaround, and what it costs.** The only way to a second voice is a second source,
-  the only way to a second source is a second handle, and the only way to a second handle is to
-  call `AppendFile` on the same file again. That is why `ApplicationTetris` registers `click.wav`
-  and `bleep.wav` twice each and why `APP=Breakout` wanted three handles on one WAV — and the
-  redundant load is precisely the cache hit that made item 53 fire. Each duplicate also burns a
-  buffer holding bytes identical to one already resident, against a ceiling of **16 shared by
-  buffers and sources together**, which `AppendFile` enforces with `debug->Fatal` ("I'm lazy: no
-  more sound buffers") — so the seventeenth registration exits the process. Dozer is already at 9
-  handles, Breakout 8, Tetris 6.
-
-  **The fix is to un-weld them:** buffers keyed by *filename* and deduplicated, and a pool of
-  sources that nothing owns. `Play(name)` takes any source not currently `AL_PLAYING`, binds that
-  buffer and plays it, stealing the oldest when they are all busy. Overlap then costs nothing and
-  needs no thought: one `AppendFile`, ten simultaneous plays.
-
-  **What makes this a design decision rather than a patch**, and the reason it is Band C: `Pause`,
-  `Rewind` and `FinishedPlaying` all take a handle and assume it names exactly one voice, which a
-  pool cannot answer — "pause the brick sound" is ambiguous once three of them are in flight.
-  Those three really serve *sustained* sounds (music, an engine loop), which genuinely do want a
-  dedicated source. So the API probably wants both concepts and should say which is which: a
-  fire-and-forget one-shot off the pool, and an explicitly acquired voice for anything that will be
-  paused, rewound or queried. Settle that before writing the pool, not after.
 
 - [ ] **64. `tank_drive` does not drive the tank, and the recorded baselines say it used to.**
   Found on 2026-09-12 while smoke-testing the input merge, and **confirmed pre-existing**: the same
