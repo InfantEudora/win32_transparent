@@ -1932,3 +1932,39 @@ object happened to construct first.
   `libOpenAL32.a` and libstdc++ were not compiled with `-ffunction-sections` either, and no flag
   passed to the engine's own compile can make them splittable. **That lever is in how `libs/*.a`
   are built, not in `engine.mk`** - worth knowing before items 80 and 82 go looking for megabytes.
+
+- [x] **69. `WasKeyPressed`, the missing half of `WasKeyReleased`.** `KeyState` has
+  `f_was_released` and `InputController` exposes `WasKeyReleased`; there is no press edge at all,
+  only `IsKeyDown`. Item 67 already names this as the reason Tetris fires rotate and hard drop on
+  the release edge, but the flag is worth having on its own and is not touch work: it is one
+  `bool f_was_pressed` set when `f_isdown` goes 0->1 and cleared in `Tick()` beside its opposite.
+
+  Two details from the port, which has this working: only the **first** mapping raises the press
+  flag, mirroring the existing rule that only the **last** release raises `f_was_released` — so two
+  buttons bound to one action behave sensibly at both edges. And the reason to add it before
+  anyone needs it is that the choice of edge is then a *feel* decision rather than an API
+  constraint; on a keyboard the two are indistinguishable, which is exactly why the gap survived
+  this long unnoticed.
+
+  **Closed 2026-09-13.** `bool f_was_pressed` on `KeyState`, raised in `ApplyPendingEvents` when
+  `f_isdown` goes 0->1, cleared in `Tick()` beside `f_was_released`, and exposed as
+  `InputController::WasKeyPressed`. Both details from the port are in: only the **first** mapping
+  raises the edge (`f_isdown == 1` after the increment), mirroring the rule that only the **last**
+  release raises `f_was_released`; and the focus-loss release path deliberately raises nothing.
+
+  **Tetris now uses it**, which is what makes the flag mean something rather than sit unused:
+  `f_rotate_cw`, `f_rotate_ccw`, `f_hard_drop` and `f_hold` read `WasKeyPressed`. The UI toggles
+  (`TOGGLE_UI`, `RESTART`) deliberately keep the release edge - that is how a button behaves, and
+  it lets a mis-press be taken back. Same split the port arrived at independently.
+
+  *Verified* free-running over MCP: `tetris_input {"action":"rotate_cw"}` turns the S piece from
+  `...ss..` / `..ss...` to `...s...` / `...ss..` and back, twice, and all fourteen apps build
+  clean.
+
+  *And it turned up a pre-existing bug, now item 84.* The first attempt to verify this used a
+  paused simulation and `sim_step`, which is what `CLAUDE.md` says to do - and nothing rotated,
+  across seven stepped ticks. That is not this change: the pre-item-69 binary, still on disk from
+  item 79, fails identically on the release edge. **Edge-triggered scripted input is never
+  delivered while single-stepping**, on either edge, because the edge is raised on a pass that
+  does not tick and cleared at the end of it. Level-triggered input is fine (`left` moves the
+  piece), which is the tell: `f_isdown` survives a pass boundary and an edge flag does not.

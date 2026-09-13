@@ -28,7 +28,8 @@ class InputController;
 
     Rather than a second mapping table with its own edge detection, each button gets a synthetic
     "system keycode" here and travels the ordinary keyboard path: AddKeyMap to bind it,
-    SubmitSystemKey to report it. That means a button gets edge detection (WasKeyReleased),
+    SubmitSystemKey to report it. That means a button gets edge detection (WasKeyPressed and
+    WasKeyReleased),
     multiple-mappings-per-action counting, the unfocused-input gate and recordability for free,
     and an app binds one with the call it already knows:
 
@@ -159,6 +160,14 @@ struct KeyState{
     //of them is. Maintained by edge, in InputController::ApplyPendingEvents.
     int                     f_isdown = 0;
     bool                    f_was_released = false; //the LAST held mapping came up this tick
+    //The mirror of f_was_released: the FIRST mapping went down this tick (f_isdown 0 -> 1).
+    //
+    //On a keyboard, firing an action on the release edge instead is unnoticeable, which is how
+    //this gap survived unnoticed - Tetris fires rotate, hard drop and hold that way. Under a
+    //thumb on a touchscreen it reads as lag: the piece turns when you LIFT. Having both edges
+    //available is what makes the choice a decision about FEEL, made per action, rather than a
+    //constraint of the API.
+    bool                    f_was_pressed = false;
     bool                    f_processed = false;  // If the input was processed
     int32_t                 value = 0;
     float                   fvalue = 0.0f;
@@ -334,6 +343,8 @@ class InputController{
 
     bool    IsKeyDown(uint32_t mapped);
     bool    WasKeyReleased(uint32_t mapped);
+    //Symmetric with WasKeyReleased: true on the tick the action went down. See KeyState.
+    bool    WasKeyPressed(uint32_t mapped);
     int32_t GetDelta(uint32_t mapped, KeyMap** map_out = NULL);
     int32_t GetValue(uint32_t mapped, KeyMap** map_out = NULL);
 

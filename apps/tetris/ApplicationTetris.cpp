@@ -1121,11 +1121,20 @@ void ApplicationTetris::GatherInput(TetrisInput& out){
         return;
     }
 
-    //Edge-triggered actions: one press, one action, no matter how long the key is held.
-    out.f_rotate_cw  = input->WasKeyReleased(INPUT_TETRIS_ROTATE_CW);
-    out.f_rotate_ccw = input->WasKeyReleased(INPUT_TETRIS_ROTATE_CCW);
-    out.f_hard_drop  = input->WasKeyReleased(INPUT_TETRIS_HARD_DROP);
-    out.f_hold       = input->WasKeyReleased(INPUT_TETRIS_HOLD);
+    /*
+        Edge-triggered actions: one press, one action, no matter how long the key is held.
+
+        The PRESS edge, not the release edge. These four read WasKeyReleased until 2026-09-13,
+        for no better reason than that it was the only edge the engine had (backlog item 69).
+        On a keyboard the difference is invisible, which is how it survived; it stops being
+        invisible the moment a finger is involved, because a hard drop that lands when you LIFT
+        reads as the game lagging. The UI toggles below keep the release edge deliberately -
+        that is how a button behaves, and it lets a mis-press be taken back by sliding off.
+    */
+    out.f_rotate_cw  = input->WasKeyPressed(INPUT_TETRIS_ROTATE_CW);
+    out.f_rotate_ccw = input->WasKeyPressed(INPUT_TETRIS_ROTATE_CCW);
+    out.f_hard_drop  = input->WasKeyPressed(INPUT_TETRIS_HARD_DROP);
+    out.f_hold       = input->WasKeyPressed(INPUT_TETRIS_HOLD);
 
     //Level-triggered: soft drop is "gravity is fast while this is down".
     out.f_soft_drop = input->IsKeyDown(INPUT_TETRIS_SOFT_DROP);
@@ -1843,10 +1852,12 @@ void ApplicationTetris::RegisterMCPTools(){
             uint64_t start_tick = main_scene->GetPhysicsTick();
             input->HoldKey(mapped,(uint32_t)ticks);
 
-            //Wait for the hold to have played out AND for the release edge to have been consumed
-            //by a tick - an edge-triggered action is read with WasKeyReleased, which only becomes
-            //true on the tick after the hold ends. Bounded, and it gives up rather than hanging
-            //if the simulation is paused with nothing stepping it.
+            //Wait for the hold to have played out AND for its edge to have been consumed by a
+            //tick. The gameplay actions now fire on the PRESS edge, so the action itself happens
+            //on the FIRST tick of the hold rather than the tick after the last one - but this
+            //still waits for the whole hold, because `ticks` is also how long a held action (a
+            //soft drop, a DAS move) is meant to run, and the caller asked for that. Bounded, and
+            //it gives up rather than hanging if the simulation is paused with nothing stepping it.
             uint64_t target_tick = start_tick + (uint64_t)ticks + 2;
             for (int waited_ms = 0; waited_ms < 4000 && main_scene->GetPhysicsTick() < target_tick; waited_ms += 4){
                 Sleep(4);

@@ -252,6 +252,12 @@ void InputController::ApplyPendingEvents(uint64_t sim_tick){
                 if (!m->f_held){
                     m->f_held = true;
                     m->state->f_isdown++;
+                    //Only the FIRST mapping to go down raises the edge, exactly as only the last
+                    //one to come up raises f_was_released. A second key on the same action while
+                    //the first is still held is not a new press of that action.
+                    if (m->state->f_isdown == 1){
+                        m->state->f_was_pressed = true;
+                    }
                 }
             break;
             case INPUT_EVENT_KEY_UP:
@@ -672,6 +678,14 @@ bool InputController::WasKeyReleased(uint32_t mapped){
     return m->state->f_was_released;
 }
 
+bool InputController::WasKeyPressed(uint32_t mapped){
+    KeyMap* m = GetByMappedKey(mapped);
+    if (!m){
+        return false;
+    }
+    return m->state->f_was_pressed;
+}
+
 int32_t InputController::GetDelta(uint32_t mapped, KeyMap** map_out){
     KeyMap* m = GetByMappedKey(mapped);
     if (!m){
@@ -763,6 +777,7 @@ void InputController::Tick(){
     //debug->Info("Input Controller Tick\n");
     for (KeyMap& km:keymap){
         km.state->f_was_released = false;
+        km.state->f_was_pressed = false;
 
         if (km.state->f_processed){
             //Somebody read it this pass, so it has done its job.
