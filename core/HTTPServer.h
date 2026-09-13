@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "TCPServer.h"
 #include "FileWatcher.h"
@@ -55,6 +55,10 @@ private:
 
 	// Broadcast JSON to all websocket clients
 	void BroadcastVariables();
+
+	// Write one complete HTTP response - status line, content type, length, body - and send it.
+	void SendHTTPResponse(SOCKET clientSocket, int statusCode, const char *statusText,
+	                      const char *contentType, const std::string &body);
 
 	// Handle HTTP requests from clients
 	void HandleHTTPConnection(SOCKET clientSocket);

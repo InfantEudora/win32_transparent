@@ -1,4 +1,4 @@
-#=======================================================================================
+﻿#=======================================================================================
 # libs/libthirdparty.a - stb_image, miniz and tinygltf.
 #
 #     export PATH="/c/msys64/mingw64/bin:$PATH"
@@ -35,6 +35,15 @@
 # it a strict improvement rather than the usual size-for-speed trade; measured on
 # tiny_gltf.o it is 182,616 bytes against the shipped 281,252, and it took 102 KB off
 # tetris_release.exe.
+#
+# No -ffunction-sections/-fdata-sections either, and this one WAS tried: the hope was that
+# splitting tiny_gltf.o would let -Wl,--gc-sections drop the glTF writer, which nothing in
+# this engine calls. It changed ocpp_release.exe by zero bytes. The writer is still in the
+# binary afterwards - WriteGltfSceneToStream and every SerializeGltf* with it - because on
+# PE/COFF each function's .pdata unwind entry references it and keeps it alive. That writer
+# is the last thing referencing std::endl and operator<<(ostream&, string), and so the last
+# thing pulling libstdc++'s locale machinery (~700 KB) into every app. Dropping it needs the
+# serializer compiled out, not garbage-collected out; see docs/engine_backlog.md.
 #
 # Do not "fix" this to -O2 or -O3 on the assumption that a release library wants them.
 # Nothing here is in a frame loop - it is image decode, zip inflate and glTF parse, all

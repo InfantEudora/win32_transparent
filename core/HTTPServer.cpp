@@ -1,7 +1,5 @@
 ﻿#include "HTTPServer.h"
 #include "Debug.h"
-#include <sstream>
-#include <iomanip>
 #include <wincrypt.h>
 #include "File.h"
 #include <thread>
@@ -129,6 +127,55 @@ bool HTTPServer::Start()
 	return TCPServer::Start();
 }
 
+/*
+    nlohmann validates UTF-8 as it serialises, and under -fno-exceptions/JSON_NOEXCEPTION a
+    failed validation calls std::abort() instead of throwing - the same trap MCPServer.cpp
+    documents on the parse side, where it answers it with allow_exceptions=false.
+
+    It matters here because these strings are not ours. /set_mode percent-decodes whatever
+    is in the query string straight into a variable, so any byte sequence a remote client
+    cares to send ends up in m_variables and then in /status. error_handler_t::replace
+    substitutes U+FFFD for an invalid sequence; strict would end the process.
+*/
+static std::string DumpJSON(const json &j)
+{
+	return j.dump(-1, ' ', false, json::error_handler_t::replace);
+}
+
+/*
+    Every endpoint in this file answers the same shape: a status line, a content type, the
+    body's length and the body. That was written out longhand ten times, and the copies had
+    already started to drift - /style.css was the only one that dropped the send-failure
+    logging, and each copy was its own chance to get Content-Length wrong.
+
+    Not an ostringstream. std::string concatenation and std::to_string do the same job here
+    without linking the locale and streambuf machinery that <sstream> pulls in; the same
+    reasoning that took the stringstreams out of tinygltf. See 3rdparty/makefile.
+
+    The websocket upgrade in HandleHTTPClient deliberately does NOT use this - an upgrade
+    carries no body and must not announce a Content-Length.
+*/
+void HTTPServer::SendHTTPResponse(SOCKET clientSocket, int statusCode, const char *statusText,
+                                  const char *contentType, const std::string &body)
+{
+	std::string response = "HTTP/1.1 ";
+	response += std::to_string(statusCode);
+	response += " ";
+	response += statusText;
+	response += "\r\nContent-Type: ";
+	response += contentType;
+	response += "\r\nContent-Length: ";
+	response += std::to_string(body.length());
+	response += "\r\nConnection: close\r\n\r\n";
+	response += body;
+
+	int bytesSent = send(clientSocket, response.c_str(), (int)response.length(), 0);
+	if (bytesSent > 0)
+		http_debug->Info("HTTP %d response sent (%d bytes)\n", statusCode, bytesSent);
+	else
+		http_debug->Err("Failed to send HTTP %d response: %d\n", statusCode, WSAGetLastError());
+}
+
 void HTTPServer::HandleHTTPConnection(SOCKET clientSocket){
 	http_debug->Info("Spawning thread for client %i\n",clientSocket);
 	//We spawn a thread to wait for data from the client.
@@ -191,58 +238,11 @@ void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 
 	// If client asked for /status, return JSON of variables
 	if (path == "/status"){
-		// Build JSON from m_variables
-		std::ostringstream jsonstream;
-		jsonstream << "{";
-		bool first = true;
-		for (const auto &p : m_variables)
-		{
-			if (!first) jsonstream << ",";
-			first = false;
-			// simple JSON string escaping for quotes and backslashes
-			std::string key = p.first;
-			std::string val = p.second;
-			auto escape = [](const std::string &s){
-				std::ostringstream o;
-				for (auto c : s) {
-					switch (c) {
-						case '"': o << "\\\""; break;
-						case '\\': o << "\\\\"; break;
-						case '\b': o << "\\b"; break;
-						case '\f': o << "\\f"; break;
-						case '\n': o << "\\n"; break;
-						case '\r': o << "\\r"; break;
-						case '\t': o << "\\t"; break;
-						default:
-							if ((unsigned char)c < 0x20) {
-								o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
-							} else {
-								o << c;
-							}
-					}
-				}
-				return o.str();
-			};
-
-			jsonstream << '"' << escape(key) << '"' << ":" << '"' << escape(val) << '"';
-		}
-		jsonstream << "}";
-
-		std::string body = jsonstream.str();
-		std::ostringstream response;
-		response << "HTTP/1.1 200 OK\r\n";
-		response << "Content-Type: application/json; charset=UTF-8\r\n";
-		response << "Content-Length: " << body.length() << "\r\n";
-		response << "Connection: close\r\n";
-		response << "\r\n";
-		response << body;
-
-		std::string responseStr = response.str();
-		int bytesSent = send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
-		if (bytesSent > 0)
-			http_debug->Info("/status response sent (%d bytes)\n", bytesSent);
-		else
-			http_debug->Err("Failed to send /status response: %d\n", WSAGetLastError());
+		//m_variables is a map<string,string>, which nlohmann converts to a JSON object
+		//directly - forty lines of hand-written escaping replaced by the conversion the
+		//library already has, and shared with BroadcastVariables() rather than copied.
+		std::string body = DumpJSON(json(m_variables));
+		SendHTTPResponse(clientSocket, 200, "OK", "application/json; charset=UTF-8", body);
 
 		closesocket(clientSocket);
 		DisconnectClient(clientSocket);
@@ -276,31 +276,15 @@ void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 			mode = dec;
 			// set variable and broadcast
 			SetVariable("operationMode", mode);
-			std::string body = "{\"result\":\"ok\",\"mode\":\"" + mode + "\"}";
-			std::ostringstream response;
-			response << "HTTP/1.1 200 OK\r\n";
-			response << "Content-Type: application/json; charset=UTF-8\r\n";
-			response << "Content-Length: " << body.length() << "\r\n";
-			response << "Connection: close\r\n";
-			response << "\r\n";
-			response << body;
-			std::string responseStr = response.str();
-			send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+			std::string body = DumpJSON(json{ {"result", "ok"}, {"mode", mode} });
+			SendHTTPResponse(clientSocket, 200, "OK", "application/json; charset=UTF-8", body);
 			closesocket(clientSocket);
 			DisconnectClient(clientSocket);
 			return;
 		}
 		// bad request
-		std::string body = "{\"result\":\"error\",\"reason\":\"missing mode\"}";
-		std::ostringstream response;
-		response << "HTTP/1.1 400 Bad Request\r\n";
-		response << "Content-Type: application/json; charset=UTF-8\r\n";
-		response << "Content-Length: " << body.length() << "\r\n";
-		response << "Connection: close\r\n";
-		response << "\r\n";
-		response << body;
-		std::string responseStr = response.str();
-		send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+		std::string body = DumpJSON(json{ {"result", "error"}, {"reason", "missing mode"} });
+		SendHTTPResponse(clientSocket, 400, "Bad Request", "application/json; charset=UTF-8", body);
 		closesocket(clientSocket);
 		DisconnectClient(clientSocket);
 		return;
@@ -319,30 +303,14 @@ void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 			mode = dec;
 			std::string val = (enabled == "1" || enabled == "true") ? "1" : "0";
 			SetVariable(std::string("mode_") + mode + std::string("_enabled"), val);
-			std::string body = "{\"result\":\"ok\",\"mode\":\"" + mode + "\",\"enabled\":\"" + val + "\"}";
-			std::ostringstream response;
-			response << "HTTP/1.1 200 OK\r\n";
-			response << "Content-Type: application/json; charset=UTF-8\r\n";
-			response << "Content-Length: " << body.length() << "\r\n";
-			response << "Connection: close\r\n";
-			response << "\r\n";
-			response << body;
-			std::string responseStr = response.str();
-			send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+			std::string body = DumpJSON(json{ {"result", "ok"}, {"mode", mode}, {"enabled", val} });
+			SendHTTPResponse(clientSocket, 200, "OK", "application/json; charset=UTF-8", body);
 			closesocket(clientSocket);
 			DisconnectClient(clientSocket);
 			return;
 		}
-		std::string body = "{\"result\":\"error\",\"reason\":\"missing params\"}";
-		std::ostringstream response;
-		response << "HTTP/1.1 400 Bad Request\r\n";
-		response << "Content-Type: application/json; charset=UTF-8\r\n";
-		response << "Content-Length: " << body.length() << "\r\n";
-		response << "Connection: close\r\n";
-		response << "\r\n";
-		response << body;
-		std::string responseStr = response.str();
-		send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+		std::string body = DumpJSON(json{ {"result", "error"}, {"reason", "missing params"} });
+		SendHTTPResponse(clientSocket, 400, "Bad Request", "application/json; charset=UTF-8", body);
 		closesocket(clientSocket);
 		DisconnectClient(clientSocket);
 		return;
@@ -447,15 +415,14 @@ void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 		if (!accept.empty() && accept.back() == '\0') accept.pop_back();
 
 		// Send upgrade response (include Sec-WebSocket-Protocol if we chose one)
-		std::ostringstream resp;
-		resp << "HTTP/1.1 101 Switching Protocols\r\n";
-		resp << "Upgrade: websocket\r\n";
-		resp << "Connection: Upgrade\r\n";
-		resp << "Sec-WebSocket-Accept: " << accept << "\r\n";
-		if (!chosenProtocol.empty()) resp << "Sec-WebSocket-Protocol: " << chosenProtocol << "\r\n";
-		resp << "\r\n";
-
-		std::string respStr = resp.str();
+		//Not SendHTTPResponse: an upgrade carries no body and must not send Content-Length.
+		std::string respStr =
+			"HTTP/1.1 101 Switching Protocols\r\n"
+			"Upgrade: websocket\r\n"
+			"Connection: Upgrade\r\n"
+			"Sec-WebSocket-Accept: " + accept + "\r\n";
+		if (!chosenProtocol.empty()) respStr += "Sec-WebSocket-Protocol: " + chosenProtocol + "\r\n";
+		respStr += "\r\n";
 		send(clientSocket, respStr.c_str(), (int)respStr.length(), 0);
 
 		// Add to websocket clients list
@@ -495,29 +462,13 @@ handle_get:
 			std::string file_body;
 			if (ReadFileToString("modes.json", file_body) && !file_body.empty()) {
 				std::string body = file_body;
-				std::ostringstream response;
-				response << "HTTP/1.1 200 OK\r\n";
-				response << "Content-Type: application/json; charset=UTF-8\r\n";
-				response << "Content-Length: " << body.length() << "\r\n";
-				response << "Connection: close\r\n";
-				response << "\r\n";
-				response << body;
-				std::string responseStr = response.str();
-				send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+				SendHTTPResponse(clientSocket, 200, "OK", "application/json; charset=UTF-8", body);
 				closesocket(clientSocket);
 				DisconnectClient(clientSocket);
 				return;
 			} else {
-				std::string body = "{\"error\":\"not found\"}";
-				std::ostringstream response;
-				response << "HTTP/1.1 404 Not Found\r\n";
-				response << "Content-Type: application/json; charset=UTF-8\r\n";
-				response << "Content-Length: " << body.length() << "\r\n";
-				response << "Connection: close\r\n";
-				response << "\r\n";
-				response << body;
-				std::string responseStr = response.str();
-				send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+				std::string body = DumpJSON(json{ {"error", "not found"} });
+				SendHTTPResponse(clientSocket, 404, "Not Found", "application/json; charset=UTF-8", body);
 				closesocket(clientSocket);
 				DisconnectClient(clientSocket);
 				return;
@@ -529,26 +480,10 @@ handle_get:
 			std::string file_body;
 			if (ReadFileToString("www/style.css", file_body) && !file_body.empty()) {
 				std::string body = file_body;
-				std::ostringstream response;
-				response << "HTTP/1.1 200 OK\r\n";
-				response << "Content-Type: text/css; charset=UTF-8\r\n";
-				response << "Content-Length: " << body.length() << "\r\n";
-				response << "Connection: close\r\n";
-				response << "\r\n";
-				response << body;
-				std::string responseStr = response.str();
-				send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+				SendHTTPResponse(clientSocket, 200, "OK", "text/css; charset=UTF-8", body);
 			} else {
 				std::string body = "Not found";
-				std::ostringstream response;
-				response << "HTTP/1.1 404 Not Found\r\n";
-				response << "Content-Type: text/plain; charset=UTF-8\r\n";
-				response << "Content-Length: " << body.length() << "\r\n";
-				response << "Connection: close\r\n";
-				response << "\r\n";
-				response << body;
-				std::string responseStr = response.str();
-				send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
+				SendHTTPResponse(clientSocket, 404, "Not Found", "text/plain; charset=UTF-8", body);
 			}
 			closesocket(clientSocket);
 			DisconnectClient(clientSocket);
@@ -557,26 +492,7 @@ handle_get:
 		// Build HTTP response with replaced variables
 		std::string htmlContent = ReplaceVariables(m_htmlContent);
 
-		std::ostringstream response;
-		response << "HTTP/1.1 200 OK\r\n";
-		response << "Content-Type: text/html; charset=UTF-8\r\n";
-		response << "Content-Length: " << htmlContent.length() << "\r\n";
-		response << "Connection: close\r\n";
-		response << "\r\n";
-		response << htmlContent;
-
-		std::string responseStr = response.str();
-
-		// Send response
-		int bytesSent = send(clientSocket, responseStr.c_str(), (int)responseStr.length(), 0);
-		if (bytesSent > 0)
-		{
-			http_debug->Info("HTTP Response sent: %d bytes\n", bytesSent);
-		}
-		else
-		{
-			http_debug->Err("Failed to send HTTP response: %d\n", WSAGetLastError());
-		}
+		SendHTTPResponse(clientSocket, 200, "OK", "text/html; charset=UTF-8", htmlContent);
 	}
 	else
 	{
@@ -590,10 +506,23 @@ handle_get:
 
 std::string HTTPServer::ParseHTTPRequest(const std::string& request)
 {
-	// Simple parser - extract the request method and path
-	std::istringstream iss(request);
-	std::string method, path, version;
-	iss >> method >> path >> version;
+	// Simple parser - extract the request method and path from the request line.
+	// The whitespace split is done by hand rather than with an istringstream: pulling in
+	// <sstream> for it costs the binary the whole locale/streambuf machinery, which is
+	// what the rest of this file was cleaned up to avoid. See 3rdparty/makefile.
+	//Bounded to the first line. The istringstream this replaced was not: >> skips any
+	//whitespace including newlines, so a request line missing its version would quietly
+	//take the next header's first word as the path.
+	size_t line_end = request.find("\r\n");
+	if (line_end == std::string::npos) line_end = request.size();
+	size_t method_end = request.find(' ');
+	size_t path_end = (method_end == std::string::npos) ? std::string::npos : request.find(' ', method_end + 1);
+	if (method_end == std::string::npos || path_end == std::string::npos || path_end > line_end) {
+		http_debug->Warn("Malformed HTTP request line\n");
+		return "";
+	}
+	std::string method = request.substr(0, method_end);
+	std::string path = request.substr(method_end + 1, path_end - method_end - 1);
 
 	http_debug->Info("HTTP Method: %s, Path: %s\n", method.c_str(), path.c_str());
 
@@ -652,28 +581,14 @@ bool HTTPServer::SendWebSocketMessage(SOCKET client, const std::string &message)
 
 void HTTPServer::BroadcastVariables()
 {
-	// Build JSON as in /status
-	/*
-	std::ostringstream json;
-	json << "{";
-	bool first = true;
-	for (const auto &p : m_variables)
-	{
-		if (!first) json << ",";
-		first = false;
-		// escape
-		auto escape = [](const std::string &s){ std::ostringstream o; for (auto c: s) { switch(c){ case '"': o << "\\\""; break; case '\\': o<<"\\\\"; break; case '\b': o<<"\\b"; break; case '\f': o<<"\\f"; break; case '\n': o<<"\\n"; break; case '\r': o<<"\\r"; break; case '\t': o<<"\\t"; break; default: if ((unsigned char)c < 0x20) { o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c; } else o<<c; } } return o.str(); };
-		json << '"' << escape(p.first) << '"' << ':' << '"' << escape(p.second) << '"';
-	}
-	json << "}";
-	std::string body = json.str();
-	*/
-
-	//The above code is mental. This should be replaced by a json library.
-	//This is reached only on websocket connect.
-	//Let's fail and scream.
-	http_debug->Fatal("HTTPServer::BroadcastVariables(): Please fix me!\n");
-	std::string body = "";
+	//Same object /status serves, over the websocket instead of a GET.
+	//
+	//This used to be a commented-out copy of /status's hand-rolled builder with a Fatal()
+	//standing in for it, which was not the harmless placeholder it looks like: Fatal()
+	//calls exit(1), and SetVariable() calls this on every change, so the OCPP app ended
+	//its own process the first time anything set a variable or a websocket client
+	//connected. Sharing the one-line conversion removes both the duplication and the bug.
+	std::string body = DumpJSON(json(m_variables));
 
 	EnterCriticalSection(&m_wsLock);
 	for (size_t i = 0; i < m_wsClients.size(); ) {

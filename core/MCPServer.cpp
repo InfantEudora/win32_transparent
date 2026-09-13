@@ -1,11 +1,10 @@
-#include "MCPServer.h"
+﻿#include "MCPServer.h"
 #include "Debug.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 #include <thread>
 #include <wincrypt.h>
 
@@ -345,15 +344,17 @@ void MCPServer::HandleHttpConnection(SOCKET clientSocket) {
         }
     }
 
-    std::ostringstream out;
-    out << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n";
-    out << "Content-Type: application/json\r\n";
-    out << "Content-Length: " << responseBody.size() << "\r\n";
-    out << "Connection: close\r\n";
-    out << "\r\n";
-    out << responseBody;
-
-    std::string outStr = out.str();
+    // Plain concatenation rather than an ostringstream: <sstream> costs the binary the
+    // whole locale and streambuf machinery for what is four headers and a number. See the
+    // note on HTTPServer::SendHTTPResponse, which builds the same thing for that server.
+    std::string outStr = "HTTP/1.1 ";
+    outStr += std::to_string(statusCode);
+    outStr += " ";
+    outStr += statusText;
+    outStr += "\r\nContent-Type: application/json\r\nContent-Length: ";
+    outStr += std::to_string(responseBody.size());
+    outStr += "\r\nConnection: close\r\n\r\n";
+    outStr += responseBody;
     send(clientSocket, outStr.c_str(), (int)outStr.size(), 0);
     closesocket(clientSocket);
 }

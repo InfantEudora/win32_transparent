@@ -1,9 +1,7 @@
-#include "OCPPClient.h"
+﻿#include "OCPPClient.h"
 #include <ctime>
 #include <cmath>
 #include <cstdlib>
-#include <iomanip>
-#include <sstream>
 #include <wincrypt.h>
 
 static Debugger *debug = new Debugger("OCPPClient", DEBUG_ALL);
@@ -124,17 +122,15 @@ OCPPClient::HandshakeResult OCPPClient::PerformWebSocketHandshake(const std::str
     }
 
     // Build WebSocket upgrade request
-    std::ostringstream request;
-    request << "GET /" << chargeBoxIdentity << " HTTP/1.1\r\n";
-    request << "Host: " << m_info.serverUrl << "\r\n";
-    request << "Upgrade: websocket\r\n";
-    request << "Connection: Upgrade\r\n";
-    request << "Sec-WebSocket-Key: " << wsKey << "\r\n";
-    request << "Sec-WebSocket-Version: 13\r\n";
-    request << "Sec-WebSocket-Protocol: ocpp1.6\r\n";
-    request << "\r\n";
-
-    std::string handshake = request.str();
+    // Concatenated rather than streamed - see the note on HTTPServer::SendHTTPResponse.
+    std::string handshake = "GET /" + chargeBoxIdentity + " HTTP/1.1\r\n"
+                            "Host: " + m_info.serverUrl + "\r\n"
+                            "Upgrade: websocket\r\n"
+                            "Connection: Upgrade\r\n"
+                            "Sec-WebSocket-Key: " + wsKey + "\r\n"
+                            "Sec-WebSocket-Version: 13\r\n"
+                            "Sec-WebSocket-Protocol: ocpp1.6\r\n"
+                            "\r\n";
     debug->Info("Sending WebSocket handshake:\n%s", handshake.c_str());
 
     if (!Send(handshake)) {
@@ -159,9 +155,11 @@ std::string OCPPClient::CurrentTimestamp() {
     std::time_t now = std::time(nullptr);
     std::tm utc;
     gmtime_s(&utc, &now);
-    std::ostringstream ts;
-    ts << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S.000Z");
-    return ts.str();
+    // strftime, not std::put_time: the latter is an iostream manipulator and needs
+    // <iomanip> and a stream to write through. Same format, none of the machinery.
+    char ts[64];
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
+    return std::string(ts);
 }
 
 bool OCPPClient::SendWebSocketFrame(const std::string &message) {
