@@ -60,6 +60,8 @@ void Playfield::NewGame(uint32_t seed){
     pieces_placed = 0;
     combo = -1;
     f_back_to_back = false;
+    f_rotated_last = false;
+    f_last_kick_was_final = false;
     ticks_elapsed = 0;
     gravity_ticks = 0;
     lock_ticks = 0;
@@ -146,6 +148,9 @@ void Playfield::SpawnPiece(int type, TetrisEvents& events){
     lock_ticks = 0;
     lock_resets = 0;
     f_hold_used = false;
+    //A fresh piece has not been rotated, so it cannot be a spin however it lands.
+    f_rotated_last = false;
+    f_last_kick_was_final = false;
 
     if (!IsPositionLegal(piece_type,piece_rotation,piece_x,piece_y)){
         //Block out: the stack has reached the spawn area. This is the only way to lose.
@@ -162,6 +167,10 @@ bool Playfield::TryMove(int dx, int dy){
     }
     piece_x += dx;
     piece_y += dy;
+    //A piece that has MOVED since it was rotated was not spun into the slot it is now in, so
+    //this is where the T-spin test loses its right to fire. Gravity comes through here too, and
+    //that is the point: a T spun into place and then dropped one more row is not a T-spin.
+    f_rotated_last = false;
     return true;
 }
 
@@ -178,6 +187,9 @@ bool Playfield::TryRotate(bool f_clockwise, TetrisEvents& events){
             piece_x = test_x;
             piece_y = test_y;
             events.f_rotated = true;
+            //The two facts DetectSpin cannot recover afterwards - see the members in Playfield.h.
+            f_rotated_last = true;
+            f_last_kick_was_final = (i == num_kicks - 1);
             return true;
         }
     }
@@ -195,19 +207,125 @@ int Playfield::GetGhostY() const{
     return y;
 }
 
+float Playfield::GetLockProgress() const{
+    if (phase != TETRIS_PHASE_FALLING || lock_ticks <= 0){
+        return 0.0f;
+    }
+    float progress = (float)lock_ticks / (float)TETRIS_LOCK_DELAY_TICKS;
+    return progress > 1.0f ? 1.0f : progress;
+}
+
+int Playfield::GetStackHeight() const{
+    //From the top down, so the first occupied row found is the highest and the scan stops there.
+    //An empty board falls out of the loop at 0, which is the answer.
+    for (int y = TETRIS_BOARD_H - 1; y >= 0; y--){
+        for (int x = 0; x < TETRIS_BOARD_W; x++){
+            if (board[y][x] >= 0){
+                return y + 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /*
     Guideline scoring: a tetris is worth more than four singles by a wide margin, which is the
     whole reason to build a well and wait. The perfect-clear column REPLACES the normal award
     rather than adding to it, and is large enough that emptying the board is worth going for on
     purpose instead of being a curiosity nobody notices happening.
 */
-int Playfield::LineClearBaseScore(int num_lines, bool f_perfect_clear){
-    if (num_lines < 1 || num_lines > 4){
+int Playfield::LineClearBaseScore(int num_lines, bool f_perfect_clear, int spin){
+    if (num_lines < 0 || num_lines > 4){
         return 0;
     }
     static const int normal[5]  = { 0, 100,  300,  500,  800 };
     static const int perfect[5] = { 0, 800, 1200, 1800, 2000 };
-    return f_perfect_clear ? perfect[num_lines] : normal[num_lines];
+    //A T-spin is paid for the SLOT, not for the rows: the whole point of the table is that a
+    //T-spin double beats a natural double by four times, and that a T-spin clearing nothing at
+    //all is still worth more than a single. Index 4 is unreachable - a T clears at most three
+    //rows - and is there so the table can be indexed without a bounds test.
+    static const int t_spin[5]  = { 400, 800, 1200, 1600, 1600 };
+    static const int t_mini[5]  = { 100, 200,  400,  400,  400 };
+
+    //A perfect clear outranks everything, including a T-spin that produced it. It is the rarer
+    //event and the larger number, and paying both would need a rule about which multiplies which.
+    if (f_perfect_clear && num_lines > 0){
+        return perfect[num_lines];
+    }
+    if (spin == TETRIS_SPIN_FULL){
+        return t_spin[num_lines];
+    }
+    if (spin == TETRIS_SPIN_MINI){
+        return t_mini[num_lines];
+    }
+    return normal[num_lines];
+}
+
+const char* Playfield::SpinName(int spin){
+    switch (spin){
+        case TETRIS_SPIN_MINI: return "T-SPIN MINI";
+        case TETRIS_SPIN_FULL: return "T-SPIN";
+    }
+    return "";
+}
+
+/*
+    The guideline three-corner test.
+
+    A T-spin is the T piece, rotated into its final position, with at least three of the four
+    corners of its 3x3 box blocked. The corners are the cells the T itself never occupies (it is
+    a centre plus three edge midpoints), so the piece cannot block its own corners and the test
+    reads the settled board directly.
+
+    The two corners on the side the T POINTS at decide full versus mini. Both blocked is a piece
+    wedged into a real slot; only one is a piece twisted into a notch, worth a quarter as much.
+
+    Walls and the floor count as blocked - a T spun into the corner of the well is the classic
+    case. The space ABOVE the well does not: there is no board up there to be blocked by, and
+    counting it would make every high spin look like a T-spin.
+*/
+int Playfield::DetectSpin() const{
+    if (piece_type != TETROMINO_T || !f_rotated_last){
+        return TETRIS_SPIN_NONE;
+    }
+
+    //The 3x3 box's corners, and which two of them are "front" for each rotation. Rotation 0 is
+    //the T pointing UP (see the art in Tetromino.cpp), and the states go clockwise from there.
+    static const TetrominoCell corner[4] = { {0,0},{2,0},{0,2},{2,2} };
+    //Indices into `corner`, per rotation: {up, right, down, left} -> the two on the pointing side.
+    static const int front[4][2] = {
+        { 2, 3 },   //0, points up    -> the top two
+        { 3, 1 },   //1, points right -> the right two
+        { 0, 1 },   //2, points down  -> the bottom two
+        { 2, 0 },   //3, points left  -> the left two
+    };
+
+    bool f_blocked[4] = {};
+    int num_blocked = 0;
+    for (int i = 0; i < 4; i++){
+        int cx = piece_x + corner[i].x;
+        int cy = piece_y + corner[i].y;
+        if (cy >= TETRIS_BOARD_H){
+            continue;                       //open sky is not a corner to spin against
+        }
+        if (cx < 0 || cx >= TETRIS_BOARD_W || cy < 0 || board[cy][cx] >= 0){
+            f_blocked[i] = true;
+            num_blocked++;
+        }
+    }
+    if (num_blocked < 3){
+        return TETRIS_SPIN_NONE;
+    }
+
+    int rotation = piece_rotation & 3;
+    bool f_both_front = f_blocked[front[rotation][0]] && f_blocked[front[rotation][1]];
+    //The last kick in the SRS table is the big two-row one. A rotation that needed it went
+    //somewhere no smaller kick could reach, which is a real spin whatever the corners say - and
+    //without this exception a T-spin triple, whose corners always read as mini, cannot happen.
+    if (f_both_front || f_last_kick_was_final){
+        return TETRIS_SPIN_FULL;
+    }
+    return TETRIS_SPIN_MINI;
 }
 
 const char* Playfield::LineClearName(int num_lines){
@@ -253,18 +371,37 @@ bool Playfield::WouldBePerfectClear() const{
     Order matters here. The back-to-back bonus is a percentage OF THE BASE, so it is taken before
     the flat combo bonus is added; doing it the other way would quietly pay 50% on the combo too.
 */
-void Playfield::AwardLineScore(int num_lines, bool f_perfect_clear, TetrisEvents& events){
-    if (num_lines < 1 || num_lines > 4){
+void Playfield::AwardLineScore(int num_lines, bool f_perfect_clear, int spin, TetrisEvents& events){
+    if (num_lines < 0 || num_lines > 4){
+        return;
+    }
+    events.spin = spin;
+
+    /*
+        A T-spin that cleared NOTHING is scored and then left alone. It pays its 400, and it does
+        not touch either run bonus: back-to-back is a chain of difficult CLEARS, and the combo is
+        already ended by the caller for any placement that cleared no rows. Returning early here
+        rather than falling through is what keeps that true - a spin-zero must not be able to
+        advance the combo counter.
+    */
+    if (num_lines == 0){
+        if (spin == TETRIS_SPIN_NONE){
+            return;
+        }
+        int points = LineClearBaseScore(0,false,spin) * level;
+        score += points;
+        events.score_awarded = points;
         return;
     }
 
-    //"Difficult" is the guideline's word for the clears the chain is built from. Here that is a
-    //tetris and nothing else - add T-spins to this predicate and the whole bonus follows.
-    bool f_difficult = (num_lines == 4);
+    //"Difficult" is the guideline's word for the clears the chain is built from: a tetris, or any
+    //T-spin that cleared something. Both are placements that had to be set up several pieces in
+    //advance, which is exactly what the bonus is paying for.
+    bool f_difficult = (num_lines == 4) || (spin != TETRIS_SPIN_NONE);
     //The FIRST difficult clear starts a chain, it does not already extend one, so it is not paid.
     bool f_chained = f_difficult && f_back_to_back;
 
-    int base = LineClearBaseScore(num_lines,f_perfect_clear);
+    int base = LineClearBaseScore(num_lines,f_perfect_clear,spin);
     int points = base * level;
     if (f_chained){
         points += base * level * BackToBackBonusPercent() / 100;
@@ -296,6 +433,11 @@ void Playfield::AwardLineScore(int num_lines, bool f_perfect_clear, TetrisEvents
 }
 
 void Playfield::LockPiece(TetrisEvents& events){
+    //Asked FIRST, while the piece is still the piece and the board is still the board around it.
+    //The answer depends on where the piece is and on what the last input did, and the write loop
+    //below is about to make the first of those unrecoverable.
+    int spin = DetectSpin();
+
     const TetrominoCell* cells = GetTetrominoCells(piece_type,piece_rotation);
     for (int i = 0; i < 4; i++){
         int cx = piece_x + cells[i].x;
@@ -331,14 +473,16 @@ void Playfield::LockPiece(TetrisEvents& events){
         events.lines_cleared = (int)clearing_rows.size();
         //Asked NOW, while the completed rows are still on the board: once they collapse there is
         //no longer any way to tell a perfect clear from an ordinary one.
-        AwardLineScore((int)clearing_rows.size(),WouldBePerfectClear(),events);
+        AwardLineScore((int)clearing_rows.size(),WouldBePerfectClear(),spin,events);
         phase = TETRIS_PHASE_CLEARING;
         phase_ticks = TETRIS_CLEAR_FLASH_TICKS;
         return;
     }
     //A placement that cleared nothing ends the combo run. Both bonuses are about keeping a run
     //going, so both are decided at the moment a piece sets rather than at the moment a row goes.
+    //Ended BEFORE the award, so a T-spin that cleared nothing cannot be paid a combo it broke.
     combo = -1;
+    AwardLineScore(0,false,spin,events);
     phase = TETRIS_PHASE_SPAWN;
     phase_ticks = TETRIS_SPAWN_DELAY_TICKS;
 }
@@ -410,6 +554,12 @@ void Playfield::UpdateFalling(const TetrisInput& input, TetrisEvents& events){
         int landed_y = GetGhostY();
         int cells = piece_y - landed_y;
         piece_y = landed_y;
+        if (cells > 0){
+            //It actually fell, so it is no longer where it was spun. A hard drop of ZERO cells -
+            //the piece already resting in the slot it was rotated into - deliberately does not
+            //clear the flag, because "spin it in, then slam" is how a T-spin is normally played.
+            f_rotated_last = false;
+        }
         score += cells * HardDropCellScore();    //guideline: 2 points a cell for a hard drop
         events.f_hard_dropped = true;
         events.hard_drop_cells = cells;

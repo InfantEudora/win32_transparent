@@ -63,6 +63,27 @@
 #define TETRIS_SPAWN_DELAY_TICKS    6   //"ARE": the pause between one piece locking and the next
 #define TETRIS_NEXT_QUEUE_SHOWN     3   //how many upcoming pieces the HUD previews
 
+/*
+    Whether the placement that just locked was a T-spin, and which kind.
+
+    The test is the guideline one and it has three parts: the piece is a T, the last thing that
+    happened to it was a ROTATION (not a slide and not gravity), and at least three of the four
+    corners of its 3x3 box are blocked. That last condition is what makes a T-spin a fact about
+    the STACK rather than about the keyboard - you cannot spin a T into open air.
+
+    MINI is the same thing with only one of the two corners on the side the T points at. It is
+    the difference between wedging a T into a proper slot and merely twisting one into a notch,
+    and it scores a quarter as much, so the distinction is worth the table it costs.
+*/
+#define TETRIS_SPIN_NONE    0
+#define TETRIS_SPIN_MINI    1
+#define TETRIS_SPIN_FULL    2
+
+//How high the stack has to get before the app starts warning about it. Here with the rules
+//rather than in the view because it is measured in board rows, and the board is the rules'.
+#define TETRIS_WARN_ROWS    15
+#define TETRIS_DANGER_ROWS  18
+
 //What phase the game is in. Everything that takes time is a phase with a tick counter rather
 //than a flag plus a timestamp, so "what is the game doing" has exactly one answer.
 enum TetrisPhase{
@@ -110,6 +131,9 @@ struct TetrisEvents{
     int  combo = 0;                 //how many clears deep the run is; 0 on the first of a run
     bool f_back_to_back = false;    //this clear EXTENDED a back-to-back chain and was paid for it
     bool f_perfect_clear = false;   //it also left the board completely empty
+    //TETRIS_SPIN_*. Set on the tick a piece locks, and set even when the spin cleared NOTHING -
+    //a T-spin with no lines still scores, so it is still an event the app has to announce.
+    int  spin = TETRIS_SPIN_NONE;
 };
 
 /*
@@ -163,13 +187,18 @@ public:
         the field is not simply a count - the value IS the multiplier the bonus wants, so the
         first clear of a run pays no combo and nothing has to subtract one.
 
-        `f_back_to_back` remembers that the last clear was a "difficult" one, which in this game
-        means a tetris (a T-spin would count too, if this game detected them - see §7 of
-        docs/tetris_findings.md). A difficult clear that follows another scores half again. It is
-        what stops the best-scoring strategy being to farm singles forever.
+        `f_back_to_back` remembers that the last clear was a "difficult" one - a tetris, or any
+        T-spin that cleared something. Both have to be set up several pieces in advance, which is
+        what the bonus is paying for, and a difficult clear that follows another scores half
+        again. It is what stops the best-scoring strategy being to farm singles forever.
     */
     int combo = -1;
     bool f_back_to_back = false;
+
+    //The best score this session has seen, and whether the game in progress has passed it. Kept
+    //with the rules because the rules are what produce a score - the app loads and saves it, and
+    //NewGame deliberately does not touch it, which is the whole point of a best.
+    int best_score = 0;
     uint64_t ticks_elapsed = 0;     //ticks this game has run, for telemetry
 
     std::vector<int> next_queue;    //front() is the piece that spawns next
@@ -183,6 +212,19 @@ public:
     //Where the active piece would land if dropped right now, for the ghost. Returns the piece's
     //bounding-box bottom row; only meaningful while falling.
     int GetGhostY() const;
+
+    /*
+        How far through its lock delay the active piece is, 0 while it is falling freely and 1 on
+        the tick it sets. The app draws this, and drawing it is not decoration: the lock delay is
+        half a second of grace that the player is given no sign of, so a piece that looks settled
+        can still be slid and a piece that looks the same is already gone. Exposed as a fraction
+        rather than as the tick count so the view never has to know what the delay is.
+    */
+    float GetLockProgress() const;
+
+    //Rows the stack reaches, counting from the floor: 0 for an empty board, TETRIS_BOARD_H when
+    //the top row is occupied. The settled board only - the active piece is not in it.
+    int GetStackHeight() const;
 
     //Does the piece fit here? Public because the ghost, the spawn test and the app's telemetry
     //all ask the same question.
@@ -201,9 +243,15 @@ public:
 
         `base` is before the level multiplier, the combo and the back-to-back bonus; the full
         arithmetic is in AwardLineScore and is the only thing that touches `score`.
+
+        `num_lines` of 0 is legal and scores nothing UNLESS `spin` says otherwise - a T-spin that
+        clears no rows is still worth 400, which is most of a triple, and is the reason a good
+        player sets a T-slot up several pieces in advance.
     */
-    static int LineClearBaseScore(int num_lines, bool f_perfect_clear);
+    static int LineClearBaseScore(int num_lines, bool f_perfect_clear, int spin = TETRIS_SPIN_NONE);
     static const char* LineClearName(int num_lines);
+    //"", "T-SPIN MINI" or "T-SPIN", for whatever wants to say what happened.
+    static const char* SpinName(int spin);
 
     //Points per cell for the two drops, so the HUD can print those too rather than repeat them.
     static int SoftDropCellScore(){ return 1; }
@@ -229,6 +277,25 @@ private:
     int lock_ticks = 0;             //ticks the piece has been resting on something
     int lock_resets = 0;
 
+    /*
+        The two facts a T-spin test needs besides the board, and neither can be recovered after
+        the fact - which is why they are recorded as they happen rather than worked out at lock
+        time.
+
+        `f_rotated_last` is the guideline's "the last movement was a rotation". Any successful
+        translation clears it, gravity included: a T that was spun into place and then fell one
+        more row was not spun into the slot it ended up in. A hard drop of ZERO cells does not
+        clear it, because that is the piece already resting where it was spun.
+
+        `f_last_kick_was_final` says the rotation had to use the LAST entry of its SRS kick table
+        - the big two-row one. A rotation that needed it went somewhere no smaller kick could
+        reach, which is a real spin whatever the corners say. It is recorded as a bool rather than
+        as the index because the index means nothing without the table's length, and the length
+        lives in Tetromino.cpp where it belongs.
+    */
+    bool f_rotated_last = false;
+    bool f_last_kick_was_final = false;
+
     void RefillBag();
     int  DrawNextPiece();           //pops the queue and tops it back up
     void SpawnPiece(int type, TetrisEvents& events);
@@ -236,10 +303,14 @@ private:
     bool TryRotate(bool f_clockwise, TetrisEvents& events);
     void LockPiece(TetrisEvents& events);
     void CollapseClearedRows();
-    void AwardLineScore(int num_lines, bool f_perfect_clear, TetrisEvents& events);
+    void AwardLineScore(int num_lines, bool f_perfect_clear, int spin, TetrisEvents& events);
     //Would the board be completely empty once `clearing_rows` are taken out? Asked while those
     //rows are still in place, because that is when the score is awarded.
     bool WouldBePerfectClear() const;
+    //TETRIS_SPIN_* for the piece as it stands. Asked at the moment of locking and never after:
+    //it depends on the piece's position and on what the last input did, both of which the next
+    //spawn throws away.
+    int DetectSpin() const;
     void UpdateFalling(const TetrisInput& input, TetrisEvents& events);
 };
 

@@ -24,8 +24,12 @@ static Debugger* debug = new Debugger("ApplicationTetris",DEBUG_ALL);
 //anything put there.
 #define PREVIEW_X           13.5f
 #define HOLD_Y              17.0f
-#define NEXT_Y              12.0f
-#define NEXT_SPACING_Y      3.5f
+//The preview column was pulled UP and tightened when the stats ladder below it gained a BEST
+//line: the third preview used to sit at y 5.0 and the score caption now reaches 4.6, and a
+//preview piece drawn through the word SCORE reads as a rendering fault. 13.0/3.2 puts the last
+//one at 6.6 - clear of the text, and still clear of the HOLD piece above it.
+#define NEXT_Y              13.0f
+#define NEXT_SPACING_Y      3.2f
 
 //The text column, in those same world coordinates. Left-aligned a little inside the preview
 //column so the captions line up with each other rather than with the pieces they label.
@@ -192,6 +196,8 @@ void ApplicationTetris::Init(void){
     //would leave the table quietly meaning something it does not say.
     SetPhysicsTPS(TETRIS_TPS);
 
+    //Before the first NewGame, so the very first frame already shows what there is to beat.
+    LoadBestScore();
     NewGame(current_seed);
 
     main_window->Resize(1200,900);
@@ -266,6 +272,37 @@ void ApplicationTetris::BuildMaterials(){
         renderer->AddMaterial(m);
         material_frame = renderer->FindMaterialIndex(m.name);
     }
+    /*
+        The same frame, warmer and then hot. The well's side walls wear one of these three
+        depending on how high the stack has got (TETRIS_WARN_ROWS / TETRIS_DANGER_ROWS), which
+        gives the player the one thing the board never told them: that they are running out of
+        room. Slightly emissive, so the change is visible in the corner of the eye at the moment
+        the player is looking hardest at the middle of the board.
+
+        Three materials swapped by slot rather than one material whose colour is written every
+        tick - a Material belongs to the RENDERER and is shared by index, so editing it in place
+        would repaint the tray and anything else that ever adopts this frame.
+    */
+    {
+        Material m;
+        m.name = "tetris_frame_warn";
+        m.glsl_material.color = vec4(0.52f,0.42f,0.22f,1.0f);
+        m.glsl_material.metallic = 0.6f;
+        m.glsl_material.roughness = 0.35f;
+        m.glsl_material.emissive = vec4(0.55f,0.36f,0.06f,0.35f);
+        renderer->AddMaterial(m);
+        material_frame_warn = renderer->FindMaterialIndex(m.name);
+    }
+    {
+        Material m;
+        m.name = "tetris_frame_danger";
+        m.glsl_material.color = vec4(0.60f,0.20f,0.20f,1.0f);
+        m.glsl_material.metallic = 0.6f;
+        m.glsl_material.roughness = 0.35f;
+        m.glsl_material.emissive = vec4(0.70f,0.12f,0.10f,0.7f);
+        renderer->AddMaterial(m);
+        material_frame_danger = renderer->FindMaterialIndex(m.name);
+    }
     {   //Text. Emissive because a label sits in front of the dark back panel with no light of
         //its own aimed at it, and unlit letterforms at this size read as grey smudges.
         Material m;
@@ -338,6 +375,11 @@ void ApplicationTetris::BuildWell(){
         Object* part = MakeCube(block_mesh,main_scene,parts[i].name,parts[i].position,parts[i].scale,material_frame);
         if (!part){
             continue;
+        }
+        //The two side walls are kept: they are what changes colour as the stack climbs. The
+        //floor is not - see well_walls in the header.
+        if (i < 2){
+            well_walls[i] = part;
         }
         Physics* p = part->AddPhysics(main_scene->physics_world);
         if (p){
@@ -482,15 +524,23 @@ void ApplicationTetris::BuildTextLabels(){
         //Captions sit just above the thing they name.
         { TETRIS_LABEL_HOLD,     vec3(TEXT_X,HOLD_Y + 2.0f,0.0f), TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "HOLD" },
         { TETRIS_LABEL_NEXT,     vec3(TEXT_X,NEXT_Y + 2.0f,0.0f), TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "NEXT" },
-        //The stats go below the next queue, which ends at NEXT_Y - 2*NEXT_SPACING_Y = 5.0.
-        //Score gets two lines because it is the number people actually look at.
-        { TETRIS_LABEL_SCORE,    vec3(TEXT_X, 3.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "SCORE\n0" },
-        { TETRIS_LABEL_LINES,    vec3(TEXT_X, 1.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LINES 0" },
-        { TETRIS_LABEL_LEVEL,    vec3(TEXT_X,-0.1f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LEVEL 1" },
+        /*
+            The stats ladder, below the next queue (which ends at NEXT_Y - 2*NEXT_SPACING_Y =
+            5.0) and above the bottom of what the camera can see (y -2.0, from the orthographic
+            half-extent of 11.5 about a target at 9.5). Score gets two lines because it is the
+            number people actually look at; everything else gets one, spaced 1.1 apart - a line
+            of text at TEXT_SCALE is 0.8 tall, so that is a clear gap rather than a crowded one.
+        */
+        { TETRIS_LABEL_SCORE,    vec3(TEXT_X, 4.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "SCORE\n0" },
+        //Directly under the score it is measured against, because that is the only place a best
+        //means anything. Without it a restart throws the whole game away with no record of it.
+        { TETRIS_LABEL_BEST,     vec3(TEXT_X, 2.2f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "BEST 0" },
+        { TETRIS_LABEL_LINES,    vec3(TEXT_X, 1.1f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LINES 0" },
+        { TETRIS_LABEL_LEVEL,    vec3(TEXT_X, 0.0f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   0, "LEVEL 1" },
         //The run bonuses, under the stats and in the hot material, because they are the two
         //numbers that are TEMPORARY - a player who cannot see the combo is about to break has no
         //reason to care that it exists. Empty (and so hidden) whenever no run is going.
-        { TETRIS_LABEL_COMBO,    vec3(TEXT_X,-1.3f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   1, "COMBO x9" },
+        { TETRIS_LABEL_COMBO,    vec3(TEXT_X,-1.1f,0.0f),         TEXT_SCALE, TEXT_ALIGN_LEFT,   1, "COMBO x9" },
         //Centred over the middle of the well (cells 0..9, so x 4.5) and in FRONT of the stack -
         //the blocks reach z +0.46, so 1.2 clears them with room for the glyphs' own 0.1 depth.
         { TETRIS_LABEL_GAMEOVER, vec3(4.5f,11.0f,1.2f),           1.30f,      TEXT_ALIGN_CENTER, 1, "GAME OVER\nPRESS R" },
@@ -556,7 +606,9 @@ void ApplicationTetris::BuildPopups(){
         layout.scale = POPUP_TEXT_SCALE;
         layout.align = TEXT_ALIGN_CENTER;
         layout.matid = 0;
-        popup.mesh = BuildTextMesh(glyphs,"PERFECT CLEAR\n+99999\nB2B COMBO x99",layout,NULL);
+        //The longest line any announcement can produce is "T-SPIN MINI TRIPLE"; prime with it so
+        //the vertex buffer is never grown again after Init.
+        popup.mesh = BuildTextMesh(glyphs,"T-SPIN MINI TRIPLE\n+99999\nB2B COMBO x99",layout,NULL);
         if (popup.mesh){
             popup.object->SetMesh(popup.mesh);
         }
@@ -571,6 +623,12 @@ void ApplicationTetris::BuildPopups(){
     line rather than being folded silently into the total.
 */
 void ApplicationTetris::FormatClearText(const TetrisClearEvent& clear, char* out, size_t out_size) const{
+    if (clear.kind == TETRIS_ANNOUNCE_LEVEL){
+        snprintf(out,out_size,"LEVEL %i\n%i TICKS/CELL",
+                 clear.level,Playfield::GravityTicksForLevel(clear.level));
+        return;
+    }
+
     //Line 3 first, because it is the one that may be empty and an empty line at the end of a
     //string is a line of nothing that still pushes the popup's origin around.
     char bonus[32] = {};
@@ -581,9 +639,26 @@ void ApplicationTetris::FormatClearText(const TetrisClearEvent& clear, char* out
     }else if (clear.combo > 0){
         snprintf(bonus,sizeof(bonus),"\nCOMBO x%i",clear.combo);
     }
-    //A perfect clear is announced by name: it is rare, it is worth eight times an ordinary
-    //single, and a player who is never told it exists will never go looking for it.
-    const char* name = clear.f_perfect_clear ? "PERFECT CLEAR" : Playfield::LineClearName(clear.lines);
+
+    /*
+        The headline. A perfect clear and a T-spin are both announced BY NAME - each is rare, each
+        is worth several times the clear it looks like, and a player who is never told they exist
+        will never go looking for them. That is the whole argument for this popup.
+
+        A T-spin that cleared nothing has no line name at all, so it prints as just "T-SPIN" and
+        its 400 points; the space before the (empty) line name would be a trailing space, so the
+        two cases are formatted apart rather than papered over with one format string.
+    */
+    char name[40];
+    if (clear.f_perfect_clear){
+        snprintf(name,sizeof(name),"PERFECT CLEAR");
+    }else if (clear.spin != TETRIS_SPIN_NONE && clear.lines > 0){
+        snprintf(name,sizeof(name),"%s %s",Playfield::SpinName(clear.spin),Playfield::LineClearName(clear.lines));
+    }else if (clear.spin != TETRIS_SPIN_NONE){
+        snprintf(name,sizeof(name),"%s",Playfield::SpinName(clear.spin));
+    }else{
+        snprintf(name,sizeof(name),"%s",Playfield::LineClearName(clear.lines));
+    }
     snprintf(out,out_size,"%s\n+%i%s",name,clear.points,bonus);
 }
 
@@ -619,16 +694,20 @@ void ApplicationTetris::UpdatePopups(uint64_t tick){
         */
         int slot = 0;
         for (int s = 0; s < TETRIS_POPUP_SLOTS; s++){
-            if (popups[s].f_active){
+            //Only its OWN kind, or a level up would erase the tetris that earned it - the two
+            //arrive on the same tick. See TETRIS_ANNOUNCE_* in the header.
+            if (popups[s].f_active && popups[s].kind == fresh[i].kind){
                 popups[s].f_active = false;
                 if (popups[s].object){
                     popups[s].object->Hide();
                 }
-            }else{
+            }
+            if (!popups[s].f_active){
                 slot = s;
             }
         }
         TetrisPopup& popup = popups[slot];
+        popup.kind = fresh[i].kind;
         if (!popup.object){
             continue;
         }
@@ -648,9 +727,12 @@ void ApplicationTetris::UpdatePopups(uint64_t tick){
             popup.mesh = mesh;
             popup.object->SetMesh(mesh);
         }
-        //A tetris, a back-to-back or a perfect clear is the game going well and should look
-        //different from a single scraped off the bottom.
-        bool f_special = (fresh[i].lines == 4) || fresh[i].f_back_to_back || fresh[i].f_perfect_clear;
+        //A tetris, a T-spin, a back-to-back or a perfect clear is the game going well and should
+        //look different from a single scraped off the bottom. So is a level up.
+        bool f_special = (fresh[i].kind == TETRIS_ANNOUNCE_LEVEL)
+                      || (fresh[i].lines == 4)
+                      || (fresh[i].spin != TETRIS_SPIN_NONE)
+                      || fresh[i].f_back_to_back || fresh[i].f_perfect_clear;
         popup.object->SetMaterialSlot(0,f_special ? material_text_hot : material_text);
         popup.spawn_tick = fresh[i].tick;
         popup.origin_y = fresh[i].world_y;
@@ -746,6 +828,7 @@ void ApplicationTetris::PreRender(void){
     int lines = 0;
     int level = 1;
     int combo = -1;
+    int best = 0;
     bool f_back_to_back = false;
     bool f_gameover = false;
     {
@@ -754,6 +837,7 @@ void ApplicationTetris::PreRender(void){
         lines = snapshot.lines;
         level = snapshot.level;
         combo = snapshot.combo;
+        best = snapshot.best_score;
         f_back_to_back = snapshot.f_back_to_back;
         f_gameover = (snapshot.phase == TETRIS_PHASE_GAMEOVER);
     }
@@ -761,6 +845,14 @@ void ApplicationTetris::PreRender(void){
     char text[64];
     snprintf(text,sizeof(text),"SCORE\n%i",score);
     SetLabelText(TETRIS_LABEL_SCORE,text);
+    //While the game in progress IS the best, say so rather than printing the same number twice -
+    //"BEST 4200" sitting under "SCORE 4200" reads like a bug, and "NEW BEST" is the better news.
+    if (score > 0 && score >= best){
+        SetLabelText(TETRIS_LABEL_BEST,"NEW BEST");
+    }else{
+        snprintf(text,sizeof(text),"BEST %i",best);
+        SetLabelText(TETRIS_LABEL_BEST,text);
+    }
     snprintf(text,sizeof(text),"LINES %i",lines);
     SetLabelText(TETRIS_LABEL_LINES,text);
     snprintf(text,sizeof(text),"LEVEL %i",level);
@@ -899,8 +991,16 @@ void ApplicationTetris::RegisterCommandHandlers(){
 }
 
 void ApplicationTetris::NewGame(uint32_t seed){
+    //Before the reset, because Playfield::NewGame is about to set `score` back to zero and this
+    //is the last moment the game that just ended still exists. `best_score` deliberately survives
+    //it - it is the one number a restart must not throw away.
+    SaveBestScore();
+
     current_seed = seed;
     game.NewGame(seed);
+    //The walls go back to calm on their own next tick, but the state has to be forgotten here or
+    //a game that ended in the red would start the next one in the red too.
+    wall_state = -1;
     //Throw away everything the previous game left in the world.
     for (size_t i = 0; i < debris.size(); i++){
         if (debris[i].object){
@@ -982,10 +1082,28 @@ void ApplicationTetris::RunSimulationTick(void){
     game.Tick(actions,events);
     HandleEvents(events);
 
+    /*
+        The best, tracked live rather than at the end. A player who beats their record and then
+        tops out still beat it, and a record that only counted finished games would be a record
+        of how people die rather than of how well they played.
+
+        Flushed on the two moments that end a game and, failing those, every ten seconds - a soft
+        drop scores a point a cell, so `f_best_dirty` is set several times a second and writing on
+        every change would be a file write per tick for a number nobody is reading.
+    */
+    if (game.score > game.best_score){
+        game.best_score = game.score;
+        f_best_dirty = true;
+    }
+    if (events.f_game_over || (main_scene->GetPhysicsTick() % 600) == 0){
+        SaveBestScore();
+    }
+
     SyncBoardView();
     SyncPieceView();
     SyncPreviewView();
     UpdateDebris();
+    UpdateDangerState();
     UpdateCameraShake();
     PublishSnapshot();
 }
@@ -1079,7 +1197,15 @@ void ApplicationTetris::HandleEvents(const TetrisEvents& events){
         shake_amount = max(shake_amount,0.08f * events.lines_cleared);
         shake_ticks = max(shake_ticks,14);
         SpawnClearDebris();
+    }
 
+    /*
+        Anything that scored gets announced, and that includes a clear of NO rows: a T-spin with
+        nothing under it is worth 400, which beats a triple, and it is the one score in this game
+        that happens with no visible consequence on the board at all. If it is not said out loud
+        it is invisible.
+    */
+    if (events.score_awarded > 0 && (events.lines_cleared > 0 || events.spin != TETRIS_SPIN_NONE)){
         /*
             Hand the frame something to announce. This is the answer to "what was that worth" -
             a score that only ever appears as a bigger total teaches the player nothing, and
@@ -1094,19 +1220,44 @@ void ApplicationTetris::HandleEvents(const TetrisEvents& events){
             row_sum += (float)game.clearing_rows[i];
         }
         TetrisClearEvent clear;
+        clear.kind = TETRIS_ANNOUNCE_CLEAR;
         clear.lines = events.lines_cleared;
         clear.points = events.score_awarded;
         clear.combo = events.combo;
+        clear.spin = events.spin;
         clear.f_back_to_back = events.f_back_to_back;
         clear.f_perfect_clear = events.f_perfect_clear;
-        clear.world_y = game.clearing_rows.empty() ? 1.0f : (row_sum / (float)game.clearing_rows.size()) + 1.0f;
+        //Over the rows that went. A spin that cleared nothing has no such rows, so it is
+        //announced over the piece that did it - which is where the player is looking.
+        clear.world_y = game.clearing_rows.empty()
+                      ? ((float)game.piece_y + 2.0f)
+                      : ((row_sum / (float)game.clearing_rows.size()) + 1.0f);
         clear.tick = main_scene->GetPhysicsTick();
         {
             std::lock_guard<std::mutex> lock(snapshot_mutex);
             snapshot.last_clear_lines = clear.lines;
             snapshot.last_clear_points = clear.points;
+            snapshot.last_clear_spin = clear.spin;
             pending_clears.push_back(clear);
         }
+    }
+
+    /*
+        The level up, which until now was an event nothing read.
+
+        Its own announcement kind, high over the well rather than down where the clear is, for
+        two reasons: it arrives on the SAME TICK as the clear that caused it, and what it says -
+        that gravity just got faster - is the one thing in this game that changes how the next
+        piece behaves. A player who is not told is simply surprised by it.
+    */
+    if (events.f_level_up){
+        TetrisClearEvent up;
+        up.kind = TETRIS_ANNOUNCE_LEVEL;
+        up.level = game.level;
+        up.world_y = 15.0f;
+        up.tick = main_scene->GetPhysicsTick();
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        pending_clears.push_back(up);
     }
     if (events.lines_cleared > 0 || events.f_locked){
         //A new piece is coming, so the next slide must not be interpolated from the old one.
@@ -1249,12 +1400,27 @@ void ApplicationTetris::SyncPieceView(){
     //from wherever the last one happened to be - it teleports.
     bool f_snap = (last_piece_type != game.piece_type);
 
+    /*
+        The lock delay, made visible.
+
+        A piece that has come to rest still has half a second in which it can be slid and spun
+        (TETRIS_LOCK_DELAY_TICKS), and until now the board gave no sign of it at all: a piece
+        that looked settled might have most of that grace left or none of it, and the player had
+        no way to tell which. Squashing the cubes as the delay runs out says "this is setting" in
+        the one place the player is already looking.
+
+        Scale rather than colour, because colour is how a piece says which piece it is - and that
+        is the one thing on this board that must never be ambiguous.
+    */
+    float squash = 1.0f - TETRIS_LOCK_SQUASH * game.GetLockProgress();
+
     for (int i = 0; i < 4; i++){
         vec3 target = CellWorldPosition(game.piece_x + cells[i].x,game.piece_y + cells[i].y);
         Object* cube = piece_objects[i];
         if (cube){
             cube->Show();
             cube->SetMaterialSlot(0,material_piece[game.piece_type]);
+            cube->SetScale(vec3(CELL_VISUAL_SCALE * squash));
             if (f_snap){
                 cube->SetPosition(target);
             }else if ((target - piece_cell_targets[i]).length() > 0.01f){
@@ -1450,6 +1616,43 @@ void ApplicationTetris::UpdateDebris(){
     }
 }
 
+/*
+    How close the stack is to the top, said by the walls.
+
+    The board itself never told the player this. The well is 20 rows and the piece spawns into
+    the top one, so the difference between "plenty of room" and "the next S piece ends the game"
+    is four rows that look exactly like the four below them. Three states rather than a gradient:
+    a warning has to be noticed, and a colour that creeps up on you is a colour you do not see.
+
+    Guarded by `wall_state` so the usual case writes nothing - this runs every tick, and a
+    material slot assignment that changes nothing still dirties the object.
+*/
+void ApplicationTetris::UpdateDangerState(){
+    int height = game.GetStackHeight();
+    int state = TETRIS_WALL_CALM;
+    if (height >= TETRIS_DANGER_ROWS){
+        state = TETRIS_WALL_DANGER;
+    }else if (height >= TETRIS_WARN_ROWS){
+        state = TETRIS_WALL_WARN;
+    }
+    if (state == wall_state){
+        return;
+    }
+    wall_state = state;
+
+    int material = material_frame;
+    if (state == TETRIS_WALL_WARN){
+        material = material_frame_warn;
+    }else if (state == TETRIS_WALL_DANGER){
+        material = material_frame_danger;
+    }
+    for (int i = 0; i < 2; i++){
+        if (well_walls[i]){
+            well_walls[i]->SetMaterialSlot(0,material);
+        }
+    }
+}
+
 void ApplicationTetris::UpdateCameraShake(){
     Camera* camera = main_scene->camera;
     if (!camera){
@@ -1471,6 +1674,53 @@ void ApplicationTetris::UpdateCameraShake(){
 }
 
 //--- Telemetry ------------------------------------------------------------------------------
+
+/*
+    The best score, and the only thing in this app that outlives the process.
+
+    A plain text file beside the executable. It is NOT resolved through ResolveAssetPath and that
+    is deliberate rather than an oversight: an asset is something the app reads and ships with,
+    resolved against a search path that may point at a shared folder two apps deep - and writing
+    a save file into that would put one app's scores under another app's assets. See core/File.h,
+    which is about loading and has no write side for exactly this reason.
+
+    Both halves fail silently. A missing or unreadable file is a best of zero, which is the
+    correct answer for a machine that has never run this before; a failed write costs a score and
+    nothing else, and a dialog about it in the middle of a game would cost more than it saved.
+*/
+static std::string BestScorePath(){
+    return GetExecutableDirectory() + "/tetris_best.txt";
+}
+
+void ApplicationTetris::LoadBestScore(){
+    FILE* f = fopen(BestScorePath().c_str(),"rb");
+    if (!f){
+        return;
+    }
+    char buffer[32] = {};
+    size_t read = fread(buffer,1,sizeof(buffer) - 1,f);
+    fclose(f);
+    buffer[read] = 0;
+    int value = atoi(buffer);
+    if (value > 0){
+        game.best_score = value;
+        debug->Info("Best score so far: %i\n",value);
+    }
+}
+
+void ApplicationTetris::SaveBestScore(){
+    if (!f_best_dirty){
+        return;
+    }
+    f_best_dirty = false;
+    FILE* f = fopen(BestScorePath().c_str(),"wb");
+    if (!f){
+        debug->Warn("Could not write the best score to %s\n",BestScorePath().c_str());
+        return;
+    }
+    fprintf(f,"%i\n",game.best_score);
+    fclose(f);
+}
 
 void ApplicationTetris::PublishSnapshot(){
     //Filled on the physics thread and read by MCP tool handlers, which hold no lock of their own
@@ -1495,6 +1745,9 @@ void ApplicationTetris::PublishSnapshot(){
     snapshot.f_paused = main_scene->IsPhysicsPaused();
     snapshot.combo = game.combo;
     snapshot.f_back_to_back = game.f_back_to_back;
+    snapshot.best_score = game.best_score;
+    snapshot.stack_height = game.GetStackHeight();
+    snapshot.lock_progress = game.GetLockProgress();
     snapshot.debris_count = (int)debris.size();
     snapshot.seed = current_seed;
     snapshot.next_types = game.next_queue;
@@ -1701,6 +1954,13 @@ json ApplicationTetris::BuildStateJson(){
         {"back_to_back",copy.f_back_to_back},
         {"last_clear_lines",copy.last_clear_lines},
         {"last_clear_points",copy.last_clear_points},
+        {"last_clear_spin",Playfield::SpinName(copy.last_clear_spin)},
+        {"best_score",copy.best_score},
+        //How close to losing, and how much of the lock delay is left. Both are things a scripted
+        //player has to be able to see: without the first it cannot know when to stop stacking,
+        //and without the second it cannot know how long it still has to slide a piece.
+        {"stack_height",copy.stack_height},
+        {"lock_progress",copy.lock_progress},
         {"pieces_placed",copy.pieces_placed},
         {"seed",copy.seed},
         {"piece",copy.piece_type >= 0 ? json(GetTetrominoName(copy.piece_type)) : json(nullptr)},
@@ -1737,8 +1997,21 @@ void ApplicationTetris::RenderTetrisHUD(){
     ImGui::Begin("Tetris",NULL,ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse);
 
     ImGui::Text("SCORE  %i",game.score);
+    ImGui::Text("BEST   %i",game.best_score);
     ImGui::Text("LEVEL  %i",game.level);
     ImGui::Text("LINES  %i",game.lines);
+    //The same warning the walls carry, in words, for whoever is reading this panel instead of
+    //the board - and because a number says how many rows are actually left.
+    {
+        int height = game.GetStackHeight();
+        if (height >= TETRIS_DANGER_ROWS){
+            ImGui::TextColored(ImVec4(1,0.25f,0.25f,1),"STACK  %i/%i  DANGER",height,TETRIS_BOARD_H);
+        }else if (height >= TETRIS_WARN_ROWS){
+            ImGui::TextColored(ImVec4(1,0.75f,0.2f,1),"STACK  %i/%i",height,TETRIS_BOARD_H);
+        }else{
+            ImGui::Text("STACK  %i/%i",height,TETRIS_BOARD_H);
+        }
+    }
     //The two bonuses that are about to expire, so they are worth seeing while they are live.
     if (game.combo > 0){
         ImGui::TextColored(ImVec4(1,0.6f,0.3f,1),"COMBO  x%i%s",game.combo,game.f_back_to_back ? "   B2B" : "");
@@ -1761,14 +2034,26 @@ void ApplicationTetris::RenderTetrisHUD(){
     */
     if (ImGui::CollapsingHeader("Scoring",ImGuiTreeNodeFlags_DefaultOpen)){
         ImGui::TextDisabled("all line scores multiply by LEVEL");
+        ImGui::Text("%-7s %5s %5s %5s","","plain","T-spin","perf");
         for (int n = 1; n <= 4; n++){
-            ImGui::Text("%-7s %4d      perfect %4d",
+            //A T-spin triple is the widest a T can clear, so the fourth row's T-spin column is
+            //the table saying "not possible" rather than a number - print it as such.
+            char spin_cell[8] = "-";
+            if (n <= 3){
+                snprintf(spin_cell,sizeof(spin_cell),"%i",Playfield::LineClearBaseScore(n,false,TETRIS_SPIN_FULL));
+            }
+            ImGui::Text("%-7s %5d %5s %5d",
                         Playfield::LineClearName(n),
                         Playfield::LineClearBaseScore(n,false),
+                        spin_cell,
                         Playfield::LineClearBaseScore(n,true));
         }
+        ImGui::Text("t-spin  %5d  clearing nothing at all",
+                    Playfield::LineClearBaseScore(0,false,TETRIS_SPIN_FULL));
+        ImGui::Text("  mini  %5d  one front corner open",
+                    Playfield::LineClearBaseScore(0,false,TETRIS_SPIN_MINI));
         ImGui::Text("combo   +%d per clear after the 1st",Playfield::ComboStepScore());
-        ImGui::Text("b2b     +%d%% tetris after a tetris",Playfield::BackToBackBonusPercent());
+        ImGui::Text("b2b     +%d%% tetris/t-spin in a row",Playfield::BackToBackBonusPercent());
         ImGui::Text("drops   %d/cell soft, %d/cell hard",
                     Playfield::SoftDropCellScore(),Playfield::HardDropCellScore());
     }

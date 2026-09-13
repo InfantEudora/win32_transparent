@@ -80,10 +80,26 @@
     first), so three is already one more than can overlap.
 */
 #define TETRIS_POPUP_TICKS          130
-#define TETRIS_POPUP_SLOTS          3
+#define TETRIS_POPUP_SLOTS          4
 #define TETRIS_POPUP_RISE           5.0f    //world units it travels upward over its life
 #define TETRIS_POPUP_GROW_TICKS     8       //the snap on the way in
 #define TETRIS_POPUP_SHRINK_TICKS   16      //...and the way out, which is how it "fades"
+
+/*
+    The world-space labels' warning colours, and the rows they switch at (TETRIS_WARN_ROWS and
+    TETRIS_DANGER_ROWS, which live with the rules because they are counted in board rows).
+
+    The well's walls carry this, not the blocks: tinting the stack would fight the piece colours,
+    which are the one thing on this screen the player is actually reading. A frame that changes
+    colour is seen in peripheral vision, which is where a warning belongs.
+*/
+#define TETRIS_WALL_CALM            0
+#define TETRIS_WALL_WARN            1
+#define TETRIS_WALL_DANGER          2
+
+//How much a piece squashes as its lock delay runs out. The piece visibly settles instead of
+//simply stopping, which is the only cue the player gets that the half-second of grace is going.
+#define TETRIS_LOCK_SQUASH          0.22f
 
 //The world-space labels. Numbered rather than named so one array and one update function cover
 //all of them; the captions never change, the three stats change when the game says so, and the
@@ -91,15 +107,26 @@
 #define TETRIS_LABEL_HOLD       0
 #define TETRIS_LABEL_NEXT       1
 #define TETRIS_LABEL_SCORE      2
-#define TETRIS_LABEL_LINES      3
-#define TETRIS_LABEL_LEVEL      4
-#define TETRIS_LABEL_COMBO      5
-#define TETRIS_LABEL_GAMEOVER   6
-#define TETRIS_LABEL_COUNT      7
+#define TETRIS_LABEL_BEST       3
+#define TETRIS_LABEL_LINES      4
+#define TETRIS_LABEL_LEVEL      5
+#define TETRIS_LABEL_COMBO      6
+#define TETRIS_LABEL_GAMEOVER   7
+#define TETRIS_LABEL_COUNT      8
 
 /*
-    One line clear worth announcing, handed from the tick that scored it to the frame that draws
-    it.
+    What an announcement is ABOUT. Two kinds, and the distinction earns its keep in one place:
+    a new announcement retires the ones already up, and it must only retire its OWN kind. A level
+    up happens on the same tick as the clear that caused it, so without this the "LEVEL 5" would
+    wipe the "TETRIS +3200" that earned it - the two would race and the player would see one of
+    them at random. Separated, they sit at different heights and both get read.
+*/
+#define TETRIS_ANNOUNCE_CLEAR       0
+#define TETRIS_ANNOUNCE_LEVEL       1
+#define TETRIS_ANNOUNCE_KINDS       2
+
+/*
+    One thing worth announcing, handed from the tick that scored it to the frame that draws it.
 
     NUMBERS ONLY. The string is formatted in PreRender for the same reason the score label's is:
     building a text mesh ends in glNamedBufferData and the physics thread may not touch GL. The
@@ -107,9 +134,12 @@
     wording never touches the simulation.
 */
 struct TetrisClearEvent{
+    int      kind = TETRIS_ANNOUNCE_CLEAR;
     int      lines = 0;
     int      points = 0;
     int      combo = 0;
+    int      spin = TETRIS_SPIN_NONE;
+    int      level = 0;             //for a level-up announcement; the level just reached
     bool     f_back_to_back = false;
     bool     f_perfect_clear = false;
     float    world_y = 0.0f;        //middle of the rows that went, so the popup starts there
@@ -149,6 +179,10 @@ struct TetrisSnapshot{
     bool f_back_to_back = false;
     int last_clear_lines = 0;       //what the most recent clear was and paid, for the tools
     int last_clear_points = 0;
+    int last_clear_spin = TETRIS_SPIN_NONE;
+    int best_score = 0;
+    int stack_height = 0;
+    float lock_progress = 0.0f;
     int debris_count = 0;
     uint32_t seed = 1;
     std::vector<int> next_types;
@@ -200,8 +234,17 @@ private:
     void SpawnClearDebris();
     void UpdateDebris();
     void UpdateCameraShake();
+    void UpdateDangerState();
     void PublishSnapshot();
     void NewGame(uint32_t seed);
+
+    //--- The best score, which is the only thing in this app that outlives the process ----------
+    //A plain text file beside the executable. NOT an asset and deliberately not resolved as one
+    //(core/File.h) - assets are things the app reads and ships with, and this is something it
+    //writes. Failure either way is silent and harmless: a missing file is a best of zero.
+    void LoadBestScore();
+    void SaveBestScore();
+    bool f_best_dirty = false;      //a new best is worth writing once, not once a tick
 
     //--- HUD ---------------------------------------------------------------------------------
     void RenderTetrisHUD();
@@ -238,6 +281,12 @@ private:
     //While the collapse animation is running the board view is driven by MoveObjectOverTicks
     //instead of by the array, so SyncBoardView has to keep its hands off it.
     bool f_collapse_animating = false;
+
+    //The well's two side walls, kept so they can change colour as the stack climbs. The floor and
+    //the back panel are not: a warning that covers three sides is a warning that looks like a
+    //bug in the lighting.
+    Object* well_walls[2] = {};
+    int wall_state = TETRIS_WALL_CALM;   //which material they currently carry
 
     //The one cube every view object in this app uses, generated in Init and shared by pointer -
     //every Object here is this mesh with a scale, a position and one material slot. Held for the
@@ -288,6 +337,7 @@ private:
         Mesh*    mesh = NULL;
         uint64_t spawn_tick = 0;
         float    origin_y = 0.0f;
+        int      kind = TETRIS_ANNOUNCE_CLEAR;
         bool     f_active = false;
     };
     TetrisPopup popups[TETRIS_POPUP_SLOTS];
@@ -306,6 +356,8 @@ private:
     int material_ghost = 0;
     int material_flash = 0;
     int material_frame = 0;
+    int material_frame_warn = 0;
+    int material_frame_danger = 0;
     int material_back = 0;
     int material_text = 0;
     int material_text_hot = 0;

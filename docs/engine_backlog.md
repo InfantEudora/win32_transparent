@@ -4,14 +4,20 @@
 `docs/engine_backlog_done.md` — 54 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
-Items are drawn from two runs in which an agent built a game on this engine as an audit of it:
+Most items are drawn from two runs in which an agent built a game on this engine as an audit of it:
 
 - `docs/tetris_findings.md` — `APP=Tetris`, items 1-43.
 - `docs/breakout_findings.md` — `APP=Breakout`, items 44-62, plus new notes on 15, 23, 25 and 39.
   Items 63, 64 and 65 came out of reviewing and working on that run rather than out of the report.
 
-Item 67 is the first that came from neither: it is a design decision taken up front, before any of
+Item 67 was the first that came from neither: it is a design decision taken up front, before any of
 the code it describes exists.
+
+Items 68-77 are a third source — the **Android port** at `C:/code/android`, which took this engine
+as its inspiration and got Tetris running on a tablet. Some are bugs it found in code it inherited,
+some are things it had to build that this engine has no equivalent of. See the reference at the
+bottom for what it found that needed no item, and for how to do the merge itself. That port is also
+why item 67 moved from band D to band C: most of it is written.
 
 Ordered by **implementation effort, not by importance** — that is what the bands are, and it is
 deliberate: this list is read when someone has an hour free as often as when someone is deciding
@@ -22,13 +28,48 @@ item that moves between bands keeps its number.
 
 Status key: `[ ]` open · `[~]` partially done.
 
-Last updated 2026-09-13, adding item 67.
+Last updated 2026-09-13, adding items 68-77 from the Android port and moving 67 to band C.
+Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
+and 61 stranded under a band A that says it is empty.
 
 ---
 
 ## Band A — minutes each, no risk
 
-*Empty. Everything in this band has been done; new items land here as they are found.*
+- [ ] **68. `Debug`'s printf-style methods are not checked, and four calls are already wrong.**
+  The one the port found is `GLTFLoader.cpp:932` — `debug->Err("Unknown Morph Target accessor
+  %s\n", it->first)`, where `it->first` is a `std::string` and `%s` reads it as a `const char*`.
+  Undefined behaviour on the one code path whose job is to tell you what went wrong. `.c_str()`
+  is the fix and that part is a minute.
+
+  **The item is why nothing caught it.** `Debug.h` declares eight variadic printf-alikes
+  (`PrintLine`, `Trace`, `Debug`, `Info`, `Ok`, `Warn`, `Err`, `Fatal`, plus the `debug_t`
+  overload) and none of them carries `__attribute__((format(printf,N,N+1)))`, so g++ never looks
+  inside a format string in this codebase at all. Adding the attribute costs one line each.
+
+  Measured on 2026-09-13 by adding the attributes temporarily and running `-fsyntax-only
+  -Wformat` over every core source (the attributes were then reverted — this is a measurement,
+  not a change): **148 warnings across 18 files.** Sorted by what they are actually worth:
+
+  - **Four more of the same crash class**, all on error or diagnostic paths, which is the worst
+    place for them because they fire exactly when something has already gone wrong:
+    `GLTFLoader.cpp:574` and `:598` are `Fatal("GLTF Node %s contains invalid translation\n")`
+    with **no argument at all**; `File.cpp:97` passes a `size_t` to `%s`; `OCPPClient.cpp:749`
+    passes a `json::size_type` to `%s`.
+  - **Nine `%zu` warnings are false alarms — do not "fix" them.** g++ reports `unknown conversion
+    type character 'z'` because it assumes the msvcrt printf, but this toolchain's `vsnprintf`
+    handles `%zu` correctly; verified with a probe that mimics `PrintLineva` and prints `zu=42`.
+    Left alone they are noise; rewritten they get worse. This is the reason to do the triage
+    before turning the attribute on permanently.
+  - **The remaining ~135 are width mismatches** — `%d` for a `DWORD`, `%i` for a
+    `vector::size_type`, `%ld` for a `LONGLONG`. Harmless in practice on this ABI and boring to
+    fix, but they are what makes the attribute noisy, so they decide whether it goes in as a
+    warning or as `-Werror=format`. `GLTFLoader.cpp` alone accounts for 59 of them.
+
+  Note `-Wall` is **not** in `engine.mk` at all, so `-Wformat` has to be asked for by name; that
+  is also why this is a narrow, safe thing to switch on rather than a general warnings cleanup.
+
+## Band B — under an hour each
 
 - [ ] **43. The field is rebuilt every frame with no dirty flag.** One geometry pass plus
   log2(size)+2 dispatches, all of it repeated whether or not anything moved. Its share of the
@@ -81,7 +122,129 @@ Last updated 2026-09-13, adding item 67.
   thread and may not touch the GL context. A core tool has the same constraint, so it needs a
   render-thread hook to act in, not just a registry walk.
 
+- [ ] **69. `WasKeyPressed`, the missing half of `WasKeyReleased`.** `KeyState` has
+  `f_was_released` and `InputController` exposes `WasKeyReleased`; there is no press edge at all,
+  only `IsKeyDown`. Item 67 already names this as the reason Tetris fires rotate and hard drop on
+  the release edge, but the flag is worth having on its own and is not touch work: it is one
+  `bool f_was_pressed` set when `f_isdown` goes 0->1 and cleared in `Tick()` beside its opposite.
+
+  Two details from the port, which has this working: only the **first** mapping raises the press
+  flag, mirroring the existing rule that only the **last** release raises `f_was_released` — so two
+  buttons bound to one action behave sensibly at both edges. And the reason to add it before
+  anyone needs it is that the choice of edge is then a *feel* decision rather than an API
+  constraint; on a keyboard the two are indistinguishable, which is exactly why the gap survived
+  this long unnoticed.
+
+- [ ] **70. `Application::GetDisplayDPI()`.** Nothing in the engine can ask how large a pixel is,
+  so every on-screen size is in pixels and means a different thing on every panel. Needed by
+  anything laid out in physical units — item 67's buttons first, but any future HUD or UI layer
+  has the same problem, and the engine's own ImGui panels are already fixed-pixel and would be
+  unreadable on a dense screen.
+
+  Windows returns 96 and **says so** — the value being nominal rather than measured is the
+  interesting part of the API, and a caller that cannot tell the difference will ship a layout
+  that is right on the developer's monitor only. The port's Android side reads
+  `DisplayInfo::density` before the window exists, so the value is valid by `Init()`; the Win32
+  side wants `GetDpiForWindow` once there is a window, with 96 as the honest answer before that.
+
+- [ ] **71. `Renderer::ReUploadAllMeshes()`.** Walks the object tree depth-first and calls
+  `Mesh::ReUploadMeshData()` on each **distinct** mesh — deduplicated by `Mesh*`, which is
+  correctness and not efficiency: `ReUploadMeshData()` zeroes vbo/vao and generates new ones, so a
+  second call for the same mesh in the same context leaks the pair the first one made, and Tetris
+  has 200 board cells sharing one cube.
+
+  **Be clear about what this buys the engine today: nothing.** A Win32 GL context is never lost
+  and there is no resize path, so there is no way to reach it from here. It is on this list for
+  two reasons. It is the generic answer to a hole that every app ported to a platform with context
+  loss falls into — the port hit it as a black screen with a working ImGui overlay, because ImGui
+  re-initialises itself and the scene does not — and having it in core means an app does not have
+  to remember. Second, it is small, and the alternative is the two cores diverging over it.
+
+  It only handles the plain `vertices` path; line, skinned and morph meshes are not covered and
+  would need the same treatment. A no-op for a mesh with no CPU-side vertices, which is what makes
+  it safe to call blindly over a whole tree.
+
+- [ ] **72. Nothing records which feature flags an object was built under.** Today this is
+  harmless and that is luck: `USE_SOUND` is the only per-app flag, no source has an
+  `#ifdef USE_SOUND` in it, and flipping it only changes *which core sources are linked*, which
+  make does track. **Items 73 and 74 both end that**, because both add real `#ifdef`s — so this
+  wants doing with them rather than after them.
+
+  The hazard is that make compares timestamps and has no dependency on a **variable's value**.
+  Build with a flag on, rebuild with it off, and every object whose source did not change is
+  reused as compiled under the opposite setting. On the port that produced a link that succeeded
+  and an APK that died at `dlopen` naming a mangled symbol, which reads like a missing library
+  rather than a stale build.
+
+  Note the engine already answers half of this, structurally and better: `engine.mk`'s "line
+  between shared and per-app flags" exists precisely so a per-app `-D` can never reach the shared
+  core objects. What is unguarded is an app's **own** objects under `apps/<name>/build/`. So the
+  stamp needed here is per-app and small — write `USE_SOUND=$(USE_SOUND) USE_MCP=...` to a
+  `.buildflags` file in the app's object dir, compare it at parse time, and `rm -rf` that
+  directory when it differs. Only the app's own objects; `build/core` must not be wiped by this,
+  and by the rule above it never needs to be.
+
 ## Band C — one to three hours each
+
+- [ ] **67. On-screen input buttons, for Android.** Full plan in `docs/touch_input_plan.md`; this
+  is the pointer, not a summary of it. The design in one line: a third input family alongside
+  `AddKeyMap` and `AddGamePadMap`, so `input->AddTouchButton(rect,INPUT_TETRIS_LEFT)` sits next to
+  the other two and **`ApplicationTetris::SetupInput` is the only app code that changes**.
+
+  **Steps 1-4 of that plan are built and shipping on the Android port, and this item is now a
+  port-back rather than a build** (2026-09-13, hence the move from band D). The plan's own test —
+  whether the seam was in the right place — held: nine buttons bound in `SetupInput` and no change
+  to `GatherInput`, the HUD, the snapshot or anything downstream. What exists there, all of it
+  deliberately **not** `#ifdef`-guarded because `SubmitPointer` takes a pointer and a mouse is a
+  pointer:
+
+  - `TOUCH_SYSKEY_BASE 0x20000` — above the gamepad range and far above both `VK_` and
+    `AKEYCODE_`. `AddTouchButton(rect, mapped, label)` allocates the keycode itself and calls
+    `AddKeyMap`, so the app never sees the number and two buttons on one action get correct
+    `f_isdown` counting.
+  - `TouchRect` (pixels, top-left origin, `Contains`) and `TouchButton` (rect, its own syskey, the
+    action, an `f_down` flag for the drawing layer, and a **fixed `char[12]` label** — not a
+    `std::string` and not a borrowed `const char*`, because the struct is walked from the thread
+    that hit-tests and a caller passing a temporary would dangle).
+  - `SubmitPointer(id, x, y, down)`, `ReleaseAllTouchPointers()` for focus loss and cancel, and
+    `GetTouchButtons()` for whatever draws. Input does not draw.
+  - `Application::DrawTouchButtons()` on ImGui's **foreground** draw list, with
+    `f_draw_touch_buttons` for an app with its own artwork. No window at all — nothing to click
+    through and nothing that can steal a pointer.
+  - `INPUT_CONTROLLER_MAX_TOUCHES` has to sit outside any Android guard for the rest to compile.
+
+  Four behaviours in it were decided by use and are worth keeping rather than rediscovering. A
+  pointer that presses inside a button **captures** it until that same pointer lifts, whatever it
+  does in between — a drifting thumb must not drop a held direction and an edge must not chatter
+  at a rect boundary; sliding onto another button therefore does nothing. A pointer that presses
+  outside every button is still **tracked** (`button_index = -1`) so its release is recognised as
+  that pointer's. Buttons are laid out in **millimetres** via item 70's `GetDisplayDPI()` (11 mm
+  buttons, 2 mm gaps, 4 mm inset), and labels are sized as a **fraction of the button**
+  (`rect.h * 0.28f`) rather than from the ImGui font, which is dpi-correct by construction because
+  the button already is. And the four gameplay one-shots fire on the **press** edge (item 69)
+  while restart and the panel toggles stay on release — latency does not matter for chrome, and
+  press-then-slide-off is a free cancel for a restart that would wipe a game in progress.
+
+  Two hazards the port hit that this repo will hit in the same order. The buttons hit-test the
+  rect list themselves and never consult ImGui, so a cluster drawn **under** an app's own HUD is
+  live and invisible — a nastier failure than being drawn over, and the reason `DrawTouchButtons`
+  ended up on the foreground list. And Tetris's HUD prints its keyboard legend unconditionally,
+  which is true here and false on any build without the `VK_` maps; whichever way the bindings are
+  guarded, the legend has to be guarded with them.
+
+  Still original work here, and it is what the band is now for: driving `SubmitPointer` from the
+  Win32 message pump as pointer 0 (the plan's step 2 seam, and the thing that makes the panel
+  testable without a device), a Win32 `GetDisplayDPI`, and reconciling the port's
+  `InputController` against this one's — the two have diverged since the port was taken, so this
+  is a merge and not a copy. See the reference at the bottom for how the port did that.
+
+  Two things in here are worth reading before touching input for any other reason. A key event with
+  `value == 0` falls through to the *first* mapping for its action (`InputController.cpp:242`), so
+  any new input source that skips allocating itself a synthetic system keycode will silently share
+  `f_held` with the keyboard. And the picking and ImGui routes were both disqualified up front by
+  multi-touch, which a game pad layout must have: picking is a 1x1 `glReadPixels` at the cursor
+  (`Renderer.cpp:849`) and ImGui is single-pointer. ImGui stays right for menus and the F1 panels,
+  which need one finger.
 
 - [ ] **42. Skinned meshes do not cast into the field.** `RenderFieldPass` draws
   `MESH_MODE_NORMAL` only; a skinned mesh would need its own variant of `shaders/field.vert`
@@ -128,6 +291,120 @@ Last updated 2026-09-13, adding item 67.
   *Whoever picks this up: `tools/vehicle_mcp.py` already drives this scenario, so the before/after
   is one command each side of the fix. This wants doing BEFORE the rp3d baselines are re-recorded,
   or the new baseline will bake in a tank that does not drive.*
+
+- [ ] **73. `USE_PHYSICS`, so an app can opt out of ReactPhysics3D.** `USE_SOUND` already
+  establishes the convention (`?= 0`, opt in per app, drop the sources and the `-l` when off). Every
+  app links rp3d today whether or not it wants it, because `Object.h` includes `Physics.h` and
+  `Object` has a physics member.
+
+  **Check the payoff before doing the work: it is smaller here than on the port.** Counted on
+  2026-09-13, only **three of the twelve apps** never touch physics — `ocpp`, `sim` and `ui`, each
+  of which calls `UpdatePhysics` on an empty world and nothing else. The rest all create a
+  `PhysicsWorld`, including the ones that look like they would not: Tetris and Breakout use static
+  bodies for their walls, `tileset` uses rp3d overlap queries directly. On the port this flag was
+  worth 94 rp3d sources against 0 and a 27.6 MB shared object against 17.9 MB, but that is an APK
+  and a different link model; here it buys link time and exe size for three apps.
+
+  **The real reason it is on this list is that it is a prerequisite for a physics-free build at
+  all** — and, more immediately, that it is what keeps the port's `Object.{h,cpp}` from diverging
+  further from this one. That is a merge argument rather than a size argument, and it is the
+  honest one.
+
+  **It is not a copy of the sound flag, and the difference is the whole item.** Dropping
+  `SoundSystem.cpp` from the source list was enough for sound. Physics needs real `#ifdef`s in
+  `core/Object.{h,cpp}` — guard the include; make `physics` a `void*` when off so every
+  `if (physics)` test and `Object`'s general shape survive unchanged; compile out only
+  `GetPhysics()`, `AddPhysics()` and `GetRigidBody()`, whose signatures name types that no longer
+  exist; leave everything else (`ResetPhysics`, `SetMass`, `Get/SetVelocity`, `UpdatePhysicsState`,
+  the transform setters, the copy constructor) declared and turn it into a no-op. `AttachChild`
+  needs no guard at all — it only tests `newchild->physics` for truthiness, which compiles against
+  a `void*`.
+
+  **And that runs straight into `engine.mk`'s "line between shared and per-app flags".** A
+  `#ifdef` in `Object.h` means `-DUSE_PHYSICS` has to reach `Object.o`, which lives in the shared
+  `build/core` — the exact thing that block forbids, and for a good reason: whichever app built
+  first would win and every other app would silently link objects compiled for someone else.
+  There are two honest ways out and picking one is the design work here. Either physics-dependent
+  core sources leave the shared tree and compile per app (correct, and it makes `build/core` no
+  longer mean "all of core"), or the flag is repo-wide rather than per-app (much simpler, and
+  worth considering seriously, since three apps opting out is not a strong case for per-app
+  disagreement within one working tree). **Do not just add the `-D` to `CORE_CFLAGS`.** Whichever
+  way it goes, item 72's stamp has to land with it.
+
+- [ ] **74. `USE_MCP`, so a shipped build does not carry a debug server.** Same convention again,
+  and the argument is not size but that MCP is a *debugging* interface — a JSON-RPC server that
+  lets an agent drive the app — and shipping one is pointless at best. Today every app binds
+  127.0.0.1:8765 whether or not anyone is driving it.
+
+  The port reports the guard coming out unusually clean, and the reason generalises: an app's MCP
+  surface is already one `RegisterMCPTools()` block. Four sites in its Tetris — the include, the
+  call in `Init()`, the two declarations, and the `//--- MCP ---` implementation block — and
+  nlohmann/json turned out to live entirely inside that block, so it stops being a dependency too.
+  **The state the tools report is deliberately not guarded**: the debug HUD reads the same
+  snapshot, and it is not MCP-only state. That is the line to hold when doing this here.
+
+  Core side is `MCPServer.cpp` / `HTTPServer.cpp` / `TCPServer.cpp` dropping out of the core
+  sources, exactly as `SoundSystem.cpp` and `WaveFile.cpp` already do — so unlike item 73 this one
+  needs no core `#ifdef` and does not touch the shared/per-app flag line. Cheaper than 73 and
+  independent of it; the only shared piece is item 72's stamp.
+
+- [ ] **75. An asset packer, and it already exists.** `docs/asset_layout_plan.md` agreed on
+  2026-09-12 that `DUMP_BINARYASSETS` is stripped entirely in favour of a separate packer. The
+  strip has not happened and the packer was never written — `core/BinaryAsset.cpp:139` still has
+  the `#ifdef`. The port has a working one, `tools/pack_assets.cpp` plus `tools/pack_assets.mk`,
+  and it is the piece that makes an embedded-asset build possible at all.
+
+  Two things in it are worth taking deliberately rather than incidentally:
+
+  - **It preserves the relative path in an asset's name** — `sound/click.wav`, not `click.wav` —
+    which is exactly the name this engine's `LoadFile` is passed. A flattening packer means
+    patching every asset string in every app, forever, and silently loses one of any two files
+    sharing a basename in different directories. `lexically_relative(".")` strips the iterator's
+    `./` and `.generic_string()` forces forward slashes, without which a name packed on Windows
+    carries backslashes and never matches a lookup.
+  - **The make dependency has to recurse with it**, and this is the part that bites.
+    `$(wildcard $(d)/*)` sees only the top level, so an edit to `assets/sound/click.wav` would not
+    trigger a repack and the app would run against a stale baked-in copy. The port uses a pure-make
+    recursive wildcard rather than `$(shell find ...)`, so it does not depend on which shell make
+    picked. Its own two traps, both learned the hard way: a **space before `$(filter`** in that
+    function is load-bearing (without it make reports a nonsense concatenated target name), and the
+    asset **directories** must be prerequisites alongside the files, because deleting a whole
+    subdirectory removes its files from the list without making anything look out of date.
+
+  Pairs with item 61's `FILE_RELEASE_EMBEDDED` note — the packer is what creates the build in which
+  that answer is the right one.
+
+- [ ] **76. `Renderer(int w, int h)` — a renderer has no size.** `Renderer::width`/`height` are set
+  once from the window and then read by eight call sites, all of them doing the same thing:
+  `camera->SetupPerspective(renderer->width, renderer->height, ...)`. The port declined to take
+  this constructor and the reasoning is right — a renderer draws to several targets at several
+  sizes (the shadow map at 2048, the deferred target, the occluder field at 512, a half-res pass if
+  anyone ever wants one), so there is no single size it can meaningfully be constructed with. The
+  **window** owns the display size; each render target picks its own. That a `Window` takes `(w,h)`
+  is fine and stays.
+
+  Half the answer is already in the tree: `GetViewportWidth()`/`GetViewportHeight()` exist and fall
+  back to `width`/`height`, so the renderer already distinguishes "the thing I am currently drawing
+  into" from "the size I was built with". The work is deciding what those eight camera call sites
+  should ask — the window, the viewport, or the specific target — and then removing the
+  constructor argument rather than leaving both spellings available.
+
+  Band C is for the mechanical part; the decision is the hard half and is small only if it is made
+  first. **This one will surface as a real conflict the moment the two cores are merged**, which is
+  the reason it is on the list now rather than when it annoys someone.
+
+- [ ] **77. Per-instance UV sub-rects, so a `SpriteSheet` can reach the world.** The port added
+  `vec2 uv0`/`uv1` to `Object` and packs them into the per-instance data the renderer uploads, which
+  is what lets one atlas texture serve many objects each showing a different sprite. `SpriteSheet`
+  and `Sprite` are both already in core here and already know their sub-rects; there is simply no
+  path from a `Sprite` to a drawn object, which is the same gap item 24 names from the text side.
+
+  The cost is that `instancedata_t` grows, and that struct's layout is **repeated by hand in
+  several shaders** — the same care `Material.h` documents for its own struct, where `emissive` was
+  appended last precisely so no existing offset moved, and the same cost item 41 flags for
+  `light_t`. So: append, never insert, and grep the shaders. Two floats per instance for every
+  object in the scene whether or not it is a sprite is the other half of the price; worth checking
+  whether it belongs on `instancedata_t` at all or wants its own path.
 
 ## Band D — half a day to a day each
 
@@ -225,27 +502,6 @@ Last updated 2026-09-13, adding item 67.
   give a conservative vertical bound to go with the horizontal one; the 2D distance alone cannot,
   because a neighbouring column one texel away may rise to just under the ray.
 
-- [ ] **67. On-screen input buttons, for Android.** Full plan in `docs/touch_input_plan.md`; this
-  is the pointer, not a summary of it. The design in one line: a third input family alongside
-  `AddKeyMap` and `AddGamePadMap`, so `input->AddTouchButton(rect,INPUT_TETRIS_LEFT)` sits next to
-  the other two and **`ApplicationTetris::SetupInput` is the only app code that changes**.
-
-  Both mechanisms that suggest themselves are disqualified by multi-touch, which a game pad layout
-  must have: picking is a 1x1 `glReadPixels` at the cursor (`Renderer.cpp:849`) and ImGui is
-  single-pointer. ImGui stays right for menus and the F1 panels, which need one finger.
-
-  The band is for steps 1-4 of the plan — the rect list, `SubmitPointer`, the Tetris bindings and
-  an `ImDrawList` to draw them. **All four are on Windows and none of them need an Android build**,
-  which is the point of putting the seam at `SubmitPointer`: the desktop mouse drives it as pointer
-  0. Physical-unit layout and the lifecycle wiring land with the port itself.
-
-  Two things in here are worth reading before touching input for any other reason. A key event with
-  `value == 0` falls through to the *first* mapping for its action (`InputController.cpp:242`), so
-  any new input source that skips allocating itself a synthetic system keycode will silently share
-  `f_held` with the keyboard. And there is no `WasKeyPressed` — only `IsKeyDown` and
-  `WasKeyReleased` — which is why Tetris fires rotate and hard drop on the release edge, fine on a
-  keyboard and wrong under a thumb.
-
 ## Band E — multi-day, strategic
 
 - [ ] **25. Record and replay** (step 7 of the deterministic-sim plan). Unblocked by item 22, but see the thread-ordering caveat there. Tetris
@@ -271,6 +527,44 @@ Last updated 2026-09-13, adding item 67.
 - [ ] **27. Finish the skeletal animation system.** `ObjectAnimation.cpp:108` still has a
   `debug->Fatal` for any clip carrying a scale track. The probe was deliberately never started.
   *Later.*
+
+---
+
+## Reference: merging the Android port
+
+Context for items 67-77, all of which came from `C:/code/android` — a port that took this engine
+as its inspiration, reached a working renderer, and has Tetris running on a tablet. Its own list of
+what belongs back here is `.claude/memory/upstream_merge_candidates.md` in that repo; the items
+above are that list checked against this tree, so where the two disagree, the items are the later
+reading.
+
+**Three of its findings needed no item, and two of those are worth knowing anyway.**
+
+- **`app_name` is the debug panel's ImGui title**, so an app whose own HUD is
+  `ImGui::Begin("Tetris")` with `app_name = "Tetris"` gets one merged window positioned by
+  whichever drew last. It cost the port an hour and it reads as a layout bug rather than a name
+  collision. **Already fixed here** and not by anyone who knew about it: the docked-panel rework
+  (step 6 of the deterministic-sim plan) split that window into `Scene`, `Inspector` and `Engine`
+  and `app_name` no longer exists in `core/`. Recorded because it is the kind of thing that comes
+  back the moment someone adds a window named after the app.
+- **`Object::SetPickable(bool)`** is listed there as an addition to take. It is not — this tree has
+  had `SetPickability(bool)` at `Object.cpp:137` all along. Same thing, different spelling, and
+  the port adopting this name costs it nothing and restores `Object.h` to verbatim for free. The
+  general lesson for the merge: check for the engine's name before adding one.
+- The 1/PI Lambert normalisation, `SetWritableDataDirectory`, `-Wl,--no-undefined`, the
+  `Window_android` / `InputController_android` split and `SetupScene()` being non-pure-virtual are
+  all Android-only and stay there.
+
+**The merge method, which is the part that actually worked.** Ten local adaptations in
+`ApplicationTetris.cpp` survived a ~900-line upstream diff by copying the upstream file **wholesale**
+and then re-applying each adaptation from a script that **asserts on its anchor** — so a change
+that invalidates an adaptation fails loudly instead of the adaptation silently vanishing. That is
+worth reaching for in either direction, and it is the difference between a merge that is reviewable
+and one that is a diff nobody reads.
+
+**Diff with `--strip-trailing-cr`.** This repo is CRLF in the working tree (`core.autocrlf=true`,
+`.gitattributes` says `text eol=lf`) and the port is LF. Without the flag a 43-line difference
+renders as 2,775 lines and the real change is invisible inside it.
 
 ---
 

@@ -741,6 +741,13 @@ right in intent and the code did not support it. Worth a note in the brief for t
 
 ## 7. What I would build next
 
+> **Added 2026-09-13, after §7.5 was built.** Four things went in alongside it, and the note on
+> each is at the end of this section rather than in the list, because they were not on the list:
+> guideline **T-spins** (with the mini distinction and the SRS final-kick exception), a **best
+> score** that survives both a restart and the process, the **level-up announcement** that
+> `events.f_level_up` had been raising for nothing, and visible **lock-delay and stack-height**
+> feedback. See §7.7.
+
 1. **Record and replay** — step 7 of the deterministic-sim plan, and this app is now a good test
    case for it. Everything is in place: all mutation arrives as tick-stamped input events or
    `SimCommand`s, the piece bag is seeded from a command payload, every duration is a tick count,
@@ -783,7 +790,44 @@ right in intent and the code did not support it. Worth a note in the brief for t
    > distance by it fans the row out across the tray, and stays a pure function of the cell's
    > position, so it is still replay-safe.
 
-6. **The skeletal-animation probe** (step 10), which I deliberately did not start. The brief
+7. **Four things that were not on this list, built 2026-09-13.** Recorded here because three of
+   them are the kind of thing a game is simply *missing* until someone names it, and the fourth
+   cost two wrong attempts that are worth not repeating.
+
+   - **T-spins**, guideline, including the mini distinction and the SRS final-kick exception (a
+     rotation that needed the last entry of its kick table is a full T-spin whatever the corners
+     say — without it a T-spin triple, whose corners always read as mini, cannot happen). The two
+     facts the test needs are recorded as they happen rather than reconstructed at lock time:
+     `f_rotated_last`, which any successful translation clears — gravity included — and
+     `f_last_kick_was_final`. A hard drop of **zero** cells deliberately does not clear the first
+     of those, because "spin it in, then slam" is how a T-spin is actually played.
+   - **A best score** that outlives the process, in a plain file beside the executable. It is
+     deliberately *not* resolved through `ResolveAssetPath`: an asset is something the app reads
+     and ships with, and a search path that may point at `shared_assets` two directories up would
+     put one app's save file under another app's assets. `core/File.h` has no write side, and this
+     is the reason.
+   - **The level-up announcement.** `events.f_level_up` existed from the start and nothing read
+     it. It needed a second announcement *kind*, not just a second string: a level up arrives on
+     the same tick as the clear that caused it, and a popup pool where a new announcement retires
+     the old one would have had the two race, with the player seeing one of them at random.
+   - **Lock delay and stack height, made visible.** The lock delay is half a second of grace the
+     board gave no sign of, so a piece that looked settled might have all of it left or none; the
+     piece now squashes as it runs out. The stack height is the same problem at the other end —
+     the difference between "plenty of room" and "the next S piece ends it" was four rows that
+     looked like the four below them; the well's side walls now go amber and then red.
+
+   Two things got measured wrong first and are worth recording:
+
+   - **The debris aim** (§7.5 above) — proportional speed cancels, and every chunk lands in the
+     same place.
+   - **Driving a T-spin through the MCP tools to check the announcement.** Holding soft drop for
+     120 ticks on the reasoning that the piece would stop at the bottom does stop it — and then
+     the 30-tick lock delay runs out while the key is still held, the piece sets, and the *next*
+     one starts falling under the same held key. The score going up by exactly the number of cells
+     dropped is what gave it away. Anything steering a piece has to stop the moment it arrives;
+     `ghost_y` is in the tool output for exactly this.
+
+8. **The skeletal-animation probe** (step 10), which I deliberately did not start. The brief
    budgets an hour and warns it is mid-rewrite with a `debug->Fatal` waiting in
    `ObjectAnimation.cpp:108` for any clip carrying a scale track. With the game and this report
    finished, that is the next hour I would spend — and I would spend it expecting to write a
