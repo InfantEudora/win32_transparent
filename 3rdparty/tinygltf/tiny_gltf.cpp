@@ -1,4 +1,4 @@
-//
+﻿//
 // Header-only tiny glTF 2.0 loader and serializer.
 //
 //
@@ -5468,6 +5468,32 @@ void JsonReserveArray(detail::json &o, size_t s) {
   (void)(s);
 }
 }  // namespace detail
+/*
+    THE glTF WRITER, AND WHY IT IS OFF.
+
+    Everything from here to the end of the namespace serialises a Model back out to glTF.
+    This engine only ever reads - core/GLTFLoader.cpp calls LoadBinaryFromMemory and nothing
+    else - so none of it is reachable, but "unreachable" and "not linked" are not the same
+    thing. WriteGltfStream ends in `stream << content << std::endl`, and those two symbols,
+    std::endl and operator<<(ostream&, const string&), are enough to pull libstdc++'s locale,
+    num_put and streambuf machinery into every app: about 700 KB, measured.
+
+    -Wl,--gc-sections does not remove it. That was tried, with -ffunction-sections on this
+    library, and cost exactly zero bytes: on PE/COFF each function's .pdata unwind entry
+    references it and keeps the section alive. It has to not be compiled, which is what this
+    guard does. See 3rdparty/makefile.
+
+    This is a local patch - upstream tinygltf has no such macro. It is safe to carry because
+    2.x is now a fork either way: upstream's answer to the size problem was tiny_gltf_v3.h,
+    a ground-up C rewrite with a different API entirely.
+
+    The declarations in tiny_gltf.h are deliberately NOT guarded. Two of them - the class's
+    WriteGltfSceneToStream/ToFile - would still compile, and leaving the class alone keeps its
+    layout identical whether or not this macro is set, so a translation unit that missed the
+    define cannot silently disagree about it. Calling one is a link error, which is the right
+    failure: loud, at build time, and exactly where the mistake is.
+*/
+#ifndef TINYGLTF_NO_WRITER
 
 // typedef std::pair<std::string, detail::json> json_object_pair;
 
@@ -7168,6 +7194,7 @@ bool TinyGLTF::WriteGltfSceneToFile(const Model *model,
   }
 }
 
+#endif  // TINYGLTF_NO_WRITER
 }  // namespace tinygltf
 
 #ifdef __clang__

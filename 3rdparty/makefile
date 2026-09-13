@@ -22,6 +22,9 @@
 #   -DTINYGLTF_NO_FS    switches the in-class initialiser of TinyGLTF::fs. See the note
 #                       beside the matching flag in engine.mk; a mismatch here is an
 #                       undefined reference to tinygltf::FileExists at app link time.
+#   -DTINYGLTF_NO_WRITER compiles the glTF serializer out. Nothing here calls it, and it was
+#                       the last referrer to std::endl and operator<<(ostream&, string) -
+#                       so the last thing pulling ~700 KB of libstdc++ stream machinery in.
 #   -D_WIN32            what the rest of the build assumes.
 #
 # No -g. The hand-built objects carried full debug info, which is most of why the archive
@@ -54,7 +57,7 @@ CC        := g++
 BUILD_DIR := build
 OUT       := ../libs/libthirdparty.a
 
-CFLAGS := -std=c++17 -Os -fno-exceptions -DJSON_NOEXCEPTION -DTINYGLTF_NO_FS -D_WIN32
+CFLAGS := -std=c++17 -Os -fno-exceptions -DJSON_NOEXCEPTION -DTINYGLTF_NO_FS -DTINYGLTF_NO_WRITER -D_WIN32
 IPATHS := -I. -Itinygltf -Istb_image -Iminiz
 
 #Object names are flat inside the archive, matching what the hand-built library held.

@@ -1,4 +1,4 @@
-#=======================================================================================
+﻿#=======================================================================================
 # The engine, as something an app's makefile includes.
 #
 # Every app under apps/<name>/ has its own makefile, builds its own exe into its own
@@ -111,6 +111,14 @@ CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
 #tinygltf::FileExists and friends that the library no longer defines. Hence up here with
 #the other app-invariant flags, and repeated in 3rdparty/makefile.
 CFLAGS += -DTINYGLTF_NO_FS
+
+#The glTF serializer, which nothing in this engine calls and which was the last thing
+#pulling libstdc++'s locale and streambuf machinery - about 700 KB - into every app. Like
+#NO_FS above this has to be seen by both sides, though for a weaker reason: the class
+#layout is deliberately the same either way, so a translation unit that missed it merely
+#fails to link if it calls the writer rather than disagreeing about the object silently.
+#Kept here anyway so the two compiles say the same thing. See 3rdparty/tinygltf/tiny_gltf.cpp.
+CFLAGS += -DTINYGLTF_NO_WRITER
 #Sound (OpenAL) is optional - see the USE_SOUND block below.
 #Nothing outside it links winmm any more: core/PrecisionSleeper resolves timeBeginPeriod
 #from winmm.dll at run time, and only on pre-Win10-1803 machines where the

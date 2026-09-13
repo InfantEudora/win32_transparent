@@ -1,4 +1,4 @@
-# Engine backlog
+﻿# Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
 `docs/engine_backlog_done.md` — 55 closed items, with their verification notes intact, because
@@ -43,9 +43,15 @@ Band B's heading was restored at the same time — it was lost when item 41 clos
 and 61 stranded under a band A that says it is empty.
 
 Also on 2026-09-13: **items 68 and 79 closed** - the eight genuinely broken format strings
-fixed, and `CONFIG=release` built - and **item 61 closed** and moved to the done list, along with the soft-compile
-change it turned out to need. Both came out of building `apps/testfx`, the fourteenth app and the
-first that exists to exercise the engine rather than to be a game — see `docs/testfx_plan.md`.
+fixed, and `CONFIG=release` built - and **item 61 closed** and moved to the done list, along with
+the soft-compile change it turned out to need. Both came out of building `apps/testfx`, the
+fourteenth app and the first that exists to exercise the engine rather than to be a game — see
+`docs/testfx_plan.md`.
+
+And later the same day, **item 83 opened**: libstdc++'s stream and locale machinery is out of
+`core/` and out of everything under `3rdparty/`, leaving OpenAL as the only thing still holding
+it. `libs/libthirdparty.a` gained a build rule (`3rdparty/makefile`) on the way, having had none
+at all - it was a hand-built blob that a fresh clone could not reproduce.
 
 ---
 
@@ -692,6 +698,118 @@ first that exists to exercise the engine rather than to be a game — see `docs/
   merely the input.** Also see item 49 — a run driven by a real gamepad would today record none of
   the stick's motion at all, because the polled path never becomes an event.
 
+- [~] **83. libstdc++'s stream and locale machinery: out of everything except OpenAL.**
+  Done 2026-09-13 for `core/`, tinygltf, stb_image and miniz; the remaining holder is
+  `libs/libOpenAL32.a` and it is the reason this is `[~]` rather than closed. Item 80 is the
+  other half of the OpenAL question and should be read with this one.
+
+  **What the machinery is and why it is so large.** One `std::ostringstream` anywhere in a
+  statically linked binary pulls in libstdc++'s locale system — `num_put`, `num_get`, `ctype`,
+  `money_get`, `time_get`, the facet registry and `basic_streambuf` with it. Measured against
+  this project's release flags by linking two otherwise identical probes:
+
+  ```
+  std::string only                 194,048
+  + std::ostringstream             929,792     +735,744
+  + std::ifstream                  930,304     (the same machinery; <sstream> and <fstream> share it)
+  + snprintf instead                194,560     +512
+  ```
+
+  735 KB to format integers into strings, because the facets have to be able to parse a
+  currency amount or a month name in any locale the program might later select. Nothing in this
+  engine has ever selected one.
+
+  **What was done, and what each part was actually worth.** The order matters, because three of
+  the four steps measure as almost nothing on their own — the machinery is all-or-nothing, and
+  until the last referrer goes, removing the others buys single-digit kilobytes:
+
+  | change | worth |
+  |---|---|
+  | `3rdparty/makefile` — the library had **no build rule at all** and was a hand-built blob | enabler |
+  | that blob was built `-Og -g`; rebuilt `-Os` | −102 KB |
+  | tinygltf's 19 `std::stringstream` error messages → `ErrStream`, plus `TINYGLTF_NO_FS` | −3 KB |
+  | `core/` — `HTTPServer`, `MCPServer`, `OCPPClient` off `<sstream>`/`<iomanip>` | ~0 |
+  | **`TINYGLTF_NO_WRITER` — the serializer compiled out** | **−634 KB** |
+
+  **Two live bugs fell out of the `core/` half, and they are the reason that row is worth more
+  than its zero kilobytes.** `HTTPServer.cpp` built its JSON by hand, in a file whose header
+  already included `tinygltf/json.hpp` and already had `using json = nlohmann::json`.
+
+  - `BroadcastVariables()` had been reduced to `http_debug->Fatal("Please fix me!")` with the
+    builder commented out above it, and `Fatal()` calls `exit(1)`. `SetVariable()` calls
+    `BroadcastVariables()`. So `apps/ocpp` ended its own process on any `/set_mode`, any HTML
+    hot-reload, and any WebSocket connect. It now serves the same object `/status` does.
+  - `/set_mode` and `/set_mode_enabled` interpolated percent-decoded query-string input straight
+    into JSON, so `?mode=eco"quoted` emitted malformed output. Now escaped by the library.
+
+  One trap worth knowing if more of this is done: nlohmann validates UTF-8 when it serialises,
+  and under `-fno-exceptions`/`JSON_NOEXCEPTION` a failure calls `std::abort()`. Since those
+  variables hold arbitrary decoded bytes, `dump()` had to become
+  `dump(-1, ' ', false, error_handler_t::replace)` — otherwise `?mode=%FF` is a remote way to
+  kill the app, which is the bug above wearing a different hat. `MCPServer.cpp` documents the
+  matching trap on the parse side (`allow_exceptions=false`).
+
+  While collapsing the ten copies of the HTTP response block into `SendHTTPResponse`, the copies
+  had already drifted: `/style.css` was the only one that had lost its send-failure logging.
+
+  The writer was the last referrer. `WriteGltfStream` ends in `stream << content << std::endl`,
+  and those two symbols held the whole 735 KB in every app, for a code path this engine cannot
+  reach — `core/GLTFLoader.cpp` only ever calls `LoadBinaryFromMemory`.
+
+  ```
+  ocpp_release.exe      4,227,584 -> 3,532,288   (-16.4%, locale symbols 669 -> 0)
+  tetris_release.exe    5,953,024 -> 5,797,888   (-2.6%)
+  ```
+
+  **`-Wl,--gc-sections` does not do this job, and that is worth knowing before anyone tries.**
+  Rebuilding `libthirdparty.a` with `-ffunction-sections -fdata-sections` so the linker could
+  drop the unreferenced writer cost **exactly zero bytes**, and the writer was still in the
+  binary afterwards. On PE/COFF each function's `.pdata` unwind entry references it and keeps
+  the section alive. This is the same result `engine.mk` records for the engine's own compile,
+  for a different reason, and it generalises: on this target, dead code has to not be compiled.
+
+  **Why tetris got 2.6% and ocpp got 16.4%, which is the whole remaining item.** Identical
+  change, two binaries: ocpp dropped 634 KB and tetris dropped 26 KB. Both lost the same
+  serializer, so the difference — about **608 KB** — is the machinery that stayed behind in the
+  one that links OpenAL. (They are different apps, so this is an inference from the deltas
+  rather than a controlled measurement; the ~735 KB probe figure above is the independent check
+  that the number is the right size.) The fourteen release binaries split along that line:
+
+  ```
+  no sound   animation 3.51M  grid 3.57M  isoanimation 3.82M  ocpp 3.53M  pinball 3.63M
+             ship 3.58M  tank 3.66M  testfx 3.55M  ui 3.49M
+  sound      breakout 5.81M  dozer 5.77M  sim 5.78M  tetris 5.80M  tileset 5.82M
+  ```
+
+  **Taking the streams out of openal-soft was looked at separately and reported as impractical**
+  — enough of the library uses them that it is not the single removable corner tinygltf's
+  serializer turned out to be. That assessment was not re-verified against openal-soft's source
+  while writing this item, so treat it as a starting point rather than a settled finding if
+  anyone picks it up. Either way the two live options are both larger than a patch:
+
+  - **Replace the audio library.** `core/SoundSystem.cpp` uses fifteen AL functions: open a
+    device, make a context, upload `AL_FORMAT_MONO16`/`STEREO16`, play, stop, query state. No
+    3D positioning, no effects, no streaming. That is a small enough surface that a much smaller
+    backend — or WASAPI directly — would cover it, and it would take ~2.3 MB rather than 608 KB
+    off the five sound apps. Under evaluation as of 2026-09-13.
+  - **Or accept it**, and note that the no-sound apps already have the win.
+
+  **Regression notes, which are the point of writing this down.** `TINYGLTF_NO_WRITER` and
+  `TINYGLTF_NO_FS` are set in *both* `engine.mk` and `3rdparty/makefile` and must stay in step;
+  `NO_FS` changes the in-class initialiser of `TinyGLTF::fs`, so a mismatch there is an
+  undefined reference to `tinygltf::FileExists` at app link time. `NO_WRITER` deliberately does
+  not change the class layout — the declarations in `tiny_gltf.h` are left alone — so a mismatch
+  there is only a link error if something calls the writer, which nothing does. Both are local
+  patches to a vendored 2.x tinygltf, which is safe to carry because upstream's own answer to
+  the size problem was `tiny_gltf_v3.h`: a ground-up C rewrite with POD structs, arena
+  allocation and its own JSON parser, i.e. a new library rather than an upgrade. Adopting it
+  would mean rewriting `core/GLTFLoader.cpp` against a different API, and it would also drop
+  `nlohmann/json` (item 74's 173 KB) — worth its own item if anyone wants it.
+
+  Finally: `engine.mk` gained two `-D`s above the shared/per-app line, so both changes needed
+  `make cleancore`. Make compares timestamps, not flags, and will happily link objects built
+  with the old ones.
+
 - [ ] **27. Finish the skeletal animation system.** `ObjectAnimation.cpp:108` still has a
   `debug->Fatal` for any clip carrying a scale track. The probe was deliberately never started.
   *Later.*
@@ -741,6 +859,17 @@ earlier version of this table conflated the two:
 
 Sized symbols account for 4.66 MB of the 5.37; the remainder is headers, padding, import tables and
 unsized data. Treat the rows as proportions, not as a budget that must sum.
+
+**Two of those rows moved on 2026-09-13 — see item 83.** The `libstdc++` line included about
+735 KB of stream and locale machinery that was being held by a single unreachable code path,
+tinygltf's glTF serializer; compiling it out took `ocpp_release.exe` from 4.23 MB to 3.53 MB and
+zeroed the 669 locale symbols in it. The `tinygltf` row drops with it: that object's own code and
+data went from 182,616 to 156,764 bytes, though that is the object measured directly rather than
+the table's method. `tetris.exe` keeps the machinery and most of that row, because OpenAL still
+references it — about 608 KB of the 2.3 MB by which a sound app now exceeds one without, the rest
+of that gap being OpenAL itself. Item 83's open half.
+The table above has not been re-bucketed since; treat the `libstdc++` and `tinygltf` rows as
+pre-change figures until someone re-runs `nm -S`.
 
 **Four things worth taking from that table.**
 

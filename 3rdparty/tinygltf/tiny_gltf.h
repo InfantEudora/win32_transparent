@@ -1,4 +1,4 @@
-#ifndef TINY_GLTF_HEADER_H
+﻿#ifndef TINY_GLTF_HEADER_H
 #define TINY_GLTF_HEADER_H
 
 #define TINYGLTF_NO_STB_IMAGE_WRITE
@@ -1427,6 +1427,10 @@ class TinyGLTF {
   ///
   /// Write glTF to stream, buffers and images will be embedded
   ///
+  // These two are declared but NOT built: this fork compiles the serializer out under
+  // TINYGLTF_NO_WRITER, which engine.mk and 3rdparty/makefile both set, because the writer
+  // was dragging ~700 KB of libstdc++ stream machinery into every app. Calling either is a
+  // link error by design. See the block comment above the guard in tiny_gltf.cpp.
   bool WriteGltfSceneToStream(const Model *model, std::ostream &stream,
                               bool prettyPrint, bool writeBinary);
 
