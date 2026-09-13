@@ -60,6 +60,10 @@ source files; keep heredocs for throwaway scripts.
 - **`&&` after a native `.exe` is unreliable** — check `$?` explicitly rather than chaining, if the
   exit status matters.
 - Bash and PowerShell are both available and take their own syntax. This file's examples are Bash.
+- **Two `python`s.** With `/c/msys64/mingw64/bin` on `PATH` for a build, `python` is MSYS's
+  interpreter, which has no `PIL` and no third-party packages. The repo's tools want the Windows
+  Python (3.9, has Pillow). Run the build and the tools in separate calls, or the tool dies with
+  `No module named 'PIL'` right after a build that worked.
 
 ---
 

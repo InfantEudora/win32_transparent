@@ -59,8 +59,8 @@ const PinFeature PIN_FEATURES[] = {
     //Listed at their ENTRY, at deck level, because that is the thing a player aims at and the
     //thing a scripted test fires a ball at. The full centrelines are in ApplicationPinball, where
     //they are sampled into geometry.
-    { "ramp_left",          PIN_KIND_RAMP_ENTRY, -2.05f,                    0.0f,  2.00f                   },
-    { "ramp_right",         PIN_KIND_RAMP_ENTRY,  1.45f,                    0.0f,  2.20f                   },
+    { "ramp_left",          PIN_KIND_RAMP_ENTRY, PIN_RAMP_L_ENTRY_X,        0.0f, PIN_RAMP_L_ENTRY_Z       },
+    { "ramp_right",         PIN_KIND_RAMP_ENTRY, PIN_RAMP_R_ENTRY_X,        0.0f, PIN_RAMP_R_ENTRY_Z       },
 };
 
 const int PIN_FEATURE_COUNT = (int)(sizeof(PIN_FEATURES) / sizeof(PIN_FEATURES[0]));

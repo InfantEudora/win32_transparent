@@ -23,6 +23,16 @@ static Debugger* debug = new Debugger("ApplicationPinball",DEBUG_ALL);
 #define PIN_INSERT_RISE         0.012f      //how far a lamp insert stands proud of the deck
 #define PIN_ARC_SEGMENTS        30          //the orbit; see the chord-error note in TableBuilder.h
 #define PIN_RAMP_SLAB           0.08f       //how thick a ramp floor looks
+#define PIN_RAMP_RAIL_THICK     0.06f       //a moulded ramp's side wall; thin, and OUTSIDE the floor
+
+/*
+    Portrait, 3:2, because the machine is (see Table.h's revision note): the cabinet is 6.9 x 10.4
+    and from 26 degrees off vertical it fills a 2:3 frame edge to edge with the margin MakeShot
+    leaves. The renderer's own width and height are not known until the window has resized, so
+    the shots are solved against these rather than against renderer->width.
+*/
+#define PIN_WINDOW_WIDTH        800
+#define PIN_WINDOW_HEIGHT       1200
 
 //The camera eases toward the current shot by this fraction of the remaining distance per pass.
 //A rate rather than a duration, so interrupting a move to go somewhere else costs nothing.
@@ -32,50 +42,63 @@ static Debugger* debug = new Debugger("ApplicationPinball",DEBUG_ALL);
 /*
     Where the ball runs, not where the floor is: MakeRibbon centres its slab on the path and hangs
     the thickness BELOW it, so a point here is a place the ball can be. That is what makes these
-    numbers checkable - "the crest is 0.85 above the deck" means the ball is 0.85 above the deck.
+    numbers checkable - "the crest is 0.82 above the deck" means the ball is 0.82 above the deck.
 
-    Both ramps end short of the inlane they feed, at z = 3.70 and 0.32 up rather than the
-    (x, 4.30) pinball_design.md 1.5 gives. A habitrail 0.46 wide centred at x = -1.70 spans -1.93
-    to -1.47, which at z = 4.30 has it lying across the inlane/outlane divider AND through the
-    slingshot, which stands 0.34 proud of the deck. Stopping up-table of the slingshot and a ball's
-    height above it drops the ball into the mouth of the inlane instead, which is what the design
-    describes and what a real habitrail does: it stops, and the ball falls the last little way.
+    BOTH RAMPS CLIMB ALONG A WALL AND COME HOME ALONG THE SAME WALL, the way the reference artwork
+    draws them: up the inside, a U-turn at the top, down the outside over the lane below. The
+    first build ran both habitrails back down the MIDDLE of the table as opaque slabs and they
+    covered most of the deck; here the airborne part is four wires (see BuildRamps) and passes
+    over things that are never more than 0.44 tall - the orbit return lane and the upper flipper
+    on the left, the plunger chute and the drop bank on the right.
 
-    The right ramp's loop over the bumper nest sits at y = 0.86, not the 0.76 that reads naturally
-    from the design's 0.70 crest. Even with the bumpers lowered to 0.63 overall (see
-    PIN_BUMPER_HEIGHT), 0.76 put the loop's underside 0.05 BELOW the nearest bumper cap - the ramp
-    floor and the cap occupying the same space. 0.86 clears it by 0.13, which is all a shape that
-    no ball is meant to roll over needs.
+    Each begins with a short FLAT run at deck level: that is the mouth, the spinner hangs in it on
+    the left, and it is what a scripted test fires at. The floor stops being part of the deck once
+    its underside clears a ball (y > PIN_RAMP_AIRBORNE_Y); from there on the ball is in the air.
+
+    Heights are what the plan tool checks: tools/pinball_plan.py samples these against everything
+    they cross and reports headroom in balls. Move a point, run it.
 */
+//Above this the ramp floor's underside clears a ball on the deck, so the ramp is airborne and
+//its rails stop being deck walls. PIN_RAMP_SLAB + a ball + a whisker; the plan tool uses the same.
+#define PIN_RAMP_AIRBORNE_Y     (PIN_RAMP_SLAB + PIN_BALL_DIAMETER + 0.02f)
+
 static const vec3 kLeftRampPath[] = {
-    vec3(-2.05f, 0.00f,  2.00f),    //entry, at deck level, with the spinner in its mouth
-    vec3(-2.16f, 0.20f,  1.10f),
-    vec3(-2.27f, 0.52f,  0.10f),
-    vec3(-2.30f, 0.85f, -1.00f),    //crest
-    vec3(-2.00f, 0.86f, -1.55f),    //the habitrail turns right...
-    vec3(-1.55f, 0.84f, -1.45f),
-    vec3(-1.45f, 0.78f, -0.70f),    //...and back down-table
-    vec3(-1.50f, 0.66f,  0.40f),
-    vec3(-1.55f, 0.52f,  1.60f),
-    vec3(-1.62f, 0.34f,  2.80f),
-    vec3(-1.70f, 0.32f,  3.70f),    //drops into the mouth of the left inlane
+    vec3(PIN_RAMP_L_ENTRY_X, 0.00f, PIN_RAMP_L_ENTRY_Z),    //mouth, flat, spinner hanging in it
+    vec3(-1.60f, 0.00f,  0.95f),    //the floor starts to climb
+    vec3(-1.70f, 0.12f,  0.45f),
+    vec3(-1.80f, 0.32f, -0.20f),    //the last point that is part of the deck; wires from here
+    vec3(-1.84f, 0.55f, -0.95f),    //passes the left pop's skirt by 0.14
+    vec3(-1.94f, 0.74f, -1.70f),    //over the upper flipper's tip, 1.3 balls above it
+    vec3(-2.00f, 0.82f, -2.25f),    //crest
+    vec3(-2.20f, 0.85f, -2.75f),    //U-turn toward the wall...
+    vec3(-2.48f, 0.86f, -2.88f),
+    vec3(-2.66f, 0.84f, -2.55f),    //...and back down-table, over the orbit return lane
+    vec3(-2.68f, 0.78f, -1.80f),    //over the upper flipper's pivot
+    vec3(-2.68f, 0.68f, -0.60f),
+    vec3(-2.66f, 0.58f,  0.60f),
+    vec3(-2.58f, 0.52f,  1.10f),
+    vec3(-2.20f, 0.48f,  1.45f),    //turning inboard, up-table of the outlane guide
+    vec3(-1.60f, 0.46f,  1.60f),    //ends 0.35 short of the divider; the ball drops into the inlane top
 };
 
 static const vec3 kRightRampPath[] = {
-    vec3( 1.45f, 0.00f,  2.20f),    //entry
-    vec3( 1.55f, 0.18f,  1.30f),
-    vec3( 1.64f, 0.44f,  0.40f),
-    vec3( 1.70f, 0.70f, -0.60f),    //crest
-    vec3( 1.35f, 0.76f, -1.45f),
-    vec3( 0.55f, 0.86f, -2.00f),
-    vec3(-0.20f, 0.86f, -2.35f),    //the loop, over the bumper nest
-    vec3(-0.70f, 0.80f, -1.85f),
-    vec3(-0.55f, 0.70f, -1.15f),
-    vec3( 0.10f, 0.60f, -0.70f),
-    vec3( 0.70f, 0.46f,  0.30f),
-    vec3( 0.95f, 0.30f,  1.70f),
-    vec3( 1.05f, 0.34f,  3.10f),
-    vec3( 1.10f, 0.32f,  3.70f),    //drops into the mouth of the right inlane
+    vec3(PIN_RAMP_R_ENTRY_X, 0.00f, PIN_RAMP_R_ENTRY_Z),    //mouth, flat
+    vec3( 1.10f, 0.00f,  0.95f),
+    vec3( 1.20f, 0.12f,  0.45f),
+    vec3( 1.32f, 0.32f, -0.20f),    //the last deck-level point; wires from here
+    vec3( 1.44f, 0.55f, -0.95f),    //passes the right pop's skirt by 0.33
+    vec3( 1.52f, 0.74f, -1.65f),
+    vec3( 1.60f, 0.82f, -2.10f),    //crest, beside the right wormhole
+    vec3( 1.85f, 0.86f, -2.50f),    //U-turn over the drop bank (0.30 tall; 0.48 of headroom)
+    vec3( 2.20f, 0.87f, -2.55f),
+    vec3( 2.55f, 0.85f, -2.20f),    //...and down the plunger chute, between divider and cabinet
+    vec3( 2.60f, 0.80f, -1.50f),
+    vec3( 2.60f, 0.77f, -0.30f),
+    vec3( 2.60f, 0.76f,  0.80f),
+    vec3( 2.45f, 0.74f,  1.25f),    //turning inboard OVER the chute divider (0.55 tall) at 0.70
+    vec3( 2.05f, 0.68f,  1.50f),
+    vec3( 1.55f, 0.56f,  1.62f),
+    vec3( 1.02f, 0.48f,  1.62f),    //ends 0.35 short of the right divider
 };
 
 //--- The camera shots ---------------------------------------------------------------------------
@@ -83,57 +106,77 @@ static const vec3 kRightRampPath[] = {
     Answer 2 to the design document's open questions: a fixed view like the original, framed to
     match the reference artwork, that MOVES somewhere when something happens there and comes back.
 
-    PIN_SHOT_TABLE is the fixed one and the only one stage 0 starts in. The other two exist to
-    prove the mechanism and, more immediately, to be able to look closely at a corner of the layout
+    PIN_SHOT_TABLE is the fixed one and the only one stage 0 starts in. The others exist to prove
+    the mechanism and, more immediately, to be able to look closely at a corner of the layout
     without hand-flying a camera - which is most of what stage 0 is for.
 
-    --- HOW THE TABLE SHOT WAS AIMED, BECAUSE GUESSING IT DOES NOT WORK --------------------------
-    The first attempt was picked by eye and cut the flippers off the bottom of the frame, which is
-    not a thing you can see coming from the numbers. The framing is really decided by two points,
-    and once they are named it falls out. For the PLAYFIELD shot those are
+    --- A SHOT IS SOLVED, NOT TYPED ----------------------------------------------------------------
+    The first build hand-derived each shot from two points - the nearest thing in frame and the
+    farthest - and wrote the resulting camera position down as a literal. The derivation was right
+    and the literals went stale the moment the table changed length, which is exactly what this
+    revision did to it. So the derivation is now code and runs at start-up against Table.h.
 
-        A = (0, 0.00, +6.90)    the drain end of the cabinet - the NEAREST thing in the shot
-        C = (0, 1.30, -7.20)    the top rail at the far end  - the FARTHEST
+    Given the two points A (near, low) and C (far, high), a view axis `elevation` degrees off
+    vertical, and a vertical fov: the ray from the camera to A lies half a fov BELOW the axis and
+    the ray to C half a fov ABOVE it. Both rays' directions are therefore known, and the camera is
+    simply where the line through A along one meets the line through C along the other. That
+    fixes the camera in the vertical plane. Where it LOOKS is where the axis meets the deck, which
+    on a long table is well down-table of the geometric centre - perspective makes the near end
+    take far more of the frame than the far end, and aiming at the middle cuts the flippers off.
+    It did, in the first build.
 
-    and from a camera at (0,16,11) they lie 18.4 degrees either side of the direction bisecting
-    them, so a 39 degree vertical fov holds both. That bisector meets the deck at z = +0.72, and
-    THAT is where the camera looks - not the middle of the playfield. Perspective makes the near
-    end of a 13-unit table take far more of the frame than the far end, so aiming at the geometric
-    centre puts the drain off the bottom edge every time. It did.
-
-    The view axis comes out 33 degrees off vertical: the artwork's near-overhead look, with just
-    enough perspective left that the ramps read as standing above the deck rather than painted on
-    it.
-
-    PIN_SHOT_MACHINE is the same arithmetic with B = (0,4.10,-7.55), the top of the backbox, in
-    place of C - it backs off to (0,20,14) and looks at z = -0.83. It is worth having, because the
-    machine does have a cabinet and a backglass, but it is not the default: with the backbox in
-    frame the playfield only gets about half the height, and the playfield is the game.
-
-    WIDTH IS THE WINDOW'S JOB, NOT THE CAMERA'S. Once the table's LENGTH has fixed the fov and the
-    distance, the only thing left deciding how much width is visible is the aspect ratio - so a
-    table that fills its frame needs a window about as narrow as a real cabinet is. See the Resize
-    call at the end of Init.
+    Width is then the window's job: with the length fixing distance and fov, the aspect ratio
+    decides how much width shows. MakeShot checks that the cabinet fits and backs the camera off
+    along its own axis if it does not - moving straight back only ever shrinks what A and C
+    subtend, so the length still fits.
 */
-static const PinShot kShots[PIN_SHOT_COUNT] = {
-    { "table",   vec3(PIN_CENTRE_X, 16.0f, 11.0f), vec3(PIN_CENTRE_X, 0.20f,  0.72f), 39.0f },
-    //Both detail shots are aimed by the same two-point method as the table shot, over the stretch
-    //each is meant to show. Picked by eye they were both wrong in the same way: too low, so the
-    //cabinet's far wall stood up across the top of the frame and the shot was half wall.
-    //  upper: z -2.00 (the bumper nest) to z -7.20 (the top rail) -> 13.1 degrees, fov 30
-    //  lower: z +6.60 (the drain)       to z +1.80 (mid-table)    -> 12.3 degrees, fov 28,
-    //         and steep enough to see over the cabinet's front wall - see BuildDeckAndCabinet.
-    { "upper",   vec3(PIN_CENTRE_X,  9.0f,  2.0f), vec3(PIN_CENTRE_X, 0.15f, -4.79f), 30.0f },
-    { "lower",   vec3(PIN_CENTRE_X, 10.0f,  8.0f), vec3(PIN_CENTRE_X, 0.15f,  4.31f), 28.0f },
-    { "machine", vec3(PIN_CENTRE_X, 20.0f, 14.0f), vec3(PIN_CENTRE_X, 0.20f, -0.83f), 39.0f },
-    /*
-        PIN_SHOT_ORBIT. The position and target here are never used - UpdateCameraShot hands the
-        camera to UpdateOrbitControls instead of easing toward them - but the entry has to exist so
-        that kShots[current_shot].name works for every shot, and the fov IS used, as the value the
-        orbit starts at. See the mode note in ApplicationPinball.h.
-    */
-    { "orbit",   vec3(),                                vec3(),                             39.0f },
-};
+static PinShot MakeShot(const char* name, const vec3& near_point, const vec3& far_point,
+                        float elevation_degrees, float fov_degrees,
+                        float half_width_needed, float aspect){
+    //Everything happens in the vertical plane x = PIN_CENTRE_X, as 2D (z, y).
+    const float e = toradians(elevation_degrees);
+    const float h = toradians(fov_degrees) * 0.5f * 0.94f;   //6% of margin inside the frame
+    //The axis points up-table (-z) and down (-y). Rotating it toward the vertical by h gives the
+    //steeper ray, to the near point; away from the vertical by h gives the flatter ray, to the far
+    //point. In (z, y) a direction at angle t off vertical pointing down-and-up-table is
+    //(-sin t, -cos t).
+    const vec2 ray_near = vec2(-sinf(e - h),-cosf(e - h));
+    const vec2 ray_far  = vec2(-sinf(e + h),-cosf(e + h));
+    const vec2 A = vec2(near_point.z,near_point.y);
+    const vec2 C = vec2(far_point.z,far_point.y);
+    //Solve A - ray_near * s = C - ray_far * t for s, by Cramer's rule on the 2x2 system
+    //    ray_near * s - ray_far * t = A - C
+    const vec2 rhs = A - C;
+    const float det = ray_near.x * (-ray_far.y) - (-ray_far.x) * ray_near.y;
+    float s = 1.0f;
+    if (fabsf(det) > 1e-6f){
+        s = (rhs.x * (-ray_far.y) - (-ray_far.x) * rhs.y) / det;
+    }
+    vec2 P = A - ray_near * s;
+
+    //Does the subject fit across? The horizontal half-fov follows from the vertical one and the
+    //aspect. Measured on the deck halfway between the two points - the middle of what the shot
+    //is OF, which for a detail shot is nowhere near the middle of the table.
+    const vec2 axis = vec2(-sinf(e),-cosf(e));
+    const float tan_half_h = tanf(toradians(fov_degrees) * 0.5f) * aspect;
+    const vec2 M = vec2((near_point.z + far_point.z) * 0.5f,0.0f);
+    const float along = (M - P).dot(axis);
+    const float needed = half_width_needed / tan_half_h;
+    if (needed > along){
+        P = P - axis * (needed - along);
+    }
+
+    //Look where the axis meets the deck.
+    const float to_deck = P.y / cosf(e);
+    const vec2 T = P + axis * to_deck;
+
+    PinShot shot;
+    shot.name     = name;
+    shot.position = vec3(PIN_CENTRE_X,P.y,P.x);
+    shot.target   = vec3(PIN_CENTRE_X,0.15f,T.x);
+    shot.fov      = fov_degrees;
+    return shot;
+}
 
 //How fast the orbit camera answers the mouse. Divisors rather than multipliers to match the feel
 //of apps/tank, which these are deliberately the same as - the point of a debug camera is that it
@@ -152,6 +195,71 @@ ApplicationPinball::ApplicationPinball():Application(){
 }
 
 ApplicationPinball::~ApplicationPinball(){
+}
+
+//--- Parts --------------------------------------------------------------------------------------
+
+void ApplicationPinball::LoadParts(){
+    /*
+        LoadFile is FATAL on a file it cannot find, so the existence check has to come first: a
+        table without parts.glb is a table built from primitives, not a crash.
+    */
+    std::string resolved;
+    if (!ResolveAssetPath("meshes/parts.glb",resolved)){
+        debug->Warn("meshes/parts.glb not found - building the table from primitives. "
+                    "tools/pinball_parts_blender.py makes it.\n");
+        return;
+    }
+    gltfloader.LoadGLTFFile("meshes/parts.glb");
+    GetAllAssetsFromGLTF();
+    f_parts_loaded = true;
+
+    //Every part the builders will ask for, so a missing or misnamed node shows up here as one
+    //line rather than as a primitive quietly standing in. Extents are in engine axes, which is
+    //also the check that Blender's Z-up came through as our Y-up: a flipper bat is long in x,
+    //the plunger rod is long in y (the app turns it onto z), the standup is wide in x.
+    const char* expected[] = {
+        "ball","flipper_bat","flipper_bat_upper","bumper_body","bumper_cap","post","rubber",
+        "saucer_rim","target_drop","target_standup","spinner_vane","gate_flap",
+        "plunger_tip","plunger_rod","plunger_knob",
+    };
+    for (int i = 0; i < (int)(sizeof(expected)/sizeof(expected[0])); i++){
+        Mesh* mesh = assetmanager->GetMeshFromAsset(expected[i]);
+        if (mesh){
+            vec3 e = mesh->GetExtents();
+            debug->Info("part %-18s extents %.3f x %.3f x %.3f\n",expected[i],e.x,e.y,e.z);
+        }else{
+            debug->Warn("part %-18s MISSING from parts.glb - its primitive stands in\n",expected[i]);
+        }
+    }
+}
+
+bool ApplicationPinball::HasPart(const char* part){
+    return f_parts_loaded && assetmanager->GetAsset(part) != NULL;
+}
+
+Object* ApplicationPinball::NewPartObject(const char* part, const char* name, Mesh* fallback,
+                                          const vec3& position, int material){
+    Object* object = NULL;
+    if (HasPart(part)){
+        //A new Object sharing the asset's mesh - so three bumpers are one instanced draw call,
+        //exactly as three Objects sharing one primitive mesh are.
+        object = assetmanager->GetObjectFromAsset(part);
+    }else if (fallback){
+        object = new Object();
+        object->SetMesh(fallback);
+    }
+    if (!object){
+        debug->Err("NewPartObject(%s): no part and no fallback\n",name);
+        return NULL;
+    }
+    object->name = name;
+    object->SetPosition(position);
+    //By INDEX, which lowers the object's resolve flag: the names the .glb brought along will not
+    //come back next frame and overwrite this. See the materials note in core/Object.h.
+    object->SetMaterialSlot(0,material);
+    main_scene->AddObject(object);
+    return object;
 }
 
 //--- Small builders -----------------------------------------------------------------------------
@@ -210,6 +318,12 @@ Object* ApplicationPinball::AddWall(const char* name, const PinPath& path, float
         debug->Err("AddWall(%s): the path made no mesh\n",name);
         return NULL;
     }
+    //wall: points = the path, a = thickness, b = height. Every guide, divider and rail on the
+    //table comes through here, which is what makes the plan complete.
+    PinPlanEntry& entry = RecordPlan("wall",name);
+    entry.points = path;
+    entry.a = thickness;
+    entry.b = height;
     //A swept mesh is already in world coordinates - the path was - so the Object sits at the
     //origin and the geometry carries the position. Stage 1's collider chain will read the same
     //path rather than this object's transform, which is the point of building both from one
@@ -240,75 +354,61 @@ void ApplicationPinball::AddPost(const char* name, float x, float z){
         vertical. The render mesh here is the cylinder that describes; the collider will be the
         capsule that behaves.
     */
-    Object* post = new Object();
-    post->SetMesh(post_mesh);
-    post->name = buffer;
-    post->SetPosition(vec3(x,0.24f,z));
-    post->SetMaterialSlot(0,material_chrome);
-    main_scene->AddObject(post);
+    NewPartObject("post",buffer,post_mesh,vec3(x,PIN_POST_HEIGHT * 0.5f,z),material_chrome);
 
     snprintf(buffer,sizeof(buffer),"%s_rubber",name);
-    Object* rubber = new Object();
-    rubber->SetMesh(rubber_mesh);
-    rubber->name = buffer;
-    rubber->SetPosition(vec3(x,0.17f,z));
-    rubber->SetMaterialSlot(0,material_rubber);
-    main_scene->AddObject(rubber);
+    NewPartObject("rubber",buffer,rubber_mesh,vec3(x,0.17f,z),material_rubber);
+
+    //post: one point, a = the radius the ball meets, which is the RUBBER's and not the post's,
+    //b = how tall it stands, for the ramps' headroom check.
+    PinPlanEntry& entry = RecordPlan("post",name);
+    entry.points.push_back(vec3(x,0.0f,z));
+    entry.a = PIN_RUBBER_RADIUS;
+    entry.b = PIN_POST_HEIGHT;
 }
 
 Object* ApplicationPinball::AddFlipper(const char* name, float x, float z, float length,
                                        float angle_degrees, bool f_mirrored){
     /*
-        The bat is built with its PIVOT AT THE OBJECT ORIGIN and extending along its own +X (or -X
-        when mirrored), because that is what stage 1's hinge joint needs and what the Blender
-        flipper_bat has to match - pinball_design.md 3.2 calls it out as the modelling note most
-        likely to cost a round trip. A bat whose origin is in its middle swings around its middle
-        and looks broken, and the fault is invisible until it moves.
-    */
-    PinPath bat;
-    float dir = f_mirrored ? -1.0f : 1.0f;
-    AppendXZ(bat,0.0f,0.0f,0.0f);
-    AppendXZ(bat,dir * length,0.0f,0.0f);
-    //Slightly wider than PIN_FLIPPER_WIDTH so the placeholder reads as a bat rather than a wire;
-    //the taper a real one has is the modelled mesh's job.
-    Mesh* mesh = MakeWallStrip(bat,PIN_FLIPPER_THICKNESS,PIN_FLIPPER_WIDTH,true);
-    if (!mesh){
-        return NULL;
-    }
-    Object* object = AddMeshObject(name,mesh,vec3(x,0.06f,z),material_orange);
-    if (object){
-        //Positive angle points the tip UP-TABLE for both hands - see the convention note at
-        //PIN_FLIPPER_REST_DEG. The mirror is in the bat's own direction, above, not in the sign.
-        object->SetRotation(quat(vec3(0,1,0),toradians(angle_degrees)));
-    }
-    return object;
-}
+        The bat has its PIVOT AT THE OBJECT ORIGIN and lies along its own +X, for BOTH hands,
+        because that is what stage 1's hinge joint needs and what the Blender flipper_bat has to
+        match - pinball_design.md 3.2 calls it out as the modelling note most likely to cost a
+        round trip. A bat whose origin is in its middle swings around its middle and looks broken,
+        and the fault is invisible until it moves.
 
-//A path offset sideways from another. `amount` is positive to the LEFT of travel, matching
-//TableBuilder's own sense. Used to turn a ramp centreline into its two rails without writing the
-//rails out by hand - which would be two more chances for the art to disagree with itself.
-static PinPath OffsetPath(const PinPath& path, float amount){
-    PinPath out;
-    const vec3 up = vec3(0,1,0);
-    for (size_t i = 0; i < path.size(); i++){
-        //The heading at a point is the average of the segments either side of it, so the offset
-        //curve stays parallel round a bend instead of stepping at every join.
-        vec3 heading = vec3();
-        if (i > 0){
-            vec3 d = path[i] - path[i - 1];
-            heading += vec3(d.x,0.0f,d.z).normalize();
+        THE MIRRORED BAT IS THE SAME BAT TURNED THROUGH 180 - ANGLE. A positive angle about +Y
+        takes +X toward -Z (up-table), so the left bat at rest, -32, points inboard and
+        down-table; turning the identical bat through 180 - (-32) = 212 degrees points it
+        inboard the OTHER way and still down-table. The first build built the mirrored bat along
+        -X and applied the angle unchanged, which is turning through 180 + angle: the right
+        flipper stood at rest in its flipped pose, and its own screenshots showed it.
+    */
+    const char* part = (length > (PIN_FLIPPER_U_LENGTH + 0.01f)) ? "flipper_bat" : "flipper_bat_upper";
+    Mesh* fallback = NULL;
+    if (!HasPart(part)){
+        PinPath bat;
+        AppendXZ(bat,0.0f,0.0f,0.0f);
+        AppendXZ(bat,length,0.0f,0.0f);
+        //The placeholder is a plain slab; the taper a real bat has is the modelled part's job.
+        fallback = MakeWallStrip(bat,PIN_FLIPPER_THICKNESS,PIN_FLIPPER_WIDTH,true);
+        if (!fallback){
+            return NULL;
         }
-        if (i + 1 < path.size()){
-            vec3 d = path[i + 1] - path[i];
-            heading += vec3(d.x,0.0f,d.z).normalize();
-        }
-        if (heading.length() < 0.0001f){
-            continue;
-        }
-        heading.normalize();
-        out.push_back(path[i] + up.cross(heading) * amount);
     }
-    return out;
+    Object* object = NewPartObject(part,name,fallback,vec3(x,0.06f,z),material_orange);
+    if (object){
+        float yaw = f_mirrored ? (180.0f - angle_degrees) : angle_degrees;
+        object->SetRotation(quat(vec3(0,1,0),toradians(yaw)));
+    }
+    //flipper: one point at the pivot, a = length, b = rest angle in degrees, c = 1 if mirrored,
+    //d = the bat's width. The plan tool sweeps the bat between rest and up itself.
+    PinPlanEntry& entry = RecordPlan("flipper",name);
+    entry.points.push_back(vec3(x,0.0f,z));
+    entry.a = length;
+    entry.b = angle_degrees;
+    entry.c = f_mirrored ? 1.0f : 0.0f;
+    entry.d = PIN_FLIPPER_WIDTH;
+    return object;
 }
 
 //--- Setup --------------------------------------------------------------------------------------
@@ -335,8 +435,8 @@ void ApplicationPinball::Init(void){
 
     //--- Shared meshes --------------------------------------------------------------------------
     unit_box_mesh    = MakeBox(vec3(1,1,1));
-    post_mesh        = MakeCylinder(0.075f,0.48f,14,true);
-    rubber_mesh      = MakeCylinder(0.105f,0.16f,14,true);
+    post_mesh        = MakeCylinder(PIN_POST_RADIUS,PIN_POST_HEIGHT,14,true);
+    rubber_mesh      = MakeCylinder(PIN_RUBBER_RADIUS,0.16f,14,true);
     bumper_body_mesh = MakeCylinder(PIN_BUMPER_RADIUS,PIN_BUMPER_HEIGHT,22,true);
     bumper_cap_mesh  = MakeCylinder(PIN_BUMPER_SKIRT_RADIUS,0.14f,26,true);
     saucer_mesh      = MakeCylinder(PIN_SAUCER_RADIUS,0.10f,22,true);
@@ -358,6 +458,9 @@ void ApplicationPinball::Init(void){
 
     BuildMaterials();
     BuildEnvironment();
+    //After the materials - the .glb's own material names are deduplicated against the app's by
+    //name, and the app's have to be there first for the app's to be the ones that win.
+    LoadParts();
     BuildDeckAndCabinet();
     BuildLowerPlayfield();
     BuildLauncher();
@@ -377,15 +480,8 @@ void ApplicationPinball::Init(void){
     SetPhysicsTPS(PIN_TPS);
     ApplyTilt();
 
-    /*
-        Portrait, and narrow - because a pinball cabinet is. See the width note in the kShots
-        comment: the table's LENGTH has already fixed the fov and the camera distance, so the only
-        control left over how much width is on screen is this aspect ratio. At 0.66 the shot shows
-        about 11.3 units across against the cabinet's 6.9, which leaves roughly two units of margin
-        either side - room for the score and mission readouts stage 5 wants, without the machine
-        itself shrinking into the middle of a letterboxed frame.
-    */
-    main_window->Resize(760,1150);
+    //Portrait, 3:2 - see PIN_WINDOW_WIDTH. The shots were solved for this aspect in SetupCamera.
+    main_window->Resize(PIN_WINDOW_WIDTH,PIN_WINDOW_HEIGHT);
 
     //One tick so the first frame is not an empty world. Nothing simulates yet; this is the same
     //courtesy every other app in the repo extends.
@@ -420,7 +516,10 @@ void ApplicationPinball::BuildMaterials(){
         { "pin_deck",      vec4(0.055f,0.105f,0.165f,1.0f), 0.12f, 0.22f, vec4(0.04f,0.10f,0.14f,0.10f), &material_deck },
         //Painted lane lines and arrows on the deck: cream, flat, and unaffected by anything.
         { "pin_deck_line", vec4(0.88f,0.86f,0.78f,1.0f),    0.00f, 0.65f, vec4(0.62f,0.60f,0.54f,0.22f), &material_deck_line },
-        { "pin_cabinet",   vec4(0.085f,0.090f,0.105f,1.0f), 0.25f, 0.45f, vec4(0,0,0,1),                 &material_cabinet },
+        //The cabinet: matte. It was a quarter metallic and the walls mirrored the woolshop HDR
+        //back at every camera that looked at them from the side - a bright blur of wool where a
+        //dark box should be. A painted cabinet reflects nothing worth seeing.
+        { "pin_cabinet",   vec4(0.085f,0.090f,0.105f,1.0f), 0.00f, 0.65f, vec4(0,0,0,1),                 &material_cabinet },
         //Chrome: posts, ball, wire rails. Roughness low enough to mirror, not so low that it is a
         //single hard highlight and otherwise black.
         { "pin_chrome",    vec4(0.92f,0.94f,0.97f,1.0f),    0.95f, 0.13f, vec4(0,0,0,1),                 &material_chrome },
@@ -521,8 +620,8 @@ void ApplicationPinball::BuildDeckAndCabinet(){
     const float t  = PIN_WALL_THICKNESS;
     const float h  = PIN_CABINET_HEIGHT;
     const float cy = h * 0.5f;
-    const float inner_x = 2.85f;
-    const float inner_z = 6.60f;
+    const float inner_x = PIN_DECK_MAX_X - 0.05f;      //2.85: the deck runs 0.05 under the wall
+    const float inner_z = PIN_DECK_MAX_Z;
 
     AddBox("cabinet_left", vec3(-inner_x - t * 0.5f,cy,0.0f),
            vec3(t,h,(inner_z + t) * 2.0f),material_cabinet);
@@ -541,8 +640,8 @@ void ApplicationPinball::BuildDeckAndCabinet(){
         over 0.10 of run. The "lower" shot spent a revision framing a grey slab before this was
         obvious. 0.55 is still two ball diameters, so it contains everything it needs to.
     */
-    AddBox("cabinet_front",vec3(0.0f,0.275f, inner_z + t * 0.5f),
-           vec3(inner_x * 2.0f,0.55f,t),material_cabinet);
+    AddBox("cabinet_front",vec3(0.0f,PIN_CABINET_FRONT_HEIGHT * 0.5f, inner_z + t * 0.5f),
+           vec3(inner_x * 2.0f,PIN_CABINET_FRONT_HEIGHT,t),material_cabinet);
 
     /*
         The apron, in two plates with the drain mouth between them. On a real machine this is where
@@ -569,14 +668,16 @@ void ApplicationPinball::BuildDeckAndCabinet(){
 
 void ApplicationPinball::BuildLowerPlayfield(){
     /*
-        Everything below the bumper nest, built once for the left and once mirrored - the mirror is
-        PIN_MIRROR_X and not a second set of typed numbers, so the two halves cannot disagree.
+        Everything below the ramp mouths, built once for the left and once mirrored - the mirror is
+        PIN_MIRROR_X and not a second set of typed numbers, so the two halves cannot disagree. On
+        the right the "cabinet" is the chute divider, which is exactly what PIN_MIRROR_X maps the
+        left wall onto.
 
-        Read it as four lanes side by side at z = 4.6, outside in:
-            cabinet -2.85 | dead space | -2.30 outlane guide | outlane | -1.80 divider | inlane |
-            -1.41 slingshot face | the flipper
-        which is the arrangement every machine has had for fifty years, and which the published
-        coordinates did not quite describe - see changes 2 to 5 in Table.h.
+        Read it as four lanes side by side at z = 2.6, outside in:
+            wall -2.85 | -2.35 outlane guide | outlane | -1.80 divider | inlane | -1.25 slingshot
+        which is the arrangement every machine has had for fifty years. Each lane is 0.40 clear -
+        1.5 balls - and tools/pinball_plan.py is what says so; the first draft's were measured
+        centre to centre and one of them was 0.24.
     */
     for (int side = 0; side < 2; side++){
         const bool f_mirror = (side == 1);
@@ -585,57 +686,56 @@ void ApplicationPinball::BuildLowerPlayfield(){
         #define PIN_X(v) (f_mirror ? PIN_MIRROR_X(v) : (v))
         char name[64];
 
-        //The inlane / outlane divider.
+        //The inlane / outlane divider: straight, then bending inboard to end just outboard of
+        //and up-table of the flipper pivot, so the inlane delivers the ball ONTO the bat. See
+        //PIN_DIVIDER_END_X for why this bend is the whole inlane.
         {
             PinPath p;
             AppendXZ(p,PIN_X(PIN_DIVIDER_L_X),PIN_DIVIDER_MIN_Z);
-            AppendXZ(p,PIN_X(PIN_DIVIDER_L_X),PIN_DIVIDER_MAX_Z);
+            AppendXZ(p,PIN_X(PIN_DIVIDER_L_X),PIN_DIVIDER_BEND_Z);
+            AppendXZ(p,PIN_X(PIN_DIVIDER_END_X),PIN_DIVIDER_END_Z);
             snprintf(name,sizeof(name),"divider_%s",tag);
             AddWall(name,p,PIN_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
         }
-        //The outlane's outer guide. Angled in slightly at the top so a ball rolling down the side
-        //is steered into the lane rather than meeting the end of a wall.
+        //The outlane's outer guide, FROM THE WALL: diagonally in to its knee and then straight
+        //down. Starting at the wall is what closes the strip along the cabinet that the first
+        //draft left open for the whole length of the table.
         {
             PinPath p;
-            AppendXZ(p,PIN_X(PIN_OUTLANE_L_X - 0.18f),PIN_OUTLANE_MIN_Z);
-            AppendXZ(p,PIN_X(PIN_OUTLANE_L_X),PIN_OUTLANE_MIN_Z + 0.55f);
+            AppendXZ(p,PIN_X(PIN_PLAY_MIN_X),PIN_OUTLANE_TOP_Z);
+            AppendXZ(p,PIN_X(PIN_OUTLANE_L_X),PIN_OUTLANE_KNEE_Z);
             AppendXZ(p,PIN_X(PIN_OUTLANE_L_X),PIN_OUTLANE_MAX_Z);
             snprintf(name,sizeof(name),"outlane_guide_%s",tag);
             AddWall(name,p,PIN_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
         }
-        //The slingshot: a rubber face on the hypotenuse, with a plastic over it.
+        //The slingshot: a closed triangle of rubber - kicking face, bottom, outer side - with a
+        //plastic floating over it. The outer side is what bounds the inlane (PIN_SLING_L_AX).
         {
             PinPath p;
             AppendXZ(p,PIN_X(PIN_SLING_L_AX),PIN_SLING_L_AZ);
             AppendXZ(p,PIN_X(PIN_SLING_L_BX),PIN_SLING_L_BZ);
+            AppendXZ(p,PIN_X(PIN_SLING_L_CX),PIN_SLING_L_CZ);
+            AppendXZ(p,PIN_X(PIN_SLING_L_AX),PIN_SLING_L_AZ);
             snprintf(name,sizeof(name),"sling_%s",tag);
-            AddWall(name,p,0.34f,0.16f,material_rubber);
+            AddWall(name,p,PIN_SLING_HEIGHT,PIN_SLING_THICKNESS,material_rubber);
 
-            //The plastic that covers the mechanism, floating just above the rubber. Reads as the
-            //orange wedge the artwork has above each flipper.
-            float mx = PIN_X((PIN_SLING_L_AX + PIN_SLING_L_BX) * 0.5f);
-            float mz = (PIN_SLING_L_AZ + PIN_SLING_L_BZ) * 0.5f;
-            //The face runs 0.60 across and 0.80 down-table, so it is 53 degrees off the x axis;
-            //the mirrored one leans the other way.
-            float yaw = f_mirror ? 53.13f : -53.13f;
+            //The plastic that covers the mechanism. Reads as the orange wedge the artwork has
+            //above each flipper; centred on the triangle, a shade larger than it.
+            float cx = PIN_X((PIN_SLING_L_AX + PIN_SLING_L_BX + PIN_SLING_L_CX) / 3.0f);
+            float cz = (PIN_SLING_L_AZ + PIN_SLING_L_BZ + PIN_SLING_L_CZ) / 3.0f;
+            //The kicking face runs 0.45 across and 0.85 down-table: 62 degrees off the x axis.
+            //A positive yaw about +Y takes +X toward -Z, so the left one leans by MINUS that.
+            float yaw = f_mirror ? 62.0f : -62.0f;
             snprintf(name,sizeof(name),"sling_plastic_%s",tag);
-            AddBox(name,vec3(mx + (f_mirror ? -0.14f : 0.14f),0.30f,mz - 0.08f),
-                   vec3(0.92f,0.04f,0.34f),material_cream,yaw);
-        }
-        //The lip that carries the inlane onto the flipper, below where the divider stops.
-        {
-            PinPath p;
-            AppendXZ(p,PIN_X(PIN_DIVIDER_L_X),PIN_DIVIDER_MAX_Z);
-            AppendXZ(p,PIN_X(PIN_DIVIDER_L_X + 0.22f),PIN_DIVIDER_MAX_Z + 0.30f);
-            snprintf(name,sizeof(name),"inlane_lip_%s",tag);
-            AddWall(name,p,PIN_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
+            AddBox(name,vec3(cx,PIN_SLING_HEIGHT + 0.02f,cz),vec3(1.00f,0.04f,0.30f),
+                   material_cream,yaw);
         }
         //The wall that funnels a drained ball from the outlane across to the outhole, under the
         //apron. Visible here because there is no glass and no apron art yet; it will be hidden.
         {
             PinPath p;
-            AppendXZ(p,PIN_X(PIN_SAVE_L_X - 0.24f),PIN_OUTLANE_MAX_Z);
-            AppendXZ(p,PIN_X(-0.95f),PIN_APRON_MIN_Z + 0.18f);
+            AppendXZ(p,PIN_X(PIN_OUTLANE_L_X - 0.05f),PIN_OUTLANE_MAX_Z);
+            AppendXZ(p,PIN_X(PIN_APRON_GAP_MIN_X - 0.23f),PIN_APRON_MIN_Z + 0.18f);
             snprintf(name,sizeof(name),"outhole_funnel_%s",tag);
             AddWall(name,p,0.26f,PIN_RAIL_VISUAL_THICK,material_rail);
         }
@@ -646,12 +746,12 @@ void ApplicationPinball::BuildLowerPlayfield(){
         snprintf(name,sizeof(name),"insert_save_%s",tag);
         AddInsert(name,PIN_X(PIN_SAVE_L_X),PIN_SAVE_L_Z,0.15f,material_lamp_dark);
 
-        //Two posts per side, where the lanes divide. These are where the rubbers that shape a
-        //draining ball's last bounce live.
-        snprintf(name,sizeof(name),"lane_%s_a",tag);
-        AddPost(name,PIN_X(PIN_DIVIDER_L_X),PIN_DIVIDER_MIN_Z - 0.10f);
-        snprintf(name,sizeof(name),"lane_%s_b",tag);
-        AddPost(name,PIN_X(PIN_OUTLANE_L_X - 0.22f),PIN_OUTLANE_MIN_Z - 0.05f);
+        //The post beside each ramp mouth, turning a ball coming down the side of the table into
+        //the mouth instead of letting it run down the wall. Not mirrored: the right one has the
+        //chute divider for a wall and sits a little further in.
+        snprintf(name,sizeof(name),"post_mouth_%s",tag);
+        AddPost(name,f_mirror ? PIN_POST_MOUTH_R_X : PIN_POST_MOUTH_L_X,
+                     f_mirror ? PIN_POST_MOUTH_R_Z : PIN_POST_MOUTH_L_Z);
 
         #undef PIN_X
     }
@@ -666,6 +766,7 @@ void ApplicationPinball::BuildLowerPlayfield(){
                PIN_FLIPPER_U_REST_DEG,false);
 }
 
+
 void ApplicationPinball::BuildLauncher(){
     //The chute divider: the long wall separating the launch lane from the play area, from the
     //plunger all the way up to where it hands the ball to the top orbit.
@@ -673,7 +774,7 @@ void ApplicationPinball::BuildLauncher(){
         PinPath p;
         AppendXZ(p,PIN_CHUTE_DIVIDER_X,PIN_CHUTE_MAX_Z);
         AppendXZ(p,PIN_CHUTE_DIVIDER_X,PIN_CHUTE_MIN_Z);
-        AddWall("chute_divider",p,0.55f,0.18f,material_rail);
+        AddWall("chute_divider",p,PIN_CHUTE_DIVIDER_HEIGHT,PIN_CHUTE_DIVIDER_THICK,material_rail);
     }
 
     /*
@@ -684,23 +785,24 @@ void ApplicationPinball::BuildLauncher(){
     */
     const float ball_y = PIN_BALL_RADIUS;
     {
-        Mesh* tip = MakeCylinder(0.11f,0.10f,18,true);
-        Object* o = AddMeshObject("plunger_tip",tip,vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 0.05f),
-                                  material_chrome);
-        //MakeCylinder's axis of revolution is +Y; the plunger's is +Z. Rotating +90 about X takes
-        //+Y to +Z, which is the whole conversion.
-        if (o) o->SetRotation(quat(vec3(1,0,0),toradians(90.0f)));
-    }
-    {
-        Mesh* rod = MakeCylinder(0.05f,0.95f,12,true);
-        Object* o = AddMeshObject("plunger_rod",rod,vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 0.58f),
-                                  material_chrome);
-        if (o) o->SetRotation(quat(vec3(1,0,0),toradians(90.0f)));
-    }
-    {
-        Mesh* knob = MakeSphere(0.14f,18,10);
-        AddMeshObject("plunger_knob",knob,vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 1.30f),
-                      material_orange);
+        //The modelled parts and the primitives both lie along +Y, MakeCylinder's axis of
+        //revolution; the plunger's is +Z. Rotating +90 about X takes +Y to +Z, which is the whole
+        //conversion, and it applies to either.
+        const quat onto_z = quat(vec3(1,0,0),toradians(90.0f));
+        Mesh* tip = HasPart("plunger_tip") ? NULL : MakeCylinder(0.11f,0.10f,18,true);
+        Object* o = NewPartObject("plunger_tip","plunger_tip",tip,
+                                  vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 0.05f),material_chrome);
+        if (o) o->SetRotation(onto_z);
+
+        Mesh* rod = HasPart("plunger_rod") ? NULL : MakeCylinder(0.05f,0.95f,12,true);
+        o = NewPartObject("plunger_rod","plunger_rod",rod,
+                          vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 0.58f),material_chrome);
+        if (o) o->SetRotation(onto_z);
+
+        Mesh* knob = HasPart("plunger_knob") ? NULL : MakeSphere(0.14f,18,10);
+        o = NewPartObject("plunger_knob","plunger_knob",knob,
+                          vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 1.30f),material_orange);
+        if (o) o->SetRotation(onto_z);
     }
 
     //The three skill-shot rollovers up the lane, and the gate at the top of it.
@@ -710,13 +812,29 @@ void ApplicationPinball::BuildLauncher(){
 
     //The one-way gate. A hinge with asymmetric limits in stage 1 - it opens into the orbit and
     //will not open back - so it is drawn where the flap hangs, leaning into the lane.
-    AddBox("gate_flap",vec3(PIN_GATE_X,0.20f,PIN_GATE_Z),vec3(0.30f,0.30f,0.05f),
-           material_chrome,-24.0f);
+    if (HasPart("gate_flap")){
+        Object* flap = NewPartObject("gate_flap","gate_flap",NULL,vec3(PIN_GATE_X,0.20f,PIN_GATE_Z),
+                                     material_chrome);
+        if (flap) flap->SetRotation(quat(vec3(0,1,0),toradians(-24.0f)));
+    }else{
+        AddBox("gate_flap",vec3(PIN_GATE_X,0.20f,PIN_GATE_Z),vec3(0.30f,0.30f,0.05f),
+               material_chrome,-24.0f);
+    }
 
     //The ball, parked where the plunger will serve it. Scenery until stage 1 gives it a body; it is
     //here now because a table with no ball on it is missing the one object everything is scaled to.
-    ball_object = AddMeshObject("ball",ball_mesh,vec3(PIN_CHUTE_X,ball_y,PIN_PLUNGER_Z - 0.30f),
+    ball_object = NewPartObject("ball","ball",ball_mesh,vec3(PIN_CHUTE_X,ball_y,PIN_PLUNGER_Z - 0.30f),
                                 material_ball);
+    //The gate flap, as the box it is drawn as. It swings open for a ball coming UP the lane, so
+    //it is recorded as an obstacle the plan tool is told to ignore for reachability - see there.
+    {
+        PinPlanEntry& entry = RecordPlan("box","gate_orbit");
+        entry.points.push_back(vec3(PIN_GATE_X,0.0f,PIN_GATE_Z));
+        entry.a = 0.30f;
+        entry.b = 0.05f;
+        entry.c = 0.35f;
+        entry.d = -24.0f;
+    }
 }
 
 void ApplicationPinball::BuildUpperPlayfield(){
@@ -726,34 +844,32 @@ void ApplicationPinball::BuildUpperPlayfield(){
         PinPath p;
         AppendArc(p,vec3(PIN_ORBIT_CX,0.0f,PIN_ORBIT_CZ),PIN_ORBIT_RADIUS,
                   PIN_ORBIT_START_DEG,PIN_ORBIT_END_DEG,PIN_ARC_SEGMENTS);
-        AddWall("rail_orbit",p,0.46f,PIN_RAIL_VISUAL_THICK,material_chrome);
+        //Dulled steel, not chrome: a 4.6-wide mirror across the top of the table reflected the
+        //HDR as a bright striped band and read as a light fitting rather than a rail.
+        AddWall("rail_orbit",p,PIN_ORBIT_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
     }
 
     /*
         The left orbit return: the lane a ball exiting the horseshoe runs down, on its way to the
         upper flipper. Its outer wall is the cabinet, so this is only the inner one - and it starts
-        exactly where the orbit rail ends, so the ball is never handed off across a gap.
+        exactly where the orbit rail ends, so the ball is never handed off across a gap. Widths
+        and why it stops where it does: PIN_RETURN_X.
     */
     {
         PinPath p;
-        AppendXZ(p,-2.32f,-5.35f);
-        AppendXZ(p,-2.30f,-4.30f);
-        AppendXZ(p,-2.45f,-3.20f);
-        AppendXZ(p,-2.50f,-2.30f);
+        AppendXZ(p,PIN_RETURN_X + 0.02f,PIN_RETURN_MIN_Z);
+        AppendXZ(p,PIN_RETURN_X,PIN_RETURN_MAX_Z);
         AddWall("rail_orbit_return",p,PIN_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
     }
 
-    /*
-        The FUEL lanes: three rollovers under the orbit, divided by four short walls. The outer two
-        have to stay inside the horseshoe (see changes 6 and 7 in Table.h), which is what fixes
-        their x - 2.10 out is as far as they go before the orbit rail is in the way.
-    */
+    //The FUEL lanes: three rollovers under the orbit, divided by four short walls a lane-pitch
+    //apart. The outer two stay inside the horseshoe (see PIN_FUEL_Z).
     {
-        const float lane_x[4] = { -2.10f, -0.90f, 0.30f, 1.50f };
         for (int i = 0; i < 4; i++){
             PinPath p;
-            AppendXZ(p,lane_x[i],PIN_FUEL_WALL_MIN_Z);
-            AppendXZ(p,lane_x[i],PIN_FUEL_WALL_MAX_Z);
+            const float x = PIN_FUEL_WALL_X_0 + PIN_FUEL_PITCH * (float)i;
+            AppendXZ(p,x,PIN_FUEL_WALL_MIN_Z);
+            AppendXZ(p,x,PIN_FUEL_WALL_MAX_Z);
             char name[48];
             snprintf(name,sizeof(name),"fuel_wall_%i",i);
             AddWall(name,p,PIN_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
@@ -774,19 +890,24 @@ void ApplicationPinball::BuildUpperPlayfield(){
     for (int i = 0; i < 3; i++){
         char name[48];
         snprintf(name,sizeof(name),"%s_rim",saucers[i].name);
-        Object* rim = new Object();
-        rim->SetMesh(saucer_mesh);
-        rim->name = name;
-        rim->SetPosition(vec3(saucers[i].x,0.02f,saucers[i].z));
-        rim->SetMaterialSlot(0,material_teal);
-        main_scene->AddObject(rim);
+        NewPartObject("saucer_rim",name,saucer_mesh,vec3(saucers[i].x,0.02f,saucers[i].z),
+                      material_teal);
 
         //0.07 is the rim's own top face - it is a 0.10-tall disc centred at 0.02. Putting the hole
         //there leaves a 0.05 ring of rim showing around a dark centre, which is what a saucer is.
         snprintf(name,sizeof(name),"%s_hole",saucers[i].name);
         AddInsert(name,saucers[i].x,saucers[i].z,PIN_SAUCER_RADIUS - 0.05f,material_rubber,0.07f);
+
+        //A saucer is a disc the ball has to be able to reach the MIDDLE of, so its "collision"
+        //radius is zero: nothing about it blocks a ball. b is the rim, c the rim's height.
+        PinPlanEntry& entry = RecordPlan("disc",saucers[i].name);
+        entry.points.push_back(vec3(saucers[i].x,0.0f,saucers[i].z));
+        entry.a = 0.0f;
+        entry.b = PIN_SAUCER_RADIUS;
+        entry.c = 0.07f;
     }
 }
+
 
 void ApplicationPinball::BuildScoringCluster(){
     //--- Pop bumpers ----------------------------------------------------------------------------
@@ -803,111 +924,128 @@ void ApplicationPinball::BuildScoringCluster(){
         //touches the straight middle: core has no cylinder collider, and a sphere-capped one would
         //throw the ball upward off a shape that is visibly vertical.
         snprintf(name,sizeof(name),"%s_body",bumpers[i].name);
-        Object* body = new Object();
-        body->SetMesh(bumper_body_mesh);
-        body->name = name;
-        body->SetPosition(vec3(bumpers[i].x,PIN_BUMPER_HEIGHT * 0.5f,bumpers[i].z));
-        body->SetMaterialSlot(0,material_cream);
-        main_scene->AddObject(body);
+        NewPartObject("bumper_body",name,bumper_body_mesh,
+                      vec3(bumpers[i].x,PIN_BUMPER_HEIGHT * 0.5f,bumpers[i].z),material_cream);
 
-        //The cap, which is the wider thing the player sees and the thing the ramp above has to
-        //clear. Skirt radius, not collider radius - the gap between the two IS the design.
+        //The cap, which is the wider thing the player sees and the thing the art has to clear.
+        //Skirt radius, not collider radius - the gap between the two IS the design.
         snprintf(name,sizeof(name),"%s_cap",bumpers[i].name);
-        Object* cap = new Object();
-        cap->SetMesh(bumper_cap_mesh);
-        cap->name = name;
-        cap->SetPosition(vec3(bumpers[i].x,PIN_BUMPER_HEIGHT + 0.04f,bumpers[i].z));
-        cap->SetMaterialSlot(0,material_orange);
-        main_scene->AddObject(cap);
+        NewPartObject("bumper_cap",name,bumper_cap_mesh,
+                      vec3(bumpers[i].x,PIN_BUMPER_HEIGHT + 0.04f,bumpers[i].z),material_orange);
 
         //The lit ring in the deck under it.
         snprintf(name,sizeof(name),"%s_insert",bumpers[i].name);
         AddInsert(name,bumpers[i].x,bumpers[i].z,PIN_BUMPER_SKIRT_RADIUS,material_lamp_dark);
-    }
 
-    //The two walls that keep a ball rattling around inside the nest instead of falling straight
-    //through it. Without these a pop bumper cluster scores once and spits the ball out.
-    {
-        PinPath p;
-        AppendXZ(p,-2.05f,-1.35f);
-        AppendXZ(p,-1.95f,-2.20f);
-        AppendXZ(p,-1.90f,-3.20f);
-        AppendXZ(p,-1.45f,-3.85f);
-        AddWall("nest_guide_left",p,PIN_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
+        //disc: one point, a = the radius the ball meets, b = the radius the art needs, c = how
+        //tall it stands. For a bumper those are the collider, the skirt and the cap's top.
+        PinPlanEntry& entry = RecordPlan("disc",bumpers[i].name);
+        entry.points.push_back(vec3(bumpers[i].x,0.0f,bumpers[i].z));
+        entry.a = PIN_BUMPER_RADIUS;
+        entry.b = PIN_BUMPER_SKIRT_RADIUS;
+        entry.c = PIN_BUMPER_HEIGHT + 0.11f;
     }
-    {
-        PinPath p;
-        AppendXZ(p, 0.85f,-1.35f);
-        AppendXZ(p, 0.78f,-2.20f);
-        AppendXZ(p, 0.72f,-3.20f);
-        AppendXZ(p, 0.30f,-3.85f);
-        AddWall("nest_guide_right",p,PIN_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
-    }
+    //No nest guides. The first draft had two angled walls hemming the pops in; on a table this
+    //length they had to stand under the ramps' climbs, where a 0.44 wall meets a 0.5 ramp floor.
+    //The ramp mouths, the saucer rims and the standups bound the nest instead.
 
     //--- The MISSION drop target bank ------------------------------------------------------------
     //Kinematic in stage 2, dropped with Scene::MoveObjectOverTicks - no joint needed, and it steps
-    //and replays correctly, which a hand-animated transform would not.
+    //and replays correctly, which a hand-animated transform would not. Backs onto the chute
+    //divider, which is already there and already 0.55 tall, so it has no wall of its own.
     {
         const float z[3] = { PIN_DROP_Z_0,PIN_DROP_Z_1,PIN_DROP_Z_2 };
         const char* letters[3] = { "drop_m","drop_i","drop_s" };
         for (int i = 0; i < 3; i++){
-            AddBox(letters[i],vec3(PIN_DROP_X,PIN_DROP_HEIGHT * 0.5f,z[i]),
-                   vec3(PIN_DROP_DEPTH,PIN_DROP_HEIGHT,PIN_DROP_WIDTH),material_cream);
+            const vec3 centre = vec3(PIN_DROP_X,PIN_DROP_HEIGHT * 0.5f,z[i]);
+            if (HasPart("target_drop")){
+                NewPartObject("target_drop",letters[i],NULL,centre,material_cream);
+            }else{
+                AddBox(letters[i],centre,vec3(PIN_DROP_DEPTH,PIN_DROP_HEIGHT,PIN_DROP_WIDTH),
+                       material_cream);
+            }
+            //box: one point at the centre, a = size along x, b = size along z, c = height,
+            //d = yaw in degrees. A target is a thing the ball has to be able to hit the FACE of.
+            PinPlanEntry& entry = RecordPlan("box",letters[i]);
+            entry.points.push_back(vec3(PIN_DROP_X,0.0f,z[i]));
+            entry.a = PIN_DROP_DEPTH;
+            entry.b = PIN_DROP_WIDTH;
+            entry.c = PIN_DROP_HEIGHT;
         }
-        //No wall of its own any more. Now that the bank is on the right it backs straight onto
-        //the chute divider, which is already there and already 0.55 tall.
+        AddPost("post_drop",PIN_POST_DROP_X,PIN_POST_DROP_Z);
     }
 
     //--- Standups ---------------------------------------------------------------------------------
-    AddBox("standup_upper",vec3(PIN_STANDUP_0_X,0.16f,PIN_STANDUP_0_Z),
-           vec3(0.10f,0.32f,0.40f),material_teal);
-    AddBox("standup_lower",vec3(PIN_STANDUP_1_X,0.16f,PIN_STANDUP_1_Z),
-           vec3(0.10f,0.32f,0.40f),material_teal);
+    //Facing the player, just below the two upper pops. See PIN_STANDUP_0_X for why not on a wall.
+    {
+        const char* names[2] = { "standup_upper","standup_lower" };
+        const float xs[2] = { PIN_STANDUP_0_X,PIN_STANDUP_1_X };
+        const float zs[2] = { PIN_STANDUP_0_Z,PIN_STANDUP_1_Z };
+        for (int i = 0; i < 2; i++){
+            const vec3 centre = vec3(xs[i],PIN_STANDUP_HEIGHT * 0.5f,zs[i]);
+            if (HasPart("target_standup")){
+                NewPartObject("target_standup",names[i],NULL,centre,material_teal);
+            }else{
+                AddBox(names[i],centre,vec3(PIN_STANDUP_WIDTH,PIN_STANDUP_HEIGHT,PIN_STANDUP_DEPTH),
+                       material_teal);
+            }
+            PinPlanEntry& entry = RecordPlan("box",names[i]);
+            entry.points.push_back(vec3(xs[i],0.0f,zs[i]));
+            entry.a = PIN_STANDUP_WIDTH;
+            entry.b = PIN_STANDUP_DEPTH;
+            entry.c = PIN_STANDUP_HEIGHT;
+        }
+    }
 
     //--- The spinner ------------------------------------------------------------------------------
-    //A free hinge, hanging in the mouth of the left ramp so the ball passes under it on the way in.
-    //Counted by revolutions off the joint's own angle rather than by contacts.
-    AddBox("spinner_vane",vec3(PIN_SPINNER_X,0.22f,PIN_SPINNER_Z),
-           vec3(PIN_SPINNER_WIDTH,PIN_SPINNER_HEIGHT,0.03f),material_chrome);
-    AddPost("spinner_a",PIN_SPINNER_X - PIN_SPINNER_WIDTH * 0.5f - 0.09f,PIN_SPINNER_Z);
-    AddPost("spinner_b",PIN_SPINNER_X + PIN_SPINNER_WIDTH * 0.5f + 0.09f,PIN_SPINNER_Z);
+    //A free hinge, hanging in the mouth of the left ramp from the ramp's own rails, so the ball
+    //passes under it on the way in. Counted by revolutions off the joint's own angle rather than
+    //by contacts. The axle is drawn as a wire between the rails; the vane hangs from it.
+    {
+        const vec3 centre = vec3(PIN_SPINNER_X,PIN_RAMP_RAIL_HEIGHT - PIN_SPINNER_HEIGHT * 0.5f,
+                                 PIN_SPINNER_Z);
+        if (HasPart("spinner_vane")){
+            NewPartObject("spinner_vane","spinner_vane",NULL,centre,material_chrome);
+        }else{
+            AddBox("spinner_vane",centre,vec3(PIN_SPINNER_WIDTH,PIN_SPINNER_HEIGHT,0.03f),
+                   material_chrome);
+        }
+        PinPath axle;
+        AppendXZ(axle,PIN_SPINNER_X - PIN_RAMP_WIDTH * 0.5f - 0.06f,PIN_SPINNER_Z,PIN_RAMP_RAIL_HEIGHT);
+        AppendXZ(axle,PIN_SPINNER_X + PIN_RAMP_WIDTH * 0.5f + 0.06f,PIN_SPINNER_Z,PIN_RAMP_RAIL_HEIGHT);
+        Mesh* wire = MakeTube(axle,0.02f,8);
+        AddMeshObject("spinner_axle",wire,vec3(),material_chrome);
+    }
 
     //--- The gravity well -------------------------------------------------------------------------
     {
-        Object* rim = new Object();
-        rim->SetMesh(saucer_mesh);
-        rim->name = "gravity_well_rim";
-        rim->SetPosition(vec3(PIN_WELL_X,0.02f,PIN_WELL_Z));
-        rim->SetMaterialSlot(0,material_orange);
-        main_scene->AddObject(rim);
+        NewPartObject("saucer_rim","gravity_well_rim",saucer_mesh,vec3(PIN_WELL_X,0.02f,PIN_WELL_Z),
+                      material_orange);
         AddInsert("gravity_well_hole",PIN_WELL_X,PIN_WELL_Z,PIN_SAUCER_RADIUS - 0.05f,
                   material_rubber,0.07f);
+        PinPlanEntry& entry = RecordPlan("disc","gravity_well");
+        entry.points.push_back(vec3(PIN_WELL_X,0.0f,PIN_WELL_Z));
+        entry.a = 0.0f;
+        entry.b = PIN_SAUCER_RADIUS;
+        entry.c = 0.07f;
     }
-
-    /*
-        The eight loose posts, placed where a ball needs deflecting rather than evenly spaced.
-
-        All eight moved once. The first set was put down by eye and five of them turned out to be
-        standing inside a ramp - a post is only 0.22 across but it is 0.48 tall, which is taller
-        than either ramp is off the deck for most of its length. These are the positions
-        tools/pinball_clearance.py passes; run it again before moving any of them.
-    */
-    AddPost("post_well_a",PIN_WELL_X - 0.55f,PIN_WELL_Z - 0.40f);
-    AddPost("post_well_b",PIN_WELL_X + 0.55f,PIN_WELL_Z - 0.40f);
-    AddPost("post_drop_a",PIN_DROP_X - 0.25f,PIN_DROP_Z_0 + 0.30f);
-    AddPost("post_drop_b",PIN_DROP_X - 0.25f,PIN_DROP_Z_2 - 0.30f);
-    AddPost("post_ramp_l",-2.62f, 2.90f);
-    AddPost("post_ramp_r", 1.55f, 2.60f);
-    AddPost("post_mid_l", -1.00f, 2.00f);
-    AddPost("post_mid_r",  0.00f, 2.00f);
 }
+
 
 void ApplicationPinball::BuildRamps(){
     /*
-        A ramp is three swept solids off ONE centreline: the floor, and a rail down each side at a
-        fixed offset. That is the whole argument for TableBuilder - the rails cannot drift from the
-        floor because they are not independently authored, and in stage 1 the collider chain reads
-        the same three paths.
+        A ramp is two things off ONE centreline.
+
+        While its floor is still part of the deck it is a moulded RAMP: a ribbon with a thin rail
+        standing outside each edge, so the full PIN_RAMP_WIDTH is clear for the ball - the first
+        build stood the rails ON the floor's edges and left 0.18 between them, which is not a ramp
+        a ball can enter. Once the floor is in the air it is a HABITRAIL: four wires the ball rides
+        between - two under it, two beside it - and nothing else, so that seen from above it hides
+        almost none of the deck below.
+
+        That is the whole argument for TableBuilder: rails and wires cannot drift from the floor
+        because they are not independently authored, and in stage 3 the collider chain reads the
+        same paths.
     */
     struct Ramp{
         const char* name;
@@ -925,26 +1063,70 @@ void ApplicationPinball::BuildRamps(){
             AppendPoint(centre,ramps[r].points[i]);
         }
 
+        //ramp: points = the centreline the ball runs along, a = floor width, b = rail height,
+        //c = how far the floor hangs below the centreline. The rails are NOT recorded as walls -
+        //a rail 0.8 up in the air is not a wall on the deck - the plan tool derives the deck-level
+        //footprint from the centreline's height itself, with the same PIN_RAMP_AIRBORNE_Y rule.
+        PinPlanEntry& entry = RecordPlan("ramp",ramps[r].name);
+        entry.points = centre;
+        entry.a = PIN_RAMP_WIDTH;
+        entry.b = PIN_RAMP_RAIL_HEIGHT;
+        entry.c = PIN_RAMP_SLAB;
+
+        //Split where the floor leaves the deck: the climb is every point a ball on the deck could
+        //not pass under - the LAST such point is where the wires take over. The plan tool uses
+        //the same rule for which stretch of a ramp is a pair of walls, so the two cannot disagree.
+        const int n = (int)centre.size();
+        int split = 0;
+        while (split + 1 < n - 1 && centre[split + 1].y < PIN_RAMP_AIRBORNE_Y){
+            split++;
+        }
+        PinPath climb(centre.begin(),centre.begin() + split + 1);
+        PinPath air(centre.begin() + split,centre.end());
+
         char name[64];
         snprintf(name,sizeof(name),"%s_floor",ramps[r].name);
-        Mesh* floor = MakeRibbon(centre,PIN_RAMP_WIDTH,PIN_RAMP_SLAB);
+        Mesh* floor = MakeRibbon(climb,PIN_RAMP_WIDTH,PIN_RAMP_SLAB);
         AddMeshObject(name,floor,vec3(),material_ramp);
 
-        //The rails sit on the floor's edges, half a rail's thickness inboard so their outer faces
-        //line up with the floor's rather than hanging over it.
-        const float rail_offset = (PIN_RAMP_WIDTH - PIN_RAIL_VISUAL_THICK) * 0.5f;
+        //The rails stand OUTSIDE the floor's edges, so the floor's whole width is clear.
+        const float rail_offset = (PIN_RAMP_WIDTH + PIN_RAMP_RAIL_THICK) * 0.5f;
         for (int side = 0; side < 2; side++){
-            PinPath edge = OffsetPath(centre,side == 0 ? rail_offset : -rail_offset);
+            PinPath edge = OffsetPath(climb,side == 0 ? rail_offset : -rail_offset);
             snprintf(name,sizeof(name),"%s_rail_%c",ramps[r].name,side == 0 ? 'l' : 'r');
-            AddWall(name,edge,PIN_RAMP_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_chrome);
+            Mesh* rail = MakeWallStrip(edge,PIN_RAMP_RAIL_HEIGHT,PIN_RAMP_RAIL_THICK,true);
+            AddMeshObject(name,rail,vec3(),material_ramp);
         }
 
-        //A lit arrow-sized insert at the entry, because a ramp nobody can see the mouth of is a
+        /*
+            The habitrail. Two wires the ball sits on, 0.22 apart so a 0.27 ball rests between them
+            with its underside at the path; two more at its waist height to keep it in. The
+            offsets are what a real wireform uses and they are also what stage 3's colliders will
+            be, one capsule chain per wire.
+        */
+        struct Wire{ const char* suffix; float offset; float rise; };
+        const Wire wires[4] = {
+            { "wire_floor_l",  0.11f, 0.08f },
+            { "wire_floor_r", -0.11f, 0.08f },
+            { "wire_side_l",   0.23f, 0.30f },
+            { "wire_side_r",  -0.23f, 0.30f },
+        };
+        if (air.size() >= 2){
+            for (int w = 0; w < 4; w++){
+                PinPath wire = OffsetPath(air,wires[w].offset,wires[w].rise);
+                snprintf(name,sizeof(name),"%s_%s",ramps[r].name,wires[w].suffix);
+                Mesh* tube = MakeTube(wire,PIN_HABITRAIL_RADIUS,10);
+                AddMeshObject(name,tube,vec3(),material_chrome);
+            }
+        }
+
+        //A lit arrow-sized insert at the mouth, because a ramp nobody can see the mouth of is a
         //ramp nobody shoots.
         snprintf(name,sizeof(name),"insert_%s",ramps[r].name);
         AddInsert(name,ramps[r].points[0].x,ramps[r].points[0].z + 0.45f,0.17f,material_lamp_lit);
     }
 }
+
 
 void ApplicationPinball::BuildBackbox(){
     /*
@@ -952,15 +1134,19 @@ void ApplicationPinball::BuildBackbox(){
         stage 5. Standing it up now costs two boxes and settles the one thing about it that matters
         to the camera: how much room above the table the framing has to leave.
     */
-    const float back_z = -7.55f;
-    AddBox("backbox",vec3(0.0f,2.05f,back_z),vec3(6.90f,4.10f,0.55f),material_cabinet,0.0f);
+    AddBox("backbox",vec3(0.0f,PIN_BACKBOX_HEIGHT * 0.5f,PIN_BACKBOX_Z),
+           vec3(PIN_DECK_MAX_X * 2.0f + PIN_WALL_THICKNESS * 2.0f - 0.10f,
+                PIN_BACKBOX_HEIGHT,PIN_BACKBOX_DEPTH),material_cabinet,0.0f);
     //The glass itself, a hair proud of the housing and leaning back the way a real one does.
-    Object* glass = AddBox("backglass",vec3(0.0f,2.10f,back_z + 0.32f),
-                           vec3(6.10f,3.40f,PIN_PLATE_THICKNESS),material_backglass);
+    Object* glass = AddBox("backglass",vec3(0.0f,PIN_BACKBOX_HEIGHT * 0.5f + 0.05f,
+                                           PIN_BACKBOX_Z + PIN_BACKBOX_DEPTH * 0.5f + 0.05f),
+                           vec3(6.10f,PIN_BACKBOX_HEIGHT - 0.70f,PIN_PLATE_THICKNESS),
+                           material_backglass);
     if (glass){
         glass->SetRotation(quat(vec3(1,0,0),toradians(-8.0f)));
     }
 }
+
 
 void ApplicationPinball::BuildOrbitBackdrop(){
     /*
@@ -1158,23 +1344,66 @@ void ApplicationPinball::BuildLights(){
 }
 
 void ApplicationPinball::SetupCamera(){
+    /*
+        The shots, solved from Table.h - see MakeShot. Each is two points and an elevation:
+
+          table    the front wall's top edge to the top wall's top edge: the whole playfield,
+                   the framing the machine is designed around. 26 degrees off vertical - nearer
+                   the artwork's overhead look than the first build's 33, so that the table keeps
+                   its 3:2 proportions on screen rather than foreshortening into a longer shape;
+                   still enough perspective for the ramps to stand off the deck.
+          upper    the bumper nest to the top wall.
+          lower    the drain to the ramp mouths, steep enough to see over the front wall.
+          machine  the front wall to the top of the backbox.
+
+        The cabinet is 6.9 wide; every shot asks for 3.7 of half-width so it has a margin.
+    */
+    const float aspect = (float)PIN_WINDOW_WIDTH / (float)PIN_WINDOW_HEIGHT;
+    const float half_w = PIN_DECK_MAX_X + PIN_WALL_THICKNESS + 0.25f;
+    const vec3 front_top = vec3(PIN_CENTRE_X,PIN_CABINET_FRONT_HEIGHT,PIN_DECK_MAX_Z + PIN_WALL_THICKNESS);
+    const vec3 back_top  = vec3(PIN_CENTRE_X,PIN_CABINET_HEIGHT,PIN_DECK_MIN_Z - PIN_WALL_THICKNESS);
+    shots[PIN_SHOT_TABLE]   = MakeShot("table",  front_top,back_top,26.0f,40.0f,half_w,aspect);
+    //The two detail shots only need the play area across, not the cabinet - asking for the full
+    //width pushed them back until they were the table shot again.
+    shots[PIN_SHOT_UPPER]   = MakeShot("upper",  vec3(PIN_CENTRE_X,0.0f,PIN_BUMPER_0_Z + 0.8f),back_top,
+                                       30.0f,30.0f,2.7f,aspect);
+    shots[PIN_SHOT_LOWER]   = MakeShot("lower",  front_top,vec3(PIN_CENTRE_X,0.4f,PIN_RAMP_L_ENTRY_Z - 0.6f),
+                                       36.0f,30.0f,2.7f,aspect);
+    shots[PIN_SHOT_MACHINE] = MakeShot("machine",front_top,
+                                       vec3(PIN_CENTRE_X,PIN_BACKBOX_HEIGHT,PIN_BACKBOX_Z - PIN_BACKBOX_DEPTH),
+                                       30.0f,42.0f,half_w,aspect);
+    /*
+        PIN_SHOT_ORBIT. The position and target are never used - UpdateCameraShot hands the camera
+        to UpdateOrbitControls instead of easing toward them - but the entry has to exist so that
+        shots[current_shot].name works for every shot, and the fov IS used, as the value the orbit
+        starts at. See the mode note in ApplicationPinball.h.
+    */
+    shots[PIN_SHOT_ORBIT].name = "orbit";
+    shots[PIN_SHOT_ORBIT].fov  = 39.0f;
+    for (int i = 0; i < PIN_SHOT_COUNT; i++){
+        debug->Info("shot %-8s camera (%.2f, %.2f, %.2f) looks at z %.2f, fov %.0f\n",shots[i].name,
+                    shots[i].position.x,shots[i].position.y,shots[i].position.z,
+                    shots[i].target.z,shots[i].fov);
+    }
+
     Camera* camera = main_scene->camera;
     camera->SetType(CAMERA_TYPE_PERSPECTIVE);
     //fov is VERTICAL and in degrees. znear is pulled in to 0.3 because the "lower" shot gets close
     //to the apron; zfar covers the backbox with room to spare.
-    camera->SetupPerspective(renderer->width,renderer->height,kShots[PIN_SHOT_TABLE].fov,0.3f,140.0f);
+    camera->SetupPerspective(renderer->width,renderer->height,shots[PIN_SHOT_TABLE].fov,0.3f,140.0f);
 
     //Snap to the opening shot rather than easing into it, so the first frame is already framed.
     current_shot   = PIN_SHOT_TABLE;
-    shot_position  = kShots[PIN_SHOT_TABLE].position;
-    shot_target    = kShots[PIN_SHOT_TABLE].target;
-    shot_fov       = kShots[PIN_SHOT_TABLE].fov;
+    shot_position  = shots[PIN_SHOT_TABLE].position;
+    shot_target    = shots[PIN_SHOT_TABLE].target;
+    shot_fov       = shots[PIN_SHOT_TABLE].fov;
     live_fov       = shot_fov;
     camera_target  = shot_target;
     camera->SetPosition(shot_position);
     camera->SetLookAt(shot_target);
     camera->CalculateLookatMatrix();
 }
+
 
 void ApplicationPinball::SetupInput(){
     InputController* input = main_scene->inputcontroller;
@@ -1245,9 +1474,9 @@ void ApplicationPinball::SetShot(int shot){
         }
     }
     current_shot  = shot;
-    shot_position = kShots[shot].position;
-    shot_target   = kShots[shot].target;
-    shot_fov      = kShots[shot].fov;
+    shot_position = shots[shot].position;
+    shot_target   = shots[shot].target;
+    shot_fov      = shots[shot].fov;
 }
 
 void ApplicationPinball::SeedOrbitFromCamera(){
@@ -1272,7 +1501,7 @@ void ApplicationPinball::SeedOrbitFromCamera(){
     orbit_yaw      = todegrees(atan2f(offset.x,offset.z));
     //The orbit does not ease its fov, so it has to inherit the one on screen or entering the mode
     //would snap the zoom.
-    live_fov = shot_fov = kShots[PIN_SHOT_ORBIT].fov;
+    shot_fov = shots[PIN_SHOT_ORBIT].fov;
     live_fov = camera->viewport.fov;
 }
 
@@ -1498,14 +1727,14 @@ void ApplicationPinball::DrawImGuiUI(void){
     ImGui::Text("tps      %.0f   tick %llu",physics_tps,(unsigned long long)main_scene->GetPhysicsTick());
     ImGui::Separator();
 
-    ImGui::Text("camera   %s",kShots[current_shot].name);
+    ImGui::Text("camera   %s",shots[current_shot].name);
     for (int i = 0; i < PIN_SHOT_COUNT; i++){
         //Four fixed shots on one row, the orbit on its own underneath - it is a different kind of
         //thing and a row of five buttons hides that.
         if (i && i != PIN_SHOT_ORBIT){
             ImGui::SameLine();
         }
-        if (ImGui::Button(kShots[i].name)){
+        if (ImGui::Button(shots[i].name)){
             SetShot(i);
         }
     }
@@ -1581,24 +1810,66 @@ json ApplicationPinball::BuildLayoutJson(){
         });
     }
 
-    //The numbers that are consequences rather than inputs. Each one is a thing that was wrong in
-    //the first draft of the layout and would be silently wrong again after any edit.
+    /*
+        The numbers that are consequences rather than inputs. Each one is a thing that was wrong in
+        a draft of the layout and would be silently wrong again after any edit.
+
+        CLEAR widths, not centre-to-centre: half of each bounding wall's thickness is taken off.
+        The first build reported centre-to-centre and called a 0.24 inlane "1.43 balls"; the ball
+        does not get to ignore the rails. tools/pinball_plan.py is the full check - it fattens
+        every shape by the ball and floods the deck - and these are the handful worth having in
+        the JSON without running it.
+    */
     const float rest = toradians(PIN_FLIPPER_REST_DEG);
     const float tip_gap = (PIN_FLIPPER_R_X - PIN_FLIPPER_L_X)
                         - 2.0f * PIN_FLIPPER_LENGTH * cosf(rest);
-    //The inlane's width at the rollover: from the divider to wherever the slingshot face is at
-    //that z.
-    const float sling_t = (PIN_INLANE_L_Z - PIN_SLING_L_AZ) / (PIN_SLING_L_BZ - PIN_SLING_L_AZ);
-    const float sling_x = PIN_SLING_L_AX + sling_t * (PIN_SLING_L_BX - PIN_SLING_L_AX);
+    const float inlane  = (PIN_SLING_L_AX - PIN_DIVIDER_L_X)
+                        - PIN_RAIL_VISUAL_THICK * 0.5f - PIN_SLING_THICKNESS * 0.5f;
+    const float outlane = (PIN_DIVIDER_L_X - PIN_OUTLANE_L_X) - PIN_RAIL_VISUAL_THICK;
+    const float orbit   = ((PIN_ORBIT_CZ - PIN_ORBIT_RADIUS) - PIN_DECK_MIN_Z)
+                        - PIN_RAIL_VISUAL_THICK * 0.5f;
+    const float ret     = (PIN_RETURN_X - PIN_PLAY_MIN_X) - PIN_RAIL_VISUAL_THICK * 0.5f;
+    const float chute   = (PIN_DECK_MAX_X - 0.05f - PIN_CHUTE_DIVIDER_X)
+                        - PIN_CHUTE_DIVIDER_THICK * 0.5f;
+
+    /*
+        The plan: every shape the builders recorded (see PinPlanEntry in the header), in the frame
+        the ball lives in. This is what tools/pinball_plan.py draws and floods. It is emitted in
+        full every call because it is a few kilobytes and because a tool that has to ask for it
+        separately is a tool that gets run against a stale copy.
+    */
+    json plan_json = json::array();
+    for (size_t i = 0; i < plan.size(); i++){
+        const PinPlanEntry& e = plan[i];
+        json points = json::array();
+        for (size_t k = 0; k < e.points.size(); k++){
+            points.push_back(json::array({e.points[k].x,e.points[k].y,e.points[k].z}));
+        }
+        plan_json.push_back(json{
+            {"kind",e.kind},{"name",e.name},{"points",points},
+            {"a",e.a},{"b",e.b},{"c",e.c},{"d",e.d}
+        });
+    }
+    vec3 ball_start = ball_object ? ball_object->GetPosition() : vec3(PIN_CHUTE_X,0.0f,PIN_PLUNGER_Z);
 
     return json{
         {"table","Orbit Outpost"},
         {"stage",0},
         {"units_per_metre",PIN_UNITS_PER_METRE},
         {"ball_diameter",PIN_BALL_DIAMETER},
+        {"ball_radius",PIN_BALL_RADIUS},
+        {"wall_thickness",PIN_WALL_THICKNESS},
+        {"rail_height",PIN_RAIL_HEIGHT},
+        {"play",{
+            {"min_x",PIN_PLAY_MIN_X},{"max_x",PIN_PLAY_MAX_X},
+            {"min_z",PIN_DECK_MIN_Z},{"max_z",PIN_DECK_MAX_Z},
+            {"centre_x",PIN_CENTRE_X}
+        }},
+        {"ball_start",json::array({ball_start.x,ball_start.y,ball_start.z})},
+        {"plan",plan_json},
         {"tilt_degrees",tilt_degrees},
         {"physics_tps",physics_tps},
-        {"camera_shot",kShots[current_shot].name},
+        {"camera_shot",shots[current_shot].name},
         //Reported always, not only while orbiting, so a caller can read the pose back after aiming
         //it and get the same numbers it would need to reproduce the view later.
         {"orbit",{
@@ -1617,11 +1888,18 @@ json ApplicationPinball::BuildLayoutJson(){
         {"clearances",{
             {"flipper_tip_gap",tip_gap},
             {"flipper_tip_gap_balls",tip_gap / PIN_BALL_DIAMETER},
-            {"inlane_width",sling_x - PIN_DIVIDER_L_X},
-            {"inlane_width_balls",(sling_x - PIN_DIVIDER_L_X) / PIN_BALL_DIAMETER},
-            {"outlane_width",PIN_DIVIDER_L_X - PIN_OUTLANE_L_X},
-            {"outlane_width_balls",(PIN_DIVIDER_L_X - PIN_OUTLANE_L_X) / PIN_BALL_DIAMETER},
-            {"orbit_lane_at_apex",(PIN_ORBIT_CZ - PIN_ORBIT_RADIUS) - PIN_DECK_MIN_Z},
+            {"inlane_clear",inlane},
+            {"inlane_clear_balls",inlane / PIN_BALL_DIAMETER},
+            {"outlane_clear",outlane},
+            {"outlane_clear_balls",outlane / PIN_BALL_DIAMETER},
+            {"orbit_lane_at_apex_clear",orbit},
+            {"orbit_lane_at_apex_balls",orbit / PIN_BALL_DIAMETER},
+            {"orbit_return_clear",ret},
+            {"orbit_return_balls",ret / PIN_BALL_DIAMETER},
+            {"chute_clear",chute},
+            {"chute_balls",chute / PIN_BALL_DIAMETER},
+            {"ramp_mouth_clear",PIN_RAMP_WIDTH},
+            {"ramp_mouth_balls",PIN_RAMP_WIDTH / PIN_BALL_DIAMETER},
             {"drain_mouth",PIN_APRON_GAP_MAX_X - PIN_APRON_GAP_MIN_X}
         }},
         {"features",features}
@@ -1689,7 +1967,7 @@ void ApplicationPinball::RegisterMCPTools(){
             std::string wanted = args.value("shot",f_orbit_args ? "orbit" : "table");
             int index = -1;
             for (int i = 0; i < PIN_SHOT_COUNT; i++){
-                if (wanted == kShots[i].name){
+                if (wanted == shots[i].name){
                     index = i;
                     break;
                 }
@@ -1756,7 +2034,7 @@ void ApplicationPinball::RegisterMCPTools(){
                 the physics loop's pacing, which is not something to guess at.
             */
             for (int waited_ms = 0; waited_ms < 3000; waited_ms += 8){
-                if ((main_scene->camera->GetPosition() - kShots[index].position).length() < 0.02f){
+                if ((main_scene->camera->GetPosition() - shots[index].position).length() < 0.02f){
                     break;
                 }
                 Sleep(8);

@@ -18,6 +18,20 @@ Reviewed 2026-09-13 and folded into `docs/engine_backlog.md` as **items 68-77**,
 touch buttons) moved from band D to band C at the same time, because the port has already built
 steps 1-4 of `docs/touch_input_plan.md`.
 
+**The point of USE_PHYSICS/USE_MCP/USE_SOUND is host BUILD TOOLS, not apps** (Dick, 2026-09-13).
+Counting apps undersells it - only 3 of 12 are physics-free. The port's `sprite_packer.exe` is a
+Windows GUI built on `core/Application` (window, ImGui, Renderer, Scene, Object) that has no use
+for physics, sound or a JSON-RPC server, and sets all three flags to 0. This repo has never had a
+non-app consumer of core, so `engine.mk` has no shape for one - its CFLAGS link opengl32/gdi32/
+ws2_32/rp3d unconditionally. The thin sibling `pack_assets.exe` links only File+BinaryAsset+Debug+
+miniz and needs no flags at all.
+
+**Assets get packed by a separate exe, by preference not necessity** (Dick, 2026-09-13). Windows
+*can* self-dump and recompile locally; Android cannot, which is why the port had to have a tool.
+Taking the tool here anyway, and deleting `DUMP_BINARYASSETS`: the self-dump packs only what that
+session loaded, and its core call site is in `InitGraphics` before anything is loaded. It is
+already dead - the flag is defined nowhere, so all four call sites hit a stub.
+
 **Three of its findings needed no backlog item, and the reason matters:**
 - `app_name` being the debug panel's ImGui title is **already fixed here** by the docked-panel
   rework — `app_name` no longer exists in `core/`.

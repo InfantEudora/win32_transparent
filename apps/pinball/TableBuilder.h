@@ -99,7 +99,27 @@ Mesh* MakeSweptBox(const PinPath& path, float half_width, float y_below, float y
 Mesh* MakeWallStrip(const PinPath& path, float height, float thickness, bool f_cap_ends = true);
 
 //A flat ribbon CENTRED on the path: `width` across, `thickness` of slab hanging below it, so the
-//path is the surface the ball actually rolls on. What a ramp floor and a habitrail bed are.
+//path is the surface the ball actually rolls on. What a ramp floor is.
 Mesh* MakeRibbon(const PinPath& path, float width, float thickness);
+
+/*
+    A round wire swept along the path: what a habitrail is made of, and the reason the airborne
+    parts of the ramps no longer cover the deck.
+
+    The first build drew every ramp as an opaque 0.46-wide slab from mouth to inlane, and two of
+    them covered the middle third of the table. A real habitrail is two or four wires a ball rides
+    between, and seen from above it hides almost nothing - which is the entire point of building
+    ramps out of wire on a machine whose playfield is the art.
+
+    `segments` is the ring's resolution; 10 is plenty for a wire this thin. Unlike MakeSweptBox
+    there is no mitre - a circle cannot be mitred by scaling one axis - so a tube wants a path
+    sampled finely enough that consecutive headings differ by a few degrees, which every path here
+    already is.
+*/
+Mesh* MakeTube(const PinPath& path, float radius, int segments = 10);
+
+//A copy of `path` shifted sideways by `amount` (positive to the LEFT of travel) and up by `rise`.
+//How one ramp centreline becomes its rails and its wires without anyone typing the rails out.
+PinPath OffsetPath(const PinPath& path, float amount, float rise = 0.0f);
 
 #endif

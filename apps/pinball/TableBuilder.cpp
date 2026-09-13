@@ -258,3 +258,112 @@ Mesh* MakeRibbon(const PinPath& path, float width, float thickness){
     //the ball rolls on and a ramp's centreline can be quoted as "where the ball is".
     return MakeSweptBox(path,width * 0.5f,thickness,0.0f,true);
 }
+
+PinPath OffsetPath(const PinPath& path, float amount, float rise){
+    PinPath out;
+    const vec3 up = vec3(0,1,0);
+    for (size_t i = 0; i < path.size(); i++){
+        //The heading at a point is the average of the segments either side of it, so the offset
+        //curve stays parallel round a bend instead of stepping at every join.
+        vec3 heading = vec3();
+        if (i > 0){
+            vec3 d = path[i] - path[i - 1];
+            heading += vec3(d.x,0.0f,d.z).normalize();
+        }
+        if (i + 1 < path.size()){
+            vec3 d = path[i + 1] - path[i];
+            heading += vec3(d.x,0.0f,d.z).normalize();
+        }
+        if (heading.length() < PIN_PATH_EPSILON){
+            continue;
+        }
+        heading.normalize();
+        out.push_back(path[i] + up.cross(heading) * amount + up * rise);
+    }
+    return out;
+}
+
+Mesh* MakeTube(const PinPath& path, float radius, int segments){
+    if (path.size() < 2 || radius <= 0.0f || segments < 3){
+        debug->Err("MakeTube: %zu points, radius %.3f, %i segments - not a tube\n",
+                   path.size(),radius,segments);
+        return NULL;
+    }
+    const int n = (int)path.size();
+    const vec3 up = vec3(0,1,0);
+
+    //A frame at every point: the tangent (averaged across the join, like MakeSweptBox's mitre),
+    //a horizontal left, and the third axis from their cross product. The left is taken in the
+    //horizontal plane so a wire that climbs keeps its ring upright rather than rolling.
+    struct Ring{ vec3 centre; vec3 left; vec3 rise; float distance; };
+    std::vector<Ring> rings(n);
+    float distance = 0.0f;
+    for (int i = 0; i < n; i++){
+        vec3 tangent = vec3();
+        if (i > 0)     tangent += vec3(path[i] - path[i - 1]).normalize();
+        if (i + 1 < n) tangent += vec3(path[i + 1] - path[i]).normalize();
+        tangent.normalize();
+        vec3 flat = vec3(tangent.x,0.0f,tangent.z);
+        if (flat.length() < PIN_PATH_EPSILON){
+            debug->Err("MakeTube: segment at point %i is vertical; a wire needs a heading\n",i);
+            return NULL;
+        }
+        flat.normalize();
+        vec3 left = up.cross(flat);
+        if (i > 0){
+            distance += (path[i] - path[i - 1]).length();
+        }
+        rings[i].centre   = path[i];
+        rings[i].left     = left;
+        rings[i].rise     = left.cross(tangent).normalize();
+        rings[i].distance = distance;
+    }
+
+    std::vector<vertex> verts;
+    verts.reserve((size_t)(n - 1) * segments * 6 + segments * 6);
+    const float circumference = 2.0f * TYPE_PI * radius;
+    for (int i = 0; i < n - 1; i++){
+        const Ring& a = rings[i];
+        const Ring& b = rings[i + 1];
+        for (int s = 0; s < segments; s++){
+            float t0 = (float)s / (float)segments;
+            float t1 = (float)(s + 1) / (float)segments;
+            float a0 = t0 * 2.0f * TYPE_PI;
+            float a1 = t1 * 2.0f * TYPE_PI;
+            //Radial directions are the normals, which is what makes a wire shade as a cylinder.
+            vec3 na0 = a.left * cosf(a0) + a.rise * sinf(a0);
+            vec3 na1 = a.left * cosf(a1) + a.rise * sinf(a1);
+            vec3 nb0 = b.left * cosf(a0) + b.rise * sinf(a0);
+            vec3 nb1 = b.left * cosf(a1) + b.rise * sinf(a1);
+            vec3 tan_a = vec3(b.centre - a.centre).normalize();
+            //Counter-clockwise seen from outside, matching PushQuad's convention.
+            PushQuad(verts,
+                MakeVertex(a.centre + na0 * radius,na0,tan_a,vec2(a.distance,t0 * circumference)),
+                MakeVertex(b.centre + nb0 * radius,nb0,tan_a,vec2(b.distance,t0 * circumference)),
+                MakeVertex(b.centre + nb1 * radius,nb1,tan_a,vec2(b.distance,t1 * circumference)),
+                MakeVertex(a.centre + na1 * radius,na1,tan_a,vec2(a.distance,t1 * circumference)));
+        }
+    }
+    //Flat caps, as fans. A habitrail's ends are the one place the wire's cross-section shows.
+    for (int end = 0; end < 2; end++){
+        const Ring& r = rings[end == 0 ? 0 : n - 1];
+        vec3 normal = end == 0 ? vec3(rings[0].centre - rings[1].centre).normalize()
+                               : vec3(rings[n - 1].centre - rings[n - 2].centre).normalize();
+        for (int s = 0; s < segments; s++){
+            float a0 = (float)s / (float)segments * 2.0f * TYPE_PI;
+            float a1 = (float)(s + 1) / (float)segments * 2.0f * TYPE_PI;
+            vec3 p0 = r.centre + (r.left * cosf(a0) + r.rise * sinf(a0)) * radius;
+            vec3 p1 = r.centre + (r.left * cosf(a1) + r.rise * sinf(a1)) * radius;
+            vertex c = MakeVertex(r.centre,normal,r.left,vec2(0.5f,0.5f));
+            vertex v0 = MakeVertex(p0,normal,r.left,vec2(cosf(a0),sinf(a0)));
+            vertex v1 = MakeVertex(p1,normal,r.left,vec2(cosf(a1),sinf(a1)));
+            //Wind so the cap faces outward: the start cap looks back along the path.
+            if (end == 0){ verts.push_back(c); verts.push_back(v1); verts.push_back(v0); }
+            else         { verts.push_back(c); verts.push_back(v0); verts.push_back(v1); }
+        }
+    }
+
+    Mesh* mesh = new Mesh();
+    mesh->SetMeshData(verts.data(),(int)verts.size());
+    return mesh;
+}

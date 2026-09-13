@@ -22,18 +22,24 @@
     GUESS until it is on screen, and the cheapest moment to find out that the bumper nest sits on
     top of the right ramp is before either of them has a collider, a joint or a rule attached.
 
-    --- WHAT STAGE 0 DOES DIFFERENTLY FROM THE PLAN, AND WHY -------------------------------------
-    The plan has stage 0 loading meshes/table.glb and meshes/parts.glb. Those do not exist yet, and
-    waiting for them would mean nobody sees the layout until after it has been modelled - which is
-    backwards, because the model wants the layout to already be settled (pinball_design.md 3.3 says
-    as much about the playfield art, and it is just as true of the geometry).
+    --- WHAT IS BUILT FROM WHAT ------------------------------------------------------------------
+    The plan has stage 0 loading meshes/table.glb and meshes/parts.glb. Two halves, two answers:
 
-    So every object here is built from core/Primitives and apps/pinball/TableBuilder instead: a
-    neutral, untextured table that IS the layout and nothing else, which is exactly what
-    pinball_design.md 3.3 asks for at this stage. Each one is a plain Object with a Mesh, so
-    swapping a procedural mesh for a named node out of table.glb later is a one-line change per
-    feature and changes nothing else. The geometry is a placeholder; the COORDINATES are the
-    deliverable, and they live in Table.h where the colliders will read them too.
+      - The STATIC MACHINE - deck, cabinet, every wall and rail, the ramps - comes from
+        core/Primitives and apps/pinball/TableBuilder, driven by Table.h. Not table.glb, and on
+        purpose: while the layout is still moving, the geometry IS the layout, and a modelled
+        table would have to be re-exported every time a coordinate changed. TableBuilder sweeps
+        the same paths the colliders will follow (a wall, a ramp floor, a habitrail wire), so
+        there is one source. table.glb is for when the layout has stopped moving.
+      - The REPEATED PARTS - bats, bumpers, posts and rubbers, targets, saucer rims, the plunger,
+        the ball - come from meshes/parts.glb, modelled in Blender by
+        tools/pinball_parts_blender.py exactly as pinball_design.md 3.2 describes (origins at the
+        pivots, +X forward, named nodes), and loaded by LoadParts. Every one has a primitive
+        fallback, so the app runs without the file and says so in the log.
+
+    The geometry is not the deliverable; the COORDINATES are, and they live in Table.h where the
+    colliders will read them too. tools/pinball_plan.py is what checks them - see the note at
+    PinPlanEntry below and docs/pinball_findings.md for what it found in the first draft.
 
     --- THE THIRD FLIPPER ------------------------------------------------------------------------
     Open question 3 was answered "2 + 1", and the design document's coordinate table predates that
@@ -121,6 +127,23 @@ public:
 
 private:
     //--- Setup, all on the render thread from Init() -------------------------------------------
+    /*
+        meshes/parts.glb, if it exists: the repeated parts, modelled in Blender by
+        tools/pinball_parts_blender.py the way pinball_design.md 3.2 asks. Loaded before anything
+        is built, so every builder below can ask for a part and get either the modelled mesh or
+        the primitive it stands in for. Missing file, missing part - the primitive is used and
+        the log says so. Nothing about the layout depends on which one turns up.
+    */
+    void LoadParts();
+    bool f_parts_loaded = false;
+    bool HasPart(const char* part);
+    //An Object for a named part, or for `fallback` if the part is not there; positioned, named,
+    //coloured with the app's own material and added to the scene. Colour comes from the app
+    //rather than the .glb because the app knows what a thing IS (the well's rim is orange, a
+    //wormhole's teal) and the file only knows what it looks like in Blender.
+    Object* NewPartObject(const char* part, const char* name, Mesh* fallback,
+                          const vec3& position, int material);
+
     void BuildMaterials();
     void BuildEnvironment();
     void BuildDeckAndCabinet();
@@ -183,6 +206,40 @@ private:
     //--- MCP, any thread -----------------------------------------------------------------------
     json BuildLayoutJson();
 
+    /*
+        THE PLAN, AS DATA - every shape on the deck a ball could meet, recorded as it is built.
+
+        Table.h holds the coordinates, but the coordinates alone do not say whether a ball FITS: a
+        lane is the gap between two walls that are defined in two different places, a ramp's mouth
+        is where two rails and a floor happen to meet the deck, and "can the ball get from the
+        plunger to the left wormhole" is a question about all of them at once. The first draft of
+        this layout had an inlane a ball could not enter and an orbit return that fed the outlane,
+        and neither was visible in the numbers.
+
+        So each builder below appends what it built here - the path, the thickness, the radius -
+        and pinball_layout emits the lot under "plan". tools/pinball_plan.py reads that, never a
+        copy of the numbers: it draws the deck at true scale, fattens every wall by the ball's
+        radius, floods from the plunger and reports what the ball cannot reach. Because it is fed
+        by the app, it cannot drift from the app, which is the fault the old copy-the-numbers
+        clearance script had by construction.
+
+        `a`..`d` mean different things per kind; each Record* call documents its own. Deliberately
+        a flat struct and not a hierarchy - it exists to be dumped as JSON and nothing else.
+    */
+    struct PinPlanEntry{
+        std::string kind;       //"wall", "ramp", "post", "disc", "box", "flipper"
+        std::string name;
+        std::vector<vec3> points;
+        float a = 0.0f, b = 0.0f, c = 0.0f, d = 0.0f;
+    };
+    std::vector<PinPlanEntry> plan;
+    PinPlanEntry& RecordPlan(const char* kind, const char* name){
+        plan.push_back(PinPlanEntry());
+        plan.back().kind = kind;
+        plan.back().name = name;
+        return plan.back();
+    }
+
     //--- The view ------------------------------------------------------------------------------
     /*
         Meshes generated once in Init and shared by pointer wherever the same shape repeats, the
@@ -234,6 +291,9 @@ private:
     bool f_show_labels = true;
 
     //--- Camera --------------------------------------------------------------------------------
+    //The named shots, SOLVED in SetupCamera from Table.h rather than typed - see MakeShot in the
+    //.cpp. Filled once, on the render thread, before anything reads them.
+    PinShot shots[PIN_SHOT_COUNT];
     vec3  camera_target = vec3(PIN_CENTRE_X,0.0f,0.40f);
     int   current_shot = PIN_SHOT_TABLE;
     //Where the camera is easing toward. Written by SetShot (physics thread, or an MCP thread

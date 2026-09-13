@@ -16,16 +16,18 @@ Nothing here is settled. The coordinates are a first draft meant to be dragged a
 what is *not* negotiable is section 2, because those are measured properties of the engine rather
 than taste.
 
-> **This document is the guide; `Table.h` is the machine.** Stage 0 is built (2026-09-13), and
-> putting the layout on screen moved ten of §1.5's coordinates — flipper pivots that left a gap
-> half a ball wide, a slingshot lying across the lane beside it, two rows of features in the same
-> square inch, and three things underneath a ramp. Every change is indexed and argued for at the
-> top of `apps/pinball/Table.h`, which is where the built coordinates live. §1.5 below is left as
-> written, because it is the reasoning that produced them and that is still worth reading.
+> **This document is the guide; `Table.h` is the machine.** Stage 0 is built (2026-09-13) and has
+> been through one review, which re-laid the table (`docs/pinball_findings.md`). The built
+> coordinates live at the top of `apps/pinball/Table.h` with the reasons for every departure from
+> §1.5; the two that matter most are that the deck is **9.2 long, not 13.2** — §1.2's 132 cm is a
+> cabinet's outer length, not a playfield's, and the reference artwork is squatter still — and
+> that every lane is now measured *clear*, after the thickness of the rails that bound it, which
+> §1.5's numbers were not. §1.5 below is left as written, because it is the reasoning that
+> produced the layout and that is still worth reading.
 >
-> `tools/pinball_clearance.py` is what found the last of them. Run it after moving a ramp path, a
-> feature or a post: "is this under that" is a question about a polyline, and three of the ten were
-> invisible to anyone reading the numbers.
+> `tools/pinball_plan.py` is the check. It reads the running app, fattens every wall by the ball's
+> radius, floods the deck from the plunger and reports what a ball cannot reach; the first build's
+> table failed it completely. Run it after moving anything.
 
 ---
 
@@ -94,7 +96,7 @@ The table is modelled **ten times life size**, and the reason is the 0.03 contac
 
 | | real | here |
 |---|---|---|
-| Playfield | 132 × 58 cm | **13.2 × 5.8 units** |
+| Playfield | 132 × 58 cm | ~~13.2 × 5.8~~ **9.2 × 5.8 units** (see below) |
 | Ball diameter | 27 mm | **0.27 units** (radius 0.135) |
 | Ball radius ÷ contact threshold | 0.45 | **4.5** |
 | Gravity | 9.81 m/s² | **98.1 u/s²** |
@@ -102,6 +104,12 @@ The table is modelled **ten times life size**, and the reason is the 0.03 contac
 
 Gravity is scaled with the geometry so that *timings* match a real machine — a ball takes the same
 number of seconds to cross the table as it would in life, which is what makes the thing feel right.
+
+> **Correction (review, 2026-09-13).** 132 × 58 cm is a cabinet's outer footprint; a standard
+> playfield is about 107 × 51 cm (2.08:1), and the reference artwork's is squatter, 1.37:1. The
+> built deck is **9.2 × 5.8** — a 3:2 cabinet — with the play area at its real 5.10 width, so
+> nothing on the table shrank; only the spacing between rows of features did. The window is 3:2
+> portrait to match. Everything else in this section stands.
 
 ### 1.3 Tick rate: 240 Hz
 
@@ -131,12 +139,17 @@ is another set of hand-built primitive colliders.
 
 ### 1.5 Feature list, with coordinates
 
-> Ten of the coordinates below were moved once the table was on screen — see the note in the
-> preamble. `apps/pinball/Table.h` is the built layout.
+> **This is the first draft, kept for its reasoning.** The built layout is `apps/pinball/Table.h`
+> and differs from it throughout — the deck is 9.2 long, so every Z below has moved, and the
+> review (`docs/pinball_findings.md` §1) found that as written the ball could not leave the
+> plunger lane: the orbit's return lane and both inlanes were under a ball wide once the rails'
+> thickness was counted. Read this section for what each feature is *for*; read Table.h for
+> where it is.
 
-Playfield spans `X ∈ [−2.90, +2.90]`, `Z ∈ [−6.60, +6.60]`. The plunger lane takes the right-hand
-strip, so the **play area proper is `X ∈ [−2.85, +2.25]`** and its centre line is at `X = −0.30`.
-All coordinates below are `(X, Z)` on the deck unless a `y` is given.
+Playfield spans `X ∈ [−2.90, +2.90]`, `Z ∈ [−6.60, +6.60]` (built: `Z ∈ [−4.60, +4.60]`). The
+plunger lane takes the right-hand strip, so the **play area proper is `X ∈ [−2.85, +2.25]`** and
+its centre line is at `X = −0.30`. All coordinates below are `(X, Z)` on the deck unless a `y` is
+given.
 
 **Bottom — the flipper end**
 
@@ -246,6 +259,13 @@ With no CCD and 0.33 units of ball travel per tick, this is the one thing that w
 1. **Thick walls.** Every static collision box is at least **0.6 units thick** — twice the worst-case
    per-tick travel. The outer walls genuinely are that thick; interior guide rails are thin *to look
    at* and fat in collision, hidden behind the art. Costs nothing and handles the ordinary case.
+
+   > **Correction (review).** This works for the cabinet and for anything with dead space behind
+   > it, and for nothing else. An inlane is 0.40 clear between two rails; fattening each by 0.23 a
+   > side closes it, and the same goes for every lane on the table — `python tools/pinball_plan.py
+   > --collider 0.6` leaves the plunger chute and nothing more. Interior rails collide at their
+   > visual thickness (0.14), which is three ticks of ball travel. Mitigation 2 is therefore not a
+   > safety net but the thing that keeps the ball on the table, and stage 1 builds it first.
 2. **A swept tunnel guard on each ball**, once per tick in `RunSimulationTick`, before the world
    steps. Cast `PhysicsWorld::Raycast` from the ball's previous centre to its predicted next centre;
    if it crosses a static collider, place the ball at the hit point offset by its radius along the
@@ -271,6 +291,11 @@ slightly so there is no gap for the ball to catch on.
 The same polyline then drives the **render** mesh (extruded into a strip) so art and collider come
 from one source and cannot drift apart. That single helper is probably the highest-leverage piece of
 code in the whole app.
+
+> Built as `TableBuilder`: `MakeWallStrip` and `MakeRibbon` are the swept box, and `MakeTube` sweeps
+> a round wire, which is what a habitrail is — the airborne part of each ramp is four wires off the
+> same centreline, and hides almost none of the deck beneath it. Every path a builder sweeps is also
+> recorded into `pinball_layout`'s `plan`, which is what `tools/pinball_plan.py` reads.
 
 ### 2.4 Feature-by-feature
 
@@ -349,7 +374,12 @@ backbox               the backglass housing
 backglass             a quad, its own material, for the art
 ```
 
-**`meshes/parts.glb`** — everything that moves or repeats, modelled at the origin facing +Z:
+**`meshes/parts.glb`** — everything that moves or repeats, modelled at the origin facing +Z.
+*Exists:* `tools/pinball_parts_blender.py` builds it headless in Blender 4.5 to exactly these
+conventions (pivot at the origin, +X forward for the bats, one named node per part, the app's
+material names) and `ApplicationPinball::LoadParts` loads it, part by part, with a primitive
+fallback for any node that is missing. Open the .glb in Blender to improve a part by hand, or
+extend the script; the script is what keeps it reproducible.
 
 ```
 ball
@@ -422,21 +452,28 @@ environment and the lighting, and render. No physics, no ball, no rules. The poi
 layout** and start moving things around — because every number in §1.5 is a guess until it is on
 screen.
 
-> Built from **procedural primitives instead of the two `.glb` files**, which do not exist yet.
-> Waiting for them would have meant nobody saw the layout until after it was modelled, and the
-> model wants the layout settled first — §3.3 says as much about the playfield art and it is just
-> as true of the geometry. Every feature is a plain `Object` with a `Mesh`, so swapping in a named
-> node from `table.glb` later is one line each. `apps/pinball/TableBuilder.h` is the polyline
-> helper §2.3 asks for; the orbit, every rail and both ramps come off it, and stage 1's collider
-> chains will read the same paths.
+> **The static machine is procedural, the parts are Blender's.** Deck, cabinet, every rail and
+> both ramps come off `apps/pinball/TableBuilder.h`, the polyline helper §2.3 asks for, driven by
+> `Table.h` — because while the layout is still moving the geometry *is* the layout, and stage 1's
+> collider chains will read the same paths. `table.glb` waits for the layout to freeze. The
+> repeated parts (§3.2's `parts.glb`) are modelled in Blender by `tools/pinball_parts_blender.py`
+> and loaded with primitive fallbacks, so the file can be improved by hand without the app ever
+> depending on it.
+>
+> **Reviewed and re-laid on 2026-09-13** — `docs/pinball_findings.md`. The first layout's ball
+> could not leave the plunger lane; the second passes `tools/pinball_plan.py`, which floods the
+> deck from the plunger with a ball 1.4 diameters across and finds every feature reachable and
+> nothing roofed. That tool, not a screenshot, is stage 0's acceptance test from here on.
 >
 > Also here already, because they cost little and the later stages need them: the tilt slider and
 > `pinball_tilt`, the *show colliders* toggle, and a **fixed camera with named shots** that eases
 > between them (answer 2) — `table` is the artwork framing, and `upper` / `lower` / `machine` are
 > there both as the effect-move mechanism and as a way to inspect a corner of the layout without
-> hand-flying anything. Feature names are painted on the deck as world-space `TextMesh` geometry,
-> so they survive an `include_ui:false` screenshot and the layout can be reviewed by something with
-> no eyes on the monitor. MCP: `pinball_layout`, `pinball_camera`, `pinball_tilt`, `pinball_labels`.
+> hand-flying anything. The shots are *solved* from Table.h at start-up (`MakeShot`), so they follow
+> the table when it changes shape. Feature names are painted on the deck as world-space `TextMesh`
+> geometry, so they survive an `include_ui:false` screenshot and the layout can be reviewed by
+> something with no eyes on the monitor. MCP: `pinball_layout` (now carrying the full `plan`),
+> `pinball_camera`, `pinball_tilt`, `pinball_labels`.
 >
 > A fifth shot, **`orbit`**, is a free debug camera rather than a framing: middle-drag to swing
 > round the machine, shift+middle-drag to slide the pivot, wheel to zoom, or place it exactly with

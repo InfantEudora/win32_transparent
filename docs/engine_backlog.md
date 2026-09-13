@@ -15,7 +15,9 @@ the code it describes exists.
 
 Items 68-77 are a third source — the **Android port** at `C:/code/android`, which took this engine
 as its inspiration and got Tetris running on a tablet. Some are bugs it found in code it inherited,
-some are things it had to build that this engine has no equivalent of. See the reference at the
+some are things it had to build that this engine has no equivalent of. Two of them (73, 75) are
+really one thread: that port has host **build tools** that link the engine core, which is a kind of
+consumer this repo has never had, and it is what the optional-subsystem flags are for. See the reference at the
 bottom for what it found that needed no item, and for how to do the merge itself. That port is also
 why item 67 moved from band D to band C: most of it is written.
 
@@ -68,6 +70,14 @@ and 61 stranded under a band A that says it is empty.
 
   Note `-Wall` is **not** in `engine.mk` at all, so `-Wformat` has to be asked for by name; that
   is also why this is a narrow, safe thing to switch on rather than a general warnings cleanup.
+
+- [ ] **78. The Engine panel's *Target Physics TPS* slider is clamped to 200, and the pinball
+  table runs at 240.** `SetPhysicsTPS` itself has no clamp, so `apps/pinball` starts correctly -
+  but the moment anyone touches that slider the table silently drops to 200 Hz, the per-tick
+  ball travel grows by a fifth, and nothing on screen says so. Widen the clamp (240 is the only
+  rate above 200 anyone has asked for; 300 leaves room) or have the slider show the app's own
+  value as its ceiling. Found while building the pinball design (`apps/pinball/pinball_design.md`
+  §1.3), still open after the stage 0 review (`docs/pinball_findings.md` §4).
 
 ## Band B — under an hour each
 
@@ -293,24 +303,39 @@ and 61 stranded under a band A that says it is empty.
   or the new baseline will bake in a tank that does not drive.*
 
 - [ ] **73. `USE_PHYSICS`, so an app can opt out of ReactPhysics3D.** `USE_SOUND` already
-  establishes the convention (`?= 0`, opt in per app, drop the sources and the `-l` when off). Every
-  app links rp3d today whether or not it wants it, because `Object.h` includes `Physics.h` and
-  `Object` has a physics member.
+  establishes the convention (`?= 0`, opt in per app, drop the sources and the `-l` when off).
+  Everything that links core today links rp3d whether or not it wants it, because `Object.h`
+  includes `Physics.h` and `Object` has a physics member.
 
-  **Check the payoff before doing the work: it is smaller here than on the port.** Counted on
-  2026-09-13, only **three of the twelve apps** never touch physics — `ocpp`, `sim` and `ui`, each
-  of which calls `UpdatePhysics` on an empty world and nothing else. The rest all create a
-  `PhysicsWorld`, including the ones that look like they would not: Tetris and Breakout use static
-  bodies for their walls, `tileset` uses rp3d overlap queries directly. On the port this flag was
-  worth 94 rp3d sources against 0 and a 27.6 MB shared object against 17.9 MB, but that is an APK
-  and a different link model; here it buys link time and exe size for three apps.
+  **The case for this is host tools, not apps.** Counting the apps undersells it badly: only three
+  of the twelve never touch physics (`ocpp`, `sim` and `ui`, each of which calls `UpdatePhysics` on
+  an empty world and nothing else), and the ones that look like they would not all do — Tetris and
+  Breakout use static bodies for their walls, `tileset` calls rp3d overlap queries directly. Twelve
+  games mostly want a physics engine, which is not surprising.
 
-  **The real reason it is on this list is that it is a prerequisite for a physics-free build at
-  all** — and, more immediately, that it is what keeps the port's `Object.{h,cpp}` from diverging
-  further from this one. That is a merge argument rather than a size argument, and it is the
-  honest one.
+  A **build tool** is a different kind of consumer, and it is the one this flag exists for. The
+  port has two, and the difference between them is the whole design:
 
-  **It is not a copy of the sound flag, and the difference is the whole item.** Dropping
+  - `pack_assets.exe` links a **thin hand-listed slice** — `File.cpp`, `BinaryAsset.cpp`,
+    `Debug.cpp`, `Debug_win32.cpp` and miniz, and that is all. No `Object`, so no flag needed and
+    no question to answer. See item 75.
+  - `sprite_packer.exe` is the one that forces the issue. It is a real Windows GUI built on
+    `core/Application` — window, ImGui, `Renderer`, `Scene`, `Object`, `GLTFLoader` — because that
+    is the whole point of a tool that shows you what it is packing. Its object directory is
+    indistinguishable from an app's. A sprite packer has no use whatsoever for a physics engine,
+    a sound backend, or a JSON-RPC server that lets an agent drive it, and its makefile
+    accordingly sets **`USE_PHYSICS ?= 0`, `USE_MCP ?= 0`, `USE_SOUND ?= 0`** — the flag family is
+    that tool's entire relationship to the engine.
+
+  This repo has no such tool yet: `tools/` is Python plus one stray `camera_ray_test.cpp` with no
+  build rule. So the second half of this item is that **`engine.mk` has no notion of a target that
+  is not an app.** Its `CFLAGS` unconditionally carry `-lreactphysics3d -limgui -lsetupapi -lhid
+  -lopengl32 -lgdi32 -lws2_32 -lcrypt32`, which is the right default for a game and wrong for
+  anything else. A tool needs either that list to become opt-in the way the sources already are,
+  or its own small makefile that includes only what it wants — the port took the second road for
+  both of its tools and it worked.
+
+  **The mechanism is not a copy of the sound flag, and that is the rest of the work.** Dropping
   `SoundSystem.cpp` from the source list was enough for sound. Physics needs real `#ifdef`s in
   `core/Object.{h,cpp}` — guard the include; make `physics` a `void*` when off so every
   `if (physics)` test and `Object`'s general shape survive unchanged; compile out only
@@ -322,14 +347,20 @@ and 61 stranded under a band A that says it is empty.
 
   **And that runs straight into `engine.mk`'s "line between shared and per-app flags".** A
   `#ifdef` in `Object.h` means `-DUSE_PHYSICS` has to reach `Object.o`, which lives in the shared
-  `build/core` — the exact thing that block forbids, and for a good reason: whichever app built
-  first would win and every other app would silently link objects compiled for someone else.
-  There are two honest ways out and picking one is the design work here. Either physics-dependent
-  core sources leave the shared tree and compile per app (correct, and it makes `build/core` no
-  longer mean "all of core"), or the flag is repo-wide rather than per-app (much simpler, and
-  worth considering seriously, since three apps opting out is not a strong case for per-app
-  disagreement within one working tree). **Do not just add the `-D` to `CORE_CFLAGS`.** Whichever
-  way it goes, item 72's stamp has to land with it.
+  `build/core` — the exact thing that block forbids, and for a good reason: whichever target built
+  first would win and every other one would silently link objects compiled for someone else. Note
+  a host tool makes this *worse* than the app case, because a tool and a game genuinely do want to
+  disagree within one working tree, so "make the flag repo-wide" is not the cheap way out here
+  that it would be for apps alone. That leaves physics-dependent core sources compiling per target
+  rather than into `build/core` — correct, and it means `build/core` stops meaning "all of core".
+  **Do not just add the `-D` to `CORE_CFLAGS`.** Whichever way it goes, item 72's stamp has to
+  land with it.
+
+  What it is worth once done: link time and exe size for three apps, a tool that does not build a
+  94-source physics library to pack sprites, and `Object.{h,cpp}` stopping its drift from the
+  port's copy. On the port the flag was worth 94 rp3d sources against 0 and a 27.6 MB shared
+  object against 17.9 MB — a different toolchain and link model, so read the ratio, not the
+  numbers.
 
 - [ ] **74. `USE_MCP`, so a shipped build does not carry a debug server.** Same convention again,
   and the argument is not size but that MCP is a *debugging* interface — a JSON-RPC server that
@@ -346,22 +377,49 @@ and 61 stranded under a band A that says it is empty.
   Core side is `MCPServer.cpp` / `HTTPServer.cpp` / `TCPServer.cpp` dropping out of the core
   sources, exactly as `SoundSystem.cpp` and `WaveFile.cpp` already do — so unlike item 73 this one
   needs no core `#ifdef` and does not touch the shared/per-app flag line. Cheaper than 73 and
-  independent of it; the only shared piece is item 72's stamp.
+  independent of it; the only shared piece is item 72's stamp. A host build tool wants this off
+  for the same reason it wants 73 off, and for a blunter one: a sprite packer that opens a
+  socket is a thing nobody asked for.
 
-- [ ] **75. An asset packer, and it already exists.** `docs/asset_layout_plan.md` agreed on
-  2026-09-12 that `DUMP_BINARYASSETS` is stripped entirely in favour of a separate packer. The
-  strip has not happened and the packer was never written — `core/BinaryAsset.cpp:139` still has
-  the `#ifdef`. The port has a working one, `tools/pack_assets.cpp` plus `tools/pack_assets.mk`,
-  and it is the piece that makes an embedded-asset build possible at all.
+- [ ] **75. Pack assets with a separate executable, and delete the self-dump.**
+  `docs/asset_layout_plan.md` agreed on 2026-09-12 that `DUMP_BINARYASSETS` is stripped entirely in
+  favour of a separate packer. Neither half has happened: `core/BinaryAsset.cpp:139` still has the
+  `#ifdef`, and no packer was written. The port has a working one — `tools/pack_assets.cpp` (84
+  lines) plus `tools/pack_assets.mk` — so this is mostly a port-back.
 
-  Two things in it are worth taking deliberately rather than incidentally:
+  **Windows *can* do this in the same build, and should stop.** That is the difference between the
+  two trees and the reason the decision is worth writing down rather than inheriting: a Windows app
+  can dump its own assets and be recompiled locally, which Android cannot do at all (no way to run
+  the build, exercise its `LoadFile` calls on-device, and pull a generated `.cpp` back off). So the
+  port had no choice and this repo does. Taking the separate exe anyway is a **preference, decided
+  2026-09-13** — and the existing code is the argument for it:
+
+  - `DumpBinaryAssets()` packs **only what that session happened to load** (`BinaryAsset.cpp:146`
+    skips any entry whose bytes were released, and correctly warns rather than baking a
+    zero-length asset). A directory walk packs what is *there*. Those are different answers, and
+    only one of them is reproducible.
+  - Worse, the core call site is `Application.cpp:169`, inside `InitGraphics` — before the app has
+    loaded almost anything. It could never have packed a real asset set from there.
+  - It is already dead: **`DUMP_BINARYASSETS` is not defined in `engine.mk` or in any app's
+    makefile**, so all four call sites (`Application.cpp:169`, plus `dozer`, `grid` and `ship`)
+    currently fall through to the `#else` stub, which just calls `ListBinaryAssets()`. Nothing
+    regresses by removing them; something misleading goes away.
+
+  **What the tool needs to link is the good news**: `File.cpp`, `BinaryAsset.cpp`, `Debug.cpp`,
+  `Debug_win32.cpp` and miniz. No `Object`, so no renderer, no rp3d, and none of item 73's
+  questions — a hand-listed source set in its own small makefile, exactly as the port has it. (The
+  heavier tool class, a GUI packer built on `Application`, is what needs 73; see there.)
+
+  Two things in it to take deliberately rather than incidentally:
 
   - **It preserves the relative path in an asset's name** — `sound/click.wav`, not `click.wav` —
-    which is exactly the name this engine's `LoadFile` is passed. A flattening packer means
-    patching every asset string in every app, forever, and silently loses one of any two files
-    sharing a basename in different directories. `lexically_relative(".")` strips the iterator's
-    `./` and `.generic_string()` forces forward slashes, without which a name packed on Windows
-    carries backslashes and never matches a lookup.
+    which is exactly the name `LoadFile` is passed here. A flattening packer means patching every
+    asset string in every app, forever, and silently loses one of any two files sharing a basename
+    in different directories. `lexically_relative(".")` strips the iterator's `./` and
+    `.generic_string()` forces forward slashes, without which a name packed on Windows carries
+    backslashes and never matches a lookup. Multiple asset dirs are scanned in order and a later
+    dir's file wins, which is how an app's own `assets/` overrides `shared_assets/` — the same
+    precedence `main.cpp` already declares for the runtime path, and it must not disagree with it.
   - **The make dependency has to recurse with it**, and this is the part that bites.
     `$(wildcard $(d)/*)` sees only the top level, so an edit to `assets/sound/click.wav` would not
     trigger a repack and the app would run against a stale baked-in copy. The port uses a pure-make
@@ -369,7 +427,8 @@ and 61 stranded under a band A that says it is empty.
     picked. Its own two traps, both learned the hard way: a **space before `$(filter`** in that
     function is load-bearing (without it make reports a nonsense concatenated target name), and the
     asset **directories** must be prerequisites alongside the files, because deleting a whole
-    subdirectory removes its files from the list without making anything look out of date.
+    subdirectory removes both it and its files from the list without making anything look out of
+    date — the parent's mtime is the only thing that changes on a delete.
 
   Pairs with item 61's `FILE_RELEASE_EMBEDDED` note — the packer is what creates the build in which
   that answer is the right one.

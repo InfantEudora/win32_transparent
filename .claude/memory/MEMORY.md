@@ -24,3 +24,4 @@
 - [Per-app build layout](per_app_build_layout.md) — DONE 2026-09-12: one exe per app under apps/<name>/, root makefile+main.cpp+data/+shaders/ deleted, core/ app-agnostic; READ THIS before any build (supersedes the APP= arrangement)
 - [Touch input plan](touch_input_plan.md) — steps 1-4 BUILT on the Android port (see [[android-port-merge]]), not yet on Windows: on-screen buttons as a third input family (AddTouchButton), not picking and not ImGui; docs/touch_input_plan.md
 - [Android port merge](android_port_merge.md) — the port at C:/code/android, its upstream candidates (backlog 68-77), and the copy-then-reapply-with-asserts merge method + --strip-trailing-cr
+- [Pinball stage 0 review](pinball_stage0_review.md) — apps/pinball re-laid 2026-09-13 (9.2 long, 3:2); Table.h is the machine, run tools/pinball_plan.py after any move, parts.glb from tools/pinball_parts_blender.py; interior rails can't be 0.6 thick; findings in docs/pinball_findings.md
