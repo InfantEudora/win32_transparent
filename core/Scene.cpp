@@ -16,6 +16,15 @@ void Scene::UpdateInput(){
     inputcontroller->UpdateKeyState(physics_tick);
 };
 
+void Scene::UpdateTickInput(){
+    if (!inputcontroller){
+        return;
+    }
+    //physics_tick is still the tick ABOUT to run - UpdatePhysics increments it at the end - which
+    //is exactly the tick this input belongs to.
+    inputcontroller->ApplyTickInput(physics_tick);
+};
+
 //One decision per pass of the physics loop - see the header for why it is not left to each stage
 //to work out for itself.
 bool Scene::BeginPass(){

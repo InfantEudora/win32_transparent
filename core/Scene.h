@@ -34,6 +34,9 @@ public:
 
 
     void UpdateInput();
+    //Only on a pass that ticks, and before anything reads an edge - see
+    //InputController::ApplyTickInput, which is the whole of it and says why it is its own call.
+    void UpdateTickInput();
 
     /*
         Called once per pass of the physics loop, straight after UpdateInput and before anything

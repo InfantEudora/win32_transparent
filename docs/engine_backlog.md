@@ -42,7 +42,9 @@ them - the resampler tables are `.bss` and cost no file bytes, which the first v
 Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
 and 61 stranded under a band A that says it is empty.
 
-Also on 2026-09-13: **item 69 closed** - `WasKeyPressed` exists and Tetris's four gameplay actions fire on the press edge - and **item 84 opened**, a pre-existing bug it turned up: edge-triggered scripted input is never delivered while single-stepping. And **items 68 and 79 closed** - the eight genuinely broken format strings
+On 2026-09-14: **item 84 closed** - scripted holds now advance from inside the tick, so edge-triggered actions survive `sim_step` in every app.
+
+On 2026-09-13: **item 69 closed** - `WasKeyPressed` exists and Tetris's four gameplay actions fire on the press edge - and **item 84 opened**, a pre-existing bug it turned up: edge-triggered scripted input is never delivered while single-stepping. And **items 68 and 79 closed** - the eight genuinely broken format strings
 fixed, and `CONFIG=release` built - and **item 61 closed** and moved to the done list, along with
 the soft-compile change it turned out to need. Both came out of building `apps/testfx`, the
 fourteenth app and the first that exists to exercise the engine rather than to be a game — see
@@ -66,7 +68,7 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
 
 ## Band A — minutes each, no risk
 
-- [ ] **78. The Engine panel's *Target Physics TPS* slider is clamped to 200, and the pinball
+- [x] **78. The Engine panel's *Target Physics TPS* slider is clamped to 200, and the pinball
   table runs at 240.** `SetPhysicsTPS` itself has no clamp, so `apps/pinball` starts correctly -
   but the moment anyone touches that slider the table silently drops to 200 Hz, the per-tick
   ball travel grows by a fifth, and nothing on screen says so. Widen the clamp (240 is the only
@@ -75,40 +77,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   §1.3), still open after the stage 0 review (`docs/pinball_findings.md` §4).
 
 ## Band B — under an hour each
-
-- [ ] **84. Edge-triggered scripted input is never delivered while single-stepping.** A
-  `HoldKey` fired at a paused simulation raises its press and release edges on a physics pass that
-  **does not tick**, and `Application::NextInput()` clears the edge flags at the end of every pass
-  whether it ticked or not - so no gameplay tick ever observes them. Level-triggered input is
-  unaffected, because `f_isdown` persists across passes where an edge flag does not.
-
-  Measured 2026-09-13 on `apps/tetris` with the simulation paused and `sim_step {"ticks":1}`:
-  `tetris_input {"action":"left"}` moves the piece (level, works); `rotate_cw`, `hard_drop` and
-  `hold` do nothing at all across seven consecutive stepped ticks. Verified on **both edges and
-  both sides of item 69** - the pre-item-69 binary behaves identically with `WasKeyReleased`, so
-  this is not a regression from that change and was simply never exercised. Free-running, the same
-  calls work: every pass ticks, so the pass that emits the edge is also a pass that runs gameplay.
-
-  *Mechanism.* `ApplyPendingEvents` only calls `AdvanceSyntheticHolds` when `sim_tick` has changed
-  since the last call - correct, and the reason hold durations are in ticks rather than wall-clock.
-  But `UpdateInput()` runs before `BeginPass()` decides whether this pass ticks, so on the pass
-  that *will* run tick N the clock still reads N-1 and no hold advances; the hold advances on the
-  *next* pass, by which time the step is spent and `BeginPass()` returns false. The edge is raised
-  and cleared without a tick in between.
-
-  *Why this matters more than a stuck test.* `CLAUDE.md` and `docs/mcp_server.md` both say
-  `sim_step` advances "input, animation, gameplay and physics" by an exact number of whole ticks,
-  and that pausing before measuring is how you avoid racing the physics thread. For edge-triggered
-  actions that is not true, and it fails silently - the tool returns success and the game does
-  nothing, which reads as the action being wrong rather than undelivered. It also means **item 7's
-  record/replay work cannot be verified by stepping** until this is fixed, which is the main
-  reason it is worth doing before that rather than after.
-
-  *Not obviously a one-liner.* Clearing the edge flags only on passes that ticked is the small fix,
-  but `NextInput()` is deliberately placed after the pass's sleep so the render thread can consume
-  mouse deltas during that window (see the comment at `Application.cpp:372`), and the delta
-  grace-pass counter is on the same path. Deciding whether "edge flags" and "axis deltas" should
-  still share a clearing point is the actual work; they now want different rules.
 
 - [ ] **43. The field is rebuilt every frame with no dirty flag.** One geometry pass plus
   log2(size)+2 dispatches, all of it repeated whether or not anything moved. Its share of the

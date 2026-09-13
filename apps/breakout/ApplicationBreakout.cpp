@@ -1864,6 +1864,8 @@ void ApplicationBreakout::RegisterMCPTools(){
             input->HoldKey(INPUT_BREAKOUT_LAUNCH,2);
             //Wait for the hold AND for the release edge to be consumed by a tick: the launch is
             //read with WasKeyReleased, which only becomes true on the tick after the hold ends.
+            //Since backlog item 84 those ticks are STEPPED ticks as well as free-running ones -
+            //scripted holds advance from inside the tick, so this works under sim_step too.
             uint64_t target = start_tick + 4;
             for (int waited = 0; waited < 4000 && main_scene->GetPhysicsTick() < target; waited += 4){
                 Sleep(4);

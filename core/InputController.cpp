@@ -194,17 +194,39 @@ void InputController::PollDevices(){
 //input - including whatever the window message thread pushed in from its own thread, which is the
 //handoff that used to be an unsynchronised write straight into KeyState.
 void InputController::ApplyPendingEvents(uint64_t sim_tick){
-    //Scripted holds go first, and emit into the same queue as everything else, so a recording of
-    //this tick cannot tell a scripted press from a real one. Only ever advanced once per SIMULATED
-    //tick - see the declaration for why counting calls instead would be a wall-clock bug.
+    //sim_tick is unused here now that scripted holds advance from ApplyTickInput instead. Kept in
+    //the signature because this is the call every pass makes and the tick it belongs to is worth
+    //having at hand - a recorder stamping hardware input wants it, and item 7 will.
+    (void)sim_tick;
+    DrainAndApplyEvents(false);
+}
+
+void InputController::ApplyTickInput(uint64_t sim_tick){
+    //Scripted holds emit into the same queue as everything else, so a recording of this tick
+    //cannot tell a scripted press from a real one.
+    //
+    //The guard is a backstop, not the mechanism: the caller runs this exactly once per ticking
+    //pass, which is once per tick. It matters because Scene::UpdatePhysics is public and an app
+    //may drive the simulation itself - see the note on Scene::BeginPass - and a hold must not
+    //count down twice for one tick if it does.
     if (!f_hold_tick_valid || sim_tick != last_hold_tick){
         f_hold_tick_valid = true;
         last_hold_tick = sim_tick;
         AdvanceSyntheticHolds();
     }
+    //Appended: this pass already applied whatever hardware input it sampled, and that is part of
+    //this tick's input too.
+    DrainAndApplyEvents(true);
+}
+
+void InputController::DrainAndApplyEvents(bool f_append){
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        tick_events.swap(pending_events);
+        if (f_append){
+            tick_events.insert(tick_events.end(),pending_events.begin(),pending_events.end());
+        }else{
+            tick_events.swap(pending_events);
+        }
         pending_events.clear();
     }
 

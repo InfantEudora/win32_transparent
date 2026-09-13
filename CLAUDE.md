@@ -141,6 +141,9 @@ only there — so pass `include_ui: false` when you want the clean 3D scene inst
 races the physics thread. `sim_pause` freezes the simulation while leaving the render loop running
 (the window stays responsive and `screenshot` still works), and `sim_step` then advances by an exact
 number of whole ticks — input, animation, gameplay and physics — instead of sleeping and guessing.
+That includes **edge-triggered scripted input** (a fire, a serve, a rotate), which was silently
+undeliverable while stepping until 2026-09-14; if one seems to do nothing under `sim_step`, suspect
+a regression of that rather than the action.
 Durations here are ticks, so this is the unit everything else is already written in.
 
 ---

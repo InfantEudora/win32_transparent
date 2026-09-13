@@ -275,7 +275,11 @@ class InputController{
     //Current value of a scalar axis. 0 when nothing is driving it.
     float GetAxis(uint32_t mapped_keycode);
     //Physics thread only. Drains everything submitted since the last call, applies it to KeyState,
-    //and keeps it as this tick's input.
+    //and keeps it as this tick's input. Called on EVERY pass of the physics loop, ticking or not,
+    //because the pause key and the editor's picking both read input on passes that do not tick.
+    //
+    //It deliberately does NOT advance scripted holds - see ApplyTickInput, which does, and the
+    //comment there for why the two cannot be the same call.
     //
     //sim_tick is Scene::GetPhysicsTick(). Input is polled and applied on EVERY physics-thread loop,
     //including while the simulation is paused - otherwise a key press could never unpause it - but
@@ -285,6 +289,28 @@ class InputController{
     //would put hold durations back on wall-clock time, which is the exact bug tick-denominating
     //them was meant to remove.
     void ApplyPendingEvents(uint64_t sim_tick);
+    /*
+        Physics thread only, on a pass that WILL tick, before anything reads an edge. Advances
+        every scripted hold by one tick and applies what that emits.
+
+        THIS IS SEPARATE FROM ApplyPendingEvents BECAUSE THE TWO ANSWER TO DIFFERENT CLOCKS, and
+        conflating them was backlog item 84. Holds are denominated in ticks, so they may only
+        advance when a tick actually runs; the old code approximated that with "sim_tick has
+        changed since last time", checked from ApplyPendingEvents - which runs BEFORE BeginPass
+        drains the command queue and decides whether this pass ticks. Free-running that is
+        harmless, because every pass ticks and the approximation is off by one pass at most.
+
+        While single-stepping it is fatal. On the pass that will run tick N the clock still reads
+        N-1, so no hold advances; the hold advances on the NEXT pass, by which time the queued
+        step is spent and the pass does not tick. The key-down was therefore raised on a spinning
+        pass and cleared by NextInput() at the end of it, with no tick in between to see it. Every
+        edge-triggered gameplay action in every app was undeliverable under sim_step - a fire, a
+        serve, a launch, a rotate - while level-triggered input worked, because f_isdown survives
+        a pass boundary and an edge flag does not.
+
+        Driving it from the tick itself removes the approximation rather than tuning it.
+    */
+    void ApplyTickInput(uint64_t sim_tick);
     //What ApplyPendingEvents just applied: the exact input this tick ran with. A recorder writes
     //this out; a replay submits it back. Physics thread only, valid until the next call.
     const std::vector<InputEvent>& GetTickEvents() const { return tick_events; }
@@ -445,6 +471,11 @@ protected:
     bool f_synthetic_release_tick = false;       //guarded by state_mutex
     std::vector<InputEvent> pending_events; //producers append, the physics thread drains
     std::vector<InputEvent> tick_events;    //physics thread only: this tick's applied input
+    //Shared body of ApplyPendingEvents and ApplyTickInput: take everything submitted since the
+    //last drain and apply it. f_append keeps what tick_events already holds, so a ticking pass
+    //ends up with the hardware input it sampled AND the scripted input its tick advanced - which
+    //together are that tick's input, and are what a recorder has to write out.
+    void DrainAndApplyEvents(bool f_append);
     WindowInputState window_state;
 
     //Read on the physics thread every poll, written from the window thread, and only ever a plain

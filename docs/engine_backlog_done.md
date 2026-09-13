@@ -2236,3 +2236,78 @@ object happened to construct first.
   **Left behind for someone to sweep up:** `libs/libOpenAL32.a` and `3rdparty/openal-soft/`
   are now referenced by nothing. Item 80 already notes those headers are a stale version set.
   Deleting them is safe but was not done here.
+
+- [x] **84. Edge-triggered scripted input is never delivered while single-stepping.** A
+  `HoldKey` fired at a paused simulation raises its press and release edges on a physics pass that
+  **does not tick**, and `Application::NextInput()` clears the edge flags at the end of every pass
+  whether it ticked or not - so no gameplay tick ever observes them. Level-triggered input is
+  unaffected, because `f_isdown` persists across passes where an edge flag does not.
+
+  Measured 2026-09-13 on `apps/tetris` with the simulation paused and `sim_step {"ticks":1}`:
+  `tetris_input {"action":"left"}` moves the piece (level, works); `rotate_cw`, `hard_drop` and
+  `hold` do nothing at all across seven consecutive stepped ticks. Verified on **both edges and
+  both sides of item 69** - the pre-item-69 binary behaves identically with `WasKeyReleased`, so
+  this is not a regression from that change and was simply never exercised. Free-running, the same
+  calls work: every pass ticks, so the pass that emits the edge is also a pass that runs gameplay.
+
+  *Mechanism.* `ApplyPendingEvents` only calls `AdvanceSyntheticHolds` when `sim_tick` has changed
+  since the last call - correct, and the reason hold durations are in ticks rather than wall-clock.
+  But `UpdateInput()` runs before `BeginPass()` decides whether this pass ticks, so on the pass
+  that *will* run tick N the clock still reads N-1 and no hold advances; the hold advances on the
+  *next* pass, by which time the step is spent and `BeginPass()` returns false. The edge is raised
+  and cleared without a tick in between.
+
+  *Why this matters more than a stuck test.* `CLAUDE.md` and `docs/mcp_server.md` both say
+  `sim_step` advances "input, animation, gameplay and physics" by an exact number of whole ticks,
+  and that pausing before measuring is how you avoid racing the physics thread. For edge-triggered
+  actions that is not true, and it fails silently - the tool returns success and the game does
+  nothing, which reads as the action being wrong rather than undelivered. It also means **item 7's
+  record/replay work cannot be verified by stepping** until this is fixed, which is the main
+  reason it is worth doing before that rather than after.
+
+  *Not obviously a one-liner.* Clearing the edge flags only on passes that ticked is the small fix,
+  but `NextInput()` is deliberately placed after the pass's sleep so the render thread can consume
+  mouse deltas during that window (see the comment at `Application.cpp:372`), and the delta
+  grace-pass counter is on the same path. Deciding whether "edge flags" and "axis deltas" should
+  still share a clearing point is the actual work; they now want different rules.
+
+  **Closed 2026-09-14 by fixing the timing rather than the flag.** `AdvanceSyntheticHolds` moved
+  out of `ApplyPendingEvents` (which every pass calls) into a new `InputController::ApplyTickInput`,
+  reached through `Scene::UpdateTickInput` and `Application::UpdateTickInput`, and called from
+  inside `if (f_tick)` in the physics loop - before `UpdateAnimations`, so the edge a hold raises
+  is already standing when `RunSimulationTick` and `GatherInput` read it. The old
+  `sim_tick != last_hold_tick` test survives as a backstop, because `Scene::UpdatePhysics` is
+  public and an app may drive the simulation itself.
+
+  *Why not the two obvious alternatives.* "Clear the edge flags only on passes that ticked" breaks
+  the pause key outright: `Scene::BeginPass` computes `f_tick_this_pass` AFTER servicing pause, so
+  the pass that pauses does not tick, the `INPUT_PAUSE` edge survives to the next pass, and the
+  simulation unpauses itself. Splitting the flag in two (per-pass and per-tick) works but is 18
+  call-site changes across 7 apps to buy coverage of real keyboard input during a single-step,
+  which nobody does. Fixing the timing left all 54 edge-read sites and both semantics untouched.
+
+  *The scope was much wider than the report.* Sorting every edge read in the repo by its enclosing
+  hook: **33 sites in `UpdateView`/`BeginPass` run every pass and were always fine; 18 sites in
+  `RunSimulationTick`/`GatherInput` run only on ticking passes and were all broken** - Tank's
+  `INPUT_FIRE` and `INPUT_CRANE_MAGNET`, Pinball's `SERVE`, Breakout's `LAUNCH` and `RESTART`,
+  Dozer's `B`/`E`, Animation and IsoAnimation's `TURN_*`, Tetris's five. Seven apps. That split
+  falls exactly along the two hooks, which is the real finding: **the engine has two input clocks
+  and one flag serving both**, and nothing had named it.
+
+  *Verified* on two apps, paused, single-stepped, exact tick numbers:
+
+  - `apps/tetris` (press edge): `rotate_cw` turns the S piece on **step 1** and once only, where
+    before it did nothing across seven stepped ticks. `hold` swaps S for L on step 1; `hard_drop`
+    locks the piece on step 1.
+  - `apps/breakout` (release edge, different app, different hook): `breakout_launch` unsticks the
+    ball on **step 3** - exactly where a 2-tick hold's release belongs - and once only.
+
+  Free-running is unchanged (breakout played on by itself, breaking bricks, ~62 ticks/s), hold
+  durations are still tick-denominated (a 30-tick `left` walks the piece three columns through
+  DAS), and all fourteen apps build clean in both configurations.
+
+  *One deliberate behaviour change.* Scripted holds now advance AFTER `BeginPass`, so a scripted
+  hold can no longer drive anything `BeginPass` reads - which is `INPUT_PAUSE` and nothing else.
+  Nothing scripts it: it is only ever a real `VK_PAUSE` or `'P'` from the keyboard, and hardware
+  input still applies before `BeginPass` exactly as it did. `UpdateView`'s readers are unaffected
+  because `UpdateView` runs after the tick.

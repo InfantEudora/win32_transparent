@@ -149,6 +149,10 @@ public:
 
     //Physics thread
     virtual void UpdateInput(void);
+    //Runs only on a pass that ticks, before UpdateAnimations, so that an edge a scripted hold
+    //raises is observable by RunSimulationTick instead of being cleared unseen. See
+    //InputController::ApplyTickInput and backlog item 84.
+    virtual void UpdateTickInput(void);
     virtual void UpdateAnimations(void);
 
     /*

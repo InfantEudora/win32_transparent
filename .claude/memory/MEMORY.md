@@ -26,3 +26,4 @@
 - [Android port merge](android_port_merge.md) — the port at C:/code/android, its upstream candidates (backlog 68-77), and the copy-then-reapply-with-asserts merge method + --strip-trailing-cr
 - [Pinball stage 0 review + stage 1](pinball_stage0_review.md) — apps/pinball re-laid and given physics 2026-09-13; Table.h is the machine, run tools/pinball_plan.py + a paused pinball_run trace after any move; rp3d traps (twist friction, max restitution, per-tick motor torque) documented at their defines; findings in docs/pinball_findings.md
 - [testfx bench gotchas](testfx_bench_gotchas.md) — uniform values leaked across effect switches (fixed 2026-09-13 in BuildEffect); sim_step runs at tick rate; default camera is above the cube, reference view is low
+- [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass run every physics pass, RunSimulationTick/GatherInput only on ticking ones; one set of edge flags serves both (backlog 84)

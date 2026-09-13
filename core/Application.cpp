@@ -130,6 +130,13 @@ void Application::UpdateInput(){
     main_scene->UpdateInput();
 }
 
+void Application::UpdateTickInput(){
+    if (!main_scene){
+        return;
+    }
+    main_scene->UpdateTickInput();
+}
+
 int Application::Exit(void){
     return 1;
 }
@@ -340,6 +347,12 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             //Time spent on this pass's work
             app->tmr_physics->Restart();
             if (f_tick){
+                //Scripted input advances HERE rather than in UpdateInput above, because only now
+                //is it known that this pass runs a tick. An edge raised on a pass that does not
+                //tick is cleared by NextInput() below without any gameplay seeing it - which is
+                //what made every edge-triggered action undeliverable under sim_step. Backlog
+                //item 84; the long version is on InputController::ApplyTickInput.
+                app->UpdateTickInput();
                 app->UpdateAnimations();
                 app->RunSimulationTick();
                 app->UpdatePhysics();
@@ -1864,7 +1877,7 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
         }
         ImGui::SetItemTooltip("Runs ticks more/less often in real time. The simulation timestep itself never changes.");
         float tps = physics_tps;
-        if (ImGui::DragFloat("Target Physics TPS",&tps,1.0f,1.0f,200.0f)){
+        if (ImGui::DragFloat("Target Physics TPS",&tps,1.0f,1.0f,250.0f)){
             SetPhysicsTPS(tps);
         }
     }
