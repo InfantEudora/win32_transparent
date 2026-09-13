@@ -119,10 +119,11 @@ CFLAGS += -DTINYGLTF_NO_FS
 #fails to link if it calls the writer rather than disagreeing about the object silently.
 #Kept here anyway so the two compiles say the same thing. See 3rdparty/tinygltf/tiny_gltf.cpp.
 CFLAGS += -DTINYGLTF_NO_WRITER
-#Sound (OpenAL) is optional - see the USE_SOUND block below.
-#Nothing outside it links winmm any more: core/PrecisionSleeper resolves timeBeginPeriod
-#from winmm.dll at run time, and only on pre-Win10-1803 machines where the
-#high-resolution waitable timer is unavailable.
+#Sound is optional - see the USE_SOUND block below.
+#NOTHING links winmm now, not even a sound build: that went with OpenAL, and miniaudio's
+#WASAPI backend wants only -lole32. core/PrecisionSleeper resolves timeBeginPeriod from
+#winmm.dll at run time anyway, and only on pre-Win10-1803 machines where the
+#high-resolution waitable timer is unavailable, so nothing needs it at link time.
 
 IPATHS += -I$(ROOT)/core/
 IPATHS += -I$(ROOT)/core/physics
@@ -173,19 +174,27 @@ CFLAGS += $(if $(CONFIG_SUFFIX),$(RFLAGS),$(DFLAGS))
 #---------------------------------------------------------------------------------------
 CORE_CFLAGS := $(CFLAGS)
 
-#Sound is opt-in per app. libs/libOpenAL32.a is a prebuilt static library; when it hasn't
-#been rebuilt with the current toolchain it won't link (mismatched libstdc++ TLS symbols:
-#`undefined reference to __emutls_v._ZSt11__once_call`). Apps that never touch SoundSystem
-#shouldn't pay for that, so an app opts in with `USE_SOUND := 1` in its makefile. When it's
-#off, core/SoundSystem.cpp and core/WaveFile.cpp are dropped from the core sources this app
-#links and -lOpenAL32 is not passed, so nothing references OpenAL at all.
+#Sound is opt-in per app. An app opts in with `USE_SOUND := 1` in its makefile; when it's off,
+#core/SoundSystem.cpp and core/WaveFile.cpp are dropped from the core sources this app links,
+#so nothing references the audio backend at all.
 #
 #Note this adds two objects to the shared core directory rather than changing any existing
 #one, so a sound app and a silent app can share that directory without interfering: the
 #silent app simply does not link the two it never asked for.
+#
+#THE BACKEND IS miniaudio, NOT OpenAL, since 2026-09-13. There is no -l for it: it is compiled
+#into libs/libthirdparty.a, which every app already links, and costs nothing in an app that
+#does not call it. That is most of the point - OpenAL measured at about 2.4 MB against the
+#fifteen functions core/SoundSystem.cpp used, and miniaudio does the same job in about 179 KB.
+#See docs/engine_backlog.md items 80 and 85, and 3rdparty/miniaudio_config.h for the feature
+#set and the reason those defines live in a header rather than here.
+#
+#-lole32 is WASAPI's: the backend is COM. libs/libOpenAL32.a is now unreferenced by any app,
+#and the note that used to live here about it failing to link with a mismatched toolchain
+#(`undefined reference to __emutls_v._ZSt11__once_call`) went with it.
 USE_SOUND ?= 0
 ifeq ($(USE_SOUND), 1)
-CFLAGS += -DUSE_SOUND -lOpenAL32 -lole32 -lwinmm
+CFLAGS += -DUSE_SOUND -lole32
 else
 CORE_SRCS_NOSOUND += $(ROOT)/core/SoundSystem.cpp
 CORE_SRCS_NOSOUND += $(ROOT)/core/WaveFile.cpp
@@ -250,7 +259,20 @@ EXE := $(BUILD_DIR)/$(PROJECT)$(CONFIG_SUFFIX).exe
 
 default: $(EXE)
 
-$(EXE): $(APP_OBJS) $(CORE_OBJS)
+#The static libraries are prerequisites, not just link arguments, and that is worth the two
+#lines. Rebuilding libs/libimgui.a or libs/libthirdparty.a used to leave every exe untouched:
+#make compares the exe against the OBJECTS, the libraries are not among them, so `make` said
+#nothing to be done and the app kept the code it linked last time. Measured the day this was
+#added - a rebuilt libimgui.a took 111 KB off each app, and six of the fourteen picked it up
+#only because something else had also changed. The other eight silently did not.
+#
+#Wildcard rather than a fixed list, so this does not have to be kept in step with whatever
+#$(CFLAGS) links; it is every library an app could pull from. A missing one is not an error
+#here - the wildcard simply yields nothing - which is what keeps this from breaking a tree
+#where a library has not been built yet.
+ENGINE_LIBS := $(wildcard $(ROOT)/libs/*.a)
+
+$(EXE): $(APP_OBJS) $(CORE_OBJS) $(ENGINE_LIBS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $^ -o $@ $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS)
 	@echo "Built $@ ($(CONFIG))"

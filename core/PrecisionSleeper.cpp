@@ -1,4 +1,4 @@
-#include "PrecisionSleeper.h"
+﻿#include "PrecisionSleeper.h"
 #include "Debug.h"
 
 static Debugger* debug = new Debugger("PrecisionSleeper",DEBUG_INFO);
@@ -20,7 +20,10 @@ PrecisionSleeper::PrecisionSleeper(){
         debug->Err("No waitable timer at all (error %lu), falling back to Sleep()\n",GetLastError());
     }
 
-    //Loaded by name rather than linked: the engine links winmm only when sound is built in.
+    //Loaded by name rather than linked, and now that is the ONLY way it is reached: no
+    //configuration of this engine passes -lwinmm any more. It went with OpenAL when the audio
+    //backend became miniaudio. This path is also rare - pre-Win10-1803 only - so paying for an
+    //import on every machine to serve it would be the wrong trade even if something did link it.
     winmm = LoadLibraryA("winmm.dll");
     if (winmm){
         timeperiod_fn begin = (timeperiod_fn)(void*)GetProcAddress(winmm,"timeBeginPeriod");

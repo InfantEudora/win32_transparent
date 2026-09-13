@@ -1,4 +1,4 @@
-# Engine backlog — closed items
+﻿# Engine backlog — closed items
 
 Everything from `docs/engine_backlog.md` that is **done** (`[x]`) or **decided against** (`[-]`),
 moved here on 2026-09-12 (and added to since) so the backlog itself is a list of work that is
@@ -1968,3 +1968,271 @@ object happened to construct first.
   delivered while single-stepping**, on either edge, because the edge is raised on a pass that
   does not tick and cleared at the end of it. Level-triggered input is fine (`left` moves the
   piece), which is the tell: `f_isdown` survives a pass boundary and an edge flag does not.
+
+---
+
+- [x] **80. OpenAL: the easy trimming is already done, and updating it costs 1.4 MB.** CLOSED
+  2026-09-13, **overtaken rather than carried out**. Everything below is a study of how to make
+  openal-soft smaller, and none of it was ever done, because item 85 replaced OpenAL with
+  miniaudio instead: the whole fifteen-function surface `core/SoundSystem.cpp` used, for 178,688
+  bytes against OpenAL's 2,475,520, measured with this item's own probe method. Nothing in this
+  engine links OpenAL any more.
+
+  **Read on only for the measurements, which are still true and still interesting** - the bsinc
+  tables being `.bss` and not file size, the 1.25.2 regression that turned them into `.data`, and
+  the abort-at-exit that the newer library caught and the old one tolerated. That last one is
+  worth keeping in mind rather than forgetting: it was the engine's own shutdown shape, never
+  closing the device, and `SoundSystem` now has a destructor that tears the engine down properly.
+
+  The original item follows, unchanged.
+
+  Measured 2026-09-13 by building openal-soft three ways and linking each against a probe that calls
+  **exactly** the fifteen functions `core/SoundSystem.cpp` uses, so the number is what the engine
+  pays rather than what an archive weighs. All figures stripped:
+
+  ```
+  no OpenAL at all (floor)                                  40,448
+  what we ship today (libs/libOpenAL32.a, built 2025-08)  2,515,968
+  1.25.2 trimmed  (EAX off, one backend, MinSizeRel)      3,991,552     +1,475,584
+  1.25.2 stock Windows defaults                           4,612,096     +2,096,128
+  ```
+
+  **`libs/libOpenAL32.a` is already configured the way this item was going to recommend.** It has
+  zero EAX symbols, WinMM as its only backend, and `ALSOFT_DLOPEN=OFF` — the `build/CMakeCache.txt`
+  in the openal-soft checkout is where it came from, and `libs/libOpenAL32.a` is byte-for-byte the
+  same size as `build/libOpenAL32.a` there. The one option still on is `ALSOFT_EMBED_HRTF_DATA`.
+
+  **A correction to what this item first claimed.** The bsinc resampler tables are **`.bss` in the
+  library we ship** — `nm` reports `b` for all three — so they cost **no file bytes at all**. They
+  are 873 KB of RAM and some startup CPU, not 873 KB of executable. An earlier version of this
+  item and of the reference below counted them as file size; they are not.
+
+  **And that is exactly what regressed upstream.** In 1.25.2 the tables moved from an
+  anonymous-namespace definition in a `.cpp` to `inline auto const … = BSincFilterArray<hdr>{}` in
+  `core/bsinc_tables.hpp`. Inline namespace-scope globals with dynamic initialisers get external
+  linkage and guard variables, so they are emitted as **`.data`** — `nm` reports `D`, and the
+  probe's `.data` section goes from 32,880 bytes to 944,516. That single change is ~872 KB of the
+  1.4 MB the update costs. The rest is mostly the HRTF set growing from 156 KB to 382,557 bytes,
+  plus general growth (vendored fmt 11.2, gsl, the C++20 rewrite).
+
+  **The engine cannot reach any of it.** `SoundSystem` calls fifteen functions, opens a device,
+  makes a context, uploads `AL_FORMAT_MONO16`/`STEREO16` and plays. No `alListener*`, no
+  `AL_POSITION`, no pitch, no effect slot, no streaming — so HRTF is unreachable by construction,
+  and the resampler is unreachable by API: `ResamplerDefault` is `Resampler::Spline` and the only
+  thing that changes it is an `alsoft.conf` entry (`core/voice.cpp:185`), which the engine neither
+  ships nor exposes. bsinc12/24/48 are built, initialised at startup, and never read.
+
+  So, in order:
+
+  - **`ALSOFT_EMBED_HRTF_DATA=OFF` — 383 KB, and free.** Binaural filtering for headphones, in a
+    game with no 3D audio. It **does not configure**: `CMakeLists.txt:1933` calls
+    `add_dependencies` with an empty `HRTF_DATA_TARGETS` and dies. The Android port already carries
+    the two-line guard as `0001-guard-empty-HRTF_DATA_TARGETS.patch` — apply, build, revert.
+  - **`MinSizeRel` + `-ffunction-sections -fdata-sections -Wl,--gc-sections`** — 140 KB off `.text`
+    measured on the port's arm64 build.
+  - **Deleting `bsinc24` and `bsinc48`** is a source edit (`bsinc_tables.hpp` + `voice.cpp`). It was
+    worth only RSS before; on 1.25.2 it is worth **~725 KB of file**, which changes the calculation
+    entirely. Resampler quality is meaningless for fixed-rate mono SFX.
+  - **Effects** (reverb, chorus, pshifter, vmorpher, …) are unconditional in the source list —
+    `CMakeLists.txt:969-982`, no option, and not reachable by `--gc-sections` because they hang off
+    the effect-type table. ~388 KB per the port's measurement. Wants a patch or nothing.
+
+  **The recommendation is therefore not "update it".** Updating buys the engine nothing it can use
+  and costs 1.4 MB; the reason to do it anyway is that the Android port is on 1.25.2 and one
+  version across both trees is worth something on its own. If it is done, do it *with* the HRTF
+  patch and the bsinc deletion, or the shipped Tetris gets bigger for no feature.
+
+  **One thing the probe turned up that wants settling before any update.** Both libraries drive the
+  full fifteen-function surface identically (device opened, buffer uploaded, source played,
+  `alGetError` 0) - but the 1.25.2 probe then **aborts at process exit**:
+  `std::__condvar::~__condvar(): Assertion '__e != 16' failed`, from MinGW's winpthreads destroying
+  a condition variable that still has a waiter. The probe never calls `alcDestroyContext` or
+  `alcCloseDevice`, so a mixer thread is still live at static destruction - and neither does
+  `core/SoundSystem`. The old library tolerates that and the new one does not. Most likely the
+  probe's bug (and the engine's) that only the newer version catches, but it is an abort on exit in
+  the exact shutdown shape the engine already has, so find out which before shipping it.
+
+  Two things to fix while in here regardless of the version decision. `3rdparty/openal-soft/al.h`
+  is the **old** header set; a header/library version mismatch is the kind of thing that fails at
+  runtime rather than at build time, so headers and library move together or not at all. And
+  `core/SoundSystem.cpp:7-60` is a commented-out `GetProcAddress` DLL loader from before the
+  library was linked statically — dead, misleading, and the first thing anyone reads in that file.
+
+---
+
+- [x] **85. libstdc++'s stream and locale machinery: gone from every app.** CLOSED
+  2026-09-13. Done in two halves on the same day: `core/`, tinygltf, stb_image and miniz
+  first, which left OpenAL as the only holder - and then OpenAL itself was replaced with
+  miniaudio, which is C and references none of it. `nm` on `tetris_release.exe` reports
+  **0** locale symbols where the first half still left 669 in a sound app. Item 80 is the
+  OpenAL background and is now mostly moot; see the closing note at the end of this item.
+
+  **What the machinery is and why it is so large.** One `std::ostringstream` anywhere in a
+  statically linked binary pulls in libstdc++'s locale system — `num_put`, `num_get`, `ctype`,
+  `money_get`, `time_get`, the facet registry and `basic_streambuf` with it. Measured against
+  this project's release flags by linking two otherwise identical probes:
+
+  ```
+  std::string only                 194,048
+  + std::ostringstream             929,792     +735,744
+  + std::ifstream                  930,304     (the same machinery; <sstream> and <fstream> share it)
+  + snprintf instead                194,560     +512
+  ```
+
+  735 KB to format integers into strings, because the facets have to be able to parse a
+  currency amount or a month name in any locale the program might later select. Nothing in this
+  engine has ever selected one.
+
+  **What was done, and what each part was actually worth.** The order matters, because three of
+  the four steps measure as almost nothing on their own — the machinery is all-or-nothing, and
+  until the last referrer goes, removing the others buys single-digit kilobytes:
+
+  | change | worth |
+  |---|---|
+  | `3rdparty/makefile` — the library had **no build rule at all** and was a hand-built blob | enabler |
+  | that blob was built `-Og -g`; rebuilt `-Os` | −102 KB |
+  | tinygltf's 19 `std::stringstream` error messages → `ErrStream`, plus `TINYGLTF_NO_FS` | −3 KB |
+  | `core/` — `HTTPServer`, `MCPServer`, `OCPPClient` off `<sstream>`/`<iomanip>` | ~0 |
+  | **`TINYGLTF_NO_WRITER` — the serializer compiled out** | **−634 KB** |
+
+  **Two live bugs fell out of the `core/` half, and they are the reason that row is worth more
+  than its zero kilobytes.** `HTTPServer.cpp` built its JSON by hand, in a file whose header
+  already included `tinygltf/json.hpp` and already had `using json = nlohmann::json`.
+
+  - `BroadcastVariables()` had been reduced to `http_debug->Fatal("Please fix me!")` with the
+    builder commented out above it, and `Fatal()` calls `exit(1)`. `SetVariable()` calls
+    `BroadcastVariables()`. So `apps/ocpp` ended its own process on any `/set_mode`, any HTML
+    hot-reload, and any WebSocket connect. It now serves the same object `/status` does.
+  - `/set_mode` and `/set_mode_enabled` interpolated percent-decoded query-string input straight
+    into JSON, so `?mode=eco"quoted` emitted malformed output. Now escaped by the library.
+
+  One trap worth knowing if more of this is done: nlohmann validates UTF-8 when it serialises,
+  and under `-fno-exceptions`/`JSON_NOEXCEPTION` a failure calls `std::abort()`. Since those
+  variables hold arbitrary decoded bytes, `dump()` had to become
+  `dump(-1, ' ', false, error_handler_t::replace)` — otherwise `?mode=%FF` is a remote way to
+  kill the app, which is the bug above wearing a different hat. `MCPServer.cpp` documents the
+  matching trap on the parse side (`allow_exceptions=false`).
+
+  While collapsing the ten copies of the HTTP response block into `SendHTTPResponse`, the copies
+  had already drifted: `/style.css` was the only one that had lost its send-failure logging.
+
+  The writer was the last referrer. `WriteGltfStream` ends in `stream << content << std::endl`,
+  and those two symbols held the whole 735 KB in every app, for a code path this engine cannot
+  reach — `core/GLTFLoader.cpp` only ever calls `LoadBinaryFromMemory`.
+
+  ```
+  ocpp_release.exe      4,227,584 -> 3,532,288   (-16.4%, locale symbols 669 -> 0)
+  tetris_release.exe    5,953,024 -> 5,797,888   (-2.6%)
+  ```
+
+  **`-Wl,--gc-sections` does not do this job, and that is worth knowing before anyone tries.**
+  Rebuilding `libthirdparty.a` with `-ffunction-sections -fdata-sections` so the linker could
+  drop the unreferenced writer cost **exactly zero bytes**, and the writer was still in the
+  binary afterwards. On PE/COFF each function's `.pdata` unwind entry references it and keeps
+  the section alive. This is the same result `engine.mk` records for the engine's own compile,
+  for a different reason, and it generalises: on this target, dead code has to not be compiled.
+
+  **And -flto does not do it either, on this toolchain. Two separate failures, both hard.**
+  LTO is the obvious next suggestion after --gc-sections, because it genuinely would work in
+  principle: with -flto the compiler emits GIMPLE rather than machine code and defers codegen
+  to link time, so an unreferenced function is never emitted at all and there is no .pdata
+  entry to anchor it. It is not garbage collection, it is not generating the garbage. Measured
+  on the miniaudio probe, building the library with it took 314,880 bytes to 242,688.
+
+  It cannot be turned on here:
+
+  - **Whole-engine LTO does not link.** Dozens of `multiple definition of 'construction vtable
+    for Light-in-PointLight'`, `'VTT for ConeLight'`, `'virtual thunk to
+    DirectionalLight::~DirectionalLight()'` and so on, between Renderer.o and Light.o. The
+    cause is `class Light : public virtual Object` (core/Light.h:45) with `DirectionalLight :
+    public Light, public Camera` on top: virtual inheritance emits construction vtables and
+    VTTs, which under LTO on PE-COFF land in `.gnu.linkonce.t.*` sections that ld does not
+    dedupe.
+  - **LTO on libthirdparty.a crashes the compiler.** `internal compiler error: in
+    binds_to_current_def_p, at symtab.cc:2497`, from tiny_gltf.h:233, during the LTO link of a
+    real app. GCC 13.1. The probe missed it because it only pulls miniaudio.o.
+
+  Two things would change that answer: a newer GCC, since the ICE is a compiler bug, or
+  dropping the virtual inheritance from Object/Light - which is a design question and not a
+  size one. Note also that -flto on a CONSUMER translation unit made the probe *bigger*
+  (242,688 to 300,544): cross-TU inlining pulling the other way. It is not a free win even
+  where it works, and it needs gcc-ar rather than ar or the archive index loses LTO symbols.
+
+  **Why tetris got 2.6% and ocpp got 16.4%, which was the remaining half.** Identical
+  change, two binaries: ocpp dropped 634 KB and tetris dropped 26 KB. Both lost the same
+  serializer, so the difference — about **608 KB** — is the machinery that stayed behind in the
+  one that links OpenAL. (They are different apps, so this is an inference from the deltas
+  rather than a controlled measurement; the ~735 KB probe figure above is the independent check
+  that the number is the right size.) The fourteen release binaries split along that line:
+
+  ```
+  no sound   animation 3.51M  grid 3.57M  isoanimation 3.82M  ocpp 3.53M  pinball 3.63M
+             ship 3.58M  tank 3.66M  testfx 3.55M  ui 3.49M
+  sound      breakout 5.81M  dozer 5.77M  sim 5.78M  tetris 5.80M  tileset 5.82M
+  ```
+
+  **Taking the streams out of openal-soft was looked at separately and reported as impractical**
+  — enough of the library uses them that it is not the single removable corner tinygltf's
+  serializer turned out to be. That assessment was not re-verified against openal-soft's source
+  while writing this item, so treat it as a starting point rather than a settled finding if
+  anyone picks it up. Either way the two live options are both larger than a patch:
+
+  - **Replace the audio library.** `core/SoundSystem.cpp` uses fifteen AL functions: open a
+    device, make a context, upload `AL_FORMAT_MONO16`/`STEREO16`, play, stop, query state. No
+    3D positioning, no effects, no streaming. That is a small enough surface that a much smaller
+    backend — or WASAPI directly — would cover it, and it would take ~2.3 MB rather than 608 KB
+    off the five sound apps. Under evaluation as of 2026-09-13.
+  - **Or accept it**, and note that the no-sound apps already have the win.
+
+  **Regression notes, which are the point of writing this down.** `TINYGLTF_NO_WRITER` and
+  `TINYGLTF_NO_FS` are set in *both* `engine.mk` and `3rdparty/makefile` and must stay in step;
+  `NO_FS` changes the in-class initialiser of `TinyGLTF::fs`, so a mismatch there is an
+  undefined reference to `tinygltf::FileExists` at app link time. `NO_WRITER` deliberately does
+  not change the class layout — the declarations in `tiny_gltf.h` are left alone — so a mismatch
+  there is only a link error if something calls the writer, which nothing does. Both are local
+  patches to a vendored 2.x tinygltf, which is safe to carry because upstream's own answer to
+  the size problem was `tiny_gltf_v3.h`: a ground-up C rewrite with POD structs, arena
+  allocation and its own JSON parser, i.e. a new library rather than an upgrade. Adopting it
+  would mean rewriting `core/GLTFLoader.cpp` against a different API, and it would also drop
+  `nlohmann/json` (item 74's 173 KB) — worth its own item if anyone wants it.
+
+  Finally: `engine.mk` gained two `-D`s above the shared/per-app line, so both changes needed
+  `make cleancore`. Make compares timestamps, not flags, and will happily link objects built
+  with the old ones.
+
+  **HOW IT ACTUALLY CLOSED: the audio library was replaced, not patched.** Taking the streams
+  out of openal-soft was reported as impractical, and the alternative turned out to be much
+  better than a workaround. `core/SoundSystem.cpp` used fifteen AL functions - open a device,
+  upload PCM16, play, stop, pause, rewind, gain, looping, is-it-playing - and miniaudio covers
+  all fifteen. Measured with probes calling only that surface, against an identical floor:
+
+  ```
+  OpenAL (the already-trimmed build we shipped)     +2,475,520
+  miniaudio                                           +178,688
+  ```
+
+  The port kept the public API of SoundSystem unchanged; no app changed a line. What it cost
+  was rebuilding the buffer/voice split on different parts: a miniaudio data source carries its
+  own cursor, so voices cannot share one, and instead a SoundBuffer owns the decoded PCM while
+  each voice builds its own `ma_audio_buffer_ref` over those same bytes. Full rationale is in
+  the header comment of `core/SoundSystem.h` and in `3rdparty/miniaudio_config.h`.
+
+  The result across all fourteen release binaries: the sound/no-sound split is gone. Sound apps
+  were 5.77-5.82 MB and are now 3.71-3.77 MB, against 3.49-3.82 MB for the silent ones. Sound
+  costs about 200 KB now rather than 2.3 MB.
+
+  ```
+  tetris_release.exe    5,953,024 -> 3,740,160    (-37.2% across both halves of this item)
+  ocpp_release.exe      4,227,584 -> 3,532,288    (-16.4%)
+  ```
+
+  **Verified** by a functional test linking SoundSystem directly - 16 checks, all passing:
+  overlapping voices on one buffer, handle identity, stop/pause/resume, stale handles staying
+  inert, looping, and the one that cannot be checked by eye - `shared_assets/sound/hax.wav` is
+  6000 Hz on a 48000 Hz device and must take 2.06 s, not the 0.26 s it would take if the
+  per-voice sample rate were not set. That one line in `Play` is the whole of rate handling and
+  the test exists mostly to guard it.
+
+  **Left behind for someone to sweep up:** `libs/libOpenAL32.a` and `3rdparty/openal-soft/`
+  are now referenced by nothing. Item 80 already notes those headers are a stale version set.
+  Deleting them is safe but was not done here.

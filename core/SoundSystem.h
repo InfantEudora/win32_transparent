@@ -1,4 +1,4 @@
-#ifndef _SOUND_H_
+﻿#ifndef _SOUND_H_
 #define _SOUND_H_
 
 #include <windows.h>
@@ -8,11 +8,15 @@
 #include <stdint.h>
 #include "BinaryAsset.h"
 
-#include "al.h"
-#include "alc.h"
-//This magical fun feature
-#define INITGUID
-#include "knownfolders.h"
+/*
+    miniaudio_config.h before miniaudio.h, always, everywhere. Some of the defines in it change
+    struct layout - MA_NO_RESOURCE_MANAGER removes a member from the middle of ma_engine - so a
+    file that included miniaudio.h on its own would agree with libthirdparty.a about the name of
+    every field and disagree about where it lives. That is not a link error. See the comment in
+    3rdparty/miniaudio_config.h.
+*/
+#include "miniaudio_config.h"
+#include "miniaudio/miniaudio.h"
 
 #include "WaveFile.h"
 
@@ -21,9 +25,11 @@
 #include <vector>
 
 /*
-    Maybe... use stb_ogg to load stuff.
+    Wraps miniaudio. It used to wrap OpenAL, and the reason for the change was size: OpenAL cost
+    about 2.4 MB in a linked binary against the fifteen functions this class actually used, and
+    miniaudio covers the same ground for about 179 KB. See docs/engine_backlog.md items 80 and 85.
 
-    For now, wraps around some version of OpenAL.
+    The design below did not change with the backend, because it was never an OpenAL design.
 
     TWO THINGS WITH TWO DIFFERENT LIFETIMES, AND THE WHOLE DESIGN IS KEEPING THEM APART.
 
@@ -31,7 +37,7 @@
       A VOICE is a thing currently making noise: one playing of a buffer, with its own gain,
       pitch and play state. Three bricks breaking at once is one buffer and three voices.
 
-    OpenAL models exactly that split - many sources may play one buffer - and this class used to
+    OpenAL modelled exactly that split - many sources may play one buffer - and this class used to
     throw it away, pairing one buffer to one source 1:1 and keying both off one name. So a name
     meant both WHAT to play and WHICH playing you meant, and a sound could not overlap itself:
     alSourcePlay on a source that is already playing REWINDS it, so the second brick cut the first
@@ -40,7 +46,7 @@
     ApplicationTetris and APP=Breakout both did, and what made the LoadFile heap corruption in
     backlog item 53 reachable at all.
 
-    So now:
+    So:
 
       A NAME identifies a BUFFER - what to play. AppendFile registers one, and registering two
       names for one file costs one buffer, not two: they are deduplicated by filename.
@@ -49,10 +55,17 @@
     Fire and forget is the common case and costs nothing: ignore the handle, and the voice is
     recycled once it finishes. Keep the handle and you can pause, rewind, stop or ask after that
     one playing - and if you need it to survive a busy moment, start it with SOUND_KEEP.
+
+    HOW THAT SPLIT IS SPELLED IN MINIAUDIO, because it is less obvious than OpenAL's was.
+    A miniaudio data source carries its own read cursor, so two voices cannot share one: they
+    would share a playback position. What they CAN share is the bytes. So a SoundBuffer owns the
+    decoded PCM and nothing else, and each voice builds its own ma_audio_buffer_ref over those
+    same bytes when it starts - a small POD with a cursor, no copy of the audio. That is the
+    many-sources-one-buffer relationship, rebuilt out of the parts miniaudio gives.
 */
 
-#define  NUM_AL_BUFFERS 32      //distinct sound FILES that can be resident
-#define  NUM_AL_SOURCES 16      //sounds that can be audible AT ONCE. Hardware voices; the scarce one.
+#define  NUM_SOUND_BUFFERS 32   //distinct sound FILES that can be resident
+#define  NUM_SOUND_VOICES  16   //sounds that can be audible AT ONCE. The scarce one.
 
 /*
     Names a single playing of a sound. Zero is never handed out, so a zero-initialised member is
@@ -78,7 +91,7 @@ typedef uint32_t soundhandle_t;
 
     SOUND_KEEP means "do not take this one". For music, an engine loop, anything long: a voice
     stolen halfway through would restart from the beginning at an arbitrary moment, which is far
-    worse than a missed click. A kept voice holds its source until Stop, so an app that starts
+    worse than a missed click. A kept voice holds its slot until Stop, so an app that starts
     them and never stops them will run out - but note that is still strictly better than the old
     behaviour, where EVERY registered sound held a source for the life of the process.
 */
@@ -88,12 +101,7 @@ typedef uint32_t soundhandle_t;
 class SoundSystem{
 public:
     SoundSystem(){};
-    ~SoundSystem(){}
-
-    HINSTANCE hdll = NULL;
-
-    ALCdevice* default_device = NULL;
-    ALCcontext* ctx = NULL;
+    ~SoundSystem();
 
     bool f_initialised = false;
     void Initialise();
@@ -111,14 +119,14 @@ public:
         Starts a sound and returns the handle of the voice playing it. Ignore the handle for
         anything fire-and-forget.
 
-        The same name may be played any number of times at once, up to NUM_AL_SOURCES - they
+        The same name may be played any number of times at once, up to NUM_SOUND_VOICES - they
         overlap instead of cutting each other off. Returns SOUND_INVALID_HANDLE if the name is
-        not registered, or if every source is busy with a kept voice.
+        not registered, or if every voice is busy with a kept one.
     */
     soundhandle_t Play(const char* handle_name, bool looping = false, float gain = 1.0f, uint32_t flags = SOUND_ONESHOT);
 
     //All of these do nothing, harmlessly, for a handle whose voice is gone - see soundhandle_t.
-    void Stop(soundhandle_t handle);        //ends it and returns the source to the pool
+    void Stop(soundhandle_t handle);        //ends it and returns the voice to the pool
     void Pause(soundhandle_t handle);
     void Resume(soundhandle_t handle);      //carries on from where Pause left it
     void Rewind(soundhandle_t handle);
@@ -129,28 +137,51 @@ public:
     bool FinishedPlaying(soundhandle_t handle);
 
     //How many voices are audible right now. For telemetry and for finding out whether an app is
-    //starving itself of sources.
+    //starving itself of voices.
     int GetNumPlaying();
 
 private:
-    //One playing of a buffer. `owner` is the handle that started it, or SOUND_INVALID_HANDLE when
-    //this source is idle and free to take.
+    //miniaudio's engine: the device, the mixing graph and the mixer thread.
+    ma_engine engine;
+
+    /*
+        One playing of a buffer.
+
+        `sound` and `ref` are only meaningful while f_active, and they are torn down and rebuilt
+        on every Play rather than kept around. That is deliberate: a ma_sound is bound to the data
+        source it was initialised from, so reusing one for a different buffer is not a thing that
+        can be expressed. Rebuilding is a small allocation inside miniaudio, at the rate a game
+        starts sound effects, and it keeps the lifetime rule to one line - if f_active, uninit
+        before doing anything else.
+
+        `owner` is the handle that started it, or SOUND_INVALID_HANDLE when this voice is idle.
+    */
     struct SoundVoice{
-        ALuint source = 0;
+        ma_sound sound;
+        ma_audio_buffer_ref ref;
+        bool f_active = false;                  //sound and ref are initialised
         soundhandle_t owner = SOUND_INVALID_HANDLE;
         bool f_keep = false;
-        uint64_t started = 0;       //play counter at start, so "oldest" is answerable
+        uint64_t started = 0;                   //play counter at start, so "oldest" is answerable
     };
 
-    //One loaded file. Named separately because several names may share one.
+    /*
+        One loaded file: the decoded PCM and what it takes to interpret it.
+
+        The BYTES ARE OWNED HERE and outlive every voice playing them, which they have to -
+        ma_audio_buffer_ref does not copy what it is given, it points at it. WaveFile frees its
+        own buffer when it goes out of scope, so AppendFile copies out rather than borrowing.
+    */
     struct SoundBuffer{
-        ALuint buffer = 0;
+        std::vector<uint8_t> pcm;
+        ma_uint32 channels = 0;
+        ma_uint32 sample_rate = 0;
+        ma_uint64 frame_count = 0;
         std::string filename;
     };
 
-    SoundVoice voices[NUM_AL_SOURCES];
+    SoundVoice voices[NUM_SOUND_VOICES];
     std::vector<SoundBuffer> buffers;
-    ALuint al_buffers[NUM_AL_BUFFERS];
 
     std::map<std::string, int>map_handles;      //name -> index into `buffers`
 
@@ -168,8 +199,14 @@ private:
     //The voice this handle still owns, or NULL if it owns none any more.
     SoundVoice* FindVoice(soundhandle_t handle);
 
-    //A source to play on: a free one, else the oldest one-shot. NULL when every source is kept.
+    //A voice to play on: a free one, else the oldest one-shot. NULL when every voice is kept.
     SoundVoice* AcquireVoice();
+
+    //Tears down whatever this voice was playing and marks it idle. Safe on an idle voice.
+    void ReleaseVoice(SoundVoice* voice);
+
+    //Is this voice actually making noise? Idle voices answer false without being asked.
+    bool VoiceIsPlaying(const SoundVoice* voice);
 };
 
 #endif
