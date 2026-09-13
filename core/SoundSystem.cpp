@@ -3,103 +3,8 @@
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("SoundSystem", DEBUG_INFO);
-/*
-//Funtion pointers that we load from DLL
-LPALCCREATECONTEXT alcCreateContext;
-LPALCOPENDEVICE alcOpenDevice;
-LPALGENBUFFERS alGenBuffers;
-LPALGETERROR alGetError;
-LPALCMAKECONTEXTCURRENT alcMakeContextCurrent;
-LPALISEXTENSIONPRESENT alIsExtensionPresent;
-LPALBUFFERDATA alBufferData;
-
-LPALGENSOURCES alGenSources;
-LPALSOURCEI alSourcei;
-LPALSOURCEF alSourcef;
-LPALGETSOURCEI alGetSourcei;
-
-LPALSOURCEPLAY alSourcePlay;
-LPALSOURCEPAUSE alSourcePause;
-LPALSOURCEREWIND alSourceRewind;
-
-bool GetALFunctions(HINSTANCE hdll){
-    if (hdll == NULL)
-        return false;
-
-    alcCreateContext = (LPALCCREATECONTEXT)GetProcAddress(hdll, "alcCreateContext");
-    if (alcCreateContext == NULL)
-        return false;
-
-    alcMakeContextCurrent = (LPALCMAKECONTEXTCURRENT)GetProcAddress(hdll, "alcMakeContextCurrent");
-    if (alcMakeContextCurrent == NULL)
-        return false;
-
-    alIsExtensionPresent = (LPALISEXTENSIONPRESENT)GetProcAddress(hdll, "alIsExtensionPresent");
-    if (alIsExtensionPresent == NULL)
-        return false;
-
-    alcOpenDevice = (LPALCOPENDEVICE)GetProcAddress(hdll, "alcOpenDevice");
-    if (alcOpenDevice == NULL)
-        return false;
-
-    alGenBuffers = (LPALGENBUFFERS)GetProcAddress(hdll, "alGenBuffers");
-    if (alGenBuffers == NULL)
-        return false;
-
-    alBufferData = (LPALBUFFERDATA)GetProcAddress(hdll, "alBufferData");
-    if (alBufferData == NULL)
-        return false;
-
-    alGetError = (LPALGETERROR)GetProcAddress(hdll, "alGetError");
-    if (alGetError == NULL)
-        return false;
-
-    //Sources
-    alGenSources = (LPALGENSOURCES)GetProcAddress(hdll, "alGenSources");
-    if (alGenSources == NULL)
-        return false;
-    alSourcei = (LPALSOURCEI)GetProcAddress(hdll, "alSourcei");
-    if (alSourcei == NULL)
-        return false;
-    alSourcef = (LPALSOURCEF)GetProcAddress(hdll, "alSourcef");
-    if (alSourcef == NULL)
-        return false;
-    alGetSourcei = (LPALGETSOURCEI)GetProcAddress(hdll, "alGetSourcei");
-    if (alGetSourcei == NULL)
-        return false;
-    alSourcePlay = (LPALSOURCEPLAY)GetProcAddress(hdll, "alSourcePlay");
-    if (alSourcePlay == NULL)
-        return false;
-    alSourcePause = (LPALSOURCEPAUSE)GetProcAddress(hdll, "alSourcePause");
-    if (alSourcePause == NULL)
-        return false;
-    alSourceRewind = (LPALSOURCEREWIND)GetProcAddress(hdll, "alSourceRewind");
-    if (alSourceRewind == NULL)
-        return false;
-
-
-    return true;
-}*/
 
 void SoundSystem::Initialise(){
-    /*
-    const char* dllname = "soft_oal.dll";
-
-    hdll = LoadLibrary(dllname);
-    if (hdll == NULL) {
-        debug->Err("Could not load %s\n",dllname);
-        return;
-    }else{
-        debug->Ok("DLL Handle: %p\n", hdll);
-        // call the getFunction to read the Function Pointers of the DLL
-        if (GetALFunctions(hdll) == true) {
-            debug->Ok("Loaded function adresses for %s\n",dllname);
-        }else{
-            debug->Err("Could not load function adresses\n");
-            return;
-        }
-    }*/
-
     debug->Info("Initialising sound device with OpenAL\n");
     default_device = alcOpenDevice(NULL);
     if (default_device){
@@ -128,10 +33,6 @@ void SoundSystem::Initialise(){
         if (ext_EAX){
             debug->Ok("EAX 2.0 support\n");
         }
-
-
-        //create a source
-
         //The voice pool. Sources are the scarce thing - they are what can be AUDIBLE at
         //once - so they are counted separately from buffers now rather than sharing one
         //ceiling with them.
@@ -144,17 +45,10 @@ void SoundSystem::Initialise(){
         }
         debug->Info("Generated %i sound sources\n",NUM_AL_SOURCES);
         f_initialised = true;
-
-        //alSourcei(sources[0], AL_BUFFER, buffers[0]);
-        //alSourcei(sources[0],AL_LOOPING,AL_TRUE);
-
-        //buffer_index++;
-
     }
 }
 
 //Loads file into memory and stores it by handle.
-
 int SoundSystem::FindBufferByName(const char* handle_name){
     if (!handle_name){
         return -1;

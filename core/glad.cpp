@@ -45,6 +45,7 @@ PFNGLLINKPROGRAMPROC glLinkProgram = NULL;
 PFNGLGETPROGRAMIVPROC glGetProgramiv = NULL;
 PFNGLGETPROGRAMINFOLOGPROC glGetProgramInfoLog = NULL;
 PFNGLDELETESHADERPROC glDeleteShader = NULL;
+PFNGLDELETEPROGRAMPROC glDeleteProgram = NULL;
 PFNGLDETACHSHADERPROC glDetachShader = NULL;
 PFNGLUSEPROGRAMPROC glUseProgram = NULL;
 PFNGLDISPATCHCOMPUTEPROC glDispatchCompute = NULL;
@@ -85,6 +86,8 @@ PFNGLMAKETEXTUREHANDLERESIDENTARBPROC glMakeTextureHandleResidentARB = NULL;
 PFNGLMAKETEXTUREHANDLENONRESIDENTARBPROC glMakeTextureHandleNonResidentARB = NULL;
 
 PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = NULL;
+PFNGLGETUNIFORMFVPROC glGetUniformfv = NULL;
+PFNGLGETUNIFORMIVPROC glGetUniformiv = NULL;
 PFNGLUNIFORM1IPROC glUniform1i = NULL;
 PFNGLUNIFORM1FVPROC glUniform1fv = NULL;
 PFNGLUNIFORM3FPROC glUniform3f = NULL;
@@ -213,6 +216,7 @@ bool InitGLExtensions(void){
     glGetActiveUniform = (PFNGLGETACTIVEUNIFORMPROC)wglGetProcAddress("glGetActiveUniform");
     glGetProgramInfoLog = (PFNGLGETPROGRAMINFOLOGPROC)wglGetProcAddress("glGetProgramInfoLog");
     glDeleteShader = (PFNGLDELETESHADERPROC)wglGetProcAddress("glDeleteShader");
+    glDeleteProgram = (PFNGLDELETEPROGRAMPROC)wglGetProcAddress("glDeleteProgram");
     glDetachShader = (PFNGLDETACHSHADERPROC)wglGetProcAddress("glDetachShader");
     glUseProgram = (PFNGLUSEPROGRAMPROC)wglGetProcAddress("glUseProgram");
     glDispatchCompute = (PFNGLDISPATCHCOMPUTEPROC)wglGetProcAddress("glDispatchCompute");
@@ -253,6 +257,8 @@ bool InitGLExtensions(void){
     glMakeTextureHandleNonResidentARB = (PFNGLMAKETEXTUREHANDLENONRESIDENTARBPROC)wglGetProcAddress("glMakeTextureHandleNonResidentARB");
 
     glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
+    glGetUniformfv = (PFNGLGETUNIFORMFVPROC)wglGetProcAddress("glGetUniformfv");
+    glGetUniformiv = (PFNGLGETUNIFORMIVPROC)wglGetProcAddress("glGetUniformiv");
     glUniform1i = (PFNGLUNIFORM1IPROC)wglGetProcAddress("glUniform1i");
     glUniform1fv = (PFNGLUNIFORM1FVPROC)wglGetProcAddress("glUniform1fv");
     glUniform3f = (PFNGLUNIFORM3FPROC)wglGetProcAddress("glUniform3f");

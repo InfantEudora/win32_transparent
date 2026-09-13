@@ -1,11 +1,29 @@
 #include "glad.h"
 #include <vector>
+#include <mutex>
 #include "Shader.h"
 #include "Debug.h"
 #include "File.h"
 #include <string>
 
 static Debugger *debug = new Debugger("Shader", DEBUG_INFO);
+
+/*
+	The registry behind Shader::ForEachShader.
+
+	Function-local statics rather than file-scope objects: several translation units construct
+	Shader instances from their own file-scope initialisers, and a plain static vector might not be
+	constructed yet when the first of those runs. This form is initialised on first use, whenever
+	that turns out to be.
+*/
+static std::mutex& RegistryMutex(){
+	static std::mutex m;
+	return m;
+}
+static std::vector<Shader*>& Registry(){
+	static std::vector<Shader*> list;
+	return list;
+}
 
 //Everything up to the last separator, or "" for a bare filename.
 static std::string DirectoryOf(const std::string& path){
@@ -112,57 +130,202 @@ static std::string LoadShaderSource(const char* path, std::vector<std::string>* 
 }
 
 Shader::Shader(){
-
+	std::lock_guard<std::mutex> lock(RegistryMutex());
+	Registry().push_back(this);
 };
 
 void Shader::CreateComputeShader(const char* comp_path){
-	debug->Info("Load and compile: %s ...\n",comp_path);
-	std::string comp_src = LoadShaderSource(comp_path,&source_files);
-	if (comp_src.empty()){
-		return;
-	}
-	int compid = -1;
-	debug->Info("Compiling compute shader : %s\n", comp_path);
-	compid = CompileCompute((char*)comp_src.c_str(),comp_src.size());
-	debug->Info("Linking program\n");
-	progid = LinkProgram(1,compid);
-
-	//TODO: Figure out if loaded from file or from memory.
-	//free(comp_data);
+	BuildCompute(comp_path);
 };
 
-Shader::Shader(const char* vert_path,const char* frag_path):Shader(){
-    debug->Info("Load and compile: %s, %s ...\n",vert_path,frag_path);
+bool Shader::BuildCompute(const char* comp_path){
+	debug->Info("Load and compile: %s ...\n",comp_path);
 
-	std::string vert_src = LoadShaderSource(vert_path,&source_files);
-	if (vert_src.empty()){
-		return;
+	//A compute program has no vertex stage, so its path lives in fname - see f_is_compute.
+	fname = comp_path;
+	vname.clear();
+	f_is_compute = true;
+	compile_log.clear();
+	f_compiled = false;
+
+	//A local list assigned at the end, because a rebuild must REPLACE the source set rather than
+	//append to whatever the previous build left behind.
+	std::vector<std::string> files;
+	std::string comp_src = LoadShaderSource(comp_path,&files);
+	if (!files.empty()){
+		source_files = files;
 	}
-	std::string frag_src = LoadShaderSource(frag_path,&source_files);
-	if (frag_src.empty()){
-		return;
+	if (comp_src.empty()){
+		compile_log = std::string("Could not read ") + comp_path + "\n";
+		progid = -1;
+		return false;
 	}
 
-	int vertid = -1;
-    int fragid = -1;
-	debug->Info("Compiling vertex shader : %s\n", vert_path);
-	vertid = CompileVertex((char*)vert_src.c_str(),vert_src.size());
-	debug->Info("Compiling fragment shader : %s\n", frag_path);
-	fragid = CompileFragment((char*)frag_src.c_str(),frag_src.size());
+	debug->Info("Compiling compute shader : %s\n", comp_path);
+	int compid = CompileCompute((char*)comp_src.c_str(),comp_src.size());
+	if (compid == 0){
+		progid = -1;
+		return false;
+	}
 	debug->Info("Linking program\n");
-	progid = LinkProgram(2,vertid,fragid);
+	int linked = LinkProgram(1,compid);
+	if (linked == -1){
+		progid = -1;
+		return false;
+	}
+	progid = linked;
+	f_compiled = true;
+	return true;
+}
+
+Shader::Shader(const char* vert_path,const char* frag_path):Shader(){
+	Build(vert_path,frag_path);
+}
+
+bool Shader::Build(const char* vert_path,const char* frag_path){
+	debug->Info("Load and compile: %s, %s ...\n",vert_path,frag_path);
+
 	vname = vert_path;
 	fname = frag_path;
+	f_is_compute = false;
+	compile_log.clear();
+	f_compiled = false;
 
+	//Both files are read before either is compiled, and the list is assigned whatever happens: a
+	//later Reload has to be able to release what this attempt actually loaded, including on the
+	//run where the second file was the one that went missing.
+	std::vector<std::string> files;
+	std::string vert_src = LoadShaderSource(vert_path,&files);
+	std::string frag_src = LoadShaderSource(frag_path,&files);
+	if (!files.empty()){
+		source_files = files;
+	}
+	if (vert_src.empty() || frag_src.empty()){
+		//LoadFile has already named the file it could not read, on stderr. This is the same news
+		//for a caller that cannot see stderr.
+		compile_log = std::string("Could not read ") +
+					  (vert_src.empty() ? vert_path : frag_path) + "\n";
+		progid = -1;
+		return false;
+	}
 
-	//TODO: Figure out if loaded from file or from memory.
-	//free(vert_data);
-	//free(frag_data);
+	debug->Info("Compiling vertex shader : %s\n", vert_path);
+	int vertid = CompileVertex((char*)vert_src.c_str(),vert_src.size());
+	debug->Info("Compiling fragment shader : %s\n", frag_path);
+	int fragid = CompileFragment((char*)frag_src.c_str(),frag_src.size());
+
+	//A failed compile comes back as 0, and glAttachShader(program,0) is a GL error - so a build
+	//with one broken stage is abandoned rather than linked with a hole in it. Unreachable while
+	//f_fatal_on_error is set, since the compile has already exited by then; that is exactly why
+	//it was safe to leave out until the soft path existed.
+	if ((vertid == 0) || (fragid == 0)){
+		if (vertid != 0){
+			glDeleteShader(vertid);
+		}
+		if (fragid != 0){
+			glDeleteShader(fragid);
+		}
+		progid = -1;
+		return false;
+	}
+
+	debug->Info("Linking program\n");
+	int linked = LinkProgram(2,vertid,fragid);
+	if (linked == -1){
+		progid = -1;
+		return false;
+	}
+	progid = linked;
+	f_compiled = true;
+	return true;
+}
+
+bool Shader::Reload(){
+	if (fname.empty()){
+		compile_log = "This program was not built from files, so there is nothing to reload\n";
+		return false;
+	}
+
+	/*
+		Give the files back before reading them, or this reloads nothing. The whole source set,
+		not the one or two filenames - see the note on Reload in Shader.h, and ReleaseFile in
+		core/File.h for what the three answers mean.
+	*/
+	int num_embedded = 0;
+	for (const std::string& path:source_files){
+		if (ReleaseFile(path.c_str()) == FILE_RELEASE_EMBEDDED){
+			num_embedded++;
+		}
+	}
+	if (num_embedded > 0){
+		char msg[256];
+		snprintf(msg,sizeof(msg),
+				 "Not reloaded: %i of this shader's %zu source files are baked into this build\n",
+				 num_embedded,source_files.size());
+		compile_log = msg;
+		debug->Info("%s",msg);
+		return false;
+	}
+
+	//Always soft. See the block above Reload in Shader.h for why the flag does not get a say.
+	bool f_was_fatal = f_fatal_on_error;
+	f_fatal_on_error = false;
+
+	//Keep the working program until the new one links, so a typo leaves the last good picture on
+	//screen instead of a black one.
+	int previous_prog = progid;
+	bool f_was_compiled = f_compiled;
+
+	bool f_ok = f_is_compute ? BuildCompute(fname.c_str()) : Build(vname.c_str(),fname.c_str());
+
+	f_fatal_on_error = f_was_fatal;
+
+	if (!f_ok){
+		progid = previous_prog;
+		f_compiled = f_was_compiled;
+		debug->Err("Reload of %s failed, keeping program %i\n",fname.c_str(),progid);
+		return false;
+	}
+	if ((previous_prog != -1) && (previous_prog != progid)){
+		glDeleteProgram(previous_prog);
+	}
+	debug->Ok("Reloaded %s (program %i)\n",fname.c_str(),progid);
+	return true;
+}
+
+void Shader::ForEachShader(const std::function<void(Shader*)>& fn){
+	if (!fn){
+		return;
+	}
+	std::lock_guard<std::mutex> lock(RegistryMutex());
+	for (Shader* s:Registry()){
+		fn(s);
+	}
 }
 
 Shader::~Shader(){
-
+	std::lock_guard<std::mutex> lock(RegistryMutex());
+	for (size_t i = 0;i < Registry().size();i++){
+		if (Registry().at(i) == this){
+			Registry().erase(Registry().begin() + i);
+			break;
+		}
+	}
 };
+
+//One place that decides what a build stage's info log does, so the four of them cannot disagree
+//about it the way they used to about a missing uniform.
+void Shader::RecordLog(const char* stage, const char* log){
+	if (!log || (*log == '\0')){
+		return;
+	}
+	compile_log += stage;
+	compile_log += ": ";
+	compile_log += log;
+	if (compile_log.back() != '\n'){
+		compile_log += '\n';
+	}
+}
 
 int Shader::CompileVertex(char* vert_data, size_t size){
 	int id = glCreateShader(GL_VERTEX_SHADER);
@@ -177,15 +340,27 @@ int Shader::CompileVertex(char* vert_data, size_t size){
 	glGetShaderiv(id, GL_COMPILE_STATUS, &result);
 	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &infolen);
 	if (!result){
+		//Terminated before the driver is asked to fill it: an implementation that reports an info
+		//log length of zero would otherwise leave this buffer uninitialised and every reader of it
+		//looking at whatever was on the heap.
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetShaderInfoLog(id, infolen, NULL, errormsg);
-		debug->Fatal("CompileVertex: error: %s\n", errormsg);
+		RecordLog("CompileVertex",errormsg);
+		//Fatal exits, so the soft path is everything after it - see Shader::f_fatal_on_error.
+		if (f_fatal_on_error){
+			debug->Fatal("CompileVertex: error: %s\n", errormsg);
+		}
+		debug->Err("CompileVertex: error: %s\n", errormsg);
 		free(errormsg);
+		glDeleteShader(id);
 		return 0;
 	}
 	if (infolen > 1){
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetShaderInfoLog(id, infolen, NULL, errormsg);
+		RecordLog("CompileVertex",errormsg);
 		debug->Warn("CompileVertex: warning: %s\n", errormsg);
 		free(errormsg);
 	}else{
@@ -208,14 +383,22 @@ int Shader::CompileFragment(char* frag_data, size_t size){
 	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &infolen);
 	if (!result){
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetShaderInfoLog(id, infolen, NULL, errormsg);
-		debug->Fatal("CompileFragment: error: %s\n", errormsg);
+		RecordLog("CompileFragment",errormsg);
+		if (f_fatal_on_error){
+			debug->Fatal("CompileFragment: error: %s\n", errormsg);
+		}
+		debug->Err("CompileFragment: error: %s\n", errormsg);
 		free(errormsg);
+		glDeleteShader(id);
 		return 0;
 	}
 	if (infolen > 1){
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetShaderInfoLog(id, infolen, NULL, errormsg);
+		RecordLog("CompileFragment",errormsg);
 		debug->Warn("CompileFragment: warning: %s\n", errormsg);
 		free(errormsg);
 	}else{
@@ -238,14 +421,22 @@ int Shader::CompileCompute(char* comp_data, size_t size){
 	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &infolen);
 	if (!result){
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetShaderInfoLog(id, infolen, NULL, errormsg);
-		debug->Fatal("CompileCompute: error: %s\n", errormsg);
+		RecordLog("CompileCompute",errormsg);
+		if (f_fatal_on_error){
+			debug->Fatal("CompileCompute: error: %s\n", errormsg);
+		}
+		debug->Err("CompileCompute: error: %s\n", errormsg);
 		free(errormsg);
+		glDeleteShader(id);
 		return 0;
 	}
 	if (infolen > 1){
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetShaderInfoLog(id, infolen, NULL, errormsg);
+		RecordLog("CompileCompute",errormsg);
 		debug->Warn("CompileCompute: warning: %s\n", errormsg);
 		free(errormsg);
 	}else{
@@ -263,17 +454,31 @@ int Shader::LinkProgram(int count, ...){
 	//about it, which is exactly the reload you want to hear about.
 	reported_missing.clear();
 
-	GLuint programid = glCreateProgram();
 	va_list arglist;
     va_start(arglist,count);
 	std::vector<int>ids;
     for (int i = 0; i < count; ++i) {
         int id = va_arg(arglist, int);
-		glAttachShader(programid, id);
 		ids.push_back(id);
-		debug->Info("LinkProgram: Attaching ID %i\n",id);
     }
     va_end(arglist);
+
+	//Collected before anything is created, because a stage that failed to compile comes back as 0
+	//and glAttachShader(program,0) is a GL error. Every caller here already checks, so this is the
+	//backstop for the next one; it is cheap and it fails loudly instead of into the GL error queue.
+	for (int id:ids){
+		if (id == 0){
+			RecordLog("LinkProgram","a shader stage did not compile, so nothing was linked");
+			debug->Err("LinkProgram: a stage compiled to 0 - not linking\n");
+			return -1;
+		}
+	}
+
+	GLuint programid = glCreateProgram();
+	for (int id:ids){
+		glAttachShader(programid, id);
+		debug->Info("LinkProgram: Attaching ID %i\n",id);
+	}
 	glLinkProgram(programid);
 
 	// Check the program
@@ -281,14 +486,29 @@ int Shader::LinkProgram(int count, ...){
 	glGetProgramiv(programid, GL_INFO_LOG_LENGTH, &infolen);
 	if (!result){
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetProgramInfoLog(programid, infolen, NULL, errormsg);
-		debug->Fatal("LinkProgram: error: %s\n", errormsg);
+		RecordLog("LinkProgram",errormsg);
+		if (f_fatal_on_error){
+			debug->Fatal("LinkProgram: error: %s\n", errormsg);
+		}
+		debug->Err("LinkProgram: error: %s\n", errormsg);
 		free(errormsg);
-		return 0;
+		//-1, NOT 0. Every progid check in this repo reads `progid != -1`, so returning 0 here -
+		//which is what this did, behind a Fatal that made it unreachable - would sail straight
+		//through those guards and leave callers drawing with program 0.
+		for (int id:ids){
+			glDetachShader(programid, id);
+			glDeleteShader(id);
+		}
+		glDeleteProgram(programid);
+		return -1;
 	}
 	if (infolen > 1){
 		char* errormsg = (char*)malloc(infolen+1);
+		errormsg[0] = '\0';
 		glGetProgramInfoLog(programid, infolen, NULL, errormsg);
+		RecordLog("LinkProgram",errormsg);
 		debug->Warn("LinkProgram: warning: %s\n", errormsg);
 		free(errormsg);
 	}else{

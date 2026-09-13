@@ -1,7 +1,7 @@
 # Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
-`docs/engine_backlog_done.md` — 54 closed items, with their verification notes intact, because
+`docs/engine_backlog_done.md` — 55 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
 Most items are drawn from two runs in which an agent built a game on this engine as an audit of it:
@@ -37,9 +37,14 @@ Status key: `[ ]` open · `[~]` partially done.
 
 Last updated 2026-09-13: items 68-77 from the Android port, 79-82 from measuring `tetris.exe`
 against the goal of shipping it, and 67 moved to band C. Item 78 came from the pinball work in
-between.
+between. Item 80 and the size reference were then corrected after building openal-soft to check
+them - the resampler tables are `.bss` and cost no file bytes, which the first version got wrong.
 Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
 and 61 stranded under a band A that says it is empty.
+
+Also on 2026-09-13: **item 61 closed** and moved to the done list, along with the soft-compile
+change it turned out to need. Both came out of building `apps/testfx`, the fourteenth app and the
+first that exists to exercise the engine rather than to be a game — see `docs/testfx_plan.md`.
 
 ---
 
@@ -99,7 +104,8 @@ and 61 stranded under a band A that says it is empty.
   That is the single largest lever in the tree and it is one line. It also means **nobody has
   ever seen the real size of this engine's output**, which is worth knowing before spending a day
   removing a library to save half a megabyte — see the reference at the bottom for what the 5.37 MB
-  is actually made of.
+  is actually made of, and note while reading it that 947 KB of what `nm` reports is `.bss` and
+  occupies no bytes on disk at all.
 
   Band A is for the `ifeq`. Two things make it not quite a one-liner, and both want settling in the
   same sitting:
@@ -129,51 +135,6 @@ and 61 stranded under a band A that says it is empty.
   90 us (see the reference at the bottom) was not measured separately from the march's, so that is
   the first thing to find out - but either way an app whose world changes rarely is paying for a
   map that did not change.
-
-- [ ] **61. A core `shader_reload` MCP tool.** `ApplicationShip::ReloadVolumeShader` is the
-  hot-reload pattern and it transfers directly, but every app that registers a custom shader has to
-  write its own — and, more to the point, so does every app that wants one reachable by anything
-  other than a keypress.
-
-  **The half nobody had noticed was missing is now done: the cache can be told a file has
-  changed.** `ReloadVolumeShader` was commented "recompiles from disk" and did not - it calls
-  `LoadFile`, which served the `BinaryAsset` cache, so it recompiled the bytes read at start-up
-  and produced an identical program. Every hot reload in this engine was a no-op from the moment
-  the cache was added. Measured, not inferred: write a file, load it, rewrite it, load it again,
-  and the original bytes come back.
-
-  `ReleaseFile` (see `core/File.h`) is the fix, and `ApplicationShip::ReloadVolumeShader` now uses
-  it. Three points that the MCP tool will need to carry over:
-
-  - **It releases the whole source set, not the two filenames.** `shaders/density.glsl` arrives
-    through a `#include` and is shared with `cloud_shadow.comp`, so it is the file most worth
-    editing live; `Shader::source_files` records every file a program's source came from, at any
-    include depth, for exactly this.
-  - **`FILE_RELEASE_EMBEDDED` is an answer, not a failure.** With assets packed into the binary
-    there is no file behind the asset, so the tool must report "not available in this build"
-    rather than rebuild an identical program and claim success. That is the failure this whole
-    thread was about.
-  - **Releasing is the one thing that can invalidate a pointer `LoadFile` handed out.** Safe for
-    shader source, which `Shader` copies into a `std::string`; not safe for a `Texture` or a
-    `WaveFile`, which hold their bytes for life.
-
-  **What is still open is the trigger.** The only way to reload anything today is one ImGui button
-  in one app, which is the whole point of this item - and it is also why the reload path has not
-  been exercised end to end: that button sits below the fold in a docked panel and the mouse wheel
-  over it is taken by the camera. An MCP tool would make it testable as well as reachable.
-
-  The Breakout run wired reload to F5 and to an ImGui button on the brief's advice and then barely
-  used it, because it was changing C++ alongside the shader anyway. Where it paid was the one
-  shader-only iteration: tuning a 45-tick flare that was drowning the effect it announced. A human
-  can press F5; the agent doing the tuning could not reach the keyboard, and each attempt cost a
-  rebuild, a relaunch and replaying the game back to the state worth looking at — about 40 seconds.
-  Adding `breakout_reload_shader` turned that into an edit and a call, and its author named a core
-  version as **the one piece of ergonomics this pass should get next**.
-
-  Note what the app-level implementations have in common and must keep: the key, the button and the
-  tool all only *raise a flag* that `PreRender` acts on, because `UpdateView` runs on the physics
-  thread and may not touch the GL context. A core tool has the same constraint, so it needs a
-  render-thread hook to act in, not just a registry walk.
 
 - [ ] **69. `WasKeyPressed`, the missing half of `WasKeyReleased`.** `KeyState` has
   `f_was_released` and `InputController` exposes `WasKeyReleased`; there is no press edge at all,
@@ -521,32 +482,78 @@ and 61 stranded under a band A that says it is empty.
   object in the scene whether or not it is a sprite is the other half of the price; worth checking
   whether it belongs on `instancedata_t` at all or wants its own path.
 
-- [ ] **80. OpenAL is the largest thing in the binary, and a megabyte of it is tables Tetris will
-  never read.** Measured 2026-09-13 (see the reference at the bottom): OpenAL contributes roughly
-  1.3 MB of the 5.37 MB stripped exe, more than ReactPhysics3D and twice ImGui. Four static arrays
-  are most of it:
+- [ ] **80. OpenAL: the easy trimming is already done, and updating it costs 1.4 MB.** Measured
+  2026-09-13 by building openal-soft three ways and linking each against a probe that calls
+  **exactly** the fifteen functions `core/SoundSystem.cpp` uses, so the number is what the engine
+  pays rather than what an archive weighs. All figures stripped:
 
   ```
-  bsinc48_filter   384 KB      bsinc12_filter   164 KB
-  bsinc24_filter   324 KB      hrtf_default     156 KB
+  no OpenAL at all (floor)                                  40,448
+  what we ship today (libs/libOpenAL32.a, built 2025-08)  2,515,968
+  1.25.2 trimmed  (EAX off, one backend, MinSizeRel)      3,991,552     +1,475,584
+  1.25.2 stock Windows defaults                           4,612,096     +2,096,128
   ```
 
-  Those are high-quality band-limited resampler kernels and a default head-related transfer
-  function — spatialised audio for a game whose entire sound design is mono bleeps on a line clear.
-  `-Wl,--gc-sections` is already in `CFLAGS` and does not touch them, because they are reachable.
+  **`libs/libOpenAL32.a` is already configured the way this item was going to recommend.** It has
+  zero EAX symbols, WinMM as its only backend, and `ALSOFT_DLOPEN=OFF` — the `build/CMakeCache.txt`
+  in the openal-soft checkout is where it came from, and `libs/libOpenAL32.a` is byte-for-byte the
+  same size as `build/libOpenAL32.a` there. The one option still on is `ALSOFT_EMBED_HRTF_DATA`.
 
-  **This is a library configuration question, not engine code**, which is why it is worth doing
-  before anything harder: `libs/libOpenAL32.a` is a prebuilt static library and openal-soft has
-  build options for exactly this (`ALSOFT_EMBED_HRTF_DATA`, and the resampler set). Band C rather
-  than B because the library has to be rebuilt to find out, and because that library is already
-  known to be fragile — `engine.mk`'s own comment records that it does not link when it has not
-  been rebuilt with the current toolchain (`undefined reference to __emutls_v._ZSt11__once_call`),
-  so anyone touching it should expect to rebuild it properly rather than tweak flags around it.
+  **A correction to what this item first claimed.** The bsinc resampler tables are **`.bss` in the
+  library we ship** — `nm` reports `b` for all three — so they cost **no file bytes at all**. They
+  are 873 KB of RAM and some startup CPU, not 873 KB of executable. An earlier version of this
+  item and of the reference below counted them as file size; they are not.
 
-  Worth checking the *other* direction too while in there: if the resampler quality is not
-  reachable from this engine's API at all, the tables are dead weight in every build, and the app
-  that eventually wants positional audio would be better served by turning them back on
-  deliberately.
+  **And that is exactly what regressed upstream.** In 1.25.2 the tables moved from an
+  anonymous-namespace definition in a `.cpp` to `inline auto const … = BSincFilterArray<hdr>{}` in
+  `core/bsinc_tables.hpp`. Inline namespace-scope globals with dynamic initialisers get external
+  linkage and guard variables, so they are emitted as **`.data`** — `nm` reports `D`, and the
+  probe's `.data` section goes from 32,880 bytes to 944,516. That single change is ~872 KB of the
+  1.4 MB the update costs. The rest is mostly the HRTF set growing from 156 KB to 382,557 bytes,
+  plus general growth (vendored fmt 11.2, gsl, the C++20 rewrite).
+
+  **The engine cannot reach any of it.** `SoundSystem` calls fifteen functions, opens a device,
+  makes a context, uploads `AL_FORMAT_MONO16`/`STEREO16` and plays. No `alListener*`, no
+  `AL_POSITION`, no pitch, no effect slot, no streaming — so HRTF is unreachable by construction,
+  and the resampler is unreachable by API: `ResamplerDefault` is `Resampler::Spline` and the only
+  thing that changes it is an `alsoft.conf` entry (`core/voice.cpp:185`), which the engine neither
+  ships nor exposes. bsinc12/24/48 are built, initialised at startup, and never read.
+
+  So, in order:
+
+  - **`ALSOFT_EMBED_HRTF_DATA=OFF` — 383 KB, and free.** Binaural filtering for headphones, in a
+    game with no 3D audio. It **does not configure**: `CMakeLists.txt:1933` calls
+    `add_dependencies` with an empty `HRTF_DATA_TARGETS` and dies. The Android port already carries
+    the two-line guard as `0001-guard-empty-HRTF_DATA_TARGETS.patch` — apply, build, revert.
+  - **`MinSizeRel` + `-ffunction-sections -fdata-sections -Wl,--gc-sections`** — 140 KB off `.text`
+    measured on the port's arm64 build.
+  - **Deleting `bsinc24` and `bsinc48`** is a source edit (`bsinc_tables.hpp` + `voice.cpp`). It was
+    worth only RSS before; on 1.25.2 it is worth **~725 KB of file**, which changes the calculation
+    entirely. Resampler quality is meaningless for fixed-rate mono SFX.
+  - **Effects** (reverb, chorus, pshifter, vmorpher, …) are unconditional in the source list —
+    `CMakeLists.txt:969-982`, no option, and not reachable by `--gc-sections` because they hang off
+    the effect-type table. ~388 KB per the port's measurement. Wants a patch or nothing.
+
+  **The recommendation is therefore not "update it".** Updating buys the engine nothing it can use
+  and costs 1.4 MB; the reason to do it anyway is that the Android port is on 1.25.2 and one
+  version across both trees is worth something on its own. If it is done, do it *with* the HRTF
+  patch and the bsinc deletion, or the shipped Tetris gets bigger for no feature.
+
+  **One thing the probe turned up that wants settling before any update.** Both libraries drive the
+  full fifteen-function surface identically (device opened, buffer uploaded, source played,
+  `alGetError` 0) - but the 1.25.2 probe then **aborts at process exit**:
+  `std::__condvar::~__condvar(): Assertion '__e != 16' failed`, from MinGW's winpthreads destroying
+  a condition variable that still has a waiter. The probe never calls `alcDestroyContext` or
+  `alcCloseDevice`, so a mixer thread is still live at static destruction - and neither does
+  `core/SoundSystem`. The old library tolerates that and the new one does not. Most likely the
+  probe's bug (and the engine's) that only the newer version catches, but it is an abort on exit in
+  the exact shutdown shape the engine already has, so find out which before shipping it.
+
+  Two things to fix while in here regardless of the version decision. `3rdparty/openal-soft/al.h`
+  is the **old** header set; a header/library version mismatch is the kind of thing that fails at
+  runtime rather than at build time, so headers and library move together or not at all. And
+  `core/SoundSystem.cpp:7-60` is a commented-out `GetProcAddress` DLL loader from before the
+  library was linked statically — dead, misleading, and the first thing anyone reads in that file.
 
 - [ ] **82. `USE_IMGUI`, the fourth member of the flag family.** With 73, 74 and `USE_SOUND`, a
   shipped build becomes a set of flags rather than a fork of the app — which is the point. ImGui is
@@ -757,8 +764,10 @@ and 61 stranded under a band A that says it is empty.
 Context for items 79-82, which came out of one question — how small can a shipped Tetris be while
 keeping the features that make it worth shipping. Measured 2026-09-13 against
 `apps/tetris/build/tetris.exe` as built that day (`-Og -g`, `USE_SOUND := 1`, MCP and physics both
-in). Everything here is `nm -S` on the binary, bucketed by symbol origin, so it accounts for code
-and static data and not for what the loader adds.
+in), bucketed by symbol origin with `nm -S`. Item 80's OpenAL figures come from a different and
+better method - building the library three ways and linking each against a probe that calls exactly
+the engine's fifteen AL functions - because a shared library's marginal cost inside a big binary is
+not something symbol bucketing can settle.
 
 **The headline is that the debug info is nine tenths of the file** (item 79):
 
@@ -767,40 +776,51 @@ as built           55.07 MB
 after `strip`       5.37 MB
 ```
 
-**And the 5.37 MB that is left, by origin:**
+**And the 5.37 MB that is left.** Bucketed by symbol origin with `nm -S`, splitting what is in the
+file from what is only `.bss` — which matters, because `.bss` occupies no bytes on disk and an
+earlier version of this table conflated the two:
 
-| component | size | notes |
-|---|---|---|
-| OpenAL | ~1.3 MB | ~1 MB of it four resampler/HRTF tables — item 80 |
-| ReactPhysics3D | 1.12 MB | the debris tray; a real feature, gated by `f_debris_enabled` |
-| libstdc++ / mingw runtime | 847 KB | `-static-libstdc++ -static` is deliberate |
-| **ImGui** | **618 KB** | one debug window in Tetris — items 81, 82 |
-| engine `core/` | 252 KB | the whole engine, and the smallest interesting line here |
-| nlohmann/json | 173 KB | MCP only — item 74 |
-| tinygltf | 156 KB | |
-| stb_image | 59 KB | |
-| miniz, glad | ~9 KB | |
+| component | in the file | `.bss` (RAM only) | notes |
+|---|---|---|---|
+| ReactPhysics3D | 1108 KB | 13 KB | the debris tray; a real feature, gated by `f_debris_enabled` |
+| OpenAL | ~975 KB | **873 KB** | the `.bss` is the bsinc resampler tables — item 80 |
+| libstdc++ / mingw CRT | 919 KB | | `-static-libstdc++ -static` is deliberate |
+| **ImGui** | **624 KB** | 22 KB | one debug window in Tetris — items 81, 82 |
+| engine `core/` | 251 KB | | the whole engine, and the smallest interesting line here |
+| nlohmann/json | 173 KB | | MCP only — item 74 |
+| tinygltf | 156 KB | | |
+| stb_image | 59 KB | | |
+| miniz | 8 KB | | |
 
-**Three things worth taking from that table.**
+Sized symbols account for 4.66 MB of the 5.37; the remainder is headers, padding, import tables and
+unsized data. Treat the rows as proportions, not as a budget that must sum.
 
-The engine itself is **252 KB**. Everything else is libraries, which is the expected shape for a
+**Four things worth taking from that table.**
+
+The engine itself is **251 KB**. Everything else is libraries, which is the expected shape for a
 small engine and is also the reason size work here is almost entirely about which libraries a build
 carries rather than about the code anyone writes.
 
+**`.bss` is not file size, and OpenAL is where that bites.** Its three bsinc resampler tables are
+873 KB of the 947 KB `.bss` and cost nothing on disk in the library we ship today. They *do* cost
+file bytes in openal-soft 1.25.2, where they became `.data` — see item 80, which is the reason
+updating that library is a 1.4 MB regression rather than an improvement.
+
 **ImGui is fourth, not first.** The instinct to remove it is right for shipping reasons — a game
 should not carry its own inspector — but as a size lever it is worth less than the release build by
-two orders of magnitude, less than an OpenAL build option, and less than physics. Do it because the
-result is a clean example of the engine, not because of the megabytes.
+two orders of magnitude, and less than physics or OpenAL. Do it because the result is a clean
+example of the engine, not because of the megabytes.
 
 **Two of the four big items are features, and that is the real question.** Physics is the debris
-tumbling out of the well and OpenAL is the sound; together they are 2.4 MB of the 5.37, and they
-are two of the better things about the game. "As small as possible while keeping the core features"
-has to decide what counts as core before the ordering means anything.
+tumbling out of the well and OpenAL is the sound; together they are about 2.1 MB of the file, and
+they are two of the better things about the game. "As small as possible while keeping the core
+features" has to decide what counts as core before the ordering means anything.
 
 **Suggested order, cheapest and least controversial first:** item 79 (the release build, ~50 MB,
 one `ifeq`), item 74 (`USE_MCP`, ~200 KB and a server a shipped game should not have), item 80
-(OpenAL's tables, ~1 MB, no engine change), then items 81 and 82 (the SDF pass and `USE_IMGUI`,
-~600 KB and the only one that is real design work).
+(OpenAL — but read it first: the easy options are already set, and the remaining wins are a patch
+rather than a flag), then items 81 and 82 (the SDF pass and `USE_IMGUI`, ~600 KB and the only one
+that is real design work).
 
 ---
 

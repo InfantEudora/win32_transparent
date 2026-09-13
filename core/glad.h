@@ -138,6 +138,27 @@
 #define GL_MAX_VERTEX_ATTRIBS 0x8869
 #define GL_ACTIVE_UNIFORMS 0x8B86
 
+//The GLSL types glGetActiveUniform reports back. GL_FLOAT, GL_INT and friends come from the
+//ancient GL/gl.h above; the composite ones arrived with GL 2.0 and do not. Anything reflecting
+//over a program's uniforms needs them to know what widget to draw - Application::RenderShaderUI
+//could only tell a float from an int for exactly this reason.
+#define GL_FLOAT_VEC2 0x8B50
+#define GL_FLOAT_VEC3 0x8B51
+#define GL_FLOAT_VEC4 0x8B52
+#define GL_INT_VEC2 0x8B53
+#define GL_INT_VEC3 0x8B54
+#define GL_INT_VEC4 0x8B55
+#define GL_BOOL 0x8B56
+#define GL_BOOL_VEC2 0x8B57
+#define GL_BOOL_VEC3 0x8B58
+#define GL_BOOL_VEC4 0x8B59
+#define GL_FLOAT_MAT2 0x8B5A
+#define GL_FLOAT_MAT3 0x8B5B
+#define GL_FLOAT_MAT4 0x8B5C
+#define GL_SAMPLER_2D 0x8B5E
+#define GL_SAMPLER_3D 0x8B5F
+#define GL_SAMPLER_CUBE 0x8B60
+
 //VBOs
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_DYNAMIC_STORAGE_BIT 0x0100
@@ -335,6 +356,11 @@ typedef void (APIENTRYP PFNGLGETACTIVEUNIFORMPROC)(GLuint program, GLuint index,
 GLAPI PFNGLGETACTIVEUNIFORMPROC glGetActiveUniform;
 typedef void (APIENTRYP PFNGLDELETESHADERPROC)(GLuint shader);
 GLAPI PFNGLDELETESHADERPROC glDeleteShader;
+//For Shader::Reload, which links a replacement program and then has to release the old one. A
+//reload that skipped this would leak one whole program per edit, which for a shader bench is a
+//leak per keystroke-worth of iteration rather than a one-off.
+typedef void (APIENTRYP PFNGLDELETEPROGRAMPROC)(GLuint program);
+GLAPI PFNGLDELETEPROGRAMPROC glDeleteProgram;
 typedef void (APIENTRYP PFNGLDETACHSHADERPROC)(GLuint program, GLuint shader);
 GLAPI PFNGLDETACHSHADERPROC glDetachShader;
 typedef void (APIENTRYP PFNGLUSEPROGRAMPROC)(GLuint program);
@@ -343,6 +369,13 @@ GLAPI PFNGLUSEPROGRAMPROC glUseProgram;
 //Uniforms
 typedef GLint (APIENTRYP PFNGLGETUNIFORMLOCATIONPROC)(GLuint program, const char *name);
 GLAPI PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation;
+//Reading a uniform back OUT of a program, which is how a reflected UI seeds its widgets: a
+//`uniform float fog = 0.4;` carries its default in the GLSL, and the panel has no other way to
+//learn it. Named programs like the glProgramUniform* setters, so bind order is irrelevant here too.
+typedef void (APIENTRYP PFNGLGETUNIFORMFVPROC)(GLuint program, GLint location, GLfloat *params);
+GLAPI PFNGLGETUNIFORMFVPROC glGetUniformfv;
+typedef void (APIENTRYP PFNGLGETUNIFORMIVPROC)(GLuint program, GLint location, GLint *params);
+GLAPI PFNGLGETUNIFORMIVPROC glGetUniformiv;
 typedef void (APIENTRYP PFNGLUNIFORM1IPROC)(GLint location, GLint v0);
 GLAPI PFNGLUNIFORM1IPROC glUniform1i;
 typedef void (APIENTRYP PFNGLUNIFORM1FVPROC)(GLint location, GLsizei count, const GLfloat *value);

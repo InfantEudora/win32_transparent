@@ -1,10 +1,12 @@
 # `testfx` — a fullscreen shader bench
 
-A thirteenth app under `apps/testfx/`, for writing and looking at fragment shaders with nothing
+A fourteenth app under `apps/testfx/`, for writing and looking at fragment shaders with nothing
 else in the frame. Shadertoy's workflow, on this engine's pipeline, so that a shader that works
 here can be lifted into one of the games as an effect.
 
-Status: **plan**. Nothing below is built yet.
+Status: **built**, 2026-09-13. Everything below describes the app as it is; section 12 at the
+bottom lists where it ended up differing from the plan and why. The core changes in section 9
+are done and closed backlog item 61.
 
 ---
 
@@ -89,7 +91,10 @@ apps/testfx/
             shadertoy_main.glsl the epilogue: main() calling mainImage()
             engine.glsl         the engine-side extras: G-buffer, camera basis, lights
             bluecube.frag       the first effect (section 8)
+            bluecube2.frag      the same reference, second take: one light in a scattering cube,
+                                analytic throughout, nine knobs - the file's header explains it
             _template.frag      copy this to start a new one
+            gbuffer.frag        a diagnostic, not an effect: shows what the deferred pass left
         textures/
             (whatever gets dropped in; channels are assignable from the UI)
 ```
@@ -111,7 +116,7 @@ A shadertoy port, in full:
 
 ```glsl
 #version 460 core
-#include "shaders/shadertoy.glsl"
+#include "shadertoy.glsl"
 
 // ---- paste between the two includes, unchanged -------------------------------
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
@@ -120,12 +125,25 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
 }
 // ------------------------------------------------------------------------------
 
-#include "shaders/shadertoy_main.glsl"
+#include "shadertoy_main.glsl"
 ```
 
-`shadertoy_main.glsl` is three lines: declare `layout(location = 0) out vec4 frag_color;`, call
-`mainImage(frag_color, vuv * iResolution.xy)`, done. An included file must not carry its own
-`#version` — `Shader::ResolveIncludes` documents that, and the prelude obeys it.
+**The include path is relative to the INCLUDING FILE'S DIRECTORY, not an asset name.** So it is
+`#include "shadertoy.glsl"` and not `#include "shaders/shadertoy.glsl"` — the latter resolves to
+`shaders/shaders/shadertoy.glsl` and fails. `Shader::ResolveIncludes` documents this and
+`raymarch_volume.frag`'s `#include "density.glsl"` is the existing example.
+
+`shadertoy_main.glsl` is one function: `main()`, calling
+`mainImage(frag_color, vuv * iResolution.xy)`. `frag_color` itself is declared in
+`shadertoy.glsl` rather than here, so that a NATIVE effect — which never includes the epilogue —
+has it too; the rule that follows is *do not declare your own output at location 0*. An included
+file must not carry its own `#version`, which `Shader::ResolveIncludes` also documents and the
+prelude obeys.
+
+Both `shadertoy.glsl` and `engine.glsl` carry an `#ifndef` guard, and `engine.glsl` includes
+`shadertoy.glsl`. So a native effect gets the whole set from one include, a port gets the
+shadertoy half from one, and a port that needs scene depth can include both in either order
+without double-declaring `vuv`.
 
 A native effect skips `shadertoy_main.glsl`, writes its own `main()`, and may include
 `engine.glsl` for the G-buffer samplers, the camera basis and the light SSBO. That is the form
@@ -147,8 +165,11 @@ with the program already bound.
 | `iTimeDelta` | `float` | `GetPhysicsTimestep()`, constant by construction |
 | `iFrame` | `int` | the tick counter |
 | `iMouse` | `vec4` | xy current, zw click origin, shadertoy's sign convention |
-| `iChannel0..3` | `sampler2D` | fixed bindings, assignable from the UI |
+| `iChannel0..3` | `sampler2D` | fixed bindings on texture units **28-31** — the next four free above the cloud-shadow and occluder-field maps at 26/27; see the `TEXUNIT_*` block in `core/Renderer.h`. Assignable from the UI |
 | `iChannelResolution[4]` | `vec3[]` | |
+| `iChannelTime[4]` | `float[]` | all four are `iTime`; declared so a snippet using it compiles |
+| `iFrameRate` | `float` | `1 / iTimeDelta`, so constant |
+| `iDate` | `vec4` | `w` is `iTime`, the date components are **zero**. Declared so a snippet using it compiles, and fed from the tick rather than the calendar — a bench whose claim is "frame N looks like this" must not contain a value that changes at midnight |
 | `iCamPos/Right/Up/Forward` | `vec3` | the engine camera's basis, pre-scaled by fov and aspect, so a native effect raymarches the scene's real camera with `dir = normalize(iCamForward + uv.x*iCamRight + uv.y*iCamUp)`. There is no general matrix inverse in `type_fmat4.h` — `inverse_transform` is rigid-only — so the basis is built on the CPU from the camera rather than inverting a view-projection in GLSL. |
 | `gbuffer_depth/position/normal` | `sampler2D` | bound by `CustomShaderPass` on units 1–3, not by us |
 | `mat_worldcam`, `eye_position` | | set by `CustomShaderPass` for every custom shader |
@@ -211,7 +232,8 @@ MCP tools, so the same loop runs headless — `screenshot` already exists and do
 | `fx_select` | switch effect by name |
 | `fx_reload` | recompile the current effect, return the compile log |
 | `fx_set` | set a named uniform to a float / vec / int |
-| `fx_state` | current effect, tick, `iTime`, uniform values, last compile log |
+| `fx_state` | current effect, tick, `iTime`, uniform values, last compile log, and the source files it was built from |
+| `fx_scene` | the test geometry on/off — **a sixth tool, added during the build**. The plan made it a checkbox and nothing else, which excluded the one caller the bench is most for: section 2 says an effect that fades where it meets geometry cannot be developed against an empty scene, so a headless caller working on exactly that would have needed somebody at the keyboard |
 
 Each takes the usual `include_screenshot` passthrough via `MaybeAttachScreenshot`.
 
@@ -219,19 +241,59 @@ Each takes the usual `include_screenshot` passthrough via `MaybeAttachScreenshot
 
 ## 8. The first effect: `bluecube.frag`
 
-A slowly spinning blue cube, per the reference frames: a rounded-box SDF raymarched against a dark
-blue vignette, lit by one key light; hard cyan highlights along the edges where the light grazes;
-a fresnel-weighted reflection of a procedural sky gradient, which is what makes it read as
-polished rather than matte; ground haze with the noise texture driving it; a soft contact
-reflection below.
+> **This section was written from memory and described the wrong object.** It is corrected below;
+> the original text is kept at the end of the section because what it got wrong is worth keeping.
+
+A tilted, frosted, **translucent slab with a light inside it**, standing in a fog bank on a dark
+navy ground. A rounded-box SDF, much thinner in z than in x and y, raymarched against the scene's
+real camera; the emission is a soft field *integrated through the volume* between the ray's entry
+and exit; the bevel carries a hard, near-white rim where light escapes; the seeded noise on
+`iChannel0` supplies the surface grain and the specks; and the ground is lit by the slab rather
+than reflecting it.
+
+**One knob walks all four reference frames.** `glow_level` at 0.18, 1.15, 2.40 and 4.50 reproduces
+`cube_example_1` through `_4` — measured, those are the values the verification screenshots were
+taken at. That was the design goal and it drove three decisions that are not obvious:
+
+- the emission is a **field integrated through the volume**, not a colour painted on the surface.
+  A painted version matches any *one* frame and cannot walk between them, because what changes
+  across the four is how far the light gets through the slab before the frost scatters it away;
+- the source **spreads as it brightens** (`glow_spread`), or the bottom band only gets brighter
+  while the top stays black and the sweep stalls around frame 2;
+- the emission **desaturates as it saturates**, or a strongly coloured emitter under a per-channel
+  Reinhard never reaches white and frame 4 is unreachable at any value.
 
 Written in the **native** form — its own `main()`, raymarching `iCamPos`/`iCamForward` so the
 engine camera orbits it — because that is the form a game would paste, and the point of the bench
 is the paste. A second file, `_template.frag`, carries the shadertoy form so both paths are
 exercised from day one.
 
-Everything worth tuning (rotation rate, roughness, fresnel power, glow colour, fog density) is a
-plain `uniform` with a default, which the reflected-uniform panel turns into sliders for free.
+Everything worth tuning is a plain `uniform` with a default — 34 of them — which the
+reflected-uniform panel turns into widgets for free.
+
+### What the original text said, and why it is worth recording
+
+> A slowly spinning blue cube, per the reference frames: a rounded-box SDF raymarched against a
+> dark blue vignette, lit by one key light; hard cyan highlights along the edges where the light
+> grazes; a fresnel-weighted reflection of a procedural sky gradient, which is what makes it read
+> as polished rather than matte; ground haze with the noise texture driving it; a soft contact
+> reflection below.
+
+That is an **opaque, polished object lit from outside**. The frames are an **emissive frosted one
+lit from within**, and the tell is in the frames themselves: the cube is *darker than its
+background* in frame 1 and *brighter than everything* in frame 4, which no externally lit surface
+does. The first build followed the description faithfully and produced a blue plastic dice.
+
+Two smaller things went the same way. "A soft contact reflection below" was built as a second
+raymarch off the ground plane — a true mirror, the most expensive thing in the shader — and the
+frames show a *pool of light*, because the object is self-luminous; driving it from the same
+emitter the interior integral uses is both cheaper and correct. And "slowly spinning" at a rate
+that reads as gentle on paper is 4.3°/s, which loses the tuned pose inside twenty seconds; it
+rocks now, with the spin still available and off by default.
+
+The lesson is not that the description was careless — it is that a *mechanism* cannot be recovered
+from a memory of how something looked, and a plan that names one is making a claim that has to be
+checked against the reference before anything is built on it.
 
 ---
 
@@ -293,7 +355,7 @@ it can return the real compile log, the same shape as `StepPhysicsAndWait`.
 
 ---
 
-## 10. Order of work
+## 10. Order of work — all done
 
 1. Core 9.1 — soft compile. Smallest, and everything after it is nicer to develop with.
 2. `apps/testfx/` skeleton: makefile, main, Init, quad, `fullscreen.vert`, a flat-colour
@@ -304,20 +366,94 @@ it can return the real compile log, the same shape as `StepPhysicsAndWait`.
 6. Core 9.2 — `Shader::Reload` + registry + `shader_reload`; retire
    `ApplicationShip::ReloadVolumeShader`'s hand-rolled copy onto it and close backlog 61.
 7. The `fx_*` MCP tools.
-8. `bluecube.frag` for real, tuned against the reference frames by screenshot.
-9. Test geometry toggle.
-10. Docs: `readme.md` app list, `CLAUDE.md` app list (`testfx` is the thirteenth), backlog 61 moved
-    to `engine_backlog_done.md` with its verification note.
+8. `bluecube.frag` for real. Written from this document's description, then **rewritten against the
+   reference frames** once they arrived - the description named the wrong mechanism, see section 8.
+9. Test geometry toggle, plus `gbuffer.frag` to see what it puts in the G-buffer.
+10. Docs: `readme.md` app list, `CLAUDE.md` app list (`testfx` is the fourteenth),
+    `docs/mcp_server.md` for `shader_reload` and the `fx_*` tools, backlog 61 moved to
+    `engine_backlog_done.md` with its verification note.
+
+**Verified while building, on 2026-09-13:** `bluecube.frag` and `_template.frag` both compile
+and draw; a syntax error two includes deep in `shadertoy.glsl` comes back through `fx_reload`
+as a GLSL log with per-source line numbers, leaves the previous program on screen and does not
+take the app down; restoring the file and reloading produces a new program id, which is what
+proves the file cache really was released; `fx_scene` turns the test geometry on and
+`gbuffer.frag` then shows the cube and the ground plane out of the depth channel alone; and two
+screenshots taken two seconds apart with `sim_pause` held are **byte-identical**, while one
+`sim_step` changes them — which is the whole of the tick-driven `iTime` claim in section 5.
 
 ## 11. Known risks
 
-- **The reflected-uniform panel writes uniforms from the UI thread**, which runs with
-  `physics_mutex` held but is *not* the render thread. `glProgramUniform` against a program the
-  render thread may be drawing with is the kind of thing that works until it does not. Safer: the
-  panel edits a C++-side value map and `SetEffectUniforms` pushes it on the render thread. Costs a
-  map, removes the question.
-- **`Directory::GetFiles` needs a resolved path** (`ResolveAssetDirectory`) — `core/File.h` is
-  explicit that anything not going through `LoadFile` must resolve the name first, and a fourth
-  place forgetting to is a bug that looks like a missing file.
-- **The `apps/` list appears in three places** (`CLAUDE.md`, `readme.md`, and habit). A thirteenth
-  app that only updates one of them is how the list goes stale.
+- ~~**The reflected-uniform panel writes uniforms from the UI thread**, which runs with
+  `physics_mutex` held but is *not* the render thread.~~ **This premise was wrong.** `DrawImGuiUI`
+  is called from `Application::DrawFrame`, which runs on the render thread; it holds
+  `physics_mutex` as well, but it is not a third thread. So the panel could have written uniforms
+  directly and been safe.
+
+  **The value map was built anyway, for a different reason that does hold: `fx_set` runs on an MCP
+  thread, which really is neither.** One rule for the map — everything goes through `fx_mutex`, and
+  `SetEffectUniforms` pushes the whole map on the render thread — is cheaper to keep true than two.
+  It also buys something the plan did not anticipate: a value survives a recompile, so iterating on
+  a shader does not cost you six sliders every reload.
+- ~~**`Directory::GetFiles` needs a resolved path** (`ResolveAssetDirectory`).~~ **Already handled
+  in core**, and has been since the asset-layout work: `Directory::GetFiles` takes an asset NAME for
+  the folder and resolves it itself, returning full paths. So the app passes `"shaders"` and gets
+  this app's own folder, because its root comes first. The real wrinkle was elsewhere and is worth
+  recording: `GetFiles` logs `debug->Err` when a pattern matches nothing, so scanning
+  `*.png *.jpg *.tga *.bmp` over a textures folder holding only a readme printed four errors at
+  every startup. One scan of `*.*` filtered in C++ replaced it — an engine that cries wolf about a
+  normal empty folder is how a real missing-asset error gets skimmed past.
+- **The `apps/` list appears in three places** (`CLAUDE.md`, `readme.md`, and habit). Both written
+  lists were *already* stale by one when this was built — `pinball` had been added and neither said
+  so. Both now name all fourteen apps individually rather than counting them, which is the version
+  that cannot silently go out of date by one.
+
+---
+
+## 12. Where the build differed from the plan
+
+Everything above is the app as built; this is the short list of what changed on the way, so that
+reading the plan against the code does not turn up surprises.
+
+- **`#include "shadertoy.glsl"`, not `#include "shaders/shadertoy.glsl"`.** The engine's GLSL
+  include resolves relative to the including file's directory, so the category prefix would have
+  produced `shaders/shaders/shadertoy.glsl`. Section 4 now says so.
+- **`frag_color` is declared in `shadertoy.glsl`, not in `shadertoy_main.glsl`.** So a native effect
+  has it too, and the two files can be included together without declaring it twice. Both `.glsl`
+  files carry `#ifndef` guards and `engine.glsl` includes `shadertoy.glsl`.
+- **One extra MCP tool, `fx_scene`**, because the test-geometry toggle was otherwise keyboard-only.
+  See the table in section 7.
+- **One extra shipped shader, `gbuffer.frag`.** Not an effect — it draws the G-buffer, which is the
+  part of the custom-material contract that is easiest to get wrong and hardest to see, and it is
+  the only way to confirm section 2's test-geometry claim without guessing. It is also what a
+  depth-aware effect that "looks broken" should be checked against first.
+- **Three additions to `core/glad.h`/`.cpp`**, which is a hand-written loader that declares only
+  what is used: `glDeleteProgram` (a reload that could not delete the superseded program would leak
+  one per edit), `glGetUniformfv`/`glGetUniformiv` (how the panel learns a `uniform float fog = 0.4`
+  default — there is no other way), and the GLSL type enums `GL_FLOAT_VEC2..4`, `GL_BOOL`,
+  `GL_SAMPLER_2D` and friends, which GL 2.0 introduced and the ancient `GL/gl.h` behind this loader
+  does not carry. That last one is why `Application::RenderShaderUI` could only ever tell a float
+  from an int.
+- **`Shader::Build`/`BuildCompute` were split out of the constructors.** A constructor that compiles
+  cannot be told `f_fatal_on_error = false` first, and "construct it, then tell it not to die" is
+  too late. `Shader::Reload()` is then the same two functions plus the file-cache handling.
+- **`ApplicationBreakout::ReloadShieldShader` was converted too**, not just the ship's. It was the
+  same hand-rolled copy and it never called `ReleaseFile` at all, so F5, the HUD button and
+  `breakout_reload_shader` had all been recompiling the start-up bytes since the cache was added.
+- **Section 8's effect was rewritten, not tuned**, once the reference frames arrived. See that
+  section; the original description is kept there.
+- **Four app-side fixes came out of tuning it**, none of which a plan would have predicted and all
+  of which the bench found in one screenshot each:
+  - the `rrand` noise texture is now **mipmapped**. White noise is the worst case for minification
+    and an unmipped one striped the ground plane toward the horizon; it read as a fog bug.
+  - the camera's **wheel zoom is clamped** to 0.4-40 units. A step proportional to distance is
+    geometric in both directions, so scrolling out compounded - forty notches put the camera 300
+    units away, and a black screen does not say which of the camera and the shader is wrong.
+  - the default camera is framed for the effect rather than for a unit cube at the origin.
+  - `fx_select` rescans the folder when a name does not match, so a file dropped in a moment ago
+    is found by the call that names it rather than only by the `fx_list` after it.
+- **The noise is 256x256 of WHITE noise, and that is a design constraint on every effect here.**
+  Its features are one texel wide, so any sampling scale that puts a texel under a pixel averages
+  to a flat 0.5 - the detail is not faint, it is mathematically absent, and no `strength` uniform
+  brings it back. Two of bluecube's terms were invisible for three rounds because of it. The rule
+  is written down at `speck_scale` in that file.

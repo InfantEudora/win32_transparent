@@ -24,7 +24,7 @@ It should kind of look like this:
 ![screenshot](docs/images/example_desktop.png)
 
 ### Folder structure
-`/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder. Twelve of them.
+`/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder. Fourteen of them: `animation breakout dozer grid isoanimation ocpp pinball ship sim tank testfx tetris tileset ui`.
 `/core`             The engine. Knows nothing about any particular app.
 `/engine.mk`        The shared build: toolchain, flags, core sources, rules. An app's makefile sets three variables and includes it.
 `/shared_assets`    Assets loaded by `/core` itself, or by two or more apps - the default shaders, the fonts, the glyph mesh and sounds Tetris and Breakout share. Nothing else belongs here.
@@ -64,7 +64,7 @@ first. Stop the previous app before starting the next.
 
 ### ToDo's
 
-- [ ] Using XInput detect controller hotplug?
+- [x] Using XInput detect controller hotplug?
 - [ ] Will we be using OBJLoader ever again? Maybe remove it.
 - [x] It'd be nice if the packed data can be zipped and unzipped. MiniZ?
 - [x] Implement GLTF Morph Targets == Blender Shape Keys. A list of weights per mesh vertex, with modifiers.
@@ -75,7 +75,7 @@ first. Stop the previous app before starting the next.
 - [ ] Have a grid that isn't several objects...
 - [ ] Grid tiles should have a module system, as a seperate standalone system that let's you connect things like roads, bricks etc. with
       some wave-function collapse type deal.
-- [ ] Camera isometric / perspective.
+- [x] Camera isometric / perspective.
 - [ ] eye_position setting is not working on AMD...? It doesn't like glUniform3fv to uniforms that arent an array?
 - [x] The is also the issue that only after recompilation:
         [ info]                 File : LoadFile: File fonts/consola.ttf is 459180 bytes

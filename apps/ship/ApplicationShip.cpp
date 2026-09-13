@@ -432,54 +432,28 @@ void ApplicationShip::PreRender(void){
     DispatchCloudShadow();
 }
 
+/*
+    Recompiles the volume shader from disk, on the render thread.
+
+    This used to be forty lines: release every source file, build a second Shader, check it
+    linked, swap it into renderer->custom_shaders at the right index, delete the old one, re-bind
+    the uniform callback. All of that is Shader::Reload() now, which rebuilds IN PLACE - so
+    nothing holding this pointer goes stale, the custom-shader index still points at the right
+    object, and the uniform callback is the same callback it always was. Everything the old
+    version explained about ReleaseFile, about the #included density.glsl and about
+    FILE_RELEASE_EMBEDDED is now stated on Shader::Reload in core/Shader.h, where every app gets it.
+
+    The core `shader_reload` MCP tool reaches this shader too, without this function - see backlog
+    item 61. This stays because the "Reload volume shader" button in the Volume panel calls it.
+*/
 void ApplicationShip::ReloadVolumeShader(void){
-    /*
-        Give the files back before reading them, or this reloads nothing.
-
-        LoadFile answers from the BinaryAsset table, and until ReleaseFile existed there was no
-        way to tell that table a file had changed - so this function compiled the bytes read at
-        start-up every time and produced an identical program. It has said "recompiles from disk"
-        and not done so since the cache was added.
-
-        The whole source set, not just the two filenames: shaders/density.glsl arrives through an
-        #include, and being able to edit it is most of the point of hot-reloading this shader at
-        all. Shader::source_files is that set, which is why it is recorded.
-
-        FILE_RELEASE_EMBEDDED is not a failure - it is a packed build telling us there is no file
-        behind the asset, so there is nothing to reload and we should say so rather than rebuild
-        an identical program and claim success.
-    */
-    if (volume_shader){
-        int num_embedded = 0;
-        for (const std::string& path:volume_shader->source_files){
-            if (ReleaseFile(path.c_str()) == FILE_RELEASE_EMBEDDED){
-                num_embedded++;
-            }
-        }
-        if (num_embedded > 0){
-            debug->Info("Not reloading: %i of this shader's %zu source files are baked into this build\n",
-                        num_embedded,volume_shader->source_files.size());
-            return;
-        }
+    if (!volume_shader){
+        return;
     }
-
-    Shader* reloaded = new Shader("shaders/default.vert","shaders/raymarch_volume.frag");
-    reloaded->uniform_callback = std::bind(&ApplicationShip::SetVolumeUniforms,this);
-    //Only swap once the new one is known good. In practice a bad shader never gets this far -
-    //Shader's compile path calls debug->Fatal - but this keeps the old program bound if that
-    //ever becomes a soft failure.
-    if (reloaded->progid != -1){
-        Shader* previous = volume_shader;
-        volume_shader = reloaded;
-        //Replace it at the index the volume's mesh already points at, rather than registering
-        //another one - AddCustomShader would append, and the mesh would keep drawing with the
-        //stale shader while the new one drew nothing.
-        renderer->custom_shaders.at(volume_shader_index) = volume_shader;
-        delete previous;
-        debug->Info("Reloaded shaders/raymarch_volume.frag (program %i)\n",volume_shader->progid);
-    }else{
-        debug->Err("Failed to reload shaders/raymarch_volume.frag, keeping the old program\n");
-        delete reloaded;
+    if (!volume_shader->Reload()){
+        //Reload has already logged the reason; this is the app-level line that names the effect
+        //rather than the file, so it is obvious which of the two shaders went wrong.
+        debug->Err("Volume shader not reloaded, the previous one is still drawing\n");
     }
 }
 
@@ -1529,7 +1503,8 @@ void ApplicationShip::DrawImGuiUI(){
         }
 
         if (ImGui::Button("Reload Shader")){
-            //Recompiles from disk. A shader error exits the app - see ReloadVolumeShader.
+            //Recompiles from disk, #included files and all. A shader error is reported and the
+            //previous program keeps drawing - see Shader::Reload.
             ReloadVolumeShader();
         }
         ImGui::End();

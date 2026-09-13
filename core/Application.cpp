@@ -252,6 +252,11 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
 }
 
 void Application::DrawFrame(){
+    //Before PreRender, not after: an app's PreRender may dispatch a compute shader or fill a
+    //texture with one of the programs about to be rebuilt, and it should be using the new one on
+    //the frame it arrives rather than the frame after.
+    ServiceShaderReload();
+
     //Any GL work the app needs done before the scene is drawn - see Application::PreRender.
     PreRender();
 
@@ -933,6 +938,103 @@ uint64_t Application::StepPhysicsAndWait(int num_ticks){
         Sleep(5);
     }
     return main_scene->GetPhysicsTick() - tick_before;
+}
+
+/*
+    The render-thread half of shader_reload. Called from the top of DrawFrame.
+
+    Building the ANSWER here rather than in the tool handler is deliberate: `progid` and
+    `compile_log` are only meaningful immediately after the rebuild, and reading them from the
+    waiting thread afterwards would be a race with the next frame's reload.
+*/
+void Application::ServiceShaderReload(){
+    std::string filter;
+    {
+        std::lock_guard<std::mutex> lock(shader_reload_mutex);
+        if (!f_shader_reload_pending){
+            return;
+        }
+        filter = shader_reload_filter;
+    }
+
+    json reloaded = json::array();
+    json available = json::array();
+    //ForEachShader holds the registry lock for the duration, which is what makes walking it from
+    //here safe against an app building a shader on another thread. Reloading inside it is fine -
+    //Reload creates no Shader objects, so there is nothing to recurse into the lock.
+    Shader::ForEachShader([&](Shader* shader){
+        if (!shader){
+            return;
+        }
+        //A compute program has no vertex stage, so fname is the only name it has.
+        std::string label = shader->fname.empty() ? shader->vname : shader->fname;
+        available.push_back(label);
+        if (filter.empty()){
+            return;
+        }
+        bool f_match = (!shader->fname.empty() && shader->fname.find(filter) != std::string::npos) ||
+                       (!shader->vname.empty() && shader->vname.find(filter) != std::string::npos);
+        if (!f_match){
+            return;
+        }
+        bool f_ok = shader->Reload();
+        reloaded.push_back(json{
+            {"shader",label},
+            {"vertex",shader->vname},
+            {"ok",f_ok},
+            {"program",shader->progid},
+            {"log",shader->compile_log},
+            {"source_files",shader->source_files}
+        });
+    });
+
+    json result;
+    result["reloaded"] = reloaded;
+    result["available"] = available;
+    if (filter.empty()){
+        result["note"] = "no `name` given, so nothing was reloaded - `available` lists what there is";
+    }else if (reloaded.empty()){
+        result["error"] = "no shader's vertex or fragment file name contains \"" + filter +
+                          "\" - see `available`";
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(shader_reload_mutex);
+        shader_reload_result = result;
+        shader_reload_filter.clear();
+        f_shader_reload_pending = false;
+    }
+}
+
+json Application::ReloadShadersAndWait(const std::string& name_filter, int timeout_ms){
+    {
+        std::lock_guard<std::mutex> lock(shader_reload_mutex);
+        if (f_shader_reload_pending){
+            return json{ {"error","another shader reload is already waiting to be serviced"} };
+        }
+        shader_reload_filter = name_filter;
+        shader_reload_result = json::object();
+        f_shader_reload_pending = true;
+    }
+
+    //Polled rather than signalled, the same way StepPhysicsAndWait waits on the physics thread.
+    //A frame at any sane rate is well inside this; a timeout means the render thread is not
+    //running, and the request is then dropped rather than left to fire at some later moment the
+    //caller has stopped expecting.
+    for (int waited_ms = 0; waited_ms < timeout_ms; waited_ms += 5){
+        {
+            std::lock_guard<std::mutex> lock(shader_reload_mutex);
+            if (!f_shader_reload_pending){
+                return shader_reload_result;
+            }
+        }
+        Sleep(5);
+    }
+
+    std::lock_guard<std::mutex> lock(shader_reload_mutex);
+    f_shader_reload_pending = false;
+    shader_reload_filter.clear();
+    return json{ {"error","the render thread did not service the reload in time"} };
 }
 
 void Application::RegisterCoreMCPTools(){
@@ -1618,6 +1720,30 @@ void Application::RegisterCoreMCPTools(){
                 return json{ {"error",result["screenshot_error"]} };
             }
             return result;
+        });
+
+    MCPServer::Get()->RegisterTool("shader_reload",
+        "Recompile a shader from disk and swap it in, without restarting the app - backlog item "
+        "61. `name` is a substring matched against every live shader's vertex and fragment file "
+        "name, and every match is rebuilt; call it with no `name` to list what there is. The whole "
+        "source set is re-read, #included files included, so editing a shared .glsl reaches every "
+        "program that includes it. A shader that fails to compile is reported with its GLSL log "
+        "and the last working program stays on screen - it no longer takes the process down. "
+        "Assets baked into the binary report that they are not reloadable in this build rather "
+        "than recompiling identical bytes and claiming success. The rebuild happens on the render "
+        "thread and this call waits for it, so the log you get back is the real one.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"name", {{"type","string"},{"description","substring of the shader's file name, e.g. \"raymarch_volume\"; omitted lists the shaders instead"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame after the reload"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            json result = ReloadShadersAndWait(args.value("name",std::string()));
+            //Taken AFTER the reload has been serviced, so the picture is the new shader's - which
+            //is the point of asking for one here at all.
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
         });
 }
 

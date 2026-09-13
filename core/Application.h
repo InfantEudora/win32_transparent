@@ -6,6 +6,7 @@
 
 #include <windows.h>
 #include <stdint.h>
+#include <mutex>
 #include "Window.h"
 #include "Renderer.h"
 #include "Shader.h"
@@ -78,9 +79,30 @@ public:
     void SubmitUICommand(const SimCommand& cmd);
 
     //Generic, app-independent MCP tools (object_list/object_get/object_set_transform/
-    //object_move/screenshot/...) - the MCP counterpart of the Generic Object UI panel. Registered
-    //for every app right after Init(), before the MCP server starts accepting requests.
+    //object_move/screenshot/shader_reload/...) - the MCP counterpart of the Generic Object UI
+    //panel. Registered for every app right after Init(), before the MCP server starts accepting
+    //requests.
     void RegisterCoreMCPTools();
+
+    /*
+        Recompile every registered Shader whose vertex or fragment file name contains
+        `name_filter`, and block until the render thread has done it. Returns one entry per
+        shader touched, each with its compile log - see the `shader_reload` MCP tool.
+
+        THE WAIT IS THE WHOLE DESIGN. Reloading touches GL, which only the render thread may do,
+        so this raises a flag that ServiceShaderReload picks up at the top of the next frame. The
+        caller then has to wait, or it would be reporting that a reload was ASKED FOR rather than
+        what the compiler said about it - and the compiler's answer is the entire value of the
+        call. Same shape as StepPhysicsAndWait, for the same reason.
+
+        ONLY callable from a thread that is not the render thread. The MCP threads qualify. A call
+        from DrawFrame or an ImGui panel would wait for a frame that cannot start until it returns.
+    */
+    json ReloadShadersAndWait(const std::string& name_filter, int timeout_ms = 2000);
+
+    //Serviced at the top of DrawFrame, on the render thread, and a cheap no-op unless a reload has
+    //been asked for. See ReloadShadersAndWait.
+    void ServiceShaderReload();
 
     //If requested, blocks (Renderer::RequestScreenshot) until the render thread has captured and
     //PNG-encoded the current frame, and attaches it to `result` as an MCP image content block. A
@@ -228,6 +250,15 @@ public:
 
     Debugger *debug_physics = NULL;
     Debugger *debug_frame = NULL;
+
+    //--- shader_reload, across the thread boundary --------------------------------------------
+    //Written by whichever thread asked for the reload and by the render thread that services it,
+    //so everything here is under the one mutex. f_pending is the handshake: raised by the asker,
+    //cleared by the render thread once the result is in place.
+    std::mutex shader_reload_mutex;
+    std::string shader_reload_filter;
+    bool f_shader_reload_pending = false;
+    json shader_reload_result;
 
     Scene* CreateNewScene(const std::string& name);    // Creates a new scene, with some defaults.
 

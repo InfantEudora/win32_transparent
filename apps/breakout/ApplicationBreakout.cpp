@@ -1556,20 +1556,21 @@ void ApplicationBreakout::SetShieldUniforms(){
     shield_shader->Setvec3("ripple2",vec3(ripples[2].x,ripples[2].age,0.0f));
 }
 
+/*
+    Recompiles the shield shader from disk, on the render thread.
+
+    This was a hand-rolled build-and-swap that never called ReleaseFile, so it recompiled the bytes
+    LoadFile had cached at start-up and produced an identical program every time - the F5 key and
+    the HUD button have been doing nothing since the cache was added. Shader::Reload() releases the
+    whole source set first, which is the half that was missing, and rebuilds in place so the
+    custom-shader index and the uniform callback both survive. See core/Shader.h and backlog 61.
+*/
 void ApplicationBreakout::ReloadShieldShader(){
-    Shader* reloaded = new Shader("shaders/default.vert","shaders/breakout_shield.frag");
-    reloaded->uniform_callback = std::bind(&ApplicationBreakout::SetShieldUniforms,this);
-    if (reloaded->progid != -1){
-        Shader* previous = shield_shader;
-        shield_shader = reloaded;
-        //Replace it AT THE INDEX the mesh already points at. AddCustomShader would append, and
-        //the quad would keep drawing with the stale program while the new one drew nothing.
-        renderer->custom_shaders.at(shield_shader_index) = shield_shader;
-        delete previous;
-        debug->Ok("Reloaded shaders/breakout_shield.frag (program %i)\n",shield_shader->progid);
-    }else{
-        debug->Err("Failed to reload shaders/breakout_shield.frag, keeping the old program\n");
-        delete reloaded;
+    if (!shield_shader){
+        return;
+    }
+    if (!shield_shader->Reload()){
+        debug->Err("Shield shader not reloaded, the previous one is still drawing\n");
     }
 }
 
@@ -1922,8 +1923,9 @@ void ApplicationBreakout::RegisterMCPTools(){
         "app. The same thing the F5 key and the HUD button do - exposed here because iterating on "
         "a shader is the one job where a rebuild-and-relaunch cycle costs more than the edit, and "
         "a caller who cannot reach the keyboard was otherwise stuck with the slow loop. The "
-        "compile happens on the render thread in PreRender; a shader that fails to compile takes "
-        "the process down, because Shader's compile path calls debug->Fatal.",
+        "compile happens on the render thread in PreRender; a shader that fails to compile leaves "
+        "the previous program drawing and logs why. The core `shader_reload` tool does the same "
+        "thing for any shader in any app and returns the GLSL log with it.",
         json{{"type","object"},{"properties",json::object()}},
         [this](const json& args) -> json {
             f_shader_reload_requested = true;

@@ -1,7 +1,8 @@
 # Engine backlog — closed items
 
 Everything from `docs/engine_backlog.md` that is **done** (`[x]`) or **decided against** (`[-]`),
-moved here on 2026-09-12 so the backlog itself is a list of work that is still open. Nothing has
+moved here on 2026-09-12 (and added to since) so the backlog itself is a list of work that is
+still open. Nothing has
 been reworded: each entry is the text it carried when it was closed, including the verification
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
@@ -1697,3 +1698,93 @@ object happened to construct first.
   `Ship #22` in both the scene tree and the Inspector, so the id buffer still reads real objects.
   `APP=Breakout` renders unchanged, custom shield shader included — it is the thing that reads
   this G-buffer.
+
+- [x] **61. A core `shader_reload` MCP tool.** `ApplicationShip::ReloadVolumeShader` is the
+  hot-reload pattern and it transfers directly, but every app that registers a custom shader has to
+  write its own — and, more to the point, so does every app that wants one reachable by anything
+  other than a keypress.
+
+  **The half nobody had noticed was missing is now done: the cache can be told a file has
+  changed.** `ReloadVolumeShader` was commented "recompiles from disk" and did not - it calls
+  `LoadFile`, which served the `BinaryAsset` cache, so it recompiled the bytes read at start-up
+  and produced an identical program. Every hot reload in this engine was a no-op from the moment
+  the cache was added. Measured, not inferred: write a file, load it, rewrite it, load it again,
+  and the original bytes come back.
+
+  `ReleaseFile` (see `core/File.h`) is the fix, and `ApplicationShip::ReloadVolumeShader` now uses
+  it. Three points that the MCP tool will need to carry over:
+
+  - **It releases the whole source set, not the two filenames.** `shaders/density.glsl` arrives
+    through a `#include` and is shared with `cloud_shadow.comp`, so it is the file most worth
+    editing live; `Shader::source_files` records every file a program's source came from, at any
+    include depth, for exactly this.
+  - **`FILE_RELEASE_EMBEDDED` is an answer, not a failure.** With assets packed into the binary
+    there is no file behind the asset, so the tool must report "not available in this build"
+    rather than rebuild an identical program and claim success. That is the failure this whole
+    thread was about.
+  - **Releasing is the one thing that can invalidate a pointer `LoadFile` handed out.** Safe for
+    shader source, which `Shader` copies into a `std::string`; not safe for a `Texture` or a
+    `WaveFile`, which hold their bytes for life.
+
+  **What is still open is the trigger.** The only way to reload anything today is one ImGui button
+  in one app, which is the whole point of this item - and it is also why the reload path has not
+  been exercised end to end: that button sits below the fold in a docked panel and the mouse wheel
+  over it is taken by the camera. An MCP tool would make it testable as well as reachable.
+
+  The Breakout run wired reload to F5 and to an ImGui button on the brief's advice and then barely
+  used it, because it was changing C++ alongside the shader anyway. Where it paid was the one
+  shader-only iteration: tuning a 45-tick flare that was drowning the effect it announced. A human
+  can press F5; the agent doing the tuning could not reach the keyboard, and each attempt cost a
+  rebuild, a relaunch and replaying the game back to the state worth looking at — about 40 seconds.
+  Adding `breakout_reload_shader` turned that into an edit and a call, and its author named a core
+  version as **the one piece of ergonomics this pass should get next**.
+
+  Note what the app-level implementations have in common and must keep: the key, the button and the
+  tool all only *raise a flag* that `PreRender` acts on, because `UpdateView` runs on the physics
+  thread and may not touch the GL context. A core tool has the same constraint, so it needs a
+  render-thread hook to act in, not just a registry walk.
+
+  **Done 2026-09-13, as part of building `apps/testfx` (`docs/testfx_plan.md`).** The three points
+  above are carried over, and they live in `Shader::Reload()` rather than in the tool, so every app
+  gets them:
+
+  - **`Shader::Reload()` rebuilds a program IN PLACE.** It `ReleaseFile`s every entry in
+    `source_files`, rebuilds into a new program id, and swaps only on success. In place is what
+    removes the `renderer->custom_shaders.at(index) = new_one` dance: nothing holding a `Shader*`
+    goes stale, the `uniform_callback` survives, and a tagged mesh can never point at a program
+    that is about to be deleted. `ApplicationShip::ReloadVolumeShader` went from 48 lines to 8 and
+    `ApplicationBreakout::ReloadShieldShader` from 16 to 6.
+  - **Breakout's reload was one of the no-ops this item describes** and nobody had noticed: it
+    never called `ReleaseFile` at all, so `breakout_reload_shader`, the F5 key and the HUD button
+    have recompiled the start-up bytes since the cache was added. Fixed by the same conversion.
+  - **A registry, so the tool finds shaders without any app registering one.** `Shader`'s
+    constructor adds `this` to a static list and the destructor removes it;
+    `Shader::ForEachShader` walks it with the list locked. Item 61 asked for exactly this and it
+    costs an app nothing.
+  - **The render-thread hook the note at the end of this item demanded.**
+    `Application::ServiceShaderReload()` runs at the top of `Application::DrawFrame` — checked:
+    no app overrides `DrawFrame` — and `ReloadShadersAndWait` blocks until it has run, so the tool
+    returns the real compile log rather than "asked for". Same shape as `StepPhysicsAndWait`.
+  - **A compile error no longer exits the process.** That was not in this item and turned out to be
+    a prerequisite: `Shader::CompileVertex/Fragment/Compute` and `LinkProgram` called
+    `debug->Fatal`, so a typo in a hot-reloaded shader killed the app — the opposite of what a
+    reload tool is for. `Shader::f_fatal_on_error` (default `true`, so every existing call site is
+    unchanged) makes them log through `debug->Err`, record the GLSL log in `Shader::compile_log`
+    and return failure; a *reload* is always soft whatever the flag says, because it always has a
+    working program to fall back on. Two latent edges came with it: `LinkProgram` returned `0` on
+    failure while every check in the repo reads `progid != -1`, and a link with a stage that
+    compiled to `0` would have called `glAttachShader(prog,0)`. Both closed.
+
+  **Verified end to end** on 2026-09-13, which is the thing this item says had never happened:
+
+  - `shader_reload {"name":"raymarch_volume"}` against a running `ship.exe` → `ok: true`,
+    `program` changes, `source_files` is
+    `["shaders/default.vert","shaders/raymarch_volume.frag","shaders/density.glsl"]` — the
+    `#include`d file is in the release set, which is the point.
+  - A syntax error appended to **`density.glsl`**, the included file, then the same call → the full
+    NVIDIA log comes back in `log`, `ok: false`, `program` unchanged at the last good one, and the
+    app is still running. Restoring the file and calling again → `ok: true` and a new program id,
+    proving the cache really was released rather than the old bytes recompiled.
+  - The same sequence through `fx_reload` in `testfx`, breaking `shaders/shadertoy.glsl` two
+    includes deep, with the same result.
+
