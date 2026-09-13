@@ -13,6 +13,12 @@
 #
 #     USE_SOUND := 1               link OpenAL (see the block below)
 #
+# CONFIG picks the build configuration and is passed on the command line, not set by an
+# app - it is a property of the build you are doing, not of the app you are doing it to:
+#
+#     mingw32-make.exe                    ->  build/<project>.exe          (debug)
+#     mingw32-make.exe CONFIG=release     ->  build/<project>_release.exe
+#
 # WHAT MAKES THIS POSSIBLE is that core/ no longer knows which app is building. It used
 # to: main.cpp took the app class through -DAPP_HEADER/-DAPP_CLASS, and core/File.cpp
 # took the asset roots through -DAPP_ASSET_PATH. Both are gone - each app has its own
@@ -47,10 +53,46 @@ endif
 
 .DEFAULT_GOAL := default
 
+#---------------------------------------------------------------------------------------
+# BUILD CONFIGURATION
+#
+# Unlike USE_SOUND, this is NOT an app setting. Debug-vs-release changes CORE_CFLAGS, so
+# it changes the shared core objects - the one thing the "line between shared and per-app
+# flags" below exists to prevent an app from doing.
+#
+# The way out is not a stamp that wipes objects when the setting changes: with one shared
+# core directory that would mean every app rebuilding whenever any app switched. Instead
+# each configuration gets its OWN object tree. Nothing can collide, nothing needs wiping,
+# and switching back and forth costs one link rather than a rebuild.
+#
+# The EXE is named per configuration too, and that is load-bearing rather than tidy. If
+# both configurations wrote build/<project>.exe, building release and then switching back
+# to debug would leave make comparing the release exe against debug objects that are all
+# older than it - "nothing to be done", and you keep running the release binary. Distinct
+# names make that unrepresentable, and let both exist at once.
+#
+# What does NOT move is the directory the exe sits in. Every app's main.cpp counts levels
+# from there - AddAssetSearchRootFromExe("../../../shared_assets") - and imgui.ini and
+# per-app save files are written next to it. A build/<config>/ exe would silently lose
+# every asset in all fourteen apps.
+#---------------------------------------------------------------------------------------
+CONFIG ?= debug
+
+ifeq ($(CONFIG),debug)
+CONFIG_SUFFIX :=
+else ifeq ($(CONFIG),release)
+CONFIG_SUFFIX := _release
+else
+$(error CONFIG must be 'debug' or 'release', not '$(CONFIG)')
+endif
+
 #Where objects go. The app's own objects are private to the app; the core, imgui and
-#third-party objects are shared, because they no longer vary by app.
-BUILD_DIR      := build
-CORE_BUILD_DIR := $(ROOT)/build/core
+#third-party objects are shared, because they no longer vary by app. Both are split by
+#configuration; the exe is not, it is only named by one.
+BUILD_DIR       := build
+OBJ_DIR         := $(BUILD_DIR)/obj/$(CONFIG)
+CORE_BUILD_ROOT := $(ROOT)/build/core
+CORE_BUILD_DIR  := $(CORE_BUILD_ROOT)/$(CONFIG)
 
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
@@ -59,6 +101,16 @@ CFLAGS = -std=c++17 -L$(ROOT)/libs/ -lreactphysics3d -limgui -lsetupapi -lhid -l
 CFLAGS += -lXinput9_1_0
 #CFLAGS += $(FNOCONSOLE)
 CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
+#tinygltf's own file I/O is dead weight here: core/GLTFLoader.cpp hands it bytes that
+#core/File.cpp has already resolved and read, so LoadBinaryFromMemory is the only entry
+#point the engine uses. Turning the built-in filesystem off drops tinygltf's <fstream>.
+#
+#This has to be seen by BOTH tiny_gltf.cpp and everything that constructs a TinyGLTF -
+#the macro switches the in-class initialiser of TinyGLTF::fs between the default callbacks
+#and nullptrs, so a translation unit compiled without it emits references to
+#tinygltf::FileExists and friends that the library no longer defines. Hence up here with
+#the other app-invariant flags, and repeated in 3rdparty/makefile.
+CFLAGS += -DTINYGLTF_NO_FS
 #Sound (OpenAL) is optional - see the USE_SOUND block below.
 #Nothing outside it links winmm any more: core/PrecisionSleeper resolves timeBeginPeriod
 #from winmm.dll at run time, and only on pre-Win10-1803 machines where the
@@ -84,7 +136,17 @@ CFLAGS += -DAL_LIBTYPE_STATIC
 
 DFLAGS = -DDEBUG -Og -g #-g Produce debug info for GDB. -O0 fastest compilation time.
 RFLAGS = -DRELEASE -O3 -s #O3 highest optimisation #-s to strip symbols
-CFLAGS += $(DFLAGS)
+CFLAGS += $(if $(CONFIG_SUFFIX),$(RFLAGS),$(DFLAGS))
+
+#A measured dead end, recorded so it is not tried twice. The -Wl,--gc-sections above is very
+#nearly inert, because without -ffunction-sections/-fdata-sections the linker's unit of
+#discard is a whole object file and one referenced symbol keeps everything compiled beside
+#it. Adding both to RFLAGS is the textbook fix and it is worth NOTHING here: tetris.exe
+#measured 5.68 MB without them and 5.69 MB with, the 10 KB being the extra section headers.
+#The reason is that almost none of the bulk is our code - it is libreactphysics3d.a,
+#libimgui.a, libOpenAL32.a and libstdc++, none of which were compiled with -ffunction-sections
+#either, so nothing the engine's own compile flags say can make them splittable. That lever
+#is in how libs/*.a are built, not here. See docs/engine_backlog.md item 79.
 
 #---------------------------------------------------------------------------------------
 # THE LINE BETWEEN SHARED AND PER-APP FLAGS
@@ -153,8 +215,9 @@ CORE_SRCS += $(ROOT)/BinaryAssetMemoryEmpty.cpp
 #core/physics/Physics.cpp becomes build/core/core/physics/Physics.o and nothing collides.
 CORE_OBJS := $(patsubst $(ROOT)/%.cpp,$(CORE_BUILD_DIR)/%.o,$(CORE_SRCS))
 
-#The app's objects stay in the app's own build folder.
-APP_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(APP_SRCS))
+#The app's objects stay in the app's own build folder, under the configuration they were
+#compiled for.
+APP_OBJS := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(APP_SRCS))
 
 #---------------------------------------------------------------------------------------
 # Header dependency tracking
@@ -175,14 +238,16 @@ DEPS = $(CORE_OBJS:.o=.d) $(APP_OBJS:.o=.d)
 #The goal is the exe BY ITS REAL PATH. Naming the target $(PROJECT).exe while writing
 #$(BUILD_DIR)/$(PROJECT).exe would mean make never finds the file it just built, so it
 #would relink on every single invocation even with nothing changed.
-default: $(BUILD_DIR)/$(PROJECT).exe
+EXE := $(BUILD_DIR)/$(PROJECT)$(CONFIG_SUFFIX).exe
 
-$(BUILD_DIR)/$(PROJECT).exe: $(APP_OBJS) $(CORE_OBJS)
+default: $(EXE)
+
+$(EXE): $(APP_OBJS) $(CORE_OBJS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $^ -o $@ $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS)
-	@echo "Built $@"
+	@echo "Built $@ ($(CONFIG))"
 
-$(BUILD_DIR)/%.o: %.cpp
+$(OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 
@@ -193,13 +258,16 @@ $(CORE_BUILD_DIR)/%.o: $(ROOT)/%.cpp
 
 -include $(DEPS)
 
-#Only this app's objects and exe. The shared core objects are left alone - another app
-#is probably using them, and they are not this app's to delete.
+#Only this app's objects and exe - both configurations of them. The shared core objects
+#are left alone - another app is probably using them, and they are not this app's to
+#delete.
 clean:
 	-rm -rf $(BUILD_DIR)
 
-#The shared core objects, for when those are what needs rebuilding.
+#The shared core objects, for when those are what needs rebuilding. Every configuration,
+#not just the one being built: this is the "I do not trust what is in there" button, and
+#leaving the other configuration's objects behind would make it a worse one.
 cleancore:
-	-rm -rf $(CORE_BUILD_DIR)
+	-rm -rf $(CORE_BUILD_ROOT)
 
 .PHONY: default clean cleancore

@@ -7,7 +7,7 @@ been reworded: each entry is the text it carried when it was closed, including t
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
 
-Numbers are stable and are never reused. They run 1-66 across both files; **28 was never
+Numbers are stable and are never reused. They run 1-83 across both files; **28 was never
 assigned**.
 
 Sources: `docs/tetris_findings.md` (the `APP=Tetris` run) and `docs/breakout_findings.md` (the
@@ -1788,3 +1788,147 @@ object happened to construct first.
   - The same sequence through `fx_reload` in `testfx`, breaking `shaders/shadertoy.glsl` two
     includes deep, with the same result.
 
+- [x] **68. `Debug`'s printf-style methods are not checked, and four calls are already wrong.**
+  The one the port found is `GLTFLoader.cpp:932` — `debug->Err("Unknown Morph Target accessor
+  %s\n", it->first)`, where `it->first` is a `std::string` and `%s` reads it as a `const char*`.
+  Undefined behaviour on the one code path whose job is to tell you what went wrong. `.c_str()`
+  is the fix and that part is a minute.
+
+  **The item is why nothing caught it.** `Debug.h` declares eight variadic printf-alikes
+  (`PrintLine`, `Trace`, `Debug`, `Info`, `Ok`, `Warn`, `Err`, `Fatal`, plus the `debug_t`
+  overload) and none of them carries `__attribute__((format(printf,N,N+1)))`, so g++ never looks
+  inside a format string in this codebase at all. Adding the attribute costs one line each.
+
+  Measured on 2026-09-13 by adding the attributes temporarily and running `-fsyntax-only
+  -Wformat` over every core source (the attributes were then reverted — this is a measurement,
+  not a change): **148 warnings across 18 files.** Sorted by what they are actually worth:
+
+  - **Four more of the same crash class**, all on error or diagnostic paths, which is the worst
+    place for them because they fire exactly when something has already gone wrong:
+    `GLTFLoader.cpp:574` and `:598` are `Fatal("GLTF Node %s contains invalid translation\n")`
+    with **no argument at all**; `File.cpp:97` passes a `size_t` to `%s`; `OCPPClient.cpp:749`
+    passes a `json::size_type` to `%s`.
+  - **Nine `%zu` warnings are false alarms — do not "fix" them.** g++ reports `unknown conversion
+    type character 'z'` because it assumes the msvcrt printf, but this toolchain's `vsnprintf`
+    handles `%zu` correctly; verified with a probe that mimics `PrintLineva` and prints `zu=42`.
+    Left alone they are noise; rewritten they get worse. This is the reason to do the triage
+    before turning the attribute on permanently.
+  - **The remaining ~135 are width mismatches** — `%d` for a `DWORD`, `%i` for a
+    `vector::size_type`, `%ld` for a `LONGLONG`. Harmless in practice on this ABI and boring to
+    fix, but they are what makes the attribute noisy, so they decide whether it goes in as a
+    warning or as `-Werror=format`. `GLTFLoader.cpp` alone accounts for 59 of them.
+
+  Note `-Wall` is **not** in `engine.mk` at all, so `-Wformat` has to be asked for by name; that
+  is also why this is a narrow, safe thing to switch on rather than a general warnings cleanup.
+
+  **Closed 2026-09-13. Eight call sites fixed; the attribute deliberately NOT committed; and two
+  of this item's own five named bugs turned out not to be bugs.**
+
+  *The attribute was the wrong one.* On MinGW `format(printf,N,N+1)` means **ms_printf**, and that
+  is the only reason `%zu` warned. Re-measured with `format(gnu_printf,N,N+1)`, which is what this
+  toolchain actually does (`__USE_MINGW_ANSI_STDIO` is on under `-std=c++17`, and `vsnprintf`
+  prints `zu=42`): **125 warnings, not 148.** The nine `%zu` false alarms this item warns you to
+  triage around **do not exist** under the right attribute - they were an artefact of the choice,
+  not a fact about the code. Anyone turning this on later should use `gnu_printf`.
+
+  *Two of the named bugs were not bugs.* `File.cpp:97` and `OCPPClient.cpp:749` are both `%zu`
+  followed by `%s`; under ms_printf the unknown `z` desynchronises the argument walk and the `%s`
+  cascade lands on the `size_t`. Under `gnu_printf` both files are clean. Fixing them as this item
+  described would have been damage, and that is the general lesson: the triage has to happen under
+  the attribute you intend to ship.
+
+  *The real crash-class list was eight, and a different eight.* All fixed:
+
+  | site | what was wrong |
+  |---|---|
+  | `GLTFLoader.cpp:121` | `"[%i].weights[%i] : %.3f"` given **two** args - the `%.3f` read an unset register on every weighted-mesh trace |
+  | `GLTFLoader.cpp:574`, `:598` | `%s` with no argument (the two this item named) |
+  | `GLTFLoader.cpp:932` | `%s` given a `std::string` - the one the Android port found |
+  | `GLTFLoader.cpp:992`, `:997` | `animation_name` passed with no conversion to print it |
+  | `ObjectAnimation.cpp:150` | `target_interval` passed with no conversion; the matching `start_keyframe` line four lines above has `" at %.3f"` and this one had lost it |
+  | `Window.cpp:174` | `hWnd` passed to a bare `"GetPixelFormat\n"` |
+
+  Verified by adding the `gnu_printf` attributes temporarily, running `-fsyntax-only -Wformat`
+  over every source in `core/` and `isoterrain/`, and reverting: **125 warnings before, 116 after,
+  and zero of the crash class.** The remaining 116 are the width mismatches (`%i` for `size_t`,
+  `%d` for `DWORD`), 59 of them in `GLTFLoader.cpp`, harmless on this ABI.
+
+  *Why the attribute is not in `Debug.h`.* Committing it would print 116 warnings on every core
+  build from now on, which is how a codebase learns to ignore warnings. Turning it on wants the
+  width cleanup done first - roughly `%i` to `%zu` and `%d` to `%lu` across 16 files - and then it
+  should go in as `-Werror=format`, because a warning nobody reads would not have caught any of
+  the eight above either. **That cleanup is not yet an item; it is the obvious follow-up to this
+  one.**
+
+- [x] **79. There is no release build, and it is worth 90% of the executable.** `engine.mk:86`
+  defines `RFLAGS = -DRELEASE -O3 -s` and **nothing references it**; line 87 is
+  `CFLAGS += $(DFLAGS)`, unconditionally. Every exe this engine has ever produced is `-Og -g`,
+  unstripped. Measured 2026-09-13 on `apps/tetris/build/tetris.exe`:
+
+  ```
+  as built          55.07 MB
+  after `strip`      5.37 MB
+  ```
+
+  That is the single largest lever in the tree and it is one line. It also means **nobody has
+  ever seen the real size of this engine's output**, which is worth knowing before spending a day
+  removing a library to save half a megabyte — see the reference at the bottom for what the 5.37 MB
+  is actually made of, and note while reading it that 947 KB of what `nm` reports is `.bss` and
+  occupies no bytes on disk at all.
+
+  Band A is for the `ifeq`. Two things make it not quite a one-liner, and both want settling in the
+  same sitting:
+
+  - **`strip` is not `-O3 -s`.** The 5.37 MB above is this same debug-optimised code with its
+    symbols removed. A real `-O3` build changes code size too, usually upward, occasionally a lot.
+    So measure the release build rather than quoting this number for it, and consider `-Os` as a
+    third setting if size is the actual goal — this engine has never compared the two.
+  - **Make will not rebuild anything when you flip it**, because no source file changed. The first
+    "release" build would link the debug objects sitting in `build/`, silently. This is item 72
+    exactly, and it is what turns that item from tidy-up into a prerequisite.
+
+  For this axis specifically the stamp is the wrong shape and something better is available.
+  Debug-vs-release is not an app-specific flag — it changes `CORE_CFLAGS`, so it changes the shared
+  `build/core` objects, which is the one thing the "line between shared and per-app flags" block is
+  written to prevent. A stamp would fix it by *wiping* core every time anyone switched, which with
+  one shared core directory means every app rebuilding whenever any app changes configuration.
+  **Give each configuration its own object tree instead** — `build/core/debug/` and
+  `build/core/release/`, app objects likewise — and the two stop being able to collide at all,
+  nothing needs wiping, and switching back and forth stops costing a rebuild. That is also the
+  shape item 73 will want if physics-dependent core sources end up compiling per target.
+
+  **Closed 2026-09-13.** `CONFIG=release` exists and is measured:
+
+  | | tetris.exe | ui.exe |
+  |---|---|---|
+  | debug (default, unchanged) | 55.39 MB | 50.10 MB |
+  | `CONFIG=release` | **5.68 MB** | **4.18 MB** |
+
+  *Per-configuration object trees, as this item proposed* - `build/core/<config>/` and
+  `build/obj/<config>/`. Verified by building tetris both ways and then switching back and forth:
+  make reports **"Nothing to be done"** in both directions, so a switch costs not even a relink,
+  and `ui` then built against the shared core tree by compiling only its own two sources.
+
+  *What this item missed: the exe cannot move.* Its suggested `build/core/release` layout is right
+  for objects, but every app's `main.cpp` calls
+  `AddAssetSearchRootFromExe("../../../shared_assets")` - three levels counted from
+  `apps/<name>/build/` - and `imgui.ini` and per-app save files are written beside the exe. An exe
+  at `build/release/tetris.exe` would silently lose every asset in all fourteen apps. So the exe
+  stays in `build/` and is **named** per configuration instead: `tetris.exe` and
+  `tetris_release.exe`. That also removes the staleness this item worried about, without a stamp:
+  two names cannot be mistaken for each other, where one name plus two object trees would have let
+  a switch back to debug report "nothing to be done" and leave you running the release binary.
+  This is why item 72 shrank rather than becoming a prerequisite.
+
+  *`-Os` measured, since this item asked and nobody ever had:* **5.29 MB**, 400 KB and 7% below
+  `-O3`'s 5.68 MB. Not worth a third configuration on a real-time engine. Recorded so the question
+  is not reopened without a reason.
+
+  *One measured dead end, recorded in `engine.mk` beside the flag.* `-Wl,--gc-sections` has been in
+  `CFLAGS` all along and is very nearly inert, because without `-ffunction-sections
+  -fdata-sections` the linker's unit of discard is a whole object file. Adding both is the textbook
+  fix and it is worth **nothing** here - 5.68 MB without, 5.69 MB with, the 10 KB being extra
+  section headers. Almost none of the bulk is our code: `libreactphysics3d.a`, `libimgui.a`,
+  `libOpenAL32.a` and libstdc++ were not compiled with `-ffunction-sections` either, and no flag
+  passed to the engine's own compile can make them splittable. **That lever is in how `libs/*.a`
+  are built, not in `engine.mk`** - worth knowing before items 80 and 82 go looking for megabytes.

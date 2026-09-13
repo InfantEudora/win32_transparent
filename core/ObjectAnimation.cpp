@@ -147,7 +147,7 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
             continue;
         }
         if (!end_keyframe){
-            debug->Err("Failed to get end_keyframe for %s\n",target->name.c_str(),target_interval);
+            debug->Err("Failed to get end_keyframe for %s at %.3f\n",target->name.c_str(),target_interval);
             continue;
         }
 

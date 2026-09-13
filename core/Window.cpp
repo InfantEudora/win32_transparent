@@ -171,7 +171,7 @@ bool Window::InitOpenGL(){
      //Read back the format
     pf = GetPixelFormat(hDC);                          // pixel format descriptor index
     DescribePixelFormat(hDC,pf,sizeof(pfd),&pfd);    // format from index
-    debug->Info("GetPixelFormat\n",hWnd);
+    debug->Info("GetPixelFormat for hWnd %p\n",hWnd);
     debug->Info(" ColorBuffer : %i bits\n",pfd.cColorBits);
     debug->Info(" ZBuffer     : %i bits\n",pfd.cDepthBits);
     debug->Info(" Stencil     : %i bits\n",pfd.cStencilBits);

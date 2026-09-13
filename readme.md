@@ -39,6 +39,9 @@ It should kind of look like this:
 export PATH="/c/msys64/mingw64/bin:$PATH"     # the toolchain is NOT on the default PATH
 cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
 ./build/tetris.exe 2>stderr.log &
+
+# and the small one - same code, no debug info, -O3: 55.4 MB becomes 5.7 MB
+mingw32-make.exe CONFIG=release -j8           # -> build/tetris_release.exe
 ```
 
 An app's makefile is four lines of actual content - `ROOT`, `PROJECT`, `APP_SRCS`, then

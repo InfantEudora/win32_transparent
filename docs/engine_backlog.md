@@ -42,46 +42,14 @@ them - the resampler tables are `.bss` and cost no file bytes, which the first v
 Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
 and 61 stranded under a band A that says it is empty.
 
-Also on 2026-09-13: **item 61 closed** and moved to the done list, along with the soft-compile
+Also on 2026-09-13: **items 68 and 79 closed** - the eight genuinely broken format strings
+fixed, and `CONFIG=release` built - and **item 61 closed** and moved to the done list, along with the soft-compile
 change it turned out to need. Both came out of building `apps/testfx`, the fourteenth app and the
 first that exists to exercise the engine rather than to be a game — see `docs/testfx_plan.md`.
 
 ---
 
 ## Band A — minutes each, no risk
-
-- [ ] **68. `Debug`'s printf-style methods are not checked, and four calls are already wrong.**
-  The one the port found is `GLTFLoader.cpp:932` — `debug->Err("Unknown Morph Target accessor
-  %s\n", it->first)`, where `it->first` is a `std::string` and `%s` reads it as a `const char*`.
-  Undefined behaviour on the one code path whose job is to tell you what went wrong. `.c_str()`
-  is the fix and that part is a minute.
-
-  **The item is why nothing caught it.** `Debug.h` declares eight variadic printf-alikes
-  (`PrintLine`, `Trace`, `Debug`, `Info`, `Ok`, `Warn`, `Err`, `Fatal`, plus the `debug_t`
-  overload) and none of them carries `__attribute__((format(printf,N,N+1)))`, so g++ never looks
-  inside a format string in this codebase at all. Adding the attribute costs one line each.
-
-  Measured on 2026-09-13 by adding the attributes temporarily and running `-fsyntax-only
-  -Wformat` over every core source (the attributes were then reverted — this is a measurement,
-  not a change): **148 warnings across 18 files.** Sorted by what they are actually worth:
-
-  - **Four more of the same crash class**, all on error or diagnostic paths, which is the worst
-    place for them because they fire exactly when something has already gone wrong:
-    `GLTFLoader.cpp:574` and `:598` are `Fatal("GLTF Node %s contains invalid translation\n")`
-    with **no argument at all**; `File.cpp:97` passes a `size_t` to `%s`; `OCPPClient.cpp:749`
-    passes a `json::size_type` to `%s`.
-  - **Nine `%zu` warnings are false alarms — do not "fix" them.** g++ reports `unknown conversion
-    type character 'z'` because it assumes the msvcrt printf, but this toolchain's `vsnprintf`
-    handles `%zu` correctly; verified with a probe that mimics `PrintLineva` and prints `zu=42`.
-    Left alone they are noise; rewritten they get worse. This is the reason to do the triage
-    before turning the attribute on permanently.
-  - **The remaining ~135 are width mismatches** — `%d` for a `DWORD`, `%i` for a
-    `vector::size_type`, `%ld` for a `LONGLONG`. Harmless in practice on this ABI and boring to
-    fix, but they are what makes the attribute noisy, so they decide whether it goes in as a
-    warning or as `-Werror=format`. `GLTFLoader.cpp` alone accounts for 59 of them.
-
-  Note `-Wall` is **not** in `engine.mk` at all, so `-Wformat` has to be asked for by name; that
-  is also why this is a narrow, safe thing to switch on rather than a general warnings cleanup.
 
 - [ ] **78. The Engine panel's *Target Physics TPS* slider is clamped to 200, and the pinball
   table runs at 240.** `SetPhysicsTPS` itself has no clamp, so `apps/pinball` starts correctly -
@@ -90,43 +58,6 @@ first that exists to exercise the engine rather than to be a game — see `docs/
   rate above 200 anyone has asked for; 300 leaves room) or have the slider show the app's own
   value as its ceiling. Found while building the pinball design (`apps/pinball/pinball_design.md`
   §1.3), still open after the stage 0 review (`docs/pinball_findings.md` §4).
-
-- [ ] **79. There is no release build, and it is worth 90% of the executable.** `engine.mk:86`
-  defines `RFLAGS = -DRELEASE -O3 -s` and **nothing references it**; line 87 is
-  `CFLAGS += $(DFLAGS)`, unconditionally. Every exe this engine has ever produced is `-Og -g`,
-  unstripped. Measured 2026-09-13 on `apps/tetris/build/tetris.exe`:
-
-  ```
-  as built          55.07 MB
-  after `strip`      5.37 MB
-  ```
-
-  That is the single largest lever in the tree and it is one line. It also means **nobody has
-  ever seen the real size of this engine's output**, which is worth knowing before spending a day
-  removing a library to save half a megabyte — see the reference at the bottom for what the 5.37 MB
-  is actually made of, and note while reading it that 947 KB of what `nm` reports is `.bss` and
-  occupies no bytes on disk at all.
-
-  Band A is for the `ifeq`. Two things make it not quite a one-liner, and both want settling in the
-  same sitting:
-
-  - **`strip` is not `-O3 -s`.** The 5.37 MB above is this same debug-optimised code with its
-    symbols removed. A real `-O3` build changes code size too, usually upward, occasionally a lot.
-    So measure the release build rather than quoting this number for it, and consider `-Os` as a
-    third setting if size is the actual goal — this engine has never compared the two.
-  - **Make will not rebuild anything when you flip it**, because no source file changed. The first
-    "release" build would link the debug objects sitting in `build/`, silently. This is item 72
-    exactly, and it is what turns that item from tidy-up into a prerequisite.
-
-  For this axis specifically the stamp is the wrong shape and something better is available.
-  Debug-vs-release is not an app-specific flag — it changes `CORE_CFLAGS`, so it changes the shared
-  `build/core` objects, which is the one thing the "line between shared and per-app flags" block is
-  written to prevent. A stamp would fix it by *wiping* core every time anyone switched, which with
-  one shared core directory means every app rebuilding whenever any app changes configuration.
-  **Give each configuration its own object tree instead** — `build/core/debug/` and
-  `build/core/release/`, app objects likewise — and the two stop being able to collide at all,
-  nothing needs wiping, and switching back and forth stops costing a rebuild. That is also the
-  shape item 73 will want if physics-dependent core sources end up compiling per target.
 
 ## Band B — under an hour each
 
@@ -189,6 +120,14 @@ first that exists to exercise the engine rather than to be a game — see `docs/
   reused as compiled under the opposite setting. On the port that produced a link that succeeded
   and an APK that died at `dlopen` naming a mangled symbol, which reads like a missing library
   rather than a stale build.
+
+  **Item 79 closing on 2026-09-13 removed the other half of this item and narrowed what is
+  left.** Debug-vs-release was the one setting that *did* reach the shared core objects, and it
+  was solved without a stamp: each configuration got its own object tree, so nothing can go stale
+  and nothing needs wiping. That is the better answer wherever it applies, and it applies whenever
+  a flag selects between whole builds. A stamp is only needed for a flag that varies **per app**
+  within one configuration - which `USE_MCP` and `USE_IMGUI` (items 74 and 82) are, because two
+  apps built the same way can still disagree about them.
 
   Note the engine already answers half of this, structurally and better: `engine.mk`'s "line
   between shared and per-app flags" exists precisely so a per-app `-D` can never reach the shared
@@ -769,12 +708,20 @@ better method - building the library three ways and linking each against a probe
 the engine's fifteen AL functions - because a shared library's marginal cost inside a big binary is
 not something symbol bucketing can settle.
 
-**The headline is that the debug info is nine tenths of the file** (item 79):
+**The headline is that the debug info is nine tenths of the file** (item 79, closed 2026-09-13):
 
 ```
-as built           55.07 MB
-after `strip`       5.37 MB
+as built                      55.07 MB
+after `strip`                  5.37 MB
+CONFIG=release (-DRELEASE -O3 -s)   5.68 MB
 ```
+
+The third line is the one that now exists. It is *larger* than the stripped debug build, by
+310 KB, which is `-O3` inlining exactly as the item predicted it might; the release build is
+still 9.7x smaller than what this engine shipped for its whole life before that day. `-Os` was
+measured at the same time and comes in at 5.29 MB - 400 KB, 7%, below `-O3` - which is not
+enough to be worth a third configuration on a real-time engine, and is recorded here so the
+question is not reopened without a reason.
 
 **And the 5.37 MB that is left.** Bucketed by symbol origin with `nm -S`, splitting what is in the
 file from what is only `.bss` — which matters, because `.bss` occupies no bytes on disk and an
@@ -816,8 +763,8 @@ tumbling out of the well and OpenAL is the sound; together they are about 2.1 MB
 they are two of the better things about the game. "As small as possible while keeping the core
 features" has to decide what counts as core before the ordering means anything.
 
-**Suggested order, cheapest and least controversial first:** item 79 (the release build, ~50 MB,
-one `ifeq`), item 74 (`USE_MCP`, ~200 KB and a server a shipped game should not have), item 80
+**Suggested order, cheapest and least controversial first:** ~~item 79 (the release build, ~50 MB,
+one `ifeq`)~~ **- done 2026-09-13, 55.07 MB to 5.68 MB**, then item 74 (`USE_MCP`, ~200 KB and a server a shipped game should not have), item 80
 (OpenAL — but read it first: the easy options are already set, and the remaining wins are a patch
 rather than a flag), then items 81 and 82 (the SDF pass and `USE_IMGUI`, ~600 KB and the only one
 that is real design work).

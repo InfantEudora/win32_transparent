@@ -653,6 +653,7 @@ bool HTTPServer::SendWebSocketMessage(SOCKET client, const std::string &message)
 void HTTPServer::BroadcastVariables()
 {
 	// Build JSON as in /status
+	/*
 	std::ostringstream json;
 	json << "{";
 	bool first = true;
@@ -666,6 +667,13 @@ void HTTPServer::BroadcastVariables()
 	}
 	json << "}";
 	std::string body = json.str();
+	*/
+
+	//The above code is mental. This should be replaced by a json library.
+	//This is reached only on websocket connect.
+	//Let's fail and scream.
+	http_debug->Fatal("HTTPServer::BroadcastVariables(): Please fix me!\n");
+	std::string body = "";
 
 	EnterCriticalSection(&m_wsLock);
 	for (size_t i = 0; i < m_wsClients.size(); ) {

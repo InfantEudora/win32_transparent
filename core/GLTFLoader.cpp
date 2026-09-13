@@ -118,7 +118,7 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
         //Default weights per morph target
         for (int i=0;i<model.meshes[mesh_index].weights.size();i++){
             double weight = model.meshes[mesh_index].weights.at(i);
-            debug->Trace("Model.meshes[%i].weights[%i] : %.3f\n",i, weight);
+            debug->Trace("Model.meshes[%i].weights[%i] : %.3f\n",mesh_index, i, weight);
         }
 
         //List primitives
@@ -571,7 +571,7 @@ vec3 GLTFLoader::GetNodePosition(const char* node_name){
     if (node->translation.size() == 0){
         return vec3(0,0,0);
     }else if (node->translation.size() != 3){
-        debug->Fatal("GLTF Node %s contains invalid translation\n");
+        debug->Fatal("GLTF Node %s contains invalid translation\n",node_name);
     }
 
     vec3 pos;
@@ -595,7 +595,7 @@ quat GLTFLoader::GetNodeRotation(const char* node_name){
     if (node->rotation.size() == 0){
          return quat().identity();
     }else if (node->rotation.size() != 4){
-        debug->Fatal("GLTF Node %s contains invalid rotation\n");
+        debug->Fatal("GLTF Node %s contains invalid rotation\n",node_name);
     }
 
     quat q;
@@ -929,7 +929,7 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
                 }else if (it->first.compare("POSITION") == 0){
                     position_bufferview = &model.bufferViews[accessor.bufferView];
                 }else{
-                    debug->Err("Unknown Morph Target accessor %s\n",it->first);
+                    debug->Err("Unknown Morph Target accessor %s\n",it->first.c_str());
                 }
             }
 
@@ -989,12 +989,12 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
     debug->Trace("LoadAnimation: Found Animation %s for you.\n",animation_name);
 
     if (gltf_animation->channels.size() == 0){
-        debug->Err("LoadAnimation: Animations has no channels.\n",animation_name);
+        debug->Err("LoadAnimation: Animation %s has no channels.\n",animation_name);
         return NULL;
     }
 
     if (gltf_animation->samplers.size() == 0){
-        debug->Warn("LoadAnimation: Animation has no samplers\n",animation_name);
+        debug->Warn("LoadAnimation: Animation %s has no samplers\n",animation_name);
         return NULL;
     }
 

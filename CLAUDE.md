@@ -75,6 +75,20 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
 ./build/tetris.exe 2>stderr.log &
 ```
 
+- **`CONFIG=release` is the other build**, and it is worth knowing about because it is worth 90% of
+  the file: `tetris.exe` is 55.4 MB, `tetris_release.exe` is 5.7 MB. Debug is the default and
+  nothing about it changed.
+
+  ```bash
+  mingw32-make.exe CONFIG=release -j8        # -> build/tetris_release.exe
+  ```
+
+  The two have **separate object trees** (`build/obj/<config>/` and `build/core/<config>/`) and
+  **separate exe names in the same folder**. That is deliberate on both counts: separate trees mean
+  switching configuration costs nothing, and separate names mean neither exe can silently be the
+  other one. The folder cannot change, because `main.cpp` counts `../../../shared_assets` from it
+  and `imgui.ini` and save files are written beside it.
+
 - **One exe per app.** Each app is a folder under `apps/` with its own `makefile`, `main.cpp`,
   `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the fourteen
   apps are `animation breakout dozer grid isoanimation ocpp pinball ship sim tank testfx
