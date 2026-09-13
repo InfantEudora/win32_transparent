@@ -17,9 +17,14 @@ Items 68-77 are a third source — the **Android port** at `C:/code/android`, wh
 as its inspiration and got Tetris running on a tablet. Some are bugs it found in code it inherited,
 some are things it had to build that this engine has no equivalent of. Two of them (73, 75) are
 really one thread: that port has host **build tools** that link the engine core, which is a kind of
-consumer this repo has never had, and it is what the optional-subsystem flags are for. See the reference at the
-bottom for what it found that needed no item, and for how to do the merge itself. That port is also
-why item 67 moved from band D to band C: most of it is written.
+consumer this repo has never had, and it is what the optional-subsystem flags are for. See the
+reference at the bottom for what it found that needed no item, and for how to do the merge itself.
+That port is also why item 67 moved from band D to band C: most of it is written.
+
+Items 79-82 are a fourth: **shipping Tetris**. It is close to a complete first game and to being
+the example of what this engine is for, and the question of how small it can be while keeping what
+makes it worth playing turned out to have a measured answer rather than an opinion. The reference
+at the bottom is that measurement; the four items are what it suggests doing, in order.
 
 Ordered by **implementation effort, not by importance** — that is what the bands are, and it is
 deliberate: this list is read when someone has an hour free as often as when someone is deciding
@@ -30,7 +35,9 @@ item that moves between bands keeps its number.
 
 Status key: `[ ]` open · `[~]` partially done.
 
-Last updated 2026-09-13, adding items 68-77 from the Android port and moving 67 to band C.
+Last updated 2026-09-13: items 68-77 from the Android port, 79-82 from measuring `tetris.exe`
+against the goal of shipping it, and 67 moved to band C. Item 78 came from the pinball work in
+between.
 Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
 and 61 stranded under a band A that says it is empty.
 
@@ -78,6 +85,42 @@ and 61 stranded under a band A that says it is empty.
   rate above 200 anyone has asked for; 300 leaves room) or have the slider show the app's own
   value as its ceiling. Found while building the pinball design (`apps/pinball/pinball_design.md`
   §1.3), still open after the stage 0 review (`docs/pinball_findings.md` §4).
+
+- [ ] **79. There is no release build, and it is worth 90% of the executable.** `engine.mk:86`
+  defines `RFLAGS = -DRELEASE -O3 -s` and **nothing references it**; line 87 is
+  `CFLAGS += $(DFLAGS)`, unconditionally. Every exe this engine has ever produced is `-Og -g`,
+  unstripped. Measured 2026-09-13 on `apps/tetris/build/tetris.exe`:
+
+  ```
+  as built          55.07 MB
+  after `strip`      5.37 MB
+  ```
+
+  That is the single largest lever in the tree and it is one line. It also means **nobody has
+  ever seen the real size of this engine's output**, which is worth knowing before spending a day
+  removing a library to save half a megabyte — see the reference at the bottom for what the 5.37 MB
+  is actually made of.
+
+  Band A is for the `ifeq`. Two things make it not quite a one-liner, and both want settling in the
+  same sitting:
+
+  - **`strip` is not `-O3 -s`.** The 5.37 MB above is this same debug-optimised code with its
+    symbols removed. A real `-O3` build changes code size too, usually upward, occasionally a lot.
+    So measure the release build rather than quoting this number for it, and consider `-Os` as a
+    third setting if size is the actual goal — this engine has never compared the two.
+  - **Make will not rebuild anything when you flip it**, because no source file changed. The first
+    "release" build would link the debug objects sitting in `build/`, silently. This is item 72
+    exactly, and it is what turns that item from tidy-up into a prerequisite.
+
+  For this axis specifically the stamp is the wrong shape and something better is available.
+  Debug-vs-release is not an app-specific flag — it changes `CORE_CFLAGS`, so it changes the shared
+  `build/core` objects, which is the one thing the "line between shared and per-app flags" block is
+  written to prevent. A stamp would fix it by *wiping* core every time anyone switched, which with
+  one shared core directory means every app rebuilding whenever any app changes configuration.
+  **Give each configuration its own object tree instead** — `build/core/debug/` and
+  `build/core/release/`, app objects likewise — and the two stop being able to collide at all,
+  nothing needs wiping, and switching back and forth stops costing a rebuild. That is also the
+  shape item 73 will want if physics-dependent core sources end up compiling per target.
 
 ## Band B — under an hour each
 
@@ -193,6 +236,19 @@ and 61 stranded under a band A that says it is empty.
   `.buildflags` file in the app's object dir, compare it at parse time, and `rm -rf` that
   directory when it differs. Only the app's own objects; `build/core` must not be wiped by this,
   and by the rule above it never needs to be.
+
+- [ ] **83. rp3d's twist friction has no lever arm, so a small rolling body freezes against any
+  wall.** The contact solver applies a torque about each contact normal bounded by the friction
+  coefficient times the normal impulse - as a torque, with no radius in it. A ball rolling along a
+  wall spins about exactly that wall's normal, so for a 0.135 pinball resting against a 0.14 rail
+  on a slope that should have rolled it into the drain, the wall's twist bound (~1.2) dwarfed the
+  torque the roll needed (~0.1) and the ball sat there for ever (`docs/pinball_findings.md` §5).
+  The pinball app works round it with **zero friction on every steel rail** (friction mixes as a
+  geometric mean, so the ball's own value cannot bring it back), which is defensible for steel
+  but wrong for rubber. The fix belongs in the fork (`C:/code/reactphysics3d`, see
+  `rp3d_local_fork_hinge_motor_patch`): scale the twist bound by the manifold's contact radius,
+  or expose a per-material twist coefficient so a rail can have sliding friction without it.
+  Anything in this engine that rolls a small body against a wall will hit this.
 
 ## Band C — one to three hours each
 
@@ -465,6 +521,57 @@ and 61 stranded under a band A that says it is empty.
   object in the scene whether or not it is a sprite is the other half of the price; worth checking
   whether it belongs on `instancedata_t` at all or wants its own path.
 
+- [ ] **80. OpenAL is the largest thing in the binary, and a megabyte of it is tables Tetris will
+  never read.** Measured 2026-09-13 (see the reference at the bottom): OpenAL contributes roughly
+  1.3 MB of the 5.37 MB stripped exe, more than ReactPhysics3D and twice ImGui. Four static arrays
+  are most of it:
+
+  ```
+  bsinc48_filter   384 KB      bsinc12_filter   164 KB
+  bsinc24_filter   324 KB      hrtf_default     156 KB
+  ```
+
+  Those are high-quality band-limited resampler kernels and a default head-related transfer
+  function — spatialised audio for a game whose entire sound design is mono bleeps on a line clear.
+  `-Wl,--gc-sections` is already in `CFLAGS` and does not touch them, because they are reachable.
+
+  **This is a library configuration question, not engine code**, which is why it is worth doing
+  before anything harder: `libs/libOpenAL32.a` is a prebuilt static library and openal-soft has
+  build options for exactly this (`ALSOFT_EMBED_HRTF_DATA`, and the resampler set). Band C rather
+  than B because the library has to be rebuilt to find out, and because that library is already
+  known to be fragile — `engine.mk`'s own comment records that it does not link when it has not
+  been rebuilt with the current toolchain (`undefined reference to __emutls_v._ZSt11__once_call`),
+  so anyone touching it should expect to rebuild it properly rather than tweak flags around it.
+
+  Worth checking the *other* direction too while in there: if the resampler quality is not
+  reachable from this engine's API at all, the tables are dead weight in every build, and the app
+  that eventually wants positional audio would be better served by turning them back on
+  deliberately.
+
+- [ ] **82. `USE_IMGUI`, the fourth member of the flag family.** With 73, 74 and `USE_SOUND`, a
+  shipped build becomes a set of flags rather than a fork of the app — which is the point. ImGui is
+  618 KB of the stripped exe plus its own vendored font (`proggy_vector` is 18 KB of it), and a
+  shipped game has no more use for a debug panel than for a JSON-RPC server.
+
+  **Tetris is much closer to this than it looks, and that is the finding.** Its entire ImGui
+  surface is one window — `ApplicationTetris::RenderTetrisHUD`, 26 text calls, five separators, two
+  buttons and two checkboxes. Everything the *game* says is already `TextMesh` (item 24's geometry
+  half), so this is not "replace a UI framework", it is "decide the debug HUD is not in the shipped
+  build". The two checkboxes (Sound, Debris) and two buttons (New game, Pause) are the only
+  functional widgets, and all four already have keyboard bindings.
+
+  What is not free is that core itself draws through ImGui in two places that are not debug UI:
+  `Application::DrawTouchButtons` borrows `ImGui::GetForegroundDrawList()`, and the engine panels
+  are the only way to reach a lot of live controls. The first is what item 81 exists for. The
+  second is an argument for keeping this flag honestly named: `USE_IMGUI=0` is a **shipping**
+  configuration, and an engine whose inspector only exists in the development build is the normal
+  arrangement rather than a regression.
+
+  Sequencing: an app with no on-screen buttons can take this flag today. An app that has them needs
+  item 81 first, or it ships with invisible controls — which, per item 67, still *work*, because
+  `SubmitPointer` hit-tests its own rect list and never consults ImGui. That separation is what
+  makes this tractable at all.
+
 ## Band D — half a day to a day each
 
 - [~] **24. World-space text.** *The geometry half is done; the SDF half and everything above the
@@ -499,7 +606,10 @@ and 61 stranded under a band A that says it is empty.
 
   Still open: the SDF/quad path itself, and everything above the primitive — layout, hit-testing,
   focus. Also still true that `imstb_truetype.h` must be copied out of `3rdparty/imgui/` before it
-  is used, or an ImGui-less build has not been achieved. *Later.*
+  is used, or an ImGui-less build has not been achieved. **The SDF half now has a home: item 81**,
+  which needs the same shader for rounded rects and so pays for the atlas anyway. The `imstb` copy
+  stops being a tidiness point there and becomes the requirement, because item 82 is what it
+  unblocks. *Later.*
 
   *Breakout note (2026-09-12):* the geometry path was used again and held up — its author singled
   out the `reuse` parameter and the thread split (`MeasureText` safe anywhere, `BuildTextMesh`
@@ -561,6 +671,59 @@ and 61 stranded under a band A that says it is empty.
   give a conservative vertical bound to go with the horizontal one; the 2D distance alone cannot,
   because a neighbouring column one texel away may rise to just under the ray.
 
+- [ ] **81. A screen-space SDF pass: rounded rects and text in one shader.** The standalone 2D
+  draw path that item 82 needs in order to drop ImGui, and the SDF half of item 24, are the same
+  piece of work. That is the whole argument for doing it this way, so it is worth stating plainly
+  before the design: **an SDF glyph and an SDF rounded box are the same shader, the same blend
+  state, the same pass and the same vertex format.** Build them as two things and you have written
+  two of everything.
+
+  **Rounded corners belong in the fragment shader, not in a mesh.** The tempting version of this is
+  a new primitive — a quad with rounded edges — and it is the wrong trade. A rounded-box SDF is
+  about three lines of GLSL, and then one unit quad serves every button at every size and every
+  corner radius, with no geometry to regenerate when any of those change. It also hands you three
+  things a rounded mesh cannot:
+
+  - **antialiasing**, one `smoothstep` across the distance, correct at any scale;
+  - **outlines**, `abs(d) - w`, which is what the touch buttons already draw by hand;
+  - **drop shadows and glows**, a second sample at an offset — item 24 makes the same observation
+    about SDF text, and it is the same `smoothstep` both times.
+
+  So the shape is one instanced quad draw where each instance carries `{rect, corner radius,
+  colour, and either a glyph's atlas UVs or a flag meaning untextured}`. Text is then the same call
+  with a glyph UV set and radius 0, which is why this does not become a subsystem.
+
+  **Keep the API to the subset actually in use.** `Application::DrawTouchButtons` needs exactly
+  three things: a filled rounded rect, an outline, and centred text at a given size. Item 24
+  already warns that everything above the text primitive — layout, hit-testing, focus — is "weeks
+  rather than days", and this item is not that. The way it stays a weekend is by refusing to grow
+  into a UI framework; a `SubmitPointer` rect list plus three draw calls is a *game pad*, and a game
+  pad is all Tetris needs.
+
+  **Hit-testing is already out of the way and this is what makes the item tractable.**
+  `SubmitPointer` walks `InputController`'s own rect list and never consults ImGui (item 67), so
+  input and drawing are already decoupled. The draw path only has to draw; it reads
+  `GetTouchButtons()` and nothing flows back.
+
+  **`imstb_truetype.h` becomes load-bearing here.** Item 24 notes it must be copied out of
+  `3rdparty/imgui/` before use "or an ImGui-less build has not been achieved" — with item 82 in
+  the picture that stops being a tidiness point and becomes the actual requirement. It is complete
+  stb_truetype 1.26 and has `stbtt_GetGlyphSDF`, so the atlas needs no new dependency.
+
+  **`TextMesh` stays and is not in competition.** Extruded glyph geometry is for world-space text
+  that wants to be lit and to sit in the scene — Tetris's board captions, which look the way they
+  do *because* they are real geometry. SDF quads are for screen-space text that wants to be crisp
+  and cheap. Item 24 already anticipated both and says they share the *layout* and none of the
+  storage; the `GlyphSet`/metrics split it describes is the seam, and an SDF atlas is a second
+  loader and a second builder rather than a rewrite.
+
+  Two things to decide up front, because retrofitting either is unpleasant. **Where the pass runs**
+  — it has to composite over the 3D scene and under nothing, which is where ImGui sits today, so it
+  is a final forward pass with depth test off and straight alpha blending. And **what units the API
+  takes**: item 67's buttons are laid out in millimetres via `GetDisplayDPI()` (item 70) precisely
+  so they survive a change of screen, and a draw path that only speaks pixels would quietly undo
+  that.
+
 ## Band E — multi-day, strategic
 
 - [ ] **25. Record and replay** (step 7 of the deterministic-sim plan). Unblocked by item 22, but see the thread-ordering caveat there. Tetris
@@ -586,6 +749,58 @@ and 61 stranded under a band A that says it is empty.
 - [ ] **27. Finish the skeletal animation system.** `ObjectAnimation.cpp:108` still has a
   `debug->Fatal` for any clip carrying a scale track. The probe was deliberately never started.
   *Later.*
+
+---
+
+## Reference: what `tetris.exe` is made of
+
+Context for items 79-82, which came out of one question — how small can a shipped Tetris be while
+keeping the features that make it worth shipping. Measured 2026-09-13 against
+`apps/tetris/build/tetris.exe` as built that day (`-Og -g`, `USE_SOUND := 1`, MCP and physics both
+in). Everything here is `nm -S` on the binary, bucketed by symbol origin, so it accounts for code
+and static data and not for what the loader adds.
+
+**The headline is that the debug info is nine tenths of the file** (item 79):
+
+```
+as built           55.07 MB
+after `strip`       5.37 MB
+```
+
+**And the 5.37 MB that is left, by origin:**
+
+| component | size | notes |
+|---|---|---|
+| OpenAL | ~1.3 MB | ~1 MB of it four resampler/HRTF tables — item 80 |
+| ReactPhysics3D | 1.12 MB | the debris tray; a real feature, gated by `f_debris_enabled` |
+| libstdc++ / mingw runtime | 847 KB | `-static-libstdc++ -static` is deliberate |
+| **ImGui** | **618 KB** | one debug window in Tetris — items 81, 82 |
+| engine `core/` | 252 KB | the whole engine, and the smallest interesting line here |
+| nlohmann/json | 173 KB | MCP only — item 74 |
+| tinygltf | 156 KB | |
+| stb_image | 59 KB | |
+| miniz, glad | ~9 KB | |
+
+**Three things worth taking from that table.**
+
+The engine itself is **252 KB**. Everything else is libraries, which is the expected shape for a
+small engine and is also the reason size work here is almost entirely about which libraries a build
+carries rather than about the code anyone writes.
+
+**ImGui is fourth, not first.** The instinct to remove it is right for shipping reasons — a game
+should not carry its own inspector — but as a size lever it is worth less than the release build by
+two orders of magnitude, less than an OpenAL build option, and less than physics. Do it because the
+result is a clean example of the engine, not because of the megabytes.
+
+**Two of the four big items are features, and that is the real question.** Physics is the debris
+tumbling out of the well and OpenAL is the sound; together they are 2.4 MB of the 5.37, and they
+are two of the better things about the game. "As small as possible while keeping the core features"
+has to decide what counts as core before the ordering means anything.
+
+**Suggested order, cheapest and least controversial first:** item 79 (the release build, ~50 MB,
+one `ifeq`), item 74 (`USE_MCP`, ~200 KB and a server a shipped game should not have), item 80
+(OpenAL's tables, ~1 MB, no engine change), then items 81 and 82 (the SDF pass and `USE_IMGUI`,
+~600 KB and the only one that is real design work).
 
 ---
 

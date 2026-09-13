@@ -305,8 +305,8 @@ code in the whole app.
 | Outer walls / cabinet | Blender | 4 boxes, 0.6 thick | static |
 | Guide rails, orbit, lane dividers | extruded polyline | `AddWallPolyline` (§2.3) | static |
 | Ball | `MakeSphere` or Blender, chrome material | sphere `r = 0.135`, bounciness ~0.4, low friction | dynamic, sleeping **disabled** |
-| Flipper | Blender (tapered bat) | 2 boxes, or 1 box + 1 capsule at the tip | dynamic body + **hinge joint with motor**, limits at ±32°. `apps/ship/HingedDoor.cpp` is the template. |
-| Plunger | Blender (rod + knob) | box | dynamic + **slider joint**, motor pulls back, spring returns |
+| Flipper | Blender (tapered bat) | 1 box + a capsule at each end (built) | dynamic body + **hinge joint with motor**, limits at ±32°. `apps/ship/HingedDoor.cpp` is the template. Built heavy (mass 2) so it carries momentum through a hit - see `PIN_FLIPPER_MASS`. |
+| Plunger | Blender (rod + knob) | box | dynamic + **slider joint**, motor pulls back, spring returns. The tip rests flush with the front wall and the ball against the wall; restitution 0.9 on the tip is what sets the launch speed. |
 | Pop bumper | Blender (cap + skirt) | **capsule**, caps buried above and below the ball's band | static collider + trigger ring; impulse applied on contact |
 | Post / rubber | `MakeCylinder` render | capsule, caps buried | static, high bounciness |
 | Slingshot | Blender | one angled box + a trigger box just in front | static; impulse on trigger |
@@ -489,6 +489,18 @@ the plunger. Tilt slider, tunnel guard, speed clamp. The MCP tools `pinball_flip
 `pinball_plunger`, `pinball_place_ball` and `pinball_telemetry`. **The whole game lives or dies on
 how the flippers feel**, and the flippers are cheaper to tune when they are the only thing on the
 table. Expect to spend real time here.
+
+> **DONE, 2026-09-13** — `docs/pinball_findings.md` §5 has the account. Built a little wider than
+> written: every static shape on the table got its collider in the builder that draws it, off the
+> same path (`AddSweptColliders`), so the rails, posts, bumper bodies and targets collide as plain
+> statics now and only their *switches* wait for stage 2. The flippers and plunger are
+> `apps/pinball/Mechanisms.h` — hinge and slider joints with motors, on the `HingedDoor` pattern.
+> Three things the engine taught us on the way, each now written where it bit: `toradians()` did
+> not parenthesise its argument (fixed in core); rp3d's *twist friction* freezes a small ball
+> rolling along a wall, so steel rails have zero friction; and rp3d takes the *larger* of two
+> restitutions, which is what sets the plunger's launch speed. A fifth tool, `pinball_run`, steps a
+> paused table and returns the ball's path - the wall test in §2.2 is that tool and the `escapes`
+> counter, and it reads zero.
 
 **Stage 2 — the scoring geometry.** Pop bumpers, slingshots, drop targets, standups, the spinner,
 all the rails and lanes, every switch reporting through a `pinball_switch_log` tool. Still no rules:

@@ -8,12 +8,18 @@ metadata:
   modified: 2026-09-06T00:00:00.000Z
 ---
 
-The project's build tools (g++, make) are not on PATH in the Bash tool's shell — `which g++`/`which make` fail, and even exporting PATH within a command doesn't seem to take effect (silent no-op, possibly sandboxed). Always invoke by full path instead.
+The project's build tools (g++, make) are not on PATH in the Bash tool's shell — `which g++`/`which make` fail. **`export PATH="/c/msys64/mingw64/bin:$PATH"` at the start of a command DOES work** (verified 2026-09-13 by compiling core sources); an earlier version of this note claimed it was a silent no-op, which is wrong. Full paths also work if preferred.
 
 - Compiler: `/c/msys64/mingw64/bin/g++.exe` (MSYS2 MinGW64, g++ 13.1.0)
 - Build: use `/c/msys64/mingw64/bin/mingw32-make.exe`, NOT `/c/msys64/usr/bin/make.exe` — the latter is the MSYS2 (Cygwin-style) make and silently fails with exit 127 and zero output in this shell (likely a runtime-DLL/exec issue), while `mingw32-make.exe` runs fine.
 - `make` itself still shells out to `g++`, so the subprocess also needs the toolchain on PATH: prefix the command with `PATH="/c/msys64/mingw64/bin:$PATH"` in the same invocation, e.g.:
   `PATH="/c/msys64/mingw64/bin:$PATH" /c/msys64/mingw64/bin/mingw32-make.exe APP=Tank -j4`
+
+**There is no release build.** `engine.mk:86` defines `RFLAGS = -DRELEASE -O3 -s` and nothing
+references it; line 87 is `CFLAGS += $(DFLAGS)` unconditionally, so every exe ever produced here is
+`-Og -g` and unstripped. Measured 2026-09-13: `tetris.exe` is 55.07 MB as built and **5.37 MB after
+`strip`**. Do not quote exe sizes as if they meant anything until this is wired (backlog item 79) -
+and note flipping it rebuilds nothing, because make has no dependency on a variable's value.
 
 Also `nproc` is not available in this shell (empty output, no error) — don't rely on `-j$(nproc)`; pass an explicit job count instead.
 

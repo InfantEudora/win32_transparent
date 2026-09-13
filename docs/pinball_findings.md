@@ -167,3 +167,64 @@ flipper's root are the three things stage 3 should look at first.
   the geometry to model against.
 - The Engine panel's *Target Physics TPS* slider is clamped to 200 while the table runs at 240;
   touching it silently slows the table. Already noted in the design; still open.
+
+---
+
+## 5. Stage 1 — ball, flippers, plunger (2026-09-13)
+
+Built the same day, on the re-laid table. What exists now:
+
+- **Colliders for everything static**, made in the same builder that draws each thing, from the
+  same path: `AddSweptColliders` puts one box per path segment (tilted where the path climbs, so
+  it is also the ramp floor's collider), `AddBoxCollider` and `AddPostCollider` do the boxes and
+  the capsules. Cabinet, deck, an invisible glass at 1.10, every rail and divider, the slingshot
+  triangles, posts, bumper bodies, targets and the ramp climbs all collide. Their *switches* are
+  stage 2; only the habitrail wires (stage 3) have no collider, so a ball that climbs a ramp
+  drops off its crest.
+- **The ball**: sphere, mass 1, restitution 0.12, friction 0.12, a little linear damping as
+  rolling resistance, sleeping disabled, gravity the tilted vector. On the open deck it rolls at
+  7.8 u/s², which is a solid sphere under 6.5°.
+- **Flippers and plunger** in `apps/pinball/Mechanisms.h`: hinge joints with motors (rest-to-up in
+  10 ticks, back in 20) and a slider with a motorised pull and a spring return, on the
+  `HingedDoor` pattern. The tip rests flush with the front wall, the ball against the wall.
+- **The tick**: held keys read every tick; the speed clamp; the tunnel guard (a raycast along the
+  tick's travel above one radius per tick, reflecting by hand); drain and *escape* detection,
+  both re-serving. Z and / (or the arrows, or the shoulder buttons) flip, space plunges, R serves.
+- **Tools**: `pinball_telemetry`, `pinball_flipper`, `pinball_plunger`, `pinball_place_ball`
+  (a SimCommand) and `pinball_run`, which steps a paused table and returns the ball's path. The
+  panel has the readouts and live tuning for the flippers, plunger and ball.
+
+**Verified**, all with the simulation paused and stepped, so every number is reproducible:
+
+| test | result |
+|---|---|
+| flippers, hold 30 ticks | both hands 64° at tick 10, held, rest at tick 20 after release, mirror-exact |
+| full plunge | 28 u/s; round the orbit, down the return lane, onto the upper flipper's face, out along it |
+| flipper shot from a resting ball | 49 u/s off either bat, mirror-exact |
+| 90 u/s at the walls, 8 directions | 0 escapes; the guard intervened 11 times, as designed |
+| 5 s unattended after a plunge | orbit, return lane, upper flipper, mid-table, drain, re-serve; 0 escapes |
+
+**What the engine taught us**, each fixed where it bit:
+
+- `toradians()` in `core/type_helpers.h` did not parenthesise its argument, so
+  `toradians(up - rest)` was `up - rest/180*pi`: a 101-radian hinge limit and a flipper that spun
+  like a propeller. **Fixed in core**; every existing call passed a single identifier, so nothing
+  else changes. The only core change in this stage.
+- **rp3d's twist friction** - a torque about the contact normal, bounded by friction times the
+  normal impulse with no lever arm - froze a ball resting against the outhole funnel on a slope
+  that should have rolled it into the drain. A ball rolling along a wall spins about exactly that
+  wall's normal. Steel rails now have zero friction, which zeroes the twist; friction is mixed as
+  a geometric mean so the ball's own value does not reintroduce it. Worth an engine note: any
+  small rolling body against a wall will hit this.
+- **rp3d takes the larger of two restitutions.** The ball is 0.12 so that the table's surfaces
+  decide; the plunger tip is 0.9, which is what turned a 17 u/s launch into 28.
+- A **light bat** cannot hit hard in an impulse solver, because the motor's torque cap is per tick
+  and a contact lasts one or two: the bat coasts on its inertia during the hit. Mass 2 with the
+  torque scaled to match is the honest model of a solenoid that keeps shoving.
+- Two layout faults only a moving ball could show: the orbit needed an **outer guide** (a plunged
+  ball ran up the straight cabinet wall past the inner rail's end into the corner), and a ramp's
+  side must reach **down to the deck** (a ball beside the climb jammed under the rising rail).
+
+**Open for stage 2 and 3**: switches and impulses on the slings and pops; the drain as a trigger;
+the wires as capsule chains; the ramp crest hand-off; feel tuning with the sliders - the defaults
+are a first answer, not a measured one.

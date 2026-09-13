@@ -5,8 +5,12 @@
 
 #define TYPE_PI 	3.14159265359f
 const float FT_EPSILON = 0.0000000125f;
-#define toradians(a)	((a/180.0f)*TYPE_PI)
-#define todegrees(a)    ((a/TYPE_PI)*180.0f)
+//The argument is parenthesised, as a function-like macro's must be: without it
+//toradians(up - rest) expanded to up - (rest/180)*pi, and the pinball flippers got a 101-radian
+//hinge limit out of a 64-degree one (2026-09-13). Every call in the repo passed a single
+//identifier or literal, so this changes nothing but that class of bug.
+#define toradians(a)	(((a)/180.0f)*TYPE_PI)
+#define todegrees(a)    (((a)/TYPE_PI)*180.0f)
 
 //Linear interpolation of a and b by factor k
 float flerp(float a, float b, float k);

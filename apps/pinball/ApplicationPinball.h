@@ -11,6 +11,7 @@
 
 #include "Table.h"
 #include "TableBuilder.h"
+#include "Mechanisms.h"
 
 /*
     ORBIT OUTPOST - a solid-state pinball machine on this engine.
@@ -69,6 +70,19 @@
 #define INPUT_PINBALL_SHOT_LOWER    INPUT_LAST+5
 #define INPUT_PINBALL_SHOT_MACHINE  INPUT_LAST+6
 #define INPUT_PINBALL_SHOT_ORBIT    INPUT_LAST+7
+//Stage 1: the controls a player actually has. Held keys, read with IsKeyDown every tick, so a
+//scripted HoldKey from an MCP tool is indistinguishable from a finger (pinball_design.md 0).
+//The upper flipper is on the LEFT button, as it is on every machine that has one.
+#define INPUT_PINBALL_FLIP_LEFT     INPUT_LAST+8
+#define INPUT_PINBALL_FLIP_RIGHT    INPUT_LAST+9
+#define INPUT_PINBALL_PLUNGE        INPUT_LAST+10
+#define INPUT_PINBALL_SERVE         INPUT_LAST+11
+
+//Our own SimCommand types, numbered from SIM_CMD_LAST like every app's (core/SimCommand.h).
+//PLACE_BALL: teleport the ball to `position` (SIM_CMD_FLAG_POSITION) with `velocity`
+//(SIM_CMD_FLAG_VELOCITY); either may be absent. SERVE: the ball back to the plunger, still.
+#define PIN_CMD_PLACE_BALL          (SIM_CMD_LAST + 0)
+#define PIN_CMD_SERVE               (SIM_CMD_LAST + 1)
 
 /*
     THE CAMERA, which the answer to open question 2 settles: fixed, framing the whole machine the
@@ -121,9 +135,62 @@ public:
 
     void Init(void) override;
     void UpdateView(void) override;
+    void RunSimulationTick(void) override;
     void PreRender(void) override;
     void DrawImGuiUI(void) override;
     vec3* GetCameraTargetPtr() override { return &camera_target; }
+
+    /*
+        --- STAGE 1: THE SIMULATION ------------------------------------------------------------
+        Everything below runs on the physics thread inside RunSimulationTick, or is read at a
+        tick boundary. The ball is a plain Object with a sphere body; the flippers and the plunger
+        are the mechanisms in Mechanisms.h. Every static shape on the table got its collider in
+        the same builder that made its mesh, from the same path - see AddSweptColliders.
+    */
+    //A chain of static box colliders along a path, one per segment, each overlapping its
+    //neighbours by half a width so a ball cannot find the join. The same numbers MakeSweptBox
+    //draws with: half_width sideways, y_below and y_above from the path's own height. Segments
+    //that climb are tilted to match, which is what makes it the ramp floor's collider too. The
+    //body is the object's own (added if it has none), static, in the TABLE category.
+    void AddSweptColliders(Object* object, const PinPath& path, float half_width,
+                           float y_below, float y_above, float bounciness, float friction);
+    //One static box collider the size of the box the object was drawn as.
+    void AddBoxCollider(Object* object, const vec3& size, float bounciness, float friction);
+    //A static capsule standing on the deck with its round caps buried below it and above the
+    //ball's band, so the ball only ever meets the straight middle - posts and pop bumpers.
+    void AddPostCollider(Object* object, float radius, float bounciness, float friction);
+
+    //The one dynamic body that matters. Built in BuildLauncher, parked against the plunger.
+    void BuildBall();
+    //Back to the plunger, still. Physics thread only; what the drain, an escape and the SERVE
+    //command all end in.
+    void ServeBall();
+    //Mitigation 2 of pinball_design.md 2.2: sweep the ball's path for this tick and stop it
+    //short of anything it would pass into. Physics thread, before the world steps.
+    void TunnelGuard();
+    void RegisterCommandHandlers();
+    json BuildTelemetryJson();
+
+    Flipper* flipper_left = NULL;
+    Flipper* flipper_right = NULL;
+    Flipper* flipper_upper = NULL;
+    Plunger* plunger = NULL;
+    Object*  plunger_rod = NULL;        //render only; follow the tip each tick
+    Object*  plunger_knob = NULL;
+    Object*  glass = NULL;              //the invisible ceiling; a body and nothing else
+
+    //Counters, all written on the physics thread and read from anywhere. They are the
+    //verification: escapes and guard hits are the tunnelling detectors, and a table that works
+    //has zero of the first and a max_speed that never reaches the clamp.
+    std::atomic<uint32_t> drains{0};
+    std::atomic<uint32_t> escapes{0};
+    std::atomic<uint32_t> guard_hits{0};
+    std::atomic<uint32_t> speed_clamps{0};
+    float max_speed_seen = 0.0f;
+    //What the last guard intervention was, for the telemetry: where, how fast, off what normal.
+    vec3 last_guard_point = {};
+    vec3 last_guard_normal = {};
+    float last_guard_speed = 0.0f;
 
 private:
     //--- Setup, all on the render thread from Init() -------------------------------------------
@@ -175,19 +242,22 @@ private:
     Object* AddCylinderObject(const char* name, const vec3& centre, float radius, float height,
                               int material, int segments = 20);
     Object* AddMeshObject(const char* name, Mesh* mesh, const vec3& position, int material);
-    //A wall standing on a path, in one call - the shape most of this table is made of.
+    //A wall standing on a path, in one call - the shape most of this table is made of. Mesh AND
+    //collider chain, from the one path; `bounciness` is the collider's, and is the rail default
+    //unless the wall is rubber.
     Object* AddWall(const char* name, const PinPath& path, float height, float thickness,
-                    int material);
+                    int material, float bounciness = PIN_RAIL_BOUNCINESS);
     //A lamp insert: the flush disc in the deck that lights up under a rollover or a target. Drawn
     //a hair proud of the deck so it does not z-fight with it.
     Object* AddInsert(const char* name, float x, float z, float radius, int material,
                       float y = 0.0f);
     //A post with its rubber ring. Two objects, one call, because they are never apart.
     void    AddPost(const char* name, float x, float z);
-    //A flipper bat parked at an angle. The pivot is the OBJECT ORIGIN, which is what the hinge
-    //joint in stage 1 needs and what a Blender flipper_bat has to match (pinball_design.md 3.2).
-    Object* AddFlipper(const char* name, float x, float z, float length, float angle_degrees,
-                       bool f_mirrored);
+    //A flipper on its hinge, parked at rest. The pivot is the OBJECT ORIGIN, which is what the
+    //hinge joint needs and what a Blender flipper_bat has to match (pinball_design.md 3.2). The
+    //plan entry is recorded here; the mechanism itself is Mechanisms.h's Flipper.
+    Flipper* AddFlipper(const char* name, float x, float z, float length, float rest_degrees,
+                        float up_degrees, bool f_mirrored);
 
     //--- The camera ----------------------------------------------------------------------------
     void SetShot(int shot);

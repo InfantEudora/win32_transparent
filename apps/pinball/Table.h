@@ -208,9 +208,12 @@
 
     It sits AT THE LEFT WALL, in the mouth of the orbit's return lane: the lane is 0.48 wide
     between the cabinet (-2.85) and the return rail (-2.37), so its centre is -2.61, and the pivot
-    is put directly under that. A ball coming off the orbit therefore lands on the ROOT of the bat
-    and rolls out along it, which is what an upper flipper is for; the first draft had the pivot
-    0.35 inboard of the lane and the ball went past the bat's back into the outlane.
+    is 0.11 OUTBOARD of that - the root's own radius - so that a ball coming off the orbit lands on
+    the bat's face just inboard of the root and rolls out along it toward the tip, which is what
+    an upper flipper is for. (With the pivot dead under the lane's centre the first plunged ball
+    hit the round root head-on, bounced straight back up the lane and settled on the pivot.) The
+    first draft had the pivot 0.35 inboard of the lane and the ball went past the bat's back into
+    the outlane.
 
     Rest is -38, a little steeper than the main pair's -32, so that the bat's tip at rest sits
     just clear of the left ramp's climb, which passes 0.6 above this corner of the deck; up is +22,
@@ -220,7 +223,7 @@
     a ball is never on top of, and it is the arrangement half the real machines with an upper
     flipper have.
 */
-#define PIN_FLIPPER_U_X         (-2.60f)
+#define PIN_FLIPPER_U_X         (-2.72f)
 #define PIN_FLIPPER_U_Z         (-1.65f)
 #define PIN_FLIPPER_U_LENGTH    0.62f
 #define PIN_FLIPPER_U_REST_DEG  (-38.0f)
@@ -301,11 +304,20 @@
 #define PIN_CHUTE_DIVIDER_THICK 0.18f
 #define PIN_CHUTE_DIVIDER_HEIGHT 0.55f
 #define PIN_CHUTE_MIN_Z         (-3.35f)    //where it opens into the top orbit
-#define PIN_CHUTE_MAX_Z         ( 4.30f)
+#define PIN_CHUTE_MAX_Z         PIN_DECK_MAX_Z   //all the way to the front wall
 
+/*
+    The plunger's tip rests FLUSH WITH THE FRONT WALL'S INNER FACE, and the ball rests against
+    that wall with the tip's face at its back - the wall is the ball stop, as the end of a real
+    shooter lane is. Pulling back takes the tip out through the wall (it collides with nothing
+    but the ball) while the ball stays put, and on release the tip meets the ball at the very end
+    of its stroke, at full speed, and stops dead on the joint's limit. The first draft had the
+    tip 0.30 inside the cabinet with the ball against it, so a pull took the tip outside anyway
+    and the ball rolled down to the wall on its own; this is the same picture drawn honestly.
+*/
 #define PIN_PLUNGER_X           PIN_CHUTE_X
-#define PIN_PLUNGER_Z           ( 4.30f)
-#define PIN_PLUNGER_TRAVEL      0.90f       //along -Z; a slider joint with a spring return
+#define PIN_PLUNGER_Z           PIN_DECK_MAX_Z   //the tip's face at rest
+#define PIN_PLUNGER_TRAVEL      0.90f       //along +Z, out through the wall; a slider joint
 
 //Three skill-shot rollovers up the lane. Release at the right moment and the top one lights.
 #define PIN_SKILL_Z_0           (-1.50f)
@@ -322,10 +334,10 @@
     The top orbit, as a circle rather than as three points.
 
     The horseshoe's ends are at (+-2.30, -3.35) - the right one where the plunger chute opens into
-    it, the left one where the return lane begins - and its apex is at z = -4.10, 0.50 short of the
-    top wall. That is a chord of 4.60 with a sagitta of 0.75, and the circle through it is
-        R = h/2 + c^2/(8h) = 0.375 + 21.16/6.00 = 3.902
-    centred at (0, -4.10 + R) = (0, -0.198). Kept as centre-and-radius because that is what a
+    it, the left one where the return lane begins - and its apex is at z = -4.08. That is a chord
+    of 4.60 with a sagitta of 0.73, and the circle through it is
+        R = h/2 + c^2/(8h) = 0.365 + 21.16/5.84 = 3.988
+    centred at (0, -4.08 + R) = (0, -0.092). Kept as centre-and-radius because that is what a
     sampler wants and because rounding the three points would leave a curve that is not quite a
     circle - which a ball riding it at 60 u/s would find.
 
@@ -333,18 +345,35 @@
     bottom of the table is symmetric about the play area. That asymmetry is real and is what makes
     the right-hand orbit exit line up with the plunger lane.
 
-    This arc is the INNER guide of the horseshoe; the outer boundary is the cabinet wall itself, so
-    the lane is the gap between them: 0.50 at the apex less half a rail, 0.43 clear - 1.6 balls.
-    (0.45 was tried: at 1.4 balls the orbit was the one lane on the table without the margin every
-    other lane has.) The rail is continuous, so the top lanes below it are fed from the bumpers,
-    not from the orbit; a ball that goes round comes down the left return.
+    This arc is the INNER guide of the horseshoe. The OUTER guide is PIN_ORBIT_OUTER_* below: the
+    first build let the cabinet be the outer boundary, and the first plunged ball showed why that
+    is wrong - it ran straight up the side wall past the end of this rail into the top corner and
+    rolled back down the chute, because nothing turned it. The lane is 0.45 clear at the apex
+    (1.7 balls) and a little wider round the corners. The rail is continuous, so the top lanes
+    below it are fed from the bumpers, not from the orbit; a ball that goes round comes down the
+    left return.
 */
 #define PIN_ORBIT_CX            ( 0.0f)
-#define PIN_ORBIT_CZ            (-0.198f)
-#define PIN_ORBIT_RADIUS        ( 3.902f)
-#define PIN_ORBIT_START_DEG     (-126.12f)  //the left-hand end, at (-2.30,-3.35)
-#define PIN_ORBIT_END_DEG       ( -53.88f)  //the right-hand end, at (+2.30,-3.35)
+#define PIN_ORBIT_CZ            (-0.092f)
+#define PIN_ORBIT_RADIUS        ( 3.988f)
+#define PIN_ORBIT_START_DEG     (-125.22f)  //the left-hand end, at (-2.30,-3.35)
+#define PIN_ORBIT_END_DEG       ( -54.78f)  //the right-hand end, at (+2.30,-3.35)
 #define PIN_ORBIT_RAIL_HEIGHT   0.46f
+/*
+    The orbit's OUTER guide: the curved wall a real shooter lane has at the top of the table.
+    Two quadratic Beziers - up the side wall, round the corner, along the top wall to the apex,
+    and the mirror - rather than a circle, so that each end is TANGENT to the side wall it leaves:
+    a ball coming up the chute at 30 u/s is turned, not bounced.
+
+    Its centreline runs HALF A RAIL INSIDE THE CABINET WALL, so its inner face is flush with the
+    wall's: where it begins it takes nothing off the chute, and where it ends nothing off the
+    return lane. (Half a rail inboard of the wall, it narrowed the chute's mouth to 1.37 balls
+    and the plan tool marked every feature past it tight.) The half that shows reads as the
+    curved lip a real cabinet has there.
+*/
+#define PIN_ORBIT_OUTER_X       (PIN_PLAY_MIN_X - PIN_RAIL_VISUAL_THICK * 0.5f)   //-2.92, and its mirror about the cabinet
+#define PIN_ORBIT_OUTER_START_Z (-3.35f)
+#define PIN_ORBIT_OUTER_APEX_Z  (PIN_DECK_MIN_Z - PIN_RAIL_VISUAL_THICK * 0.5f)   //-4.67
 
 /*
     The orbit's LEFT RETURN: the lane a ball runs down after the horseshoe, between the cabinet
@@ -492,6 +521,122 @@
 #define PIN_POST_MOUTH_R_Z      ( 0.60f)
 #define PIN_POST_DROP_X         ( 1.85f)
 #define PIN_POST_DROP_Z         (-1.15f)
+
+//--- Stage 1: the ball, the flippers, the plunger, and what they are made of -------------------
+/*
+    Physics numbers. Still no engine type - these are floats the mechanisms read - and still one
+    place, so that "how hard does a flipper hit" is a question with one answer.
+
+    Units follow the scale: lengths in units (10 cm), time in seconds, so a mass of 1 for the ball
+    means every force below is in "ball-weights times 98". Nothing here is a measured real-world
+    value; they are the numbers that make a 240 Hz solver produce a ball that behaves like one,
+    found with pinball_run traces and the tuning sliders in the panel. Feel is stage 1's whole
+    job (pinball_design.md 4), so expect these to move.
+*/
+#define PIN_BALL_MASS           1.0f
+//Restitution in rp3d is the LARGER of the two materials in contact, so the ball carries the
+//floor of the table's bounce and every surface says how lively it is on its own.
+#define PIN_BALL_BOUNCINESS     0.12f
+#define PIN_BALL_FRICTION       0.12f
+//rp3d has no rolling resistance. A little linear damping stands in for it, so a ball on the flat
+//stretches of the deck slows the way a real one does instead of coasting for ever.
+#define PIN_BALL_LINEAR_DAMPING 0.10f
+#define PIN_DECK_FRICTION       0.15f
+#define PIN_DECK_BOUNCINESS     0.02f
+#define PIN_RAIL_BOUNCINESS     0.35f       //steel guides and the cabinet
+/*
+    ZERO, and not because steel is slippery. rp3d's contact solver applies a TWIST friction at
+    every contact - a torque about the contact normal, bounded by the friction coefficient times
+    the normal impulse, with no lever arm in it. A ball rolling along a wall spins about exactly
+    that wall's normal, so the wall's twist friction opposes the roll directly, and against a
+    0.135 ball the bound is enormous: a ball resting against the outhole funnel, on a slope that
+    should have rolled it into the drain, sat there indefinitely. rp3d mixes friction as the
+    geometric mean of the two materials, so a zero here is a zero for every rail contact whatever
+    the ball says, and the deck's friction - the one that makes the ball ROLL - is untouched.
+*/
+#define PIN_RAIL_FRICTION       0.00f
+#define PIN_RUBBER_BOUNCINESS   0.80f       //post rings; the slingshots too, come stage 2
+#define PIN_RUBBER_FRICTION     0.40f
+#define PIN_PLASTIC_BOUNCINESS  0.45f       //ramp floors and rails, the targets
+//An invisible ceiling over the whole deck, above the habitrails: whatever gets a ball airborne,
+//it stays in the cabinet. Real glass is lower, but real glass has no ramps to clear at 1:10.
+#define PIN_GLASS_HEIGHT        1.10f
+//Where the plunger serves the ball to: against the front wall, with the plunger's tip at its back.
+#define PIN_BALL_REST_Z         (PIN_DECK_MAX_Z - PIN_BALL_RADIUS - 0.005f)
+
+/*
+    Flippers. A hinge joint with a MOTOR, driven at a target angular speed with a torque cap, so
+    the bat accelerates hard, arrives at its limit and stays there while the button is held; the
+    return is the same motor the other way with less torque, which is what a return spring is. A
+    real bat crosses its 60-odd degrees in about 30 ms; at 40 rad/s ours takes 28.
+*/
+/*
+    A HEAVY bat, driven hard. In an impulse solver a motor's torque cap is what it can add per
+    tick, and a contact lasts a tick or two - so during the hit the bat is coasting on its own
+    inertia, and a 0.6 bat at 60 rad/s left a resting ball at 30 u/s where a real machine's hard
+    shot is 50-80. A real bat is light but its solenoid keeps shoving for the whole stroke; the
+    honest way to say that in this solver is a bat with mass, and the torque scaled up with it so
+    it still reaches speed in five ticks. Tuning sliders in the panel move all of these live.
+*/
+#define PIN_FLIPPER_MASS            2.00f
+#define PIN_FLIPPER_MOTOR_SPEED     60.0f   //rad/s, toward up
+#define PIN_FLIPPER_MOTOR_TORQUE    2000.0f
+#define PIN_FLIPPER_RETURN_SPEED    25.0f   //rad/s, back to rest
+#define PIN_FLIPPER_RETURN_TORQUE   400.0f
+#define PIN_FLIPPER_BOUNCINESS      0.30f
+#define PIN_FLIPPER_FRICTION        0.30f
+#define PIN_FLIPPER_TIP_RADIUS      0.065f  //the rounded end the ball actually meets
+
+/*
+    The plunger. A slider joint along the chute: a motor pulls the tip back while the button is
+    held (the player's hand), and on release a spring force proportional to the pull drives it
+    home against a hard stop at its rest position. Launch strength is therefore how long the
+    button was held, which is what makes the skill shot a skill.
+*/
+#define PIN_PLUNGER_MASS            0.50f
+#define PIN_PLUNGER_SPRING          1600.0f //force per unit of pull
+#define PIN_PLUNGER_DAMPING         4.0f    //force per unit of speed, so it does not ring
+#define PIN_PLUNGER_PULL_SPEED      3.0f    //units per second while the button is held
+#define PIN_PLUNGER_PULL_FORCE      300.0f
+#define PIN_PLUNGER_TIP_LENGTH      0.10f
+/*
+    Steel on steel: nearly elastic. The tip meets the ball at the END of its stroke and stops on
+    the limit, so there is no follow-through and the ball gets whatever the restitution lets it
+    keep - and rp3d takes the LARGER of the two materials, so this is the number that decides
+    the launch. At the ball's own 0.12 a full pull sent the ball out at 17 u/s; at 0.9 it is
+    over 30, which is a real machine's ~3 m/s.
+*/
+#define PIN_PLUNGER_TIP_BOUNCINESS  0.90f
+
+/*
+    Collision categories. The ball meets everything; the table meets only the ball (statics never
+    meet each other anyway); a flipper or the plunger meets ONLY the ball, so a bat can never fight
+    the deck it stands 0.06 above or the slingshot whose corner is 0.35 from its swing.
+*/
+#define PIN_CAT_BALL            0x0001
+#define PIN_CAT_TABLE           0x0002
+#define PIN_CAT_FLIPPER         0x0004
+#define PIN_CAT_PLUNGER         0x0008
+
+/*
+    The tunnel guard (pinball_design.md 2.2, mitigation 2). Once a tick moves the ball more than
+    this, its path is swept with a raycast before the step and a wall it would pass into is
+    handled by hand. Below it the solver's own contacts are trusted - and must be, because a
+    hand-placed reflection has no friction and no spin, and a ball rolling along a rail at 5 u/s
+    wants the solver's version of that contact, not ours.
+
+    One radius per tick is 32 u/s. The solver resolves a 0.14 rail to the RIGHT side as long as
+    the ball's centre does not cross the rail's midplane within a tick, which is travel under
+    half a rail plus a radius, 0.205, or 49 u/s; between 32 and 49 the contact is deep but
+    correct, above it the ball is pushed out the far side. So the guard takes over a little
+    before the solver stops being trustworthy and not before. (At half a radius it was reflecting
+    a 16 u/s ball off a pop bumper the solver had handled fine.)
+*/
+#define PIN_GUARD_MIN_TRAVEL    PIN_BALL_RADIUS
+//How far outside the cabinet counts as "the ball has left the table". A ball found here is
+//re-served and counted; the count is the tunnelling detector, and it should read zero.
+#define PIN_ESCAPE_MARGIN       0.30f
+#define PIN_DRAIN_HALF_WIDTH    0.45f
 
 //--- Backbox -------------------------------------------------------------------------------------
 //Not playable. Standing behind the top wall; how tall it is decides how much room the "machine"

@@ -20,6 +20,7 @@ APP_SRCS += main.cpp
 APP_SRCS += ApplicationPinball.cpp
 APP_SRCS += Table.cpp
 APP_SRCS += TableBuilder.cpp
+APP_SRCS += Mechanisms.cpp
 
 # Not yet. A pinball machine is mostly short overlapping one-shots and wants about
 # fourteen of them (pinball_design.md 3.4), which is well inside SoundSystem's 32 buffers

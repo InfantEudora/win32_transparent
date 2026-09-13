@@ -24,6 +24,7 @@ static Debugger* debug = new Debugger("ApplicationPinball",DEBUG_ALL);
 #define PIN_ARC_SEGMENTS        30          //the orbit; see the chord-error note in TableBuilder.h
 #define PIN_RAMP_SLAB           0.08f       //how thick a ramp floor looks
 #define PIN_RAMP_RAIL_THICK     0.06f       //a moulded ramp's side wall; thin, and OUTSIDE the floor
+#define PIN_RAMP_SKIRT          0.60f       //how far a climb's side wall hangs below the floor: to the deck, and then some
 
 /*
     Portrait, 3:2, because the machine is (see Table.h's revision note): the cabinet is 6.9 x 10.4
@@ -312,7 +313,7 @@ Object* ApplicationPinball::AddMeshObject(const char* name, Mesh* mesh, const ve
 }
 
 Object* ApplicationPinball::AddWall(const char* name, const PinPath& path, float height,
-                                    float thickness, int material){
+                                    float thickness, int material, float bounciness){
     Mesh* mesh = MakeWallStrip(path,height,thickness,true);
     if (!mesh){
         debug->Err("AddWall(%s): the path made no mesh\n",name);
@@ -325,10 +326,13 @@ Object* ApplicationPinball::AddWall(const char* name, const PinPath& path, float
     entry.a = thickness;
     entry.b = height;
     //A swept mesh is already in world coordinates - the path was - so the Object sits at the
-    //origin and the geometry carries the position. Stage 1's collider chain will read the same
-    //path rather than this object's transform, which is the point of building both from one
-    //source (pinball_design.md 2.3).
-    return AddMeshObject(name,mesh,vec3(),material);
+    //origin and the geometry carries the position. The collider chain reads the same path rather
+    //than this object's transform, which is the point of building both from one source
+    //(pinball_design.md 2.3): the wall the ball meets IS the wall it sees.
+    Object* object = AddMeshObject(name,mesh,vec3(),material);
+    AddSweptColliders(object,path,thickness * 0.5f,0.0f,height,bounciness,
+                      bounciness >= PIN_RUBBER_BOUNCINESS ? PIN_RUBBER_FRICTION : PIN_RAIL_FRICTION);
+    return object;
 }
 
 Object* ApplicationPinball::AddInsert(const char* name, float x, float z, float radius,
@@ -354,7 +358,10 @@ void ApplicationPinball::AddPost(const char* name, float x, float z){
         vertical. The render mesh here is the cylinder that describes; the collider will be the
         capsule that behaves.
     */
-    NewPartObject("post",buffer,post_mesh,vec3(x,PIN_POST_HEIGHT * 0.5f,z),material_chrome);
+    Object* post = NewPartObject("post",buffer,post_mesh,vec3(x,PIN_POST_HEIGHT * 0.5f,z),
+                                 material_chrome);
+    //The collider is the RUBBER's radius, on the post's body: the ring is what the ball meets.
+    AddPostCollider(post,PIN_RUBBER_RADIUS,PIN_RUBBER_BOUNCINESS,PIN_RUBBER_FRICTION);
 
     snprintf(buffer,sizeof(buffer),"%s_rubber",name);
     NewPartObject("rubber",buffer,rubber_mesh,vec3(x,0.17f,z),material_rubber);
@@ -367,21 +374,13 @@ void ApplicationPinball::AddPost(const char* name, float x, float z){
     entry.b = PIN_POST_HEIGHT;
 }
 
-Object* ApplicationPinball::AddFlipper(const char* name, float x, float z, float length,
-                                       float angle_degrees, bool f_mirrored){
+Flipper* ApplicationPinball::AddFlipper(const char* name, float x, float z, float length,
+                                        float rest_degrees, float up_degrees, bool f_mirrored){
     /*
         The bat has its PIVOT AT THE OBJECT ORIGIN and lies along its own +X, for BOTH hands,
-        because that is what stage 1's hinge joint needs and what the Blender flipper_bat has to
-        match - pinball_design.md 3.2 calls it out as the modelling note most likely to cost a
-        round trip. A bat whose origin is in its middle swings around its middle and looks broken,
-        and the fault is invisible until it moves.
-
-        THE MIRRORED BAT IS THE SAME BAT TURNED THROUGH 180 - ANGLE. A positive angle about +Y
-        takes +X toward -Z (up-table), so the left bat at rest, -32, points inboard and
-        down-table; turning the identical bat through 180 - (-32) = 212 degrees points it
-        inboard the OTHER way and still down-table. The first build built the mirrored bat along
-        -X and applied the angle unchanged, which is turning through 180 + angle: the right
-        flipper stood at rest in its flipped pose, and its own screenshots showed it.
+        because that is what the hinge joint needs and what the Blender flipper_bat is modelled to
+        (pinball_design.md 3.2). The mirrored hand is the same bat turned through 180 - angle; the
+        Flipper handles that, and the reasoning is in Mechanisms.cpp.
     */
     const char* part = (length > (PIN_FLIPPER_U_LENGTH + 0.01f)) ? "flipper_bat" : "flipper_bat_upper";
     Mesh* fallback = NULL;
@@ -395,23 +394,20 @@ Object* ApplicationPinball::AddFlipper(const char* name, float x, float z, float
             return NULL;
         }
     }
-    Object* object = NewPartObject(part,name,fallback,vec3(x,0.06f,z),material_orange);
-    if (object){
-        float yaw = f_mirrored ? (180.0f - angle_degrees) : angle_degrees;
-        object->SetRotation(quat(vec3(0,1,0),toradians(yaw)));
-    }
+    Flipper* flipper = new Flipper(name,assetmanager,part,fallback,material_orange,
+                                   main_scene->physics_world,main_scene,
+                                   vec3(x,0.0f,z),length,rest_degrees,up_degrees,f_mirrored);
     //flipper: one point at the pivot, a = length, b = rest angle in degrees, c = 1 if mirrored,
     //d = the bat's width. The plan tool sweeps the bat between rest and up itself.
     PinPlanEntry& entry = RecordPlan("flipper",name);
     entry.points.push_back(vec3(x,0.0f,z));
     entry.a = length;
-    entry.b = angle_degrees;
+    entry.b = rest_degrees;
     entry.c = f_mirrored ? 1.0f : 0.0f;
     entry.d = PIN_FLIPPER_WIDTH;
-    return object;
+    return flipper;
 }
 
-//--- Setup --------------------------------------------------------------------------------------
 
 void ApplicationPinball::Init(void){
     /*
@@ -473,6 +469,7 @@ void ApplicationPinball::Init(void){
     BuildLights();
     SetupCamera();
     SetupInput();
+    RegisterCommandHandlers();
     RegisterMCPTools();
 
     //240, and taken from the rules' own header rather than written here as a literal - see PIN_TPS
@@ -609,10 +606,25 @@ void ApplicationPinball::BuildDeckAndCabinet(){
     const float deck_w  = PIN_DECK_MAX_X - PIN_DECK_MIN_X;
     const float deck_l  = PIN_DECK_MAX_Z - PIN_DECK_MIN_Z;
 
-    //One box, top face at y = 0, everything else buried. In stage 1 this is one collider and one
-    //collider only - a playfield is the easiest surface on the whole machine to get right.
-    AddBox("deck",vec3(deck_cx,-PIN_DECK_THICKNESS * 0.5f,deck_cz),
-           vec3(deck_w,PIN_DECK_THICKNESS,deck_l),material_deck);
+    //One box, top face at y = 0, everything else buried. One collider and one collider only - a
+    //playfield is the easiest surface on the whole machine to get right.
+    Object* deck = AddBox("deck",vec3(deck_cx,-PIN_DECK_THICKNESS * 0.5f,deck_cz),
+                          vec3(deck_w,PIN_DECK_THICKNESS,deck_l),material_deck);
+    AddBoxCollider(deck,vec3(deck_w,PIN_DECK_THICKNESS,deck_l),PIN_DECK_BOUNCINESS,PIN_DECK_FRICTION);
+
+    /*
+        The glass: a body with no mesh, a slab over the whole cabinet at PIN_GLASS_HEIGHT. Nothing
+        should ever reach it - the deck is flat, the walls are vertical and the capsules keep
+        their round ends out of the ball's band - but "should" is not a collider, and a ball that
+        does get airborne has to come down inside the cabinet rather than over its wall.
+    */
+    glass = new Object();
+    glass->name = "glass";
+    glass->SetPosition(vec3(0.0f,PIN_GLASS_HEIGHT + PIN_WALL_THICKNESS * 0.5f,0.0f));
+    glass->SetPickability(false);
+    main_scene->AddObject(glass);
+    AddBoxCollider(glass,vec3(deck_w + PIN_WALL_THICKNESS * 2.0f,PIN_WALL_THICKNESS,
+                              deck_l + PIN_WALL_THICKNESS * 2.0f),PIN_DECK_BOUNCINESS,PIN_DECK_FRICTION);
 
     //The four cabinet walls, their INNER faces on the play area's bounds and their thickness
     //outward. 0.6 thick is not styling: it is twice the worst-case per-tick travel, which is
@@ -623,12 +635,20 @@ void ApplicationPinball::BuildDeckAndCabinet(){
     const float inner_x = PIN_DECK_MAX_X - 0.05f;      //2.85: the deck runs 0.05 under the wall
     const float inner_z = PIN_DECK_MAX_Z;
 
-    AddBox("cabinet_left", vec3(-inner_x - t * 0.5f,cy,0.0f),
-           vec3(t,h,(inner_z + t) * 2.0f),material_cabinet);
-    AddBox("cabinet_right",vec3( inner_x + t * 0.5f,cy,0.0f),
-           vec3(t,h,(inner_z + t) * 2.0f),material_cabinet);
-    AddBox("cabinet_top",  vec3(0.0f,cy,-inner_z - t * 0.5f),
-           vec3(inner_x * 2.0f,h,t),material_cabinet);
+    //Drawn and collided as the same four boxes - the one place the design's 0.6-thick collider
+    //rule applies as written, because there is nothing behind a cabinet wall to close off.
+    {
+        Object* wall;
+        wall = AddBox("cabinet_left", vec3(-inner_x - t * 0.5f,cy,0.0f),
+                      vec3(t,h,(inner_z + t) * 2.0f),material_cabinet);
+        AddBoxCollider(wall,vec3(t,h,(inner_z + t) * 2.0f),PIN_RAIL_BOUNCINESS,PIN_RAIL_FRICTION);
+        wall = AddBox("cabinet_right",vec3( inner_x + t * 0.5f,cy,0.0f),
+                      vec3(t,h,(inner_z + t) * 2.0f),material_cabinet);
+        AddBoxCollider(wall,vec3(t,h,(inner_z + t) * 2.0f),PIN_RAIL_BOUNCINESS,PIN_RAIL_FRICTION);
+        wall = AddBox("cabinet_top",  vec3(0.0f,cy,-inner_z - t * 0.5f),
+                      vec3(inner_x * 2.0f,h,t),material_cabinet);
+        AddBoxCollider(wall,vec3(inner_x * 2.0f,h,t),PIN_RAIL_BOUNCINESS,PIN_RAIL_FRICTION);
+    }
     /*
         The front wall is HALF the height of the other three, and that is a real cabinet's shape
         rather than a saving: the glass slopes down to meet it, the lockdown bar sits on it, and
@@ -640,8 +660,11 @@ void ApplicationPinball::BuildDeckAndCabinet(){
         over 0.10 of run. The "lower" shot spent a revision framing a grey slab before this was
         obvious. 0.55 is still two ball diameters, so it contains everything it needs to.
     */
-    AddBox("cabinet_front",vec3(0.0f,PIN_CABINET_FRONT_HEIGHT * 0.5f, inner_z + t * 0.5f),
-           vec3(inner_x * 2.0f,PIN_CABINET_FRONT_HEIGHT,t),material_cabinet);
+    {
+        Object* front = AddBox("cabinet_front",vec3(0.0f,PIN_CABINET_FRONT_HEIGHT * 0.5f, inner_z + t * 0.5f),
+                               vec3(inner_x * 2.0f,PIN_CABINET_FRONT_HEIGHT,t),material_cabinet);
+        AddBoxCollider(front,vec3(inner_x * 2.0f,PIN_CABINET_FRONT_HEIGHT,t),PIN_RAIL_BOUNCINESS,PIN_RAIL_FRICTION);
+    }
 
     /*
         The apron, in two plates with the drain mouth between them. On a real machine this is where
@@ -717,7 +740,9 @@ void ApplicationPinball::BuildLowerPlayfield(){
             AppendXZ(p,PIN_X(PIN_SLING_L_CX),PIN_SLING_L_CZ);
             AppendXZ(p,PIN_X(PIN_SLING_L_AX),PIN_SLING_L_AZ);
             snprintf(name,sizeof(name),"sling_%s",tag);
-            AddWall(name,p,PIN_SLING_HEIGHT,PIN_SLING_THICKNESS,material_rubber);
+            //Rubber: the liveliest thing on the table. The kick a real slingshot adds on top of
+            //the bounce is stage 2's, with the switch that fires it.
+            AddWall(name,p,PIN_SLING_HEIGHT,PIN_SLING_THICKNESS,material_rubber,PIN_RUBBER_BOUNCINESS);
 
             //The plastic that covers the mechanism. Reads as the orange wedge the artwork has
             //above each flipper; centred on the triangle, a shade larger than it.
@@ -756,14 +781,14 @@ void ApplicationPinball::BuildLowerPlayfield(){
         #undef PIN_X
     }
 
-    //The three flippers, parked at rest. Nothing moves them yet; stage 1 gives each a hinge joint
-    //with a motor and these become the bodies it drives.
-    AddFlipper("flipper_left", PIN_FLIPPER_L_X,PIN_FLIPPER_L_Z,PIN_FLIPPER_LENGTH,
-               PIN_FLIPPER_REST_DEG,false);
-    AddFlipper("flipper_right",PIN_FLIPPER_R_X,PIN_FLIPPER_R_Z,PIN_FLIPPER_LENGTH,
-               PIN_FLIPPER_REST_DEG,true);
-    AddFlipper("flipper_upper",PIN_FLIPPER_U_X,PIN_FLIPPER_U_Z,PIN_FLIPPER_U_LENGTH,
-               PIN_FLIPPER_U_REST_DEG,false);
+    //The three flippers, each a hinge with a motor, parked at rest until RunSimulationTick reads
+    //a button. The upper one shares the left button.
+    flipper_left  = AddFlipper("flipper_left", PIN_FLIPPER_L_X,PIN_FLIPPER_L_Z,PIN_FLIPPER_LENGTH,
+                               PIN_FLIPPER_REST_DEG,PIN_FLIPPER_UP_DEG,false);
+    flipper_right = AddFlipper("flipper_right",PIN_FLIPPER_R_X,PIN_FLIPPER_R_Z,PIN_FLIPPER_LENGTH,
+                               PIN_FLIPPER_REST_DEG,PIN_FLIPPER_UP_DEG,true);
+    flipper_upper = AddFlipper("flipper_upper",PIN_FLIPPER_U_X,PIN_FLIPPER_U_Z,PIN_FLIPPER_U_LENGTH,
+                               PIN_FLIPPER_U_REST_DEG,PIN_FLIPPER_U_UP_DEG,false);
 }
 
 
@@ -778,31 +803,33 @@ void ApplicationPinball::BuildLauncher(){
     }
 
     /*
-        The plunger, as three pieces along the lane. A slider joint with a spring return in stage 1;
-        scenery now, but placed so the geometry it will need is already right - in particular the
-        rod passes THROUGH the cabinet wall and the knob sits outside it, which is the one part of
-        a plunger that has to be modelled rather than implied.
+        The plunger, as three pieces along the lane: the TIP is the mechanism - a slider joint
+        with a spring return and a motorised pull-back (Mechanisms.h) - and the rod and the knob
+        are scenery that RunSimulationTick moves along behind it. The rod passes THROUGH the
+        cabinet wall and the knob sits outside it, which is the one part of a plunger that has to
+        be modelled rather than implied.
     */
     const float ball_y = PIN_BALL_RADIUS;
     {
         //The modelled parts and the primitives both lie along +Y, MakeCylinder's axis of
         //revolution; the plunger's is +Z. Rotating +90 about X takes +Y to +Z, which is the whole
-        //conversion, and it applies to either.
+        //conversion, and it applies to either. The Plunger does it for the tip itself.
         const quat onto_z = quat(vec3(1,0,0),toradians(90.0f));
-        Mesh* tip = HasPart("plunger_tip") ? NULL : MakeCylinder(0.11f,0.10f,18,true);
-        Object* o = NewPartObject("plunger_tip","plunger_tip",tip,
-                                  vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 0.05f),material_chrome);
-        if (o) o->SetRotation(onto_z);
+        Mesh* tip = HasPart("plunger_tip") ? NULL : MakeCylinder(0.11f,PIN_PLUNGER_TIP_LENGTH,18,true);
+        plunger = new Plunger("plunger_tip",assetmanager,"plunger_tip",tip,material_chrome,
+                              main_scene->physics_world,main_scene,
+                              vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + PIN_PLUNGER_TIP_LENGTH * 0.5f),
+                              PIN_PLUNGER_TRAVEL);
 
         Mesh* rod = HasPart("plunger_rod") ? NULL : MakeCylinder(0.05f,0.95f,12,true);
-        o = NewPartObject("plunger_rod","plunger_rod",rod,
-                          vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 0.58f),material_chrome);
-        if (o) o->SetRotation(onto_z);
+        plunger_rod = NewPartObject("plunger_rod","plunger_rod",rod,
+                                    vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 0.58f),material_chrome);
+        if (plunger_rod) plunger_rod->SetRotation(onto_z);
 
         Mesh* knob = HasPart("plunger_knob") ? NULL : MakeSphere(0.14f,18,10);
-        o = NewPartObject("plunger_knob","plunger_knob",knob,
-                          vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 1.30f),material_orange);
-        if (o) o->SetRotation(onto_z);
+        plunger_knob = NewPartObject("plunger_knob","plunger_knob",knob,
+                                     vec3(PIN_PLUNGER_X,ball_y,PIN_PLUNGER_Z + 1.30f),material_orange);
+        if (plunger_knob) plunger_knob->SetRotation(onto_z);
     }
 
     //The three skill-shot rollovers up the lane, and the gate at the top of it.
@@ -821,10 +848,9 @@ void ApplicationPinball::BuildLauncher(){
                material_chrome,-24.0f);
     }
 
-    //The ball, parked where the plunger will serve it. Scenery until stage 1 gives it a body; it is
-    //here now because a table with no ball on it is missing the one object everything is scaled to.
-    ball_object = NewPartObject("ball","ball",ball_mesh,vec3(PIN_CHUTE_X,ball_y,PIN_PLUNGER_Z - 0.30f),
-                                material_ball);
+    //The ball, resting against the plunger tip. The one thing on the table everything is scaled
+    //to, and from stage 1 the one dynamic body that matters.
+    BuildBall();
     //The gate flap, as the box it is drawn as. It swings open for a ball coming UP the lane, so
     //it is recorded as an obstacle the plan tool is told to ignore for reachability - see there.
     {
@@ -847,6 +873,17 @@ void ApplicationPinball::BuildUpperPlayfield(){
         //Dulled steel, not chrome: a 4.6-wide mirror across the top of the table reflected the
         //HDR as a bright striped band and read as a light fitting rather than a rail.
         AddWall("rail_orbit",p,PIN_ORBIT_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
+    }
+    //The orbit's outer guide, tangent to each side wall - see PIN_ORBIT_OUTER_X for why it is
+    //two Beziers and not the cabinet.
+    {
+        PinPath p;
+        const float xo = -PIN_ORBIT_OUTER_X;    //the right-hand side; the define is the left
+        AppendBezier(p,vec3( xo,0.0f,PIN_ORBIT_OUTER_START_Z),vec3( xo,0.0f,PIN_ORBIT_OUTER_APEX_Z),
+                       vec3(0.0f,0.0f,PIN_ORBIT_OUTER_APEX_Z),PIN_ARC_SEGMENTS / 2);
+        AppendBezier(p,vec3(0.0f,0.0f,PIN_ORBIT_OUTER_APEX_Z),vec3(-xo,0.0f,PIN_ORBIT_OUTER_APEX_Z),
+                       vec3(-xo,0.0f,PIN_ORBIT_OUTER_START_Z),PIN_ARC_SEGMENTS / 2);
+        AddWall("rail_orbit_outer",p,PIN_ORBIT_RAIL_HEIGHT,PIN_RAIL_VISUAL_THICK,material_rail);
     }
 
     /*
@@ -924,8 +961,11 @@ void ApplicationPinball::BuildScoringCluster(){
         //touches the straight middle: core has no cylinder collider, and a sphere-capped one would
         //throw the ball upward off a shape that is visibly vertical.
         snprintf(name,sizeof(name),"%s_body",bumpers[i].name);
-        NewPartObject("bumper_body",name,bumper_body_mesh,
-                      vec3(bumpers[i].x,PIN_BUMPER_HEIGHT * 0.5f,bumpers[i].z),material_cream);
+        Object* body = NewPartObject("bumper_body",name,bumper_body_mesh,
+                                     vec3(bumpers[i].x,PIN_BUMPER_HEIGHT * 0.5f,bumpers[i].z),material_cream);
+        //Static for now: a hard round thing the ball bounces off. The kick, and the switch that
+        //fires it, are stage 2.
+        AddPostCollider(body,PIN_BUMPER_RADIUS,PIN_PLASTIC_BOUNCINESS,PIN_RAIL_FRICTION);
 
         //The cap, which is the wider thing the player sees and the thing the art has to clear.
         //Skirt radius, not collider radius - the gap between the two IS the design.
@@ -958,12 +998,11 @@ void ApplicationPinball::BuildScoringCluster(){
         const char* letters[3] = { "drop_m","drop_i","drop_s" };
         for (int i = 0; i < 3; i++){
             const vec3 centre = vec3(PIN_DROP_X,PIN_DROP_HEIGHT * 0.5f,z[i]);
-            if (HasPart("target_drop")){
-                NewPartObject("target_drop",letters[i],NULL,centre,material_cream);
-            }else{
-                AddBox(letters[i],centre,vec3(PIN_DROP_DEPTH,PIN_DROP_HEIGHT,PIN_DROP_WIDTH),
-                       material_cream);
-            }
+            const vec3 size = vec3(PIN_DROP_DEPTH,PIN_DROP_HEIGHT,PIN_DROP_WIDTH);
+            Object* target = HasPart("target_drop")
+                           ? NewPartObject("target_drop",letters[i],NULL,centre,material_cream)
+                           : AddBox(letters[i],centre,size,material_cream);
+            AddBoxCollider(target,size,PIN_PLASTIC_BOUNCINESS,PIN_RAIL_FRICTION);
             //box: one point at the centre, a = size along x, b = size along z, c = height,
             //d = yaw in degrees. A target is a thing the ball has to be able to hit the FACE of.
             PinPlanEntry& entry = RecordPlan("box",letters[i]);
@@ -983,12 +1022,11 @@ void ApplicationPinball::BuildScoringCluster(){
         const float zs[2] = { PIN_STANDUP_0_Z,PIN_STANDUP_1_Z };
         for (int i = 0; i < 2; i++){
             const vec3 centre = vec3(xs[i],PIN_STANDUP_HEIGHT * 0.5f,zs[i]);
-            if (HasPart("target_standup")){
-                NewPartObject("target_standup",names[i],NULL,centre,material_teal);
-            }else{
-                AddBox(names[i],centre,vec3(PIN_STANDUP_WIDTH,PIN_STANDUP_HEIGHT,PIN_STANDUP_DEPTH),
-                       material_teal);
-            }
+            const vec3 size = vec3(PIN_STANDUP_WIDTH,PIN_STANDUP_HEIGHT,PIN_STANDUP_DEPTH);
+            Object* target = HasPart("target_standup")
+                           ? NewPartObject("target_standup",names[i],NULL,centre,material_teal)
+                           : AddBox(names[i],centre,size,material_teal);
+            AddBoxCollider(target,size,PIN_PLASTIC_BOUNCINESS,PIN_RAIL_FRICTION);
             PinPlanEntry& entry = RecordPlan("box",names[i]);
             entry.points.push_back(vec3(xs[i],0.0f,zs[i]));
             entry.a = PIN_STANDUP_WIDTH;
@@ -1087,15 +1125,44 @@ void ApplicationPinball::BuildRamps(){
         char name[64];
         snprintf(name,sizeof(name),"%s_floor",ramps[r].name);
         Mesh* floor = MakeRibbon(climb,PIN_RAMP_WIDTH,PIN_RAMP_SLAB);
-        AddMeshObject(name,floor,vec3(),material_ramp);
+        Object* floor_object = AddMeshObject(name,floor,vec3(),material_ramp);
+        /*
+            The climb's floor collides, so a ball CAN go up a ramp - and off the crest onto the
+            deck below, because the wires that carry it home are stage 3's (a capsule chain per
+            wire, off the same paths). The same AddSweptColliders as every wall; the tilt is the
+            path's own.
 
-        //The rails stand OUTSIDE the floor's edges, so the floor's whole width is clear.
+            IT IS SOLID TO THE DECK, not a slab. The space under a climbing floor is a wedge: open
+            at the crest end where the underside is 0.47 up, a ball's height wide a little further
+            down, and a ball that wanders in from up-table - which is where the upper flipper
+            sends it - rolls forward until it jams. A real ramp sits on a housing that closes
+            that space, so the collider hangs PIN_RAMP_SKIRT below the path and the dark skirt
+            below is the housing the player sees. Buried in the deck at the mouth, a wall at the
+            crest end.
+        */
+        AddSweptColliders(floor_object,climb,PIN_RAMP_WIDTH * 0.5f,PIN_RAMP_SKIRT,0.0f,
+                          PIN_PLASTIC_BOUNCINESS,PIN_RAIL_FRICTION);
+        snprintf(name,sizeof(name),"%s_housing",ramps[r].name);
+        Mesh* housing = MakeSweptBox(climb,PIN_RAMP_WIDTH * 0.5f - 0.005f,PIN_RAMP_SKIRT,
+                                     -PIN_RAMP_SLAB,true);
+        AddMeshObject(name,housing,vec3(),material_cabinet);
+
+        /*
+            The rails stand OUTSIDE the floor's edges, so the floor's whole width is clear - and
+            they reach DOWN TO THE DECK, not just down to the floor. A rail that only stood on the
+            floor's edge rose with it, and a ball on the deck beside the climb met the rail's
+            underside at exactly its own height and jammed under it; the first plunged ball ended
+            its journey wedged there. A moulded ramp's side is solid to the deck, so the rail hangs
+            PIN_RAMP_SKIRT below the path: buried in the deck at the mouth, a closed wall higher up.
+        */
         const float rail_offset = (PIN_RAMP_WIDTH + PIN_RAMP_RAIL_THICK) * 0.5f;
         for (int side = 0; side < 2; side++){
             PinPath edge = OffsetPath(climb,side == 0 ? rail_offset : -rail_offset);
             snprintf(name,sizeof(name),"%s_rail_%c",ramps[r].name,side == 0 ? 'l' : 'r');
-            Mesh* rail = MakeWallStrip(edge,PIN_RAMP_RAIL_HEIGHT,PIN_RAMP_RAIL_THICK,true);
-            AddMeshObject(name,rail,vec3(),material_ramp);
+            Mesh* rail = MakeSweptBox(edge,PIN_RAMP_RAIL_THICK * 0.5f,PIN_RAMP_SKIRT,PIN_RAMP_RAIL_HEIGHT,true);
+            Object* rail_object = AddMeshObject(name,rail,vec3(),material_ramp);
+            AddSweptColliders(rail_object,edge,PIN_RAMP_RAIL_THICK * 0.5f,PIN_RAMP_SKIRT,PIN_RAMP_RAIL_HEIGHT,
+                              PIN_PLASTIC_BOUNCINESS,PIN_RAIL_FRICTION);
         }
 
         /*
@@ -1416,6 +1483,24 @@ void ApplicationPinball::SetupInput(){
     input->AddKeyMap('3', INPUT_PINBALL_SHOT_LOWER);
     input->AddKeyMap('4', INPUT_PINBALL_SHOT_MACHINE);
     input->AddKeyMap('5', INPUT_PINBALL_SHOT_ORBIT);
+
+    /*
+        The player's controls. Z and / are 3D Pinball's own; the arrows and the shoulder buttons
+        are for hands that do not know that. Space (or A) is the plunger: hold to pull back,
+        release to launch. R (or Y) serves a fresh ball to the plunger, which is stage 1's "start
+        again" until stage 4 has a game to start.
+    */
+    input->AddKeyMap('Z',                       INPUT_PINBALL_FLIP_LEFT);
+    input->AddKeyMap(VK_LEFT,                   INPUT_PINBALL_FLIP_LEFT);
+    input->AddKeyMap(GAMEPAD_KEY_LEFT_SHOULDER, INPUT_PINBALL_FLIP_LEFT);
+    input->AddKeyMap(VK_OEM_2,                  INPUT_PINBALL_FLIP_RIGHT);   //the / key
+    input->AddKeyMap(VK_RIGHT,                  INPUT_PINBALL_FLIP_RIGHT);
+    input->AddKeyMap(GAMEPAD_KEY_RIGHT_SHOULDER,INPUT_PINBALL_FLIP_RIGHT);
+    input->AddKeyMap(VK_SPACE,                  INPUT_PINBALL_PLUNGE);
+    input->AddKeyMap(VK_RETURN,                 INPUT_PINBALL_PLUNGE);
+    input->AddKeyMap(GAMEPAD_KEY_A,             INPUT_PINBALL_PLUNGE);
+    input->AddKeyMap('R',                       INPUT_PINBALL_SERVE);
+    input->AddKeyMap(GAMEPAD_KEY_Y,             INPUT_PINBALL_SERVE);
     //The orbit's own controls - middle mouse, shift and the wheel - need no mapping here:
     //InputController's constructor binds all four, because every app wants them.
     //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
@@ -1711,7 +1796,7 @@ void ApplicationPinball::DrawImGuiUI(void){
     ImGui::SetNextWindowSize(ImVec2(320,0),ImGuiCond_Always);
     ImGui::Begin("Orbit Outpost",NULL,ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse);
 
-    ImGui::TextColored(ImVec4(1.0f,0.62f,0.18f,1.0f),"STAGE 0 - static layout");
+    ImGui::TextColored(ImVec4(1.0f,0.62f,0.18f,1.0f),"STAGE 1 - ball, flippers, plunger");
     ImGui::Text("%i features, %zu labels",PIN_FEATURE_COUNT,feature_labels.size());
     ImGui::Separator();
 
@@ -1725,6 +1810,81 @@ void ApplicationPinball::DrawImGuiUI(void){
         ImGui::Text("gravity  (0, %.2f, %.2f)",-PIN_GRAVITY * cosf(t),PIN_GRAVITY * sinf(t));
     }
     ImGui::Text("tps      %.0f   tick %llu",physics_tps,(unsigned long long)main_scene->GetPhysicsTick());
+    ImGui::Separator();
+
+    /*
+        Stage 1 readouts and tuning. Read directly: this runs with physics_mutex held, so the
+        physics thread is between passes and nothing here is half-stepped. The tuning sliders
+        write plain floats the mechanisms read on their next tick - a direct write rather than a
+        command, which is allowed for the debug UI and right for tuning, which is not gameplay
+        and has no business in a recording. The serve button IS gameplay and goes on the queue.
+    */
+    {
+        Physics* p = ball_object ? ball_object->GetPhysics() : NULL;
+        if (p){
+            vec3 pos = p->GetBodyWorldPosition();
+            vec3 vel = p->GetVelocity();
+            float speed = vel.length();
+            ImGui::Text("ball     (%.2f, %.2f, %.2f)  %.1f u/s  %.2f r/tick",pos.x,pos.y,pos.z,speed,
+                        speed * main_scene->GetPhysicsTimestep() / PIN_BALL_RADIUS);
+        }
+        ImGui::Text("flippers L %+5.1f  R %+5.1f  U %+5.1f deg",
+                    flipper_left ? flipper_left->GetAngleDegrees() : 0.0f,
+                    flipper_right ? flipper_right->GetAngleDegrees() : 0.0f,
+                    flipper_upper ? flipper_upper->GetAngleDegrees() : 0.0f);
+        ImGui::Text("plunger  %.2f / %.2f%s",plunger ? plunger->GetTravel() : 0.0f,
+                    plunger ? plunger->travel : 0.0f,(plunger && plunger->IsPulling()) ? "  pulling" : "");
+        ImGui::Text("drains %u  escapes %u  guard %u  clamps %u  max %.1f u/s",
+                    (uint32_t)drains,(uint32_t)escapes,(uint32_t)guard_hits,(uint32_t)speed_clamps,
+                    max_speed_seen);
+        if (ImGui::Button("serve ball (R)")){
+            //SubmitUICommand, never SubmitCommandAndWait: this runs with physics_mutex held.
+            SimCommand cmd;
+            cmd.type = PIN_CMD_SERVE;
+            SubmitUICommand(cmd);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("zero counters")){
+            drains = 0; escapes = 0; guard_hits = 0; speed_clamps = 0; max_speed_seen = 0.0f;
+        }
+        if (ImGui::TreeNode("flipper tuning")){
+            Flipper* list[3] = { flipper_left,flipper_right,flipper_upper };
+            float speed  = flipper_left ? flipper_left->motor_speed : PIN_FLIPPER_MOTOR_SPEED;
+            float torque = flipper_left ? flipper_left->motor_torque : PIN_FLIPPER_MOTOR_TORQUE;
+            float rspeed = flipper_left ? flipper_left->return_speed : PIN_FLIPPER_RETURN_SPEED;
+            float rtorq  = flipper_left ? flipper_left->return_torque : PIN_FLIPPER_RETURN_TORQUE;
+            bool f_changed = false;
+            f_changed |= ImGui::SliderFloat("motor speed (rad/s)",&speed,5.0f,80.0f);
+            f_changed |= ImGui::SliderFloat("motor torque",&torque,50.0f,5000.0f);
+            f_changed |= ImGui::SliderFloat("return speed (rad/s)",&rspeed,5.0f,60.0f);
+            f_changed |= ImGui::SliderFloat("return torque",&rtorq,20.0f,1500.0f);
+            if (f_changed){
+                for (int i = 0; i < 3; i++){
+                    if (!list[i]) continue;
+                    list[i]->motor_speed = speed;
+                    list[i]->motor_torque = torque;
+                    list[i]->return_speed = rspeed;
+                    list[i]->return_torque = rtorq;
+                }
+            }
+            ImGui::TreePop();
+        }
+        if (plunger && ImGui::TreeNode("plunger tuning")){
+            ImGui::SliderFloat("spring",&plunger->spring,100.0f,5000.0f);
+            ImGui::SliderFloat("damping",&plunger->damping,0.0f,40.0f);
+            ImGui::SliderFloat("pull speed (u/s)",&plunger->pull_speed,0.5f,10.0f);
+            ImGui::TreePop();
+        }
+        if (p && ImGui::TreeNode("ball tuning")){
+            float bounce = p->GetBounciness();
+            float friction = p->GetFrictionCoefficient();
+            float damping = p->GetLinearDamping();
+            if (ImGui::SliderFloat("bounciness",&bounce,0.0f,1.0f))    p->SetBounciness(bounce);
+            if (ImGui::SliderFloat("friction",&friction,0.0f,1.0f))    p->SetFrictionCoefficient(friction);
+            if (ImGui::SliderFloat("linear damping",&damping,0.0f,1.0f)) p->SetLinearDamping(damping);
+            ImGui::TreePop();
+        }
+    }
     ImGui::Separator();
 
     ImGui::Text("camera   %s",shots[current_shot].name);
@@ -1785,8 +1945,367 @@ void ApplicationPinball::DrawImGuiUI(void){
     }
 
     ImGui::Separator();
-    ImGui::TextDisabled("F1 panels   L labels   1-4 camera");
+    ImGui::TextDisabled("Z / flippers   space plunger   R serve   P pause");
+    ImGui::TextDisabled("F1 panels   L labels   1-5 camera");
     ImGui::End();
+}
+
+//--- Stage 1: colliders -------------------------------------------------------------------------
+
+//The one static body every collider here goes on: the object's own, added if it has none, in the
+//TABLE category, meeting only the ball. Statics never meet each other in rp3d anyway, so the mask
+//costs nothing and says what is meant.
+static Physics* StaticBodyFor(Object* object, PhysicsWorld* world){
+    if (!object || !world){
+        return NULL;
+    }
+    Physics* p = object->GetPhysics();
+    if (!p){
+        p = object->AddPhysics(world);      //STATIC by default, seeded from the object's transform
+    }
+    if (p){
+        object->SetCollisionCategoryBits(PIN_CAT_TABLE);
+        object->SetCollideWithMaskBits(PIN_CAT_BALL);
+    }
+    return p;
+}
+
+void ApplicationPinball::AddSweptColliders(Object* object, const PinPath& path, float half_width,
+                                           float y_below, float y_above, float bounciness,
+                                           float friction){
+    Physics* p = StaticBodyFor(object,main_scene ? main_scene->physics_world : NULL);
+    if (!p || path.size() < 2){
+        return;
+    }
+    /*
+        One box per segment, in the BODY's frame. Every object this is called on sits at the
+        origin unrotated (a swept mesh carries its own world coordinates), so local is world; the
+        origin is subtracted anyway so that a wall object placed elsewhere would still be right.
+
+        Each box is extended by half a width at both ends, so consecutive boxes overlap round a
+        bend and a ball cannot find a seam - the collider version of MakeSweptBox's mitre. The
+        overlap also closes the small wedge a mitre leaves on the OUTSIDE of a bend, at the cost
+        of a wedge the same size protruding on the inside, which is a ball's-width-irrelevant
+        0.07 here and would be worth mitring properly only if a lane ever went that tight.
+    */
+    const vec3 origin = object->GetPosition();
+    const vec3 up = vec3(0,1,0);
+    for (size_t i = 0; i + 1 < path.size(); i++){
+        vec3 a = path[i];
+        vec3 b = path[i + 1];
+        vec3 d = b - a;
+        const float length = d.length();
+        if (length < 0.0005f){
+            continue;
+        }
+        const float flat = sqrtf(d.x * d.x + d.z * d.z);
+        if (flat < 0.0005f){
+            debug->Err("AddSweptColliders(%s): segment %zu is vertical\n",object->name.c_str(),i);
+            continue;
+        }
+        //Local +X along the segment: yaw about +Y takes +X to the horizontal heading (+X toward
+        //-Z for a positive yaw, hence the minus), then pitch about the local Z tilts it up the
+        //climb. Multiplication applies the right-hand factor first.
+        const float yaw   = atan2f(-d.z,d.x);
+        const float pitch = atan2f(d.y,flat);
+        const quat  orientation = quat(up,yaw) * quat(vec3(0,0,1),pitch);
+        vec3 centre = (a + b) * 0.5f + up * ((y_above - y_below) * 0.5f) - origin;
+        vec3 half   = vec3(length * 0.5f + half_width,(y_above + y_below) * 0.5f,half_width);
+        p->AddBoxCollider(half,centre,orientation,1.0f);
+        p->SetBounciness(bounciness);
+        p->SetFrictionCoefficient(friction);
+    }
+}
+
+void ApplicationPinball::AddBoxCollider(Object* object, const vec3& size, float bounciness,
+                                        float friction){
+    Physics* p = StaticBodyFor(object,main_scene ? main_scene->physics_world : NULL);
+    if (!p){
+        return;
+    }
+    //The object's own centre is the box's; AddBox drew it that way. Its render scale is not
+    //consulted - the half extents are the size the caller drew, which is the point.
+    p->AddBoxCollider(size * 0.5f,vec3(),quat().identity(),1.0f);
+    p->SetBounciness(bounciness);
+    p->SetFrictionCoefficient(friction);
+}
+
+void ApplicationPinball::AddPostCollider(Object* object, float radius, float bounciness,
+                                         float friction){
+    Physics* p = StaticBodyFor(object,main_scene ? main_scene->physics_world : NULL);
+    if (!p){
+        return;
+    }
+    /*
+        core has no cylinder collider (pinball_design.md 0), so a post is a capsule whose straight
+        part spans well past the ball's band both ways: centred at ball height, 0.60 tall, so it
+        runs from 0.165 below the deck to 0.435 above it and the round caps are beyond both. The
+        ball's centre never leaves 0.135 on a flat deck, so it only ever meets the cylinder - a
+        cap would deflect it upward off a shape that is visibly vertical.
+    */
+    const float straight = 0.60f;
+    const vec3 local = vec3(0.0f,PIN_BALL_RADIUS - object->GetPosition().y,0.0f);
+    p->AddCapsuleCollider(radius,straight,local,quat().identity(),1.0f);
+    p->SetBounciness(bounciness);
+    p->SetFrictionCoefficient(friction);
+}
+
+//--- Stage 1: the ball --------------------------------------------------------------------------
+
+void ApplicationPinball::BuildBall(){
+    ball_object = NewPartObject("ball","ball",ball_mesh,
+                                vec3(PIN_CHUTE_X,PIN_BALL_RADIUS,PIN_BALL_REST_Z),material_ball);
+    if (!ball_object || !main_scene->physics_world){
+        return;
+    }
+    Physics* p = ball_object->AddPhysics(main_scene->physics_world);
+    if (!p){
+        return;
+    }
+    p->AddSphereCollider(PIN_BALL_RADIUS,vec3(),quat().identity(),1.0f);
+    p->SetBounciness(PIN_BALL_BOUNCINESS);
+    p->SetFrictionCoefficient(PIN_BALL_FRICTION);
+    p->SetStatic(false);
+    //The only body on the table that feels gravity - the tilted vector ApplyTilt writes.
+    p->SetGravityEnabled(true);
+    p->SetMass(PIN_BALL_MASS);
+    p->SetLinearDamping(PIN_BALL_LINEAR_DAMPING);
+    p->SetAngularDamping(0.05f);
+    if (p->body && p->body->rigidbody){
+        //Sleeping disabled (pinball_design.md 2.4): a ball resting against the plunger would
+        //otherwise go to sleep, and a sleeping body does not notice a tip arriving under it.
+        p->body->rigidbody->setIsAllowedToSleep(false);
+    }
+    ball_object->SetCollisionCategoryBits(PIN_CAT_BALL);
+    ball_object->SetCollideWithMaskBits(PIN_CAT_TABLE | PIN_CAT_FLIPPER | PIN_CAT_PLUNGER);
+}
+
+void ApplicationPinball::ServeBall(){
+    Physics* p = ball_object ? ball_object->GetPhysics() : NULL;
+    if (!p){
+        return;
+    }
+    p->SetVelocity(vec3());
+    p->SetAngularVelocity(vec3());
+    p->SetBodyWorldPosition(vec3(PIN_CHUTE_X,PIN_BALL_RADIUS,PIN_BALL_REST_Z));
+    p->SetBodyWorldOrientation(quat().identity());
+    p->WakeUp();
+}
+
+//--- Stage 1: the tick --------------------------------------------------------------------------
+
+void ApplicationPinball::TunnelGuard(){
+    Physics* p = ball_object ? ball_object->GetPhysics() : NULL;
+    PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
+    if (!p || !world || !p->body || !p->body->rigidbody){
+        return;
+    }
+    /*
+        rp3d 0.10 has no continuous collision detection, so a ball doing 0.33 units per tick
+        against a 0.14 rail is on the far side of it before the solver knows it was near. This
+        is the check the solver does not do: cast from where the ball is to where this tick will
+        put it, one radius further, and if that crosses anything, put the ball against the
+        surface and reflect its velocity by hand.
+
+        Only above PIN_GUARD_MIN_TRAVEL per tick. Below it the solver's own contact - with its
+        friction and its spin - is the better answer, and it catches everything at that speed.
+        Above it the choice is between a hand-made reflection and a ball outside the cabinet.
+    */
+    const float dt = main_scene->GetPhysicsTimestep();
+    const vec3 position = p->GetBodyWorldPosition();
+    vec3 velocity = p->GetVelocity();
+    const float speed = velocity.length();
+    const float travel = speed * dt;
+    if (travel < PIN_GUARD_MIN_TRAVEL){
+        return;
+    }
+    const vec3 direction = velocity * (1.0f / speed);
+    const vec3 to = position + direction * (travel + PIN_BALL_RADIUS);
+    PhysicsWorld::RaycastHit hit = world->Raycast(position,to,p->body->rigidbody);
+    if (!hit.hit){
+        return;
+    }
+    const float distance = (hit.point - position).length();
+    //The surface is further than this tick's travel plus half a radius: the ball ends the tick
+    //with its centre clear of the surface's midplane, and the solver gets the contact. Leave it.
+    if (distance > travel + PIN_BALL_RADIUS * 0.5f){
+        return;
+    }
+    //Moving away from it already (a graze from behind, a surface the ray clipped edge-on)? Not
+    //ours either.
+    const float into = velocity.dot(hit.normal);
+    if (into >= 0.0f){
+        return;
+    }
+    //A radius short of the surface along the ray, and the normal component reflected with the
+    //ball's own bounce. No friction and no spin: this is the emergency exit, not the physics.
+    vec3 placed = hit.point - direction * (PIN_BALL_RADIUS + 0.005f);
+    velocity = velocity - hit.normal * ((1.0f + PIN_BALL_BOUNCINESS) * into);
+    p->SetBodyWorldPosition(placed);
+    p->SetVelocity(velocity);
+    guard_hits++;
+    last_guard_point  = hit.point;
+    last_guard_normal = hit.normal;
+    last_guard_speed  = speed;
+}
+
+void ApplicationPinball::RunSimulationTick(void){
+    if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    InputController* input = main_scene->inputcontroller;
+
+    //--- The player ------------------------------------------------------------------------------
+    //Held keys, read every tick - a flipper button is a level, not an edge. IsInputLive is the
+    //engine's one predicate for "this input is ours to act on": the window in front, or a
+    //scripted hold running (which is exactly when the window is not in front).
+    const bool f_live = input->IsInputLive();
+    const bool f_flip_left  = f_live && input->IsKeyDown(INPUT_PINBALL_FLIP_LEFT);
+    const bool f_flip_right = f_live && input->IsKeyDown(INPUT_PINBALL_FLIP_RIGHT);
+    const bool f_pull       = f_live && input->IsKeyDown(INPUT_PINBALL_PLUNGE);
+    if (flipper_left)  flipper_left->SetFlip(f_flip_left);
+    if (flipper_upper) flipper_upper->SetFlip(f_flip_left);
+    if (flipper_right) flipper_right->SetFlip(f_flip_right);
+    if (plunger)       plunger->SetPull(f_pull);
+    if (f_live && input->WasKeyReleased(INPUT_PINBALL_SERVE)){
+        ServeBall();
+    }
+
+    //--- The ball --------------------------------------------------------------------------------
+    Physics* p = ball_object ? ball_object->GetPhysics() : NULL;
+    if (p){
+        //Mitigation 3 first, so the guard sweeps the speed the ball will really move at.
+        vec3 velocity = p->GetVelocity();
+        const float speed = velocity.length();
+        if (speed > PIN_MAX_BALL_SPEED){
+            p->SetVelocity(velocity * (PIN_MAX_BALL_SPEED / speed));
+            speed_clamps++;
+        }
+        if (speed > max_speed_seen){
+            max_speed_seen = speed;
+        }
+        TunnelGuard();
+
+        /*
+            The drain and the escape. Both end in a re-serve; only one of them is a fault.
+
+            The drain is a region of the deck rather than a trigger volume: the same test rp3d's
+            trigger would make, done here on the tick where it belongs, and it costs a compare. It
+            becomes a switch with the rest of them in stage 2. The ESCAPE is a ball found outside
+            the cabinet or below the deck, which no honest simulation can produce - so it is
+            counted, logged with where and how fast, and the count is the tunnelling detector this
+            stage exists to drive to zero.
+        */
+        const vec3 position = p->GetBodyWorldPosition();
+        const bool f_in_mouth = fabsf(position.x - PIN_DRAIN_X) < PIN_DRAIN_HALF_WIDTH;
+        if (position.z > PIN_DRAIN_Z - 0.10f && f_in_mouth && position.y < 0.5f){
+            drains++;
+            ServeBall();
+        }else if (position.x < PIN_PLAY_MIN_X - PIN_ESCAPE_MARGIN
+               || position.x > PIN_DECK_MAX_X + PIN_ESCAPE_MARGIN
+               || position.z < PIN_DECK_MIN_Z - PIN_ESCAPE_MARGIN
+               || position.z > PIN_DECK_MAX_Z + PIN_ESCAPE_MARGIN + 0.5f
+               || position.y < -0.5f || position.y > PIN_GLASS_HEIGHT + 1.0f){
+            escapes++;
+            debug->Warn("ball ESCAPED at (%.2f, %.2f, %.2f) doing %.1f u/s on tick %llu - re-served\n",
+                        position.x,position.y,position.z,speed,
+                        (unsigned long long)main_scene->GetPhysicsTick());
+            ServeBall();
+        }
+    }
+
+    //--- Scenery that follows a body -------------------------------------------------------------
+    //The rod and the knob ride behind the plunger tip. Render-only objects, so setting their
+    //position directly from the tick is fine.
+    if (plunger){
+        const vec3 tip = plunger->GetPosition();
+        if (plunger_rod)  plunger_rod->SetPosition(vec3(tip.x,tip.y,tip.z + 0.53f));
+        if (plunger_knob) plunger_knob->SetPosition(vec3(tip.x,tip.y,tip.z + 1.25f));
+    }
+}
+
+//--- Stage 1: commands and telemetry ------------------------------------------------------------
+
+void ApplicationPinball::RegisterCommandHandlers(){
+    //Both run on the physics thread at the top of a tick with physics_mutex held - the only
+    //place a teleport is safe (core/SimCommand.h), and the place a recording replays it to.
+    main_scene->RegisterCommandHandler(PIN_CMD_PLACE_BALL,
+        [this](const SimCommand& cmd) -> objectid_t {
+            Physics* p = ball_object ? ball_object->GetPhysics() : NULL;
+            if (!p){
+                return OBJECTID_INVALID;
+            }
+            p->SetAngularVelocity(vec3());
+            if (cmd.flags & SIM_CMD_FLAG_POSITION){
+                p->SetBodyWorldPosition(cmd.position);
+            }
+            p->SetVelocity((cmd.flags & SIM_CMD_FLAG_VELOCITY) ? cmd.velocity : vec3());
+            p->WakeUp();
+            return ball_object->GetID();
+        });
+    main_scene->RegisterCommandHandler(PIN_CMD_SERVE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            ServeBall();
+            return ball_object ? ball_object->GetID() : OBJECTID_INVALID;
+        });
+}
+
+//Physics-thread state, so call this at a tick boundary (Scene::AtTickBoundary) or from the tick.
+json ApplicationPinball::BuildTelemetryJson(){
+    json result;
+    result["tick"]   = (uint64_t)main_scene->GetPhysicsTick();
+    result["paused"] = main_scene->IsPhysicsPaused();
+    result["tilt_degrees"] = tilt_degrees;
+
+    Physics* p = ball_object ? ball_object->GetPhysics() : NULL;
+    if (p){
+        vec3 position = p->GetBodyWorldPosition();
+        vec3 velocity = p->GetVelocity();
+        float speed = velocity.length();
+        result["ball"] = json{
+            {"position",json::array({position.x,position.y,position.z})},
+            {"velocity",json::array({velocity.x,velocity.y,velocity.z})},
+            {"speed",speed},
+            //In the two units that matter for tunnelling: how far it moves per tick, and that
+            //as a fraction of its own radius.
+            {"travel_per_tick",speed * main_scene->GetPhysicsTimestep()},
+            {"travel_per_tick_radii",speed * main_scene->GetPhysicsTimestep() / PIN_BALL_RADIUS},
+            {"in_chute",position.x > PIN_CHUTE_DIVIDER_X}
+        };
+    }
+    json flippers = json::object();
+    Flipper* list[3] = { flipper_left,flipper_right,flipper_upper };
+    const char* names[3] = { "left","right","upper" };
+    for (int i = 0; i < 3; i++){
+        if (list[i]){
+            flippers[names[i]] = json{
+                {"angle_degrees",list[i]->GetAngleDegrees()},
+                {"sweep_degrees",list[i]->GetSweepDegrees()},
+                {"flipping",list[i]->IsFlipping()}
+            };
+        }
+    }
+    result["flippers"] = flippers;
+    if (plunger){
+        result["plunger"] = json{
+            {"travel",plunger->GetTravel()},
+            {"travel_max",plunger->travel},
+            {"pulling",plunger->IsPulling()}
+        };
+    }
+    result["counters"] = json{
+        {"drains",(uint32_t)drains},
+        {"escapes",(uint32_t)escapes},
+        {"guard_hits",(uint32_t)guard_hits},
+        {"speed_clamps",(uint32_t)speed_clamps},
+        {"max_speed_seen",max_speed_seen},
+        {"last_guard",json{
+            {"point",json::array({last_guard_point.x,last_guard_point.y,last_guard_point.z})},
+            {"normal",json::array({last_guard_normal.x,last_guard_normal.y,last_guard_normal.z})},
+            {"speed",last_guard_speed}
+        }}
+    };
+    return result;
 }
 
 //--- MCP ----------------------------------------------------------------------------------------
@@ -1826,8 +2345,8 @@ json ApplicationPinball::BuildLayoutJson(){
     const float inlane  = (PIN_SLING_L_AX - PIN_DIVIDER_L_X)
                         - PIN_RAIL_VISUAL_THICK * 0.5f - PIN_SLING_THICKNESS * 0.5f;
     const float outlane = (PIN_DIVIDER_L_X - PIN_OUTLANE_L_X) - PIN_RAIL_VISUAL_THICK;
-    const float orbit   = ((PIN_ORBIT_CZ - PIN_ORBIT_RADIUS) - PIN_DECK_MIN_Z)
-                        - PIN_RAIL_VISUAL_THICK * 0.5f;
+    const float orbit   = ((PIN_ORBIT_CZ - PIN_ORBIT_RADIUS) - PIN_ORBIT_OUTER_APEX_Z)
+                        - PIN_RAIL_VISUAL_THICK;
     const float ret     = (PIN_RETURN_X - PIN_PLAY_MIN_X) - PIN_RAIL_VISUAL_THICK * 0.5f;
     const float chute   = (PIN_DECK_MAX_X - 0.05f - PIN_CHUTE_DIVIDER_X)
                         - PIN_CHUTE_DIVIDER_THICK * 0.5f;
@@ -2101,5 +2620,204 @@ void ApplicationPinball::RegisterMCPTools(){
             return MaybeAttachScreenshot(json{ {"labels_visible",visible} },
                                          args.value("include_screenshot",true),
                                          false);
+        });
+
+    //--- Stage 1 -------------------------------------------------------------------------------
+    /*
+        Four tools the design asks for (pinball_design.md 4, stage 1) and one it did not know it
+        needed. The rule they share: an MCP handler holds no lock and never touches the
+        simulation. Input goes in as a scripted hold, exactly as a finger would; a teleport goes
+        in as a SimCommand; state comes out at a tick boundary. pinball_run is the fifth - it
+        steps a PAUSED simulation and returns the ball's path, which turns "does the ball get
+        round the orbit" from a question about a screenshot into a list of numbers.
+    */
+    MCPServer::Get()->RegisterTool("pinball_telemetry",
+        "The state of the machine at a tick boundary: the ball's position, velocity and speed "
+        "(also as travel per tick, in radii - above 1 is where tunnelling lives), each flipper's "
+        "angle from rest and whether it is being driven, the plunger's pull, and the counters: "
+        "drains, escapes (a ball found outside the cabinet - the tunnelling detector, should be "
+        "0), tunnel-guard interventions and speed clamps, and the fastest the ball has gone.",
+        json{{"type","object"},{"properties",json::object()}},
+        [this](const json& args) -> json {
+            json result;
+            if (main_scene && main_scene->AtTickBoundary([&]{ result = BuildTelemetryJson(); })){
+                return result;
+            }
+            return json{ {"error","no scene"} };
+        });
+
+    MCPServer::Get()->RegisterTool("pinball_flipper",
+        "Hold a flipper button for a number of SIMULATION ticks - a scripted press, indistinguishable "
+        "to the simulation from a finger. 'left' also drives the upper flipper, as the left button "
+        "does on the machine. 240 ticks is a second; a flipper reaches its up stop in about 8. Pass "
+        "ticks 0 to release early. While the simulation is running this blocks until the hold has "
+        "played out; while it is PAUSED it returns at once and the hold counts down as pinball_run "
+        "or sim_step advance the ticks - which is how to script a shot deterministically: pause, "
+        "pinball_place_ball, pinball_flipper, pinball_run.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"side", {{"type","string"},{"enum", json::array({"left","right","both"})}}},
+                {"ticks", {{"type","number"},{"description","simulation ticks to hold, default 30, capped at 2400"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG afterwards, default false"}}}
+            }},
+            {"required", json::array({"side"})}
+        },
+        [this](const json& args) -> json {
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            std::string side = args.value("side","left");
+            int ticks = (int)clamp(args.value("ticks",30.0f),0.0f,2400.0f);
+            uint64_t start = main_scene->GetPhysicsTick();
+            if (side == "left" || side == "both")  input->HoldKey(INPUT_PINBALL_FLIP_LEFT,(uint32_t)ticks);
+            if (side == "right" || side == "both") input->HoldKey(INPUT_PINBALL_FLIP_RIGHT,(uint32_t)ticks);
+            if (ticks > 0 && !main_scene->IsPhysicsPaused()){
+                uint64_t target = start + (uint64_t)ticks + 2;
+                for (int waited = 0; waited < 12000 && main_scene->GetPhysicsTick() < target; waited += 4){
+                    Sleep(4);
+                }
+            }
+            json result;
+            main_scene->AtTickBoundary([&]{ result = BuildTelemetryJson(); });
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false),false);
+        });
+
+    MCPServer::Get()->RegisterTool("pinball_plunger",
+        "Pull the plunger back for a number of SIMULATION ticks and let go. The pull runs at "
+        "about 3 units per second against a 0.9 travel, so 72 ticks is a full pull and anything "
+        "shorter is a softer launch - that is the skill shot. Same scripted-hold semantics as "
+        "pinball_flipper: blocks while running, returns at once while paused.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"ticks", {{"type","number"},{"description","ticks to hold the plunger back, default 72 (a full pull)"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG afterwards, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            int ticks = (int)clamp(args.value("ticks",72.0f),0.0f,2400.0f);
+            uint64_t start = main_scene->GetPhysicsTick();
+            input->HoldKey(INPUT_PINBALL_PLUNGE,(uint32_t)ticks);
+            if (ticks > 0 && !main_scene->IsPhysicsPaused()){
+                //The pull, plus a quarter of a second for the launch to have happened.
+                uint64_t target = start + (uint64_t)ticks + 60;
+                for (int waited = 0; waited < 12000 && main_scene->GetPhysicsTick() < target; waited += 4){
+                    Sleep(4);
+                }
+            }
+            json result;
+            main_scene->AtTickBoundary([&]{ result = BuildTelemetryJson(); });
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false),false);
+        });
+
+    MCPServer::Get()->RegisterTool("pinball_place_ball",
+        "Put the ball anywhere with any velocity, or back on the plunger with none. Goes through "
+        "the simulation command queue, so it lands at the top of a tick on the physics thread and "
+        "is recorded like any other command. The test the design asks for - fire the ball at every "
+        "wall at 90 u/s from both sides and check it never ends up outside the cabinet - is this "
+        "tool, pinball_run and the escapes counter.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"position", {{"type","array"},{"description","[x,y,z]; y is normally 0.135, the ball's radius. Omit to serve to the plunger"}}},
+                {"velocity", {{"type","array"},{"description","[vx,vy,vz] in units per second; omit for a ball at rest"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            SimCommand cmd;
+            if (args.contains("position")){
+                const json& p = args["position"];
+                if (!p.is_array() || p.size() != 3){
+                    return json{ {"error","position must be [x,y,z]"} };
+                }
+                cmd.type = PIN_CMD_PLACE_BALL;
+                cmd.flags |= SIM_CMD_FLAG_POSITION;
+                cmd.position = vec3(p[0].get<float>(),p[1].get<float>(),p[2].get<float>());
+                if (args.contains("velocity")){
+                    const json& v = args["velocity"];
+                    if (!v.is_array() || v.size() != 3){
+                        return json{ {"error","velocity must be [vx,vy,vz]"} };
+                    }
+                    cmd.flags |= SIM_CMD_FLAG_VELOCITY;
+                    cmd.velocity = vec3(v[0].get<float>(),v[1].get<float>(),v[2].get<float>());
+                }
+            }else{
+                cmd.type = PIN_CMD_SERVE;
+            }
+            //SubmitCommandAndWait, not SubmitUICommand: an MCP handler holds no lock, so it may
+            //wait - and it has to, or it would report the ball where it was. Commands drain while
+            //paused too, so this does not hang against a paused table.
+            SubmitCommandAndWait(cmd);
+            json result;
+            main_scene->AtTickBoundary([&]{ result = BuildTelemetryJson(); });
+            return result;
+        });
+
+    MCPServer::Get()->RegisterTool("pinball_run",
+        "Advance a PAUSED simulation by exactly `ticks` ticks and return the ball's path: its "
+        "position and speed every `sample` ticks, plus what happened on the way (drains, escapes, "
+        "guard interventions, the fastest speed). Requires sim_pause first - a running table cannot "
+        "be stepped. Scripted holds (pinball_flipper, pinball_plunger) count down inside these "
+        "ticks, so pause, place, hold, run is a reproducible shot. Capped at 4800 ticks (20 s).",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"ticks", {{"type","number"},{"description","ticks to advance, default 240"}}},
+                {"sample", {{"type","number"},{"description","record the ball every this many ticks, default 12"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG at the end, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            if (!main_scene->IsPhysicsPaused()){
+                return json{ {"error","the simulation is running; sim_pause first"} };
+            }
+            int ticks  = (int)clamp(args.value("ticks",240.0f),1.0f,4800.0f);
+            int sample = (int)clamp(args.value("sample",12.0f),1.0f,(float)ticks);
+            uint32_t drains_before = drains, escapes_before = escapes, guard_before = guard_hits;
+            float max_speed = 0.0f;
+            json path = json::array();
+            auto record = [&](){
+                Physics* p = ball_object ? ball_object->GetPhysics() : NULL;
+                if (!p){
+                    return;
+                }
+                vec3 pos = p->GetBodyWorldPosition();
+                float speed = p->GetVelocity().length();
+                if (speed > max_speed) max_speed = speed;
+                path.push_back(json::array({(uint64_t)main_scene->GetPhysicsTick(),
+                                            pos.x,pos.y,pos.z,speed}));
+            };
+            main_scene->AtTickBoundary(record);
+            int done = 0;
+            while (done < ticks){
+                int step = min(sample,ticks - done);
+                uint64_t advanced = StepPhysicsAndWait(step);
+                done += (int)advanced;
+                main_scene->AtTickBoundary(record);
+                if ((int)advanced < step){
+                    break;      //timed out; report what ran rather than pretend
+                }
+            }
+            json result;
+            main_scene->AtTickBoundary([&]{ result = BuildTelemetryJson(); });
+            result["ticks_advanced"] = done;
+            result["path"] = path;
+            result["path_columns"] = json::array({"tick","x","y","z","speed"});
+            result["events"] = json{
+                {"drains",(uint32_t)drains - drains_before},
+                {"escapes",(uint32_t)escapes - escapes_before},
+                {"guard_hits",(uint32_t)guard_hits - guard_before},
+                {"max_speed",max_speed}
+            };
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false),false);
         });
 }
