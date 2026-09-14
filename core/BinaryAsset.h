@@ -42,6 +42,26 @@ public:
     size_t compressed_offset = 0;
     uint8_t* compressed_data = NULL;
 
+    /*
+        THE BAKED-IN ASSETS, AND THE ONE THING IN THIS HEADER THAT IS AN EXTERNAL INTERFACE.
+
+        Nothing in this engine writes these. They are defined by a GENERATED translation unit -
+        BinaryAssetMemoryEmpty.cpp in a loose build, which is the empty array, or the packer's
+        output in a baked one. So the field names and their meanings below are a contract with
+        tools/assetpack rather than a private arrangement of this class, and renaming one breaks
+        a build somewhere this file cannot see. See tools/assetpack_plan.md.
+
+        The engine used to produce this itself, from a DUMP_BINARYASSETS build that dumped its own
+        loaded assets back out as a .cpp to be compiled in on a second pass. That went on
+        2026-09-14, and the reason is worth keeping: it could only ever bake what that particular
+        session happened to have loaded by the time it was called, which is not the same question
+        as what is in the asset tree, and only one of the two has a reproducible answer.
+
+        `size` is the CONTENT length, but a compressed entry's blob holds size+1 bytes - the
+        trailing zero StoreBinaryAsset is promised, baked in so a decompressed asset is as safe to
+        hand to the GLSL compiler as a fresh disk read is. Uncompress() is the other half of that
+        and subtracts the one back off.
+    */
     static int num_memory_assets;
     static BinaryAsset assets[];
     /*
@@ -68,7 +88,8 @@ public:
         `data` must come from malloc/calloc and the caller must forget it the moment this
         returns. `sz` is the content length, and the buffer must be sz+1 bytes with a zero in
         the last one, which is what keeps a cached asset safe to treat as a C string (GLSL
-        source does) and what DumpBinaryAssets bakes into the compressed blob.
+        source does) and what the packer bakes into the compressed blob - see the note on
+        `assets[]` above.
 
         Returns the stored asset, or the one already held under that name - in which case the
         buffer passed in is freed, because the asset already here is what earlier callers are
@@ -78,7 +99,6 @@ public:
     */
     static BinaryAsset* StoreBinaryAsset(const char* filename, uint8_t* data, size_t sz);
     static void ListBinaryAssets();
-    static void DumpBinaryAssets();
     static BinaryAsset* GetBinaryAsset(const char* filename);
 
     /*

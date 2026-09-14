@@ -588,7 +588,7 @@ void ApplicationShip::Init(void){
     RegisterCommandHandlers();
     RegisterMCPTools();
 
-    BinaryAsset::DumpBinaryAssets();
+    BinaryAsset::ListBinaryAssets();
     assetmanager->ListAssets();
 }
 

@@ -56,6 +56,32 @@ class InputController;
 #define GAMEPAD_KEY_X               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_X)
 #define GAMEPAD_KEY_Y               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_Y)
 
+/*
+    Synthetic keycodes for the on-screen buttons - see AddTouchButton further down.
+
+    EVERY INPUT SOURCE MUST OWN ITS KEYCODES, and the failure when one does not is silent. A key
+    event whose `value` is 0 falls through to GetByMappedKey (InputController.cpp), which returns
+    the FIRST mapping for that action - so a button submitting {KEY_DOWN, INPUT_TETRIS_LEFT, 0}
+    would share f_held with VK_LEFT. Press the button, then press and release the arrow key, and
+    the action releases with a finger still on the screen, because both wrote the same mapping.
+    Invisible on a device with no keyboard; very visible on Windows, which is where this is tested.
+
+    AddTouchButton allocates these itself and never shows them to the app, which also means two
+    buttons bound to one action get DIFFERENT keycodes and so correct f_isdown counting for free -
+    the same property two physical keys on one action already have.
+
+    Above the gamepad range (which reaches 0x18000 at most, being the base plus a 16-bit XInput
+    bit) and far above both Win32 VK_ codes (0..255) and Android AKEYCODE_ values, so nothing can
+    collide.
+*/
+#define TOUCH_SYSKEY_BASE           0x20000
+
+//How many simultaneously-down pointers are tracked. Five is what the Android port's panel reports
+//via AMotionEvent_getPointerCount(). It is NOT inside any Android guard, and that is the point:
+//the whole reason the seam is at SubmitPointer is that a mouse on Windows can drive it as
+//pointer 0 before any touchscreen exists.
+#define INPUT_CONTROLLER_MAX_TOUCHES 5
+
 //GamePadMap is gone: an analog stick is now a KeyMap like everything else - see the analog block
 //in KeyMap below, and AddGamePadMap. It used to be a parallel table with its own lookup, which
 //meant a gamepad axis had no KeyState, so GetAxis returned 0 for it forever and a scripted
@@ -367,6 +393,128 @@ class InputController{
     KeyMap* GetBySystemKey(uint32_t sys_code);
     KeyMap* GetByMappedKey(uint32_t mapped_code);
 
+    /*
+        ON-SCREEN BUTTONS - a THIRD INPUT FAMILY, alongside AddKeyMap and AddGamePadMap, so an app
+        binds one the same way it binds the other two and nothing downstream can tell them apart:
+
+            input->AddKeyMap(VK_LEFT,        INPUT_TETRIS_LEFT);
+            input->AddGamePadMap(0,          INPUT_TETRIS_LEFT);
+            input->AddTouchButton(rect_left, INPUT_TETRIS_LEFT);   //this one
+
+        IN HERE RATHER THAN BESIDE IT, deliberately. The note further down on absorbing the gamepad
+        records that the old separate GamePadController was wrong precisely because it was a
+        parallel input class with its own keymap that apps polled by hand. A TouchController that
+        apps polled by hand would be the same mistake with a different noun.
+
+        EDGES, NEVER LEVELS. SubmitPointer emits one KEY_DOWN on press and one KEY_UP on release,
+        and nothing anywhere polls "is a finger inside this rect". That is the load-bearing choice:
+        with edges, the rate the pointer layer runs at is irrelevant, because KeyState holds the
+        action down between the two events and DAS/ARR keeps counting in ticks on the physics
+        thread where it already lives. Poll instead and button feel becomes a function of frame
+        rate, and the rect list and the live pointer positions both have to cross threads.
+
+        THIS PANEL HAS NO RENDERING OPINION. It owns rectangles and emits keycodes;
+        GetTouchButtons() hands the list to whatever draws - UIOverlay, today. Input does not draw,
+        and the drawing layer never feeds anything back.
+
+        Recording and replay come out right for free: because these are ordinary key events on a
+        synthetic keycode, a recording captures "touch button 2 down @ tick 412" - the ACTION, not
+        the finger position - which replays at any screen size, any dpi, and after any later change
+        to the layout. Route touch through picking or record raw coordinates instead and every
+        recording made before a button moved ten pixels is silently wrong.
+    */
+
+    //Screen-space rectangle in PIXELS, top-left origin - the same space Android's
+    //AMotionEvent_getX/getY report in, and the same one UIOverlay draws in. That correspondence is
+    //deliberate: the rectangle that gets hit-tested is the rectangle that gets drawn.
+    //
+    //Physical-size layout (a button in millimetres, anchored to a corner) belongs a layer ABOVE
+    //this - it needs dpi, and this struct is what it would produce.
+    struct TouchRect{
+        float x = 0.0f;
+        float y = 0.0f;
+        float w = 0.0f;
+        float h = 0.0f;
+        bool Contains(float px,float py) const {
+            return (px >= x) && (px < (x + w)) && (py >= y) && (py < (y + h));
+        }
+    };
+
+    struct TouchButton{
+        TouchRect rect;
+        uint32_t  system_keycode = 0;   //allocated from TOUCH_SYSKEY_BASE; the app never sees it
+        uint32_t  mapped_keycode = 0;   //what it drives - kept for drawing and debugging
+        //Optional, for a drawing layer to put on the button. A FIXED BUFFER rather than a
+        //std::string or a borrowed const char*: this struct is walked from the thread that
+        //hit-tests, and a caller passing a temporary would otherwise leave a dangling pointer.
+        //Short on purpose - a legend, not a sentence.
+        char      label[12] = "";
+        //Purely for a drawing layer: true while some pointer is holding this button. Written by
+        //SubmitPointer on the same thread that hit-tests.
+        bool      f_down = false;
+    };
+
+    /*
+        Binds a rectangle to an action. Call during setup, alongside the AddKeyMap calls.
+
+        RETURNS AN INDEX, not a pointer. A pointer into `touch_buttons` is invalidated by the very
+        next AddTouchButton, so a caller that stored one and then added another button would be
+        holding a dangling pointer with nothing to say so - and adding buttons in a row is the
+        normal usage.
+
+        SET THE RECT TO ANYTHING (zero is fine) AND POSITION IT IN LayoutTouchButtons INSTEAD. See
+        SetTouchButtonRect for why the two are separate, and Application::LayoutTouchButtons for
+        where the geometry belongs.
+    */
+    int AddTouchButton(const TouchRect& rect, uint32_t mapped, const char* label = NULL);
+
+    /*
+        Moves an existing button. This is the ONLY part of a button that may change after setup.
+
+        The split is what makes a relayout safe. A button's IDENTITY - its synthetic keycode and
+        the KeyMap that carries it - is allocated once by AddTouchButton and never touched again,
+        because `keymap` is read lock-free by PollDevices on the physics thread and appending to it
+        at run time would both race that walk and grow it without bound on every resize. Its
+        GEOMETRY is four floats that only SubmitPointer reads.
+
+        So a window resize or an orientation change re-runs the layout and nothing re-runs the
+        binding. The residual race is those four float writes against a hit test happening in the
+        same instant; the worst outcome is one press attributed to the wrong button during the
+        frame the window changed size, which is not worth a lock on the pointer path to prevent.
+
+        Out-of-range indices are ignored, so a layout that has lost count fails quietly rather than
+        corrupting a neighbour.
+    */
+    void SetTouchButtonRect(int index, const TouchRect& rect);
+    int  GetNumTouchButtons() const {return (int)touch_buttons.size();}
+
+    /*
+        One pointer changed. `pointer_id` is the platform's STABLE id for that finger, not its
+        index in the event - indices shift when a finger lifts while others stay down, and
+        ownership would transfer to the wrong finger in exactly the multi-touch case this design
+        exists for. The Win32 mouse is always pointer 0.
+
+        down=true on press and on every subsequent move of a pointer already down; down=false on
+        release. A pointer that presses inside a button CAPTURES it and holds it until that same
+        pointer lifts, wherever it moves in between - a millimetre of thumb drift must not drop a
+        held direction, and an edge must not chatter at a rect boundary. Sliding from one button
+        onto another therefore does nothing; whether it should is a question about feel, to be
+        answered with the buttons in front of you rather than now.
+
+        Safe from whichever thread delivers pointer events, but only ONE such thread: it reaches
+        KeyState through SubmitSystemKey (which takes state_mutex and queues) while keeping its own
+        pointer-ownership table lock-free. On Win32 that is the window thread; on Android it is the
+        one pumping the ALooper.
+    */
+    void SubmitPointer(int32_t pointer_id, float x, float y, bool down);
+
+    //Releases every button any pointer is holding, and forgets the pointers. For a cancelled
+    //gesture (ACTION_CANCEL) and for focus loss, neither of which delivers an ordinary release.
+    void ReleaseAllTouchPointers();
+
+    //The rect list, for a drawing layer. Input does not draw.
+    const std::vector<TouchButton>& GetTouchButtons() const {return touch_buttons;}
+
     bool    IsKeyDown(uint32_t mapped);
     bool    WasKeyReleased(uint32_t mapped);
     //Symmetric with WasKeyReleased: true on the tick the action went down. See KeyState.
@@ -459,6 +607,19 @@ protected:
     void ApplyGamepadButtons(uint16_t buttons);
     uint16_t gamepad_buttons = 0;       //last wButtons applied, for edge detection
     uint32_t gamepad_rescan_countdown = 0;
+
+    //--- On-screen buttons, see AddTouchButton ---------------------------------------------------
+    //Which button each live pointer captured on press. Sized to the touch limit the platform layer
+    //already clamps to; a pointer beyond that is ignored rather than tracked wrongly.
+    struct TouchPointer{
+        int32_t id = -1;            //-1 = slot free
+        int     button_index = -1;  //-1 = pressed outside every button, tracked so its release is
+                                    //recognised as this pointer's rather than hunted for
+    };
+    std::vector<TouchButton> touch_buttons;
+    TouchPointer touch_pointers[INPUT_CONTROLLER_MAX_TOUCHES];
+    //Next synthetic keycode to hand out. One per button, never reused.
+    uint32_t next_touch_syskey = TOUCH_SYSKEY_BASE;
     //Physics thread, first thing in ApplyPendingEvents: advances every scripted hold by one tick,
     //emitting the ordinary events that start and end it.
     void AdvanceSyntheticHolds();

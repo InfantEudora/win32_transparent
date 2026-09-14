@@ -819,6 +819,54 @@ void ApplicationTetris::SetLabelText(int label_id, const char* text){
     published under snapshot_mutex at the end of every tick - and the strings are formatted here,
     on this side of it. Nothing has to be published as text, and the simulation never waits.
 */
+/*
+    TEMPORARY - the 2D overlay smoke test (docs/ui_overlay_plan.md step 3).
+
+    Render thread, called by Application::DrawFrame between the scene and the ImGui panels, with
+    the overlay already Begin()'d at the window size. This exists to answer four questions that
+    are much easier to answer with shapes on screen than by reasoning:
+
+      - does the pass composite over the scene at all, and with the right alpha;
+      - are the rounded corners actually round, and antialiased, at several radii;
+      - does the outline sit ON the edge rather than inside or outside it;
+      - does the SDF text resolve at both a HUD size and a banner size from ONE 48px bake.
+
+    Delete this once the real HUD moves here.
+*/
+void ApplicationTetris::DrawOverlay(void){
+    if (!overlay || !overlay->IsReady()){
+        return;
+    }
+
+    const uint32_t panel   = UIColor(20,24,34,210);     //deliberately translucent: tests blending
+    const uint32_t accent  = UIColor(90,190,255,255);
+    const uint32_t white   = UIColor(255,255,255,255);
+    const uint32_t warm    = UIColor(255,180,60,255);
+
+    //A panel in the top-left. Translucent, so the scene has to show through it - which is the
+    //whole compositing question in one shape.
+    overlay->AddRect(vec2(24,544),vec2(300,710),12.0f,panel);
+    overlay->AddRectOutline(vec2(24,544),vec2(300,710),12.0f,2.0f,accent);
+
+    overlay->AddText("OVERLAY OK",vec2(40,584),22.0f,white);
+    overlay->AddText("rounded + sdf text",vec2(40,612),14.0f,accent);
+
+    //Radius sweep, including one where the radius exceeds half the short side - that must clamp
+    //to a capsule rather than turning the distance field inside out.
+    overlay->AddRect(vec2(40,630),vec2(90,670),0.0f,white);
+    overlay->AddRect(vec2(100,630),vec2(150,670),8.0f,white);
+    overlay->AddRect(vec2(160,630),vec2(210,670),20.0f,white);
+    overlay->AddRect(vec2(220,630),vec2(270,670),999.0f,white);
+
+    overlay->AddText("0    8   20  max",vec2(40,692),12.0f,accent);
+
+    //Centred text at banner size, from the same 48px bake as the 12px line above. If one atlas
+    //really does serve every size, these two are the proof.
+    overlay->AddText("TETRIS",vec2((float)main_window->width * 0.5f,
+                                   (float)main_window->height - 48.0f),
+                     56.0f,warm,UI_ALIGN_CENTER);
+}
+
 void ApplicationTetris::PreRender(void){
     if (!glyphs.IsValid()){
         return;
@@ -973,7 +1021,67 @@ void ApplicationTetris::SetupInput(){
     //D-pad arrives through XInput as buttons rather than as an analog index, so it is not mapped
     //here - see docs/tetris_findings.md on what that costs.
     input->AddGamePadMap(0,INPUT_TETRIS_LEFT);
+
+    /*
+        On-screen buttons - the third input family, and the whole test of whether the seam was put
+        in the right place: this block is the ONLY app code that changes for them. GatherInput,
+        DAS/ARR, the HUD, the MCP tools and the snapshot are all untouched, because everything
+        downstream of a KeyState stopped caring where input came from.
+
+        Driven by the mouse as pointer 0 on Windows (InputController::HandleMessage) and by real
+        fingers on Android. Nothing here knows which.
+
+        LAID OUT IN PIXELS, which is a known placeholder. The port sizes these in MILLIMETRES via
+        GetDisplayDPI - 11 mm buttons, 2 mm gaps, 4 mm inset - because a fraction-of-the-screen
+        button is a pinhead on a phone and a dinner plate on a tablet simultaneously. That needs
+        backlog item 70, which does not exist on win32 yet; when it does, only these numbers
+        change.
+    */
+    //BOUND here, POSITIONED in LayoutTouchButtons. The rect passed now is discarded: the window
+    //is still 1280x800 at this point and becomes 1200x900 a few lines further down Init, so any
+    //geometry computed here would be wrong by 80 pixels and the right-hand cluster would hang off
+    //the edge. See Application::LayoutTouchButtons.
+    InputController::TouchRect later = {};
+    touch_left      = input->AddTouchButton(later,INPUT_TETRIS_LEFT,      "<");
+    touch_softdrop  = input->AddTouchButton(later,INPUT_TETRIS_SOFT_DROP, "v");
+    touch_right     = input->AddTouchButton(later,INPUT_TETRIS_RIGHT,     ">");
+    touch_ccw       = input->AddTouchButton(later,INPUT_TETRIS_ROTATE_CCW,"CCW");
+    touch_cw        = input->AddTouchButton(later,INPUT_TETRIS_ROTATE_CW, "CW");
+    touch_harddrop  = input->AddTouchButton(later,INPUT_TETRIS_HARD_DROP, "DROP");
+    touch_hold      = input->AddTouchButton(later,INPUT_TETRIS_HOLD,      "HOLD");
 }
+
+/*
+    Where the on-screen buttons actually go. Render thread, before the first frame and again on
+    every resize - so this is the only place that knows the window size, and it cannot be run too
+    early the way SetupInput can.
+
+    LAID OUT IN PIXELS, which is a known placeholder. The Android port sizes these in MILLIMETRES
+    via GetDisplayDPI - 11 mm buttons, 2 mm gaps, 4 mm inset - because a button measured as a
+    fraction of the screen is a pinhead on a phone and a dinner plate on a tablet at the same time.
+    That needs backlog item 70, which has no win32 implementation yet; when it does, only the three
+    constants below change.
+*/
+void ApplicationTetris::LayoutTouchButtons(int w, int h){
+    InputController* input = main_scene->inputcontroller;
+    const float s = 88.0f;      //button size
+    const float g = 12.0f;      //gap
+    const float m = 28.0f;      //margin from the window edge
+    float row = (float)h - m - s;       //bottom row
+
+    //Movement on the left, thumb-side, in the order they sit on a d-pad.
+    input->SetTouchButtonRect(touch_left,     {m,             row, s,s});
+    input->SetTouchButtonRect(touch_softdrop, {m + (s + g),   row, s,s});
+    input->SetTouchButtonRect(touch_right,    {m + 2*(s + g), row, s,s});
+
+    //Actions on the right. Hard drop sits outermost and hold above it, so the two that end a piece
+    //are not adjacent to the two that merely turn it.
+    input->SetTouchButtonRect(touch_ccw,      {(float)w - m - 3*s - 2*g, row, s,s});
+    input->SetTouchButtonRect(touch_cw,       {(float)w - m - 2*s - g,   row, s,s});
+    input->SetTouchButtonRect(touch_harddrop, {(float)w - m - s,         row, s,s});
+    input->SetTouchButtonRect(touch_hold,     {(float)w - m - s, row - (s + g), s,s});
+}
+
 
 void ApplicationTetris::RegisterCommandHandlers(){
     //Restarting is intent from outside the simulation - the HUD button, an MCP call, later a

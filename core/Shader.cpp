@@ -4,6 +4,7 @@
 #include "Shader.h"
 #include "Debug.h"
 #include "File.h"
+#include <ctype.h>
 #include <string>
 
 static Debugger *debug = new Debugger("Shader", DEBUG_INFO);
@@ -115,6 +116,78 @@ static std::string ResolveIncludes(const std::string& path, const char* data, si
 	return out;
 }
 
+/*
+	The #version line, which is the ONE thing a shader source cannot state portably.
+
+	`#version 430 core` and `#version 310 es` cannot both be the first line of one file, and it has
+	to be the first line, so a shader that names its own version has picked a platform. That is the
+	whole of the incompatibility for a simple shader - everything else GLES 3.1 and desktop GL
+	disagree about is in the features a shader USES, not in how it is written. In particular:
+
+	  PRECISION QUALIFIERS ARE VALID DESKTOP GLSL and always have been (GLSL 1.30 added them for
+	  exactly this compatibility, parsed and ignored). Measured 2026-09-14 rather than assumed -
+	  `precision highp float;`, `precision mediump int;`, `uniform mediump sampler2D` and
+	  `in highp vec3` were all added to a `#version 430 core` fragment shader here and compiled
+	  and linked with no error and no warning. So the ES-only-looking half of a portable shader
+	  can sit in the shared source and desktop simply ignores it, and only the version line has to
+	  be supplied per platform. (The Android port's cube_desktop.vert says otherwise in its header
+	  and forked the file over it; it is wrong about this, which is worth knowing before that merge
+	  reaches here.)
+
+	highp, not the port's mediump default, because what will use this first is the 2D overlay,
+	whose whole job is crisp edges at exact pixel positions - see docs/ui_overlay_plan.md. A pass
+	that wants to trade precision for tile-GPU bandwidth can still say so per variable.
+*/
+static const char* ShaderVersionPreamble(){
+#if defined(__ANDROID__)
+	return "#version 310 es\n"
+		   "precision highp float;\n"
+		   "precision highp int;\n";
+#else
+	return "#version 430 core\n";
+#endif
+}
+
+/*
+	Whether the source states its own #version, which is decided by the first thing in it that is
+	neither whitespace nor a comment.
+
+	Comments are skipped rather than ignored because a file may perfectly reasonably open with a
+	licence or an explanation, and "does line 1 start with #version" would then inject a second
+	version directive into a shader that already had one - a compile error naming a line the
+	author cannot see, since the offending line is not in their file.
+*/
+static bool SourceHasVersionDirective(const std::string& src){
+	size_t pos = 0;
+	while (pos < src.size()){
+		if (isspace((unsigned char)src[pos])){
+			pos++;
+			continue;
+		}
+		if (src.compare(pos,2,"//") == 0){
+			size_t eol = src.find('\n',pos);
+			if (eol == std::string::npos){
+				break;
+			}
+			pos = eol + 1;
+			continue;
+		}
+		if (src.compare(pos,2,"/*") == 0){
+			size_t end = src.find("*/",pos + 2);
+			if (end == std::string::npos){
+				break;
+			}
+			pos = end + 2;
+			continue;
+		}
+		//First real token. Anything but #version means the file left it to us.
+		return src.compare(pos,8,"#version") == 0;
+	}
+	//Nothing but comments and whitespace. Not a shader, but it is not this function's job to say
+	//so - the compiler will, and more usefully.
+	return false;
+}
+
 //Reads a shader file and splices in whatever it #includes. Empty if the file could not be read.
 static std::string LoadShaderSource(const char* path, std::vector<std::string>* files_used){
 	size_t sz = 0;
@@ -126,7 +199,26 @@ static std::string LoadShaderSource(const char* path, std::vector<std::string>* 
 		files_used->push_back(path);
 	}
 	int source_index = 0;
-	return ResolveIncludes(path,(const char*)data,sz,0,&source_index,files_used);
+	std::string src = ResolveIncludes(path,(const char*)data,sz,0,&source_index,files_used);
+
+	/*
+		A shader that names its own version is left BYTE FOR BYTE ALONE, and that is what makes
+		this safe to add to a tree with eleven shaders already in it: none of them changes, and
+		nothing has to be audited. Omitting the version is how a shader opts in to being portable.
+
+		The alternative - strip whatever version is there and always impose one - is tidier to
+		describe and worse to own, because it would silently change what every existing shader
+		compiles as, including the compute ones, on the strength of a claim that they did not care.
+	*/
+	if (SourceHasVersionDirective(src)){
+		return src;
+	}
+
+	//#line puts the numbering back. Without it every error in a portable shader is reported one
+	//line further down than it really is on desktop and three on GLES - and the offset differs by
+	//platform, which is the kind of thing that wastes an afternoon exactly once per person.
+	//Source 0 is the including file, matching ResolveIncludes' own convention.
+	return std::string(ShaderVersionPreamble()) + "#line 1 0\n" + src;
 }
 
 Shader::Shader(){

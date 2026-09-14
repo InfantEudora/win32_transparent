@@ -10,6 +10,10 @@
 #include "Window.h"
 #include "Renderer.h"
 #include "Shader.h"
+//Included rather than forward-declared: an app overriding DrawOverlay needs the Add* calls, so a
+//forward declaration would only make every one of them include this itself. Renderer.h has
+//already pulled in glad by this point, so it costs nothing.
+#include "UIOverlay.h"
 #include "Scene.h"
 #include "PerfTimer.h"
 #include "AssetManager.h"
@@ -201,6 +205,52 @@ public:
     virtual void DrawFrame(void);
     virtual void DrawImGuiUI(void);
 
+    /*
+        Screen-space 2D - rounded rects and text - for an app's own HUD and, later, the on-screen
+        buttons. RENDER THREAD, called between the scene and the ImGui panels, with `overlay`
+        already Begin()'d at the window's size: an override just calls overlay->AddRect/AddText
+        and returns. DrawFrame submits the batch.
+
+        DRAWN UNDER ImGui, deliberately. This is the app's UI and ImGui's windows are the debug
+        panels on top of it, which is the right way round while both exist - and in a shipping
+        build (item 82, USE_IMGUI=0) the question disappears with the panels. The exception to
+        watch for is the touch buttons: item 67 records that a button cluster drawn UNDER an
+        app's own HUD is live and invisible, which is nastier than being drawn over, so when
+        those move here they may want to be last rather than first.
+    */
+    virtual void DrawOverlay(void){};
+
+    /*
+        Draws InputController's on-screen button rects through `overlay`. Core-owned, because the
+        rects are, and drawn AFTER DrawOverlay so a cluster cannot end up beneath an app's own HUD
+        - item 67 records that as the nastier failure, since the buttons hit-test their own rect
+        list and would still be live while invisible.
+
+        Override to draw them as artwork instead, or clear f_draw_touch_buttons for an app whose
+        layout is swipe-only and draws nothing. Either way input is unaffected: the rect list and
+        SubmitPointer do not know or care whether anything drew.
+    */
+    virtual void DrawTouchButtons(void);
+    bool f_draw_touch_buttons = true;
+
+    /*
+        Positions the on-screen buttons for a surface of `w` x `h` pixels. Called on the render
+        thread before the first frame and again whenever the size changes - so an app does its
+        layout arithmetic here and nowhere else, and never has to find out when the size is final.
+
+        THAT LAST PART IS WHY THIS EXISTS RATHER THAN THE LAYOUT LIVING IN SetupInput. The size is
+        NOT final during Init: ApplicationTetris::Init calls SetupInput and then resizes its own
+        window, so a layout computed in SetupInput is built against 1280x800 for a window that
+        becomes 1200x900, and the right-hand buttons land off the edge. That was real, not
+        hypothetical. A user dragging the window, or an Android orientation change, is the same
+        bug arriving later.
+
+        Bind the buttons in SetupInput (AddTouchButton, which allocates the keycodes once) and
+        move them here (SetTouchButtonRect). See those two for why identity and geometry are
+        separated.
+    */
+    virtual void LayoutTouchButtons(int w, int h){ (void)w; (void)h; };
+
     int Exit(void);
 
     DWORD thread_id_main = -1;
@@ -209,6 +259,14 @@ public:
 
     Window* main_window = NULL;
     Renderer* renderer = NULL;
+    //The 2D overlay, created on the render thread after the app's Init() - see UIOverlay.h. Never
+    //NULL once the frame thread is running, but IsReady() is false if the font or shader is
+    //missing, in which case every Add* is a no-op rather than a crash.
+    UIOverlay* overlay = NULL;
+    //Surface size the touch-button layout was last computed for, so DrawFrame can notice a
+    //resize. -1 forces LayoutTouchButtons to run before the first frame.
+    int touch_layout_w = -1;
+    int touch_layout_h = -1;
     Shader* default_shader = NULL;
     std::vector<Scene*> scenes;         // List of different scenes this application owns.
     Scene* main_scene = NULL;           // Currently active scene.

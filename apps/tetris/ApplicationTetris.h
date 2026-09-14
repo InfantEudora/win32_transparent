@@ -199,6 +199,16 @@ public:
     void RunSimulationTick(void) override;
     void PreRender(void) override;
     void DrawImGuiUI(void) override;
+    //Temporary: the 2D overlay smoke test - a filled rounded rect, an outline and text, to prove
+    //the pass composites and the SDF resolves. See docs/ui_overlay_plan.md step 3.
+    void DrawOverlay(void) override;
+    void LayoutTouchButtons(int w, int h) override;
+
+    //Indices into InputController's touch-button list, handed out by AddTouchButton in
+    //SetupInput and used by LayoutTouchButtons to position them. Indices rather than
+    //pointers because the list is a vector and adding the next button would dangle one.
+    int touch_left = -1, touch_right = -1, touch_softdrop = -1;
+    int touch_cw = -1, touch_ccw = -1, touch_harddrop = -1, touch_hold = -1;
     vec3* GetCameraTargetPtr() override { return &camera_target; }
 
     SoundSystem* soundsystem = NULL;

@@ -173,7 +173,20 @@ void Application::Init(){
     main_scene->inputcontroller = main_window->inputcontroller;
     main_scene->shader = default_shader;
 
-    BinaryAsset::DumpBinaryAssets();
+    /*
+        THIS WHOLE FUNCTION IS UNREACHABLE, and that is worth knowing before reading anything in
+        it. Init() is virtual, FrameThreadFunction calls app->Init() (:211), and all fourteen apps
+        override it without chaining to this base - measured 2026-09-14, no caller anywhere.
+
+        The line below was BinaryAsset::DumpBinaryAssets() until that date, which made this look
+        like the place the baked asset table was produced. It was not: the dump only ever emitted
+        what the process happened to have loaded so far, and from here that is the default shaders
+        and nothing else. Producing the table is now tools/assetpack's job, off-line and from the
+        asset tree rather than from a session - see tools/assetpack_plan.md. What is left is the
+        listing the call has actually been doing in every build anyone ran, kept rather than
+        deleted so this stays a no-op change, and renamed so it says what it does.
+    */
+    BinaryAsset::ListBinaryAssets();
 
     //Just so the current items show on the first frame...?
     main_scene->UpdatePhysics(GetPhysicsTimestep());
@@ -181,6 +194,54 @@ void Application::Init(){
 
 void Application::DrawImGuiUI(){
     return;
+}
+
+/*
+    The on-screen buttons, drawn from InputController's rect list.
+
+    This is where the three pieces meet, and the shape is the point: InputController owns the
+    rectangles and emits keycodes, UIOverlay owns the pixels, and neither knows about the other.
+    Nothing flows back from here into input - SubmitPointer hit-tests the same list independently,
+    so a button works exactly as well when nothing draws it (item 67).
+
+    Run on the render thread with the overlay already Begun. Reading `f_down` here is a benign
+    race with the window thread that writes it: the worst outcome is a button drawn lit one frame
+    after it released, which is a frame of paint and not a missed input.
+*/
+void Application::DrawTouchButtons(){
+    if (!overlay || !overlay->IsReady() || !main_window || !main_window->inputcontroller){
+        return;
+    }
+    const std::vector<InputController::TouchButton>& buttons =
+        main_window->inputcontroller->GetTouchButtons();
+    if (buttons.empty()){
+        return;
+    }
+
+    for (const InputController::TouchButton& b: buttons){
+        vec2 min = vec2(b.rect.x,b.rect.y);
+        vec2 max = vec2(b.rect.x + b.rect.w,b.rect.y + b.rect.h);
+        //A corner radius proportional to the button rather than a constant, so the same layout in
+        //millimetres looks the same on a dense screen as on a coarse one once item 70 lands.
+        float radius = ((b.rect.w < b.rect.h) ? b.rect.w : b.rect.h) * 0.22f;
+
+        uint32_t fill    = b.f_down ? UIColor(90,190,255,150) : UIColor(230,238,255,40);
+        uint32_t outline = b.f_down ? UIColor(200,235,255,255) : UIColor(200,215,240,120);
+
+        overlay->AddRect(min,max,radius,fill);
+        overlay->AddRectOutline(min,max,radius,2.0f,outline);
+
+        if (b.label[0]){
+            //Sized from the BUTTON, not from a fixed point size - dpi-correct by construction,
+            //because the button already is whatever the layout made it.
+            float size = b.rect.h * 0.30f;
+            //y is a baseline, so the text is nudged down from the centre by roughly a third of its
+            //height to sit optically centred rather than hanging above the middle.
+            vec2 at = vec2(b.rect.x + b.rect.w * 0.5f,b.rect.y + b.rect.h * 0.5f + size * 0.34f);
+            overlay->AddText(b.label,at,size,UIColor(255,255,255,b.f_down ? 255 : 190),
+                             UI_ALIGN_CENTER);
+        }
+    }
 }
 
 //Function for rendering the frame to a window
@@ -205,6 +266,20 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     }
 
     app->Init();
+
+    /*
+        The 2D overlay, HERE rather than in Application::Init, because Init is virtual and an app
+        may replace it wholesale rather than calling the base - ApplicationTetris does exactly
+        that, to build a deferred renderer instead of the default one. Anything core needs for
+        every app therefore cannot live in Init. This spot is core-owned, on the render thread
+        with the context current, and after the app has declared its asset roots.
+
+        A missing font or shader is not fatal: Init logs, returns false, and the overlay stays
+        un-ready, so every Add* is a no-op and the app runs without a HUD rather than not at all.
+    */
+    app->overlay = new UIOverlay();
+    app->overlay->Init();
+
     //Before RegisterCoreMCPTools: those tools submit commands, so the handlers have to be in
     //place before any of them can be called.
     app->RegisterCoreCommandHandlers();
@@ -273,6 +348,37 @@ void Application::DrawFrame(){
     //This should render the objects and whatever it wants
     if (main_scene){
         main_scene->DrawFrame();
+    }
+
+    /*
+        The 2D overlay, between the scene and the panels.
+
+        Renderer::DrawFrame has just left resolve_fbo_id bound holding the resolved scene, and
+        nothing below rebinds - so this composites over the scene into the same buffer ImGui is
+        about to draw into and SwapWindowBuffers is about to present. The batch is rebuilt from
+        scratch every frame, which is why there is no dirty flag anywhere in UIOverlay.
+
+        Note this lands AFTER Renderer's own scene-only screenshot capture and BEFORE the
+        UI-inclusive one, so `screenshot include_ui:false` gives the clean 3D scene without the
+        HUD, and the default includes it. That split already existed for ImGui and the overlay
+        simply joins the UI side of it.
+    */
+    if (overlay){
+        //Re-lay the on-screen buttons whenever the surface changes, and once before the first
+        //frame. Here rather than at Init because the size is not final there - see
+        //Application::LayoutTouchButtons for the case that proved it.
+        if ((main_window->width != touch_layout_w) || (main_window->height != touch_layout_h)){
+            touch_layout_w = main_window->width;
+            touch_layout_h = main_window->height;
+            LayoutTouchButtons(touch_layout_w,touch_layout_h);
+        }
+
+        overlay->Begin(main_window->width,main_window->height);
+        DrawOverlay();
+        if (f_draw_touch_buttons){
+            DrawTouchButtons();
+        }
+        overlay->Draw();
     }
 
     //Overlay ImGui

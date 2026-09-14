@@ -67,6 +67,116 @@ KeyMap* InputController::AddKeyMap(uint32_t syskey, uint32_t mapped){
     return AddMapping(syskey,mapped,-1);
 }
 
+//--- On-screen buttons ---------------------------------------------------------------------------
+//See the block comment in the header for why these live in here and why they are edge-driven.
+
+int InputController::AddTouchButton(const TouchRect& rect, uint32_t mapped, const char* label){
+    TouchButton button;
+    button.rect = rect;
+    button.mapped_keycode = mapped;
+    if (label){
+        snprintf(button.label,sizeof(button.label),"%s",label);
+    }
+    //Its own keycode, never the app's, never 0. See TOUCH_SYSKEY_BASE for what sharing one costs.
+    button.system_keycode = next_touch_syskey++;
+    touch_buttons.push_back(button);
+
+    //The ordinary mapping, so everything downstream - edge detection, the multiply-mapped count,
+    //the focus gate, HoldKey, recording - treats this exactly like a key.
+    AddKeyMap(button.system_keycode,mapped);
+
+    debug->Info("Touch button %u -> action %u (index %d)\n",
+                button.system_keycode,mapped,(int)touch_buttons.size() - 1);
+    return (int)touch_buttons.size() - 1;
+}
+
+void InputController::SetTouchButtonRect(int index, const TouchRect& rect){
+    if ((index < 0) || (index >= (int)touch_buttons.size())){
+        return;
+    }
+    touch_buttons[index].rect = rect;
+}
+
+void InputController::SubmitPointer(int32_t pointer_id, float x, float y, bool down){
+    //Find the slot this pointer already owns, if any.
+    int slot = -1;
+    for (int i = 0; i < INPUT_CONTROLLER_MAX_TOUCHES; i++){
+        if (touch_pointers[i].id == pointer_id){
+            slot = i;
+            break;
+        }
+    }
+
+    if (!down){
+        if (slot < 0){
+            //Never saw it go down - pressed before the layout existed, or beyond the pointer
+            //limit. Nothing to release.
+            return;
+        }
+        int button_index = touch_pointers[slot].button_index;
+        touch_pointers[slot].id = -1;
+        touch_pointers[slot].button_index = -1;
+        if ((button_index >= 0) && (button_index < (int)touch_buttons.size())){
+            touch_buttons[button_index].f_down = false;
+            SubmitSystemKey(touch_buttons[button_index].system_keycode,false);
+        }
+        return;
+    }
+
+    if (slot >= 0){
+        //A move of a pointer already down. Deliberately nothing: the button was CAPTURED on press
+        //and is held until this pointer lifts, so a drifting thumb cannot drop a held direction
+        //and an edge cannot chatter at a rect boundary. See the header on why sliding between
+        //buttons is not a feature yet.
+        return;
+    }
+
+    //A new pointer. Take a free slot; if there is none, ignore it rather than evicting somebody
+    //else's finger - the platform layer already clamps to this same limit.
+    for (int i = 0; i < INPUT_CONTROLLER_MAX_TOUCHES; i++){
+        if (touch_pointers[i].id == -1){
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0){
+        return;
+    }
+
+    //First hit wins, so overlapping rects resolve by declaration order rather than by accident.
+    int hit = -1;
+    for (int i = 0; i < (int)touch_buttons.size(); i++){
+        if (touch_buttons[i].rect.Contains(x,y)){
+            hit = i;
+            break;
+        }
+    }
+
+    //Tracked even when it hit nothing (button_index -1), so its release is recognised as this
+    //pointer's rather than searched for among the buttons.
+    touch_pointers[slot].id = pointer_id;
+    touch_pointers[slot].button_index = hit;
+
+    if (hit >= 0){
+        touch_buttons[hit].f_down = true;
+        SubmitSystemKey(touch_buttons[hit].system_keycode,true);
+    }
+}
+
+void InputController::ReleaseAllTouchPointers(){
+    for (int i = 0; i < INPUT_CONTROLLER_MAX_TOUCHES; i++){
+        int button_index = touch_pointers[i].button_index;
+        touch_pointers[i].id = -1;
+        touch_pointers[i].button_index = -1;
+        if ((button_index >= 0) && (button_index < (int)touch_buttons.size())){
+            touch_buttons[button_index].f_down = false;
+            //Honoured even unfocused: SubmitSystemKey only gates key-DOWNS, so anything held can
+            //always release.
+            SubmitSystemKey(touch_buttons[button_index].system_keycode,false);
+        }
+    }
+}
+
 void InputController::UpdateKeyState(uint64_t sim_tick){
     PollDevices();
     ApplyPendingEvents(sim_tick);
@@ -159,9 +269,15 @@ void InputController::PollDevices(){
                 continue;   //the mouse axes and wheel have no system key to poll
             }
             if (map.system_keycode >= GAMEPAD_SYSKEY_BASE){
-                //A gamepad button, not a key. GetAsyncKeyState knows nothing about it and would
-                //return 0, which this loop would read as "released" and act on - cancelling every
-                //button press the instant PollGamepad reported it. PollGamepad owns these.
+                //A SYNTHETIC keycode, not a key: a gamepad button (PollGamepad owns those) or an
+                //on-screen button (SubmitPointer owns those). GetAsyncKeyState knows nothing about
+                //either and would return 0, which this loop would read as "released" and act on -
+                //cancelling every press the instant the source that owns it reported one.
+                //
+                //One threshold covers both because TOUCH_SYSKEY_BASE sits above the gamepad range,
+                //so this kept working for touch buttons without being changed. Worth knowing
+                //rather than relying on: a fourth source numbered BELOW this would be polled to
+                //death here with nothing to indicate why.
                 continue;
             }
             bool down = sample_keys && (GetAsyncKeyState(map.system_keycode) & 0x8000) != 0;
@@ -843,7 +959,26 @@ void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
         SetMouseOverWindow(true);
+        /*
+            The mouse drives the on-screen buttons as pointer 0 - the seam that makes them testable
+            on Windows without a touchscreen (docs/touch_input_plan.md step 2).
+
+            Forwarding the button state on every MOVE, rather than only on the up/down messages, is
+            what makes this robust without SetCapture. Press inside a button, drag outside the
+            window and release, and Win32 delivers no WM_LBUTTONUP to us at all - so the button
+            would stay latched and the piece would keep moving, which is exactly the failure the
+            touch plan's focus-loss note warns about. Here the next move with MK_LBUTTON clear
+            releases it. Capture would also fix it, and would fight ImGui for the mouse.
+
+            The down=true case costs nothing: SubmitPointer deliberately ignores a move of a
+            pointer already down, because a button is CAPTURED by the pointer that pressed it.
+        */
+        SubmitPointer(0,(float)x,(float)y,(wParam & MK_LBUTTON) != 0);
         //debug->Trace("WM_MOUSEMOVE x,y = %li,%li\n",x,y);
+    }else if (msg == WM_LBUTTONDOWN){
+        SubmitPointer(0,(float)GET_X_LPARAM(lParam),(float)GET_Y_LPARAM(lParam),true);
+    }else if (msg == WM_LBUTTONUP){
+        SubmitPointer(0,(float)GET_X_LPARAM(lParam),(float)GET_Y_LPARAM(lParam),false);
     }else if (msg == WM_MOUSEWHEEL){
         int d = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
         int x = GET_X_LPARAM(lParam);
@@ -864,12 +999,27 @@ void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
     }else if (msg == WM_ACTIVATE){
         //Losing the foreground stops the simulation seeing key presses at all, and releases
         //anything still held. ImGui is unaffected; it has its own Win32 handler.
-        SetFocused(LOWORD(wParam) != WA_INACTIVE);
+        bool focused = (LOWORD(wParam) != WA_INACTIVE);
+        SetFocused(focused);
+        if (!focused){
+            ReleaseAllTouchPointers();
+        }
         debug->Trace("WM_ACTIVATE focus=%i\n",(int)f_has_focus);
     }else if (msg == WM_SETFOCUS){
         SetFocused(true);
     }else if (msg == WM_KILLFOCUS){
         SetFocused(false);
+        /*
+            OUTSIDE SetFocused, not inside it. SetFocused takes state_mutex and so does
+            SubmitSystemKey, which ReleaseAllTouchPointers calls - and state_mutex is not
+            recursive, so folding this in would deadlock the window thread on the first alt-tab.
+
+            f_release_all_keys already drops what the mappings are holding, so this is not about
+            the key state. It is about the pointer-ownership table and each button's f_down flag:
+            without it a button the user was holding when they alt-tabbed stays lit for the
+            drawing layer, and its pointer slot stays occupied.
+        */
+        ReleaseAllTouchPointers();
     }else if (msg == WM_SETCURSOR){
     }else if (msg == WM_CHAR){
     }else if (msg == WM_CAPTURECHANGED){

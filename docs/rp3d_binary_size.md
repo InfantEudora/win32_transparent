@@ -4,38 +4,64 @@ Investigated 2026-09-13/14 against `C:/code/reactphysics3d` on branch `vehicle-c
 built the way we build it: MSYS2 MINGW64, GCC 13.1.0, GNU ld 2.40, default Release
 (`-O3 -DNDEBUG`), statically linked.
 
-Result: a **37% smaller binary** for the physics side, from removing a dependency that had
+Result: a **49% smaller binary** for the physics side, from removing a dependency that had
 nothing to do with physics. Work is committed on branch `size/no-iostream-dependency`
 (branched off `vehicle-constraint`). The game already builds and runs against it.
 
-## Read this first: a new define must match, or you get the 2026-09-07 bug again
+Two CMake options, both defaulting to **ON** so nothing changes unless you ask:
 
-The change adds a CMake option `RP3D_COMPILE_DEFAULT_LOGGER` (default **ON**, so nothing
-changes unless you ask). Turning it OFF is where the size win is — but it changes the
-declaration of `PhysicsCommon`:
+| option | effect when OFF |
+|---|---|
+| `RP3D_COMPILE_DEFAULT_LOGGER` | drops the built-in `DefaultLogger` (the `<fstream>`/`<sstream>` user) |
+| `RP3D_COMPILE_DEBUG_STRINGS` | drops every `to_string()` and all log message text; **forces the logger off too** |
+
+```
+  strings ON,  logger ON  (default)   2,242,048
+  strings ON,  logger OFF             1,413,120
+  strings OFF (forces logger OFF)     1,132,032
+```
+
+`RP3D_COMPILE_DEBUG_STRINGS=OFF` is the one to use. It subsumes the other.
+
+## Read this first: both defines must match, or you get the 2026-09-07 bug again
+
+Same failure class as the `VehicleWheelSettings` incident in `rp3d_brake_steer_task.md`, and
+just as quiet — but one of these is worse.
+
+**`IS_RP3D_DEFAULT_LOGGER_ENABLED` changes a struct size.**
 
 ```
 sizeof(PhysicsCommon)    logger ON: 2184      logger OFF: 2120
 ```
 
-64 bytes, the `Set<DefaultLogger*> mDefaultLoggers` member. Everything else
-(`PhysicsWorld`, `RigidBody`, `Collider`) is byte-identical.
+64 bytes, the `Set<DefaultLogger*> mDefaultLoggers` member. Everything else is byte-identical.
+Verified: a consumer compiled without the define, linked against a library built with it,
+produced no error of any kind. `PhysicsCommon physicsCommon;` on the stack then reserves 2120
+bytes while the library's constructor writes 2184.
 
-**A mismatch links silently.** Verified: a consumer compiled without the define, linked
-against a library built with it, produced no error of any kind. `PhysicsCommon physicsCommon;`
-on the stack then reserves 2120 bytes while the library's constructor writes 2184 — 64 bytes
-of stack corruption, no diagnostic. Same failure class as the `VehicleWheelSettings` incident
-in `rp3d_brake_steer_task.md`, and just as quiet.
+**`IS_RP3D_DEBUG_STRINGS_ENABLED` renumbers vtables, which is nastier.** It adds or removes a
+pure virtual `to_string()` on `CollisionShape` and `Joint`, so every virtual after that slot
+shifts:
 
-So the rule from that doc extends: **whenever you rebuild the library, carry
-`IS_RP3D_DEFAULT_LOGGER_ENABLED` across in the same step** — into the game's
-`3rdparty/reactphysics3d/` copy of the headers and into the game's own compile flags. Set it on
-both sides or neither. CMake handles it automatically if you link the target (it is a PUBLIC
-compile definition); our build does not, so it is manual.
+```
+  strings ON   slot 14: BoxShape::to_string()
+               slot 15: BoxShape::getLocalSupportPointWithoutMargin()
+  strings OFF  slot 14: BoxShape::getLocalSupportPointWithoutMargin()
+```
 
-If we ever ship a prebuilt `.a` to someone else, the member can be kept unconditionally
-(`Set<DefaultLogger*>` only needs `DefaultLogger` forward-declared) so the layout is stable in
-both configurations. Costs 64 bytes per `PhysicsCommon`, of which there is one.
+Object layout does **not** change (`sizeof(BoxShape)` is 80 and `sizeof(SliderJoint)` is 24
+either way), so nothing looks wrong: it links silently and then calls through the wrong vtable
+slot with the wrong signature. There is no diagnostic of any kind, at any stage.
+
+So the rule from the other doc extends: **whenever you rebuild the library, carry both defines
+across in the same step** — into the game's `3rdparty/reactphysics3d/` copy of the headers and
+into the game's own compile flags. Set them on both sides or neither. CMake does this
+automatically if you link the target (both are PUBLIC compile definitions); our build does not,
+so it is manual.
+
+If we ever ship a prebuilt `.a` to someone else, the logger member can be kept unconditionally
+(`Set<DefaultLogger*>` only needs `DefaultLogger` forward-declared) so that layout is stable.
+The vtable one cannot be made safe that way — it is inherent to removing a virtual.
 
 ## What was actually eating the binary
 
@@ -43,10 +69,10 @@ Attribution was done by parsing the GNU ld map and reconciling against the real 
 (agreed to within 0.04%).
 
 ```
-                        before                 after (logger OFF)
-  ReactPhysics3D    1,214,172  54%        1,181,708  83%
-  libstdc++/CRT       996,676  45%          206,506  14%
-  total             2,237,440             1,413,120
+                        before            logger OFF          strings OFF
+  ReactPhysics3D    1,214,172  54%     1,181,708  83%        919,880  81%
+  libstdc++/CRT       996,676  45%       206,506  14%        206,506  18%
+  total             2,237,440           1,413,120          1,132,032
 ```
 
 Nearly half the binary was the C++ runtime, and essentially all of that was **iostream and
@@ -86,9 +112,10 @@ handler displaces it (measured: −52,736 bytes, exception message still readabl
 `St13runtime_error`). That belongs in the engine, not in RP3D — it is a process-wide policy
 choice. Not done.
 
-`to_string()` at 156 KB is the largest discretionary item left. Removing it needs a
-compile-time switch, because it is pure virtual on `Joint` and `CollisionShape` *and* genuinely
-called from three `RP3D_LOG` sites. Not done — it is public API and we are not short of space.
+`to_string()` was the largest discretionary item at 156 KB. It is now behind
+`RP3D_COMPILE_DEBUG_STRINGS`, which removes 281,088 bytes in total — the `to_string()` bodies
+plus the `std::string` concatenation that built every log message at ~72 `RP3D_LOG` sites.
+With it off the binary contains zero `to_string` bodies and zero stream/locale objects.
 
 ## The linker will not help: `--gc-sections` does not work here
 
@@ -137,10 +164,14 @@ reachable. A two-line preprocessor guard removes what no linker configuration wi
 
 ```sh
 # from a MINGW64 shell
-cmake -S . -B build-nologger -G Ninja -DCMAKE_BUILD_TYPE=Release \
-      -DRP3D_COMPILE_DEFAULT_LOGGER=OFF
-cmake --build build-nologger -j
+cmake -S . -B build-nostrings -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DRP3D_COMPILE_DEBUG_STRINGS=OFF
+cmake --build build-nostrings -j
 ```
 
-Testbed requires the logger; the CMake will stop with a clear error if you combine
-`RP3D_COMPILE_TESTBED=ON` with the logger off.
+and on the game side, compile with `-DIS_RP3D_DEBUG_STRINGS_ENABLED` **absent** — i.e. do not
+define it anywhere. (With `RP3D_COMPILE_DEBUG_STRINGS=ON` you must define it on both sides.)
+
+Unit tests pass in both configurations. The testbed needs the strings; combining it with
+`RP3D_COMPILE_DEBUG_STRINGS=OFF` stops at configure time with an explicit message rather than
+failing deep in the build.

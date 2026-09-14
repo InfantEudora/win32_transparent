@@ -42,7 +42,13 @@ them - the resampler tables are `.bss` and cost no file bytes, which the first v
 Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
 and 61 stranded under a band A that says it is empty.
 
-On 2026-09-14: **item 84 closed** - scripted holds now advance from inside the tick, so edge-triggered actions survive `sim_step` in every app.
+On 2026-09-14: **item 84 closed** - scripted holds now advance from inside the tick, so edge-triggered
+SCRIPTED actions survive `sim_step` in every app. That wording said "edge-triggered actions" until
+later the same day, when the on-screen buttons showed that REAL asynchronous edges still fall through
+the same hole - see the new item 88. Also on 2026-09-14: **item 67 closed** (on-screen buttons, driven
+by the Win32 mouse as pointer 0) and **item 81 largely built** - `core/UIOverlay`, an SDF atlas baked
+by the new `tools/fontbake`, and one screen-space pass that draws rounded rects and text together.
+See `docs/ui_overlay_plan.md`.
 
 On 2026-09-13: **item 69 closed** - `WasKeyPressed` exists and Tetris's four gameplay actions fire on the press edge - and **item 84 opened**, a pre-existing bug it turned up: edge-triggered scripted input is never delivered while single-stepping. And **items 68 and 79 closed** - the eight genuinely broken format strings
 fixed, and `CONFIG=release` built - and **item 61 closed** and moved to the done list, along with
@@ -77,6 +83,33 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   §1.3), still open after the stage 0 review (`docs/pinball_findings.md` §4).
 
 ## Band B — under an hour each
+
+- [ ] **88. Edge-triggered REAL input is still lost under `sim_step` - item 84's other half.**
+  Item 84 was closed on 2026-09-14 having fixed this for **scripted** input: synthetic holds now
+  advance from inside the ticking branch, so a `HoldKey` survives single-stepping. Its closing note
+  says "in every app", and that is true of scripted holds and **not** of real asynchronous events.
+
+  `Application`'s physics loop calls `UpdateInput()` (and so `ApplyPendingEvents`) on **every**
+  pass, ticking or not, because a paused editor still needs a working camera. So a key event that
+  arrives from another thread while the simulation is paused - an on-screen button, a gamepad
+  button, any queued key - is drained on a NON-TICKING pass, raises its edge there, and `NextInput`
+  clears it before any tick sees it. The comment above `UpdateTickInput` in the tick loop describes
+  exactly this mechanism; only the synthetic half was moved.
+
+  **Measured 2026-09-14** with the new touch buttons (`docs/ui_overlay_plan.md` section 13): a CW
+  press rotates the piece with the simulation running, and does nothing at all under `tetris_step`.
+  Level-triggered actions are unaffected - `IsKeyDown` persists across passes, so LEFT/RIGHT move
+  correctly while stepped, which is why this hid for so long.
+
+  Consequences worth weighing before picking a fix. It makes **any** paused, stepped test of a
+  real edge-triggered action silently wrong, which is the same class of problem item 84 was opened
+  for and the same one that makes a recording untrustworthy. The fix is not "stop draining on
+  non-ticking passes" - `UpdateView` needs that input - but something closer to what
+  `ApplyTickInput` already does for holds: let an edge survive until a ticking pass consumes it.
+
+  There is a test that asserts the CURRENT behaviour (scratchpad `touch_test.sh`), so fixing this
+  will make that check fail rather than silently keep testing around it.
+
 
 - [ ] **43. The field is rebuilt every frame with no dirty flag.** One geometry pass plus
   log2(size)+2 dispatches, all of it repeated whether or not anything moved. Its share of the
@@ -156,7 +189,12 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
 
 ## Band C — one to three hours each
 
-- [ ] **67. On-screen input buttons, for Android.** Full plan in `docs/touch_input_plan.md`; this
+- [x] **67. On-screen input buttons, for Android.** **DONE 2026-09-14 on Windows** - ported back,
+  driven by the Win32 mouse as pointer 0, drawn through the new `UIOverlay` (item 81) and verified
+  end to end in `apps/tetris`. What was built and the two defects found doing it - the port's
+  `AddTouchButton` returning a pointer the next call invalidates, and the window size not being
+  final during `Init()` - are in `docs/ui_overlay_plan.md` section 13. Item 88 is the one thing
+  this could not fix. Original entry follows. Full plan in `docs/touch_input_plan.md`; this
   is the pointer, not a summary of it. The design in one line: a third input family alongside
   `AddKeyMap` and `AddGamePadMap`, so `input->AddTouchButton(rect,INPUT_TETRIS_LEFT)` sits next to
   the other two and **`ApplicationTetris::SetupInput` is the only app code that changes**.
@@ -343,9 +381,34 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
 
 - [ ] **75. Pack assets with a separate executable, and delete the self-dump.**
   `docs/asset_layout_plan.md` agreed on 2026-09-12 that `DUMP_BINARYASSETS` is stripped entirely in
-  favour of a separate packer. Neither half has happened: `core/BinaryAsset.cpp:139` still has the
-  `#ifdef`, and no packer was written. The port has a working one — `tools/pack_assets.cpp` (84
-  lines) plus `tools/pack_assets.mk` — so this is mostly a port-back.
+  favour of a separate packer. The port has a working one — `tools/pack_assets.cpp` (84 lines) plus
+  `tools/pack_assets.mk` — so this is mostly a port-back.
+
+  **The design is settled and written up: `tools/assetpack_plan.md` (2026-09-14).** One output form,
+  `.incbin` — a `.bin` blob, a four-line `.S` stub and the generated table — chosen over the port's
+  byte-array `.cpp` on measurement: 2 MB of assets is 10 MB of source and **3.09 s** to compile
+  against **0.05 s** to assemble, and it is linear (20 MB → 100 MB → 33.7 s), so grid's 69 MB would
+  be a 345 MB source file. A side `.pak` file is deferred, not rejected; what will bring it back is
+  a **visual loader** — a baked `assets[]` is simply there when the process starts, with nothing to
+  report progress on — and that decision gets made by the first thing that ships with a loading
+  screen. No `core/AssetPack` is being written now, and `LoadFile`'s search order is untouched.
+
+  **The self-dump half is DONE, 2026-09-14.** The `#ifdef`/`#else` block, `DumpBinaryAssets()` and
+  all four call sites are gone; the call sites became `BinaryAsset::ListBinaryAssets()`, which is
+  what they had been doing all along. `core/BinaryAsset.cpp` is 137 lines, down from 233, and is now
+  purely a reader — `BinaryAsset.h` carries the note saying `assets[]` is an *external* interface
+  the packer emits against, since nothing in the engine writes it any more. Verified: ship, dozer,
+  grid and tetris all build clean, and ship still logs its 11 assets followed by `ListAssets()`
+  exactly as before.
+
+  **Two facts this item had wrong**, corrected here rather than left to mislead the next reader:
+  the core call site was in `Application::Init()`, not `InitGraphics` (no such function exists), and
+  **`Application::Init()` is dead code** — it is virtual, `FrameThreadFunction` calls `app->Init()`
+  at `Application.cpp:211`, and all fourteen apps override it without chaining to the base. So that
+  call site never ran in any build, which is a stronger version of the point the item was making.
+  The dead base `Init()` is left alone deliberately; it is its own question, not this one.
+
+  What remains is the tool itself — steps 2-5 of the plan.
 
   **Windows *can* do this in the same build, and should stop.** That is the difference between the
   two trees and the reason the decision is worth writing down rather than inheriting: a Windows app
@@ -360,10 +423,10 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
     only one of them is reproducible.
   - Worse, the core call site is `Application.cpp:169`, inside `InitGraphics` — before the app has
     loaded almost anything. It could never have packed a real asset set from there.
-  - It is already dead: **`DUMP_BINARYASSETS` is not defined in `engine.mk` or in any app's
-    makefile**, so all four call sites (`Application.cpp:169`, plus `dozer`, `grid` and `ship`)
-    currently fall through to the `#else` stub, which just calls `ListBinaryAssets()`. Nothing
-    regresses by removing them; something misleading goes away.
+  - It was already dead: **`DUMP_BINARYASSETS` was never defined in `engine.mk` or in any app's
+    makefile**, so all four call sites fell through to the `#else` stub, which just called
+    `ListBinaryAssets()`. Nothing regressed by removing them; something misleading went away.
+    (Done — see the note above.)
 
   **What the tool needs to link is the good news**: `File.cpp`, `BinaryAsset.cpp`, `Debug.cpp`,
   `Debug_win32.cpp` and miniz. No `Object`, so no renderer, no rp3d, and none of item 73's

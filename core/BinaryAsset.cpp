@@ -14,8 +14,8 @@ BinaryAsset* BinaryAsset::StoreBinaryAsset(const char* filename, uint8_t* data, 
         if (asset.name.compare(filename) == 0){
             if (!asset.data){
                 //An entry ReleaseBinaryAsset emptied, being filled back in. Re-used rather than
-                //appended to so there is still exactly one entry per name - which is what
-                //DumpBinaryAssets walks to build the pack, and it must not see this file twice.
+                //appended to so there is still exactly one entry per name, which is what lets
+                //GetBinaryAsset stop at the first match instead of looking for a later one.
                 asset.data = data;
                 asset.size = sz;
                 return &asset;
@@ -34,8 +34,8 @@ BinaryAsset* BinaryAsset::StoreBinaryAsset(const char* filename, uint8_t* data, 
     // ADOPTED, not copied. This is the only copy of the file that will exist, and LoadFile
     // hands out a pointer to it rather than to a duplicate - see File.h on who owns what.
     // The sz+1-with-a-zero shape is the caller's promise (LoadFile calloc's it) and it is what
-    // makes an asset safe to treat as a C string: GLSL source is loaded this way, and
-    // DumpBinaryAssets compresses size+1 bytes so a baked-in asset keeps the same guarantee.
+    // makes an asset safe to treat as a C string: GLSL source is loaded this way, and the packer
+    // compresses size+1 bytes so a baked-in asset keeps the same guarantee - see BinaryAsset.h.
     a.data = data;
     a.size = sz;
     file_assets.push_back(a);
@@ -94,11 +94,15 @@ void BinaryAsset::Uncompress(){
             debug->Fatal("Uncompressing asset with exising data\n");
         }
         data = (uint8_t*)tinfl_decompress_mem_to_heap(compressed_data,compressed_size,&size,1500);
-        // DumpBinaryAssets() compresses size+1 bytes (content + the null
-        // terminator StoreBinaryAsset now guarantees), so what comes back
-        // is one byte longer than the logical content -- correct for that
-        // so `size` keeps meaning "content length" everywhere else, same
-        // as the disk-read path.
+        // The packer compresses size+1 bytes (content + the null terminator
+        // StoreBinaryAsset guarantees), so what comes back is one byte longer
+        // than the logical content -- correct for that so `size` keeps meaning
+        // "content length" everywhere else, same as the disk-read path.
+        //
+        // THIS IS ONE HALF OF A CONTRACT WITH tools/assetpack, which has no way
+        // to check it: a packer that compressed only `size` bytes would leave
+        // every asset here one byte short, and the only thing that would notice
+        // is a shader losing its last character. See BinaryAsset.h.
         size -= 1;
         iscompressed = false;
         debug->Info(" Done.\n");
@@ -135,100 +139,3 @@ BinaryAsset* BinaryAsset::GetBinaryAsset(const char* filename){
     }
     return NULL;
 }
-
-#ifdef DUMP_BINARYASSETS
-void BinaryAsset::DumpBinaryAssets(){
-    /*
-        Only entries that still hold their bytes. ReleaseBinaryAsset empties an entry in place and
-        the next load fills it back in, so an empty one here means a file was released and never
-        read again - baking that into the pack would produce a zero-length asset that fails at
-        run time in a build where there is no file to fall back to. Skipped and named instead.
-    */
-    std::vector<BinaryAsset*> to_dump;
-    for (BinaryAsset& asset:file_assets){
-        if (!asset.data){
-            debug->Warn("DumpBinaryAssets: %s was released and not read again - left out of the pack\n",asset.name.c_str());
-            continue;
-        }
-        to_dump.push_back(&asset);
-    }
-
-    int num_file_assets = to_dump.size();
-    if (num_file_assets == 0){
-        return;
-    }
-
-    FILE* file;
-	size_t sz = 0;
-	file = fopen("BinaryAssetMemory.cpp", "wb");
-    if(!file){
-		debug->Fatal("DumpBinaryAssets failed.\n");
-		return;
-	}
-    fprintf(file,"#include \"BinaryAsset.h\"\n");
-    fprintf(file,"int BinaryAsset::num_memory_assets = %i;\n",num_file_assets);
-    fprintf(file,"static const uint8_t asset_data[] = {\n");
-
-    //Build the binary blob, keep track off assets and offsets.
-    size_t offset = 0;
-    for (BinaryAsset* asset_ptr:to_dump){
-        BinaryAsset& asset = *asset_ptr;
-        debug->Info("Dump BinaryAsset: %s\n",asset.name.c_str());
-        //We compress them
-        if (1){
-            if (asset.iscompressed){
-                debug->Fatal("Duping an already compressed asset?\n");
-            }
-            // +1: bake the null terminator in too (see StoreBinaryAsset/
-            // Uncompress) so a decompressed memory asset is just as safe
-            // to treat as a C string as a fresh disk read is.
-            asset.compressed_data = (uint8_t*)tdefl_compress_mem_to_heap(asset.data,asset.size+1,&asset.compressed_size,1500);
-            float ratio = (100.0f / asset.size) * asset.compressed_size;
-            debug->Info(" Compressed from %zu to %zu (%.0f%%)\n",asset.size,asset.compressed_size,ratio);
-            asset.iscompressed = true;
-            asset.compressed_offset = offset;
-            for (size_t i=0;i<asset.compressed_size;i++){
-                fprintf(file,"0x%02X,",asset.compressed_data[i]);
-                offset++;
-            }
-        }else{
-            asset.offset = offset;
-            for (size_t i=0;i<asset.size;i++){
-                fprintf(file,"0x%02X,",asset.data[i]);
-                offset++;
-            }
-        }
-    }
-    fprintf(file,"};\n");
-    fprintf(file,"BinaryAsset BinaryAsset::assets[] = {\n");
-    for (BinaryAsset* asset_ptr:to_dump){
-        BinaryAsset& asset = *asset_ptr;
-        fprintf(file,"{\n");
-        fprintf(file,".name=\"%s\",\n",asset.name.c_str());
-        fprintf(file,".iscompressed=%d,\n",asset.iscompressed);
-        if (asset.iscompressed){
-            fprintf(file,".size = 0,\n");
-            fprintf(file,".offset = 0,\n");
-            fprintf(file,".data = NULL,\n");
-            fprintf(file,".compressed_size = %zu,\n",asset.compressed_size);
-            fprintf(file,".compressed_offset = %zu,\n",asset.compressed_offset);
-            fprintf(file,".compressed_data = (uint8_t*)&asset_data[%zu]\n",asset.compressed_offset);
-        }else{
-            fprintf(file,".size=%zu,\n",asset.size);
-            fprintf(file,".offset=%zu,\n",asset.offset);
-            fprintf(file,".data = (uint8_t*)&asset_data[%zu],\n",asset.offset);
-            fprintf(file,".compressed_size = 0,\n");
-            fprintf(file,".compressed_offset = 0,\n");
-            fprintf(file,".compressed_data = NULL\n");
-        }
-        fprintf(file,"},\n");
-    }
-    fprintf(file,"};\n");
-    fclose(file);
-}
-#else
-void BinaryAsset::DumpBinaryAssets(){
-    ListBinaryAssets();
-    //DeflateBinaryAssets();
-}
-#endif

@@ -49,13 +49,19 @@ almost none — it is close to the most portable thing this engine could possibl
    shim is the pattern to copy; it is about twenty lines.
 
 A note on precision qualifiers, because the port concluded otherwise and it is worth settling.
-`cube_desktop.vert`'s header says `precision`/`highp` are "ES-only syntax". Desktop GLSL has
-accepted precision qualifiers and `precision` statements since GLSL 1.30, parsed and ignored, for
-exactly this compatibility reason — so a shared source *should* be able to carry
-`precision highp float;` and compile on both. No shader in this tree uses one today, so there is no
-local precedent either way. **Verify it in step 2 rather than trusting this paragraph**: add the
-line to an existing shader, see if it still links, delete it again. Five minutes, and if it fails
-the fallback is to inject the precision block in the same place as the `#version` line.
+`cube_desktop.vert`'s header says `precision`/`highp` are "ES-only syntax", and forks the file over
+it.
+
+**Measured 2026-09-14, and the port is wrong about this.** `precision highp float;`,
+`precision mediump int;`, `uniform mediump sampler2D` and `in highp vec3` were all added to a
+`#version 430 core` fragment shader in this tree and compiled and linked with **no error and no
+warning**. Desktop GLSL has accepted precision qualifiers since GLSL 1.30 — added for exactly this
+compatibility, parsed and ignored.
+
+So the ES-looking half of a portable shader can live in the shared source and desktop simply
+ignores it. **`#version` really is the only irreconcilable token**, which is what makes §6 a
+complete answer rather than a first instalment — and it means the port's shader fork is avoidable
+when that merge comes.
 
 ---
 
@@ -260,15 +266,17 @@ system.
 
 1. ~~**`tools/fontbake.cpp`** plus the `3rdparty/stb_truetype/` copy.~~ **Done 2026-09-14 — see
    §10.** Nothing in the engine changed.
-2. **`#version` injection in `Shader.cpp`**, and settle the precision-qualifier question (§1).
-   Small, and everything after it depends on the answer.
-3. **`core/UIOverlay`** and the pass, on Windows. One filled rounded rect. Confirm the alpha
-   compositing question in §5 here, with the simplest possible thing on screen.
-4. **Text.** Load the `.fnt`, centred, sized in mm.
-5. **Port back item 67's touch buttons** and draw them through `UIOverlay` instead of
-   `ImGui::GetForegroundDrawList()`. Item 67 notes the buttons hit-test their own rect list in
-   `InputController` and never consult ImGui, so input is already decoupled and nothing about this
-   step touches it.
+2. ~~**`#version` injection in `Shader.cpp`**, and settle the precision-qualifier question (§1).~~
+   **Done 2026-09-14 — see §11.**
+3. ~~**`core/UIOverlay`** and the pass, on Windows. One filled rounded rect.~~ **Done
+   2026-09-14 — see §12.** Tested in `apps/tetris` at Dick's suggestion, which is also where the
+   pointer work in step 5 has to be validated.
+4. ~~**Text.**~~ **Done with step 3** — the shader draws glyphs and rects through one expression,
+   so splitting them across two steps would have meant writing the text path to verify the rect
+   one. Sized in pixels, not mm; see §12 for why that moved to the caller.
+5. ~~**Port back item 67's touch buttons** and draw them through `UIOverlay`.~~ **Done
+   2026-09-14 — see §13.** Driven by the Win32 mouse as pointer 0 and verified end to end in
+   `apps/tetris`.
 6. **Android**: the DSA shim (§1) and the context-loss re-upload (§7).
 7. **Item 82 (`USE_IMGUI=0`) becomes reachable.** It is blocked today because
    `Application::DrawTouchButtons` borrows an ImGui draw list; step 5 is what unblocks it.
@@ -369,3 +377,230 @@ payload would cost about four fifths of the file, and `miniz` is already vendore
 linked into every app. Not done, because the loader does not exist yet and an asset format is
 easier to change before something reads it than after. Worth doing if the size ever matters; not
 worth doing on speculation.
+
+---
+
+## 11. Step 2 as built (2026-09-14)
+
+`core/Shader.cpp` gained two file-static helpers and four lines inside `LoadShaderSource`, which is
+already the single funnel for vertex, fragment **and** compute sources. No shader file changed, no
+app changed, and no API changed.
+
+**The rule: a shader that states its own `#version` is left byte for byte alone; a shader that
+omits one gets the platform's preamble.** Omitting the version is how a shader opts in to being
+portable.
+
+That is deliberately not the tidier design. Always stripping whatever version is there and imposing
+one would be easier to describe, and it would silently change what all eleven existing shaders
+compile as — including the compute ones — on the strength of an assumption that they did not care.
+This way the existing tree is provably untouched and nothing had to be audited.
+
+Two details that are not obvious and are load-bearing:
+
+- **The version check skips comments, not just line 1.** A file may reasonably open with a licence
+  or an explanation. "Does line 1 start with `#version`" would then inject a *second* version
+  directive into a shader that already had one, producing a compile error naming a line the author
+  cannot see — because the offending line is not in their file. Both `//` and `/* */` are skipped.
+- **`#line 1 0` follows the preamble**, or every error in a portable shader is reported one line
+  further down than it really is on desktop and three on GLES. The offset differing per platform is
+  what makes this worth getting right rather than living with.
+
+### Verified
+
+Not by inspection — the engine loads shaders from disk at run time, so all of this was tested
+against a prebuilt `breakout.exe` by editing the shader between runs.
+
+| | |
+|---|---|
+| Precision qualifiers are valid desktop GLSL | four ES forms added to a `430 core` shader: compiled and linked, 0 errors, 0 warnings |
+| A shader with **no** `#version` compiles | `breakout_shield.frag` with line 1 deleted — and its next content is a `/* */` block, so the comment-skipping path ran too |
+| Error line numbers survive the injection | a deliberate syntax error appended as line 227 of 227 reported as **`0(227)`**. Without `#line 1 0` it would have said 228 |
+| Existing shaders are unaffected | restored, byte-for-byte per `git status`; all 12 of breakout's shader compiles succeed, 0 errors |
+
+### The Android half is written but unexercised
+
+`ShaderVersionPreamble()` carries an `#if defined(__ANDROID__)` arm returning
+`#version 310 es` plus `precision highp float;` / `precision highp int;`. Nothing compiles that arm
+in this tree, so it is a statement of intent that the port merge should check rather than a tested
+path. `highp` rather than the port's `mediump` default because what uses this first is an overlay
+whose entire job is crisp edges at exact pixel positions; a pass that would rather have the tile-GPU
+bandwidth can still say `mediump` per variable.
+
+---
+
+## 12. Steps 3 and 4 as built (2026-09-14)
+
+`core/UIOverlay.{h,cpp}` plus `shared_assets/shaders/ui_overlay.{vert,frag}`, drawn from
+`Application::DrawFrame` between the scene and the ImGui panels, with a new
+`virtual void DrawOverlay()` for apps to fill. Rects and text landed together, because the shader
+draws both through one expression and splitting them would have meant writing the text path anyway
+in order to verify the rect one.
+
+### The alpha-compositing worry was unfounded, and here is why
+
+§5 said to check this first because this repo's history made it likely to bite. It does not.
+`Window::CreateNewLayeredWindow` — the `WS_EX_LAYERED` / `UpdateLayeredWindow` path whose
+`AC_SRC_ALPHA` blend would demand **premultiplied** pixels — exists but **nothing calls it**.
+`Application::Start` uses `CreateNewWindow`, so `f_is_layered` is false in all fourteen apps and
+the window is ordinary and opaque. Straight alpha is correct, matching the global
+`GL_SRC_ALPHA`/`GL_ONE_MINUS_SRC_ALPHA`.
+
+Recorded because the risk is real if that path is ever revived: `ui_overlay.frag`'s final line and
+the blend func are the two places that would have to change together, and they now say so.
+
+### The real trap was somewhere else entirely
+
+**`Renderer::SetOpenGLState` runs ONCE, from `Renderer::Init` — not per frame.** So every piece of
+state the overlay changes stays changed into the next frame's scene pass. Leaving the depth test
+off would have flattened the entire game one frame later, which would have read as a renderer bug
+with nothing pointing back here. `UIOverlay::Draw` restores depth test, depth mask and culling
+explicitly, and the comment there says why rather than what.
+
+Two smaller ones worth recording so they are not rediscovered:
+
+- **`sample` is a reserved word in GLSL 4.00+.** The obvious name for the value fetched from the
+  atlas does not compile on desktop. It is `field`.
+- **`Add*/Draw` inside a `/* */` block comment ends the comment.** Cost one build. Comes up
+  naturally when documenting an API whose methods are being glob-abbreviated.
+
+### Pixels, not millimetres — a deliberate narrowing of §5
+
+§5 said the API should take millimetres so layout survives a change of screen. `UIOverlay` takes
+**pixels**, and the mm conversion belongs to the caller. A rasteriser legitimately speaks pixels;
+it is *layout* that must speak millimetres, which is the same seam ImGui uses. Doing it this way
+avoids inventing a dpi abstraction before item 70 lands a real win32 `GetDisplayDPI`, and item 67's
+button layout — the actual consumer — is where the conversion will live.
+
+### Drawn under ImGui
+
+The overlay is the app's UI and ImGui's windows are debug panels on top of it, which is the right
+way round while both exist and moot once item 82 drops ImGui from shipping builds. **One exception
+to watch:** item 67 records that a touch-button cluster drawn *under* an app's own HUD is live and
+invisible, which is worse than being drawn over — so when those move here they may need to be last
+rather than first. `Application::DrawOverlay`'s comment carries that warning.
+
+It also means the overlay lands after Renderer's scene-only screenshot capture and before the
+UI-inclusive one, so `screenshot include_ui:false` still gives the clean 3D scene. That split
+already existed for ImGui; the overlay joins the UI side of it.
+
+### Verified by measurement, not by eye
+
+A screenshot proves something drew. It does not prove the distance field is right. So the test
+recomputes the rounded-box SDF on the CPU for each pixel along a diagonal through a rounded corner,
+predicts the colour through both quads (fill, then outline, straight alpha over the background),
+and compares with what the GPU produced:
+
+```
+( 24,544) d= +4.26  got (0, 0, 0)        want (0, 0, 0)
+( 26,546) d= +1.44  got (6, 12, 17)      want (6, 12, 17)      <- outline at 6.5% coverage
+( 27,547) d= +0.02  got (90, 190, 255)   want (90, 190, 255)   <- dead on the edge
+( 28,548) d= -1.39  got (24, 38, 52)     want (24, 38, 52)     <- outline fading into fill
+( 29,549) d= -2.81  got (16, 20, 28)     want (16, 20, 28)
+```
+
+**Worst channel error across the whole corner: 0.** Byte-exact. That single result covers the
+distance field, the pixel-space antialiasing ramp, the outline band, the straight-alpha blend and
+the solid texel at once — if any one of them were wrong the partial pixels would not match.
+
+Also checked: the bbox corner of a radius-12 rect is background while the same offset into a
+radius-0 rect is fully filled (so the corner is missing because of the radius, not because the
+overlay is offset); the outline peak sits within 1 px of the rect edge; text renders at 12, 14, 22
+and 56 px **from the one 48 px bake**, which is the claim that justified SDF over a bitmap atlas.
+
+One measurement worth keeping for whoever tests this next: **a perfectly axis-aligned edge at an
+integer coordinate shows no antialiasing ramp at all** — pixel centres land exactly on the ends of
+the 1 px ramp, giving a hard 0-to-1 step. That is correct, not broken. Test antialiasing on a curve
+or a fractional position, or the first measurement will look like a bug.
+
+### Still temporary
+
+`ApplicationTetris::DrawOverlay` is a smoke test — a panel, a radius sweep and two text sizes —
+marked as such and to be deleted when the real HUD moves across.
+
+---
+
+## 13. Step 5 as built (2026-09-14)
+
+The on-screen buttons, ported back from the Android port, driven by the Win32 mouse as pointer 0,
+and drawn through `UIOverlay`. Verified end to end in `apps/tetris` — a synthetic click on the
+LEFT button moves the piece left, and the whole path from `PostMessage` to `piece_x` is exercised
+without reaching into the input system anywhere.
+
+**The plan's own test held.** `docs/touch_input_plan.md` said the design would be right if
+`ApplicationTetris::SetupInput` gained a handful of lines and nothing else in the app changed.
+It did: seven `AddTouchButton` calls plus a `LayoutTouchButtons` override. `GatherInput`, DAS/ARR,
+the HUD, the MCP tools and the snapshot are all untouched.
+
+Where the three pieces meet is worth stating because it is the whole point of the shape:
+**`InputController` owns the rectangles and emits keycodes, `UIOverlay` owns the pixels, and
+neither knows about the other.** `Application::DrawTouchButtons` reads `GetTouchButtons()` and
+nothing flows back — `SubmitPointer` hit-tests the same list independently, so a button works
+exactly as well when nothing draws it.
+
+### One real defect found, and it is not the one the port warned about
+
+The port's `AddTouchButton` returns `TouchButton*` — a pointer into a `std::vector` that the *next*
+`AddTouchButton` invalidates. Adding buttons in a row is the normal usage, so a caller that stored
+one would be holding a dangling pointer with nothing to say so. **This version returns an index.**
+
+The bigger one is a layout bug that the plan predicted in the abstract and that turned out to be
+immediate rather than hypothetical:
+
+> **The window size is not final during `Init()`.** `ApplicationTetris::Init` calls `SetupInput()`
+> and *then* `main_window->Resize(1200,900)`. A layout computed in `SetupInput` is therefore built
+> against 1280x800 for a window that becomes 1200x900, and the right-hand cluster lands off the
+> edge. Confirmed from the log: buttons at x=1164..1252 in a 1200px window.
+
+So **identity and geometry are now separate**. `AddTouchButton` allocates the synthetic keycode and
+its `KeyMap` once, at setup; `SetTouchButtonRect` moves a button afterwards; and a new
+`Application::LayoutTouchButtons(w,h)` is called before the first frame and again whenever the
+surface changes. That split is not tidiness — `keymap` is walked lock-free by `PollDevices` on the
+physics thread, so re-binding on every resize would both race that walk and grow the vector without
+bound. Moving four floats does neither.
+
+This also makes an Android orientation change work by construction rather than by luck, and it was
+verified live here by accident: a screenshot taken after the window had been resized to 1086px wide
+shows the right-hand cluster still correctly inset from the new edge.
+
+### Verified
+
+`scratchpad/touch_test.sh`, all checks passing against a clean build. Every press goes through
+`PostMessage` → `WndProc` → `HandleMessage` → `SubmitPointer`, the same path a real click takes.
+
+| | |
+|---|---|
+| LEFT / RIGHT move the piece | paused + `tetris_step`, so each result is a function of the input and not of timing |
+| a press on empty space does nothing | hit-test returns -1 and no key is submitted |
+| a held button auto-repeats | DAS/ARR still counts in ticks on the physics thread, unchanged |
+| releasing stops the repeat | the capture is released by the same pointer that took it |
+| CW / CCW rotate | unpaused — see the limitation below |
+| the button lights while held | measured: the held button reads markedly bluer than an idle one |
+
+Hit-testing was confirmed exactly right from a temporary trace before it was removed: `hit=0` for
+LEFT, `2` for RIGHT, `4` for CW, `3` for CCW and `-1` for the middle of the board.
+
+### Two traps for whoever tests this next
+
+**The window must have focus.** `SubmitSystemKey` drops key-*downs* while `!f_has_focus` — a click
+in a background window has no business driving the game. The pointer still hit-tests and the button
+still lights; only the key is gated. Driving this from a script means re-asserting focus before
+*every* click, because each `curl`/`python`/`powershell` the harness spawns puts a console in front.
+Without that, the log shows flawless hit-testing and nothing happens, which is a confusing half
+hour.
+
+**Edge-triggered actions are lost while the simulation is paused**, and this is an engine
+limitation rather than anything to do with the buttons. Rotation fires on `WasKeyPressed`, true for
+exactly one tick. While paused the physics loop keeps running *non-ticking* passes, each calling
+`UpdateInput` → `ApplyPendingEvents`; the press is drained there, raises its edge on a pass that
+does not tick, and `NextInput` clears it before any tick can see it. Measured: CW rotates the piece
+unpaused and does nothing under `tetris_step`.
+
+**That is backlog item 84's other half.** Item 84 was closed on 2026-09-14 having fixed exactly
+this for *synthetic* holds, by advancing them inside the ticking branch — the comment at
+`Application.cpp`'s tick loop says so. Real asynchronous events (a touch button, a gamepad button,
+any queued key) still fall through. The test asserts the limitation explicitly, so that fixing it
+makes the test fail loudly rather than quietly continuing to work around it.
+
+### Still temporary
+
+`ApplicationTetris::DrawOverlay` is still the step-3 smoke test. The buttons themselves are real.
