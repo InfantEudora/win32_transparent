@@ -819,54 +819,6 @@ void ApplicationTetris::SetLabelText(int label_id, const char* text){
     published under snapshot_mutex at the end of every tick - and the strings are formatted here,
     on this side of it. Nothing has to be published as text, and the simulation never waits.
 */
-/*
-    TEMPORARY - the 2D overlay smoke test (docs/ui_overlay_plan.md step 3).
-
-    Render thread, called by Application::DrawFrame between the scene and the ImGui panels, with
-    the overlay already Begin()'d at the window size. This exists to answer four questions that
-    are much easier to answer with shapes on screen than by reasoning:
-
-      - does the pass composite over the scene at all, and with the right alpha;
-      - are the rounded corners actually round, and antialiased, at several radii;
-      - does the outline sit ON the edge rather than inside or outside it;
-      - does the SDF text resolve at both a HUD size and a banner size from ONE 48px bake.
-
-    Delete this once the real HUD moves here.
-*/
-void ApplicationTetris::DrawOverlay(void){
-    if (!overlay || !overlay->IsReady()){
-        return;
-    }
-
-    const uint32_t panel   = UIColor(20,24,34,210);     //deliberately translucent: tests blending
-    const uint32_t accent  = UIColor(90,190,255,255);
-    const uint32_t white   = UIColor(255,255,255,255);
-    const uint32_t warm    = UIColor(255,180,60,255);
-
-    //A panel in the top-left. Translucent, so the scene has to show through it - which is the
-    //whole compositing question in one shape.
-    overlay->AddRect(vec2(24,544),vec2(300,710),12.0f,panel);
-    overlay->AddRectOutline(vec2(24,544),vec2(300,710),12.0f,2.0f,accent);
-
-    overlay->AddText("OVERLAY OK",vec2(40,584),22.0f,white);
-    overlay->AddText("rounded + sdf text",vec2(40,612),14.0f,accent);
-
-    //Radius sweep, including one where the radius exceeds half the short side - that must clamp
-    //to a capsule rather than turning the distance field inside out.
-    overlay->AddRect(vec2(40,630),vec2(90,670),0.0f,white);
-    overlay->AddRect(vec2(100,630),vec2(150,670),8.0f,white);
-    overlay->AddRect(vec2(160,630),vec2(210,670),20.0f,white);
-    overlay->AddRect(vec2(220,630),vec2(270,670),999.0f,white);
-
-    overlay->AddText("0    8   20  max",vec2(40,692),12.0f,accent);
-
-    //Centred text at banner size, from the same 48px bake as the 12px line above. If one atlas
-    //really does serve every size, these two are the proof.
-    overlay->AddText("TETRIS",vec2((float)main_window->width * 0.5f,
-                                   (float)main_window->height - 48.0f),
-                     56.0f,warm,UI_ALIGN_CENTER);
-}
-
 void ApplicationTetris::PreRender(void){
     if (!glyphs.IsValid()){
         return;
@@ -1013,6 +965,7 @@ void ApplicationTetris::SetupInput(){
     input->AddKeyMap(VK_SHIFT,INPUT_TETRIS_HOLD);
     input->AddKeyMap('R',INPUT_TETRIS_RESTART);
     input->AddKeyMap(VK_F1,INPUT_TETRIS_TOGGLE_UI);
+    input->AddKeyMap('M',INPUT_TETRIS_MUTE);
     //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
     //INPUT_PAUSE is handled by Scene::UpdatePhysics itself, so this is the whole feature.
     input->AddKeyMap('P',INPUT_PAUSE);
@@ -1042,13 +995,39 @@ void ApplicationTetris::SetupInput(){
     //geometry computed here would be wrong by 80 pixels and the right-hand cluster would hang off
     //the edge. See Application::LayoutTouchButtons.
     InputController::TouchRect later = {};
+
+    /*
+        MOVE LEFT IS ON THE LEFT AND MOVE RIGHT IS ON THE RIGHT, one under each thumb, rather than
+        both directions crammed under one of them. Holding a tablet in landscape, the direction you
+        press should be the side you press - and DAS means a direction is HELD, so the two are
+        never wanted by the same thumb at the same time anyway.
+
+        The rotations split the same way and end up as the inner button of each cluster, which
+        leaves each thumb with one direction and one rotation.
+    */
     touch_left      = input->AddTouchButton(later,INPUT_TETRIS_LEFT,      "<");
     touch_softdrop  = input->AddTouchButton(later,INPUT_TETRIS_SOFT_DROP, "v");
-    touch_right     = input->AddTouchButton(later,INPUT_TETRIS_RIGHT,     ">");
     touch_ccw       = input->AddTouchButton(later,INPUT_TETRIS_ROTATE_CCW,"CCW");
-    touch_cw        = input->AddTouchButton(later,INPUT_TETRIS_ROTATE_CW, "CW");
+
     touch_harddrop  = input->AddTouchButton(later,INPUT_TETRIS_HARD_DROP, "DROP");
-    touch_hold      = input->AddTouchButton(later,INPUT_TETRIS_HOLD,      "HOLD");
+    touch_cw        = input->AddTouchButton(later,INPUT_TETRIS_ROTATE_CW, "CW");
+    touch_right     = input->AddTouchButton(later,INPUT_TETRIS_RIGHT,     ">");
+
+    /*
+        Chrome, top-right. All three work WHILE PAUSED, which is the whole reason they are handled
+        where they are rather than in the gameplay tick:
+
+          - New game submits TETRIS_CMD_RESTART, and Scene::BeginPass drains the command queue
+            before it decides whether to tick.
+          - Pause is INPUT_PAUSE, the ENGINE's action - the same one 'P' is mapped to - which
+            BeginPass services itself on every pass. There is no app code for it at all, which is
+            the point: a pause handled in RunSimulationTick would be a one-way trip, because the
+            tick that would read the release never runs while paused.
+          - Mute is read in UpdateView, which runs on ticking and non-ticking passes alike.
+    */
+    touch_newgame   = input->AddTouchButton(later,INPUT_TETRIS_RESTART,   "NEW");
+    touch_pause     = input->AddTouchButton(later,INPUT_PAUSE,            "II");
+    touch_mute      = input->AddTouchButton(later,INPUT_TETRIS_MUTE,      "MUTE");
 }
 
 /*
@@ -1064,22 +1043,53 @@ void ApplicationTetris::SetupInput(){
 */
 void ApplicationTetris::LayoutTouchButtons(int w, int h){
     InputController* input = main_scene->inputcontroller;
-    const float s = 88.0f;      //button size
-    const float g = 12.0f;      //gap
-    const float m = 28.0f;      //margin from the window edge
-    float row = (float)h - m - s;       //bottom row
 
-    //Movement on the left, thumb-side, in the order they sit on a d-pad.
-    input->SetTouchButtonRect(touch_left,     {m,             row, s,s});
-    input->SetTouchButtonRect(touch_softdrop, {m + (s + g),   row, s,s});
-    input->SetTouchButtonRect(touch_right,    {m + 2*(s + g), row, s,s});
+    const float s     = 88.0f;      //a comfortable thumb target
+    const float g     = 12.0f;      //gap
+    const float m     = 28.0f;      //inset from the window edge
+    const float small = 64.0f;      //chrome, smaller on purpose - see below
 
-    //Actions on the right. Hard drop sits outermost and hold above it, so the two that end a piece
-    //are not adjacent to the two that merely turn it.
-    input->SetTouchButtonRect(touch_ccw,      {(float)w - m - 3*s - 2*g, row, s,s});
-    input->SetTouchButtonRect(touch_cw,       {(float)w - m - 2*s - g,   row, s,s});
-    input->SetTouchButtonRect(touch_harddrop, {(float)w - m - s,         row, s,s});
-    input->SetTouchButtonRect(touch_hold,     {(float)w - m - s, row - (s + g), s,s});
+    const float left  = 0.0f;
+    const float top   = 0.0f;
+    const float right = (float)w;
+    const float row   = (float)h - m - s;
+
+    /*
+        ANCHORED TO CORNERS, not laid out from one origin. The well and the HUD both live in the
+        middle, so the two thumb clusters go in the bottom corners, where a hand holding a tablet
+        in landscape actually is - and anchoring each cluster to its own edge is what keeps that
+        true at every window size.
+    */
+
+    //Left thumb, built rightwards from the left edge.
+    {
+        float x = left + m;
+        input->SetTouchButtonRect(touch_left,     {x,row,s,s});  x += s + g;
+        input->SetTouchButtonRect(touch_softdrop, {x,row,s,s});  x += s + g;
+        input->SetTouchButtonRect(touch_ccw,      {x,row,s,s});
+    }
+
+    //Right thumb, MIRRORED: built leftwards from the right edge, so ">" is the outermost button on
+    //the right exactly as "<" is the outermost on the left.
+    {
+        float x = right - m - s;
+        input->SetTouchButtonRect(touch_right,    {x,row,s,s});  x -= s + g;
+        input->SetTouchButtonRect(touch_cw,       {x,row,s,s});  x -= s + g;
+        input->SetTouchButtonRect(touch_harddrop, {x,row,s,s});
+    }
+
+    /*
+        Top-right corner: new game, pause, mute. SMALLER on purpose - these are not played with,
+        and a fat target up there would be in the way of the board. Built leftwards from the right
+        edge like the thumb cluster below it, so the two corners stay visually aligned.
+    */
+    {
+        const float y = top + m;
+        float x = right - m - small;
+        input->SetTouchButtonRect(touch_mute,    {x,y,small,small});  x -= small + g;
+        input->SetTouchButtonRect(touch_pause,   {x,y,small,small});  x -= small + g;
+        input->SetTouchButtonRect(touch_newgame, {x,y,small,small});
+    }
 }
 
 
@@ -1159,6 +1169,29 @@ void ApplicationTetris::UpdateView(void){
         f_show_inspector_window = f_show_engine_ui;
         f_show_engine_window = f_show_engine_ui;
     }
+
+    if (input->WasKeyReleased(INPUT_TETRIS_MUTE)){
+        f_sound_enabled = !f_sound_enabled;
+    }
+
+    /*
+        New game. HERE rather than in RunSimulationTick, and as a COMMAND rather than a direct
+        NewGame() call, and both halves of that are for the same reason: so it works while paused.
+
+        It used to sit in the gameplay tick, which does not run while the simulation is paused - so
+        the one moment a player is most likely to reach for "new game" was the one moment it did
+        nothing. UpdateView runs on every pass, and Scene::BeginPass drains the command queue
+        BEFORE it decides whether to tick, so the restart lands either way.
+
+        This is also exactly what the ImGui "New game" button already did, so there is now one path
+        rather than two that could drift.
+    */
+    if (input->WasKeyReleased(INPUT_TETRIS_RESTART)){
+        SimCommand cmd;
+        cmd.type = TETRIS_CMD_RESTART;
+        cmd.value[0] = 0.0f;   //0 means "pick a fresh seed"
+        SubmitUICommand(cmd);
+    }
 }
 
 /*
@@ -1175,13 +1208,8 @@ void ApplicationTetris::RunSimulationTick(void){
 
     InputController* input = main_scene->inputcontroller;
 
-    //Restart is a game action, so it stays here and is read whether or not a game is in progress.
-    //It is deliberately not part of the TetrisInput the rules see.
-    if (input->WasKeyReleased(INPUT_TETRIS_RESTART)){
-        //Already on the physics thread inside the tick - so this is a direct call, not a command.
-        //A command would be a round trip through the queue to arrive back here one tick later.
-        NewGame(next_auto_seed++);
-    }
+    //Restart moved to UpdateView - see the note there. It is chrome by behaviour even though it is
+    //a game action by subject: it has to work while paused, and this hook does not run then.
 
     TetrisInput actions;
     GatherInput(actions);
@@ -2061,6 +2089,11 @@ json ApplicationTetris::BuildStateJson(){
         {"tick",copy.tick},
         {"game_ticks",copy.game_ticks},
         {"paused",f_paused},
+        //Read live for the same reason as "paused": it is chrome, toggled in UpdateView on passes
+        //that need not tick, so a snapshotted copy would lag or never move at all. It is here so
+        //the mute button is TESTABLE - without it the only way to tell whether a press landed is
+        //to listen, which no automated check can do.
+        {"sound",f_sound_enabled},
         {"phase",PhaseName(copy.phase)},
         {"score",copy.score},
         {"lines",copy.lines},
@@ -2209,7 +2242,7 @@ void ApplicationTetris::RenderTetrisHUD(){
     ImGui::TextDisabled("arrows move/soft drop");
     ImGui::TextDisabled("Z/X or up rotate");
     ImGui::TextDisabled("space hard drop, C hold");
-    ImGui::TextDisabled("R restart, P pause, F1 panels");
+    ImGui::TextDisabled("R restart, P pause, M mute, F1 panels");
 
     ImGui::End();
 }

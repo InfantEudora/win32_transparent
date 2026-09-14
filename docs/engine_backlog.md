@@ -1,7 +1,7 @@
 ﻿# Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
-`docs/engine_backlog_done.md` — 55 closed items, with their verification notes intact, because
+`docs/engine_backlog_done.md` — 62 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
 Most items are drawn from two runs in which an agent built a game on this engine as an audit of it:
@@ -41,6 +41,14 @@ between. Item 80 and the size reference were then corrected after building opena
 them - the resampler tables are `.bss` and cost no file bytes, which the first version got wrong.
 Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
 and 61 stranded under a band A that says it is empty.
+
+On 2026-09-14: **item 75 closed and moved** - assets are packed by `tools/assetpack`, a separate
+exe, and the engine's `DUMP_BINARYASSETS` self-dump is gone. Tetris now builds as a **single
+4.58 MB file with no `shared_assets` folder**, 23% smaller than the exe-plus-tree it replaces, and
+proven by running it alone in an empty directory. `apps/ui` bakes by default; every other app is
+unchanged and opts in with `BAKE_ASSETS=1`. Plan and measurements in `tools/assetpack_plan.md`.
+**Item 89 opened** out of it: `Application::Init()` is dead code and the graphics prologue it holds
+is copy-pasted into all fourteen apps.
 
 On 2026-09-14: **item 84 closed** - scripted holds now advance from inside the tick, so edge-triggered
 SCRIPTED actions survive `sim_step` in every app. That wording said "edge-triggered actions" until
@@ -188,6 +196,54 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   Anything in this engine that rolls a small body against a wall will hit this.
 
 ## Band C — one to three hours each
+
+- [ ] **89. `Application::Init()` is dead, and the graphics prologue it holds is copy-pasted into
+  all fourteen apps. Take the port's `InitGraphics()` split instead.**
+  Found 2026-09-14 while closing item 75's first half. `Init()` is virtual, `FrameThreadFunction`
+  calls `app->Init()` (`core/Application.cpp:211`), and **every app overrides it without chaining to
+  the base**, so `Application::Init()` has no caller in any build. That is why the dump call site
+  inside it could never have worked, and it is why nobody noticed.
+
+  **The base is not a base, it is a stale copy.** Its body — construct the renderer at window size,
+  `renderer->Init()`, `SetVSync(true)`, load `shaders/default.*`, `new Scene()` and wire it — has
+  drifted from all fourteen live versions. Measured: `new Renderer(...)` and
+  `default_shader = new Shader("shaders/default.vert","shaders/default.frag")` appear in **14 of 14**
+  apps; `renderer->Init()` **with no pipeline argument appears only in the dead base**, every live
+  app passing one or defaulting differently; `SetVSync` in **7 of 14**, so the other seven take
+  whatever the driver gives them and that varies by machine; and `main_scene = new Scene()` in
+  **none**, because apps build their scene through a factory (`CreateEmptyScene`, `CreateMainScene`,
+  `CreateHandTestScene`).
+
+  **So the fix is NOT to make apps chain to it.** A base whose prologue hard-codes the pipeline,
+  VSync and the scene is one every app would have to call and then undo half of, which is worse than
+  none. The split wanted is the opposite: a **non-virtual `InitGraphics()` that owns the prologue and
+  calls the virtual `Init()` hook inside itself**, leaving `Init()` to mean only "the app's own
+  setup".
+
+  **The port has already built exactly that, and been through its two non-obvious lessons** —
+  `C:/code/android/android_core/Application.cpp:155` (Android) and `:950` (its Windows counterpart).
+  Both are worth taking verbatim rather than rediscovering:
+
+  - **The `main_scene` post-condition goes AFTER `Init()`, not before.** Checking first makes the
+    legal case — an app that creates its scene *in* `Init()` — fatal, and the port records Tetris
+    dying on that line every launch after a completely successful renderer bring-up. Still fatal
+    after, and worth being: every line below dereferences it, and the message names the one thing
+    that has to be true by then.
+  - **Wiring the scene is defaults, not overwrites.** `main_scene->renderer`/`camera`/
+    `inputcontroller` are filled in only where still NULL, because an app's `Init()` may have built
+    its own scene with its own camera (Tetris's is orthographic) and the prologue must not stamp
+    over it. The dead base here assigns unconditionally, which is the bug that would have appeared
+    the moment anyone made an app chain to it.
+
+  **One real defect falls out of doing this**: `renderer->Init()` returns `bool` and **13 of the 14
+  apps ignore it** — `apps/ship` is the only one that checks and Fatals. A pipeline that fails to
+  initialise therefore gives a black window and no message in thirteen apps. A prologue that owns
+  the call gets the check right once, for all of them.
+
+  **Do it with the Android merge, not before.** Deleting the dead `Init()` on its own is a
+  ten-second change and the wrong one: it throws away the evidence of what the prologue was meant
+  to be, immediately before the merge that wants to reinstate a shared one. See the merge notes at
+  the bottom of this file and `docs/asset_layout_plan.md`.
 
 - [x] **67. On-screen input buttons, for Android.** **DONE 2026-09-14 on Windows** - ported back,
   driven by the Win32 mouse as pointer 0, drawn through the new `UIOverlay` (item 81) and verified
@@ -360,7 +416,56 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   object against 17.9 MB — a different toolchain and link model, so read the ratio, not the
   numbers.
 
-- [ ] **74. `USE_MCP`, so a shipped build does not carry a debug server.** Same convention again,
+- [ ] **74. `USE_MCP`, so a shipped build does not carry a debug server.**
+
+  **A prerequisite was found and done first, 2026-09-14: OCPP is out of core.** `core/HTTPServer.h`
+  held an `OCPPServerHandler` **as a member**, and its upgrade path tested for `"ocpp1.6"` and
+  `"ocpp2.0"` by name. Since `core/MCPServer` stands on `HTTPServer` and every app has MCP, **all
+  fourteen apps linked a charge-point client and its 992-line server handler.** Found by relinking
+  tetris without the OCPP objects, which failed with four undefined references straight out of
+  `HTTPServer.cpp`.
+
+  `HTTPServer` now exposes a `WebSocketApp` — four optional `std::function` hooks
+  (`accepts_protocol`, `on_open`, `on_message`, `on_close`) — and `apps/ocpp` installs the protocol
+  into them. WebSockets are a transport and stay in core; what is spoken over them does not. The
+  handler had taken its two dependencies as `std::function` from the start, so this is the shape it
+  was written for. `OCPPClient.{h,cpp}` and `OCPPServerHandler.{h,cpp}` moved to `apps/ocpp/`.
+
+  **Measured: `tetris_release.exe` 3,645,952 → 3,468,800, 177,152 bytes off every app (4.9%).**
+  Verified: MCP still answers `initialize` and `tools/call` on tetris (the HTTP POST path was never
+  websocket); `apps/ocpp` serves its page, negotiates `ocpp1.6` and echoes it in the 101, logs
+  `OCPP client connected (protocol=ocpp1.6)` from its own handler, and a no-subprotocol upgrade
+  still joins the broadcast list and gets its variables snapshot. `tank`, `tileset`, `breakout` and
+  `ui` all build clean.
+
+  Two details preserved deliberately: a client that negotiates a subprotocol is still kept **out**
+  of `m_wsClients`, so it never receives the status-page broadcast; and `ocpp_last_msg_<path>` is
+  still set, now from the app's `on_message`, though nothing in the tree reads it.
+
+  **What this changes about the item below.** `HTTPServer` now has exactly **two** consumers in the
+  whole tree: `core/MCPServer`, and `apps/ocpp`. Nothing else touches it — `apps/tileset` carried a
+  bare unused `#include "HTTPServer.h"` (since removed) and `apps/tank`'s only mention is a comment.
+  So `USE_MCP=0` can drop `HTTPServer`, `TCPServer`, `Socket` and the websocket stack outright for
+  **all thirteen** non-OCPP apps, not just some of them.
+
+  **Decided 2026-09-14: two flags.** `apps/ocpp` needs `HTTPServer` whether or not it wants MCP, so
+  the server cannot hang off `USE_MCP` without making an unrelated feature load-bearing for it.
+
+  | flag | drops when off | wanted by |
+  |---|---|---|
+  | `USE_NET` | `Socket.cpp`, `TCPServer.cpp`, `TCPClient.cpp`, `HTTPServer.cpp`, `-lws2_32 -lcrypt32` | `apps/ocpp` (its `OCPPClient` is a `TCPClient`) |
+  | `USE_MCP` | `MCPServer.cpp`, and the app's own `RegisterMCPTools()` | everything, while developing |
+
+  `USE_MCP := 1` implies `USE_NET := 1`; one `ifeq` in `engine.mk` above the `CORE_CFLAGS` line.
+
+  **`USE_MCP` DEFAULTS ON, unlike every other flag in this family, and that is deliberate.**
+  `USE_SOUND` and `USE_PHYSICS` default off because doing without is the safe default. MCP is the
+  opposite: `screenshot`, `sim_pause` and `sim_step` are how work in this repo is verified at all
+  (see `CLAUDE.md`), so an app that quietly lost them would break the development loop rather than
+  merely shrink. A shipped build turns it off on purpose — which is also why the flag is worth
+  having rather than deleting the server.
+
+  Same convention again,
   and the argument is not size but that MCP is a *debugging* interface — a JSON-RPC server that
   lets an agent drive the app — and shipping one is pointless at best. Today every app binds
   127.0.0.1:8765 whether or not anyone is driving it.
@@ -378,83 +483,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   independent of it; the only shared piece is item 72's stamp. A host build tool wants this off
   for the same reason it wants 73 off, and for a blunter one: a sprite packer that opens a
   socket is a thing nobody asked for.
-
-- [ ] **75. Pack assets with a separate executable, and delete the self-dump.**
-  `docs/asset_layout_plan.md` agreed on 2026-09-12 that `DUMP_BINARYASSETS` is stripped entirely in
-  favour of a separate packer. The port has a working one — `tools/pack_assets.cpp` (84 lines) plus
-  `tools/pack_assets.mk` — so this is mostly a port-back.
-
-  **The design is settled and written up: `tools/assetpack_plan.md` (2026-09-14).** One output form,
-  `.incbin` — a `.bin` blob, a four-line `.S` stub and the generated table — chosen over the port's
-  byte-array `.cpp` on measurement: 2 MB of assets is 10 MB of source and **3.09 s** to compile
-  against **0.05 s** to assemble, and it is linear (20 MB → 100 MB → 33.7 s), so grid's 69 MB would
-  be a 345 MB source file. A side `.pak` file is deferred, not rejected; what will bring it back is
-  a **visual loader** — a baked `assets[]` is simply there when the process starts, with nothing to
-  report progress on — and that decision gets made by the first thing that ships with a loading
-  screen. No `core/AssetPack` is being written now, and `LoadFile`'s search order is untouched.
-
-  **The self-dump half is DONE, 2026-09-14.** The `#ifdef`/`#else` block, `DumpBinaryAssets()` and
-  all four call sites are gone; the call sites became `BinaryAsset::ListBinaryAssets()`, which is
-  what they had been doing all along. `core/BinaryAsset.cpp` is 137 lines, down from 233, and is now
-  purely a reader — `BinaryAsset.h` carries the note saying `assets[]` is an *external* interface
-  the packer emits against, since nothing in the engine writes it any more. Verified: ship, dozer,
-  grid and tetris all build clean, and ship still logs its 11 assets followed by `ListAssets()`
-  exactly as before.
-
-  **Two facts this item had wrong**, corrected here rather than left to mislead the next reader:
-  the core call site was in `Application::Init()`, not `InitGraphics` (no such function exists), and
-  **`Application::Init()` is dead code** — it is virtual, `FrameThreadFunction` calls `app->Init()`
-  at `Application.cpp:211`, and all fourteen apps override it without chaining to the base. So that
-  call site never ran in any build, which is a stronger version of the point the item was making.
-  The dead base `Init()` is left alone deliberately; it is its own question, not this one.
-
-  What remains is the tool itself — steps 2-5 of the plan.
-
-  **Windows *can* do this in the same build, and should stop.** That is the difference between the
-  two trees and the reason the decision is worth writing down rather than inheriting: a Windows app
-  can dump its own assets and be recompiled locally, which Android cannot do at all (no way to run
-  the build, exercise its `LoadFile` calls on-device, and pull a generated `.cpp` back off). So the
-  port had no choice and this repo does. Taking the separate exe anyway is a **preference, decided
-  2026-09-13** — and the existing code is the argument for it:
-
-  - `DumpBinaryAssets()` packs **only what that session happened to load** (`BinaryAsset.cpp:146`
-    skips any entry whose bytes were released, and correctly warns rather than baking a
-    zero-length asset). A directory walk packs what is *there*. Those are different answers, and
-    only one of them is reproducible.
-  - Worse, the core call site is `Application.cpp:169`, inside `InitGraphics` — before the app has
-    loaded almost anything. It could never have packed a real asset set from there.
-  - It was already dead: **`DUMP_BINARYASSETS` was never defined in `engine.mk` or in any app's
-    makefile**, so all four call sites fell through to the `#else` stub, which just called
-    `ListBinaryAssets()`. Nothing regressed by removing them; something misleading went away.
-    (Done — see the note above.)
-
-  **What the tool needs to link is the good news**: `File.cpp`, `BinaryAsset.cpp`, `Debug.cpp`,
-  `Debug_win32.cpp` and miniz. No `Object`, so no renderer, no rp3d, and none of item 73's
-  questions — a hand-listed source set in its own small makefile, exactly as the port has it. (The
-  heavier tool class, a GUI packer built on `Application`, is what needs 73; see there.)
-
-  Two things in it to take deliberately rather than incidentally:
-
-  - **It preserves the relative path in an asset's name** — `sound/click.wav`, not `click.wav` —
-    which is exactly the name `LoadFile` is passed here. A flattening packer means patching every
-    asset string in every app, forever, and silently loses one of any two files sharing a basename
-    in different directories. `lexically_relative(".")` strips the iterator's `./` and
-    `.generic_string()` forces forward slashes, without which a name packed on Windows carries
-    backslashes and never matches a lookup. Multiple asset dirs are scanned in order and a later
-    dir's file wins, which is how an app's own `assets/` overrides `shared_assets/` — the same
-    precedence `main.cpp` already declares for the runtime path, and it must not disagree with it.
-  - **The make dependency has to recurse with it**, and this is the part that bites.
-    `$(wildcard $(d)/*)` sees only the top level, so an edit to `assets/sound/click.wav` would not
-    trigger a repack and the app would run against a stale baked-in copy. The port uses a pure-make
-    recursive wildcard rather than `$(shell find ...)`, so it does not depend on which shell make
-    picked. Its own two traps, both learned the hard way: a **space before `$(filter`** in that
-    function is load-bearing (without it make reports a nonsense concatenated target name), and the
-    asset **directories** must be prerequisites alongside the files, because deleting a whole
-    subdirectory removes both it and its files from the list without making anything look out of
-    date — the parent's mtime is the only thing that changes on a delete.
-
-  Pairs with item 61's `FILE_RELEASE_EMBEDDED` note — the packer is what creates the build in which
-  that answer is the right one.
 
 - [ ] **76. `Renderer(int w, int h)` — a renderer has no size.** `Renderer::width`/`height` are set
   once from the window and then read by eight call sites, all of them doing the same thing:

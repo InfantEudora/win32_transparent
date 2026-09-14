@@ -69,7 +69,23 @@ void Debugger::Start(char *name) {
         SetupConsole();
     }
     this->name = name;
-    PrintLine(DEBUG_INFO, "Debugger [%s] started\n", name);
+    /*
+        No "Debugger [x] started" line here any more, and it is not coming back.
+
+        Every Debugger in this project is a file-scope global, and engine.mk compiles ALL of
+        core/ into every app, so each one announced roughly fifty subsystems before main() -
+        GLTFLoader, Physics, SoundSystem and forty-odd others - in apps that never call any of
+        them. apps/ui is a bare ImGui harness and printed the lot.
+
+        It could not even be turned off where it mattered: the line was emitted from here,
+        BEFORE the constructor's SetLevel() runs, so a Debugger built at DEBUG_NONE announced
+        itself just as loudly. tools/lockd had to resort to a priority-101 static constructor
+        to silence three of them for its --list output; that hack is gone with this line.
+
+        A subsystem is visible in the log the moment it logs something, which is the only
+        moment its existence is interesting. Debugger::ListHandles() still enumerates them all
+        on demand.
+    */
     std::string n = name;
     std::map<std::string, Debugger *> *handles = GetHandles();
 
@@ -168,7 +184,19 @@ void Debugger::PrintLine(const char *format, ...) {
 }
 
 void Debugger::PrintLine(debug_t type, const char *format, ...) {
-    if (level >= type) {
+    /*
+        (int64_t)type, not type. `level` is an int and debug_t is uint64_t, so the bare
+        comparison converted level to unsigned - and SetLevel(debug_t) computes
+        `level = type - 1`, which for DEBUG_ALL (0) leaves level at -1. As unsigned that is
+        0xFFFFFFFFFFFFFFFF, so the test was always true and this overload silently printed
+        NOTHING on any debugger constructed with DEBUG_ALL - which is most of them.
+
+        It never bit because nothing outside this file calls this overload; the level-named
+        entry points (Info, Warn, ...) compare against the plain int macros and were always
+        correct. This was the -Wsign-compare warning on this line, which was a real bug
+        rather than noise.
+    */
+    if (level >= (int64_t)type) {
         return;
     }
     std::lock_guard<std::mutex> lock(mutex);

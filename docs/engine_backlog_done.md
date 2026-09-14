@@ -7,7 +7,7 @@ been reworded: each entry is the text it carried when it was closed, including t
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
 
-Numbers are stable and are never reused. They run 1-83 across both files; **28 was never
+Numbers are stable and are never reused. They run 1-89 across both files; **28 was never
 assigned**.
 
 Sources: `docs/tetris_findings.md` (the `APP=Tetris` run) and `docs/breakout_findings.md` (the
@@ -2311,3 +2311,155 @@ object happened to construct first.
   Nothing scripts it: it is only ever a real `VK_PAUSE` or `'P'` from the keyboard, and hardware
   input still applies before `BeginPass` exactly as it did. `UpdateView`'s readers are unaffected
   because `UpdateView` runs after the tick.
+
+- [x] **75. Pack assets with a separate executable, and delete the self-dump.**
+  `docs/asset_layout_plan.md` agreed on 2026-09-12 that `DUMP_BINARYASSETS` is stripped entirely in
+  favour of a separate packer. The port has a working one — `tools/pack_assets.cpp` (84 lines) plus
+  `tools/pack_assets.mk` — so this is mostly a port-back.
+
+  **The design is settled and written up: `tools/assetpack_plan.md` (2026-09-14).** One output form,
+  `.incbin` — a `.bin` blob, a four-line `.S` stub and the generated table — chosen over the port's
+  byte-array `.cpp` on measurement: 2 MB of assets is 10 MB of source and **3.09 s** to compile
+  against **0.05 s** to assemble, and it is linear (20 MB → 100 MB → 33.7 s), so grid's 69 MB would
+  be a 345 MB source file. A side `.pak` file is deferred, not rejected; what will bring it back is
+  a **visual loader** — a baked `assets[]` is simply there when the process starts, with nothing to
+  report progress on — and that decision gets made by the first thing that ships with a loading
+  screen. No `core/AssetPack` is being written now, and `LoadFile`'s search order is untouched.
+
+  **The self-dump half is DONE, 2026-09-14.** The `#ifdef`/`#else` block, `DumpBinaryAssets()` and
+  all four call sites are gone; the call sites became `BinaryAsset::ListBinaryAssets()`, which is
+  what they had been doing all along. `core/BinaryAsset.cpp` is 137 lines, down from 233, and is now
+  purely a reader — `BinaryAsset.h` carries the note saying `assets[]` is an *external* interface
+  the packer emits against, since nothing in the engine writes it any more. Verified: ship, dozer,
+  grid and tetris all build clean, and ship still logs its 11 assets followed by `ListAssets()`
+  exactly as before.
+
+  **Two facts this item had wrong**, corrected here rather than left to mislead the next reader:
+  the core call site was in `Application::Init()`, not `InitGraphics` (no such function exists), and
+  **`Application::Init()` is dead code** — it is virtual, `FrameThreadFunction` calls `app->Init()`
+  at `Application.cpp:211`, and all fourteen apps override it without chaining to the base. So that
+  call site never ran in any build, which is a stronger version of the point the item was making.
+  The dead base `Init()` is left alone deliberately; it is its own question, not this one.
+
+  **Step 2 is also DONE, 2026-09-14**: `tools/assetpack/` exists, builds clean under `-Wall`, and
+  `--list` walks, names and reports. Tetris's root lists 22 assets / 2,317,715 bytes matching `du`;
+  all fourteen apps walk with zero shadowed names. Two findings from it:
+
+  - **No name shadowing exists anywhere in the tree**, so first-root-wins has no live test case —
+    ship overrides a shared *category*, not a colliding *name*, which is not the same test. Verified
+    against a constructed collision instead.
+  - **444 KB of the 2.3 MB `shared_assets` baseline is loaded by nothing**: `fonts/CascadiaMono.ttf`
+    (371,352) and `fonts/mono_sdf.png` (73,296, which `fontbake` writes only to be eyeballed). 19%
+    of the baseline, in every app, and it lands hardest on tetris and ui, which own no assets of
+    their own and so carry `shared_assets` as their entire payload. **This is really items 79-82's
+    business**, not this one's — see there.
+
+  **Step 3 is DONE too, 2026-09-14** — the writer emits `assets.bin` + `assets.S` + the generated
+  `BinaryAssetMemory.cpp`, verified by hand-compiling that trio against the real `core/File.cpp` and
+  `core/BinaryAsset.cpp` and round-tripping every asset (in the baked table, served by `LoadFile`
+  from it rather than disk, bytes identical, `size` the content length, `data[size] == 0`). **All 94
+  assets across tetris and grid round-trip byte-for-byte, compressed and `--no-compress` alike.**
+
+  **The measurement settles the format with room to spare**: grid's 72.9 MB packs in 2.9 s,
+  assembles in 0.51 s and compiles its table in 0.35 s — under four seconds, against the ~115 s the
+  byte-array form was projected to cost. Tetris packs 2,317,715 bytes to 1,160,291 (50%); grid
+  72,890,388 to 61,740,843 (85%, because it is mostly already-compressed PNG and GLB, which is the
+  measurement the deferred per-file compression choice was waiting for).
+
+  **A trap worth knowing repo-wide: `3rdparty/miniz/miniz.h` has no include guard** — no
+  `#pragma once`, no `MINIZ_HEADER_INCLUDED`. Any translation unit that includes it both directly
+  and transitively (via `BinaryAsset.h`) fails with a wall of `conflicts with a previous
+  declaration` on its enums, which reads like a broken toolchain rather than a double include. One
+  line upstream would end it; nothing in-tree hits it today because everything reaches miniz through
+  `BinaryAsset.h`.
+
+  **Step 4 is DONE, 2026-09-14** — `engine.mk` has a `BAKE_ASSETS` block, proven on `apps/ui`
+  (tetris's asset shape exactly, and another agent was in tetris at the time). `ui_baked.exe` runs
+  with **no search path at all**: 11 assets from the baked table, 0 from disk, no fatals, and it
+  screenshots **byte-identically** to the loose build. Repack triggers correctly on a nested edit,
+  on adding a subdirectory and on deleting one. **`ui_baked_release.exe` is 4.32 MB and needs no
+  `shared_assets` folder** — which is the shape item 82 wants for shipping.
+
+  Two corrections that came out of building it, both worth knowing beyond this item:
+
+  - **A baked asset beats a file on disk, always.** `LoadFile` asks `GetBinaryAsset` before it
+    consults the search path, so in a baked build editing a shader beside the exe does nothing.
+    The plan had claimed the opposite. Right for shipping, a trap while developing - hence baking
+    stays off by default, and an app that bakes should compile its roots out (`-DASSETS_BAKED`).
+  - **`BAKE_ASSETS` needs its own object tree AND its own exe name**, for the reason the `CONFIG`
+    block has always given. With one exe name, loose → baked → loose leaves make comparing the
+    baked exe against older loose objects, reporting "nothing to be done", and leaving the baked
+    binary under the name you asked for. Splitting only the objects is the easy place to stop and
+    is not enough.
+
+  **Step 5 is DONE, 2026-09-14 — and with it this item, bar the decision below.** Measured on
+  tetris, `CONFIG=release BAKE_ASSETS=1`:
+
+  | | bytes | files |
+  |---|---|---|
+  | `tetris_release.exe` + `shared_assets/` | 5,963,667 | **23** |
+  | `tetris_baked_release.exe` | **4,581,376** | **1** |
+
+  **23% smaller and one file.** Proven the only way that settles it: both exes copied alone into an
+  empty directory far from the repo. The loose one dies on `LoadFile failed to load
+  [fonts/consola.ttf]`; the baked one serves **19 assets from its own table, 0 from disk, 0 fatals**
+  and plays - well, ghost piece, HOLD/NEXT and the glyph-mesh score text all rendering. That run
+  covers every category tetris has: TTF, the SDF `.fnt`, a GLB mesh, ten shaders including the
+  `field_jfa` compute glow, and four WAVs.
+
+  **Tetris's default build is deliberately unchanged** - `BAKE_ASSETS` is opt-in on its command
+  line, not set in its makefile, because what this item is worth to items 79-82 is the comparison
+  and that needs the ordinary build to stay what it was. `apps/ui` is the one app that bakes by
+  default, as the proving ground. **The remaining decision is which apps ship baked**, and that is
+  items 79-82's call rather than this one's.
+
+  Note for anyone measuring tetris: its screenshots are **not** byte-comparable between runs, unlike
+  `apps/ui`'s. `RRandom` cannot be seeded, so the piece sequence differs every launch - compare
+  asset resolution and render correctness, not pixels.
+
+  **Windows *can* do this in the same build, and should stop.** That is the difference between the
+  two trees and the reason the decision is worth writing down rather than inheriting: a Windows app
+  can dump its own assets and be recompiled locally, which Android cannot do at all (no way to run
+  the build, exercise its `LoadFile` calls on-device, and pull a generated `.cpp` back off). So the
+  port had no choice and this repo does. Taking the separate exe anyway is a **preference, decided
+  2026-09-13** — and the existing code is the argument for it:
+
+  - `DumpBinaryAssets()` packs **only what that session happened to load** (`BinaryAsset.cpp:146`
+    skips any entry whose bytes were released, and correctly warns rather than baking a
+    zero-length asset). A directory walk packs what is *there*. Those are different answers, and
+    only one of them is reproducible.
+  - Worse, the core call site is `Application.cpp:169`, inside `InitGraphics` — before the app has
+    loaded almost anything. It could never have packed a real asset set from there.
+  - It was already dead: **`DUMP_BINARYASSETS` was never defined in `engine.mk` or in any app's
+    makefile**, so all four call sites fell through to the `#else` stub, which just called
+    `ListBinaryAssets()`. Nothing regressed by removing them; something misleading went away.
+    (Done — see the note above.)
+
+  **What the tool needs to link is the good news**: `File.cpp`, `BinaryAsset.cpp`, `Debug.cpp`,
+  `Debug_win32.cpp` and miniz. No `Object`, so no renderer, no rp3d, and none of item 73's
+  questions — a hand-listed source set in its own small makefile, exactly as the port has it. (The
+  heavier tool class, a GUI packer built on `Application`, is what needs 73; see there.)
+
+  Two things in it to take deliberately rather than incidentally:
+
+  - **It preserves the relative path in an asset's name** — `sound/click.wav`, not `click.wav` —
+    which is exactly the name `LoadFile` is passed here. A flattening packer means patching every
+    asset string in every app, forever, and silently loses one of any two files sharing a basename
+    in different directories. `lexically_relative(".")` strips the iterator's `./` and
+    `.generic_string()` forces forward slashes, without which a name packed on Windows carries
+    backslashes and never matches a lookup. Multiple asset dirs are scanned in order and a later
+    dir's file wins, which is how an app's own `assets/` overrides `shared_assets/` — the same
+    precedence `main.cpp` already declares for the runtime path, and it must not disagree with it.
+  - **The make dependency has to recurse with it**, and this is the part that bites.
+    `$(wildcard $(d)/*)` sees only the top level, so an edit to `assets/sound/click.wav` would not
+    trigger a repack and the app would run against a stale baked-in copy. The port uses a pure-make
+    recursive wildcard rather than `$(shell find ...)`, so it does not depend on which shell make
+    picked. Its own two traps, both learned the hard way: a **space before `$(filter`** in that
+    function is load-bearing (without it make reports a nonsense concatenated target name), and the
+    asset **directories** must be prerequisites alongside the files, because deleting a whole
+    subdirectory removes both it and its files from the list without making anything look out of
+    date — the parent's mtime is the only thing that changes on a delete.
+
+  Pairs with item 61's `FILE_RELEASE_EMBEDDED` note — the packer is what creates the build in which
+  that answer is the right one.
+

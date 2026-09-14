@@ -224,9 +224,94 @@ CORE_SRCS := $(filter-out $(CORE_SRCS_NOSOUND), $(wildcard $(addsuffix /*.cpp, $
 #apps/tileset, crane into apps/tank). See docs/asset_layout_plan.md section 2.1.
 CORE_SRCS += $(wildcard $(addsuffix /*.cpp, $(LIB_DIRS)))
 
-#BinaryAssetMemoryEmpty.cpp is the empty asset table. A build that bakes its assets in
-#replaces it with generator output - see docs/asset_layout_plan.md section 5.
+#---------------------------------------------------------------------------------------
+# BAKED ASSETS
+#
+# An app opts in with, in its own makefile:
+#
+#     BAKE_ASSETS := 1
+#     ASSET_ROOTS := $(ROOT)/shared_assets          # same ORDER main.cpp declares them
+#     ASSET_PACK_FLAGS += --exclude "www/*"         # optional
+#
+# Off (the default) nothing here changes: the app links BinaryAssetMemoryEmpty.cpp, the
+# asset table is empty, and every name resolves through the search path to a file on disk.
+# That is the right arrangement for development and it stays the default.
+#
+# On, tools/assetpack walks those roots and writes three files that belong together:
+#
+#     build/generated/assets.bin              the compressed blob
+#     build/generated/assets.S                four lines of .incbin pulling it in
+#     build/generated/BinaryAssetMemory.cpp   the table, pointing into the blob
+#
+# and the app links those INSTEAD of BinaryAssetMemoryEmpty.cpp. See tools/assetpack_plan.md
+# for why .incbin rather than a byte array: 2 MB of assets is 10 MB of C source and 3.09 s
+# to compile, against 0.05 s to assemble, and it scales linearly - grid's 72 MB assembles
+# in half a second.
+#
+# TWO THINGS TO KNOW BEFORE TURNING IT ON.
+#
+# A BAKED ASSET WINS OVER A FILE ON DISK, always. LoadFile asks GetBinaryAsset before it
+# touches the search path (core/File.cpp), so in a baked build editing a shader next to the
+# exe does nothing at all - the baked copy answers. That is the correct behaviour for a
+# shipped build and a trap during development, which is the other reason the default is off.
+# An app that bakes should generally stop declaring disk roots in its main.cpp too; they can
+# then only mislead. -DASSETS_BAKED is defined here so it can do that in one #ifndef.
+#
+# THE GENERATED FILES ARE THE APP'S, NOT THE CORE'S. They are compiled into $(OBJ_DIR) with
+# CFLAGS like any other app source, never into the shared $(ROOT)/build/core tree - two apps
+# bake different assets, and a shared object holding one app's table linked into another is
+# exactly the silent, timestamp-invisible mix-up the CORE_CFLAGS line above exists to stop.
+#---------------------------------------------------------------------------------------
+BAKE_ASSETS ?= 0
+BAKE_SUFFIX :=
+
+ifeq ($(BAKE_ASSETS),1)
+
+ifeq ($(strip $(ASSET_ROOTS)),)
+$(error BAKE_ASSETS is 1 but ASSET_ROOTS is empty - name the roots to bake, in the same order main.cpp declares them)
+endif
+
+GENERATED   := $(BUILD_DIR)/generated
+PACK_TOOL   := $(ROOT)/tools/assetpack/build/assetpack.exe
+BAKED_TABLE := $(GENERATED)/BinaryAssetMemory.cpp
+BAKED_STUB  := $(GENERATED)/assets.S
+BAKED_BLOB  := $(GENERATED)/assets.bin
+
+#Not per-configuration, unlike the objects built from them: the same bytes are baked into a
+#debug and a release build, so one pack serves both and switching configuration does not
+#repack. The OBJECTS still land in $(OBJ_DIR), which is per-configuration.
+
+#So an app can compile its disk roots out - see the note above.
+CFLAGS += -DASSETS_BAKED
+
+#AND THEREFORE ITS OWN OBJECT TREE, for exactly the reason CONFIG has one. -DASSETS_BAKED
+#changes what main.cpp compiles to, and make compares objects by TIMESTAMP, not by the flags
+#they were built with. Sharing one tree would mean `make BAKE_ASSETS=0` after a baked build
+#relinking a main.o that still has its asset roots compiled out - against an empty table, so
+#the app would come up and die on its first asset with nothing to suggest why. Splitting the
+#tree makes that unrepresentable and costs one rebuild the first time each way is used, which
+#is the same trade the debug/release split already makes.
+OBJ_DIR := $(OBJ_DIR)/baked
+
+#AND ITS OWN EXE NAME, for the second half of that same reason - the half that is easy to
+#stop one step short of. Splitting only the objects is not enough: build loose, then baked,
+#then loose again, and make compares the BAKED exe against loose objects that are all older
+#than it, says "nothing to be done", and leaves the baked binary sitting there under the name
+#you asked for. Measured while writing this, and it is exactly what the CONFIG block above
+#describes for debug-vs-release. Distinct names make it unrepresentable and let both exist at
+#once, which is also what makes "does baking change anything?" a question you can answer by
+#running them side by side.
+BAKE_SUFFIX := _baked
+
+APP_SRCS += $(BAKED_TABLE)
+APP_ASM  += $(BAKED_STUB)
+
+else
+
+#BinaryAssetMemoryEmpty.cpp is the empty asset table, and what every non-baking app links.
 CORE_SRCS += $(ROOT)/BinaryAssetMemoryEmpty.cpp
+
+endif
 
 #Core objects land under $(ROOT)/build/core mirroring their path below the root, so
 #core/physics/Physics.cpp becomes build/core/core/physics/Physics.o and nothing collides.
@@ -235,6 +320,11 @@ CORE_OBJS := $(patsubst $(ROOT)/%.cpp,$(CORE_BUILD_DIR)/%.o,$(CORE_SRCS))
 #The app's objects stay in the app's own build folder, under the configuration they were
 #compiled for.
 APP_OBJS := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(APP_SRCS))
+
+#Assembler sources - only the generated .incbin stub uses this today. Kept separate from
+#APP_SRCS because the pattern rule and the flags differ: an .S needs no -MMD, no IPATHS and
+#no C++ flags, and passing them would be noise at best.
+ASM_OBJS := $(patsubst %.S,$(OBJ_DIR)/%.o,$(APP_ASM))
 
 #---------------------------------------------------------------------------------------
 # Header dependency tracking
@@ -255,7 +345,9 @@ DEPS = $(CORE_OBJS:.o=.d) $(APP_OBJS:.o=.d)
 #The goal is the exe BY ITS REAL PATH. Naming the target $(PROJECT).exe while writing
 #$(BUILD_DIR)/$(PROJECT).exe would mean make never finds the file it just built, so it
 #would relink on every single invocation even with nothing changed.
-EXE := $(BUILD_DIR)/$(PROJECT)$(CONFIG_SUFFIX).exe
+#$(BAKE_SUFFIX) is _baked when BAKE_ASSETS=1 and empty otherwise - see the BAKED ASSETS
+#block for why it is in the name rather than only in the object path.
+EXE := $(BUILD_DIR)/$(PROJECT)$(BAKE_SUFFIX)$(CONFIG_SUFFIX).exe
 
 default: $(EXE)
 
@@ -272,7 +364,7 @@ default: $(EXE)
 #where a library has not been built yet.
 ENGINE_LIBS := $(wildcard $(ROOT)/libs/*.a)
 
-$(EXE): $(APP_OBJS) $(CORE_OBJS) $(ENGINE_LIBS)
+$(EXE): $(APP_OBJS) $(ASM_OBJS) $(CORE_OBJS) $(ENGINE_LIBS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $^ -o $@ $(LINKS) $(LFLAGS) $(CFLAGS) $(IPATHS)
 	@echo "Built $@ ($(CONFIG))"
@@ -281,12 +373,58 @@ $(OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 
+#Assembler. g++ rather than `as` so the driver picks the right target and the .S goes
+#through the preprocessor, which is what the capital S asks for.
+$(OBJ_DIR)/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@
+
 #CORE_CFLAGS, not CFLAGS - these objects are shared between apps. See the note above it.
 $(CORE_BUILD_DIR)/%.o: $(ROOT)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CC) -c $(DEPFLAGS) $(CORE_CFLAGS) $(IPATHS) $< -o $@
 
 -include $(DEPS)
+
+#---------------------------------------------------------------------------------------
+# Baking the assets
+#---------------------------------------------------------------------------------------
+ifeq ($(BAKE_ASSETS),1)
+
+#Recursive wildcard. GNU make has no builtin, and $(wildcard $(d)/*) sees ONLY THE TOP
+#LEVEL - which stopped being good enough the moment assets moved into meshes/, shaders/
+#and sound/, which is now every app. Without it an edit to assets/sound/click.wav would
+#not trigger a repack and the app would go on running against a stale baked-in copy, with
+#nothing anywhere to say so.
+#
+#Deliberately pure make rather than $(shell find ...), so it does not depend on which
+#shell make picked - this repo has both Bash and PowerShell in play.
+#
+#THE SPACE BEFORE $(filter IS LOAD-BEARING. Without it the results concatenate and make
+#reports a nonsense target like 'No rule to make target assets/sound/probe.wavassets/sound'.
+rwildcard = $(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(subst *,%,$2),$d))
+
+#The ROOTS are prerequisites alongside their contents, and that is not redundant: rwildcard
+#lists a directory's CONTENTS, so deleting a whole subdirectory removes both it and its
+#files from the list at once, nothing looks out of date, and the deleted assets stay baked
+#in. The parent's own mtime is the only thing that changes on a delete.
+ASSET_FILES := $(foreach d,$(ASSET_ROOTS),$(call rwildcard,$(d),*))
+
+#A GROUPED target (&:, GNU make 4.3+). One run of the tool writes all three files, so this
+#has to be one rule producing three outputs. Three ordinary rules would each invoke the
+#packer - three times the work serially, and with -j a race in which three copies write the
+#same blob at once.
+$(BAKED_TABLE) $(BAKED_STUB) $(BAKED_BLOB) &: $(PACK_TOOL) $(ASSET_ROOTS) $(ASSET_FILES)
+	@mkdir -p $(GENERATED)
+	$(PACK_TOOL) $(ASSET_PACK_FLAGS) -o $(GENERATED) $(ASSET_ROOTS)
+
+#Built on demand, and rebuilt when its own sources change - not merely when it is missing.
+#An app silently baking with a stale packer is the kind of thing that is only noticed much
+#later. The + hands the sub-make this make's jobserver rather than starting a second one.
+$(PACK_TOOL): $(wildcard $(ROOT)/tools/assetpack/*.cpp) $(ROOT)/tools/assetpack/makefile $(ROOT)/tools/tools.mk
+	+$(MAKE) -C $(ROOT)/tools/assetpack
+
+endif
 
 #Only this app's objects and exe - both configurations of them. The shared core objects
 #are left alone - another app is probably using them, and they are not this app's to

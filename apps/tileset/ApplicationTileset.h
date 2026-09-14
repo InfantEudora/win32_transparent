@@ -4,7 +4,6 @@
 #include "Application.h"
 #include "type_plane.h"
 #include "type_ray.h"
-#include "HTTPServer.h"
 #include "Isoterrain.h"
 #include "IsoCar.h"
 #include "IsoHouse.h"

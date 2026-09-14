@@ -4,6 +4,7 @@
 #include "Application.h"
 #include "HTTPServer.h"
 #include "OCPPClient.h"
+#include "OCPPServerHandler.h"
 #include <deque>
 #include <windows.h>
 
@@ -47,6 +48,17 @@ public:
     void RenderTCPClientsUI();
 
     HTTPServer* http_server = NULL;
+
+    /*
+        The OCPP protocol, which THIS APP owns. Until 2026-09-14 it was a member of HTTPServer
+        and reached as http_server->ocpp, which made a charge-point protocol part of the engine's
+        generic web server and so of every app that links core - see the note in apps/ocpp/makefile.
+
+        A pointer, not a value, because it has to be constructed with two callbacks bound to
+        http_server, and http_server is not built until Init(). Created there and installed into
+        the server's WebSocketApp hooks in the same breath.
+    */
+    OCPPServerHandler* ocpp = NULL;
 
     TCPClient* tcp_client = NULL;
 

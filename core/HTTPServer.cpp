@@ -12,9 +12,6 @@ static Debugger* http_debug = new Debugger("HTTPServer", DEBUG_TRACE);
 
 HTTPServer::HTTPServer(int port)
 	: TCPServer(port)
-	, ocpp(
-		  [this](SOCKET s, const std::string& msg) { return SendWebSocketMessage(s, msg); },
-		  [this](const std::string& name, const std::string& value) { SetVariable(name, value); })
 	, m_fileWatcher(nullptr)
 {
 	InitializeCriticalSection(&m_wsLock);
@@ -337,10 +334,13 @@ void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 			goto handle_get;
 		}
 
-		// See if the client requested an OCPP subprotocol and pick the first we support
+		// Offer each subprotocol the client listed to the application, in the CLIENT's order,
+		// and echo back the first it accepts. The order is the client's preference and the RFC
+		// says to honour it; this used to test for "ocpp1.6" and "ocpp2.0" by name, which is
+		// how a charge-point protocol ended up compiled into every app - see WebSocketApp.
 		std::string requestedProtocols = findHeader("Sec-WebSocket-Protocol");
 		std::string chosenProtocol;
-		if (!requestedProtocols.empty()){
+		if (!requestedProtocols.empty() && m_ws_app.accepts_protocol){
 			// split by comma
 			size_t pos = 0;
 			while (pos < requestedProtocols.size()){
@@ -350,8 +350,7 @@ void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 				auto l = token.find_first_not_of(" \t\r\n");
 				auto r = token.find_last_not_of(" \t\r\n");
 				if (l!=std::string::npos && r!=std::string::npos) token = token.substr(l, r-l+1);
-				// accept ocpp1.6 or ocpp2.0
-				if (token == "ocpp1.6" || token == "ocpp2.0") { chosenProtocol = token; break; }
+				if (m_ws_app.accepts_protocol(token)) { chosenProtocol = token; break; }
 				if (comma==std::string::npos) break;
 				pos = comma + 1;
 			}
@@ -425,9 +424,17 @@ void HTTPServer::HandleHTTPClient(SOCKET clientSocket){
 		respStr += "\r\n";
 		send(clientSocket, respStr.c_str(), (int)respStr.length(), 0);
 
-		// Add to websocket clients list
+		/*
+		    A client that negotiated a subprotocol belongs to the APPLICATION, and is deliberately
+		    kept out of m_wsClients. That list is who BroadcastVariables() sends the {{variable}}
+		    snapshot to, and a charge point speaking OCPP would be confused by a status-page
+		    payload arriving unasked. Preserved exactly as it was when the OCPP handler lived
+		    here; only who gets told has changed.
+		*/
 		if (!chosenProtocol.empty()) {
-			ocpp.RegisterClient(clientSocket, path, chosenProtocol);
+			if (m_ws_app.on_open) {
+				m_ws_app.on_open(clientSocket, path, chosenProtocol);
+			}
 		} else {
 			EnterCriticalSection(&m_wsLock);
 			m_wsClients.push_back(clientSocket);
@@ -677,14 +684,16 @@ void HTTPServer::HandleWebSocketClient(SOCKET clientSocket, const std::string &p
 		if (opcode == 0x1) { // text
 			std::string msg(payload.begin(), payload.end());
 			http_debug->Info("WS text from %s: %s\n", path.c_str(), msg.c_str());
-			// For debug/visibility also set a variable that will be visible via /status
-			SetVariable(std::string("ocpp_last_msg_") + path, msg);
-			// Try to parse and handle as an OCPP message (e.g., BootNotification)
-
-			if (ocpp.HandleMessage(clientSocket, path, msg)){
-				http_debug->Info("Handled OCPP message from %s\n", path.c_str());
-			}else{
-				http_debug->Warn("OCPP message handling failed\n");
+			//The ocpp_last_msg_<path> variable that used to be set here went with the protocol:
+			//it was named for OCPP, and it was written and read by nothing else in the tree.
+			//apps/ocpp sets it from its own on_message, so /status shows what it always did.
+			if (m_ws_app.on_message){
+				if (!m_ws_app.on_message(clientSocket, path, msg)){
+					//Not an error. A socket carrying an application protocol still sees frames
+					//that are not part of it, and the application is the only thing that can
+					//tell the difference.
+					http_debug->Trace("WS text from %s was not handled by the application\n", path.c_str());
+				}
 			}
 		} else if (opcode == 0x8) { // close
 			http_debug->Info("WS close received from %s\n", path.c_str());
@@ -710,9 +719,17 @@ void HTTPServer::HandleWebSocketClient(SOCKET clientSocket, const std::string &p
 		if (m_wsClients[i] == clientSocket) { m_wsClients.erase(m_wsClients.begin() + i); break; }
 	}
 	LeaveCriticalSection(&m_wsLock);
-	ocpp.UnregisterClient(clientSocket);
+	//Unconditional, as the OCPP call it replaces was: this runs for every websocket reader on its
+	//way out, and an application that was never told about this socket has nothing to forget.
+	if (m_ws_app.on_close){
+		m_ws_app.on_close(clientSocket);
+	}
 
 	closesocket(clientSocket);
 	DisconnectClient(clientSocket);
 	http_debug->Info("WebSocket reader stopped for %s\n", path.c_str());
+}
+
+void HTTPServer::SetWebSocketApp(const WebSocketApp& app){
+	m_ws_app = app;
 }

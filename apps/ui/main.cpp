@@ -31,8 +31,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         Relative to the EXECUTABLE, not the working directory - see GetExecutableDirectory in
         core/File.h.
+
+        NOT DECLARED AT ALL IN A BAKED BUILD, and that is the point of the #ifndef rather than
+        tidiness. LoadFile asks the baked table before it touches the search path, so with
+        BAKE_ASSETS=1 every one of these names is already answered and a root could only ever
+        be consulted for a name that is going to fail anyway. Leaving it in would make the log
+        claim a search path the process never uses, and would make "does the bake actually
+        cover everything?" unanswerable - a missing asset would quietly be found on disk and
+        the gap would surface on the machine that has no disk copy. ASSETS_BAKED comes from
+        engine.mk; see the BAKED ASSETS block there.
     */
+#ifndef ASSETS_BAKED
     AddAssetSearchRootFromExe("../../../shared_assets");
+#endif
 
     Application* main_app = new ApplicationUI();
     main_app->Start();

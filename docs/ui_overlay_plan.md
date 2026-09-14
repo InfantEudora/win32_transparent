@@ -277,7 +277,9 @@ system.
 5. ~~**Port back item 67's touch buttons** and draw them through `UIOverlay`.~~ **Done
    2026-09-14 — see §13.** Driven by the Win32 mouse as pointer 0 and verified end to end in
    `apps/tetris`.
-6. **Android**: the DSA shim (§1) and the context-loss re-upload (§7).
+6. ~~**Android**: the DSA shim (§1) and the context-loss re-upload (§7).~~ **Done 2026-09-14 — see
+   §15.** Running on the mdt740, including a real background/resume cycle. So is the port half:
+   `C:/code/android` now carries `UIOverlay`, §11's `#version` injection and the assets.
 7. **Item 82 (`USE_IMGUI=0`) becomes reachable.** It is blocked today because
    `Application::DrawTouchButtons` borrows an ImGui draw list; step 5 is what unblocks it.
 
@@ -417,12 +419,15 @@ against a prebuilt `breakout.exe` by editing the shader between runs.
 | Error line numbers survive the injection | a deliberate syntax error appended as line 227 of 227 reported as **`0(227)`**. Without `#line 1 0` it would have said 228 |
 | Existing shaders are unaffected | restored, byte-for-byte per `git status`; all 12 of breakout's shader compiles succeed, 0 errors |
 
-### The Android half is written but unexercised
+### The Android half — written unexercised here, exercised on the device since
 
 `ShaderVersionPreamble()` carries an `#if defined(__ANDROID__)` arm returning
 `#version 310 es` plus `precision highp float;` / `precision highp int;`. Nothing compiles that arm
-in this tree, so it is a statement of intent that the port merge should check rather than a tested
-path. `highp` rather than the port's `mediump` default because what uses this first is an overlay
+in this tree, so when this section was written it was a statement of intent.
+
+**It is now a tested path** — ported into the Android tree and run on the mdt740 on 2026-09-14:
+`ui_overlay.vert` and `ui_overlay.frag` carry no `#version` of their own and both compiled and
+linked there. See §15. `highp` rather than the port's `mediump` default because what uses this first is an overlay
 whose entire job is crisp edges at exact pixel positions; a pass that would rather have the tile-GPU
 bandwidth can still say `mediump` per variable.
 
@@ -604,3 +609,211 @@ makes the test fail loudly rather than quietly continuing to work around it.
 ### Still temporary
 
 `ApplicationTetris::DrawOverlay` is still the step-3 smoke test. The buttons themselves are real.
+
+---
+
+## 14. The real HUD (2026-09-14)
+
+The step-3 smoke test is gone and `apps/tetris` now carries the Android build's actual button
+layout, so the two are close to copy-over equivalent:
+
+```
+   top-right     NEW   II   MUTE        (64 px - chrome, not played with)
+   bottom-left    <     v    CCW        (88 px - left thumb)
+   bottom-right  DROP  CW    >          (88 px - right thumb, built from the right edge)
+```
+
+**Move-left is on the left and move-right is on the right**, one under each thumb, with the
+rotations as the inner button of each cluster. That is the port's arrangement and its reasoning
+holds: the direction you press should be the side you press, and DAS means a direction is *held*,
+so the two are never wanted by the same thumb at once. Each cluster is anchored to its own corner
+rather than laid out from one origin, which is what keeps that true at every window size.
+
+### All three chrome buttons work while paused, and that drove where each is handled
+
+A HUD button that only works while the game is running is broken in the one case a player most
+needs it — you pause, *then* you reach for "new game" or "mute". So each lands somewhere that runs
+on non-ticking passes:
+
+| button | action | handled | why it survives a pause |
+|---|---|---|---|
+| **II** | `INPUT_PAUSE` | nowhere — the engine's own | `Scene::BeginPass` services it on every pass, before the pause gate it controls |
+| **MUTE** | `INPUT_TETRIS_MUTE` (new, also `M`) | `UpdateView` | runs on ticking and non-ticking passes alike, like the existing UI toggle |
+| **NEW** | `INPUT_TETRIS_RESTART` | `UpdateView`, as a command | `BeginPass` drains the command queue *before* deciding whether to tick |
+
+**Restart moved out of `RunSimulationTick` to make that true.** It used to call `NewGame()` directly
+from inside the tick — which does not run while paused, so pressing it did nothing at exactly the
+wrong moment. It now submits `TETRIS_CMD_RESTART`, which is what the ImGui "New game" button already
+did, so there is one path rather than two that could drift. The cost is one tick of latency on a
+restart, which is nothing.
+
+`tetris_state` gained a `sound` field. That is not decoration: without it the only way to tell
+whether a mute press landed is to listen, which no automated check can do.
+
+### Verified
+
+Two suites, each run repeatedly against a clean build: the gameplay cluster (3 consecutive clean
+runs) and the chrome cluster (2). Pause toggles both ways, mute toggles both ways **while paused**,
+new game resets the game clock **while paused** and does not resume the simulation.
+
+### The harness was flaky, and the fix is worth knowing
+
+The first runs passed and failed alternately, with perfect hit-testing in the log either way.
+`SetForegroundWindow` is refused by Windows for a background process under a pile of conditions, so
+it worked most of the time and silently failed the rest — and a press that arrives unfocused is
+dropped by the focus gate.
+
+The harness now posts **`WM_ACTIVATE`** itself as well as asking for the foreground. That is the
+same message `InputController::HandleMessage` listens for to set `f_has_focus`, so it drives the
+real code path rather than reaching past it, and it made both suites deterministic. It does not
+weaken what is being tested: that the gate works is proven separately, by presses being dropped
+when it is not set.
+
+### One cosmetic collision left
+
+The **DROP** button overlaps the `LEVEL` readout, which is world-space `TextMesh` geometry the app
+positions itself. The port hit the same class of problem in the same corner and solved it by moving
+a button; here it is the readout and the button disagreeing about who owns that space. Not fixed,
+because where the score readouts sit is a game-layout decision rather than an overlay one.
+
+---
+
+## 15. Step 6 as built (2026-09-14)
+
+The engine half of Android support. `core/UIOverlay.{h,cpp}` only — no app changed, nothing in the
+port changed, and the win32 build is byte-identical in behaviour.
+
+### The DSA shim was already right, and is now measured rather than asserted
+
+§12 wrote the `#if defined(__ANDROID__)` arms and said plainly that nothing in this tree compiles
+them. That is no longer true: the file now compiles **for aarch64, with the NDK's own clang against
+the real GLES headers**, clean under `-Wall -Wextra`.
+
+Two things were checked rather than believed:
+
+| | |
+|---|---|
+| The Android arm is what compiled | preprocessed output contains **0** occurrences of `glNamedBufferData`, `glCreateBuffers`, `glVertexArrayAttribFormat`, `glBindTextureUnit`, `glCreateTextures`, `glTextureStorage2D` — and the bind-then-call replacements in their place |
+| DSA really is absent from GLES | **all ten** DSA entry points this file would otherwise use appear **0** times across `GLES3/gl3.h`, `gl31.h` **and `gl32.h`** |
+
+That second row is the one worth keeping. §1 asserted "no DSA at any GLES version, including 3.2";
+it is now a grep against the shipping headers. The shim is not defensive programming — the desktop
+path cannot compile there at all.
+
+**`glad.h` was the one thing genuinely missing**, and it is in the header rather than the body:
+Android has no glad, and the GLES entry points come straight out of the NDK's `libGLESv2.so`. The
+include is now the same `#if defined(__ANDROID__)` / `<GLES3/gl31.h>` split that
+`android_core/Mesh.h` already carries, **spelled the same way on purpose** — the port merge should
+be a copy, not a translation.
+
+### §7 asked for something this engine already does
+
+§7 said to keep the loaded `.fnt` pixel bytes in RAM rather than freeing them after upload. It
+turns out there was never anything to change: `core/File.h`'s contract is **"THE FILE LAYER OWNS
+THE BUFFER. DO NOT free() IT"**, valid for the life of the process, one file one buffer one owner.
+The bytes are already retained, by design, for every asset in the engine.
+
+So `UIOverlay` keeps a **borrowed pointer** into that buffer and copies nothing. What was actually
+missing was not the retention but the **entry point** — something to call once the context is back.
+That is `ReUploadGPUObjects()`.
+
+It also means a re-upload touches no disk, needs no error path for a file that has since moved, and
+cannot fail for a reason the first load did not already catch.
+
+### Forgotten, not deleted — and why that is the whole subtlety
+
+The handles are zeroed and **not** passed to `glDeleteBuffers`/`glDeleteTextures`, and the comment
+in the code says why at length, because it reads like missing cleanup:
+
+> Those names died with the context that issued them. Deleting them now frees nothing — the objects
+> are already gone — and the names are live in the **new** context, where the driver is free to have
+> reissued them to somebody else's buffer. The delete is a no-op on a good day and destroys an
+> unrelated object on a bad one, from a line that reads like tidying up.
+
+The port's `Mesh::ReUploadMeshData` does the same thing and its comment asks the question out loud
+— *"Can we assume the old VBO is dead?"* — so this is an answer worth carrying **back** to the port
+when the merge happens, not just forward.
+
+The shader gets the same treatment one level up. `Shader::Build` assigns a fresh `progid` and does
+**not** delete the previous one (only `Shader::Reload` does, deliberately), so rebuilding calls
+`Build` again on the surviving `Shader` object. No `delete`, no new allocation, no stale
+`glDeleteProgram`.
+
+### One code path, not two
+
+`Init` and `ReUploadGPUObjects` both end in a private `CreateGPUObjects()` that builds the shader,
+the buffers and the atlas. A separate re-upload path that duplicated those three steps is exactly
+the kind of thing that works on the day it is written and silently stops matching `Init` a month
+later — and it would drift on the platform where nobody is looking, since win32 never calls it.
+
+`vbo_capacity` is **gone** while here. It was declared, commented as "only grown when it must be",
+and never read by anything — `Draw` respecifies the whole buffer every frame regardless. One less
+piece of state to reason about across a context loss, and the comment no longer describes a
+behaviour the code does not have.
+
+### It runs on the device
+
+Brought up on the port (`C:/code/android`) the same day and **run on the mdt740 — the Mali-T720
+whose limits shaped §1 and §3.** The overlay draws there, and this is what the plan has been
+aiming at since §1: *one stage, the same on both platforms*, now demonstrated rather than argued.
+
+| what was proven | how |
+|---|---|
+| The stage draws on GLES 3.1 | translucent rounded panel, cyan outline, a radius sweep ending in a circle, and text at three sizes **from the one 48 px bake** |
+| Straight alpha is right there too | the panel composites over the running game — the scene reads through it |
+| **§11's Android arm works** | both overlay shaders carry **no `#version`** and compiled and linked on the device. That arm was "written but unexercised" until now |
+| **§7 does what it claims** | HOME, then resume. The log shows `APP_CMD_TERM_WINDOW` → `APP_CMD_INIT_WINDOW` → `UIOverlay: GPU objects rebuilt after context loss` |
+| The rebuild is CORRECT, not merely survived | the screenshot after the resume is the same overlay — text crisp, panel and outline intact, quad count unchanged — with only the frame counter advanced, 716 to 2153 |
+
+That last row is the one worth keeping. A context-loss path that runs but re-uploads a wrong or
+empty atlas looks exactly like one that works until you read the text, and "the font vanished after
+a phone call" is the bug §7 was written to prevent.
+
+### What the port needed, as predicted plus one
+
+The gap list this section carried before the bring-up was accurate, and all of it is now done in
+`C:/code/android`:
+
+1. **`Shader::Setvec2`** added — the port had `Setint`/`Setfloat`/`Setvec3`/`Setmat3`/`Setmat4`.
+2. **`Shader::Build(vert,frag)`** added, and the two-argument constructor now **delegates to it**,
+   so the port has one build path rather than a constructor's and a `Build`'s that could drift.
+3. **§11's `#version` injection ported**, into all three `glShaderSource` sites (the port has no
+   `LoadShaderSource` funnel). Its own shaders all state `#version 310 es`, so they are untouched —
+   the same "state your version and nothing happens to you" rule that made this safe here.
+4. **The name collision is real and is now documented at both call sites.** The port's existing
+   `Renderer::InitUIOverlay`/`DrawUIOverlay`/`ui_overlay_texture` are a hand-drawn PNG of the
+   button artwork (`uioverlay.psd` at its root) blitted full-screen. The new stage draws in the
+   same slot, immediately after it. **Retiring the PNG is the obvious next step** and was left
+   alone deliberately: it is a deletion, and deletions belong in their own change.
+5. **The port's `LoadFile` ownership contract held** — the borrowed `atlas_pixels` pointer is valid
+   there, which the resume test proves rather than assumes.
+
+Assets needed no new mechanism at all. The port packs `ASSET_DIRS` **recursively**, naming a file
+by its path below the root, so `shared_assets/fonts/mono_sdf.fnt` and
+`shared_assets/shaders/ui_overlay.{vert,frag}` resolve under exactly the names
+`UIOverlay::Init` already defaults to. Worth noting in passing: the packer deflates the atlas from
+287,316 to 72,401 bytes — **75% off**, which is §10's "worth doing if the size ever matters",
+measured.
+
+Plumbing was one new `Application::BringUpOverlay()` called from both `InitGraphics` bodies
+(Android's and Win32's — the two moments a GL context comes into existence), plus a
+`virtual void DrawOverlay()` hook and a `Begin`/`DrawOverlay`/`Draw` bracket in the shared
+`DrawFrame`. The app therefore cannot forget to upload and cannot draw a stale batch.
+
+### Two pre-existing port breakages found on the way, and both are ours
+
+`apps/tetris` **did not build on the port before any of this**, and neither failure had anything to
+do with the overlay. Both come from the same place: the port and this engine share one
+`C:/code/reactphysics3d` checkout, which has moved to branch `size/no-iostream-dependency` — the
+rp3d side of **item 85**, getting libstdc++'s stream and locale machinery out of every binary.
+
+- `RP3D_VERSION` is a `constexpr const char*` there now, not a `std::string`, so
+  `PhysicsWorld.cpp`'s `.c_str()` no longer compiles.
+- `DefaultLogger` is behind `IS_RP3D_DEFAULT_LOGGER_ENABLED` (off by default, because it writes
+  through `std::ofstream`) while the port's makefile **globs every rp3d source**, so it compiled a
+  file full of references to a class that no longer exists — 13 errors in an untouched file.
+
+Both are fixed there (`.c_str()` dropped; `DefaultLogger.cpp` filtered out of the glob, which is
+what an Android build wants anyway). Recorded here because the lesson is not about either fix:
+**a shared third-party checkout means a change made in this tree lands in the port as a compile
+error in a file nobody edited**, and the next one will look just as mysterious.

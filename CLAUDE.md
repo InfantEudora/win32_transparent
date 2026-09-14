@@ -148,6 +148,44 @@ Durations here are ticks, so this is the unit everything else is already written
 
 ---
 
+## Working alongside other agents
+
+Several agents share this one checkout, and they clash on files. `tools/lockd/` is a standalone
+MCP broker that arbitrates it: claim the paths you are about to edit, edit them, release them.
+See `docs/lock_broker.md`.
+
+```bash
+cd tools/lockd && ./build/lockd.exe 2>lockd.log &            # http://127.0.0.1:8766/mcp
+```
+
+`.mcp.json` at the repo root registers it for you - no `claude mcp add` needed, every agent that
+opens this checkout gets the same broker, which is the point. You are asked to approve it once,
+the first time. If the `lock_*` tools are not in your tool list, the broker was not running when
+the session started, or the session predates the registration; restart the session.
+
+- `lock_claim` **everything the task needs in one call** - claims are all-or-nothing, and
+  accumulating them one at a time is how two agents deadlock on each other.
+- Refused? Do other work and come back. Do not edit anyway. The reply names who holds it and why.
+- **Re-read the files after a claim is granted.** The lease reserves the right to edit; it does
+  not make a read taken before the lease current.
+- `lock_release` when done.
+
+**This is enforced, not just advised.** A `PreToolUse` hook (`.claude/settings.json`) claims the
+target of every `Edit`/`Write` for your session and refuses the write if another agent holds it,
+so you are protected and protecting others whether or not you call the tools yourself. Claiming
+explicitly is still worth doing: it takes the whole set at once, states a reason the other agent
+can read, and tells you about a collision *before* you have written the change. The hook lets the
+edit through if the broker is not running.
+
+It also covers the two shared resources this file already has rules for: `#build` for the shared
+`build/core` tree (build one app at a time) and `#port:8765` for the port a running app binds
+(one app at a time). Claiming those is how to make either rule hold rather than hope.
+
+Port **8766**, and `127.0.0.1` rather than `localhost`, for the same reasons as everything else
+here - see the two notes above.
+
+---
+
 ## House style
 
 Match the surrounding code: 4-space indent, `f_` prefix on booleans, and comments that explain

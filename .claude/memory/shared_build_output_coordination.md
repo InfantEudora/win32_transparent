@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 321ef6c3-8b60-4cdc-8703-73b7f520e3b5
-  modified: 2026-09-12T15:20:55.351Z
+  modified: 2026-09-14T09:41:53.886Z
 ---
 
 **Ask the user before running `mingw32-make` in this tree.** Told 2026-09-12. Another agent is
@@ -23,6 +23,13 @@ half black, with nothing wrong in its own log.
 Symptoms to read as "the other agent, not my change": the app exiting with a clean log tail, a
 `curl` to 127.0.0.1:8765 failing with exit 7 when it worked a moment earlier, a partially rendered
 screenshot, or `wind.exe` having a newer mtime than my own build.
+
+**There is now a lock for this.** `tools/lockd/` (built 2026-09-14, see `docs/lock_broker.md` and
+the CLAUDE.md section) is an MCP broker other agents in this tree claim paths from; the shared
+`build/core` tree is the named lock `#build` and a running app's port is `#port:8765`. Claim
+`#build` before `mingw32-make` rather than guessing whether the other agent has finished. Still
+ask the user when the broker is not running - it is advisory unless the PreToolUse hook is
+installed, and it holds nothing across its own restart.
 
 **Agreed direction that removes the problem:** each app gets **its own output exe and its own
 makefile**, rather than one `wind.exe` selected by `APP=`. Planned as part of the asset

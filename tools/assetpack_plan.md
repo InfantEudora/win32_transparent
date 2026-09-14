@@ -96,6 +96,23 @@ assetpack [options] <root> [<root> ...]
 `ReadFileToString`, which by design never caches, so it is not an asset in the sense this tool means
 and ocpp passes `--exclude www/*`.
 
+**`--exclude` has a second day-one use, found by the first `--list` run.** `shared_assets/` is
+2.3 MB and **444 KB of it is loaded by nothing at run time** — every app's baseline, all fourteen:
+
+| file | bytes | who loads it |
+|---|---|---|
+| `fonts/consola.ttf` | 459,180 | `core/Window.cpp:243`, ImGui's font |
+| `fonts/mono_sdf.fnt` | 287,316 | `core/UIOverlay.h:97`, the overlay atlas |
+| `fonts/CascadiaMono.ttf` | 371,352 | **nothing** |
+| `fonts/mono_sdf.png` | 73,296 | **nothing** — `fontbake` writes it to be eyeballed, and says so |
+
+That is 19% of the shared baseline, and it matters most exactly where it is least affordable:
+tetris and ui own no assets at all, so `shared_assets` *is* their whole payload. It bears on
+backlog items 79-82 (shipping tetris small) more than on this one. The packer's job is only to make
+it visible and to be able to drop it — `--exclude "fonts/CascadiaMono.ttf" --exclude "*.png"` — not
+to decide it; whether `CascadiaMono.ttf` is kept for a future font switch is not a call to make
+from a grep, and `fontbake --no-png` is the tidier fix for the other one.
+
 **Compression is on by default** and `--no-compress` exists so that measuring it is a flag rather
 than a rebuild. Per-file or per-extension choice — `.glb` with embedded PNG and already-compressed
 `.wav` deflate to roughly nothing while still costing inflate time at load — is a later
@@ -351,19 +368,130 @@ Each step is independently verifiable and nothing before the last one changes an
    listing: `ApplicationDozer.cpp` calls `assetmanager->ListAssets()` on the very next line, so it
    was clearly wanted). Verify: any app builds and logs the same asset list it did before.
 2. **The tool, `--list` first.** The walk, the naming and the shadow report, writing nothing.
-   Verify against tetris: `--list` over `shared_assets` names every file with forward slashes and
-   no `./`, and reports no shadowed names. Against ship, which has two roots, it reports the one
-   real override.
-3. **The writer.** `assets.bin`, `assets.S`, `BinaryAssetMemory.cpp`. Verify by compiling the
-   generated trio by hand and dumping the table — before any makefile is touched, so a failure here
-   is the tool's and not the build's.
-4. **The `engine.mk` rules.** Verify: `apps/tetris` builds with `BAKE_ASSETS := 1`, runs with its
-   asset root **removed from `main.cpp`**, and screenshots identically. That is the real test — a
-   baked build that still has its roots proves nothing, because every lookup falls through to the
-   disk and succeeds. Then re-add the root and confirm the loose file still wins.
-5. **Measure it.** Exe size and build time for tetris baked vs loose, recorded in
-   `docs/engine_backlog_done.md` with item 75. §3's numbers are the argument for the shape; this is
-   the evidence that the shape delivered.
+   **DONE 2026-09-14** — `tools/assetpack/`, builds clean under `-Wall`. Verified: tetris's single
+   root lists 22 assets / 2,317,715 bytes, matching `du`, all forward slashes and no `./`; all
+   fourteen apps walk with **zero shadowed names**; the error paths (missing root, no roots, a flag
+   with no value) each fail with a message rather than an empty walk.
+
+   Two things this step actually established, neither of them expected:
+
+   - **There is no name shadowing anywhere in the tree**, so the precedence rule has no live test
+     case. §6 says ship proves the same-category override, and it does — `shaders/default.vert`
+     from `shared_assets` beside `shaders/raymarch_volume.frag` from its own root — but that is a
+     shared *category*, not a colliding *name*, and the two are not the same test. The report was
+     verified against a deliberately constructed collision instead: a root supplying its own
+     `shaders/default.vert` ahead of `shared_assets` is packed and the shared copy reported as
+     shadowed. Worth keeping as a regression check, because the day a real override appears is
+     exactly the day this has to already be right.
+   - **444 KB of the 2.3 MB shared baseline is loaded by nothing** — see below.
+3. **The writer.** `assets.bin`, `assets.S`, `BinaryAssetMemory.cpp`.
+   **DONE 2026-09-14.** Verified by hand-compiling the generated trio against the *real* engine
+   reader — `core/File.cpp` + `core/BinaryAsset.cpp` + miniz, no app, no makefile — and round-tripping
+   every asset: present in the baked table, served by `LoadFile` from it rather than from disk,
+   bytes identical to the file, `size` the content length, and `data[size] == 0`.
+
+   | | assets | raw | blob | |
+   |---|---|---|---|---|
+   | tetris (`shared_assets`) | 22 | 2,317,715 | 1,160,291 | **50%** |
+   | grid (own + shared) | 72 | 72,890,388 | 61,740,843 | **85%** |
+
+   **All 94 round-trip byte-for-byte, compressed and `--no-compress` alike**, across shaders, TTF,
+   WAV, PNG, OBJ, MTL and GLB. The empty pack (everything excluded) also compiles and links, which
+   is worth having because it is what an app with no assets of its own would produce.
+
+   **Grid settles the format choice with room to spare.** End to end: **2.9 s to pack, 0.51 s to
+   assemble, 0.35 s to compile the table** — under four seconds for 72 MB, against the ~115 s §3
+   projects for the byte-array form. The `.incbin` side really is a file copy.
+
+   It also shows what the deferred per-file compression decision is worth: tetris packs to 50%
+   because it is shaders, TTF and WAV, while grid manages only 85% because it is mostly PNG and GLB
+   that are already compressed — and pays inflate time at load for the privilege. The writer prints
+   a per-asset ratio and flags entries that got *bigger*, so that optimisation now has its
+   measurement and can be taken whenever it is wanted.
+
+   **One trap found, worth knowing before anything else links miniz**: `3rdparty/miniz/miniz.h` has
+   **no include guard at all** — no `#pragma once`, no `MINIZ_HEADER_INCLUDED`. A translation unit
+   that includes it both directly and through `BinaryAsset.h` fails to compile with a wall of
+   `conflicts with a previous declaration` on its enums, which reads like a toolchain fault rather
+   than a double include. `assetpack.cpp` takes miniz *through* `BinaryAsset.h` only, which is what
+   `core/BinaryAsset.cpp` already does. A one-line `#pragma once` upstream would end it.
+4. **The `engine.mk` rules.** **DONE 2026-09-14**, on `apps/ui` rather than tetris — identical
+   asset shape (owns nothing, one shared root) and another agent was working in tetris at the time.
+   An app opts in with `BAKE_ASSETS := 1` + `ASSET_ROOTS`, and `apps/ui/main.cpp` compiles its disk
+   root out under the `-DASSETS_BAKED` that `engine.mk` then defines.
+
+   Verified, in the order that makes each answer mean something:
+
+   - **Runs with no search path at all.** 11 assets served from the baked table, **0 read from
+     disk**, no fatals — and `InitAssetRoots` is never even reached, so the log has no search-root
+     line to print. A baked build that still had its roots would have proved nothing.
+   - **Renders identically.** `ui.exe` and `ui_baked.exe`, screenshotted over MCP: **byte-identical
+     PNGs**, same MD5.
+   - **Incremental behaviour**, which is where the staleness traps are: no changes → nothing to be
+     done, no spurious repack; touching a *nested* asset (`shaders/default.vert`) → repacks, so the
+     recursive wildcard works; adding a nested subdirectory → 21 assets; **deleting that whole
+     subdirectory → back to 20**, which is the case that only works because the roots are
+     prerequisites alongside their contents.
+   - **Excludes work**: 20 assets instead of 22, the 444 KB of `CascadiaMono.ttf` and
+     `mono_sdf.png` left out.
+   - **All four variants coexist**: `ui.exe` 42.5 MB, `ui_baked.exe` 43.5 MB, `ui_release.exe`
+     3.39 MB, **`ui_baked_release.exe` 4.32 MB** — a single file that needs no `shared_assets`
+     folder at all. The baked delta is +935,424 bytes against a 932,339-byte blob.
+
+   **A BAKED ASSET WINS OVER A FILE ON DISK — this plan said the opposite, and was wrong.** Step 4
+   used to end "re-add the root and confirm the loose file still wins". It does not: `LoadFile`
+   asks `GetBinaryAsset` *before* it touches the search path (`core/File.cpp`), so in a baked build
+   editing a shader next to the exe does nothing at all. That sentence was pack-mode reasoning —
+   §3's deferred design does put packs after the roots — leaking into the bake, where it does not
+   apply. Correct behaviour for shipping, a trap during development, and the reason baking stays
+   off by default and an app that bakes should stop declaring roots.
+
+   **One real bug found by building it, worth the retelling.** Toggling `BAKE_ASSETS` changes
+   `-DASSETS_BAKED`, and make compares objects by timestamp, not by the flags they were built with
+   — so the first version shared one object tree and one exe name between baked and loose. Building
+   loose → baked → loose then left make comparing the **baked** exe against loose objects all older
+   than it: *"Nothing to be done"*, and the baked binary sat there under the name you asked for.
+   Hit exactly that, and then hit its consequence — a loose build whose leftover `main.o` still had
+   its roots compiled out, dying on `LoadFile failed to load [fonts/consola.ttf] - looked in:
+   fonts/consola.ttf`. This is the same failure the `CONFIG` block has always described for
+   debug-vs-release, and it wants the same two-part fix, not half of it: a separate object tree
+   **and** a distinct exe name. Splitting only the objects is the easy step to stop at.
+5. **Measure it.** **DONE 2026-09-14, on tetris.**
+
+   **Tetris bakes and ships as one file.** `CONFIG=release BAKE_ASSETS=1`:
+
+   | | bytes | files |
+   |---|---|---|
+   | `tetris_release.exe` + `shared_assets/` | 5,963,667 | **23** |
+   | `tetris_baked_release.exe` | **4,581,376** | **1** |
+
+   **23% smaller and a single file**, because the 2.3 MB asset tree becomes a 932 KB blob. The exe
+   itself grows by 935,424 bytes against a 932,339-byte blob, so the table and alignment cost about
+   3 KB. Build time is *lower* baked than loose (7.9 s against 13.0 s) — not a real saving, just
+   the shared core objects already being warm, but it is emphatically not a cost.
+
+   **Proven with no assets within reach, which is the only test that settles it.** Both exes copied
+   alone into an empty directory far from the repo and run there:
+
+   - `tetris_release.exe` → `Fatal: LoadFile failed to load [fonts/consola.ttf] - looked in:
+     fonts/consola.ttf, <tempdir>/../../../shared_assets/fonts/consola.ttf`. The control, and it
+     fails exactly as it should.
+   - `tetris_baked_release.exe` → **19 assets from the baked table, 0 from disk, 0 fatals**, and it
+     plays: well, ghost piece, HOLD/NEXT, and the glyph-mesh score text all rendering.
+
+   Every category is covered by that run — TTF, the SDF `.fnt`, a GLB mesh, ten shaders including
+   the `field_jfa` compute glow, and all four WAVs. Nothing in tetris reads an asset any way other
+   than through `LoadFile`, which is why it is a clean case; §5's four exceptions are what makes
+   other apps harder.
+
+   Two notes for items 79-82, which this really serves:
+
+   - The screenshots are **not** byte-comparable between runs, unlike `apps/ui`'s. `RRandom` cannot
+     be seeded, so the piece sequence differs every launch. Compare asset resolution and render
+     correctness, not pixels.
+   - Tetris bakes 20 assets and **uses 17**. The three it never touches — `shaders/skybox.frag`,
+     `shaders/skybox.vert`, `shaders/texture.comp` — are 4,660 bytes together and not worth an
+     exclude. The 444 KB of dead fonts was the whole prize, and that is already taken.
 
 ---
 

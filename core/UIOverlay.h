@@ -3,7 +3,16 @@
 
 #include <stdint.h>
 #include <vector>
+#include <string>
+//Desktop gets GLuint and the enums from glad. Android has no glad at all - the GLES entry points
+//are exported straight out of the NDK's libGLESv2.so - so the declarations have to be pulled in
+//explicitly. This is the same split android_core/Mesh.h already carries, spelled the same way on
+//purpose: the port merge should be a copy, not a translation.
+#if defined(__ANDROID__)
+#include <GLES3/gl31.h>
+#else
 #include "glad.h"
+#endif
 #include "type_vec2.h"
 #include "UIFont.h"
 
@@ -100,6 +109,25 @@ public:
 
     bool IsReady() const { return f_ready; }
 
+    /*
+        Builds every GPU object this owns AGAIN, after the context they lived in went away.
+        RENDER THREAD, and the new context must already be current.
+
+        ANDROID. GPU objects do not survive the EGL context, and the port destroys and recreates
+        its window - and with it the context - whenever the app is backgrounded, orientation lock
+        or not. So this is not an edge case to be defensive about; it is what happens when the
+        user takes a call. On win32 a context is never lost and nothing calls this.
+
+        Re-reads nothing from disk. The font bytes are still in RAM because core/File.h's LoadFile
+        never frees - "one file, one buffer, one owner", valid for the life of the process - so
+        the atlas is re-uploaded from the same pointer Init used. That is docs/ui_overlay_plan.md
+        section 7's "keep the pixels rather than freeing them", already satisfied by the file
+        layer rather than needing a copy of its own.
+
+        Safe to call when Init failed or never ran: it stays inert rather than half-built.
+    */
+    bool ReUploadGPUObjects();
+
     //Discards last frame's quads and records the size of the surface being drawn to. Call once a
     //frame before any Add*. `screen_w/h` are the WINDOW's size, not the 3D viewport's - the
     //overlay covers the whole window even where the scene is drawn into a sub-rectangle.
@@ -138,6 +166,10 @@ public:
 private:
     void AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
                  float radius, float outline, float distance_scale, uint32_t color);
+    //The shader, the buffers and the atlas - everything that dies with a context. Shared by Init
+    //and ReUploadGPUObjects so the two cannot drift, which is the same argument the rest of this
+    //stage makes for having one code path rather than a desktop one and an Android one.
+    bool CreateGPUObjects();
     bool InitBuffers();
     bool InitFontTexture(const uint8_t* pixels);
 
@@ -146,7 +178,14 @@ private:
     GLuint          atlas_tex = 0;
     GLuint          vbo = 0;
     GLuint          vao = 0;
-    size_t          vbo_capacity = 0;   //in vertices, so the buffer is only grown when it must be
+
+    //Borrowed, not owned - it points into the file layer's own buffer, which outlives everything
+    //here. See ReUploadGPUObjects for why this is kept at all.
+    const uint8_t*  atlas_pixels = NULL;
+    //Remembered so a rebuild needs no arguments, and so it cannot be given different ones than
+    //the build it is meant to reproduce.
+    std::string     vert_name;
+    std::string     frag_name;
 
     int             screen_w = 1;
     int             screen_h = 1;

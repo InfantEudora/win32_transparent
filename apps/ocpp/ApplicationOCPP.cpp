@@ -93,6 +93,40 @@ void ApplicationOCPP::Init(void){
 
     //Create an HTTP server to listen for connections
     http_server = new HTTPServer(9090);
+
+    /*
+        The protocol, installed into the server's websocket hooks. The server knows how to carry
+        frames; what is in them is this app's business, and nothing in core has heard of OCPP
+        since 2026-09-14 - see core/HTTPServer.h's WebSocketApp.
+
+        The two lambdas the handler takes are the ones HTTPServer used to pass itself when it
+        owned one: how to write a frame back, and how to publish a value to the status page.
+    */
+    ocpp = new OCPPServerHandler(
+        [this](SOCKET s, const std::string& msg){ return http_server->SendWebSocketMessage(s,msg); },
+        [this](const std::string& name, const std::string& value){ http_server->SetVariable(name,value); });
+
+    WebSocketApp ocpp_app;
+    //The two subprotocol names that used to be hardcoded in the HTTP server's upgrade path.
+    ocpp_app.accepts_protocol = [](const std::string& proposed){
+        return (proposed == "ocpp1.6") || (proposed == "ocpp2.0");
+    };
+    ocpp_app.on_open = [this](SOCKET s, const std::string& path, const std::string& protocol){
+        ocpp->RegisterClient(s,path,protocol);
+    };
+    ocpp_app.on_message = [this](SOCKET s, const std::string& path, const std::string& msg){
+        //Visible on /status, and named the way it always was. This is the one line of the old
+        //arrangement that was doing debug work rather than protocol work, so it comes along
+        //with the protocol rather than staying in a server that no longer knows what OCPP is.
+        http_server->SetVariable(std::string("ocpp_last_msg_") + path, msg);
+        return ocpp->HandleMessage(s,path,msg);
+    };
+    ocpp_app.on_close = [this](SOCKET s){
+        ocpp->UnregisterClient(s);
+    };
+    //Before Start(), because the reader threads it spawns are what call these.
+    http_server->SetWebSocketApp(ocpp_app);
+
     if (!http_server->Start()){
         debug->Fatal("Failed to start HTTP server\n");
     }
@@ -114,8 +148,8 @@ void ApplicationOCPP::UpdateView(){
     // Check if any OCPP clients need charging profile updates
     if (http_server) {
         DWORD now_ms = GetTickCount();
-        for (SOCKET client_socket : http_server->ocpp.clients) {
-            OCPPClientData* data = http_server->ocpp.GetClientData(client_socket);
+        for (SOCKET client_socket : ocpp->clients) {
+            OCPPClientData* data = ocpp->GetClientData(client_socket);
             if (!data) continue;
             for (auto& kv : data->connectors) {
                 int connectorId = kv.first;
@@ -125,7 +159,7 @@ void ApplicationOCPP::UpdateView(){
                 DWORD time_since_last_update_ms = now_ms - conn.last_profile_update_time_ms;
                 if (time_since_last_update_ms >= 1000) {
                     // Send SetChargingProfile request
-                    http_server->ocpp.SendSetChargingProfile(client_socket, connectorId, conn.server_current_limit);
+                    ocpp->SendSetChargingProfile(client_socket, connectorId, conn.server_current_limit);
 
                     // Update the last update time
                     conn.last_profile_update_time_ms = now_ms;
@@ -217,14 +251,14 @@ void ApplicationOCPP::RenderOCPPServerUI(){
         return;
     }
 
-    ImGui::Text("Connected OCPP Clients: %d", (int)http_server->ocpp.clients.size());
+    ImGui::Text("Connected OCPP Clients: %d", (int)ocpp->clients.size());
     int client_idx = 0;
-    for (SOCKET client_socket : http_server->ocpp.clients){
+    for (SOCKET client_socket : ocpp->clients){
         ImGui::PushID(client_idx);
         ImGui::Text("Client %d - Socket %llu", client_idx, (unsigned long long)client_socket);
         client_idx++;
 
-        OCPPClientData* data = http_server->ocpp.GetClientData(client_socket);
+        OCPPClientData* data = ocpp->GetClientData(client_socket);
         if (data) {
             ImGui::Text("Chargebox Path %s", data->path.c_str());
 
@@ -265,22 +299,22 @@ void ApplicationOCPP::RenderOCPPServerUI(){
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Remote Start")){
-                    http_server->ocpp.SendRemoteStartTransaction(client_socket, connectorId, conn.remote_start_id_tag);
+                    ocpp->SendRemoteStartTransaction(client_socket, connectorId, conn.remote_start_id_tag);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Remote Stop")){
-                    http_server->ocpp.SendRemoteStopTransaction(client_socket, conn.transactionId);
+                    ocpp->SendRemoteStopTransaction(client_socket, conn.transactionId);
                 }
 
                 // ChangeAvailability is genuinely per connector, so unlike the
                 // Reset control below the list these belong inside the loop.
                 // The connector 0 row addresses the whole charge point.
                 if (ImGui::Button("Operative")){
-                    http_server->ocpp.SendChangeAvailability(client_socket, connectorId, "Operative");
+                    ocpp->SendChangeAvailability(client_socket, connectorId, "Operative");
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Inoperative")){
-                    http_server->ocpp.SendChangeAvailability(client_socket, connectorId, "Inoperative");
+                    ocpp->SendChangeAvailability(client_socket, connectorId, "Inoperative");
                 }
                 ImGui::SameLine();
                 ImGui::TextDisabled("(?)");
@@ -301,7 +335,7 @@ void ApplicationOCPP::RenderOCPPServerUI(){
                 ImGui::InputInt("PBaseline (W)", &conn.pbaseline_watts);
                 ImGui::SameLine();
                 if (ImGui::Button("Set Power")){
-                    http_server->ocpp.SendChangeConfiguration(client_socket, "PBaseline", std::to_string(conn.pbaseline_watts));
+                    ocpp->SendChangeConfiguration(client_socket, "PBaseline", std::to_string(conn.pbaseline_watts));
                 }
 
                 if (data->hasV2GTelemetry) {
@@ -339,7 +373,7 @@ void ApplicationOCPP::RenderOCPPServerUI(){
             // Hard reboots the physical unit, so colour it as the dangerous one.
             if (hardReset) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f,0.15f,0.15f,1.0f));
             if (ImGui::Button(hardReset ? "Hard Reset" : "Soft Reset")){
-                http_server->ocpp.SendReset(client_socket, resetTypes[data->resetTypeIdx]);
+                ocpp->SendReset(client_socket, resetTypes[data->resetTypeIdx]);
             }
             if (hardReset) ImGui::PopStyleColor();
             ImGui::SameLine();
@@ -353,7 +387,7 @@ void ApplicationOCPP::RenderOCPPServerUI(){
             }
 
             // Transaction history table for this chargepoint (spans all connectors)
-            std::vector<OCPPTransaction> history = http_server->ocpp.GetTransactionHistory(client_socket);
+            std::vector<OCPPTransaction> history = ocpp->GetTransactionHistory(client_socket);
             if (!history.empty()) {
                 ImGui::Separator();
                 ImGui::Text("Transaction History (%d)", (int)history.size());

@@ -32,6 +32,45 @@ fresh empty memory directory at the profile path and start over — the repo cop
 stays intact, so restoring is a matter of deleting that directory and re-running
 the command above.
 
+## `settings.json` (tracked)
+
+One `PreToolUse` hook, matching `Edit|Write|MultiEdit|NotebookEdit`, which runs
+`tools/lockd/claude_lock_hook.py` before any write. That claims the target path
+from the lock broker for the current session and blocks the edit if another agent
+holds it. See `docs/lock_broker.md` §6 for what it does and why, and the top of
+the hook script for how it behaves when the broker is down (it lets the edit
+through).
+
+Tracked rather than in `settings.local.json` on purpose: every agent working in
+this checkout needs the same rule, and one that opted out would be exactly the one
+that overwrites somebody's file.
+
+The command path must be **`$CLAUDE_PROJECT_DIR`-qualified, never relative**, and
+this one cost an agent its afternoon. It was written relative first, on the
+assumption that hooks run with the working directory set to the project root. They
+do not: cwd is the *session's*, and it tracks whatever `cd` the `Bash` tool last
+did. So an agent that cd'd into `tools/assetpack` to build it then found every
+subsequent write refused with
+
+```
+can't open file '...\tools\assetpack\tools\lockd\claude_lock_hook.py': [Errno 2]
+```
+
+because a path that fails to resolve exits 2 from the interpreter, and a
+`PreToolUse` hook reads exit 2 as "block this edit". One `cd` disables writing
+until you `cd` back, and nothing about the message says so. Measured 2026-09-14:
+`$CLAUDE_PROJECT_DIR` does expand correctly here, with the hook both allowing and
+blocking from a non-root cwd.
+
+If a bad command ever does wedge writes this way, recovery is via the `Bash` tool —
+this matcher does not cover it.
+
+Measured when it was installed on 2026-09-14: the hook took effect **immediately**,
+in the session that wrote this file, without reloading the window — the four edits
+made right after it appeared in the lock table, auto-claimed. Do not rely on the
+opposite being true either; if a change to the hook does not seem to be taking,
+reload before concluding the hook itself is wrong.
+
 ## `scratch/` (ignored)
 
 Temp files, traces, one-off scripts. Gitignored via `.claude/scratch/` in

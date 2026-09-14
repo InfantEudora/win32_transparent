@@ -13,9 +13,15 @@ static Debugger* debug = new Debugger("UIOverlay", DEBUG_INFO);
     android_core/Mesh.cpp and these two helpers are the same shim for this file's much smaller
     surface: bind, then call, so the format latches into whatever is currently bound.
 
-    NOT COMPILED OR TESTED IN THIS TREE - nothing here defines __ANDROID__. It is written now
-    because the desktop and GLES forms have to say the same thing, and the moment to notice they
-    do not is while writing the desktop one. Treat it as intent for the port merge to verify.
+    Nothing in THIS tree defines __ANDROID__, so this arm is never built here - but it is not
+    speculative: the same file compiles for aarch64 with the NDK and RUNS, on the Mali-T720, in
+    the Android port at C:/code/android. See docs/ui_overlay_plan.md section 15.
+
+    Measured while proving it, and the reason this shim is not optional: not one of glCreateBuffers,
+    glNamedBufferData, glVertexArrayAttribFormat, glVertexArrayVertexBuffer, glEnableVertexArrayAttrib,
+    glBindTextureUnit, glCreateTextures, glCreateVertexArrays, glTextureStorage2D or
+    glTextureSubImage2D appears anywhere in GLES3/gl3.h, gl31.h or gl32.h. DSA is absent at every
+    GLES version, exactly as section 1 claimed.
 */
 #if defined(__ANDROID__)
 static void UIUploadBuffer(GLuint buffer, size_t bytes, const void* data){
@@ -140,20 +146,83 @@ bool UIOverlay::Init(const char* font_asset, const char* vert_asset, const char*
         return false;
     }
 
-    shader = new Shader();
-    if (!shader->Build(vert_asset,frag_asset)){
-        debug->Err("UIOverlay: could not build %s + %s\n",vert_asset,frag_asset);
+    //Borrowed from the file layer, which owns it for the life of the process (see File.h) - so
+    //this is a pointer, not a copy, and it is what lets a context loss be recovered from without
+    //touching the disk again.
+    atlas_pixels = data + font.pixel_offset;
+    vert_name    = vert_asset;
+    frag_name    = frag_asset;
+
+    if (!CreateGPUObjects()){
+        return false;
+    }
+
+    debug->Ok("UIOverlay ready: %s, %ux%u atlas, em %.1f px\n",
+              font_asset,font.atlas_w,font.atlas_h,font.em_px);
+    return true;
+}
+
+bool UIOverlay::CreateGPUObjects(){
+    //Reused rather than replaced, and that is the point: Shader::Build assigns a fresh progid and
+    //does NOT delete the previous one (only Shader::Reload does). After a context loss the old
+    //program id is meaningless, so deleting it would at best do nothing and at worst name a
+    //program the NEW context has since handed to somebody else.
+    if (!shader){
+        shader = new Shader();
+    }
+    if (!shader->Build(vert_name.c_str(),frag_name.c_str())){
+        debug->Err("UIOverlay: could not build %s + %s\n",vert_name.c_str(),frag_name.c_str());
         delete shader;
         shader = NULL;
         return false;
     }
 
     InitBuffers();
-    InitFontTexture(data + font.pixel_offset);
+    InitFontTexture(atlas_pixels);
 
     f_ready = true;
-    debug->Ok("UIOverlay ready: %s, %ux%u atlas, em %.1f px\n",
-              font_asset,font.atlas_w,font.atlas_h,font.em_px);
+    return true;
+}
+
+bool UIOverlay::ReUploadGPUObjects(){
+    //Never built, or built and failed. Rebuilding from here would mean inventing the half of
+    //Init that reads the font, so say so and stay inert instead.
+    if (!atlas_pixels){
+        debug->Warn("UIOverlay::ReUploadGPUObjects: nothing to rebuild, Init never succeeded\n");
+        return false;
+    }
+
+    /*
+        FORGOTTEN, NOT DELETED, and this is the whole subtlety of the function.
+
+        These names died with the context that issued them. Calling glDeleteBuffers or
+        glDeleteTextures on them now does not free anything - the objects are already gone - and
+        the names are live in the NEW context, where the driver is free to have reissued them to
+        somebody else's buffer. So the delete would be a no-op on a good day and would destroy an
+        unrelated object on a bad one, from a line that reads like cleanup.
+
+        Dropping them on the floor is correct because there is no floor to drop them on: the
+        context took everything with it. The Android port's Mesh::ReUploadMeshData zeroes vbo/vao
+        for exactly this reason.
+    */
+    atlas_tex = 0;
+    vbo       = 0;
+    vao       = 0;
+    f_ready   = false;
+
+    //Same reasoning one level up: the Shader object survives, its program did not. Build() will
+    //overwrite progid without touching the old value.
+    if (!CreateGPUObjects()){
+        debug->Err("UIOverlay::ReUploadGPUObjects: rebuild failed, the overlay will draw nothing\n");
+        return false;
+    }
+
+    //Last frame's quads referred to a buffer that no longer exists, and the surface is very
+    //probably a different size than it was. Begin() clears this anyway; doing it here means a
+    //Draw() before the next Begin() draws nothing rather than a stale batch.
+    vertices.clear();
+
+    debug->Ok("UIOverlay: GPU objects rebuilt after context loss\n");
     return true;
 }
 

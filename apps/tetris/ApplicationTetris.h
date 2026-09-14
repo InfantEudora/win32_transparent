@@ -40,6 +40,9 @@
 #define INPUT_TETRIS_HOLD           INPUT_LAST+7
 #define INPUT_TETRIS_RESTART        INPUT_LAST+8
 #define INPUT_TETRIS_TOGGLE_UI      INPUT_LAST+9
+//Chrome, like TOGGLE_UI: handled in UpdateView so it works while the game is paused, which is
+//exactly when someone reaches for the mute button.
+#define INPUT_TETRIS_MUTE           INPUT_LAST+10
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Restarting is intent arriving from
 //OUTSIDE the simulation (a button, an MCP call), which is exactly what the command queue is for.
@@ -199,16 +202,17 @@ public:
     void RunSimulationTick(void) override;
     void PreRender(void) override;
     void DrawImGuiUI(void) override;
-    //Temporary: the 2D overlay smoke test - a filled rounded rect, an outline and text, to prove
-    //the pass composites and the SDF resolves. See docs/ui_overlay_plan.md step 3.
-    void DrawOverlay(void) override;
     void LayoutTouchButtons(int w, int h) override;
 
-    //Indices into InputController's touch-button list, handed out by AddTouchButton in
-    //SetupInput and used by LayoutTouchButtons to position them. Indices rather than
-    //pointers because the list is a vector and adding the next button would dangle one.
-    int touch_left = -1, touch_right = -1, touch_softdrop = -1;
-    int touch_cw = -1, touch_ccw = -1, touch_harddrop = -1, touch_hold = -1;
+    //Indices into InputController's touch-button list, handed out by AddTouchButton in SetupInput
+    //and used by LayoutTouchButtons to position them. Indices rather than pointers because the
+    //list is a vector and adding the next button would dangle one.
+    //
+    //Two clusters under the thumbs and three small chrome buttons in the top-right corner,
+    //matching the Android build's layout - see LayoutTouchButtons.
+    int touch_left = -1, touch_softdrop = -1, touch_ccw = -1;
+    int touch_harddrop = -1, touch_cw = -1, touch_right = -1;
+    int touch_newgame = -1, touch_pause = -1, touch_mute = -1;
     vec3* GetCameraTargetPtr() override { return &camera_target; }
 
     SoundSystem* soundsystem = NULL;
