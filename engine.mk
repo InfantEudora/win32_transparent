@@ -19,6 +19,16 @@
 #     mingw32-make.exe                    ->  build/<project>.exe          (debug)
 #     mingw32-make.exe CONFIG=release     ->  build/<project>_release.exe
 #
+# A SHIPPING build is neither of those. It is release AND baked assets AND the three
+# developer facilities switched off, and getting four flags right by hand every time is
+# not a thing anyone does reliably - so the set is named once, as a target:
+#
+#     mingw32-make.exe ship               ->  build/<project>_baked_nomcp_nonet_noimgui_release.exe
+#
+# That name is derived, not chosen, which is why it reads like that; the ship rule echoes
+# the path so nobody has to assemble it in their head. See the `ship` block near the end of
+# this file for what the five settings are and why USE_SOUND is not among them.
+#
 # WHAT MAKES THIS POSSIBLE is that core/ no longer knows which app is building. It used
 # to: main.cpp took the app class through -DAPP_HEADER/-DAPP_CLASS, and core/File.cpp
 # took the asset roots through -DAPP_ASSET_PATH. Both are gone - each app has its own
@@ -384,15 +394,28 @@ ifeq ($(strip $(ASSET_ROOTS)),)
 $(error BAKE_ASSETS is 1 but ASSET_ROOTS is empty - name the roots to bake, in the same order main.cpp declares them)
 endif
 
-GENERATED   := $(BUILD_DIR)/generated
+#PER-VARIANT, BUT STILL NOT PER-CONFIGURATION, and the split is the whole point.
+#
+#Not per-configuration, because debug and release bake the SAME BYTES: one pack serves both and
+#switching configuration does not repack. That was the original reasoning and it still holds.
+#The OBJECTS built from these files land in $(OBJ_DIR), which is per-configuration.
+#
+#Per-VARIANT, because $(ASSET_PACK_FLAGS) can depend on the flag family, and now does. An app
+#excludes ImGui's font when USE_IMGUI=0 and must keep it otherwise (apps/tetris/makefile has the
+#worked example), so `make ship` and `make BAKE_ASSETS=1` want DIFFERENT packs from the same
+#tree. With one shared directory the second build to run finds the first one's table newer than
+#everything and reuses it: measured 2026-09-14, `make ship` after a measurement build shipped a
+#254 KB font it had explicitly excluded, and the reverse order is the one that dies at startup.
+#
+#So it is exactly the argument the VARIANT_SUFFIX block makes about objects and exe names, about
+#a different kind of output: a build whose flags change what comes out needs somewhere of its own
+#to put it. $(VARIANT_SUFFIX) is empty for a default build, so an ordinary bake is untouched and
+#build/generated is still build/generated.
+GENERATED   := $(BUILD_DIR)/generated$(VARIANT_SUFFIX)
 PACK_TOOL   := $(ROOT)/tools/assetpack/build/assetpack.exe
 BAKED_TABLE := $(GENERATED)/BinaryAssetMemory.cpp
 BAKED_STUB  := $(GENERATED)/assets.S
 BAKED_BLOB  := $(GENERATED)/assets.bin
-
-#Not per-configuration, unlike the objects built from them: the same bytes are baked into a
-#debug and a release build, so one pack serves both and switching configuration does not
-#repack. The OBJECTS still land in $(OBJ_DIR), which is per-configuration.
 
 #So an app can compile its disk roots out - see the note above.
 CFLAGS += -DASSETS_BAKED
@@ -527,7 +550,20 @@ ASSET_FILES := $(foreach d,$(ASSET_ROOTS),$(call rwildcard,$(d),*))
 #has to be one rule producing three outputs. Three ordinary rules would each invoke the
 #packer - three times the work serially, and with -j a race in which three copies write the
 #same blob at once.
-$(BAKED_TABLE) $(BAKED_STUB) $(BAKED_BLOB) &: $(PACK_TOOL) $(ASSET_ROOTS) $(ASSET_FILES)
+#
+#$(MAKEFILE_LIST) IS A PREREQUISITE BECAUSE THE FLAGS LIVE THERE. The recipe below passes
+#$(ASSET_PACK_FLAGS), which an app sets in its own makefile - and make compares TIMESTAMPS, so
+#without this an edit to that list changes nothing: the generated table is newer than every
+#asset and the tool, make says there is nothing to do, and the app keeps the blob it packed
+#under the OLD exclusions. Measured 2026-09-14, adding an exclusion and rebuilding: the pack
+#did not re-run, and the only way to notice was to count the entries in the generated .cpp.
+#
+#That is the same class of bug as the split object trees above, and worse here, because the
+#stale artefact is data rather than code: an exclusion that has quietly not taken effect ships
+#an asset you meant to drop, and one that has quietly not been REMOVED ships a build that dies
+#on its first LoadFile. MAKEFILE_LIST is every makefile read so far - this file and the app's -
+#which is exactly the set that can carry ASSET_ROOTS or ASSET_PACK_FLAGS.
+$(BAKED_TABLE) $(BAKED_STUB) $(BAKED_BLOB) &: $(PACK_TOOL) $(MAKEFILE_LIST) $(ASSET_ROOTS) $(ASSET_FILES)
 	@mkdir -p $(GENERATED)
 	$(PACK_TOOL) $(ASSET_PACK_FLAGS) -o $(GENERATED) $(ASSET_ROOTS)
 
@@ -538,6 +574,56 @@ $(PACK_TOOL): $(wildcard $(ROOT)/tools/assetpack/*.cpp) $(ROOT)/tools/assetpack/
 	+$(MAKE) -C $(ROOT)/tools/assetpack
 
 endif
+
+#---------------------------------------------------------------------------------------
+# ship - the one build that is not for us
+#
+# FIVE settings have to agree before a build is fit to hand to a player, and every one of
+# them defaults to what a DEVELOPER wants. Spelling them out on the command line every time
+# is how one of them eventually gets left off, and the one most worth leaving off is
+# USE_MCP=0: a shipped game that still listens on 127.0.0.1:8765 is the precise failure
+# that flag exists to prevent, and nothing about the running app would look wrong. So the
+# set lives here, named once, and the whole instruction is:
+#
+#     mingw32-make.exe ship -j8
+#
+# which means:
+#
+#     CONFIG=release    -O3 -s, no debug symbols       ~13x smaller than the debug exe
+#     BAKE_ASSETS=1     assets compiled into the exe   nothing to ship beside it
+#     USE_MCP=0         no JSON-RPC debug server       and so no listening socket
+#     USE_NET=0         no sockets at all
+#     USE_IMGUI=0       no menu bar, Scene tree, Inspector or per-app debug HUD
+#
+# USE_IMGUI=0 DOES NOT LEAVE THE GAME MUTE. core/UIOverlay is a separate thing and stays -
+# it is how a shipped build talks to a player, ImGui is how the engine talks to us. The
+# USE_IMGUI block above has the long version.
+#
+# USE_SOUND IS DELIBERATELY ABSENT from that list. It is a property of the APP, not of the
+# build - Tetris ships with sound because Tetris has sound - so ship inherits whatever the
+# app's own makefile asked for and does not second-guess it. The four above are all
+# developer surface, which is what makes them the build's business rather than the app's.
+#
+# AN APP THAT HAS NOT DECLARED ASSET_ROOTS CANNOT SHIP YET, and says so: BAKE_ASSETS=1
+# raises the $(error) in the BAKED ASSETS block above. That is the correct answer rather
+# than a nuisance - quietly dropping the bake would produce an exe that looks shippable and
+# dies on its first asset wherever it lands. Declare the roots, in the order main.cpp does.
+#
+# A SUB-MAKE, not target-specific variables. EXE, CFLAGS, OBJ_DIR and CORE_SRCS are all
+# computed while this file is being READ, and a target-specific variable is set long after
+# that - `ship: CONFIG=release` would happily build the debug exe and call it release. The
+# leading + hands over this make's jobserver, so `make ship -j8` really does use eight.
+#---------------------------------------------------------------------------------------
+ship:
+	+$(MAKE) CONFIG=release BAKE_ASSETS=1 USE_MCP=0 USE_NET=0 USE_IMGUI=0 shipname
+
+#Runs INSIDE that sub-make, where $(EXE) has already been computed AS the ship exe - which
+#is the point: the name is derived from the same suffix rules as every other build rather
+#than spelled out a second time here, where it could drift. `default` as a prerequisite
+#keeps it last under -j, and means the path is still printed when everything is up to date
+#and the link rule's own "Built" line never runs.
+shipname: default
+	@echo "Ship build: $(EXE)"
 
 #Only this app's objects and exe - both configurations of them. The shared core objects
 #are left alone - another app is probably using them, and they are not this app's to
@@ -551,4 +637,4 @@ clean:
 cleancore:
 	-rm -rf $(CORE_BUILD_ROOT)
 
-.PHONY: default clean cleancore
+.PHONY: default ship shipname clean cleancore

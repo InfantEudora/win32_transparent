@@ -9,6 +9,9 @@
 
 #include "Debug.h"
 #include "File.h"
+//File.h already pulls this in, but the listing below names BinaryAsset directly and an include
+//that is only there by transit is one refactor away from not being there at all.
+#include "BinaryAsset.h"
 
 //Required for NVidia Optimus to use the discrete GPU on laptops with integrated graphics. Put this in the main.cpp of your application, and it will be picked up by the driver.
 extern "C" { __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001; }
@@ -53,5 +56,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     Application* main_app = new ApplicationTetris();
     main_app->Start();
+
+    BinaryAsset::ListBinaryAssets();
+
     return main_app->Exit();
 }

@@ -2737,3 +2737,84 @@ object happened to construct first.
   Still true that **nothing turns any of these off by default.** No app sets them; every ordinary
   build is exactly what it was. Flipping them is what releasing something means, and that is items
   79-82's call to make - which, with 82 closed, is now just a decision rather than any more work.
+
+---
+
+- [x] **90. `ASSET_PACK_FLAGS` exclusions cannot vary by build flag, and one of them now breaks the
+  baked build.** CLOSED 2026-09-14, the day it was opened. `apps/tetris/makefile` excluded
+  `fonts/consola.ttf` from the pack, which is right for `make ship` — that is ImGui's font,
+  `USE_IMGUI=0` drops `core/WindowImGui.cpp`, and nothing asks for it. But the exclude list is read
+  at parse time and knows nothing about the flags, so it applied to **every** baked build, including
+  the `CONFIG=release BAKE_ASSETS=1` measurement build documented five lines above it in that same
+  file. That build still has ImGui, still calls `LoadFile("fonts/consola.ttf")` at
+  `core/WindowImGui.cpp:64`, and — because `ASSETS_BAKED` means `main.cpp` declares no disk root to
+  fall back on — died during startup:
+
+  ```
+  [fatal] File : LoadFile failed to load [fonts/consola.ttf] - looked in: fonts/consola.ttf
+  ```
+
+  **The fix is three lines, and the subtle part is not the `ifneq`.** `engine.mk` is included at the
+  BOTTOM of an app makefile, and that is where the flag family gets its defaults — so `USE_IMGUI` is
+  *not set yet* at the point the exclusion is written, and a bare `ifneq ($(USE_IMGUI),1)` reads an
+  empty value and excludes in every build that did not name the flag on the command line, which is
+  precisely the bug. The default has to be mirrored first:
+
+  ```make
+  USE_IMGUI ?= 1
+  ifneq ($(USE_IMGUI),1)
+  ASSET_PACK_FLAGS += --exclude "fonts/consola.ttf"
+  endif
+  ```
+
+  `?=` does not overwrite a command-line value, so `make ship` still wins. The exclusions in that
+  file are now grouped by what KIND of claim each one is, because there turned out to be three and
+  only two are safe unconditionally: facts about the asset tree (`CascadiaMono.ttf`, `mono_sdf.png`,
+  `shaders/texture.comp` — nothing in the repo loads them), facts about the app (`skybox.vert/.frag`
+  — `apps/grid`, `apps/isoanimation` and `apps/pinball` all load them, so this is only correct
+  because the list is per-app), and facts about a *build of* the app, which is the one that needed
+  the guard.
+
+  **Two further bugs surfaced while verifying the fix, and both are fixed with it.** Neither was
+  visible before an exclusion existed that actually mattered:
+
+  - **Changing `ASSET_PACK_FLAGS` did not trigger a repack.** The pack rule's prerequisites were the
+    tool, the roots and the asset files — not the makefile that supplies the flags. Make compares
+    timestamps, never the flags a thing was built with, so adding the exclusion and rebuilding left
+    the generated table untouched and the only way to notice was to count entries in the generated
+    `.cpp`. `$(MAKEFILE_LIST)` is now a prerequisite of the grouped pack rule in `engine.mk`.
+  - **`$(GENERATED)` had to become per-variant.** It is deliberately not per-*configuration* — debug
+    and release bake identical bytes — but once the flags can change the pack, `make ship` and
+    `make BAKE_ASSETS=1` want different packs from one tree, and with one shared directory the
+    second build to run found the first's table newer than everything and reused it wholesale.
+    Measured both ways round: `make ship` after a measurement build shipped the 254 KB font it had
+    explicitly excluded, and the opposite order produced the startup death above. Now
+    `$(BUILD_DIR)/generated$(VARIANT_SUFFIX)`, which is empty for a default build, so an ordinary
+    bake still writes `build/generated` and is unchanged. Same argument the `VARIANT_SUFFIX` block
+    already makes about object trees and exe names, applied to a third kind of output.
+
+  **Verified** by building both baked variants from a cleared `build/generated*` and running each to
+  a graceful shutdown, reading the tally `BinaryAsset::ListBinaryAssets()` prints from
+  `apps/tetris/main.cpp`:
+
+  | build | `generated` dir | packed | `consola.ttf` | fatals | never requested |
+  |---|---|---|---|---|---|
+  | `CONFIG=release BAKE_ASSETS=1` | `generated/` | 17 | present, in use | 0 | **0** |
+  | `make ship` | `generated_nomcp_nonet_noimgui/` | 16 | absent | 0 | **0** |
+
+  Both coexist, and in either build order. **Zero unused assets in either**, which is the number
+  that says the exclusions are now exactly right rather than merely smaller — before this, ship
+  packed 20 and requested 16. Repack-on-flag-change verified separately by `touch`ing the app
+  makefile and watching `assetpack.exe` re-run.
+
+  **On the size, and the part of it that is not this item's doing.** The ship pack went from 932,270
+  to 518,559 bytes and the exe from 3,397,632 to 2,984,448. Only **256,046 of that is the four new
+  exclusions** (`consola.ttf` 254,032, `texture.comp` 1,004, `skybox.frag` 528, `skybox.vert` 482).
+  The other 157,665 is `sound/bleep.wav` and `sound/click.wav` being re-encoded smaller by unrelated
+  work in the same session, which landed between the before and after measurements. Recorded split
+  rather than merged because the merged figure is the one a later reader would reasonably take as
+  the value of excluding assets, and it is roughly 60% too flattering.
+
+  The general problem this is a special case of is item 91, still open: an exclusion is a claim about
+  what the code loads, and only the code knows that. `docs/asset_declaration_plan.md` is the agreed
+  replacement for the whole hand-written block.

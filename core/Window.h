@@ -103,7 +103,10 @@ public:
     bool InitImGui();
 
     static Window* CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc);
-    static Window* CreateNewWindow(int width, int height, WNDCLASSEXA* wc);
+    //`title` is what shows in the title bar and on the taskbar. Passed in at creation rather
+    //than SetTitle'd afterwards so the window is never briefly called something else - see
+    //Application::Start, which hands it the app's own name.
+    static Window* CreateNewWindow(int width, int height, WNDCLASSEXA* wc, const char* title);
 
     void ImGuiNewFrame();
     void ImGuiRenderDrawData();

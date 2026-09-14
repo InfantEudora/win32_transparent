@@ -97,6 +97,14 @@ void Window::Show(int nShowCmd){
     //UpdateWindow(hWnd);
 }
 
+//Renaming a window that already exists. CreateNewWindow takes the title it opens with, so this is
+//for a name that CHANGES while running - a document name, a connection state - rather than for
+//setting it the first time. It was declared here and never defined until something needed it,
+//which would have been a link error for whoever called it first.
+void Window::SetTitle(std::string title){
+    SetWindowTextA(hWnd,title.c_str());
+}
+
 //This registers the window classes for this application
 void Window::RegisterWindowClasses(){
     WNDCLASSEXA wc = {0};
@@ -357,7 +365,7 @@ Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc){
     return wnd;
 }
 
-Window* Window::CreateNewWindow(int width, int height, WNDCLASSEXA* wc){
+Window* Window::CreateNewWindow(int width, int height, WNDCLASSEXA* wc, const char* title){
     Window* wnd = new Window();
 
     int left = 200;
@@ -374,7 +382,7 @@ Window* Window::CreateNewWindow(int width, int height, WNDCLASSEXA* wc){
 
     wnd->hWnd = CreateWindowExA(WS_EX_LEFT,
         wc->lpszClassName,
-        "Normal Window",
+        title ? title : "Normal Window",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,

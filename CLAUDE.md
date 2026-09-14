@@ -76,7 +76,7 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
 ```
 
 - **`CONFIG=release` is the other build**, and it is worth knowing about because it is worth 90% of
-  the file: `tetris.exe` is 55.4 MB, `tetris_release.exe` is 5.7 MB. Debug is the default and
+  the file: `tetris.exe` is 41.9 MB, `tetris_release.exe` is 3.3 MB. Debug is the default and
   nothing about it changed.
 
   ```bash
@@ -88,6 +88,24 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   switching configuration costs nothing, and separate names mean neither exe can silently be the
   other one. The folder cannot change, because `main.cpp` counts `../../../shared_assets` from it
   and `imgui.ini` and save files are written beside it.
+
+- **`make ship` is the build you hand to someone else.** `CONFIG=release` on its own is *not* that:
+  it still carries the MCP server, the sockets, the ImGui panels, and no assets. Five settings have
+  to agree, so they are named once as a target rather than typed out each time:
+
+  ```bash
+  mingw32-make.exe ship -j8        # -> build/tetris_baked_nomcp_nonet_noimgui_release.exe
+  ```
+
+  which is `CONFIG=release BAKE_ASSETS=1 USE_MCP=0 USE_NET=0 USE_IMGUI=0`. The result binds **no
+  port** and needs **no `shared_assets/` beside it**. The flag most worth not forgetting is
+  `USE_MCP=0`: a shipped game still listening on 8765 looks perfectly fine while running, which is
+  exactly why it should not be a thing anyone has to remember. `USE_SOUND` is deliberately *not* in
+  the set - it is a property of the app, not of the build. An app that has not declared
+  `ASSET_ROOTS` cannot ship yet and fails with a message saying so. Measured 2026-09-14, Tetris:
+  debug 43.9 MB, release 3.47 MB, ship 3.40 MB - the ship exe is *smaller* than the loose release
+  despite carrying 932 KB of compressed assets, because dropping ImGui and the server saves more
+  than the blob costs.
 
 - **One exe per app.** Each app is a folder under `apps/` with its own `makefile`, `main.cpp`,
   `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the fourteen

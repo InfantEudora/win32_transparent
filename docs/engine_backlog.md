@@ -59,6 +59,25 @@ unchanged and opts in with `BAKE_ASSETS=1`. Plan and measurements in `tools/asse
 **Item 89 opened** out of it: `Application::Init()` is dead code and the graphics prologue it holds
 is copy-pasted into all fourteen apps.
 
+On 2026-09-14, later still: **items 90 and 91 opened**, out of `make ship` landing in `engine.mk`
+(release + baked + `USE_MCP=0` + `USE_NET=0` + `USE_IMGUI=0`, named once rather than typed out) and
+out of teaching `BinaryAsset::ListBinaryAssets()` to report the packed table rather than only the
+disk one. Tetris **packs 20 assets and requests 16**; the four it never touches are the skybox pair,
+`shaders/texture.comp`, and `fonts/consola.ttf` — that last only because `USE_IMGUI=0` drops the
+code that loads it. Excluding them by hand became item 90, which bit immediately — the exclusion was
+flag-blind, so `CONFIG=release BAKE_ASSETS=1` with ImGui still on died at startup with no
+`consola.ttf` to load — and **item 90 closed the same day**, taking two further bugs with it that
+only became visible once an exclusion mattered: the pack did not re-run when `ASSET_PACK_FLAGS`
+changed, and `$(GENERATED)` had to become per-variant so `make ship` and the measurement build stop
+reusing each other's table. Tetris now packs **16 and requests 16** — no dead weight in either
+variant — and the ship exe is 2,984,448 bytes. Of the 413 KB that came off, **256,046 bytes is the
+exclusions**; the rest is `bleep.wav` and `click.wav` being re-encoded by other work the same day,
+and the two are kept apart in the closed entry because the combined figure flatters the exclusions
+by about 60%. Item 91 is the general form — the packer
+walks a directory when it should be reading the build — including why a runtime dump can verify the
+pack but must never produce it. Its direction was settled the same day: the code declares what it
+loads, `ASSET_NEEDS` next to the `LoadFile` call, planned in `docs/asset_declaration_plan.md`.
+
 On 2026-09-14: **item 84 closed** - scripted holds now advance from inside the tick, so edge-triggered
 SCRIPTED actions survive `sim_step` in every app. That wording said "edge-triggered actions" until
 later the same day, when the on-screen buttons showed that REAL asynchronous edges still fall through
@@ -626,6 +645,58 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   takes**: item 67's buttons are laid out in millimetres via `GetDisplayDPI()` (item 70) precisely
   so they survive a change of screen, and a draw path that only speaks pixels would quietly undo
   that.
+
+- [ ] **91. The packer is directory-driven, so what ships is a hand-maintained guess.** **Full plan
+  in `docs/asset_declaration_plan.md`** — direction agreed 2026-09-14 (step 3 below, `ASSET_NEEDS`),
+  and the mechanism is verified rather than assumed: a custom COFF section carries the names through
+  mingw g++, `objcopy` reads them back out of the `.o`, and `-Wl,--gc-sections` — which `engine.mk`
+  already passes — drops them from the shipped exe, so a declaration costs nothing to ship.
+  `tools/assetpack` walks `ASSET_ROOTS` and subtracts `--exclude` globs. That makes the shipped set
+  a property of **the tree plus a hand-written list**, when what anyone actually wants is a property
+  of **the code**: the assets this build of this app can ask for. Three sources of truth, and only
+  the third is authoritative. Item 90 — closed 2026-09-14, text in `docs/engine_backlog_done.md` —
+  is what happens when they disagree, and it is worth reading first: it cost three fixes, two of
+  which were bugs nobody could see until an exclusion mattered.
+
+  The measurement that motivated this, taken 2026-09-14: Tetris packed 20 assets and, run to
+  shutdown, requested 16 of them. The four it never touched were `shaders/skybox.vert`,
+  `shaders/skybox.frag` and `shaders/texture.comp` — which it does not draw — plus
+  `fonts/consola.ttf`, which it does not load *in a `USE_IMGUI=0` build*. Nothing in a makefile or
+  in the asset tree could have told you the fourth one.
+
+  **The obvious fix is banned, and it is worth writing down why.** Having the app dump the names it
+  loaded and feeding that back as the pack list is exactly `DUMP_BINARYASSETS`, removed on
+  2026-09-14 — see the note on `assets[]` in `core/BinaryAsset.h`. It could only ever bake what one
+  session happened to reach, which is a different question from what the app can ask for, and only
+  one of the two has a reproducible answer. A menu never opened, a sound only a tetris plays, a
+  shader behind a toggle: all absent, and nothing would say so. A runtime manifest is a **verifier**
+  here, never an input.
+
+  Three steps, cheapest first, each useful alone:
+
+  1. **Run the baked build in the build, and diff.** `BinaryAsset::ListBinaryAssets()` now reports
+     both tables and, at shutdown, which packed assets were never requested
+     (`apps/tetris/main.cpp`). So: bake everything with no exclusions, run to shutdown, and compare
+     what was requested against what was packed. Over-inclusion shows up as a list of names to
+     look at; **under**-inclusion shows up as the `LoadFile failed` fatal in item 90, which is
+     louder. This is the cheap regression net and it needs no new machinery — only somewhere to
+     run it.
+  2. **Cross-check the pack against the code.** Scan the translation units the build actually
+     compiles for asset-name literals and warn when the pack and the code disagree. Flag-aware for
+     free, because `USE_IMGUI=0` drops `core/WindowImGui.cpp` and its `"fonts/consola.ttf"` with
+     it. A warning rather than the pack list, because of the caveats below.
+  3. **Let the code declare what it needs.** The dependency on `fonts/consola.ttf` belongs next to
+     the `LoadFile` at `core/WindowImGui.cpp:64`, not in fourteen app makefiles. Something like
+     `ASSET_NEEDS("fonts/consola.ttf")` registering into a link-time section, with the packer
+     reading the registrations out of the objects that were actually linked. That is reproducible,
+     needs no run, and is flag-aware by construction — a dropped translation unit takes its
+     declarations with it.
+
+  **Two things no static scan can see**, which is why step 2 warns rather than decides. Names built
+  at run time (`"shaders/" + name`) are invisible. And shaders have their own reference graph:
+  `core/Shader.cpp` implements a nested GLSL `#include`, so `apps/ship/assets/shaders/*.frag` pulls
+  in `density.glsl` by name with no C++ literal anywhere. Both are visible to step 1 and to the
+  runtime listing, which is the other half of why the verifier keeps its job even once step 3 lands.
 
 ## Band E — multi-day, strategic
 

@@ -54,7 +54,9 @@ int2 Application::GetDisplaySettings(){
 
 void Application::Start(void){
     //Create a main window
-    main_window = Window::CreateNewWindow(1280,800,&Window::wcs.at(0));
+    //The app's own name in the title bar - see Application::app_name, which a subclass sets in
+    //its constructor and so has already set by the time Start() runs.
+    main_window = Window::CreateNewWindow(1280,800,&Window::wcs.at(0),app_name.c_str());
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }
@@ -170,21 +172,6 @@ void Application::Init(){
     main_scene->renderer = renderer;
     main_scene->inputcontroller = main_window->inputcontroller;
     main_scene->shader = default_shader;
-
-    /*
-        THIS WHOLE FUNCTION IS UNREACHABLE, and that is worth knowing before reading anything in
-        it. Init() is virtual, FrameThreadFunction calls app->Init() (:211), and all fourteen apps
-        override it without chaining to this base - measured 2026-09-14, no caller anywhere.
-
-        The line below was BinaryAsset::DumpBinaryAssets() until that date, which made this look
-        like the place the baked asset table was produced. It was not: the dump only ever emitted
-        what the process happened to have loaded so far, and from here that is the default shaders
-        and nothing else. Producing the table is now tools/assetpack's job, off-line and from the
-        asset tree rather than from a session - see tools/assetpack_plan.md. What is left is the
-        listing the call has actually been doing in every build anyone ran, kept rather than
-        deleted so this stays a no-op change, and renamed so it says what it does.
-    */
-    BinaryAsset::ListBinaryAssets();
 
     //Just so the current items show on the first frame...?
     main_scene->UpdatePhysics(GetPhysicsTimestep());
@@ -361,17 +348,25 @@ void Application::DrawFrame(){
         //Re-lay the on-screen buttons whenever the surface changes, and once before the first
         //frame. Here rather than at Init because the size is not final there - see
         //Application::LayoutTouchButtons for the case that proved it.
+#if USE_TOUCH_UI
         if ((main_window->width != touch_layout_w) || (main_window->height != touch_layout_h)){
             touch_layout_w = main_window->width;
             touch_layout_h = main_window->height;
             LayoutTouchButtons(touch_layout_w,touch_layout_h);
         }
+#endif
 
         overlay->Begin(main_window->width,main_window->height);
+        //NOT gated: this is the app's own 2D HUD, which a desktop build wants as much as a phone
+        //does. Only the touch BUTTONS are Android-only - see USE_TOUCH_UI in Application.h. An
+        //app whose overlay draws labels FOR those buttons reads its own button indices, which
+        //are -1 when they were never bound, so it goes quiet on its own.
         DrawOverlay();
+#if USE_TOUCH_UI
         if (f_draw_touch_buttons){
             DrawTouchButtons();
         }
+#endif
         overlay->Draw();
     }
 
@@ -1154,3 +1149,35 @@ Object* Application::CreateNewObjectFromGLTF(const std::string& nodename, Scene*
     }
     return NULL;
 }
+
+
+//--- The device's media volume ------------------------------------------------------------------
+/*
+    See the declarations in Application.h for what these are for and why a caller must respect
+    -1. There is no win32 implementation yet, so this is the whole of it here.
+
+    The __ANDROID__ half is deliberately kept as a visible empty branch rather than left out: the
+    Android port (C:/code/android) has a working JNI version of exactly these three functions
+    against AudioManager, and naming the branch here is what stops the next person concluding
+    the feature does not exist rather than that this platform does not implement it.
+*/
+#ifdef __ANDROID__
+    //Implemented in the Android port against AudioManager/STREAM_MUSIC. Note it must also
+    //ADJUST_UNMUTE on any non-zero value: setStreamVolume alone leaves an explicitly muted
+    //stream silent, which makes the control look broken in the exact case it exists for.
+#else
+
+/*
+    -1 is the documented "no control available" answer, and a caller that respects it hides its
+    volume UI rather than drawing one that does nothing.
+
+    A win32 version would go through IAudioEndpointVolume (mmdeviceapi/endpointvolume), but that
+    adjusts the WHOLE ENDPOINT rather than this process's stream - a game quietly turning the
+    speakers down for every other app on the machine is a ruder thing than not having the button,
+    so this stays unimplemented until it is per-session (ISimpleAudioVolume) rather than global.
+*/
+int  Application::GetSystemVolume() const    { return -1; }
+int  Application::GetMaxSystemVolume() const { return -1; }
+void Application::SetSystemVolume(int volume){ (void)volume; }
+
+#endif //__ANDROID__

@@ -7,6 +7,9 @@
 #include <windows.h>
 #include <stdint.h>
 #include <mutex>
+//app_name is a std::string. Window.h happens to pull this in too, but an include that is only
+//there by transit is one refactor away from not being there at all.
+#include <string>
 #include "Window.h"
 #include "Renderer.h"
 #include "Shader.h"
@@ -27,6 +30,29 @@
 //with no winsock in it, so it sidesteps the include-order trap MCPServer.h documents.
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;
+
+/*
+    THE ON-SCREEN TOUCH UI, AND THE ONE LINE THAT TURNS IT ON.
+
+    A phone or tablet has nothing else to play with, so the button clusters are the only controls
+    there. A desktop has a keyboard, a mouse and a gamepad already, so the same buttons are dead
+    weight on top of the game - they cover the corners, they hit-test every pointer press, and
+    nobody presses them. So they are ANDROID-ONLY by default.
+
+    This is deliberately ONE #if, in one file, rather than a per-app setting: checking how the
+    touch layout looks on Windows is a thing you want to do while working on the layout, and it
+    should cost changing this line to `#if 1` and rebuilding - not finding five places.
+
+    It gates BINDING as well as drawing, in the apps as well as here, and that is the part not to
+    get wrong: a button that is bound but not drawn is still live at its rect, so an invisible
+    DROP in the corner of a desktop window would eat clicks and there would be nothing on screen
+    to explain why. Backlog item 67 is the same failure found the other way round.
+*/
+#if defined(__ANDROID__)
+    #define USE_TOUCH_UI 1
+#else
+    #define USE_TOUCH_UI 0
+#endif
 
 /*
     The thing that ties everything together.
@@ -319,9 +345,45 @@ public:
         physics_us_per_tick = 1000000.0f / physics_tps;
     }
 
+    /*
+        What this application calls itself. Start() hands it to the window, so it is what shows in
+        the title bar and on the taskbar instead of the old hardcoded "Normal Window".
+
+        SET IT IN THE APP'S CONSTRUCTOR - Start() creates the window, and a subclass constructor
+        has already run by then. Assigning it later changes nothing on its own; that is what
+        Window::SetTitle is for.
+
+        Keep it distinct from any ImGui window title the app uses. Two ImGui::Begin() calls with
+        the same string are ONE window, so an app named "Tetris" that also does Begin("Tetris")
+        for its HUD would find the two merged into a single scrolling panel.
+    */
+    std::string app_name = "Application";
+
     //The one and only simulation timestep, in seconds. Constant for the life of the run - every
     //caller of Scene::UpdatePhysics/UpdateAnimations passes this, nothing computes its own.
     float GetPhysicsTimestep() const { return 1.0f / physics_tps; }
+
+    /*
+        THE DEVICE'S OWN MEDIA VOLUME, not a gain applied to our mixer.
+
+        SoundSystem's per-voice gain and an app's mute flag both sit DOWNSTREAM of this: if the
+        output stream is at 0 the game is silent however loud it asks to be. Worth having as a
+        separate control because the two failures are indistinguishable to the player - a muted
+        game on a device at volume 0 and a game at full gain on a device at volume 0 sound
+        exactly alike, and only one of them is a setting they can find.
+
+        GetSystemVolume returns the current step and GetMaxSystemVolume the top of the scale,
+        which is PER-DEVICE and must never be assumed - so a readout shows both, or it does not
+        say how loud the number is. SetSystemVolume clamps to [0,max].
+
+        All three return -1 / do nothing when there is no control to reach, which is what the
+        win32 build does today. Callers must treat -1 as "no volume control on this platform"
+        and HIDE their UI rather than drawing one that does nothing: see ApplicationTetris,
+        which never allocates its V-/V+ buttons when max comes back negative.
+    */
+    int  GetSystemVolume() const;
+    int  GetMaxSystemVolume() const;
+    void SetSystemVolume(int volume);
 
 
     //Generic Object placement and selection

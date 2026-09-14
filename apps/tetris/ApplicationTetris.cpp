@@ -112,6 +112,11 @@ static vec3 PreviewCellPosition(const vec3& anchor, int type, int index){
 }
 
 ApplicationTetris::ApplicationTetris():Application(){
+    //The window title. HERE rather than in Init(), because Start() creates the window and Init()
+    //runs after it. Not "Tetris" alone: the ImGui HUD further down is already
+    //ImGui::Begin("Tetris"), and two Begin() calls sharing a name are one window - see
+    //Application::app_name.
+    app_name = "Tetris Engine";
     debug->Info("Created new application.\n");
 }
 
@@ -967,6 +972,17 @@ void ApplicationTetris::SetupCamera(){
 void ApplicationTetris::SetupInput(){
     InputController* input = main_scene->inputcontroller;
 
+    /*
+        EVERY MAPPING IN THIS BLOCK IS A WIN32 VIRTUAL-KEY CODE, so it is guarded rather than
+        assumed. The Android port of this same file builds against a device with no keyboard to
+        press them on, and VK_LEFT and friends do not exist there at all.
+
+        Kept verbatim inside the guard rather than split into a platform file: this app's file is
+        shared with that port more or less line for line, and re-syncing it should stay a plain
+        copy plus this one #if. The gamepad and touch bindings below are deliberately OUTSIDE it -
+        they are portable as written.
+    */
+#if defined(_WIN32)
     //Two mappings for most actions, because muscle memory differs: arrows are the classic
     //arcade layout and Z/X/C the guideline one. KeyState::f_isdown counts HELD MAPPINGS rather
     //than being a boolean, so an action stays down while either of its keys is.
@@ -986,12 +1002,23 @@ void ApplicationTetris::SetupInput(){
     //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
     //INPUT_PAUSE is handled by Scene::UpdatePhysics itself, so this is the whole feature.
     input->AddKeyMap('P',INPUT_PAUSE);
+#endif //_WIN32
 
     //Gamepad: the left stick's X axis steers, which is the one analog control a Tetris has. The
     //D-pad arrives through XInput as buttons rather than as an analog index, so it is not mapped
     //here - see docs/tetris_findings.md on what that costs.
     input->AddGamePadMap(0,INPUT_TETRIS_LEFT);
 
+    /*
+        Everything from here to the end of SetupInput is the ON-SCREEN TOUCH UI, which is
+        Android-only - see USE_TOUCH_UI in core/Application.h, which is the single line that
+        turns it on for a desktop build when you want to look at the layout.
+
+        The BINDING is inside the guard and not just the drawing, on purpose: AddTouchButton is
+        what makes a rect live, so buttons bound but not drawn would sit invisible in the corners
+        of a desktop window quietly eating clicks.
+    */
+#if USE_TOUCH_UI
     /*
         On-screen buttons - the third input family, and the whole test of whether the seam was put
         in the right place: this block is the ONLY app code that changes for them. GatherInput,
@@ -1045,6 +1072,70 @@ void ApplicationTetris::SetupInput(){
     touch_newgame   = input->AddTouchButton(later,INPUT_TETRIS_RESTART,   "NEW");
     touch_pause     = input->AddTouchButton(later,INPUT_PAUSE,            "II");
     touch_mute      = input->AddTouchButton(later,INPUT_TETRIS_MUTE,      "MUTE");
+
+    /*
+        The device's own media volume, under MUTE.
+
+        Bound only when the platform actually HAS the control, so the win32 build (where
+        GetMaxSystemVolume returns -1) gets no buttons rather than two dead ones. That check
+        belongs here rather than in LayoutTouchButtons, because AddTouchButton is what allocates
+        the keycode - a button bound and then never positioned would still be pressable at (0,0).
+
+        It earns its place on a touch device specifically: the Android reference tablet idles with
+        its music stream muted at zero, `media volume` does not exist before API 26, and VOLUME_UP
+        key events only act on the ACTIVE stream, so from an idle app they do nothing. Without
+        this the game is silent there and there is no way from inside it to find out why.
+    */
+    system_volume_max = GetMaxSystemVolume();
+    if (system_volume_max > 0){
+        touch_vol_down = input->AddTouchButton(later,INPUT_TETRIS_VOL_DOWN,"V-");
+        touch_vol_up   = input->AddTouchButton(later,INPUT_TETRIS_VOL_UP,  "V+");
+        RefreshSystemVolume();
+    }
+#endif //USE_TOUCH_UI
+}
+
+//Reads the device volume back. See system_volume in the header for why this is cached rather
+//than called from the draw.
+void ApplicationTetris::RefreshSystemVolume(){
+    if (system_volume_max <= 0){
+        return;
+    }
+    system_volume = GetSystemVolume();
+}
+
+/*
+    The volume readout, under its two buttons.
+
+    On the overlay rather than as a 3D TextMesh like SCORE/LINES/LEVEL, deliberately: those are
+    positioned in WORLD space and so move relative to the screen as the aspect ratio changes.
+    This label has to stay under two SCREEN-SPACE buttons, so it is drawn in screen space too,
+    and it reads its position back out of the button rather than recomputing the layout.
+
+    Shows the step and the top of the scale ("VOL 12/15") because the scale is per-device - 15 on
+    the Android reference tablet, but nothing may assume that - so a bare number would not say
+    how loud 12 actually is.
+
+    Render thread, with `overlay` already Begin()'d at the window size - see the DrawOverlay
+    contract in core/Application.h.
+*/
+void ApplicationTetris::DrawOverlay(){
+    if ((touch_vol_up < 0) || (system_volume < 0) || !overlay || !overlay->IsReady()){
+        return;
+    }
+    InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+    if (!input || (touch_vol_up >= input->GetNumTouchButtons())){
+        return;
+    }
+    const InputController::TouchRect& r = input->GetTouchButtons()[touch_vol_up].rect;
+
+    char text[32];
+    snprintf(text,sizeof(text),"VOL %i/%i",system_volume,system_volume_max);
+
+    const float size = r.h * 0.34f;
+    //Right edge of the button row, so the readout and the buttons share one margin.
+    const vec2 at = vec2(r.x + r.w,r.y + r.h + size * 1.25f);
+    overlay->AddText(text,at,size,UIColor(200,215,240,200),UI_ALIGN_RIGHT);
 }
 
 /*
@@ -1086,13 +1177,26 @@ void ApplicationTetris::LayoutTouchButtons(int w, int h){
         input->SetTouchButtonRect(touch_ccw,      {x,row,s,s});
     }
 
-    //Right thumb, MIRRORED: built leftwards from the right edge, so ">" is the outermost button on
-    //the right exactly as "<" is the outermost on the left.
+    /*
+        Right thumb, MIRRORED: built leftwards from the right edge, so ">" is the outermost button
+        on the right exactly as "<" is the outermost on the left.
+
+        DROP SITS ABOVE ">" RATHER THAN BESIDE IT, in a second row. Hard drop is the one
+        irreversible action on the pad - the piece locks where it lands and there is no taking it
+        back - and while it was the third button in this row it was immediately next to CW, which
+        is pressed constantly and in a hurry. Moving it to its own row costs a deliberate reach
+        upwards, which is the right price for it, and it no longer shares an edge with anything
+        that gets pressed by reflex.
+
+        Above the OUTERMOST button specifically: that is where the thumb already rests, so the
+        reach is short even though it is deliberate.
+    */
     {
         float x = right - m - s;
-        input->SetTouchButtonRect(touch_right,    {x,row,s,s});  x -= s + g;
-        input->SetTouchButtonRect(touch_cw,       {x,row,s,s});  x -= s + g;
-        input->SetTouchButtonRect(touch_harddrop, {x,row,s,s});
+        input->SetTouchButtonRect(touch_right,    {x,row,s,s});
+        input->SetTouchButtonRect(touch_harddrop, {x,row - s - g,s,s});
+        x -= s + g;
+        input->SetTouchButtonRect(touch_cw,       {x,row,s,s});
     }
 
     /*
@@ -1106,6 +1210,21 @@ void ApplicationTetris::LayoutTouchButtons(int w, int h){
         input->SetTouchButtonRect(touch_mute,    {x,y,small,small});  x -= small + g;
         input->SetTouchButtonRect(touch_pause,   {x,y,small,small});  x -= small + g;
         input->SetTouchButtonRect(touch_newgame, {x,y,small,small});
+    }
+
+    /*
+        Device volume, in a second row directly under MUTE.
+
+        Right-aligned like the row above it so the two corners stay one block, and the readout
+        (DrawOverlay) sits under these again. Skipped entirely when the platform has no volume
+        control - the indices are -1 then and SetTouchButtonRect ignores those, but not binding
+        them in the first place is what actually keeps them off the screen.
+    */
+    if (touch_vol_up >= 0){
+        const float y = top + m + small + g;
+        float x = right - m - small;
+        input->SetTouchButtonRect(touch_vol_up,   {x,y,small,small});  x -= small + g;
+        input->SetTouchButtonRect(touch_vol_down, {x,y,small,small});
     }
 }
 
@@ -1189,6 +1308,35 @@ void ApplicationTetris::UpdateView(void){
 
     if (input->WasKeyReleased(INPUT_TETRIS_MUTE)){
         f_sound_enabled = !f_sound_enabled;
+    }
+
+    /*
+        Device volume, one step per press.
+
+        On the PRESS edge, unlike the chrome buttons around it. The others are one-shot state
+        flips where press-then-slide-off is a useful free cancel; this is a repeated adjustment
+        where you look at the readout and press again, and a release-edge control makes that feel
+        like the number is lagging your finger.
+
+        Re-read after setting rather than assuming the write landed: the platform can refuse or
+        clamp it (a fixed-volume device, a policy restriction), and a readout showing what we
+        ASKED for rather than what happened would be worse than no readout at all.
+    */
+    if (system_volume_max > 0){
+        int wanted = system_volume;
+        if (input->WasKeyPressed(INPUT_TETRIS_VOL_DOWN)){ wanted--; }
+        if (input->WasKeyPressed(INPUT_TETRIS_VOL_UP)){   wanted++; }
+        if (wanted != system_volume){
+            SetSystemVolume(wanted);
+            RefreshSystemVolume();
+        } else if (--volume_poll_countdown <= 0){
+            //Once a second, so a change made outside the app (hardware keys, the system UI) is
+            //reflected rather than sitting stale until the next press. In PASSES rather than
+            //ticks on purpose - UpdateView runs on non-ticking passes too, and this is chrome,
+            //not simulation, so it must keep refreshing while the game is paused.
+            volume_poll_countdown = 60;
+            RefreshSystemVolume();
+        }
     }
 
     /*
@@ -1916,6 +2064,9 @@ void ApplicationTetris::PublishSnapshot(){
     snapshot.rows = game.ToAsciiRows();
 }
 
+#ifdef USE_MCP
+//Only BuildStateJson uses this, so it follows that inside the guard -- otherwise a USE_MCP=0
+//build warns about an unused static function.
 static const char* PhaseName(int phase){
     switch (phase){
         case TETRIS_PHASE_SPAWN:      return "spawn";
@@ -1929,7 +2080,6 @@ static const char* PhaseName(int phase){
 
 //--- MCP ------------------------------------------------------------------------------------
 
-#ifdef USE_MCP
 //This app's own MCP tools. Present only when USE_MCP=1; see the block in engine.mk for why
 //the core half of the same switch is a swapped translation unit rather than an #ifdef.
 void ApplicationTetris::RegisterMCPTools(){
@@ -2086,7 +2236,6 @@ void ApplicationTetris::RegisterMCPTools(){
             return BuildStateJson();
         });
 }
-#endif //USE_MCP
 
 json ApplicationTetris::BuildStateJson(){
     TetrisSnapshot copy;
@@ -2148,6 +2297,7 @@ json ApplicationTetris::BuildStateJson(){
         {"board",rows}
     };
 }
+#endif //USE_MCP
 
 //--- HUD ------------------------------------------------------------------------------------
 

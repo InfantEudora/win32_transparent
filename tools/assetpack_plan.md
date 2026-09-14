@@ -291,6 +291,32 @@ $(GENERATED)/BinaryAssetMemory.cpp: $(PACK_TOOL) $(ASSET_ROOTS) \
 - Pure make, not `$(shell find ...)`, so it does not depend on which shell make picked. This repo
   has both Bash and PowerShell in play and `engine.mk` is already careful about it (see the note on
   `;` in `APP_ASSET_PATH` at `core/File.cpp`).
+- **`$(MAKEFILE_LIST)` has to be a prerequisite too, because the FLAGS are an input.** Added
+  2026-09-14, after the first exclusion that actually mattered. The recipe passes
+  `$(ASSET_PACK_FLAGS)`, which an app sets in its own makefile — and make compares timestamps, never
+  the flags a thing was built with. Without it, editing that list changes nothing: the generated
+  table is newer than every asset and the tool, make reports nothing to do, and the app keeps the
+  blob packed under the *old* exclusions. Measured by adding an exclusion and rebuilding — the pack
+  did not re-run, and the only way to see it was to count entries in the generated `.cpp`. Worse
+  than the stale-object case above, because the stale artefact is data: an exclusion that silently
+  did not take effect ships an asset you meant to drop, and one that silently was not *removed*
+  ships a build that dies on its first `LoadFile`.
+
+### 4.2.1 The generated directory is per-variant, not just per-app
+
+`$(GENERATED)` is deliberately **not** per-configuration — debug and release bake identical bytes, so
+one pack serves both and switching configuration costs nothing. That still holds.
+
+It is, since 2026-09-14, **per-variant**: `$(BUILD_DIR)/generated$(VARIANT_SUFFIX)`. Once
+`ASSET_PACK_FLAGS` can depend on the flag family, two builds of one app want two different packs from
+one tree — `apps/tetris` excludes ImGui's font when `USE_IMGUI=0` and must keep it otherwise. With a
+single shared directory the second build to run finds the first one's table newer than everything and
+reuses it wholesale. Measured both ways round: `make ship` after a measurement build shipped a 254 KB
+font it had explicitly excluded, and the opposite order produced the `LoadFile failed` startup death.
+
+This is the same argument the `VARIANT_SUFFIX` block in `engine.mk` makes about object trees and exe
+names, applied to a third kind of output. `$(VARIANT_SUFFIX)` is empty for a default build, so an
+ordinary bake still writes `build/generated` and nothing about it changed.
 
 ### 4.3 What it does not do
 

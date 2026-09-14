@@ -59,8 +59,6 @@ void ApplicationDozer::Init(){
 
     main_scene = CreateMainScene();
     main_scene->UpdatePhysics(1.0/50.0f);
-
-    BinaryAsset::ListBinaryAssets();
     assetmanager->ListAssets();
 
     main_window->Resize(1600,800);

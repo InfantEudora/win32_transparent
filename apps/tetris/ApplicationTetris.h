@@ -43,6 +43,12 @@
 //Chrome, like TOGGLE_UI: handled in UpdateView so it works while the game is paused, which is
 //exactly when someone reaches for the mute button.
 #define INPUT_TETRIS_MUTE           INPUT_LAST+10
+//The DEVICE's media volume, not this app's mixer -- see Application::GetSystemVolume. Separate
+//from MUTE above, which only silences our own SoundSystem: a muted game on a device at volume 0
+//and a game at full gain on a device at volume 0 sound identical, and only one of them is a
+//setting the player can find.
+#define INPUT_TETRIS_VOL_DOWN       INPUT_LAST+11
+#define INPUT_TETRIS_VOL_UP         INPUT_LAST+12
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Restarting is intent arriving from
 //OUTSIDE the simulation (a button, an MCP call), which is exactly what the command queue is for.
@@ -215,6 +221,26 @@ public:
     int touch_left = -1, touch_softdrop = -1, touch_ccw = -1;
     int touch_harddrop = -1, touch_cw = -1, touch_right = -1;
     int touch_newgame = -1, touch_pause = -1, touch_mute = -1;
+    //Below MUTE, in their own row. -1 until SetupInput runs, and left at -1 on a platform with no
+    //volume control, which is what keeps them out of the layout and off the screen.
+    int touch_vol_down = -1, touch_vol_up = -1;
+
+    /*
+        The device volume, cached.
+
+        Cached because reading it can be an expensive round trip to the platform -- on Android it
+        is a JNI attach/call/detach -- and this is drawn every frame. Refreshed on a press (so the
+        readout moves with the button) and once a second otherwise, so a change made with the
+        hardware keys or from the system UI still shows up here rather than going stale until the
+        next press.
+
+        max <= 0 means "no volume control on this platform": the buttons are never bound and the
+        readout is never drawn. That is the win32 case today.
+    */
+    int  system_volume = -1;
+    int  system_volume_max = -1;
+    int  volume_poll_countdown = 0;
+    void RefreshSystemVolume();
     vec3* GetCameraTargetPtr() override { return &camera_target; }
 
     SoundSystem* soundsystem = NULL;
@@ -234,6 +260,7 @@ private:
     void SetupFieldShadows();
     void SetupCamera();
     void SetupInput();
+    void DrawOverlay() override;
     void RegisterCommandHandlers();
 #ifdef USE_MCP
     void RegisterMCPTools();
@@ -269,10 +296,18 @@ private:
     void RenderTetrisHUD();
 #endif
 
+#ifdef USE_MCP
     //--- MCP, any thread ---------------------------------------------------------------------
     //Serialises `snapshot` (never the live game) into the shape every tool returns. Safe from an
     //MCP thread, which is the only kind that calls it.
+    //
+    //Guarded with its four callers rather than left declared unconditionally: nothing outside an
+    //MCP build can call it, and a member declared here but defined inside the guard in the .cpp
+    //is a trap for whoever adds the fifth caller. `json` itself IS available either way - core
+    //Application.h includes json.hpp for MaybeAttachScreenshot - so this is about dead code, not
+    //about compiling.
     json BuildStateJson();
+#endif
 
     //--- The view ----------------------------------------------------------------------------
     //One object per board cell, created once and hidden when its cell is empty. A fixed grid

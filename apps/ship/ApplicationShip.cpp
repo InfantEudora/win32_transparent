@@ -604,8 +604,6 @@ void ApplicationShip::Init(void){
     //compile. The CORE tools are switched a different way - see engine.mk.
     RegisterMCPTools();
 #endif
-
-    BinaryAsset::ListBinaryAssets();
     assetmanager->ListAssets();
 }
 
