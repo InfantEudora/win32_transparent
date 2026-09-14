@@ -201,7 +201,9 @@ public:
     void UpdateView(void) override;
     void RunSimulationTick(void) override;
     void PreRender(void) override;
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
     void LayoutTouchButtons(int w, int h) override;
 
     //Indices into InputController's touch-button list, handed out by AddTouchButton in SetupInput
@@ -233,7 +235,9 @@ private:
     void SetupCamera();
     void SetupInput();
     void RegisterCommandHandlers();
+#ifdef USE_MCP
     void RegisterMCPTools();
+#endif
     void BuildTextLabels();
 
     //--- Per tick, physics thread ----------------------------------------------------------
@@ -261,7 +265,9 @@ private:
     bool f_best_dirty = false;      //a new best is worth writing once, not once a tick
 
     //--- HUD ---------------------------------------------------------------------------------
+#ifdef USE_IMGUI
     void RenderTetrisHUD();
+#endif
 
     //--- MCP, any thread ---------------------------------------------------------------------
     //Serialises `snapshot` (never the live game) into the shape every tool returns. Safe from an

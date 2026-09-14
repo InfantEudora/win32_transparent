@@ -1,4 +1,12 @@
 #include "ApplicationAnimation.h"
+#ifdef USE_IMGUI
+//core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
+//Guarded because a build with USE_IMGUI=0 has no library behind this header, and every panel
+//function below that would call it is compiled out too.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#endif
+
 #include "Debug.h"
 
 static Debugger *debug = new Debugger("ApplicationAnimation", DEBUG_ALL);
@@ -264,7 +272,7 @@ void ApplicationAnimation::RunSimulationTick(){
     //code and the character input fell under it only by being further down the function. A
     //character that stops steering because the cursor is over a panel is almost certainly not
     //wanted, but removing the gate is a behaviour change on its own merits, not part of this split.
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         return;
     }
 
@@ -365,7 +373,7 @@ void ApplicationAnimation::UpdateView(){
     }
 
     //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         //Clear mouse delta
         input->GetDelta(INPUT_MOUSE_WHEEL);
         return;
@@ -437,6 +445,9 @@ void ApplicationAnimation::UpdateView(){
     }
 }
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationAnimation::DrawImGuiUI(){
     //We're asked to import the f_filemodal file.
     if (f_import_file){
@@ -550,8 +561,12 @@ void ApplicationAnimation::DrawImGuiUI(){
         ImGui::EndPopup();
     }
 }
+#endif //USE_IMGUI
 
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationAnimation::RenderSkeletonUI(){
     ImGui::Begin("Skeleton UI");
 
@@ -622,8 +637,12 @@ void ApplicationAnimation::RenderSkeletonUI(){
     }
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationAnimation::RenderBoneModifierHeader(Bone* bone, int id){
     if (!bone){
         return;
@@ -704,3 +723,4 @@ void ApplicationAnimation::RenderBoneModifierHeader(Bone* bone, int id){
         ImGui::PopID();
     }
 }
+#endif //USE_IMGUI

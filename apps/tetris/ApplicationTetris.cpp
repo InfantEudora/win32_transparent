@@ -1,8 +1,21 @@
 #include "ApplicationTetris.h"
+#ifdef USE_IMGUI
+//core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
+//Guarded because a build with USE_IMGUI=0 has no library behind this header, and every panel
+//function below that would call it is compiled out too.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#endif
+
 #include "Debug.h"
 #include "Primitives.h"
 #include "type_helpers.h"
+#ifdef USE_MCP
+//MCPServer.h and nothing else from it: with USE_MCP=0 that class is not compiled, and the
+//header also pulls winsock in with the include-order constraint it documents - both
+//pointless in a build with no debug server. See the USE_MCP block in engine.mk.
 #include "MCPServer.h"
+#endif
 
 static Debugger* debug = new Debugger("ApplicationTetris",DEBUG_ALL);
 
@@ -187,7 +200,11 @@ void ApplicationTetris::Init(void){
     SetupCamera();
     SetupInput();
     RegisterCommandHandlers();
+#ifdef USE_MCP
+    //Guarded because this app's own tools call into MCPServer, which USE_MCP=0 does not
+    //compile. The CORE tools are switched a different way - see engine.mk.
     RegisterMCPTools();
+#endif
 
     //60 ticks per second, not the engine's default 50, and taken from the RULES rather than
     //written here as a literal: the gravity table in Playfield.cpp is denominated in 60Hz frames,
@@ -1912,6 +1929,9 @@ static const char* PhaseName(int phase){
 
 //--- MCP ------------------------------------------------------------------------------------
 
+#ifdef USE_MCP
+//This app's own MCP tools. Present only when USE_MCP=1; see the block in engine.mk for why
+//the core half of the same switch is a swapped translation unit rather than an #ifdef.
 void ApplicationTetris::RegisterMCPTools(){
     //Registered from Init(). The server only starts accepting requests after Init() returns, so
     //registration can never race a client's tools/list.
@@ -2066,6 +2086,7 @@ void ApplicationTetris::RegisterMCPTools(){
             return BuildStateJson();
         });
 }
+#endif //USE_MCP
 
 json ApplicationTetris::BuildStateJson(){
     TetrisSnapshot copy;
@@ -2130,6 +2151,9 @@ json ApplicationTetris::BuildStateJson(){
 
 //--- HUD ------------------------------------------------------------------------------------
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTetris::DrawImGuiUI(void){
     //Runs on the RENDER thread with physics_mutex held, so reading the simulation directly here
     //is safe - and is the reason this reads `game` rather than the snapshot the MCP tools use.
@@ -2138,7 +2162,11 @@ void ApplicationTetris::DrawImGuiUI(void){
     }
     RenderTetrisHUD();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTetris::RenderTetrisHUD(){
     //Anchored top-left and kept narrow, because the engine's debug panels dock into the same
     //corner when F1 is on and the two should not fight over it.
@@ -2246,3 +2274,4 @@ void ApplicationTetris::RenderTetrisHUD(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI

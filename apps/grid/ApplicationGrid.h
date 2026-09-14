@@ -10,8 +10,13 @@
 /*
     An attempt at an application that overrides the default, and shows a grid.
 */
+#ifdef USE_IMGUI
+//The define must precede imgui.h, and imgui_internal.h checks that it did - see the note in
+//core/Scene.h about the header that used to get there first without it.
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui.h"
 #include "imgui_internal.h"
+#endif
 
 
 Skeleton* FindSkeletonInScene(Scene* scene, const std::string& name);
@@ -22,7 +27,9 @@ public:
 
     void Init(void) override;
 
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
     void UpdateView() override;
     void RunSimulationTick() override;
 
@@ -69,13 +76,21 @@ private:
 
     static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
 
+#ifdef USE_IMGUI
     void RenderRightClickMenu_IsoCell(IsoCell* cell);
+#endif
+#ifdef USE_IMGUI
     void RenderRightClickMenu_IsoWall(IsoWall* wall);
+#endif
     void RenderRightClickMenu();
+#ifdef USE_IMGUI
     int  MenuQueryDirection();
+#endif
 
     void RenderBoneModifierHeader(Bone* bone, int id);
+#ifdef USE_IMGUI
     void RenderGridUI();
+#endif
     void RenderSkeletonUI();
     void RenderAnimationUI();
 

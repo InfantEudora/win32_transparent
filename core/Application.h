@@ -82,11 +82,24 @@ public:
     //wait. See the deadlock note above, and the implementation's own comment.
     void SubmitUICommand(const SimCommand& cmd);
 
-    //Generic, app-independent MCP tools (object_list/object_get/object_set_transform/
-    //object_move/screenshot/shader_reload/...) - the MCP counterpart of the Generic Object UI
-    //panel. Registered for every app right after Init(), before the MCP server starts accepting
-    //requests.
+    /*
+        Generic, app-independent MCP tools (object_list/object_get/object_set_transform/
+        object_move/screenshot/shader_reload/...) - the MCP counterpart of the Generic Object UI
+        panel. Registered for every app right after Init(), before the MCP server starts accepting
+        requests.
+
+        THESE TWO AND MaybeAttachScreenshot BELOW ARE DECLARED UNCONDITIONALLY and defined in one
+        of a swappable PAIR of translation units: core/ApplicationMCP.cpp with USE_MCP=1, and
+        core/ApplicationMCP_none.cpp - where all three do nothing - with USE_MCP=0. So this header
+        is the same for every app whatever the flag says, which is what keeps the shared core
+        objects shareable. See the note at the top of core/ApplicationMCP.cpp.
+    */
     void RegisterCoreMCPTools();
+
+    //Starts both MCP transports, once the app's own Init() has registered its tools. A wrapper
+    //rather than a direct MCPServer call so that Application.cpp never names that class - with
+    //USE_MCP=0 it is not compiled at all.
+    void StartMCPServer();
 
     /*
         Recompile every registered Shader whose vertex or fragment file name contains
@@ -188,7 +201,15 @@ public:
     virtual void RunSimulationTick(void);
 
     virtual void UpdatePhysics(void);
-    virtual void NextInput(void);
+    /*
+        End of a physics pass: clears the per-pass input transition flags.
+
+        `f_ticked` is whether this pass actually ran a tick, and passing it is what makes an
+        edge-triggered action survive a paused pass - backlog item 88. An edge nobody has read
+        yet is kept until a ticking pass has had its chance at it; see InputController::Tick,
+        which carries the rule and the reasoning.
+    */
+    virtual void NextInput(bool f_ticked);
 
     //Frame thread
     /*
@@ -342,6 +363,20 @@ protected:
     objectid_t hovered_objid = OBJECTID_INVALID;
     objectid_t dragged_objid = OBJECTID_INVALID;
     void CheckObjectSelection();
+
+    /*
+        Does the debug UI want the mouse, or the keyboard?
+
+        ImGui::GetIO().WantCaptureMouse behind a name every build has. Game logic asks before
+        acting on a click so that dragging a slider does not also swing the camera - apps/ship
+        and apps/tank both do. With USE_IMGUI=0 the answer is always false and the click belongs
+        to the game, which is what lets those call sites stay unguarded.
+
+        Defined, like everything else declared around here, in whichever of
+        core/ApplicationDebugUI.cpp / ApplicationDebugUI_none.cpp this build compiled.
+    */
+    bool UIWantsMouse();
+    bool UIWantsKeyboard();
 
     //--- Debug UI ---------------------------------------------------------------------------
     //RenderApplicationUI is still the single call an app's DrawImGuiUI makes; it now hosts a

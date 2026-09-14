@@ -1,8 +1,21 @@
 #include "ApplicationBreakout.h"
+#ifdef USE_IMGUI
+//core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
+//Guarded because a build with USE_IMGUI=0 has no library behind this header, and every panel
+//function below that would call it is compiled out too.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#endif
+
 #include "Debug.h"
 #include "Primitives.h"
 #include "type_helpers.h"
+#ifdef USE_MCP
+//MCPServer.h and nothing else from it: with USE_MCP=0 that class is not compiled, and the
+//header also pulls winsock in with the include-order constraint it documents - both
+//pointless in a build with no debug server. See the USE_MCP block in engine.mk.
 #include "MCPServer.h"
+#endif
 
 #include <math.h>
 #include <string.h>
@@ -212,7 +225,11 @@ void ApplicationBreakout::Init(void){
     SetupCamera();
     SetupInput();
     RegisterCommandHandlers();
+#ifdef USE_MCP
+    //Guarded because this app's own tools call into MCPServer, which USE_MCP=0 does not
+    //compile. The CORE tools are switched a different way - see engine.mk.
     RegisterMCPTools();
+#endif
 
     //The rules denominate everything in ticks and were written against this rate - see
     //BREAKOUT_TPS in breakout/Field.h, which is the one number they cannot look up for
@@ -1789,6 +1806,9 @@ json ApplicationBreakout::BuildStateJson(){
 
 //--- MCP ------------------------------------------------------------------------------------------
 
+#ifdef USE_MCP
+//This app's own MCP tools. Present only when USE_MCP=1; see the block in engine.mk for why
+//the core half of the same switch is a swapped translation unit rather than an #ifdef.
 void ApplicationBreakout::RegisterMCPTools(){
     //Registered from Init(). The server only starts accepting requests after Init() returns, so
     //registration can never race a client's tools/list.
@@ -1986,9 +2006,13 @@ void ApplicationBreakout::RegisterMCPTools(){
             return result;
         });
 }
+#endif //USE_MCP
 
 //--- HUD --------------------------------------------------------------------------------------------
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationBreakout::DrawImGuiUI(void){
     //Runs on the RENDER thread with physics_mutex held, so reading the simulation directly here is
     //safe - which is why this reads `game` rather than the snapshot the MCP tools use.
@@ -1997,7 +2021,11 @@ void ApplicationBreakout::DrawImGuiUI(void){
     }
     RenderBreakoutHUD();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationBreakout::RenderBreakoutHUD(){
     //Anchored top-left and kept narrow, because the engine's debug panels dock into the same
     //corner when F1 is on and the two should not fight over it.
@@ -2057,3 +2085,4 @@ void ApplicationBreakout::RenderBreakoutHUD(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI

@@ -12,7 +12,9 @@ public:
 
     void Init(void) override;
 
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
 };
 
 #endif

@@ -4,9 +4,24 @@
 
 //Requires #define IMGUI_DEFINE_MATH_OPERATORS to be set.
 
+/*
+    GUARDED IN TWO PIECES, because this header is two things.
+
+    The ImGooey namespace below is ImGui - typed in ImVec2, ImGuiID and ImGuiButtonFlags, and
+    IMGUI_API is one of imgui.h's own macros - so it is not declared in a build without ImGui,
+    and neither is its implementation in imgooey.cpp.
+
+    The ImGooyStatus/ImGooyItemFlags enums and the Component/ComponentState/Operation structs are
+    NOT. They are plain data on plain ints, ApplicationSim.cpp keeps a std::vector<Component> at
+    file scope, and Component's own methods are ordinary C++. Sweeping those into the guard as
+    well is a mistake that shows up as "'Component' was not declared in this scope" - which is how
+    this comment came to be written.
+*/
+#ifdef USE_IMGUI
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui.h"
 #include "imgui_internal.h"
+#endif //USE_IMGUI
 
 
 typedef int ImGooyItemFlags;             // -> enum ImGooyItemFlags_
@@ -29,12 +44,14 @@ enum ImGooyStatus_
 };
 
 
+#ifdef USE_IMGUI
 namespace ImGooey{
     IMGUI_API bool CustomButton(const char* label, const ImVec2& size_arg = ImVec2(0, 0), ImGooyItemFlags gflags = 0, ImGuiButtonFlags bflags = 0, ImGuiItemFlags iflags = 0);
     IMGUI_API bool StatusLabel(const char* label,const ImVec2& size_arg, ImGooyStatus status, float animation = 0.0f);
     IMGUI_API bool Begin(const char* name, bool* p_open, ImGuiWindowFlags flags);
     IMGUI_API bool StorageButton(ImGuiID id, ImTextureID texture_id, const ImVec2& image_size, const ImVec2& uv0, const ImVec2& uv1, const ImVec4& bg_col, const ImVec4& tint_col, ImGuiButtonFlags flags = 0);
 };
+#endif //USE_IMGUI
 
 #include <string>
 #include <vector>
@@ -78,7 +95,6 @@ struct Component{
     State (Percentage, Operational Degraded etc.)
 
 */
-
 
 
 #endif

@@ -43,16 +43,24 @@ public:
     void UpdateView() override;
     void RunSimulationTick() override;
 
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
+#ifdef USE_IMGUI
     void RenderTankWheelDebugUI(void);
+#endif
     //Shared by the tank and buggy sections of RenderTankWheelDebugUI - the per-wheel table only
     //ever reads/writes Wheel fields and Vehicle::WheelRadius/WheelRestLength/WheelTravel, none
     //of which are vehicle-specific, so one function renders it for whichever Vehicle is passed.
+#ifdef USE_IMGUI
     void RenderVehicleWheelTable(Vehicle* vehicle);
+#endif
 
     //The crane's own section of the Vehicle Debug window: the velocity commands, the magnet,
     //what each joint currently reads back, and the key legend for driving it from the keyboard.
+#ifdef USE_IMGUI
     void RenderCraneDebugUI(void);
+#endif
 
     //reactphysics3d::EventListener. Called from INSIDE PhysicsWorld::Update, on the physics
     //thread: forwards each overlap involving the crane's magnet field collider to the crane,
@@ -62,7 +70,9 @@ public:
     //A separate, focused control panel - only visible while the buggy is the actively controlled
     //vehicle (see SetControlledVehicle/controlled_vehicle) - as opposed to RenderTankWheelDebugUI's
     //"Buggy" section above, which stays visible any time the buggy exists at all.
+#ifdef USE_IMGUI
     void RenderBuggyControlDebugUI(void);
+#endif
 
     Object* compass = NULL;
     Object* target = NULL;
@@ -165,7 +175,9 @@ public:
     void TestHeightmapRoundTrip();
     void TestHeightmapMesh();
     void AddTestSceneObjects();
+#ifdef USE_MCP
     void RegisterMCPTools();
+#endif
     //Handlers for this app's own SimCommand types (TANK_CMD_*). Called from Init(), next to
     //RegisterMCPTools, since the tools submit the commands these handle.
     void RegisterCommandHandlers();

@@ -14,9 +14,15 @@ public:
     void UpdateView() override;
     void RunSimulationTick() override;
 
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
+#ifdef USE_IMGUI
     void RenderSkeletonUI();
+#endif
+#ifdef USE_IMGUI
     void RenderBoneModifierHeader(Bone* bone, int id);
+#endif
 
     Scene* CreateEmptyScene();
 

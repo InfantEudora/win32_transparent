@@ -1,5 +1,18 @@
 #include "ApplicationShip.h"
+#ifdef USE_IMGUI
+//core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
+//Guarded because a build with USE_IMGUI=0 has no library behind this header, and every panel
+//function below that would call it is compiled out too.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#endif
+
+#ifdef USE_MCP
+//MCPServer.h and nothing else from it: with USE_MCP=0 that class is not compiled, and the
+//header also pulls winsock in with the include-order constraint it documents - both
+//pointless in a build with no debug server. See the USE_MCP block in engine.mk.
 #include "MCPServer.h"
+#endif
 #include "Primitives.h"
 #include "Debug.h"
 
@@ -586,7 +599,11 @@ void ApplicationShip::Init(void){
     gamepad_controller->AddGamePadMap(4,GAMEPAD_R2L2);
 
     RegisterCommandHandlers();
+#ifdef USE_MCP
+    //Guarded because this app's own tools call into MCPServer, which USE_MCP=0 does not
+    //compile. The CORE tools are switched a different way - see engine.mk.
     RegisterMCPTools();
+#endif
 
     BinaryAsset::ListBinaryAssets();
     assetmanager->ListAssets();
@@ -786,6 +803,9 @@ void ApplicationShip::onTrigger(const rp3d::OverlapCallback::CallbackData& callb
     }
 }
 
+#ifdef USE_MCP
+//This app's own MCP tools. Present only when USE_MCP=1; see the block in engine.mk for why
+//the core half of the same switch is a swapped translation unit rather than an #ifdef.
 void ApplicationShip::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("asteroid_spawn",
         "Add asteroids to the scene, the same way the 'Add Asteroid' button in the Ship Settings "
@@ -955,6 +975,7 @@ void ApplicationShip::RegisterMCPTools(){
             return json{ {"doors",out} };
         });
 }
+#endif //USE_MCP
 
 //Called before update physics after update animations
 //The model: object lifetime, the ship's own stabilisation, the asteroid field, and flight input.
@@ -1302,13 +1323,16 @@ void ApplicationShip::UpdateView(){
 
 
     //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         //Clear mouse delta
         input->GetDelta(INPUT_MOUSE_WHEEL);
         return;
     }
 }
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationShip::DrawImGuiUI(){
     //We're asked to import the f_filemodal file.
     if (f_import_file){
@@ -1535,6 +1559,7 @@ void ApplicationShip::DrawImGuiUI(){
         ImGui::EndPopup();
     }
 }
+#endif //USE_IMGUI
 
 //Called from within physics update.
 void ApplicationShip::onContact(const rp3d::CollisionCallback::CallbackData& callbackData){

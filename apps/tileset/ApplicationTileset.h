@@ -37,11 +37,21 @@ public:
     void UpdateView() override;
     void RunSimulationTick() override;
 
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
+#ifdef USE_IMGUI
     void RenderToolsUI();
+#endif
+#ifdef USE_IMGUI
     void RenderTerrainUI();
+#endif
+#ifdef USE_IMGUI
     void RenderSelectedRoadUI();
+#endif
+#ifdef USE_IMGUI
     void RenderSelectedCarUI();
+#endif
 
     SoundSystem* soundsystem = NULL;
     SpriteSheet* icon_sprites = NULL;

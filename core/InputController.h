@@ -194,6 +194,20 @@ struct KeyState{
     //available is what makes the choice a decision about FEEL, made per action, rather than a
     //constraint of the API.
     bool                    f_was_pressed = false;
+    /*
+        Whether anything has actually READ each edge since it was raised - the two are separate
+        because an action may legitimately be watched on one edge and not the other.
+
+        This is what lets an edge OUTLIVE the pass it was raised on, which is backlog item 88.
+        Input is drained on every physics pass (a paused editor still needs a working camera), but
+        gameplay only runs on the passes that tick, so a press arriving while the simulation is
+        paused used to be raised and cleared with no tick in between ever seeing it. Tick() now
+        keeps an edge nobody has read yet; see the rule there.
+
+        Physics thread only, like the flags they describe.
+    */
+    bool                    f_pressed_read = false;
+    bool                    f_released_read = false;
     bool                    f_processed = false;  // If the input was processed
     int32_t                 value = 0;
     float                   fvalue = 0.0f;
@@ -526,7 +540,16 @@ class InputController{
     int2    GetAbsoluteMousePosition();
     int2    GetRelativeMousePosition(); //Relative to the window
 
-    void    Tick();
+    /*
+        End of a physics pass: clear the per-pass transition flags. `f_ticked` is whether the pass
+        actually ran a tick, and an unread edge survives a pass that did not - backlog item 88.
+        The full rule, and why it is not simply "keep it until a tick", is on the definition.
+
+        NOT defaulted, deliberately. A default would be the old unconditional clear, which is
+        precisely the bug - and it would be chosen silently, by a caller that had not thought
+        about which clock it is on. Being made to answer the question is the point.
+    */
+    void    Tick(bool f_ticked);
     void    SetHoveredObjectID(objectid_t id);
     objectid_t GetHoveredObjectID();
     void    SetHoveredNormal(vec3 normal);

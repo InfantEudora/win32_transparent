@@ -223,7 +223,7 @@ void ApplicationSim::UpdateView(){
         main_scene->AddObject(route);
     }
 
-    if ((!ImGui::GetIO().WantCaptureMouse) && (input->WasKeyReleased(INPUT_CLICK_LEFT))){
+    if ((!UIWantsMouse()) && (input->WasKeyReleased(INPUT_CLICK_LEFT))){
         //Store the clicked position on the plane.
         plane p; p.normal = vec3(0,1,0);
         int2 px = main_scene->inputcontroller->GetRelativeMousePosition();
@@ -259,7 +259,7 @@ void ApplicationSim::RunSimulationTick(){
     //The WantCaptureMouse gate is kept exactly as it was. It is incidental to keyboard steering -
     //hovering a panel has no business stopping the ship - but removing it is a behaviour change on
     //its own merits, not part of this split.
-    if (controlling_ship && (!ImGui::GetIO().WantCaptureMouse)){
+    if (controlling_ship && (!UIWantsMouse())){
         StellarObject* ship = controlling_ship;
 
         //Todo: Prevent auto-route following.
@@ -305,6 +305,9 @@ void ApplicationSim::RunSimulationTick(){
     }
 }
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationSim::RenderNoiseTestWindow(){
     ImGui::Begin("Perlin (and Others) Noise Test Suite");
     static bool regenerate = true;
@@ -432,7 +435,11 @@ void ApplicationSim::RenderNoiseTestWindow(){
         }
     }
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationSim::RenderPopulationOverview(){
     ImGui::Begin("Population and Stuff");
     ImGui::DragInt("Simulation Interval",&simulation_interval,1,1,360);
@@ -598,12 +605,16 @@ void ApplicationSim::RenderPopulationOverview(){
     ImGui::Text("Press R to create a route from current object to target");
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 
 /*
     The Idea being that making a UI takes forever, and ImGui is soo good...
     That maybe it's best to adapt it...
 */
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationSim::RenderSuperCustomUI(){
 
     //First stype we want is a button, with a half corner at left missing.
@@ -901,7 +912,11 @@ void ApplicationSim::RenderSuperCustomUI(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationSim::DrawImGuiUI(){
     RenderRandTestWindow();
     //RenderNoiseTestWindow();
@@ -911,6 +926,7 @@ void ApplicationSim::DrawImGuiUI(){
 
     RenderSuperCustomUI();
 }
+#endif //USE_IMGUI
 
 void ApplicationSim::SetControllingShip(StellarBody* body){
     //First, we find the StellarObject that has this

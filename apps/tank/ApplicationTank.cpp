@@ -1,7 +1,20 @@
 #include "ApplicationTank.h"
+#ifdef USE_IMGUI
+//core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
+//Guarded because a build with USE_IMGUI=0 has no library behind this header, and every panel
+//function below that would call it is compiled out too.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#endif
+
 #include "Debug.h"
 #include "type_helpers.h"
+#ifdef USE_MCP
+//MCPServer.h and nothing else from it: with USE_MCP=0 that class is not compiled, and the
+//header also pulls winsock in with the include-order constraint it documents - both
+//pointless in a build with no debug server. See the USE_MCP block in engine.mk.
 #include "MCPServer.h"
+#endif
 #include <cmath>
 #include <cstdlib>
 
@@ -656,7 +669,11 @@ void ApplicationTank::Init(void){
     main_scene->physics_world->rp_world->setEventListener(this);
 
     RegisterCommandHandlers();
+#ifdef USE_MCP
+    //Guarded because this app's own tools call into MCPServer, which USE_MCP=0 does not
+    //compile. The CORE tools are switched a different way - see engine.mk.
     RegisterMCPTools();
+#endif
 
     main_window->Resize(1600,800);
 
@@ -1081,6 +1098,9 @@ void ApplicationTank::RegisterCommandHandlers(){
         });
 }
 
+#ifdef USE_MCP
+//This app's own MCP tools. Present only when USE_MCP=1; see the block in engine.mk for why
+//the core half of the same switch is a swapped translation unit rather than an #ifdef.
 void ApplicationTank::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("tank_drive",
         "Drive the tank hull forward or reverse, or release the pedals. The input is held for "
@@ -1503,6 +1523,7 @@ void ApplicationTank::RegisterMCPTools(){
             return GetCraneTelemetry();
         });
 }
+#endif //USE_MCP
 
 //Debug helper: write a small hand-picked grid of known heights to a PNG, read it back,
 //and compare - to verify the SaveHeightmapPNG/LoadHeightmapPNG round-trip is correct
@@ -2075,10 +2096,10 @@ void ApplicationTank::UpdateView(){
     //Cursor-driven work only: picking and selection. Skipped when the window isn't focused, or
     //when the pointer is over a UI element. Vehicle control continues below either way, so a
     //scripted drive isn't cancelled by the operator happening to mouse over a debug panel.
-    if (has_focus && !ImGui::GetIO().WantCaptureMouse){
+    if (has_focus && !UIWantsMouse()){
         CheckObjectSelection();
     }
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         input->GetDelta(INPUT_MOUSE_WHEEL); //clear the wheel delta so it doesn't apply later
     }
 
@@ -2233,17 +2254,24 @@ void ApplicationTank::UpdateBuggyWheelSpinParticles(){
     }
 }
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTank::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
     RenderTankWheelDebugUI();
     RenderBuggyControlDebugUI();
 }
+#endif //USE_IMGUI
 
 //Renders the per-wheel table for whichever Vehicle is passed - the table only ever reads/writes
 //Wheel fields and Vehicle::WheelRadius/WheelRestLength/WheelTravel, none of which are
 //vehicle-specific, so this is shared between the tank and buggy sections of
 //RenderTankWheelDebugUI below rather than duplicated per vehicle type.
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTank::RenderVehicleWheelTable(Vehicle* vehicle){
     if (!vehicle){
         return;
@@ -2359,7 +2387,11 @@ void ApplicationTank::RenderVehicleWheelTable(Vehicle* vehicle){
     }
     ImGui::PopID();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTank::RenderTankWheelDebugUI(){
     ImGui::Begin("Vehicle Debug");
 
@@ -2491,6 +2523,7 @@ void ApplicationTank::RenderTankWheelDebugUI(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 //The crane's section of the Vehicle Debug window. Unlike the tank/buggy sections above, none of
 //the sliders here push their value into the crane: RunSimulationTick does that for all four
@@ -2498,6 +2531,9 @@ void ApplicationTank::RenderTankWheelDebugUI(){
 //every tick (see its crane block), so this only has to move the crane_*_speed floats - which
 //also means the panel and the keyboard and the crane_speed MCP tool are all editing the same
 //numbers rather than each having their own path into the mechanism.
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTank::RenderCraneDebugUI(){
     if (!crane){
         return;
@@ -2552,10 +2588,14 @@ void ApplicationTank::RenderCraneDebugUI(){
     }
     ImGui::PopID();
 }
+#endif //USE_IMGUI
 
 //A focused control panel for the buggy - unlike RenderTankWheelDebugUI's own "Buggy" section
 //(visible any time controlled_buggy exists), this one only shows up while the buggy is actually
 //the vehicle receiving input, so it doesn't clutter the screen while driving the tank instead.
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTank::RenderBuggyControlDebugUI(){
     if (!controlled_buggy || controlled_vehicle != controlled_buggy){
         return;
@@ -2704,3 +2744,4 @@ void ApplicationTank::RenderBuggyControlDebugUI(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI

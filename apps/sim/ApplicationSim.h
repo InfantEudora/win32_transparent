@@ -21,7 +21,9 @@ public:
     void Init(void) override;
     void UpdateView() override;
     void RunSimulationTick() override;
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
 
     RRandom rrand;
     PerlinNoise pnoise;
@@ -46,10 +48,16 @@ public:
     void SetControllingShip(StellarBody* body);
 
 
+#ifdef USE_IMGUI
     void RenderPopulationOverview();
+#endif
 
+#ifdef USE_IMGUI
     void RenderNoiseTestWindow();
+#endif
+#ifdef USE_IMGUI
     void RenderSuperCustomUI();
+#endif
     void UpdateUI();
 };
 

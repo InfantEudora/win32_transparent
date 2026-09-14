@@ -208,67 +208,8 @@ bool Window::InitOpenGL(){
     return true;
 }
 
-bool Window::InitImGui(){
-    // Setup Dear ImGui context
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
 
-    ImGuiIO& io = ImGui::GetIO();
 
-    //Docking. The submodule is on imgui's docking branch, but the flag was never set, so nothing
-    //could actually be docked - Application::RenderApplicationUI builds a default left-hand
-    //layout on top of this. Enabling it makes EVERY ImGui window in every app dockable, which is
-    //the intent: an app'''s own panels can be dragged into the same layout as the core ones.
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-
-    //Load a font
-    ImFontConfig config;
-    config.OversampleH = 2;
-    config.OversampleV = 2;
-    sprintf(config.Name,"Consola TTF");
-
-    /*
-        AddFontFromMemoryTTF takes ownership of what it is given by default and frees it with the
-        atlas - which would be the file layer's buffer, freed out from under a cache that is still
-        handing that pointer out (see File.h). So we keep ownership, which is also the arrangement
-        ImGui prefers since 1.92: it no longer copies for this flag, and it requires the data to
-        outlive the atlas. Being lent something that lives as long as the process is exactly that.
-    */
-    config.FontDataOwnedByAtlas = false;
-
-    size_t size = 0;
-    uint8_t* data = LoadFile("fonts/consola.ttf",&size);
-    ImFont* font = NULL;
-    if (data){
-        font = io.Fonts->AddFontFromMemoryTTF(data,size, 13, &config);
-    }
-    const char* glsl_version = "#version 430";
-
-    // Setup Platform/Renderer backends
-    if (!ImGui_ImplWin32_Init(hWnd)){
-        debug->Err("Failed to do ImGui_ImplWin32_Init\n");
-        return false;
-    };
-    if (!ImGui_ImplOpenGL3_Init(glsl_version)){
-        debug->Err("Failed to do ImGui_ImplOpenGL3_Init\n");
-        return false;
-    }
-    return true;
-}
-
-void Window::ImGuiNewFrame(){
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    ImGui::NewFrame();
-}
-
-void Window::ImGuiRenderDrawData(){
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-}
 
 //Simply copies buffer to backbuffer
 void Window::SwapWindowBuffers(){
@@ -464,8 +405,11 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
-    //Forward message to ImGui
-    int res = ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+    //Forward message to the debug UI, if this build has one. Through a wrapper rather than
+    //naming ImGui here, so that this file is identical whatever USE_IMGUI says - see
+    //core/WindowImGui.cpp. With USE_IMGUI=0 the twin returns 0: nothing consumes the message,
+    //which is correct, because there are no panels to click on.
+    int res = ImGuiForwardWndProc(hWnd, msg, wParam, lParam);
     //Res != 0 means message was handled...
 
     switch(msg){

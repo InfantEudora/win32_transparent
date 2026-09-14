@@ -617,7 +617,7 @@ void ApplicationGrid::RunSimulationTick(){
     }
 
     //Gate carried over: in the old single hook this sat above the cursor-tracking block below.
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         return;
     }
 
@@ -764,7 +764,7 @@ void ApplicationGrid::UpdateView(){
     }
 
     //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         //Clear mouse delta
         input->GetDelta(INPUT_MOUSE_WHEEL);
         return;
@@ -986,6 +986,9 @@ IsoRoom* ApplicationGrid::FindRoomByCell(IsoCell* cell){
 }
 
 //TODO: GetWorldUp, using GetWorldRotation
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
     ImVec2 window_pos, window_pos_pivot;
     window_pos_pivot.x = 0.0f;
@@ -1076,8 +1079,12 @@ void ApplicationGrid::RenderRightClickMenu_IsoCell(IsoCell* hovered_cell){
     }
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 // Renders a menu with the 4 directions
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 int ApplicationGrid::MenuQueryDirection(){
     if (ImGui::MenuItem("North")){
         return DIRECTION_NORTH;
@@ -1093,7 +1100,11 @@ int ApplicationGrid::MenuQueryDirection(){
     }
     return DIRECTION_NONE;
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
     ImVec2 window_pos, window_pos_pivot;
     window_pos_pivot.x = 0.0f;
@@ -1123,11 +1134,14 @@ void ApplicationGrid::RenderRightClickMenu_IsoWall(IsoWall* hovered_wall){
     }
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 void ApplicationGrid::RenderRightClickMenu(){
     IsoWall* hovered_wall = dynamic_cast<IsoWall*>(rightclick_menu_object);
     if (hovered_wall){
+#ifdef USE_IMGUI
         return RenderRightClickMenu_IsoWall(hovered_wall);
+#endif
     }
 
     IsoCell* clicked_cell = dynamic_cast<IsoCell*>(rightclick_menu_object);
@@ -1140,7 +1154,9 @@ void ApplicationGrid::RenderRightClickMenu(){
         clicked_cell = dynamic_cast<IsoCell*>(rightclick_menu_object->GetParent());
     }
     if (clicked_cell){
+#ifdef USE_IMGUI
         return RenderRightClickMenu_IsoCell(clicked_cell);
+#endif
     }
 
 
@@ -1161,6 +1177,9 @@ Skeleton* FindSkeletonInScene(Scene* scene, const std::string& name){
 }
 
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationGrid::DrawImGuiUI(){
     RenderGridUI();
     RenderDebugMenuBar();
@@ -1171,7 +1190,11 @@ void ApplicationGrid::DrawImGuiUI(){
     }
     //ImGui::ShowDemoWindow();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationGrid::RenderGridUI(){
     Object* object = main_scene->camera;
 
@@ -1319,6 +1342,7 @@ void ApplicationGrid::RenderGridUI(){
     }
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 void ApplicationGrid::CreateRoom(IsoCell* center_cell, int size_x, int size_y){
     //Make sure the center is not already in a room

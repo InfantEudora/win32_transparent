@@ -97,7 +97,7 @@ CORE_BUILD_DIR  := $(CORE_BUILD_ROOT)/$(CONFIG)
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
-CFLAGS = -std=c++17 -L$(ROOT)/libs/ -lreactphysics3d -limgui -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -lws2_32 -lcrypt32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
+CFLAGS = -std=c++17 -L$(ROOT)/libs/ -lreactphysics3d -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 CFLAGS += -lXinput9_1_0
 #CFLAGS += $(FNOCONSOLE)
 CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
@@ -196,9 +196,122 @@ USE_SOUND ?= 0
 ifeq ($(USE_SOUND), 1)
 CFLAGS += -DUSE_SOUND -lole32
 else
-CORE_SRCS_NOSOUND += $(ROOT)/core/SoundSystem.cpp
-CORE_SRCS_NOSOUND += $(ROOT)/core/WaveFile.cpp
+CORE_SRCS_DROP += $(ROOT)/core/SoundSystem.cpp
+CORE_SRCS_DROP += $(ROOT)/core/WaveFile.cpp
 endif
+
+#---------------------------------------------------------------------------------------
+# USE_MCP and USE_NET - the debug server, and the sockets underneath it
+#
+# USE_MCP=0 drops the JSON-RPC server an agent drives the app through: core/MCPServer.cpp,
+# the core tools (see below), and the app's own RegisterMCPTools() block. Nothing binds
+# 127.0.0.1:8765, which is most of the point - a shipped game has no use for a remote
+# control, and item 74 in docs/engine_backlog.md is the long version.
+#
+# USE_NET=0 drops the sockets with it: Socket, TCPServer, TCPClient, HTTPServer, and
+# -lws2_32 -lcrypt32. It is SEPARATE from USE_MCP because apps/ocpp needs an HTTP server
+# whether or not it wants a debug interface - its OCPPClient is a TCPClient. Folding the two
+# together would make MCP load-bearing for a feature that has nothing to do with it.
+#
+# USE_MCP=1 implies USE_NET=1; there is no such thing as MCP without a socket.
+#
+# BOTH DEFAULT ON, unlike USE_SOUND and every other flag in this family, and that is
+# deliberate rather than an oversight. Sound defaults off because silence is a safe default.
+# MCP is the opposite: screenshot, sim_pause and sim_step are how work in this repo is
+# verified at all (see CLAUDE.md), so an app that quietly lost them would break the
+# development loop rather than merely shrink. These get turned off ON PURPOSE, when
+# releasing something, and never by accident.
+#
+# HOW THE CORE SIDE IS SWITCHED, because it is not the obvious way. A flag must never
+# CHANGE a core translation unit - see the CORE_CFLAGS block below - so -DUSE_MCP is NOT
+# visible to core. Instead core/ApplicationMCP.cpp and core/ApplicationMCP_none.cpp define
+# the same three symbols, one doing the work and one doing nothing, and exactly one of them
+# is compiled. core/Application.cpp calls them unconditionally and is identical either way.
+# -DUSE_MCP below the CORE_CFLAGS line reaches only the APP's own objects, which is where
+# an app's own RegisterMCPTools() is guarded.
+#---------------------------------------------------------------------------------------
+USE_MCP ?= 1
+USE_NET ?= 1
+
+ifeq ($(USE_MCP),1)
+USE_NET := 1
+CFLAGS += -DUSE_MCP
+CORE_SRCS_DROP += $(ROOT)/core/ApplicationMCP_none.cpp
+else
+CORE_SRCS_DROP += $(ROOT)/core/ApplicationMCP.cpp
+CORE_SRCS_DROP += $(ROOT)/core/MCPServer.cpp
+endif
+
+ifeq ($(USE_NET),1)
+CFLAGS += -DUSE_NET -lws2_32 -lcrypt32
+else
+CORE_SRCS_DROP += $(ROOT)/core/Socket.cpp
+CORE_SRCS_DROP += $(ROOT)/core/TCPServer.cpp
+CORE_SRCS_DROP += $(ROOT)/core/TCPClient.cpp
+CORE_SRCS_DROP += $(ROOT)/core/HTTPServer.cpp
+endif
+
+#---------------------------------------------------------------------------------------
+# USE_IMGUI - the debug panels
+#
+# The fourth and last member of the family. USE_IMGUI=0 drops the menu bar, the Scene tree,
+# the Inspector, the Engine panel, the shader list, click-to-select, each app's own HUD, and
+# -limgui with them: 618 KB of a stripped exe plus its vendored font.
+#
+# WHAT IT DOES NOT DROP is the 2D overlay. core/UIOverlay is a separate thing - one
+# screen-space pass drawing rounded rects and SDF text, built for Android where ImGui is not
+# an option - and it is how a SHIPPED build says anything to a player. ImGui is developer
+# surface; the overlay is the game's. See docs/ui_overlay_plan.md.
+#
+# Defaults ON for the same reason USE_MCP does: the panels are where the telemetry, the
+# inspector and the sliders live, and an app that lost them by accident would be much harder
+# to work on rather than merely smaller.
+#
+# Switched the same two ways as USE_MCP, and for the same reason. CORE: a swapped translation
+# unit, because -D must never change a shared core object - core/ApplicationDebugUI.cpp and
+# core/WindowImGui.cpp against their _none twins. APPS: -DUSE_IMGUI below the CORE_CFLAGS line,
+# where an #ifdef around an app's own panel functions is safe.
+#---------------------------------------------------------------------------------------
+USE_IMGUI ?= 1
+
+ifeq ($(USE_IMGUI),1)
+CFLAGS += -DUSE_IMGUI -limgui
+CORE_SRCS_DROP += $(ROOT)/core/ApplicationDebugUI_none.cpp
+CORE_SRCS_DROP += $(ROOT)/core/WindowImGui_none.cpp
+else
+CORE_SRCS_DROP += $(ROOT)/core/ApplicationDebugUI.cpp
+CORE_SRCS_DROP += $(ROOT)/core/WindowImGui.cpp
+endif
+
+#---------------------------------------------------------------------------------------
+# A NON-DEFAULT FLAG GETS ITS OWN OBJECT TREE AND ITS OWN EXE NAME.
+#
+# Both flags above put a -D into CFLAGS, so they change what the APP's objects compile to -
+# and make compares objects by timestamp, never by the flags they were built with. Sharing
+# one tree and one exe name between `make` and `make USE_MCP=0` means building one, then the
+# other, then the first again leaves make comparing an exe against objects that are all older
+# than it: "nothing to be done", and you keep whichever binary you built before.
+#
+# That is the same failure the CONFIG block describes for debug-vs-release, and it is worth
+# more care here than anywhere else in this file. The whole point of USE_MCP=0 is to produce
+# a build that does NOT listen on a port; getting a silently stale binary means shipping a
+# game with a debug server in it, which is precisely the thing the flag exists to prevent.
+#
+# The suffix is empty when everything is at its default, so an ordinary build is untouched:
+# `make` still writes build/tetris.exe out of build/obj/debug. Only a deliberately non-default
+# build gets a name, and it gets one that says what it is.
+#---------------------------------------------------------------------------------------
+VARIANT_SUFFIX :=
+ifneq ($(USE_MCP),1)
+VARIANT_SUFFIX := $(VARIANT_SUFFIX)_nomcp
+endif
+ifneq ($(USE_NET),1)
+VARIANT_SUFFIX := $(VARIANT_SUFFIX)_nonet
+endif
+ifneq ($(USE_IMGUI),1)
+VARIANT_SUFFIX := $(VARIANT_SUFFIX)_noimgui
+endif
+OBJ_DIR := $(OBJ_DIR)$(VARIANT_SUFFIX)
 
 #---------------------------------------------------------------------------------------
 # Sources
@@ -207,7 +320,7 @@ CORE_DIRS += $(ROOT)/core
 CORE_DIRS += $(ROOT)/core/skeleton
 CORE_DIRS += $(ROOT)/core/physics
 
-CORE_SRCS := $(filter-out $(CORE_SRCS_NOSOUND), $(wildcard $(addsuffix /*.cpp, $(CORE_DIRS))))
+CORE_SRCS := $(filter-out $(CORE_SRCS_DROP), $(wildcard $(addsuffix /*.cpp, $(CORE_DIRS))))
 
 #SHARED LIBRARIES: a folder at the repo root that more than one app builds, declared by an app as
 #
@@ -347,7 +460,7 @@ DEPS = $(CORE_OBJS:.o=.d) $(APP_OBJS:.o=.d)
 #would relink on every single invocation even with nothing changed.
 #$(BAKE_SUFFIX) is _baked when BAKE_ASSETS=1 and empty otherwise - see the BAKED ASSETS
 #block for why it is in the name rather than only in the object path.
-EXE := $(BUILD_DIR)/$(PROJECT)$(BAKE_SUFFIX)$(CONFIG_SUFFIX).exe
+EXE := $(BUILD_DIR)/$(PROJECT)$(BAKE_SUFFIX)$(VARIANT_SUFFIX)$(CONFIG_SUFFIX).exe
 
 default: $(EXE)
 

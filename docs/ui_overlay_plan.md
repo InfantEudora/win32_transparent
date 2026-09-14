@@ -600,11 +600,18 @@ exactly one tick. While paused the physics loop keeps running *non-ticking* pass
 does not tick, and `NextInput` clears it before any tick can see it. Measured: CW rotates the piece
 unpaused and does nothing under `tetris_step`.
 
-**That is backlog item 84's other half.** Item 84 was closed on 2026-09-14 having fixed exactly
-this for *synthetic* holds, by advancing them inside the ticking branch — the comment at
-`Application.cpp`'s tick loop says so. Real asynchronous events (a touch button, a gamepad button,
-any queued key) still fall through. The test asserts the limitation explicitly, so that fixing it
-makes the test fail loudly rather than quietly continuing to work around it.
+**That was backlog item 84's other half, and it is item 88 — now closed, also on 2026-09-14.**
+Item 84 had fixed this for *synthetic* holds by advancing them inside the ticking branch; real
+asynchronous events (a touch button, a gamepad button, any queued key) still fell through.
+
+They no longer do. An edge is cleared once something has READ it, or once a ticking pass has been
+and gone, so a press that arrives while the simulation is stepped waits for the tick instead of
+being cleared by the spinning pass it landed on. **A CW press while paused now rotates the piece on
+the next `tetris_step`** — measured both ways, against a build with the old clear restored. The
+full record is item 88 in `docs/engine_backlog_done.md`.
+
+So the note above about the test asserting the limitation has served its purpose: it did fail
+loudly, which is exactly what it was written for.
 
 ### Still temporary
 

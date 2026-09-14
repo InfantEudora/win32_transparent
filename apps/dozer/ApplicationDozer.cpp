@@ -1,4 +1,12 @@
 #include "ApplicationDozer.h"
+#ifdef USE_IMGUI
+//core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
+//Guarded because a build with USE_IMGUI=0 has no library behind this header, and every panel
+//function below that would call it is compiled out too.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#endif
+
 #include "Debug.h"
 
 static Debugger *debug = new Debugger("ApplicationDozer", DEBUG_ALL);
@@ -99,7 +107,7 @@ void ApplicationDozer::RunSimulationTick(){
     renderer->DeleteDestroyedObjects();
 
     //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         return;
     }
 
@@ -162,7 +170,7 @@ void ApplicationDozer::UpdateView(){
     }
 
     //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         //Clear mouse delta
         input->GetDelta(INPUT_MOUSE_WHEEL);
         return;
@@ -341,6 +349,9 @@ void ApplicationDozer::ExportSceneString(){
     fclose(file);
 }
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationDozer::RenderDebugMenuBarClass(void){
     if (ImGui::BeginMenu("Dozer Scene")){
         if (ImGui::MenuItem("Export")){
@@ -349,7 +360,11 @@ void ApplicationDozer::RenderDebugMenuBarClass(void){
         ImGui::EndMenu();
     }
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationDozer::DrawImGuiUI(){
     //UI
     ImGui::Begin("Hi there!");
@@ -370,6 +385,7 @@ void ApplicationDozer::DrawImGuiUI(){
     RenderRandTestWindow();
     //ImGui::ShowDemoWindow();
 }
+#endif //USE_IMGUI
 
 Scene* ApplicationDozer::CreateMainScene(){
     Scene* scene = CreateNewScene("Dozer Test Scene");

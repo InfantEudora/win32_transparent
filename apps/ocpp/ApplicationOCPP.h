@@ -41,11 +41,19 @@ public:
 
     void Init(void) override;
     void UpdateView() override;
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
 
+#ifdef USE_IMGUI
     void RenderOCPPServerUI();
+#endif
+#ifdef USE_IMGUI
     void RenderOCPPClientsUI();
+#endif
+#ifdef USE_IMGUI
     void RenderTCPClientsUI();
+#endif
 
     HTTPServer* http_server = NULL;
 

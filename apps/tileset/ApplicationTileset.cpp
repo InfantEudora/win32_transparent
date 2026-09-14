@@ -1,4 +1,12 @@
 #include "ApplicationTileset.h"
+#ifdef USE_IMGUI
+//core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
+//Guarded because a build with USE_IMGUI=0 has no library behind this header, and every panel
+//function below that would call it is compiled out too.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imgui.h"
+#endif
+
 #include "Debug.h"
 #include "Directory.h"
 
@@ -109,7 +117,7 @@ void ApplicationTileset::RunSimulationTick(){
     }
 
     //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         return;
     }
 
@@ -164,7 +172,7 @@ void ApplicationTileset::UpdateView(){
     InputController* input = main_scene->inputcontroller;
 
     //All further code requires the cursor not to be above an UI element
-    if (ImGui::GetIO().WantCaptureMouse){
+    if (UIWantsMouse()){
         //Clear mouse delta
         input->GetDelta(INPUT_MOUSE_WHEEL);
         return;
@@ -274,6 +282,9 @@ void ApplicationTileset::UpdateView(){
     mouse_delta_sum += input->GetDelta(INPUT_MOUSE_WHEEL);
 }
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTileset::DrawImGuiUI(){
     RenderDebugMenuBar();
     RenderApplicationUI();
@@ -282,7 +293,11 @@ void ApplicationTileset::DrawImGuiUI(){
     RenderSelectedCarUI();
     RenderSelectedRoadUI();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTileset::RenderToolsUI(){
     ImGui::Begin("Tools");
     ImGui::Text("Current Tool: %d", (int)current_tool);
@@ -333,7 +348,11 @@ void ApplicationTileset::RenderToolsUI(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTileset::RenderSelectedRoadUI(){
     ImGui::Begin("Selected Road");
 
@@ -361,7 +380,11 @@ void ApplicationTileset::RenderSelectedRoadUI(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTileset::RenderSelectedCarUI(){
     ImGui::Begin("Selected Car");
     IsoCar* car = dynamic_cast<IsoCar*>(selected_object);
@@ -469,7 +492,11 @@ void ApplicationTileset::RenderSelectedCarUI(){
 
     ImGui::End();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTileset::RenderTerrainUI(){
     if (!terrain) return;
 
@@ -519,6 +546,7 @@ void ApplicationTileset::RenderTerrainUI(){
     }
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 void ApplicationTileset::onTrigger(const reactphysics3d::OverlapCallback::CallbackData& callbackData){
     //debug->Trace("Trigger: num overlap pairs %hhu\n",callbackData.getNbOverlappingPairs());

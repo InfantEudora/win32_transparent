@@ -1,7 +1,7 @@
 ﻿# Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
-`docs/engine_backlog_done.md` — 62 closed items, with their verification notes intact, because
+`docs/engine_backlog_done.md` — 65 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
 Most items are drawn from two runs in which an agent built a game on this engine as an audit of it:
@@ -42,6 +42,15 @@ them - the resampler tables are `.bss` and cost no file bytes, which the first v
 Band B's heading was restored at the same time — it was lost when item 41 closed, which left 43
 and 61 stranded under a band A that says it is empty.
 
+On 2026-09-14, later: **items 74 and 82 closed and moved**, and with them the optional-subsystem
+flag family is complete. `USE_NET`, `USE_MCP` and `USE_IMGUI` join `USE_SOUND`; all three default
+ON, because MCP and the debug panels are how work in this repo gets done and losing them by
+accident would be a worse outcome than a larger binary. A shipped build turns them off on purpose.
+Tetris end to end: **5,792,659 bytes in 23 files -> 3,397,632 in one, 41% smaller**, with no asset
+folder, no port bound and no debug UI. Getting there also moved two thirds of `core/Application.cpp`
+out of it - 3327 lines to 1157 - because that is how much of it was debug interface. The OCPP
+protocol left `core/HTTPServer` on the way (every app had been linking a charge-point client).
+
 On 2026-09-14: **item 75 closed and moved** - assets are packed by `tools/assetpack`, a separate
 exe, and the engine's `DUMP_BINARYASSETS` self-dump is gone. Tetris now builds as a **single
 4.58 MB file with no `shared_assets` folder**, 23% smaller than the exe-plus-tree it replaces, and
@@ -53,7 +62,8 @@ is copy-pasted into all fourteen apps.
 On 2026-09-14: **item 84 closed** - scripted holds now advance from inside the tick, so edge-triggered
 SCRIPTED actions survive `sim_step` in every app. That wording said "edge-triggered actions" until
 later the same day, when the on-screen buttons showed that REAL asynchronous edges still fall through
-the same hole - see the new item 88. Also on 2026-09-14: **item 67 closed** (on-screen buttons, driven
+the same hole - which became item 88, **also closed on 2026-09-14**: an unread edge now survives a
+non-ticking pass, so the original wording is true at last. Also on 2026-09-14: **item 67 closed** (on-screen buttons, driven
 by the Win32 mouse as pointer 0) and **item 81 largely built** - `core/UIOverlay`, an SDF atlas baked
 by the new `tools/fontbake`, and one screen-space pass that draws rounded rects and text together.
 See `docs/ui_overlay_plan.md`.
@@ -91,33 +101,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   §1.3), still open after the stage 0 review (`docs/pinball_findings.md` §4).
 
 ## Band B — under an hour each
-
-- [ ] **88. Edge-triggered REAL input is still lost under `sim_step` - item 84's other half.**
-  Item 84 was closed on 2026-09-14 having fixed this for **scripted** input: synthetic holds now
-  advance from inside the ticking branch, so a `HoldKey` survives single-stepping. Its closing note
-  says "in every app", and that is true of scripted holds and **not** of real asynchronous events.
-
-  `Application`'s physics loop calls `UpdateInput()` (and so `ApplyPendingEvents`) on **every**
-  pass, ticking or not, because a paused editor still needs a working camera. So a key event that
-  arrives from another thread while the simulation is paused - an on-screen button, a gamepad
-  button, any queued key - is drained on a NON-TICKING pass, raises its edge there, and `NextInput`
-  clears it before any tick sees it. The comment above `UpdateTickInput` in the tick loop describes
-  exactly this mechanism; only the synthetic half was moved.
-
-  **Measured 2026-09-14** with the new touch buttons (`docs/ui_overlay_plan.md` section 13): a CW
-  press rotates the piece with the simulation running, and does nothing at all under `tetris_step`.
-  Level-triggered actions are unaffected - `IsKeyDown` persists across passes, so LEFT/RIGHT move
-  correctly while stepped, which is why this hid for so long.
-
-  Consequences worth weighing before picking a fix. It makes **any** paused, stepped test of a
-  real edge-triggered action silently wrong, which is the same class of problem item 84 was opened
-  for and the same one that makes a recording untrustworthy. The fix is not "stop draining on
-  non-ticking passes" - `UpdateView` needs that input - but something closer to what
-  `ApplyTickInput` already does for holds: let an edge survive until a ticking pass consumes it.
-
-  There is a test that asserts the CURRENT behaviour (scratchpad `touch_test.sh`), so fixing this
-  will make that check fail rather than silently keep testing around it.
-
 
 - [ ] **43. The field is rebuilt every frame with no dirty flag.** One geometry pass plus
   log2(size)+2 dispatches, all of it repeated whether or not anything moved. Its share of the
@@ -249,8 +232,8 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   driven by the Win32 mouse as pointer 0, drawn through the new `UIOverlay` (item 81) and verified
   end to end in `apps/tetris`. What was built and the two defects found doing it - the port's
   `AddTouchButton` returning a pointer the next call invalidates, and the window size not being
-  final during `Init()` - are in `docs/ui_overlay_plan.md` section 13. Item 88 is the one thing
-  this could not fix. Original entry follows. Full plan in `docs/touch_input_plan.md`; this
+  final during `Init()` - are in `docs/ui_overlay_plan.md` section 13. Item 88 was the one thing
+  this could not fix, and it is closed too: a button press while paused now reaches the next tick. Original entry follows. Full plan in `docs/touch_input_plan.md`; this
   is the pointer, not a summary of it. The design in one line: a third input family alongside
   `AddKeyMap` and `AddGamePadMap`, so `input->AddTouchButton(rect,INPUT_TETRIS_LEFT)` sits next to
   the other two and **`ApplicationTetris::SetupInput` is the only app code that changes**.
@@ -416,74 +399,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   object against 17.9 MB — a different toolchain and link model, so read the ratio, not the
   numbers.
 
-- [ ] **74. `USE_MCP`, so a shipped build does not carry a debug server.**
-
-  **A prerequisite was found and done first, 2026-09-14: OCPP is out of core.** `core/HTTPServer.h`
-  held an `OCPPServerHandler` **as a member**, and its upgrade path tested for `"ocpp1.6"` and
-  `"ocpp2.0"` by name. Since `core/MCPServer` stands on `HTTPServer` and every app has MCP, **all
-  fourteen apps linked a charge-point client and its 992-line server handler.** Found by relinking
-  tetris without the OCPP objects, which failed with four undefined references straight out of
-  `HTTPServer.cpp`.
-
-  `HTTPServer` now exposes a `WebSocketApp` — four optional `std::function` hooks
-  (`accepts_protocol`, `on_open`, `on_message`, `on_close`) — and `apps/ocpp` installs the protocol
-  into them. WebSockets are a transport and stay in core; what is spoken over them does not. The
-  handler had taken its two dependencies as `std::function` from the start, so this is the shape it
-  was written for. `OCPPClient.{h,cpp}` and `OCPPServerHandler.{h,cpp}` moved to `apps/ocpp/`.
-
-  **Measured: `tetris_release.exe` 3,645,952 → 3,468,800, 177,152 bytes off every app (4.9%).**
-  Verified: MCP still answers `initialize` and `tools/call` on tetris (the HTTP POST path was never
-  websocket); `apps/ocpp` serves its page, negotiates `ocpp1.6` and echoes it in the 101, logs
-  `OCPP client connected (protocol=ocpp1.6)` from its own handler, and a no-subprotocol upgrade
-  still joins the broadcast list and gets its variables snapshot. `tank`, `tileset`, `breakout` and
-  `ui` all build clean.
-
-  Two details preserved deliberately: a client that negotiates a subprotocol is still kept **out**
-  of `m_wsClients`, so it never receives the status-page broadcast; and `ocpp_last_msg_<path>` is
-  still set, now from the app's `on_message`, though nothing in the tree reads it.
-
-  **What this changes about the item below.** `HTTPServer` now has exactly **two** consumers in the
-  whole tree: `core/MCPServer`, and `apps/ocpp`. Nothing else touches it — `apps/tileset` carried a
-  bare unused `#include "HTTPServer.h"` (since removed) and `apps/tank`'s only mention is a comment.
-  So `USE_MCP=0` can drop `HTTPServer`, `TCPServer`, `Socket` and the websocket stack outright for
-  **all thirteen** non-OCPP apps, not just some of them.
-
-  **Decided 2026-09-14: two flags.** `apps/ocpp` needs `HTTPServer` whether or not it wants MCP, so
-  the server cannot hang off `USE_MCP` without making an unrelated feature load-bearing for it.
-
-  | flag | drops when off | wanted by |
-  |---|---|---|
-  | `USE_NET` | `Socket.cpp`, `TCPServer.cpp`, `TCPClient.cpp`, `HTTPServer.cpp`, `-lws2_32 -lcrypt32` | `apps/ocpp` (its `OCPPClient` is a `TCPClient`) |
-  | `USE_MCP` | `MCPServer.cpp`, and the app's own `RegisterMCPTools()` | everything, while developing |
-
-  `USE_MCP := 1` implies `USE_NET := 1`; one `ifeq` in `engine.mk` above the `CORE_CFLAGS` line.
-
-  **`USE_MCP` DEFAULTS ON, unlike every other flag in this family, and that is deliberate.**
-  `USE_SOUND` and `USE_PHYSICS` default off because doing without is the safe default. MCP is the
-  opposite: `screenshot`, `sim_pause` and `sim_step` are how work in this repo is verified at all
-  (see `CLAUDE.md`), so an app that quietly lost them would break the development loop rather than
-  merely shrink. A shipped build turns it off on purpose — which is also why the flag is worth
-  having rather than deleting the server.
-
-  Same convention again,
-  and the argument is not size but that MCP is a *debugging* interface — a JSON-RPC server that
-  lets an agent drive the app — and shipping one is pointless at best. Today every app binds
-  127.0.0.1:8765 whether or not anyone is driving it.
-
-  The port reports the guard coming out unusually clean, and the reason generalises: an app's MCP
-  surface is already one `RegisterMCPTools()` block. Four sites in its Tetris — the include, the
-  call in `Init()`, the two declarations, and the `//--- MCP ---` implementation block — and
-  nlohmann/json turned out to live entirely inside that block, so it stops being a dependency too.
-  **The state the tools report is deliberately not guarded**: the debug HUD reads the same
-  snapshot, and it is not MCP-only state. That is the line to hold when doing this here.
-
-  Core side is `MCPServer.cpp` / `HTTPServer.cpp` / `TCPServer.cpp` dropping out of the core
-  sources, exactly as `SoundSystem.cpp` and `WaveFile.cpp` already do — so unlike item 73 this one
-  needs no core `#ifdef` and does not touch the shared/per-app flag line. Cheaper than 73 and
-  independent of it; the only shared piece is item 72's stamp. A host build tool wants this off
-  for the same reason it wants 73 off, and for a blunter one: a sprite packer that opens a
-  socket is a thing nobody asked for.
-
 - [ ] **76. `Renderer(int w, int h)` — a renderer has no size.** `Renderer::width`/`height` are set
   once from the window and then read by eight call sites, all of them doing the same thing:
   `camera->SetupPerspective(renderer->width, renderer->height, ...)`. The port declined to take
@@ -550,30 +465,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   Whatever is chosen, `3rdparty/makefile` already warns about it at the imgui flags block and
   says to check `git -C imgui diff` is non-empty before rebuilding that library. That is a
   reminder, not a fix.
-
-- [ ] **82. `USE_IMGUI`, the fourth member of the flag family.** With 73, 74 and `USE_SOUND`, a
-  shipped build becomes a set of flags rather than a fork of the app — which is the point. ImGui is
-  618 KB of the stripped exe plus its own vendored font (`proggy_vector` is 18 KB of it), and a
-  shipped game has no more use for a debug panel than for a JSON-RPC server.
-
-  **Tetris is much closer to this than it looks, and that is the finding.** Its entire ImGui
-  surface is one window — `ApplicationTetris::RenderTetrisHUD`, 26 text calls, five separators, two
-  buttons and two checkboxes. Everything the *game* says is already `TextMesh` (item 24's geometry
-  half), so this is not "replace a UI framework", it is "decide the debug HUD is not in the shipped
-  build". The two checkboxes (Sound, Debris) and two buttons (New game, Pause) are the only
-  functional widgets, and all four already have keyboard bindings.
-
-  What is not free is that core itself draws through ImGui in two places that are not debug UI:
-  `Application::DrawTouchButtons` borrows `ImGui::GetForegroundDrawList()`, and the engine panels
-  are the only way to reach a lot of live controls. The first is what item 81 exists for. The
-  second is an argument for keeping this flag honestly named: `USE_IMGUI=0` is a **shipping**
-  configuration, and an engine whose inspector only exists in the development build is the normal
-  arrangement rather than a regression.
-
-  Sequencing: an app with no on-screen buttons can take this flag today. An app that has them needs
-  item 81 first, or it ships with invisible controls — which, per item 67, still *work*, because
-  `SubmitPointer` hit-tests its own rect list and never consults ImGui. That separation is what
-  makes this tractable at all.
 
 ## Band D — half a day to a day each
 

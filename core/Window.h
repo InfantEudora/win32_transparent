@@ -12,12 +12,34 @@
 
 #include "InputController.h"
 
-//ImGui
-#define IMGUI_DEFINE_MATH_OPERATORS
-#include "imgui.h"
-#include "backends\imgui_impl_win32.h"
-#include "backends\imgui_impl_opengl3.h"
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+/*
+    NO ImGui HEADERS HERE, deliberately, and this is the interesting part of the file.
+
+    Until 2026-09-14 this header included imgui.h and both backend headers, so every translation
+    unit that touched a Window - which is to say very nearly all of core and all fourteen apps -
+    had the whole of ImGui's API in scope whether it wanted it or not, including in builds with
+    USE_IMGUI=0 where the library is not even linked.
+
+    They are gone rather than wrapped in an #ifdef, and the difference matters. This header is
+    read by CORE translation units, compiled with CORE_CFLAGS, and by APP ones, compiled with
+    CFLAGS - and only the second carries -DUSE_IMGUI. An #ifdef here would make the same header
+    mean two different things in the same build, which is the sort of thing that is fine until
+    the day it silently is not. Deleting the includes cannot: Window has no ImGui-typed MEMBER,
+    only the three methods below, so nothing about this class changes either way.
+
+    Anything that actually calls ImGui includes it itself now - core/WindowImGui.cpp,
+    core/ApplicationDebugUI.cpp, and each app's own panel code behind its own #ifdef USE_IMGUI.
+    Which is also simply where an include belongs.
+*/
+
+/*
+    The WndProc forward, so Window.cpp's message loop does not name ImGui. Nonzero means the debug
+    UI consumed the message. Defined in core/WindowImGui.cpp, or as a no-op returning 0 in its twin.
+
+    A FREE function rather than a Window member, because the window procedure that calls it is one
+    - Win32 hands WndProc to the OS, so it cannot be a non-static member.
+*/
+int ImGuiForwardWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // Generic wrapper around a DIB with a 32-bit color depth.
 typedef struct{
@@ -85,6 +107,7 @@ public:
 
     void ImGuiNewFrame();
     void ImGuiRenderDrawData();
+
     void SwapWindowBuffers();
     void CopyBufferToImage();
     void CopyBufferToBackBuffer();

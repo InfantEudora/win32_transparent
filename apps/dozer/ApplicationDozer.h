@@ -18,7 +18,9 @@ public:
 
     void UpdateView(void) override;
     void RunSimulationTick(void) override;
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
 
     vec3 camera_target = {};
     Scene* CreateMainScene();
@@ -39,7 +41,9 @@ public:
     void ExportSceneString();
 
 protected:
+#ifdef USE_IMGUI
     void RenderDebugMenuBarClass(void) override;
+#endif
 
 private:
     //reactphysics3d::EventListener

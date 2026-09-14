@@ -1,5 +1,7 @@
 #include "imgooey.h"
 
+#ifdef USE_IMGUI
+//ImGui, so not in a build without it. Component's methods below are plain C++ and stay.
 namespace ImGooey{
     //Collection of modded ImGui stuff.
 
@@ -191,6 +193,7 @@ namespace ImGooey{
         return res;
     }
 }
+#endif //USE_IMGUI
 
 ComponentState* Component::GetMainState(){
     if (states.size() > 0){

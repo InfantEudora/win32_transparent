@@ -191,7 +191,9 @@ public:
     void UpdateView(void) override;
     void RunSimulationTick(void) override;
     void PreRender(void) override;
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
     vec3* GetCameraTargetPtr() override { return &camera_target; }
 
     //Physics thread, from inside rp3d's own step. Stages what it saw and does nothing else -
@@ -219,7 +221,9 @@ private:
     void SetupCamera();
     void SetupInput();
     void RegisterCommandHandlers();
+#ifdef USE_MCP
     void RegisterMCPTools();
+#endif
 
     //--- Per tick, physics thread --------------------------------------------------------------
     void GatherInput(BreakoutInput& out);
@@ -248,7 +252,9 @@ private:
     void ReloadShieldShader();
 
     //--- HUD -------------------------------------------------------------------------------------
+#ifdef USE_IMGUI
     void RenderBreakoutHUD();
+#endif
 
     //--- MCP, any thread -------------------------------------------------------------------------
     json BuildStateJson();

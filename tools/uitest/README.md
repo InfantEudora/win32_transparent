@@ -1,7 +1,8 @@
 # tools/uitest — verifying the 2D overlay and the on-screen buttons
 
-Five scripts that check what `docs/ui_overlay_plan.md` built: the SDF font asset, the overlay's
-distance-field maths, and the touch buttons driven end to end through the Win32 message pump.
+Six scripts that check what `docs/ui_overlay_plan.md` built: the SDF font asset, the overlay's
+distance-field maths, and the touch buttons driven end to end through the Win32 message pump —
+plus one that checks the engine rule those buttons depend on (backlog item 88).
 
 Unlike everything else under `tools/`, these are **scripts rather than a built exe** — there is
 nothing to compile. They drive a running app over MCP and read pixels back, because that is the
@@ -10,6 +11,9 @@ only place the answers actually live.
 ```bash
 #no app needed
 python tools/uitest/check_fnt.py                       # validates shared_assets/fonts/mono_sdf.fnt
+
+#starts and stops apps/tetris ITSELF - nothing else may be on the port
+python tools/uitest/item88_test.py                     # edge input survives a paused pass
 
 #with apps/tetris running (see CLAUDE.md - one app at a time, it owns port 8765)
 bash tools/uitest/touch_test.sh                        # the six gameplay buttons
@@ -46,6 +50,16 @@ expects, so they need updating if the thing being measured moves.
 `PostMessage` → `WndProc` → `InputController::HandleMessage` → `SubmitPointer`. Nothing reaches
 into the input system directly. `click.ps1` is the one that posts them.
 
+**`item88_test.py`** is about the ENGINE rather than the buttons; it just uses a button as the only
+convenient source of a genuinely asynchronous input event. It checks that an edge-triggered press
+arriving while the simulation is paused reaches the next stepped tick, **and** that a chrome action
+read every pass still fires exactly once rather than repeating — the two halves of item 88's rule,
+and the second is what a careless fix breaks.
+
+Deliberately **not** built on `tetris_input`: that uses `HoldKey`, the scripted path item 84 already
+fixed, so a test written on it passes with or without item 88 and proves nothing. It is also the
+only script here that starts and stops the app itself, which is what lets it guard the port.
+
 ---
 
 ## Two things that will waste an afternoon if they are not known
@@ -78,20 +92,42 @@ being dropped when it is not set.
 key and move the piece. That is the one remaining way a human can distort a result, and no amount
 of care inside the harness can prevent it.
 
-### Level-triggered and edge-triggered actions must be tested differently
+### Level-triggered and edge-triggered actions used to need testing differently — item 88
 
-Movement (`IsKeyDown`) survives being applied on a non-ticking pass. Rotation (`WasKeyPressed`) does
-not: while the simulation is paused the physics loop keeps running non-ticking passes, each draining
-the event queue, so the press raises its edge on a pass that does not tick and `NextInput` clears it
-before any tick sees it.
+**This split is gone, and the way it went is the point of writing it down.**
 
-So `touch_test.sh` checks movement **paused and single-stepped** (deterministic, timing-free) and
-rotation **unpaused**. That split is a statement about the engine, not about the buttons — it is
-**backlog item 88**, the half of item 84 that was never fixed.
+Movement (`IsKeyDown`) always survived being applied on a non-ticking pass. Rotation
+(`WasKeyPressed`) did not: while the simulation was paused the physics loop kept running
+non-ticking passes, each draining the event queue, so a press raised its edge on a pass that did
+not tick and `NextInput` cleared it before any tick saw it. So `touch_test.sh` checked movement
+**paused and single-stepped** and rotation **unpaused**, and asserted the limitation at the end on
+purpose, so that a fix would fail here loudly rather than let the suite quietly keep testing around
+a bug that no longer existed.
 
-The suite deliberately **asserts the limitation** at the end. Fixing item 88 will make that check
-fail, which is the point: it should force someone to update this file rather than quietly keep
-testing around a bug that no longer exists.
+**It worked exactly as intended.** Item 88 closed on 2026-09-14 and that check failed on the next
+run. Both movement and rotation are now checked paused and stepped, which is strictly better:
+deterministic and timing-free, with no sleeps racing the simulation.
+
+The rule now is that an edge is cleared once something has **read** it, or once a **ticking** pass
+has been and gone — so an unread edge waits for the tick that wants it, while chrome read every
+pass from `UpdateView` is consumed immediately and still fires once. Both halves are checked:
+`touch_test.sh` ends by stepping again after a rotation and asserting the piece does **not** turn a
+second time, which is what a fix that kept edges instead of consuming them would break.
+
+Full record, including the before-and-after measurement, is item 88 in
+`docs/engine_backlog_done.md`.
+
+### A stale app makes every one of these lie
+
+Every app binds port 8765, and a second one starts perfectly happily while its server silently
+fails to bind — so a leftover instance answers instead and the suite reports on **the wrong build**.
+This is the failure that looks like a regression in the thing you just fixed, and it cost a
+confused round during item 88: a leftover control build made a working fix look broken.
+
+`touch_test.sh` now refuses to start if `tetris.exe` on disk is newer than the running process (the
+exe cannot be relinked while it runs, so that combination means the rebuild is not what is
+running), and `item88_test.py` — which starts the app itself — refuses to start if anything is
+already answering on 8765.
 
 ---
 

@@ -47,7 +47,9 @@ public:
     //Application::PreRender for why this cannot live in either physics-thread hook.
     void PreRender(void) override;
 
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
 
     DirectionalLight* sun = NULL;
     ShipCharacter* ship_character = NULL;
@@ -118,7 +120,9 @@ public:
 
     //MCP: enough of a handle on the ship and the doors to drive a repeatable shot at one and read
     //back what it did - the ship app's own tools, registered on top of the core ones.
+#ifdef USE_MCP
     void RegisterMCPTools();
+#endif
     //Handlers for this app's own SimCommand types (SHIP_CMD_*). Called from Init(), next to
     //RegisterMCPTools.
     void RegisterCommandHandlers();

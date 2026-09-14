@@ -18,6 +18,15 @@
 ROOT    := ../..
 PROJECT := ocpp
 
+#This app IS a network application - it serves a page over HTTP and speaks OCPP over
+#websockets, and its OCPPClient is a TCPClient. USE_NET=0 would leave it linking against
+#sockets that were not compiled; said plainly here rather than as 26 undefined references
+#from the linker. USE_MCP=0 is fine and supported - that is exactly why the two are separate
+#flags, see the block in engine.mk.
+ifneq ($(USE_NET),1)
+$(error apps/ocpp cannot be built with USE_NET=0 - HTTP and websockets are what it is)
+endif
+
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationOCPP.cpp
 

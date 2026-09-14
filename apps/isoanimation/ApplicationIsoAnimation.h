@@ -15,13 +15,21 @@ public:
     void UpdateView() override;
     void RunSimulationTick() override;
 
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
+#ifdef USE_IMGUI
     void RenderDebugMenuBarClass(void) override;
+#endif
     bool f_show_demo_window = false;
     bool f_show_shader_window = false;
 
+#ifdef USE_IMGUI
     void RenderSkeletonUI();
+#endif
+#ifdef USE_IMGUI
     void RenderBoneModifierHeader(Bone* bone, int id);
+#endif
     void SetCharacterUniforms(void);
 
     Scene* CreateEmptyScene();

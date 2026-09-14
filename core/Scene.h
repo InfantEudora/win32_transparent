@@ -20,7 +20,19 @@
 #include "PhysicsWorld.h"
 #include "SimCommand.h"
 
-#include "imgui.h"
+/*
+    NO imgui.h here either, and this one was doing real damage rather than merely being untidy.
+
+    Scene uses nothing from ImGui - not a type, not a call, checked - but this header is reached
+    by every app through Application.h, and it included imgui.h WITHOUT first defining
+    IMGUI_DEFINE_MATH_OPERATORS. So ImGui was always pulled in early and without that define, and
+    any translation unit that later included imgui_internal.h properly - apps/grid and apps/sim do -
+    hit imgui_internal.h's "#error Please '#define IMGUI_DEFINE_MATH_OPERATORS' _BEFORE_ including
+    imgui.h!". That was invisible only because core/Window.h happened to define it even earlier;
+    taking ImGui out of Window.h on 2026-09-14 is what exposed it.
+
+    See the note at the top of core/Window.h for the general rule: a header includes what it uses.
+*/
 
 class Scene{
 public:

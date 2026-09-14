@@ -3,7 +3,9 @@
 
 #include "Application.h"
 #include "Texture.h"
+#ifdef USE_IMGUI
 #include "imgui.h"
+#endif
 
 #include <map>
 #include <mutex>
@@ -92,7 +94,9 @@ public:
     void Init(void) override;
     void PreRender(void) override;
     void UpdateView(void) override;
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
 
     //Lets the core camera_get/camera_set tools see and move the point the camera orbits.
     vec3* GetCameraTargetPtr() override { return &camera_target; }
@@ -201,10 +205,14 @@ private:
     bool WaitForEffectRequest(int timeout_ms = 2000);
 
     //--- UI -----------------------------------------------------------------------------------
+#ifdef USE_IMGUI
     void RenderEffectPanel();
+#endif
 
     //--- MCP ----------------------------------------------------------------------------------
+#ifdef USE_MCP
     void RegisterMCPTools();
+#endif
     json EffectStateJson();
     //Matches an effect by exact asset name, by file name, or by a unique substring of either.
     //Returns -1 for no match and -2 for an ambiguous one, so a caller can tell the two apart.

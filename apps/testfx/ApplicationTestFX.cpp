@@ -4,7 +4,12 @@
 #include "Directory.h"
 #include "File.h"
 #include "type_helpers.h"
+#ifdef USE_MCP
+//MCPServer.h and nothing else from it: with USE_MCP=0 that class is not compiled, and the
+//header also pulls winsock in with the include-order constraint it documents - both
+//pointless in a build with no debug server. See the USE_MCP block in engine.mk.
 #include "MCPServer.h"
+#endif
 
 #include <algorithm>
 #include <math.h>
@@ -128,7 +133,11 @@ void ApplicationTestFX::Init(void){
         debug->Err("No *.frag found under the shaders folder - there is nothing to draw\n");
     }
 
+#ifdef USE_MCP
+    //Guarded because this app's own tools call into MCPServer, which USE_MCP=0 does not
+    //compile. The CORE tools are switched a different way - see engine.mk.
     RegisterMCPTools();
+#endif
 }
 
 /*
@@ -784,11 +793,18 @@ void ApplicationTestFX::UpdateView(void){
 
 //--- UI -----------------------------------------------------------------------------------------
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTestFX::DrawImGuiUI(void){
     RenderApplicationUI();
     RenderEffectPanel();
 }
+#endif //USE_IMGUI
 
+#ifdef USE_IMGUI
+//Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI
+//unconditionally; with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationTestFX::RenderEffectPanel(void){
     //Clear of the engine's own panels, which dock into the left edge, and wide enough that a
     //uniform's name is not truncated - ImGui puts a widget's label to its RIGHT, so a narrow
@@ -1003,6 +1019,7 @@ void ApplicationTestFX::RenderEffectPanel(void){
     ImGui::PopItemWidth();
     ImGui::End();
 }
+#endif //USE_IMGUI
 
 //--- MCP ----------------------------------------------------------------------------------------
 
@@ -1052,6 +1069,9 @@ json ApplicationTestFX::EffectStateJson(void){
     return state;
 }
 
+#ifdef USE_MCP
+//This app's own MCP tools. Present only when USE_MCP=1; see the block in engine.mk for why
+//the core half of the same switch is a swapped translation unit rather than an #ifdef.
 void ApplicationTestFX::RegisterMCPTools(void){
     MCPServer::Get()->RegisterTool("fx_list",
         "List the effects this bench can compile - every *.frag under apps/testfx/assets/shaders "
@@ -1277,3 +1297,4 @@ void ApplicationTestFX::RegisterMCPTools(void){
             return MaybeAttachScreenshot(EffectStateJson(),args.value("include_screenshot",false));
         });
 }
+#endif //USE_MCP

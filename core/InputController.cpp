@@ -808,11 +808,20 @@ bool InputController::IsKeyDown(uint32_t mapped){
     return !!m->state->f_isdown;
 }
 
+/*
+    Reading an edge CONSUMES it, and that is what makes item 88's rule work rather than merely
+    delay the problem - see Tick(). The flag is set on the way out whether or not the edge was
+    up: "this action was looked at on this pass" is the useful fact, and a consumer that polls an
+    action every pass should not have an unrelated older edge kept alive for it.
+
+    Marked even when the lookup says the action is not down, for the same reason.
+*/
 bool InputController::WasKeyReleased(uint32_t mapped){
     KeyMap* m = GetByMappedKey(mapped);
     if (!m){
         return false;
     }
+    m->state->f_released_read = true;
     return m->state->f_was_released;
 }
 
@@ -821,6 +830,7 @@ bool InputController::WasKeyPressed(uint32_t mapped){
     if (!m){
         return false;
     }
+    m->state->f_pressed_read = true;
     return m->state->f_was_pressed;
 }
 
@@ -910,12 +920,42 @@ vec3 InputController::GetHoveredPosition(){
     return window_state.hovered_position;
 }
 
-//Clears the button and input transition flags
-void InputController::Tick(){
+/*
+    Clears the button and input transition flags at the end of a physics pass.
+
+    `f_ticked` says whether that pass actually ran a tick, and it is what fixes backlog item 88.
+    THE RULE: an edge is cleared once it has been READ, or once a TICKING pass has been and gone.
+    An edge nobody has looked at yet survives a non-ticking pass.
+
+    Why that is the right rule rather than "never clear until a tick": input is drained on every
+    pass, ticking or not, because UpdateView and the pause key need it while the simulation is
+    stopped. Those consumers read their actions EVERY pass, so their edges are consumed on the
+    pass they appear and behave exactly as before - a mute toggle fires once, not once per pass
+    for as long as the game is paused, which is what a blanket "keep it until a tick" would do.
+
+    Gameplay actions are read only from the ticking branch, so nothing consumes them while the
+    simulation is stepped; their edges now wait, and the next tick sees them. That is the whole
+    bug: a rotate pressed while paused was raised on a spinning pass and cleared at the end of it.
+
+    The `f_ticked` clear is the backstop that keeps this bounded, and it is deliberately not a
+    grace COUNT like the axis path below: the consumer being waited for is the tick itself, so
+    "until the next tick" is the exact lifetime rather than an approximation of it. An action no
+    code reads at all is cleared by the next tick and cannot accumulate.
+
+    Two presses of one action between ticks still collapse into a single edge. That is inherent
+    to a boolean and is the same thing that happens to two presses inside one tick today.
+*/
+void InputController::Tick(bool f_ticked){
     //debug->Info("Input Controller Tick\n");
     for (KeyMap& km:keymap){
-        km.state->f_was_released = false;
-        km.state->f_was_pressed = false;
+        if (km.state->f_released_read || f_ticked){
+            km.state->f_was_released = false;
+        }
+        if (km.state->f_pressed_read || f_ticked){
+            km.state->f_was_pressed = false;
+        }
+        km.state->f_released_read = false;
+        km.state->f_pressed_read = false;
 
         if (km.state->f_processed){
             //Somebody read it this pass, so it has done its job.

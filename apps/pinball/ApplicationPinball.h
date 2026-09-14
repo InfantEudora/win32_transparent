@@ -137,7 +137,9 @@ public:
     void UpdateView(void) override;
     void RunSimulationTick(void) override;
     void PreRender(void) override;
+#ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+#endif
     vec3* GetCameraTargetPtr() override { return &camera_target; }
 
     /*
@@ -224,7 +226,9 @@ private:
     void BuildLights();
     void SetupCamera();
     void SetupInput();
+#ifdef USE_MCP
     void RegisterMCPTools();
+#endif
 
     //--- Small builders ------------------------------------------------------------------------
     /*
