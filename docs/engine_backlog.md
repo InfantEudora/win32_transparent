@@ -583,7 +583,16 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   give a conservative vertical bound to go with the horizontal one; the 2D distance alone cannot,
   because a neighbouring column one texel away may rise to just under the ray.
 
-- [ ] **81. A screen-space SDF pass: rounded rects and text in one shader.** The standalone 2D
+- [ ] **81. A screen-space SDF pass: rounded rects and text in one shader.** **Full plan in
+  `docs/ui_overlay_plan.md`** (2026-09-14), which fixes the scope at rounded rects plus centred
+  text and adds the constraint this entry was written without: **the stage runs on Android too, as
+  one shared stage.** Three things in it change what is written below. The per-instance SSBO shape
+  is out — `GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS` is **0** on the port's Mali-T720 and SSBOs
+  link-fail outside compute, so the batch is plain vertex attributes rebuilt per frame, ImGui-style.
+  Distances are kept **in pixels** so coverage needs no derivatives, which is what makes the output
+  match across the two platforms and independent of the MSAA configuration underneath. And the
+  glyph and box distances combine with `max()` against a reserved solid texel, so one shader covers
+  both with no branch at all. The rest of this entry still stands. The standalone 2D
   draw path that item 82 needs in order to drop ImGui, and the SDF half of item 24, are the same
   piece of work. That is the whole argument for doing it this way, so it is worth stating plainly
   before the design: **an SDF glyph and an SDF rounded box are the same shader, the same blend

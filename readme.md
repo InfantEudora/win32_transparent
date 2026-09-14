@@ -187,6 +187,14 @@ Maybe using WGL_NV_gpu_affinity: https://github.com/Eyescale/Equalizer/blob/mast
 
 No. Nothing seems to work. You can set it via Windows in the Windows Graphics Settings per EXE, or extern "C" { __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001; } to get the NVidia GPU instead of the Intel one.
 
+Link time optimisation. A -flto flag that might help the linker know more that just moving adresses around.
+Tried it, and it in GCC 13.0 trips on multiple inheritence. There is now Object -> Light -> PointLight Light
+Object -> Light, Camera -> DirectionalLight
+
+In theory it's a nice C++ feature, in practice... it isn't.
+
+Another usefull C++ feature is that almost every string handler drags in a 1MB stack for parsing litterally every character in every country of origin, every currency, in every time zone. Crazy if you just want to print hello and << a trailing end out, with maybe an endl.
+
 ### ImGui:
 Checked out docking branch commit: 8d0723c2c36c7200d317fe1285ab86d24068c342
 
@@ -292,7 +300,7 @@ Tiled
 
 ### Audio
 
-Currently we play Wav files with OpenAL. It'd be nice to handle opus file format.
+Previously we played Wav files with OpenAL. It'd be nice to handle opus file format, or anything compressed.
 Tested with a DLL, but now compiled in as a static library with the following basic configuration:
 ```
 $ cmake --build .
@@ -313,6 +321,11 @@ $ cmake --build .
 -- Generating done (0.0s)
 ```
 
+It was huge. Replaced it by miniaudio.
+
+### Toolchain:
+
+Main machine: GCC 13.1.0 / ld 2.40
 
 ### Debugging
 
