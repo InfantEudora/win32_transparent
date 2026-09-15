@@ -31,37 +31,42 @@ static Debugger* debug = new Debugger("ApplicationBomber",DEBUG_ALL);
 #define BLAST_MODE_CROSS    1
 
 /*
-    The wall pattern around a blast site, as offsets in cells from the bomb.
+    Every node this app takes out of bomber_assets.glb, by its name in the file.
 
-    IDENTICAL AROUND BOTH SITES, and that is the entire experimental control: the two sites draw
-    the same blast with the same arm lengths in front of the same obstacles, so anything that
-    differs on screen is a difference between the two ways of drawing it.
+    THE ORDER OF MazeTile AND MazeDecor IS MIRRORED HERE, which is what lets the field builder
+    index straight into these with the tile byte rather than running a switch. A tile type without
+    a mesh would be a blank cell, so the arrays are sized by the enum's COUNT and the compiler
+    complains if one gets out of step.
 
-    The four are chosen to produce three different outcomes rather than to look like a maze:
-    the hard wall two cells east clips that arm to one tile, the soft block two cells north does
-    the same going the other way, and the two diagonal pillars block nothing at all - an arm runs
-    along an axis, so they are there to give the eye something to judge the flame's size against
-    and to catch its light.
+    A MAZE_TILE_WALL cell gets a grass tile AND a wall on top of it: wall_brick is only 0.75 deep
+    against a 1.0 cell, so without a floor under it you would see through the gap to the void.
 */
-struct BomberWallOffset{ int dx; int dz; int kind; };
-static const BomberWallOffset BOMBER_SITE_WALLS[] = {
-    { 2, 0,BOMBER_WALL_HARD},   //clips the east arm to 1 tile
-    { 0,-2,BOMBER_WALL_SOFT},   //clips the north arm to 1 tile
-    {-2,-2,BOMBER_WALL_HARD},   //pillar, blocks nothing
-    { 2, 2,BOMBER_WALL_HARD},   //pillar, blocks nothing
+static const char* BOMBER_TILE_ASSET[MAZE_TILE_COUNT] = {
+    "tile_grass",   //MAZE_TILE_GRASS
+    "tile_brick",   //MAZE_TILE_BRICK
+    "tile_rock",    //MAZE_TILE_ROCK
+    "tile_water",   //MAZE_TILE_WATER
+    "tile_grass",   //MAZE_TILE_WALL - the floor under the wall; the wall itself is added on top
 };
-
-//Where the flame sits above the floor: the middle of a wall cube, so a blast reads as being at the
-//height of the things it is going to destroy.
-#define BOMBER_FLAME_HEIGHT     (BOMBER_WALL_SIZE * 0.5f)
+static const char* BOMBER_DECOR_ASSET[MAZE_DECOR_COUNT] = {
+    NULL,               //MAZE_DECOR_NONE
+    "grass_flowers",
+    "grass_plant",
+    "turd",
+    "bridge",
+};
+#define BOMBER_WALL_ASSET   "wall_brick"
+#define BOMBER_BOMB_ASSET   "bomb"
+#define BOMBER_CHAR_ASSET   "character"
 
 ApplicationBomber::ApplicationBomber():Application(){
     app_name = "Bomber";
     debug->Info("Created new ApplicationBomber.\n");
 
-    //All three engine windows up. The Explosion panel is what this app is driven from, but the
-    //Scene tree and the Inspector earn their place here too: there are two sites' worth of volumes
-    //and being able to pick one and read its transform is how you check a box is where you think.
+    //All three engine windows up. The Bomber panel is what this app is driven from, but the Scene
+    //tree and the Inspector earn their place here too: there are a few hundred objects in the
+    //field and being able to pick one and read its transform is how you check a tile is where you
+    //think it is.
     f_show_scene_window = true;
     f_show_inspector_window = true;
     f_show_engine_window = true;
@@ -74,15 +79,14 @@ void ApplicationBomber::Init(void){
         debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
     /*
-        PIPELINE_DEFERRED is not optional here, even though the scene is a few cubes: the deferred
-        pass is what fills the G-buffer CustomShaderPass binds on units 1-3, and the blast clamps
-        its march to the solid scene using exactly that. Without it a wall standing in the middle
-        of the flame would be buried under the full depth of fire instead of the right fraction of
-        it.
+        PIPELINE_DEFERRED is not optional here: the deferred pass is what fills the G-buffer
+        CustomShaderPass binds on units 1-3, and the blast clamps its march to the solid scene
+        using exactly that. Without it a wall standing in the middle of the flame would be buried
+        under the full depth of fire instead of the right fraction of it.
     */
     renderer->alpha_clip = 0.5f;
-    //The plain background. With no skybox the frame clears to black, which is the right backdrop
-    //for judging an emissive effect - anything else makes the fire's colour a matter of opinion.
+    //No skybox: the frame clears to black, which is the right backdrop for judging an emissive
+    //effect - anything else makes the fire's colour a matter of opinion.
     renderer->f_render_skybox = false;
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
@@ -92,47 +96,46 @@ void ApplicationBomber::Init(void){
     /*
         60 ticks per second, not the default 50.
 
-        The blast clock is counted in ticks, so the tick rate IS the frame rate of the explosion.
-        A fireball's first fifth of a second is where all its expansion happens, and at 50 Hz that
-        is ten frames to say it in. This app simulates almost nothing, so the extra ticks cost a
-        loop iteration each.
+        The blast clock is counted in ticks, so the tick rate IS the frame rate of the explosion. A
+        fireball's first fifth of a second is where all its expansion happens, and at 50 Hz that is
+        ten frames to say it in. It also makes MAZE_STEP_TICKS a round third of a second.
     */
     SetPhysicsTPS(60.0f);
 
     main_scene = CreateNewScene("Bomber Scene");
+    assetmanager = new AssetManager();
 
     /*
-        Framed so BOTH sites fit, from 45 degrees up.
+        Framed on the whole 16x16 board from 45 degrees up.
 
-        That angle is not a matter of taste here: a bomberman blast is a PLUS drawn on the floor,
-        and from the low three-quarter view a scene like this usually wants, the two arms running
-        away from the camera are foreshortened into the middle and the whole thing reads as a blob.
-        It cost a filmstrip to notice, because each frame looked plausible on its own. Halfway up
-        is where the cross is legible and the flame still has a visible silhouette.
-
-        Both in frame is the whole point of the default: the two are here to be compared, and a
-        default view showing one of them would make that take a camera move every time. The orbit
-        is there for going in close on either.
+        That angle is not a matter of taste: a bomberman blast is a PLUS drawn on the floor, and
+        from a low three-quarter view the two arms running away from the camera foreshorten into
+        the middle and the whole thing reads as a blob. Halfway up is where the cross is legible
+        and the flame still has a visible silhouette. The orbit is there for going in close.
     */
-    camera_target = vec3(0.0f,1.0f,0.0f);
-    main_scene->camera->SetPosition(vec3(0.0f,17.0f,17.0f));
+    camera_target = vec3(0.0f,0.0f,0.0f);
+    main_scene->camera->SetPosition(vec3(0.0f,13.0f,11.0f));
     main_scene->camera->SetLookAt(camera_target);
 
     /*
         Draw from the shared stream ONCE, here, before anything else runs. Application::rrand is a
         single shared stream and there is an open backlog item about off-tick draws shifting it out
         from under the simulation; Init is the one place that cannot do that, because it runs
-        before the physics thread exists. See core/RRandom.h.
+        before the physics thread exists. NOTE that the maze does NOT use it - Maze carries its own
+        seeded generator for exactly this reason. See core/RRandom.h and Maze.h.
     */
     rrand = new RRandom(1);
 
     BuildLighting();
-    BuildGround();
-    BuildWalls();
+    LoadAssets();
     BuildBlastNoise();
     BuildExplosion();
-    BuildSites();
     BuildKnobTable();
+
+    //The field itself. Init is the render thread and nothing is running yet, so this is the one
+    //RebuildField that needs no command behind it.
+    maze.NewGame(current_seed);
+    RebuildField();
 
     SetupInput();
     RegisterCommandHandlers();
@@ -143,167 +146,209 @@ void ApplicationBomber::Init(void){
     RegisterMCPTools();
 #endif
 
-    debug->Ok("Bomber ready - %i walls, arms E%.0f W%.0f N%.0f S%.0f, blast life %.0f ticks\n",
-              (int)walls.size(),
-              site_tiles.arm_limit.x,site_tiles.arm_limit.y,
-              site_tiles.arm_limit.z,site_tiles.arm_limit.w,
-              blast_life);
+    debug->Ok("Bomber ready - %ix%i field, seed %u, %i objects\n",
+              MAZE_W,MAZE_H,current_seed,(int)field_objects.size());
 }
 
-//--- the scene ----------------------------------------------------------------------------------
+//--- the scene ------------------------------------------------------------------------------------
 
 vec3 ApplicationBomber::CellCentre(int cx, int cz) const {
-    //Centred on the origin rather than running from a corner, so the orbit camera has something
-    //symmetric to turn around. When the real maze arrives it will want an origin corner instead;
-    //this is the one line that changes.
-    return vec3((float)cx * BOMBER_CELL_SIZE,0.0f,(float)cz * BOMBER_CELL_SIZE);
+    //The board is centred on the origin rather than running from a corner, so the orbit camera has
+    //something symmetric to turn around and the default framing needs no offset. Maze itself knows
+    //nothing about this - it counts from (0,0) - which is the whole point of keeping world units
+    //out of that header.
+    return vec3(((float)cx - (MAZE_W - 1) * 0.5f) * BOMBER_CELL_SIZE,
+                0.0f,
+                ((float)cz - (MAZE_H - 1) * 0.5f) * BOMBER_CELL_SIZE);
 }
 
 void ApplicationBomber::BuildLighting(void){
+    /*
+        A key light and a fill, which is two lights rather than one for a reason worth stating:
+        default.frag's ambient term is a hardcoded 0.1 * albedo and there is no app-side lever on
+        it, so a single sun leaves every surface facing away from it at a tenth brightness. On a
+        board made of cubes that is half of what you are looking at, and the field came out reading
+        as night-time. The fill is the repo's usual answer - apps/breakout and apps/tetris both
+        carry one - and it costs nothing, because it casts no shadow.
+    */
     sun = new DirectionalLight();
     sun->name = "Directional Light (Sun)";
-    sun->SetPosition(vec3(-9,13,10));
-    sun->color = vec3(1.0f,0.95f,0.88f);
-    //Deliberately modest. The flame is the brightest thing in this scene by an order of magnitude
-    //and it should stay that way; a sun bright enough to make the cubes pop would flatten the one
-    //effect the app exists to look at.
-    sun->brightness = 3.2f;
-    //Half-extent in world units for the shadow ortho. The ground is 30 across, so 18 covers the
-    //part of it anything stands on with room for the walls' shadows to fall off rather than be
-    //clipped mid-shadow.
-    sun->viewport.zoom = 18.0f;
+    sun->SetPosition(vec3(-9,14,7));
+    sun->color = vec3(1.0f,0.96f,0.90f);
+    sun->brightness = 6.0f;
+    //Half-extent in world units for the shadow ortho. The board is 16 across, so 12 covers it with
+    //room for the walls' shadows to fall off the edge rather than be clipped mid-shadow.
+    sun->viewport.zoom = 12.0f;
     sun->SetLookAt(vec3());
     main_scene->AddObject(sun);
-}
 
-void ApplicationBomber::BuildGround(void){
-    Material m;
-    m.name = "bomber_ground";
-    m.glsl_material.color = vec4(0.22f,0.23f,0.26f,1.0f);
-    m.glsl_material.metallic = 0.05f;
-    m.glsl_material.roughness = 0.85f;
-    int material = renderer->AddMaterial(m);
+    //From the opposite side and cool, so the faces the sun misses read as sky-lit rather than as
+    //unlit. Dim enough that the sun still says where the light is coming from, and NO SHADOW: a
+    //second shadow pass over four hundred objects to fake an ambient term would be a poor trade.
+    DirectionalLight* fill = new DirectionalLight();
+    fill->name = "Directional Light (Fill)";
+    fill->SetPosition(vec3(8,10,-9));
+    fill->color = vec3(0.72f,0.80f,1.00f);
+    fill->brightness = 2.2f;
+    fill->f_casts_shadow = false;
+    fill->viewport.zoom = 12.0f;
+    fill->SetLookAt(vec3());
+    main_scene->AddObject(fill);
 
-    ground = new Object();
-    ground->name = "Ground";
-    //Wide rather than square: the two sites are side by side on X and nothing ever goes far on Z.
-    ground->SetMesh(MakeQuad(30.0f,16.0f));
-    //MakeQuad lies in XY facing +Z; a floor is that rotated a quarter turn back about X.
-    ground->SetRotation(quat(vec3(1,0,0),-TYPE_PI * 0.5f));
-    ground->SetMaterialSlot(0,material);
-    ground->SetPickability(false);
-    main_scene->AddObject(ground);
+    /*
+        The flame's own light on the field around it, parked dark until something goes off.
+
+        Not decoration: the volumes are emissive, so they light THEMSELVES correctly, but nothing
+        in a deferred renderer makes an emissive volume light the SURFACES near it. Without this
+        the walls stay sun-lit while a fireball burns next to them and the blast reads as a sticker
+        over the scene rather than as something in it.
+    */
+    blast_light = new PointLight();
+    blast_light->name = "Blast Light";
+    blast_light->SetPosition(vec3(0.0f,BOMBER_FLAME_HEIGHT,0.0f));
+    blast_light->color = vec3(1.00f,0.62f,0.26f);
+    blast_light->brightness = 0.0f;
+    //No shadow: it is inside a volume that is already deciding what the fire can see, and a shadow
+    //pass for a light that is dark most of the time is a pass paid for far too often.
+    blast_light->f_casts_shadow = false;
+    main_scene->AddObject(blast_light);
 }
 
 /*
-    The walls, in the two colours a bomberman maze is made of.
+    Pulls every node this app needs out of the one GLB and leaves them in the AssetManager, where
+    the field builder can stamp out as many copies as it likes - each copy sharing the one mesh, so
+    two hundred and fifty-six floor tiles are a handful of draw calls rather than two hundred and
+    fifty-six.
 
-    GREEN IS THE INDESTRUCTIBLE PILLAR GRID and BROWN IS THE DESTRUCTIBLE FILL - that is the
-    convention the rest of this app will be written against, so it is worth fixing now while it
-    costs nothing.
+    --- WHAT IS TAKEN FROM THE FILE, AND WHAT IS NOT ---------------------------------------------
+    Only the MESH and the MATERIALS. The node's X and Z translation is Blender layout - the artist
+    spreads the pieces out so they do not sit inside each other - and is thrown away, because this
+    app decides where things go.
 
-    The same four-wall pattern goes around each site; see BOMBER_SITE_WALLS for what each is for.
+    THE NODE'S Y TRANSLATION IS KEPT, and that is not an inconsistency. It is the height the piece
+    has to sit at for its feet or its top to land on the ground plane, which is a property of the
+    model and is visible in Blender as "does it stand on the floor". Three of the eleven need one:
+    tile_rock is modelled 0.32 low, and the bomb and the character are modelled below their own
+    origins. Taking it means the app never carries a table of per-asset fudge heights that has to
+    be re-derived every time something is re-exported - the check stays "does it look right in
+    Blender", which is the only check the artist can actually run.
+
+    RENDER THREAD ONLY: GetAssetsFromGLTF says so itself, and means it - it uploads meshes.
 */
-void ApplicationBomber::BuildWalls(void){
-    Material hard;
-    hard.name = "bomber_wall_hard";
-    //A green that reads as stone rather than as foliage: desaturated, and dark enough that the
-    //flame's orange is what carries the frame.
-    hard.glsl_material.color = vec4(0.24f,0.52f,0.28f,1.0f);
-    hard.glsl_material.metallic = 0.10f;
-    hard.glsl_material.roughness = 0.62f;
-    renderer->AddMaterial(hard);
+void ApplicationBomber::LoadAssets(void){
+    //LoadGLTFFile returns nothing, so a missing file shows up as every GetAssetsFromGLTF below
+    //failing to find its node. That is noisy but clear in stderr, and the AddCellObject guard
+    //turns it into a blank board rather than a crash.
+    gltfloader.LoadGLTFFile("meshes/bomber_assets.glb");
 
-    Material soft;
-    soft.name = "bomber_wall_soft";
-    soft.glsl_material.color = vec4(0.48f,0.31f,0.17f,1.0f);
-    soft.glsl_material.metallic = 0.05f;
-    soft.glsl_material.roughness = 0.80f;
-    renderer->AddMaterial(soft);
+    //Everything with a mesh. Naming them rather than calling GetAllAssetsFromGLTF so that a node
+    //added to the file for some other purpose does not silently become a game asset.
+    GetAssetsFromGLTF("tile_grass","tile_brick","tile_rock","tile_water",
+                      BOMBER_WALL_ASSET,
+                      "grass_flowers","grass_plant","turd","bridge",
+                      BOMBER_BOMB_ASSET,BOMBER_CHAR_ASSET);
 
-    Material bomb;
-    bomb.name = "bomber_bomb";
-    bomb.glsl_material.color = vec4(0.08f,0.08f,0.09f,1.0f);
-    bomb.glsl_material.metallic = 0.35f;
-    bomb.glsl_material.roughness = 0.30f;
-    renderer->AddMaterial(bomb);
-
-    //The two sites' cells. Set before the walls so ComputeArmLimits has somewhere to start from.
-    site_tiles.mode   = BLAST_MODE_TILE;
-    site_tiles.cell_x = -4;
-    site_tiles.cell_z =  0;
-    site_cross.mode   = BLAST_MODE_CROSS;
-    site_cross.cell_x =  4;
-    site_cross.cell_z =  0;
-
-    const BomberSite* sites[2] = {&site_tiles,&site_cross};
-    for (int s = 0; s < 2; s++){
-        for (const BomberWallOffset& w:BOMBER_SITE_WALLS){
-            AddWall(sites[s]->cell_x + w.dx,sites[s]->cell_z + w.dz,w.kind);
-        }
-    }
-
-    //Only now that every wall is placed - an arm walked before its neighbour existed would come
-    //back too long, and the failure is a flame reaching through a wall, which reads as a shader
-    //bug rather than as an ordering one.
-    site_tiles.arm_limit = ComputeArmLimits(site_tiles.cell_x,site_tiles.cell_z);
-    site_cross.arm_limit = ComputeArmLimits(site_cross.cell_x,site_cross.cell_z);
+    //The two that move, so their height does not have to be looked up every tick.
+    character_y = gltfloader.GetNodePosition(BOMBER_CHAR_ASSET).y;
+    bomb_y      = gltfloader.GetNodePosition(BOMBER_BOMB_ASSET).y;
 }
 
-Object* ApplicationBomber::AddWall(int cx, int cz, int kind){
-    bool f_hard = (kind == BOMBER_WALL_HARD);
-    int material = renderer->FindMaterialIndex(f_hard ? "bomber_wall_hard" : "bomber_wall_soft");
-
-    Object* wall = new Object();
+Object* ApplicationBomber::AddCellObject(const char* asset_name, int cx, int cz,
+                                         float y_offset, bool f_random_yaw){
+    Object* object = assetmanager->GetObjectFromAsset(asset_name);
+    if (!object){
+        debug->Err("No asset called %s - is it in bomber_assets.glb?\n",asset_name);
+        return NULL;
+    }
     char name[64];
-    snprintf(name,sizeof(name),"%s Wall (%i,%i)",f_hard ? "Hard" : "Soft",cx,cz);
-    wall->name = name;
-    //Its own mesh per wall rather than a shared one. Wasteful for eight cubes and deliberately so:
-    //a destructible block is going to want to shrink, tilt or be replaced on its own, and a shared
-    //mesh is the thing that would quietly do it to all of them at once.
-    wall->SetMesh(MakeBox(vec3(BOMBER_WALL_SIZE,BOMBER_WALL_SIZE,BOMBER_WALL_SIZE)));
-    //MakeBox is centred on the origin, so half its height puts it on the ground rather than
-    //through it.
-    wall->SetPosition(CellCentre(cx,cz) + vec3(0.0f,BOMBER_WALL_SIZE * 0.5f,0.0f));
-    wall->SetMaterialSlot(0,material);
-    main_scene->AddObject(wall);
-    walls.push_back(wall);
-    occupied.insert(BomberCell(cx,cz));
-    return wall;
-}
+    snprintf(name,sizeof(name),"%s (%i,%i)",asset_name,cx,cz);
+    object->name = name;
+    object->SetPosition(CellCentre(cx,cz) + vec3(0.0f,y_offset,0.0f));
 
-/*
-    How far the flame gets in each direction, in tiles.
+    /*
+        A quarter-turn of variety on the scattered pieces, derived from the CELL rather than drawn
+        from a random stream.
 
-    Walk out one cell at a time and stop at the first wall - the same loop the game itself will
-    run, and the reason the blast needs no clipping afterwards: an arm that was never allowed past
-    a wall cannot be drawn through one, in either mode.
-
-    BOTH KINDS OF WALL STOP IT for now. Once soft blocks can be destroyed the flame will occupy the
-    block's own tile as it burns it, which is `limit = step` instead of `limit = step - 1` for the
-    soft case - one line, called out here because it is the difference between a blast that
-    destroys what it touches and one that stops politely in front of it.
-*/
-vec4 ApplicationBomber::ComputeArmLimits(int cx, int cz) const {
-    //(east +X, west -X, north -Z, south +Z), matching the order the shader reads arm_limit in.
-    static const int DIR_X[4] = { 1,-1, 0, 0};
-    static const int DIR_Z[4] = { 0, 0,-1, 1};
-
-    float limits[4] = {0,0,0,0};
-    for (int d = 0; d < 4; d++){
-        int reach = 0;
-        for (int step = 1; step <= BOMBER_BLAST_RANGE; step++){
-            if (occupied.count(BomberCell(cx + DIR_X[d] * step,cz + DIR_Z[d] * step))){
-                break;
-            }
-            reach = step;
-        }
-        limits[d] = (float)reach;
+        Deterministic on purpose: it costs no state, it survives a rebuild of the same seed
+        unchanged, and - the real reason - it cannot shift the simulation's random stream, which is
+        the open problem RRandom.h describes. A hash of two small ints is plenty when the answer is
+        one of four angles.
+    */
+    if (f_random_yaw){
+        uint32_t h = (uint32_t)(cx * 73856093) ^ (uint32_t)(cz * 19349663);
+        object->SetRotation(quat(vec3(0,1,0),(float)(h & 3) * (TYPE_PI * 0.5f)));
     }
-    return vec4(limits[0],limits[1],limits[2],limits[3]);
+
+    main_scene->AddObject(object);
+    field_objects.push_back(object);
+    return object;
 }
 
-//--- the volumes ----------------------------------------------------------------------------------
+void ApplicationBomber::RebuildField(void){
+    //Throw away whatever is standing. Destroy() only MARKS; DeleteDestroyedObjects is what frees
+    //them and takes them out of the scene, and it is safe HERE because we hold physics_mutex - the
+    //render thread is not walking the object list. Same reasoning as ApplicationBreakout::NewGame.
+    for (Object* object:field_objects){
+        if (object){
+            object->Destroy();
+        }
+    }
+    field_objects.clear();
+    if (character){
+        character->Destroy();
+        character = NULL;
+    }
+    if (bomb){
+        bomb->Destroy();
+        bomb = NULL;
+    }
+    renderer->DeleteDestroyedObjects();
+
+    for (int z = 0; z < MAZE_H; z++){
+        for (int x = 0; x < MAZE_W; x++){
+            uint8_t t = maze.tile[z][x];
+            //The floor. Every cell gets one, walls included - see the note on BOMBER_TILE_ASSET.
+            const char* tile_asset = BOMBER_TILE_ASSET[t < MAZE_TILE_COUNT ? t : 0];
+            float tile_y = gltfloader.GetNodePosition(tile_asset).y;
+            //Floor tiles are turned at random too. They are square and the texture is not, so four
+            //orientations is four times as much board for nothing.
+            AddCellObject(tile_asset,x,z,tile_y,true);
+
+            if (t == MAZE_TILE_WALL){
+                AddCellObject(BOMBER_WALL_ASSET,x,z,
+                              gltfloader.GetNodePosition(BOMBER_WALL_ASSET).y,true);
+            }
+
+            uint8_t d = maze.decor[z][x];
+            if (d != MAZE_DECOR_NONE && d < MAZE_DECOR_COUNT && BOMBER_DECOR_ASSET[d]){
+                //A bridge is not scenery, it is the thing that makes the water under it walkable,
+                //so it must not be turned to a random angle - a bridge across the wrong axis reads
+                //as a mistake even though nothing about the rules cares.
+                bool f_yaw = (d != MAZE_DECOR_BRIDGE);
+                AddCellObject(BOMBER_DECOR_ASSET[d],x,z,
+                              gltfloader.GetNodePosition(BOMBER_DECOR_ASSET[d]).y,f_yaw);
+            }
+        }
+    }
+
+    //The two that move. Not in field_objects: they outlive a rebuild conceptually, and keeping
+    //them separate is what stops the loop above destroying the thing the player is.
+    character = assetmanager->GetObjectFromAsset(BOMBER_CHAR_ASSET);
+    if (character){
+        character->name = "Character";
+        main_scene->AddObject(character);
+    }
+    bomb = assetmanager->GetObjectFromAsset(BOMBER_BOMB_ASSET);
+    if (bomb){
+        bomb->name = "Bomb";
+        bomb->SetVisibility(false);
+        main_scene->AddObject(bomb);
+    }
+
+    SyncView();
+}
+
+//--- the blast volumes ----------------------------------------------------------------------------
 
 /*
     Fills blast_noise by running shaders/noise3d.comp over it once.
@@ -342,7 +387,9 @@ void ApplicationBomber::BuildBlastNoise(void){
 Mesh* ApplicationBomber::BuildBlastCube(int shader_index){
     //A unit cube centred on the origin, so the shader's box is -0.5..+0.5 on every axis. MakeBox
     //winds it counter-clockwise seen from outside, which is what lets the uniform callback flip to
-    //GL_FRONT and keep exactly the inside faces.
+    //GL_FRONT and keep exactly the inside faces. Generated rather than taken from an asset because
+    //asset meshes are shared by pointer, and tagging one MESH_MODE_SHADER would turn every other
+    //user of it into a volume.
     Mesh* mesh = MakeBox(vec3(1,1,1));
     if (!mesh){
         debug->Fatal("Failed to build a blast cube\n");
@@ -361,10 +408,10 @@ void ApplicationBomber::BuildExplosion(void){
         ONE SOURCE FILE, TWO PROGRAMS.
 
         Shader::uniform_callback is per-Shader and runs once per pass with that program bound, so
-        one program could only be told one blast_mode per frame - and both modes are on screen at
-        the same time. Compiling the same .frag twice costs one extra program and keeps the shape
-        code in one file, which matters more: if the two modes drifted into two files the bench
-        would be comparing two shaders rather than two ways of arranging one.
+        one program could only be told one blast_mode per frame - and both modes can be on screen
+        at once. Compiling the same .frag twice costs one extra program and keeps the shape code in
+        one file, which matters more: if the two modes drifted into two files the comparison would
+        be between two shaders rather than between two ways of arranging one.
     */
     tile_shader = new Shader();
     //A compile error must not take the app down: the whole point of the reload loop is that a
@@ -391,122 +438,54 @@ void ApplicationBomber::BuildExplosion(void){
 
     tile_mesh  = BuildBlastCube(tile_shader_index);
     cross_mesh = BuildBlastCube(cross_shader_index);
-}
 
-/*
-    The volumes of both sites, plus the bomb markers and the per-site light.
+    /*
+        The volumes, created once and never destroyed.
 
-    THE TILE SITE GETS EVERY TILE OF ITS MAXIMUM CROSS, including the ones the maze blocks. They
-    are created once and never touched again: the shader discards the ones past that direction's
-    arm limit, and it discards them from the tile's own world position rather than from anything
-    the app has to keep in step. So changing a blast's range or knocking a wall down is a uniform
-    changing, not objects being created and destroyed on the physics thread while the render thread
-    walks the list.
+        A blast is frequent, and creating and destroying objects on the physics thread while the
+        render thread walks the list is exactly the hazard Scene::AddObject warns about. So the
+        most a blast can ever need is built now and parked; SyncView moves them onto the tiles of
+        whatever is currently burning, and the shader draws nothing when the clock says nothing is.
 
-    All of a site's tiles share ONE mesh, so the nine of them are one draw call - which is also the
-    reason they cannot depth-sort against each other, the trade-off this whole comparison is about.
-*/
-void ApplicationBomber::BuildSites(void){
-    int bomb_material = renderer->FindMaterialIndex("bomber_bomb");
-
-    //Offsets of every tile of a full cross, centre first. Built rather than written out so that
-    //raising BOMBER_BLAST_RANGE needs nothing here.
-    std::vector<BomberCell> tile_offsets;
-    tile_offsets.push_back(BomberCell(0,0));
-    for (int step = 1; step <= BOMBER_BLAST_RANGE; step++){
-        tile_offsets.push_back(BomberCell( step,0));
-        tile_offsets.push_back(BomberCell(-step,0));
-        tile_offsets.push_back(BomberCell(0,-step));
-        tile_offsets.push_back(BomberCell(0, step));
+        All the tile volumes share ONE mesh, so the nine of them are one draw call - which is also
+        the reason they cannot depth-sort against each other.
+    */
+    for (int i = 0; i < BOMBER_MAX_BLAST_TILES; i++){
+        Object* v = new Object();
+        char name[48];
+        snprintf(name,sizeof(name),"Blast Tile %i",i);
+        v->name = name;
+        v->SetMesh(tile_mesh);
+        v->SetScale(vec3(BOMBER_TILE_BOX,BOMBER_TILE_BOX,BOMBER_TILE_BOX));
+        //No material: the shader computes its own colour and never touches the material buffer.
+        v->SetMaterialSlot(0,-1);
+        //Belt and braces. MESH_MODE_SHADER meshes do not go through DeferredPass at all, so the
+        //box never reaches the object-id buffer and could not be picked anyway.
+        v->SetPickability(false);
+        main_scene->AddObject(v);
+        blast_tiles.push_back(v);
     }
 
-    BomberSite* sites[2] = {&site_tiles,&site_cross};
-    const char* names[2] = {"Tiles","Cross"};
-    for (int s = 0; s < 2; s++){
-        BomberSite& site = *sites[s];
-        site.origin = CellCentre(site.cell_x,site.cell_z) + vec3(0.0f,BOMBER_FLAME_HEIGHT,0.0f);
-
-        char name[96];
-        if (site.mode == BLAST_MODE_TILE){
-            for (size_t i = 0; i < tile_offsets.size(); i++){
-                Object* v = new Object();
-                snprintf(name,sizeof(name),"%s Tile (%i,%i)",names[s],
-                         tile_offsets[i].first,tile_offsets[i].second);
-                v->name = name;
-                v->SetMesh(tile_mesh);
-                v->SetPosition(CellCentre(site.cell_x + tile_offsets[i].first,
-                                          site.cell_z + tile_offsets[i].second)
-                               + vec3(0.0f,BOMBER_FLAME_HEIGHT,0.0f));
-                v->SetScale(vec3(BOMBER_TILE_BOX,BOMBER_TILE_BOX,BOMBER_TILE_BOX));
-                //No material: the shader computes its own colour and never touches the material
-                //buffer.
-                v->SetMaterialSlot(0,-1);
-                //Belt and braces. MESH_MODE_SHADER meshes do not go through DeferredPass at all,
-                //so the box never reaches the object-id buffer and could not be picked anyway.
-                v->SetPickability(false);
-                main_scene->AddObject(v);
-                site.tiles.push_back(v);
-            }
-        }else{
-            Object* v = new Object();
-            snprintf(name,sizeof(name),"%s Volume",names[s]);
-            v->name = name;
-            v->SetMesh(cross_mesh);
-            v->SetPosition(site.origin);
-            v->SetScale(vec3(BOMBER_CROSS_BOX,BOMBER_CROSS_BOX,BOMBER_CROSS_BOX));
-            v->SetMaterialSlot(0,-1);
-            v->SetPickability(false);
-            main_scene->AddObject(v);
-            site.cross = v;
-        }
-
-        //Something to see where the bomb is while nothing is burning, and a preview of the object
-        //the game will actually put there.
-        site.bomb = new Object();
-        snprintf(name,sizeof(name),"%s Bomb",names[s]);
-        site.bomb->name = name;
-        site.bomb->SetMesh(MakeSphere(0.38f,20,10));
-        site.bomb->SetPosition(CellCentre(site.cell_x,site.cell_z) + vec3(0.0f,0.38f,0.0f));
-        site.bomb->SetMaterialSlot(0,bomb_material);
-        main_scene->AddObject(site.bomb);
-
-        /*
-            The flame's own light on the walls around it, parked dark until something detonates.
-
-            ONE PER SITE, not one shared between them, and that is not tidiness: a single light in
-            the middle would reach both sites at different distances and light them differently,
-            and then a difference on screen would no longer be a difference between the two
-            volumes. It is also not decoration - the volumes are emissive, so they light THEMSELVES
-            correctly, but nothing in a deferred renderer makes an emissive volume light the
-            SURFACES near it. Without this the walls stay sun-lit while a fireball burns next to
-            them and the blast reads as a sticker over the scene rather than as something in it.
-        */
-        site.light = new PointLight();
-        snprintf(name,sizeof(name),"%s Blast Light",names[s]);
-        site.light->name = name;
-        site.light->SetPosition(site.origin);
-        site.light->color = vec3(1.00f,0.62f,0.26f);
-        site.light->brightness = 0.0f;
-        //No shadow: it is inside a volume that is already deciding what the fire can see, and a
-        //shadow pass for a light that is dark 95% of the time is a pass paid for 95% too often.
-        site.light->f_casts_shadow = false;
-        main_scene->AddObject(site.light);
-    }
+    blast_cross = new Object();
+    blast_cross->name = "Blast Cross Volume";
+    blast_cross->SetMesh(cross_mesh);
+    blast_cross->SetScale(vec3(BOMBER_CROSS_BOX,BOMBER_CROSS_BOX,BOMBER_CROSS_BOX));
+    blast_cross->SetMaterialSlot(0,-1);
+    blast_cross->SetPickability(false);
+    main_scene->AddObject(blast_cross);
 }
 
-//The two Shader::uniform_callbacks. Each is the shared push with its own mode's box size and the
-//per-mode constants that are not knobs - see BOMBER_TILE_SHELL and friends for why those two are
-//constants rather than sliders.
+//The two Shader::uniform_callbacks. Each is the shared push with its own mode's box size, plus the
+//flag saying whether that renderer is wanted at all - see PushBlastUniforms.
 void ApplicationBomber::SetTileUniforms(void){
-    PushBlastUniforms(tile_shader,site_tiles,BLAST_MODE_TILE,BOMBER_TILE_BOX);
+    PushBlastUniforms(tile_shader,BLAST_MODE_TILE,BOMBER_TILE_BOX,f_draw_tiles);
 }
 
 void ApplicationBomber::SetCrossUniforms(void){
-    PushBlastUniforms(cross_shader,site_cross,BLAST_MODE_CROSS,BOMBER_CROSS_BOX);
+    PushBlastUniforms(cross_shader,BLAST_MODE_CROSS,BOMBER_CROSS_BOX,f_draw_cross);
 }
 
-void ApplicationBomber::PushBlastUniforms(Shader* shader, const BomberSite& site,
-                                          int mode, float box_world){
+void ApplicationBomber::PushBlastUniforms(Shader* shader, int mode, float box_world, bool f_enabled){
     if (!shader){
         return;
     }
@@ -516,13 +495,22 @@ void ApplicationBomber::PushBlastUniforms(Shader* shader, const BomberSite& site
 
     shader->Setint("blast_mode",mode);
 
-    //The clock, from the physics thread's published view state. See the note on blast_age_view.
-    shader->Setfloat("blast_age",blast_age_view);
+    /*
+        A renderer that is switched off is told the blast is over rather than having its objects
+        hidden.
+
+        One uniform, written on the thread that is already writing uniforms, against a visibility
+        flag that the physics thread would have to write while the render thread reads it. The
+        shader's very first line discards on a negative age, so this costs a fragment prologue on
+        the box's pixels and nothing else.
+    */
+    shader->Setfloat("blast_age",f_enabled ? blast_age_view : -1.0f);
     shader->Setfloat("blast_seed",blast_seed_view);
 
-    //The maze, as the shader needs it.
-    shader->Setvec4("arm_limit",site.arm_limit);
-    shader->Setvec3("blast_origin",site.origin);
+    //The maze, as the shader needs it. Arm limits are in TILES for both modes; cell_object is what
+    //the cross mode multiplies them by to get a skeleton length.
+    shader->Setvec4("arm_limit",blast_arms_view);
+    shader->Setvec3("blast_origin",blast_origin_view);
     shader->Setfloat("cell_world",BOMBER_CELL_SIZE);
     shader->Setfloat("cell_object",BOMBER_CELL_SIZE * to_object);
 
@@ -551,10 +539,10 @@ void ApplicationBomber::PushBlastUniforms(Shader* shader, const BomberSite& site
         shader->Setfloat("sun_intensity",sun_intensity);
         shader->Setfloat("light_absorption",light_absorption);
         /*
-            The cross box is three times the tile box on a side, so the same step COUNT is three
-            times the step LENGTH, and the arms go visibly stripy. Paying for that here rather than
-            with a second knob keeps the two modes on one setting: move the slider and both get
-            proportionally finer, which is what makes a quality comparison between them fair.
+            The cross box is several times the tile box on a side, so the same step COUNT is
+            several times the step LENGTH and the arms go visibly stripy. Paying for that here
+            rather than with a second knob keeps the two modes on one setting: move the slider and
+            both get proportionally finer, which is what makes a quality comparison fair.
         */
         int steps = (mode == BLAST_MODE_CROSS) ? num_view_steps * BOMBER_CROSS_VIEW_STEPS_MUL
                                                : num_view_steps;
@@ -597,15 +585,10 @@ void ApplicationBomber::PushBlastUniforms(Shader* shader, const BomberSite& site
     Recompiles shaders/bomber_explosion.frag into BOTH programs, without a rebuild or a relaunch.
     RENDER THREAD ONLY - it is GL work, which is why the F5 key only raises a flag.
 
-    Shader::Reload does the work, including putting each new program back in
-    renderer->custom_shaders at the index it already holds and re-releasing every source file
-    (#included ones too). A reload is always soft whatever f_fatal_on_error says: on failure the
-    old program keeps drawing and compile_log says why, which is the only useful behaviour when the
-    whole point is to be editing the file.
-
     Both are reloaded even if the first fails, so one broken mode cannot leave the other stale -
     they are the same source, and a half-reloaded pair would be a genuinely confusing thing to be
-    looking at.
+    looking at. A reload is always soft whatever f_fatal_on_error says: on failure the old program
+    keeps drawing and compile_log says why.
 */
 void ApplicationBomber::ReloadExplosionShader(void){
     bool f_ok = true;
@@ -630,96 +613,32 @@ void ApplicationBomber::ReloadExplosionShader(void){
     }
 }
 
-//--- the blast ----------------------------------------------------------------------------------
-
-void ApplicationBomber::Detonate(void){
-    blast_start_tick = main_scene->GetPhysicsTick();
-    f_blast_live = true;
-    blast_count++;
-    //Both sites, off the one clock. That is what makes them comparable frame by frame: at any tick
-    //the two are exactly the same number of ticks into the same blast.
-    debug->Info("Detonation %u at tick %llu\n",blast_count,(unsigned long long)blast_start_tick);
-}
-
-/*
-    One tick of the blast. Physics thread, inside the tick, so it pauses and single-steps with
-    everything else.
-
-    Two things happen here and they are deliberately both on this side of the thread boundary: the
-    lights' brightness, because it is a property of objects the renderer reads, and the published
-    age, because the shaders must see a value that came from a whole number of ticks rather than
-    from wherever the render thread happened to look.
-*/
-void ApplicationBomber::UpdateBlast(void){
-    float age = -1.0f;
-    if (f_blast_live){
-        age = (float)(main_scene->GetPhysicsTick() - blast_start_tick);
-        /*
-            The TILE site outlives the cross one: its outermost ring does not ignite until
-            range * tile_delay ticks in, and then has a full life of its own to burn. So the clock
-            has to run until the LAST tile is done or the far tiles would be cut off mid-flame.
-            The cross site simply draws nothing past its own life, which it already checks.
-        */
-        float last_tile_out = blast_life + tile_delay * (float)BOMBER_BLAST_RANGE;
-        if (age > last_tile_out){
-            //Burnt out. The clock goes negative rather than the objects being hidden - see the
-            //note on blast_age_view.
-            f_blast_live = false;
-            age = -1.0f;
-        }
-    }
-
-    /*
-        Each site's light follows its own fire.
-
-        A flat brightness for the blast's whole life lights the walls as brightly while the last
-        smoke drifts as it does at the detonation, which is exactly backwards - the flash is the
-        moment the room should go orange. So: a very fast rise over the first few ticks and a
-        fourth-power decay, which is steeper than the fire's own cooling curve because a point
-        light has no smoke to hide behind.
-
-        It also RISES with the flame, using the same `rise` the shader applies, so the highlight on
-        the wall tops tracks where the fire actually is.
-    */
-    BomberSite* sites[2] = {&site_tiles,&site_cross};
-    for (int s = 0; s < 2; s++){
-        BomberSite& site = *sites[s];
-        if (!site.light){
-            continue;
-        }
-        if (age >= 0.0f){
-            float t = clamp(age / max(blast_life,1.0f),0.0f,1.0f);
-            float ignite = clamp(age / 3.0f,0.0f,1.0f);
-            float decay = powf(1.0f - t,4.0f);
-            site.light->brightness = blast_light_brightness * ignite * decay;
-            site.light->radius = blast_light_radius;
-            site.light->SetPosition(site.origin + vec3(0.0f,rise * t * t,0.0f));
-        }else{
-            site.light->brightness = 0.0f;
-        }
-    }
-
-    //Published last, so the render thread never sees an age that is ahead of the lights.
-    blast_age_view = age;
-    //Derived from the count rather than drawn from rrand: a detonation has to look different from
-    //the last one, and has to differ THE SAME WAY on a replay. An arithmetic seed does both
-    //without touching the shared random stream, which has an open backlog item about exactly that.
-    //The multiplier is irrational-ish so consecutive blasts land far apart in the noise.
-    blast_seed_view = (float)blast_count * 0.6180339887f;
-}
-
-//--- input, commands and the loop ----------------------------------------------------------------
+//--- input, commands and the loop -----------------------------------------------------------------
 
 void ApplicationBomber::SetupInput(void){
     InputController* input = main_scene->inputcontroller;
 
-    //Two mappings for the trigger, because muscle memory differs and both cost nothing:
+    //Arrows and WASD and the d-pad, because muscle memory differs and all three cost nothing:
     //KeyState::f_isdown counts HELD MAPPINGS rather than being a boolean, so an action stays down
-    //while either of its keys is.
-    input->AddKeyMap(VK_SPACE,INPUT_BOMBER_DETONATE);
-    input->AddKeyMap('B',INPUT_BOMBER_DETONATE);
-    input->AddKeyMap(GAMEPAD_KEY_A,INPUT_BOMBER_DETONATE);
+    //while any of its keys is.
+    input->AddKeyMap(VK_UP,INPUT_BOMBER_NORTH);
+    input->AddKeyMap('W',INPUT_BOMBER_NORTH);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_UP,INPUT_BOMBER_NORTH);
+    input->AddKeyMap(VK_DOWN,INPUT_BOMBER_SOUTH);
+    input->AddKeyMap('S',INPUT_BOMBER_SOUTH);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_DOWN,INPUT_BOMBER_SOUTH);
+    input->AddKeyMap(VK_LEFT,INPUT_BOMBER_WEST);
+    input->AddKeyMap('A',INPUT_BOMBER_WEST);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_LEFT,INPUT_BOMBER_WEST);
+    input->AddKeyMap(VK_RIGHT,INPUT_BOMBER_EAST);
+    input->AddKeyMap('D',INPUT_BOMBER_EAST);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_RIGHT,INPUT_BOMBER_EAST);
 
+    input->AddKeyMap(VK_SPACE,INPUT_BOMBER_DROP);
+    input->AddKeyMap('B',INPUT_BOMBER_DROP);
+    input->AddKeyMap(GAMEPAD_KEY_A,INPUT_BOMBER_DROP);
+
+    input->AddKeyMap('R',INPUT_BOMBER_RESTART);
     input->AddKeyMap(VK_F5,INPUT_BOMBER_RELOAD_SHADER);
 
     //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
@@ -729,17 +648,216 @@ void ApplicationBomber::SetupInput(void){
 }
 
 void ApplicationBomber::RegisterCommandHandlers(void){
+    main_scene->RegisterCommandHandler(BOMBER_CMD_RESTART,
+        [this](const SimCommand& cmd) -> objectid_t {
+            //The seed travels IN the command, so a recorded restart lays out the same maze on
+            //replay. 0 means "pick a fresh one".
+            uint32_t seed = (uint32_t)cmd.value[0];
+            current_seed = seed ? seed : next_auto_seed++;
+            maze.NewGame(current_seed);
+            RebuildField();
+            debug->Ok("New field, seed %u\n",current_seed);
+            return OBJECTID_INVALID;
+        });
+
     main_scene->RegisterCommandHandler(BOMBER_CMD_DETONATE,
         [this](const SimCommand& cmd) -> objectid_t {
             (void)cmd;
-            Detonate();
+            //Drop one where the character is and light it short, so a blast can be looked at
+            //without waiting out the fuse. Goes through the same fields a placed bomb does rather
+            //than calling Explode directly, so what is being looked at is a real bomb.
+            if (!maze.f_bomb && !maze.f_blast){
+                maze.f_bomb = true;
+                maze.bomb_x = maze.tile_x;
+                maze.bomb_z = maze.tile_z;
+            }
+            maze.fuse_ticks = 1;
             return OBJECTID_INVALID;
         });
 }
 
 /*
-    Physics thread, every pass - including the ones that simulate nothing. Camera and the reload
-    key only: neither is simulation, and nothing here may write something a tick will read.
+    The held keys, as the one direction Maze wants.
+
+    KEEP WHAT YOU HAVE IF IT IS STILL HELD, otherwise take the first one that is. That rule is the
+    difference between a walker that corners and one that fights you: with a fixed priority order,
+    holding right and then also pressing up turns you up only if up happens to sort first, and
+    letting go of up drops you back to right in a way that feels like a dropped input. Keeping the
+    current heading while it is valid means a diagonal press is a request to turn WHEN THE CURRENT
+    WAY IS RELEASED, which is what a thumb expects.
+*/
+int ApplicationBomber::ReadDirection(void){
+    InputController* input = main_scene->inputcontroller;
+    static const int ACTION[MAZE_NUM_DIRS] = {
+        INPUT_BOMBER_EAST,INPUT_BOMBER_WEST,INPUT_BOMBER_NORTH,INPUT_BOMBER_SOUTH
+    };
+
+    if (maze.facing >= 0 && maze.facing < MAZE_NUM_DIRS && input->IsKeyDown(ACTION[maze.facing])){
+        return maze.facing;
+    }
+    for (int d = 0; d < MAZE_NUM_DIRS; d++){
+        if (input->IsKeyDown(ACTION[d])){
+            return d;
+        }
+    }
+    return MAZE_DIR_NONE;
+}
+
+/*
+    Physics thread, once per tick that actually runs, physics_mutex held.
+
+    The game is HERE and nowhere else, which is what makes the whole thing pause, single-step and
+    replay together. The drop key is WasKeyPressed rather than IsKeyDown because a bomb is an edge,
+    and an edge read on a pass that does not tick would be cleared before any gameplay saw it
+    (backlog item 84; the long version is on InputController::ApplyTickInput).
+*/
+void ApplicationBomber::RunSimulationTick(void){
+    if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    InputController* input = main_scene->inputcontroller;
+
+    if (input->WasKeyPressed(INPUT_BOMBER_RESTART)){
+        SimCommand cmd;
+        cmd.type = BOMBER_CMD_RESTART;
+        cmd.value[0] = 0.0f;    //0 means "pick a fresh seed"
+        main_scene->SubmitCommand(cmd);
+    }
+
+    MazeInput in;
+    in.direction = ReadDirection();
+    in.f_place_bomb = input->WasKeyPressed(INPUT_BOMBER_DROP);
+    maze.Tick(in);
+
+    SyncView();
+}
+
+/*
+    Puts the view where the rules say it is. Physics thread, end of the tick.
+
+    Everything here is a WRITE DERIVED FROM Maze and never the other way round. That one-way rule
+    is what lets the whole view be thrown away and rebuilt (RebuildField) without the game noticing,
+    and it is why the character's world position is computed from CharX/CharZ every tick rather
+    than being integrated here.
+*/
+void ApplicationBomber::SyncView(void){
+    //--- the character ---------------------------------------------------------------------------
+    if (character){
+        //CharX/CharZ are in TILES and fractional across a step; the cell size lives on this side.
+        vec3 base = CellCentre(0,0);
+        character->SetPosition(vec3(base.x + maze.CharX() * BOMBER_CELL_SIZE,
+                                    character_y,
+                                    base.z + maze.CharZ() * BOMBER_CELL_SIZE));
+        /*
+            Face the way it walks.
+
+            TWO CONVENTIONS MEET HERE AND THEY POINT OPPOSITE WAYS, which is the whole reason this
+            table needs a comment rather than being four obvious numbers:
+
+              - the ENGINE's forward axis is -Z. Setting yaw 0 and asking object_get for
+                world_forward returns (0,0,-1), so yaw t gives forward (-sin t, 0, -cos t).
+              - the MODEL faces +Z as exported, i.e. the OPPOSITE of the engine's forward. Point
+                the camera due south of the character at yaw 0 and you are looking at its face.
+
+            So the yaw that makes the character LOOK in direction D is the one that puts the
+            engine's forward at -D, which is what these four are.
+
+            Worth measuring rather than reasoning about: two rounds of getting this wrong were
+            really the camera being dragged between the camera_set and the screenshot, which
+            silently reframes the test. object_get's world_forward is the honest instrument - it
+            needs no picture - and a screenshot is only needed once, to settle which way the ART
+            faces relative to that.
+        */
+        static const float YAW[MAZE_NUM_DIRS] = {
+             TYPE_PI * 0.5f,    //EAST  +X
+            -TYPE_PI * 0.5f,    //WEST  -X
+             TYPE_PI,           //NORTH -Z
+             0.0f               //SOUTH +Z - the rest pose
+        };
+        if (maze.facing >= 0 && maze.facing < MAZE_NUM_DIRS){
+            character->SetRotation(quat(vec3(0,1,0),YAW[maze.facing]));
+        }
+    }
+
+    //--- the bomb --------------------------------------------------------------------------------
+    if (bomb){
+        bomb->SetVisibility(maze.f_bomb);
+        if (maze.f_bomb){
+            bomb->SetPosition(CellCentre(maze.bomb_x,maze.bomb_z) + vec3(0.0f,bomb_y,0.0f));
+        }
+    }
+
+    //--- the blast -------------------------------------------------------------------------------
+    float age = maze.f_blast ? (float)maze.blast_ticks : -1.0f;
+    vec3 origin = CellCentre(maze.blast_x,maze.blast_z) + vec3(0.0f,BOMBER_FLAME_HEIGHT,0.0f);
+
+    /*
+        Move the per-tile volumes onto the cells that are burning.
+
+        Done every tick rather than once when a blast starts, because it is nine SetPosition calls
+        against the cost of a flag saying whether it has been done - and because the shader works
+        out which ring a tile is in FROM ITS POSITION, so a volume left in last blast's place would
+        not be a stale-looking tile, it would be a tile with the wrong delay and the wrong arm.
+
+        Volumes past the blast's actual reach are parked ON the centre rather than moved away: the
+        shader discards them by arm limit anyway, and stacking them costs one discarded fragment
+        each while moving them somewhere far away would put a box in the middle of the board.
+    */
+    int slot = 0;
+    if (slot < (int)blast_tiles.size()){
+        blast_tiles[slot++]->SetPosition(origin);
+    }
+    for (int d = 0; d < MAZE_NUM_DIRS && slot < (int)blast_tiles.size(); d++){
+        for (int step = 1; step <= MAZE_BLAST_RANGE && slot < (int)blast_tiles.size(); step++){
+            bool f_reached = maze.f_blast && step <= maze.arm[d];
+            vec3 p = f_reached
+                   ? CellCentre(maze.blast_x + Maze::DirX(d) * step,
+                                maze.blast_z + Maze::DirZ(d) * step) + vec3(0.0f,BOMBER_FLAME_HEIGHT,0.0f)
+                   : origin;
+            blast_tiles[slot++]->SetPosition(p);
+        }
+    }
+    if (blast_cross){
+        blast_cross->SetPosition(origin);
+    }
+
+    /*
+        The light follows the fire.
+
+        A flat brightness for the blast's whole life lights the field as brightly while the last
+        smoke drifts as it does at the detonation, which is exactly backwards - the flash is the
+        moment the board should go orange. So: a very fast rise over the first few ticks and a
+        fourth-power decay, which is steeper than the fire's own cooling curve because a point
+        light has no smoke to hide behind. It also RISES with the flame, using the same `rise` the
+        shader applies.
+    */
+    if (blast_light){
+        if (age >= 0.0f){
+            float t = clamp(age / max(blast_life,1.0f),0.0f,1.0f);
+            float ignite = clamp(age / 3.0f,0.0f,1.0f);
+            float decay = powf(1.0f - t,4.0f);
+            blast_light->brightness = blast_light_brightness * ignite * decay;
+            blast_light->radius = blast_light_radius;
+            blast_light->SetPosition(origin + vec3(0.0f,rise * t * t,0.0f));
+        }else{
+            blast_light->brightness = 0.0f;
+        }
+    }
+
+    //Published last, so the render thread never sees an age that is ahead of the volumes.
+    blast_origin_view = origin;
+    blast_arms_view = vec4((float)maze.arm[MAZE_DIR_EAST],(float)maze.arm[MAZE_DIR_WEST],
+                           (float)maze.arm[MAZE_DIR_NORTH],(float)maze.arm[MAZE_DIR_SOUTH]);
+    blast_age_view = age;
+    //Derived from the count rather than drawn from a random stream: a blast has to look different
+    //from the last one, and has to differ THE SAME WAY on a replay. The multiplier is
+    //irrational-ish so consecutive blasts land far apart in the noise.
+    blast_seed_view = (float)maze.blast_count * 0.6180339887f;
+}
+
+/*
+    Physics thread, every pass - including the ones that simulate nothing. Camera and the reload key
+    only: neither is simulation, and nothing here may write something a tick will read.
 
     THE CAMERA IS ApplicationShip's, not the shorter one apps/testfx uses, and the differences are
     all things that were got wrong here first:
@@ -755,7 +873,7 @@ void ApplicationBomber::RegisterCommandHandlers(void){
         the longer you waited before dragging.
 
       - It is gated on the window having focus, and it gives up the mouse to the debug UI, so
-        dragging a slider in the Explosion panel does not also swing the camera.
+        dragging a slider in the Bomber panel does not also swing the camera.
 
       - The wheel is accumulated and bled off rather than applied as it arrives, which is what
         makes the zoom coast to a stop instead of stepping.
@@ -818,15 +936,15 @@ void ApplicationBomber::UpdateView(void){
         shrinks as it closes in, and bleeds the accumulator off by /1.1 a pass so a flick of the
         wheel coasts. Clamped at both ends, and the clamp is not defensive tidiness: a step
         proportional to the distance is geometric in BOTH directions, so scrolling out compounds
-        and a few seconds of it put the camera far enough away that the blast is a speck on a black
-        screen - which looks exactly like a shader that stopped drawing.
+        and a few seconds of it put the camera far enough away that the board is a speck on a black
+        screen - which looks exactly like a renderer that stopped drawing.
     */
     if (main_window->f_has_focus){
         if (mouse_wheel_sum != 0.0f){
             vec3 diff = camera->GetPosition() - camera_target;
             float distance = diff.length();
             float step = distance * mouse_wheel_sum / 50.0f;
-            float target = clamp(distance - step,2.0f,60.0f);
+            float target = clamp(distance - step,1.5f,60.0f);
             camera->MoveForwardBy(distance - target);
             mouse_wheel_sum /= 1.1f;
             if (fabsf(mouse_wheel_sum) < 0.01f){
@@ -843,25 +961,6 @@ void ApplicationBomber::UpdateView(void){
     }
 }
 
-/*
-    Physics thread, once per tick that actually runs, physics_mutex held.
-
-    The detonation key is read HERE rather than in UpdateView because it is simulation: it changes
-    what the world does, so it has to be paused, stepped and replayed with everything else. That is
-    also why it is WasKeyPressed and not IsKeyDown - a detonation is an edge, and an edge read on a
-    pass that does not tick would be cleared before any gameplay saw it (backlog item 84; the long
-    version is on InputController::ApplyTickInput).
-*/
-void ApplicationBomber::RunSimulationTick(void){
-    if (!main_scene || !main_scene->inputcontroller){
-        return;
-    }
-    if (main_scene->inputcontroller->WasKeyPressed(INPUT_BOMBER_DETONATE)){
-        Detonate();
-    }
-    UpdateBlast();
-}
-
 //Frame thread, top of every frame, before anything is drawn.
 void ApplicationBomber::PreRender(void){
     //A shader reload is GL work, so the key and the panel button only raise a flag and it is
@@ -872,7 +971,7 @@ void ApplicationBomber::PreRender(void){
     }
 }
 
-//--- the knobs ------------------------------------------------------------------------------------
+//--- the knobs --------------------------------------------------------------------------------------
 
 /*
     One table, driving the panel's sliders, the bomber_set tool and the bomber_state readout.
@@ -882,17 +981,16 @@ void ApplicationBomber::PreRender(void){
     to, and a slider whose useful third is two pixels wide is a slider nobody tunes with.
 
     Lengths are in WORLD UNITS. PushBlastUniforms converts them per volume, which is what lets one
-    slider mean the same thing to a 4-unit tile box and a 12-unit cross box - and without that the
-    two sites could not be compared at all.
+    slider mean the same thing to a 2-unit tile box and a 6-unit cross box.
 */
 void ApplicationBomber::BuildKnobTable(void){
     knobs.clear();
     knobs.push_back({"blast_life",&blast_life,NULL,20.0f,400.0f,
         "how long one blast lasts, in simulation ticks"});
-    knobs.push_back({"blast_radius",&blast_radius,NULL,0.2f,3.0f,
-        "radius of the flame tube, in WORLD units - a cell is 2.0"});
+    knobs.push_back({"blast_radius",&blast_radius,NULL,0.1f,2.0f,
+        "radius of the flame tube, in WORLD units - a grid cell is 1.0"});
     knobs.push_back({"tile_delay",&tile_delay,NULL,0.0f,20.0f,
-        "ticks each ring of tiles waits behind the one nearer the bomb (per-tile site only)"});
+        "ticks each ring of tiles waits behind the one nearer the bomb (per-tile renderer only)"});
     knobs.push_back({"rim_softness",&rim_softness,NULL,0.01f,1.0f,
         "width of the fade at the front's edge, as a fraction of the radius"});
     knobs.push_back({"turbulence",&turbulence,NULL,0.0f,2.0f,
@@ -901,7 +999,7 @@ void ApplicationBomber::BuildKnobTable(void){
         "how many times the noise tiles across the flame's diameter - the billow size"});
     knobs.push_back({"outflow",&outflow,NULL,0.0f,1.5f,
         "how far the billows are dragged outward over a life"});
-    knobs.push_back({"rise",&rise,NULL,0.0f,3.0f,
+    knobs.push_back({"rise",&rise,NULL,0.0f,2.0f,
         "how far the flame floats up over a life, in WORLD units"});
     knobs.push_back({"blast_density",&blast_density,NULL,0.5f,60.0f,
         "density per world unit at the heart of the front"});
@@ -916,15 +1014,15 @@ void ApplicationBomber::BuildKnobTable(void){
     knobs.push_back({"light_absorption",&light_absorption,NULL,0.0f,4.0f,
         "how fast light is extinguished through the medium"});
     knobs.push_back({"num_view_steps",NULL,&num_view_steps,4.0f,128.0f,
-        "steps along the view ray - the app's main cost. The cross site gets double"});
+        "steps along the view ray - the app's main cost. The cross renderer gets double"});
     knobs.push_back({"num_light_steps",NULL,&num_light_steps,0.0f,16.0f,
         "steps towards each light per view step, for the smoke only. 0 disables scattering"});
     knobs.push_back({"light_falloff",&light_falloff,NULL,0.5f,3.0f,
         "attenuation exponent: brightness/pow(distance,this)"});
     knobs.push_back({"max_radiance",&max_radiance,NULL,0.5f,40.0f,
         "ceiling on in-scattered radiance at one sample"});
-    knobs.push_back({"blast_light_brightness",&blast_light_brightness,NULL,0.0f,200.0f,
-        "peak brightness of the point light each site throws on its walls"});
+    knobs.push_back({"blast_light_brightness",&blast_light_brightness,NULL,0.0f,60.0f,
+        "peak brightness of the point light the fire throws on the field"});
     knobs.push_back({"blast_light_radius",&blast_light_radius,NULL,0.05f,5.0f,
         "source size of that light, for the penumbra estimate"});
     knobs.push_back({"debug_view",NULL,&debug_view,0.0f,2.0f,
@@ -940,39 +1038,37 @@ BomberKnob* ApplicationBomber::FindKnob(const std::string& name){
     return NULL;
 }
 
-json ApplicationBomber::BlastStateJson(void){
+json ApplicationBomber::StateJson(void){
     json result;
-    //Read without the lock: these are the two published floats and the point of them is that a
-    //reader never blocks the simulation for them. See the note in the header.
-    float age = blast_age_view;
-    result["blast_age"] = age;
-    result["blast_live"] = age >= 0.0f;
-    result["blast_count"] = blast_count;
-    //The normalised age is what every curve in the shader is actually a function of, so it is
-    //worth reporting alongside the raw tick count rather than leaving it to be recomputed.
-    result["blast_progress"] = (age >= 0.0f) ? clamp(age / max(blast_life,1.0f),0.0f,1.0f) : -1.0f;
+    result["seed"] = current_seed;
     result["tick"] = main_scene ? main_scene->GetPhysicsTick() : 0;
 
-    //Both sites, so a caller can see that they really do have the same arms.
-    const BomberSite* sites[2] = {&site_tiles,&site_cross};
-    const char* names[2] = {"tiles","cross"};
-    json sites_json = json::array();
-    for (int s = 0; s < 2; s++){
-        sites_json.push_back(json{
-            {"name",names[s]},
-            {"mode",(sites[s]->mode == BLAST_MODE_CROSS) ? "one volume shaped like the cross"
-                                                         : "one volume per tile"},
-            {"cell",json::array({sites[s]->cell_x,sites[s]->cell_z})},
-            {"origin",json::array({sites[s]->origin.x,sites[s]->origin.y,sites[s]->origin.z})},
-            {"arm_limit_tiles",json{
-                {"east",sites[s]->arm_limit.x},
-                {"west",sites[s]->arm_limit.y},
-                {"north",sites[s]->arm_limit.z},
-                {"south",sites[s]->arm_limit.w}}},
-            {"volumes",(sites[s]->mode == BLAST_MODE_CROSS) ? 1 : (int)sites[s]->tiles.size()}
-        });
-    }
-    result["sites"] = sites_json;
+    //The character and the bomb, in TILES - which is the space every rule is written in, so it is
+    //the space a caller should be reasoning and asserting in too.
+    result["character"] = json{
+        {"tile",json::array({maze.tile_x,maze.tile_z})},
+        {"stepping",maze.step_ticks > 0},
+        {"facing",maze.facing},
+        {"x",maze.CharX()},
+        {"z",maze.CharZ()}
+    };
+    result["bomb"] = json{
+        {"live",maze.f_bomb},
+        {"tile",json::array({maze.bomb_x,maze.bomb_z})},
+        {"fuse_ticks",maze.fuse_ticks}
+    };
+    result["blast"] = json{
+        {"live",maze.f_blast},
+        {"tile",json::array({maze.blast_x,maze.blast_z})},
+        {"age_ticks",maze.blast_ticks},
+        {"count",maze.blast_count},
+        {"arm_tiles",json{
+            {"east",maze.arm[MAZE_DIR_EAST]},
+            {"west",maze.arm[MAZE_DIR_WEST]},
+            {"north",maze.arm[MAZE_DIR_NORTH]},
+            {"south",maze.arm[MAZE_DIR_SOUTH]}}}
+    };
+    result["renderers"] = json{{"tiles",f_draw_tiles},{"cross",f_draw_cross}};
 
     json values = json::object();
     {
@@ -991,24 +1087,99 @@ json ApplicationBomber::BlastStateJson(void){
     return result;
 }
 
-//--- MCP -----------------------------------------------------------------------------------------
+//--- MCP ---------------------------------------------------------------------------------------------
 
 #ifdef USE_MCP
 void ApplicationBomber::RegisterMCPTools(void){
-    MCPServer::Get()->RegisterTool("bomber_detonate",
-        "Set off BOTH blast sites at once, restarting the clock from tick 0 - the same thing the "
-        "space bar does. The left site (-8 on X) draws the cross as one volume per tile, the right "
-        "one (+8 on X) as a single volume shaped like the cross; they share one clock and one set "
-        "of tunables so that what differs on screen is only the thing being compared. Returns the "
-        "blast state; pass include_screenshot to see it. NOTE that the flame is at its brightest "
-        "within a few ticks and is smoke by the end of its life, so a screenshot taken right after "
-        "this shows the flash and nothing else. To look at a particular frame: sim_pause, "
-        "bomber_detonate, then sim_step the number of ticks you want - the whole effect is driven "
-        "by the tick counter, so frame N is reproducible.",
+    MCPServer::Get()->RegisterTool("bomber_state",
+        "Everything about the game as the RULES see it: the character's tile, whether it is "
+        "mid-step, the live bomb and its fuse, the blast and how many tiles each of its arms "
+        "reached, plus the blast effect's tunables. Positions are in TILES on a 16x16 grid, which "
+        "is the space every rule is written in - assert in tiles, not in world units.",
         json{
             {"type","object"},
             {"properties", {
-                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame after detonating"}}},
+                {"include_map", {{"type","boolean"},{"description","also return the tile grid as 16 strings, one per row: . grass , brick : rock ~ water # wall, upper case where a bridge is"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the current frame"}}},
+                {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            json result = StateJson();
+            if (args.value("include_map",false)){
+                //One character per tile. A picture of the board in 16 lines beats 256 numbers for
+                //the one caller that cannot look at the monitor.
+                static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#'};
+                json rows = json::array();
+                for (int z = 0; z < MAZE_H; z++){
+                    std::string row;
+                    for (int x = 0; x < MAZE_W; x++){
+                        char c = GLYPH[maze.tile[z][x] < MAZE_TILE_COUNT ? maze.tile[z][x] : 0];
+                        if (maze.decor[z][x] == MAZE_DECOR_BRIDGE){
+                            c = '=';    //water you can walk on
+                        }
+                        if (x == maze.tile_x && z == maze.tile_z){
+                            c = '@';
+                        }else if (maze.f_bomb && x == maze.bomb_x && z == maze.bomb_z){
+                            c = 'o';
+                        }
+                        row += c;
+                    }
+                    rows.push_back(row);
+                }
+                result["map"] = rows;
+                result["map_legend"] = ". grass  , brick  : rock  ~ water  = bridge  # wall  @ character  o bomb";
+            }
+            return MaybeAttachScreenshot(result,
+                                         args.value("include_screenshot",false),
+                                         args.value("include_ui",true));
+        });
+
+    MCPServer::Get()->RegisterTool("bomber_input",
+        "Hold one of the game's controls for a number of SIMULATION TICKS, exactly as a thumb "
+        "would - the event goes through InputController, so it is read by the same code a key "
+        "press is and it works while the simulation is paused and being single-stepped. "
+        "`action` is north/south/east/west/bomb. A direction wants enough ticks to cross a tile "
+        "(20 at the default walk speed); `bomb` is an edge, so one tick is enough. The call "
+        "returns as soon as the hold is queued - step or wait for it to play out, then read "
+        "bomber_state.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"action", {{"type","string"},{"description","north, south, east, west or bomb"}}},
+                {"ticks", {{"type","number"},{"description","how many simulation ticks to hold it, default 20"}}}
+            }},
+            {"required",json::array({"action"})}
+        },
+        [this](const json& args) -> json {
+            std::string action = args.value("action",std::string());
+            uint32_t mapped = 0;
+            if (action == "north"){ mapped = INPUT_BOMBER_NORTH; }
+            else if (action == "south"){ mapped = INPUT_BOMBER_SOUTH; }
+            else if (action == "west"){ mapped = INPUT_BOMBER_WEST; }
+            else if (action == "east"){ mapped = INPUT_BOMBER_EAST; }
+            else if (action == "bomb"){ mapped = INPUT_BOMBER_DROP; }
+            else {
+                return json{ {"error","action must be north, south, east, west or bomb"} };
+            }
+            int ticks = (int)args.value("ticks",20.0f);
+            if (ticks < 1){
+                ticks = 1;
+            }
+            main_scene->inputcontroller->HoldKey(mapped,(uint32_t)ticks);
+            return json{ {"held",action}, {"ticks",ticks} };
+        });
+
+    MCPServer::Get()->RegisterTool("bomber_bomb",
+        "Drop a bomb on the character's tile and set its fuse to one tick, so it goes off on the "
+        "next tick that runs - the way to look at a blast without waiting out the two-second fuse. "
+        "To study a particular frame of one: sim_pause, bomber_bomb, then sim_step the number of "
+        "ticks you want, because the whole effect is driven by the tick counter and frame N is "
+        "reproducible.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame afterwards"}}},
                 {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
         },
@@ -1016,47 +1187,53 @@ void ApplicationBomber::RegisterMCPTools(void){
             SimCommand cmd;
             cmd.type = BOMBER_CMD_DETONATE;
             //SubmitCommandAndWait, not SubmitUICommand: an MCP handler holds no lock, so it may
-            //wait - and it has to, or it would report the state of the blast it just replaced.
+            //wait - and it has to, or it would report the state from before the bomb was placed.
             SubmitCommandAndWait(cmd);
-            return MaybeAttachScreenshot(BlastStateJson(),
+            return MaybeAttachScreenshot(StateJson(),
                                          args.value("include_screenshot",false),
                                          args.value("include_ui",true));
         });
 
-    MCPServer::Get()->RegisterTool("bomber_state",
-        "The blast clock, both sites, and every tunable of the explosion effect. `blast_age` is in "
-        "SIMULATION TICKS since detonation and is -1 when nothing is burning; `blast_progress` is "
-        "that normalised to 0..1 over the blast's life, which is what every curve in the shader is "
-        "a function of. `sites` reports each site's arm lengths in tiles, walked out from the bomb "
-        "and stopped at the first wall - both sites have the same walls around them, so the two "
-        "should always agree. Also reports whether the shader compiled and what the compiler said.",
+    MCPServer::Get()->RegisterTool("bomber_restart",
+        "Lay out a fresh field and put the character back on its spawn. The same seed always "
+        "produces the same maze, so a layout worth looking at can be got back; pass 0 or leave it "
+        "out for a new one.",
         json{
             {"type","object"},
             {"properties", {
-                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the current frame"}}},
+                {"seed", {{"type","number"},{"description","field seed; 0 or absent picks a fresh one"}}},
+                {"include_map", {{"type","boolean"},{"description","also return the new tile grid"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the new field"}}},
                 {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
         },
         [this](const json& args) -> json {
-            return MaybeAttachScreenshot(BlastStateJson(),
+            SimCommand cmd;
+            cmd.type = BOMBER_CMD_RESTART;
+            cmd.value[0] = args.value("seed",0.0f);
+            SubmitCommandAndWait(cmd);
+            json result = StateJson();
+            return MaybeAttachScreenshot(result,
                                          args.value("include_screenshot",false),
                                          args.value("include_ui",true));
         });
 
     MCPServer::Get()->RegisterTool("bomber_set",
-        "Set one tunable of the explosion by name - the names and current values are the `knobs` "
-        "object bomber_state returns. Both sites share every one of them, which is the point: a "
-        "difference on screen has to be a difference between the two ways of drawing the blast and "
-        "not between two sets of settings. Lengths are in WORLD units (a grid cell is 2.0) and are "
-        "converted per volume, so one value means the same thing to both boxes. The value is held "
-        "on the C++ side and pushed to the programs on the render thread every frame, so it "
-        "survives a shader reload and never writes to a program mid-draw. Setting `debug_view` to "
-        "1 reads out the marched interval and 2 reads out the G-buffer the shader is handed, which "
-        "is how to tell a black screen caused by the shape from one caused by the box.",
+        "Set one tunable of the blast effect by name - the names and current values are the "
+        "`knobs` object bomber_state returns. Both renderers share every one of them, which is the "
+        "point: a difference on screen has to be a difference between the two ways of drawing the "
+        "blast and not between two sets of settings. Lengths are in WORLD units (a grid cell is "
+        "1.0) and are converted per volume, so one value means the same thing to both boxes. The "
+        "value is held on the C++ side and pushed to the programs on the render thread every "
+        "frame, so it survives a shader reload and never writes to a program mid-draw. Setting "
+        "`debug_view` to 1 reads out the marched interval and 2 reads out the G-buffer the shader "
+        "is handed, which is how to tell a black screen caused by the shape from one caused by the "
+        "box. `draw_tiles` and `draw_cross` are not knobs but are accepted here too: they switch "
+        "the two renderers on and off, and both on draws the same blast twice.",
         json{
             {"type","object"},
             {"properties", {
-                {"name", {{"type","string"},{"description","tunable to set, as listed by bomber_state"}}},
+                {"name", {{"type","string"},{"description","tunable to set, as listed by bomber_state, or draw_tiles / draw_cross"}}},
                 {"value", {{"type","number"},{"description","the new value; clamped to the tunable's range"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame after the change"}}},
                 {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
@@ -1066,7 +1243,11 @@ void ApplicationBomber::RegisterMCPTools(void){
         [this](const json& args) -> json {
             std::string name = args.value("name",std::string());
             float value = args.value("value",0.0f);
-            {
+            if (name == "draw_tiles"){
+                f_draw_tiles = value != 0.0f;
+            }else if (name == "draw_cross"){
+                f_draw_cross = value != 0.0f;
+            }else{
                 std::lock_guard<std::mutex> lock(knob_mutex);
                 BomberKnob* knob = FindKnob(name);
                 if (!knob){
@@ -1082,18 +1263,17 @@ void ApplicationBomber::RegisterMCPTools(void){
                     *knob->ivalue = (int)(clamped + 0.5f);
                 }
             }
-            return MaybeAttachScreenshot(BlastStateJson(),
+            return MaybeAttachScreenshot(StateJson(),
                                          args.value("include_screenshot",false),
                                          args.value("include_ui",true));
         });
 
     MCPServer::Get()->RegisterTool("bomber_reload_shader",
         "Recompile shaders/bomber_explosion.frag from disk and swap it into BOTH programs, without "
-        "restarting the app - the edit-and-look loop. One source file serves both blast modes, so "
-        "a reload always does the pair; a shader that fails to compile leaves the last working one "
-        "drawing and reports the GLSL error rather than taking the app down. The tunables keep "
-        "their values, since they live on the C++ side. This is bomber's own reload; the core "
-        "shader_reload tool does the same for any shader in the app by file-name filter.",
+        "restarting the app - the edit-and-look loop. One source file serves both blast renderers, "
+        "so a reload always does the pair; a shader that fails to compile leaves the last working "
+        "one drawing and reports the GLSL error rather than taking the app down. The tunables keep "
+        "their values, since they live on the C++ side.",
         json{
             {"type","object"},
             {"properties", {
@@ -1113,54 +1293,64 @@ void ApplicationBomber::RegisterMCPTools(void){
             if (f_shader_reload_requested){
                 return json{ {"error","the render thread did not compile it in time"} };
             }
-            return MaybeAttachScreenshot(BlastStateJson(),
+            return MaybeAttachScreenshot(StateJson(),
                                          args.value("include_screenshot",false),
                                          args.value("include_ui",true));
         });
 }
 #endif //USE_MCP
 
-//--- UI -------------------------------------------------------------------------------------------
+//--- UI ------------------------------------------------------------------------------------------------
 
 #ifdef USE_IMGUI
 //Panel code, so it is not in a build without ImGui. The engine calls DrawImGuiUI unconditionally;
 //with USE_IMGUI=0 the base class version is an empty one. See engine.mk.
 void ApplicationBomber::DrawImGuiUI(void){
     RenderApplicationUI();
-    RenderExplosionPanel();
+    RenderBomberPanel();
 }
 
-void ApplicationBomber::RenderExplosionPanel(void){
-    ImGui::Begin("Explosion");
+void ApplicationBomber::RenderBomberPanel(void){
+    ImGui::Begin("Bomber");
 
-    //Which is which. Two sentences that save walking the scene tree, and the left/right is the
-    //only thing about this screen that is not self-evident.
-    ImGui::TextDisabled("LEFT  site: one volume per tile (%i boxes, 1 draw call)",
-                        (int)site_tiles.tiles.size());
-    ImGui::TextDisabled("RIGHT site: one volume shaped like the cross");
-    ImGui::TextDisabled("arms E%.0f W%.0f N%.0f S%.0f tiles, walked to the first wall",
-                        site_tiles.arm_limit.x,site_tiles.arm_limit.y,
-                        site_tiles.arm_limit.z,site_tiles.arm_limit.w);
-    ImGui::Separator();
+    ImGui::TextDisabled("arrows/WASD walk   space drops a bomb   R is a new field");
+    ImGui::Text("Field seed %u",current_seed);
+    ImGui::Text("Character  tile (%2i,%2i)%s",maze.tile_x,maze.tile_z,
+                maze.step_ticks > 0 ? "  walking" : "");
 
-    float age = blast_age_view;
-    if (age >= 0.0f){
-        ImGui::Text("Burning - tick %.0f of %.0f",age,blast_life);
-        ImGui::ProgressBar(clamp(age / max(blast_life,1.0f),0.0f,1.0f),ImVec2(-1,0));
+    if (maze.f_bomb){
+        ImGui::Text("Bomb at (%2i,%2i)",maze.bomb_x,maze.bomb_z);
+        //A bar rather than a number: a fuse is a countdown, and the thing worth knowing at a
+        //glance is how much of it is left rather than its value in ticks.
+        ImGui::ProgressBar(clamp((float)maze.fuse_ticks / (float)MAZE_FUSE_TICKS,0.0f,1.0f),
+                           ImVec2(-1,0),"fuse");
+    }else if (maze.f_blast){
+        ImGui::Text("Blast at (%2i,%2i)  arms E%i W%i N%i S%i",maze.blast_x,maze.blast_z,
+                    maze.arm[MAZE_DIR_EAST],maze.arm[MAZE_DIR_WEST],
+                    maze.arm[MAZE_DIR_NORTH],maze.arm[MAZE_DIR_SOUTH]);
+        ImGui::ProgressBar(clamp((float)maze.blast_ticks / max(blast_life,1.0f),0.0f,1.0f),
+                           ImVec2(-1,0),"burning");
     }else{
-        ImGui::TextDisabled("Idle");
+        ImGui::TextDisabled("No bomb");
         //A bar either way, so the panel does not change height when something goes off and the
         //controls under it do not jump out from under the pointer mid-drag.
         ImGui::ProgressBar(0.0f,ImVec2(-1,0),"---");
     }
-    ImGui::Text("%u detonations",blast_count);
+    ImGui::Text("%u blasts this field",maze.blast_count);
 
-    if (ImGui::Button("Detonate (Space)")){
+    if (ImGui::Button("Bomb now")){
         //SubmitUICommand, never SubmitCommandAndWait: this runs on the render thread with
         //physics_mutex held, and waiting here for the physics thread - which needs that same mutex
         //to drain the queue - would deadlock instantly. See Application::SubmitCommandAndWait.
         SimCommand cmd;
         cmd.type = BOMBER_CMD_DETONATE;
+        SubmitUICommand(cmd);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("New field (R)")){
+        SimCommand cmd;
+        cmd.type = BOMBER_CMD_RESTART;
+        cmd.value[0] = 0.0f;
         SubmitUICommand(cmd);
     }
     ImGui::SameLine();
@@ -1173,6 +1363,12 @@ void ApplicationBomber::RenderExplosionPanel(void){
         //there is one path rather than two. See ReloadExplosionShader.
         f_shader_reload_requested = true;
     }
+
+    ImGui::Separator();
+    //The two renderers. Both on draws the same blast twice, which is the A/B - see the note at the
+    //top of the header.
+    ImGui::Checkbox("draw per-tile volumes",&f_draw_tiles);
+    ImGui::Checkbox("draw single cross volume",&f_draw_cross);
 
     {
         std::lock_guard<std::mutex> lock(reload_mutex);

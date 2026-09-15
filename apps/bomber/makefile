@@ -20,6 +20,7 @@ PROJECT := bomber
 
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationBomber.cpp
+APP_SRCS += Maze.cpp
 
 #No SoundSystem yet, so OpenAL is not linked - see the USE_SOUND block in engine.mk. A bomb
 #that makes no noise is a gap this app will want closing, but it is a property of the app

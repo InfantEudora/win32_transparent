@@ -7,7 +7,6 @@
 imgui.ini
 *.d
 *.blend1
-*.blend
 *.a
 BinaryAssetMemory.cpp
 .current_app
