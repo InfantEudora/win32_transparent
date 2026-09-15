@@ -42,7 +42,27 @@ every destructible tile becomes GRASS and its floor was already the grass tile (
 loop in `NewGame` skips soft blocks precisely to keep that true).
 
 **Pickups are buried under soft blocks** and need no "revealed" flag - an item on an impassable
-cell cannot be walked onto, so the tile above IS the lid.
+cell cannot be walked onto, so the tile above IS the lid. Five kinds: health, shield, and coin /
+diamond / crystal worth 10 / 50 / 250 (`MazeItemScore`). `MAZE_ITEM_ORDER` is a FIXED LIST walked
+front-to-back onto shuffled cells, so a full board buries exactly 4 coins and one of each other -
+exact mix, random placement - and a board too small to carry the list loses the rare things at the
+back of it first.
+
+**Taken pickups shrink away and treasure turns, both as TWEENS in the view** - `TickPickupView`,
+off `GetPhysicsTick()` so they freeze under `sim_pause`. The shrink is VIEW state
+(`cell_item_shrink`), not a rule: the pickup is gone from the game the instant it is taken. The line
+this app now draws: a motion with a SHAPE (the door swinging) is authored in Blender; a spin, a bob
+or a fade is arithmetic in the app.
+
+**The exit door is two objects and the first unskinned thing animated from a clip** - `wall_doorway`
+placed on a border cell with `door` attached as a child, `Door_Opening` on the ARCHWAY (see
+[[animation-state-machine-in-object]]). Forward opens, `SetAnimationRate(-1)` shuts. The RULES do
+not know about it yet: no door tile in `Maze`, and `RebuildField` carries a view-only special case
+to leave the brick off that cell.
+
+**`equipped_shield` is a CHILD of `character`** with an identity local transform - the artist placed
+it on the character in the .glb, so it follows, turns and is freed with them (`~Object` deletes
+children). Visibility follows `shield_ticks`.
 
 **The blast is drawn two ways** off one clock, `f_draw_tiles` (default) and `f_draw_cross` - see
 [[volumetric-effect-gotchas]]. The user prefers per-tile and accepts that overlapping volumes do
@@ -87,8 +107,21 @@ Built once in `Init` on the RENDER thread (`BuildEnemies`), never in `RebuildFie
 physics thread. `GetSkeleton` takes the SKIN name (`enemy_armature`), not the node name (`enemy`).
 Needs `renderer->skinned_shader`, which is NULL by default and warns about nothing.
 
-Still open: sound (`USE_SOUND` off - no wav yet), player animations, one bomb at a time, enemies
-that wander rather than hunt.
+**Testing affordances worth knowing before writing a test by hand:** `bomber_give` lays a pickup on
+the player's tile and lets the real `TickItems` collect it (it does NOT make one appear - pickup
+objects are built per cell at layout); `bomber_state.field.items_shrinking` is the only evidence
+the shrink ran, since it is over in 18 ticks; `door.leaf_moved` is the leaf's own local transform,
+which nothing but the clip writes. **`object_list` is capped at 200 entries** and a laid-out board
+is four hundred objects, so an unfiltered call quietly returns only the tail - use `name_filter`.
+And a driver that walks the player somewhere must let the last step LAND: `tile` is the
+DESTINATION of the step in progress and `TickItems` refuses to collect while `step_ticks > 0`.
+
+Still open: the key/door win condition (the only unused asset left whose job is a rule), sound
+(`USE_SOUND` off - no wav yet), player animations, one bomb at a time, enemies that wander rather
+than hunt, and no HUD. `apps/bomber/game_todo.md` is the user's own list - read it first.
+
+**Lillies go on OPEN water only** (`MAZE_DECOR_LILLY`), never on a bridged cell, which falls out of
+the decor byte: a bridge IS that cell's decor.
 
 See also [[engine-forward-is-minus-z]], [[ship-orbit-camera-is-the-canonical-one]],
 [[raymarch-volume-stage-plan]], [[per-app-build-layout]].

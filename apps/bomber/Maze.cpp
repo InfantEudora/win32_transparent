@@ -242,56 +242,197 @@ void Maze::CarveDoorways(int split_x, int split_z){
 }
 
 /*
-    Water, and bridges over it.
+    Water, and the bridges that span it.
 
-    THE RUN'S DIRECTION IS THE BRIDGE'S DIRECTION, which is the whole point of doing this in one
-    place: a pond is grown as a straight run, so every bridge laid on it gets the run's axis and a
-    row of them lines up into ONE bridge rather than three planks at three angles. The view reads
-    that axis to turn the model, and the walker reads it to refuse a step across the rope rails.
+    A POND IS A STRAIGHT RUN AND ITS BRIDGE RUNS DOWN THE LENGTH OF IT. That single choice is the
+    whole difference between the two things this can look like, and it is worth stating because the
+    other one seems just as reasonable on paper: lay the bridge ACROSS the run and every water cell
+    gets its own one-tile plank, so a four-cell pond comes out as four little bridges side by side,
+    each crossing nothing much. Lay it ALONG the run and they are one span - you step on at one
+    bank, walk the length of the pond, and step off at the other, with the rope rails down the
+    sides where they belong.
 
-    Bridges are laid on a CONTIGUOUS stretch rather than scattered, for the same reason: half a
-    bridge across a three-tile pond is a crossing that does not cross.
+    So the run's axis IS the bridge's axis, and that one assignment is the whole mechanism. The
+    view reads it to turn the model (see BOMBER_BRIDGE_YAW_X in ApplicationBomber) and the walker
+    reads it to refuse a step over the rails, so the picture and the rule can never disagree.
+
+    THE RUN IS GROWN BOTH WAYS FROM ITS SEED, not forwards from it, and that is not tidiness - it
+    is what makes the spans actually happen. Growing one way meant a seed that landed just before a
+    pillar produced a one-cell stub, and on a lattice of pillars stubs are most of what you get. A
+    stub is a puddle with a plank on it. Growing out from the middle spends exactly the same rolls
+    on a pond that is usually its full length.
+
+    A BRIDGE IS ONLY LAID WHEN BOTH ITS ENDS REACH DRY LAND. A span that runs into a wall is a
+    pier, and a pier is a crossing that does not cross - which is the rule the all-or-nothing note
+    below has always stated, now applied to the ENDS as well as to the middle. It matters more than
+    it used to: a cross-wise plank had two chances at a bank per water cell, a span has exactly two
+    in total.
 */
 void Maze::AddWater(){
-    for (int pond = 0; pond < 7; pond++){
-        int x = 1 + RandomBelow(MAZE_W - 2);
-        int z = 1 + RandomBelow(MAZE_H - 2);
+    /*
+        Whether this cell is a BANK of a bridge that is already down - that is, whether some
+        neighbour is a bridge whose grain points at this cell, so that this is where you step off it.
+
+        It exists only to be refused by can_flood below, and it earns its keep because the ponds are
+        laid one after another out of the same bag of rolls: a later pond that floods an earlier
+        bridge's landing turns a finished crossing into a pier, and it does it silently, several
+        ponds after the bridge was checked and found good.
+    */
+    auto guards_bridge = [this](int x, int z){
+        for (int d = 0; d < MAZE_NUM_DIRS; d++){
+            int nx = x + DirX(d);
+            int nz = z + DirZ(d);
+            //DirAxis(d) is the axis of the step from here to that neighbour, so a bridge there with
+            //that same grain is one whose planks run towards this cell.
+            if (InBounds(nx,nz) && decor[nz][nx] == MAZE_DECOR_BRIDGE &&
+                pass_axis[nz][nx] == DirAxis(d)){
+                return true;
+            }
+        }
+        return false;
+    };
+    /*
+        Where water may go. Not out of bounds; not onto a pillar, because a pond that ate one would
+        punch a hole in the lattice the zones are built on; not through somebody else's bridge,
+        because cutting an earlier crossing in half leaves two piers and a gap in the middle; and
+        not onto either of that bridge's banks - which together are the shape this function exists
+        to avoid, from both ends.
+    */
+    auto can_flood = [this,&guards_bridge](int x, int z){
+        return InBounds(x,z) && tile[z][x] != MAZE_TILE_WALL &&
+               decor[z][x] != MAZE_DECOR_BRIDGE && !guards_bridge(x,z);
+    };
+    /*
+        A bank: somewhere you can actually stand, whose own grain lets you step off the bridge onto
+        it. The grain test is not hypothetical - a bank can be the last cell of ANOTHER bridge, and
+        when the two agree on an axis the result is one longer span across two ponds, which is a
+        better accident than a T-junction you cannot walk through.
+    */
+    auto is_bank = [this](int x, int z, uint8_t axis){
+        return IsPassable(x,z) &&
+               (pass_axis[z][x] == MAZE_AXIS_ANY || pass_axis[z][x] == axis);
+    };
+
+    for (int pond = 0; pond < MAZE_NUM_PONDS; pond++){
         //Along an axis, not a diagonal: a pond that steps diagonally cannot be bridged by a line of
         //bridge pieces, and the axis is what a bridge needs.
         int dir = RandomBelow(MAZE_NUM_DIRS);
-        int run = 2 + RandomBelow(3);
+        int span = MAZE_POND_MIN + RandomBelow(MAZE_POND_MAX - MAZE_POND_MIN + 1);
+        int seed_x = 1 + RandomBelow(MAZE_W - 2);
+        int seed_z = 1 + RandomBelow(MAZE_H - 2);
+        int dx = DirX(dir);
+        int dz = DirZ(dir);
 
-        //Lay the water first, remembering how far it actually got - it stops at a wall rather than
-        //eating one, because a pond that ate a pillar would punch a hole in the lattice the zones
-        //are built on.
-        int laid = 0;
-        int wx = x;
-        int wz = z;
-        for (int i = 0; i < run; i++){
-            if (!InBounds(wx,wz) || tile[wz][wx] == MAZE_TILE_WALL){
-                break;
-            }
-            tile[wz][wx] = MAZE_TILE_WATER;
-            decor[wz][wx] = MAZE_DECOR_NONE;
-            pass_axis[wz][wx] = MAZE_AXIS_ANY;
-            laid++;
-            wx += DirX(dir);
-            wz += DirZ(dir);
+        //Nothing to grow from. Skipped rather than nudged onto a free cell: the roll is what makes
+        //a board this seed's board, and a generator that quietly moves its own dice is one nobody
+        //can reason about afterwards.
+        if (!can_flood(seed_x,seed_z)){
+            continue;
         }
 
-        //Bridge the whole of it, some of the time. All or nothing - see the note above.
-        if (laid > 0 && RandomBelow(100) < 55){
-            //ACROSS the run, not along it: you cross a stream, you do not walk down it. The bridge
-            //planks therefore run perpendicular to the water's own direction.
-            uint8_t axis = (DirAxis(dir) == MAZE_AXIS_X) ? MAZE_AXIS_Z : MAZE_AXIS_X;
+        //Out from the seed, backwards first and then forwards, up to `span` cells between them.
+        //Only the AXIS of `d` matters here, since it grows both ways along it.
+        auto reach = [&](int d, int& back, int& fwd){
+            back = 0;
+            while (back + 1 < span &&
+                   can_flood(seed_x - DirX(d) * (back + 1),seed_z - DirZ(d) * (back + 1))){
+                back++;
+            }
+            fwd = 0;
+            while (back + fwd + 1 < span &&
+                   can_flood(seed_x + DirX(d) * (fwd + 1),seed_z + DirZ(d) * (fwd + 1))){
+                fwd++;
+            }
+        };
+
+        int back = 0;
+        int fwd = 0;
+        reach(dir,back,fwd);
+        /*
+            IF THE ROLLED AXIS HAS NO ROOM, TAKE THE OTHER ONE. This is not fussiness, it is half
+            the ponds: the pillar lattice puts a wall on every even x of every even row, so a run
+            rolled east-west along an EVEN row is boxed in before it starts and comes out as a
+            single cell of water in a corridor - which is not a pond, cannot be bridged (both of
+            its banks are the pillars that boxed it in), and just blocks the corridor. The same
+            seed one quarter-turn round has the whole row to grow into.
+
+            The dice are not being re-rolled - the seed cell, the length and the bridge chance are
+            all still the ones this pond was dealt, and a pond with room both ways keeps the axis
+            it rolled. Only a pond that has nowhere to go is turned, and it is turned to a fixed
+            axis rather than a random one so the board stays a function of the seed.
+        */
+        if (back + fwd + 1 < MAZE_POND_MIN){
+            int other = (DirAxis(dir) == MAZE_AXIS_X) ? MAZE_DIR_SOUTH : MAZE_DIR_EAST;
+            int other_back = 0;
+            int other_fwd = 0;
+            reach(other,other_back,other_fwd);
+            if (other_back + other_fwd > back + fwd){
+                dir = other;
+                back = other_back;
+                fwd = other_fwd;
+                dx = DirX(dir);
+                dz = DirZ(dir);
+            }
+        }
+
+        int x = seed_x - dx * back;         //the first cell of the run, walking towards `dir`
+        int z = seed_z - dz * back;
+        int laid = back + fwd + 1;
+
+        //Bridge the whole of it, some of the time. All or nothing - see the note above. Rolled
+        //BEFORE the water goes down, because a pond that is going to be bridged is shaped
+        //differently from one that is not - which is the next paragraph.
+        uint8_t axis = DirAxis(dir);
+        bool f_bridge = (RandomBelow(100) < MAZE_BRIDGE_PCT);
+        if (f_bridge){
+            /*
+                A POND THAT IS ABOUT TO BE BRIDGED STOPS ONE CELL SHORT OF ANYTHING ITS BRIDGE
+                CANNOT LAND ON, by giving up cells from whichever end has nowhere to go until it
+                has two banks or nothing left.
+
+                It is the difference between a rule and a lottery. A run grows until it meets a
+                wall, so the cell that stopped it IS the wall, and simply refusing to bridge such a
+                pond threw away most of them - measured over a thousand seeds, only 71% of boards
+                had a crossing anywhere on them, against 96% before any of this. Retracting the
+                pond by one instead leaves that cell dry, and a dry cell is exactly what a bridge
+                needs at its end. The pond is one shorter and the board has a crossing on it.
+
+                Giving up EVERYTHING is a real outcome and not a failure - a two-cell run wedged
+                between two walls has no dry end to offer - and then it is simply a pond, laid at
+                its full length, which is what the untouched x/z/laid below still describe.
+            */
             int bx = x;
             int bz = z;
-            for (int i = 0; i < laid; i++){
-                decor[bz][bx] = MAZE_DECOR_BRIDGE;
-                pass_axis[bz][bx] = axis;
-                bx += DirX(dir);
-                bz += DirZ(dir);
+            int blen = laid;
+            while (blen > 0 && !is_bank(bx - dx,bz - dz,axis)){
+                bx += dx;                   //the cell we just gave up is the bank now
+                bz += dz;
+                blen--;
             }
+            //bx + dx * blen does not move while the back end retracts, so this is still the far end.
+            while (blen > 0 && !is_bank(bx + dx * blen,bz + dz * blen,axis)){
+                blen--;
+            }
+            if (blen > 0){
+                x = bx;
+                z = bz;
+                laid = blen;
+            }else{
+                f_bridge = false;
+            }
+        }
+
+        for (int i = 0; i < laid; i++){
+            tile[z + dz * i][x + dx * i] = MAZE_TILE_WATER;
+            decor[z + dz * i][x + dx * i] = MAZE_DECOR_NONE;
+            pass_axis[z + dz * i][x + dx * i] = MAZE_AXIS_ANY;
+        }
+        if (!f_bridge){
+            continue;
+        }
+        for (int i = 0; i < laid; i++){
+            decor[z + dz * i][x + dx * i] = MAZE_DECOR_BRIDGE;
+            pass_axis[z + dz * i][x + dx * i] = axis;
         }
     }
 }
@@ -361,7 +502,9 @@ void Maze::AddItems(){
         int j = i + RandomBelow(num_cells - i);
         int tx = cell_x[i]; cell_x[i] = cell_x[j]; cell_x[j] = tx;
         int tz = cell_z[i]; cell_z[i] = cell_z[j]; cell_z[j] = tz;
-        item[cell_z[i]][cell_x[i]] = (i % 2 == 0) ? MAZE_ITEM_HEALTH : (uint8_t)MAZE_ITEM_SHIELD;
+        //The cells are shuffled and the LIST IS NOT, so the mix on a full board is exact while
+        //where each thing landed is not. See MAZE_ITEM_ORDER.
+        item[cell_z[i]][cell_x[i]] = MAZE_ITEM_ORDER[i];
     }
 }
 
@@ -414,7 +557,21 @@ void Maze::PlaceEnemies(){
 void Maze::AddDecor(){
     for (int z = 1; z < MAZE_H - 1; z++){
         for (int x = 1; x < MAZE_W - 1; x++){
-            if (IsBlock(x,z) || tile[z][x] == MAZE_TILE_WATER){
+            if (IsBlock(x,z)){
+                continue;
+            }
+            /*
+                Water gets lillies and nothing else.
+
+                The `decor == NONE` test is what keeps a pad off a bridge: a bridge IS this cell's
+                decor, so a spanned cell is never empty water. Everything below this point is for
+                dry land, which is why this returns rather than falling through - a plant growing
+                out of a pond would be the same bug the other way round.
+            */
+            if (tile[z][x] == MAZE_TILE_WATER){
+                if (decor[z][x] == MAZE_DECOR_NONE && RandomBelow(100) < MAZE_LILLY_PCT){
+                    decor[z][x] = MAZE_DECOR_LILLY;
+                }
                 continue;
             }
             if (decor[z][x] != MAZE_DECOR_NONE){
@@ -475,14 +632,30 @@ int Maze::PruneUnreachable(){
         }
     }
 
-    //Anything walkable that was not reached becomes wall. Water is left as it is: it was never
-    //walkable, and a pond behind a wall reads as scenery rather than as a place you failed to get to.
+    //Anything walkable that was not reached becomes wall.
     for (int z = 1; z < MAZE_H - 1; z++){
         for (int x = 1; x < MAZE_W - 1; x++){
             if (seen[z][x]){
                 continue;
             }
-            if (IsBlock(x,z) || tile[z][x] == MAZE_TILE_WATER){
+            if (tile[z][x] == MAZE_TILE_WATER){
+                /*
+                    THE POND STAYS, ITS BRIDGE GOES. The water was never walkable, so a pond behind
+                    a wall reads as scenery rather than as a place you failed to get to - but a
+                    BRIDGE is a promise that you can cross, and one nobody can reach is a crossing
+                    to nowhere with a wall at each end.
+
+                    This is cheap now and it was not before: the banks are walled off by this very
+                    loop, several cells after the generator checked them and found them good, so
+                    AddWater cannot see it coming. It also shows far more than it used to, because a
+                    span runs the whole length of its pond - what used to be one stranded plank is
+                    now four of them in a sealed pocket.
+                */
+                decor[z][x] = MAZE_DECOR_NONE;
+                pass_axis[z][x] = MAZE_AXIS_ANY;
+                continue;
+            }
+            if (IsBlock(x,z)){
                 continue;
             }
             tile[z][x] = MAZE_TILE_WALL;
@@ -642,6 +815,9 @@ void Maze::NewGame(uint32_t seed){
     player.f_alive = true;
 
     health = MAZE_START_HEALTH;
+    //A board is a round, so the score starts again with it. Dying does NOT reset it - see the note
+    //on `score`.
+    score = 0;
     shield_ticks = 0;
     invuln_ticks = 0;
     dead_ticks = 0;
@@ -986,6 +1162,14 @@ void Maze::TickItems(){
             shield_ticks = MAZE_SHIELD_TICKS;
             break;
         default:
+            /*
+                The treasures, which are the whole of the default case and are meant to be.
+
+                MazeItemScore returns 0 for anything that is not one, so a pickup added later that
+                forgets to say what it is worth adds nothing rather than adding garbage - and a
+                treasure added later needs no case here at all, only a line in that switch.
+            */
+            score += (uint32_t)MazeItemScore(item[z][x]);
             break;
     }
     item[z][x] = MAZE_ITEM_NONE;

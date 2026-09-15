@@ -49,4 +49,22 @@ adaptations in `ApplicationTetris.cpp` survived a ~900-line diff that way.
 `.gitattributes` `text eol=lf`) and the port is LF; without it a 43-line change renders as 2,775.
 Note `git diff` does NOT accept that flag — use `diff`/`git diff --no-index` or normalise first.
 
+**`core/glad.h` is the single chokepoint, measured 2026-09-15.** `core/Mesh.h:5` includes
+`"glad.h"`, whose line 4 is `#include <windows.h>` — so every file that touches `Mesh` or `Object`
+dies there before reaching any real portability question. Swap `glad.h` for a
+`#include <GLES3/gl31.h>` shim and **31 of the 63 `core/*.cpp` syntax-check clean for aarch64 with
+the NDK, unmodified** — including `Object`, `ObjectAnimation`, `GLTFLoader`, `Shader`, all of
+`physics/` and all of `skeleton/`. The Android port's own `glad.h` already opens with the right
+guard; take its first four lines.
+
+After that the next-biggest single win is **`PerfTimer.h/.cpp`**: 13 lines of
+`LARGE_INTEGER`/`QueryPerformanceCounter`, in a file that already includes `<chrono>`. It is the
+*only* thing failing `Scene.cpp` and `ParticleEmitter.cpp` (4 errors each, all `LARGE_INTEGER`).
+
+**The arbiter is the NDK compiler, not the eye** — `aarch64-linux-android24-clang++ -std=c++17
+-fsyntax-only` from `C:/code/android/sdk/ndk/27.2.12479018`. Diff line counts mislead badly here:
+they conflate Android divergence with plain staleness, and for most small files
+(`Camera`, `AssetManager`, `Light`, `Material.h`, `GLTFLoader.h`) the entire diff is this tree
+having moved ahead, with no Android content at all.
+
 See [[touch_input_plan]], [[per_app_build_layout]], [[shared_build_output_coordination]].

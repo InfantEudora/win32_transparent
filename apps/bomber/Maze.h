@@ -67,6 +67,15 @@ enum MazeDecor : uint8_t {
     MAZE_DECOR_FLOWERS_TALL,    //a standing clump, tall enough to read from across the board
     MAZE_DECOR_PLANT,
     MAZE_DECOR_TURD,
+    /*
+        A lilly pad. THE ONLY DECOR THAT GOES ON WATER, and only on water with nothing else on it -
+        a pad growing through a bridge is the one arrangement that would read as a mistake.
+
+        It is scenery and nothing more: it does not make the cell crossable (that is
+        MAZE_DECOR_BRIDGE's job and IsPassable asks for that by name), it does not block a blast,
+        and walking is not affected by it, because there is no walking on water to affect.
+    */
+    MAZE_DECOR_LILLY,
     MAZE_DECOR_BRIDGE,
     MAZE_DECOR_COUNT
 };
@@ -87,8 +96,42 @@ enum MazeItem : uint8_t {
     MAZE_ITEM_NONE = 0,
     MAZE_ITEM_HEALTH,       //one point of health back, up to the starting maximum
     MAZE_ITEM_SHIELD,       //MAZE_SHIELD_TICKS of not being hurt by anything
+    /*
+        The three treasures. THEY DO NOTHING BUT SCORE, which is the point of having three of them:
+        a pickup that changes how the game plays has to be balanced, and a pickup that is only worth
+        points can be made rare purely because it is pretty.
+
+        Ordered by what they are worth, and MazeItemScore below depends on that order only in the
+        sense that it has to be kept in step with it - which is why it is a switch and not
+        arithmetic on the enum.
+    */
+    MAZE_ITEM_COIN,
+    MAZE_ITEM_DIAMOND,
+    MAZE_ITEM_CRYSTAL,
     MAZE_ITEM_COUNT
 };
+
+//--- what treasure is worth ---------------------------------------------------------------------
+/*
+    Points per treasure, and the gaps are deliberately wide.
+
+    5x between each step, so finding a crystal is not "a few more coins", it is the thing that
+    happened this round. A flatter ladder would make the rare ones pointless to be pleased about,
+    which is the only job they have.
+*/
+#define MAZE_SCORE_COIN         10
+#define MAZE_SCORE_DIAMOND      50
+#define MAZE_SCORE_CRYSTAL      250
+
+//What one pickup adds to the score. 0 for the ones that pay in health or time instead.
+static inline int MazeItemScore(uint8_t item){
+    switch (item){
+        case MAZE_ITEM_COIN:    return MAZE_SCORE_COIN;
+        case MAZE_ITEM_DIAMOND: return MAZE_SCORE_DIAMOND;
+        case MAZE_ITEM_CRYSTAL: return MAZE_SCORE_CRYSTAL;
+        default:                return 0;
+    }
+}
 
 /*
     Which way a cell may be crossed.
@@ -178,6 +221,29 @@ enum MazeStyle : uint8_t {
 #define MAZE_MIN_PLAYABLE       90
 #define MAZE_LAYOUT_ATTEMPTS    8
 
+//--- water and the bridges over it --------------------------------------------------------------
+//How many ponds are ATTEMPTED. Attempted rather than laid: one whose seed lands on a pillar is
+//skipped rather than moved, so a board usually ends up with a few less than this.
+#define MAZE_NUM_PONDS          7
+/*
+    How long a pond's run TRIES to be, in cells, before the walls have their say.
+
+    THIS IS THE LENGTH OF A BRIDGE, because a bridge spans the whole of the pond it is on - see
+    AddWater. Five is the ceiling because a span longer than that is a corridor you cannot turn
+    round in with a bomb behind you.
+
+    The floor is three and it is not the shortest bridge you will see: a pond about to be bridged
+    gives up a cell to any end that has no dry land to offer, so a three-cell run wedged between
+    two walls ends up as a one-cell crossing. Measured over a thousand seeds this lands at a mean
+    span of 3.1 cells with 11% of them single - a floor of two gave a mean of 2.7 with 18% single,
+    and a ceiling of six bought 3.4 at the price of visibly less floor to play on.
+*/
+#define MAZE_POND_MIN           3
+#define MAZE_POND_MAX           5
+//Percentage of ponds that get a bridge. The rest stay water you have to walk around, which is what
+//makes the ones you can cross worth noticing.
+#define MAZE_BRIDGE_PCT         55
+
 //--- soft blocks and what is under them ---------------------------------------------------------
 //Percentage of open floor that gets a destructible block. A fifth is the classic feel: enough that
 //the board changes shape as it is played, not so much that the opening move is always "dig out".
@@ -185,8 +251,34 @@ enum MazeStyle : uint8_t {
 //Cells around the spawn kept clear of them, in manhattan distance. Two, so the first bomb always
 //has somewhere to run to.
 #define MAZE_SPAWN_CLEAR        2
-//How many pickups are buried. Four on a 16x16 board is rare enough to be worth digging for.
-#define MAZE_NUM_ITEMS          4
+/*
+    How many pickups are buried, and EXACTLY WHAT THEY ARE.
+
+    A fixed list handed out in order rather than a weighted roll, which is the same call AddItems
+    already made about which cells to use: a board then has exactly one crystal rather than a 12%
+    chance of two, and "how good was that board" is a question about where things were, not about
+    whether the dice were kind.
+
+    The list is walked front to back onto SHUFFLED cells, so the mix is exact while the placement is
+    not. It also degrades the right way: a board with only three soft blocks left to bury things
+    under keeps the coins and the health and loses the crystal, because the rare thing is at the
+    back. Eight of them on a 16x16 board with ~34 soft blocks is roughly one dig in four.
+*/
+#define MAZE_NUM_ITEMS          8
+static const uint8_t MAZE_ITEM_ORDER[MAZE_NUM_ITEMS] = {
+    MAZE_ITEM_COIN,    MAZE_ITEM_HEALTH,
+    MAZE_ITEM_COIN,    MAZE_ITEM_DIAMOND,
+    MAZE_ITEM_COIN,    MAZE_ITEM_SHIELD,
+    MAZE_ITEM_COIN,    MAZE_ITEM_CRYSTAL,
+};
+
+/*
+    Percentage of empty water cells that get a lilly pad.
+
+    A third, so a pond reads as a pond rather than as a lilly farm, and so two ponds on the same
+    board do not look like copies of each other.
+*/
+#define MAZE_LILLY_PCT          33
 
 //--- the player ---------------------------------------------------------------------------------
 #define MAZE_START_HEALTH       3
@@ -323,6 +415,14 @@ public:
     int  dead_ticks = 0;            //counts UP while lying there, to MAZE_RESPAWN_TICKS
     int  deaths = 0;
     int  items_taken = 0;
+    /*
+        Points. Treasure only - health and shields pay in other currencies and are worth 0 here.
+
+        Survives a death, because dying already costs a life and the respawn, and taking the score
+        as well would mean a board is only worth playing from full health. It does NOT survive
+        NewGame: a seed lays out a board and a board is a round.
+    */
+    uint32_t score = 0;
 
     //--- the bomb -----------------------------------------------------------------------------
     //One at a time for now. `fuse_ticks` counts down; at zero it becomes the blast below.
@@ -442,8 +542,8 @@ private:
     void FillOpen(int x0, int z0, int x1, int z1);
     //Punches holes through a zone boundary so the pieces of the field are one field.
     void CarveDoorways(int split_x, int split_z);
-    //Lays water in short runs and bridges some of them, ALIGNED with the run so a row of bridges
-    //is one bridge. See the note at the definition.
+    //Lays water in short straight runs and bridges some of them ALONG the run, so a crossing is one
+    //long span rather than a row of parallel planks. See the note at the definition.
     void AddWater();
     //Scatters hedges and wooden walls over the open floor. AFTER the reachability pass - see there.
     void AddSoftBlocks();

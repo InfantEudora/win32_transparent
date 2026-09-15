@@ -80,12 +80,34 @@ static const char* BOMBER_DECOR_ASSET[MAZE_DECOR_COUNT] = {
     "flowers",
     "grass_plant",
     "turd",
+    "lilly",            //MAZE_DECOR_LILLY - the only one that goes on water
     "bridge",
 };
+//Ordered by MazeItem, so the rows after the first two are coin, diamond, crystal - the score ladder
+//in the order Maze.h writes it.
 static const char* BOMBER_ITEM_ASSET[MAZE_ITEM_COUNT] = {
     NULL,               //MAZE_ITEM_NONE
     "pickup_health",
     "pickup_shield",
+    "pickup_coin",
+    "pickup_diamond",
+    "pickup_crystal",
+};
+/*
+    Which pickups turn on the spot.
+
+    The two flat ones. A crystal is faceted enough to read as an object standing still and a health
+    or shield pickup is a thing on the floor, but a coin seen edge-on is a line - it has to turn to
+    say what it is. Indexed by MazeItem so adding a treasure is a row here rather than a condition
+    somewhere in the field builder.
+*/
+static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
+    false,              //MAZE_ITEM_NONE
+    false,              //health
+    false,              //shield
+    true,               //coin
+    true,               //diamond
+    false,              //crystal
 };
 /*
     Which way the bridge model's planks run at each yaw.
@@ -145,6 +167,59 @@ static const char* BOMBER_ITEM_ASSET[MAZE_ITEM_COUNT] = {
 #define BOMBER_ANIM_CHOP    "Enemy_Chopping"
 //Plays ONCE and holds its last frame - see where it is loaded. The only non-looping clip here.
 #define BOMBER_ANIM_DEATH   "Enemy_Death"
+
+/*
+    --- the exit door, and why it is two assets ---------------------------------------------------
+
+    `wall_doorway` is the frame and `door` is the leaf that swings in it. They are separate nodes in
+    the .glb, parented there, and both sit at the same origin with no offset between them.
+
+    THAT SPLIT IS WHAT MAKES THE CLIP WORK AT ALL. An animation track writes an ABSOLUTE local
+    transform onto its target - Animation::ApplyIntervalOnto does a plain SetPosition/SetRotation -
+    so a clip on a single door object would overwrite the placement this app gives it and drag the
+    door to wherever the cell is in Blender. With the leaf a CHILD, its local transform is relative
+    to the archway, so the clip owns it outright and the archway keeps the cell.
+
+    It also buys the hinge. The leaf's origin is not on its hinge edge, so `Door_Opening` swings it
+    97 degrees AND slides it by (-0.33, 0, -0.31) to keep the hinge still - a rotation-only clip
+    would spin the door about its middle. Both halves are needed and both are in the file.
+
+    Note what is NOT needed: no armature, no skin, no bones. GLTFLoader::LoadAnimation builds one
+    track per target NODE and does not care whether that node is a joint, and Object::AddAnimation
+    links tracks by name against the object and its children. A rigid prop animates through exactly
+    the same path a character does, minus the skin.
+*/
+#define BOMBER_DOOR_ARCH_ASSET  "wall_doorway"
+/*
+    The leaf's node name, and it is a LOOKUP KEY, not a label: Animation::LinkObjects binds the
+    clip's one track by comparing it against object names, so the leaf object has to be called
+    exactly this or the clip plays and nothing moves.
+*/
+#define BOMBER_DOOR_LEAF_ASSET  "door"
+#define BOMBER_ANIM_DOOR        "Door_Opening"
+/*
+    Where it stands, until the rules place it.
+
+    The middle of the north border, so it reads as the way OUT of the board rather than as a piece
+    of furniture on it. RebuildField leaves the block off this cell - see the note there.
+*/
+#define BOMBER_DOOR_X           (MAZE_W / 2)
+#define BOMBER_DOOR_Z           0
+
+//--- the pickups ----------------------------------------------------------------------------------
+/*
+    How long a taken pickup takes to shrink away, in ticks.
+
+    Under a third of a second. Long enough to be seen and to say WHICH cell paid out, which is the
+    only job it has - a pickup that vanished on the frame it was touched left the player wondering
+    whether they had got it. Much longer and it is still shrinking while you walk off the tile,
+    which reads as a second object rather than as the one you took.
+*/
+#define BOMBER_ITEM_SHRINK_TICKS    18
+//Ticks for one full turn of a coin. Four seconds - slow enough to be scenery rather than a beacon.
+#define BOMBER_ITEM_SPIN_TICKS      240
+//The shield the player wears. Parented to the character - see the note on shield_worn.
+#define BOMBER_SHIELD_ASSET         "equipped_shield"
 
 ApplicationBomber::ApplicationBomber():Application(){
     app_name = "Bomber";
@@ -226,6 +301,7 @@ void ApplicationBomber::Init(void){
     LoadAssets();
     BuildEnemies();
     BuildTurds();
+    BuildDoor();
     BuildBlastNoise();
     //BEFORE BuildExplosion, because custom shaders draw in registration order and the water is
     //opaque while the blast is not - see BuildWater.
@@ -346,8 +422,10 @@ void ApplicationBomber::LoadAssets(void){
     //added to the file for some other purpose does not silently become a game asset.
     GetAssetsFromGLTF("tile_grass","tile_brick","tile_rock","tile_water",
                       "wall_brick","wall_hedge","wall_wood",
-                      "grass_flowers","flowers","grass_plant","turd","bridge",
+                      "grass_flowers","flowers","grass_plant","turd","bridge","lilly",
                       "pickup_health","pickup_shield",
+                      "pickup_coin","pickup_diamond","pickup_crystal",BOMBER_SHIELD_ASSET,
+                      BOMBER_DOOR_ARCH_ASSET,BOMBER_DOOR_LEAF_ASSET,
                       BOMBER_BOMB_ASSET,BOMBER_CHAR_ASSET);
     /*
         THE ENEMY IS NOT IN THAT LIST, and that is the whole difference between it and everything
@@ -544,6 +622,108 @@ void ApplicationBomber::BuildTurds(void){
               first ? first->num_bones : 0);
 }
 
+/*
+    The exit: an archway on its cell with a door leaf swinging under it.
+
+    RENDER THREAD, ONCE. Not part of RebuildField and not in `field_objects`, so a restart lays out
+    a new board around a door that keeps standing - and keeps whatever state it was left in, which
+    is what you want while looking at the animation.
+
+    --- THE CLIP GOES ON THE ARCHWAY, NOT ON THE LEAF ---------------------------------------------
+    Which looks backwards, since the leaf is the thing that moves. Two reasons, and they are the
+    same two that make a Skeleton work the way it does:
+
+      - Scene::UpdateAnimations walks `renderer->objects`, which holds what was handed to
+        Scene::AddObject. A child is DRAWN through its parent (Renderer::CullObjects recurses) but
+        it is not in that list, so ApplyAnimation would never run on the leaf. The archway is in it.
+      - Object::AddAnimation calls Animation::LinkObjects(this), which resolves each track against
+        this object AND its children by name. The clip's one track is named `door`, so it binds to
+        the leaf from up here.
+
+    So the archway is the animated object and the leaf is what the animation moves, exactly as a
+    Skeleton is the animated object and its bones are what move.
+*/
+void ApplicationBomber::BuildDoor(void){
+    door_arch = assetmanager->GetObjectFromAsset(BOMBER_DOOR_ARCH_ASSET);
+    Object* leaf = assetmanager->GetObjectFromAsset(BOMBER_DOOR_LEAF_ASSET);
+    if (!door_arch || !leaf){
+        debug->Err("The door needs both %s and %s in bomber_assets.glb\n",
+                   BOMBER_DOOR_ARCH_ASSET,BOMBER_DOOR_LEAF_ASSET);
+        door_arch = NULL;
+        return;
+    }
+    door_arch->name = "Doorway";
+    //NOT a display name: LinkObjects matches the clip's track against it. See BOMBER_DOOR_LEAF_ASSET.
+    leaf->name = BOMBER_DOOR_LEAF_ASSET;
+    /*
+        No transform on the leaf. The two nodes share an origin in the .glb, so identity is already
+        the shut pose, and from here on the clip owns this transform completely - anything set on it
+        would be overwritten on the first frame that plays.
+    */
+    door_arch->AttachChild(leaf);
+
+    //A panel lying east-west, like the hedges and the wooden walls - it stands IN the north border,
+    //so its long axis runs along that wall. See BOMBER_PANEL_YAW_X.
+    door_arch->SetPosition(CellCentre(BOMBER_DOOR_X,BOMBER_DOOR_Z));
+    door_arch->SetRotation(quat(vec3(0,1,0),BOMBER_PANEL_YAW_X));
+
+    Animation* opening = gltfloader.LoadAnimation(BOMBER_ANIM_DOOR);
+    if (!opening){
+        debug->Err("No animation called %s in bomber_assets.glb\n",BOMBER_ANIM_DOOR);
+    }else{
+        /*
+            A DOOR IS AN EVENT, like the enemy's death and unlike everything else animated here: it
+            swings once and stays where it got to. Object::ApplyAnimation drops a non-looping clip
+            into ANIMATION_STATE_PAUSED on its last frame, which is precisely "open and staying
+            open" - a looped door would slam and re-open forever.
+        */
+        opening->looped = false;
+        door_arch->AddAnimation(opening);
+        //The same unbound-track report BuildSkinnedActor does, and for the same reason: a track
+        //that found nothing to drive looks exactly like a clip that is playing.
+        for (ObjectAnimation* track:opening->object_animations){
+            if (!track->target){
+                debug->Warn("Clip %s drives nothing on [%s] - no object of that name under %s\n",
+                            BOMBER_ANIM_DOOR,track->target_name.c_str(),door_arch->name.c_str());
+            }
+        }
+        debug->Ok("Clip %-16s %i track(s), %.2fs\n",BOMBER_ANIM_DOOR,
+                  (int)opening->object_animations.size(),opening->duration);
+    }
+
+    main_scene->AddObject(door_arch);
+    /*
+        Start the clip, then ask for it shut.
+
+        SwitchToAnimation is the only rewind in the door's whole life: after this the clip is never
+        restarted, only run one way or the other. The first tick takes it to 0 and pauses it there,
+        posing the leaf on the way - so the shut door at startup is the same state a shut door ends
+        in, rather than a second arrangement that has to be kept in step with the first.
+    */
+    door_arch->SwitchToAnimation(BOMBER_ANIM_DOOR);
+    SetDoorOpen(false);
+    debug->Ok("Door at tile (%i,%i)\n",BOMBER_DOOR_X,BOMBER_DOOR_Z);
+}
+
+/*
+    Swings it, or swings it back.
+
+    PHYSICS THREAD ONLY - from the BOMBER_CMD_DOOR handler, and from BuildDoor before anything is
+    running.
+
+    ONE CLIP, RUN BOTH WAYS. There is a single `Door_Opening` in the file and shutting is it at -1,
+    which is the whole of Object::SetAnimationRate's reason for existing. Nothing rewinds, so
+    pressing shut halfway through the swing reverses from halfway through rather than snapping to
+    the far end - which is also what a door hit by a second thought actually does.
+*/
+void ApplicationBomber::SetDoorOpen(bool f_open){
+    if (!door_arch){
+        return;
+    }
+    f_door_open = f_open;
+    door_arch->SetAnimationRate(f_open ? 1.0f : -1.0f);
+}
+
 float ApplicationBomber::CellYaw(int cx, int cz) const {
     uint32_t h = (uint32_t)(cx * 73856093) ^ (uint32_t)(cz * 19349663);
     return (float)(h & 3) * (TYPE_PI * 0.5f);
@@ -603,8 +783,11 @@ void ApplicationBomber::RebuildField(void){
         }
     }
     if (character){
+        //The worn shield is its CHILD, so ~Object takes it - see the note on shield_worn. Dropping
+        //the pointer here is the whole of this side of its lifetime.
         character->Destroy();
         character = NULL;
+        shield_worn = NULL;
     }
     if (bomb){
         bomb->Destroy();
@@ -615,6 +798,16 @@ void ApplicationBomber::RebuildField(void){
     //How many of the pooled turds this field has used. Handed out in board order - see the decor
     //block below - and the unused tail is hidden once the walk is done.
     int num_turds_placed = 0;
+
+    //The pickups' view state, which belongs to the field being built and not to the one that just
+    //went. spin_items holds objects from `field_objects`, which the loop above has already emptied.
+    spin_items.clear();
+    num_item_shrinking = 0;
+    for (int z = 0; z < MAZE_H; z++){
+        for (int x = 0; x < MAZE_W; x++){
+            cell_item_shrink[z][x] = 0;
+        }
+    }
 
     for (int z = 0; z < MAZE_H; z++){
         for (int x = 0; x < MAZE_W; x++){
@@ -635,6 +828,17 @@ void ApplicationBomber::RebuildField(void){
                 re-export wall_brick as a thin one and this is the line that should change.
             */
             const char* block_asset = BOMBER_BLOCK_ASSET[t];
+            /*
+                Except where the door stands: the archway IS the wall on that cell, and a brick
+                block in the same place would stand inside it.
+
+                A special case in the VIEW, and the only one on this board - which is exactly why
+                it is temporary. When the exit becomes a rule it will be a tile type in Maze like
+                every other block, BOMBER_BLOCK_ASSET will have a row for it, and this goes away.
+            */
+            if (x == BOMBER_DOOR_X && z == BOMBER_DOOR_Z){
+                block_asset = NULL;
+            }
             if (block_asset){
                 bool f_panel = (t != MAZE_TILE_WALL);
                 float yaw = BOMBER_PANEL_YAW_X;
@@ -698,6 +902,21 @@ void ApplicationBomber::RebuildField(void){
                 cell_item[z][x] = AddCellObject(BOMBER_ITEM_ASSET[it],x,z,
                                                 gltfloader.GetNodePosition(BOMBER_ITEM_ASSET[it]).y,
                                                 0.0f,false);
+                if (cell_item[z][x]){
+                    /*
+                        HIDDEN UNTIL RefreshCells SAYS OTHERWISE, and that is not tidiness.
+
+                        RefreshCells starts a shrink when it finds a pickup that is VISIBLE and that
+                        the rules no longer have. Every item here is buried, so leaving them at the
+                        Object default of visible would make the first refresh - which runs at the
+                        bottom of this function - read them all as just taken and shrink the whole
+                        board's worth away.
+                    */
+                    cell_item[z][x]->SetVisibility(false);
+                    if (BOMBER_ITEM_SPINS[it]){
+                        spin_items.push_back(cell_item[z][x]);
+                    }
+                }
             }
         }
     }
@@ -707,6 +926,20 @@ void ApplicationBomber::RebuildField(void){
     character = assetmanager->GetObjectFromAsset(BOMBER_CHAR_ASSET);
     if (character){
         character->name = "Character";
+        /*
+            The shield goes on as a CHILD with no transform of its own.
+
+            The artist placed `equipped_shield` on top of `character` in the .glb - both nodes sit
+            at the same origin - so identity here is exactly where it was drawn. Attaching rather
+            than positioning it every tick means it follows and turns with the player for free, and
+            it is freed with them: see the note on shield_worn.
+        */
+        shield_worn = assetmanager->GetObjectFromAsset(BOMBER_SHIELD_ASSET);
+        if (shield_worn){
+            shield_worn->name = "Shield";
+            shield_worn->SetVisibility(false);
+            character->AttachChild(shield_worn);
+        }
         main_scene->AddObject(character);
     }
     bomb = assetmanager->GetObjectFromAsset(BOMBER_BOMB_ASSET);
@@ -1126,6 +1359,25 @@ void ApplicationBomber::RegisterCommandHandlers(void){
             maze.fuse_ticks = 1;
             return OBJECTID_INVALID;
         });
+
+    main_scene->RegisterCommandHandler(BOMBER_CMD_DOOR,
+        [this](const SimCommand& cmd) -> objectid_t {
+            SetDoorOpen(cmd.value[0] != 0.0f);
+            return OBJECTID_INVALID;
+        });
+
+    main_scene->RegisterCommandHandler(BOMBER_CMD_GIVE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            int id = (int)cmd.value[0];
+            if (id <= MAZE_ITEM_NONE || id >= MAZE_ITEM_COUNT || !maze.player.f_alive){
+                return OBJECTID_INVALID;
+            }
+            //Laid on the tile, not granted: TickItems picks it up on this same tick, through the
+            //same switch a dug-up one goes through.
+            maze.item[maze.player.tile_z][maze.player.tile_x] = (uint8_t)id;
+            maze.field_version++;
+            return OBJECTID_INVALID;
+        });
 }
 
 /*
@@ -1223,14 +1475,83 @@ void ApplicationBomber::RefreshCells(void){
                 cell_block[z][x]->SetVisibility(BOMBER_BLOCK_ASSET[t] != NULL);
             }
             if (cell_item[z][x]){
-                //Visible once it can be walked onto, gone once it has been taken. The tile IS the
-                //lid - see the note on MazeItem.
-                cell_item[z][x]->SetVisibility(maze.item[z][x] != MAZE_ITEM_NONE &&
-                                               maze.IsPassable(x,z));
+                //Visible once it can be walked onto. The tile IS the lid - see the note on MazeItem.
+                bool f_want = maze.item[z][x] != MAZE_ITEM_NONE && maze.IsPassable(x,z);
+                if (f_want){
+                    cell_item[z][x]->SetVisibility(true);
+                }else if (cell_item[z][x]->IsVisible() && cell_item_shrink[z][x] <= 0){
+                    /*
+                        Taken. It SHRINKS AWAY rather than blinking out, over the next
+                        BOMBER_ITEM_SHRINK_TICKS.
+
+                        Started here because this is the one place that sees the change: the rules
+                        cleared the cell and bumped field_version, and comparing what is drawn
+                        against what they now say is what this function is for. The `<= 0` guard
+                        matters - a second field_version bump while a shrink is running (another
+                        block destroyed a tick later) would otherwise restart it.
+                    */
+                    cell_item_shrink[z][x] = BOMBER_ITEM_SHRINK_TICKS;
+                    num_item_shrinking++;
+                }
             }
         }
     }
     drawn_field_version = maze.field_version;
+}
+
+/*
+    The two pickup tweens: treasure turning, and a taken pickup shrinking away.
+
+    PHYSICS THREAD, from SyncView, every tick. Both are derived from state that already exists -
+    the tick counter and a per-cell countdown - so neither is anything the simulation has to
+    remember and neither can drift.
+*/
+void ApplicationBomber::TickPickupView(void){
+    /*
+        The spin, off the PHYSICS TICK rather than a wall clock.
+
+        Same reason the blast and the water are: it freezes under sim_pause, it advances one frame
+        per sim_step, and a screenshot of a board is reproducible. A wall clock here would put the
+        coins on a different clock from the fire burning next to them.
+    */
+    if (!spin_items.empty() && main_scene){
+        float phase = (float)(main_scene->GetPhysicsTick() % BOMBER_ITEM_SPIN_TICKS)
+                      / (float)BOMBER_ITEM_SPIN_TICKS;
+        float turn = phase * TYPE_PI * 2.0f;
+        for (int i = 0; i < (int)spin_items.size(); i++){
+            /*
+                A different starting angle each, from the INDEX rather than a random draw - the same
+                call BuildTurds makes and for the same reason. Four coins turning in lockstep reads
+                as one animation played four times, and a draw from the shared stream would shift it
+                out from under the simulation.
+            */
+            float offset = (float)i / (float)spin_items.size() * TYPE_PI * 2.0f;
+            spin_items[i]->SetRotation(quat(vec3(0,1,0),turn + offset));
+        }
+    }
+
+    //One comparison on the overwhelming majority of ticks - see the note on num_item_shrinking.
+    if (num_item_shrinking <= 0){
+        return;
+    }
+    for (int z = 0; z < MAZE_H; z++){
+        for (int x = 0; x < MAZE_W; x++){
+            if (cell_item_shrink[z][x] <= 0 || !cell_item[z][x]){
+                continue;
+            }
+            cell_item_shrink[z][x]--;
+            if (cell_item_shrink[z][x] <= 0){
+                //Hidden AND put back to full size: the object is reused for the life of the field,
+                //and a pickup left at scale 0 would be invisible the next time one was revealed.
+                cell_item[z][x]->SetVisibility(false);
+                cell_item[z][x]->SetScale(vec3(1.0f,1.0f,1.0f));
+                num_item_shrinking--;
+            }else{
+                float f = (float)cell_item_shrink[z][x] / (float)BOMBER_ITEM_SHRINK_TICKS;
+                cell_item[z][x]->SetScale(vec3(f,f,f));
+            }
+        }
+    }
 }
 
 /*
@@ -1248,6 +1569,9 @@ void ApplicationBomber::SyncView(void){
     if (drawn_field_version != maze.field_version){
         RefreshCells();
     }
+    //Straight after it, so a pickup taken THIS tick starts shrinking on the frame it was taken
+    //rather than on the next one.
+    TickPickupView();
 
     //--- the walkers -------------------------------------------------------------------------------
     /*
@@ -1307,6 +1631,17 @@ void ApplicationBomber::SyncView(void){
     };
 
     PlaceWalker(character,maze.player,character_y);
+    /*
+        The worn shield, which is the only feedback that a shield is running other than a number in
+        a panel.
+
+        A CHILD, so this flag is all there is to it - it is already in the right place and facing
+        the right way, and a dead player draws no shield because nothing below an invisible object
+        is drawn either.
+    */
+    if (shield_worn){
+        shield_worn->SetVisibility(maze.shield_ticks > 0);
+    }
     for (int i = 0; i < (int)enemy_objects.size(); i++){
         //An object past the end of this field's enemies gets a default MazeWalker, whose f_alive is
         //false - which is why that default is false rather than true.
@@ -1732,7 +2067,12 @@ json ApplicationBomber::StateJson(void){
         {"health",maze.health},
         {"shield_ticks",maze.shield_ticks},
         {"invuln_ticks",maze.invuln_ticks},
-        {"deaths",maze.deaths}
+        {"deaths",maze.deaths},
+        //Treasure only. See MazeItemScore - health and shields are worth nothing here.
+        {"score",maze.score},
+        //Whether the shield is actually being WORN, which is the half a tick count cannot answer:
+        //it is a child of the character, so this is also a test that the character exists.
+        {"wearing_shield",shield_worn ? shield_worn->IsVisible() : false}
     };
     //One entry per enemy this field placed, alive or not - the index is stable, so a test can
     //follow one of them. Their TILES are what an assertion wants: "did it cut the hedge" is a
@@ -1801,8 +2141,44 @@ json ApplicationBomber::StateJson(void){
         {"items_taken",maze.items_taken},
         {"blocks_destroyed",maze.blocks_destroyed},
         {"blocks_cut",maze.blocks_cut},
-        {"enemies_killed",maze.enemies_killed}
+        {"enemies_killed",maze.enemies_killed},
+        //Pickups part-way through shrinking away. VIEW state, reported because it is the only
+        //evidence that the shrink ran at all - it is over in BOMBER_ITEM_SHRINK_TICKS and a
+        //screenshot has to be taken inside that window to see it.
+        {"items_shrinking",num_item_shrinking}
     };
+    /*
+        The door, as the ANIMATION sees it.
+
+        `clip` and `state` are here rather than just `open` because the interesting failure is not
+        a door that will not open - it is a clip that reports itself playing while the leaf stands
+        still, which is what an unbound track looks like from the outside. `leaf_moved` is the one
+        that cannot lie: it is the leaf's own local transform, which only the clip ever writes.
+    */
+    if (door_arch){
+        json door = json{
+            {"tile",json::array({BOMBER_DOOR_X,BOMBER_DOOR_Z})},
+            {"open",f_door_open},
+            {"clip",std::string(door_arch->CurrentAnimationName())},
+            {"state",door_arch->animation_state},
+            //1 opening, -1 shutting, and PAUSED with either means it has got there.
+            {"rate",door_arch->animation_rate}
+        };
+        Animation* opening = door_arch->FindAnimation(BOMBER_ANIM_DOOR);
+        if (opening){
+            door["time_index"] = opening->time_index;
+            door["duration"] = opening->duration;
+            door["tracks"] = (int)opening->object_animations.size();
+        }
+        Object* leaf = door_arch->GetNumChildren() > 0 ? door_arch->GetChild(0) : NULL;
+        if (leaf){
+            vec3 p = leaf->GetPosition();
+            quat r = leaf->GetRotation();
+            door["leaf_moved"] = json::array({p.x,p.y,p.z});
+            door["leaf_turned"] = json::array({r.x,r.y,r.z,r.w});
+        }
+        result["door"] = door;
+    }
     result["renderers"] = json{{"tiles",f_draw_tiles},{"cross",f_draw_cross}};
     result["input_locked"] = f_lock_human_input;
     /*
@@ -1950,6 +2326,70 @@ void ApplicationBomber::RegisterMCPTools(void){
             cmd.type = BOMBER_CMD_DETONATE;
             //SubmitCommandAndWait, not SubmitUICommand: an MCP handler holds no lock, so it may
             //wait - and it has to, or it would report the state from before the bomb was placed.
+            SubmitCommandAndWait(cmd);
+            return MaybeAttachScreenshot(StateJson(),
+                                         args.value("include_screenshot",false),
+                                         args.value("include_ui",true));
+        });
+
+    MCPServer::Get()->RegisterTool("bomber_door",
+        "Swing the exit door open, or put it back shut. The door is an ARCHWAY plus a LEAF, and "
+        "the leaf is moved by the Door_Opening clip out of the .glb - this is the app's only "
+        "animated prop that is not a character, so it is also the test of whether an unskinned "
+        "object can be animated at all. Opening takes about 50 ticks; to look at it a frame at a "
+        "time, sim_pause, call this, then sim_step. bomber_state's `door` block reports the clip, "
+        "its time index and - the one thing that cannot lie - the leaf's own local transform.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"open", {{"type","boolean"},{"description","true opens it, false snaps it shut (there is only one clip, so shutting does not animate)"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame afterwards"}}},
+                {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            SimCommand cmd;
+            cmd.type = BOMBER_CMD_DOOR;
+            cmd.value[0] = args.value("open",true) ? 1.0f : 0.0f;
+            //An MCP handler holds no lock, so it may wait - and it has to, or it would report the
+            //door's state from before the command ran.
+            SubmitCommandAndWait(cmd);
+            return MaybeAttachScreenshot(StateJson(),
+                                         args.value("include_screenshot",false),
+                                         args.value("include_ui",true));
+        });
+
+    MCPServer::Get()->RegisterTool("bomber_give",
+        "Lay a pickup on the tile the player is standing on; the next tick collects it. `item` is "
+        "health, shield, coin, diamond or crystal. FOR TESTING what a pickup does without playing "
+        "a board until one turns up - it goes through Maze::TickItems exactly as a dug-up one "
+        "does, so the score, the shield and the health cap are all the real rules. What it does "
+        "NOT do is make one appear on screen: the field's pickup objects are built per cell when "
+        "the board is laid out, and a cell that never had one has no object to show. Use it for "
+        "the rules and the worn shield; watch `field.items_shrinking` for the shrink.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"item", {{"type","string"},{"description","health, shield, coin, diamond or crystal"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame afterwards"}}},
+                {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
+            }},
+            {"required",json::array({"item"})}
+        },
+        [this](const json& args) -> json {
+            std::string want = args.value("item",std::string());
+            int id = MAZE_ITEM_NONE;
+            if (want == "health"){ id = MAZE_ITEM_HEALTH; }
+            else if (want == "shield"){ id = MAZE_ITEM_SHIELD; }
+            else if (want == "coin"){ id = MAZE_ITEM_COIN; }
+            else if (want == "diamond"){ id = MAZE_ITEM_DIAMOND; }
+            else if (want == "crystal"){ id = MAZE_ITEM_CRYSTAL; }
+            else {
+                return json{ {"error","item must be health, shield, coin, diamond or crystal"} };
+            }
+            SimCommand cmd;
+            cmd.type = BOMBER_CMD_GIVE;
+            cmd.value[0] = (float)id;
             SubmitCommandAndWait(cmd);
             return MaybeAttachScreenshot(StateJson(),
                                          args.value("include_screenshot",false),
@@ -2118,6 +2558,7 @@ void ApplicationBomber::RenderBomberPanel(void){
     //Everything here is in TICKS rather than seconds, which is the house rule and is also what the
     //MCP tools report - a panel that said 1.4s while bomber_state said 84 would be two units to
     //hold in your head for no gain.
+    ImGui::Text("Score %u",maze.score);
     if (maze.player.f_alive){
         ImGui::Text("Health %i/%i",maze.health,MAZE_START_HEALTH);
         if (maze.shield_ticks > 0){
@@ -2192,6 +2633,21 @@ void ApplicationBomber::RenderBomberPanel(void){
         //there is one path rather than two. See ReloadExplosionShader.
         f_shader_reload_requested = true;
     }
+
+    //The exit. Its own row because it is the only thing on this panel that is not about the blast
+    //or the board, and because it is the fastest way to look at the clip a frame at a time: pause,
+    //press it, then step.
+    if (ImGui::Button(f_door_open ? "Shut the door" : "Open the door")){
+        //SubmitUICommand, never SubmitCommandAndWait - render thread with the mutex held. See the
+        //note on the Bomb now button.
+        SimCommand cmd;
+        cmd.type = BOMBER_CMD_DOOR;
+        cmd.value[0] = f_door_open ? 0.0f : 1.0f;
+        SubmitUICommand(cmd);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("tile (%i,%i)  %s",BOMBER_DOOR_X,BOMBER_DOOR_Z,
+                        door_arch ? door_arch->CurrentAnimationName() : "no door");
 
     ImGui::Separator();
     //The two renderers. Both on draws the same blast twice, which is the A/B - see the note at the

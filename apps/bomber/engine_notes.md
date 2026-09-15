@@ -335,6 +335,71 @@ should have to write it.
 
 ---
 
+## 16. CLOSED: `Object` has a playback rate, so a one-shot runs backwards
+
+Found wiring the exit door, which is the first animated thing here that is a PROP rather than a
+character - and the first whose motion has to be undone. Fixed the same day.
+
+`Object::ApplyAnimation` handles a non-looping clip well: it stops on its last frame and drops into
+`ANIMATION_STATE_PAUSED`, which is exactly "open and staying open". What there is no way to say is
+any of the three things that follow from that:
+
+- **play it backwards** - a door shutting is the opening clip in reverse, and authoring a second
+  clip for it is authoring the same motion twice. `ANIMATION_STATE_TRANSITION_BACK` already walks a
+  time index backwards, so the machinery is there; it is only reachable for a blend that is being
+  abandoned.
+- **park it on a given frame** without playing - "be shut" is the clip at t=0 and nothing else.
+- **stop it** other than by letting it run out or by assigning `animation_state` from outside.
+
+**What it is now:** `Object::animation_rate`, set through `Object::SetAnimationRate(float)`. 1 is
+normal, -1 runs the clip backwards, 0 parks it on the frame it is on and keeps posing it there. The
+whole of the door's open and shut is
+
+```cpp
+door_arch->SetAnimationRate(f_open ? 1.0f : -1.0f);
+```
+
+Three things made it nearly free, and they are worth knowing if this is ever extended:
+
+- **The arithmetic was already there.** `ANIMATION_STATE_PLAYING` clamped the time index at the top
+  end; it now clamps at both, with the same two rules mirrored - a one-shot stops on its FIRST frame
+  and pauses, a looping clip wraps round to the end. `auto_continue_to` is deliberately not
+  consulted on the way back: a chain of connector clips is a forward idea.
+- **A non-zero rate wakes a finished one-shot.** A clip that ran out sits in
+  `ANIMATION_STATE_PAUSED`, so without that, reversing out of an open door would do nothing. Rate 0
+  does not wake anything, because parking what has already stopped is what it is doing.
+- **It applies to PLAYING only.** A crossfade is a fixed-length blend between two clips and what
+  "backwards" would mean for one is not obvious, so the transition states run at their own pace.
+  Slowing a walk down slows the walk, not the blend into it. That limit is a decision, not an
+  oversight.
+
+The pay-off beyond shutting a door is that a reversal MID-CLIP reverses from where it got to,
+because nothing rewinds. Pressing shut halfway through the swing is a door hit by a second thought,
+which is what a door actually does. Verified against the running game: 0.417s in, reversed, and the
+next tick was at 0.333s rather than back at the far end.
+
+### 16b. `f_scale` is never set, so scale channels are silently dropped
+
+Not a gap worth fixing, but worth writing down because the code reads as though it is a trap and is
+not. `Animation::ApplyIntervalOnto` has
+
+```cpp
+if (keyframe->f_scale){
+    debug->Fatal("TODO: Implement animation scaling\n");
+}
+```
+
+and `Debugger::Fatal` calls `exit(1)`. Nothing anywhere sets `f_scale`: `GLTFLoader::LoadAnimation`
+recognises `ANIM_TARGET_PATH_SCALE` when it reads the channel and then has no branch for it, so the
+keyframe is created and the values are never read. That line is unreachable.
+
+It matters because Blender's default keying set is Location, Rotation AND Scale, so nearly every
+clip exported from it carries a scale channel - every clip in `bomber_assets.glb` does. They are
+dropped, which is the right answer for a rig and for a door. If scaling is ever implemented, that
+`Fatal` is the first thing to remove, not to satisfy.
+
+---
+
 ## Gotchas that are not gaps
 
 - **`sim_step` takes `num_ticks`, not `ticks`.** An unknown argument is ignored and the tool steps

@@ -838,6 +838,20 @@ void Object::SwitchToAnimation(const std::string& name){
 }
 
 //Forcesfull switches to the specified animation. If NULL, will switch to default pose.
+/*
+    Which way, and how fast, the running clip goes. See the note at the declaration.
+
+    Two lines, and the second is the one worth having: without it, every caller that reversed a
+    finished one-shot would have to know that it had finished, and would have to write
+    `animation_state` from outside to say so.
+*/
+void Object::SetAnimationRate(float rate){
+    animation_rate = rate;
+    if (current_animation && rate != 0.0f && animation_state == ANIMATION_STATE_PAUSED){
+        animation_state = ANIMATION_STATE_PLAYING;
+    }
+}
+
 void Object::SwitchToAnimation(Animation* animation){
     //No blend, so nothing is being faded out - and any blend that WAS running is abandoned here
     //rather than finished.
@@ -978,7 +992,10 @@ void Object::ApplyAnimation(float time_delta){
     if (animation_state == ANIMATION_STATE_PLAYING){
         bool f_did_rewind = false;
         float last_time_index = current_animation->time_index;
-        current_animation->time_index += time_delta;
+        //The rate is applied HERE and nowhere else - see the note on animation_rate. A rate of 0
+        //leaves the index alone and still falls through to ApplyInterval below, which is what
+        //makes "parked on a frame" a pose that is held rather than a pose that is merely left.
+        current_animation->time_index += time_delta * animation_rate;
         if (current_animation->time_index > current_animation->duration){
             if (!current_animation->looped){
                 /*
@@ -997,6 +1014,23 @@ void Object::ApplyAnimation(float time_delta){
                 }
             }else{
                 current_animation->time_index -= current_animation->duration;
+                f_did_rewind = true;
+            }
+        }else if (current_animation->time_index < 0.0f){
+            /*
+                The same two rules at the other end, for a clip running backwards.
+
+                A one-shot stops on its FIRST frame and pauses - a door that has finished shutting
+                is shut, and nothing should carry it past that. A looping clip wraps round to the
+                end instead, so a walk played at -1 is a walk backwards rather than one step and a
+                stop. `auto_continue_to` is not consulted: a chain of connector clips is a forward
+                idea, and running one in reverse would be following it the wrong way.
+            */
+            if (!current_animation->looped){
+                current_animation->time_index = 0.0f;
+                animation_state = ANIMATION_STATE_PAUSED;
+            }else{
+                current_animation->time_index += current_animation->duration;
                 f_did_rewind = true;
             }
         }

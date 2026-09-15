@@ -291,6 +291,22 @@ class Object{
     float animation_mask = 1.0f; // 0.0 = no animation, 1.0 = full animation
     float position_mask = 1.0f;
 
+    /*
+        How fast, and WHICH WAY, the current clip runs. 1 is normal, -1 is backwards, 0 is parked.
+
+        One number instead of four API calls. A door shutting is its opening clip at -1 and needs no
+        second clip authored; "be shut" is the same clip at 0, which poses a chosen frame every tick
+        without advancing; and a reversal MID-CLIP just reverses from where it got to, because
+        nothing here rewinds. Set it with SetAnimationRate, which also wakes a clip that has run to
+        its end - see the note there.
+
+        IT APPLIES TO ANIMATION_STATE_PLAYING ONLY, deliberately. A crossfade is a fixed-length
+        blend between two clips and what "backwards" would mean for one is not obvious, so the two
+        transition states run at their own pace. Slowing a walk down slows the walk, not the blend
+        into it.
+    */
+    float animation_rate = 1.0f;
+
     //Seconds of animation to advance per simulation tick. Refreshed from the simulation timestep
     //every tick by Scene::UpdateAnimations, so it tracks the physics rate instead of assuming
     //50Hz - animation timing is simulation state now that root motion drives character movement.
@@ -365,6 +381,19 @@ class Object{
     void TransitionToAnimation(Animation* animation);  // Flags that we can blend into the next animation
     void SwitchToAnimation(const std::string& name);                   // Does not need a animation transistion
     void SwitchToAnimation(Animation* animation);                      // Instantly switches to the next animation, without blending
+    /*
+        Sets the direction and speed of the clip that is playing. 1 normal, -1 backwards, 0 parked.
+
+        DOES NOT REWIND, which is the whole point: SwitchToAnimation starts a clip from the
+        beginning, this one changes which way an already-running one goes. Reversing halfway through
+        reverses from halfway through.
+
+        A NON-ZERO RATE WAKES A FINISHED ONE-SHOT. A clip that ran to its end is left in
+        ANIMATION_STATE_PAUSED, and asking for a rate is asking for it to move, so this un-pauses
+        it - without that, reversing out of an open door would do nothing at all. A rate of 0 does
+        not wake anything, because parking something that has already stopped is what it is doing.
+    */
+    void SetAnimationRate(float rate);
 
     //Physics & Collision
     Physics*            GetPhysics();

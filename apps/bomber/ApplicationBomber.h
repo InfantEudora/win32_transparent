@@ -77,6 +77,24 @@
 //Drops a bomb on the character's tile with a one-tick fuse, so a blast can be looked at without
 //waiting out MAZE_FUSE_TICKS. value[0] is ignored.
 #define BOMBER_CMD_DETONATE         SIM_CMD_LAST+1
+/*
+    Opens or shuts the exit door. value[0] is 1 to open, 0 to shut.
+
+    A COMMAND rather than a direct call for the same reason the other two are: the panel button
+    runs on the render thread and the MCP tool on its own, while switching a clip on is a write to
+    simulation state that the physics thread is reading every tick.
+*/
+#define BOMBER_CMD_DOOR             SIM_CMD_LAST+2
+/*
+    Lays a pickup on the tile the player is standing on, so the next tick collects it.
+    value[0] is a MazeItem.
+
+    FOR TESTING, like BOMBER_CMD_DETONATE, and for the same reason: waiting for a board to hand out
+    its one crystal by playing takes minutes. It goes through the REAL path - Maze::TickItems does
+    the granting a tick later - rather than adding to the score directly, so what is exercised is
+    the rule and not a shortcut around it.
+*/
+#define BOMBER_CMD_GIVE             SIM_CMD_LAST+3
 
 //--- the art --------------------------------------------------------------------------------------
 /*
@@ -188,6 +206,27 @@ private:
     void BuildEnemies();
     //A pool of animated turds. Decoration, but it is the asset that multi-root rigs were fixed for.
     void BuildTurds();
+    /*
+        The exit, as an archway with a swinging leaf under it.
+
+        RENDER THREAD, ONCE, from Init - it takes objects out of the AssetManager and adds one to
+        the scene, and it is deliberately NOT part of RebuildField, so a restart leaves it standing.
+        See the long note at the definition for why the clip goes on the ARCHWAY and not on the
+        leaf it actually drives.
+    */
+    void BuildDoor();
+    //Opens or shuts it. PHYSICS THREAD, from the BOMBER_CMD_DOOR handler only.
+    void SetDoorOpen(bool f_open);
+    /*
+        Spins the treasure and shrinks away whatever was just picked up.
+
+        PHYSICS THREAD, from SyncView, every tick. Both are TWEENS rather than clips, which is the
+        line this app now draws: a motion with a shape to it (the door swinging) is authored in
+        Blender and played through Object's animation path; a spin, a bob or a fade is arithmetic
+        against state the rules already hold, and a .glb round trip to change its speed would be
+        worse than a constant.
+    */
+    void TickPickupView();
     /*
         One skinned skeleton with its clips loaded onto it, ready to be shown and posed.
 
@@ -354,6 +393,35 @@ private:
     std::vector<Object*> field_objects;
     Object* cell_block[MAZE_H][MAZE_W];
     Object* cell_item[MAZE_H][MAZE_W];
+    /*
+        Ticks left of a taken pickup's shrink, per cell, and how many cells are doing one.
+
+        VIEW STATE, NOT A RULE, and that is the whole reason it is here rather than in Maze: the
+        pickup is gone from the game the instant it is taken - health is granted, the score moves -
+        and what is left is a picture of it getting smaller. Running the tick twice would change
+        nothing about the outcome, which is this app's test for which side of the line something
+        belongs on.
+
+        The counter is what keeps the per-tick cost at one comparison. RefreshCells starts a shrink
+        when it finds a visible pickup the rules no longer have; TickPickupView runs them down.
+    */
+    int  cell_item_shrink[MAZE_H][MAZE_W];
+    int  num_item_shrinking = 0;
+    /*
+        The coins and diamonds of this field, so the spin costs a walk of three or four objects per
+        tick rather than 256 cells. Rebuilt with the field; never destroyed through here, since
+        field_objects owns them.
+    */
+    std::vector<Object*> spin_items;
+    /*
+        The shield the player wears while one is running.
+
+        A CHILD OF `character`, which does three things at once: it follows the player with no code
+        at all, it turns with them, and ~Object frees it when RebuildField destroys the character -
+        so there is no second lifetime to keep in step. Its local transform is identity because the
+        artist placed it on the character in the .glb and the two nodes share an origin.
+    */
+    Object* shield_worn = NULL;
     Object* character = NULL;
     Object* bomb = NULL;
     /*
@@ -374,6 +442,19 @@ private:
     */
     std::vector<Object*> turd_objects;
     float turd_y = 0.0f;
+    /*
+        The exit: the archway object, with the door leaf attached under it as a child.
+
+        ONE POINTER FOR TWO OBJECTS on purpose - everything this class does afterwards goes through
+        the archway, because that is what holds the clip and what the scene knows about. The leaf is
+        reachable as its only child if it is ever needed.
+
+        THE RULES DO NOT KNOW ABOUT IT YET. It is scenery standing in the border wall, and the only
+        thing that opens it is the button. Walking through it does nothing, because `Maze` has no
+        door tile - that is the next piece of work, not something the view should fake.
+    */
+    Object* door_arch = NULL;
+    bool f_door_open = false;
     //Y offsets taken from each GLB node's own translation - see LoadAssets for why.
     float character_y = 0.0f;
     float bomb_y = 0.0f;

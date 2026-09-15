@@ -286,6 +286,196 @@ static void TestPickup(){
     Check(maze.shield_ticks == 0,              "and no shield was granted");
 }
 
+//--- treasure ----------------------------------------------------------------------------------
+
+/*
+    What a pickup is worth, and that taking one is what pays.
+
+    Built on a cleared board rather than a generated one, because this is a statement about the five
+    item types and not about where the generator puts them - a test that had to go looking for a
+    crystal would be testing AddItems twice and TickItems not at all.
+*/
+static void TestScore(){
+    printf("treasure pays, and the other two pickups do not\n");
+
+    Maze maze;
+    maze.NewGame(1);
+    for (int z = 0; z < MAZE_H; z++){
+        for (int x = 0; x < MAZE_W; x++){
+            bool f_border = (x == 0 || z == 0 || x == MAZE_W - 1 || z == MAZE_H - 1);
+            maze.tile[z][x] = f_border ? MAZE_TILE_WALL : (uint8_t)MAZE_TILE_GRASS;
+            maze.decor[z][x] = MAZE_DECOR_NONE;
+            maze.item[z][x] = MAZE_ITEM_NONE;
+            maze.pass_axis[z][x] = MAZE_AXIS_ANY;
+        }
+    }
+    maze.num_enemies = 0;
+    maze.player.tile_x = maze.player.from_x = 2;
+    maze.player.tile_z = maze.player.from_z = 5;
+    maze.player.step_ticks = 0;
+    maze.player.f_alive = true;
+    maze.score = 0;
+    maze.health = MAZE_START_HEALTH;
+
+    Check(MAZE_SCORE_COIN < MAZE_SCORE_DIAMOND && MAZE_SCORE_DIAMOND < MAZE_SCORE_CRYSTAL,
+                                                      "coin < diamond < crystal");
+    Check(MazeItemScore(MAZE_ITEM_HEALTH) == 0 && MazeItemScore(MAZE_ITEM_SHIELD) == 0,
+                                                      "health and shield are worth no points");
+
+    //A row of them to walk along, in the order the score ladder is written in.
+    maze.item[5][3] = MAZE_ITEM_COIN;
+    maze.item[5][4] = MAZE_ITEM_DIAMOND;
+    maze.item[5][5] = MAZE_ITEM_CRYSTAL;
+    maze.item[5][6] = MAZE_ITEM_SHIELD;
+
+    StepOnce(maze,MAZE_DIR_EAST);
+    Check(maze.score == MAZE_SCORE_COIN,              "a coin scored");
+    StepOnce(maze,MAZE_DIR_EAST);
+    Check(maze.score == MAZE_SCORE_COIN + MAZE_SCORE_DIAMOND,
+                                                      "a diamond scored more");
+    StepOnce(maze,MAZE_DIR_EAST);
+    uint32_t before_shield = maze.score;
+    Check(before_shield == MAZE_SCORE_COIN + MAZE_SCORE_DIAMOND + MAZE_SCORE_CRYSTAL,
+                                                      "a crystal scored most");
+    StepOnce(maze,MAZE_DIR_EAST);
+    Check(maze.score == before_shield,                "the shield added nothing to the score");
+    Check(maze.shield_ticks > 0,                      "but still granted its shield");
+    Check(maze.items_taken == 4,                      "all four counted as pickups");
+
+    //Dying is expensive enough already - see the note on `score`.
+    maze.shield_ticks = 0;
+    maze.invuln_ticks = 0;
+    maze.health = 1;
+    /*
+        Killed by their own bomb, which is the DETERMINISTIC way to do it here.
+
+        An enemy dropped onto the player's tile does not work: StepWalker commits to a neighbouring
+        cell on the very next tick and `tile_x` is the DESTINATION, so it has walked off the tile
+        before TickPlayerCondition ever looks. A blast sits still.
+    */
+    maze.f_bomb = true;
+    maze.bomb_x = maze.player.tile_x;
+    maze.bomb_z = maze.player.tile_z;
+    maze.fuse_ticks = 1;
+    RunTicks(maze,MAZE_RESPAWN_TICKS + 8);
+    Check(maze.deaths > 0,                            "the player died");
+    Check(maze.score == before_shield,                "and kept the score");
+
+    //A new board is a new round.
+    maze.NewGame(7);
+    Check(maze.score == 0,                            "NewGame starts the score again");
+}
+
+/*
+    What the generator buries, over enough boards that "exact rather than probable" is a claim with
+    evidence behind it.
+
+    The interesting half is the SHORT boards: MAZE_ITEM_ORDER is walked front to back, so a board
+    with too few soft blocks loses the things at the back of it. That is deliberate and this is
+    where it would be noticed changing.
+*/
+static void TestItemMix(){
+    printf("what is buried is exact, not probable\n");
+
+    int full_boards = 0;
+    int bad_mix = 0;
+    int total[MAZE_ITEM_COUNT] = {0};
+    for (uint32_t seed = 1; seed <= 60; seed++){
+        Maze maze;
+        maze.NewGame(seed);
+        int count[MAZE_ITEM_COUNT] = {0};
+        int buried = 0;
+        for (int z = 0; z < MAZE_H; z++){
+            for (int x = 0; x < MAZE_W; x++){
+                uint8_t it = maze.item[z][x];
+                if (it != MAZE_ITEM_NONE){
+                    count[it]++;
+                    total[it]++;
+                    buried++;
+                }
+            }
+        }
+        if (buried < MAZE_NUM_ITEMS){
+            //A board too small to carry the whole list. Not a failure - see the note above.
+            continue;
+        }
+        full_boards++;
+        if (count[MAZE_ITEM_COIN] != 4 || count[MAZE_ITEM_HEALTH] != 1 ||
+            count[MAZE_ITEM_SHIELD] != 1 || count[MAZE_ITEM_DIAMOND] != 1 ||
+            count[MAZE_ITEM_CRYSTAL] != 1){
+            bad_mix++;
+        }
+    }
+    printf("  %i of 60 boards buried the whole list; %i coin, %i health, %i shield, %i diamond, "
+           "%i crystal in all\n",full_boards,total[MAZE_ITEM_COIN],total[MAZE_ITEM_HEALTH],
+           total[MAZE_ITEM_SHIELD],total[MAZE_ITEM_DIAMOND],total[MAZE_ITEM_CRYSTAL]);
+    Check(full_boards > 50,                           "nearly every board has room for all eight");
+    Check(bad_mix == 0,                               "and every one of those buried exactly the "
+                                                      "list, not a roll of it");
+}
+
+//--- lilly pads --------------------------------------------------------------------------------
+
+/*
+    A lilly goes on empty water and nowhere else.
+
+    Three separate claims, and the third is the one that would break quietly: a pad on a BRIDGE cell
+    would still be on water, so testing the tile alone would pass while the board looked wrong.
+*/
+static void TestLillies(){
+    printf("lillies grow on empty water only\n");
+
+    int lillies = 0;
+    int on_dry_land = 0;
+    int on_a_bridge = 0;
+    int water_cells = 0;
+    int boards_with_water = 0;
+    int boards_with_lillies = 0;
+    for (uint32_t seed = 1; seed <= 40; seed++){
+        Maze maze;
+        maze.NewGame(seed);
+        int here = 0;
+        int wet = 0;
+        for (int z = 0; z < MAZE_H; z++){
+            for (int x = 0; x < MAZE_W; x++){
+                if (maze.tile[z][x] == MAZE_TILE_WATER){
+                    wet++;
+                    water_cells++;
+                }
+                if (maze.decor[z][x] != MAZE_DECOR_LILLY){
+                    continue;
+                }
+                lillies++;
+                here++;
+                if (maze.tile[z][x] != MAZE_TILE_WATER){
+                    on_dry_land++;
+                }
+                //A bridge cell cannot also be a lilly cell - they are the same byte - so what this
+                //really checks is that the pad did not replace a span. IsPassable says it best:
+                //water is only crossable where a bridge is, so a lilly cell must not be passable.
+                if (maze.IsPassable(x,z)){
+                    on_a_bridge++;
+                }
+            }
+        }
+        if (wet > 0){
+            boards_with_water++;
+        }
+        if (here > 0){
+            boards_with_lillies++;
+        }
+    }
+    printf("  %i lillies over %i water cells on %i boards (%i of 40 boards had water)\n",
+           lillies,water_cells,boards_with_lillies,boards_with_water);
+    Check(lillies > 0,                                "some boards actually grew one");
+    Check(on_dry_land == 0,                           "none of them on dry land");
+    Check(on_a_bridge == 0,                           "and none on a cell you can walk across");
+    //Roughly MAZE_LILLY_PCT of the water that has no span on it. Loose bounds on purpose: the point
+    //is that the knob is connected, not that the RNG hits its mean over 40 boards.
+    int pct = water_cells ? (lillies * 100) / water_cells : 0;
+    Check(pct > 5 && pct < MAZE_LILLY_PCT + 10,       "and the density is in the right region");
+}
+
 //--- the enemy cuts a hedge --------------------------------------------------------------------------
 
 static void TestEnemyChopsHedge(){
@@ -519,6 +709,101 @@ static void TestDeterminism(){
            a.field_version,a.blocks_destroyed,a.enemies_killed,a.deaths);
 }
 
+//--- bridges span, rather than lying side by side -------------------------------------------------
+
+/*
+    The SHAPE of a crossing, over generated boards.
+
+    This is here because the thing it guards against looked completely fine cell by cell. When a
+    bridge was laid across its pond's run rather than along it, every water cell got its own
+    one-tile plank and every single one of them was a legal, walkable, correctly-turned bridge - and
+    the board read as three little bridges lying side by side instead of one crossing. No assertion
+    about a cell could have caught that, because no cell was wrong. The span was.
+
+    So this measures SPANS: a maximal run of bridge cells sharing one grain. Their length is the
+    property the picture actually shows, and the two ends are where a crossing is or is not one.
+*/
+static void TestBridgesSpan(){
+    printf("bridges span their pond and land on both banks, seeds 1..200\n");
+    bool f_on_water = true;
+    bool f_no_water_left_over = true;
+    bool f_banks_are_land = true;
+    int num_spans = 0;
+    int total_cells = 0;
+    int longest = 0;
+
+    for (uint32_t seed = 1; seed <= 200; seed++){
+        Maze maze;
+        maze.NewGame(seed);
+        for (int z = 0; z < MAZE_H; z++){
+            for (int x = 0; x < MAZE_W; x++){
+                if (maze.decor[z][x] != MAZE_DECOR_BRIDGE){
+                    continue;
+                }
+                total_cells++;
+                //A bridge is only ever over water, and it always states a grain - the walker and
+                //the view have nothing else to go on.
+                uint8_t axis = maze.pass_axis[z][x];
+                if (maze.tile[z][x] != MAZE_TILE_WATER || axis == MAZE_AXIS_ANY){
+                    f_on_water = false;
+                    continue;
+                }
+
+                int dx = (axis == MAZE_AXIS_X) ? 1 : 0;
+                int dz = 1 - dx;
+                //Measure each span once, from its head: the cell behind a head is not another
+                //bridge cell of the same grain.
+                int bx = x - dx;
+                int bz = z - dz;
+                if (maze.InBounds(bx,bz) && maze.decor[bz][bx] == MAZE_DECOR_BRIDGE &&
+                    maze.pass_axis[bz][bx] == axis){
+                    continue;
+                }
+
+                int len = 1;
+                while (maze.InBounds(x + dx * len,z + dz * len) &&
+                       maze.decor[z + dz * len][x + dx * len] == MAZE_DECOR_BRIDGE &&
+                       maze.pass_axis[z + dz * len][x + dx * len] == axis){
+                    len++;
+                }
+                num_spans++;
+                if (len > longest){
+                    longest = len;
+                }
+
+                //The two ends. Water at either one is a span that stops short of its own pond -
+                //the "crossing that does not cross" the generator is written to make impossible.
+                int fx = x + dx * len;
+                int fz = z + dz * len;
+                if ((maze.InBounds(bx,bz) && maze.tile[bz][bx] == MAZE_TILE_WATER) ||
+                    (maze.InBounds(fx,fz) && maze.tile[fz][fx] == MAZE_TILE_WATER)){
+                    f_no_water_left_over = false;
+                }
+                /*
+                    And both ends have to be ground you can end up standing on. A SOFT BLOCK COUNTS:
+                    the generator scatters hedges and wood after the water is down, so a bank can
+                    end up with one on it - which is a bridge you have to blow your way onto, not a
+                    bridge that goes nowhere. A wall there would be the second thing.
+                */
+                if (!((maze.IsPassable(bx,bz) || maze.IsSoft(bx,bz)) &&
+                      (maze.IsPassable(fx,fz) || maze.IsSoft(fx,fz)))){
+                    f_banks_are_land = false;
+                }
+            }
+        }
+    }
+
+    Check(num_spans > 0,          "generated boards have bridges at all");
+    Check(f_on_water,             "every bridge cell is water and states a grain");
+    Check(f_no_water_left_over,   "no span stops short of its own pond");
+    Check(f_banks_are_land,       "every span ends on ground, or on a block over it");
+    //The point of the whole exercise: a crossing is one long thing. If this drops back to 1 the
+    //bridges are being laid across their ponds again and the board is a row of planks.
+    Check(longest >= 3,           "and crossings get long - the longest here is a real span");
+    printf("    %i spans over %i bridge cells, longest %i, mean %.2f\n",
+           num_spans,total_cells,longest,num_spans ? (double)total_cells / num_spans : 0.0);
+}
+
 //--- bridges still work -------------------------------------------------------------------------------
 
 static void TestBridgeStillDirectional(){
@@ -622,9 +907,13 @@ int main(){
     TestGeneration();
     TestBlastClearsBlocks();
     TestPickup();
+    TestScore();
+    TestItemMix();
+    TestLillies();
     TestEnemyChopsHedge();
     TestPlayerCondition();
     TestEnemyDies();
+    TestBridgesSpan();
     TestBridgeStillDirectional();
     TestDeterminism();
     TestSoak();
