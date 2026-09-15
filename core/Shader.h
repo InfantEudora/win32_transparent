@@ -107,9 +107,13 @@ public:
         For those, staying out of the G-buffer is a bug with three faces: they cannot be picked,
         they are invisible to anything sampling the scene's depth, and - the one that actually
         shows - A VOLUME THAT CLAMPS ITS MARCH TO THE G-BUFFER MARCHES STRAIGHT THROUGH THEM. In
-        bomber that is a fireball spilling below the waterline on exactly the tiles a blast is
-        allowed to cross, next to grass tiles where it stops correctly. Measured, not feared: 2.6%
-        of the frame differed between the same blast over water and over grass.
+        bomber that is a blast drawn over the water instead of stopping at it, on exactly the
+        tiles Maze::BlocksBlast lets flame cross.
+
+        MEASURED BY BUILDING IT BOTH WAYS, which is the only way this question has an answer: with
+        a blast volume parked across a pond, turning this flag on changed 15% of the pond's pixels
+        (by 25/255 on average, 135/255 at worst) and - the half that says the flag is doing what it
+        claims and nothing else - ZERO pixels anywhere else in the frame.
 
         The geometry is drawn with the plain deferred shader, not with this program, and that is
         the whole trick: position, normal, depth and object id are properties of the SHAPE, which

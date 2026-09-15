@@ -32,7 +32,10 @@ typedef uint32_t objectid_t;
 
 #define ANIMATION_STATE_INVALID             -1
 #define ANIMATION_STATE_PAUSED              0
-#define ANIMATION_STATE_LOOPING             1
+//Playing a single clip, whether or not that clip loops. It used to be called LOOPING, which named
+//a property of the CLIP rather than the state of the object - a one-shot being played is in this
+//state too, and the old name said otherwise.
+#define ANIMATION_STATE_PLAYING             1
 #define ANIMATION_STATE_TRANSITION_START    2
 #define ANIMATION_STATE_TRANSITION          3
 #define ANIMATION_STATE_TRANSITION_BACK     4
@@ -254,10 +257,32 @@ class Object{
     float morph_factors[NUM_MORPH_FACTOR_SLOTS] = {};
     std::vector<Animation*>animations;
 
-    Animation* current_animation = NULL;
-    Animation* transition_to = NULL;    // The animation we are transitioning towards (NULL when not transitioning)
+    /*
+        --- which clips this object is playing ---------------------------------------------------
 
-    int animation_state = ANIMATION_STATE_LOOPING;
+        DURING A CROSSFADE THERE IS NO SINGLE CURRENT CLIP: two are sampled and mixed, so whichever
+        one gets called "current" is wrong for the length of the blend. These two names pick the
+        reading that is useful.
+
+        `current_animation` is ALWAYS what the object is playing or BECOMING. It flips to the
+        destination the moment a transition starts, not when it finishes - so "what is this thing
+        doing?" has one answer in every state, which is what every caller assumes it means. It used
+        to name the clip being LEFT, which is the opposite, and callers had to test the destination
+        separately to avoid re-requesting a transition they had already asked for.
+
+        `previous_animation` is the clip being faded OUT, and is non-NULL exactly while a blend is
+        running - so it is also the "am I blending?" test, with no extra flag to keep in step.
+
+        `animation_transition_factor` reads with them: 0 is all previous, 1 is all current.
+
+        There is deliberately no `next_animation`. A request arriving mid-blend is refused today
+        rather than queued - see TransitionToAnimation. When something actually needs queueing,
+        this is where that slot goes.
+    */
+    Animation* current_animation = NULL;
+    Animation* previous_animation = NULL;
+
+    int animation_state = ANIMATION_STATE_PLAYING;
 
     bool f_animation_override = false;  //If we should manually step through animation with ticks
     int animation_override_ticks = 0;
@@ -287,8 +312,10 @@ class Object{
     void AddAnimation(Animation* animation);
     //void SetAnimation(Animation* animation);
     Animation* FindAnimation(const std::string& name); //Finds it by name
+    //What the object is playing or becoming. True in every state - see the note on the fields.
     const char* CurrentAnimationName();
-    const char* NextAnimationName();
+    //What it is fading out of, or "None" when it is not blending.
+    const char* PreviousAnimationName();
 
     //Sparse per-object table of (from,to) -> blend time overrides. An empty 'from' matches any
     //current animation (a wildcard "->to" default). Anything not listed here just uses

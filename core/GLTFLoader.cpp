@@ -1175,15 +1175,40 @@ Animation* GLTFLoader::LoadAnimation(const char* animation_name){
     return animation;
 }
 
-Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager){
+/*
+    Where a node sits in a skin's joint list, or -1 if it is not one of its joints.
+
+    THAT POSITION IS THE BONE'S IDENTITY, not the order bones happen to get visited in: the
+    JOINTS_0 vertex attribute indexes it, and `inverseBindMatrices` is parallel to it. The two only
+    coincide while a rig is a single chain whose depth-first order matches its joint list.
+*/
+static int JointIndexOf(const std::vector<int>& joints, int node_index){
+    for (size_t i = 0; i < joints.size(); i++){
+        if (joints[i] == node_index){
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+Bone* GLTFLoader::GetBone(int node_index, const std::vector<int>& joints, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager){
     tinygltf::Node& node = model.nodes.at(node_index);
+    int joint_index = JointIndexOf(joints,node_index);
+    if (joint_index < 0){
+        debug->Err("Node %s is not a joint of this skin\n",node.name.c_str());
+        return NULL;
+    }
     Bone* bone = new Bone();
     bone->name = node.name;
-    bone->bone_index = bone_count;
+    bone->bone_index = joint_index;
     bone->node_index = node_index;
     bone->SetMaterialName(0,"bone_mat");
-    bone->inverse_bind_matrix = invbinmatrices.at(bone->bone_index);
-    bone_count++;
+    if (joint_index < (int)invbinmatrices.size()){
+        bone->inverse_bind_matrix = invbinmatrices.at(joint_index);
+    }else{
+        debug->Err("Skin has %i joints but only %i inverse bind matrices; %s gets identity\n",
+                   (int)joints.size(),(int)invbinmatrices.size(),node.name.c_str());
+    }
 
     if (node.translation.size() == 3){
         vec3 translation = vec3(node.translation[0],node.translation[1],node.translation[2]);
@@ -1206,9 +1231,17 @@ Bone* GLTFLoader::GetBone(int node_index, int& bone_count, std::vector<fmat4>&in
         assetmanager->GetObjectFromAsset("bone_mesh",bone);
     }*/
 
-    //Traverse nodes until no more nodes have children.
-    for (int node_index : node.children){
-        Bone* child_bone = GetBone(node_index,bone_count,invbinmatrices,assetmanager);
+    //Traverse nodes until no more nodes have children. ONLY into children that are joints of this
+    //skin: a mesh or a prop parented under a bone is a child of it in the file, and turning that
+    //into a Bone would put a thing that is not part of the rig into the skeleton.
+    for (int child_node_index : node.children){
+        if (JointIndexOf(joints,child_node_index) < 0){
+            continue;
+        }
+        Bone* child_bone = GetBone(child_node_index,joints,invbinmatrices,assetmanager);
+        if (!child_bone){
+            continue;
+        }
         bone->AttachChild(child_bone);
         child_bone->SetReferences();
         bone->SetReferences();
@@ -1249,7 +1282,6 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
     std::vector<fmat4>inv_binds;
     LoadInverseBindMatrices(inv_binds,accessor_invbindmatrices);
 
-    //The first one should be a root bone, and reference all the subsequent bones in some way.
     if (skin->joints.size() < 1){
         debug->Err("No bones in skeleton.\n");
         return NULL;
@@ -1267,12 +1299,53 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
         debug->Trace(" -> Node children.size    : %i\n",node.children.size());
     }
 
-    //Recursively get everything
-    int bone_count = 0;
-    Bone* root_bone = GetBone(skin->joints.at(0),bone_count,inv_binds,assetmanager);
-    skeleton->AttachChild(root_bone);
-    skeleton->num_bones = bone_count;
-    debug->Trace("Loaded %i bones into skeleton\n",bone_count);
+    /*
+        Every joint that is not the CHILD of another joint is a root, and each one is loaded.
+
+        glTF does not require a skin's joints to form a single tree - `skin.joints` is a flat list
+        and `skin.skeleton` (a common root) is optional and often absent. This used to start at
+        joints[0] and walk down through its children, which quietly loaded only the part of the rig
+        that happened to hang off the first joint. A rig whose bones are siblings loaded ONE bone,
+        the clips driving the rest bound to nothing, and the mesh tore itself apart where vertices
+        were weighted to joints that had no matrix - with nothing said at any level above Trace.
+
+        It is not always the artist's doing, either: Blender's exporter adds its own root-level
+        `neutral_bone` to some rigs, so a second root can appear in a file nobody built that way.
+    */
+    std::vector<bool> f_has_joint_parent(skin->joints.size(),false);
+    for (int joint_node : skin->joints){
+        for (int child_node : model.nodes.at(joint_node).children){
+            int child_joint = JointIndexOf(skin->joints,child_node);
+            if (child_joint >= 0){
+                f_has_joint_parent[child_joint] = true;
+            }
+        }
+    }
+
+    int num_roots = 0;
+    for (size_t i = 0; i < skin->joints.size(); i++){
+        if (f_has_joint_parent[i]){
+            continue;       //reached by recursion from its parent
+        }
+        Bone* root_bone = GetBone(skin->joints[i],skin->joints,inv_binds,assetmanager);
+        if (!root_bone){
+            continue;
+        }
+        skeleton->AttachChild(root_bone);
+        num_roots++;
+    }
+
+    /*
+        The joint COUNT, not the number of bones the walk produced.
+
+        It is what the shader's stride is - Renderer lays out one matrix per joint and indexes it by
+        the JOINTS_0 attribute - so it has to be the length of the joint list even if something went
+        wrong above and a bone is missing. A short block would make every instance after the first
+        read into the wrong one's matrices.
+    */
+    skeleton->num_bones = (int)skin->joints.size();
+    debug->Trace("Loaded %i bones into skeleton %s, from %i root bone(s)\n",
+                 skeleton->num_bones,skeleton_name,num_roots);
     return skeleton;
 }
 

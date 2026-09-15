@@ -803,11 +803,11 @@ const char* Object::CurrentAnimationName(){
     return current_animation ? current_animation->name.c_str() : "None";
 }
 
-const char* Object::NextAnimationName(){
-    if (!transition_to){
+const char* Object::PreviousAnimationName(){
+    if (!previous_animation){
         return "None";
     }
-    return transition_to->name.c_str();
+    return previous_animation->name.c_str();
 }
 
 void Object::SetBlendTime(const std::string& from, const std::string& to, float blend_time){
@@ -839,7 +839,9 @@ void Object::SwitchToAnimation(const std::string& name){
 
 //Forcesfull switches to the specified animation. If NULL, will switch to default pose.
 void Object::SwitchToAnimation(Animation* animation){
-    transition_to = NULL;
+    //No blend, so nothing is being faded out - and any blend that WAS running is abandoned here
+    //rather than finished.
+    previous_animation = NULL;
     if (!animation){
         current_animation = NULL;
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
@@ -847,8 +849,7 @@ void Object::SwitchToAnimation(Animation* animation){
     }
     current_animation = animation;
     current_animation->time_index = 0.0f;
-    animation_state = ANIMATION_STATE_LOOPING;
-
+    animation_state = ANIMATION_STATE_PLAYING;
 }
 
 void Object::TransitionToAnimation(const std::string& name){
@@ -864,49 +865,65 @@ void Object::TransitionToAnimation(const std::string& name){
 //From whereever the current animation is, we attempt transition into the next animation.
 void Object::TransitionToAnimation(Animation* animation){
     if (!animation){
-        transition_to = NULL;
+        previous_animation = NULL;
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
         return;
     }
 
-    Animation* target_animation = current_animation; //The animation we are in, or are transitioning to
-
-    if (animation_state == ANIMATION_STATE_TRANSITION){
-        if (animation == transition_to){
-            debug->Info("Already transitioning to this animation\n");
-            return;
+    /*
+        Already blending. `current_animation` is where it is HEADED and `previous_animation` is what
+        it is leaving, so both questions below are asked of the right slot - which is the whole
+        point of naming them this way round.
+    */
+    if (animation_state == ANIMATION_STATE_TRANSITION ||
+        animation_state == ANIMATION_STATE_TRANSITION_START){
+        if (animation == current_animation){
+            return;     //already on its way there; asking again is not an error
         }
-        if (transition_to && !transition_to->interruptible){
-            debug->Info("Cannot interrupt transition to %s before it finishes\n",transition_to->name.c_str());
-            return;
-        }
-        debug->Info("Currently Transition from %s to %s. Request Transition back to %s\n",current_animation ? current_animation->name.c_str() : "NULL",transition_to ? transition_to->name.c_str() : "NULL",animation->name.c_str());
-        if (current_animation == animation){
-            debug->Info("Rewinding transition back to %s\n",animation->name.c_str());
+        if (animation == previous_animation){
+            //Asked to go back where it came from. Rewind the blend rather than start a second one.
+            debug->Trace("Rewinding transition back to %s\n",animation->name.c_str());
             animation_state = ANIMATION_STATE_TRANSITION_BACK;
-        }else{
-            debug->Warn("Cannot transition back to %s.\n",animation->name.c_str());
-            animation_state = ANIMATION_STATE_PAUSED;
+            return;
         }
+        /*
+            A THIRD clip, mid-blend. Not supported and deliberately not faked: honouring it would
+            mean either blending three clips or snapping, and refusing is the only answer that
+            cannot look subtly wrong. The clean fix when something needs it is a one-deep queue -
+            remember this request and start it when the current blend lands - which is what the
+            missing `next_animation` slot would be for. See the note on the animation fields.
+        */
+        debug->Warn("Cannot retarget to %s while blending %s -> %s; request ignored\n",
+                    animation->name.c_str(),
+                    previous_animation ? previous_animation->name.c_str() : "NULL",
+                    current_animation ? current_animation->name.c_str() : "NULL");
         return;
-        //We are in the middle of a transition. We can either continue to the current target animation,
-        //rewind it, or (not yet handled) retarget it to a third animation.
     }
 
-    if (target_animation == animation){
-        //Already playing (or transitioning to) this animation - no-op.
+    if (current_animation == animation){
+        return;     //already playing it
+    }
+
+    if (current_animation && !current_animation->interruptible &&
+        !current_animation->HasFinished() && animation_state == ANIMATION_STATE_PLAYING){
+        debug->Trace("Cannot interrupt %s before it finishes\n",current_animation->name.c_str());
         return;
     }
 
-    if (target_animation && !target_animation->interruptible && !target_animation->HasFinished() && animation_state == ANIMATION_STATE_LOOPING){
-        debug->Info("Cannot interrupt %s before it finishes\n",target_animation->name.c_str());
+    if (!current_animation){
+        //Nothing to fade out of, so there is nothing to blend - start it outright rather than
+        //running a crossfade against an empty slot.
+        SwitchToAnimation(animation);
         return;
     }
 
-    debug->Info("Transitioning from %s to %s\n",target_animation ? target_animation->name.c_str() : "NULL",animation->name.c_str());
+    debug->Trace("Transitioning from %s to %s\n",current_animation->name.c_str(),
+                 animation->name.c_str());
 
-    transition_to = animation;
-    animation_transition_blend_time = LookupBlendTime(target_animation ? target_animation->name : "", animation->name);
+    //THE FLIP: the destination becomes current immediately, and what was playing becomes previous.
+    previous_animation = current_animation;
+    current_animation = animation;
+    animation_transition_blend_time = LookupBlendTime(previous_animation->name,animation->name);
     animation_state = ANIMATION_STATE_TRANSITION_START;
     animation_transition_time = 0.0f;
     animation_transition_factor = 0.0f;
@@ -947,27 +964,18 @@ void Object::ApplyAnimation(float time_delta){
     if (!current_animation){
         animation_state = ANIMATION_STATE_INVALID;
     }
-    if (animation_state == ANIMATION_STATE_INVALID){
-        //Nothing is playing. If something was asked for, start there rather than blending out of a
-        //clip that does not exist.
-        if (transition_to){
-            current_animation = transition_to;
-            animation_state = ANIMATION_STATE_TRANSITION;
-            animation_transition_time = animation_transition_blend_time;
-            animation_transition_factor = 1.0f;
-        }
-    }
     if (animation_state == ANIMATION_STATE_LOAD_DEFAULT_POSE){
         LoadDefaultPose();
         animation_state = ANIMATION_STATE_INVALID;
         current_animation = NULL;
+        previous_animation = NULL;
     }
 
     if (!current_animation){
         return;
     }
 
-    if (animation_state == ANIMATION_STATE_LOOPING){
+    if (animation_state == ANIMATION_STATE_PLAYING){
         bool f_did_rewind = false;
         float last_time_index = current_animation->time_index;
         current_animation->time_index += time_delta;
@@ -1011,76 +1019,70 @@ void Object::ApplyAnimation(float time_delta){
         //One tick of bookkeeping, kept as its own state so that anything wanting to know a blend
         //has just begun has somewhere to hook in.
         debug->Trace("Transition start from %s to %s\n",
-                     current_animation->name.c_str(),
-                     transition_to ? transition_to->name.c_str() : "NULL");
+                     previous_animation ? previous_animation->name.c_str() : "NULL",
+                     current_animation->name.c_str());
         animation_state = ANIMATION_STATE_TRANSITION;
 
     }else if (animation_state == ANIMATION_STATE_TRANSITION){
-        if (!transition_to){
-            debug->Warn("Transition to NULL - falling back to the default pose\n");
-            animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
-            return;
-        }
-        if (transition_to == current_animation){
-            //Nothing to blend between. Clearing transition_to as well as the state matters: left
-            //set, it is a pending transition that has already been consumed, and the next request
-            //to blend somewhere else sees a transition still in flight and refuses.
-            debug->Warn("Transition target is the clip already playing\n");
-            transition_to = NULL;
-            animation_state = ANIMATION_STATE_LOOPING;
+        if (!previous_animation){
+            //Nothing to fade out of. Not an error - SwitchToAnimation clears it, and starting from
+            //nothing takes this path - so just play what is current.
+            animation_state = ANIMATION_STATE_PLAYING;
             return;
         }
 
         /*
             Both clips run while the blend does, and a blend can outlast either of them.
 
-            The one being left is clamped if it does not loop (a death should not restart under a
-            crossfade) and wrapped if it does; the one being entered always wraps, because
-            transitioning INTO the tail of a one-shot would start it half-finished.
+            The one being LEFT is clamped if it does not loop (a death should not restart under a
+            crossfade) and wrapped if it does; the one being ENTERED always wraps. That last part is
+            inherited behaviour and is arguably wrong for a one-shot destination - noted rather than
+            changed, because this pass is about names.
         */
-        float from_last_time_index = current_animation->time_index;
-        bool f_from_did_rewind = false;
-        current_animation->time_index += time_delta;
-        if (current_animation->time_index > current_animation->duration){
-            if (!current_animation->looped){
-                current_animation->time_index = current_animation->duration;
+        float prev_last_time_index = previous_animation->time_index;
+        bool f_prev_did_rewind = false;
+        previous_animation->time_index += time_delta;
+        if (previous_animation->time_index > previous_animation->duration){
+            if (!previous_animation->looped){
+                previous_animation->time_index = previous_animation->duration;
             }else{
-                current_animation->time_index -= current_animation->duration;
-                f_from_did_rewind = true;
+                previous_animation->time_index -= previous_animation->duration;
+                f_prev_did_rewind = true;
             }
         }
 
-        float to_last_time_index = transition_to->time_index;
-        bool f_to_did_rewind = false;
-        transition_to->time_index += time_delta;
-        if (transition_to->time_index > transition_to->duration){
-            transition_to->time_index -= transition_to->duration;
-            f_to_did_rewind = true;
+        float cur_last_time_index = current_animation->time_index;
+        bool f_cur_did_rewind = false;
+        current_animation->time_index += time_delta;
+        if (current_animation->time_index > current_animation->duration){
+            current_animation->time_index -= current_animation->duration;
+            f_cur_did_rewind = true;
         }
 
+        //0 is all previous, 1 is all current - which is how it reads now that the slots are named
+        //for what they hold rather than for the order they were assigned in.
         animation_transition_factor = animation_transition_time / animation_transition_blend_time;
         if (animation_transition_blend_time == 0){
             animation_transition_factor = 1.0f;
         }
 
-        RootMotionDelta delta = current_animation->LerpRootMotion(transition_to,
-            f_from_did_rewind ? current_animation->time_index : from_last_time_index,
+        RootMotionDelta delta = previous_animation->LerpRootMotion(current_animation,
+            f_prev_did_rewind ? previous_animation->time_index : prev_last_time_index,
+            previous_animation->time_index,
+            f_cur_did_rewind ? current_animation->time_index : cur_last_time_index,
             current_animation->time_index,
-            f_to_did_rewind ? transition_to->time_index : to_last_time_index,
-            transition_to->time_index,
             animation_transition_factor);
-        current_animation->Lerp(transition_to,current_animation->time_index,
-                                transition_to->time_index,animation_transition_factor);
+        previous_animation->Lerp(current_animation,previous_animation->time_index,
+                                 current_animation->time_index,animation_transition_factor);
         ApplyRootMotion(delta);
 
         animation_transition_time += time_delta;
         if (animation_transition_time >= animation_transition_blend_time){
             animation_transition_time = animation_transition_blend_time;
             //Rewind the clip being left, so entering it again next time starts at its beginning.
-            current_animation->time_index = 0;
-            current_animation = transition_to;
-            transition_to = NULL;
-            animation_state = ANIMATION_STATE_LOOPING;
+            previous_animation->time_index = 0;
+            previous_animation = NULL;
+            animation_state = ANIMATION_STATE_PLAYING;
             debug->Trace("Transition complete. Now at %s\n",current_animation->name.c_str());
         }
 
@@ -1092,39 +1094,50 @@ void Object::ApplyAnimation(float time_delta){
             backwards would drag the character back across ground it already covered. The pose
             blends back, the world transform stays where it got to.
         */
-        if (!transition_to){
+        if (!previous_animation){
             debug->Warn("No transition to rewind\n");
             animation_state = ANIMATION_STATE_PAUSED;
             return;
         }
 
-        current_animation->time_index -= time_delta;
-        if (current_animation->time_index < 0){
-            if (!current_animation->looped){
-                current_animation->time_index = 0;
+        previous_animation->time_index -= time_delta;
+        if (previous_animation->time_index < 0){
+            if (!previous_animation->looped){
+                previous_animation->time_index = 0;
             }else{
-                current_animation->time_index += current_animation->duration;
+                previous_animation->time_index += previous_animation->duration;
             }
         }
-        transition_to->time_index -= time_delta;
-        if (transition_to->time_index < 0){
-            transition_to->time_index += transition_to->duration;
+        current_animation->time_index -= time_delta;
+        if (current_animation->time_index < 0){
+            current_animation->time_index += current_animation->duration;
         }
 
         animation_transition_time -= time_delta;
         if (animation_transition_time <= 0){
             animation_transition_time = 0;
+            /*
+                THE REWIND ENDS BACK AT `previous_animation`, so that is what has to become current
+                again - this swap is the one place the naming flip is not purely cosmetic.
+
+                Before the flip, `current_animation` had never moved off the clip being left, so
+                aborting a blend was just a matter of dropping the destination. Now the destination
+                IS current from the moment the blend starts, so abandoning it means putting the
+                clip we came back to where it belongs, and winding the abandoned one back to zero
+                so that entering it again later starts at its beginning.
+            */
             current_animation->time_index = 0;
-            transition_to = NULL;
-            animation_state = ANIMATION_STATE_LOOPING;
+            current_animation = previous_animation;
+            previous_animation = NULL;
+            animation_state = ANIMATION_STATE_PLAYING;
             debug->Trace("Transition rewind complete. Now at %s\n",current_animation->name.c_str());
         }else{
             animation_transition_factor = animation_transition_time / animation_transition_blend_time;
             if (animation_transition_blend_time == 0){
                 animation_transition_factor = 0.0f;
             }
-            current_animation->Lerp(transition_to,current_animation->time_index,
-                                    transition_to->time_index,animation_transition_factor);
+            previous_animation->Lerp(current_animation,previous_animation->time_index,
+                                     current_animation->time_index,animation_transition_factor);
         }
     }
 }

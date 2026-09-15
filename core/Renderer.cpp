@@ -360,14 +360,36 @@ void Renderer::RenderUniqueMeshes(int rendering_mode, int custom_shader_index, b
                     debug->Err("skeleton->GetAllBones() did not yield expected number of bones (%i vs %i)\n",bones.size(),skeleton->num_bones);
                 }
 
-                //We add however many bones we want / have
-                int num_bones = skeleton->num_bones;
-                for (int i=0;i<num_bones;i++){
-                    bonedata.mat_inversebind = bones.at(i)->inverse_bind_matrix;
-                    bonedata.mat_transformscale = bones.at(i)->GetWorldTransformScaleMatrix();
+                /*
+                    This instance's block of bone matrices, laid out BY JOINT INDEX.
 
-                    bones.at(i)->bone_unpacked_index = i;
-                    boneinstancedata.push_back(bonedata);
+                    The shader reads bone_data[instance * bone_count + bones.x], where bones.x is
+                    the JOINTS_0 vertex attribute - an index into the skin's joint list. So the
+                    block has to be in THAT order, and not in the order a tree walk happens to
+                    visit bones in.
+
+                    Those two agreed for as long as every rig was a single chain whose depth-first
+                    order matched its joint list, which is why pushing them back in walk order
+                    worked. It stops being true the moment a skin has more than one root bone: the
+                    walk emits a whole subtree before it reaches the second root, while the joint
+                    list interleaves them. The failure is silent and looks like a corrupt mesh.
+
+                    Bone::bone_index is that joint index - see GLTFLoader::GetBone.
+                */
+                int num_bones = skeleton->num_bones;
+                size_t bone_base = boneinstancedata.size();
+                boneinstancedata.resize(bone_base + num_bones,bonedata);
+                for (Bone* bone:bones){
+                    int slot = bone->bone_index;
+                    if (slot < 0 || slot >= num_bones){
+                        debug->Err("Bone %s has joint index %i, outside this skin's %i joints\n",
+                                   bone->name.c_str(),slot,num_bones);
+                        continue;
+                    }
+                    bonedata.mat_inversebind = bone->inverse_bind_matrix;
+                    bonedata.mat_transformscale = bone->GetWorldTransformScaleMatrix();
+                    boneinstancedata.at(bone_base + slot) = bonedata;
+                    bone->bone_unpacked_index = slot;
                 }
                 data.num_bones = num_bones;
             }

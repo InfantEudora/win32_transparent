@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 8a9b69d2-99f4-4de3-a7fd-bee7ffca5edb
-  modified: 2026-09-15T14:28:52.548Z
+  modified: 2026-09-15T14:57:15.810Z
 ---
 
 Moved 2026-09-15, at the user's request, out of `PlayerCharacter::ApplyAnimation` and into
@@ -28,12 +28,20 @@ silently stopped that bone animating. `apps/isoanimation` calls `SetRootBone` ri
 `AddAnimation`, so it reads like part of the recipe - it is only correct there because those are
 `PlayerCharacter`s.
 
-**Still not supported, deliberately:** retargeting a transition to a THIRD clip mid-blend.
-`TransitionToAnimation` rewinds when asked to go back where it came from, and otherwise pauses.
+**The slots are `previous_animation` + `current_animation`, and CURRENT FLIPS TO THE DESTINATION THE
+MOMENT A TRANSITION STARTS** (renamed same day; `transition_to` is gone). So `CurrentAnimationName()`
+means "playing or becoming" in every state, `previous_animation` is non-NULL exactly while a blend
+runs (it IS the "am I blending?" test, via `PreviousAnimationName()`), and the blend factor reads
+0 = all previous, 1 = all current. There is deliberately NO `next_animation`.
 
-**Gotcha for callers:** while a blend runs, `CurrentAnimationName()` is still the clip being LEFT.
-Code deciding "am I already playing X?" must check `NextAnimationName()` too or it re-requests the
-same transition every tick for the whole blend.
+`ANIMATION_STATE_LOOPING` is now `ANIMATION_STATE_PLAYING` - a one-shot being played was in that
+state too, so the old name described the clip rather than the object.
+
+**Still not supported, deliberately:** retargeting a transition to a THIRD clip mid-blend - refused
+with a warning. Asking to go back where it came from still rewinds (TRANSITION_BACK), and that is
+the one place the flip is not cosmetic: the rewind has to restore `current_animation` from
+`previous_animation` when it lands. The clean fix for retargeting is a one-deep queue, agreed as
+"when we feel we need it" - the user does not expect this game to need it.
 
 `Object.h` needs a `struct RootMotionDelta;` forward declaration - `Object.h` and
 `ObjectAnimation.h` include each other, so whichever is reached first sees the other half-built.

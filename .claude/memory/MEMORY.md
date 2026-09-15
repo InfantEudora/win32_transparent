@@ -34,3 +34,4 @@
 - [Engine forward is -Z](engine_forward_is_minus_z.md) — use object_get's world_forward to settle orientation; bracket screenshots with camera_get or the user's mouse silently reframes them
 - [Measuring GPU cost](measuring_gpu_cost.md) — frame timers are useless here (driver forces vsync, wglSwapIntervalEXT is NULL); count work in-shader and read it back off a screenshot
 - [Animation state machine lives in Object](animation_state_machine_in_object.md) — lifted out of PlayerCharacter 2026-09-15: blending now works on any Object; SetRootBone is no longer a silent trap; mid-blend retarget still unsupported
+- [Skinned rig bone indexing](skinned_rig_bone_indexing.md) — a bone's index is its position in skin.joints, not visit order; GetSkeleton loads every root and Renderer lays matrices out by that index (multi-root rigs used to load one bone and tear the mesh)

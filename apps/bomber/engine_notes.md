@@ -230,46 +230,39 @@ is most of them. The precondition is already met everywhere it matters: it works
 
 ---
 
-## 12. `GetSkeleton` only loads the joints that hang off `joints[0]`
+## 12. CLOSED: `GetSkeleton` now loads every root of a skin, not just `joints[0]`
 
-```cpp
-Bone* root_bone = GetBone(skin->joints.at(0),bone_count,inv_binds,assetmanager);
-skeleton->AttachChild(root_bone);
-```
+**What was wrong.** It took `skin->joints[0]` and recursed through its *children*, so any joint that
+was a SIBLING of the first rather than a descendant was never loaded. glTF does not require joints
+to form one tree - `skin.joints` is a flat list and `skin.skeleton` is optional and often absent.
 
-That is the whole of it: it takes the **first** joint and recurses through its **children**. Any
-joint that is a *sibling* of the first rather than a descendant of it is never loaded, and glTF does
-not require joints to form one tree — `skin.joints` is a flat list, and `skin.skeleton` (the common
-root) is optional and absent here.
+Two rigs here hit it. The enemy was first exported with `Hips`, `Head` and `Arm.R` as siblings and
+loaded **one bone of three** (the art was then fixed to `Hips -> Torso -> Head, Arm.R`, which is the
+right rig regardless). The turd is `Base`, `Flies` and `neutral_bone`, all roots - and `neutral_bone`
+is added by Blender's exporter, not by the artist, so **a second root can appear in a file nobody
+built that way**. That is what made this worth fixing in the engine rather than in Blender.
 
-The enemy rig was first exported with `Hips`, `Head` and `Arm.R` all parented to the armature object
-and none to each other. `Hips` had no children, so **one bone of three** loaded.
+It cost more than a missing animation: the clips bound to nothing, and the mesh tore itself apart,
+because `default_skinned.vert` indexes `bone_data[instance * bone_count + bones.x]` with
+`bone_count` short while the vertices still carried the full range of joint indices.
 
-**The art was fixed** — it is now `Hips → Torso → Head, Arm.R`, one chain, and all four bones load.
-That is the right rig regardless: with the bones as siblings, moving the hips would not have carried
-the head, so the walk would have looked wrong even if all three had loaded. **The engine gap is
-still open**, and is deliberately parked until something actually needs a multi-root rig.
+**What it is now.** Every joint that is not the child of another joint is loaded as a root and
+attached to the skeleton. Recursion only follows children that are joints of that skin, so a mesh or
+prop parented under a bone no longer becomes a bone. `num_bones` is the joint COUNT rather than
+however many the walk produced - it is the shader's stride, so it has to be the list length even if
+a bone went missing.
 
-**What it costs, in order of how much it hurts:**
+**Two things underneath it had to be fixed as well, and they were the real hazard:**
 
-1. **The mesh tears itself apart.** `default_skinned.vert` indexes
-   `bone_data[gl_InstanceID * bone_count + bones.x]` with `bone_count = skeleton->num_bones` = 1,
-   while the vertices carry bone indices 0..2. Indices 1 and 2 read past this instance's block into
-   whatever is next in the buffer. On screen that is the head and arm stretched into long spikes
-   across the board - which reads as a corrupt mesh, not as a rig that half-loaded.
-2. **Two thirds of the animation silently does nothing** - see §13.
-3. **Nothing says so.** `GetSkeleton` logs `Loaded %i bones` at **Trace** level only, so at the
-   default log level a rig that loaded a third of itself is indistinguishable from one that worked.
+1. `Bone::bone_index` was a depth-first *visit counter*, not the joint's position in `skin->joints`.
+   Those coincide only for a single chain whose walk order matches its joint list. It is now the
+   joint index, which is what `inverseBindMatrices` is parallel to and what `JOINTS_0` refers to.
+2. `Renderer` uploaded each instance's bone matrices in `GetAllBones()` *traversal* order, while the
+   shader indexes them by joint index. Same hidden assumption, and multi-root breaks it: the walk
+   emits a whole subtree before reaching the second root, while the joint list interleaves them. The
+   block is now laid out by `bone_index`.
 
-**What bomber does:** logs the bone count next to the clip names in `BuildEnemies`, and warns when a
-clip has tracks that bound to nothing.
-
-**The fix, cheapest first:** `GetSkeleton` already has `skin->joints` in hand - walking the whole
-list and attaching any joint whose parent is not itself a joint would handle flat and multi-root
-rigs both. Failing that, one `debug->Warn` when `bone_count != skin->joints.size()` turns a corrupt
-mesh into a line of stderr. There is already a bone-count check at `Renderer.cpp:359`, but it
-compares the skeleton against *itself*; the useful comparison is against what the **mesh** expects,
-which is the one number that predicts the out-of-range read.
+Neither would have shown up as anything but a corrupt-looking mesh.
 
 ---
 
@@ -298,14 +291,23 @@ character overrides:
 `PlayerCharacter::ApplyAnimation` is now `ProcessInputState()`, a call to the base, and its own
 layering (blink, head/hips look, foot trackers).
 
-**One thing deliberately NOT fixed:** retargeting a transition to a *third* clip while one is still
-running. `TransitionToAnimation` still rewinds when asked to go back where it came from and pauses
-otherwise. Out of scope by agreement - the simple cases (play it once, let it finish, blend A to B)
-are what this buys.
+**The slots were then renamed, which is the half that matters to app code.** `transition_to` is gone;
+the pair is now `previous_animation` and `current_animation`, and **`current_animation` flips to the
+destination the moment a transition starts**. So:
 
-**Watch out for one consequence in app code:** while a blend runs, `CurrentAnimationName()` is still
-the clip being *left*. Code that decides "am I already playing X?" has to check `NextAnimationName()`
-too, or it re-requests the same transition every tick for the whole blend.
+- `CurrentAnimationName()` means "what is this playing or becoming" in *every* state. It used to name
+  the clip being LEFT during a blend, which made "am I already playing X?" answer wrongly for the
+  whole crossfade - bomber needed a second test against the transition target to avoid re-requesting
+  the same transition every tick. That second test is gone.
+- `previous_animation` is non-NULL exactly while a blend runs, so it is also the "am I blending?"
+  test. `PreviousAnimationName()` reports it; bomber puts it in `bomber_state` as `blending_from`.
+- `animation_transition_factor` now reads as 0 = all previous, 1 = all current.
+- `ANIMATION_STATE_LOOPING` became `ANIMATION_STATE_PLAYING`: a one-shot being played was always in
+  that state too, so the old name described the clip rather than the object.
+
+**Deliberately NOT fixed:** retargeting a transition to a *third* clip mid-blend. It is refused with
+a warning rather than faked - honouring it would mean blending three clips or snapping. The clean
+answer when something needs it is a one-deep queue (a `next_animation`), not three-way blending.
 
 ---
 

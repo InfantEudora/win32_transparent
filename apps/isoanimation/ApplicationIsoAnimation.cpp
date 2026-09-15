@@ -817,7 +817,9 @@ void ApplicationIsoAnimation::DrawImGuiUI(){
         ImGui::Checkbox("Camera Track",&f_mode_camera_track);
         ImGui::Separator();
         ImGui::Text("Current Animation : %s",character->CurrentAnimationName());
-        ImGui::Text("Next Animation    : %s",character->NextAnimationName());
+        //Reads as "what it is on its way out of". CurrentAnimationName above is the destination the
+        //moment a blend starts, so these two together are the whole crossfade.
+        ImGui::Text("Blending from     : %s",character->PreviousAnimationName());
         ImGui::Separator();
         Bone* hips = character->FindBone("mixamorig:Hips");
         if (hips){

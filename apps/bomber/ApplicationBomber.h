@@ -186,6 +186,19 @@ private:
         enemies are actually placed) runs on the physics thread. See the note at the definition.
     */
     void BuildEnemies();
+    //A pool of animated turds. Decoration, but it is the asset that multi-root rigs were fixed for.
+    void BuildTurds();
+    /*
+        One skinned skeleton with its clips loaded onto it, ready to be shown and posed.
+
+        RENDER THREAD ONLY - it uploads a mesh. `f_report` logs which of the clip's tracks actually
+        bound to a bone, and is passed true for the first actor of each kind only.
+    */
+    Skeleton* BuildSkinnedActor(const char* skin_name, const char* node_name,
+                                const char* const* clip_names, int num_clips, bool f_report);
+    //The quarter-turn a scattered piece takes on a cell, hashed from the cell so it is the same
+    //every rebuild and never touches the simulation's random stream.
+    float CellYaw(int cx, int cz) const;
     /*
         Destroys whatever field is standing and builds the one Maze currently describes.
 
@@ -263,11 +276,13 @@ private:
         WHAT IT WOULD HAVE COST, and why it does not: a MESH_MODE_SHADER mesh does not go through
         the deferred pass, so water tiles would stop being pickable AND would vanish from the
         G-BUFFER - which the blast clamps its raymarch to. Since Maze::BlocksBlast lets flame run
-        straight over water on purpose, that showed up as a fireball spilling below the waterline
-        on exactly the tiles a blast is allowed to cross. Measured at 2.6% of the frame against
-        the same blast over grass, so it is a real artifact and not a worry. BuildWater sets
-        Shader::f_writes_gbuffer, which puts the tile's SHAPE back in the deferred pass while
-        leaving its colour custom, and both halves of the problem go with it.
+        straight over water on purpose, that showed up as the blast drawn over the pond instead
+        of stopping at its surface. BuildWater sets Shader::f_writes_gbuffer, which puts the tile's
+        SHAPE back in the deferred pass while leaving its colour custom, and both halves of the
+        problem go with it.
+
+        Built both ways to check it was worth having: the flag changes 15% of the pond's pixels and
+        nothing at all outside it.
     */
     void BuildWater();
     //Shader::uniform_callback for it: the four knobs plus the clock. RENDER THREAD, program bound.
@@ -350,6 +365,15 @@ private:
         matters while they are being built.
     */
     std::vector<Object*> enemy_objects;
+    /*
+        The animated turds, handed out to whichever cells have one.
+
+        A pool rather than one per cell because the generator scatters them - see BOMBER_MAX_TURDS.
+        RebuildField takes them in order and hides the rest; unlike the enemies, which cell a given
+        one is on changes every restart, so nothing may assume the index means anything.
+    */
+    std::vector<Object*> turd_objects;
+    float turd_y = 0.0f;
     //Y offsets taken from each GLB node's own translation - see LoadAssets for why.
     float character_y = 0.0f;
     float bomb_y = 0.0f;
@@ -434,7 +458,7 @@ private:
     //it belongs to, so neighbouring tiles overlap by half a cell and the cross reads as one
     //connected blast rather than as beads - a tile's flame is still GROWING when its neighbour
     //lights, so anything near the cell pitch leaves gaps exactly where the cross should join.
-    float blast_radius = 0.75f;
+    float blast_radius = 0.5f;
     float rim_softness = 0.22f;
     float turbulence = 0.85f;
     float noise_scale = 1.20f;
@@ -454,7 +478,7 @@ private:
     //see the long note at this uniform in the .frag, which is where the number was earned.
     float sun_intensity = 0.12f;
     float light_absorption = 1.0f;
-    int   num_view_steps = 40;
+    int   num_view_steps = 32;
     int   num_light_steps = 4;
     float light_falloff = 2.0f;
     float max_radiance = 10.0f;

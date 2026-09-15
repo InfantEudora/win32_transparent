@@ -949,9 +949,12 @@ void Application::RenderInspectorAnimationTab(Object* object){
     }else{
         ImGui::TextDisabled("Playing : nothing");
     }
-    if (object->transition_to){
-        ImGui::Text("Blending to %s (factor %.3f)",object->transition_to->name.c_str(),
-                    object->animation_transition_factor);
+    //"Playing" above is already the clip being blended INTO - current_animation is the destination
+    //from the moment a transition starts - so what is worth adding here is where it came from.
+    if (object->previous_animation){
+        ImGui::Text("Blending from %s (%.0f%% of the way across)",
+                    object->previous_animation->name.c_str(),
+                    object->animation_transition_factor * 100.0f);
     }
     ImGui::TextDisabled("state %i, wanted '%s'",object->animation_state,
                         object->dbg_desired_animation_name.c_str());

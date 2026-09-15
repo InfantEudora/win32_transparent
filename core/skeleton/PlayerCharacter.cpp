@@ -76,7 +76,7 @@ void PlayerCharacter::ProcessInputState(){
         //If the animation is transitioning to walking, we move by a factor.
         //If the animation is looping, that is the full speed.
         float factor = animation_transition_factor;
-        if (animation_state == ANIMATION_STATE_LOOPING){
+        if (animation_state == ANIMATION_STATE_PLAYING){
             factor = 1;
         }
         //MoveForwardBy(-0.025f * factor);

@@ -39,7 +39,11 @@ public:
     void                        LoadGLTFFile(const char* filename);
     Mesh*                       GetMeshFromNode(const char* node_name,std::vector<Material>*optional_mat_list_out = NULL, bool skinned = false); //This creates a mesh, or a skinned mesh if skinned is true
     Skeleton*                   GetSkeleton(const char* skeleton_name, AssetManager* assetmanager, Skeleton* optional_target = NULL);
-    Bone*                       GetBone(int node_index, int& bone_count, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
+    //`joints` is the skin's joint list. A bone's position in it IS its index - the JOINTS_0 vertex
+    //attribute and inverseBindMatrices are both keyed on it - so it is passed down rather than a
+    //running counter, which only matched while every rig was one chain. Returns NULL if the node
+    //is not a joint of that skin.
+    Bone*                       GetBone(int node_index, const std::vector<int>& joints, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager = NULL);
     Animation*                  LoadAnimation(const char* animation_name);
 
     vec3                        GetNodePosition(const char* node_name);

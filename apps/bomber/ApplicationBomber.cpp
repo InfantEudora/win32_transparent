@@ -126,6 +126,21 @@ static const char* BOMBER_ITEM_ASSET[MAZE_ITEM_COUNT] = {
     names its nodes instead of calling GetAllAssetsFromGLTF.
 */
 #define BOMBER_ENEMY_SKIN   "enemy_armature"
+/*
+    The turd's rig and its one clip - flies buzzing round it.
+
+    THIS IS THE MULTI-ROOT RIG. `turd_armature` has three joints, `Base`, `Flies` and a
+    `neutral_bone` the Blender exporter adds by itself, and none of them is a child of another.
+    Until GLTFLoader::GetSkeleton learned to load every root, it loaded only `Base` - which is not
+    the animated one - so this is the asset that pays for that fix.
+
+    A POOL, not one per cell: turds are scattered by the generator, and a board has two on average
+    and eight at the most over two thousand seeds. Twelve is comfortably clear of that, and a cell
+    past the end of the pool falls back to the static mesh rather than going missing.
+*/
+#define BOMBER_TURD_SKIN    "turd_armature"
+#define BOMBER_ANIM_TURD    "Turd_Idle"
+#define BOMBER_MAX_TURDS    12
 #define BOMBER_ANIM_WALK    "Enemy_Walking"
 #define BOMBER_ANIM_CHOP    "Enemy_Chopping"
 //Plays ONCE and holds its last frame - see where it is loaded. The only non-looping clip here.
@@ -210,6 +225,7 @@ void ApplicationBomber::Init(void){
     BuildLighting();
     LoadAssets();
     BuildEnemies();
+    BuildTurds();
     BuildBlastNoise();
     //BEFORE BuildExplosion, because custom shaders draw in registration order and the water is
     //opaque while the blast is not - see BuildWater.
@@ -346,120 +362,124 @@ void ApplicationBomber::LoadAssets(void){
     character_y = gltfloader.GetNodePosition(BOMBER_CHAR_ASSET).y;
     bomb_y      = gltfloader.GetNodePosition(BOMBER_BOMB_ASSET).y;
     enemy_y     = gltfloader.GetNodePosition(BOMBER_ENEMY_ASSET).y;
+    turd_y      = gltfloader.GetNodePosition(BOMBER_DECOR_ASSET[MAZE_DECOR_TURD]).y;
 }
 
 /*
-    One skinned, animated skeleton per enemy the board can ever hold.
+    One skinned skeleton, with its clips loaded onto it.
 
-    RENDER THREAD, ONCE, FROM Init - and that is not a preference. GetMeshFromNode uploads a mesh,
-    so it is GL work, while RebuildField runs on the PHYSICS thread inside the restart command
-    handler. Building these where the enemies are placed would be a GL call from the wrong thread
-    on every restart. So they are built up front and only ever shown, hidden and posed after that -
-    the same call BuildExplosion makes about the blast volumes, for the same reason.
+    RENDER THREAD ONLY - GetMeshFromNode uploads a mesh. Everything that uses these calls it from
+    Init and then only shows, hides and poses them; RebuildField runs on the PHYSICS thread and must
+    never build one.
 
-    MAZE_MAX_ENEMIES of them regardless of how many a given field actually places, because that is
-    the most it can ever need and the spare ones cost one hidden object each.
+    EVERY ACTOR GETS ITS OWN COPY OF EVERY CLIP, which is why this returns one skeleton and is
+    called in a loop rather than building a shared thing. Object::AddAnimation binds a clip to the
+    bones of the skeleton it is added to, so a shared clip would drive whichever skeleton linked it
+    last and leave the rest standing still.
 
-    EVERY ENEMY GETS ITS OWN COPY OF EVERY CLIP. An Animation is bound to the bones it was linked
-    against (Object::AddAnimation calls LinkObjects on the skeleton it is added to), so a shared
-    clip would drive whichever skeleton linked it last and the other three would stand still. Four
-    skeletons therefore means four LoadAnimation calls per clip, which is what apps/isoanimation
-    does for its three preview skeletons and is the pattern followed here.
+    Every clip is loaded LOOPING. Callers that want a one-shot clear the flag afterwards - there is
+    one such clip (the enemy's death) and making the exception the caller's business keeps this
+    function from needing to know what any of them mean.
+*/
+Skeleton* ApplicationBomber::BuildSkinnedActor(const char* skin_name, const char* node_name,
+                                               const char* const* clip_names, int num_clips,
+                                               bool f_report){
+    Skeleton* skeleton = gltfloader.GetSkeleton(skin_name,assetmanager);
+    if (!skeleton){
+        debug->Err("No skin called %s in bomber_assets.glb\n",skin_name);
+        return NULL;
+    }
+
+    std::vector<Material> loaded_materials;
+    Mesh* skinned_mesh = gltfloader.GetMeshFromNode(node_name,&loaded_materials,true);
+    if (!skinned_mesh){
+        debug->Err("No skinned mesh on node %s\n",node_name);
+        return NULL;
+    }
+    skeleton->SetMesh(skinned_mesh);
+    skeleton->TakeMaterialNames(loaded_materials);
+    skeleton->PickMaterials(loaded_materials,renderer->materials);
+
+    for (int i = 0; i < num_clips; i++){
+        Animation* animation = gltfloader.LoadAnimation(clip_names[i]);
+        if (!animation){
+            debug->Err("No animation called %s in bomber_assets.glb\n",clip_names[i]);
+            continue;
+        }
+        /*
+            NONE OF THESE CLIPS MOVES THE OBJECT, which is why the extract flags are left alone.
+
+            Where a thing is standing is a RULE here - Maze steps the enemies tile to tile and
+            scatters the decor - so root motion pulled out of a hip track would fight the grid and
+            drag the model off it. Both flags default to false; this is a note about why they are
+            not touched rather than a line of code. See Animation::extract_horizontal_root_motion.
+        */
+        animation->looped = true;
+        skeleton->AddAnimation(animation);
+
+        /*
+            Did every track in the clip find a bone to drive?
+
+            Reported for the first actor of each kind, because A CLIP THAT DRIVES NOTHING LOOKS
+            EXACTLY LIKE A CLIP THAT IS PLAYING: Object::ApplyAnimation skips tracks whose target is
+            NULL, silently, so the clip is "playing", its time index advances, and nothing moves.
+
+            An unbound track means that bone is not in the skeleton. That used to happen whenever a
+            rig's joints were siblings rather than one chain - GetSkeleton walked down from
+            joints[0] and took only what hung off it - and it is what the turd's Base/Flies/
+            neutral_bone rig ran into. GetSkeleton loads every root now, so this should stay quiet;
+            it is kept because it is the only thing that would say so if it ever stopped being true.
+        */
+        if (f_report){
+            std::string unbound;
+            for (ObjectAnimation* track:animation->object_animations){
+                if (!track->target){
+                    unbound += (unbound.empty() ? "" : ", ") + track->target_name;
+                }
+            }
+            if (unbound.empty()){
+                debug->Ok("Clip %-16s %i/%i track(s) bound, %.2fs\n",clip_names[i],
+                          (int)animation->object_animations.size(),
+                          (int)animation->object_animations.size(),animation->duration);
+            }else{
+                debug->Warn("Clip %s drives nothing on [%s] - those bones are not in the "
+                            "skeleton %s\n",clip_names[i],unbound.c_str(),skin_name);
+            }
+        }
+    }
+    return skeleton;
+}
+
+/*
+    One skeleton per enemy the board can ever hold, built once and then only shown, hidden and posed.
+
+    MAZE_MAX_ENEMIES of them regardless of how many a given field places, because that is the most it
+    can ever need and a spare costs one hidden object.
 */
 void ApplicationBomber::BuildEnemies(void){
     static const char* CLIPS[] = {BOMBER_ANIM_WALK,BOMBER_ANIM_CHOP,BOMBER_ANIM_DEATH};
 
     for (int i = 0; i < MAZE_MAX_ENEMIES; i++){
-        Skeleton* skeleton = gltfloader.GetSkeleton(BOMBER_ENEMY_SKIN,assetmanager);
+        Skeleton* skeleton = BuildSkinnedActor(BOMBER_ENEMY_SKIN,BOMBER_ENEMY_ASSET,
+                                               CLIPS,(int)(sizeof(CLIPS)/sizeof(CLIPS[0])),
+                                               i == 0);
         if (!skeleton){
-            debug->Err("No skin called %s - is the enemy still rigged in bomber_assets.glb?\n",
-                       BOMBER_ENEMY_SKIN);
             return;
         }
-
-        std::vector<Material> loaded_materials;
-        Mesh* skinned_mesh = gltfloader.GetMeshFromNode(BOMBER_ENEMY_ASSET,&loaded_materials,true);
-        if (!skinned_mesh){
-            debug->Err("No skinned mesh on node %s\n",BOMBER_ENEMY_ASSET);
-            return;
-        }
-        skeleton->SetMesh(skinned_mesh);
-        skeleton->TakeMaterialNames(loaded_materials);
-        skeleton->PickMaterials(loaded_materials,renderer->materials);
-
         char name[32];
         snprintf(name,sizeof(name),"Enemy %i",i);
         skeleton->name = name;
 
-        for (const char* clip_name:CLIPS){
-            Animation* animation = gltfloader.LoadAnimation(clip_name);
-            if (!animation){
-                debug->Err("No animation called %s in bomber_assets.glb\n",clip_name);
-                continue;
-            }
-            /*
-                WALKING AND CHOPPING LOOP; DYING DOES NOT. NONE OF THEM MOVES THE CHARACTER.
+        /*
+            DYING IS AN EVENT, NOT A STATE - the one clip here that does not loop.
 
-                Walking and chopping are STATES: an enemy walks until it stops and chops until the
-                hedge is gone, and both outlast their own 0.37s of keyframes. Dying is an EVENT -
-                it happens once, and a looping death is a body repeatedly getting back up to fall
-                over again. A non-looping clip stops on its last frame, which is the pose a corpse
-                should hold for the rest of MAZE_DEATH_TICKS.
-
-                Not moving because the ENEMY'S POSITION IS A RULE, not a pose. Maze steps it tile to
-                tile and SyncView reads that back; root motion extracted from the hip track would
-                fight it and the model would drift off the grid it is supposed to be on. Both
-                extract flags default to false, so this is a note about why they are left alone
-                rather than a line of code - see Animation::extract_horizontal_root_motion.
-            */
-            animation->looped = (strcmp(clip_name,BOMBER_ANIM_DEATH) != 0);
-            skeleton->AddAnimation(animation);
-            /*
-                Did every track in the clip find a bone to drive?
-
-                Checked once, for the first enemy, because A CLIP THAT DRIVES NOTHING LOOKS EXACTLY
-                LIKE A CLIP THAT IS PLAYING. Object::ApplyAnimation walks the tracks and skips any
-                whose target is NULL, silently - so bomber_state reports the right clip, the time
-                index advances, and the character stands still. That cost the best part of an hour
-                here and the answer was never going to come from a screenshot.
-
-                An unbound track means the bone is not in the skeleton, which on this rig means
-                GLTFLoader::GetSkeleton did not load it: it starts at skin->joints[0] and walks
-                DOWN through children, so any joint that is a SIBLING of the first rather than a
-                descendant of it is never reached. Belongs in LinkObjects rather than here - see
-                engine_notes.md - but until it is there, every app that loads a clip wants this.
-            */
-            if (i == 0){
-                std::string unbound;
-                for (ObjectAnimation* track:animation->object_animations){
-                    if (!track->target){
-                        unbound += (unbound.empty() ? "" : ", ") + track->target_name;
-                    }
-                }
-                if (unbound.empty()){
-                    debug->Ok("Clip %s: all %i track(s) bound, %.2fs\n",clip_name,
-                              (int)animation->object_animations.size(),animation->duration);
-                }else{
-                    debug->Warn("Clip %s drives nothing on [%s] - those bones are not in the "
-                                "skeleton. The rig's joints are siblings, and GetSkeleton only "
-                                "loads what hangs off joints[0].\n",clip_name,unbound.c_str());
-                }
-            }
-            /*
-                DELIBERATELY NO SetRootBone.
-
-                It is no longer a trap - Object::ApplyAnimation now calls SampleRootMotion itself,
-                so a named root bone gets posed whatever kind of object owns it, and only the
-                MOTION is left to the virtual that a plain Skeleton ignores. It used to be one:
-                the root track was skipped by ApplyInterval and nothing else picked it up unless
-                the object happened to be a PlayerCharacter, which silently stopped that bone
-                animating at all. That cost an hour here.
-
-                It stays unset because this app has no use for it either way. Root motion is
-                something bomber actively does not want - Maze owns where an enemy is - so leaving
-                every track ordinary, with the hip movement staying local as a bob, is both simpler
-                and exactly the wanted behaviour.
-            */
+            A looping death is a body repeatedly getting back up to fall over again. A non-looping
+            clip stops on its last frame instead, which is the pose a corpse should hold for the
+            rest of MAZE_DEATH_TICKS.
+        */
+        Animation* death = skeleton->FindAnimation(BOMBER_ANIM_DEATH);
+        if (death){
+            death->looped = false;
         }
 
         //Something has to be playing or ApplyAnimation has nothing to pose, and the skeleton would
@@ -470,19 +490,63 @@ void ApplicationBomber::BuildEnemies(void){
         main_scene->AddObject(skeleton);
         enemy_objects.push_back(skeleton);
     }
-    /*
-        How many bones actually loaded, which is worth a line of its own.
 
-        GLTFLoader::GetSkeleton walks DOWN from skin->joints[0] and takes whatever hangs off it, so
-        a rig whose bones are siblings rather than a chain loads exactly one bone and says so only
-        at Trace level. The clips then link the one track they can find and the app looks like it
-        animated something. Printing the count next to the clip names is the cheapest thing that
-        turns that into a visible number - compare it against the joint count in the GLB.
-    */
     Skeleton* first = enemy_objects.empty() ? NULL : dynamic_cast<Skeleton*>(enemy_objects[0]);
-    debug->Ok("Built %i enemy skeletons, %i bone(s) each, %s\n",(int)enemy_objects.size(),
-              first ? first->num_bones : 0,
-              enemy_objects.empty() ? "none animated" : "walking by default");
+    debug->Ok("Built %i enemy skeletons, %i bone(s) each\n",(int)enemy_objects.size(),
+              first ? first->num_bones : 0);
+}
+
+/*
+    A pool of animated turds, buzzing.
+
+    Decoration, and the only reason it is a pool rather than one per cell is that the generator
+    scatters them: two on an average board, eight at the most over two thousand seeds, so
+    BOMBER_MAX_TURDS covers it with room over. RebuildField hands them out to the cells that want
+    one and hides the rest; a cell past the end of the pool falls back to the static mesh.
+
+    This is the asset that multi-root rigs were fixed for - see BOMBER_TURD_SKIN.
+*/
+void ApplicationBomber::BuildTurds(void){
+    static const char* CLIPS[] = {BOMBER_ANIM_TURD};
+
+    for (int i = 0; i < BOMBER_MAX_TURDS; i++){
+        Skeleton* skeleton = BuildSkinnedActor(BOMBER_TURD_SKIN,BOMBER_DECOR_ASSET[MAZE_DECOR_TURD],
+                                               CLIPS,1,i == 0);
+        if (!skeleton){
+            return;
+        }
+        char name[32];
+        snprintf(name,sizeof(name),"Turd %i",i);
+        skeleton->name = name;
+
+        /*
+            They all start at a DIFFERENT point in the clip.
+
+            Four turds buzzing in lockstep reads as one animation played four times, which is worse
+            than not animating them at all. The offset comes from the index rather than a random
+            draw so it survives a restart unchanged and cannot touch the simulation's stream.
+        */
+        skeleton->SwitchToAnimation(BOMBER_ANIM_TURD);
+        //AFTER SwitchToAnimation, which rewinds the clip it starts. Each skeleton owns its own copy
+        //of the clip - BuildSkinnedActor loads one per actor - so this offsets only this one.
+        Animation* idle = skeleton->FindAnimation(BOMBER_ANIM_TURD);
+        if (idle){
+            idle->time_index = idle->duration * ((float)i / (float)BOMBER_MAX_TURDS);
+        }
+        skeleton->SetVisibility(false);
+
+        main_scene->AddObject(skeleton);
+        turd_objects.push_back(skeleton);
+    }
+
+    Skeleton* first = turd_objects.empty() ? NULL : dynamic_cast<Skeleton*>(turd_objects[0]);
+    debug->Ok("Built %i turd skeletons, %i bone(s) each\n",(int)turd_objects.size(),
+              first ? first->num_bones : 0);
+}
+
+float ApplicationBomber::CellYaw(int cx, int cz) const {
+    uint32_t h = (uint32_t)(cx * 73856093) ^ (uint32_t)(cz * 19349663);
+    return (float)(h & 3) * (TYPE_PI * 0.5f);
 }
 
 Object* ApplicationBomber::AddCellObject(const char* asset_name, int cx, int cz,
@@ -506,12 +570,7 @@ Object* ApplicationBomber::AddCellObject(const char* asset_name, int cx, int cz,
         the open problem RRandom.h describes. A hash of two small ints is plenty when the answer is
         one of four angles.
     */
-    if (f_random_yaw){
-        uint32_t h = (uint32_t)(cx * 73856093) ^ (uint32_t)(cz * 19349663);
-        object->SetRotation(quat(vec3(0,1,0),(float)(h & 3) * (TYPE_PI * 0.5f)));
-    }else{
-        object->SetRotation(quat(vec3(0,1,0),yaw));
-    }
+    object->SetRotation(quat(vec3(0,1,0),f_random_yaw ? CellYaw(cx,cz) : yaw));
 
     main_scene->AddObject(object);
     field_objects.push_back(object);
@@ -552,6 +611,10 @@ void ApplicationBomber::RebuildField(void){
         bomb = NULL;
     }
     renderer->DeleteDestroyedObjects();
+
+    //How many of the pooled turds this field has used. Handed out in board order - see the decor
+    //block below - and the unused tail is hidden once the walk is done.
+    int num_turds_placed = 0;
 
     for (int z = 0; z < MAZE_H; z++){
         for (int x = 0; x < MAZE_W; x++){
@@ -599,11 +662,28 @@ void ApplicationBomber::RebuildField(void){
                     what the game will actually let you do. A row of them shares one axis, which is
                     what turns three planks at three angles into one bridge.
                 */
-                bool f_yaw = (d != MAZE_DECOR_BRIDGE);
-                float yaw = (maze.pass_axis[z][x] == MAZE_AXIS_X) ? BOMBER_BRIDGE_YAW_X
-                                                                  : BOMBER_BRIDGE_YAW_Z;
-                AddCellObject(BOMBER_DECOR_ASSET[d],x,z,
-                              gltfloader.GetNodePosition(BOMBER_DECOR_ASSET[d]).y,yaw,f_yaw);
+                /*
+                    A TURD TAKES ONE OF THE POOLED, ANIMATED SKELETONS instead of a copy of the
+                    static mesh - it is the one piece of decoration that moves.
+
+                    Positioned here rather than added: these are built once on the render thread and
+                    this runs on the physics thread, so all it may do is place one and show it.
+                    Which turd lands on which cell changes every restart, which is fine - nothing
+                    reads the index - and a board with more turds than the pool falls back to the
+                    static mesh rather than leaving a cell empty.
+                */
+                if (d == MAZE_DECOR_TURD && num_turds_placed < (int)turd_objects.size()){
+                    Object* object = turd_objects[num_turds_placed++];
+                    object->SetPosition(CellCentre(x,z) + vec3(0.0f,turd_y,0.0f));
+                    object->SetRotation(quat(vec3(0,1,0),CellYaw(x,z)));
+                    object->SetVisibility(true);
+                }else{
+                    bool f_yaw = (d != MAZE_DECOR_BRIDGE);
+                    float yaw = (maze.pass_axis[z][x] == MAZE_AXIS_X) ? BOMBER_BRIDGE_YAW_X
+                                                                      : BOMBER_BRIDGE_YAW_Z;
+                    AddCellObject(BOMBER_DECOR_ASSET[d],x,z,
+                                  gltfloader.GetNodePosition(BOMBER_DECOR_ASSET[d]).y,yaw,f_yaw);
+                }
             }
 
             /*
@@ -635,6 +715,12 @@ void ApplicationBomber::RebuildField(void){
         bomb->SetVisibility(false);
         main_scene->AddObject(bomb);
     }
+    //The turds this field did not need. Hidden rather than moved away, so a pool entry never ends
+    //up standing on a cell that no longer has one.
+    for (int i = num_turds_placed; i < (int)turd_objects.size(); i++){
+        turd_objects[i]->SetVisibility(false);
+    }
+
     //Nothing has been drawn yet, so whatever the maze's version is, this view is not at it. The
     //wrap when field_version is 0 does not matter: the comparison is for difference, not order.
     drawn_field_version = maze.field_version - 1;
@@ -941,10 +1027,10 @@ void ApplicationBomber::BuildWater(void){
         G-buffer like any other tile - see Shader::f_writes_gbuffer.
 
         Without this the blast's raymarch, which clamps itself to the G-buffer's depth, marches
-        straight through the water and the fireball spills below the waterline. It is not
+        straight through the water and draws over the pond instead of stopping at it. It is not
         theoretical: Maze::BlocksBlast lets flame cross water on purpose, so a bomb beside a pond
-        is an ordinary move, and the same blast measured 2.6% of the frame different over water
-        than over the grass tile next to it.
+        is an ordinary move. Built both ways with a volume parked across the pond, the flag was
+        worth 15% of the pond's pixels and changed nothing anywhere else in the frame.
     */
     water_shader->f_writes_gbuffer = true;
     water_shader_index = renderer->AddCustomShader(water_shader);
@@ -1253,17 +1339,12 @@ void ApplicationBomber::SyncView(void){
             }
             continue;
         }
-        /*
-            Asked for only when it is neither playing NOR already on its way.
-
-            Both halves are needed: while a blend runs, CurrentAnimationName is still the clip being
-            left, so testing that alone would re-request the same transition every tick for the
-            whole blend. TransitionToAnimation would shrug each one off, but it would log a line per
-            tick per enemy while doing it.
-        */
+        //One comparison, because CurrentAnimationName is what the object is playing OR BECOMING -
+        //it names the destination from the moment a blend starts. This used to need a second test
+        //against the transition target, since "current" then meant the clip being left and a blend
+        //in flight looked like the wrong clip playing.
         const char* clip = walker.chop_ticks > 0 ? BOMBER_ANIM_CHOP : BOMBER_ANIM_WALK;
-        if (strcmp(object->CurrentAnimationName(),clip) != 0 &&
-            strcmp(object->NextAnimationName(),clip) != 0){
+        if (strcmp(object->CurrentAnimationName(),clip) != 0){
             object->TransitionToAnimation(clip);
         }
     }
@@ -1670,6 +1751,11 @@ json ApplicationBomber::StateJson(void){
             {"chopping",maze.enemy[i].chop_ticks > 0},
             {"chop_ticks",maze.enemy[i].chop_ticks},
             {"clip",object ? object->CurrentAnimationName() : "no object"},
+            //What it is fading OUT of, or "None". Non-empty exactly while a crossfade is running,
+            //so it is both the blend's source and the answer to "is this one blending right now" -
+            //which `clip` alone can no longer tell you, now that it names the destination from the
+            //moment the blend starts.
+            {"blending_from",object ? object->PreviousAnimationName() : "None"},
             {"clips_loaded",object ? (int)object->animations.size() : 0}
         });
     }
