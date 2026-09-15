@@ -316,6 +316,13 @@ typedef void (APIENTRYP PFNGLNAMEDFRAMEBUFFERDRAWBUFFERSPROC)(GLuint framebuffer
 GLAPI PFNGLNAMEDFRAMEBUFFERDRAWBUFFERSPROC glNamedFramebufferDrawBuffers;
 typedef void (APIENTRYP PFNGLNAMEDFRAMEBUFFERTEXTUREPROC)(GLuint framebuffer, GLenum attachment, GLuint texture, GLint level);
 GLAPI PFNGLNAMEDFRAMEBUFFERTEXTUREPROC glNamedFramebufferTexture;
+//The named form of glCheckFramebufferStatus above. Both are here because they answer for
+//DIFFERENT framebuffers: the unnamed one reports on whatever is bound, so it can only be used at
+//a point in the frame where that happens to be the one you just built. This one names its target
+//and so can check a framebuffer from anywhere - which is what Renderer::RebuildLowResFBO needs,
+//running as it does from an app's PreRender with the frame's own framebuffer bound.
+typedef GLenum (APIENTRYP PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC)(GLuint framebuffer, GLenum target);
+GLAPI PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC glCheckNamedFramebufferStatus;
 
 //Blending. GL 1.1's glBlendFunc is exported by opengl32 and needs no loading; the EQUATION does,
 //and MIN/MAX are the reason it is here - they reduce a target rather than compositing into it,
@@ -326,6 +333,13 @@ GLAPI PFNGLNAMEDFRAMEBUFFERTEXTUREPROC glNamedFramebufferTexture;
 #define GL_MAX      0x8008
 typedef void (APIENTRYP PFNGLBLENDEQUATIONSEPARATEPROC)(GLenum modeRGB, GLenum modeAlpha);
 GLAPI PFNGLBLENDEQUATIONSEPARATEPROC glBlendEquationSeparate;
+//Different FACTORS for colour and alpha, which glBlendFunc cannot express. Needed the moment
+//anything renders into a framebuffer whose alpha is going to be READ BACK rather than presented:
+//the ordinary SRC_ALPHA/ONE_MINUS_SRC_ALPHA applied to the alpha channel of a cleared buffer
+//squares the coverage, which is invisible over an opaque frame and wrong in an off-screen one.
+//See Renderer::CustomShaderPass, which composites its low-res target and therefore reads it.
+typedef void (APIENTRYP PFNGLBLENDFUNCSEPARATEPROC)(GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
+GLAPI PFNGLBLENDFUNCSEPARATEPROC glBlendFuncSeparate;
 
 //Shaders
 typedef void (APIENTRYP PFNGLSHADERSOURCEPROC)(GLuint shader, GLsizei count, const char *const*string, const GLint *length);

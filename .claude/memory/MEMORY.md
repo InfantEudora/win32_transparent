@@ -28,7 +28,9 @@
 - [testfx bench gotchas](testfx_bench_gotchas.md) — uniform values leaked across effect switches (fixed 2026-09-13 in BuildEffect); sim_step runs at tick rate; default camera is above the cube, reference view is low
 - [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass run every physics pass, RunSimulationTick/GatherInput only on ticking ones; one set of edge flags serves both (backlog 84)
 - [lockd owner must be session id](lockd_owner_must_be_session_id.md) — an explicit lock_claim under any other owner string makes the PreToolUse hook refuse your own edits
-- [Bomber app](bomber_app.md) — apps/bomber, a bomberman: 16x16 maze from one GLB, walking character, bomb+fuse, blast drawn per-tile or as one cross volume; Maze holds the rules
+- [Bomber app](bomber_app.md) — apps/bomber, a bomberman: blended 16x16 field from one GLB, walking character, destructible hedge/wood, buried pickups, hedge-cutting enemies, raymarched blast; Maze holds the rules and `make rules` tests them with no engine
 - [Volumetric effect gotchas](volumetric_effect_gotchas.md) — sim_step wants num_ticks not ticks; a volume needs sun_intensity; shape terms go relative to the feature, not the box
 - [Ship orbit camera is the canonical one](ship_orbit_camera_canonical.md) — copy the orbit from ApplicationShip/Tank, never testfx: raw mouse deltas, drained outside the button gate, focus+UI gated
 - [Engine forward is -Z](engine_forward_is_minus_z.md) — use object_get's world_forward to settle orientation; bracket screenshots with camera_get or the user's mouse silently reframes them
+- [Measuring GPU cost](measuring_gpu_cost.md) — frame timers are useless here (driver forces vsync, wglSwapIntervalEXT is NULL); count work in-shader and read it back off a screenshot
+- [Animation state machine lives in Object](animation_state_machine_in_object.md) — lifted out of PlayerCharacter 2026-09-15: blending now works on any Object; SetRootBone is no longer a silent trap; mid-blend retarget still unsupported

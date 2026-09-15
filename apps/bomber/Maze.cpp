@@ -1,5 +1,14 @@
 #include "Maze.h"
 
+//Manhattan distance between two cells. A local helper rather than <stdlib.h>'s abs, so this
+//translation unit keeps depending on nothing at all - which is the point of the Maze/Application
+//split and is worth more than four saved lines.
+static int CellDistance(int ax, int az, int bx, int bz){
+    int dx = ax > bx ? ax - bx : bx - ax;
+    int dz = az > bz ? az - bz : bz - az;
+    return dx + dz;
+}
+
 //--- the field's own random stream ---------------------------------------------------------------
 
 uint32_t Maze::NextRandom(){
@@ -39,6 +48,35 @@ int Maze::DirZ(int dir){
 
 uint8_t Maze::DirAxis(int dir){
     return (dir == MAZE_DIR_EAST || dir == MAZE_DIR_WEST) ? MAZE_AXIS_X : MAZE_AXIS_Z;
+}
+
+int Maze::DirOpposite(int dir){
+    switch (dir){
+        case MAZE_DIR_EAST:  return MAZE_DIR_WEST;
+        case MAZE_DIR_WEST:  return MAZE_DIR_EAST;
+        case MAZE_DIR_NORTH: return MAZE_DIR_SOUTH;
+        case MAZE_DIR_SOUTH: return MAZE_DIR_NORTH;
+        default:             return MAZE_DIR_NONE;
+    }
+}
+
+//--- the walker ---------------------------------------------------------------------------------
+
+float MazeWalker::X() const {
+    if (step_ticks <= 0 || step_total <= 0){
+        return (float)tile_x;
+    }
+    //step_ticks counts DOWN to arrival, so this is 0 at the start of a step and 1 at the end.
+    float t = 1.0f - (float)step_ticks / (float)step_total;
+    return (float)from_x + ((float)tile_x - (float)from_x) * t;
+}
+
+float MazeWalker::Z() const {
+    if (step_ticks <= 0 || step_total <= 0){
+        return (float)tile_z;
+    }
+    float t = 1.0f - (float)step_ticks / (float)step_total;
+    return (float)from_z + ((float)tile_z - (float)from_z) * t;
 }
 
 //--- generation -------------------------------------------------------------------------------------
@@ -258,21 +296,138 @@ void Maze::AddWater(){
     }
 }
 
+/*
+    Hedges and wooden walls, scattered over the open floor.
+
+    AFTER THE REACHABILITY PASS, ON PURPOSE. A soft block is not a wall: everything behind one is
+    somewhere you can get to as soon as you have dug, so counting it as unreachable would be wrong
+    and - worse - the prune would turn the pocket behind it into real wall and make the lie true.
+    Running the prune over the hard walls only and then scattering these on what is left is what
+    makes `reachable_cells` mean "reachable once you have done the work".
+
+    The spawn's elbow room is kept clear so the opening move is never "dig your way out", and
+    bridges are skipped because a blocked bridge is a crossing that does not cross.
+*/
+void Maze::AddSoftBlocks(){
+    for (int z = 1; z < MAZE_H - 1; z++){
+        for (int x = 1; x < MAZE_W - 1; x++){
+            if (tile[z][x] != MAZE_TILE_GRASS){
+                continue;
+            }
+            if (pass_axis[z][x] != MAZE_AXIS_ANY){
+                continue;
+            }
+            if (CellDistance(x,z,MAZE_SPAWN_X,MAZE_SPAWN_Z) <= MAZE_SPAWN_CLEAR){
+                continue;
+            }
+            if (RandomBelow(100) >= MAZE_SOFT_BLOCK_PCT){
+                continue;
+            }
+            //More hedge than wood, because the hedge is the one an enemy can cut and the one that
+            //therefore makes the board move on its own.
+            tile[z][x] = (RandomBelow(100) < 60) ? MAZE_TILE_HEDGE : (uint8_t)MAZE_TILE_WOOD;
+        }
+    }
+}
+
+/*
+    The pickups, buried under soft blocks.
+
+    UNDER blocks rather than lying on the floor, which is what makes blowing a hedge up worth doing
+    for its own sake rather than only when it is in the way. Nothing marks them as hidden: an item
+    on an impassable cell cannot be walked onto, so the tile above it IS the lid.
+
+    Chosen by shuffling the list of soft blocks and taking the front of it, rather than by rolling
+    until enough have been placed: a board that happens to have three soft blocks then places three
+    items instead of spinning, and the count is exact rather than probable. The two kinds alternate
+    so a field never buries four of the same thing.
+*/
+void Maze::AddItems(){
+    int cell_x[MAZE_W * MAZE_H];
+    int cell_z[MAZE_W * MAZE_H];
+    int num_cells = 0;
+    for (int z = 1; z < MAZE_H - 1; z++){
+        for (int x = 1; x < MAZE_W - 1; x++){
+            if (IsSoft(x,z)){
+                cell_x[num_cells] = x;
+                cell_z[num_cells] = z;
+                num_cells++;
+            }
+        }
+    }
+
+    int want = num_cells < MAZE_NUM_ITEMS ? num_cells : MAZE_NUM_ITEMS;
+    for (int i = 0; i < want; i++){
+        int j = i + RandomBelow(num_cells - i);
+        int tx = cell_x[i]; cell_x[i] = cell_x[j]; cell_x[j] = tx;
+        int tz = cell_z[i]; cell_z[i] = cell_z[j]; cell_z[j] = tz;
+        item[cell_z[i]][cell_x[i]] = (i % 2 == 0) ? MAZE_ITEM_HEALTH : (uint8_t)MAZE_ITEM_SHIELD;
+    }
+}
+
+/*
+    The enemies.
+
+    Placed by the same shuffle-and-take as the items, and for the same reason. The distance rule is
+    the whole design: an enemy that starts within a few tiles of the spawn is not a threat, it is an
+    ambush, and the player has done nothing yet to deserve one.
+
+    Bridges are excluded by the pass_axis test, which also takes care of water - a water cell is
+    only passable when it has a bridge on it, and a bridge always sets an axis.
+*/
+void Maze::PlaceEnemies(){
+    num_enemies = 0;
+
+    int cell_x[MAZE_W * MAZE_H];
+    int cell_z[MAZE_W * MAZE_H];
+    int num_cells = 0;
+    for (int z = 1; z < MAZE_H - 1; z++){
+        for (int x = 1; x < MAZE_W - 1; x++){
+            if (!IsPassable(x,z) || pass_axis[z][x] != MAZE_AXIS_ANY){
+                continue;
+            }
+            if (CellDistance(x,z,MAZE_SPAWN_X,MAZE_SPAWN_Z) < MAZE_ENEMY_MIN_DIST){
+                continue;
+            }
+            cell_x[num_cells] = x;
+            cell_z[num_cells] = z;
+            num_cells++;
+        }
+    }
+
+    int want = num_cells < MAZE_MAX_ENEMIES ? num_cells : MAZE_MAX_ENEMIES;
+    for (int i = 0; i < want; i++){
+        int j = i + RandomBelow(num_cells - i);
+        int tx = cell_x[i]; cell_x[i] = cell_x[j]; cell_x[j] = tx;
+        int tz = cell_z[i]; cell_z[i] = cell_z[j]; cell_z[j] = tz;
+
+        MazeWalker& walker = enemy[num_enemies++];
+        walker = MazeWalker();
+        walker.tile_x = walker.from_x = cell_x[i];
+        walker.tile_z = walker.from_z = cell_z[i];
+        walker.step_total = MAZE_ENEMY_STEP_TICKS;
+        walker.facing = RandomBelow(MAZE_NUM_DIRS);
+        walker.f_alive = true;
+    }
+}
+
 void Maze::AddDecor(){
     for (int z = 1; z < MAZE_H - 1; z++){
         for (int x = 1; x < MAZE_W - 1; x++){
-            if (tile[z][x] == MAZE_TILE_WALL || tile[z][x] == MAZE_TILE_WATER){
+            if (IsBlock(x,z) || tile[z][x] == MAZE_TILE_WATER){
                 continue;
             }
             if (decor[z][x] != MAZE_DECOR_NONE){
                 continue;
             }
             int roll = RandomBelow(100);
-            if (roll < 9){
+            if (roll < 7){
                 decor[z][x] = MAZE_DECOR_FLOWERS;
-            }else if (roll < 15){
+            }else if (roll < 12){
+                decor[z][x] = MAZE_DECOR_FLOWERS_TALL;
+            }else if (roll < 18){
                 decor[z][x] = MAZE_DECOR_PLANT;
-            }else if (roll < 17){
+            }else if (roll < 20){
                 decor[z][x] = MAZE_DECOR_TURD;
             }
         }
@@ -327,7 +482,7 @@ int Maze::PruneUnreachable(){
             if (seen[z][x]){
                 continue;
             }
-            if (tile[z][x] == MAZE_TILE_WALL || tile[z][x] == MAZE_TILE_WATER){
+            if (IsBlock(x,z) || tile[z][x] == MAZE_TILE_WATER){
                 continue;
             }
             tile[z][x] = MAZE_TILE_WALL;
@@ -352,14 +507,18 @@ int Maze::PruneUnreachable(){
     THE SPAWN IS CLEARED LAST and unconditionally, before the reachability pass. Whatever the dice
     did, the character starts on a tile it can stand on with two neighbours it can walk to -
     otherwise a seed in a hundred puts it in a pond and the game looks broken rather than unlucky.
-*/
-void Maze::NewGame(uint32_t seed){
-    rng_state = seed ? seed : 1;
 
+    THE ORDER OF THE LAST FIVE STEPS IS LOAD-BEARING and is the one thing here worth reading twice:
+    prune, then soft blocks, then items under those blocks, then enemies on what is still open, then
+    decoration on what is left. Each step depends on the one before having settled - see AddSoftBlocks
+    for why the prune cannot come after it.
+*/
+int Maze::LayOutTerrain(){
     for (int z = 0; z < MAZE_H; z++){
         for (int x = 0; x < MAZE_W; x++){
             tile[z][x] = MAZE_TILE_WALL;
             decor[z][x] = MAZE_DECOR_NONE;
+            item[z][x] = MAZE_ITEM_NONE;
             pass_axis[z][x] = MAZE_AXIS_ANY;
             zone[z][x] = MAZE_STYLE_BOMBER;
         }
@@ -424,13 +583,43 @@ void Maze::NewGame(uint32_t seed){
         pass_axis[spawn[i][1]][spawn[i][0]] = MAZE_AXIS_ANY;
     }
 
-    reachable_cells = PruneUnreachable();
-    //Decoration last, so nothing is scattered on a cell that is about to become a wall.
+    return PruneUnreachable();
+}
+
+void Maze::NewGame(uint32_t seed){
+    rng_state = seed ? seed : 1;
+
+    /*
+        Roll a layout, and roll again if it came out as a corner of a field rather than a field.
+
+        The stream is NOT reseeded between attempts, so the second layout is a different one and the
+        whole sequence is still decided by `seed`. The last attempt is kept whatever it scored: a
+        small board is worse than a big one but still better than no board, and a loop that could
+        fail to terminate is worse than either.
+    */
+    for (int attempt = 0; attempt < MAZE_LAYOUT_ATTEMPTS; attempt++){
+        reachable_cells = LayOutTerrain();
+        if (reachable_cells >= MAZE_MIN_PLAYABLE){
+            break;
+        }
+    }
+
+    AddSoftBlocks();
+    AddItems();
+    PlaceEnemies();
+    //Decoration last, so nothing is scattered on a cell that is about to become a wall or a hedge.
     AddDecor();
 
-    //Floor variety, purely cosmetic: grass mostly, with brick and rock mixed in so the board reads
-    //as ground rather than as a colour. Done here, after every rule has settled, precisely because
-    //it changes nothing - grass, brick and rock are the same tile as far as the walker is concerned.
+    /*
+        Floor variety, purely cosmetic: grass mostly, with brick and rock mixed in so the board reads
+        as ground rather than as a colour. Done here, after every rule has settled, precisely because
+        it changes nothing - grass, brick and rock are the same tile as far as the walker is concerned.
+
+        IT DELIBERATELY SKIPS THE SOFT BLOCKS, which is what lets the view treat a cell's floor as
+        fixed for the life of the field: a hedge turns into GRASS when it burns, and the floor that
+        was already under it is the grass tile, so nothing has to be swapped at the moment of the
+        explosion. Give a hedge a rock floor here and that stops being true.
+    */
     for (int z = 1; z < MAZE_H - 1; z++){
         for (int x = 1; x < MAZE_W - 1; x++){
             if (tile[z][x] != MAZE_TILE_GRASS){
@@ -445,28 +634,68 @@ void Maze::NewGame(uint32_t seed){
         }
     }
 
-    tile_x = from_x = MAZE_SPAWN_X;
-    tile_z = from_z = MAZE_SPAWN_Z;
-    step_ticks = 0;
-    facing = MAZE_DIR_SOUTH;
+    player = MazeWalker();
+    player.tile_x = player.from_x = MAZE_SPAWN_X;
+    player.tile_z = player.from_z = MAZE_SPAWN_Z;
+    player.step_total = MAZE_STEP_TICKS;
+    player.facing = MAZE_DIR_SOUTH;
+    player.f_alive = true;
+
+    health = MAZE_START_HEALTH;
+    shield_ticks = 0;
+    invuln_ticks = 0;
+    dead_ticks = 0;
+    deaths = 0;
+    items_taken = 0;
 
     f_bomb = false;
     fuse_ticks = 0;
     f_blast = false;
     blast_ticks = 0;
     blast_count = 0;
+    blocks_destroyed = 0;
+    blocks_cut = 0;
+    enemies_killed = 0;
     for (int d = 0; d < MAZE_NUM_DIRS; d++){
         arm[d] = 0;
     }
+
+    //A view that has never looked at this field is out of date by definition, so the counter moves
+    //even though nothing was "changed" - see the note on field_version.
+    field_version++;
 }
 
 //--- queries -----------------------------------------------------------------------------------------
+
+bool Maze::IsBlock(int x, int z) const {
+    if (!InBounds(x,z)){
+        return false;
+    }
+    //A range test, which the enum's ordering exists to allow - see the note on MazeTile.
+    return tile[z][x] >= MAZE_TILE_WALL && tile[z][x] < MAZE_TILE_COUNT;
+}
+
+bool Maze::IsSoft(int x, int z) const {
+    if (!InBounds(x,z)){
+        return false;
+    }
+    return tile[z][x] == MAZE_TILE_HEDGE || tile[z][x] == MAZE_TILE_WOOD;
+}
+
+bool Maze::IsChoppable(int x, int z) const {
+    if (!InBounds(x,z)){
+        return false;
+    }
+    //Hedge only. An enemy carries shears, not an axe, and the difference is what makes the two soft
+    //block types worth having as two things rather than one with two models.
+    return tile[z][x] == MAZE_TILE_HEDGE;
+}
 
 bool Maze::IsPassable(int x, int z) const {
     if (!InBounds(x,z)){
         return false;
     }
-    if (tile[z][x] == MAZE_TILE_WALL){
+    if (IsBlock(x,z)){
         return false;
     }
     if (tile[z][x] == MAZE_TILE_WATER){
@@ -502,7 +731,7 @@ bool Maze::BlocksBlast(int x, int z) const {
     if (!InBounds(x,z)){
         return true;
     }
-    return tile[z][x] == MAZE_TILE_WALL;
+    return IsBlock(x,z);
 }
 
 bool Maze::IsBurning(int x, int z) const {
@@ -522,24 +751,15 @@ bool Maze::IsBurning(int x, int z) const {
     return false;
 }
 
-float Maze::CharX() const {
-    if (step_ticks <= 0){
-        return (float)tile_x;
+bool Maze::IsDangerous(int x, int z) const {
+    //The flame, not the smoke it leaves behind - see MAZE_BLAST_HURT_TICKS.
+    if (!f_blast || blast_ticks > MAZE_BLAST_HURT_TICKS){
+        return false;
     }
-    //step_ticks counts DOWN to arrival, so this is 0 at the start of a step and 1 at the end.
-    float t = 1.0f - (float)step_ticks / (float)MAZE_STEP_TICKS;
-    return (float)from_x + ((float)tile_x - (float)from_x) * t;
+    return IsBurning(x,z);
 }
 
-float Maze::CharZ() const {
-    if (step_ticks <= 0){
-        return (float)tile_z;
-    }
-    float t = 1.0f - (float)step_ticks / (float)MAZE_STEP_TICKS;
-    return (float)from_z + ((float)tile_z - (float)from_z) * t;
-}
-
-//--- the walker ---------------------------------------------------------------------------------------
+//--- the walkers --------------------------------------------------------------------------------------
 
 /*
     Begin a step, if we can.
@@ -550,35 +770,60 @@ float Maze::CharZ() const {
     which is the usual trade and the right one at this stage.
 
     Facing is set even when the step is refused, so walking into a wall still turns the character to
-    look at it - without that, pushing against a wall looks like the input was dropped.
+    look at it - without that, pushing against a wall looks like the input was dropped. It is also
+    what lets an enemy decide to cut a hedge by turning towards it first.
 */
-void Maze::TryStep(int dir){
+void Maze::StepWalker(MazeWalker& walker, int dir, int step_ticks){
     if (dir < 0 || dir >= MAZE_NUM_DIRS){
         return;
     }
-    facing = dir;
-    if (step_ticks > 0){
-        return;     //already on the way somewhere
+    walker.facing = dir;
+    if (walker.step_ticks > 0 || walker.chop_ticks > 0){
+        return;     //already on the way somewhere, or busy with the shears
     }
-    int nx = tile_x + DirX(dir);
-    int nz = tile_z + DirZ(dir);
-    if (!CanEnter(tile_x,tile_z,nx,nz)){
+    int nx = walker.tile_x + DirX(dir);
+    int nz = walker.tile_z + DirZ(dir);
+    if (!CanEnter(walker.tile_x,walker.tile_z,nx,nz)){
         return;
     }
-    from_x = tile_x;
-    from_z = tile_z;
-    tile_x = nx;
-    tile_z = nz;
-    step_ticks = MAZE_STEP_TICKS;
+    walker.from_x = walker.tile_x;
+    walker.from_z = walker.tile_z;
+    walker.tile_x = nx;
+    walker.tile_z = nz;
+    walker.step_ticks = step_ticks;
+    walker.step_total = step_ticks;
+}
+
+void Maze::ClearBlock(int x, int z){
+    if (!IsBlock(x,z)){
+        return;
+    }
+    /*
+        Straight to grass, and the DECOR AND ITEM ARE LEFT ALONE.
+
+        Decor, because a block cell never had any - AddDecor skips them - so there is nothing to
+        clear and pretending otherwise would hide a bug if that ever changed. The item, because it
+        is the whole reason to knock the block down: it becomes reachable the instant the tile
+        stops being impassable, with nothing having to reveal it.
+    */
+    tile[z][x] = MAZE_TILE_GRASS;
+    field_version++;
 }
 
 /*
     The bomb becomes the blast.
 
-    Each arm is walked out one tile at a time and stops at the first wall, so the flame is never
-    drawn through anything and the view needs no clipping of its own - the arm lengths it is handed
-    are already the truth. This is also the one place the difference between the two predicates
-    matters: the walk asks BlocksBlast, so it runs straight over water and over bridges.
+    Each arm is walked out one tile at a time, so the flame is never drawn through anything and the
+    view needs no clipping of its own - the arm lengths it is handed are already the truth. This is
+    also the one place all three predicates matter at once:
+
+      - the walk asks BlocksBlast, so it runs straight over water and over bridges;
+      - a SOFT block is reached, burnt away, and stops the arm THERE - the flame gets to the hedge,
+        which is what destroys it, and does not continue past where the hedge was;
+      - a hard wall stops the arm BEFORE it, because the flame never gets to that cell at all.
+
+    The one-tile difference between those last two is the whole rule, and getting it the other way
+    round is what makes a bomberman blast either unable to clear blocks or able to see through them.
 */
 void Maze::Explode(){
     f_bomb = false;
@@ -591,7 +836,18 @@ void Maze::Explode(){
     for (int d = 0; d < MAZE_NUM_DIRS; d++){
         int reach = 0;
         for (int step = 1; step <= MAZE_BLAST_RANGE; step++){
-            if (BlocksBlast(blast_x + DirX(d) * step,blast_z + DirZ(d) * step)){
+            int nx = blast_x + DirX(d) * step;
+            int nz = blast_z + DirZ(d) * step;
+            if (!InBounds(nx,nz)){
+                break;
+            }
+            if (IsSoft(nx,nz)){
+                ClearBlock(nx,nz);
+                blocks_destroyed++;
+                reach = step;
+                break;
+            }
+            if (BlocksBlast(nx,nz)){
                 break;
             }
             reach = step;
@@ -600,33 +856,229 @@ void Maze::Explode(){
     }
 }
 
-void Maze::Tick(const MazeInput& input){
-    //--- the walker -------------------------------------------------------------------------
-    if (step_ticks > 0){
-        step_ticks--;
+/*
+    One tick of every enemy.
+
+    The whole of the AI, and deliberately small: an enemy finishes what it is doing, dies if it is
+    standing in fire, cuts a hedge if one is in front of it, and otherwise wanders with a bias
+    towards carrying straight on. There is no pathfinding and no awareness of the player, because an
+    enemy that hunts you is a different game and this one has no animation to sell it yet.
+
+    The wander rule is the only part with any subtlety: reversing is allowed only when there is
+    nothing else, which is what keeps one from jittering back and forth in a corridor and is what
+    makes it eventually cover ground.
+*/
+void Maze::TickEnemies(){
+    for (int i = 0; i < num_enemies; i++){
+        MazeWalker& walker = enemy[i];
+        if (!walker.f_alive){
+            //Dead, but possibly still falling over. Nothing else about a corpse is simulated.
+            if (walker.death_ticks > 0){
+                walker.death_ticks--;
+            }
+            continue;
+        }
+
+        //Caught by the flame. Checked here rather than in Explode so that walking INTO a blast that
+        //is already burning is just as fatal as being under the bomb - one rule instead of two.
+        if (IsDangerous(walker.tile_x,walker.tile_z)){
+            walker.f_alive = false;
+            walker.death_ticks = MAZE_DEATH_TICKS;
+            //A death interrupts whatever it was doing. Without this a corpse keeps a chop pending
+            //and the hedge it was cutting falls over some time after its killer walked away.
+            walker.chop_ticks = 0;
+            walker.step_ticks = 0;
+            enemies_killed++;
+            continue;
+        }
+
+        if (walker.step_ticks > 0){
+            walker.step_ticks--;
+            continue;
+        }
+
+        if (walker.chop_ticks > 0){
+            walker.chop_ticks--;
+            if (walker.chop_ticks <= 0){
+                //Checked again on the way out: the player may have blown the same hedge up while
+                //this one was busy with it, and cutting a hole in a cell that is already open would
+                //bump field_version for nothing.
+                int ax = walker.tile_x + DirX(walker.facing);
+                int az = walker.tile_z + DirZ(walker.facing);
+                if (IsChoppable(ax,az)){
+                    ClearBlock(ax,az);
+                    blocks_cut++;
+                }
+            }
+            continue;
+        }
+
+        //A hedge straight ahead is worth stopping for.
+        int ax = walker.tile_x + DirX(walker.facing);
+        int az = walker.tile_z + DirZ(walker.facing);
+        if (IsChoppable(ax,az)){
+            walker.chop_ticks = MAZE_CHOP_TICKS;
+            continue;
+        }
+
+        int back = DirOpposite(walker.facing);
+        int cand[MAZE_NUM_DIRS];
+        int num_cand = 0;
+        bool f_straight_on = false;
+        for (int d = 0; d < MAZE_NUM_DIRS; d++){
+            int nx = walker.tile_x + DirX(d);
+            int nz = walker.tile_z + DirZ(d);
+            if (!CanEnter(walker.tile_x,walker.tile_z,nx,nz)){
+                continue;
+            }
+            if (d == walker.facing){
+                f_straight_on = true;
+            }
+            if (d != back){
+                cand[num_cand++] = d;
+            }
+        }
+
+        int dir;
+        if (num_cand == 0){
+            dir = back;                             //a dead end: the only way out is back
+        }else if (f_straight_on && RandomBelow(100) < 70){
+            dir = walker.facing;                    //keep going, mostly
+        }else{
+            dir = cand[RandomBelow(num_cand)];
+        }
+        StepWalker(walker,dir,MAZE_ENEMY_STEP_TICKS);
     }
-    //Checked AFTER the decrement, so a held direction rolls straight into the next step on the tick
-    //the last one lands rather than costing an idle tick between every tile. Without this a walk
-    //across the board is visibly stuttery and it looks like a frame-rate problem.
-    if (step_ticks <= 0 && input.direction != MAZE_DIR_NONE){
-        TryStep(input.direction);
+}
+
+/*
+    Pick up whatever the player is standing on.
+
+    ON ARRIVAL, not on departure: the test is step_ticks == 0, so an item is taken when the walker
+    is actually on the cell rather than when it commits to walking there. Mid-step `tile_x` is
+    already the destination, and collecting then would let an item be taken from a tile away.
+*/
+void Maze::TickItems(){
+    if (!player.f_alive || player.step_ticks > 0){
+        return;
+    }
+    int x = player.tile_x;
+    int z = player.tile_z;
+    if (!InBounds(x,z) || item[z][x] == MAZE_ITEM_NONE){
+        return;
+    }
+    //Cannot happen while the player is standing here - the lid would have to be on top of them -
+    //but it states what "hidden" actually means rather than leaving it implied by the tile.
+    if (!IsPassable(x,z)){
+        return;
+    }
+
+    switch (item[z][x]){
+        case MAZE_ITEM_HEALTH:
+            //Capped rather than banked. A health pickup found at full health is wasted, which is
+            //what makes taking a hit cost something beyond the number.
+            if (health < MAZE_START_HEALTH){
+                health++;
+            }
+            break;
+        case MAZE_ITEM_SHIELD:
+            //Refreshed rather than added, so two shields in a row are not twenty seconds.
+            shield_ticks = MAZE_SHIELD_TICKS;
+            break;
+        default:
+            break;
+    }
+    item[z][x] = MAZE_ITEM_NONE;
+    items_taken++;
+    field_version++;
+}
+
+/*
+    Who hurt the player this tick, and the respawn clock.
+
+    THE FIELD IS NOT REGENERATED ON DEATH. Losing the board you were in the middle of looking at is
+    worse than dying, and this app is a bench as much as it is a game - so the player lies there for
+    MAZE_RESPAWN_TICKS and gets up on the spawn with full health, on the same field, with whatever
+    has already been blown up still blown up.
+*/
+void Maze::TickPlayerCondition(){
+    if (shield_ticks > 0){
+        shield_ticks--;
+    }
+    if (invuln_ticks > 0){
+        invuln_ticks--;
+    }
+
+    if (!player.f_alive){
+        dead_ticks++;
+        if (dead_ticks >= MAZE_RESPAWN_TICKS){
+            player = MazeWalker();
+            player.tile_x = player.from_x = MAZE_SPAWN_X;
+            player.tile_z = player.from_z = MAZE_SPAWN_Z;
+            player.step_total = MAZE_STEP_TICKS;
+            player.facing = MAZE_DIR_SOUTH;
+            player.f_alive = true;
+            health = MAZE_START_HEALTH;
+            dead_ticks = 0;
+            //Long enough to walk off the spawn if the spawn is what killed you.
+            invuln_ticks = MAZE_HIT_INVULN_TICKS;
+        }
+        return;
+    }
+
+    bool f_hit = IsDangerous(player.tile_x,player.tile_z);
+    for (int i = 0; i < num_enemies && !f_hit; i++){
+        //Same TILE, not an overlap test - the whole reason the walkers are on a grid. Mid-step both
+        //are drawn between cells, so this fires a little before they visibly touch, which is the
+        //right way round: being killed by something that had not reached you yet reads as a bug,
+        //and so does walking through one unharmed.
+        if (enemy[i].f_alive &&
+            enemy[i].tile_x == player.tile_x && enemy[i].tile_z == player.tile_z){
+            f_hit = true;
+        }
+    }
+
+    if (f_hit && shield_ticks <= 0 && invuln_ticks <= 0){
+        health--;
+        invuln_ticks = MAZE_HIT_INVULN_TICKS;
+        if (health <= 0){
+            health = 0;
+            player.f_alive = false;
+            dead_ticks = 0;
+            deaths++;
+        }
+    }
+}
+
+void Maze::Tick(const MazeInput& input){
+    //--- the player -------------------------------------------------------------------------
+    if (player.f_alive){
+        if (player.step_ticks > 0){
+            player.step_ticks--;
+        }
+        //Checked AFTER the decrement, so a held direction rolls straight into the next step on the
+        //tick the last one lands rather than costing an idle tick between every tile. Without this a
+        //walk across the board is visibly stuttery and it looks like a frame-rate problem.
+        if (player.step_ticks <= 0 && input.direction != MAZE_DIR_NONE){
+            StepWalker(player,input.direction,MAZE_STEP_TICKS);
+        }
+
+        /*
+            Placed on the tile the character is HEADING FOR while it is mid-step, which is `tile_x`
+            either way - see the note on MazeWalker. That is the tile it will be standing on a
+            moment later, and it is the one the player means.
+
+            Refused while a bomb is already burning or a blast is still lit: one at a time for now.
+        */
+        if (input.f_place_bomb && !f_bomb && !f_blast){
+            f_bomb = true;
+            bomb_x = player.tile_x;
+            bomb_z = player.tile_z;
+            fuse_ticks = MAZE_FUSE_TICKS;
+        }
     }
 
     //--- the bomb ---------------------------------------------------------------------------
-    /*
-        Placed on the tile the character is HEADING FOR while it is mid-step, which is `tile_x`
-        either way - see the note on the walker's fields. That is the tile it will be standing on a
-        moment later, and it is the one the player means.
-
-        Refused while a bomb is already burning or a blast is still lit: one at a time for now.
-    */
-    if (input.f_place_bomb && !f_bomb && !f_blast){
-        f_bomb = true;
-        bomb_x = tile_x;
-        bomb_z = tile_z;
-        fuse_ticks = MAZE_FUSE_TICKS;
-    }
-
     if (f_bomb){
         fuse_ticks--;
         if (fuse_ticks <= 0){
@@ -641,4 +1093,11 @@ void Maze::Tick(const MazeInput& input){
             f_blast = false;
         }
     }
+
+    //--- everyone else ----------------------------------------------------------------------
+    //After the blast clock, so an enemy that was standing where a bomb just went off dies on the
+    //same tick the flame appears rather than on the next one.
+    TickEnemies();
+    TickItems();
+    TickPlayerCondition();
 }

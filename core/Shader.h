@@ -63,6 +63,64 @@ public:
     //A compute shader keeps its path in fname - it has no vertex stage for vname to describe.
     bool f_is_compute = false;
 
+    /*
+        CUSTOM-MATERIAL PASS ONLY: draw this program into the renderer's reduced-resolution target
+        instead of straight into the frame. Ignored by every other pass and by every shader the
+        renderer owns.
+
+        WHAT IT IS FOR. A raymarched volume is the one thing in this engine whose cost is per
+        PIXEL rather than per vertex - tens to hundreds of 3D texture fetches each - so it is the
+        one thing worth drawing at a fraction of the window's resolution and scaling back up. At
+        Renderer::SetCustomShaderScale(2) that is a quarter of the fragments and therefore a
+        quarter of the marches.
+
+        AND IT IS ALSO A LOOK. The upscale is nearest-neighbour, so what comes back is honestly
+        blocky. For apps/bomber that is the point - the blast is meant to read as chunky pixels
+        against a smooth world - and for anything that does NOT want that, this flag is the wrong
+        tool and the answer is fewer march steps, not fewer pixels.
+
+        WHAT THE SHADER OWES IN RETURN, and it is not optional: gl_FragCoord is in the LOW-RES
+        target's pixels while the G-buffer is still full size, so a shader that reaches for the
+        scene behind it must divide by the uniform `render_target_size` (which the renderer sets
+        on every custom shader, and which is simply the window size when this flag is false)
+        rather than by textureSize(gbuffer_depth,0). Getting that wrong does not fail loudly - it
+        samples the wrong part of the scene and the volume is occluded by the wrong geometry.
+
+        The low-res target has NO DEPTH BUFFER, so this suits a shader that resolves its own
+        occlusion against the G-buffer - which is what the volume contract on
+        Renderer::AddCustomShader already asks for - and not one that wants to depth-test.
+    */
+    bool f_lowres = false;
+
+    /*
+        CUSTOM-MATERIAL PASS ONLY: also draw this program's meshes into the deferred G-buffer,
+        using the renderer's own deferred shader. Off by default, and off is right for a volume.
+
+        WHAT IT IS FOR. A custom shader replaces how a surface is COLOURED. Some of them replace
+        what a surface IS as well - a raymarched volume has no surface at all, and the box it is
+        drawn on is a container, not geometry. Those must stay out of the G-buffer, which is why
+        MESH_MODE_SHADER was taken out of DeferredPass: a volume that wrote depth would occlude
+        itself, and would swallow every mouse pick made through it.
+
+        But a custom shader can equally be an ordinary solid thing that simply computes its own
+        colour - apps/bomber's water tiles are a slab of floor with an animated pattern on them.
+        For those, staying out of the G-buffer is a bug with three faces: they cannot be picked,
+        they are invisible to anything sampling the scene's depth, and - the one that actually
+        shows - A VOLUME THAT CLAMPS ITS MARCH TO THE G-BUFFER MARCHES STRAIGHT THROUGH THEM. In
+        bomber that is a fireball spilling below the waterline on exactly the tiles a blast is
+        allowed to cross, next to grass tiles where it stops correctly. Measured, not feared: 2.6%
+        of the frame differed between the same blast over water and over grass.
+
+        The geometry is drawn with the plain deferred shader, not with this program, and that is
+        the whole trick: position, normal, depth and object id are properties of the SHAPE, which
+        is ordinary. Only the colour was ever custom.
+
+        SET IT WHEN your custom shader draws something solid that occupies the space its mesh
+        says it does. Leave it alone for anything translucent, and for anything that would be
+        lying about where its surface is.
+    */
+    bool f_writes_gbuffer = false;
+
     Shader();
     Shader(const char* vert,const char* frag);
     ~Shader();

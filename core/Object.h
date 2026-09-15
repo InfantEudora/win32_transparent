@@ -1,6 +1,15 @@
 #ifndef _OBJECT_H_
 #define _OBJECT_H_
 class Object;
+/*
+    Object.h and ObjectAnimation.h include each other, so whichever is reached FIRST gets to see the
+    other only half-built. Object.h includes ObjectAnimation.h below and that is enough when Object.h
+    comes first - but when something includes ObjectAnimation.h first, that file's include of this
+    one runs before RootMotionDelta exists, and ApplyRootMotion's signature below cannot name it.
+
+    A forward declaration is all that signature needs, since it takes a const reference.
+*/
+struct RootMotionDelta;
 #include <string>
 #include <atomic>
 #include <list>
@@ -293,7 +302,38 @@ class Object{
     void SetBlendTime(const std::string& from, const std::string& to, float blend_time);
     float LookupBlendTime(const std::string& from, const std::string& to);
 
+    /*
+        Advances the current clip and poses whatever it drives. Called once per TICK by
+        Scene::UpdateAnimations.
+
+        THE WHOLE STATE MACHINE LIVES HERE, blending included, and that is a deliberate change from
+        when it lived in PlayerCharacter. Nothing in playing, looping, ending or crossfading a clip
+        is specific to a character; what IS specific is what a clip's extracted root motion should
+        do to the object, and that is the one thing this hands to a virtual. Before, an app that
+        gave a plain Skeleton two clips and asked it to blend got an object stuck in
+        ANIMATION_STATE_TRANSITION_START, which nothing advanced - it simply froze.
+
+        Retargeting a transition to a THIRD clip while it is still running is still not supported:
+        TransitionToAnimation rewinds (ANIMATION_STATE_TRANSITION_BACK) when asked to go back where
+        it came from, and otherwise pauses. That is unchanged and deliberately out of scope.
+    */
     virtual void ApplyAnimation(float time_delta);
+    /*
+        What this tick's extracted root motion should DO to this object. Base does nothing.
+
+        The delta is still computed either way, because computing it is also what writes the
+        corrected (pinned, swing-only) pose onto the root bone - see Animation::SampleRootMotion.
+        So an object that ignores the motion still gets its root bone posed, which is the half that
+        used to go missing: a clip whose root bone was named simply never animated that bone unless
+        the object happened to be a PlayerCharacter.
+
+        PlayerCharacter overrides this to actually move and turn. Anything whose position is owned
+        by something else - a grid, a physics body, a spline - wants the base's silence.
+    */
+    virtual void ApplyRootMotion(const RootMotionDelta& delta);
+    //Puts every Bone below this object back to its reference pose. Virtual so a character can also
+    //clear whatever state it keeps alongside.
+    virtual void LoadDefaultPose();
     void TransitionToAnimation(const std::string& name);
     void TransitionToAnimation(Animation* animation);  // Flags that we can blend into the next animation
     void SwitchToAnimation(const std::string& name);                   // Does not need a animation transistion

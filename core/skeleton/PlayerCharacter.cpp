@@ -102,200 +102,46 @@ void PlayerCharacter::ProcessInputState(){
     }
 }
 
-void PlayerCharacter::ApplyAnimation(float time_delta){
-    if (f_animation_override){
-        if (animation_override_ticks > 0){
-            debug->Info("Stepping through animation. ticks = %i, time_delta = %.3f\n",animation_override_ticks,time_delta);
-            animation_override_ticks--;
-        }else{
-            return;
-        }
-    }
+/*
+    The character half of root motion.
 
+    Object computes the delta and poses the root bone with it either way; this is the part that says
+    a CHARACTER is the thing that actually goes where its feet went. Anything whose position is owned
+    by something else - bomber's enemies, which a grid steps - inherits Object's version and stays
+    put.
+*/
+void PlayerCharacter::ApplyRootMotion(const RootMotionDelta& delta){
+    if (delta.yaw != 0.0f){
+        RotateBy(quat(vec3(0,1,0),delta.yaw));
+    }
+    if (delta.position.length() > 0){
+        MoveBy(GetRotation()*delta.position);
+    }
+}
+
+void PlayerCharacter::LoadDefaultPose(){
+    //The bones are Object's job. The character state that described the pose they were in is ours,
+    //and it is no longer true once they have been put back.
+    Object::LoadDefaultPose();
+    character_animation_state.Clear();
+    character_animation_state.t_pose = true;
+}
+
+void PlayerCharacter::ApplyAnimation(float time_delta){
     ProcessInputState();
 
-    //Animation state starts off as invalid.
-    if (!current_animation){
-        animation_state = ANIMATION_STATE_INVALID;
-    }
-    if (animation_state == ANIMATION_STATE_INVALID){
-        if (transition_to){
-            current_animation = transition_to;
-            animation_state = ANIMATION_STATE_TRANSITION;
-            animation_transition_time = animation_transition_blend_time;
-            animation_transition_factor = 1.0f;
-        }
-    }
-    if (animation_state == ANIMATION_STATE_LOAD_DEFAULT_POSE){
-        //Load the default pose into the skeleton.
-        std::vector<Bone*> bones;
-        GetAllBones(this,bones);
-        for (Bone* bone:bones){
-            bone->SetRotation(bone->reference_rotation);
-            bone->SetPosition(bone->reference_position);
-        }
-        animation_state = ANIMATION_STATE_INVALID;
-        current_animation = NULL;
-        character_animation_state.Clear();
-        character_animation_state.t_pose = true;
-    }
+    /*
+        THE CLIP MACHINERY IS Object's NOW.
 
-    if (animation_state == ANIMATION_STATE_LOOPING){
-        //Loop the same animation
-        bool did_rewind = false;
-        float last_time_index = current_animation->time_index;
-        current_animation->time_index += time_delta;
-        if (current_animation->time_index > current_animation->duration){
-            if (!current_animation->looped){
-                current_animation->time_index = current_animation->duration;
+        Playing, looping, ending, crossfading and rewinding a blend are not character behaviour, and
+        keeping a second copy of them here is exactly what let the two drift apart: Object could only
+        loop, so any non-PlayerCharacter asking for a blend froze in a state nothing advanced.
 
-                debug->Info("Animation %s ended.\n",current_animation->name.c_str());
-                if (!current_animation->auto_continue_to){
-                    debug->Info("No auto-continue set for %s. Pausing animation.\n",current_animation->name.c_str());
-                    animation_state = ANIMATION_STATE_PAUSED;
-                }else{
-                    debug->Info("Auto-continuing from %s to %s.\n",current_animation->name.c_str(),current_animation->auto_continue_to->name.c_str());
-                    TransitionToAnimation(current_animation->auto_continue_to);
-                }
-            }else{
-                //Animation has ended. We play a frame close to 0.
-                current_animation->time_index -= current_animation->duration;
-                did_rewind = true;
-            }
-        }
-
-        //Extract this tick's world-motion delta (position/yaw) from the clip's root bone track, and
-        //write the corrected (pinned/swing-only) pose onto the root bone for the new time index.
-        //On a loop wraparound we sample a zero-width window so the bone pose is still refreshed for
-        //the new (wrapped) time, without contributing a spurious delta from the wrap itself.
-        float sample_prev_time = did_rewind ? current_animation->time_index : last_time_index;
-        RootMotionDelta delta = current_animation->SampleRootMotion(sample_prev_time, current_animation->time_index);
-        current_animation->ApplyInterval(current_animation->time_index);
-
-        if (delta.yaw != 0.0f){
-            RotateBy(quat(vec3(0,1,0),delta.yaw));
-        }
-        if (delta.position.length() > 0){
-            MoveBy(GetRotation()*delta.position);
-        }
-    }else if (animation_state == ANIMATION_STATE_TRANSITION_START){
-        //In this state, we need to record the character position to where the hips currently are.
-        //We are going to transition by playing this animation
-        if (transition_to == NULL){
-            debug->Ok("Transition start from %s to NULL\n",current_animation->name.c_str());
-        }else{
-            debug->Ok("Transition start from %s to %s\n",current_animation->name.c_str(),transition_to->name.c_str());
-        }
-        animation_state = ANIMATION_STATE_TRANSITION;
-    }else if (animation_state == ANIMATION_STATE_TRANSITION){
-        //If there is no next animation, we can't proceed.
-        if (!transition_to){
-            debug->Warn("AnimationSampler: Transition to next = NULL\n");
-            animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
-        }
-        if (transition_to == current_animation){
-            debug->Warn("AnimationSampler: Next is identical to current\n");
-            animation_state = ANIMATION_STATE_LOOPING;
-
-        }
-
-        //We need to play the current and the next animation,
-        //and loop both if we transistion longer than the animation is.
-        //If the current animation is a non-looping animation, we need to make sure we don't play past the end of it.
-        float from_last_time_index = current_animation->time_index;
-        bool from_did_rewind = false;
-        current_animation->time_index += time_delta;
-        if (current_animation->time_index > current_animation->duration){
-            if (!current_animation->looped){
-                current_animation->time_index = current_animation->duration;
-            }else{
-                current_animation->time_index -= current_animation->duration;
-                from_did_rewind = true;
-            }
-        }
-        //Rewind next animation as well.
-        float to_last_time_index = transition_to->time_index;
-        bool to_did_rewind = false;
-        transition_to->time_index += time_delta;
-        if (transition_to->time_index > transition_to->duration){
-            transition_to->time_index -= transition_to->duration;
-            to_did_rewind = true;
-        }
-
-        animation_transition_factor = animation_transition_time / animation_transition_blend_time;
-        if (animation_transition_blend_time == 0){
-            animation_transition_factor = 1.0;
-        }
-
-        debug->Info("Transitioning from %s to %s. Time = %.3f / %.3f (%.2f%%)\n",current_animation->name.c_str(),transition_to->name.c_str(),animation_transition_time,animation_transition_blend_time,animation_transition_factor*100.0f);
-
-        //Blend the per-frame root motion of both clips (same zero-width-window handling on rewind as
-        //ANIMATION_STATE_LOOPING) and write the blended pose onto the shared root bone.
-        RootMotionDelta delta = current_animation->LerpRootMotion(transition_to,
-            from_did_rewind ? current_animation->time_index : from_last_time_index, current_animation->time_index,
-            to_did_rewind ? transition_to->time_index : to_last_time_index, transition_to->time_index,
-            animation_transition_factor);
-        current_animation->Lerp(transition_to,current_animation->time_index,transition_to->time_index,animation_transition_factor);
-
-        if (delta.yaw != 0.0f){
-            RotateBy(quat(vec3(0,1,0),delta.yaw));
-        }
-        if (delta.position.length() > 0){
-            MoveBy(GetRotation()*delta.position);
-        }
-
-        animation_transition_time += time_delta;
-        if (animation_transition_time >= animation_transition_blend_time){
-            animation_transition_time = animation_transition_blend_time;
-            //Reset the animation that we have transitioned from:
-            current_animation->time_index = 0;
-            current_animation = transition_to;
-            transition_to = NULL;
-            animation_state = ANIMATION_STATE_LOOPING;
-            debug->Info("Transition complete. Now at %s\n",current_animation->name.c_str());
-        }
-    }else if (animation_state == ANIMATION_STATE_TRANSITION_BACK){
-        //We rewind the transition if we are aborting the transition.
-        if (!transition_to){
-            debug->Warn("No current transition to transition back from.\n");
-            animation_state = ANIMATION_STATE_PAUSED;
-        }else{
-            current_animation->time_index -= time_delta;
-            if (current_animation->time_index < 0){
-                if (!current_animation->looped){
-                    current_animation->time_index = 0;
-                }else{
-                    current_animation->time_index += current_animation->duration;
-                }
-            }
-            //Rewind next animation as well.
-            transition_to->time_index -= time_delta;
-            if (transition_to->time_index < 0){
-                transition_to->time_index += transition_to->duration;
-            }
-
-            debug->Info("Rewinding transition from %s to %s. Time = %.3f (%.2f%%)\n",current_animation->name.c_str(),transition_to->name.c_str(),animation_transition_time,animation_transition_factor*100.0f);
-            //We just need to rewind the current transition.
-            animation_transition_time -= time_delta;
-            if (animation_transition_time <= 0){
-                animation_transition_time = 0;
-                //Reset current animation (we've rewound back to it; current_animation was always the "from")
-                current_animation->time_index = 0;
-                transition_to = NULL;
-                animation_state = ANIMATION_STATE_LOOPING;
-                debug->Info("Transition rewind complete. Now at %s\n",current_animation->name.c_str());
-            }else{
-                animation_transition_factor = animation_transition_time / animation_transition_blend_time;
-                if (animation_transition_blend_time == 0){
-                    animation_transition_factor = 0;
-                }
-            }
-
-            if (transition_to){
-                current_animation->Lerp(transition_to,current_animation->time_index,transition_to->time_index,animation_transition_factor);
-            }
-        }
-    }
+        What remains below IS character behaviour - an idle blink layered over whatever is playing, a
+        head and hips that turn to look where the character is looking, and the foot trackers. The
+        two things Object hands back are ApplyRootMotion and LoadDefaultPose, both above.
+    */
+    Object::ApplyAnimation(time_delta);
 
     //Addition animation layering on top of the current animation.
     if (blink_animation){

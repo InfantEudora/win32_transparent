@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 8a9b69d2-99f4-4de3-a7fd-bee7ffca5edb
-  modified: 2026-09-15T10:39:19.913Z
+  modified: 2026-09-15T14:28:35.382Z
 ---
 
 `apps/bomber`, started 2026-09-15. A bomberman, and a bench for the volumetric blast that drives it.
@@ -26,10 +26,23 @@ If running it twice for one tick would change the outcome, it belongs in Maze.
 - `default.frag`'s ambient is a hardcoded 0.1 with no app-side lever, so the app carries a **key
   sun plus a shadowless fill light**, as breakout and tetris do.
 
-**Conventions:** green/`wall_brick` = indestructible, brown = destructible (not yet destroyable).
-**Passability and blast-blocking are different predicates** - water stops a walker but not a flame;
-a bridge over water makes it walkable. Walker moves tile-to-tile with an atomic step
-(`MAZE_STEP_TICKS`), so "which tile" is always two integers.
+**Three predicates, not one flag:** `IsPassable` (water stops a walker, a bridge over it does not),
+`BlocksBlast` (any block), `IsSoft` (hedge/wood burn; `wall_brick` never does). A blast arm reaches
+INTO a soft block, destroys it and stops THERE; it stops BEFORE a hard wall. That one-tile
+difference is the whole bomberman rule. `IsChoppable` is hedge only - the enemy has shears.
+
+**Walkers are a `MazeWalker` struct**, shared by the player and up to `MAZE_MAX_ENEMIES` enemies -
+they differ only in what picks their direction. Each carries its own `step_total` so the two can
+move at different speeds. Tile-to-tile with an atomic step, so "which tile" is always two integers.
+
+**The view is built ONCE per field and then only shown/hidden.** `cell_block`/`cell_item` index the
+objects by cell; `Maze::field_version` bumps on any cell change and `RefreshCells` walks the board
+on those ticks only. NO object churn mid-game - which works because a cell's FLOOR never changes:
+every destructible tile becomes GRASS and its floor was already the grass tile (the floor-variety
+loop in `NewGame` skips soft blocks precisely to keep that true).
+
+**Pickups are buried under soft blocks** and need no "revealed" flag - an item on an impassable
+cell cannot be walked onto, so the tile above IS the lid.
 
 **The blast is drawn two ways** off one clock, `f_draw_tiles` (default) and `f_draw_cross` - see
 [[volumetric-effect-gotchas]]. The user prefers per-tile and accepts that overlapping volumes do
@@ -57,8 +70,25 @@ for - GetNodeScale, LoadGLTFFile returning void, Mesh bounds, no ambient setting
 sorting, picking opt-in, scripted-vs-real input, camera_set not capturing atomically. Add to it
 rather than starting a new doc.
 
-Still open: destroying soft blocks, enemies, sound (`USE_SOUND` off - no wav yet), animations (the
-character has none).
+**`mingw32-make.exe rules` builds `maze_test.cpp` against `Maze.cpp` ALONE** - no core, no window,
+no GPU, about a second - and checks every rule. RUN IT AFTER ANY CHANGE TO Maze: it is possible only
+because `Maze.h` names no engine type, and it has already earned its place twice (it found a seed
+generating a 14-cell board, and it caught a test that walked two tiles while asserting one). The
+generator now re-rolls a layout scoring under `MAZE_MIN_PLAYABLE`.
+
+**Verify rules through `bomber_state`, not screenshots** - tiles and counters are the instrument.
+`bomber_input` only SUBMITS a hold and returns; on a free-running sim, reading state straight after
+it is a race. `sim_pause` then `bomber_input` then `sim_step` is the pattern that works.
+
+**The enemy is SKINNED and animated** (Walking, Chopping, Death); the player still is not. Each enemy
+needs its OWN Skeleton, bones and copies of every clip - a pose lives in the bones, and
+`AddAnimation` binds a clip to the skeleton it is added to, so sharing would animate one of them.
+Built once in `Init` on the RENDER thread (`BuildEnemies`), never in `RebuildField`, which is the
+physics thread. `GetSkeleton` takes the SKIN name (`enemy_armature`), not the node name (`enemy`).
+Needs `renderer->skinned_shader`, which is NULL by default and warns about nothing.
+
+Still open: sound (`USE_SOUND` off - no wav yet), player animations, one bomb at a time, enemies
+that wander rather than hunt.
 
 See also [[engine-forward-is-minus-z]], [[ship-orbit-camera-is-the-canonical-one]],
 [[raymarch-volume-stage-plan]], [[per-app-build-layout]].

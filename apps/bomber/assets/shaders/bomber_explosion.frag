@@ -62,6 +62,35 @@
     volumes are - a non-uniform box would make an object-space length stop being a world length,
     which is the trap raymarch_volume.frag documents at its light march.
 
+    --- WHAT MAKES IT AFFORDABLE ------------------------------------------------------------------
+    This is the only thing in the engine whose cost is genuinely per PIXEL - tens to hundreds of 3D
+    texture fetches each - so it is worth saying where the work went, because every one of these
+    is load-bearing and removing one will not look like a mistake, it will look like a frame rate.
+
+      - IT IS DRAWN AT A FRACTION OF THE WINDOW'S RESOLUTION AND SCALED BACK UP with nearest
+        neighbour, via Shader::f_lowres and Renderer::SetCustomShaderScale. At scale 2 that is a
+        quarter of the fragments and therefore a quarter of everything below. THE BLOCKS ARE THE
+        LOOK - a chunky blast against a smooth world is the art direction, not an artifact - which
+        is why the cost and the look are one number and not two. It is also why this shader uses
+        `render_target_size` and not textureSize(gbuffer_depth,0); see that uniform.
+
+      - THE MARCH IS BOUNDED BY THE FLAME, NOT BY THE BOX. `set_bounds` computes the exact box the
+        medium can occupy and both marches use it. The box a blast is drawn on is sized for the
+        blast it will BECOME, so for most of a blast's life most of it is air.
+
+      - A SAMPLE PROVES ITSELF EMPTY BEFORE IT FETCHES THE NOISE. See the two early-outs in
+        `medium_at`. Both are derivations, not tolerances: they return the same zero the full
+        evaluation would.
+
+      - THE LIGHT MARCH RUNS ONLY WHERE IT CAN BE SEEN. It is the one non-constant cost per sample
+        - num_light_steps evaluations PER LIGHT - and the fire outshines the scene's lights
+        anyway, so it is gated on the sample's own contribution rather than on it being faintly
+        smoky. See `scatter_cutoff`, which restores the old behaviour at 0 so the claim that this
+        is invisible can be checked rather than believed.
+
+    Only the first of those changes the picture at all. The other three are exact, and were worth
+    between two and nine noise fetches per view step each.
+
     --- THE DEBUG VIEWS ARE WORTH KNOWING ABOUT --------------------------------------------------
     `f_show_box` (the Explosion panel's Debug view, or the bomber_set MCP tool) answers the two
     questions that otherwise cost a screenshot each: 1 shows the marched interval, so a blank
@@ -123,6 +152,18 @@ layout (binding = 25) uniform sampler3D noise_texture;
 
 //The ray origin. The default shaders get it under this same name.
 uniform vec3 eye_position;
+/*
+    The pixel size of whatever gl_FragCoord is being measured against, set by
+    Renderer::CustomShaderSubPasses.
+
+    NOT textureSize(gbuffer_depth,0), which is what this used to divide by and what every other
+    volume in the tree still does. The two are the same number until a shader sets
+    Shader::f_lowres, and this one does: the blast is drawn into a reduced-resolution target while
+    the G-buffer stays full size, so the old spelling would have read the scene's depth at
+    somewhere between one and eight times too far into the screen. The symptom would not have been
+    a crash or a blank - it would have been the fire occluded by the wrong wall.
+*/
+uniform vec2 render_target_size = vec2(1920.0,1080.0);
 
 //--- which shape this program draws -------------------------------------------------------------
 #define BLAST_MODE_TILE     0
@@ -219,15 +260,63 @@ uniform int num_view_steps  = 40;   // Steps along the view ray
 uniform int num_light_steps = 4;    // Steps towards each light per view step, for the smoke only
 uniform float light_falloff = 2.0;  // brightness/pow(distance,this)
 uniform float max_radiance  = 10.0; // Ceiling on in-scattered radiance at one sample
+/*
+    How much light a sample has to be able to scatter before it is worth marching towards the
+    lights for it. In the same units as the radiance the march accumulates, so ~1.0 is "as bright
+    as the picture".
+
+    THIS IS THE CHEAPEST KNOB IN THE FILE AND THE ONE THAT BUYS THE MOST. The light march is the
+    only part of this shader that is not O(1) per sample: it costs num_light_steps density
+    evaluations PER LIGHT, so at the defaults a single view sample that takes it is nine noise
+    fetches instead of one. The gate it replaced was `smokiness > 0.02`, which is true of every
+    sample cooler than temperature 0.98 - i.e. of essentially the whole blast, fireball included,
+    even though the fireball's own emission outshines the scene's lights by orders of magnitude
+    and the result is invisible in it.
+
+    What is tested is the sample's ACTUAL contribution - its density, its step length, how much
+    light is still getting through to it, how smoky it is - against the most any light could add.
+    So the march switches itself off for the bright core, for anything behind the first optically
+    thick sample, and for the thin haze at the edge, and stays on for exactly the cold smoke that
+    is what it was for.
+
+    SET IT TO 0 TO GET THE OLD PICTURE BACK EXACTLY. That is the point of it being a uniform: the
+    claim "this is invisible" is one slider away from being checked rather than argued about.
+*/
+uniform float scatter_cutoff = 0.002;
 
 //Lights past this are ignored - a bound on the worst case, since the march costs
 //num_view_steps * lights * num_light_steps.
 #define MAX_BLAST_LIGHTS 8
 
-//1 = read out the marched interval (is the box being intersected as a slab?).
+//1 = read out the marched interval - which is now the FLAME's bounds rather than the whole cube
+//(see g_lo/g_hi), so this doubles as a picture of how much of the box the march is skipping. A
+//young blast should show a small bright lozenge inside a much bigger box.
 //2 = read out the G-buffer this shader is given: red where depth says there is geometry, blue
 //where it says there is not. All blue means the G-buffer is not reaching us.
+/*
+    3 = READ OUT WHAT THIS PIXEL COST, as the number of 3D noise fetches it actually performed -
+    which is the honest unit of this shader's expense, since every other instruction in the march
+    is dwarfed by them.
+
+    It exists because a frame timer could not answer the question. The blast covers a few percent
+    of the window in normal play, the driver here forces vsync on, and the GPU is idle most of the
+    frame - so two settings that differ by a factor of four in work measure as the same number of
+    milliseconds, and the only thing a stopwatch can honestly report is "not the bottleneck".
+    Counting is exact, deterministic, reproducible frame to frame, and the same on any GPU.
+
+    The encoding is built to be SUMMED OVER A SCREENSHOT rather than looked at: red carries the
+    count over BLAST_FETCH_SCALE, blue is 1 as a marker so a script can tell the pixels this
+    shader wrote from the scene behind it (nothing in the game is pure blue with no green), and
+    alpha is 1 so the value survives both the direct and the low-res composite path unaltered.
+    Add up the red of every blue-marked pixel, multiply by the scale, and that is the frame's
+    fetch count. Pixels this shader discarded are absent from the mask, which is correct: they
+    performed none.
+*/
 uniform int f_show_box = 0;
+//Ceiling on what view 3 can report before it clamps. 512 covers the default 40 view steps and 4
+//light steps with the app's three lights (40 * (1 + 2*4) = 360); turn the step knobs up and the
+//brightest pixels saturate, so read this view at the settings you actually ship.
+#define BLAST_FETCH_SCALE 512.0
 
 //The volume fills the unit cube in object space, matching ApplicationBomber::BuildBlastCube.
 #define BOX_MIN vec3(-0.5)
@@ -241,20 +330,45 @@ uniform int f_show_box = 0;
 */
 float g_t = 0.0;            //this instance's normalised age, 0 at its detonation and 1 at its end
 vec4  g_reach = vec4(0.0);  //how far each arm has got RIGHT NOW, object units, E/W/N/S
+/*
+    The smallest axis-aligned box that can contain anything this blast is currently drawing, in
+    object space, already clipped to the unit cube. Set once per fragment by `set_bounds` below
+    and then used by BOTH marches.
+
+    THE BOX THIS VOLUME IS DRAWN ON IS SIZED FOR THE BLAST IT WILL BECOME, and for most of a
+    blast's life that is nearly all empty: the flame is a fraction of its final radius for the
+    first half of the clock, the arms have not got there yet, and the whole thing is a flat cross
+    in a cube - so a ray coming in from above spends most of its steps in air above the flame
+    whatever the age. Marching between these two planes instead of between the cube's costs one
+    extra slab test and removes those steps outright.
+
+    It is EXACT, not a heuristic: see set_bounds for where the padding comes from. Nothing outside
+    this box has a non-zero density, so no sample is lost - only ones that were guaranteed to
+    return zero.
+*/
+vec3 g_lo = BOX_MIN;
+vec3 g_hi = BOX_MAX;
+//How many times this fragment has fetched the noise. Debug view 3 reads it out; nothing else
+//looks at it, and it costs one add on a path that is already doing a 3D texture lookup.
+int g_fetches = 0;
 
 /*
-    Slab test against the unit cube. Returns (distance to the box, distance travelled inside it),
-    both as values of the ray parameter t.
+    Slab test against an arbitrary axis-aligned box. Returns (distance to the box, distance
+    travelled inside it), both as values of the ray parameter t.
 
     Called with a ray already taken into object space but NOT renormalised: the transform is
     affine, so inv*(ro + t*rd) == (inv*ro) + t*(inv*rd) and the same t describes both rays. rd is
     a unit vector in WORLD space, so every t here - and every step size built from it - is a real
     world distance, which is what the density and Beer's law need. Renormalising the local
     direction would silently break that on any non-uniformly scaled volume.
+
+    It took the unit cube as a given until the tight bounds above existed. An inverted box (lo
+    past hi, which is what an empty blast produces) falls out correctly as dst_inside 0 rather
+    than needing a test of its own.
 */
-vec2 ray_box_dst(vec3 local_origin, vec3 inv_local_dir){
-    vec3 t0 = (BOX_MIN - local_origin) * inv_local_dir;
-    vec3 t1 = (BOX_MAX - local_origin) * inv_local_dir;
+vec2 ray_box_dst(vec3 box_min, vec3 box_max, vec3 local_origin, vec3 inv_local_dir){
+    vec3 t0 = (box_min - local_origin) * inv_local_dir;
+    vec3 t1 = (box_max - local_origin) * inv_local_dir;
     vec3 tsmall = min(t0,t1);
     vec3 tbig   = max(t0,t1);
 
@@ -306,6 +420,39 @@ float skeleton_distance(vec3 q){
 }
 
 /*
+    The farthest the flame can possibly be from its own skeleton right now, in object units.
+
+    ONE DEFINITION, USED TWICE - by set_bounds below to size the marched interval, and by
+    medium_at to decide whether a sample is worth a noise fetch. That they agree is what makes
+    both of them exact rather than approximately right, and two copies of this arithmetic would
+    drift the first time somebody changed how the noise is applied. It is derived rather than
+    tuned: `lumpy` is r*(1 + (fbm-0.5)*turbulence) and fbm is a weighted average of four texture
+    channels, so it is in 0..1 and lumpy can never exceed r*(1 + |turbulence|/2). `outer` is
+    1 - smoothstep(lumpy-rim,lumpy+rim,d), which is exactly zero past that plus the rim width.
+    Whatever the noise turns out to say.
+*/
+float medium_reach(float r){
+    return r * (1.0 + abs(turbulence) * 0.5) + max(rim_softness * r,0.004);
+}
+
+/*
+    Narrows the marched interval from the whole cube to the part of it that can contain flame.
+    Sets g_lo/g_hi, which is where the reasoning for this lives.
+
+    The skeleton is two segments crossing at the origin, so its own box spans each arm's current
+    reach, and the medium is everything within `medium_reach` of it. In Y that leaves a SLAB, and
+    that is the term that pays for itself: the cross volume's box is six world units tall because
+    it has to be six wide, while the flame in it is never more than about one - so a ray coming
+    down at the board was spending most of its steps in the air above the fire.
+*/
+void set_bounds(void){
+    float pad = medium_reach(front_radius(g_t));
+    vec3 centre = vec3(0.0,rise * g_t * g_t,0.0);
+    g_lo = max(vec3(-g_reach.y,0.0,-g_reach.z) - vec3(pad) + centre,BOX_MIN);
+    g_hi = min(vec3( g_reach.x,0.0, g_reach.w) + vec3(pad) + centre,BOX_MAX);
+}
+
+/*
     The medium at p (object space), as (density, temperature).
 
     Both come out of one evaluation because they share every expensive term - the noise fetch, the
@@ -321,6 +468,40 @@ vec2 medium_at(vec3 p){
 
     float r = front_radius(t);
     float d = skeleton_distance(q);
+    //Every soft edge below is this wide. A fraction of the radius, so the flame is not a hard
+    //marble while it is small and a soft blob once it is big. Hoisted above the noise fetch
+    //because the two early-outs need it and it does not depend on the noise.
+    float rim = max(rim_softness * r,0.004);
+
+    /*
+        --- THE TWO EXACT EARLY-OUTS, AND WHY THEY ARE HERE RATHER THAN AT THE CALLER ------------
+
+        This function is called up to nine times per view step (once for the sample, once per step
+        of each light march), and every one of those calls costs a 3D texture fetch. Both tests
+        below return the same vec2(0) the full evaluation would have returned, for a provable
+        reason rather than a tolerance, and they are the single largest saving in this file after
+        the resolution itself.
+
+        OUTSIDE THE FLAME. medium_reach is the most the front can bulge, so past it `outer` is
+        zero, so `shell` is zero, so density is zero - and a zero-density sample contributes
+        nothing to the radiance and nothing to the transmittance whatever its temperature is. Most
+        of the box is out here, which is exactly why set_bounds exists as well: this makes the
+        sample cheap, that one stops it being taken at all.
+
+        INSIDE THE EXHAUSTED CORE. Once the middle has hollowed (t past 0.30, where the mix on
+        `shell` has reached `inner` outright) everything closer in than the inner edge is zero
+        too. The bound uses the SMALLEST lumpy radius the noise can produce, so it is conservative
+        in the right direction. For a fireball this is a third of the path of a ray through the
+        middle; for an arm, shell_thickness is 1 and the bound goes negative, so the test simply
+        never fires - which is correct, an arm has no hollow to skip.
+    */
+    if (d > medium_reach(r)){
+        return vec2(0.0);
+    }
+    float shell_frac = clamp(shell_thickness,0.0,1.0);
+    if ((t >= 0.30) && (d < r * (1.0 - abs(turbulence) * 0.5) * (1.0 - shell_frac) - rim)){
+        return vec2(0.0);
+    }
 
     //Outward from the bomb, for dragging the noise along. Measured from the CENTRE rather than
     //from the nearest point of the skeleton: along an arm that still points the way the gas is
@@ -341,21 +522,19 @@ vec2 medium_at(vec3 p){
         `blast_seed` shifts the whole field so the next bomb in the same place is not the same bomb.
     */
     vec3 uvw = (q / (r * 2.0)) * noise_scale - dir * (outflow * t) + vec3(blast_seed);
+    g_fetches++;
     vec4 n = texture(noise_texture,uvw);
     float fbm = n.r * 0.55 + n.g * 0.25 + n.b * 0.13 + n.a * 0.07;
 
     //The front, pushed in and out by the noise so the flame is lumpy rather than a smooth tube.
     float lumpy = r * (1.0 + (fbm - 0.5) * turbulence);
-    //Every soft edge below is this wide. A fraction of the radius, so the flame is not a hard
-    //marble while it is small and a soft blob once it is big.
-    float rim = max(rim_softness * r,0.004);
 
     //Outer edge: inside the front, fading over `rim`.
     float outer = 1.0 - smoothstep(lumpy - rim,lumpy + rim,d);
     //Inner edge: the exhausted core, a fixed fraction of the front's radius - so the shell grows
     //with the flame instead of becoming a thin skin on a big one. shell_thickness 1 means no core
     //at all, which is what an arm wants: a hollow tube would read as a pipe.
-    float inner_r = lumpy * (1.0 - clamp(shell_thickness,0.0,1.0));
+    float inner_r = lumpy * (1.0 - shell_frac);
     float inner = smoothstep(inner_r - rim,inner_r + rim,d);
     //Only hollow once there IS a core to hollow. At detonation the whole thing is burning, and
     //that solid first instant is what reads as the flash.
@@ -411,9 +590,15 @@ vec3 fire_color(float temp){
 
     `local_dir` must be an object-space direction whose world image is a unit vector, so the step
     sizes here - and `max_dst` - are world distances. See the note at the call site.
+
+    It is bounded by the FLAME's box (g_lo/g_hi) rather than by the volume's cube, which is worth
+    more here than it is on the view ray. The integral is unchanged - there is no density outside
+    that box to integrate - but the same handful of steps now land inside the smoke instead of
+    being spread over the empty half of a cube, so the self-shadowing is better resolved as well
+    as cheaper, and a shadow ray that leaves the flame immediately returns without marching at all.
 */
 float light_march(vec3 p, vec3 local_dir, float max_dst, int steps){
-    float dst_inside = min(ray_box_dst(p,1.0 / local_dir).y,max_dst);
+    float dst_inside = min(ray_box_dst(g_lo,g_hi,p,1.0 / local_dir).y,max_dst);
     if (steps < 1 || dst_inside <= 0.0){
         return 1.0;
     }
@@ -517,6 +702,9 @@ void main(){
     if (!setup_instance(transform)){
         discard;
     }
+    //Has to come after setup_instance and before anything marches: it reads the clock and the arm
+    //lengths that call just worked out, and both marches below are written against what it sets.
+    set_bounds();
 
     mat4 to_local = inverse(transform);
 
@@ -527,11 +715,23 @@ void main(){
     vec3 local_origin = (to_local * vec4(eye_position,1.0)).xyz;
     vec3 local_dir    = (to_local * vec4(rd,0.0)).xyz;
 
-    vec2 hit = ray_box_dst(local_origin,1.0 / local_dir);
+    vec3 inv_local_dir = 1.0 / local_dir;
+    /*
+        Two intervals, and they do different jobs.
+
+        `box_span` is how far this ray crosses the WHOLE cube, and is only used to work out what
+        one step is worth: `num_view_steps` has always meant "this many steps across the box", and
+        it still does, so the slider means what it meant and a screenshot at a given setting is
+        comparable with an old one.
+
+        `hit` is the interval that can actually contain flame. That is what gets marched.
+    */
+    float box_span = ray_box_dst(BOX_MIN,BOX_MAX,local_origin,inv_local_dir).y;
+    vec2 hit = ray_box_dst(g_lo,g_hi,local_origin,inv_local_dir);
     float dst_to_box = hit.x;
     float dst_inside = hit.y;
     if (dst_inside <= 0.0){
-        discard;
+        discard;   //Missed the box, or the flame inside it - nothing to march.
     }
 
     /*
@@ -543,7 +743,7 @@ void main(){
         purely as the "is there anything here at all" test - see the TEXUNIT_GBUFFER_* block in
         core/Renderer.h for why the position buffer cannot answer that.
     */
-    vec2 screen_uv = gl_FragCoord.xy / vec2(textureSize(gbuffer_depth,0));
+    vec2 screen_uv = gl_FragCoord.xy / render_target_size;
     if (texture(gbuffer_depth,screen_uv).r < 1.0){
         vec3 scene_position = texture(gbuffer_position,screen_uv).xyz;
         float dst_to_scene = dot(scene_position - eye_position,rd);
@@ -594,13 +794,28 @@ void main(){
     //and the falloff - has to be measured in world units.
     mat3 to_world_rot = mat3(transform);
 
-    float step_size = dst_inside / float(max(num_view_steps,1));
+    /*
+        How many steps to take over the interval that survived, at the step DENSITY the knob asks
+        for over the whole box.
+
+        The point of deriving it rather than always taking num_view_steps is that the saving is
+        real: taking the full count over a shorter interval would keep the same cost and merely
+        oversample. Rounding UP means the actual step is never longer than it was before this
+        existed, so the march is equal or finer everywhere and no setting can be made worse by it.
+
+        The floor of 4 is for the grazing ray that clips a corner of the bounds: one or two
+        samples across a thin slice of flame is where a volume starts to strobe as the camera
+        moves, and four steps on a ray that is barely in the fire costs nothing.
+    */
+    float ref_step = max(box_span,0.0001) / float(max(num_view_steps,1));
+    int steps = clamp(int(ceil(dst_inside / ref_step)),4,max(num_view_steps,4));
+    float step_size = dst_inside / float(steps);
     //Half a step in, so samples sit in the middle of the slabs they represent.
     vec3 p = local_origin + local_dir * (dst_to_box + step_size * 0.5);
 
     float transmittance = 1.0;
     vec3 radiance = vec3(0.0);
-    for (int i = 0;i < num_view_steps;i++){
+    for (int i = 0;i < steps;i++){
         vec2 medium = medium_at(p);
         float density = medium.x;
         float temperature = medium.y;
@@ -619,7 +834,15 @@ void main(){
             */
             float smokiness = 1.0 - temperature;
             vec3 scattered = smoke_ambient;
-            if (smokiness > 0.02 && num_light_steps > 0){
+            /*
+                What this sample is about to be multiplied by on its way into `radiance`. Working
+                it out BEFORE the march rather than after is the whole of the optimisation: the
+                same four numbers that weight the result also say whether the result can be seen,
+                and `max_radiance` is already the ceiling on what one light may contribute. So the
+                test is "could the brightest legal answer move the picture" - see scatter_cutoff.
+            */
+            float scatter_weight = density * step_size * transmittance * smoke_albedo * smokiness;
+            if ((scatter_weight * max_radiance > scatter_cutoff) && num_light_steps > 0){
                 scattered += sun_color * sun_brightness * sun_intensity
                            * light_march(p,local_sun_dir,1.0e9,num_light_steps);
 
@@ -668,6 +891,12 @@ void main(){
             }
         }
         p += local_dir * step_size;
+    }
+
+    if (f_show_box == 3){
+        //After the march, not before: the whole point is what the march actually did.
+        color = vec4(float(g_fetches) / BLAST_FETCH_SCALE,0.0,1.0,1.0);
+        return;
     }
 
     float alpha = 1.0 - transmittance;

@@ -19,8 +19,13 @@
 #include "Primitives.h"
 #include "type_helpers.h"
 
+//Skeleton, for the enemies' skinned meshes. Only BuildEnemies needs the type - everything after it
+//talks to them through Object - so it is included here rather than in the header.
+#include "Skeleton.h"
+
 #include <math.h>
 #include <stdio.h>
+#include <string.h>     //strcmp, for comparing the clip that is playing against the one wanted
 
 static Debugger* debug = new Debugger("ApplicationBomber",DEBUG_ALL);
 
@@ -38,22 +43,49 @@ static Debugger* debug = new Debugger("ApplicationBomber",DEBUG_ALL);
     a mesh would be a blank cell, so the arrays are sized by the enum's COUNT and the compiler
     complains if one gets out of step.
 
-    A MAZE_TILE_WALL cell gets a grass tile AND a wall on top of it: wall_brick is only 0.75 deep
-    against a 1.0 cell, so without a floor under it you would see through the gap to the void.
+    A CELL WITH A BLOCK ON IT GETS A FLOOR TOO: wall_brick is only 0.81 deep against a 1.0 cell
+    and wall_hedge only 0.45, so without a floor under them you would see through the gap to the
+    void. The floor under every block type is the GRASS tile, and that is not a shortcut - it is
+    what lets a hedge burn away without anything having to swap the floor underneath it. See the
+    floor-variety loop at the end of Maze::NewGame, which skips soft blocks to keep it true.
 */
 static const char* BOMBER_TILE_ASSET[MAZE_TILE_COUNT] = {
     "tile_grass",   //MAZE_TILE_GRASS
     "tile_brick",   //MAZE_TILE_BRICK
     "tile_rock",    //MAZE_TILE_ROCK
     "tile_water",   //MAZE_TILE_WATER
-    "tile_grass",   //MAZE_TILE_WALL - the floor under the wall; the wall itself is added on top
+    "tile_grass",   //MAZE_TILE_WALL  - the floor under the block
+    "tile_grass",   //MAZE_TILE_HEDGE - and what is left standing when it burns
+    "tile_grass",   //MAZE_TILE_WOOD  - the same
+};
+/*
+    What STANDS on a cell, by the type of the tile it is standing on. NULL means the tile is floor
+    and nothing stands there.
+
+    A table rather than the `if (t == MAZE_TILE_WALL)` the field builder used to carry, because
+    there are three block types now and a fourth would otherwise be a fourth branch.
+*/
+static const char* BOMBER_BLOCK_ASSET[MAZE_TILE_COUNT] = {
+    NULL,           //MAZE_TILE_GRASS
+    NULL,           //MAZE_TILE_BRICK
+    NULL,           //MAZE_TILE_ROCK
+    NULL,           //MAZE_TILE_WATER
+    "wall_brick",   //MAZE_TILE_WALL
+    "wall_hedge",   //MAZE_TILE_HEDGE
+    "wall_wood",    //MAZE_TILE_WOOD
 };
 static const char* BOMBER_DECOR_ASSET[MAZE_DECOR_COUNT] = {
     NULL,               //MAZE_DECOR_NONE
     "grass_flowers",
+    "flowers",
     "grass_plant",
     "turd",
     "bridge",
+};
+static const char* BOMBER_ITEM_ASSET[MAZE_ITEM_COUNT] = {
+    NULL,               //MAZE_ITEM_NONE
+    "pickup_health",
+    "pickup_shield",
 };
 /*
     Which way the bridge model's planks run at each yaw.
@@ -65,9 +97,39 @@ static const char* BOMBER_DECOR_ASSET[MAZE_DECOR_COUNT] = {
 #define BOMBER_BRIDGE_YAW_X     (TYPE_PI * 0.5f)    //planks run east-west
 #define BOMBER_BRIDGE_YAW_Z     0.0f                //planks run north-south
 
-#define BOMBER_WALL_ASSET   "wall_brick"
+/*
+    Which way a THIN block model lies at yaw 0.
+
+    wall_hedge measures 1.00 x 0.45 in plan and wall_wood 0.96 x 0.27 - they are panels, not cubes,
+    and a panel turned at random reads as rubble rather than as a hedge. So a run of them takes its
+    angle from its NEIGHBOURS, which is the same trick the bridges use one screen down: the long
+    axis lies along whichever way the run goes, and a row lines up into one hedge. wall_brick is
+    very nearly square (0.99 x 0.81) and keeps the random quarter-turn instead.
+*/
+#define BOMBER_PANEL_YAW_X      0.0f                //long axis east-west: the model's rest pose
+#define BOMBER_PANEL_YAW_Z      (TYPE_PI * 0.5f)    //long axis north-south
+
 #define BOMBER_BOMB_ASSET   "bomb"
 #define BOMBER_CHAR_ASSET   "character"
+#define BOMBER_ENEMY_ASSET  "enemy"
+/*
+    The enemy's skin and its two clips, by their names IN THE FILE.
+
+    GLTFLoader::GetSkeleton is looked up by SKIN name, not by node name - GetSkeletonNames returns
+    model.skins, which is a different list from the nodes everything else here is named by. So the
+    enemy is "enemy" to GetMeshFromNode and "enermy_armature" to GetSkeleton. The spelling is the
+    artist's and is deliberately copied rather than corrected: it is a lookup key into the asset,
+    and a tidier constant that does not match the file finds nothing.
+
+    The clips are named rather than taken from GetAnimationNames() so that a clip added to the file
+    for the player does not get loaded onto the enemy's three bones - the same reason LoadAssets
+    names its nodes instead of calling GetAllAssetsFromGLTF.
+*/
+#define BOMBER_ENEMY_SKIN   "enemy_armature"
+#define BOMBER_ANIM_WALK    "Enemy_Walking"
+#define BOMBER_ANIM_CHOP    "Enemy_Chopping"
+//Plays ONCE and holds its last frame - see where it is loaded. The only non-looping clip here.
+#define BOMBER_ANIM_DEATH   "Enemy_Death"
 
 ApplicationBomber::ApplicationBomber():Application(){
     app_name = "Bomber";
@@ -100,6 +162,15 @@ void ApplicationBomber::Init(void){
     renderer->f_render_skybox = false;
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+    /*
+        The enemy is a SKINNED mesh, and a skinned mesh has nowhere to be drawn without this.
+
+        Renderer::skinned_shader is NULL by default and an app that forgets it gets no warning -
+        the enemy simply does not appear, which reads as a failed asset load rather than as a
+        missing shader. Only the fragment half is shared with default_shader; the vertex half is
+        the one that knows about bone matrices.
+    */
+    renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 
     main_window->Resize(1280,800);
 
@@ -138,7 +209,11 @@ void ApplicationBomber::Init(void){
 
     BuildLighting();
     LoadAssets();
+    BuildEnemies();
     BuildBlastNoise();
+    //BEFORE BuildExplosion, because custom shaders draw in registration order and the water is
+    //opaque while the blast is not - see BuildWater.
+    BuildWater();
     BuildExplosion();
     BuildKnobTable();
 
@@ -254,13 +329,160 @@ void ApplicationBomber::LoadAssets(void){
     //Everything with a mesh. Naming them rather than calling GetAllAssetsFromGLTF so that a node
     //added to the file for some other purpose does not silently become a game asset.
     GetAssetsFromGLTF("tile_grass","tile_brick","tile_rock","tile_water",
-                      BOMBER_WALL_ASSET,
-                      "grass_flowers","grass_plant","turd","bridge",
+                      "wall_brick","wall_hedge","wall_wood",
+                      "grass_flowers","flowers","grass_plant","turd","bridge",
+                      "pickup_health","pickup_shield",
                       BOMBER_BOMB_ASSET,BOMBER_CHAR_ASSET);
+    /*
+        THE ENEMY IS NOT IN THAT LIST, and that is the whole difference between it and everything
+        else on the board. GetAssetsFromGLTF builds one Object per node and hands out copies that
+        SHARE its mesh, which is exactly right for four hundred tiles and exactly wrong for a
+        skinned character: a pose lives in the bones, the bones are the object's children, and four
+        enemies sharing one set would be one enemy drawn four times. BuildEnemies gives each its own
+        skeleton, its own bones and its own copies of the clips.
+    */
 
-    //The two that move, so their height does not have to be looked up every tick.
+    //The ones that move, so their height does not have to be looked up every tick.
     character_y = gltfloader.GetNodePosition(BOMBER_CHAR_ASSET).y;
     bomb_y      = gltfloader.GetNodePosition(BOMBER_BOMB_ASSET).y;
+    enemy_y     = gltfloader.GetNodePosition(BOMBER_ENEMY_ASSET).y;
+}
+
+/*
+    One skinned, animated skeleton per enemy the board can ever hold.
+
+    RENDER THREAD, ONCE, FROM Init - and that is not a preference. GetMeshFromNode uploads a mesh,
+    so it is GL work, while RebuildField runs on the PHYSICS thread inside the restart command
+    handler. Building these where the enemies are placed would be a GL call from the wrong thread
+    on every restart. So they are built up front and only ever shown, hidden and posed after that -
+    the same call BuildExplosion makes about the blast volumes, for the same reason.
+
+    MAZE_MAX_ENEMIES of them regardless of how many a given field actually places, because that is
+    the most it can ever need and the spare ones cost one hidden object each.
+
+    EVERY ENEMY GETS ITS OWN COPY OF EVERY CLIP. An Animation is bound to the bones it was linked
+    against (Object::AddAnimation calls LinkObjects on the skeleton it is added to), so a shared
+    clip would drive whichever skeleton linked it last and the other three would stand still. Four
+    skeletons therefore means four LoadAnimation calls per clip, which is what apps/isoanimation
+    does for its three preview skeletons and is the pattern followed here.
+*/
+void ApplicationBomber::BuildEnemies(void){
+    static const char* CLIPS[] = {BOMBER_ANIM_WALK,BOMBER_ANIM_CHOP,BOMBER_ANIM_DEATH};
+
+    for (int i = 0; i < MAZE_MAX_ENEMIES; i++){
+        Skeleton* skeleton = gltfloader.GetSkeleton(BOMBER_ENEMY_SKIN,assetmanager);
+        if (!skeleton){
+            debug->Err("No skin called %s - is the enemy still rigged in bomber_assets.glb?\n",
+                       BOMBER_ENEMY_SKIN);
+            return;
+        }
+
+        std::vector<Material> loaded_materials;
+        Mesh* skinned_mesh = gltfloader.GetMeshFromNode(BOMBER_ENEMY_ASSET,&loaded_materials,true);
+        if (!skinned_mesh){
+            debug->Err("No skinned mesh on node %s\n",BOMBER_ENEMY_ASSET);
+            return;
+        }
+        skeleton->SetMesh(skinned_mesh);
+        skeleton->TakeMaterialNames(loaded_materials);
+        skeleton->PickMaterials(loaded_materials,renderer->materials);
+
+        char name[32];
+        snprintf(name,sizeof(name),"Enemy %i",i);
+        skeleton->name = name;
+
+        for (const char* clip_name:CLIPS){
+            Animation* animation = gltfloader.LoadAnimation(clip_name);
+            if (!animation){
+                debug->Err("No animation called %s in bomber_assets.glb\n",clip_name);
+                continue;
+            }
+            /*
+                WALKING AND CHOPPING LOOP; DYING DOES NOT. NONE OF THEM MOVES THE CHARACTER.
+
+                Walking and chopping are STATES: an enemy walks until it stops and chops until the
+                hedge is gone, and both outlast their own 0.37s of keyframes. Dying is an EVENT -
+                it happens once, and a looping death is a body repeatedly getting back up to fall
+                over again. A non-looping clip stops on its last frame, which is the pose a corpse
+                should hold for the rest of MAZE_DEATH_TICKS.
+
+                Not moving because the ENEMY'S POSITION IS A RULE, not a pose. Maze steps it tile to
+                tile and SyncView reads that back; root motion extracted from the hip track would
+                fight it and the model would drift off the grid it is supposed to be on. Both
+                extract flags default to false, so this is a note about why they are left alone
+                rather than a line of code - see Animation::extract_horizontal_root_motion.
+            */
+            animation->looped = (strcmp(clip_name,BOMBER_ANIM_DEATH) != 0);
+            skeleton->AddAnimation(animation);
+            /*
+                Did every track in the clip find a bone to drive?
+
+                Checked once, for the first enemy, because A CLIP THAT DRIVES NOTHING LOOKS EXACTLY
+                LIKE A CLIP THAT IS PLAYING. Object::ApplyAnimation walks the tracks and skips any
+                whose target is NULL, silently - so bomber_state reports the right clip, the time
+                index advances, and the character stands still. That cost the best part of an hour
+                here and the answer was never going to come from a screenshot.
+
+                An unbound track means the bone is not in the skeleton, which on this rig means
+                GLTFLoader::GetSkeleton did not load it: it starts at skin->joints[0] and walks
+                DOWN through children, so any joint that is a SIBLING of the first rather than a
+                descendant of it is never reached. Belongs in LinkObjects rather than here - see
+                engine_notes.md - but until it is there, every app that loads a clip wants this.
+            */
+            if (i == 0){
+                std::string unbound;
+                for (ObjectAnimation* track:animation->object_animations){
+                    if (!track->target){
+                        unbound += (unbound.empty() ? "" : ", ") + track->target_name;
+                    }
+                }
+                if (unbound.empty()){
+                    debug->Ok("Clip %s: all %i track(s) bound, %.2fs\n",clip_name,
+                              (int)animation->object_animations.size(),animation->duration);
+                }else{
+                    debug->Warn("Clip %s drives nothing on [%s] - those bones are not in the "
+                                "skeleton. The rig's joints are siblings, and GetSkeleton only "
+                                "loads what hangs off joints[0].\n",clip_name,unbound.c_str());
+                }
+            }
+            /*
+                DELIBERATELY NO SetRootBone.
+
+                It is no longer a trap - Object::ApplyAnimation now calls SampleRootMotion itself,
+                so a named root bone gets posed whatever kind of object owns it, and only the
+                MOTION is left to the virtual that a plain Skeleton ignores. It used to be one:
+                the root track was skipped by ApplyInterval and nothing else picked it up unless
+                the object happened to be a PlayerCharacter, which silently stopped that bone
+                animating at all. That cost an hour here.
+
+                It stays unset because this app has no use for it either way. Root motion is
+                something bomber actively does not want - Maze owns where an enemy is - so leaving
+                every track ordinary, with the hip movement staying local as a bob, is both simpler
+                and exactly the wanted behaviour.
+            */
+        }
+
+        //Something has to be playing or ApplyAnimation has nothing to pose, and the skeleton would
+        //stand in its bind pose looking like the animation failed to load.
+        skeleton->SwitchToAnimation(BOMBER_ANIM_WALK);
+        skeleton->SetVisibility(false);
+
+        main_scene->AddObject(skeleton);
+        enemy_objects.push_back(skeleton);
+    }
+    /*
+        How many bones actually loaded, which is worth a line of its own.
+
+        GLTFLoader::GetSkeleton walks DOWN from skin->joints[0] and takes whatever hangs off it, so
+        a rig whose bones are siblings rather than a chain loads exactly one bone and says so only
+        at Trace level. The clips then link the one track they can find and the app looks like it
+        animated something. Printing the count next to the clip names is the cheapest thing that
+        turns that into a visible number - compare it against the joint count in the GLB.
+    */
+    Skeleton* first = enemy_objects.empty() ? NULL : dynamic_cast<Skeleton*>(enemy_objects[0]);
+    debug->Ok("Built %i enemy skeletons, %i bone(s) each, %s\n",(int)enemy_objects.size(),
+              first ? first->num_bones : 0,
+              enemy_objects.empty() ? "none animated" : "walking by default");
 }
 
 Object* ApplicationBomber::AddCellObject(const char* asset_name, int cx, int cz,
@@ -306,6 +528,21 @@ void ApplicationBomber::RebuildField(void){
         }
     }
     field_objects.clear();
+    /*
+        THE ENEMIES ARE NOT THROWN AWAY HERE. They are skinned skeletons built once on the render
+        thread by BuildEnemies, and rebuilding them would mean uploading a mesh from the physics
+        thread - see the note there. A restart only changes how many of them a field uses, which
+        SyncView expresses by hiding the spare ones.
+    */
+    //The per-cell index points into what was just thrown away, so it is cleared with it. Missing
+    //this would leave RefreshCells calling SetVisibility on freed objects the first time a block
+    //burned on the new field, which is a crash one restart later than the mistake.
+    for (int z = 0; z < MAZE_H; z++){
+        for (int x = 0; x < MAZE_W; x++){
+            cell_block[z][x] = NULL;
+            cell_item[z][x] = NULL;
+        }
+    }
     if (character){
         character->Destroy();
         character = NULL;
@@ -318,17 +555,38 @@ void ApplicationBomber::RebuildField(void){
 
     for (int z = 0; z < MAZE_H; z++){
         for (int x = 0; x < MAZE_W; x++){
-            uint8_t t = maze.tile[z][x];
-            //The floor. Every cell gets one, walls included - see the note on BOMBER_TILE_ASSET.
-            const char* tile_asset = BOMBER_TILE_ASSET[t < MAZE_TILE_COUNT ? t : 0];
+            uint8_t t = maze.tile[z][x] < MAZE_TILE_COUNT ? maze.tile[z][x] : 0;
+            //The floor. Every cell gets one, blocks included - see the note on BOMBER_TILE_ASSET.
+            const char* tile_asset = BOMBER_TILE_ASSET[t];
             float tile_y = gltfloader.GetNodePosition(tile_asset).y;
             //Floor tiles are turned at random too. They are square and the texture is not, so four
             //orientations is four times as much board for nothing.
             AddCellObject(tile_asset,x,z,tile_y,0.0f,true);
 
-            if (t == MAZE_TILE_WALL){
-                AddCellObject(BOMBER_WALL_ASSET,x,z,
-                              gltfloader.GetNodePosition(BOMBER_WALL_ASSET).y,0.0f,true);
+            /*
+                The block standing on it, if any.
+
+                A thin panel takes its angle from its neighbours so a run reads as one hedge rather
+                than as a pile - see BOMBER_PANEL_YAW_X. The test is on which ASSET it is and not on
+                whether the tile is destructible, because being a panel is a fact about the MODEL:
+                re-export wall_brick as a thin one and this is the line that should change.
+            */
+            const char* block_asset = BOMBER_BLOCK_ASSET[t];
+            if (block_asset){
+                bool f_panel = (t != MAZE_TILE_WALL);
+                float yaw = BOMBER_PANEL_YAW_X;
+                if (f_panel){
+                    bool f_ew = (x > 0 && maze.tile[z][x - 1] == t) ||
+                                (x < MAZE_W - 1 && maze.tile[z][x + 1] == t);
+                    bool f_ns = (z > 0 && maze.tile[z - 1][x] == t) ||
+                                (z < MAZE_H - 1 && maze.tile[z + 1][x] == t);
+                    //A lone block has neither and falls through to the rest pose, which is as good
+                    //an answer as any and is at least the same one every time.
+                    yaw = (f_ns && !f_ew) ? BOMBER_PANEL_YAW_Z : BOMBER_PANEL_YAW_X;
+                }
+                cell_block[z][x] = AddCellObject(block_asset,x,z,
+                                                 gltfloader.GetNodePosition(block_asset).y,
+                                                 yaw,!f_panel);
             }
 
             uint8_t d = maze.decor[z][x];
@@ -347,6 +605,20 @@ void ApplicationBomber::RebuildField(void){
                 AddCellObject(BOMBER_DECOR_ASSET[d],x,z,
                               gltfloader.GetNodePosition(BOMBER_DECOR_ASSET[d]).y,yaw,f_yaw);
             }
+
+            /*
+                The pickup, built now and hidden under whatever is on top of it.
+
+                Built up front rather than spawned when the block above it burns, because spawning
+                would mean a Scene::AddObject from the middle of a tick - the one thing that call
+                warns about - to save four objects on a board of four hundred.
+            */
+            uint8_t it = maze.item[z][x];
+            if (it != MAZE_ITEM_NONE && it < MAZE_ITEM_COUNT && BOMBER_ITEM_ASSET[it]){
+                cell_item[z][x] = AddCellObject(BOMBER_ITEM_ASSET[it],x,z,
+                                                gltfloader.GetNodePosition(BOMBER_ITEM_ASSET[it]).y,
+                                                0.0f,false);
+            }
         }
     }
 
@@ -363,7 +635,9 @@ void ApplicationBomber::RebuildField(void){
         bomb->SetVisibility(false);
         main_scene->AddObject(bomb);
     }
-
+    //Nothing has been drawn yet, so whatever the maze's version is, this view is not at it. The
+    //wrap when field_version is 0 does not matter: the comparison is for difference, not order.
+    drawn_field_version = maze.field_version - 1;
     SyncView();
 }
 
@@ -440,12 +714,21 @@ void ApplicationBomber::BuildExplosion(void){
     tile_shader->f_fatal_on_error = false;
     bool f_tile_ok = tile_shader->Build("shaders/default.vert","shaders/bomber_explosion.frag");
     tile_shader->uniform_callback = std::bind(&ApplicationBomber::SetTileUniforms,this);
+    /*
+        BOTH MODES DRAW AT REDUCED RESOLUTION, and they have to, not just for the frame rate:
+        blast_pixel_scale is an art setting as much as a cost one, and a comparison between a
+        pixelated cross and a smooth per-tile blast would be a comparison between two looks rather
+        than between two ways of arranging one - which is the one thing this pair of shaders
+        exists to avoid. See Shader::f_lowres, and PreRender for where the scale is pushed.
+    */
+    tile_shader->f_lowres = true;
     tile_shader_index = renderer->AddCustomShader(tile_shader);
 
     cross_shader = new Shader();
     cross_shader->f_fatal_on_error = false;
     bool f_cross_ok = cross_shader->Build("shaders/default.vert","shaders/bomber_explosion.frag");
     cross_shader->uniform_callback = std::bind(&ApplicationBomber::SetCrossUniforms,this);
+    cross_shader->f_lowres = true;
     cross_shader_index = renderer->AddCustomShader(cross_shader);
 
     f_shader_ok = f_tile_ok && f_cross_ok;
@@ -569,6 +852,7 @@ void ApplicationBomber::PushBlastUniforms(Shader* shader, int mode, float box_wo
         shader->Setint("num_light_steps",num_light_steps);
         shader->Setfloat("light_falloff",light_falloff);
         shader->Setfloat("max_radiance",max_radiance);
+        shader->Setfloat("scatter_cutoff",scatter_cutoff);
         shader->Setint("f_show_box",debug_view);
     }
 
@@ -619,6 +903,12 @@ void ApplicationBomber::ReloadExplosionShader(void){
     if (cross_shader){
         f_ok = cross_shader->Reload() && f_ok;
     }
+    //The water rides along with F5 too. The function's name is a little narrow for what it now
+    //does, but reloading exactly one of the app's shaders from the key that means "reload my
+    //shaders" would be the more surprising of the two.
+    if (water_shader){
+        f_ok = water_shader->Reload() && f_ok;
+    }
     {
         std::lock_guard<std::mutex> lock(reload_mutex);
         f_shader_ok = f_ok;
@@ -630,6 +920,63 @@ void ApplicationBomber::ReloadExplosionShader(void){
         debug->Err("shaders/bomber_explosion.frag did not compile; the previous one is still "
                    "drawing:\n%s\n",log.c_str());
     }
+}
+
+/*
+    The water tiles. The header's block on BuildWater says why the SHARED mesh is what gets tagged,
+    and why this has to run before BuildExplosion.
+*/
+void ApplicationBomber::BuildWater(void){
+    water_shader = new Shader();
+    //Soft, like the blast's: a shader that will not compile is something to read the log of and
+    //fix with F5, not something to relaunch the app over.
+    water_shader->f_fatal_on_error = false;
+    if (!water_shader->Build("shaders/default.vert","shaders/bomber_water.frag")){
+        debug->Err("shaders/bomber_water.frag did not compile - the water will not draw at all, "
+                   "F5 reloads it:\n%s\n",water_shader->compile_log.c_str());
+    }
+    water_shader->uniform_callback = std::bind(&ApplicationBomber::SetWaterUniforms,this);
+    /*
+        A water tile is SOLID FLOOR that happens to compute its own colour, so it belongs in the
+        G-buffer like any other tile - see Shader::f_writes_gbuffer.
+
+        Without this the blast's raymarch, which clamps itself to the G-buffer's depth, marches
+        straight through the water and the fireball spills below the waterline. It is not
+        theoretical: Maze::BlocksBlast lets flame cross water on purpose, so a bomb beside a pond
+        is an ordinary move, and the same blast measured 2.6% of the frame different over water
+        than over the grass tile next to it.
+    */
+    water_shader->f_writes_gbuffer = true;
+    water_shader_index = renderer->AddCustomShader(water_shader);
+
+    /*
+        The one line that reaches every water tile. Named through BOMBER_TILE_ASSET rather than by
+        the literal "tile_water", so the shader follows the table if the asset is ever renamed -
+        that table is already the single place saying which mesh a tile type draws with.
+    */
+    Mesh* mesh = assetmanager->GetMeshFromAsset(BOMBER_TILE_ASSET[MAZE_TILE_WATER]);
+    if (!mesh){
+        debug->Err("No mesh for %s - the water tiles will draw with the default shader\n",
+                   BOMBER_TILE_ASSET[MAZE_TILE_WATER]);
+        return;
+    }
+    mesh->mesh_mode = MESH_MODE_SHADER;
+    mesh->custom_shader_index = water_shader_index;
+}
+
+void ApplicationBomber::SetWaterUniforms(void){
+    if (!water_shader){
+        return;
+    }
+    //Outside the lock: the clock is published by SyncView as a plain float and is read here the
+    //same unlocked way blast_age_view is, for the reason stated on it.
+    water_shader->Setfloat("water_time",water_time_view);
+
+    std::lock_guard<std::mutex> lock(knob_mutex);
+    water_shader->Setfloat("water_scale",water_scale);
+    water_shader->Setfloat("water_speed",water_speed);
+    water_shader->Setfloat("water_depth",water_depth);
+    water_shader->Setfloat("caustic_width",caustic_width);
 }
 
 //--- input, commands and the loop -----------------------------------------------------------------
@@ -687,8 +1034,8 @@ void ApplicationBomber::RegisterCommandHandlers(void){
             //than calling Explode directly, so what is being looked at is a real bomb.
             if (!maze.f_bomb && !maze.f_blast){
                 maze.f_bomb = true;
-                maze.bomb_x = maze.tile_x;
-                maze.bomb_z = maze.tile_z;
+                maze.bomb_x = maze.player.tile_x;
+                maze.bomb_z = maze.player.tile_z;
             }
             maze.fuse_ticks = 1;
             return OBJECTID_INVALID;
@@ -711,8 +1058,9 @@ int ApplicationBomber::ReadDirection(void){
         INPUT_BOMBER_EAST,INPUT_BOMBER_WEST,INPUT_BOMBER_NORTH,INPUT_BOMBER_SOUTH
     };
 
-    if (maze.facing >= 0 && maze.facing < MAZE_NUM_DIRS && input->IsKeyDown(ACTION[maze.facing])){
-        return maze.facing;
+    if (maze.player.facing >= 0 && maze.player.facing < MAZE_NUM_DIRS &&
+        input->IsKeyDown(ACTION[maze.player.facing])){
+        return maze.player.facing;
     }
     for (int d = 0; d < MAZE_NUM_DIRS; d++){
         if (input->IsKeyDown(ACTION[d])){
@@ -771,6 +1119,35 @@ void ApplicationBomber::RunSimulationTick(void){
 }
 
 /*
+    Brings the view back in step with the board.
+
+    Called from SyncView on the ticks where Maze::field_version has moved - a block destroyed, an
+    item taken. NOTHING IS CREATED AND NOTHING IS DESTROYED HERE; see the note on cell_block. One
+    walk of 256 cells on the few ticks where something actually changed is cheaper than any
+    bookkeeping that would avoid it, and it reads the rules rather than a record of them, so it
+    cannot drift out of step with what the game will actually let you do.
+*/
+void ApplicationBomber::RefreshCells(void){
+    for (int z = 0; z < MAZE_H; z++){
+        for (int x = 0; x < MAZE_W; x++){
+            uint8_t t = maze.tile[z][x] < MAZE_TILE_COUNT ? maze.tile[z][x] : 0;
+            if (cell_block[z][x]){
+                //Still standing only while the tile still says something stands here. A hedge that
+                //burned is GRASS now, and BOMBER_BLOCK_ASSET[GRASS] is NULL.
+                cell_block[z][x]->SetVisibility(BOMBER_BLOCK_ASSET[t] != NULL);
+            }
+            if (cell_item[z][x]){
+                //Visible once it can be walked onto, gone once it has been taken. The tile IS the
+                //lid - see the note on MazeItem.
+                cell_item[z][x]->SetVisibility(maze.item[z][x] != MAZE_ITEM_NONE &&
+                                               maze.IsPassable(x,z));
+            }
+        }
+    }
+    drawn_field_version = maze.field_version;
+}
+
+/*
     Puts the view where the rules say it is. Physics thread, end of the tick.
 
     Everything here is a WRITE DERIVED FROM Maze and never the other way round. That one-way rule
@@ -779,42 +1156,115 @@ void ApplicationBomber::RunSimulationTick(void){
     than being integrated here.
 */
 void ApplicationBomber::SyncView(void){
-    //--- the character ---------------------------------------------------------------------------
-    if (character){
-        //CharX/CharZ are in TILES and fractional across a step; the cell size lives on this side.
-        vec3 base = CellCentre(0,0);
-        character->SetPosition(vec3(base.x + maze.CharX() * BOMBER_CELL_SIZE,
-                                    character_y,
-                                    base.z + maze.CharZ() * BOMBER_CELL_SIZE));
+    //--- what changed on the board ---------------------------------------------------------------
+    //First, so everything placed below stands on a field that already agrees with the rules. One
+    //integer comparison on the ticks where nothing was destroyed and nothing was picked up.
+    if (drawn_field_version != maze.field_version){
+        RefreshCells();
+    }
+
+    //--- the walkers -------------------------------------------------------------------------------
+    /*
+        Face the way they walk.
+
+        TWO CONVENTIONS MEET HERE AND THEY POINT OPPOSITE WAYS, which is the whole reason this
+        table needs a comment rather than being four obvious numbers:
+
+          - the ENGINE's forward axis is -Z. Setting yaw 0 and asking object_get for
+            world_forward returns (0,0,-1), so yaw t gives forward (-sin t, 0, -cos t).
+          - the MODEL faces +Z, which is BLENDER'S forward and exactly what an export should
+            produce - it is not an art fault and there is no export setting to change it. Point
+            the camera due south of the character at yaw 0 and you are looking at its face.
+
+        So the yaw that makes a walker LOOK in direction D is the one that puts the engine's
+        forward at -D, which is what these four are.
+
+        Worth measuring rather than reasoning about: two rounds of getting this wrong were really
+        the camera being dragged between the camera_set and the screenshot, which silently reframes
+        the test. object_get's world_forward is the honest instrument - it needs no picture - and a
+        screenshot is only needed once, to settle which way the ART faces relative to that.
+    */
+    static const float YAW[MAZE_NUM_DIRS] = {
+         TYPE_PI * 0.5f,    //EAST  +X
+        -TYPE_PI * 0.5f,    //WEST  -X
+         TYPE_PI,           //NORTH -Z
+         0.0f               //SOUTH +Z - the rest pose
+    };
+
+    /*
+        ONE PLACEMENT FOR THE PLAYER AND THE ENEMIES, because they are the same MazeWalker and the
+        two models are exported facing the same way. Two copies of this would be two chances for one
+        of them to be silently turned around, and the enemy has no animation to give that away.
+
+        X()/Z() are in TILES and fractional across a step; the cell size lives on this side.
+
+        A DEAD WALKER IS STILL DRAWN WHILE IT IS FALLING OVER. `death_ticks` is the window Maze
+        gives it, and it is the whole reason a death animation has anywhere to play: as far as every
+        rule is concerned the walker is already gone, and as far as the view is concerned it is
+        still on its tile, holding the last frame of the clip until the window runs out.
+    */
+    vec3 base = CellCentre(0,0);
+    auto PlaceWalker = [&](Object* object, const MazeWalker& walker, float y){
+        if (!object){
+            return;
+        }
+        bool f_draw = walker.f_alive || walker.death_ticks > 0;
+        object->SetVisibility(f_draw);
+        if (!f_draw){
+            return;
+        }
+        object->SetPosition(vec3(base.x + walker.X() * BOMBER_CELL_SIZE,y,
+                                 base.z + walker.Z() * BOMBER_CELL_SIZE));
+        if (walker.facing >= 0 && walker.facing < MAZE_NUM_DIRS){
+            object->SetRotation(quat(vec3(0,1,0),YAW[walker.facing]));
+        }
+    };
+
+    PlaceWalker(character,maze.player,character_y);
+    for (int i = 0; i < (int)enemy_objects.size(); i++){
+        //An object past the end of this field's enemies gets a default MazeWalker, whose f_alive is
+        //false - which is why that default is false rather than true.
+        const MazeWalker& walker = i < maze.num_enemies ? maze.enemy[i] : MazeWalker();
+        PlaceWalker(enemy_objects[i],walker,enemy_y);
+
         /*
-            Face the way it walks.
+            Which clip that enemy is playing, derived from the rules rather than remembered.
 
-            TWO CONVENTIONS MEET HERE AND THEY POINT OPPOSITE WAYS, which is the whole reason this
-            table needs a comment rather than being four obvious numbers:
+            Dead, cutting or walking - in that order, because being dead outranks whatever it was
+            in the middle of. Reading the rules every tick and comparing against what is actually
+            playing means nothing has to be kept in step: a restart, a kill, a hedge finished early
+            all land on the right clip without anybody telling the view about them.
 
-              - the ENGINE's forward axis is -Z. Setting yaw 0 and asking object_get for
-                world_forward returns (0,0,-1), so yaw t gives forward (-sin t, 0, -cos t).
-              - the MODEL faces +Z, which is BLENDER'S forward and exactly what an export should
-                produce - it is not an art fault and there is no export setting to change it. Point
-                the camera due south of the character at yaw 0 and you are looking at its face.
-
-            So the yaw that makes the character LOOK in direction D is the one that puts the
-            engine's forward at -D, which is what these four are.
-
-            Worth measuring rather than reasoning about: two rounds of getting this wrong were
-            really the camera being dragged between the camera_set and the screenshot, which
-            silently reframes the test. object_get's world_forward is the honest instrument - it
-            needs no picture - and a screenshot is only needed once, to settle which way the ART
-            faces relative to that.
+            TransitionToAnimation now BLENDS, since the state machine moved from PlayerCharacter
+            into Object - a plain Skeleton used to freeze on ANIMATION_STATE_TRANSITION_START
+            because nothing advanced it. Death is the exception and uses SwitchToAnimation: blending
+            INTO a death softens the one moment that should read as sudden, and blending OUT of it
+            would be a corpse standing back up. It is also the only non-looping clip here, so it is
+            the one that must start from frame 0 rather than wherever a crossfade left it.
         */
-        static const float YAW[MAZE_NUM_DIRS] = {
-             TYPE_PI * 0.5f,    //EAST  +X
-            -TYPE_PI * 0.5f,    //WEST  -X
-             TYPE_PI,           //NORTH -Z
-             0.0f               //SOUTH +Z - the rest pose
-        };
-        if (maze.facing >= 0 && maze.facing < MAZE_NUM_DIRS){
-            character->SetRotation(quat(vec3(0,1,0),YAW[maze.facing]));
+        if (!enemy_objects[i]){
+            continue;
+        }
+        Object* object = enemy_objects[i];
+        if (!walker.f_alive){
+            if (walker.death_ticks > 0 &&
+                strcmp(object->CurrentAnimationName(),BOMBER_ANIM_DEATH) != 0){
+                object->SwitchToAnimation(BOMBER_ANIM_DEATH);
+            }
+            continue;
+        }
+        /*
+            Asked for only when it is neither playing NOR already on its way.
+
+            Both halves are needed: while a blend runs, CurrentAnimationName is still the clip being
+            left, so testing that alone would re-request the same transition every tick for the
+            whole blend. TransitionToAnimation would shrug each one off, but it would log a line per
+            tick per enemy while doing it.
+        */
+        const char* clip = walker.chop_ticks > 0 ? BOMBER_ANIM_CHOP : BOMBER_ANIM_WALK;
+        if (strcmp(object->CurrentAnimationName(),clip) != 0 &&
+            strcmp(object->NextAnimationName(),clip) != 0){
+            object->TransitionToAnimation(clip);
         }
     }
 
@@ -892,6 +1342,11 @@ void ApplicationBomber::SyncView(void){
     //from the last one, and has to differ THE SAME WAY on a replay. The multiplier is
     //irrational-ish so consecutive blasts land far apart in the noise.
     blast_seed_view = (float)maze.blast_count * 0.6180339887f;
+
+    //The water's clock. Ticks rather than seconds, so it stops when the simulation does - see
+    //water_time_view. Taken from the scene rather than counted here, because the scene's tick is
+    //already the number every other duration in this app is measured in.
+    water_time_view = (float)main_scene->GetPhysicsTick();
 }
 
 /*
@@ -1026,6 +1481,22 @@ void ApplicationBomber::PreRender(void){
         f_shader_reload_requested = false;
         ReloadExplosionShader();
     }
+    /*
+        HERE AND NOT IN PushBlastUniforms, which is the obvious place and is wrong: that runs
+        inside the custom-shader pass with the program bound and the target already chosen, and
+        SetCustomShaderScale may reallocate the target it is drawing into. PreRender is the hook
+        for exactly this - render thread, GL context, before the frame starts.
+
+        Unconditional because the call is a compare and a return when the scale has not moved;
+        there is nothing to guard.
+    */
+    int scale = 1;
+    {
+        //Same lock every other knob is read under - see PushBlastUniforms.
+        std::lock_guard<std::mutex> lock(knob_mutex);
+        scale = blast_pixel_scale;
+    }
+    renderer->SetCustomShaderScale(scale);
 }
 
 //--- the knobs --------------------------------------------------------------------------------------
@@ -1078,12 +1549,26 @@ void ApplicationBomber::BuildKnobTable(void){
         "attenuation exponent: brightness/pow(distance,this)"});
     knobs.push_back({"max_radiance",&max_radiance,NULL,0.5f,40.0f,
         "ceiling on in-scattered radiance at one sample"});
+    knobs.push_back({"scatter_cutoff",&scatter_cutoff,NULL,0.0f,0.05f,
+        "skip the light march where it could not be seen. 0 = never skip, the old picture"});
+    knobs.push_back({"blast_pixel_scale",NULL,&blast_pixel_scale,1.0f,8.0f,
+        "window pixels per blast pixel: 2 is quarter the marches and 2x2 blocks, 1 is off"});
     knobs.push_back({"blast_light_brightness",&blast_light_brightness,NULL,0.0f,60.0f,
         "peak brightness of the point light the fire throws on the field"});
     knobs.push_back({"blast_light_radius",&blast_light_radius,NULL,0.05f,5.0f,
         "source size of that light, for the penumbra estimate"});
-    knobs.push_back({"debug_view",NULL,&debug_view,0.0f,2.0f,
-        "0 off, 1 the marched interval, 2 the G-buffer the shader is handed"});
+    //--- the water. Four, and no colour: see the block on water_scale in the header.
+    knobs.push_back({"water_scale",&water_scale,NULL,1.0f,8.0f,
+        "voronoi cells across one tile of water. Under 1.5 reads as blobs, over 8 as noise"});
+    knobs.push_back({"water_speed",&water_speed,NULL,0.0f,8.0f,
+        "how fast the caustic net breathes, radians per 100 ticks. 0 freezes it"});
+    knobs.push_back({"water_depth",&water_depth,NULL,0.0f,1.0f,
+        "how much darker a cell's middle is than the tile's own colour. 0 is a flat tile"});
+    knobs.push_back({"caustic_width",&caustic_width,NULL,0.02f,1.0f,
+        "width of the bright bridges, in cell units - so it means the same at any water_scale"});
+
+    knobs.push_back({"debug_view",NULL,&debug_view,0.0f,3.0f,
+        "0 off, 1 the marched interval, 2 the G-buffer the shader is handed, 3 noise fetches per pixel"});
 }
 
 BomberKnob* ApplicationBomber::FindKnob(const std::string& name){
@@ -1097,7 +1582,7 @@ BomberKnob* ApplicationBomber::FindKnob(const std::string& name){
 
 json ApplicationBomber::MapJson(void){
     json out;
-    static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#'};
+    static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#','h','w'};
     static const char ZONE_GLYPH[MAZE_STYLE_COUNT] = {'B','L','O'};
     json rows = json::array();
     json zones = json::array();
@@ -1111,10 +1596,24 @@ json ApplicationBomber::MapJson(void){
                 //cannot guess and the half that decides whether a step is legal.
                 c = (maze.pass_axis[z][x] == MAZE_AXIS_X) ? '-' : '|';
             }
-            if (x == maze.tile_x && z == maze.tile_z){
-                c = '@';
-            }else if (maze.f_bomb && x == maze.bomb_x && z == maze.bomb_z){
+            //A pickup shows only once it can actually be reached, by the same rule the view draws
+            //it with. A map that showed buried ones would be a map of a different game.
+            if (maze.item[z][x] != MAZE_ITEM_NONE && maze.IsPassable(x,z)){
+                c = (maze.item[z][x] == MAZE_ITEM_HEALTH) ? '+' : '*';
+            }
+            //Whatever is STANDING on a cell wins over what the cell is made of, and the player wins
+            //over everything - so these go last, in this order.
+            if (maze.f_bomb && x == maze.bomb_x && z == maze.bomb_z){
                 c = 'o';
+            }
+            for (int i = 0; i < maze.num_enemies; i++){
+                if (maze.enemy[i].f_alive &&
+                    x == maze.enemy[i].tile_x && z == maze.enemy[i].tile_z){
+                    c = 'E';
+                }
+            }
+            if (maze.player.f_alive && x == maze.player.tile_x && z == maze.player.tile_z){
+                c = '@';
             }
             row += c;
             zrow += (maze.tile[z][x] == MAZE_TILE_WALL && (x == 0 || z == 0 ||
@@ -1127,7 +1626,8 @@ json ApplicationBomber::MapJson(void){
     }
     out["map"] = rows;
     out["map_legend"] = ". grass  , brick  : rock  ~ water  - bridge east-west  "
-                           "| bridge north-south  # wall  @ character  o bomb";
+                           "| bridge north-south  # wall  h hedge  w wood  "
+                           "+ health  * shield  @ player  E enemy  o bomb";
     out["zones"] = zones;
     out["zone_legend"] = "B bomber pillar grid  L labyrinth  O open plaza";
 
@@ -1142,12 +1642,38 @@ json ApplicationBomber::StateJson(void){
     //The character and the bomb, in TILES - which is the space every rule is written in, so it is
     //the space a caller should be reasoning and asserting in too.
     result["character"] = json{
-        {"tile",json::array({maze.tile_x,maze.tile_z})},
-        {"stepping",maze.step_ticks > 0},
-        {"facing",maze.facing},
-        {"x",maze.CharX()},
-        {"z",maze.CharZ()}
+        {"tile",json::array({maze.player.tile_x,maze.player.tile_z})},
+        {"stepping",maze.player.step_ticks > 0},
+        {"facing",maze.player.facing},
+        {"x",maze.player.X()},
+        {"z",maze.player.Z()},
+        {"alive",maze.player.f_alive},
+        {"health",maze.health},
+        {"shield_ticks",maze.shield_ticks},
+        {"invuln_ticks",maze.invuln_ticks},
+        {"deaths",maze.deaths}
     };
+    //One entry per enemy this field placed, alive or not - the index is stable, so a test can
+    //follow one of them. Their TILES are what an assertion wants: "did it cut the hedge" is a
+    //question about two integers and a tile type, not about a picture.
+    json enemies = json::array();
+    for (int i = 0; i < maze.num_enemies; i++){
+        //`clip` is the VIEW's answer next to the rules' - which clip is actually playing, against
+        //the chop_ticks that should have chosen it. Reported because an animation is otherwise only
+        //checkable by eye, and "is it playing the right one" and "is it playing at all" are two
+        //different failures that look identical in a screenshot.
+        Object* object = i < (int)enemy_objects.size() ? enemy_objects[i] : NULL;
+        enemies.push_back(json{
+            {"tile",json::array({maze.enemy[i].tile_x,maze.enemy[i].tile_z})},
+            {"alive",maze.enemy[i].f_alive},
+            {"facing",maze.enemy[i].facing},
+            {"chopping",maze.enemy[i].chop_ticks > 0},
+            {"chop_ticks",maze.enemy[i].chop_ticks},
+            {"clip",object ? object->CurrentAnimationName() : "no object"},
+            {"clips_loaded",object ? (int)object->animations.size() : 0}
+        });
+    }
+    result["enemies"] = enemies;
     result["bomb"] = json{
         {"live",maze.f_bomb},
         {"tile",json::array({maze.bomb_x,maze.bomb_z})},
@@ -1163,6 +1689,33 @@ json ApplicationBomber::StateJson(void){
             {"west",maze.arm[MAZE_DIR_WEST]},
             {"north",maze.arm[MAZE_DIR_NORTH]},
             {"south",maze.arm[MAZE_DIR_SOUTH]}}}
+    };
+    /*
+        What is left of the board, counted rather than left to be diffed out of the map.
+
+        `version` is the one the view tracks, so a caller watching for "did anything change" reads
+        the same number the renderer does instead of comparing two grids of text.
+    */
+    int soft_left = 0;
+    int items_left = 0;
+    for (int z = 0; z < MAZE_H; z++){
+        for (int x = 0; x < MAZE_W; x++){
+            if (maze.IsSoft(x,z)){
+                soft_left++;
+            }
+            if (maze.item[z][x] != MAZE_ITEM_NONE){
+                items_left++;
+            }
+        }
+    }
+    result["field"] = json{
+        {"version",maze.field_version},
+        {"soft_blocks_left",soft_left},
+        {"items_buried_or_loose",items_left},
+        {"items_taken",maze.items_taken},
+        {"blocks_destroyed",maze.blocks_destroyed},
+        {"blocks_cut",maze.blocks_cut},
+        {"enemies_killed",maze.enemies_killed}
     };
     result["renderers"] = json{{"tiles",f_draw_tiles},{"cross",f_draw_cross}};
     result["input_locked"] = f_lock_human_input;
@@ -1198,6 +1751,28 @@ json ApplicationBomber::StateJson(void){
         }
     }
     result["knobs"] = values;
+
+    /*
+        WHAT THE BLAST COSTS, because this app is a bench for it and a bench that cannot report a
+        number is a picture.
+
+        Both are rolling averages over the last 60 frames (PerfTimer::max_deltas), in
+        microseconds. `render_loop_us` is the whole render thread including the buffer swap, so it
+        is the one that turns into FPS and the one that answers "is this fast enough"; `renderer_us`
+        is DrawFrame alone.
+
+        READ THEM WITH VSYNC IN MIND, which Application::Init switches on: while the frame fits in
+        a refresh interval, render_loop_us IS the refresh interval and says nothing about the
+        effect at all. To compare two settings of the volume, make the frame miss vsync first -
+        fill the screen with the blast and put num_view_steps up - and only then read this. A
+        measurement taken at a comfortable 60 FPS will report that every setting costs the same,
+        which is true and useless.
+    */
+    result["perf"] = {
+        {"render_loop_us",tmr_render_loop ? tmr_render_loop->avg : 0.0},
+        {"renderer_us",(renderer && renderer->tmr_frame) ? renderer->tmr_frame->avg : 0.0},
+        {"vsync",renderer ? renderer->GetVSync() : false}
+    };
 
     {
         std::lock_guard<std::mutex> lock(reload_mutex);
@@ -1332,8 +1907,12 @@ void ApplicationBomber::RegisterMCPTools(void){
         "frame, so it survives a shader reload and never writes to a program mid-draw. Setting "
         "`debug_view` to 1 reads out the marched interval and 2 reads out the G-buffer the shader "
         "is handed, which is how to tell a black screen caused by the shape from one caused by the "
-        "box. `draw_tiles` and `draw_cross` are not knobs but are accepted here too: they switch "
-        "the two renderers on and off, and both on draws the same blast twice.",
+        "box; 3 reads out what each pixel COST, as noise fetches, which is how to measure the "
+        "effect on a machine whose frame timer is pinned to vsync. REMEMBER TO SET IT BACK TO 0 - "
+        "nothing resets a knob but relaunching, and a debug view left on looks like a rendering "
+        "bug to whoever finds it next. `draw_tiles` and `draw_cross` are not knobs but are "
+        "accepted here too: they switch the two renderers on and off, and both on draws the same "
+        "blast twice.",
         json{
             {"type","object"},
             {"properties", {
@@ -1448,8 +2027,39 @@ void ApplicationBomber::RenderBomberPanel(void){
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f,0.7f,0.2f,1.0f),"LOCKED");
     }
-    ImGui::Text("Character  tile (%2i,%2i)%s",maze.tile_x,maze.tile_z,
-                maze.step_ticks > 0 ? "  walking" : "");
+    ImGui::Text("Character  tile (%2i,%2i)%s",maze.player.tile_x,maze.player.tile_z,
+                maze.player.step_ticks > 0 ? "  walking" : "");
+    //Everything here is in TICKS rather than seconds, which is the house rule and is also what the
+    //MCP tools report - a panel that said 1.4s while bomber_state said 84 would be two units to
+    //hold in your head for no gain.
+    if (maze.player.f_alive){
+        ImGui::Text("Health %i/%i",maze.health,MAZE_START_HEALTH);
+        if (maze.shield_ticks > 0){
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.4f,0.8f,1.0f,1.0f),"SHIELD %i",maze.shield_ticks);
+        }else if (maze.invuln_ticks > 0){
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f,0.8f,0.3f,1.0f),"hit %i",maze.invuln_ticks);
+        }
+    }else{
+        ImGui::TextColored(ImVec4(1.0f,0.4f,0.3f,1.0f),"Dead - back on the spawn in %i ticks",
+                           MAZE_RESPAWN_TICKS - maze.dead_ticks);
+    }
+    //Enough to tell whether the enemies are doing anything without having to find them on the board.
+    int num_alive = 0;
+    int num_cutting = 0;
+    for (int i = 0; i < maze.num_enemies; i++){
+        if (maze.enemy[i].f_alive){
+            num_alive++;
+            if (maze.enemy[i].chop_ticks > 0){
+                num_cutting++;
+            }
+        }
+    }
+    ImGui::Text("Enemies %i/%i alive, %i cutting   %u killed",
+                num_alive,maze.num_enemies,num_cutting,maze.enemies_killed);
+    ImGui::Text("Blocks  %u bombed, %u cut by enemies   pickups taken %i",
+                maze.blocks_destroyed,maze.blocks_cut,maze.items_taken);
 
     if (maze.f_bomb){
         ImGui::Text("Bomb at (%2i,%2i)",maze.bomb_x,maze.bomb_z);

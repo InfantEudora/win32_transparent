@@ -63,6 +63,20 @@ class Renderer;
 //by default.frag's CalcFieldShadow to shadow point lights without a cube map. Next unit up.
 #define TEXUNIT_FIELD_SHADOW      27
 
+/*
+    The reduced-resolution custom-shader target, while CompositeLowRes is scaling it back over
+    the frame. Nothing else ever samples it.
+
+    A UNIT OF ITS OWN, and not unit 0, which is the obvious choice for a one-off full-screen pass
+    and is a trap: UNIT 0 IS THE SHADOW MAP in this engine (DrawFrame binds shadow_tex_id there
+    before the colour pass, and default.frag's CalcShadow reads it). Leaving a colour texture
+    parked on unit 0 makes every surface in the scene sample its own shadow term out of whatever
+    the volume happened to draw - and since that target is cleared to zero, the whole world reads
+    as fully shadowed and renders nearly black. Which is what it did, and it looks like a lighting
+    bug rather than like a texture binding, because every symptom of it is in the lighting.
+*/
+#define TEXUNIT_LOWRES_COMPOSITE  28
+
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
     int material_slot[NUM_MATERIAL_SLOTS];      // We could do that each instance has a material assigned to a fixed number of slots
@@ -166,8 +180,12 @@ class Renderer{
 
         WHAT THE ENGINE SETS ON YOUR SHADER, every frame, before your callback:
 
-          mat_worldcam    the camera matrix
-          eye_position    the ray origin, for anything raymarched
+          mat_worldcam        the camera matrix
+          eye_position        the ray origin, for anything raymarched
+          render_target_size  the pixel size of what gl_FragCoord is measured against. Divide by
+                              this to turn gl_FragCoord into a 0..1 screen uv for the G-buffer
+                              below, NOT by textureSize(gbuffer_depth,0): the two agree until the
+                              shader opts into Shader::f_lowres, and then they do not.
 
         And what it does NOT: the shadow matrices, the cloud-shadow and occluder-field uniforms.
         Those go to the shaders the renderer owns. Reusing shaders/default.vert is a convenience
@@ -204,6 +222,30 @@ class Renderer{
     //Draws every MESH_MODE_SHADER mesh, one sub-pass per registered custom shader. Runs last of
     //the geometry passes, with the deferred G-buffer bound as input - see the definition.
     void CustomShaderPass(Camera* camera);
+
+    /*
+        How many window pixels across one pixel of the reduced-resolution custom-shader target is.
+
+        1 (the default) switches the whole thing off: no target is allocated, and every custom
+        shader draws straight into the frame exactly as it always did. 2 is a quarter of the
+        fragments, 3 a ninth, 4 a sixteenth. Clamped to 1..8.
+
+        THIS IS BOTH A COST AND A LOOK, and deliberately one number rather than two: the upscale
+        is nearest-neighbour, so N is equally "render at 1/N" and "show as NxN blocks". Two knobs
+        would let somebody ask for big pixels at full resolution, which is paying for a look that
+        the cheap version gives away.
+
+        It applies to every shader that has opted in with Shader::f_lowres - which is where the
+        per-shader half of this lives, and which is also where what a low-res shader owes in
+        return is written down. A scale set while nothing has opted in is remembered and costs
+        nothing.
+
+        RENDER THREAD ONLY, and not from inside a uniform_callback: it may allocate. The natural
+        place is Application::PreRender. Returns false if the target could not be built, having
+        left the scale at 1 so the frame still draws.
+    */
+    bool SetCustomShaderScale(int scale);
+    int GetCustomShaderScale(){return lowres_scale;}
     //Binds the cloud shadow map (if an app supplied one) and tells `s` whether to use it.
     void UploadCloudShadow(Shader* s);
     //Binds the occluder field (if an app enabled one) and tells `s` whether to use it.
@@ -337,6 +379,41 @@ class Renderer{
 
     //Buffers for stages that require the output of the deferred pipeline
     GLuint ssao_tex_id = -1; // SSAO output texture
+
+    /*
+        The reduced-resolution target the custom-material pass draws Shader::f_lowres shaders
+        into, and the full-screen pass that scales it back up. See SetCustomShaderScale above for
+        what it is for; this block is about how it is built.
+
+        RGBA16F to match msaa_fbo's own colour format, because a volume's radiance runs well past
+        1 at the core and the whole point of the effect is that it does. NO DEPTH ATTACHMENT: a
+        volume disables the depth test anyway and resolves occlusion against the G-buffer itself,
+        so a depth buffer here would cost memory and answer nothing.
+
+        Allocated lazily on the first SetCustomShaderScale above 1 and rebuilt by Resize, so an
+        app that never asks pays nothing - which is every app but bomber today.
+    */
+    GLuint lowres_fbo_id = -1;
+    GLuint lowres_tex_id = -1;
+    //Size of that texture, which is the window size divided by lowres_scale and ROUNDED UP - so
+    //the last block is allowed to hang off the edge rather than leaving a strip undrawn.
+    int lowres_tex_width = 0;
+    int lowres_tex_height = 0;
+    int lowres_scale = 1;
+    //The upscale. Attribute-less: it builds its own full-screen triangle from gl_VertexID, so it
+    //needs a bound VAO and no vertex buffer at all - hence the one below, which exists only to
+    //satisfy core profile's "you must have a VAO" and holds nothing.
+    Shader* lowres_composite_shader = NULL;
+    GLuint lowres_vao = -1;
+
+    bool RebuildLowResFBO(void);
+    //Draws the low-res target over the frame, one nearest-neighbour block per low-res pixel.
+    void CompositeLowRes(void);
+    //The body of CustomShaderPass, run once for the full-res shaders and once for the low-res
+    //ones. `f_lowres` selects which half it draws and `f_lowres_pass` says whether there is a
+    //low-res half at all this frame - which is what keeps an opted-in shader drawn, at full
+    //resolution, when the scale is 1. Returns how many sub-passes it ran.
+    int CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres_pass);
 
     //Shadow
     GLuint shadow_fbo_id = -1;  // Framebuffer for getting depth of a light sournce

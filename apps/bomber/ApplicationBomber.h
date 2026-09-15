@@ -180,6 +180,13 @@ private:
     void BuildLighting();
     void LoadAssets();
     /*
+        Builds the enemies' skinned skeletons and loads their clips onto them.
+
+        RENDER THREAD, ONCE, from Init - it uploads a mesh, and RebuildField (which is where the
+        enemies are actually placed) runs on the physics thread. See the note at the definition.
+    */
+    void BuildEnemies();
+    /*
         Destroys whatever field is standing and builds the one Maze currently describes.
 
         PHYSICS THREAD, from inside the restart command handler - which is the only place it is
@@ -198,6 +205,13 @@ private:
     */
     Object* AddCellObject(const char* asset_name, int cx, int cz, float y_offset,
                           float yaw, bool f_random_yaw);
+    /*
+        Brings the view back in step with the board after a block was destroyed or an item taken.
+
+        PHYSICS THREAD, from SyncView, and it only ever calls SetVisibility - see the note on
+        cell_block for why that is the entire mechanism.
+    */
+    void RefreshCells();
 
     //World centre of grid cell (cx,cz), at y=0. The board is centred on the origin so the orbit
     //camera has something symmetric to turn around.
@@ -233,8 +247,35 @@ private:
         reports - while the march stays in the space ray_box_dst needs.
     */
     void PushBlastUniforms(Shader* shader, int mode, float box_world, bool f_enabled);
-    //Recompiles shaders/bomber_explosion.frag into BOTH programs. RENDER THREAD ONLY - serviced
-    //from PreRender, because the key that asks for it is read on the physics thread.
+    //--- the water tiles ------------------------------------------------------------------------
+    /*
+        Builds shaders/bomber_water.frag and points tile_water's SHARED mesh at it.
+
+        Tagging the shared mesh is what makes one call reach every water tile on the board -
+        GetObjectFromAsset hands out objects that share their asset's mesh - and it is also what
+        makes the tag safe, since tile_water is the only asset using that mesh. The same line
+        against tile_grass would turn every floor in the field into water.
+
+        CALLED BEFORE BuildExplosion, and that is not tidiness. Renderer::CustomShaderPass draws
+        custom shaders in REGISTRATION ORDER; the water is opaque and the blast is not, so
+        registering the water second would paint the tiles over the fire.
+
+        WHAT IT WOULD HAVE COST, and why it does not: a MESH_MODE_SHADER mesh does not go through
+        the deferred pass, so water tiles would stop being pickable AND would vanish from the
+        G-BUFFER - which the blast clamps its raymarch to. Since Maze::BlocksBlast lets flame run
+        straight over water on purpose, that showed up as a fireball spilling below the waterline
+        on exactly the tiles a blast is allowed to cross. Measured at 2.6% of the frame against
+        the same blast over grass, so it is a real artifact and not a worry. BuildWater sets
+        Shader::f_writes_gbuffer, which puts the tile's SHAPE back in the deferred pass while
+        leaving its colour custom, and both halves of the problem go with it.
+    */
+    void BuildWater();
+    //Shader::uniform_callback for it: the four knobs plus the clock. RENDER THREAD, program bound.
+    void SetWaterUniforms();
+
+    //Recompiles shaders/bomber_explosion.frag into BOTH programs, and the water shader with them.
+    //RENDER THREAD ONLY - serviced from PreRender, because the key that asks for it is read on
+    //the physics thread.
     void ReloadExplosionShader();
 
     //--- the loop -----------------------------------------------------------------------------
@@ -277,19 +318,52 @@ private:
     vec3 camera_target = vec3(0,0,0);
     DirectionalLight* sun = NULL;
     /*
-        Everything the field is made of: tiles, walls and decoration, one Object each.
+        Everything the field is made of: floors, blocks, decoration and buried pickups, one Object
+        each. Kept as a flat list purely so RebuildField can destroy them all.
 
-        Kept as a flat list purely so RebuildField can destroy them all. They are never looked up
-        by cell - the view is rebuilt wholesale rather than edited, because a bomberman field
-        changes rarely (a restart, and later a block being destroyed) and a per-cell index would be
-        a second thing to keep in step with Maze for no gain.
+        `cell_block` and `cell_item` INDEX INTO IT BY CELL, which an earlier version of this app
+        deliberately did not do: it rebuilt the field wholesale, on the grounds that a bomberman
+        board only changes on a restart. Destructible blocks ended that. A hedge burning is a change
+        to one cell, and throwing four hundred objects away to express it would be absurd.
+
+        WHAT IS INDEXED IS NEVER CREATED OR DESTROYED MID-GAME - only shown and hidden. A destroyed
+        block is its object turned invisible; a revealed pickup is its object turned visible. So the
+        object list is fixed for the life of a field and no allocation, no deletion and no
+        Scene::AddObject happens while the game is running - which is the same call BuildExplosion
+        makes about the blast volumes, for the same reason.
+
+        It works because a cell's FLOOR never changes: every destructible tile turns into GRASS when
+        it goes, and the floor under a soft block is already the grass tile. The floor-variety loop
+        at the end of Maze::NewGame skips soft blocks precisely so that stays true.
     */
     std::vector<Object*> field_objects;
+    Object* cell_block[MAZE_H][MAZE_W];
+    Object* cell_item[MAZE_H][MAZE_W];
     Object* character = NULL;
     Object* bomb = NULL;
+    /*
+        One SKINNED, ANIMATED skeleton per enemy the board can ever hold - MAZE_MAX_ENEMIES of them,
+        built once by BuildEnemies on the render thread and never rebuilt.
+
+        Held as Object* rather than Skeleton* because everything this class does to them afterwards
+        - SetPosition, SetVisibility, SwitchToAnimation - is Object's. The skeleton half only
+        matters while they are being built.
+    */
+    std::vector<Object*> enemy_objects;
     //Y offsets taken from each GLB node's own translation - see LoadAssets for why.
     float character_y = 0.0f;
     float bomb_y = 0.0f;
+    float enemy_y = 0.0f;
+    /*
+        The last Maze::field_version this view was brought up to date with.
+
+        The whole of the incremental update: when it differs from the maze's, RefreshCells walks the
+        board once and fixes what is visible. One integer comparison per tick buys that, instead of
+        256 SetVisibility calls every tick or a list of pending changes to keep in step with the
+        rules - and it cannot drift, because the refresh reads the rules rather than a record of
+        what it was told about them.
+    */
+    uint32_t drawn_field_version = 0;
 
     //--- the blast volumes ------------------------------------------------------------------------
     Shader* tile_shader = NULL;
@@ -308,6 +382,12 @@ private:
 
     Texture* blast_noise = NULL;
     Shader*  blast_noise_shader = NULL;
+
+    //--- the water tiles --------------------------------------------------------------------------
+    //One shader, no mesh and no objects of its own: it draws the tile_water objects the field
+    //builder already makes, because BuildWater tagged the mesh they share.
+    Shader* water_shader = NULL;
+    int     water_shader_index = -1;
 
     /*
         --- the blast clock, view side ---------------------------------------------------------
@@ -378,6 +458,51 @@ private:
     int   num_light_steps = 4;
     float light_falloff = 2.0f;
     float max_radiance = 10.0f;
+    //How much light a sample must be able to scatter before the shader marches towards the lights
+    //for it. The single biggest saving in the effect and the one most worth being able to turn
+    //off: 0 restores the pre-optimisation picture exactly. See scatter_cutoff in the .frag.
+    float scatter_cutoff = 0.002f;
+    /*
+        Window pixels across one pixel of the blast, and therefore how much of the window's
+        resolution the march is actually paying for. 1 is off.
+
+        ONE NUMBER FOR BOTH, deliberately - see Renderer::SetCustomShaderScale. 2 is a quarter of
+        the fragments and 2x2 blocks; 4 is a sixteenth and 4x4. It is a knob rather than a constant
+        because "how blocky should the fire be" is a judgement about how it sits next to the
+        board's own art, and that is a thing to slide, not to argue about.
+
+        Read on the RENDER THREAD by PreRender, written by the panel and by bomber_set. A plain
+        int either side of that boundary for the same reason the blast clock is - see the note on
+        blast_age_view.
+    */
+    int   blast_pixel_scale = 2;
+
+    /*
+        --- the water ------------------------------------------------------------------------------
+        Four knobs, and all four are about the PATTERN. THE COLOUR IS NOT HERE ON PURPOSE: it comes
+        from tile_water's own material, so the hue is an art decision and lives in the .glb next to
+        the rest of the board's palette. A colour picker in the debug panel would be a second place
+        to set something the asset already says, and the two would disagree the first time anyone
+        re-exported.
+
+        Each is explained at its uniform in shaders/bomber_water.frag. The ranges in BuildKnobTable
+        are what is worth exploring rather than what is legal.
+    */
+    float water_scale = 4.0f;
+    float water_speed = 1.0f;
+    float water_depth = 0.55f;
+    float caustic_width = 0.18f;
+    /*
+        The water's clock, view side: simulation ticks, published by SyncView and read by
+        SetWaterUniforms on the render thread. The same unlocked hand-off as blast_age_view and for
+        the same reasons - see the note there.
+
+        IN TICKS, so the water freezes under sim_pause and advances exactly one frame per sim_step.
+        A wall clock here would make a screenshot of the board unreproducible and would put the
+        water on a different clock from the fire, which is the one thing you cannot have the moment
+        you film a blast going off next to a pond.
+    */
+    float water_time_view = 0.0f;
     //0 off, 1 the marched interval, 2 the G-buffer the shader reads. Matches f_show_box in
     //shaders/bomber_explosion.frag.
     int   debug_view = 0;

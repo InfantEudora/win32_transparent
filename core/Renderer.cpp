@@ -106,6 +106,12 @@ bool Renderer::Resize(int new_width, int new_height){
     if ((pipeline == PIPELINE_DEFERRED) && !RebuildDeferredFBO()){
         return false;
     }
+    //Only if an app actually asked for one - RebuildLowResFBO allocates, and at scale 1 there is
+    //nothing to resize. A failure here is not fatal to the resize: the target is dropped back to
+    //full resolution and the frame still draws.
+    if ((lowres_scale > 1) && !RebuildLowResFBO()){
+        lowres_scale = 1;
+    }
     return true;
 }
 
@@ -486,12 +492,29 @@ void Renderer::DeferredPass(Camera* camera){
     //UploadLights();
     RenderUniqueMeshes(MESH_MODE_NORMAL);
 
-    //MESH_MODE_SHADER meshes are deliberately NOT drawn here. They used to be, with
-    //deferred_shader still bound - so a custom material wrote position/normal/objectid/depth as
-    //if it were solid geometry. For a volume that is actively wrong twice over: it made the box
-    //swallow every hover pick made through it, and now that CustomShaderPass reads this same
-    //G-buffer to find the geometry in front of it, the box would have occluded itself.
-    //A custom material that genuinely wants to be in the G-buffer needs its own deferred variant.
+    /*
+        MESH_MODE_SHADER meshes are not drawn here BY DEFAULT. They all used to be, with
+        deferred_shader still bound, so every custom material wrote position/normal/objectid/depth
+        as if it were solid geometry. For a volume that is actively wrong twice over: it made the
+        box swallow every hover pick made through it, and now that CustomShaderPass reads this same
+        G-buffer to find the geometry in front of it, the box would have occluded itself.
+
+        But "no custom material is ever solid" was too strong, and this is the opt-in that used to
+        be the "needs its own deferred variant" note. A custom shader that draws an ordinary solid
+        surface and merely computes its own COLOUR - apps/bomber's water tiles - sets
+        Shader::f_writes_gbuffer, and its meshes are drawn here with the plain deferred shader.
+        Which is exactly right: depth, position, normal and object id describe the SHAPE, and the
+        shape was never the custom part.
+
+        Drawn with `deferred_shader`, not with the custom program, and not by a second pass over
+        every mesh: one RenderUniqueMeshes per opted-in shader index, which is how the mesh filter
+        already works.
+    */
+    for (int i = 0;i < (int)custom_shaders.size();i++){
+        if (custom_shaders.at(i) && custom_shaders.at(i)->f_writes_gbuffer){
+            RenderUniqueMeshes(MESH_MODE_SHADER,i);
+        }
+    }
 
     if (deferred_shader_skinned && camera){
         deferred_shader_skinned->Use();
@@ -527,6 +550,135 @@ Shader* Renderer::GetCustomShader(int index){
 }
 
 /*
+    Builds (or resizes) the reduced-resolution custom-shader target. See the block on
+    lowres_fbo_id in Renderer.h for what it is and why it has no depth attachment.
+
+    ROUNDED UP, not down. At an odd window width a truncating divide leaves the rightmost column
+    of window pixels with no low-res block behind it, and the composite then samples the block
+    next door - a one-pixel smear down the edge of the screen that only appears at some window
+    sizes, which is the worst kind of bug to go looking for. One spare block costs nothing.
+*/
+bool Renderer::RebuildLowResFBO(void){
+    int scale = (lowres_scale < 1) ? 1 : lowres_scale;
+    int w = (width  + scale - 1) / scale;
+    int h = (height + scale - 1) / scale;
+    if (w < 1){
+        w = 1;
+    }
+    if (h < 1){
+        h = 1;
+    }
+    if ((lowres_fbo_id != (GLuint)-1) && (w == lowres_tex_width) && (h == lowres_tex_height)){
+        return true;    //Already the right size - the common case, every frame.
+    }
+    debug->Info("(Re)Building the custom-shader target at 1/%i: %i x %i\n",scale,w,h);
+
+    if (lowres_fbo_id == (GLuint)-1){
+        glCreateFramebuffers(1, &lowres_fbo_id);
+    }
+    if (lowres_tex_id != (GLuint)-1){
+        glDeleteTextures(1, &lowres_tex_id);
+    }
+    glCreateTextures(GL_TEXTURE_2D, 1, &lowres_tex_id);
+    //RGBA16F: the same format msaa_fbo's colour renderbuffer uses, for the same reason - a
+    //volume's core is brighter than 1 on purpose.
+    glTextureStorage2D(lowres_tex_id, 1, GL_RGBA16F, w, h);
+    //NEAREST is the effect, not a compromise. The composite computes the exact texel it wants so
+    //the filter never actually interpolates, but LINEAR here would quietly soften the blocks the
+    //day somebody sampled it any other way.
+    glTextureParameteri(lowres_tex_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(lowres_tex_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTextureParameteri(lowres_tex_id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(lowres_tex_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glNamedFramebufferTexture(lowres_fbo_id, GL_COLOR_ATTACHMENT0, lowres_tex_id, 0);
+    GLenum draw_buffer = GL_COLOR_ATTACHMENT0;
+    glNamedFramebufferDrawBuffers(lowres_fbo_id, 1, &draw_buffer);
+
+    //The named check rather than CheckFrameBuffer(), which reads whatever is bound - this runs
+    //from PreRender with the frame's own framebuffer bound and must not disturb it.
+    GLenum status = glCheckNamedFramebufferStatus(lowres_fbo_id, GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE){
+        debug->Err("The custom-shader target is not complete (0x%04X)\n",status);
+        return false;
+    }
+    lowres_tex_width = w;
+    lowres_tex_height = h;
+
+    if (lowres_vao == (GLuint)-1){
+        //Holds nothing and is never filled. The composite's vertex stage builds its triangle out
+        //of gl_VertexID, but core profile still refuses to draw with no VAO bound at all.
+        glCreateVertexArrays(1, &lowres_vao);
+    }
+    if (!lowres_composite_shader){
+        lowres_composite_shader = new Shader("shaders/lowres_composite.vert",
+                                             "shaders/lowres_composite.frag");
+    }
+    return true;
+}
+
+bool Renderer::SetCustomShaderScale(int scale){
+    if (scale < 1){
+        scale = 1;
+    }
+    if (scale > 8){
+        scale = 8;
+    }
+    if (scale == lowres_scale){
+        return true;
+    }
+    lowres_scale = scale;
+    if (scale == 1){
+        //Left allocated deliberately. An app driving this from a slider will be back in a moment,
+        //and a texture the size of the window is not worth churning to save while somebody drags.
+        return true;
+    }
+    if (!RebuildLowResFBO()){
+        lowres_scale = 1;   //So the frame still draws, at full resolution, rather than not at all.
+        return false;
+    }
+    return true;
+}
+
+/*
+    Scales the low-res target back over the frame, one NxN block per low-res pixel.
+
+    PREMULTIPLIED, and that is the whole reason this is a shader rather than a blit. The low-res
+    target was drawn into with a SEPARATE alpha blend (see CustomShaderPass) so that it holds
+    colour already multiplied by coverage, which is the only form in which a stack of translucent
+    volumes composites correctly into a buffer that started empty. glBlendFunc(GL_ONE,
+    GL_ONE_MINUS_SRC_ALPHA) is the matching "over" for that form. A straight glBlitFramebuffer
+    could not apply any blend at all, and would have stamped the volume over the scene.
+*/
+void Renderer::CompositeLowRes(void){
+    if (!lowres_composite_shader || !lowres_composite_shader->f_compiled){
+        return;
+    }
+    lowres_composite_shader->Use();
+    //TEXUNIT_LOWRES_COMPOSITE, emphatically not unit 0 - see the note on that define for the
+    //nearly-black scene that came of borrowing the shadow map's unit for this.
+    glBindTextureUnit(TEXUNIT_LOWRES_COMPOSITE, lowres_tex_id);
+    lowres_composite_shader->Setint("lowres_scale",lowres_scale);
+
+    //The volume already resolved its own occlusion against the G-buffer; this is a flat overlay
+    //and must not be depth-tested, depth-written or culled by whatever the last sub-pass left.
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    glBindVertexArray(lowres_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    //Back to the state SetOpenGLState established once at start-up, which everything else in the
+    //frame assumes is still in force.
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+/*
     The custom-material pass: everything tagged MESH_MODE_SHADER, one sub-pass per registered
     shader. What a custom shader is given and what is expected of it is stated once, on
     Renderer::AddCustomShader in Renderer.h - this is about how the pass is ordered and why.
@@ -551,10 +703,93 @@ void Renderer::CustomShaderPass(Camera* camera){
     if (custom_shaders.empty() || !camera){
         return;
     }
+    /*
+        Is there a reduced-resolution half this frame at all?
+
+        SCALE 1 MEANS THE FEATURE IS OFF, NOT THAT THE TARGET IS THE SAME SIZE - so a shader that
+        has opted in still has to be drawn, at full resolution, straight into the frame. Getting
+        this wrong does not draw it small or blurry, it does not draw it AT ALL: it is in neither
+        half, and the effect silently vanishes at exactly the setting a person reaches for to
+        compare against. Which is what it did, until a fetch count came back as zero.
+
+        Counted before anything is allocated or cleared for the same reason: an app that set a
+        scale and then switched its volume off must not pay a target clear and a full-screen
+        composite every frame to put nothing on the screen.
+    */
+    int num_lowres = 0;
+    for (int i = 0;i < (int)custom_shaders.size();i++){
+        if (custom_shaders.at(i) && custom_shaders.at(i)->f_lowres){
+            num_lowres++;
+        }
+    }
+    bool f_lowres_pass = (lowres_scale > 1) && (num_lowres > 0) && RebuildLowResFBO();
+
+    //The full-resolution half first, straight into the frame - every custom shader in every app
+    //that has not asked for anything else, plus any that has while the feature is switched off.
+    CustomShaderSubPasses(camera,false,f_lowres_pass);
+    if (!f_lowres_pass){
+        return;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, lowres_fbo_id);
+    vec4 clr_clear = vec4(0,0,0,0);
+    glClearNamedFramebufferfv(lowres_fbo_id,GL_COLOR,0,(float*)&clr_clear);
+    /*
+        The viewport, scaled. An app with an offset viewport (Renderer::viewport_x, which Tank
+        uses) gets its offset divided too, so a viewport whose origin is not a multiple of the
+        scale lands up to one block out. Nothing in the tree does both, and a block is the unit
+        this whole feature deals in - noted rather than solved.
+    */
+    glViewport(viewport_x / lowres_scale,
+               viewport_y / lowres_scale,
+               (GetViewportWidth()  + lowres_scale - 1) / lowres_scale,
+               (GetViewportHeight() + lowres_scale - 1) / lowres_scale);
+    /*
+        SEPARATE alpha blending, and this is the one line that has to be right.
+
+        The frame's ordinary GL_SRC_ALPHA/GL_ONE_MINUS_SRC_ALPHA applied to the ALPHA channel of a
+        buffer cleared to zero computes a*a + 0*(1-a) - it squares the coverage. Over the opaque
+        frame that never mattered, because nothing read the alpha back; here the composite does,
+        and a squared alpha makes every volume render too transparent and a stack of them wrong in
+        a way that looks like a density bug. GL_ONE/GL_ONE_MINUS_SRC_ALPHA on alpha is the
+        standard "over" accumulation, and it leaves colour premultiplied - which is what
+        CompositeLowRes then expects.
+    */
+    glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+
+    CustomShaderSubPasses(camera,true,true);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, msaa_fbo_id);
+    glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
+    CompositeLowRes();
+}
+
+/*
+    One sub-pass per registered custom shader that belongs in this half of the pass. Returns how
+    many ran. Everything about what a custom shader is handed is here; CustomShaderPass above is
+    only about which target the two halves draw into.
+
+    `f_lowres_pass` is whether there IS a reduced-resolution half this frame, and is what makes
+    scale 1 mean "off" rather than "missing": with it false, an opted-in shader is drawn here at
+    full resolution along with everything else.
+*/
+int Renderer::CustomShaderSubPasses(Camera* camera, bool f_lowres, bool f_lowres_pass){
     vec3 eye = camera->GetPosition();
+    //What gl_FragCoord is measured against in this half of the pass. A shader sampling the
+    //G-buffer must divide by THIS and not by textureSize(gbuffer_depth,0) - the two are the same
+    //number at full resolution and are not at all in the low-res half, which is exactly the trap
+    //Shader::f_lowres warns about.
+    vec2 target_size = f_lowres ? vec2((float)lowres_tex_width,(float)lowres_tex_height)
+                                : vec2((float)width,(float)height);
+    int num_drawn = 0;
     for (int i = 0;i < (int)custom_shaders.size();i++){
         Shader* shader = custom_shaders.at(i);
         if (!shader){
+            continue;
+        }
+        //Which half this shader is in. Only one that opted in AND has a low-res half to be drawn
+        //into is in the low-res one; everything else is full resolution.
+        if ((shader->f_lowres && f_lowres_pass) != f_lowres){
             continue;
         }
         shader->Use();
@@ -562,6 +797,7 @@ void Renderer::CustomShaderPass(Camera* camera){
         //A custom shader that reconstructs a ray - anything raymarched - needs the ray origin,
         //which the default shaders get under this same name.
         shader->Setvec3("eye_position",eye);
+        shader->Setvec2("render_target_size",target_size);
 
         glBindTextureUnit(TEXUNIT_GBUFFER_DEPTH,deferred_depth_tex_id);
         glBindTextureUnit(TEXUNIT_GBUFFER_POSITION,deferred_position_tex_id);
@@ -575,7 +811,9 @@ void Renderer::CustomShaderPass(Camera* camera){
         glCullFace(GL_BACK);
         glDepthMask(GL_TRUE);
         glEnable(GL_DEPTH_TEST);
+        num_drawn++;
     }
+    return num_drawn;
 }
 
 /*

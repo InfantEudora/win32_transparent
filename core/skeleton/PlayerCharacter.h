@@ -53,6 +53,10 @@ class PlayerCharacter : public virtual Skeleton{
     Animation* blink_animation = NULL;
 
     void ApplyAnimation(float time_delta) override;
+    //A character DOES move where its clip says it moved, and a character has state describing the
+    //pose its bones are in. Both are the hooks Object::ApplyAnimation calls back into.
+    void ApplyRootMotion(const RootMotionDelta& delta) override;
+    void LoadDefaultPose() override;
 
     float idle_time = 0.0f;
     float idle_time_max = 3.0f;

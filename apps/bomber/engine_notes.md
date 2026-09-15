@@ -9,17 +9,34 @@ here is urgent; most cost a comment rather than a bug.
 
 ---
 
-## 1. `GLTFLoader` has no `GetNodeScale`
+## 1. A node's transform is silently discarded, and its scale cannot even be read
 
-`GetNodePosition` and `GetNodeRotation` are public and take a node name; there is no scale
-counterpart, so an app cannot read a node's scale without going through `tinygltf` itself.
+Two halves of one problem, and the second is the one that bites.
 
-**What bomber does:** nothing — `bomber_assets.glb` currently exports every node at scale 1. An
-earlier version of the file had the character at scale 4 and the app would have had to carry that
-number as a literal.
+`GLTFLoader::GetMeshFromNode` uses the node **only to find the mesh index**. Its translation,
+rotation and scale are never applied to the vertices and are never handed to the caller either —
+so a model that is only correct once its node transform is applied loads silently wrong. There is
+no warning, because nothing in the loader considers it unusual.
 
-**Cost:** none today, a hardcoded constant the day an asset is exported scaled. The fix is about
-fifteen lines next to the other two accessors.
+`GetNodePosition` and `GetNodeRotation` are public and take a node name, so an app can at least ask
+about two of the three. There is **no `GetNodeScale`**, so the third cannot be read at all without
+going through `tinygltf` directly.
+
+**What bomber does:** relies on an export convention — every node at scale 1, no rotation, and only
+a Y translation that means "how high this piece stands". The user owns that convention and fixes
+the file when it is broken.
+
+**It has already happened once.** `wall_wood` was first exported with scale (5.53, 6.20, 7.47) and
+a 60° rotation. The app would have drawn a 0.17-unit crumb lying on its side, with nothing in
+stderr and nothing in the loader to say why. It was caught by **dumping the GLB's JSON chunk with a
+throwaway script and printing every node's TRS and world size** — not by the engine, and not by
+looking at the screen, where it would have read as "the new asset didn't load".
+
+**Cost:** an export mistake becomes a visual puzzle rather than a message. Two fixes, either of
+which would be enough: a `GetNodeScale` beside the other two accessors (about fifteen lines), or —
+better — one `debug->Warn` in `GetMeshFromNode` when the node it is reading carries a non-identity
+transform that is about to be thrown away. The second is three lines and turns a silent class of
+art bug into a line of stderr naming the node.
 
 ---
 
@@ -182,6 +199,137 @@ it app-side would mean silently overriding the exported materials, which is wors
 
 **Cost:** none now. Worth a one-line warning from `Renderer::AddMaterial` when metallic is high and
 there is no environment, because the symptom (a black object) looks like a failed texture load.
+
+---
+
+## 11. There is nowhere for a test that is not an app
+
+`engine.mk` builds one thing: an application, linked against all of `core/`. There is no convention
+for a binary that is *not* an app — no `tests/` target, nothing that compiles a single translation
+unit and runs it — so a piece of logic that could be checked in a second without a window has
+nowhere to be checked from.
+
+**What bomber does:** carries its own four-line `rules` target in `apps/bomber/makefile`, which
+compiles `maze_test.cpp` against `Maze.cpp` alone — no core, no engine, no GPU — and runs it. It
+checks the things that are statements about integers: a blast clearing a hedge and stopping at it,
+an enemy cutting through one, a pickup staying buried until the block above it goes, the bridge
+refusing a step across its rope side, 200 seeds all laying out a playable board, and two identical
+games staying identical for 900 ticks.
+
+**It earned its place immediately.** It found that seed 12 generated a board with **fourteen**
+reachable cells and no room for a single enemy — a pre-existing weakness in the zone generator that
+`reachable_cells` had been quietly reporting for a day without anyone reading it. The fix (re-roll a
+layout that scores under `MAZE_MIN_PLAYABLE`) is in `Maze::NewGame`.
+
+**Cost:** the target is hand-rolled and this app is the only one with one, so nothing keeps it
+working and nothing runs it but a person who knows it is there. A `TEST_SRCS` convention in
+`engine.mk`, building each named source on its own and running it, would cost about as much as this
+one app's copy and would be available to the apps that have a `Field`, a `Table` or a `Maze` — which
+is most of them. The precondition is already met everywhere it matters: it works here only because
+`Maze.h` names no engine type.
+
+---
+
+## 12. `GetSkeleton` only loads the joints that hang off `joints[0]`
+
+```cpp
+Bone* root_bone = GetBone(skin->joints.at(0),bone_count,inv_binds,assetmanager);
+skeleton->AttachChild(root_bone);
+```
+
+That is the whole of it: it takes the **first** joint and recurses through its **children**. Any
+joint that is a *sibling* of the first rather than a descendant of it is never loaded, and glTF does
+not require joints to form one tree — `skin.joints` is a flat list, and `skin.skeleton` (the common
+root) is optional and absent here.
+
+The enemy rig was first exported with `Hips`, `Head` and `Arm.R` all parented to the armature object
+and none to each other. `Hips` had no children, so **one bone of three** loaded.
+
+**The art was fixed** — it is now `Hips → Torso → Head, Arm.R`, one chain, and all four bones load.
+That is the right rig regardless: with the bones as siblings, moving the hips would not have carried
+the head, so the walk would have looked wrong even if all three had loaded. **The engine gap is
+still open**, and is deliberately parked until something actually needs a multi-root rig.
+
+**What it costs, in order of how much it hurts:**
+
+1. **The mesh tears itself apart.** `default_skinned.vert` indexes
+   `bone_data[gl_InstanceID * bone_count + bones.x]` with `bone_count = skeleton->num_bones` = 1,
+   while the vertices carry bone indices 0..2. Indices 1 and 2 read past this instance's block into
+   whatever is next in the buffer. On screen that is the head and arm stretched into long spikes
+   across the board - which reads as a corrupt mesh, not as a rig that half-loaded.
+2. **Two thirds of the animation silently does nothing** - see §13.
+3. **Nothing says so.** `GetSkeleton` logs `Loaded %i bones` at **Trace** level only, so at the
+   default log level a rig that loaded a third of itself is indistinguishable from one that worked.
+
+**What bomber does:** logs the bone count next to the clip names in `BuildEnemies`, and warns when a
+clip has tracks that bound to nothing.
+
+**The fix, cheapest first:** `GetSkeleton` already has `skin->joints` in hand - walking the whole
+list and attaching any joint whose parent is not itself a joint would handle flat and multi-root
+rigs both. Failing that, one `debug->Warn` when `bone_count != skin->joints.size()` turns a corrupt
+mesh into a line of stderr. There is already a bone-count check at `Renderer.cpp:359`, but it
+compares the skeleton against *itself*; the useful comparison is against what the **mesh** expects,
+which is the one number that predicts the out-of-range read.
+
+---
+
+## 13-14. CLOSED: the animation state machine moved from `PlayerCharacter` into `Object`
+
+Both of these were the same gap seen from two sides, and both are fixed. Kept as one short entry
+rather than deleted outright because the shape of the fix is worth knowing about.
+
+**What was wrong.** `Object::ApplyAnimation` handled exactly one state, `ANIMATION_STATE_LOOPING`.
+`TransitionToAnimation` set `ANIMATION_STATE_TRANSITION_START`, which `Object` had no branch for, so
+asking a plain `Skeleton` to blend left it in a state nothing advanced and it froze on the pose it
+had. Separately, `ApplyInterval` skips the root track on the grounds that `SampleRootMotion` will
+pose it, and only `PlayerCharacter::ApplyAnimation` called that - so naming a root bone on anything
+else silently stopped that bone animating. The whole ~200-line machine lived in `PlayerCharacter`,
+tangled with `ProcessInputState()` and the root-motion `MoveBy`/`RotateBy`.
+
+**What it is now.** The state machine lives in `Object::ApplyAnimation` - looping, one-shots that
+hold their last frame, `auto_continue_to`, crossfades and the rewind. Two virtuals are what a
+character overrides:
+
+- `ApplyRootMotion(delta)` - base does nothing. The delta is still **computed** either way, because
+  computing it is also what poses the root bone; only the world movement is optional. That is the
+  half that used to go missing.
+- `LoadDefaultPose()` - base puts every `Bone` below the object back to its reference pose.
+
+`PlayerCharacter::ApplyAnimation` is now `ProcessInputState()`, a call to the base, and its own
+layering (blink, head/hips look, foot trackers).
+
+**One thing deliberately NOT fixed:** retargeting a transition to a *third* clip while one is still
+running. `TransitionToAnimation` still rewinds when asked to go back where it came from and pauses
+otherwise. Out of scope by agreement - the simple cases (play it once, let it finish, blend A to B)
+are what this buys.
+
+**Watch out for one consequence in app code:** while a blend runs, `CurrentAnimationName()` is still
+the clip being *left*. Code that decides "am I already playing X?" has to check `NextAnimationName()`
+too, or it re-requests the same transition every tick for the whole blend.
+
+---
+
+## 15. A clip that drives nothing is indistinguishable from a clip that is playing
+
+`Animation::LinkObjects` binds each track to a bone **by name** and already counts the ones it
+matched:
+
+```cpp
+debug->Info("Animation: Linked %i objects from %s to animation %s\n",count,...);
+```
+
+It prints the count it found but never the count it *wanted*, so `Linked 1 objects` for a
+three-track clip looks like success. Downstream, `ApplyInterval` skips unbound tracks silently.
+
+The result is a failure mode with no symptom anywhere in the engine: the clip is "playing", the time
+index advances, `CurrentAnimationName()` returns the right string, and nothing moves.
+
+**What bomber does:** walks the tracks itself after `AddAnimation` and warns, naming the bones that
+bound to nothing.
+
+**Fix:** one line - compare `count` against `object_animations.size()` in `LinkObjects` and warn on
+a mismatch, naming the unmatched targets. Every app that loads a clip wants it, and none of them
+should have to write it.
 
 ---
 
