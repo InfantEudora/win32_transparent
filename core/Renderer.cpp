@@ -1882,6 +1882,40 @@ Texture* Renderer::LoadTexture(const char* filename, int target, int depth){
     return texture;
 }
 
+//Depth-first over the object tree, re-uploading each distinct mesh once. `done` is a plain vector
+//walked linearly: a scene has a handful of distinct meshes however many objects share them, so a
+//set would cost more than it saved.
+static void ReUploadMeshesRecursive(Object* object, std::vector<Mesh*>& done){
+    Mesh* mesh = object->GetMesh();
+    if (mesh){
+        bool f_seen = false;
+        for (Mesh* m:done){
+            if (m == mesh){
+                f_seen = true;
+                break;
+            }
+        }
+        if (!f_seen){
+            done.push_back(mesh);
+            //A no-op for a mesh with no CPU-side vertices, which is what makes this safe to call
+            //blindly over the whole tree.
+            mesh->ReUploadMeshData();
+        }
+    }
+    for (Object* child:object->children){
+        ReUploadMeshesRecursive(child,done);
+    }
+}
+
+//See the header for why this exists when nothing on Windows can reach it.
+void Renderer::ReUploadAllMeshes(){
+    std::vector<Mesh*> done;
+    for (Object* object:objects){
+        ReUploadMeshesRecursive(object,done);
+    }
+    debug->Info("Re-uploaded %d distinct meshes for the new GL context\n",(int)done.size());
+}
+
 //Should be called when physics is done, before rendering.
 //It deletes them from the list, and actually deletes them.
 //This is now responsible for destroying objects... until something better comes to mind.

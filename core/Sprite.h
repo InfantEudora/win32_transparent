@@ -22,7 +22,8 @@ public:
 	vec2 uv0 = {0};
 	vec2 uv1 = {0};
 
-	void CalculateUV();
+	void CalculateUV();        // pixel rect (x/y/width/height) -> uv0/uv1
+	void CalculatePixelRect(); // uv0/uv1 -> pixel rect, the inverse of CalculateUV()
 };
 
 #endif

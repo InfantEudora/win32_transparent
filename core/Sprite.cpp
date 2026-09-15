@@ -32,3 +32,18 @@ void Sprite::CalculateUV(){
 	//debug->Trace("Sprite w x h = %llu x %llu\n",width,height);
 	//debug->Trace("UV0: %.3f %.3f UV1 %.3f %.3f\n",uv0.x,uv0.y,uv1.x,uv1.y);
 }
+
+// Inverse of CalculateUV() -- recomputes x/y/width/height from the current
+// uv0/uv1, so the two representations don't drift apart after something
+// (e.g. a UV editor) sets uv0/uv1 directly instead of going through pixel
+// coordinates.
+void Sprite::CalculatePixelRect(){
+	if (!atlas){
+		debug->Warn("Sprite has no Atlas to calculate pixel rect on\n");
+		return;
+	}
+	x = (int)(uv0.x * (double)atlas->width);
+	y = (int)(uv0.y * (double)atlas->height);
+	width  = (int)((uv1.x - uv0.x) * (double)atlas->width);
+	height = (int)((uv1.y - uv0.y) * (double)atlas->height);
+}

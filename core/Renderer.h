@@ -353,6 +353,23 @@ class Renderer{
     */
     void DeleteDestroyedObjects();
 
+    /*
+        Re-uploads every mesh reachable from `objects`, children included, after the GL context has
+        been replaced.
+
+        NOTHING ON WINDOWS CALLS THIS, and it is here anyway. A Win32 context is never lost, so
+        this is currently a path only Android needs - but it is the generic answer to a hole every
+        app falls into on a platform that does lose one, and having it in core means an app does
+        not have to know. The Android port hit it as a black screen with a working ImGui overlay:
+        ImGui re-initialises itself and the scene does not, so everything drawn by the engine had
+        VAOs belonging to the dead context and only the overlay came back.
+
+        DEDUPLICATED BY Mesh*, which is correctness and not efficiency. ReUploadMeshData() zeroes
+        vbo/vao and generates a new pair, so a second call for the same mesh in the same context
+        leaks the pair the first one made - and Tetris has 200 board cells sharing one cube.
+    */
+    void ReUploadAllMeshes();
+
     Texture* LoadTexture(const char* filename,int target = GL_TEXTURE_2D, int depth = 1);
 
     //We'll have one multisampled framebuffer with a single color and depth buffer.

@@ -25,6 +25,75 @@ Sprite* SpriteSheet::GetLastSprite(){
 	return NULL;
 }
 
+void SpriteSheet::AddSpritesFromGrid(Texture* atlas_texture, int columns, int rows, const char* name_prefix){
+	if (!atlas_texture){
+		debug->Err("AddSpritesFromGrid: no atlas texture given\n");
+		return;
+	}
+	if ((columns <= 0) || (rows <= 0)){
+		debug->Err("AddSpritesFromGrid: columns/rows must be positive (got %d x %d)\n", columns, rows);
+		return;
+	}
+	if (atlas_texture->IsEmpty()){
+		debug->Err("AddSpritesFromGrid: %s has no decoded image data -- load it first\n", atlas_texture->name.c_str());
+		return;
+	}
+	if (texture && (texture != atlas_texture)){
+		debug->Warn("AddSpritesFromGrid: this SpriteSheet already has a different texture (%s) -- overwriting with %s\n",
+			texture->name.c_str(), atlas_texture->name.c_str());
+	}
+	if (((atlas_texture->width % columns) != 0) || ((atlas_texture->height % rows) != 0)){
+		debug->Warn("AddSpritesFromGrid: %s (%d x %d) doesn't divide evenly into %d x %d cells\n",
+			atlas_texture->name.c_str(), atlas_texture->width, atlas_texture->height, columns, rows);
+	}
+
+	texture = atlas_texture;
+	int cell_width = atlas_texture->width / columns;
+	int cell_height = atlas_texture->height / rows;
+
+	for (int row = 0; row < rows; row++){
+		for (int col = 0; col < columns; col++){
+			Sprite s;
+			s.atlas = texture;
+			s.width = cell_width;
+			s.height = cell_height;
+			s.x = col * cell_width;
+			s.y = row * cell_height;
+			s.name = std::string(name_prefix) + std::to_string(row * columns + col);
+			s.CalculateUV();
+			sprites.push_back(s);
+		}
+	}
+	debug->Info("AddSpritesFromGrid: added %d sprites (%d x %d cells, %d x %d px each) from %s\n",
+		columns * rows, columns, rows, cell_width, cell_height, atlas_texture->name.c_str());
+}
+
+void SpriteSheet::AddSpriteFromWholeTexture(Texture* source_texture, const char* name){
+	if (!source_texture){
+		debug->Err("AddSpriteFromWholeTexture: no texture given\n");
+		return;
+	}
+	if (source_texture->IsEmpty()){
+		debug->Err("AddSpriteFromWholeTexture: %s has no decoded image data -- load it first\n", source_texture->name.c_str());
+		return;
+	}
+
+	Sprite s;
+	s.atlas = source_texture;
+	s.name = name;
+	s.width = source_texture->width;
+	s.height = source_texture->height;
+	s.x = 0;
+	s.y = 0;
+	s.uv0 = vec2(0.0f, 0.0f);
+	s.uv1 = vec2(1.0f, 1.0f);
+	sprites.push_back(s);
+}
+
+void SpriteSheet::Clear(){
+	sprites.clear();
+}
+
 void SpriteSheet::Upload(){
     if (texture){
         texture->Create2D();

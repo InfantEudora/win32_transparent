@@ -31,6 +31,15 @@ If running it twice for one tick would change the outcome, it belongs in Maze.
 INTO a soft block, destroys it and stops THERE; it stops BEFORE a hard wall. That one-tile
 difference is the whole bomberman rule. `IsChoppable` is hedge only - the enemy has shears.
 
+**An enemy must be able to DO something, and that took two changes not one.** `PlaceEnemies` refuses
+a cell with no neighbour it can step into and no hedge it can cut. That alone was not enough: a
+walled-in enemy reversed at a dead end, and `back` is the opposite of `facing`, so it flipped between
+the same two directions for ever and never turned to look at the other axis - one sealed in by three
+walls and a hedge stood facing the wall all round. `TickEnemies` now turns to face something it can
+work on when even `back` is blocked, which has to be a RULE and not just a spawn check because a
+blast can wall one in later. Measured over 200 seeds / 800 enemies: 15 born with no exit and 14 more
+never moving, both now 0.
+
 **Walkers are a `MazeWalker` struct**, shared by the player and up to `MAZE_MAX_ENEMIES` enemies -
 they differ only in what picks their direction. Each carries its own `step_total` so the two can
 move at different speeds. Tile-to-tile with an atomic step, so "which tile" is always two integers.
@@ -54,11 +63,23 @@ off `GetPhysicsTick()` so they freeze under `sim_pause`. The shrink is VIEW stat
 this app now draws: a motion with a SHAPE (the door swinging) is authored in Blender; a spin, a bob
 or a fade is arithmetic in the app.
 
-**The exit door is two objects and the first unskinned thing animated from a clip** - `wall_doorway`
-placed on a border cell with `door` attached as a child, `Door_Opening` on the ARCHWAY (see
-[[animation-state-machine-in-object]]). Forward opens, `SetAnimationRate(-1)` shuts. The RULES do
-not know about it yet: no door tile in `Maze`, and `RebuildField` carries a view-only special case
-to leave the brick off that cell.
+**The exit is `MAZE_TILE_DOOR`, and it is the one tile whose passability is a property of the GAME
+rather than of the cell** - `IsPassable` tests `f_has_key` BEFORE it tests `IsBlock`. It stays inside
+the `IsBlock` range on purpose, so a blast still stops at it, an enemy cannot cut it, and no soft
+block is laid over it. `PlaceDoor` puts it in the border wall on a cell whose inward neighbour is
+open, preferring one `MAZE_DOOR_MIN_DIST` from the spawn, and runs BEFORE `AddSoftBlocks` so nothing
+is built on top of it (a soft block IN FRONT of it is fine - that is a bomb, not a lock).
+
+**`MAZE_ITEM_KEY` is first in `MAZE_ITEM_ORDER`** so a board too small to bury everything still
+buries the way out, and `AddItems` will not lay it under a block with no open cell beside it. That
+was a real soft lock: a key nobody can reach looks exactly like a board you have not searched hard
+enough. Walking through the door does NOT yet end the level - that is the remaining half.
+
+**The door is two objects and the first unskinned thing animated from a clip** - `wall_doorway`
+placed on `maze.door_x/door_z` with `door` attached as a child, `Door_Opening` on the ARCHWAY (see
+[[animation-state-machine-in-object]]). Forward opens, `SetAnimationRate(-1)` shuts. THE VIEW
+FOLLOWS THE RULE: `SyncView` compares `f_door_open` against `maze.f_has_key`, so `door.unlocked`
+flips at once and `door.open` catches up over the fifty ticks the leaf swings.
 
 **`equipped_shield` is a CHILD of `character`** with an identity local transform - the artist placed
 it on the character in the .glb, so it follows, turns and is freed with them (`~Object` deletes
@@ -116,7 +137,8 @@ is four hundred objects, so an unfiltered call quietly returns only the tail - u
 And a driver that walks the player somewhere must let the last step LAND: `tile` is the
 DESTINATION of the step in progress and `TickItems` refuses to collect while `step_ticks > 0`.
 
-Still open: the key/door win condition (the only unused asset left whose job is a rule), sound
+Still open: walking through the exit should end the level (agreed shape: re-roll the seed, carry
+score and upgrades across), sound
 (`USE_SOUND` off - no wav yet), player animations, one bomb at a time, enemies that wander rather
 than hunt, and no HUD. `apps/bomber/game_todo.md` is the user's own list - read it first.
 

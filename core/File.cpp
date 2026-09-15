@@ -2,11 +2,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <vector>
+#if defined(_WIN32)
 #include <windows.h>        //GetModuleFileName - see GetExecutableDirectory
+#endif
 #include "File.h"
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("File", DEBUG_ALL);
+
+//Only ever written by SetWritableDataDirectory, and only read on the non-Win32 arm of
+//GetExecutableDirectory below.
+static std::string writable_data_dir;
+
+void SetWritableDataDirectory(const char* path){
+	if (path && *path){
+		writable_data_dir = path;
+	}
+}
 
 std::string GetBasePath(const char* filename){
 	std::string sname = filename;
@@ -99,6 +111,7 @@ static void InitAssetRoots(){
 }
 
 std::string GetExecutableDirectory(){
+#if defined(_WIN32)
 	//Worked out once. GetModuleFileName does not change over the life of the process, and the
 	//roots built from it are read on every failed as-given lookup.
 	static std::string dir;
@@ -117,6 +130,15 @@ std::string GetExecutableDirectory(){
 	}
 	dir = GetBasePath(buf);
 	return dir;
+#else
+	/*
+		Set by Application from the platform's own answer - see SetWritableDataDirectory in File.h.
+		Empty until that happens, and a caller that concatenates a filename onto an empty string
+		writes to the working directory instead, which is exactly the fallback the Win32 failure
+		path above takes. So an unset directory degrades the same way a failed query does.
+	*/
+	return writable_data_dir;
+#endif
 }
 
 void AddAssetSearchRootFromExe(const char* relative){

@@ -49,6 +49,28 @@ adaptations in `ApplicationTetris.cpp` survived a ~900-line diff that way.
 `.gitattributes` `text eol=lf`) and the port is LF; without it a 43-line change renders as 2,775.
 Note `git diff` does NOT accept that flag — use `diff`/`git diff --no-index` or normalise first.
 
+**APPLIED 2026-09-15 (steps 1-3 of the merge plan).** `core/glad.h` now carries the platform
+switch for the whole tree; `PerfTimer` is on `std::chrono`; `Debug_win32.cpp` is `_WIN32`-guarded;
+`Sprite::CalculatePixelRect`, `SpriteSheet::{AddSpriteFromWholeTexture,AddSpritesFromGrid,Clear}`
+and `File::SetWritableDataDirectory` came over from the port. **33 of the 62 `core/*.cpp` now
+syntax-check clean for aarch64**, from zero before. Windows debug and `make ship` both build clean
+and Tetris runs.
+
+**`Mesh.cpp` merged next (step 4a).** Four upload sites plus `InitSSBO`/`InitVBOVAO`/
+`InitLineVBOVAO`/`InitSkinnedVBOVAO` now have a GLES arm using bind-then-call
+(`glGenBuffers`/`glVertexAttribPointer`) beside the DSA one. **The diff removes no line at all** -
+the desktop arms are byte-identical, wrapped in `#else` - which is the cheapest possible proof
+that desktop behaviour did not move. Verified anyway: Tetris (normal + text meshes) and the
+animation app (skinned character, correct skinning/normals/UVs/shadows) both render correctly.
+
+Two things worth keeping from it: `type_vertex.h` is **byte-identical on both sides**, and the
+desktop arm's hand-computed offsets (`11*sizeof(float)`) and the GLES arm's `offsetof` agree
+exactly - now enforced by a block of `static_assert`s at the top of `Mesh.cpp`, unconditional so
+an Android-only build still catches a layout change that would break desktop. GLES also has no
+immutable buffer storage, so `SetMorphMeshData`'s `glNamedBufferStorage` becomes `glBufferData`
+there; harmless for a write-once buffer. The port's `Mesh::ReUploadMeshData()` was NOT taken - it
+belongs with `Renderer::ReUploadAllMeshes` and the context-loss item.
+
 **`core/glad.h` is the single chokepoint, measured 2026-09-15.** `core/Mesh.h:5` includes
 `"glad.h"`, whose line 4 is `#include <windows.h>` — so every file that touches `Mesh` or `Object`
 dies there before reaching any real portability question. Swap `glad.h` for a
@@ -57,9 +79,18 @@ the NDK, unmodified** — including `Object`, `ObjectAnimation`, `GLTFLoader`, `
 `physics/` and all of `skeleton/`. The Android port's own `glad.h` already opens with the right
 guard; take its first four lines.
 
-After that the next-biggest single win is **`PerfTimer.h/.cpp`**: 13 lines of
-`LARGE_INTEGER`/`QueryPerformanceCounter`, in a file that already includes `<chrono>`. It is the
-*only* thing failing `Scene.cpp` and `ParticleEmitter.cpp` (4 errors each, all `LARGE_INTEGER`).
+After that came **`PerfTimer.h/.cpp`**: 13 lines of `LARGE_INTEGER`/`QueryPerformanceCounter`
+in a file that already included `<chrono>`, and whose `<Windows.h>` reached `Application.h` and
+`Renderer.h`. Done. **Careful with what a stubbed measurement tells you**: with fake Win32 headers
+in the include path, `Scene.cpp` and `ParticleEmitter.cpp` failed on nothing but `LARGE_INTEGER`,
+which read as "PerfTimer is the only blocker". It was not - the stubs were satisfying
+`windowsx.h`, which those two really get from `InputController.h`. Both still fail on that, and
+`InputController` is the next real piece of work for them.
+
+Measured while replacing it, because the file now claims the numbers did not move: `steady_clock`'s
+tick here is **100 ns and `QueryPerformanceFrequency` reports 10 MHz - the same 100 ns**, so
+libstdc++ is backing it with the same counter, and over one busy interval `PerfTimer` and a direct
+QPC pair agree to **1-4 us in 8,400**.
 
 **The arbiter is the NDK compiler, not the eye** — `aarch64-linux-android24-clang++ -std=c++17
 -fsyntax-only` from `C:/code/android/sdk/ndk/27.2.12479018`. Diff line counts mislead badly here:

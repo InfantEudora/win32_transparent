@@ -4,15 +4,9 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
-//Desktop gets GLuint and the enums from glad. Android has no glad at all - the GLES entry points
-//are exported straight out of the NDK's libGLESv2.so - so the declarations have to be pulled in
-//explicitly. This is the same split android_core/Mesh.h already carries, spelled the same way on
-//purpose: the port merge should be a copy, not a translation.
-#if defined(__ANDROID__)
-#include <GLES3/gl31.h>
-#else
+//GLuint and the enums. This file used to carry the Android/desktop #if itself; glad.h is that
+//switch now, for every consumer at once - on Android it is <GLES3/gl31.h> and nothing else.
 #include "glad.h"
-#endif
 #include "type_vec2.h"
 #include "UIFont.h"
 

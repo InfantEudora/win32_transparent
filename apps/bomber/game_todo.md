@@ -33,12 +33,13 @@ Enemies can cut down hedges, or they can attack the player. Each attack takes on
   away over 18 ticks instead of blinking out; coins and diamonds turn on the spot.
 - **The worn shield.** `equipped_shield` is a child of the character while a shield is running, so
   it follows and turns with them for nothing and is freed with them.
-- **The exit door.** An archway with a swinging leaf, standing in the north border. Scenery so far -
-  the rules have no door tile yet. The Blender clip runs forward to open and backward to shut.
+- **The exit.** `MAZE_TILE_DOOR` in the border wall, placed by the generator, locked until the key
+  is dug up. The archway and its swinging leaf follow the rule rather than the other way round.
 - **Lilly pads**, on open water only - never on a bridged cell.
 - **Player condition.** Health, shield, hit invulnerability, death, respawn on the same field.
 - **Enemies.** Up to four, spawned away from the player, wandering. They cut hedges
-  (`MAZE_CHOP_TICKS`), they hurt the player on contact, and they die to a blast.
+  (`MAZE_CHOP_TICKS`), they hurt the player on contact, and they die to a blast. None of them is
+  ever born somewhere it can do nothing - see the note at the bottom.
 - **Animation.** Enemy walk, chop and death, cross-fading. The turd idles. Blending lives in
   `Object` now, so any object can have it.
 - **The blast.** Raymarched through a 3D noise volume in a CustomShaderPass, clamped against the
@@ -48,16 +49,22 @@ Enemies can cut down hedges, or they can attack the player. Each attack takes on
 
 Roughly in the order each one unblocks the next.
 
-1. **Win condition: key, door, exit.** The key is buried under a soft block like the other pickups,
-   so `MazeItem` already has the shape for it. The door sits IN THE BORDER WALL, visible from the
-   start, closed until the key is held. Walking through it ends the level.
-   - A door in the border is a border cell that becomes passable in one direction. `pass_axis` is
-     already the generic per-cell property for exactly that, and the bridges are its first user.
-   - Guarantee the key is reachable. Generation already prunes unreachable cells, but a key under a
-     block that only opens by cutting a hedge an enemy may never cut is a soft lock. Either the key
-     only ever goes under a bomb-reachable block, or `NewGame` gets a reachability check alongside
-     `MAZE_MIN_PLAYABLE`.
-   - The door is a TWO-PIECE asset: an archway and a leaf. See the note at the bottom.
+1. **Win condition: key, door, exit.** HALF DONE.
+   - ~~The key unlocks the door.~~ `MAZE_ITEM_KEY` sets `Maze::f_has_key`, and `MAZE_TILE_DOOR` is
+     the one tile whose passability is a property of the GAME rather than of the cell - `IsPassable`
+     tests the flag before it tests `IsBlock`. It stays inside the `IsBlock` range, so a blast still
+     stops at it, an enemy cannot cut it, and no soft block is laid over it. The key is worth no
+     points: all it does is open the way out.
+   - ~~The door is placed by the rules.~~ `PlaceDoor` picks a border cell whose inward neighbour is
+     open, preferring one `MAZE_DOOR_MIN_DIST` from the spawn. The view reads `maze.door_x/door_z`,
+     so the special case that used to keep a brick off the door's cell is gone.
+   - ~~The key is always diggable.~~ It is first in `MAZE_ITEM_ORDER` so a small board still buries
+     it, and `AddItems` will not lay it under a block with no open cell beside it. That was the soft
+     lock: a key nobody can reach looks exactly like a board you have not searched hard enough.
+   - **Still to do: walking through it ends the level.** The agreed shape is a re-roll - the field
+     regenerates on a new seed and the score and any upgrades carry over. `NewGame` already does all
+     of it; what is new is carrying state across, and a camera that does something during the
+     transition so the fiction of walking into a new room survives.
 2. ~~**Score: coin and diamond.**~~ DONE. Coin 10, diamond 50, crystal 250 - 5x steps, so a
    crystal is the thing that happened this round rather than a few more coins. `MazeItemScore` is
    the one place that says so; a treasure added later needs a line there and nothing else.
@@ -76,15 +83,12 @@ Roughly in the order each one unblocks the next.
 8. **Lives, game over, next level.** A run rather than a board: keep score across levels, re-roll the
    seed, maybe raise enemy count or lower the fuse.
 9. **Second plant decor.** `plant` in the GLB is a different mesh from the `grass_plant` already in
-   use. One line in the decor table. (`lilly` went in the same way, on water.)
+   use. One line in the decor table. (`lilly` went in the same way, on water.) THE LAST UNUSED
+   ASSET.
 
 ### Assets in the GLB with nothing using them yet
 
-`pickup_key` and `plant`. Everything else is in as of 2026-09-15 - `wall_doorway` and `door` as the
-exit, the three treasures, `equipped_shield` on the player and `lilly` on the water.
-
-`pickup_key` is waiting on item 1: it is the only asset left whose job is a RULE rather than a
-picture.
+`plant`, and that is all - everything else in the file is in the game as of 2026-09-15.
 
 ---
 
@@ -147,6 +151,25 @@ shut state should use.
 it does nothing and the archway is a view-only special case in `RebuildField` (the cell gets no
 brick). That special case is the thing that disappears when item 1 above is built.
 
+### Enemies are not born in a box
+
+Measured before the fix, over 200 seeds and 800 enemies: **15 spawned with no exit at all** and
+another **14 spawned next to a hedge they could never cut**. Both are now 0, and it took two changes
+rather than one, which is the part worth remembering:
+
+- `PlaceEnemies` will not use a cell with nothing to do from it - no neighbour it can step into and
+  no hedge it can cut. It asks exactly what `TickEnemies` will ask a tick later rather than
+  approximating it with "is it surrounded".
+- **That filter alone was not enough.** A walled-in enemy used to reverse when it found a dead end,
+  and `back` is the opposite of `facing` - so it flipped between the same two directions for ever
+  and never turned to look at the other axis. One sealed in by three walls and a hedge would stand
+  facing the wall for the whole round with the hedge it could have cut beside it. It now turns to
+  face something it can work on. That is a rule and not just a spawn check, because a blast can wall
+  one in after the board has started.
+
+The soak in `make rules` is what proves it: 2000 ticks with nobody touching the controls, and every
+enemy on every board has moved by the end.
+
 ### Whatever else needs one animation
 
 Same question, and now a proven answer on both sides. Anything with a shape to its motion - a door,
@@ -155,6 +178,19 @@ a lid, a chest - belongs in Blender, because the unskinned path costs nothing be
 fade, a bob or a spin is a tween in the app: the coins turning and the pickups shrinking are both
 arithmetic against the tick counter in `ApplicationBomber::TickPickupView`, and a .glb round trip to
 change their speed would be worse than a constant.
+
+### A table sized by an enum count will not tell you it is short
+
+Adding `MAZE_TILE_DOOR` grew `MAZE_TILE_COUNT`, and two `static const char GLYPH[MAZE_TILE_COUNT]`
+tables - one in `MapJson`, one in the test harness - quietly value-initialised their new last entry
+to `' '`. The door then rendered as a NUL BYTE INSIDE A JSON STRING and as a hole in the printed
+board, and nothing anywhere said so.
+
+Every table in this app indexed by a `MazeTile` / `MazeItem` / `MazeDecor` is the same shape and the
+same risk. They are all in one place near the top of `ApplicationBomber.cpp` for that reason, and
+the two glyph tables now spell the enum name against each row so the next addition is obvious.
+There are six of them: `BOMBER_TILE_ASSET`, `BOMBER_BLOCK_ASSET`, `BOMBER_DECOR_ASSET`,
+`BOMBER_ITEM_ASSET`, `BOMBER_ITEM_SPINS`, and `GLYPH`/`ITEM_GLYPH` in `MapJson`.
 
 ### Testing affordances that now exist
 
@@ -170,3 +206,8 @@ Worth knowing before writing another test by hand:
   nothing but the clip ever writes.
 - `object_list` is capped at 200 entries and a laid-out board is four hundred objects, so an
   unfiltered call quietly returns only the front of it. Use `name_filter`.
+- `scratchpad/bomberdrive.py` PLAYS the board: it reads the map out of `bomber_state`, paths over it
+  with soft blocks costing eight (a hedge is a door that takes one bomb), respects the bridges'
+  grain at both ends of a step exactly as `Maze::CanEnter` does, and digs where the path says to.
+  The greedy version it replaced could not get out of the spawn corner. Anything that needs the
+  player to GET somewhere - the level transition, enemies that hunt, the HUD - wants this.

@@ -3,6 +3,11 @@
 // members), and every write goes through buf_append(), which -- unlike the
 // original's raw sprintf/vsprintf into a shared static buffer -- can never
 // write past the end of it.
+//
+// Guarded like Debug_android.cpp so both backend files can sit in the same
+// source list and be compiled unconditionally whatever the target is - only
+// the matching one ever contains any code.
+#if defined(_WIN32)
 #include "Debug.h"
 #include <cstdarg>
 #include <cstdio>
@@ -112,3 +117,5 @@ void Debugger::Flush() {
         g_boffset = 0;
     }
 }
+
+#endif // defined(_WIN32)

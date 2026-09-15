@@ -10,6 +10,7 @@
 #include "Maze.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static int failures = 0;
 
@@ -24,13 +25,16 @@ static void PrintBoard(Maze& maze){
     for (int z = 0; z < MAZE_H; z++){
         char row[MAZE_W + 1];
         for (int x = 0; x < MAZE_W; x++){
-            static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#','h','w'};
+            //One per tile type - anything short of that value-initialises to '\0' and prints
+            //as a hole in the board. See the same table in ApplicationBomber::MapJson.
+            static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#','h','w','D'};
             char c = GLYPH[maze.tile[z][x]];
             if (maze.decor[z][x] == MAZE_DECOR_BRIDGE){
                 c = (maze.pass_axis[z][x] == MAZE_AXIS_X) ? '-' : '|';
             }
             if (maze.item[z][x] != MAZE_ITEM_NONE && maze.IsPassable(x,z)){
-                c = (maze.item[z][x] == MAZE_ITEM_HEALTH) ? '+' : '*';
+                static const char ITEM_GLYPH[MAZE_ITEM_COUNT] = {' ','+','S','K','c','d','x'};
+                c = ITEM_GLYPH[maze.item[z][x]];
             }
             for (int i = 0; i < maze.num_enemies; i++){
                 if (maze.enemy[i].f_alive && maze.enemy[i].tile_x == x && maze.enemy[i].tile_z == z){
@@ -414,6 +418,188 @@ static void TestItemMix(){
                                                       "list, not a roll of it");
 }
 
+//--- the exit ----------------------------------------------------------------------------------
+
+/*
+    Every board has a way out, and it is in a place you could walk up to.
+
+    The three claims are separable and all three have failed in some form on some board while this
+    was being written: the door has to EXIST, it has to be on the BORDER (a door in the middle of
+    the field is a wall with a handle), and the cell INSIDE it has to be open or nothing can ever
+    stand in front of it.
+*/
+static void TestExitPlaced(){
+    printf("every board has an exit, on the border, reachable from inside\n");
+
+    int missing = 0;
+    int off_border = 0;
+    int sealed = 0;
+    int near_spawn = 0;
+    int doors_per_board = 0;
+    int wrong_count = 0;
+    for (uint32_t seed = 1; seed <= 200; seed++){
+        Maze maze;
+        maze.NewGame(seed);
+        int x = maze.door_x;
+        int z = maze.door_z;
+        doors_per_board = 0;
+        for (int dz = 0; dz < MAZE_H; dz++){
+            for (int dx = 0; dx < MAZE_W; dx++){
+                if (maze.tile[dz][dx] == MAZE_TILE_DOOR){
+                    doors_per_board++;
+                }
+            }
+        }
+        if (doors_per_board != 1){
+            wrong_count++;
+        }
+        if (maze.tile[z][x] != MAZE_TILE_DOOR){
+            missing++;
+            continue;
+        }
+        bool f_border = (x == 0 || z == 0 || x == MAZE_W - 1 || z == MAZE_H - 1);
+        if (!f_border){
+            off_border++;
+        }
+        int ix = (x == 0) ? 1 : (x == MAZE_W - 1 ? MAZE_W - 2 : x);
+        int iz = (z == 0) ? 1 : (z == MAZE_H - 1 ? MAZE_H - 2 : z);
+        /*
+            Open, or something a bomb can clear.
+
+            PlaceDoor runs BEFORE AddSoftBlocks and only ever picks a cell whose inward neighbour is
+            open floor - but a hedge may then be laid on that floor, which is fine and is arguably
+            better: the exit takes a bomb to get to. What must never happen is a HARD wall there,
+            and that is what this counts.
+        */
+        if (!maze.IsPassable(ix,iz) && !maze.IsSoft(ix,iz)){
+            sealed++;
+        }
+        //Manhattan by hand: Maze::CellDistance is private, and spelling it out here is one
+        //line rather than widening the class's surface for a test.
+        int dist = abs(x - MAZE_SPAWN_X) + abs(z - MAZE_SPAWN_Z);
+        if (dist < MAZE_DOOR_MIN_DIST){
+            near_spawn++;
+        }
+    }
+    printf("  over 200 seeds: %i missing, %i off the border, %i walled in, %i closer than "
+           "MAZE_DOOR_MIN_DIST\n",missing,off_border,sealed,near_spawn);
+    Check(missing == 0,                               "every board placed one");
+    Check(wrong_count == 0,                           "exactly one door tile per board");
+    Check(off_border == 0,                            "always in the border wall");
+    Check(sealed == 0,                                "and never with a hard wall in front of it");
+    //A PREFERENCE, not a rule - see MAZE_DOOR_MIN_DIST. Loud if it ever stops being rare.
+    Check(near_spawn < 10,                            "and nearly always a walk away from the spawn");
+}
+
+/*
+    The key opens it, and nothing else does.
+
+    The last check is the one worth having: a door that could be bombed open would make the key
+    decorative, and the reason it cannot is that MAZE_TILE_DOOR sits inside the IsBlock range - one
+    line away from being wrong in either direction.
+*/
+static void TestKeyOpensDoor(){
+    printf("the key opens the exit, and a bomb does not\n");
+
+    Maze maze;
+    maze.NewGame(3);
+    int x = maze.door_x;
+    int z = maze.door_z;
+
+    Check(!maze.f_has_key,                            "a new board starts locked");
+    Check(!maze.IsPassable(x,z),                      "and the door cannot be walked through");
+    Check(maze.BlocksBlast(x,z),                      "a blast stops at it");
+    Check(!maze.IsSoft(x,z),                          "it is not something a bomb can destroy");
+    Check(!maze.IsChoppable(x,z),                     "and not something an enemy can cut");
+
+    //Straight into the door, which is the strongest form of the claim.
+    maze.f_bomb = true;
+    maze.bomb_x = (x == 0) ? 1 : (x == MAZE_W - 1 ? MAZE_W - 2 : x);
+    maze.bomb_z = (z == 0) ? 1 : (z == MAZE_H - 1 ? MAZE_H - 2 : z);
+    maze.fuse_ticks = 1;
+    RunTicks(maze,MAZE_BLAST_TICKS + 8);
+    Check(maze.tile[z][x] == MAZE_TILE_DOOR,          "a bomb next to it leaves it standing");
+    Check(!maze.IsPassable(x,z),                      "and still shut");
+
+    maze.f_has_key = true;
+    Check(maze.IsPassable(x,z),                       "the key makes it passable");
+    Check(maze.BlocksBlast(x,z),                      "an OPEN door still stops a blast");
+
+    //And through the real pickup path, on a cleared board so the walk is not the test.
+    Maze m2;
+    m2.NewGame(3);
+    for (int cz = 1; cz < MAZE_H - 1; cz++){
+        for (int cx = 1; cx < MAZE_W - 1; cx++){
+            m2.tile[cz][cx] = MAZE_TILE_GRASS;
+            m2.decor[cz][cx] = MAZE_DECOR_NONE;
+            m2.item[cz][cx] = MAZE_ITEM_NONE;
+            m2.pass_axis[cz][cx] = MAZE_AXIS_ANY;
+        }
+    }
+    m2.num_enemies = 0;
+    m2.player.tile_x = m2.player.from_x = 5;
+    m2.player.tile_z = m2.player.from_z = 5;
+    m2.player.step_ticks = 0;
+    m2.item[5][6] = MAZE_ITEM_KEY;
+    uint32_t score_before = m2.score;
+    StepOnce(m2,MAZE_DIR_EAST);
+    Check(m2.f_has_key,                               "walking onto the key picks it up");
+    Check(m2.score == score_before,                   "and it is worth no points");
+    Check(m2.IsPassable(m2.door_x,m2.door_z),         "which unlocked the door");
+}
+
+/*
+    The key is always buried, and always somewhere a bomb can reach.
+
+    The second half is the soft lock this was written to make impossible: a key under a block with
+    four walls round it is a board that cannot be finished, and nothing else on the board would say
+    so - you would simply run out of places to look.
+*/
+static void TestKeyIsDiggable(){
+    printf("the key is always buried, and always diggable\n");
+
+    int no_key = 0;
+    int not_buried = 0;
+    int sealed = 0;
+    for (uint32_t seed = 1; seed <= 200; seed++){
+        Maze maze;
+        maze.NewGame(seed);
+        int kx = -1;
+        int kz = -1;
+        int keys = 0;
+        for (int z = 0; z < MAZE_H; z++){
+            for (int x = 0; x < MAZE_W; x++){
+                if (maze.item[z][x] == MAZE_ITEM_KEY){
+                    keys++;
+                    kx = x;
+                    kz = z;
+                }
+            }
+        }
+        if (keys != 1){
+            no_key++;
+            continue;
+        }
+        if (!maze.IsSoft(kx,kz)){
+            not_buried++;
+        }
+        bool f_open = false;
+        for (int d = 0; d < MAZE_NUM_DIRS; d++){
+            if (maze.IsPassable(kx + Maze::DirX(d),kz + Maze::DirZ(d))){
+                f_open = true;
+            }
+        }
+        if (!f_open){
+            sealed++;
+        }
+    }
+    printf("  over 200 seeds: %i without exactly one key, %i not under a block, %i with no open "
+           "cell beside them\n",no_key,not_buried,sealed);
+    Check(no_key == 0,                                "exactly one key on every board");
+    Check(not_buried == 0,                            "always under a soft block");
+    Check(sealed == 0,                                "and always with somewhere to bomb it from");
+}
+
 //--- lilly pads --------------------------------------------------------------------------------
 
 /*
@@ -474,6 +660,74 @@ static void TestLillies(){
     //is that the knob is connected, not that the RNG hits its mean over 40 boards.
     int pct = water_cells ? (lillies * 100) / water_cells : 0;
     Check(pct > 5 && pct < MAZE_LILLY_PCT + 10,       "and the density is in the right region");
+}
+
+//--- enemies that are not born in a box --------------------------------------------------------
+
+/*
+    No enemy starts somewhere it can do nothing, and none of them ends up stuck.
+
+    TWO CLAIMS, and they need each other. The spawn filter alone is not enough: an enemy walled in
+    on three sides with a hedge on the fourth passes it, and used to stand there for the whole round
+    anyway, because a dead end made it reverse - and `back` is the opposite of `facing`, so it
+    flipped between the same two directions for ever and never turned to look at the hedge.
+
+    The soak is the honest test of both. Before this, 15 of 800 enemies over these seeds spawned
+    with no exit at all and another 14 spawned next to a hedge they could never face.
+*/
+static void TestEnemiesCanAct(){
+    printf("no enemy is born in a box, and none of them stays in one\n");
+
+    int total = 0;
+    int no_option = 0;
+    int never_moved = 0;
+    for (uint32_t seed = 1; seed <= 200; seed++){
+        Maze maze;
+        maze.NewGame(seed);
+        int sx[MAZE_MAX_ENEMIES];
+        int sz[MAZE_MAX_ENEMIES];
+        int n = maze.num_enemies;
+        for (int i = 0; i < n; i++){
+            sx[i] = maze.enemy[i].tile_x;
+            sz[i] = maze.enemy[i].tile_z;
+            total++;
+            bool f_can_act = false;
+            for (int d = 0; d < MAZE_NUM_DIRS; d++){
+                int nx = sx[i] + Maze::DirX(d);
+                int nz = sz[i] + Maze::DirZ(d);
+                if (maze.CanEnter(sx[i],sz[i],nx,nz) || maze.IsChoppable(nx,nz)){
+                    f_can_act = true;
+                }
+            }
+            if (!f_can_act){
+                no_option++;
+            }
+        }
+
+        //Nobody touching the controls: the enemies are the only thing moving, so anything still on
+        //its spawn tile at the end never found anything to do.
+        bool moved[MAZE_MAX_ENEMIES] = {false};
+        MazeInput in;
+        for (int t = 0; t < 2000; t++){
+            maze.Tick(in);
+            for (int i = 0; i < n; i++){
+                if (maze.enemy[i].tile_x != sx[i] || maze.enemy[i].tile_z != sz[i]){
+                    moved[i] = true;
+                }
+            }
+        }
+        for (int i = 0; i < n; i++){
+            //A corpse is not stuck - it is dead, and the player's own bombs are not running here,
+            //so this only happens to one that walked into a blast it started itself. It cannot.
+            if (!moved[i] && maze.enemy[i].f_alive){
+                never_moved++;
+            }
+        }
+    }
+    printf("  %i enemies over 200 seeds: %i spawned with no option, %i never moved in 2000 ticks\n",
+           total,no_option,never_moved);
+    Check(no_option == 0,                             "every enemy spawns able to walk or to cut");
+    Check(never_moved == 0,                           "and every one of them got going");
 }
 
 //--- the enemy cuts a hedge --------------------------------------------------------------------------
@@ -910,6 +1164,10 @@ int main(){
     TestScore();
     TestItemMix();
     TestLillies();
+    TestExitPlaced();
+    TestKeyOpensDoor();
+    TestKeyIsDiggable();
+    TestEnemiesCanAct();
     TestEnemyChopsHedge();
     TestPlayerCondition();
     TestEnemyDies();

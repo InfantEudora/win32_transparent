@@ -152,23 +152,6 @@ and 61 ended up stranded under a band that no longer said anything about them.
   `DisplayInfo::density` before the window exists, so the value is valid by `Init()`; the Win32
   side wants `GetDpiForWindow` once there is a window, with 96 as the honest answer before that.
 
-- [ ] **71. `Renderer::ReUploadAllMeshes()`.** Walks the object tree depth-first and calls
-  `Mesh::ReUploadMeshData()` on each **distinct** mesh — deduplicated by `Mesh*`, which is
-  correctness and not efficiency: `ReUploadMeshData()` zeroes vbo/vao and generates new ones, so a
-  second call for the same mesh in the same context leaks the pair the first one made, and Tetris
-  has 200 board cells sharing one cube.
-
-  **Be clear about what this buys the engine today: nothing.** A Win32 GL context is never lost
-  and there is no resize path, so there is no way to reach it from here. It is on this list for
-  two reasons. It is the generic answer to a hole that every app ported to a platform with context
-  loss falls into — the port hit it as a black screen with a working ImGui overlay, because ImGui
-  re-initialises itself and the scene does not — and having it in core means an app does not have
-  to remember. Second, it is small, and the alternative is the two cores diverging over it.
-
-  It only handles the plain `vertices` path; line, skinned and morph meshes are not covered and
-  would need the same treatment. A no-op for a mesh with no CPU-side vertices, which is what makes
-  it safe to call blindly over a whole tree.
-
 - [ ] **72. Nothing records which feature flags an object was built under.** Today this is
   harmless and that is luck: `USE_SOUND` is the only per-app flag, no source has an
   `#ifdef USE_SOUND` in it, and flipping it only changes *which core sources are linked*, which

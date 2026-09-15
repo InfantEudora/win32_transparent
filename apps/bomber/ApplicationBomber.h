@@ -78,11 +78,11 @@
 //waiting out MAZE_FUSE_TICKS. value[0] is ignored.
 #define BOMBER_CMD_DETONATE         SIM_CMD_LAST+1
 /*
-    Opens or shuts the exit door. value[0] is 1 to open, 0 to shut.
+    Gives the player the exit key, or takes it back. value[0] is 1 to give, 0 to take.
 
-    A COMMAND rather than a direct call for the same reason the other two are: the panel button
-    runs on the render thread and the MCP tool on its own, while switching a clip on is a write to
-    simulation state that the physics thread is reading every tick.
+    IT SETS THE RULE, NOT THE ANIMATION. The door is `Maze::f_has_key` now; the clip follows it in
+    SyncView. A button that posed the door directly would be overwritten on the next tick and would
+    also be lying, since walking through is decided by the rules.
 */
 #define BOMBER_CMD_DOOR             SIM_CMD_LAST+2
 /*
@@ -215,8 +215,13 @@ private:
         leaf it actually drives.
     */
     void BuildDoor();
-    //Opens or shuts it. PHYSICS THREAD, from the BOMBER_CMD_DOOR handler only.
-    void SetDoorOpen(bool f_open);
+    /*
+        Brings the door's animation in step with the rules. PHYSICS THREAD, from SyncView.
+
+        `f_snap` rewinds the clip first, which is how a NEW BOARD gets a shut door on its first
+        frame instead of one swinging shut on a board it was never open on.
+    */
+    void SetDoorOpen(bool f_open, bool f_snap = false);
     /*
         Spins the treasure and shrinks away whatever was just picked up.
 

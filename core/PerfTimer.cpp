@@ -1,4 +1,7 @@
 #include "PerfTimer.h"
+//printf, which used to arrive here through the <Windows.h> in PerfTimer.h. See the note on
+//PerfTimer::starttime for why that include is gone.
+#include <cstdio>
 
 //Returns a static map handle.
 std::vector<PerfTimer*>* PerfTimer::GetTimers() {
@@ -14,17 +17,22 @@ PerfTimer::PerfTimer(char* name){
     Start(name);
 }
 
+double PerfTimer::ElapsedUs(){
+    //duration_cast TRUNCATES, which is what the old (end-start)*1000000/freq integer arithmetic
+    //did too - so a timer that read 349 us before this change still reads 349 us.
+    return (double)std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - starttime).count();
+}
+
 void PerfTimer::Restart(){
     this->stopped = false;
-    QueryPerformanceFrequency(&startfreq);
-    QueryPerformanceCounter(&starttime);
+    starttime = std::chrono::steady_clock::now();
 }
 
 void PerfTimer::Start(char* name){
     this->name = name;
     this->stopped = false;
-    QueryPerformanceFrequency(&startfreq);
-    QueryPerformanceCounter(&starttime);
+    starttime = std::chrono::steady_clock::now();
     std::vector<PerfTimer*>* timers = GetTimers();
     timers->push_back(this);
 }
@@ -37,22 +45,11 @@ PerfTimer::~PerfTimer(){
 }
 
 double PerfTimer::GetdtUs(void){
-    LARGE_INTEGER endtime;
-    QueryPerformanceCounter(&endtime);
-    elapsedtime.QuadPart = endtime.QuadPart - starttime.QuadPart;
-    elapsedtime.QuadPart *= 1000000;
-    elapsedtime.QuadPart /= startfreq.QuadPart;
-    return elapsedtime.QuadPart;
+    return ElapsedUs();
 }
 
 double PerfTimer::Stop(){
-    LARGE_INTEGER endtime;
-    QueryPerformanceFrequency(&stopfreq);
-    QueryPerformanceCounter(&endtime);
-    elapsedtime.QuadPart = endtime.QuadPart - starttime.QuadPart;
-    elapsedtime.QuadPart *= 1000000;
-    elapsedtime.QuadPart /= startfreq.QuadPart;
-    delta = elapsedtime.QuadPart;
+    delta = ElapsedUs();
     stopped = true;
 
     deltas.push_back(delta);

@@ -1,6 +1,36 @@
 #ifndef __glad_h_
 #define __glad_h_
 
+/*
+    THE PLATFORM'S GL HEADER, and the one place in core/ that knows there is more than one.
+
+    Everything below this guard is desktop-only: WGL, the Win32 types it is written in (HDC,
+    HGLRC, DWORD, RECT), and a long list of `GLAPI PFNGL...PROC glSomething;` externs that
+    glad.cpp resolves through wglGetProcAddress. Android needs none of it - the GLES entry points
+    are exported straight out of the NDK's libGLESv2.so, so they want declaring, not loading, and
+    <GLES3/gl31.h> declares them.
+
+    THE EXTERNS MUST STAY BEHIND THIS GUARD RATHER THAN BEING DECLARED ON BOTH SIDES, and that is
+    the whole reason the switch is here and not in a shared "GL.h" that offers everything to
+    everyone. A visible `GLAPI PFNGLNAMEDBUFFERDATAPROC glNamedBufferData;` would let every Direct
+    State Access call in this tree COMPILE for Android and then fail at link - or, if something
+    ever supplied the symbol, read as a null function pointer at runtime. GLES has no DSA at any
+    version up to 3.2 (measured, not assumed - see the note at the top of UIOverlay.cpp), so a
+    desktop-only call has to fail here, loudly, at the compile that first sees it.
+
+    WHY THIS FILE AND NOT EACH CONSUMER. Mesh.h, Texture.h, Material.h, Renderer.h and CubeMap.h
+    all open with `#include "glad.h"` and windows.h arrived through every one of them, so the
+    first error out of an Android build of almost any file in core/ was 'windows.h' file not
+    found - from glad.h:4, three includes deep, saying nothing about the real question. Putting
+    the switch here fixes all five without touching them, and leaves them shareable with the
+    Android port exactly as they stand.
+*/
+#if defined(__ANDROID__)
+
+#include <GLES3/gl31.h>
+
+#else
+
 #include <windows.h>
 #include <GL/gl.h>
 #include <stdint.h>
@@ -508,5 +538,7 @@ GLAPI PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback;
 //WGL Contexts - When we want RenderDoc to work
 typedef HGLRC (APIENTRYP PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC hDC, HGLRC hShareContext, const int *attribList);
 GLAPI PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
+
+#endif //!defined(__ANDROID__)
 
 #endif

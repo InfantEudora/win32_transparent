@@ -39,7 +39,7 @@
     A hedge stops both and burns. Keeping the predicates separate (IsPassable / BlocksBlast /
     IsSoft) rather than having one `f_solid` flag is what makes that expressible at all.
 
-    THE THREE BLOCK TYPES ARE ADJACENT AND LAST, which is what lets IsBlock be a range test rather
+    THE BLOCK TYPES ARE ADJACENT AND LAST, which is what lets IsBlock be a range test rather
     than a list that something will eventually be left out of.
 */
 enum MazeTile : uint8_t {
@@ -50,6 +50,16 @@ enum MazeTile : uint8_t {
     MAZE_TILE_WALL,         //impassable, stops a blast, and nothing can remove it
     MAZE_TILE_HEDGE,        //impassable, stops a blast, burns - and an enemy can cut through it
     MAZE_TILE_WOOD,         //impassable, stops a blast, burns
+    /*
+        The exit, in the border wall. THE ONE TILE WHOSE PASSABILITY IS NOT A PROPERTY OF THE CELL:
+        it is a block until the key is found and floor afterwards, so IsPassable tests `f_has_key`
+        before it tests IsBlock rather than the two being folded together.
+
+        It stays inside the IsBlock range, which is right for everything else that asks: a blast
+        never opens it (BlocksBlast), an enemy cannot cut it (IsChoppable is hedge only), nothing
+        is scattered on it and no soft block is laid over it.
+    */
+    MAZE_TILE_DOOR,
     MAZE_TILE_COUNT
 };
 
@@ -96,6 +106,14 @@ enum MazeItem : uint8_t {
     MAZE_ITEM_NONE = 0,
     MAZE_ITEM_HEALTH,       //one point of health back, up to the starting maximum
     MAZE_ITEM_SHIELD,       //MAZE_SHIELD_TICKS of not being hurt by anything
+    /*
+        The way out. Worth no points and grants nothing that helps you survive - all it does is
+        unlock MAZE_TILE_DOOR, which is why `f_has_key` is a flag on the game and not a counter.
+
+        IT IS ALWAYS BURIED, first in MAZE_ITEM_ORDER, and AddItems will not lay it under a block
+        with no open cell beside it - a key nobody can reach is a board that cannot be finished.
+    */
+    MAZE_ITEM_KEY,
     /*
         The three treasures. THEY DO NOTHING BUT SCORE, which is the point of having three of them:
         a pickup that changes how the game plays has to be balanced, and a pickup that is only worth
@@ -264,13 +282,26 @@ enum MazeStyle : uint8_t {
     under keeps the coins and the health and loses the crystal, because the rare thing is at the
     back. Eight of them on a 16x16 board with ~34 soft blocks is roughly one dig in four.
 */
-#define MAZE_NUM_ITEMS          8
+#define MAZE_NUM_ITEMS          9
 static const uint8_t MAZE_ITEM_ORDER[MAZE_NUM_ITEMS] = {
+    //FIRST, and that is the whole reason the list is walked in order: the key is the way out, so
+    //it is the one thing a board too small to bury everything must still bury.
+    MAZE_ITEM_KEY,
     MAZE_ITEM_COIN,    MAZE_ITEM_HEALTH,
     MAZE_ITEM_COIN,    MAZE_ITEM_DIAMOND,
     MAZE_ITEM_COIN,    MAZE_ITEM_SHIELD,
     MAZE_ITEM_COIN,    MAZE_ITEM_CRYSTAL,
 };
+
+/*
+    How far from the spawn the exit has to be, in manhattan distance.
+
+    Far enough that finding the key is a journey rather than a detour. It is a PREFERENCE and not a
+    requirement: if no border cell that far out can be opened onto, PlaceDoor takes the best it can
+    get, because a board with a door in an awkward place is still finishable and a board with no
+    door at all is not.
+*/
+#define MAZE_DOOR_MIN_DIST      12
 
 /*
     Percentage of empty water cells that get a lilly pad.
@@ -416,6 +447,16 @@ public:
     int  deaths = 0;
     int  items_taken = 0;
     /*
+        The exit, and whether it is unlocked.
+
+        The door is a CELL, so it is in `tile` like everything else; these two are only where it is,
+        so nothing has to search the border for it. `f_has_key` is what opens it - one flag, because
+        one key opens one door and a count would imply otherwise.
+    */
+    int  door_x = 0;
+    int  door_z = 0;
+    bool f_has_key = false;
+    /*
         Points. Treasure only - health and shields pay in other currencies and are worth 0 here.
 
         Survives a death, because dying already costs a life and the respawn, and taking the score
@@ -551,6 +592,17 @@ private:
     void AddItems();
     //Puts the enemies down, far enough from the spawn to be a threat rather than an ambush.
     void PlaceEnemies();
+    /*
+        Puts the exit in the border wall, on a cell that can be reached from inside.
+
+        AFTER the terrain has settled and BEFORE the soft blocks, so nothing is laid on top of it -
+        the door is a block, and AddSoftBlocks only builds on open floor. A soft block CAN land on
+        the cell in front of it, which is fine: that is a bomb, not a lock.
+    */
+    void PlaceDoor();
+    //Is there anywhere next to this cell a walker could stand? What makes a buried thing DIGGABLE:
+    //a blast reaches INTO a soft block from the cell beside it, so one open neighbour is enough.
+    bool HasOpenNeighbour(int x, int z) const;
     //Scatters flowers, plants and worse on dry open ground.
     void AddDecor();
     /*

@@ -500,12 +500,99 @@ void Maze::AddItems(){
     int want = num_cells < MAZE_NUM_ITEMS ? num_cells : MAZE_NUM_ITEMS;
     for (int i = 0; i < want; i++){
         int j = i + RandomBelow(num_cells - i);
+        /*
+            The KEY gets one extra condition, and it is the difference between a board that can be
+            finished and one that cannot: the block it is under must have an open cell beside it,
+            or no bomb can ever be placed where the flame would reach it.
+
+            Applied by walking on from the cell the draw landed on rather than by drawing again, so
+            it costs the same one draw and cannot loop. A board with no diggable soft block at all
+            falls through and buries it anyway - there is nothing better to do with it, and
+            MAZE_MIN_PLAYABLE makes that board vanishingly rare.
+        */
+        if (MAZE_ITEM_ORDER[i] == MAZE_ITEM_KEY){
+            for (int k = 0; k < num_cells - i; k++){
+                int t = i + ((j - i) + k) % (num_cells - i);
+                if (HasOpenNeighbour(cell_x[t],cell_z[t])){
+                    j = t;
+                    break;
+                }
+            }
+        }
         int tx = cell_x[i]; cell_x[i] = cell_x[j]; cell_x[j] = tx;
         int tz = cell_z[i]; cell_z[i] = cell_z[j]; cell_z[j] = tz;
         //The cells are shuffled and the LIST IS NOT, so the mix on a full board is exact while
         //where each thing landed is not. See MAZE_ITEM_ORDER.
         item[cell_z[i]][cell_x[i]] = MAZE_ITEM_ORDER[i];
     }
+}
+
+//Is there anywhere next to this cell a walker could stand? What makes a buried thing diggable: a
+//blast reaches INTO a soft block from the cell beside it, so one open neighbour is enough.
+bool Maze::HasOpenNeighbour(int x, int z) const {
+    for (int d = 0; d < MAZE_NUM_DIRS; d++){
+        if (IsPassable(x + DirX(d),z + DirZ(d))){
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    The exit, in the border wall.
+
+    A border cell whose INWARD neighbour is open, because that is the whole requirement - the door
+    has to be walked up to from inside. Corners are excluded for free: both of a corner's neighbours
+    are border wall.
+
+    Far from the spawn if it can be, and MAZE_DOOR_MIN_DIST says how far. The fallback is deliberate
+    and is the only reason this cannot fail: a door in an awkward place still finishes a board, and
+    no door at all does not.
+*/
+void Maze::PlaceDoor(){
+    int cell_x[2 * MAZE_W + 2 * MAZE_H];
+    int cell_z[2 * MAZE_W + 2 * MAZE_H];
+    int num_far = 0;
+    int num_cells = 0;
+    //Two passes into one array: the far ones at the front, the rest behind them, so "prefer far"
+    //is a bound on the draw rather than a second list.
+    for (int pass = 0; pass < 2; pass++){
+        for (int z = 0; z < MAZE_H; z++){
+            for (int x = 0; x < MAZE_W; x++){
+                bool f_border = (x == 0 || z == 0 || x == MAZE_W - 1 || z == MAZE_H - 1);
+                if (!f_border || tile[z][x] != MAZE_TILE_WALL){
+                    continue;
+                }
+                int ix = (x == 0) ? 1 : (x == MAZE_W - 1 ? MAZE_W - 2 : x);
+                int iz = (z == 0) ? 1 : (z == MAZE_H - 1 ? MAZE_H - 2 : z);
+                if ((ix == x && iz == z) || !IsPassable(ix,iz)){
+                    continue;
+                }
+                bool f_far = CellDistance(x,z,MAZE_SPAWN_X,MAZE_SPAWN_Z) >= MAZE_DOOR_MIN_DIST;
+                if ((pass == 0) != f_far){
+                    continue;
+                }
+                cell_x[num_cells] = x;
+                cell_z[num_cells] = z;
+                num_cells++;
+            }
+        }
+        if (pass == 0){
+            num_far = num_cells;
+        }
+    }
+
+    if (num_cells == 0){
+        //Nowhere at all to put it. Cannot happen on a board that passed MAZE_MIN_PLAYABLE - every
+        //reachable region touches the border somewhere - but a silent (0,0) would be a door in a
+        //corner and this says so instead.
+        door_x = door_z = 0;
+        return;
+    }
+    int pick = RandomBelow(num_far > 0 ? num_far : num_cells);
+    door_x = cell_x[pick];
+    door_z = cell_z[pick];
+    tile[door_z][door_x] = MAZE_TILE_DOOR;
 }
 
 /*
@@ -530,6 +617,25 @@ void Maze::PlaceEnemies(){
                 continue;
             }
             if (CellDistance(x,z,MAZE_SPAWN_X,MAZE_SPAWN_Z) < MAZE_ENEMY_MIN_DIST){
+                continue;
+            }
+            /*
+                IT HAS TO BE ABLE TO DO SOMETHING FROM HERE - one cell it can step into, or one
+                hedge it can cut. Without this the generator will happily drop one in a pocket the
+                terrain passes sealed shut, and it stands there for the whole round.
+
+                The two halves are the two things TickEnemies can actually do, so this asks exactly
+                what the enemy will ask a tick later rather than approximating it with "is it
+                surrounded". Hedges are already placed by the time this runs; decoration is not, and
+                decoration never blocks anything.
+            */
+            bool f_can_act = false;
+            for (int d = 0; d < MAZE_NUM_DIRS && !f_can_act; d++){
+                int nx = x + DirX(d);
+                int nz = z + DirZ(d);
+                f_can_act = CanEnter(x,z,nx,nz) || IsChoppable(nx,nz);
+            }
+            if (!f_can_act){
                 continue;
             }
             cell_x[num_cells] = x;
@@ -777,6 +883,8 @@ void Maze::NewGame(uint32_t seed){
         }
     }
 
+    //Before the soft blocks, so nothing is built on top of the exit - see PlaceDoor.
+    PlaceDoor();
     AddSoftBlocks();
     AddItems();
     PlaceEnemies();
@@ -823,6 +931,8 @@ void Maze::NewGame(uint32_t seed){
     dead_ticks = 0;
     deaths = 0;
     items_taken = 0;
+    //A new board is a new lock. The door itself was placed by PlaceDoor above.
+    f_has_key = false;
 
     f_bomb = false;
     fuse_ticks = 0;
@@ -870,6 +980,17 @@ bool Maze::IsChoppable(int x, int z) const {
 bool Maze::IsPassable(int x, int z) const {
     if (!InBounds(x,z)){
         return false;
+    }
+    /*
+        The exit, and the one place on the board where whether you may walk somewhere depends on the
+        GAME rather than on the cell.
+
+        Before the IsBlock test rather than folded into it, deliberately: a door is still a block to
+        everything else that asks - a blast stops at it, nothing is scattered on it, no soft block
+        is laid over it - and only walking through it is conditional.
+    */
+    if (tile[z][x] == MAZE_TILE_DOOR){
+        return f_has_key;
     }
     if (IsBlock(x,z)){
         return false;
@@ -1117,7 +1238,30 @@ void Maze::TickEnemies(){
 
         int dir;
         if (num_cand == 0){
-            dir = back;                             //a dead end: the only way out is back
+            /*
+                A dead end: the only way out is back.
+
+                Unless even THAT is blocked, in which case this one is boxed in and reversing is
+                worse than useless - `back` is the opposite of `facing`, so it would flip between
+                the same two directions for ever and never look at the other axis. An enemy sealed
+                in by three walls and a hedge would stand there facing the wall for the whole round
+                while the hedge it could have cut sat beside it. So: turn to face something it can
+                actually work on.
+
+                PlaceEnemies will not START one somewhere with neither an exit nor a hedge, but a
+                blast can wall one in afterwards by filling the board's shape in around it, which is
+                why this is a rule here and not only a check at spawn.
+            */
+            dir = back;
+            if (!CanEnter(walker.tile_x,walker.tile_z,walker.tile_x + DirX(back),
+                          walker.tile_z + DirZ(back))){
+                for (int d = 0; d < MAZE_NUM_DIRS; d++){
+                    if (IsChoppable(walker.tile_x + DirX(d),walker.tile_z + DirZ(d))){
+                        dir = d;
+                        break;
+                    }
+                }
+            }
         }else if (f_straight_on && RandomBelow(100) < 70){
             dir = walker.facing;                    //keep going, mostly
         }else{
@@ -1160,6 +1304,11 @@ void Maze::TickItems(){
         case MAZE_ITEM_SHIELD:
             //Refreshed rather than added, so two shields in a row are not twenty seconds.
             shield_ticks = MAZE_SHIELD_TICKS;
+            break;
+        case MAZE_ITEM_KEY:
+            //And that is the whole of unlocking the exit - IsPassable reads this flag. The
+            //field_version bump at the bottom of this function is what tells the view.
+            f_has_key = true;
             break;
         default:
             /*

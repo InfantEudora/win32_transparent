@@ -3039,3 +3039,32 @@ object happened to construct first.
   out the `reuse` parameter and the thread split (`MeasureText` safe anywhere, `BuildTextMesh`
   render-thread-only) as the right shape. The one thing that made it awkward in a real scene was
   item 45: extruded glyphs cast real shadows, and there is no way to say they should not.
+
+- [x] **71. `Renderer::ReUploadAllMeshes()`.** **DONE 2026-09-15** - taken from the Android port
+  along with `Mesh::ReUploadMeshData()`, which it calls, as the first piece of the port merge after
+  `Mesh.cpp`'s GLES arms. The depth-first walk is a file-local `static` in `Renderer.cpp` rather
+  than a member, so the header gains exactly one declaration. Both carry the note this entry asked
+  for, at the definition: nothing on Windows reaches them, a Win32 context is never lost, and they
+  live in core so the two trees do not diverge over it and an app does not have to remember.
+
+  **Verified by construction as much as by testing: the change removes no existing line.** All
+  four files (`Mesh.{h,cpp}`, `Renderer.{h,cpp}`) are purely additive, so no desktop path moved.
+  On top of that, both `.cpp` files compile clean under mingw g++ for Windows AND under
+  `aarch64-linux-android24-clang++` for the port, and `apps/tetris` and `apps/animation` build,
+  run and render unchanged. Nothing here calls it, by design - the port is what exercises it, and
+  that is the point of the entry below. Original entry follows. Walks the object tree depth-first and calls
+  `Mesh::ReUploadMeshData()` on each **distinct** mesh — deduplicated by `Mesh*`, which is
+  correctness and not efficiency: `ReUploadMeshData()` zeroes vbo/vao and generates new ones, so a
+  second call for the same mesh in the same context leaks the pair the first one made, and Tetris
+  has 200 board cells sharing one cube.
+
+  **Be clear about what this buys the engine today: nothing.** A Win32 GL context is never lost
+  and there is no resize path, so there is no way to reach it from here. It is on this list for
+  two reasons. It is the generic answer to a hole that every app ported to a platform with context
+  loss falls into — the port hit it as a black screen with a working ImGui overlay, because ImGui
+  re-initialises itself and the scene does not — and having it in core means an app does not have
+  to remember. Second, it is small, and the alternative is the two cores diverging over it.
+
+  It only handles the plain `vertices` path; line, skinned and morph meshes are not covered and
+  would need the same treatment. A no-op for a mesh with no CPU-side vertices, which is what makes
+  it safe to call blindly over a whole tree.

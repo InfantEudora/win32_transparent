@@ -46,6 +46,10 @@ public:
     meshid_t GetID();
 
     void SetMeshData(vertex* verts, int vertex_count);
+
+    //Rebuilds this mesh's VBO/VAO from the vertices it already holds - see the definition for
+    //when that is needed and why nothing here calls it.
+    void ReUploadMeshData();
     void SetLineMeshData(line_vertex* verts, int vertex_count);
     void SetSkinnedMeshData(skinned_vertex* verts, int vertex_count);
     void SetMorphMeshData(morph_vertex* verts, int vertex_count);

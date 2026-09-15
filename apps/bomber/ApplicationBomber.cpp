@@ -57,6 +57,7 @@ static const char* BOMBER_TILE_ASSET[MAZE_TILE_COUNT] = {
     "tile_grass",   //MAZE_TILE_WALL  - the floor under the block
     "tile_grass",   //MAZE_TILE_HEDGE - and what is left standing when it burns
     "tile_grass",   //MAZE_TILE_WOOD  - the same
+    "tile_grass",   //MAZE_TILE_DOOR  - the ground under the archway
 };
 /*
     What STANDS on a cell, by the type of the tile it is standing on. NULL means the tile is floor
@@ -73,6 +74,9 @@ static const char* BOMBER_BLOCK_ASSET[MAZE_TILE_COUNT] = {
     "wall_brick",   //MAZE_TILE_WALL
     "wall_hedge",   //MAZE_TILE_HEDGE
     "wall_wood",    //MAZE_TILE_WOOD
+    //NULL, and that is the whole of what used to be a special case in RebuildField: the archway is
+    //its own object, placed and animated separately, so the door cell simply has no block on it.
+    NULL,           //MAZE_TILE_DOOR
 };
 static const char* BOMBER_DECOR_ASSET[MAZE_DECOR_COUNT] = {
     NULL,               //MAZE_DECOR_NONE
@@ -89,6 +93,7 @@ static const char* BOMBER_ITEM_ASSET[MAZE_ITEM_COUNT] = {
     NULL,               //MAZE_ITEM_NONE
     "pickup_health",
     "pickup_shield",
+    "pickup_key",
     "pickup_coin",
     "pickup_diamond",
     "pickup_crystal",
@@ -105,6 +110,7 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
     false,              //MAZE_ITEM_NONE
     false,              //health
     false,              //shield
+    false,              //key
     true,               //coin
     true,               //diamond
     false,              //crystal
@@ -197,14 +203,6 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
 */
 #define BOMBER_DOOR_LEAF_ASSET  "door"
 #define BOMBER_ANIM_DOOR        "Door_Opening"
-/*
-    Where it stands, until the rules place it.
-
-    The middle of the north border, so it reads as the way OUT of the board rather than as a piece
-    of furniture on it. RebuildField leaves the block off this cell - see the note there.
-*/
-#define BOMBER_DOOR_X           (MAZE_W / 2)
-#define BOMBER_DOOR_Z           0
 
 //--- the pickups ----------------------------------------------------------------------------------
 /*
@@ -424,7 +422,8 @@ void ApplicationBomber::LoadAssets(void){
                       "wall_brick","wall_hedge","wall_wood",
                       "grass_flowers","flowers","grass_plant","turd","bridge","lilly",
                       "pickup_health","pickup_shield",
-                      "pickup_coin","pickup_diamond","pickup_crystal",BOMBER_SHIELD_ASSET,
+                      "pickup_key","pickup_coin","pickup_diamond","pickup_crystal",
+                      BOMBER_SHIELD_ASSET,
                       BOMBER_DOOR_ARCH_ASSET,BOMBER_DOOR_LEAF_ASSET,
                       BOMBER_BOMB_ASSET,BOMBER_CHAR_ASSET);
     /*
@@ -662,11 +661,6 @@ void ApplicationBomber::BuildDoor(void){
     */
     door_arch->AttachChild(leaf);
 
-    //A panel lying east-west, like the hedges and the wooden walls - it stands IN the north border,
-    //so its long axis runs along that wall. See BOMBER_PANEL_YAW_X.
-    door_arch->SetPosition(CellCentre(BOMBER_DOOR_X,BOMBER_DOOR_Z));
-    door_arch->SetRotation(quat(vec3(0,1,0),BOMBER_PANEL_YAW_X));
-
     Animation* opening = gltfloader.LoadAnimation(BOMBER_ANIM_DOOR);
     if (!opening){
         debug->Err("No animation called %s in bomber_assets.glb\n",BOMBER_ANIM_DOOR);
@@ -692,35 +686,34 @@ void ApplicationBomber::BuildDoor(void){
     }
 
     main_scene->AddObject(door_arch);
-    /*
-        Start the clip, then ask for it shut.
-
-        SwitchToAnimation is the only rewind in the door's whole life: after this the clip is never
-        restarted, only run one way or the other. The first tick takes it to 0 and pauses it there,
-        posing the leaf on the way - so the shut door at startup is the same state a shut door ends
-        in, rather than a second arrangement that has to be kept in step with the first.
-    */
-    door_arch->SwitchToAnimation(BOMBER_ANIM_DOOR);
-    SetDoorOpen(false);
-    debug->Ok("Door at tile (%i,%i)\n",BOMBER_DOOR_X,BOMBER_DOOR_Z);
+    //Shut, and WHERE it stands is not decided here - RebuildField puts it on the cell Maze chose.
+    SetDoorOpen(false,true);
 }
 
 /*
     Swings it, or swings it back.
 
-    PHYSICS THREAD ONLY - from the BOMBER_CMD_DOOR handler, and from BuildDoor before anything is
-    running.
+    PHYSICS THREAD ONLY - from SyncView, which compares it against Maze::f_has_key every tick, and
+    from RebuildField and BuildDoor with `f_snap`.
 
     ONE CLIP, RUN BOTH WAYS. There is a single `Door_Opening` in the file and shutting is it at -1,
     which is the whole of Object::SetAnimationRate's reason for existing. Nothing rewinds, so
-    pressing shut halfway through the swing reverses from halfway through rather than snapping to
+    losing the key halfway through the swing reverses from halfway through rather than snapping to
     the far end - which is also what a door hit by a second thought actually does.
+
+    `f_snap` is the one case where that is wrong: a NEW BOARD's door was never open, so rewinding
+    the clip first puts it shut on the first frame instead of swinging it shut over fifty ticks.
 */
-void ApplicationBomber::SetDoorOpen(bool f_open){
+void ApplicationBomber::SetDoorOpen(bool f_open, bool f_snap){
     if (!door_arch){
         return;
     }
     f_door_open = f_open;
+    if (f_snap){
+        //The only rewind in the door's life. After this the clip is only ever run one way or the
+        //other, and the first tick takes it to an end and pauses it there, posing the leaf.
+        door_arch->SwitchToAnimation(BOMBER_ANIM_DOOR);
+    }
     door_arch->SetAnimationRate(f_open ? 1.0f : -1.0f);
 }
 
@@ -828,17 +821,6 @@ void ApplicationBomber::RebuildField(void){
                 re-export wall_brick as a thin one and this is the line that should change.
             */
             const char* block_asset = BOMBER_BLOCK_ASSET[t];
-            /*
-                Except where the door stands: the archway IS the wall on that cell, and a brick
-                block in the same place would stand inside it.
-
-                A special case in the VIEW, and the only one on this board - which is exactly why
-                it is temporary. When the exit becomes a rule it will be a tile type in Maze like
-                every other block, BOMBER_BLOCK_ASSET will have a row for it, and this goes away.
-            */
-            if (x == BOMBER_DOOR_X && z == BOMBER_DOOR_Z){
-                block_asset = NULL;
-            }
             if (block_asset){
                 bool f_panel = (t != MAZE_TILE_WALL);
                 float yaw = BOMBER_PANEL_YAW_X;
@@ -941,6 +923,25 @@ void ApplicationBomber::RebuildField(void){
             character->AttachChild(shield_worn);
         }
         main_scene->AddObject(character);
+    }
+    /*
+        The exit, on the cell Maze picked for it this time.
+
+        Positioned here rather than in BuildDoor because the cell moves with the board, and only
+        moving it is safe on this thread - the objects themselves were built once on the render
+        thread, which is the same split the enemies and the turds keep.
+    */
+    if (door_arch){
+        door_arch->SetPosition(CellCentre(maze.door_x,maze.door_z));
+        /*
+            A panel lying ALONG the wall it stands in - east-west on the north and south borders,
+            north-south on the other two. The same two angles the hedges and wooden walls take; see
+            BOMBER_PANEL_YAW_X.
+        */
+        bool f_side = (maze.door_x == 0 || maze.door_x == MAZE_W - 1);
+        door_arch->SetRotation(quat(vec3(0,1,0),f_side ? BOMBER_PANEL_YAW_Z : BOMBER_PANEL_YAW_X));
+        //A new board is a new lock, and it was never open - so snap rather than swing.
+        SetDoorOpen(false,true);
     }
     bomb = assetmanager->GetObjectFromAsset(BOMBER_BOMB_ASSET);
     if (bomb){
@@ -1362,7 +1363,9 @@ void ApplicationBomber::RegisterCommandHandlers(void){
 
     main_scene->RegisterCommandHandler(BOMBER_CMD_DOOR,
         [this](const SimCommand& cmd) -> objectid_t {
-            SetDoorOpen(cmd.value[0] != 0.0f);
+            //The RULE, not the animation: SyncView brings the clip along on the next tick.
+            maze.f_has_key = (cmd.value[0] != 0.0f);
+            maze.field_version++;
             return OBJECTID_INVALID;
         });
 
@@ -1641,6 +1644,16 @@ void ApplicationBomber::SyncView(void){
     */
     if (shield_worn){
         shield_worn->SetVisibility(maze.shield_ticks > 0);
+    }
+    /*
+        The door, derived from the rules rather than remembered - the same shape as the enemies'
+        clip selection one screen down.
+
+        Compared rather than set every tick because SetAnimationRate would otherwise wake the clip
+        out of the PAUSED state it settles into at each end, every tick, for ever.
+    */
+    if (door_arch && f_door_open != maze.f_has_key){
+        SetDoorOpen(maze.f_has_key);
     }
     for (int i = 0; i < (int)enemy_objects.size(); i++){
         //An object past the end of this field's enemies gets a default MazeWalker, whose f_alive is
@@ -1998,7 +2011,33 @@ BomberKnob* ApplicationBomber::FindKnob(const std::string& name){
 
 json ApplicationBomber::MapJson(void){
     json out;
-    static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#','h','w'};
+    /*
+        ONE ENTRY PER TILE TYPE, and the compiler will not tell you if there are fewer.
+
+        A table this shape value-initialises anything the initialiser list does not reach, so the
+        day MAZE_TILE_DOOR was added this quietly started writing '\0' into the middle of a JSON
+        string. Spelled out with the enum name against each row so the next one added is obvious.
+    */
+    static const char GLYPH[MAZE_TILE_COUNT] = {
+        '.',    //MAZE_TILE_GRASS
+        ',',    //MAZE_TILE_BRICK
+        ':',    //MAZE_TILE_ROCK
+        '~',    //MAZE_TILE_WATER
+        '#',    //MAZE_TILE_WALL
+        'h',    //MAZE_TILE_HEDGE
+        'w',    //MAZE_TILE_WOOD
+        'D',    //MAZE_TILE_DOOR
+    };
+    //Same shape, same warning. A pickup shows only where it can be reached - see below.
+    static const char ITEM_GLYPH[MAZE_ITEM_COUNT] = {
+        ' ',    //MAZE_ITEM_NONE
+        '+',    //health
+        'S',    //shield
+        'K',    //key
+        'c',    //coin
+        'd',    //diamond
+        'x',    //crystal
+    };
     static const char ZONE_GLYPH[MAZE_STYLE_COUNT] = {'B','L','O'};
     json rows = json::array();
     json zones = json::array();
@@ -2015,7 +2054,7 @@ json ApplicationBomber::MapJson(void){
             //A pickup shows only once it can actually be reached, by the same rule the view draws
             //it with. A map that showed buried ones would be a map of a different game.
             if (maze.item[z][x] != MAZE_ITEM_NONE && maze.IsPassable(x,z)){
-                c = (maze.item[z][x] == MAZE_ITEM_HEALTH) ? '+' : '*';
+                c = ITEM_GLYPH[maze.item[z][x] < MAZE_ITEM_COUNT ? maze.item[z][x] : 0];
             }
             //Whatever is STANDING on a cell wins over what the cell is made of, and the player wins
             //over everything - so these go last, in this order.
@@ -2042,8 +2081,9 @@ json ApplicationBomber::MapJson(void){
     }
     out["map"] = rows;
     out["map_legend"] = ". grass  , brick  : rock  ~ water  - bridge east-west  "
-                           "| bridge north-south  # wall  h hedge  w wood  "
-                           "+ health  * shield  @ player  E enemy  o bomb";
+                           "| bridge north-south  # wall  h hedge  w wood  D exit door  "
+                           "+ health  S shield  K key  c coin  d diamond  x crystal  "
+                           "@ player  E enemy  o bomb";
     out["zones"] = zones;
     out["zone_legend"] = "B bomber pillar grid  L labyrinth  O open plaza";
 
@@ -2070,6 +2110,8 @@ json ApplicationBomber::StateJson(void){
         {"deaths",maze.deaths},
         //Treasure only. See MazeItemScore - health and shields are worth nothing here.
         {"score",maze.score},
+        //The exit key. The one pickup that is a win condition rather than a reward.
+        {"has_key",maze.f_has_key},
         //Whether the shield is actually being WORN, which is the half a tick count cannot answer:
         //it is a child of the character, so this is also a test that the character exists.
         {"wearing_shield",shield_worn ? shield_worn->IsVisible() : false}
@@ -2157,7 +2199,11 @@ json ApplicationBomber::StateJson(void){
     */
     if (door_arch){
         json door = json{
-            {"tile",json::array({BOMBER_DOOR_X,BOMBER_DOOR_Z})},
+            {"tile",json::array({maze.door_x,maze.door_z})},
+            //`unlocked` is the RULE - whether you may walk through. `open` is the view following
+            //it, and the two differ for the fifty ticks the leaf takes to swing.
+            {"unlocked",maze.f_has_key},
+            {"passable",maze.IsPassable(maze.door_x,maze.door_z)},
             {"open",f_door_open},
             {"clip",std::string(door_arch->CurrentAnimationName())},
             {"state",door_arch->animation_state},
@@ -2333,16 +2379,17 @@ void ApplicationBomber::RegisterMCPTools(void){
         });
 
     MCPServer::Get()->RegisterTool("bomber_door",
-        "Swing the exit door open, or put it back shut. The door is an ARCHWAY plus a LEAF, and "
-        "the leaf is moved by the Door_Opening clip out of the .glb - this is the app's only "
-        "animated prop that is not a character, so it is also the test of whether an unskinned "
-        "object can be animated at all. Opening takes about 50 ticks; to look at it a frame at a "
-        "time, sim_pause, call this, then sim_step. bomber_state's `door` block reports the clip, "
-        "its time index and - the one thing that cannot lie - the leaf's own local transform.",
+        "Give the player the exit key, or take it back - which is what opens and shuts the door, "
+        "because the door is Maze::f_has_key and the animation follows it. The door is an ARCHWAY "
+        "plus a LEAF moved by the Door_Opening clip out of the .glb, the app's only animated prop "
+        "that is not a character. Opening takes about 50 ticks and the RULE changes immediately, so "
+        "`door.unlocked` and `door.open` differ while it swings; `door.passable` is what the walker "
+        "will actually be allowed to do. To look at it a frame at a time: sim_pause, call this, "
+        "then sim_step.",
         json{
             {"type","object"},
             {"properties", {
-                {"open", {{"type","boolean"},{"description","true opens it, false snaps it shut (there is only one clip, so shutting does not animate)"}}},
+                {"open", {{"type","boolean"},{"description","true gives the key and opens it, false takes the key back and shuts it"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame afterwards"}}},
                 {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
@@ -2361,7 +2408,7 @@ void ApplicationBomber::RegisterMCPTools(void){
 
     MCPServer::Get()->RegisterTool("bomber_give",
         "Lay a pickup on the tile the player is standing on; the next tick collects it. `item` is "
-        "health, shield, coin, diamond or crystal. FOR TESTING what a pickup does without playing "
+        "health, shield, key, coin, diamond or crystal. FOR TESTING what a pickup does without playing "
         "a board until one turns up - it goes through Maze::TickItems exactly as a dug-up one "
         "does, so the score, the shield and the health cap are all the real rules. What it does "
         "NOT do is make one appear on screen: the field's pickup objects are built per cell when "
@@ -2370,7 +2417,7 @@ void ApplicationBomber::RegisterMCPTools(void){
         json{
             {"type","object"},
             {"properties", {
-                {"item", {{"type","string"},{"description","health, shield, coin, diamond or crystal"}}},
+                {"item", {{"type","string"},{"description","health, shield, key, coin, diamond or crystal"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the frame afterwards"}}},
                 {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }},
@@ -2381,11 +2428,12 @@ void ApplicationBomber::RegisterMCPTools(void){
             int id = MAZE_ITEM_NONE;
             if (want == "health"){ id = MAZE_ITEM_HEALTH; }
             else if (want == "shield"){ id = MAZE_ITEM_SHIELD; }
+            else if (want == "key"){ id = MAZE_ITEM_KEY; }
             else if (want == "coin"){ id = MAZE_ITEM_COIN; }
             else if (want == "diamond"){ id = MAZE_ITEM_DIAMOND; }
             else if (want == "crystal"){ id = MAZE_ITEM_CRYSTAL; }
             else {
-                return json{ {"error","item must be health, shield, coin, diamond or crystal"} };
+                return json{ {"error","item must be health, shield, key, coin, diamond or crystal"} };
             }
             SimCommand cmd;
             cmd.type = BOMBER_CMD_GIVE;
@@ -2558,7 +2606,7 @@ void ApplicationBomber::RenderBomberPanel(void){
     //Everything here is in TICKS rather than seconds, which is the house rule and is also what the
     //MCP tools report - a panel that said 1.4s while bomber_state said 84 would be two units to
     //hold in your head for no gain.
-    ImGui::Text("Score %u",maze.score);
+    ImGui::Text("Score %u%s",maze.score,maze.f_has_key ? "   KEY" : "");
     if (maze.player.f_alive){
         ImGui::Text("Health %i/%i",maze.health,MAZE_START_HEALTH);
         if (maze.shield_ticks > 0){
@@ -2637,7 +2685,7 @@ void ApplicationBomber::RenderBomberPanel(void){
     //The exit. Its own row because it is the only thing on this panel that is not about the blast
     //or the board, and because it is the fastest way to look at the clip a frame at a time: pause,
     //press it, then step.
-    if (ImGui::Button(f_door_open ? "Shut the door" : "Open the door")){
+    if (ImGui::Button(maze.f_has_key ? "Take the key back" : "Give the exit key")){
         //SubmitUICommand, never SubmitCommandAndWait - render thread with the mutex held. See the
         //note on the Bomb now button.
         SimCommand cmd;
@@ -2646,8 +2694,8 @@ void ApplicationBomber::RenderBomberPanel(void){
         SubmitUICommand(cmd);
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("tile (%i,%i)  %s",BOMBER_DOOR_X,BOMBER_DOOR_Z,
-                        door_arch ? door_arch->CurrentAnimationName() : "no door");
+    ImGui::TextDisabled("exit (%i,%i)  %s",maze.door_x,maze.door_z,
+                        maze.f_has_key ? "UNLOCKED" : "locked");
 
     ImGui::Separator();
     //The two renderers. Both on draws the same blast twice, which is the A/B - see the note at the

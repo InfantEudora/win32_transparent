@@ -50,6 +50,18 @@ void AddAssetSearchRoot(const char* root);
 std::string GetExecutableDirectory();
 
 /*
+    Tells GetExecutableDirectory what to answer on a platform where it cannot work it out itself.
+
+    Android has no equivalent of "next to the executable" - the executable is inside a read-only
+    APK - and the writable directory an app is given, the activity's internalDataPath, is handed
+    to native code at startup rather than being derivable from anything. So the port's Application
+    passes it here once, and everything downstream keeps calling GetExecutableDirectory.
+
+    A no-op on Windows, where the answer IS derivable and GetModuleFileName already gives it.
+*/
+void SetWritableDataDirectory(const char* path);
+
+/*
     Adds a search root given RELATIVE TO THE EXECUTABLE rather than to the working directory, so
     an app can name its assets once and have them found however it was launched:
 
