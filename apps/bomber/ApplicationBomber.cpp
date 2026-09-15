@@ -55,6 +55,16 @@ static const char* BOMBER_DECOR_ASSET[MAZE_DECOR_COUNT] = {
     "turd",
     "bridge",
 };
+/*
+    Which way the bridge model's planks run at each yaw.
+
+    The asset is very nearly square in plan (0.89 x 0.94), so which of the two is "along the planks"
+    cannot be read off its bounding box - it has to be looked at once and then written down. These
+    two are that, and flipping them is the whole fix if a re-export turns the model.
+*/
+#define BOMBER_BRIDGE_YAW_X     (TYPE_PI * 0.5f)    //planks run east-west
+#define BOMBER_BRIDGE_YAW_Z     0.0f                //planks run north-south
+
 #define BOMBER_WALL_ASSET   "wall_brick"
 #define BOMBER_BOMB_ASSET   "bomb"
 #define BOMBER_CHAR_ASSET   "character"
@@ -254,7 +264,7 @@ void ApplicationBomber::LoadAssets(void){
 }
 
 Object* ApplicationBomber::AddCellObject(const char* asset_name, int cx, int cz,
-                                         float y_offset, bool f_random_yaw){
+                                         float y_offset, float yaw, bool f_random_yaw){
     Object* object = assetmanager->GetObjectFromAsset(asset_name);
     if (!object){
         debug->Err("No asset called %s - is it in bomber_assets.glb?\n",asset_name);
@@ -277,6 +287,8 @@ Object* ApplicationBomber::AddCellObject(const char* asset_name, int cx, int cz,
     if (f_random_yaw){
         uint32_t h = (uint32_t)(cx * 73856093) ^ (uint32_t)(cz * 19349663);
         object->SetRotation(quat(vec3(0,1,0),(float)(h & 3) * (TYPE_PI * 0.5f)));
+    }else{
+        object->SetRotation(quat(vec3(0,1,0),yaw));
     }
 
     main_scene->AddObject(object);
@@ -312,21 +324,28 @@ void ApplicationBomber::RebuildField(void){
             float tile_y = gltfloader.GetNodePosition(tile_asset).y;
             //Floor tiles are turned at random too. They are square and the texture is not, so four
             //orientations is four times as much board for nothing.
-            AddCellObject(tile_asset,x,z,tile_y,true);
+            AddCellObject(tile_asset,x,z,tile_y,0.0f,true);
 
             if (t == MAZE_TILE_WALL){
                 AddCellObject(BOMBER_WALL_ASSET,x,z,
-                              gltfloader.GetNodePosition(BOMBER_WALL_ASSET).y,true);
+                              gltfloader.GetNodePosition(BOMBER_WALL_ASSET).y,0.0f,true);
             }
 
             uint8_t d = maze.decor[z][x];
             if (d != MAZE_DECOR_NONE && d < MAZE_DECOR_COUNT && BOMBER_DECOR_ASSET[d]){
-                //A bridge is not scenery, it is the thing that makes the water under it walkable,
-                //so it must not be turned to a random angle - a bridge across the wrong axis reads
-                //as a mistake even though nothing about the rules cares.
+                /*
+                    A BRIDGE IS NOT SCENERY and must not be turned at random: it is the thing that
+                    makes the water under it crossable, and the way it is turned is a RULE - the
+                    cell's pass_axis, which the walker reads to refuse a step across the rope rails.
+                    So the model takes its angle from that axis and the picture always agrees with
+                    what the game will actually let you do. A row of them shares one axis, which is
+                    what turns three planks at three angles into one bridge.
+                */
                 bool f_yaw = (d != MAZE_DECOR_BRIDGE);
+                float yaw = (maze.pass_axis[z][x] == MAZE_AXIS_X) ? BOMBER_BRIDGE_YAW_X
+                                                                  : BOMBER_BRIDGE_YAW_Z;
                 AddCellObject(BOMBER_DECOR_ASSET[d],x,z,
-                              gltfloader.GetNodePosition(BOMBER_DECOR_ASSET[d]).y,f_yaw);
+                              gltfloader.GetNodePosition(BOMBER_DECOR_ASSET[d]).y,yaw,f_yaw);
             }
         }
     }
@@ -717,7 +736,26 @@ void ApplicationBomber::RunSimulationTick(void){
     }
     InputController* input = main_scene->inputcontroller;
 
-    if (input->WasKeyPressed(INPUT_BOMBER_RESTART)){
+    /*
+        While the input lock is on, the game's controls are accepted only when a SCRIPTED hold is
+        running. See the note on f_lock_human_input for why that test and not a better one: the
+        engine mixes scripted holds into the same KeyState as real keys, so this is as close as the
+        app can get without changing core.
+
+        The keys are still READ either way. WasKeyPressed consumes an edge, and an edge left unread
+        for the duration of a test would arrive the instant the lock lifted - a bomb dropped by a
+        key pressed a minute ago is worse than one that was ignored.
+    */
+    bool f_restart = input->WasKeyPressed(INPUT_BOMBER_RESTART);
+    bool f_drop = input->WasKeyPressed(INPUT_BOMBER_DROP);
+    int direction = ReadDirection();
+    if (f_lock_human_input && !input->HasSyntheticHolds()){
+        f_restart = false;
+        f_drop = false;
+        direction = MAZE_DIR_NONE;
+    }
+
+    if (f_restart){
         SimCommand cmd;
         cmd.type = BOMBER_CMD_RESTART;
         cmd.value[0] = 0.0f;    //0 means "pick a fresh seed"
@@ -725,8 +763,8 @@ void ApplicationBomber::RunSimulationTick(void){
     }
 
     MazeInput in;
-    in.direction = ReadDirection();
-    in.f_place_bomb = input->WasKeyPressed(INPUT_BOMBER_DROP);
+    in.direction = direction;
+    in.f_place_bomb = f_drop;
     maze.Tick(in);
 
     SyncView();
@@ -756,7 +794,8 @@ void ApplicationBomber::SyncView(void){
 
               - the ENGINE's forward axis is -Z. Setting yaw 0 and asking object_get for
                 world_forward returns (0,0,-1), so yaw t gives forward (-sin t, 0, -cos t).
-              - the MODEL faces +Z as exported, i.e. the OPPOSITE of the engine's forward. Point
+              - the MODEL faces +Z, which is BLENDER'S forward and exactly what an export should
+                produce - it is not an art fault and there is no export setting to change it. Point
                 the camera due south of the character at yaw 0 and you are looking at its face.
 
             So the yaw that makes the character LOOK in direction D is the one that puts the
@@ -888,15 +927,35 @@ void ApplicationBomber::UpdateView(void){
         return;
     }
 
+    /*
+        Hover and click-to-select, which is what puts something in the Inspector.
+
+        THE APP HAS TO ASK FOR THIS. Picking is not on by default - CheckObjectSelection is a
+        protected method on Application and an app that never calls it simply has no selection, with
+        no error to say so. Every app that wants an Inspector calls it from UpdateView; this one did
+        not, which looked exactly like picking being broken.
+    */
+    CheckObjectSelection();
+
+    //Drained every pass whether or not anything will act on them - see the block above. Draining
+    //while the lock is on matters for the same reason it matters behind a button gate: a test's
+    //worth of mouse movement would otherwise arrive in one lump the moment the lock lifted.
+    int cam_dx = input->GetDelta(INPUT_MOUSE_DELTA_X);
+    int cam_dy = input->GetDelta(INPUT_MOUSE_DELTA_Y);
+    int wheel = input->GetDelta(INPUT_MOUSE_WHEEL);
+
+    if (f_lock_human_input){
+        //Everything below this line is a human moving the camera or asking for a shader reload, and
+        //under the lock neither happens. MCP still drives the camera through camera_set, which does
+        //not come through here at all - that is the point of the lock.
+        return;
+    }
+
     if (input->WasKeyReleased(INPUT_BOMBER_RELOAD_SHADER)){
         //NOT a GL call: it only raises a flag that PreRender acts on. UpdateView runs on the
         //physics thread, which may not touch the context at all.
         f_shader_reload_requested = true;
     }
-
-    //Drained every pass whether or not the drag is active - see the block above for why.
-    int cam_dx = input->GetDelta(INPUT_MOUSE_DELTA_X);
-    int cam_dy = input->GetDelta(INPUT_MOUSE_DELTA_Y);
 
     //Middle mouse orbits around camera_target, shift+middle pans both camera and pivot. Same
     //scheme and same sensitivities as ApplicationShip and ApplicationTank.
@@ -951,12 +1010,10 @@ void ApplicationBomber::UpdateView(void){
                 mouse_wheel_sum = 0.0f;
             }
         }
+        //`wheel` was read at the top of this function, so a scroll over a panel is dropped rather
+        //than piling up and arriving all at once the moment the pointer leaves it.
         if (!UIWantsMouse()){
-            mouse_wheel_sum += (float)input->GetDelta(INPUT_MOUSE_WHEEL);
-        }else{
-            //Read and throw away, so a scroll over a panel does not pile up and then arrive all at
-            //once the moment the pointer leaves it.
-            input->GetDelta(INPUT_MOUSE_WHEEL);
+            mouse_wheel_sum += (float)wheel;
         }
     }
 }
@@ -1038,6 +1095,45 @@ BomberKnob* ApplicationBomber::FindKnob(const std::string& name){
     return NULL;
 }
 
+json ApplicationBomber::MapJson(void){
+    json out;
+    static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#'};
+    static const char ZONE_GLYPH[MAZE_STYLE_COUNT] = {'B','L','O'};
+    json rows = json::array();
+    json zones = json::array();
+    for (int z = 0; z < MAZE_H; z++){
+        std::string row;
+        std::string zrow;
+        for (int x = 0; x < MAZE_W; x++){
+            char c = GLYPH[maze.tile[z][x] < MAZE_TILE_COUNT ? maze.tile[z][x] : 0];
+            if (maze.decor[z][x] == MAZE_DECOR_BRIDGE){
+                //Which WAY the bridge runs, because that is the half of it a caller
+                //cannot guess and the half that decides whether a step is legal.
+                c = (maze.pass_axis[z][x] == MAZE_AXIS_X) ? '-' : '|';
+            }
+            if (x == maze.tile_x && z == maze.tile_z){
+                c = '@';
+            }else if (maze.f_bomb && x == maze.bomb_x && z == maze.bomb_z){
+                c = 'o';
+            }
+            row += c;
+            zrow += (maze.tile[z][x] == MAZE_TILE_WALL && (x == 0 || z == 0 ||
+                     x == MAZE_W - 1 || z == MAZE_H - 1))
+                  ? ' '
+                  : ZONE_GLYPH[maze.zone[z][x] < MAZE_STYLE_COUNT ? maze.zone[z][x] : 0];
+        }
+        rows.push_back(row);
+        zones.push_back(zrow);
+    }
+    out["map"] = rows;
+    out["map_legend"] = ". grass  , brick  : rock  ~ water  - bridge east-west  "
+                           "| bridge north-south  # wall  @ character  o bomb";
+    out["zones"] = zones;
+    out["zone_legend"] = "B bomber pillar grid  L labyrinth  O open plaza";
+
+    return out;
+}
+
 json ApplicationBomber::StateJson(void){
     json result;
     result["seed"] = current_seed;
@@ -1069,6 +1165,30 @@ json ApplicationBomber::StateJson(void){
             {"south",maze.arm[MAZE_DIR_SOUTH]}}}
     };
     result["renderers"] = json{{"tiles",f_draw_tiles},{"cross",f_draw_cross}};
+    result["input_locked"] = f_lock_human_input;
+    /*
+        What the mouse is over and what was last clicked.
+
+        Here because picking is otherwise invisible to anything but a human looking at the
+        Inspector, and "is picking working" then has no answer that is not a screenshot of a panel.
+        These two separate the two ways it can be broken: no `hovered` means the readback or the
+        mouse position is wrong, `hovered` without `selected` means the click edge is not arriving.
+    */
+    result["hovered"] = hovered_object ? hovered_object->name : std::string();
+    result["selected"] = selected_object ? selected_object->name : std::string();
+    //Where the pointer is as the ENGINE sees it, which is the other half of the picking chain: a
+    //hover that is empty while the mouse is off the window means nothing is wrong at all.
+    if (main_scene && main_scene->inputcontroller){
+        int2 m = main_scene->inputcontroller->GetRelativeMousePosition();
+        result["mouse"] = json{
+            {"over_window",main_scene->inputcontroller->IsMouseOverWindow()},
+            {"x",m.x},{"y",m.y},
+            {"hovered_id",(int)main_scene->inputcontroller->GetHoveredObjectID()}
+        };
+    }
+    //How much of the field the walker can actually get to. The one number that says whether a seed
+    //produced a playable board or a pretty one with most of itself walled off.
+    result["reachable_cells"] = maze.reachable_cells;
 
     json values = json::object();
     {
@@ -1094,12 +1214,14 @@ void ApplicationBomber::RegisterMCPTools(void){
     MCPServer::Get()->RegisterTool("bomber_state",
         "Everything about the game as the RULES see it: the character's tile, whether it is "
         "mid-step, the live bomb and its fuse, the blast and how many tiles each of its arms "
-        "reached, plus the blast effect's tunables. Positions are in TILES on a 16x16 grid, which "
-        "is the space every rule is written in - assert in tiles, not in world units.",
+        "reached, how many cells of the field the walker can actually get to, and the blast "
+        "effect's tunables. Positions are in TILES on a 16x16 grid, which is the space every rule "
+        "is written in - assert in tiles, not in world units. `include_map` adds the board as text "
+        "plus a second grid naming which zone style each cell came from.",
         json{
             {"type","object"},
             {"properties", {
-                {"include_map", {{"type","boolean"},{"description","also return the tile grid as 16 strings, one per row: . grass , brick : rock ~ water # wall, upper case where a bridge is"}}},
+                {"include_map", {{"type","boolean"},{"description","also return the tile grid and the zone grid as 16 strings each"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","return a screenshot of the current frame"}}},
                 {"include_ui", {{"type","boolean"},{"description","draw the ImGui panels in that screenshot (default true)"}}}
             }}
@@ -1107,28 +1229,7 @@ void ApplicationBomber::RegisterMCPTools(void){
         [this](const json& args) -> json {
             json result = StateJson();
             if (args.value("include_map",false)){
-                //One character per tile. A picture of the board in 16 lines beats 256 numbers for
-                //the one caller that cannot look at the monitor.
-                static const char GLYPH[MAZE_TILE_COUNT] = {'.',',',':','~','#'};
-                json rows = json::array();
-                for (int z = 0; z < MAZE_H; z++){
-                    std::string row;
-                    for (int x = 0; x < MAZE_W; x++){
-                        char c = GLYPH[maze.tile[z][x] < MAZE_TILE_COUNT ? maze.tile[z][x] : 0];
-                        if (maze.decor[z][x] == MAZE_DECOR_BRIDGE){
-                            c = '=';    //water you can walk on
-                        }
-                        if (x == maze.tile_x && z == maze.tile_z){
-                            c = '@';
-                        }else if (maze.f_bomb && x == maze.bomb_x && z == maze.bomb_z){
-                            c = 'o';
-                        }
-                        row += c;
-                    }
-                    rows.push_back(row);
-                }
-                result["map"] = rows;
-                result["map_legend"] = ". grass  , brick  : rock  ~ water  = bridge  # wall  @ character  o bomb";
+                result.update(MapJson());
             }
             return MaybeAttachScreenshot(result,
                                          args.value("include_screenshot",false),
@@ -1213,6 +1314,9 @@ void ApplicationBomber::RegisterMCPTools(void){
             cmd.value[0] = args.value("seed",0.0f);
             SubmitCommandAndWait(cmd);
             json result = StateJson();
+            if (args.value("include_map",false)){
+                result.update(MapJson());
+            }
             return MaybeAttachScreenshot(result,
                                          args.value("include_screenshot",false),
                                          args.value("include_ui",true));
@@ -1268,6 +1372,28 @@ void ApplicationBomber::RegisterMCPTools(void){
                                          args.value("include_ui",true));
         });
 
+    MCPServer::Get()->RegisterTool("bomber_lock_input",
+        "Ignore the keyboard, the gamepad and the mouse, leaving only input that arrives through "
+        "MCP. TURN THIS ON BEFORE ANY SCRIPTED TEST. The app is on screen while it is being driven, "
+        "so a hand on the mouse moves the camera between a camera_set and the screenshot after it, "
+        "and a stray key walks the character out from under the test - both produce a "
+        "plausible-looking picture of the wrong thing. With the lock on, camera_set stays put and "
+        "bomber_input is the only thing that moves the character. One caveat, stated because it "
+        "cannot be fixed from this side: scripted holds and real keys land in the same place in the "
+        "engine, so a key pressed during the exact ticks a bomber_input hold is running still gets "
+        "through.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"locked", {{"type","boolean"},{"description","true to ignore human input, false to hand it back"}}}
+            }},
+            {"required",json::array({"locked"})}
+        },
+        [this](const json& args) -> json {
+            f_lock_human_input = args.value("locked",false);
+            return json{ {"input_locked",f_lock_human_input} };
+        });
+
     MCPServer::Get()->RegisterTool("bomber_reload_shader",
         "Recompile shaders/bomber_explosion.frag from disk and swap it into BOTH programs, without "
         "restarting the app - the edit-and-look loop. One source file serves both blast renderers, "
@@ -1314,7 +1440,14 @@ void ApplicationBomber::RenderBomberPanel(void){
     ImGui::Begin("Bomber");
 
     ImGui::TextDisabled("arrows/WASD walk   space drops a bomb   R is a new field");
-    ImGui::Text("Field seed %u",current_seed);
+    ImGui::Text("Field seed %u   %i cells reachable",current_seed,maze.reachable_cells);
+    //Visible in the panel as well as over MCP, because a lock that is on and forgotten looks
+    //exactly like a keyboard that has stopped working.
+    ImGui::Checkbox("lock out keyboard/mouse (MCP only)",&f_lock_human_input);
+    if (f_lock_human_input){
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f,0.7f,0.2f,1.0f),"LOCKED");
+    }
     ImGui::Text("Character  tile (%2i,%2i)%s",maze.tile_x,maze.tile_z,
                 maze.step_ticks > 0 ? "  walking" : "");
 

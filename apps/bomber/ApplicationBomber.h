@@ -189,9 +189,15 @@ private:
         AssetManager::GetObjectFromAsset only shares a mesh that is already on the card.
     */
     void RebuildField();
-    //One object from a loaded GLB node, placed on a cell. `y` comes from the node's own
-    //translation - see the note in LoadAssets.
-    Object* AddCellObject(const char* asset_name, int cx, int cz, float y_offset, bool f_random_yaw);
+    /*
+        One object from a loaded GLB node, placed on a cell.
+
+        `y_offset` comes from the node's own translation - see the note in LoadAssets. `yaw` is used
+        when `f_random_yaw` is false; when it is true the piece takes one of four quarter turns
+        derived from the cell, which is variety for free on anything square and symmetric.
+    */
+    Object* AddCellObject(const char* asset_name, int cx, int cz, float y_offset,
+                          float yaw, bool f_random_yaw);
 
     //World centre of grid cell (cx,cz), at y=0. The board is centred on the origin so the orbit
     //camera has something symmetric to turn around.
@@ -247,6 +253,13 @@ private:
     void RegisterMCPTools();
 #endif
     json StateJson();
+    /*
+        The board as text: one row per line, plus a second grid saying which zone style each cell
+        came from. Shared by bomber_state and bomber_restart rather than living inside one of them,
+        because both advertise it - and the first version had it inline in bomber_state only, so
+        bomber_restart's schema promised a map it never returned.
+    */
+    json MapJson();
 
     //--- UI -----------------------------------------------------------------------------------
 #ifdef USE_IMGUI
@@ -374,6 +387,26 @@ private:
     //short of blowing it white.
     float blast_light_brightness = 4.0f;
     float blast_light_radius = 0.8f;
+
+    /*
+        --- the input lock -------------------------------------------------------------------------
+        Ignores the keyboard, the gamepad and the mouse, leaving only input that arrives through
+        MCP. FOR AUTOMATED TESTING, and it exists because the app is on screen while it is being
+        driven: a hand on the mouse moves the camera between a camera_set and the screenshot that
+        follows it, which silently reframes a comparison, and a stray key walks the character out
+        from under a scripted test. Both produce a plausible-looking picture of the wrong thing,
+        which is the worst kind of wrong.
+
+        WHAT IT CANNOT DO, said out loud: InputController mixes scripted holds into the same
+        KeyState as real keys, so nothing downstream can tell them apart. The lock therefore accepts
+        the game's controls only while InputController::HasSyntheticHolds() says a scripted hold is
+        running - so a human pressing a key during that exact window still gets through. That is
+        good enough for its purpose (nobody is playing during a scripted test) and the honest fix
+        would be in core, not here: see engine_notes.md.
+
+        The camera and the shader-reload key have no such loophole - they are simply switched off.
+    */
+    bool f_lock_human_input = false;
 
     //--- camera ---------------------------------------------------------------------------------
     /*

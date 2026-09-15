@@ -35,6 +35,28 @@ a bridge over water makes it walkable. Walker moves tile-to-tile with an atomic 
 [[volumetric-effect-gotchas]]. The user prefers per-tile and accepts that overlapping volumes do
 not depth-sort (the engine has no answer yet); that is known and accepted, not a bug to hunt.
 
+**Levels are a BLEND of three styles** (`MazeStyle`): classic bomber pillar grid, carved labyrinth,
+and open plaza. Four jittered quadrants, dealt one of each style plus a free one so all three always
+appear. A reachability flood fill from the spawn turns unreachable floor into wall and reports
+`reachable_cells`.
+
+**`pass_axis` is a generic per-cell "which way may this be crossed"**, not a bridge property. Bridges
+set it (and take their model yaw from it, so a row lines up into one crossing); the walker checks it
+at BOTH ends of a step, so you cannot step off a bridge sideways. Verified functionally, not by eye.
+
+**`f_lock_human_input`** (panel checkbox + `bomber_lock_input` MCP tool) ignores keyboard/gamepad/
+mouse so scripted tests are not disturbed - camera drift measured at 0.0000 with it on. ALWAYS TURN
+IT ON before a scripted test; see [[engine-forward-is-minus-z]] for why.
+
+**Object picking is opt-in**: an app must call `Application::CheckObjectSelection()` from UpdateView
+or it silently has no selection. bomber now does. There may be a second, engine-side problem
+underneath it - see the app's own `engine_notes.md`.
+
+**`apps/bomber/engine_notes.md`** is the running list of engine gaps and workarounds the user asked
+for - GetNodeScale, LoadGLTFFile returning void, Mesh bounds, no ambient setting, volume depth
+sorting, picking opt-in, scripted-vs-real input, camera_set not capturing atomically. Add to it
+rather than starting a new doc.
+
 Still open: destroying soft blocks, enemies, sound (`USE_SOUND` off - no wav yet), animations (the
 character has none).
 
