@@ -61,6 +61,52 @@ ifndef PROJECT
 $(error PROJECT is not set - an app makefile must set PROJECT to its exe name before including engine.mk)
 endif
 
+#---------------------------------------------------------------------------------------
+# THE SETTINGS ARE A CLOSED LIST, AND A NAME OFF IT IS AN ERROR.
+#
+# `make CONIFG=release` builds debug, quietly and successfully. Make has no notion of an
+# unknown variable: an assignment on the command line defines whatever you name, nothing
+# reads it, and the real setting keeps its ?= default. The build then differs from the one
+# you asked for in exactly the way you were trying to change, and says nothing.
+#
+# That is the same class of failure the split object trees below are all about - a build
+# that is silently not the one you asked for - except that here nothing is even stale, so
+# there is no second build that would behave differently and give it away. The only
+# evidence is the exe name, and only for the settings that change it.
+#
+# $(.VARIABLES) plus $(origin) is the whole mechanism: origin is 'command line' only for
+# names actually assigned on the command line, so an app makefile's own ROOT, PROJECT,
+# APP_SRCS and the rest are not candidates, and neither are -j8 or the goals. Anything
+# left over after filtering out the list below was meant to be one of them.
+#
+# The list is exactly the ?= settings in this file - the knobs a BUILD has, as opposed to
+# the ones an APP declares. ASSET_ROOTS, ASSET_PACK_FLAGS, IPATHS, LIB_DIRS and CFLAGS are
+# deliberately NOT here: they are the app's to state, they are built up with +=, and a
+# command-line assignment would replace rather than add to them, which is a subtler version
+# of the same surprise.
+#---------------------------------------------------------------------------------------
+BUILD_SETTINGS := CONFIG USE_SOUND USE_MCP USE_NET USE_IMGUI BAKE_ASSETS
+
+CMDLINE_SETTINGS := $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $v)),$v))
+UNKNOWN_SETTINGS := $(filter-out $(BUILD_SETTINGS),$(CMDLINE_SETTINGS))
+
+ifneq ($(UNKNOWN_SETTINGS),)
+$(error not a build setting: $(UNKNOWN_SETTINGS) - this build accepts $(BUILD_SETTINGS), and would otherwise have used the default for whichever of those you meant)
+endif
+
+#And the values, for the same reason one step down. Every setting but CONFIG is read with
+#`ifeq ($(X),1)`, so USE_MCP=ture, USE_MCP=yes and USE_MCP=true are all read as OFF - and an
+#app with its debug server switched off looks exactly like one with it on until something
+#tries to connect. CONFIG validates its own value where it is used, a few lines below.
+#
+#Checked here rather than beside each ?= because an empty value passes: a setting that was
+#never given has not been given a wrong value either, and its default is applied later. The
+#app makefile's own USE_SOUND := 1 is checked too, which is right - a typo is a typo wherever
+#it is written.
+BOOL_SETTINGS := USE_SOUND USE_MCP USE_NET USE_IMGUI BAKE_ASSETS
+
+$(foreach v,$(BOOL_SETTINGS),$(if $(filter-out 0 1,$($v)),$(error $v must be 0 or 1, not '$($v)')))
+
 .DEFAULT_GOAL := default
 
 #---------------------------------------------------------------------------------------

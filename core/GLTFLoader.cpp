@@ -658,8 +658,9 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         return NULL;
     }
 
-    //Now we expect there to be a NORMAL, POSITION and maybe a TEXCOORD_0
-    //TODO: Parse a mesh without UVs
+    //Now we expect there to be a NORMAL, POSITION and maybe a TEXCOORD_0. A mesh without UVs
+    //loads fine and always has; what was missing was the loader believing it rather than
+    //reporting it - see the f_has_uvs note further down.
     //Parse multiple primitives, one primitive may have one material
 
     //All vertices loaded from this node.
@@ -808,8 +809,25 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
             }
         }
 
-        if (uv_bufferview == NULL){
-            debug->Warn("No uv_bufferview for Mesh\n");
+        /*
+            NO TEXCOORD_0 IS A STATEMENT, NOT A DEFECT, and the two have to be told apart here
+            because everything downstream sees the same thing: GetVertex hands back uv (0,0) for
+            every vertex either way, so the tangent solve below fails on every triangle and used
+            to report all of them as an unwrap that had gone wrong.
+
+            A mesh that never brought UVs was never unwrapped and was never going to be. Glyphs
+            are the worked example - see tools/blender_glyph_export.py, which drops the attribute
+            on purpose because nothing samples a texture on a letter - and a collision hull or any
+            other flat-shaded mesh is the same case. Two warnings per primitive, 94 primitives to
+            a font, every one of them reporting that something deliberate had happened.
+
+            So the absence is noted once at Info and the tangent report below is skipped. What
+            survives is the case that report was written for: a mesh that DOES carry UVs and still
+            cannot be unwrapped from them, which is a real authoring mistake and still says so.
+        */
+        bool f_has_uvs = (uv_bufferview != NULL);
+        if (!f_has_uvs){
+            debug->Info("Mesh has no TEXCOORD_0 - untextured, so its tangents are placeholders\n");
         }
 
         int vertex_count = indexAccessor.count;
@@ -877,7 +895,10 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
         //The old code was silent about this and the mesh loaded looking fine, which is most of why
         //it went unnoticed. Say it out loud: it is the difference between "my normal map is broken"
         //and "this mesh was never unwrapped".
-        if (unwrapped_tangents){
+        //Only for a mesh that brought UVs - see f_has_uvs above for why the other case is not
+        //news. This is the case it was written for: the mesh was unwrapped badly, or not at all,
+        //and nothing said so.
+        if (unwrapped_tangents && f_has_uvs){
             debug->Warn("%i of %i triangles have no UV area; their tangents are placeholders. Normal mapping this mesh will not work.\n",unwrapped_tangents,triangle_count);
         }
 

@@ -79,8 +79,11 @@ void ApplicationTileset::Init(void){
     main_scene->physics_world->SetDebugRendering(false);
     main_scene->physics_world->rp_world->setEventListener(this);
 
+    /*
     icon_sprites = new SpriteSheet();
     Texture temp_texture;
+    //TODO: This should be done in a spritepacker, not inside the application
+
     // Load all the icons from the icon folder by extension:
     std::vector<std::string>filenames = Directory::GetFiles("icons","*.png");
     for (std::string& filename: filenames){
@@ -88,8 +91,8 @@ void ApplicationTileset::Init(void){
         temp_texture.LoadFromFile(filename.c_str(),GL_TEXTURE_2D,TEXTURE_DONT_UPLOAD);
         icon_sprites->AddSpriteFromTexture(&temp_texture,filename.c_str());
     }
-
     icon_sprites->Upload();
+    */
 
     main_window->Resize(1600,800);
 }
@@ -302,7 +305,10 @@ void ApplicationTileset::RenderToolsUI(){
     ImGui::Begin("Tools");
     ImGui::Text("Current Tool: %d", (int)current_tool);
 
-
+    if (!icon_sprites){
+        ImGui::End();
+        return;
+    }
 
     for (int i = 0; i < 5; i++) {
         std::string id = "Button" + std::to_string(i);

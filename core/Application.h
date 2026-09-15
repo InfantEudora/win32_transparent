@@ -51,7 +51,7 @@ using json = nlohmann::json;
 #if defined(__ANDROID__)
     #define USE_TOUCH_UI 1
 #else
-    #define USE_TOUCH_UI 0
+    #define USE_TOUCH_UI 1
 #endif
 
 /*

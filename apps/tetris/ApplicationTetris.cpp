@@ -222,7 +222,7 @@ void ApplicationTetris::Init(void){
     LoadBestScore();
     NewGame(current_seed);
 
-    main_window->Resize(1200,900);
+    main_window->Resize(600,1024);
 
     //One tick so the first frame is not an empty board.
     main_scene->StepPhysics(1);

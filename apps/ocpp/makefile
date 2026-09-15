@@ -23,7 +23,13 @@ PROJECT := ocpp
 #sockets that were not compiled; said plainly here rather than as 26 undefined references
 #from the linker. USE_MCP=0 is fine and supported - that is exactly why the two are separate
 #flags, see the block in engine.mk.
-ifneq ($(USE_NET),1)
+#
+#TESTED AGAINST 0, NOT AGAINST 1, AND THAT IS THE WHOLE POINT OF THE LINE. This runs BEFORE
+#the include below, so engine.mk's `USE_NET ?= 1` has not been applied yet and an ordinary
+#`make` sees USE_NET EMPTY. `ifneq ($(USE_NET),1)` therefore fired on the default build and
+#refused the one case it was meant to allow - this app could only be built by spelling out
+#USE_NET=1. Naming the value being rejected leaves the default, and any future value, alone.
+ifeq ($(USE_NET),0)
 $(error apps/ocpp cannot be built with USE_NET=0 - HTTP and websockets are what it is)
 endif
 

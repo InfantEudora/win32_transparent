@@ -5,7 +5,8 @@
             "includePath": [
                 "${workspaceFolder}/**/*",
                 "C:/msys64/usr/include/**",
-                "${workspaceFolder}/core/",
+                "${workspaceFolder}/core/**/*",
+                "${workspaceFolder}/apps/**/*",
                 "${workspaceFolder}/3rdparty/miniz/"
             ],
             "cStandard": "c17",

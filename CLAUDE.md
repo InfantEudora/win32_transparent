@@ -108,8 +108,8 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   than the blob costs.
 
 - **One exe per app.** Each app is a folder under `apps/` with its own `makefile`, `main.cpp`,
-  `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the fourteen
-  apps are `animation breakout dozer grid isoanimation ocpp pinball ship sim tank testfx
+  `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the fifteen
+  apps are `animation bomber breakout dozer grid isoanimation ocpp pinball ship sim tank testfx
   tetris tileset ui`.
 - **`build/core` is shared between apps**, so **build one app at a time** - two concurrent builds
   race on the same object files. When a core source changes, the next build of every app relinks;

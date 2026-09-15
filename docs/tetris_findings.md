@@ -628,7 +628,7 @@ It caught a wrong expectation in its own first draft, which is the point of writ
 New files, not a patch. **Nothing existing changed**, so no app can behave differently: the two
 translation units are compiled and linked into every app and export three functions nobody else
 calls. This is the geometry half of backlog item 24, done after the report at Dick's direction
-because he had already exported one mesh per glyph to `data/glyphs_unispace.glb`.
+because he had already exported one mesh per glyph to `shared_assets/meshes/glyphs_unispace.glb`.
 
 `BuildTextMesh` bakes a string into a single `Mesh` — each glyph's triangles copied, shifted along
 a pen and welded into one vertex buffer. `APP=Tetris` now says `HOLD`, `NEXT`, `SCORE`, `LINES`,

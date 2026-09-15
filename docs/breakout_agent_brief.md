@@ -815,7 +815,7 @@ lit and shadowed like anything else, and it appears in screenshots.
 
 ```cpp
 GlyphSet glyphs;
-LoadGlyphSetFromGLB(glyphs,"data/glyphs_unispace.glb",0.509167f,1.0f);   //advance, line_height
+LoadGlyphSetFromGLB(glyphs,"shared_assets/meshes/glyphs_unispace.glb",0.509167f,1.0f);   //advance, line_height
 TextLayout layout; layout.scale = 0.8f; layout.align = TEXT_ALIGN_CENTER; layout.matid = 0;
 score_mesh = BuildTextMesh(glyphs,"SCORE 1200",layout,score_mesh);       //reuse, don't reallocate
 ```
@@ -1022,7 +1022,7 @@ cold.
 **Other**
 
 - `GLTFLoader` produces `inf`/`NaN` tangents for any mesh with degenerate UVs — 62% of the
-  triangles in `data/glyphs_unispace.glb`. Harmless until something normal-maps such a mesh, at
+  triangles in `shared_assets/meshes/glyphs_unispace.glb`. Harmless until something normal-maps such a mesh, at
   which point the symptom points nowhere near the loader. Open backlog item 38.
 - Several apps gate keyboard control on `ImGui::GetIO().WantCaptureMouse` for historical reasons.
   A paddle that stops because the cursor drifted over a panel is a bad time; decide deliberately.

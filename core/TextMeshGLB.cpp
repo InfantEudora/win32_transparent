@@ -53,8 +53,10 @@ bool LoadGlyphSetFromGLB(GlyphSet& out, const char* filename, float advance, flo
             continue;
         }
 
-        //No material list: the glyphs are exported without materials (the export script says so),
-        //and an Object picks the colour its text is drawn in by material slot anyway.
+        //No material list. The glyphs DO carry one since 2026-09-15 - a single default, so that
+        //no primitive is exported without one - but its values are never wanted here: an Object
+        //picks the colour its text is drawn in by material slot, and every glyph vertex arrives
+        //with matid 0 for it to land on. See tools/blender_glyph_export.py.
         Mesh* mesh = loader.GetMeshFromNode(name.c_str(),NULL,false);
         if (!mesh){
             debug->Warn("Glyph node %s carried no mesh\n",name.c_str());

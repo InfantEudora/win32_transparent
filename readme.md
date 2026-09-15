@@ -24,7 +24,7 @@ It should kind of look like this:
 ![screenshot](docs/images/example_desktop.png)
 
 ### Folder structure
-`/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder. Fourteen of them: `animation breakout dozer grid isoanimation ocpp pinball ship sim tank testfx tetris tileset ui`.
+`/apps/<name>`      One app: its own `makefile`, its own `main.cpp`, its gameplay classes, its `assets/`, and its exe in `build/`. Build it by running `make` in that folder. Fifteen of them: `animation bomber breakout dozer grid isoanimation ocpp pinball ship sim tank testfx tetris tileset ui`.
 `/core`             The engine. Knows nothing about any particular app.
 `/engine.mk`        The shared build: toolchain, flags, core sources, rules. An app's makefile sets three variables and includes it.
 `/shared_assets`    Assets loaded by `/core` itself, or by two or more apps - the default shaders, the fonts, the glyph mesh and sounds Tetris and Breakout share. Nothing else belongs here.

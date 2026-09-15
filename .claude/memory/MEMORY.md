@@ -28,3 +28,6 @@
 - [testfx bench gotchas](testfx_bench_gotchas.md) — uniform values leaked across effect switches (fixed 2026-09-13 in BuildEffect); sim_step runs at tick rate; default camera is above the cube, reference view is low
 - [Input has two clocks](input_two_clocks.md) — UpdateView/BeginPass run every physics pass, RunSimulationTick/GatherInput only on ticking ones; one set of edge flags serves both (backlog 84)
 - [lockd owner must be session id](lockd_owner_must_be_session_id.md) — an explicit lock_claim under any other owner string makes the PreToolUse hook refuse your own edits
+- [Bomber app](bomber_app.md) — apps/bomber, volumetric explosion bench heading toward bomberman; TWO blast sites side by side (per-tile vs single cross volume) sharing one clock and one shader source
+- [Volumetric effect gotchas](volumetric_effect_gotchas.md) — sim_step wants num_ticks not ticks; a volume needs sun_intensity; shape terms go relative to the feature, not the box
+- [Ship orbit camera is the canonical one](ship_orbit_camera_canonical.md) — copy the orbit from ApplicationShip/Tank, never testfx: raw mouse deltas, drained outside the button gate, focus+UI gated

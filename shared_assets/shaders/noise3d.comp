@@ -1,8 +1,13 @@
 #version 430 core
 
 /*
-    Generates the 3D cloud noise the raymarched volume samples - run once at startup, not per
-    frame (see ApplicationShip::BuildVolumeNoise).
+    Generates the 3D noise a raymarched volume samples - run once at startup, not per frame
+    (see ApplicationShip::BuildVolumeNoise and ApplicationBomber::BuildBlastNoise).
+
+    IN shared_assets BECAUSE TWO APPS USE IT: the ship's clouds and bomber's explosion. It moved
+    here from apps/ship/assets/shaders/ when the second one appeared, which is the rule that
+    folder exists for. core/Texture.h's Create3D already named this file as the thing it is there
+    for, so it was engine-shaped before it was shared.
 
     This is the voronoi/worley from shaders/texture.comp lifted into 3D, with one change that
     matters: it is TILEABLE. The cell lookup wraps modulo the cell count, so the pattern repeats

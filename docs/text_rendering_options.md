@@ -144,14 +144,15 @@ what geometry each glyph contributes. Build B first, add D later as a second gly
 
 #### The glyph set exists (added 2026-09-11)
 
-`data/glyphs_unispace.glb` — 94 meshes, printable ASCII 0x20-0x7E, Unispace Bold, 8264 triangles
-in total. So the "become a typographer in Blender" half of the objection above is paid off already,
-and the metrics half is generated rather than invented. Three scripts in `tools/` rebuild it:
+`shared_assets/meshes/glyphs_unispace.glb` — 94 meshes, printable ASCII 0x20-0x7E, Unispace Bold,
+8,264 triangles in total. So the "become a typographer in Blender" half of the objection above is
+paid off already, and the metrics half is generated rather than invented. Three scripts in `tools/`
+rebuild it, from `art_source/fonts.blend`:
 
 ```
-blender --background fonts.blend --python tools/blender_glyph_meshes.py
-blender --background fonts.blend --python tools/blender_glyph_export.py  -- --out data/glyphs_unispace.glb
-blender --background fonts.blend --python tools/blender_glyph_preview.py -- --out sheet.png --wire
+blender --background art_source/fonts.blend --python tools/blender_glyph_meshes.py
+blender --background art_source/fonts.blend --python tools/blender_glyph_export.py  -- --out shared_assets/meshes/glyphs_unispace.glb
+blender --background art_source/fonts.blend --python tools/blender_glyph_preview.py -- --out sheet.png --wire
 ```
 
 The first is the one that matters: it rebuilds each glyph **from the font** into a `Glyphs`
@@ -160,7 +161,16 @@ that mesh by loose parts looks fine on `A-Z0-9`, because a filled and extruded c
 connected component, and then silently shatters `i j : = % ?` into two or more pieces each.
 Re-running is idempotent.
 
-What the layout loop in §4c needs is in `fonts_glyphs.json` next to the .blend, keyed by codepoint.
+The .glb is shared rather than per-app because both Tetris and Breakout draw from it; see
+`docs/asset_layout_plan.md` for the rule, and note that an app names it `meshes/glyphs_unispace.glb`
+and never by where it sits.
+
+The exported file carries **one default material and no UVs**, and both are deliberate — a glyph is
+flat-shaded in whatever colour the app puts in slot 0, and nothing ever samples a texture on a
+letter. The reasoning, and what each was costing while it was the other way round, is in the
+docstring of `tools/blender_glyph_export.py`.
+
+What the layout loop in §4c needs is in `fonts_glyphs.json` at the repo root, keyed by codepoint.
 Unispace is monospace, so per-glyph metrics are mostly a formality:
 
 | | |
@@ -374,10 +384,11 @@ second glyph source when something wants physical letters, sharing B's layout co
 ## 6. What was actually built (2026-09-11)
 
 **D, not B** — because between writing this note and building anything, Dick exported one mesh per
-glyph to `data/glyphs_unispace.glb` (`tools/blender_glyph_meshes.py`, Unispace Bold, 94 meshes,
-8,264 triangles). With the glyph source already in the tree, D stopped being the expensive option.
+glyph to `shared_assets/meshes/glyphs_unispace.glb` (`tools/blender_glyph_meshes.py`, Unispace
+Bold, 94 meshes, 8,264 triangles). With the glyph source already in the tree, D stopped being the
+expensive option.
 
-`core/TextMesh.h` bakes a string into a single `Mesh`; `APP=Tetris` uses it for its captions,
+`core/TextMesh.h` bakes a string into a single `Mesh`; `apps/tetris` uses it for its captions,
 stats and game-over banner. Three things the exercise settled that this note had left open:
 
 - **§4's glyph-selection question does not arise for D at all.** There is no atlas and no UV

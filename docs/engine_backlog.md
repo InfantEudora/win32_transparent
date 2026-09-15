@@ -1,7 +1,7 @@
 ﻿# Engine backlog
 
 **Open work only.** Everything already done or decided against moved to
-`docs/engine_backlog_done.md` — 65 closed items, with their verification notes intact, because
+`docs/engine_backlog_done.md` — 70 closed items, with their verification notes intact, because
 those notes are what a later regression gets checked against.
 
 Most items are drawn from two runs in which an agent built a game on this engine as an audit of it:
@@ -107,17 +107,30 @@ out to have been compiled `-Og -g`. Every app is now between 3.49 and 3.82 MB; t
 between a sound app and a silent one is gone. **Item 80 closed with it** - its whole subject was
 how to trim openal-soft, and it was overtaken rather than carried out. Both are in the done list.
 
+On 2026-09-15: **items 78, 67, 81 and 24 closed and moved.** 78 and 67 were already ticked and
+were simply still here. The other two are the interesting pair, and they close together because
+they are one subject: **this engine now has two ways of rendering text, on purpose.**
+`core/TextMesh` welds glyph meshes along a pen for text that lives in the world — lit, shadowed,
+knocked over — and `core/UIOverlay` draws SDF glyphs and rounded rects through one distance
+expression for text stuck to the screen. They share the pen arithmetic and none of the storage,
+which is the seam item 24 identified before either half existed. Item 81's six steps
+(`docs/ui_overlay_plan.md` §8) are all done including the Android half, and item 82 — which it
+existed to unblock — closed a day earlier.
+
+**What is deliberately NOT open as a result**: layout, wrapping, hit-testing, focus, widgets,
+state. Both entries and `docs/ui_overlay_plan.md` §9 decline that rather than defer it, for item
+24's own reason — it is "weeks rather than days" and a `SubmitPointer` rect list plus three draw
+calls is all Tetris needs. A UI framework belongs in a new item, not in a reopened one.
+
+Band A is empty again as a result; the heading stays, for the reason the 2026-09-13 note above
+gives.
+
 ---
 
 ## Band A — minutes each, no risk
 
-- [x] **78. The Engine panel's *Target Physics TPS* slider is clamped to 200, and the pinball
-  table runs at 240.** `SetPhysicsTPS` itself has no clamp, so `apps/pinball` starts correctly -
-  but the moment anyone touches that slider the table silently drops to 200 Hz, the per-tick
-  ball travel grows by a fifth, and nothing on screen says so. Widen the clamp (240 is the only
-  rate above 200 anyone has asked for; 300 leaves room) or have the slider show the app's own
-  value as its ceiling. Found while building the pinball design (`apps/pinball/pinball_design.md`
-  §1.3), still open after the stage 0 review (`docs/pinball_findings.md` §4).
+*Empty — item 78 closed 2026-09-15.* The heading stays: the last time one was dropped, items 43
+and 61 ended up stranded under a band that no longer said anything about them.
 
 ## Band B — under an hour each
 
@@ -246,71 +259,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   ten-second change and the wrong one: it throws away the evidence of what the prologue was meant
   to be, immediately before the merge that wants to reinstate a shared one. See the merge notes at
   the bottom of this file and `docs/asset_layout_plan.md`.
-
-- [x] **67. On-screen input buttons, for Android.** **DONE 2026-09-14 on Windows** - ported back,
-  driven by the Win32 mouse as pointer 0, drawn through the new `UIOverlay` (item 81) and verified
-  end to end in `apps/tetris`. What was built and the two defects found doing it - the port's
-  `AddTouchButton` returning a pointer the next call invalidates, and the window size not being
-  final during `Init()` - are in `docs/ui_overlay_plan.md` section 13. Item 88 was the one thing
-  this could not fix, and it is closed too: a button press while paused now reaches the next tick. Original entry follows. Full plan in `docs/touch_input_plan.md`; this
-  is the pointer, not a summary of it. The design in one line: a third input family alongside
-  `AddKeyMap` and `AddGamePadMap`, so `input->AddTouchButton(rect,INPUT_TETRIS_LEFT)` sits next to
-  the other two and **`ApplicationTetris::SetupInput` is the only app code that changes**.
-
-  **Steps 1-4 of that plan are built and shipping on the Android port, and this item is now a
-  port-back rather than a build** (2026-09-13, hence the move from band D). The plan's own test —
-  whether the seam was in the right place — held: nine buttons bound in `SetupInput` and no change
-  to `GatherInput`, the HUD, the snapshot or anything downstream. What exists there, all of it
-  deliberately **not** `#ifdef`-guarded because `SubmitPointer` takes a pointer and a mouse is a
-  pointer:
-
-  - `TOUCH_SYSKEY_BASE 0x20000` — above the gamepad range and far above both `VK_` and
-    `AKEYCODE_`. `AddTouchButton(rect, mapped, label)` allocates the keycode itself and calls
-    `AddKeyMap`, so the app never sees the number and two buttons on one action get correct
-    `f_isdown` counting.
-  - `TouchRect` (pixels, top-left origin, `Contains`) and `TouchButton` (rect, its own syskey, the
-    action, an `f_down` flag for the drawing layer, and a **fixed `char[12]` label** — not a
-    `std::string` and not a borrowed `const char*`, because the struct is walked from the thread
-    that hit-tests and a caller passing a temporary would dangle).
-  - `SubmitPointer(id, x, y, down)`, `ReleaseAllTouchPointers()` for focus loss and cancel, and
-    `GetTouchButtons()` for whatever draws. Input does not draw.
-  - `Application::DrawTouchButtons()` on ImGui's **foreground** draw list, with
-    `f_draw_touch_buttons` for an app with its own artwork. No window at all — nothing to click
-    through and nothing that can steal a pointer.
-  - `INPUT_CONTROLLER_MAX_TOUCHES` has to sit outside any Android guard for the rest to compile.
-
-  Four behaviours in it were decided by use and are worth keeping rather than rediscovering. A
-  pointer that presses inside a button **captures** it until that same pointer lifts, whatever it
-  does in between — a drifting thumb must not drop a held direction and an edge must not chatter
-  at a rect boundary; sliding onto another button therefore does nothing. A pointer that presses
-  outside every button is still **tracked** (`button_index = -1`) so its release is recognised as
-  that pointer's. Buttons are laid out in **millimetres** via item 70's `GetDisplayDPI()` (11 mm
-  buttons, 2 mm gaps, 4 mm inset), and labels are sized as a **fraction of the button**
-  (`rect.h * 0.28f`) rather than from the ImGui font, which is dpi-correct by construction because
-  the button already is. And the four gameplay one-shots fire on the **press** edge (item 69)
-  while restart and the panel toggles stay on release — latency does not matter for chrome, and
-  press-then-slide-off is a free cancel for a restart that would wipe a game in progress.
-
-  Two hazards the port hit that this repo will hit in the same order. The buttons hit-test the
-  rect list themselves and never consult ImGui, so a cluster drawn **under** an app's own HUD is
-  live and invisible — a nastier failure than being drawn over, and the reason `DrawTouchButtons`
-  ended up on the foreground list. And Tetris's HUD prints its keyboard legend unconditionally,
-  which is true here and false on any build without the `VK_` maps; whichever way the bindings are
-  guarded, the legend has to be guarded with them.
-
-  Still original work here, and it is what the band is now for: driving `SubmitPointer` from the
-  Win32 message pump as pointer 0 (the plan's step 2 seam, and the thing that makes the panel
-  testable without a device), a Win32 `GetDisplayDPI`, and reconciling the port's
-  `InputController` against this one's — the two have diverged since the port was taken, so this
-  is a merge and not a copy. See the reference at the bottom for how the port did that.
-
-  Two things in here are worth reading before touching input for any other reason. A key event with
-  `value == 0` falls through to the *first* mapping for its action (`InputController.cpp:242`), so
-  any new input source that skips allocating itself a synthetic system keycode will silently share
-  `f_held` with the keyboard. And the picking and ImGui routes were both disqualified up front by
-  multi-touch, which a game pad layout must have: picking is a 1x1 `glReadPixels` at the cursor
-  (`Renderer.cpp:849`) and ImGui is single-pointer. ImGui stays right for menus and the F1 panels,
-  which need one finger.
 
 - [ ] **42. Skinned meshes do not cast into the field.** `RenderFieldPass` draws
   `MESH_MODE_NORMAL` only; a skinned mesh would need its own variant of `shaders/field.vert`
@@ -487,48 +435,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
 
 ## Band D — half a day to a day each
 
-- [~] **24. World-space text.** *The geometry half is done; the SDF half and everything above the
-  primitive are open.* No bitmap font, no text mesh, one 13px ImGui font. `SpriteSheet`
-  already loads an atlas — it just cannot reach the world. Pairs with item 19.
-  **Options compared in `docs/text_rendering_options.md`** (2026-09-11): seven methods with
-  pros/cons, how glyph selection actually works, and what is already in the tree. Headline: the
-  vendored `imstb_truetype.h` is complete stb_truetype 1.26 and does bitmap baking **and SDF
-  generation** (`stbtt_GetGlyphSDF`) **and** outline extraction, so the three most attractive
-  options need no new dependency. Recommendation is an SDF atlas, one mesh per string, glyph
-  selected by baked UVs, drawn in the custom shader pass — outline/shadow/glow then cost a
-  `smoothstep` each, and one atlas serves every size. Copy the header out of `3rdparty/imgui/`
-  first: a font system that includes from ImGui's folder has not achieved an ImGui-less build.
-  Build the text primitive before any UI layer — it is useful on its own, and the UI framework
-  (layout, hit-testing, focus) is weeks rather than days.
-
-  **The GEOMETRY half is done** (2026-09-11), which is option D of that note rather than the
-  recommended B, because Dick had already exported one mesh per glyph to
-  `data/glyphs_unispace.glb` from `tools/blender_glyph_meshes.py`. `core/TextMesh.h` bakes a
-  string into a single `Mesh` — glyph triangles copied along a pen and welded into one vertex
-  buffer. `APP=Tetris` uses it for its captions, its three stats and its game-over banner, so the
-  board no longer says anything through ImGui.
-
-  Two things about its shape are worth keeping when the SDF atlas arrives:
-  - **There is no atlas in it, and that is not an omission.** An atlas is texture bookkeeping.
-    What a layout needs from a font is *metrics*, and for a monospaced set that is two floats
-    (`advance` 0.509167, `line_height` 1.0, from `fonts_glyphs.json`). The two paths will share
-    the *layout* and none of the storage; letting “atlas” into this API would have welded them.
-  - **The builder loads nothing.** It takes a `GlyphSet` and depends on `Mesh` alone;
-    `LoadGlyphSetFromGLB` is the only part that knows what glTF is and lives in its own
-    translation unit. An SDF path is a second loader and a second builder, not a rewrite.
-
-  Still open: the SDF/quad path itself, and everything above the primitive — layout, hit-testing,
-  focus. Also still true that `imstb_truetype.h` must be copied out of `3rdparty/imgui/` before it
-  is used, or an ImGui-less build has not been achieved. **The SDF half now has a home: item 81**,
-  which needs the same shader for rounded rects and so pays for the atlas anyway. The `imstb` copy
-  stops being a tidiness point there and becomes the requirement, because item 82 is what it
-  unblocks. *Later.*
-
-  *Breakout note (2026-09-12):* the geometry path was used again and held up — its author singled
-  out the `reuse` parameter and the thread split (`MeasureText` safe anywhere, `BuildTextMesh`
-  render-thread-only) as the right shape. The one thing that made it awkward in a real scene was
-  item 45: extruded glyphs cast real shadows, and there is no way to say they should not.
-
 - [ ] **26. Scene save/load.** `BuildSceneFromJSON` restores name/position/rotation of asset-backed
   objects and nothing else. *Later.*
 
@@ -583,68 +489,6 @@ how to trim openal-soft, and it was overtaken rather than carried out. Both are 
   spacing for such rays. The real fix is a max-mipmap pyramid over the height channel, which would
   give a conservative vertical bound to go with the horizontal one; the 2D distance alone cannot,
   because a neighbouring column one texel away may rise to just under the ray.
-
-- [ ] **81. A screen-space SDF pass: rounded rects and text in one shader.** **Full plan in
-  `docs/ui_overlay_plan.md`** (2026-09-14), which fixes the scope at rounded rects plus centred
-  text and adds the constraint this entry was written without: **the stage runs on Android too, as
-  one shared stage.** Three things in it change what is written below. The per-instance SSBO shape
-  is out — `GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS` is **0** on the port's Mali-T720 and SSBOs
-  link-fail outside compute, so the batch is plain vertex attributes rebuilt per frame, ImGui-style.
-  Distances are kept **in pixels** so coverage needs no derivatives, which is what makes the output
-  match across the two platforms and independent of the MSAA configuration underneath. And the
-  glyph and box distances combine with `max()` against a reserved solid texel, so one shader covers
-  both with no branch at all. The rest of this entry still stands. The standalone 2D
-  draw path that item 82 needs in order to drop ImGui, and the SDF half of item 24, are the same
-  piece of work. That is the whole argument for doing it this way, so it is worth stating plainly
-  before the design: **an SDF glyph and an SDF rounded box are the same shader, the same blend
-  state, the same pass and the same vertex format.** Build them as two things and you have written
-  two of everything.
-
-  **Rounded corners belong in the fragment shader, not in a mesh.** The tempting version of this is
-  a new primitive — a quad with rounded edges — and it is the wrong trade. A rounded-box SDF is
-  about three lines of GLSL, and then one unit quad serves every button at every size and every
-  corner radius, with no geometry to regenerate when any of those change. It also hands you three
-  things a rounded mesh cannot:
-
-  - **antialiasing**, one `smoothstep` across the distance, correct at any scale;
-  - **outlines**, `abs(d) - w`, which is what the touch buttons already draw by hand;
-  - **drop shadows and glows**, a second sample at an offset — item 24 makes the same observation
-    about SDF text, and it is the same `smoothstep` both times.
-
-  So the shape is one instanced quad draw where each instance carries `{rect, corner radius,
-  colour, and either a glyph's atlas UVs or a flag meaning untextured}`. Text is then the same call
-  with a glyph UV set and radius 0, which is why this does not become a subsystem.
-
-  **Keep the API to the subset actually in use.** `Application::DrawTouchButtons` needs exactly
-  three things: a filled rounded rect, an outline, and centred text at a given size. Item 24
-  already warns that everything above the text primitive — layout, hit-testing, focus — is "weeks
-  rather than days", and this item is not that. The way it stays a weekend is by refusing to grow
-  into a UI framework; a `SubmitPointer` rect list plus three draw calls is a *game pad*, and a game
-  pad is all Tetris needs.
-
-  **Hit-testing is already out of the way and this is what makes the item tractable.**
-  `SubmitPointer` walks `InputController`'s own rect list and never consults ImGui (item 67), so
-  input and drawing are already decoupled. The draw path only has to draw; it reads
-  `GetTouchButtons()` and nothing flows back.
-
-  **`imstb_truetype.h` becomes load-bearing here.** Item 24 notes it must be copied out of
-  `3rdparty/imgui/` before use "or an ImGui-less build has not been achieved" — with item 82 in
-  the picture that stops being a tidiness point and becomes the actual requirement. It is complete
-  stb_truetype 1.26 and has `stbtt_GetGlyphSDF`, so the atlas needs no new dependency.
-
-  **`TextMesh` stays and is not in competition.** Extruded glyph geometry is for world-space text
-  that wants to be lit and to sit in the scene — Tetris's board captions, which look the way they
-  do *because* they are real geometry. SDF quads are for screen-space text that wants to be crisp
-  and cheap. Item 24 already anticipated both and says they share the *layout* and none of the
-  storage; the `GlyphSet`/metrics split it describes is the seam, and an SDF atlas is a second
-  loader and a second builder rather than a rewrite.
-
-  Two things to decide up front, because retrofitting either is unpleasant. **Where the pass runs**
-  — it has to composite over the 3D scene and under nothing, which is where ImGui sits today, so it
-  is a final forward pass with depth test off and straight alpha blending. And **what units the API
-  takes**: item 67's buttons are laid out in millimetres via `GetDisplayDPI()` (item 70) precisely
-  so they survive a change of screen, and a draw path that only speaks pixels would quietly undo
-  that.
 
 - [ ] **91. The packer is directory-driven, so what ships is a hand-maintained guess.** **Full plan
   in `docs/asset_declaration_plan.md`** — direction agreed 2026-09-14 (step 3 below, `ASSET_NEEDS`),
