@@ -30,8 +30,37 @@ void Texture::Create2D(int target, int depth){
         return;
     }
 
+#if defined(__ANDROID__)
+    /*
+        GLES has no Direct State Access, so the texture has to be BOUND before it can be
+        configured - the same translation core/Mesh.cpp makes for buffers and VAOs.
+
+        PIN UNIT 0 FIRST. glActiveTexture/glBindTexture are global state, so without this the
+        texture lands on whatever unit some unrelated earlier call happened to leave active, and
+        every texture created here overwrites the last one on that unit. The Android port hit
+        exactly this: its shadow-map setup left its own unit active, every material texture
+        loaded afterwards bound to that unit in turn, and the shadow map ended up sampling a
+        random material's colours - which looks like a shadow bug and is not one. Unit 0 is a
+        safe scratch choice because Renderer::UploadMaterials rebinds every real unit afterwards.
+
+        The desktop arm cannot have this bug: glTextureParameteri addresses the texture by name
+        and touches no binding at all. That asymmetry is the reason DSA exists.
+    */
+    glGenTextures(1, &texture_id);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(target, texture_id);
+    debug->Info("Create2D: %s texture_id: %u\n",name.c_str(),texture_id);
+
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    //Allocates storage in GPU, but no data is transferred
+    glTexStorage2D(target, 1, storage_format, width, height);
+#else
     glCreateTextures(target, 1, &texture_id);
-    debug->Info("Create2D: %s texture_id: %li\n",name.c_str(),texture_id);
+    debug->Info("Create2D: %s texture_id: %u\n",name.c_str(),texture_id);
 
     glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
@@ -40,6 +69,7 @@ void Texture::Create2D(int target, int depth){
 
     //Allocates storage in GPU, but no data is transferred
     glTextureStorage2D(texture_id, 1, storage_format, width, height);
+#endif
 }
 
 //LINEAR so a volume marching through this does not see the voxel grid, and REPEAT on every axis
@@ -55,8 +85,29 @@ void Texture::Create3D(int w, int h, int d, GLenum format, GLenum wrap, GLenum f
     depth = d;
     storage_format = format;
 
+#if defined(__ANDROID__)
+    //Bind-then-call, and unit 0 pinned first - see Create2D above for why both.
+    //
+    //NOT TAKEN FROM THE PORT, unlike the rest of the GLES arms in this file: the port has no
+    //Create3D at all, because nothing it runs uses a volume texture. So this arm is written from
+    //the 2D one and has never executed. GL_TEXTURE_3D and glTexStorage3D are both core GLES 3.0,
+    //so it should hold, but treat it as untested until something on a device actually samples a
+    //volume.
+    glGenTextures(1, &texture_id);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, texture_id);
+    debug->Info("Create3D: %s %ix%ix%i texture_id: %u\n",name.c_str(),width,height,depth,texture_id);
+
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, wrap);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, wrap);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, wrap);
+
+    glTexStorage3D(GL_TEXTURE_3D, 1, storage_format, width, height, depth);
+#else
     glCreateTextures(GL_TEXTURE_3D, 1, &texture_id);
-    debug->Info("Create3D: %s %ix%ix%i texture_id: %li\n",name.c_str(),width,height,depth,texture_id);
+    debug->Info("Create3D: %s %ix%ix%i texture_id: %u\n",name.c_str(),width,height,depth,texture_id);
 
     glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, filter);
     glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, filter);
@@ -65,6 +116,7 @@ void Texture::Create3D(int w, int h, int d, GLenum format, GLenum wrap, GLenum f
     glTextureParameteri(texture_id, GL_TEXTURE_WRAP_R, wrap);
 
     glTextureStorage3D(texture_id, 1, storage_format, width, height, depth);
+#endif
 }
 
 //Uses the first cubemap file to create an image. The second one uses the main image handle.
@@ -81,13 +133,34 @@ void Texture::LoadCubeMapFile(const char* filename, int depth_in, Texture* first
 }
 
 //Uploads entire texture. Storage should have been allocated with Create2D
-void Texture::UploadTexture(UINT _format, int target){
+void Texture::UploadTexture(GLenum _format, int target){
+#if defined(__ANDROID__)
+    if (target == GL_TEXTURE_CUBE_MAP){
+        /*
+            THE ONE PLACE THE TWO ARMS ARE NOT A MECHANICAL TRANSLATION.
+
+            The DSA call addresses a cube face as a Z SLICE of the whole cubemap object -
+            glTextureSubImage3D with `depth` as the z offset. GLES has no such call, and names
+            the face by its own target enum instead: GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+            which matches LoadCubeMapFile's "0-6: face index" convention for `depth`.
+        */
+        glActiveTexture(GL_TEXTURE0);       //see Create2D
+        glBindTexture(GL_TEXTURE_CUBE_MAP, texture_id);
+        glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + depth, 0, 0, 0, width, height, image_format, GL_UNSIGNED_BYTE, img_data);
+    }else{
+        glActiveTexture(GL_TEXTURE0);       //see Create2D
+        glBindTexture(target, texture_id);
+        glTexSubImage2D(target, 0, 0, 0, width, height, image_format, GL_UNSIGNED_BYTE, img_data);
+        glGenerateMipmap(target);
+    }
+#else
     if (target == GL_TEXTURE_CUBE_MAP){
         glTextureSubImage3D(texture_id,0,0,0,depth,width,height,1,image_format,GL_UNSIGNED_BYTE,img_data);
     }else{
         glTextureSubImage2D(texture_id,0,0,0,width,height,image_format,GL_UNSIGNED_BYTE,img_data);
         glGenerateTextureMipmap(texture_id);
     }
+#endif
 }
 
 //Load a decoded (PNG, JPG etc. from memory.)
@@ -106,7 +179,7 @@ void Texture::LoadFromMemory(uint8_t* data, size_t length, int target, int depth
     //Compute image data size
     img_data_sz = channels * w * h;
 
-    UINT format; //Note 2 different formats are used.
+    GLenum format; //Note 2 different formats are used.
     if (channels == 4){
         format = GL_RGBA8;
     }else if (channels == 3){
@@ -240,6 +313,17 @@ void Texture::LoadHDRFromFile(const char* filename, int depth_in){
         return;
     }
 
+#if defined(__ANDROID__)
+    glGenTextures(1, &texture_id);
+    glActiveTexture(GL_TEXTURE0);           //see Create2D
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB16F, width, height);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_FLOAT, hdr_data);
+#else
     glCreateTextures(GL_TEXTURE_2D, 1, &texture_id);
     glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -247,6 +331,7 @@ void Texture::LoadHDRFromFile(const char* filename, int depth_in){
     glTextureParameteri(texture_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTextureStorage2D(texture_id, 1, GL_RGB16F, width, height);
     glTextureSubImage2D(texture_id, 0, 0, 0, width, height, GL_RGB, GL_FLOAT, hdr_data);
+#endif
 }
 
 // Bilinear-filtered HDR sample. x, y in [0, 1].

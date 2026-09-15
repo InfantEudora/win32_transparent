@@ -40,6 +40,32 @@ already dead - the flag is defined nowhere, so all four call sites hit a stub.
 - Lambert 1/PI, `SetWritableDataDirectory`, `--no-undefined`, the `*_android` file split are
   Android-only.
 
+**`Texture.cpp` merged (step 4b), 2026-09-16.** `Create2D`, `Create3D`, `UploadTexture` and
+`LoadHDRFromFile` have GLES arms; `Texture.h` needed NO change (glad.h switches, and `GLuint64`
+exists in GLES3, so the bindless member stays unguarded - the whole bindless block is already
+behind `#ifdef BINDLESS_TEXTURES`, which is **defined nowhere in the tree**).
+
+Two things this turned up that were not mechanical:
+- **The cubemap face.** DSA addresses a face as a Z SLICE (`glTextureSubImage3D` with `depth` as
+  the z offset); GLES names it by its own target enum, `GL_TEXTURE_CUBE_MAP_POSITIVE_X + face`.
+  The only genuinely non-mechanical translation in the file.
+- **The GLES arm must pin `glActiveTexture(GL_TEXTURE0)` before binding.** Bind-based calls use
+  global state, so without it a texture lands on whatever unit was last active. The port hit this
+  as its shadow map sampling a random material's colours. The DESKTOP arm cannot have the bug -
+  `glTextureParameteri` names the texture and touches no binding - which is the point of DSA.
+
+**Unlike Mesh.cpp, this diff removed four lines**, all pre-existing defects the port had already
+fixed: `UploadTexture(UINT _format)` -> `GLenum` (the header always said `GLenum`; `UINT` is a
+Windows type and was the only one leaking into a core signature), a second `UINT format;`, and two
+`debug->Info(... %li ...)` for a `GLuint` -> `%u`. Type-identical on Win32, so no behaviour change.
+
+`Create3D`'s GLES arm is **written by me, not taken from the port** - the port has no `Create3D` -
+so it has never executed. Flagged as such at the site.
+
+Verified: tetris, ship (Create3D x2 + textures), grid and animation all build and render correctly;
+`make ship` clean. **The cubemap path was never exercised at runtime** - no app loaded one in these
+runs - so that arm rests on the desktop side being byte-identical, not on a test.
+
 **The merge method that worked, worth reusing in either direction:** copy the upstream file
 **wholesale**, then re-apply each local adaptation from a script that **asserts on its anchor**, so
 an upstream change that invalidates an adaptation fails loudly instead of silently dropping it. Ten
