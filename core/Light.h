@@ -8,7 +8,9 @@
 
 //GLSL really wants things to be padded to 16 bytes
 //light_t matches layout in shader
-typedef struct {
+//Named rather than typedef'd, for the reason Material.h records above its own struct: the default
+//member initialisers make this non-C-compatible, so it cannot borrow a linkage name from a typedef.
+struct light_t {
     vec3 position = {0,0,0};
     int     shadow = 0;     // Set if the the light produces a shadow
     vec3 direction = {0,0,0};
@@ -40,7 +42,7 @@ typedef struct {
     float   pad0 = 0.0f;
     float   pad1 = 0.0f;
     float   pad2 = 0.0f;
-}light_t;
+};
 
 class Light : public virtual Object{
 public:

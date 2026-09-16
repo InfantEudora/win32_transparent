@@ -183,7 +183,7 @@ change their speed would be worse than a constant.
 
 Adding `MAZE_TILE_DOOR` grew `MAZE_TILE_COUNT`, and two `static const char GLYPH[MAZE_TILE_COUNT]`
 tables - one in `MapJson`, one in the test harness - quietly value-initialised their new last entry
-to `' '`. The door then rendered as a NUL BYTE INSIDE A JSON STRING and as a hole in the printed
+to `'\0'`. The door then rendered as a NUL BYTE INSIDE A JSON STRING and as a hole in the printed
 board, and nothing anywhere said so.
 
 Every table in this app indexed by a `MazeTile` / `MazeItem` / `MazeDecor` is the same shape and the

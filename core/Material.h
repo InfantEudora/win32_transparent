@@ -20,7 +20,10 @@
 */
 //GLSL really wants things to be padded to 16 bytes
 //material_t matches layout in shader
-typedef struct {
+//A named struct rather than typedef struct{...}material_t; - the default member initialisers
+//below make it non-C-compatible, and only a C-compatible type may take its linkage name from
+//a typedef. The layout is identical either way; the old spelling drew -Wnon-c-typedef-for-linkage.
+struct material_t {
     vec4 color = {0,1,1,1};
     int diffuse_texture = -1;       // The OpenGL texture unit the material is bound to. 0 to 32 typically.
     int normal_texture = -1;        // The OpenGL texture unit the material is bound to
@@ -65,14 +68,14 @@ typedef struct {
     // here instead of filling pad[3] keeps every existing offset - including the two 8-byte
     // texture handles - exactly where it was. std430: vec4 at offset 64, struct grows 64 -> 80.
     vec4 emissive = {0,0,0,1};
-}material_t;
+};
 
 //We want to know more about the material than GLSL
-typedef struct{
+struct Material {
     material_t glsl_material;
     std::string name;
     Texture* diff_texture = NULL;   //Optional diffuse texture
     Texture* norm_texture = NULL;   //Optional normal map texture
-}Material;
+};
 
 #endif

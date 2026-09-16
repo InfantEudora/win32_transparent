@@ -1636,8 +1636,30 @@ bool Renderer::CheckFrameBuffer(){
     return false;
 }
 
+/*
+    Set true to let GL_DEBUG_SEVERITY_NOTIFICATION through as well. Off by default because some
+    drivers narrate every buffer allocation at that level and bury everything else; on when you
+    are asking a driver why it is doing something rather than whether it failed.
+*/
+bool f_gl_log_notifications = false;
+
 void opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, char const* message, void const* user_param){
-    if (severity != GL_DEBUG_SEVERITY_HIGH){
+    /*
+        WHAT GETS THROUGH, AND WHY IT IS NOT JUST `HIGH` ANY MORE.
+
+        This dropped everything below GL_DEBUG_SEVERITY_HIGH. HIGH is the severity a driver uses
+        for "that call was an error". It is NOT the one it uses for "that call was legal and I am
+        doing something other than what you expect with it" - undefined behaviour, an unsupported
+        vertex format quietly substituted, a fallback to software. Those arrive as MEDIUM, LOW or
+        NOTIFICATION.
+
+        Which is the entire reason the Intel material-index bug was invisible: the picture was
+        wrong, the log was empty, and this callback was the thing that should have said so. A
+        driver difference that shows up as UNDEFINED_BEHAVIOR at MEDIUM is exactly the class of
+        bug this engine hits when it moves between vendors, so that class must not be filtered
+        out by default.
+    */
+    if ((severity == GL_DEBUG_SEVERITY_NOTIFICATION) && !f_gl_log_notifications){
         return;
     }
 	const char* src_str = [source]() {

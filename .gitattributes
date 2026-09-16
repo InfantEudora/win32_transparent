@@ -1,1 +1,25 @@
-text eol=lf
+#=======================================================================================
+# Line endings.
+#
+# Git stores text as LF in the repository and checks it out as CRLF in the working tree,
+# which is what VSCode and the rest of this machine expect. Saying so here rather than
+# relying on core.autocrlf means every clone behaves the same way regardless of how that
+# machine's Git happened to be installed - autocrlf is a per-install setting nobody
+# chooses deliberately, and it is set by the Git for Windows installer.
+#
+# The repository was ALREADY all-LF before this file existed, so this normalises nothing
+# and produces no sweeping diff; it only pins down behaviour that was previously an
+# accident of each machine's configuration.
+#
+# text=auto, NOT a bare `text`. The latter forces EOL conversion on every file with no
+# binary detection, and this repo tracks 80 binaries - .glb meshes, .wav sound, .blend
+# sources and .png - which it would quietly corrupt. (libs/*.a is untracked, so not a factor.)
+#=======================================================================================
+* text=auto eol=crlf
+
+# Shell scripts have to stay LF. MSYS bash reads a shebang with a trailing CR as an
+# interpreter name ending in that CR, which does not exist, and fails with "bad
+# interpreter: no such file or directory" - an error that points at the file rather than
+# at its line endings, and so costs an hour. The .py tools under tools/ carry shebangs
+# too, but are always invoked as `python script.py`, so theirs is never parsed.
+*.sh text eol=lf
