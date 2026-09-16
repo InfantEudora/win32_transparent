@@ -215,8 +215,6 @@ bool Mesh::InitVBOVAO(){
         glEnableVertexAttribArray(ATTRIB_UVCOORD);
         glVertexAttribPointer(ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, uv));
 
-        glEnableVertexAttribArray(ATTRIB_MATINDEX);
-        glVertexAttribIPointer(ATTRIB_MATINDEX, 1, GL_INT, sizeof(vertex), (void*)offsetof(vertex, matid));
 
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -234,19 +232,17 @@ bool Mesh::InitVBOVAO(){
         glEnableVertexArrayAttrib(vao,ATTRIB_NORMAL);
         glEnableVertexArrayAttrib(vao,ATTRIB_TANGENT);
         glEnableVertexArrayAttrib(vao,ATTRIB_UVCOORD);
-        glEnableVertexArrayAttrib(vao,ATTRIB_MATINDEX);
 
         glVertexArrayAttribFormat(vao, ATTRIB_VERTEX, 3, GL_FLOAT, GL_FALSE, 0*sizeof(float));
         glVertexArrayAttribFormat(vao, ATTRIB_NORMAL, 3, GL_FLOAT, GL_TRUE , 3*sizeof(float));
         glVertexArrayAttribFormat(vao, ATTRIB_TANGENT, 3, GL_FLOAT, GL_TRUE, 6*sizeof(float));
         glVertexArrayAttribFormat(vao, ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, 9*sizeof(float));
-        glVertexArrayAttribIFormat(vao, ATTRIB_MATINDEX, 1, GL_INT, 11*sizeof(float));
+        //No matid attribute: it is pulled from the VBO as an SSBO, see SSBO_VERTEX_PULL in Mesh.h.
 
         glVertexArrayAttribBinding(vao, ATTRIB_VERTEX, 0);
         glVertexArrayAttribBinding(vao, ATTRIB_NORMAL, 0);
         glVertexArrayAttribBinding(vao, ATTRIB_TANGENT, 0);
         glVertexArrayAttribBinding(vao, ATTRIB_UVCOORD, 0);
-        glVertexArrayAttribBinding(vao, ATTRIB_MATINDEX, 0);
     }
     return true;
 }
@@ -331,11 +327,6 @@ bool Mesh::InitSkinnedVBOVAO(){
     glEnableVertexAttribArray(ATTRIB_UVCOORD);
     glVertexAttribPointer(ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(skinned_vertex), (void*)offsetof(skinned_vertex, uv));
 
-    glEnableVertexAttribArray(ATTRIB_MATINDEX);
-    glVertexAttribIPointer(ATTRIB_MATINDEX, 1, GL_INT, sizeof(skinned_vertex), (void*)offsetof(skinned_vertex, matid));
-
-    glEnableVertexAttribArray(ATTRIB_BONES);
-    glVertexAttribIPointer(ATTRIB_BONES, 3, GL_INT, sizeof(skinned_vertex), (void*)offsetof(skinned_vertex, bones));
 
     glEnableVertexAttribArray(ATTRIB_WEIGHTS);
     glVertexAttribPointer(ATTRIB_WEIGHTS, 3, GL_FLOAT, GL_TRUE, sizeof(skinned_vertex), (void*)offsetof(skinned_vertex, weights));
@@ -355,8 +346,6 @@ bool Mesh::InitSkinnedVBOVAO(){
     glEnableVertexArrayAttrib(vao,ATTRIB_NORMAL);
     glEnableVertexArrayAttrib(vao,ATTRIB_TANGENT);
     glEnableVertexArrayAttrib(vao,ATTRIB_UVCOORD);
-    glEnableVertexArrayAttrib(vao,ATTRIB_MATINDEX);
-    glEnableVertexArrayAttrib(vao,ATTRIB_BONES);
     glEnableVertexArrayAttrib(vao,ATTRIB_WEIGHTS);
 
 
@@ -364,8 +353,7 @@ bool Mesh::InitSkinnedVBOVAO(){
     glVertexArrayAttribFormat(vao, ATTRIB_NORMAL, 3, GL_FLOAT, GL_TRUE , 3*sizeof(float));
     glVertexArrayAttribFormat(vao, ATTRIB_TANGENT, 3, GL_FLOAT, GL_TRUE, 6*sizeof(float));
     glVertexArrayAttribFormat(vao, ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, 9*sizeof(float));
-    glVertexArrayAttribIFormat(vao, ATTRIB_MATINDEX, 1, GL_INT, 11*sizeof(float));
-    glVertexArrayAttribIFormat(vao, ATTRIB_BONES, 3, GL_INT, 11*sizeof(float) + 1*sizeof(int));
+    //No matid or bones attributes: both are pulled from the VBO as an SSBO, see Mesh.h.
     glVertexArrayAttribFormat(vao, ATTRIB_WEIGHTS, 3, GL_FLOAT, GL_TRUE, 11*sizeof(float) + 4*sizeof(int));
 
 
@@ -373,8 +361,6 @@ bool Mesh::InitSkinnedVBOVAO(){
     glVertexArrayAttribBinding(vao, ATTRIB_NORMAL, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_TANGENT, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_UVCOORD, 0);
-    glVertexArrayAttribBinding(vao, ATTRIB_MATINDEX, 0);
-    glVertexArrayAttribBinding(vao, ATTRIB_BONES, 0);
     glVertexArrayAttribBinding(vao, ATTRIB_WEIGHTS, 0);
 
     return true;
@@ -383,6 +369,9 @@ bool Mesh::InitSkinnedVBOVAO(){
 
 void Mesh::RenderInstances(int num_instances){
     glBindVertexArray(vao);
+    //The vertex buffer a second time, as an SSBO: this is how the shaders read matid and the
+    //bone indices, which Intel does not deliver correctly as vertex attributes - see Mesh.h.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SSBO_VERTEX_PULL, vbo);
     if (ssbo > 0){
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, ssbo);
     }

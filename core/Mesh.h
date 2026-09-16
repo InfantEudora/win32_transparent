@@ -12,6 +12,36 @@ class Mesh;
 //UVs
 #define ATTRIB_UVCOORD  3
 #define ATTRIB_MATINDEX 4
+/*
+    THE INTEGER VERTEX FIELDS - matid, and bones in skinned_vertex - ARE NOT VERTEX ATTRIBUTES.
+
+    They used to be: `in int matindex` at ATTRIB_MATINDEX, `in ivec3 bones` at ATTRIB_BONES, set
+    up with glVertexArrayAttribIFormat. That is the textbook spelling and correct on the NVidia
+    RTX A500. On the Intel Iris Xe (driver 32.0.101.7085, measured 2026-09-16 with a colour probe
+    on the raw attribute, genuine int bits in the buffer) an integer attribute arrives as
+    per-triangle garbage - at index 4 and at index 8 alike, with nothing else changed - while the
+    four float attributes next to it in the same buffer arrive perfectly. So material_slot[matindex]
+    read out of bounds and every object drew with material 0, and the bone indices were garbage
+    too, which is why skinned characters were invisible there. GL debug output said nothing.
+
+    So the shaders read these fields the way they already read everything else that has to be
+    right on both vendors: from an SSBO. Mesh::RenderInstances binds the mesh's own VBO at
+    SSBO_VERTEX_PULL as well, and default.vert / default_skinned.vert index it with gl_VertexID
+    (draws are non-indexed, so gl_VertexID is the row) using the strides pinned by the
+    static_asserts in Mesh.cpp. The VAO carries only the four float attributes. Verified correct
+    on both GPUs the same day - the probe paints the same material mosaic on each.
+
+    A float attribute carrying the id was tried and not cleanly evaluated: every such build ran
+    while deferred.frag still had the sampler-array bug described there, which killed the frame
+    whenever real material ids reached it, and that was mistaken for the attribute path failing.
+    It may well work; the pull is kept because it does not depend on the answer.
+
+    ATTRIB_MATINDEX stays what it was for the line VAO - the line colour, read by
+    shaders/line.vert. Lines have a program of their own now rather than borrowing default.vert,
+    whose material-index input used to read the colour word; that was never the Intel bug, but
+    a program whose inputs match every VAO it is drawn with is one less undefined thing.
+*/
+#define SSBO_VERTEX_PULL 6
 //Skinning
 #define ATTRIB_BONES    5
 #define ATTRIB_WEIGHTS  6

@@ -164,11 +164,67 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0){
     return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
+/*
+    THE ONLY WAY A MATERIAL'S TEXTURE MAY BE SAMPLED IN THIS SHADER.
+
+    material_texture[] is an array of samplers, and GLSL only defines indexing one with a value
+    that is the same for every fragment of the draw call. m.diffuse_texture is not that: one
+    instanced draw covers several objects with different materials, and the per-vertex material
+    id changes it from triangle to triangle inside one object besides. So
+    `texture(material_texture[m.diffuse_texture], uv)` was undefined, and the undefined behaviour
+    on the Intel Iris Xe (driver 32.0.101.7085, measured 2026-09-16) is that the FRAME dies once
+    the index really diverges - see the longer note in deferred.frag, where it bit first. NVidia
+    reads a sampler per lane and never minded.
+
+    Every case indexes with a LITERAL, which is defined however the index diverges; the compiler
+    emits a branch tree, and a flat index only diverges where two materials meet inside one pixel
+    group. The derivatives are the globals below, taken at the top of main() where control flow
+    is still uniform: implicit-derivative texture() inside a divergent branch is itself undefined,
+    and every caller of this sits inside `if (m.diffuse_texture >= 0)`. Unit 0 is the shadow map
+    and is sampled with a literal directly in CalcShadow; UploadMaterials hands materials units
+    4 and upwards.
+*/
+vec2 g_uv_dx = vec2(0.0);
+vec2 g_uv_dy = vec2(0.0);
+
+vec4 SampleMaterialTexture(int unit, vec2 uv){
+    vec2 dx = g_uv_dx;
+    vec2 dy = g_uv_dy;
+    switch (unit){
+        case 1:  return textureGrad(material_texture[1],  uv, dx, dy);
+        case 2:  return textureGrad(material_texture[2],  uv, dx, dy);
+        case 3:  return textureGrad(material_texture[3],  uv, dx, dy);
+        case 4:  return textureGrad(material_texture[4],  uv, dx, dy);
+        case 5:  return textureGrad(material_texture[5],  uv, dx, dy);
+        case 6:  return textureGrad(material_texture[6],  uv, dx, dy);
+        case 7:  return textureGrad(material_texture[7],  uv, dx, dy);
+        case 8:  return textureGrad(material_texture[8],  uv, dx, dy);
+        case 9:  return textureGrad(material_texture[9],  uv, dx, dy);
+        case 10: return textureGrad(material_texture[10], uv, dx, dy);
+        case 11: return textureGrad(material_texture[11], uv, dx, dy);
+        case 12: return textureGrad(material_texture[12], uv, dx, dy);
+        case 13: return textureGrad(material_texture[13], uv, dx, dy);
+        case 14: return textureGrad(material_texture[14], uv, dx, dy);
+        case 15: return textureGrad(material_texture[15], uv, dx, dy);
+        case 16: return textureGrad(material_texture[16], uv, dx, dy);
+        case 17: return textureGrad(material_texture[17], uv, dx, dy);
+        case 18: return textureGrad(material_texture[18], uv, dx, dy);
+        case 19: return textureGrad(material_texture[19], uv, dx, dy);
+        case 20: return textureGrad(material_texture[20], uv, dx, dy);
+        case 21: return textureGrad(material_texture[21], uv, dx, dy);
+        case 22: return textureGrad(material_texture[22], uv, dx, dy);
+        case 23: return textureGrad(material_texture[23], uv, dx, dy);
+        //A unit nothing was bound to. The same magenta a missing material gets in main(), so a
+        //bad index looks like a bad material rather than like a plausible surface.
+        default: return vec4(0.9, 0.0, 0.5, 1.0);
+    }
+}
+
 vec3 GetNormalMapNormal(){
     //Bindless
     //vec3 normal = texture(m.handle_normal,vuv).rgb;
     //Default
-    vec3 normal = texture(material_texture[m.normal_texture],vuv).rgb;
+    vec3 normal = SampleMaterialTexture(m.normal_texture,vuv).rgb;
 
     normal = (2.0 * normal) - 1.0;
     return normalize(normal);
@@ -239,7 +295,7 @@ float GetTransparency(){
         //Bindless
         //return texture(m.handle_diffuse,vuv).w;
         //Default
-        return texture(material_texture[m.diffuse_texture], vuv).w;
+        return SampleMaterialTexture(m.diffuse_texture, vuv).w;
     }
     return m.color.w;
 }
@@ -440,7 +496,7 @@ vec4 CalcPBRLighting(){
         //albedo = texture(m.handle_diffuse,vuv).xyz;// * m.color.xyz;
         //albedo = texture(m.handle_normal,vuv).xyz;// * m.color.xyz;
         //Default
-        albedo = texture(material_texture[m.diffuse_texture], vuv).rgb;
+        albedo = SampleMaterialTexture(m.diffuse_texture, vuv).rgb;
     }else{
         albedo = m.color.xyz;
     }
@@ -567,6 +623,9 @@ vec4 CalcPBRLighting(){
 }
 
 void main(){
+    //UV derivatives while control flow is still uniform - see SampleMaterialTexture.
+    g_uv_dx = dFdx(vuv);
+    g_uv_dy = dFdy(vuv);
     //Select/Set the current material
     if (f_materialindex_is_color > 0){
        color = vec4(1,1,1,1);

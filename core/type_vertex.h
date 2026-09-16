@@ -28,7 +28,7 @@ struct vertex{
     vec3    normal;
     vec3    tangent;
     vec2    uv;
-    int32_t matid;
+    int32_t matid;      //Read by the shaders through the VBO bound as an SSBO, not as an attribute - see Mesh.h
     vertex(){};
 };
 
@@ -45,7 +45,7 @@ struct skinned_vertex{
     vec3    normal;
     vec3    tangent;
     vec2    uv;
-    int32_t matid;
+    int32_t matid;      //Read by the shaders through the VBO bound as an SSBO, not as an attribute - see Mesh.h
     int3    bones;      // Bone ids that infuence this vertex
     vec3    weights;    // Bone weights
 

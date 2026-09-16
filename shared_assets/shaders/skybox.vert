@@ -9,7 +9,6 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
 layout (location = 3) in vec2 uv;
-layout (location = 4) in int matindex;
 
 //Output
 layout (location = 0) out vec3 vposition; 	//Vertex position in world space, used for lighting

@@ -10,8 +10,6 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
 layout (location = 3) in vec2 uv;
-layout (location = 4) in int matindex;
-layout (location = 5) in ivec3 bones;
 layout (location = 6) in vec3 weights;
 
 struct InstanceData{
@@ -59,6 +57,14 @@ struct Bone{
 //This matches our material slot, which looks up the global index.
 layout (std430, binding = 0) buffer InstanceDataBuffer{
 	InstanceData instance_data[];
+};
+
+//This mesh's own vertex buffer, bound by Mesh::RenderInstances. The integer fields of a vertex
+//are read from here by gl_VertexID rather than as vertex attributes - see SSBO_VERTEX_PULL in
+//core/Mesh.h for the Intel measurements behind that. One uint per 4-byte field; the stride in
+//words is the struct size pinned by the static_asserts in core/Mesh.cpp.
+layout (std430, binding = 6) readonly buffer VertexPull{
+	uint vertex_words[];
 };
 
 layout (std430, binding = 1) buffer MaterialBuffer{
@@ -120,6 +126,9 @@ void main(){
 	//Compute the bone index in the data list for this instance.
 	//A vertex is in the local space of the root node, the skeleton.
 	//The bone weights are ...
+	//skinned_vertex is 18 words: matid is word 11, the three bone ids words 12..14.
+	uint vrow = uint(gl_VertexID) * 18u;
+	ivec3 bones = ivec3(int(vertex_words[vrow + 12u]), int(vertex_words[vrow + 13u]), int(vertex_words[vrow + 14u]));
 	int bone_count = instance_data[gl_InstanceID].num_bones;
 	mat4 skin_matrix =
         weights.x * bone_data[(gl_InstanceID * bone_count) + bones.x].mat_transformscale * bone_data[(gl_InstanceID * bone_count) + bones.x].inv_bindmatrix +
@@ -170,7 +179,7 @@ void main(){
 
 	vshadow = mat_shadow * world_position; //Vertex postition in shadow coordinates
 
-	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
+	int matindex_out = instance_data[gl_InstanceID].material_slot[int(vertex_words[vrow + 11u])];
 	vmatindex = matindex_out;
 	vinstanceid = gl_InstanceID;
 

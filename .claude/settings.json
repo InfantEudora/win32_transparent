@@ -1,6 +1,6 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "Disabled_PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [

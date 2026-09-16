@@ -80,6 +80,11 @@ bool Renderer::Init(int _pipeline){
         ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
     }
 
+    //Line meshes have a program of their own - see SSBO_VERTEX_PULL in Mesh.h and line.vert: a
+    //program's vertex inputs have to match every VAO it is drawn with, and the line VAO does not
+    //look like a mesh VAO.
+    line_shader = new Shader("shaders/line.vert","shaders/line.frag");
+
     SetOpenGLState();
 
     //We make intel happy with an empty VAO
@@ -1061,9 +1066,12 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     UploadCloudShadow(shader);
     UploadFieldShadow(shader);
     RenderUniqueMeshes(MESH_MODE_NORMAL);
-    shader->Setint("f_materialindex_is_color",1);
+    //Lines through their own program - see line.vert. f_materialindex_is_color, which used to
+    //make default.frag paint them white, is no longer part of this pass.
+    line_shader->Use();
+    line_shader->Setmat4("mat_worldcam",camera->mat_cam);
     RenderUniqueMeshes(MESH_MODE_LINE);
-    shader->Setint("f_materialindex_is_color",0);
+    shader->Use();
 
 
 

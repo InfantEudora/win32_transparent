@@ -10,7 +10,6 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
 layout (location = 3) in vec2 uv;
-layout (location = 4) in int matindex;
 
 
 struct InstanceData{
@@ -57,6 +56,14 @@ struct morph_vertex{
 //This matches our material slot, which looks up the global index.
 layout (std430, binding = 0) buffer InstanceDataBuffer{
 	InstanceData instance_data[];
+};
+
+//This mesh's own vertex buffer, bound by Mesh::RenderInstances. The integer fields of a vertex
+//are read from here by gl_VertexID rather than as vertex attributes - see SSBO_VERTEX_PULL in
+//core/Mesh.h for the Intel measurements behind that. One uint per 4-byte field; the stride in
+//words is the struct size pinned by the static_asserts in core/Mesh.cpp.
+layout (std430, binding = 6) readonly buffer VertexPull{
+	uint vertex_words[];
 };
 
 layout (std430, binding = 1) buffer MaterialBuffer{
@@ -126,7 +133,7 @@ void main(){
 	vnormal = normalize(vnormal);
 	vshadow = mat_shadow * world_position; //Vertex postition in shadow coordinates
 
-	int matindex_out = instance_data[gl_InstanceID].material_slot[matindex];
+	int matindex_out = instance_data[gl_InstanceID].material_slot[int(vertex_words[uint(gl_VertexID) * 12u + 11u])];
 
 	Material m = materials[matindex_out];
 	if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
