@@ -8,6 +8,7 @@
     that looked wrong in a screenshot.
 */
 #include "Maze.h"
+#include "Hallway.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -270,7 +271,7 @@ static void TestPickup(){
     maze.player.tile_z = maze.player.from_z = 5;
     maze.player.step_ticks = 0;
     maze.player.f_alive = true;
-    maze.health = 1;
+    maze.player.health = 1;
 
     //One still buried, one out in the open.
     maze.tile[5][7] = MAZE_TILE_HEDGE;
@@ -280,14 +281,14 @@ static void TestPickup(){
     StepOnce(maze,MAZE_DIR_EAST);
     Check(maze.player.tile_x == 6,             "walked east one tile");
     Check(maze.item[5][6] == MAZE_ITEM_NONE,   "the loose pickup was taken");
-    Check(maze.health == 2,                    "health went up by one");
+    Check(maze.player.health == 2,                    "health went up by one");
     Check(maze.items_taken == 1,               "one pickup counted");
 
     //Walking into the hedge must not collect what is under it.
     Check(!StepOnce(maze,MAZE_DIR_EAST),       "the hedge blocked the next step");
     Check(maze.player.tile_x == 6,             "and the player stayed put");
     Check(maze.item[5][7] == MAZE_ITEM_SHIELD, "the buried pickup was NOT collected through it");
-    Check(maze.shield_ticks == 0,              "and no shield was granted");
+    Check(maze.player.shield_ticks == 0,              "and no shield was granted");
 }
 
 //--- treasure ----------------------------------------------------------------------------------
@@ -318,8 +319,8 @@ static void TestScore(){
     maze.player.tile_z = maze.player.from_z = 5;
     maze.player.step_ticks = 0;
     maze.player.f_alive = true;
-    maze.score = 0;
-    maze.health = MAZE_START_HEALTH;
+    maze.player.score = 0;
+    maze.player.health = MAZE_START_HEALTH;
 
     Check(MAZE_SCORE_COIN < MAZE_SCORE_DIAMOND && MAZE_SCORE_DIAMOND < MAZE_SCORE_CRYSTAL,
                                                       "coin < diamond < crystal");
@@ -333,23 +334,23 @@ static void TestScore(){
     maze.item[5][6] = MAZE_ITEM_SHIELD;
 
     StepOnce(maze,MAZE_DIR_EAST);
-    Check(maze.score == MAZE_SCORE_COIN,              "a coin scored");
+    Check(maze.player.score == MAZE_SCORE_COIN,              "a coin scored");
     StepOnce(maze,MAZE_DIR_EAST);
-    Check(maze.score == MAZE_SCORE_COIN + MAZE_SCORE_DIAMOND,
+    Check(maze.player.score == MAZE_SCORE_COIN + MAZE_SCORE_DIAMOND,
                                                       "a diamond scored more");
     StepOnce(maze,MAZE_DIR_EAST);
-    uint32_t before_shield = maze.score;
+    uint32_t before_shield = maze.player.score;
     Check(before_shield == MAZE_SCORE_COIN + MAZE_SCORE_DIAMOND + MAZE_SCORE_CRYSTAL,
                                                       "a crystal scored most");
     StepOnce(maze,MAZE_DIR_EAST);
-    Check(maze.score == before_shield,                "the shield added nothing to the score");
-    Check(maze.shield_ticks > 0,                      "but still granted its shield");
+    Check(maze.player.score == before_shield,                "the shield added nothing to the score");
+    Check(maze.player.shield_ticks > 0,                      "but still granted its shield");
     Check(maze.items_taken == 4,                      "all four counted as pickups");
 
     //Dying is expensive enough already - see the note on `score`.
-    maze.shield_ticks = 0;
-    maze.invuln_ticks = 0;
-    maze.health = 1;
+    maze.player.shield_ticks = 0;
+    maze.player.invuln_ticks = 0;
+    maze.player.health = 1;
     /*
         Killed by their own bomb, which is the DETERMINISTIC way to do it here.
 
@@ -363,11 +364,11 @@ static void TestScore(){
     maze.fuse_ticks = 1;
     RunTicks(maze,MAZE_RESPAWN_TICKS + 8);
     Check(maze.deaths > 0,                            "the player died");
-    Check(maze.score == before_shield,                "and kept the score");
+    Check(maze.player.score == before_shield,                "and kept the score");
 
     //A new board is a new round.
     maze.NewGame(7);
-    Check(maze.score == 0,                            "NewGame starts the score again");
+    Check(maze.player.score == 0,                            "NewGame starts the score again");
 }
 
 /*
@@ -416,6 +417,242 @@ static void TestItemMix(){
     Check(full_boards > 50,                           "nearly every board has room for all eight");
     Check(bad_mix == 0,                               "and every one of those buried exactly the "
                                                       "list, not a roll of it");
+}
+
+
+//--- the corridor between levels ----------------------------------------------------------------
+
+//Hold a world direction for n ticks. The corridor turns it into a local one itself, which is half
+//of what these tests are checking.
+static void HallTicks(Hallway& hall, int n, int world_dir = MAZE_DIR_NONE){
+    MazeInput in;
+    in.direction = world_dir;
+    for (int i = 0; i < n; i++){
+        hall.Tick(in);
+    }
+}
+
+//One tile and no more - HALL_STEP_TICKS exactly, because a held direction rolls into the next step
+//on the tick the last one lands. The same trap the board's StepOnce was written for.
+static bool HallStepOnce(Hallway& hall, int world_dir){
+    int x = hall.player.tile_x;
+    int z = hall.player.tile_z;
+    HallTicks(hall,HALL_STEP_TICKS,world_dir);
+    return hall.player.tile_x != x || hall.player.tile_z != z;
+}
+
+static void TestHallShape(){
+    printf("the corridor is a corridor with a doorway at each end\n");
+
+    int short_len = 99;
+    int long_len = 0;
+    MazeWalker w;
+    for (uint32_t seed = 1; seed <= 200; seed++){
+        Hallway hall;
+        hall.Begin(seed,w,MAZE_DIR_SOUTH);
+        if (hall.length < short_len){ short_len = hall.length; }
+        if (hall.length > long_len){ long_len = hall.length; }
+    }
+    printf("  lengths over 200 seeds: %i..%i (HALL_MIN_LEN %i, HALL_MAX_LEN %i)\n",
+           short_len,long_len,HALL_MIN_LEN,HALL_MAX_LEN);
+    Check(short_len >= HALL_MIN_LEN && long_len <= HALL_MAX_LEN,
+                                                      "every length is in range");
+    Check(short_len == HALL_MIN_LEN && long_len == HALL_MAX_LEN,
+                                                      "and the whole range gets used");
+
+    //The same seed is the same corridor - it comes from the seed and not from a shared stream.
+    Hallway a;
+    Hallway b;
+    a.Begin(77,w,MAZE_DIR_SOUTH);
+    b.Begin(77,w,MAZE_DIR_NORTH);
+    Check(a.length == b.length,                       "the same seed is the same length");
+
+    Hallway hall;
+    hall.Begin(5,w,MAZE_DIR_SOUTH);
+    int L = hall.length;
+    bool f_ends_narrow = true;
+    bool f_middle_wide = true;
+    for (int x = 0; x < HALL_W; x++){
+        if (hall.IsPassable(x,0) != (x == 1)){ f_ends_narrow = false; }
+        if (hall.IsPassable(x,L - 1) != (x == 1)){ f_ends_narrow = false; }
+        for (int z = 1; z < L - 1; z++){
+            if (!hall.IsPassable(x,z)){ f_middle_wide = false; }
+        }
+    }
+    Check(f_ends_narrow,                              "both ends are one cell wide");
+    Check(f_middle_wide,                              "and the middle is the full width");
+    Check(!hall.IsPassable(1,-1) && !hall.IsPassable(1,L),
+                                                      "and there is nothing beyond either end");
+}
+
+/*
+    The doors, and the order they have to happen in.
+
+    The near one shutting is the COMMIT POINT - the tick the app throws the old board away - so
+    "exactly once, and not before the player is off the threshold" is the claim that matters most in
+    this file.
+*/
+static void TestHallDoors(){
+    printf("the corridor seals behind you and opens in front of you\n");
+
+    Hallway hall;
+    MazeWalker w;
+    hall.Begin(5,w,MAZE_DIR_SOUTH);
+    int L = hall.length;
+
+    Check(hall.player.tile_x == 1 && hall.player.tile_z == 0,
+                                                      "the player starts in the near doorway");
+    Check(hall.f_near_door_open,                      "which is open, having just been walked through");
+    Check(!hall.f_sealed && !hall.f_far_door_open && !hall.f_finished,
+                                                      "and nothing else has happened yet");
+
+    Check(HallStepOnce(hall,MAZE_DIR_SOUTH),          "walked in off the threshold");
+    Check(hall.player.tile_z == 1,                    "one cell along");
+    Check(!hall.f_near_door_open,                     "the near door shut behind the player");
+    Check(hall.f_sealed,                              "and that is the commit point");
+
+    //No going back. This is what makes destroying the old board safe.
+    Check(!hall.CanEnter(1,1,1,0),                    "the threshold cannot be stepped back onto");
+    Check(!HallStepOnce(hall,MAZE_DIR_NORTH),         "so walking back does nothing");
+    Check(hall.player.tile_z == 1,                    "and the player is still inside");
+
+    bool f_shut_all_the_way = true;
+    while (hall.player.tile_z < L - 2){
+        if (hall.f_far_door_open){ f_shut_all_the_way = false; }
+        if (!HallStepOnce(hall,MAZE_DIR_SOUTH)){ break; }
+    }
+    Check(f_shut_all_the_way,                         "the far door stays shut on the way down");
+    Check(hall.player.tile_z == L - 2,                "reached the cell in front of it");
+    Check(hall.f_far_door_open,                       "which opened it");
+    Check(!hall.f_finished,                           "but standing there is not going through it");
+
+    Check(HallStepOnce(hall,MAZE_DIR_SOUTH),          "stepped into the far doorway");
+    Check(hall.player.tile_z == L - 1,                "which is the last cell");
+    Check(hall.f_finished,                            "and that finishes the corridor");
+}
+
+/*
+    A corridor turned to meet the next board still walks the way it looks.
+
+    The turn is the whole reason WorldToLocal exists: the corridor thinks in its own frame so it can
+    be picked up and rotated while the player is sealed inside it, and the player presses world
+    directions throughout.
+*/
+static void TestHallTurning(){
+    printf("a turned corridor still walks the way it looks\n");
+
+    MazeWalker w;
+    bool f_all_round_trip = true;
+    bool f_all_forward = true;
+    for (int d = 0; d < MAZE_NUM_DIRS; d++){
+        Hallway hall;
+        hall.Begin(5,w,d);
+        if (hall.LocalToWorld(MAZE_DIR_SOUTH) != d){ f_all_forward = false; }
+        for (int e = 0; e < MAZE_NUM_DIRS; e++){
+            //While the two frames agree - which is everything up to the commit - input and geometry
+            //are still inverses, and that is worth pinning: it is what makes walking into the
+            //corridor continuous with walking on the board.
+            if (hall.LocalToWorld(hall.InputToLocal(e)) != e){ f_all_round_trip = false; }
+            //Opposites must stay opposite through a turn, or a corridor would fold up.
+            if (hall.InputToLocal(Maze::DirOpposite(e)) !=
+                Maze::DirOpposite(hall.InputToLocal(e))){ f_all_round_trip = false; }
+        }
+    }
+    Check(f_all_forward,                              "local forward is the way the corridor runs");
+    Check(f_all_round_trip,                           "and turning is reversible for every heading");
+
+    /*
+        AND TURNING THE CORRIDOR DOES NOT TURN THE CONTROLS.
+
+        This is the one you can walk into: the corridor is picked up and rotated at the commit and
+        the camera goes with it, so nothing happens on screen and the player is still walking away
+        from the camera - but the keys are WORLD directions. With one frame instead of two, the key
+        that had been walking them forward walked them into a wall and they stopped dead half way
+        down a corridor that looked completely normal.
+    */
+    Hallway turned;
+    turned.Begin(5,w,MAZE_DIR_NORTH);
+    Check(HallStepOnce(turned,MAZE_DIR_NORTH),        "north walks up a north-running corridor");
+    int was = turned.player.tile_z;
+    //What CommitHallway does: the geometry turns, the control frame does not.
+    turned.forward = MAZE_DIR_EAST;
+    Check(turned.LocalToWorld(MAZE_DIR_SOUTH) == MAZE_DIR_EAST,
+                                                      "the corridor now runs east");
+    Check(HallStepOnce(turned,MAZE_DIR_NORTH),        "and north STILL walks up it");
+    Check(turned.player.tile_z == was + 1,            "one more cell along");
+
+    //Built running EAST: pressing east walks up it, and the sides are two cells apart.
+    Hallway east;
+    east.Begin(5,w,MAZE_DIR_EAST);
+    Check(HallStepOnce(east,MAZE_DIR_EAST),           "east walks up an east-running corridor");
+    Check(east.player.tile_z == 1,                    "one cell along it");
+    Check(HallStepOnce(east,MAZE_DIR_NORTH),          "north moves across it");
+    Check(east.player.tile_x != 1,                    "to one side of the corridor");
+    int side = east.player.tile_x;
+    HallStepOnce(east,MAZE_DIR_NORTH);
+    Check(east.player.tile_x == side,                 "and the wall stops the next one");
+}
+
+/*
+    What travels, and what a level boundary costs.
+
+    Three policies in one test, because the whole point of them is that they DIFFER: the corridor
+    changes nothing, the respawn keeps what was earned, and a new board keeps what was earned but
+    takes what belonged to the board.
+*/
+static void TestHallCarriesTheWalker(){
+    printf("the walker travels; the level boundary is what costs\n");
+
+    MazeWalker w;
+    w.health = 2;
+    w.score = 1234;
+    w.f_has_key = true;
+    w.shield_ticks = 300;
+    w.tile_x = 9;
+    w.tile_z = 9;
+
+    Hallway hall;
+    hall.Begin(5,w,MAZE_DIR_SOUTH);
+    Check(hall.player.health == 2,                    "the corridor changes no health");
+    Check(hall.player.score == 1234,                  "nor the score");
+    Check(hall.player.f_has_key,                      "nor the key");
+    Check(hall.player.tile_x == 1 && hall.player.tile_z == 0,
+                                                      "it only moves the body to the entrance");
+    Check(hall.player.invuln_ticks == 0,              "and drops a mercy window nothing can use");
+
+    Maze next;
+    next.NewGame(4,&hall.player);
+    Check(next.player.health == 2,                    "the next board keeps the health");
+    Check(next.player.score == 1234,                  "and the score");
+    Check(!next.player.f_has_key,                     "but takes the key - a new board is a new lock");
+    Check(next.player.shield_ticks == 0,              "and the shield, which belonged to the last one");
+    Check(next.player.tile_x == MAZE_SPAWN_X && next.player.tile_z == MAZE_SPAWN_Z,
+                                                      "and stands them on the spawn");
+
+    Maze fresh;
+    fresh.NewGame(4);
+    Check(fresh.player.health == MAZE_START_HEALTH && fresh.player.score == 0,
+                                                      "NewGame with no walker is a fresh run");
+}
+
+//There are no bombs in the corridor, and that is a rule rather than an omission.
+static void TestHallHasNoBombs(){
+    printf("nothing can hurt you in the corridor\n");
+
+    Hallway hall;
+    MazeWalker w;
+    w.health = 1;
+    hall.Begin(5,w,MAZE_DIR_SOUTH);
+
+    MazeInput in;
+    in.direction = MAZE_DIR_SOUTH;
+    in.f_place_bomb = true;
+    for (int i = 0; i < 400; i++){
+        hall.Tick(in);
+    }
+    Check(hall.player.f_alive,                        "hammering the bomb key kills nobody");
+    Check(hall.player.health == 1,                    "and costs no health");
+    Check(hall.f_finished,                            "and the walk still finished");
 }
 
 //--- the exit ----------------------------------------------------------------------------------
@@ -506,23 +743,38 @@ static void TestKeyOpensDoor(){
     int x = maze.door_x;
     int z = maze.door_z;
 
-    Check(!maze.f_has_key,                            "a new board starts locked");
-    Check(!maze.IsPassable(x,z),                      "and the door cannot be walked through");
+    //The cell inside the door: the only one anyone ever steps onto it from.
+    int ix = (x == 0) ? 1 : (x == MAZE_W - 1 ? MAZE_W - 2 : x);
+    int iz = (z == 0) ? 1 : (z == MAZE_H - 1 ? MAZE_H - 2 : z);
+
+    Check(!maze.player.f_has_key,                     "a new board starts locked");
+    Check(!maze.CanEnter(maze.player,ix,iz,x,z),      "and the door cannot be walked through");
+    //IsPassable answers for the CELL and calls a door shut for everybody - that is what lets the
+    //generator, the flood fill and the map keep asking it without knowing who is playing.
+    Check(!maze.IsPassable(x,z),                      "a door is never 'passable' as a cell");
     Check(maze.BlocksBlast(x,z),                      "a blast stops at it");
     Check(!maze.IsSoft(x,z),                          "it is not something a bomb can destroy");
     Check(!maze.IsChoppable(x,z),                     "and not something an enemy can cut");
 
     //Straight into the door, which is the strongest form of the claim.
     maze.f_bomb = true;
-    maze.bomb_x = (x == 0) ? 1 : (x == MAZE_W - 1 ? MAZE_W - 2 : x);
-    maze.bomb_z = (z == 0) ? 1 : (z == MAZE_H - 1 ? MAZE_H - 2 : z);
+    maze.bomb_x = ix;
+    maze.bomb_z = iz;
     maze.fuse_ticks = 1;
     RunTicks(maze,MAZE_BLAST_TICKS + 8);
     Check(maze.tile[z][x] == MAZE_TILE_DOOR,          "a bomb next to it leaves it standing");
-    Check(!maze.IsPassable(x,z),                      "and still shut");
+    Check(!maze.CanEnter(maze.player,ix,iz,x,z),      "and still shut");
 
-    maze.f_has_key = true;
-    Check(maze.IsPassable(x,z),                       "the key makes it passable");
+    maze.player.f_has_key = true;
+    Check(maze.CanEnter(maze.player,ix,iz,x,z),       "the key lets the PLAYER through");
+    /*
+        AND NOBODY ELSE. This is the check that would have caught the bug this split was made for:
+        while the key was a Maze member, IsPassable answered the door for whoever asked, and
+        TickEnemies asks through CanEnter - so 35 of 60 boards ended up with an enemy standing in
+        the player's exit.
+    */
+    MazeWalker enemy_probe;
+    Check(!maze.CanEnter(enemy_probe,ix,iz,x,z),      "but not a walker with no key");
     Check(maze.BlocksBlast(x,z),                      "an OPEN door still stops a blast");
 
     //And through the real pickup path, on a cleared board so the walk is not the test.
@@ -541,11 +793,71 @@ static void TestKeyOpensDoor(){
     m2.player.tile_z = m2.player.from_z = 5;
     m2.player.step_ticks = 0;
     m2.item[5][6] = MAZE_ITEM_KEY;
-    uint32_t score_before = m2.score;
+    uint32_t score_before = m2.player.score;
     StepOnce(m2,MAZE_DIR_EAST);
-    Check(m2.f_has_key,                               "walking onto the key picks it up");
-    Check(m2.score == score_before,                   "and it is worth no points");
-    Check(m2.IsPassable(m2.door_x,m2.door_z),         "which unlocked the door");
+    Check(m2.player.f_has_key,                        "walking onto the key picks it up");
+    Check(m2.player.score == score_before,                   "and it is worth no points");
+    int m2ix = (m2.door_x == 0) ? 1 : (m2.door_x == MAZE_W - 1 ? MAZE_W - 2 : m2.door_x);
+    int m2iz = (m2.door_z == 0) ? 1 : (m2.door_z == MAZE_H - 1 ? MAZE_H - 2 : m2.door_z);
+    Check(m2.CanEnter(m2.player,m2ix,m2iz,m2.door_x,m2.door_z),
+                                                      "which unlocked the door");
+
+    /*
+        DYING DOES NOT COST THE KEY.
+
+        `player = MazeWalker()` in the respawn is a blunt reset, and the walker now carries things
+        that must survive one. This is the test that says which - anything else earned that moves
+        onto MazeWalker later wants a line here too.
+    */
+    m2.player.health = 1;
+    m2.player.shield_ticks = 0;
+    m2.player.invuln_ticks = 0;
+    m2.f_bomb = true;
+    m2.bomb_x = m2.player.tile_x;
+    m2.bomb_z = m2.player.tile_z;
+    m2.fuse_ticks = 1;
+    RunTicks(m2,MAZE_RESPAWN_TICKS + 8);
+    Check(m2.deaths > 0,                              "the player died holding the key");
+    Check(m2.player.f_has_key,                        "and got up still holding it");
+
+    //A new BOARD is a new lock, which is the opposite call and is made in the other reset site.
+    m2.NewGame(9);
+    Check(!m2.player.f_has_key,                       "but a new board takes it back");
+}
+
+/*
+    No enemy ever walks into the exit, on real boards, over a long run.
+
+    The unit check above asks CanEnter directly; this one lets the simulation try. Measured on the
+    broken version: 35 of 60 boards had one standing in the doorway within 6000 ticks.
+*/
+static void TestEnemiesCannotUseExit(){
+    printf("the exit is the player's alone\n");
+
+    int boards = 0;
+    int intruded = 0;
+    for (uint32_t seed = 1; seed <= 60; seed++){
+        Maze maze;
+        maze.NewGame(seed);
+        //Unlocked from the start, which is the state the bug needed - and a harder test than
+        //playing for it, because the enemies get the whole run to find it.
+        maze.player.f_has_key = true;
+        boards++;
+        MazeInput in;
+        for (int t = 0; t < 6000; t++){
+            maze.Tick(in);
+            for (int i = 0; i < maze.num_enemies; i++){
+                if (maze.enemy[i].f_alive && maze.enemy[i].tile_x == maze.door_x &&
+                    maze.enemy[i].tile_z == maze.door_z){
+                    intruded++;
+                    t = 6000;
+                    break;
+                }
+            }
+        }
+    }
+    printf("  %i of %i boards let an enemy into the exit\n",intruded,boards);
+    Check(intruded == 0,                              "no enemy ever stood in the doorway");
 }
 
 /*
@@ -695,7 +1007,7 @@ static void TestEnemiesCanAct(){
             for (int d = 0; d < MAZE_NUM_DIRS; d++){
                 int nx = sx[i] + Maze::DirX(d);
                 int nz = sz[i] + Maze::DirZ(d);
-                if (maze.CanEnter(sx[i],sz[i],nx,nz) || maze.IsChoppable(nx,nz)){
+                if (maze.CanEnter(maze.enemy[i],sx[i],sz[i],nx,nz) || maze.IsChoppable(nx,nz)){
                     f_can_act = true;
                 }
             }
@@ -765,7 +1077,7 @@ static void TestEnemyChopsHedge(){
     maze.player.tile_z = maze.player.from_z = 8;
     maze.player.step_ticks = 0;
     maze.player.f_alive = true;
-    maze.health = MAZE_START_HEALTH;
+    maze.player.health = MAZE_START_HEALTH;
 
     RunTicks(maze,1);
     Check(maze.enemy[0].chop_ticks > 0,"it starts cutting the hedge in front of it");
@@ -807,13 +1119,13 @@ static void TestPlayerCondition(){
     maze.player.tile_z = maze.player.from_z = 5;
     maze.player.step_ticks = 0;
     maze.player.f_alive = true;
-    maze.health = MAZE_START_HEALTH;
+    maze.player.health = MAZE_START_HEALTH;
 
     //Stand on your own bomb. One flame must cost exactly one point, not one per tick.
     RunTicks(maze,1,MAZE_DIR_NONE,true);
     RunTicks(maze,MAZE_FUSE_TICKS + 10);
-    Check(maze.health == MAZE_START_HEALTH - 1,"standing in the flame costs exactly one health");
-    Check(maze.invuln_ticks > 0,               "and opens the mercy window");
+    Check(maze.player.health == MAZE_START_HEALTH - 1,"standing in the flame costs exactly one health");
+    Check(maze.player.invuln_ticks > 0,               "and opens the mercy window");
 
     //Wait the blast out, take a shield, then sit in another one.
     RunTicks(maze,MAZE_BLAST_TICKS + MAZE_HIT_INVULN_TICKS + 5);
@@ -822,12 +1134,12 @@ static void TestPlayerCondition(){
     //One short of the full value on the tick it is taken: TickItems grants it and
     //TickPlayerCondition spends a tick of it in the same Tick. An accounting detail, not a bug -
     //but it is the kind of thing a test should state rather than paper over with a range.
-    Check(maze.shield_ticks == MAZE_SHIELD_TICKS - 1,"the shield pickup was taken");
+    Check(maze.player.shield_ticks == MAZE_SHIELD_TICKS - 1,"the shield pickup was taken");
 
-    int health_before = maze.health;
+    int health_before = maze.player.health;
     RunTicks(maze,1,MAZE_DIR_NONE,true);
     RunTicks(maze,MAZE_FUSE_TICKS + 10);
-    Check(maze.health == health_before,"a shield takes the whole blast for you");
+    Check(maze.player.health == health_before,"a shield takes the whole blast for you");
 
     //Smoke does not kill. Let the flame pass, drop the shield, and stand in what is left.
     Maze late;
@@ -845,15 +1157,15 @@ static void TestPlayerCondition(){
     late.player.tile_x = late.player.from_x = 5;
     late.player.tile_z = late.player.from_z = 5;
     late.player.f_alive = true;
-    late.health = MAZE_START_HEALTH;
+    late.player.health = MAZE_START_HEALTH;
     RunTicks(late,1,MAZE_DIR_NONE,true);
     RunTicks(late,MAZE_FUSE_TICKS);
     RunTicks(late,MAZE_BLAST_HURT_TICKS + 5);
-    int after_flame = late.health;
-    late.invuln_ticks = 0;
+    int after_flame = late.player.health;
+    late.player.invuln_ticks = 0;
     RunTicks(late,20);
     Check(late.f_blast,"the blast is still drawn this late");
-    Check(late.health == after_flame,"but the smoke after it does not hurt");
+    Check(late.player.health == after_flame,"but the smoke after it does not hurt");
 
     //Three flames kill, and death is followed by a respawn on the spawn, on the SAME field.
     Maze die;
@@ -871,7 +1183,7 @@ static void TestPlayerCondition(){
     die.player.tile_x = die.player.from_x = 9;
     die.player.tile_z = die.player.from_z = 9;
     die.player.f_alive = true;
-    die.health = MAZE_START_HEALTH;
+    die.player.health = MAZE_START_HEALTH;
     for (int hit = 0; hit < MAZE_START_HEALTH; hit++){
         RunTicks(die,1,MAZE_DIR_NONE,true);
         RunTicks(die,MAZE_FUSE_TICKS + 5);
@@ -882,7 +1194,35 @@ static void TestPlayerCondition(){
     Check(die.player.f_alive,"and the player came back");
     Check(die.player.tile_x == MAZE_SPAWN_X && die.player.tile_z == MAZE_SPAWN_Z,
           "on the spawn");
-    Check(die.health == MAZE_START_HEALTH,"with full health");
+    Check(die.player.health == MAZE_START_HEALTH,"with full health");
+
+    /*
+        THE BODY IS STILL ON THE BOARD while the respawn runs.
+
+        It was not, and nothing said so: the player's death set `Maze::dead_ticks` and never
+        `MazeWalker::death_ticks`, and the view draws a walker while `f_alive || death_ticks > 0` -
+        so the player vanished on the frame they died and the wait ran on an empty tile. One
+        countdown now, and this is the check that keeps it that way.
+
+        On a FRESH death rather than the loop above: that one runs 175 ticks past its last hit,
+        which is longer than MAZE_RESPAWN_TICKS, so by the end of it the player is already up.
+    */
+    die.player.health = 1;
+    die.player.invuln_ticks = 0;
+    die.player.shield_ticks = 0;
+    die.f_bomb = true;
+    die.bomb_x = die.player.tile_x;
+    die.bomb_z = die.player.tile_z;
+    die.fuse_ticks = 1;
+    RunTicks(die,4);
+    Check(!die.player.f_alive,                 "a second death put the player down");
+    Check(die.player.death_ticks > 0,          "with the body still on the board");
+    int lying = die.player.death_ticks;
+    RunTicks(die,10);
+    Check(die.player.death_ticks == lying - 10,"counting down to getting up");
+    RunTicks(die,MAZE_RESPAWN_TICKS + 4);
+    Check(die.player.f_alive && die.player.death_ticks == 0,
+                                               "and at zero the body is the player again");
 }
 
 //--- an enemy dies in a blast -------------------------------------------------------------------------
@@ -914,8 +1254,8 @@ static void TestEnemyDies(){
     maze.player.tile_x = maze.player.from_x = 5;
     maze.player.tile_z = maze.player.from_z = 8;
     maze.player.f_alive = true;
-    maze.health = MAZE_START_HEALTH;
-    maze.shield_ticks = MAZE_SHIELD_TICKS;      //this test is about the enemy, not the player
+    maze.player.health = MAZE_START_HEALTH;
+    maze.player.shield_ticks = MAZE_SHIELD_TICKS;      //this test is about the enemy, not the player
 
     RunTicks(maze,1,MAZE_DIR_NONE,true);
     RunTicks(maze,MAZE_FUSE_TICKS + 3);
@@ -945,7 +1285,7 @@ static void TestDeterminism(){
         a.Tick(in);
         b.Tick(in);
         if (a.player.tile_x != b.player.tile_x || a.player.tile_z != b.player.tile_z ||
-            a.field_version != b.field_version || a.health != b.health ||
+            a.field_version != b.field_version || a.player.health != b.player.health ||
             a.blocks_destroyed != b.blocks_destroyed){
             f_same = false;
             break;
@@ -1167,6 +1507,12 @@ int main(){
     TestExitPlaced();
     TestKeyOpensDoor();
     TestKeyIsDiggable();
+    TestEnemiesCannotUseExit();
+    TestHallShape();
+    TestHallDoors();
+    TestHallTurning();
+    TestHallCarriesTheWalker();
+    TestHallHasNoBombs();
     TestEnemiesCanAct();
     TestEnemyChopsHedge();
     TestPlayerCondition();

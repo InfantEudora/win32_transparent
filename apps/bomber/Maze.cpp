@@ -630,10 +630,13 @@ void Maze::PlaceEnemies(){
                 decoration never blocks anything.
             */
             bool f_can_act = false;
+            MazeWalker probe;
             for (int d = 0; d < MAZE_NUM_DIRS && !f_can_act; d++){
                 int nx = x + DirX(d);
                 int nz = z + DirZ(d);
-                f_can_act = CanEnter(x,z,nx,nz) || IsChoppable(nx,nz);
+                //A KEYLESS walker on purpose: the question is what an ENEMY could do from here,
+                //and an enemy never carries a key. A default MazeWalker is exactly that.
+                f_can_act = CanEnter(probe,x,z,nx,nz) || IsChoppable(nx,nz);
             }
             if (!f_can_act){
                 continue;
@@ -717,6 +720,10 @@ int Maze::PruneUnreachable(){
     seen[MAZE_SPAWN_Z][MAZE_SPAWN_X] = true;
 
     int count = 0;
+    //The flood asks CanEnter, which now wants a walker. A default one carries no key, which is the
+    //right question for reachability: the board must be playable without the exit counting as a way
+    //through. (It also runs before PlaceDoor, so there is no door to count yet either.)
+    MazeWalker probe;
     while (head < tail){
         int cx = queue_x[head];
         int cz = queue_z[head];
@@ -728,7 +735,10 @@ int Maze::PruneUnreachable(){
             if (!InBounds(nx,nz) || seen[nz][nx]){
                 continue;
             }
-            if (!CanEnter(cx,cz,nx,nz)){
+            //The reachability flood, which is about the BOARD and not about anybody on it - so it
+            //floods with a keyless walker and treats the exit as shut. It runs before PlaceDoor
+            //anyway; this says which answer it would want if that ever changed.
+            if (!CanEnter(probe,cx,cz,nx,nz)){
                 continue;
             }
             seen[nz][nx] = true;
@@ -865,7 +875,7 @@ int Maze::LayOutTerrain(){
     return PruneUnreachable();
 }
 
-void Maze::NewGame(uint32_t seed){
+void Maze::NewGame(uint32_t seed, const MazeWalker* carry){
     rng_state = seed ? seed : 1;
 
     /*
@@ -915,24 +925,41 @@ void Maze::NewGame(uint32_t seed){
         }
     }
 
+    /*
+        A NEW BOARD IS A NEW LOCK, so the blunt reset is the right one here and the key goes with it
+        - unlike the respawn one screen down, which keeps it. The two sites differ on purpose; see
+        the note there.
+    */
     player = MazeWalker();
     player.tile_x = player.from_x = MAZE_SPAWN_X;
     player.tile_z = player.from_z = MAZE_SPAWN_Z;
     player.step_total = MAZE_STEP_TICKS;
     player.facing = MAZE_DIR_SOUTH;
     player.f_alive = true;
+    player.health = MAZE_START_HEALTH;
+    /*
+        WHAT A LEVEL BOUNDARY COSTS, and the one place that decides it.
 
-    health = MAZE_START_HEALTH;
-    //A board is a round, so the score starts again with it. Dying does NOT reset it - see the note
-    //on `score`.
-    score = 0;
-    shield_ticks = 0;
-    invuln_ticks = 0;
-    dead_ticks = 0;
+        KEPT: health and the score - they are what the last board was worth and what it cost, and a
+        run where every board starts from scratch is not a run.
+        LOST: the key (a new board is a new lock, and the exit here has not been found yet), the
+        shield and the mercy window (both are a state the LAST board left you in, and carrying a
+        shield into a fresh board would hand you the first twenty seconds of it).
+
+        Anything added to MazeWalker later has to be named on one side of this or the other, exactly
+        as it has to be named in the respawn - see the note there.
+    */
+    if (carry){
+        player.health = carry->health;
+        player.score = carry->score;
+    }
+    /*
+        A board is a round, so the score starts again with it - and it is the blunt `player =
+        MazeWalker()` above that does it, not a line here. That is the point of the two reset sites
+        reading differently: THIS one keeps nothing, the respawn keeps what was earned.
+    */
     deaths = 0;
     items_taken = 0;
-    //A new board is a new lock. The door itself was placed by PlaceDoor above.
-    f_has_key = false;
 
     f_bomb = false;
     fuse_ticks = 0;
@@ -982,16 +1009,15 @@ bool Maze::IsPassable(int x, int z) const {
         return false;
     }
     /*
-        The exit, and the one place on the board where whether you may walk somewhere depends on the
-        GAME rather than on the cell.
+        A DOOR IS SHUT AS FAR AS THIS FUNCTION IS CONCERNED, always.
 
-        Before the IsBlock test rather than folded into it, deliberately: a door is still a block to
-        everything else that asks - a blast stops at it, nothing is scattered on it, no soft block
-        is laid over it - and only walking through it is conditional.
+        This answers for the CELL, and a cell cannot know who is standing next to it. Everything
+        that asks this - generation, pruning, decoration, HasOpenNeighbour, the map, the view's
+        item visibility - wants the conservative answer and would be wrong with any other one.
+
+        Whether a particular walker may go through is CanEnter's question, and it asks the walker
+        for a key. Splitting the two is what stopped the enemies using the player's exit.
     */
-    if (tile[z][x] == MAZE_TILE_DOOR){
-        return f_has_key;
-    }
     if (IsBlock(x,z)){
         return false;
     }
@@ -1002,8 +1028,19 @@ bool Maze::IsPassable(int x, int z) const {
     return true;
 }
 
-bool Maze::CanEnter(int from_x, int from_z, int to_x, int to_z) const {
-    if (!IsPassable(to_x,to_z)){
+bool Maze::CanEnter(const MazeWalker& walker, int from_x, int from_z, int to_x, int to_z) const {
+    /*
+        The exit, which is the only cell whose answer depends on WHO is asking.
+
+        Before IsPassable rather than after, because IsPassable calls a door shut for everybody -
+        that is its job. An enemy fails this for the only reason that matters: it has no key and no
+        way to ever get one, since TickItems only ever hands one to the player.
+    */
+    if (InBounds(to_x,to_z) && tile[to_z][to_x] == MAZE_TILE_DOOR){
+        if (!walker.f_has_key){
+            return false;
+        }
+    }else if (!IsPassable(to_x,to_z)){
         return false;
     }
     //Which axis this step runs along. Derived from the cells rather than taking a direction, so a
@@ -1080,7 +1117,7 @@ void Maze::StepWalker(MazeWalker& walker, int dir, int step_ticks){
     }
     int nx = walker.tile_x + DirX(dir);
     int nz = walker.tile_z + DirZ(dir);
-    if (!CanEnter(walker.tile_x,walker.tile_z,nx,nz)){
+    if (!CanEnter(walker,walker.tile_x,walker.tile_z,nx,nz)){
         return;
     }
     walker.from_x = walker.tile_x;
@@ -1225,7 +1262,7 @@ void Maze::TickEnemies(){
         for (int d = 0; d < MAZE_NUM_DIRS; d++){
             int nx = walker.tile_x + DirX(d);
             int nz = walker.tile_z + DirZ(d);
-            if (!CanEnter(walker.tile_x,walker.tile_z,nx,nz)){
+            if (!CanEnter(walker,walker.tile_x,walker.tile_z,nx,nz)){
                 continue;
             }
             if (d == walker.facing){
@@ -1253,7 +1290,7 @@ void Maze::TickEnemies(){
                 why this is a rule here and not only a check at spawn.
             */
             dir = back;
-            if (!CanEnter(walker.tile_x,walker.tile_z,walker.tile_x + DirX(back),
+            if (!CanEnter(walker,walker.tile_x,walker.tile_z,walker.tile_x + DirX(back),
                           walker.tile_z + DirZ(back))){
                 for (int d = 0; d < MAZE_NUM_DIRS; d++){
                     if (IsChoppable(walker.tile_x + DirX(d),walker.tile_z + DirZ(d))){
@@ -1297,18 +1334,18 @@ void Maze::TickItems(){
         case MAZE_ITEM_HEALTH:
             //Capped rather than banked. A health pickup found at full health is wasted, which is
             //what makes taking a hit cost something beyond the number.
-            if (health < MAZE_START_HEALTH){
-                health++;
+            if (player.health < MAZE_START_HEALTH){
+                player.health++;
             }
             break;
         case MAZE_ITEM_SHIELD:
             //Refreshed rather than added, so two shields in a row are not twenty seconds.
-            shield_ticks = MAZE_SHIELD_TICKS;
+            player.shield_ticks = MAZE_SHIELD_TICKS;
             break;
         case MAZE_ITEM_KEY:
-            //And that is the whole of unlocking the exit - IsPassable reads this flag. The
-            //field_version bump at the bottom of this function is what tells the view.
-            f_has_key = true;
+            //Onto the PLAYER, which is the whole of unlocking the exit - CanEnter asks the walker
+            //that is trying to step through. The field_version bump at the bottom tells the view.
+            player.f_has_key = true;
             break;
         default:
             /*
@@ -1318,7 +1355,7 @@ void Maze::TickItems(){
                 forgets to say what it is worth adds nothing rather than adding garbage - and a
                 treasure added later needs no case here at all, only a line in that switch.
             */
-            score += (uint32_t)MazeItemScore(item[z][x]);
+            player.score += (uint32_t)MazeItemScore(item[z][x]);
             break;
     }
     item[z][x] = MAZE_ITEM_NONE;
@@ -1335,26 +1372,43 @@ void Maze::TickItems(){
     has already been blown up still blown up.
 */
 void Maze::TickPlayerCondition(){
-    if (shield_ticks > 0){
-        shield_ticks--;
+    if (player.shield_ticks > 0){
+        player.shield_ticks--;
     }
-    if (invuln_ticks > 0){
-        invuln_ticks--;
+    if (player.invuln_ticks > 0){
+        player.invuln_ticks--;
     }
 
     if (!player.f_alive){
-        dead_ticks++;
-        if (dead_ticks >= MAZE_RESPAWN_TICKS){
+        //ONE countdown for both halves of being dead - the body is still drawn while it runs, and
+        //at zero the player gets up. See MazeWalker::death_ticks.
+        if (player.death_ticks > 0){
+            player.death_ticks--;
+        }
+        if (player.death_ticks <= 0){
+            /*
+                WHAT A DEATH COSTS, said out loud - because `player = MazeWalker()` is a blunt reset
+                and the walker now carries things that must survive one.
+
+                NOT the key. Dying already costs a life and the walk back; making it also cost the
+                key would mean digging up a block again whose location there is no way to remember,
+                on a board that has already been played flat. Anything else added to MazeWalker that
+                the player EARNED belongs on this list; anything that is a fact about the body -
+                where it is, what it is doing, how hurt it is - belongs in the reset.
+            */
+            bool f_kept_key = player.f_has_key;
+            uint32_t kept_score = player.score;
             player = MazeWalker();
+            player.f_has_key = f_kept_key;
+            player.score = kept_score;
             player.tile_x = player.from_x = MAZE_SPAWN_X;
             player.tile_z = player.from_z = MAZE_SPAWN_Z;
             player.step_total = MAZE_STEP_TICKS;
             player.facing = MAZE_DIR_SOUTH;
             player.f_alive = true;
-            health = MAZE_START_HEALTH;
-            dead_ticks = 0;
+            player.health = MAZE_START_HEALTH;
             //Long enough to walk off the spawn if the spawn is what killed you.
-            invuln_ticks = MAZE_HIT_INVULN_TICKS;
+            player.invuln_ticks = MAZE_HIT_INVULN_TICKS;
         }
         return;
     }
@@ -1371,13 +1425,15 @@ void Maze::TickPlayerCondition(){
         }
     }
 
-    if (f_hit && shield_ticks <= 0 && invuln_ticks <= 0){
-        health--;
-        invuln_ticks = MAZE_HIT_INVULN_TICKS;
-        if (health <= 0){
-            health = 0;
+    if (f_hit && player.shield_ticks <= 0 && player.invuln_ticks <= 0){
+        player.health--;
+        player.invuln_ticks = MAZE_HIT_INVULN_TICKS;
+        if (player.health <= 0){
+            player.health = 0;
             player.f_alive = false;
-            dead_ticks = 0;
+            //MAZE_RESPAWN_TICKS and not MAZE_DEATH_TICKS: for the player this counter is the wait
+            //to get up, and the body is drawn for all of it. TickEnemies sets the shorter one.
+            player.death_ticks = MAZE_RESPAWN_TICKS;
             deaths++;
         }
     }

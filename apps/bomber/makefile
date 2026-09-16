@@ -16,7 +16,7 @@
 #
 #     mingw32-make.exe rules                         # -> build/maze_test.exe, then runs it
 #
-# `rules` builds maze_test.cpp against Maze.cpp ALONE - no core, no engine, no window, no
+# `rules` builds maze_test.cpp against Maze.cpp and Hallway.cpp ALONE - no core, no window, no
 # GPU - and checks the game's rules: a blast clearing a hedge and stopping at it, an enemy
 # cutting through one, a pickup staying buried until the block above it goes, the bridge
 # refusing a step across its rope side, and 200 seeds all laying out a playable board. It
@@ -32,6 +32,7 @@ PROJECT := bomber
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationBomber.cpp
 APP_SRCS += Maze.cpp
+APP_SRCS += Hallway.cpp
 
 #No SoundSystem yet, so OpenAL is not linked - see the USE_SOUND block in engine.mk. A bomb
 #that makes no noise is a gap this app will want closing, but it is a property of the app
@@ -45,5 +46,5 @@ include $(ROOT)/engine.mk
 .PHONY: rules
 rules:
 	@mkdir -p build
-	$(CXX) -std=c++17 -Wall -g -o build/maze_test.exe maze_test.cpp Maze.cpp
+	$(CXX) -std=c++17 -Wall -g -o build/maze_test.exe maze_test.cpp Maze.cpp Hallway.cpp
 	@./build/maze_test.exe

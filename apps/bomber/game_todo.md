@@ -61,10 +61,44 @@ Roughly in the order each one unblocks the next.
    - ~~The key is always diggable.~~ It is first in `MAZE_ITEM_ORDER` so a small board still buries
      it, and `AddItems` will not lay it under a block with no open cell beside it. That was the soft
      lock: a key nobody can reach looks exactly like a board you have not searched hard enough.
-   - **Still to do: walking through it ends the level.** The agreed shape is a re-roll - the field
-     regenerates on a new seed and the score and any upgrades carry over. `NewGame` already does all
-     of it; what is new is carrying state across, and a camera that does something during the
-     transition so the fiction of walking into a new room survives.
+   - ~~Carrying state across a level.~~ Done by putting it on the walker - see below. Score, health
+     and the key travel with the body, so the transition has nothing to marshal.
+   - ~~**Walking through it ends the level.**~~ BUILT 2026-09-16. A HALLWAY. Stepping into the
+     open exit builds a 3 x (4..8) corridor in front of the player, tiles popping in from below; the
+     door shuts behind you, which is the COMMIT POINT - before it shuts nothing may be destroyed,
+     after it shuts the old board is unreachable and unseeable and is replaced. A second door at the
+     far end opens when you stand in front of it.
+     - It is a separate `Hallway`, NOT a size parameter on `Maze` and not a second `Maze`: the two
+       are never simulated at once (the app gets a phase), they share nothing but the walker, and
+       `Maze` is already carrying enough bomberman-specific rules without also having to be a
+       corridor. `MazeWalker` is a standalone 40-byte struct and `DirX`/`DirZ`/`DirOpposite` are
+       already `static`, so the sharing is free.
+     - Nothing can follow you in. Nothing can hurt you there. It is where the score tally goes.
+     - Where the new board is BUILT is the part that will bite: the far door has to open onto its
+       spawn. The neat answer is to re-anchor the moment the near door shuts - both doors closed,
+       the old board gone, the hallway a sealed box with no external reference and no skybox, so the
+       hallway, the player in it and `camera_target` can all be moved together and nobody can tell.
+       The board then stays at the origin forever and the world never drifts. `CellCentre` is the
+       lever either way.
+     - The pop-in is a TWEEN, not a clip - a staggered per-cell rise, same shape as the pickup
+       shrink in `TickPickupView`. No new asset: floor, `wall_brick`, and two more
+       `wall_doorway`+`door` pairs running the clip that is already there.
+
+   **What actually got built, and the one thing that bit.** `Hallway.h/.cpp`, 44 rules checks, and
+   the app grows a phase - one of the two ticks, never both. The corridor keeps TWO FRAMES and that
+   is the part worth knowing: `forward` is the frame it is BUILT in and turns at the commit;
+   `control_forward` is the frame the player's HANDS are in and never does. With one frame, turning
+   the corridor turned the controls with it - the camera rotates too, so nothing happens on screen,
+   and the key that had been walking you forward walks you into the side wall. You stop dead half
+   way down a corridor that looks completely normal. `bomber_state` reports both, and says which one
+   to press.
+
+   **Still to polish:** you can SEE OVER THE CORRIDOR WALLS from the board's camera angle, so the
+   board swap at the commit is visible rather than hidden - the old board vanishes and the new one
+   appears somewhere else. The corridor is a sealed box to a walker and not to the camera. Cheapest
+   fixes, in order: dolly the camera in and down while in the corridor so the walls occlude (the
+   camera is already panned there, so it is a few lines), or make the corridor walls two bricks
+   high. Worth looking at before choosing.
 2. ~~**Score: coin and diamond.**~~ DONE. Coin 10, diamond 50, crystal 250 - 5x steps, so a
    crystal is the thing that happened this round rather than a few more coins. `MazeItemScore` is
    the one place that says so; a treasure added later needs a line there and nothing else.
@@ -178,6 +212,33 @@ a lid, a chest - belongs in Blender, because the unskinned path costs nothing be
 fade, a bob or a spin is a tween in the app: the coins turning and the pickups shrinking are both
 arithmetic against the tick counter in `ApplicationBomber::TickPickupView`, and a .glb round trip to
 change their speed would be worse than a constant.
+
+### What lives on the walker, and what lives on the board
+
+Settled 2026-09-16, and it is the shape the level transition needs. `MazeWalker` carries what is
+true of a BODY and of whoever owns it - where it is, which way it faces, whether it is mid-step or
+mid-swing, `health`, `shield_ticks`, `invuln_ticks`, `f_has_key`, `score`. `Maze` keeps the board and
+the STATISTICS (`deaths`, `items_taken`, `blocks_destroyed`, `blocks_cut`, `enemies_killed`).
+
+The walker is the thing that travels, so everything on it carries across a level boundary for
+nothing. That is the whole reason for the split, and it fixed two live bugs on the way:
+
+- **The exit was open to everyone.** `Maze::f_has_key` belonged to the game, so `IsPassable`
+  answered the door for whoever asked - and `TickEnemies` asks, through `CanEnter`. Measured: **35
+  of 60 boards** ended up with an enemy standing in the player's exit, blocking it and costing a
+  life on contact. Now `IsPassable` answers for the CELL and calls a door shut for everybody, and
+  `CanEnter(walker, ...)` asks the walker for a key. An enemy can never have one.
+- **The player's body vanished the instant they died.** There were two death clocks one letter
+  apart - `MazeWalker::death_ticks` for the corpse and `Maze::dead_ticks` for the respawn wait - and
+  the player's death set only the second, while the view draws a walker while
+  `f_alive || death_ticks > 0`. One countdown now; whoever does the killing says how long it runs
+  (`MAZE_DEATH_TICKS` for an enemy, `MAZE_RESPAWN_TICKS` for the player).
+
+**The two reset sites now read differently on purpose.** `player = MazeWalker()` appears in
+`NewGame` and in the respawn. The first is the blunt reset and keeps nothing - a new board is a new
+lock. The second names what a death does NOT cost: the key and the score. **Anything earned that
+moves onto `MazeWalker` later needs a line in that second site and a line in the test**, or it will
+be wiped silently on every death with nothing to say so.
 
 ### A table sized by an enum count will not tell you it is short
 

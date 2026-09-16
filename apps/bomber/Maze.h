@@ -384,18 +384,64 @@ struct MazeWalker{
     int facing = MAZE_DIR_SOUTH;
     bool f_alive = false;
     /*
-        Ticks left of this walker's death, counting DOWN from MAZE_DEATH_TICKS.
+        Ticks left of being dead, counting DOWN. ONE COUNTER, and whoever does the killing says how
+        long it runs.
 
         A walker that has just died is `f_alive == false` with `death_ticks > 0`: gone as far as
         every rule is concerned - it cannot be hit again, it blocks nothing, it chops nothing - and
         still on the board as far as the view is concerned, which is what gives a death animation
-        somewhere to play. At zero it stops being drawn at all.
+        somewhere to play. What happens at zero depends on who it is: an enemy stops being drawn,
+        the player gets up on the spawn.
+
+        THERE USED TO BE TWO of these - this one for the corpse and a `Maze::dead_ticks` counting up
+        to the respawn - and the player's death set only the second, so the player's body vanished
+        on the frame it died while the wait ran invisibly. TickEnemies sets MAZE_DEATH_TICKS here
+        and TickPlayerCondition sets MAZE_RESPAWN_TICKS, which is the whole of the difference.
 
         The duration is here rather than in the view for the usual reason: it is a duration, it is
         counted in ticks, and a paused simulation should freeze a death half-finished like it
         freezes everything else.
     */
     int death_ticks = 0;
+    /*
+        How much more this body can take, and what is protecting it.
+
+        ON THE WALKER because they are facts about a BODY, which is also what makes them survive a
+        level boundary for nothing: the walker is the thing that travels from one board to the next.
+
+        `health` defaults to one - a single hit kills unless something says otherwise - and the
+        player is set to MAZE_START_HEALTH. Enemies still die outright in TickEnemies rather than
+        through this, so the field is unused for them today; it is here rather than in a parallel
+        array so that a tougher enemy is `health = 2` and not a new mechanism.
+    */
+    int health = 1;
+    int shield_ticks = 0;       //MAZE_SHIELD_TICKS of taking no damage at all
+    int invuln_ticks = 0;       //the mercy window after a hit, so one flame is one hit
+    /*
+        Points, belonging to whoever is carrying them.
+
+        Here rather than on the game for two reasons: TickItems already has this walker in hand when
+        it grants one, so adding is direct; and a second player would want a second score, which
+        falls out rather than needing a design. An enemy carries a zero it can never change, which
+        costs four bytes.
+
+        It survives a death - see the respawn - and NOT a new board, which is the other reset site.
+    */
+    uint32_t score = 0;
+    /*
+        Is this walker carrying the exit key?
+
+        ON THE WALKER AND NOT ON THE GAME, and that is a rule rather than tidiness. While it was a
+        Maze member, IsPassable answered the door for whoever asked - and TickEnemies asks, through
+        CanEnter. So taking the key opened the exit for the enemies too, and 35 of 60 boards ended
+        up with one standing in it. A key is something a BODY carries, so the door asks the body.
+
+        It survives death. Dying already costs a life and the walk back; making it also cost the key
+        would mean re-digging a block whose location you have no way of remembering - see the
+        respawn in TickPlayerCondition, which is explicit about what a death takes and what it does
+        not precisely because this is here now.
+    */
+    bool f_has_key = false;
     /*
         Ticks left of the swing this walker is in the middle of.
 
@@ -439,23 +485,28 @@ public:
     MazeWalker enemy[MAZE_MAX_ENEMIES];
     int num_enemies = 0;
 
-    //--- the player's condition -----------------------------------------------------------------
-    int  health = MAZE_START_HEALTH;
-    int  shield_ticks = 0;          //>0: nothing can hurt you, and you can see it
-    int  invuln_ticks = 0;          //the mercy window after a hit; not a shield, just not twice
-    int  dead_ticks = 0;            //counts UP while lying there, to MAZE_RESPAWN_TICKS
+    /*
+        --- what the BOARD counts, and no more -----------------------------------------------------
+        Health, the shield, the mercy window and the score used to be here. They are facts about a
+        BODY and about whoever owns it, so they live on MazeWalker now - which is also what makes
+        them survive a level boundary, since the walker is the thing that travels.
+
+        What is left is STATISTICS, and they are a different question: `deaths` and `items_taken`
+        are the player's, `blocks_destroyed`, `blocks_cut` and `enemies_killed` are the board's, and
+        what a new level does to each of them is a decision that has not been made yet. Keeping them
+        here is what stops that decision being made by accident.
+    */
     int  deaths = 0;
     int  items_taken = 0;
     /*
         The exit, and whether it is unlocked.
 
         The door is a CELL, so it is in `tile` like everything else; these two are only where it is,
-        so nothing has to search the border for it. `f_has_key` is what opens it - one flag, because
-        one key opens one door and a count would imply otherwise.
+        so nothing has to search the border for it. WHO may walk through is not here - it is
+        `MazeWalker::f_has_key`, asked by CanEnter, so that an enemy never can.
     */
     int  door_x = 0;
     int  door_z = 0;
-    bool f_has_key = false;
     /*
         Points. Treasure only - health and shields pay in other currencies and are worth 0 here.
 
@@ -508,7 +559,15 @@ public:
     //--- the game -----------------------------------------------------------------------------
     //Lays out a fresh field and puts the character on its spawn. Draws from `seed` and nothing
     //else, so the same seed is the same field.
-    void NewGame(uint32_t seed);
+    /*
+        Lays out a board and puts the player on its spawn.
+
+        `carry` is the walker as it arrived from the level before, or NULL for a fresh run, and this
+        is the THIRD and last of the three reset policies - the other two being the blunt one a few
+        lines into the definition and the respawn's, which keeps what a death must not take. This
+        one is a LEVEL boundary: you keep what you earned and you lose what belonged to the board.
+    */
+    void NewGame(uint32_t seed, const MazeWalker* carry = NULL);
 
     //One tick of everything: the walkers, the fuse, the blast clock, and who got hurt. The only
     //entry point that changes anything.
@@ -528,7 +587,7 @@ public:
         not the other - see MazePassAxis. Both ends are checked: leaving a bridge sideways is as
         wrong as entering one sideways.
     */
-    bool CanEnter(int from_x, int from_z, int to_x, int to_z) const;
+    bool CanEnter(const MazeWalker& walker, int from_x, int from_z, int to_x, int to_z) const;
     //Does this cell stop a flame? Any of the three block types - see the note on MazeTile.
     bool BlocksBlast(int x, int z) const;
     //Is there a block standing here at all, of any kind?

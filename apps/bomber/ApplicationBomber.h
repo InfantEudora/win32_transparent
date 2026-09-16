@@ -9,6 +9,7 @@
 #include "Application.h"
 #include "Texture.h"
 #include "Maze.h"
+#include "Hallway.h"
 
 /*
     bomber - a bomberman built on this engine, and a bench for the volumetric blast that drives it.
@@ -215,6 +216,40 @@ private:
         leaf it actually drives.
     */
     void BuildDoor();
+    //One archway with its leaf attached and Door_Opening loaded onto it, added to the scene and
+    //shut. RENDER THREAD. Three of these exist - the board's exit and the corridor's two ends.
+    Object* MakeDoorway(const char* name);
+    //--- the corridor between levels ------------------------------------------------------------
+    /*
+        Every object a corridor can ever need, at its maximum size, built once.
+
+        RENDER THREAD, ONCE, from Init - the same rule the enemies and the turds keep, because the
+        corridor is laid out from the PHYSICS thread and nothing there may upload a mesh. A shorter
+        corridor hides the surplus; nothing is ever created or destroyed for one.
+    */
+    void BuildHallway();
+    //The player stepped into the open exit. PHYSICS THREAD.
+    void BeginHallway();
+    /*
+        The near door has finished shutting: throw the old board away, lay out the next one, and
+        pick the corridor up and turn it to meet it.
+
+        THE ONE MOMENT THIS IS SAFE, and it is safe because the corridor is a closed box by now -
+        both doors shut, no skybox, nothing of either board visible. So the whole thing can be moved
+        and rotated with the player and the camera inside it and nobody can tell. PHYSICS THREAD.
+    */
+    void CommitHallway();
+    //The player stepped into the far doorway and is now standing on the next board. PHYSICS THREAD.
+    void EndHallway();
+    //Positions and shows the corridor, runs the pop-in and drives its two doors. PHYSICS THREAD.
+    void SyncHallwayView();
+    //World position of a corridor cell, in LOCAL coordinates and fractional so a mid-step walker
+    //lands between two of them.
+    vec3 HallCellCentre(float x, float z) const;
+    //Puts a door instantly at one end of its clip and holds it there - the rate-0 case. Used where
+    //a door has to START open, which no amount of playing forwards can express.
+    void ParkDoor(Object* arch, bool f_open);
+
     /*
         Brings the door's animation in step with the rules. PHYSICS THREAD, from SyncView.
 
@@ -460,6 +495,51 @@ private:
     */
     Object* door_arch = NULL;
     bool f_door_open = false;
+
+    //--- the corridor ---------------------------------------------------------------------------
+    Hallway hall;
+    //Which of the two is being simulated. They are NEVER both ticked - see the note at the top of
+    //Hallway.h - and they overlap on screen only until the near door shuts.
+    bool f_in_hallway = false;
+    /*
+        Ticks from the corridor sealing to the board being swapped.
+
+        Not zero, and that is the user-visible half of the rule: the commit is when the near door
+        has FINISHED shutting, not when it starts. Long enough to cover the clip.
+    */
+    int  hall_commit_ticks = 0;
+    bool f_hall_committed = false;
+    //Counts UP while the corridor rises out of the floor. View only; the rules have the cells there
+    //from the first tick, and the pop-in is a tween like the coins and the shrink.
+    int  hall_build_ticks = 0;
+    uint32_t drawn_hall_version = 0;
+    //World position of local cell (1,0) - the near doorway. The corridor's whole placement is this
+    //plus `hall.forward`, which is what lets CommitHallway move and turn it in two lines.
+    vec3 hall_origin = vec3(0,0,0);
+    //The seed the next board will be laid out from, chosen when the corridor begins so the board is
+    //ready the moment the corridor seals.
+    uint32_t hall_next_seed = 0;
+    Object* hall_floor[HALL_MAX_LEN][HALL_W];
+    //Padded by one on each side: index px is local x = px - 1, so the two side walls are px 0 and
+    //px HALL_W+1 and the end caps fall out of IsPassable.
+    Object* hall_wall[HALL_MAX_LEN][HALL_W + 2];
+    /*
+        The corridor's own two archways.
+
+        The near one is NOT the board's exit door even though it stands in the same place: that one
+        belongs to the board and is carried off to the next one at the commit, which would happen
+        while this is still in shot. The far one is the board's ENTRY, and it stays standing at
+        BOMBER_ENTRY_X/Z for the whole level afterwards - it is the door you came in by.
+    */
+    Object* hall_near_arch = NULL;
+    Object* hall_far_arch = NULL;
+    //What the two doors are DRAWN as, compared against the rules every tick - the same shape as
+    //f_door_open, and for the same reason: SetAnimationRate would otherwise wake a parked clip
+    //every tick for ever.
+    bool f_hall_near_drawn_open = false;
+    bool f_hall_far_drawn_open = false;
+    //Counts down while the camera walks back from the corridor's far door to the board's middle.
+    int  hall_camera_return = 0;
     //Y offsets taken from each GLB node's own translation - see LoadAssets for why.
     float character_y = 0.0f;
     float bomb_y = 0.0f;

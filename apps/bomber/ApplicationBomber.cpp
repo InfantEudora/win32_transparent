@@ -204,6 +204,58 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
 #define BOMBER_DOOR_LEAF_ASSET  "door"
 #define BOMBER_ANIM_DOOR        "Door_Opening"
 
+//--- the corridor between levels --------------------------------------------------------------------
+/*
+    Where the corridor puts you back onto the board: the border cell beside the spawn.
+
+    A FIXED CELL, so the corridor always has somewhere to aim at and the board always has an archway
+    in its wall - on level one too, where nothing walked in through it. RebuildField leaves the brick
+    off this one cell for it, which is the only thing the board has to know about any of this.
+*/
+#define BOMBER_ENTRY_X          (MAZE_SPAWN_X - 1)
+#define BOMBER_ENTRY_Z          MAZE_SPAWN_Z
+//Ticks one cell takes to rise out of the floor, and how far behind the row in front it starts. The
+//corridor unrolls away from you rather than appearing all at once.
+#define BOMBER_HALL_RISE_TICKS  14
+#define BOMBER_HALL_ROW_DELAY   4
+//How far below the floor a cell starts. A whole cell, so it is clearly arriving from underneath.
+#define BOMBER_HALL_RISE_DROP   1.0f
+/*
+    Ticks from the corridor sealing to the board being swapped.
+
+    The Door_Opening clip is 0.83s - 50 ticks - and the commit must not happen until the near door
+    has FINISHED shutting, because until then the old board is still visible through the gap. Sixty
+    is that plus a moment.
+*/
+#define BOMBER_HALL_COMMIT_TICKS 60
+//Ticks the camera takes to walk back from the doorway to the middle of the new board.
+#define BOMBER_HALL_RETURN_TICKS 45
+
+/*
+    The yaw that makes a walker LOOK in each direction. Lifted out of SyncView because the corridor
+    needs it too - see the long note at its old home for why these four numbers are what they are.
+*/
+static const float BOMBER_WALKER_YAW[MAZE_NUM_DIRS] = {
+     TYPE_PI * 0.5f,    //EAST  +X
+    -TYPE_PI * 0.5f,    //WEST  -X
+     TYPE_PI,           //NORTH -Z
+     0.0f               //SOUTH +Z - the rest pose
+};
+
+//A world direction as a unit step in world space, and as the yaw that points local +z along it.
+//Local +z is SOUTH, which is yaw 0 - so this is BOMBER_WALKER_YAW turned round.
+static vec3 BomberDirVec(int dir){
+    return vec3((float)Maze::DirX(dir),0.0f,(float)Maze::DirZ(dir));
+}
+static float BomberDirYaw(int dir){
+    switch (dir){
+        case MAZE_DIR_EAST:  return  TYPE_PI * 0.5f;
+        case MAZE_DIR_WEST:  return -TYPE_PI * 0.5f;
+        case MAZE_DIR_NORTH: return  TYPE_PI;
+        default:             return  0.0f;      //SOUTH, and local +z is SOUTH
+    }
+}
+
 //--- the pickups ----------------------------------------------------------------------------------
 /*
     How long a taken pickup takes to shrink away, in ticks.
@@ -300,6 +352,7 @@ void ApplicationBomber::Init(void){
     BuildEnemies();
     BuildTurds();
     BuildDoor();
+    BuildHallway();
     BuildBlastNoise();
     //BEFORE BuildExplosion, because custom shaders draw in registration order and the water is
     //opaque while the blast is not - see BuildWater.
@@ -642,16 +695,15 @@ void ApplicationBomber::BuildTurds(void){
     So the archway is the animated object and the leaf is what the animation moves, exactly as a
     Skeleton is the animated object and its bones are what move.
 */
-void ApplicationBomber::BuildDoor(void){
-    door_arch = assetmanager->GetObjectFromAsset(BOMBER_DOOR_ARCH_ASSET);
+Object* ApplicationBomber::MakeDoorway(const char* name){
+    Object* arch = assetmanager->GetObjectFromAsset(BOMBER_DOOR_ARCH_ASSET);
     Object* leaf = assetmanager->GetObjectFromAsset(BOMBER_DOOR_LEAF_ASSET);
-    if (!door_arch || !leaf){
-        debug->Err("The door needs both %s and %s in bomber_assets.glb\n",
+    if (!arch || !leaf){
+        debug->Err("A doorway needs both %s and %s in bomber_assets.glb\n",
                    BOMBER_DOOR_ARCH_ASSET,BOMBER_DOOR_LEAF_ASSET);
-        door_arch = NULL;
-        return;
+        return NULL;
     }
-    door_arch->name = "Doorway";
+    arch->name = name;
     //NOT a display name: LinkObjects matches the clip's track against it. See BOMBER_DOOR_LEAF_ASSET.
     leaf->name = BOMBER_DOOR_LEAF_ASSET;
     /*
@@ -659,8 +711,16 @@ void ApplicationBomber::BuildDoor(void){
         the shut pose, and from here on the clip owns this transform completely - anything set on it
         would be overwritten on the first frame that plays.
     */
-    door_arch->AttachChild(leaf);
+    arch->AttachChild(leaf);
 
+    /*
+        ITS OWN COPY OF THE CLIP, one per archway.
+
+        AddAnimation binds a clip's tracks to the object it is added to and its children, so a clip
+        shared between two archways would drive whichever linked it last and leave the other standing
+        - the same rule BuildSkinnedActor keeps for the enemies. The track is named `door` and each
+        arch has a child of that name, which is why the names may repeat.
+    */
     Animation* opening = gltfloader.LoadAnimation(BOMBER_ANIM_DOOR);
     if (!opening){
         debug->Err("No animation called %s in bomber_assets.glb\n",BOMBER_ANIM_DOOR);
@@ -672,28 +732,385 @@ void ApplicationBomber::BuildDoor(void){
             open" - a looped door would slam and re-open forever.
         */
         opening->looped = false;
-        door_arch->AddAnimation(opening);
+        arch->AddAnimation(opening);
         //The same unbound-track report BuildSkinnedActor does, and for the same reason: a track
         //that found nothing to drive looks exactly like a clip that is playing.
         for (ObjectAnimation* track:opening->object_animations){
             if (!track->target){
                 debug->Warn("Clip %s drives nothing on [%s] - no object of that name under %s\n",
-                            BOMBER_ANIM_DOOR,track->target_name.c_str(),door_arch->name.c_str());
+                            BOMBER_ANIM_DOOR,track->target_name.c_str(),arch->name.c_str());
             }
         }
         debug->Ok("Clip %-16s %i track(s), %.2fs\n",BOMBER_ANIM_DOOR,
                   (int)opening->object_animations.size(),opening->duration);
     }
 
-    main_scene->AddObject(door_arch);
+    main_scene->AddObject(arch);
+    return arch;
+}
+
+void ApplicationBomber::BuildDoor(void){
+    door_arch = MakeDoorway("Doorway");
     //Shut, and WHERE it stands is not decided here - RebuildField puts it on the cell Maze chose.
     SetDoorOpen(false,true);
 }
 
 /*
+    Puts a door at one end of its clip THIS INSTANT and holds it there.
+
+    The rate-0 case, and the one thing SwitchToAnimation cannot express: a corridor's near door has
+    to START open, because the player has just walked through it, and playing the clip forwards to
+    get there would be fifty ticks of it opening in front of somebody who is already inside.
+
+    `time_index` is written directly, which is the only reach-in - it is the field Object's own state
+    machine advances, and setting a rate of 0 is what stops it advancing again.
+*/
+void ApplicationBomber::ParkDoor(Object* arch, bool f_open){
+    if (!arch){
+        return;
+    }
+    Animation* clip = arch->FindAnimation(BOMBER_ANIM_DOOR);
+    if (!clip){
+        return;
+    }
+    arch->SwitchToAnimation(clip);
+    clip->time_index = f_open ? clip->duration : 0.0f;
+    //Posed now rather than on the next tick, so there is not one frame of the old pose.
+    clip->ApplyInterval(clip->time_index);
+    arch->SetAnimationRate(0.0f);
+}
+
+/*
+    Every object a corridor can ever need, at its longest, built once and then only shown and moved.
+
+    RENDER THREAD, from Init. Twenty-four floors and forty walls covers HALL_MAX_LEN at full width
+    with the surplus hidden, which is the same bargain the turds and the enemies make: a pool costs
+    a few hidden objects and buys never having to create one on the physics thread.
+*/
+void ApplicationBomber::BuildHallway(void){
+    for (int z = 0; z < HALL_MAX_LEN; z++){
+        for (int x = 0; x < HALL_W; x++){
+            char name[48];
+            snprintf(name,sizeof(name),"Hall floor (%i,%i)",x,z);
+            Object* o = assetmanager->GetObjectFromAsset(BOMBER_TILE_ASSET[MAZE_TILE_BRICK]);
+            hall_floor[z][x] = o;
+            if (o){
+                o->name = name;
+                o->SetVisibility(false);
+                main_scene->AddObject(o);
+            }
+        }
+        for (int px = 0; px < HALL_W + 2; px++){
+            char name[48];
+            snprintf(name,sizeof(name),"Hall wall (%i,%i)",px - 1,z);
+            Object* o = assetmanager->GetObjectFromAsset(BOMBER_BLOCK_ASSET[MAZE_TILE_WALL]);
+            hall_wall[z][px] = o;
+            if (o){
+                o->name = name;
+                o->SetVisibility(false);
+                main_scene->AddObject(o);
+            }
+        }
+    }
+    hall_near_arch = MakeDoorway("Hall Near Door");
+    hall_far_arch = MakeDoorway("Hall Far Door");
+    if (hall_near_arch){
+        hall_near_arch->SetVisibility(false);
+        ParkDoor(hall_near_arch,false);
+    }
+    /*
+        The far arch is the board's ENTRY and it is visible from the very first frame, standing shut
+        in the border beside the spawn - on level one too, where nothing came through it. During a
+        transition it is carried out to the corridor's far end and then brought back here, which is
+        why it is this object and not a fourth one.
+    */
+    if (hall_far_arch){
+        ParkDoor(hall_far_arch,false);
+    }
+    debug->Ok("Corridor pool: %i floor, %i wall, 2 doorways\n",
+              HALL_MAX_LEN * HALL_W,HALL_MAX_LEN * (HALL_W + 2));
+}
+
+/*
+    World position of a corridor cell, in the corridor's own frame.
+
+    Fractional, so a walker mid-step lands between two cells. `hall_origin` is local (1,0) - the near
+    doorway - and the two axes come straight out of Hallway::LocalToWorld, so moving or turning the
+    corridor is two members and nothing else has to be told.
+*/
+vec3 ApplicationBomber::HallCellCentre(float x, float z) const {
+    vec3 fwd = BomberDirVec(hall.LocalToWorld(MAZE_DIR_SOUTH));
+    vec3 across = BomberDirVec(hall.LocalToWorld(MAZE_DIR_EAST));
+    return hall_origin + across * ((x - 1.0f) * BOMBER_CELL_SIZE) + fwd * (z * BOMBER_CELL_SIZE);
+}
+
+/*
+    The player has stepped into the open exit. PHYSICS THREAD, from RunSimulationTick.
+
+    The corridor's local cell (1,0) is the exit cell ITSELF, so nothing moves at the moment the two
+    swap over: the same body is standing in the same place, and which class is simulating it changes.
+*/
+void ApplicationBomber::BeginHallway(void){
+    if (f_in_hallway){
+        return;
+    }
+    //Chosen NOW rather than at the commit, so the next board's seed is settled before anything can
+    //depend on it - and so a recorded run lays out the same one.
+    hall_next_seed = next_auto_seed++;
+    //The way they were walking IS the way the corridor runs. It cannot be anything else: they got
+    //here by stepping outward through the border.
+    hall.Begin(hall_next_seed,maze.player,maze.player.facing);
+    hall_origin = CellCentre(maze.door_x,maze.door_z);
+
+    f_in_hallway = true;
+    f_hall_committed = false;
+    hall_commit_ticks = 0;
+    hall_build_ticks = 0;
+
+    /*
+        The board's exit door steps aside for the corridor's near arch.
+
+        Same asset in the same place, and the yaw is COPIED rather than recomputed so the hinge and
+        the leaf are on the same side - a 180 degree difference would be invisible on the archway and
+        very visible on the door hanging in it. The board's one is carried off to the next board at
+        the commit, which is why this cannot simply be it.
+    */
+    if (door_arch){
+        if (hall_near_arch){
+            hall_near_arch->SetRotation(door_arch->GetRotation());
+        }
+        door_arch->SetVisibility(false);
+    }
+    if (hall_near_arch){
+        hall_near_arch->SetVisibility(true);
+        //OPEN, because the player has just walked through it. Fifty ticks of it opening in front of
+        //somebody already standing inside is what ParkDoor exists to avoid.
+        ParkDoor(hall_near_arch,true);
+        f_hall_near_drawn_open = true;
+    }
+    if (hall_far_arch){
+        ParkDoor(hall_far_arch,false);
+        f_hall_far_drawn_open = false;
+    }
+    debug->Ok("Corridor: %i long, running %s, next board seed %u\n",
+              hall.length,
+              hall.forward == MAZE_DIR_EAST ? "east" :
+              hall.forward == MAZE_DIR_WEST ? "west" :
+              hall.forward == MAZE_DIR_NORTH ? "north" : "south",
+              hall_next_seed);
+    SyncHallwayView();
+}
+
+/*
+    The near door has finished shutting. Swap the board, and move the corridor to meet the new one.
+
+    THE ONE MOMENT ANY OF THIS IS SAFE. The corridor is a closed box by now - a door at each end,
+    both shut, and this app draws no skybox - so there is no external reference by which a move or a
+    turn could be seen. The player and the camera are carried along with it.
+*/
+void ApplicationBomber::CommitHallway(void){
+    //Where the player is, and which way the corridor points, before any of it moves.
+    vec3 before = HallCellCentre(hall.player.X(),hall.player.Z());
+    float yaw_before = BomberDirYaw(hall.forward);
+
+    current_seed = hall_next_seed;
+    /*
+        The walker goes with them, and Maze::NewGame is where a level boundary's cost is decided -
+        health and score kept, the key and the shield taken. One place, and not this one.
+    */
+    maze.NewGame(current_seed,&hall.player);
+    RebuildField();
+
+    /*
+        Now pick the corridor up.
+
+        Its far doorway has to land on BOMBER_ENTRY_X/Z - the border cell beside the spawn - running
+        EAST, so that stepping out of it is a step onto the spawn. Two members say all of that: the
+        direction, and the world position of local (1,0), which is the far doorway walked back down
+        the length of the corridor.
+    */
+    //`forward` only. `control_forward` is left where it was, so the key that has been walking the
+    //player up the corridor goes on doing it - see the note on it.
+    hall.forward = MAZE_DIR_EAST;
+    hall_origin = CellCentre(BOMBER_ENTRY_X,BOMBER_ENTRY_Z)
+                - BomberDirVec(MAZE_DIR_EAST) * ((float)(hall.length - 1) * BOMBER_CELL_SIZE);
+
+    vec3 after = HallCellCentre(hall.player.X(),hall.player.Z());
+    float yaw_after = BomberDirYaw(hall.forward);
+
+    /*
+        And carry the camera with it, about the PLAYER.
+
+        Rotating the position alone would leave the view swinging round; rotating the orientation as
+        well is what makes the turn invisible. The same rotate-about-a-pivot the orbit in UpdateView
+        does, applied once.
+    */
+    Camera* camera = main_scene ? main_scene->camera : NULL;
+    if (camera){
+        quat turn(vec3(0,1,0),yaw_after - yaw_before);
+        vec3 rel = camera->GetPosition() - before;
+        camera->SetPosition(after + turn * rel);
+        camera->RotateBy(turn);
+        camera_target = after + turn * (camera_target - before);
+    }
+
+    f_hall_committed = true;
+    debug->Ok("Corridor sealed: board %u laid out, corridor turned to meet it\n",current_seed);
+}
+
+/*
+    The player has stepped into the far doorway, which is the border cell beside the spawn - so they
+    are already standing on the next board and Maze has had them on its spawn since the commit.
+*/
+void ApplicationBomber::EndHallway(void){
+    f_in_hallway = false;
+    //Bring the camera back over the board over the next second or so - see SyncView. Panned rather
+    //than snapped, and panned rather than re-aimed, so the angle the player chose survives.
+    hall_camera_return = BOMBER_HALL_RETURN_TICKS;
+    //Facing the way they walked in. The corridor ran east by the time they got here.
+    maze.player.facing = MAZE_DIR_EAST;
+
+    if (door_arch){
+        door_arch->SetVisibility(true);
+    }
+    if (hall_near_arch){
+        hall_near_arch->SetVisibility(false);
+    }
+    for (int z = 0; z < HALL_MAX_LEN; z++){
+        for (int x = 0; x < HALL_W; x++){
+            if (hall_floor[z][x]){
+                hall_floor[z][x]->SetVisibility(false);
+            }
+        }
+        for (int px = 0; px < HALL_W + 2; px++){
+            if (hall_wall[z][px]){
+                hall_wall[z][px]->SetVisibility(false);
+            }
+        }
+    }
+    /*
+        THE FAR ARCH STAYS. It is standing in the border beside the spawn, which is exactly where the
+        corridor left it, and it is the door the player came in by - so it swings shut behind them
+        rather than being taken away with the rest.
+    */
+    if (hall_far_arch){
+        hall_far_arch->SetAnimationRate(-1.0f);
+        f_hall_far_drawn_open = false;
+    }
+    SyncView();
+}
+
+/*
+    The corridor on screen: where its cells are, how far out of the floor they have risen, and its
+    two doors. PHYSICS THREAD, from SyncView, every tick while the corridor is the live one.
+*/
+void ApplicationBomber::SyncHallwayView(void){
+    hall_build_ticks++;
+
+    //Hoisted: GetNodePosition is a name lookup, and this is per tick rather than per cell.
+    float floor_y = gltfloader.GetNodePosition(BOMBER_TILE_ASSET[MAZE_TILE_BRICK]).y;
+    float wall_y = gltfloader.GetNodePosition(BOMBER_BLOCK_ASSET[MAZE_TILE_WALL]).y;
+    float yaw = BomberDirYaw(hall.forward);
+
+    for (int z = 0; z < HALL_MAX_LEN; z++){
+        /*
+            THE ROW'S OWN CLOCK. Each row starts BOMBER_HALL_ROW_DELAY after the one in front, so the
+            corridor unrolls away from the player rather than appearing all at once - which is the
+            difference between a corridor arriving and a corridor having always been there.
+        */
+        int t = hall_build_ticks - z * BOMBER_HALL_ROW_DELAY;
+        float rise = clamp((float)t / (float)BOMBER_HALL_RISE_TICKS,0.0f,1.0f);
+        float drop = -(1.0f - rise) * BOMBER_HALL_RISE_DROP;
+        bool f_row = (z < hall.length) && (t > 0);
+
+        for (int x = 0; x < HALL_W; x++){
+            Object* o = hall_floor[z][x];
+            if (!o){
+                continue;
+            }
+            bool f_show = f_row && hall.IsPassable(x,z);
+            o->SetVisibility(f_show);
+            if (f_show){
+                o->SetPosition(HallCellCentre((float)x,(float)z) + vec3(0.0f,floor_y + drop,0.0f));
+                o->SetRotation(quat(vec3(0,1,0),yaw));
+            }
+        }
+        for (int px = 0; px < HALL_W + 2; px++){
+            Object* o = hall_wall[z][px];
+            if (!o){
+                continue;
+            }
+            //px is local x + 1, so the two side walls fall out of IsPassable along with the caps at
+            //either end of the corridor.
+            bool f_show = f_row && !hall.IsPassable(px - 1,z);
+            o->SetVisibility(f_show);
+            if (f_show){
+                o->SetPosition(HallCellCentre((float)(px - 1),(float)z)
+                               + vec3(0.0f,wall_y + drop,0.0f));
+                o->SetRotation(quat(vec3(0,1,0),yaw));
+            }
+        }
+    }
+
+    //--- the two doors --------------------------------------------------------------------------
+    if (hall_near_arch){
+        hall_near_arch->SetPosition(HallCellCentre(1.0f,0.0f));
+        //Yaw is NOT set here: it was copied from the board's exit door at Begin so the leaf hangs
+        //the same way round, and the corridor never turns while this one is still in shot.
+        if (f_hall_near_drawn_open != hall.f_near_door_open){
+            f_hall_near_drawn_open = hall.f_near_door_open;
+            hall_near_arch->SetAnimationRate(hall.f_near_door_open ? 1.0f : -1.0f);
+        }
+    }
+    if (hall_far_arch){
+        hall_far_arch->SetPosition(HallCellCentre(1.0f,(float)(hall.length - 1)));
+        hall_far_arch->SetRotation(quat(vec3(0,1,0),yaw));
+        if (f_hall_far_drawn_open != hall.f_far_door_open){
+            f_hall_far_drawn_open = hall.f_far_door_open;
+            hall_far_arch->SetAnimationRate(hall.f_far_door_open ? 1.0f : -1.0f);
+        }
+    }
+
+    //--- the player -------------------------------------------------------------------------------
+    vec3 walker_pos = HallCellCentre(hall.player.X(),hall.player.Z());
+    if (character){
+        character->SetVisibility(true);
+        character->SetPosition(walker_pos + vec3(0.0f,character_y,0.0f));
+        //The walker's facing is LOCAL - the corridor turns it back into a world direction, which is
+        //the whole reason Hallway keeps its own frame.
+        int world_facing = hall.LocalToWorld(hall.player.facing);
+        if (world_facing >= 0 && world_facing < MAZE_NUM_DIRS){
+            character->SetRotation(quat(vec3(0,1,0),BOMBER_WALKER_YAW[world_facing]));
+        }
+    }
+    //The shield follows the body as always - it is a child - so only whether it shows is decided.
+    if (shield_worn){
+        shield_worn->SetVisibility(hall.player.shield_ticks > 0);
+    }
+
+    /*
+        AND THE CAMERA GOES WITH THEM, or they walk out of shot.
+
+        A PAN and not a re-aim: the pivot is moved onto the player and the camera is carried by the
+        same vector, so whatever angle and distance the player had chosen on the board is exactly
+        what they get in the corridor. It also makes the turn at the commit a rotation about the
+        player rather than about somewhere behind them.
+    */
+    Camera* camera = main_scene ? main_scene->camera : NULL;
+    if (camera){
+        vec3 d = walker_pos - camera_target;
+        camera_target = walker_pos;
+        camera->SetPosition(camera->GetPosition() + d);
+    }
+    drawn_hall_version = hall.version;
+}
+
+
+
+/*
     Swings it, or swings it back.
 
-    PHYSICS THREAD ONLY - from SyncView, which compares it against Maze::f_has_key every tick, and
+    PHYSICS THREAD ONLY - from SyncView, which compares it against the player's key every tick, and
     from RebuildField and BuildDoor with `f_snap`.
 
     ONE CLIP, RUN BOTH WAYS. There is a single `Door_Opening` in the file and shutting is it at -1,
@@ -821,6 +1238,11 @@ void ApplicationBomber::RebuildField(void){
                 re-export wall_brick as a thin one and this is the line that should change.
             */
             const char* block_asset = BOMBER_BLOCK_ASSET[t];
+            //The way IN. The corridor's far archway stands on this cell for the whole level, so the
+            //border gets no brick here - see BOMBER_ENTRY_X.
+            if (x == BOMBER_ENTRY_X && z == BOMBER_ENTRY_Z){
+                block_asset = NULL;
+            }
             if (block_asset){
                 bool f_panel = (t != MAZE_TILE_WALL);
                 float yaw = BOMBER_PANEL_YAW_X;
@@ -942,6 +1364,18 @@ void ApplicationBomber::RebuildField(void){
         door_arch->SetRotation(quat(vec3(0,1,0),f_side ? BOMBER_PANEL_YAW_Z : BOMBER_PANEL_YAW_X));
         //A new board is a new lock, and it was never open - so snap rather than swing.
         SetDoorOpen(false,true);
+    }
+    /*
+        And the way in, which is a fixed cell and so is placed here once rather than moved about.
+
+        Left where the corridor put it if one is in flight - SyncHallwayView owns it then, and moving
+        it here would drag the far end of a corridor somebody is standing in.
+    */
+    if (hall_far_arch && !f_in_hallway){
+        hall_far_arch->SetPosition(CellCentre(BOMBER_ENTRY_X,BOMBER_ENTRY_Z));
+        hall_far_arch->SetRotation(quat(vec3(0,1,0),BOMBER_PANEL_YAW_Z));
+        ParkDoor(hall_far_arch,false);
+        f_hall_far_drawn_open = false;
     }
     bomb = assetmanager->GetObjectFromAsset(BOMBER_BOMB_ASSET);
     if (bomb){
@@ -1363,8 +1797,9 @@ void ApplicationBomber::RegisterCommandHandlers(void){
 
     main_scene->RegisterCommandHandler(BOMBER_CMD_DOOR,
         [this](const SimCommand& cmd) -> objectid_t {
-            //The RULE, not the animation: SyncView brings the clip along on the next tick.
-            maze.f_has_key = (cmd.value[0] != 0.0f);
+            //The RULE, not the animation: SyncView brings the clip along on the next tick. The key
+            //is the PLAYER's, which is what stops an enemy walking out through the same door.
+            maze.player.f_has_key = (cmd.value[0] != 0.0f);
             maze.field_version++;
             return OBJECTID_INVALID;
         });
@@ -1454,7 +1889,40 @@ void ApplicationBomber::RunSimulationTick(void){
     MazeInput in;
     in.direction = direction;
     in.f_place_bomb = f_drop;
-    maze.Tick(in);
+
+    /*
+        ONE OR THE OTHER, NEVER BOTH - see the note at the top of Hallway.h. That is what makes the
+        corridor cost a branch rather than a second simulation, and it is why none of the board's
+        rules have to know it exists.
+    */
+    if (f_in_hallway){
+        hall.Tick(in);
+        /*
+            The commit is when the near door has FINISHED shutting, not when it starts: until it is
+            shut the old board is still visible through the gap. Hallway reports the tick the player
+            stepped off the threshold and this waits out the clip.
+        */
+        if (hall.f_sealed && !f_hall_committed){
+            hall_commit_ticks++;
+            if (hall_commit_ticks >= BOMBER_HALL_COMMIT_TICKS){
+                CommitHallway();
+            }
+        }
+        if (hall.f_finished && f_hall_committed){
+            EndHallway();
+        }
+    }else{
+        maze.Tick(in);
+        /*
+            Standing on the open exit is what starts a corridor. `step_ticks == 0` because `tile_x`
+            is the DESTINATION of the step in progress - without it the corridor would begin while
+            the player was still half a cell short of the doorway.
+        */
+        if (maze.player.f_alive && maze.player.step_ticks == 0 &&
+            maze.player.tile_x == maze.door_x && maze.player.tile_z == maze.door_z){
+            BeginHallway();
+        }
+    }
 
     SyncView();
 }
@@ -1566,6 +2034,32 @@ void ApplicationBomber::TickPickupView(void){
     than being integrated here.
 */
 void ApplicationBomber::SyncView(void){
+    /*
+        In the corridor, the board is not being ticked and nothing on it can have moved - so it is
+        left exactly as it was and only the corridor is brought up to date. After the commit there is
+        no board left to update anyway.
+    */
+    if (f_in_hallway){
+        SyncHallwayView();
+        return;
+    }
+    /*
+        Just out of a corridor: walk the pivot back from the doorway to the middle of the board.
+
+        The same pan as in the corridor and for the same reason - the camera keeps the angle and the
+        distance the player chose, and only what it is looking at moves.
+    */
+    if (hall_camera_return > 0){
+        hall_camera_return--;
+        Camera* camera = main_scene ? main_scene->camera : NULL;
+        if (camera){
+            float t = 1.0f / (float)(hall_camera_return + 1);
+            vec3 want = camera_target + (vec3(0,0,0) - camera_target) * t;
+            vec3 d = want - camera_target;
+            camera_target = want;
+            camera->SetPosition(camera->GetPosition() + d);
+        }
+    }
     //--- what changed on the board ---------------------------------------------------------------
     //First, so everything placed below stands on a field that already agrees with the rules. One
     //integer comparison on the ticks where nothing was destroyed and nothing was picked up.
@@ -1597,12 +2091,8 @@ void ApplicationBomber::SyncView(void){
         the test. object_get's world_forward is the honest instrument - it needs no picture - and a
         screenshot is only needed once, to settle which way the ART faces relative to that.
     */
-    static const float YAW[MAZE_NUM_DIRS] = {
-         TYPE_PI * 0.5f,    //EAST  +X
-        -TYPE_PI * 0.5f,    //WEST  -X
-         TYPE_PI,           //NORTH -Z
-         0.0f               //SOUTH +Z - the rest pose
-    };
+    //Lifted to file scope as BOMBER_WALKER_YAW, because the corridor points a walker with it too.
+    const float* YAW = BOMBER_WALKER_YAW;
 
     /*
         ONE PLACEMENT FOR THE PLAYER AND THE ENEMIES, because they are the same MazeWalker and the
@@ -1643,7 +2133,7 @@ void ApplicationBomber::SyncView(void){
         is drawn either.
     */
     if (shield_worn){
-        shield_worn->SetVisibility(maze.shield_ticks > 0);
+        shield_worn->SetVisibility(maze.player.shield_ticks > 0);
     }
     /*
         The door, derived from the rules rather than remembered - the same shape as the enemies'
@@ -1652,8 +2142,8 @@ void ApplicationBomber::SyncView(void){
         Compared rather than set every tick because SetAnimationRate would otherwise wake the clip
         out of the PAUSED state it settles into at each end, every tick, for ever.
     */
-    if (door_arch && f_door_open != maze.f_has_key){
-        SetDoorOpen(maze.f_has_key);
+    if (door_arch && f_door_open != maze.player.f_has_key){
+        SetDoorOpen(maze.player.f_has_key);
     }
     for (int i = 0; i < (int)enemy_objects.size(); i++){
         //An object past the end of this field's enemies gets a default MazeWalker, whose f_alive is
@@ -2104,14 +2594,17 @@ json ApplicationBomber::StateJson(void){
         {"x",maze.player.X()},
         {"z",maze.player.Z()},
         {"alive",maze.player.f_alive},
-        {"health",maze.health},
-        {"shield_ticks",maze.shield_ticks},
-        {"invuln_ticks",maze.invuln_ticks},
+        {"health",maze.player.health},
+        {"shield_ticks",maze.player.shield_ticks},
+        {"invuln_ticks",maze.player.invuln_ticks},
         {"deaths",maze.deaths},
+        //Counts DOWN while lying there; the body is drawn for all of it.
+        {"death_ticks",maze.player.death_ticks},
         //Treasure only. See MazeItemScore - health and shields are worth nothing here.
-        {"score",maze.score},
-        //The exit key. The one pickup that is a win condition rather than a reward.
-        {"has_key",maze.f_has_key},
+        {"score",maze.player.score},
+        //The exit key. The one pickup that is a win condition rather than a reward, and the one
+        //thing on the walker that a death does not take.
+        {"has_key",maze.player.f_has_key},
         //Whether the shield is actually being WORN, which is the half a tick count cannot answer:
         //it is a child of the character, so this is also a test that the character exists.
         {"wearing_shield",shield_worn ? shield_worn->IsVisible() : false}
@@ -2198,12 +2691,28 @@ json ApplicationBomber::StateJson(void){
         that cannot lie: it is the leaf's own local transform, which only the clip ever writes.
     */
     if (door_arch){
+        //The cell inside the door - the only one a walker can step onto it from.
+        int door_in_x = (maze.door_x == 0) ? 1
+                      : (maze.door_x == MAZE_W - 1 ? MAZE_W - 2 : maze.door_x);
+        int door_in_z = (maze.door_z == 0) ? 1
+                      : (maze.door_z == MAZE_H - 1 ? MAZE_H - 2 : maze.door_z);
         json door = json{
             {"tile",json::array({maze.door_x,maze.door_z})},
-            //`unlocked` is the RULE - whether you may walk through. `open` is the view following
-            //it, and the two differ for the fifty ticks the leaf takes to swing.
-            {"unlocked",maze.f_has_key},
-            {"passable",maze.IsPassable(maze.door_x,maze.door_z)},
+            //`unlocked` is the RULE - whether the PLAYER may walk through. `open` is the view
+            //following it, and the two differ for the fifty ticks the leaf takes to swing.
+            {"unlocked",maze.player.f_has_key},
+            /*
+                What the walker will actually be told, asked of the rules rather than restated.
+
+                Through CanEnter and from the cell INSIDE the door, because that is the only step
+                anyone ever takes onto it - and because Maze::IsPassable now calls a door shut for
+                everybody, which is its job. `enemy_passable` is the same question for a body with
+                no key, and it is here because it was FALSE for a while and nothing said so: an
+                enemy could walk into the unlocked exit and stand in it.
+            */
+            {"passable",maze.CanEnter(maze.player,door_in_x,door_in_z,maze.door_x,maze.door_z)},
+            {"enemy_passable",maze.CanEnter(MazeWalker(),door_in_x,door_in_z,
+                                            maze.door_x,maze.door_z)},
             {"open",f_door_open},
             {"clip",std::string(door_arch->CurrentAnimationName())},
             {"state",door_arch->animation_state},
@@ -2224,6 +2733,40 @@ json ApplicationBomber::StateJson(void){
             door["leaf_turned"] = json::array({r.x,r.y,r.z,r.w});
         }
         result["door"] = door;
+    }
+    /*
+        The corridor, when there is one. Which of the two is live is the first thing any caller has
+        to know, because `character` and `field` describe the BOARD and the board is not where the
+        player is standing while this block exists.
+    */
+    result["in_hallway"] = f_in_hallway;
+    if (f_in_hallway){
+        result["hallway"] = json{
+            {"length",hall.length},
+            {"tile",json::array({hall.player.tile_x,hall.player.tile_z})},
+            /*
+                TWO FRAMES, and a caller wants the second one.
+
+                `forward` is where the corridor currently POINTS, which changes at the commit when it
+                is turned to meet the next board. `control_forward` is the direction whose key walks
+                the player up it, and it never changes - so that is the one to press. Reading
+                `forward` and pressing it walks you into the side wall, which is exactly what the
+                first version of the test for this did.
+            */
+            {"forward",hall.forward},
+            {"control_forward",hall.control_forward},
+            {"near_door_open",hall.f_near_door_open},
+            //`sealed` is the RULE (the player stepped off the threshold) and `committed` is the app
+            //having acted on it once the near door finished shutting - they are 60 ticks apart.
+            {"sealed",hall.f_sealed},
+            {"committed",f_hall_committed},
+            {"far_door_open",hall.f_far_door_open},
+            {"finished",hall.f_finished},
+            //The walker travels, so these are the numbers that have to come out the other end.
+            {"health",hall.player.health},
+            {"score",hall.player.score},
+            {"has_key",hall.player.f_has_key}
+        };
     }
     result["renderers"] = json{{"tiles",f_draw_tiles},{"cross",f_draw_cross}};
     result["input_locked"] = f_lock_human_input;
@@ -2380,7 +2923,8 @@ void ApplicationBomber::RegisterMCPTools(void){
 
     MCPServer::Get()->RegisterTool("bomber_door",
         "Give the player the exit key, or take it back - which is what opens and shuts the door, "
-        "because the door is Maze::f_has_key and the animation follows it. The door is an ARCHWAY "
+        "because the door is the PLAYER'S key and the animation follows it - an enemy carries no "
+        "key and can never use the exit. The door is an ARCHWAY "
         "plus a LEAF moved by the Door_Opening clip out of the .glb, the app's only animated prop "
         "that is not a character. Opening takes about 50 ticks and the RULE changes immediately, so "
         "`door.unlocked` and `door.open` differ while it swings; `door.passable` is what the walker "
@@ -2606,19 +3150,20 @@ void ApplicationBomber::RenderBomberPanel(void){
     //Everything here is in TICKS rather than seconds, which is the house rule and is also what the
     //MCP tools report - a panel that said 1.4s while bomber_state said 84 would be two units to
     //hold in your head for no gain.
-    ImGui::Text("Score %u%s",maze.score,maze.f_has_key ? "   KEY" : "");
+    ImGui::Text("Score %u%s",maze.player.score,maze.player.f_has_key ? "   KEY" : "");
     if (maze.player.f_alive){
-        ImGui::Text("Health %i/%i",maze.health,MAZE_START_HEALTH);
-        if (maze.shield_ticks > 0){
+        ImGui::Text("Health %i/%i",maze.player.health,MAZE_START_HEALTH);
+        if (maze.player.shield_ticks > 0){
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.4f,0.8f,1.0f,1.0f),"SHIELD %i",maze.shield_ticks);
-        }else if (maze.invuln_ticks > 0){
+            ImGui::TextColored(ImVec4(0.4f,0.8f,1.0f,1.0f),"SHIELD %i",maze.player.shield_ticks);
+        }else if (maze.player.invuln_ticks > 0){
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f,0.8f,0.3f,1.0f),"hit %i",maze.invuln_ticks);
+            ImGui::TextColored(ImVec4(1.0f,0.8f,0.3f,1.0f),"hit %i",maze.player.invuln_ticks);
         }
     }else{
+        //A countdown now, not a count up - one clock for being dead. See MazeWalker::death_ticks.
         ImGui::TextColored(ImVec4(1.0f,0.4f,0.3f,1.0f),"Dead - back on the spawn in %i ticks",
-                           MAZE_RESPAWN_TICKS - maze.dead_ticks);
+                           maze.player.death_ticks);
     }
     //Enough to tell whether the enemies are doing anything without having to find them on the board.
     int num_alive = 0;
@@ -2685,7 +3230,7 @@ void ApplicationBomber::RenderBomberPanel(void){
     //The exit. Its own row because it is the only thing on this panel that is not about the blast
     //or the board, and because it is the fastest way to look at the clip a frame at a time: pause,
     //press it, then step.
-    if (ImGui::Button(maze.f_has_key ? "Take the key back" : "Give the exit key")){
+    if (ImGui::Button(maze.player.f_has_key ? "Take the key back" : "Give the exit key")){
         //SubmitUICommand, never SubmitCommandAndWait - render thread with the mutex held. See the
         //note on the Bomb now button.
         SimCommand cmd;
@@ -2695,7 +3240,7 @@ void ApplicationBomber::RenderBomberPanel(void){
     }
     ImGui::SameLine();
     ImGui::TextDisabled("exit (%i,%i)  %s",maze.door_x,maze.door_z,
-                        maze.f_has_key ? "UNLOCKED" : "locked");
+                        maze.player.f_has_key ? "UNLOCKED" : "locked");
 
     ImGui::Separator();
     //The two renderers. Both on draws the same blast twice, which is the A/B - see the note at the

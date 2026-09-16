@@ -40,9 +40,32 @@ work on when even `back` is blocked, which has to be a RULE and not just a spawn
 blast can wall one in later. Measured over 200 seeds / 800 enemies: 15 born with no exit and 14 more
 never moving, both now 0.
 
-**Walkers are a `MazeWalker` struct**, shared by the player and up to `MAZE_MAX_ENEMIES` enemies -
-they differ only in what picks their direction. Each carries its own `step_total` so the two can
-move at different speeds. Tile-to-tile with an atomic step, so "which tile" is always two integers.
+**`MazeWalker` carries everything that is true of a BODY; `Maze` keeps the board and the
+statistics.** Settled 2026-09-16 because the walker is the thing that TRAVELS between levels, so
+anything on it carries across for free. On the walker: position/facing/step, `f_alive`,
+`death_ticks`, `chop_ticks`, `health`, `shield_ticks`, `invuln_ticks`, `f_has_key`, `score`. Left on
+Maze: `deaths`, `items_taken`, `blocks_destroyed`, `blocks_cut`, `enemies_killed` - statistics,
+whose per-level carry-across policy is a decision not yet made.
+
+**Two bugs that split fixed, both invisible until measured:**
+- `Maze::f_has_key` opened the door for WHOEVER asked, and `TickEnemies` asks through `CanEnter` -
+  35 of 60 boards ended with an enemy standing in the player's exit. Now **`IsPassable` answers for
+  the CELL and calls a door shut for everybody** (which is what generation, pruning, decor, the map
+  and the view's item visibility all want), and **`CanEnter(walker, from, to)` asks the walker for a
+  key**. An enemy never has one.
+- **Two death clocks one letter apart** - `MazeWalker::death_ticks` (corpse drawn) and
+  `Maze::dead_ticks` (respawn wait) - and the player's death set only the second, so the player's
+  body vanished on the frame it died. One countdown now; the killer picks the length
+  (`MAZE_DEATH_TICKS` enemy, `MAZE_RESPAWN_TICKS` player).
+
+**`player = MazeWalker()` appears TWICE and they mean different things.** `NewGame` is the blunt
+reset (a new board is a new lock); the respawn names what a death does NOT cost (the key, the
+score). Anything earned added to `MazeWalker` later needs a line in the respawn AND a line in the
+test, or every death wipes it silently.
+
+**Walkers are shared by the player and up to `MAZE_MAX_ENEMIES` enemies** - they differ only in what
+picks their direction. Each carries its own `step_total` so the two can move at different speeds.
+Tile-to-tile with an atomic step, so "which tile" is always two integers.
 
 **The view is built ONCE per field and then only shown/hidden.** `cell_block`/`cell_item` index the
 objects by cell; `Maze::field_version` bumps on any cell change and `RefreshCells` walks the board
@@ -137,8 +160,28 @@ is four hundred objects, so an unfiltered call quietly returns only the tail - u
 And a driver that walks the player somewhere must let the last step LAND: `tile` is the
 DESTINATION of the step in progress and `TickItems` refuses to collect while `step_ticks > 0`.
 
-Still open: walking through the exit should end the level (agreed shape: re-roll the seed, carry
-score and upgrades across), sound
+**`Hallway.h/.cpp` is the level boundary** (built 2026-09-16): a 3 x 4..8 corridor with a doorway
+at each end, its own tiny rule set, no tile array (the shape is a function of `length`). NOT a size
+parameter on Maze and not a second Maze - the two are NEVER simulated at once, so the app holds a
+phase and one of them ticks. It shares `MazeWalker` and `Maze::DirX/DirZ/DirOpposite` directly.
+
+**The commit point** is the near door having FINISHED shutting - `Hallway::f_sealed` reports the tick
+the player steps off the threshold, and the app waits `BOMBER_HALL_COMMIT_TICKS` (60, past the
+50-tick clip) before throwing the old board away. Then `Maze::NewGame(seed, carry)` lays out the next
+one and the corridor is picked up, moved and TURNED so its far doorway lands on `BOMBER_ENTRY_X/Z` -
+the border cell beside the spawn - with the camera rotated about the player by the same quaternion.
+
+**TWO FRAMES, and this is the trap.** `Hallway::forward` is the frame the corridor is BUILT in and
+turns at the commit; `control_forward` is the frame the player's HANDS are in and never does.
+`LocalToWorld` uses the first, `InputToLocal` the second, and they are deliberately not inverses once
+they part. With one frame, turning the corridor turned the controls with it: the camera rotates too,
+so NOTHING happens on screen, and the key that had been walking you forward walks you into the side
+wall. `bomber_state` reports both and says which to press.
+
+**Known gap:** you can see OVER the corridor walls from the board's camera angle, so the board swap
+is visible. The corridor is a sealed box to a walker, not to the camera.
+
+Also open: sound
 (`USE_SOUND` off - no wav yet), player animations, one bomb at a time, enemies that wander rather
 than hunt, and no HUD. `apps/bomber/game_todo.md` is the user's own list - read it first.
 
