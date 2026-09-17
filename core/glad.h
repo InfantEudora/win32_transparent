@@ -224,6 +224,22 @@
 
 #define GL_STREAM_DRAW 0x88E0
 #define GL_STREAM_READ 0x88E1
+//Pixel pack buffer - see Renderer::ReadPickingAsync. glReadPixels writes into whatever is bound
+//here instead of into client memory, and that is the whole trick: with a buffer bound it is a
+//GPU-side copy that returns immediately, with nothing bound it is a stall until the GPU catches up.
+#define GL_PIXEL_PACK_BUFFER 0x88EB
+#define GL_MAP_READ_BIT 0x0001
+//The type RGBA16F actually holds - see the format note above HalfToFloat in Renderer.cpp.
+#define GL_HALF_FLOAT 0x140B
+
+//Fence syncs - how ReadPickingAsync asks "has the GPU finished writing that buffer yet?" WITHOUT
+//waiting for the answer to be yes. Mapping a buffer the GPU is still writing blocks, which is the
+//exact stall the pixel pack buffer was introduced to remove, so readiness has to be polled the
+//same way GL_QUERY_RESULT_AVAILABLE polls a timer query.
+#define GL_SYNC_GPU_COMMANDS_COMPLETE 0x9117
+#define GL_SYNC_STATUS 0x9114
+#define GL_UNSIGNALED 0x9118
+#define GL_SIGNALED 0x9119
 #define GL_STREAM_COPY 0x88E2
 #define GL_STATIC_DRAW 0x88E4
 #define GL_STATIC_READ 0x88E5
@@ -487,6 +503,25 @@ GLAPI PFNGLGENVERTEXARRAYSPROC glGenVertexArrays;
 //SSBOs
 typedef void (APIENTRYP PFNGLBINDBUFFERBASEPROC)(GLenum target, GLuint index, GLuint buffer);
 GLAPI PFNGLBINDBUFFERBASEPROC glBindBufferBase;
+//glBindBuffer has no direct-state-access twin for the pixel pack point: which buffer glReadPixels
+//packs into is context state, not an argument, so this one genuinely has to bind.
+typedef void (APIENTRYP PFNGLBINDBUFFERPROC)(GLenum target, GLuint buffer);
+GLAPI PFNGLBINDBUFFERPROC glBindBuffer;
+typedef void (APIENTRYP PFNGLDELETEBUFFERSPROC)(GLsizei n, const GLuint *buffers);
+GLAPI PFNGLDELETEBUFFERSPROC glDeleteBuffers;
+typedef void* (APIENTRYP PFNGLMAPNAMEDBUFFERRANGEPROC)(GLuint buffer, GLintptr offset, GLsizeiptr length, GLbitfield access);
+GLAPI PFNGLMAPNAMEDBUFFERRANGEPROC glMapNamedBufferRange;
+typedef GLboolean (APIENTRYP PFNGLUNMAPNAMEDBUFFERPROC)(GLuint buffer);
+GLAPI PFNGLUNMAPNAMEDBUFFERPROC glUnmapNamedBuffer;
+typedef struct __GLsync *GLsync;
+typedef GLsync (APIENTRYP PFNGLFENCESYNCPROC)(GLenum condition, GLbitfield flags);
+GLAPI PFNGLFENCESYNCPROC glFenceSync;
+typedef void (APIENTRYP PFNGLDELETESYNCPROC)(GLsync sync);
+GLAPI PFNGLDELETESYNCPROC glDeleteSync;
+//glGetSynciv rather than glClientWaitSync(timeout 0): a pure query with no flush side effect, so
+//polling it every frame cannot itself change how the command stream is submitted.
+typedef void (APIENTRYP PFNGLGETSYNCIVPROC)(GLsync sync, GLenum pname, GLsizei count, GLsizei *length, GLint *values);
+GLAPI PFNGLGETSYNCIVPROC glGetSynciv;
 typedef void (APIENTRYP PFNGLNAMEDBUFFERDATAPROC)(GLuint buffer, GLsizeiptr size, const void *data, GLenum usage);
 GLAPI PFNGLNAMEDBUFFERDATAPROC glNamedBufferData;
 typedef void (APIENTRYP PFNGLNAMEDBUFFERSUBDATAPROC)(GLuint buffer, GLintptr offset, GLsizeiptr size, const void *data);

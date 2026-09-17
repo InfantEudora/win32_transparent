@@ -858,6 +858,61 @@ void Application::RegisterCoreMCPTools(){
     //a position, a point being looked AT, and the pivot they turn around, so these report and
     //accept exactly that. Written for debugging the middle-mouse orbit: camera_get before and
     //after a drag says whether a runaway came from the input delta or from the orbit maths.
+    /*
+        The renderer's own numbers, so they can be read without the ImGui panel.
+
+        The panel (Engine -> Performance) is the same data, but it is behind a collapsing header
+        and a screenshot, which makes an A/B measurement a matter of clicking accurately rather
+        than of measuring. This repo's measurements are made by agents driving MCP, so the
+        timings belong here too.
+
+        `gpu_passes` are GL_TIME_ELAPSED queries - actual GPU execution. `cpu` are wall-clock
+        PerfTimers. The two are different machines and do not sum to each other; see the block
+        comment on Renderer::gpu_pass_t.
+    */
+    MCPServer::Get()->RegisterTool("renderer_timings",
+        "Per-pass GPU cost and the renderer's CPU timers, in microseconds, as the Engine panel's "
+        "Performance section shows them. `gpu_passes` are GL_TIME_ELAPSED queries measuring real "
+        "GPU execution; a pass that did not run this frame reads 0. `cpu` are wall-clock timers - "
+        "`pick_readback` is the mouse-over readback, which is a CPU stall rather than GPU work. "
+        "Each value is a rolling average over the last 60 frames, with the peak alongside.",
+        json{ {"type","object"}, {"properties", json::object()} },
+        [this](const json &args) -> json {
+            if (!renderer){
+                return json{ {"error","no renderer"} };
+            }
+            json passes = json::array();
+            double total_us = 0;
+            for (int i=0;i<Renderer::GPU_PASS_COUNT;i++){
+                const Renderer::GPUPassTimer* pass = renderer->GetGPUPassTimer(i);
+                if (!pass || !pass->timer){
+                    continue;
+                }
+                total_us += pass->timer->avg;
+                passes.push_back(json{
+                    {"pass",   Renderer::GetGPUPassName(i)},
+                    {"avg_us", pass->timer->avg},
+                    {"max_us", pass->timer->max},
+                });
+            }
+            json cpu = json::object();
+            if (renderer->tmr_frame){
+                cpu["renderer_us"] = renderer->tmr_frame->avg;
+            }
+            if (renderer->tmr_pick_readback){
+                cpu["pick_readback_us"] = renderer->tmr_pick_readback->avg;
+            }
+            if (tmr_render_loop){
+                cpu["frame_us"] = tmr_render_loop->avg;
+            }
+            return json{
+                {"gpu_timers_supported", renderer->GPUTimersSupported()},
+                {"gpu_passes", passes},
+                {"gpu_total_us", total_us},
+                {"cpu", cpu},
+            };
+        });
+
     MCPServer::Get()->RegisterTool("camera_get",
         "Report the active scene camera: world position, the point it is looking at, its "
         "forward/up/left vectors, its rotation quaternion, the orbit pivot (camera_target) the "

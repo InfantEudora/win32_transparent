@@ -27,8 +27,9 @@ and a gap between the total and the frame time is real work nobody has scoped ye
 5.56 ms of a 6.23 ms `Renderer Time`** - the mouse-over `glReadPixels` in `DrawFrame` is ~89% of the
 CPU-side renderer cost. It is timed with a CPU `PerfTimer` (`tmr_pick_readback`) on purpose: it is a
 sync, so the cost is a stall in wall clock, and a GPU timer around it would report the near-zero time
-the GPU spent. The Android port already replaced it with an async PBO readback; porting that is the
-obvious next move.
+the GPU spent. That readback went asynchronous the same day and now costs
+85 us - see [[async-picking-readback]], including the two ways of getting it wrong that both
+measured SLOWER than the blocking version.
 
 **Why:** a CPU timer around a GL call measures submission, not execution, and this repo had already
 concluded that twice from opposite directions - see [[measuring-gpu-cost]].
@@ -39,4 +40,6 @@ right tool - it measures work, not milliseconds, and is noise-free. A pass that 
 zero, so toggling one off decays its average to zero rather than freezing it; the panel dims those
 rows.
 
-Related: [[per-app-build-layout]], [[raymarch-volume-stage-plan]], [[android-port-merge]].
+Also readable over MCP as `renderer_timings`, which is how to A/B without the panel.
+
+Related: [[async-picking-readback]], [[per-app-build-layout]], [[raymarch-volume-stage-plan]], [[android-port-merge]].

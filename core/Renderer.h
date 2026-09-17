@@ -116,6 +116,9 @@ typedef enum RenderPipeline{
 class Renderer{
     public:
     Renderer(int w, int h);
+    //Releases the GL objects this class owns outright (pass timer queries, picking PBOs). The
+    //context outlives nothing, so this matters for correctness rather than for leaks at exit.
+    ~Renderer();
 
     std::mutex physics_mutex;     //Makes sure all object states are updated, not just one.
 
@@ -609,11 +612,47 @@ class Renderer{
     static const char* GetGPUPassName(int pass);
     bool GPUTimersSupported(){return f_gpu_timers_supported;}
 
-    //The mouse-over readback in DrawFrame, on the CPU clock deliberately: glReadPixels is a hard
-    //CPU-GPU sync, so what it costs is a stall measured in wall clock, and a GPU timer around it
-    //would report the near-zero time the GPU spent rather than the time the frame lost waiting.
-    //The Android port already replaced this with an asynchronous PBO readback.
+    //The mouse-over readback in DrawFrame, on the CPU clock deliberately: what it costs is a
+    //stall measured in wall clock, and a GPU timer around it would report the near-zero time the
+    //GPU spent rather than the time the frame lost waiting. Kept after the readback went
+    //asynchronous (see ReadPickingAsync) precisely so the difference stays visible in the panel.
     PerfTimer* tmr_pick_readback = NULL;
+
+    /*
+        ASYNCHRONOUS MOUSE-OVER PICKING.
+
+        The problem this solves: glReadPixels into client memory cannot return until the GPU has
+        finished everything queued ahead of it, so it stalls the render thread for most of a
+        frame. Measured on apps/ship before this existed: 5.56 ms of a 6.23 ms "Renderer Time",
+        i.e. ~89% of the CPU-side cost of the whole renderer was this one call waiting.
+
+        The fix is to read into a PIXEL PACK BUFFER instead. With a buffer bound to
+        GL_PIXEL_PACK_BUFFER, glReadPixels' last argument stops being a client pointer and becomes
+        a byte offset into that buffer, and the call becomes a GPU-side copy that returns
+        immediately. The result is collected a frame later, by which time it is simply sitting
+        there. Two buffers alternate so the one being mapped is never the one just written.
+
+        THE COST IS THAT THE ANSWER IS ONE FRAME OLD, and that is not free here. The object id
+        buffer holds instancedata_t::objectindex - an index into renderable_objects AS IT WAS
+        WHEN THE PIXEL WAS DRAWN, explicitly not a stable object id. renderable_objects is rebuilt
+        by culling every single frame, so resolving a one-frame-old index against the current
+        vector names a different object whenever the visible set shifts - which, with a moving
+        camera, is constantly. picking_id_snapshot therefore keeps the id list that each in-flight
+        read belongs to, and the index is resolved against that. It is a few hundred ids copied
+        per frame against 5.5 ms saved.
+
+        (The tidier fix is for the shader to write the object's real id rather than its index,
+        which would make a stale value self-validating. That means changing what objectindex means
+        for every app and shader that fills it, so it is deliberately not bundled in here.)
+    */
+    //Three deep because the driver is allowed to be that far ahead - see the members below.
+    static const int PICK_PBO_SLOTS = 3;
+    bool InitPickingPBOs();
+    void DestroyPickingPBOs();
+    //Collects the previous frame's result into `input`, then issues this frame's read. Does both
+    //or neither: with nothing in flight yet it only issues, which is why the first frame of
+    //hovering reports nothing.
+    void ReadPickingAsync(InputController* input, int mouse_x, int mouse_y);
     int last_texture_unit = 0;
     int num_texture_units = 24;
     int cubemap_texture_unit = 24; //We reserve the last texture unit for the skybox cubemap, so we can easily bind it in the shader without needing to change other texture bindings.
@@ -650,6 +689,20 @@ class Renderer{
     bool screenshot_include_ui = true;
     bool screenshot_ready = false;
     std::vector<uint8_t> screenshot_png;
+
+    //Rotating picking readback - see ReadPickingAsync. THREE slots, not the two the GPU pass
+    //timers use: a timer query is polled and skipped when unready, but a stale hover is visible,
+    //so this wants the buffer it reuses to be genuinely finished rather than merely probably
+    //finished. With vsync on, the driver runs a frame or two ahead, and two slots measurably
+    //were not enough - the map blocked and the readback cost MORE than the sync version it
+    //replaced. Each slot carries the fence that says when its data actually landed.
+    GLuint picking_pbo[PICK_PBO_SLOTS] = {0,0,0};
+    GLsync picking_fence[PICK_PBO_SLOTS] = {0,0,0};
+    int picking_pbo_write_index = 0;
+    bool f_picking_pbo_has_data[PICK_PBO_SLOTS] = {false,false,false};
+    //renderable_objects as it stood when each in-flight read was issued, by id. Without this the
+    //index that comes back resolves against a differently-culled vector - see ReadPickingAsync.
+    std::vector<objectid_t> picking_id_snapshot[PICK_PBO_SLOTS];
 
     GPUPassTimer gpu_pass_timers[GPU_PASS_COUNT];
     bool f_gpu_timers_supported = false;

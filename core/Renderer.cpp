@@ -14,6 +14,11 @@ Renderer::Renderer(int w, int h){
     height = h;
 }
 
+Renderer::~Renderer(){
+    DestroyGPUPassTimers();
+    DestroyPickingPBOs();
+}
+
 void Renderer::SetOpenGLState(){
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
@@ -100,6 +105,7 @@ bool Renderer::Init(int _pipeline){
     tmr_frame = new PerfTimer("Frame Time");
     tmr_pick_readback = new PerfTimer("Pick readback");
     InitGPUPassTimers();
+    InitPickingPBOs();
     return true;
 }
 
@@ -1107,6 +1113,211 @@ void Renderer::EndGPUFrame(){
     }
 }
 
+/*
+    Byte layout of one picking PBO.
+
+    Three reads into ONE buffer at three offsets rather than three buffers: with a pack buffer
+    bound, glReadPixels takes a byte offset, so a whole frame of picking data costs one buffer,
+    one bind and one map. 16-byte spacing rather than tight packing because the slack costs
+    nothing at 48 bytes and keeps every offset comfortably past GL_PACK_ALIGNMENT.
+*/
+#define PICK_OFFSET_POSITION    0       //GL_RGBA / GL_HALF_FLOAT  - 8 bytes
+#define PICK_OFFSET_NORMAL      16      //GL_RGBA / GL_HALF_FLOAT  - 8 bytes
+#define PICK_OFFSET_ID          32      //GL_RED_INTEGER / GL_INT  - 4 bytes
+#define PICK_PBO_SIZE           48
+
+/*
+    THE FORMATS ABOVE MUST MATCH THE ATTACHMENTS EXACTLY, and that is not a tidiness point - it is
+    the difference between this mechanism working and being slower than what it replaced.
+
+    Position and normal are RGBA16F (RebuildDeferredFBO). Asking glReadPixels for GL_RGB/GL_FLOAT
+    from them is a channel-count AND type conversion, and there is no GPU path for it: the driver
+    does the conversion on the CPU, which means it must have the pixels NOW, which means it waits
+    for the GPU to finish the frame. Measured: the first such read cost 4.8 ms while the exact
+    format integer read beside it cost 31 us, and reordering them did not move the cost - it
+    followed the mismatched read, not the position in the sequence.
+
+    So both are read as GL_RGBA/GL_HALF_FLOAT, exactly what the texture holds, and unpacked here
+    instead. Anyone changing a deferred attachment's internal format has to change its read too.
+*/
+static float HalfToFloat(uint16_t h){
+    uint32_t sign = (uint32_t)(h >> 15) << 31;
+    uint32_t exponent = (h >> 10) & 0x1F;
+    uint32_t mantissa = h & 0x3FF;
+    uint32_t bits;
+    if (exponent == 0){
+        if (mantissa == 0){
+            bits = sign;                        //+-0
+        }else{
+            //Subnormal half. Renormalise into the float exponent range by shifting the mantissa
+            //up until its implicit leading bit appears, paying one exponent step per shift.
+            exponent = 127 - 15 + 1;
+            while ((mantissa & 0x400) == 0){
+                mantissa <<= 1;
+                exponent--;
+            }
+            mantissa &= 0x3FF;
+            bits = sign | (exponent << 23) | (mantissa << 13);
+        }
+    }else if (exponent == 31){
+        bits = sign | 0x7F800000u | (mantissa << 13);    //inf / NaN
+    }else{
+        bits = sign | ((exponent - 15 + 127) << 23) | (mantissa << 13);
+    }
+    float f;
+    memcpy(&f,&bits,sizeof(f));
+    return f;
+}
+
+//One RGBA16F texel out of the mapped buffer, as three floats. The alpha channel carries nothing
+//either of these two attachments needs.
+static void UnpackHalf3(const void* src, float* out){
+    uint16_t raw[4];
+    memcpy(raw,src,sizeof(raw));
+    out[0] = HalfToFloat(raw[0]);
+    out[1] = HalfToFloat(raw[1]);
+    out[2] = HalfToFloat(raw[2]);
+}
+
+bool Renderer::InitPickingPBOs(){
+    if (!glCreateBuffers || !glNamedBufferData || !glBindBuffer || !glMapNamedBufferRange
+        || !glUnmapNamedBuffer || !glFenceSync || !glDeleteSync || !glGetSynciv){
+        debug->Warn("Pixel pack buffer entry points missing - picking stays synchronous\n");
+        return false;
+    }
+    glCreateBuffers(PICK_PBO_SLOTS,picking_pbo);
+    for (int i=0;i<PICK_PBO_SLOTS;i++){
+        //GL_STREAM_READ: written by the GPU once, read by the CPU once, then thrown away. It is a
+        //hint, but it is the honest description and the one drivers optimise this path for.
+        glNamedBufferData(picking_pbo[i],PICK_PBO_SIZE,NULL,GL_STREAM_READ);
+        f_picking_pbo_has_data[i] = false;
+        picking_fence[i] = 0;
+        picking_id_snapshot[i].clear();
+    }
+    debug->Info("Async picking readback ready (%i pixel pack buffers)\n",PICK_PBO_SLOTS);
+    return true;
+}
+
+void Renderer::DestroyPickingPBOs(){
+    if (picking_pbo[0] == 0){
+        return;
+    }
+    glDeleteBuffers(PICK_PBO_SLOTS,picking_pbo);
+    for (int i=0;i<PICK_PBO_SLOTS;i++){
+        picking_pbo[i] = 0;
+        f_picking_pbo_has_data[i] = false;
+        if (picking_fence[i]){
+            glDeleteSync(picking_fence[i]);
+            picking_fence[i] = 0;
+        }
+    }
+}
+
+//See the block comment on this in Renderer.h for why it is asynchronous and what the one-frame
+//lag costs. Collect first, then issue: the slot being read is the one NOT about to be written,
+//so it has had a full frame to land and the map never waits.
+void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y){
+    if (!input || (picking_pbo[0] == 0) || (deferred_fbo_id == (GLuint)-1)){
+        return;
+    }
+    //Same convention as the synchronous version this replaced: the mouse is measured from the top
+    //of the window, GL reads from the bottom, and the deferred FBO is always full window size.
+    int gl_y = height - mouse_y;
+    //The slot about to be reused is the OLDEST - written PICK_PBO_SLOTS frames ago - so it is the
+    //one with the best chance of having landed. Consuming it here, immediately before overwriting
+    //it, is the same trick BeginGPUPass uses on its query objects.
+    int slot = picking_pbo_write_index;
+
+    //Poll, never wait. glMapNamedBufferRange on a buffer the GPU has not finished writing blocks
+    //until it has, which is precisely the stall this whole mechanism exists to avoid - measured
+    //at 6.65 ms, WORSE than the synchronous readback, before this check existed.
+    bool f_ready = false;
+    if (f_picking_pbo_has_data[slot] && picking_fence[slot]){
+        GLint status = GL_UNSIGNALED;
+        glGetSynciv(picking_fence[slot],GL_SYNC_STATUS,1,NULL,&status);
+        f_ready = (status == GL_SIGNALED);
+    }
+
+    if (f_ready){
+        void* mapped = glMapNamedBufferRange(picking_pbo[slot],0,PICK_PBO_SIZE,GL_MAP_READ_BIT);
+        if (mapped){
+            float position[3] = {0,0,0};
+            float normal[3] = {0,0,0};
+            int32_t object_index = -1;
+            UnpackHalf3((const char*)mapped + PICK_OFFSET_POSITION,position);
+            UnpackHalf3((const char*)mapped + PICK_OFFSET_NORMAL,normal);
+            memcpy(&object_index,(const char*)mapped + PICK_OFFSET_ID,sizeof(object_index));
+            glUnmapNamedBuffer(picking_pbo[slot]);
+
+            //Resolved against the list this read was issued against, NOT the current one.
+            const std::vector<objectid_t>& snapshot = picking_id_snapshot[slot];
+            //-1 is DeferredPass's cleared value, i.e. the mouse is over nothing. The upper bound
+            //is >= rather than >: an index equal to size() used to reach .at(size()), which with
+            //-fno-exceptions aborts the process rather than throwing.
+            if ((object_index < 0) || ((size_t)object_index >= snapshot.size())){
+                input->SetHoveredObjectID(OBJECTID_INVALID);
+                input->SetHoveredNormal(vec3());
+                input->SetHoveredPosition(vec3());
+            }else{
+                input->SetHoveredObjectID(snapshot.at(object_index));
+                vec3 n = vec3(normal[0],normal[1],normal[2]);
+                input->SetHoveredNormal(n.normalize());
+                input->SetHoveredPosition(vec3(position[0],position[1],position[2]));
+            }
+        }
+    }
+
+    //The mouse outside the window would make glReadPixels read outside the framebuffer, which is
+    //undefined rather than an error. Issue nothing, and mark the slot empty so next frame does
+    //not present whatever was in it as an answer.
+    //A slot whose fence had not signalled is about to be overwritten, losing that sample. That is
+    //deliberate: skipping the write instead would stop picking permanently if a fence ever stuck,
+    //and one dropped hover update is invisible. The fence goes either way - it has been consumed
+    //or it has been abandoned, and in both cases it must not outlive the data it described.
+    if (picking_fence[slot]){
+        glDeleteSync(picking_fence[slot]);
+        picking_fence[slot] = 0;
+    }
+
+    //The mouse outside the window would make glReadPixels read outside the framebuffer, which is
+    //undefined rather than an error. Issue nothing, and mark the slot empty so a later frame does
+    //not present whatever was in it as an answer.
+    if ((mouse_x < 0) || (mouse_x >= width) || (gl_y < 0) || (gl_y >= height)){
+        f_picking_pbo_has_data[slot] = false;
+        picking_pbo_write_index = (slot + 1) % PICK_PBO_SLOTS;
+        return;
+    }
+
+    //clear() keeps the capacity, so this allocates once and then never again.
+    std::vector<objectid_t>& snapshot = picking_id_snapshot[slot];
+    snapshot.clear();
+    snapshot.reserve(renderable_objects.size());
+    for (Object* object:renderable_objects){
+        snapshot.push_back(object->GetID());
+    }
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, deferred_fbo_id);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, picking_pbo[slot]);
+    //The last argument is a byte OFFSET into the bound buffer, not a pointer. That is the whole
+    //difference between this and the blocking version.
+    glReadBuffer(GL_COLOR_ATTACHMENT3);
+    glReadPixels(mouse_x,gl_y,1,1,GL_RED_INTEGER,GL_INT,(void*)(uintptr_t)PICK_OFFSET_ID);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glReadPixels(mouse_x,gl_y,1,1,GL_RGBA,GL_HALF_FLOAT,(void*)(uintptr_t)PICK_OFFSET_POSITION);
+    glReadBuffer(GL_COLOR_ATTACHMENT1);
+    glReadPixels(mouse_x,gl_y,1,1,GL_RGBA,GL_HALF_FLOAT,(void*)(uintptr_t)PICK_OFFSET_NORMAL);
+    //NOT optional. A pack buffer left bound silently redirects the NEXT glReadPixels anywhere in
+    //the engine into it - CaptureScreenshotIfRequested is the one that would hit, and it would
+    //hand back an empty image with no error anywhere.
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+    //Signalled once the GPU has actually executed the three reads above, which is what the poll
+    //at the top of the next visit to this slot is asking about.
+    picking_fence[slot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);
+    f_picking_pbo_has_data[slot] = true;
+    picking_pbo_write_index = (slot + 1) % PICK_PBO_SLOTS;
+}
+
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
     if (!camera){
         debug->Fatal("DrawFrame called without camera.\n");
@@ -1270,57 +1481,18 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     ResolveAA();
     EndGPUPass(GPU_PASS_RESOLVE);
 
-    //Now we can read the normal and object ID:
-    if ((pipeline == PIPELINE_DEFERRED && input)){
-        //DeferredPass ran near the top of the frame and left its own framebuffer bound; it no
-        //longer does, and ResolveAA has since pointed the read framebuffer at msaa_fbo. So say
-        //explicitly which framebuffer these glReadPixels come from.
+    //The mouse-over readback. Asynchronous since 2026-09-17 - it used to block here for most of
+    //a frame; see Renderer.h's block comment on ReadPickingAsync for what it was costing and what
+    //the one-frame lag it trades for costs instead. The timer stays so the panel keeps showing it.
+    if ((pipeline == PIPELINE_DEFERRED) && input){
         if (tmr_pick_readback){
             tmr_pick_readback->Restart();
         }
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, deferred_fbo_id);
-        glReadBuffer(GL_COLOR_ATTACHMENT3);
-        int32_t id_pixeldata[4] = {-1,-1,-1,-1};
-        float  normal_pixeldata[4] = {0,0,0,0};
-        float  position_pixeldata[4] = {0,0,0,0};
-        int2 mouse = {-1,-1};
-        if (input){
-            mouse = input->GetRelativeMousePosition();
-        }
-        glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RED_INTEGER, GL_INT, id_pixeldata);
-        glReadBuffer(GL_COLOR_ATTACHMENT1);
-        glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RGB, GL_FLOAT, normal_pixeldata);
-        glReadBuffer(GL_COLOR_ATTACHMENT0);
-        glReadPixels(mouse.x,  height - mouse.y, 1, 1, GL_RGB, GL_FLOAT, position_pixeldata);
-
-        //-1 is the cleared value, i.e. the mouse is over nothing. It used to have to accept
-        //0x3F800000 as well, which is the bit pattern of 1.0f and was the object id buffer being
-        //cleared by a float call aimed at the wrong draw buffer - see DeferredPass's clear block.
-        if (id_pixeldata[0] != -1){
-            int index = id_pixeldata[0];
-            if (index > renderable_objects.size()){
-                debug->Err("Read back object index %i is out of bounds (max %i)\n",index,renderable_objects.size());
-                input->SetHoveredObjectID(OBJECTID_INVALID);
-                input->SetHoveredNormal(vec3());
-                input->SetHoveredPosition(vec3());
-            }else{
-                input->SetHoveredObjectID(renderable_objects.at(index)->GetID());
-                vec3 n = vec3(normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
-                input->SetHoveredNormal(n.normalize());
-                input->SetHoveredPosition(vec3(position_pixeldata[0],position_pixeldata[1],position_pixeldata[2]));
-            }
-        }else{
-            input->SetHoveredObjectID(OBJECTID_INVALID);
-            input->SetHoveredNormal(vec3());
-            input->SetHoveredPosition(vec3());
-        }
+        int2 mouse = input->GetRelativeMousePosition();
+        ReadPickingAsync(input,mouse.x,mouse.y);
         if (tmr_pick_readback){
             tmr_pick_readback->Stop();
         }
-
-        //debug->Info("Pixel data: %08X %08X %08X %08X\n",id_pixeldata[0],id_pixeldata[1],id_pixeldata[2],id_pixeldata[3]);
-        //debug->Info("Normal data: %.3f %.3f %.3f\n",normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
-        //glReadPixels(x,  window->height - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixelData);
     }
 
     if (f_ssao){

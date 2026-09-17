@@ -67,6 +67,13 @@ PFNGLBINDVERTEXARRAYPROC glBindVertexArray = NULL;
 PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = NULL;
 
 PFNGLBINDBUFFERBASEPROC glBindBufferBase = NULL;
+PFNGLBINDBUFFERPROC glBindBuffer = NULL;
+PFNGLDELETEBUFFERSPROC glDeleteBuffers = NULL;
+PFNGLMAPNAMEDBUFFERRANGEPROC glMapNamedBufferRange = NULL;
+PFNGLUNMAPNAMEDBUFFERPROC glUnmapNamedBuffer = NULL;
+PFNGLFENCESYNCPROC glFenceSync = NULL;
+PFNGLDELETESYNCPROC glDeleteSync = NULL;
+PFNGLGETSYNCIVPROC glGetSynciv = NULL;
 PFNGLNAMEDBUFFERDATAPROC glNamedBufferData = NULL;
 PFNGLNAMEDBUFFERSUBDATAPROC glNamedBufferSubData = NULL;
 PFNGLINVALIDATEBUFFERDATAPROC glInvalidateBufferData = NULL;
@@ -251,6 +258,13 @@ bool InitGLExtensions(void){
 
 
     glBindBufferBase = (PFNGLBINDBUFFERBASEPROC)wglGetProcAddress("glBindBufferBase");
+    glBindBuffer = (PFNGLBINDBUFFERPROC)wglGetProcAddress("glBindBuffer");
+    glDeleteBuffers = (PFNGLDELETEBUFFERSPROC)wglGetProcAddress("glDeleteBuffers");
+    glMapNamedBufferRange = (PFNGLMAPNAMEDBUFFERRANGEPROC)wglGetProcAddress("glMapNamedBufferRange");
+    glUnmapNamedBuffer = (PFNGLUNMAPNAMEDBUFFERPROC)wglGetProcAddress("glUnmapNamedBuffer");
+    glFenceSync = (PFNGLFENCESYNCPROC)wglGetProcAddress("glFenceSync");
+    glDeleteSync = (PFNGLDELETESYNCPROC)wglGetProcAddress("glDeleteSync");
+    glGetSynciv = (PFNGLGETSYNCIVPROC)wglGetProcAddress("glGetSynciv");
     glNamedBufferData = (PFNGLNAMEDBUFFERDATAPROC)wglGetProcAddress("glNamedBufferData");
     glNamedBufferSubData = (PFNGLNAMEDBUFFERSUBDATAPROC)wglGetProcAddress("glNamedBufferSubData");
     glInvalidateBufferData = (PFNGLINVALIDATEBUFFERDATAPROC)wglGetProcAddress("glInvalidateBufferData");
