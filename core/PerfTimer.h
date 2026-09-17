@@ -21,6 +21,20 @@ public:
     void Restart();
     double GetdtUs(void);
     double Stop();
+
+    /*
+        Files a measurement this timer did not take itself, in microseconds.
+
+        Stop() is now this plus a clock read, so the two cannot drift apart - but the reason it
+        exists separately is that a GPU timing has no Start/Stop pair to hang off. A
+        GL_TIME_ELAPSED query is answered by the driver a frame or two AFTER the pass it measured
+        was submitted (see Renderer::GPUPassTimer), so the number arrives with no relationship to
+        where the CPU happens to be when it is collected. Everything below this - the 60-sample
+        window, min/max/avg - applies to it unchanged, which is the whole point: a GPU pass shows
+        up in the Engine panel as just another timer, smoothed the same way, rather than as a raw
+        jittering float in its own separate display.
+    */
+    void AddSample(double us);
     int num_deltas = 0;
     int max_deltas = 60;
     double delta = 0;

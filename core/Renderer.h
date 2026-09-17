@@ -533,6 +533,87 @@ class Renderer{
 
     //Counters/Timers
     PerfTimer* tmr_frame = NULL;
+
+    /*
+        PER-PASS GPU TIMING.
+
+        What this is for: tmr_frame above, and every other PerfTimer in this engine, measures the
+        CPU. GL is asynchronous, so a CPU timer around a draw call measures how long it took to
+        SUBMIT the work, not how long the GPU took to do it - the two are unrelated, and this
+        repo has concluded that twice the hard way (see the occluder-field measurement in
+        docs/engine_backlog.md, which had to caveat its own number, and the note that frame time
+        here is quantised to the refresh interval because the driver forces vsync on).
+        GL_TIME_ELAPSED asks the GPU itself, so it is immune to both.
+
+        THE ONE RULE: SCOPES MUST NOT NEST OR OVERLAP. Only one GL_TIME_ELAPSED query can be
+        active per context, so there is deliberately no "whole frame" timer wrapping these - it
+        would be illegal, not merely inaccurate. Two passes that want splitting (the occluder
+        field and its jump flood) are therefore two ADJACENT scopes inside RenderFieldPass, not
+        an outer and an inner one. BeginGPUPass refuses a nested Begin and says so rather than
+        letting it turn into a GL_INVALID_OPERATION from somewhere unrelated later.
+
+        The consequence of that rule is that anything not inside a scope is invisible, so the
+        column does not add up to the frame. That is honest and worth keeping in view: a gap
+        between the sum and the frame time is real work nobody has named yet.
+
+        A result lags a frame or two behind the pass it measures - see GPUPassTimer - and lands
+        in an ordinary PerfTimer, so a GPU pass reads out of the Engine panel with the same
+        60-sample rolling average as everything else.
+    */
+    enum gpu_pass_t{
+        GPU_PASS_SHADOW = 0,    //Shadow map: the depth passes, skinned and static
+        GPU_PASS_FIELD,         //Occluder field heights (apps that called EnableFieldShadows)
+        GPU_PASS_FIELD_JFA,     //...and the jump flood that turns them into a distance field
+        GPU_PASS_DEFERRED,      //G-buffer - a second full geometry pass, see DrawFrame
+        GPU_PASS_SKYBOX,
+        GPU_PASS_COLOR,         //The lit pass: static meshes, then lines
+        GPU_PASS_SKINNED,
+        GPU_PASS_CUSTOM,        //CustomShaderPass - volumes and anything else translucent
+        GPU_PASS_RESOLVE,       //MSAA resolve
+        GPU_PASS_SSAO,
+        GPU_PASS_BLIT,          //Only when view_buffer selects an intermediate to look at
+        GPU_PASS_OVERLAY,       //UIOverlay - the app's own 2D HUD (Application::DrawFrame)
+        GPU_PASS_IMGUI,         //The debug panels (Application::DrawFrame)
+        GPU_PASS_COUNT
+    };
+
+    /*
+        Two query objects per pass, used alternately.
+
+        Reading a query's result stalls until the GPU has actually finished it, so reading the
+        one just written would sync the CPU to the GPU every frame and destroy the thing being
+        measured. Writing into the slot from TWO frames ago instead means its result has had a
+        whole frame to become available, and the read never waits. Checking availability in
+        BeginGPUPass - right before clobbering the slot - rather than in EndGPUPass also means
+        the rare not-ready-yet case needs no "try again next frame" bookkeeping: the pass simply
+        contributes no sample that frame.
+    */
+    struct GPUPassTimer{
+        GLuint queries[2] = {0,0};
+        int write_index = 0;
+        bool f_has_run[2] = {false,false};
+        bool f_begun_this_frame = false;
+        PerfTimer* timer = NULL;        //Microseconds, to match every other timer in the panel
+    };
+
+    bool InitGPUPassTimers();
+    void DestroyGPUPassTimers();
+    void BeginGPUPass(int pass);
+    void EndGPUPass(int pass);
+    //Call once per frame, after the LAST pass of the frame has ended (which is ImGui's, in
+    //Application::DrawFrame - not the end of Renderer::DrawFrame). Files a zero for every pass
+    //that did not run, so a pass being switched off decays out of the rolling average instead of
+    //sitting there showing what it used to cost.
+    void EndGPUFrame();
+    const GPUPassTimer* GetGPUPassTimer(int pass);
+    static const char* GetGPUPassName(int pass);
+    bool GPUTimersSupported(){return f_gpu_timers_supported;}
+
+    //The mouse-over readback in DrawFrame, on the CPU clock deliberately: glReadPixels is a hard
+    //CPU-GPU sync, so what it costs is a stall measured in wall clock, and a GPU timer around it
+    //would report the near-zero time the GPU spent rather than the time the frame lost waiting.
+    //The Android port already replaced this with an asynchronous PBO readback.
+    PerfTimer* tmr_pick_readback = NULL;
     int last_texture_unit = 0;
     int num_texture_units = 24;
     int cubemap_texture_unit = 24; //We reserve the last texture unit for the skybox cubemap, so we can easily bind it in the shader without needing to change other texture bindings.
@@ -569,6 +650,12 @@ class Renderer{
     bool screenshot_include_ui = true;
     bool screenshot_ready = false;
     std::vector<uint8_t> screenshot_png;
+
+    GPUPassTimer gpu_pass_timers[GPU_PASS_COUNT];
+    bool f_gpu_timers_supported = false;
+    //Which pass owns the one active GL_TIME_ELAPSED query, or -1. Exists to catch a nested
+    //Begin at the call site that made the mistake - see the block comment on gpu_pass_t.
+    int active_gpu_pass = -1;
 };
 
 

@@ -1041,6 +1041,67 @@ void Application::RenderEngineWindow(){
         ImGui::Text("Physics Loop  : %8.2f TPS (%5.2f ms)",1000000.0f/tmr_physics_loop->avg,tmr_physics_loop->avg/1000.0f);
         ImGui::Text("Physics Sleep : %8.1f us  (%5.2f ms)",tmr_physics_sleep->avg,tmr_physics_sleep->avg/1000.0f);
         ImGui::Text("Physics Time  : %8.1f us  (%5.2f ms)",tmr_physics->avg,tmr_physics->avg/1000.0f);
+        //A CPU number on purpose - glReadPixels is a sync, so this is the frame stalling, not the
+        //GPU working. See Renderer::tmr_pick_readback.
+        if (renderer->tmr_pick_readback){
+            ImGui::Text("Pick Readback : %8.1f us  (%5.2f ms)  CPU stall",
+                        renderer->tmr_pick_readback->avg,renderer->tmr_pick_readback->avg/1000.0f);
+        }
+
+        /*
+            Per-pass GPU cost, from GL_TIME_ELAPSED queries - the only numbers on this panel that
+            are not the CPU. Everything above measures how long submitting the work took; these
+            measure how long the GPU spent on it, which is a different quantity and usually the
+            one being asked about.
+
+            The total does NOT match "Renderer Time" above and is not meant to. Untimed GL work
+            falls outside every scope, and the two clocks are measuring different machines. What
+            the total is good for is A/B: change something, watch the pass it belongs to.
+        */
+        ImGui::SeparatorText("GPU passes (GL_TIME_ELAPSED)");
+        if (!renderer->GPUTimersSupported()){
+            ImGui::TextDisabled("Timer queries unavailable - see Renderer::InitGPUPassTimers");
+        }else if (ImGui::BeginTable("gpu_passes",3,ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingStretchProp)){
+            ImGui::TableSetupColumn("Pass");
+            ImGui::TableSetupColumn("avg ms");
+            ImGui::TableSetupColumn("peak ms");
+            ImGui::TableHeadersRow();
+            double total_us = 0;
+            for (int i=0;i<Renderer::GPU_PASS_COUNT;i++){
+                const Renderer::GPUPassTimer* pass = renderer->GetGPUPassTimer(i);
+                if (!pass || !pass->timer){
+                    continue;
+                }
+                total_us += pass->timer->avg;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                //A pass that is switched off averages down to zero rather than freezing at what
+                //it used to cost (Renderer::EndGPUFrame files the zeroes). Dimming it says which
+                //of the two a 0.000 is without needing a fourth column to explain it.
+                bool f_idle = (pass->timer->avg <= 0.0);
+                if (f_idle){
+                    ImGui::TextDisabled("%s",Renderer::GetGPUPassName(i));
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("    -");
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("    -");
+                    continue;
+                }
+                ImGui::Text("%s",Renderer::GetGPUPassName(i));
+                ImGui::TableNextColumn();
+                ImGui::Text("%7.3f",pass->timer->avg/1000.0);
+                ImGui::TableNextColumn();
+                ImGui::Text("%7.3f",pass->timer->max/1000.0);
+            }
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Total (timed)");
+            ImGui::TableNextColumn();
+            ImGui::Text("%7.3f",total_us/1000.0);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("");
+            ImGui::EndTable();
+        }
         if (main_scene && main_scene->renderer){
             ImGui::Text("Renderable Objects : %i",(int)main_scene->renderer->renderable_objects.size());
             ImGui::Text("Unique Meshes      : %i",(int)main_scene->renderer->unique_meshes.size());

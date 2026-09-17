@@ -367,7 +367,9 @@ void Application::DrawFrame(){
             DrawTouchButtons();
         }
 #endif
+        renderer->BeginGPUPass(Renderer::GPU_PASS_OVERLAY);
         overlay->Draw();
+        renderer->EndGPUPass(Renderer::GPU_PASS_OVERLAY);
     }
 
     //Overlay ImGui
@@ -377,7 +379,9 @@ void Application::DrawFrame(){
     renderer->physics_mutex.unlock();
 
     //Finish ImGui
+    renderer->BeginGPUPass(Renderer::GPU_PASS_IMGUI);
     main_window->ImGuiRenderDrawData();
+    renderer->EndGPUPass(Renderer::GPU_PASS_IMGUI);
 
     //The UI-inclusive capture point. ImGui renders into whatever framebuffer is bound and nothing
     //above rebinds, so resolve_fbo_id now holds the scene with the panels composited on top -
@@ -387,6 +391,13 @@ void Application::DrawFrame(){
     //Renderer::DrawFrame and this is a no-op for it.
     if (renderer){
         renderer->CaptureScreenshotIfRequested(true);
+    }
+
+    //The frame boundary for the GPU timers: every pass has now had its chance to run, so the
+    //ones that did not can be told they cost nothing. Here rather than at the end of
+    //Renderer::DrawFrame because the overlay and ImGui passes above are outside it.
+    if (renderer){
+        renderer->EndGPUFrame();
     }
 
     //Copy to screen and finish

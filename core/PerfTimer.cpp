@@ -49,7 +49,16 @@ double PerfTimer::GetdtUs(void){
 }
 
 double PerfTimer::Stop(){
-    delta = ElapsedUs();
+    AddSample(ElapsedUs());
+    return delta;
+}
+
+//The statistics half of what Stop() used to do, split out so a measurement taken by something
+//other than this class's clock gets the same treatment - see the comment in PerfTimer.h.
+void PerfTimer::AddSample(double us){
+    delta = us;
+    //Marks the timer settled, so a GPU-fed timer (which never calls Restart/Stop) does not get a
+    //meaningless wall-clock sample appended by the destructor on the way out.
     stopped = true;
 
     deltas.push_back(delta);
@@ -71,5 +80,4 @@ double PerfTimer::Stop(){
         }
     }
     avg /= (double)num_deltas;
-    return delta;
 }

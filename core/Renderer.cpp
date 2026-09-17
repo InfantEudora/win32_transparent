@@ -98,6 +98,8 @@ bool Renderer::Init(int _pipeline){
     glDebugMessageCallback(opengl_message_callback, nullptr);
 
     tmr_frame = new PerfTimer("Frame Time");
+    tmr_pick_readback = new PerfTimer("Pick readback");
+    InitGPUPassTimers();
     return true;
 }
 
@@ -953,6 +955,158 @@ void Renderer::FinishDepthPasses(){
     //glCullFace(GL_BACK);
 }
 
+/*
+    Names, in gpu_pass_t order. Also the string pushed as the debug group (see BeginGPUPass), so
+    a RenderDoc capture and the Engine panel call the same pass the same thing.
+*/
+static const char* gpu_pass_names[Renderer::GPU_PASS_COUNT] = {
+    "Shadow map",
+    "Occluder field",
+    "Field jump flood",
+    "Deferred G-buffer",
+    "Skybox",
+    "Color",
+    "Skinned",
+    "Custom shaders",
+    "MSAA resolve",
+    "SSAO",
+    "Buffer blit",
+    "UI overlay",
+    "ImGui",
+};
+
+const char* Renderer::GetGPUPassName(int pass){
+    if ((pass < 0) || (pass >= GPU_PASS_COUNT)){
+        return "?";
+    }
+    return gpu_pass_names[pass];
+}
+
+const Renderer::GPUPassTimer* Renderer::GetGPUPassTimer(int pass){
+    if ((pass < 0) || (pass >= GPU_PASS_COUNT)){
+        return NULL;
+    }
+    return &gpu_pass_timers[pass];
+}
+
+/*
+    Query objects for every pass. Called from Init, on the render thread, with a context current -
+    query names are context state and this is the only thread that ever has one.
+
+    No extension test: glGenQueries and GL_TIME_ELAPSED are core GL 3.3 and this renderer already
+    requires 4.5 for direct state access, so the only way these are missing is a failed
+    wglGetProcAddress, which is what the null check catches. The Android port has to do real
+    feature detection here (GL_EXT_disjoint_timer_query) - that difference is the whole of what
+    separates the two implementations.
+*/
+bool Renderer::InitGPUPassTimers(){
+    f_gpu_timers_supported = glGenQueries && glDeleteQueries && glBeginQuery && glEndQuery
+                          && glGetQueryObjectuiv && glGetQueryObjectui64v;
+    if (!f_gpu_timers_supported){
+        debug->Warn("Timer query entry points missing - per-pass GPU timings will read 0\n");
+        return false;
+    }
+    for (int i=0;i<GPU_PASS_COUNT;i++){
+        GPUPassTimer& t = gpu_pass_timers[i];
+        glGenQueries(2,t.queries);
+        //Registers with PerfTimer's static list and gets the same rolling window as tmr_frame.
+        //Never Restart/Stop-ed: AddSample is the only thing that ever writes to it.
+        t.timer = new PerfTimer(gpu_pass_names[i]);
+    }
+    debug->Info("GPU pass timers ready (GL_TIME_ELAPSED, %i passes)\n",(int)GPU_PASS_COUNT);
+    return true;
+}
+
+void Renderer::DestroyGPUPassTimers(){
+    if (!f_gpu_timers_supported){
+        return;
+    }
+    for (int i=0;i<GPU_PASS_COUNT;i++){
+        GPUPassTimer& t = gpu_pass_timers[i];
+        glDeleteQueries(2,t.queries);
+        t.queries[0] = 0;
+        t.queries[1] = 0;
+        t.f_has_run[0] = false;
+        t.f_has_run[1] = false;
+    }
+    f_gpu_timers_supported = false;
+}
+
+void Renderer::BeginGPUPass(int pass){
+    if ((pass < 0) || (pass >= GPU_PASS_COUNT)){
+        return;
+    }
+    //The group is pushed even when the queries are unavailable - it costs nothing and a capture
+    //is worth having either way.
+    if (glPushDebugGroup){
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION,(GLuint)pass,-1,gpu_pass_names[pass]);
+    }
+    if (!f_gpu_timers_supported){
+        return;
+    }
+    if (active_gpu_pass != -1){
+        //Not Fatal: instrumentation should never be what takes the app down. But loud, because
+        //the alternative is a GL_INVALID_OPERATION surfacing somewhere with no connection to the
+        //nesting that caused it. See the block comment on gpu_pass_t.
+        debug->Err("BeginGPUPass(%s) while %s is still open - GPU pass scopes cannot nest\n",
+                   gpu_pass_names[pass],gpu_pass_names[active_gpu_pass]);
+        return;
+    }
+    GPUPassTimer& t = gpu_pass_timers[pass];
+    int idx = t.write_index;
+    //Collect the result sitting in the slot about to be reused - it is two frames old, so this
+    //does not wait. If it somehow is not ready, skip the sample rather than stall.
+    if (t.f_has_run[idx]){
+        GLuint available = 0;
+        glGetQueryObjectuiv(t.queries[idx],GL_QUERY_RESULT_AVAILABLE,&available);
+        if (available){
+            GLuint64 ns = 0;
+            glGetQueryObjectui64v(t.queries[idx],GL_QUERY_RESULT,&ns);
+            if (t.timer){
+                t.timer->AddSample((double)ns / 1000.0);    //ns -> us, the unit every timer uses
+            }
+        }
+    }
+    glBeginQuery(GL_TIME_ELAPSED,t.queries[idx]);
+    active_gpu_pass = pass;
+    t.f_begun_this_frame = true;
+}
+
+void Renderer::EndGPUPass(int pass){
+    if ((pass < 0) || (pass >= GPU_PASS_COUNT)){
+        return;
+    }
+    if (f_gpu_timers_supported && (active_gpu_pass == pass)){
+        glEndQuery(GL_TIME_ELAPSED);
+        GPUPassTimer& t = gpu_pass_timers[pass];
+        t.f_has_run[t.write_index] = true;
+        t.write_index = 1 - t.write_index;
+        active_gpu_pass = -1;
+    }
+    if (glPopDebugGroup){
+        glPopDebugGroup();
+    }
+}
+
+void Renderer::EndGPUFrame(){
+    if (!f_gpu_timers_supported){
+        return;
+    }
+    if (active_gpu_pass != -1){
+        debug->Err("EndGPUFrame with %s still open - a pass is missing its EndGPUPass\n",
+                   gpu_pass_names[active_gpu_pass]);
+    }
+    for (int i=0;i<GPU_PASS_COUNT;i++){
+        GPUPassTimer& t = gpu_pass_timers[i];
+        //A pass that did not run this frame cost this frame nothing, and saying so is what makes
+        //toggling one off visibly decay to zero instead of freezing at its last value.
+        if (!t.f_begun_this_frame && t.timer){
+            t.timer->AddSample(0.0);
+        }
+        t.f_begun_this_frame = false;
+    }
+}
+
 void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
     if (!camera){
         debug->Fatal("DrawFrame called without camera.\n");
@@ -977,6 +1131,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     camera->viewport.px_offset_y = (float)(height - (viewport_y + GetViewportHeight()));
     camera->CalculateLookatMatrix();
 
+    BeginGPUPass(GPU_PASS_SHADOW);
     ClearDepthPasses();
     if (skinned_shader){
         skinned_shader->Use();
@@ -1008,6 +1163,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         //RenderDepthPasses(shader,MESH_MODE_SHADER);
         FinishDepthPasses();
     }
+    EndGPUPass(GPU_PASS_SHADOW);
 
     //The occluder field, for apps that asked for one. Before the deferred pass rather than after
     //it only because both rebind the framebuffer and the viewport, and this keeps all of the
@@ -1026,7 +1182,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     //It is a second full geometry pass either way. If that ever needs to go, the fix is to make
     //the color pass write the G-buffer as extra render targets - not to move this back.
     if (pipeline == PIPELINE_DEFERRED){
+        BeginGPUPass(GPU_PASS_DEFERRED);
         DeferredPass(camera);
+        EndGPUPass(GPU_PASS_DEFERRED);
     }
 
     glBindTextureUnit(0, shadow_tex_id);
@@ -1053,8 +1211,13 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     glViewport(viewport_x, viewport_y, GetViewportWidth(), GetViewportHeight());
 
     { //We draw skybox before other stuff
+        BeginGPUPass(GPU_PASS_SKYBOX);
         DrawSkyBox(camera);
+        EndGPUPass(GPU_PASS_SKYBOX);
     }
+    //Opens here rather than at RenderUniqueMeshes so the material and light SSBO uploads below
+    //are counted with the pass that consumes them - they are GL work on the same timeline.
+    BeginGPUPass(GPU_PASS_COLOR);
     shader->Use();
 
     UploadMaterials();
@@ -1072,10 +1235,12 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     line_shader->Setmat4("mat_worldcam",camera->mat_cam);
     RenderUniqueMeshes(MESH_MODE_LINE);
     shader->Use();
+    EndGPUPass(GPU_PASS_COLOR);
 
 
 
     if (skinned_shader && camera){
+        BeginGPUPass(GPU_PASS_SKINNED);
         skinned_shader->Use();
         vec3 p = camera->GetPosition();
         skinned_shader->Setvec3("eye_position",p);
@@ -1090,21 +1255,29 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         UploadCloudShadow(skinned_shader);
         UploadFieldShadow(skinned_shader);
         RenderUniqueMeshes(MESH_MODE_SKINNED);
+        EndGPUPass(GPU_PASS_SKINNED);
     }
 
     //Custom materials go last of the geometry passes, AFTER the skinned meshes: they are
     //typically translucent and do not write depth, so anything solid has to already be in the
     //buffer for them to blend over. A character standing inside a volume was previously drawn
     //on top of it at full strength.
+    BeginGPUPass(GPU_PASS_CUSTOM);
     CustomShaderPass(camera);
+    EndGPUPass(GPU_PASS_CUSTOM);
 
+    BeginGPUPass(GPU_PASS_RESOLVE);
     ResolveAA();
+    EndGPUPass(GPU_PASS_RESOLVE);
 
     //Now we can read the normal and object ID:
     if ((pipeline == PIPELINE_DEFERRED && input)){
         //DeferredPass ran near the top of the frame and left its own framebuffer bound; it no
         //longer does, and ResolveAA has since pointed the read framebuffer at msaa_fbo. So say
         //explicitly which framebuffer these glReadPixels come from.
+        if (tmr_pick_readback){
+            tmr_pick_readback->Restart();
+        }
         glBindFramebuffer(GL_READ_FRAMEBUFFER, deferred_fbo_id);
         glReadBuffer(GL_COLOR_ATTACHMENT3);
         int32_t id_pixeldata[4] = {-1,-1,-1,-1};
@@ -1141,6 +1314,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
             input->SetHoveredNormal(vec3());
             input->SetHoveredPosition(vec3());
         }
+        if (tmr_pick_readback){
+            tmr_pick_readback->Stop();
+        }
 
         //debug->Info("Pixel data: %08X %08X %08X %08X\n",id_pixeldata[0],id_pixeldata[1],id_pixeldata[2],id_pixeldata[3]);
         //debug->Info("Normal data: %.3f %.3f %.3f\n",normal_pixeldata[0],normal_pixeldata[1],normal_pixeldata[2]);
@@ -1148,10 +1324,16 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
     }
 
     if (f_ssao){
+        BeginGPUPass(GPU_PASS_SSAO);
         SSAOPass(camera);
+        EndGPUPass(GPU_PASS_SSAO);
     }
 
     //Look at one of the intermediate buffers
+    const bool f_blit_view = (view_buffer >= 1) && (view_buffer <= 3);
+    if (f_blit_view){
+        BeginGPUPass(GPU_PASS_BLIT);
+    }
     if (view_buffer == 1){
         //Object position
         BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT0);
@@ -1163,6 +1345,9 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         BlitBufferTarget(deferred_fbo_id,GL_COLOR_ATTACHMENT2);
     }else{
 
+    }
+    if (f_blit_view){
+        EndGPUPass(GPU_PASS_BLIT);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo_id);
 
@@ -1393,6 +1578,7 @@ void Renderer::RenderFieldPass(){
     field_camera->CalculateLookatMatrix();
     mat_field = field_camera->mat_cam;
 
+    BeginGPUPass(GPU_PASS_FIELD);
     glBindFramebuffer(GL_FRAMEBUFFER, field_fbo_id);
     //R very low and A very high, so an untouched column reads as a slab that contains nothing -
     //CalcFieldShadow needs no separate occupancy test. G starts at 0 for the jump flood.
@@ -1417,8 +1603,14 @@ void Renderer::RenderFieldPass(){
     glBlendEquationSeparate(GL_FUNC_ADD,GL_FUNC_ADD);
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
+    EndGPUPass(GPU_PASS_FIELD);
 
+    //Timed separately rather than nested inside the scope above, because nesting is illegal -
+    //see the block comment on gpu_pass_t. The dispatches are the half a CPU timer could never
+    //see: for compute, submission and execution have nothing to do with each other.
+    BeginGPUPass(GPU_PASS_FIELD_JFA);
     FieldDistancePass();
+    EndGPUPass(GPU_PASS_FIELD_JFA);
 }
 
 /*

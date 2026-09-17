@@ -110,6 +110,17 @@ PFNGLPROGRAMUNIFORMMATRIX4FVPROC glProgramUniformMatrix4fv = NULL;
 PFNGLGETINTEGERI_VPROC glGetIntegeri_v = NULL;
 
 PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback = NULL;
+PFNGLPUSHDEBUGGROUPPROC glPushDebugGroup = NULL;
+PFNGLPOPDEBUGGROUPPROC glPopDebugGroup = NULL;
+
+//Timer queries - see the block comment on these in glad.h.
+PFNGLGENQUERIESPROC glGenQueries = NULL;
+PFNGLDELETEQUERIESPROC glDeleteQueries = NULL;
+PFNGLBEGINQUERYPROC glBeginQuery = NULL;
+PFNGLENDQUERYPROC glEndQuery = NULL;
+PFNGLGETQUERYOBJECTUIVPROC glGetQueryObjectuiv = NULL;
+PFNGLGETQUERYOBJECTUI64VPROC glGetQueryObjectui64v = NULL;
+
 
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = NULL;
 
@@ -283,6 +294,16 @@ bool InitGLExtensions(void){
     glGetIntegeri_v = (PFNGLGETINTEGERI_VPROC)wglGetProcAddress("glGetIntegeri_v");
 
     glDebugMessageCallback = (PFNGLDEBUGMESSAGECALLBACKPROC)wglGetProcAddress("glDebugMessageCallback");
+    glPushDebugGroup = (PFNGLPUSHDEBUGGROUPPROC)wglGetProcAddress("glPushDebugGroup");
+    glPopDebugGroup = (PFNGLPOPDEBUGGROUPPROC)wglGetProcAddress("glPopDebugGroup");
+
+    glGenQueries = (PFNGLGENQUERIESPROC)wglGetProcAddress("glGenQueries");
+    glDeleteQueries = (PFNGLDELETEQUERIESPROC)wglGetProcAddress("glDeleteQueries");
+    glBeginQuery = (PFNGLBEGINQUERYPROC)wglGetProcAddress("glBeginQuery");
+    glEndQuery = (PFNGLENDQUERYPROC)wglGetProcAddress("glEndQuery");
+    glGetQueryObjectuiv = (PFNGLGETQUERYOBJECTUIVPROC)wglGetProcAddress("glGetQueryObjectuiv");
+    glGetQueryObjectui64v = (PFNGLGETQUERYOBJECTUI64VPROC)wglGetProcAddress("glGetQueryObjectui64v");
+
 
     wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
 

@@ -535,6 +535,37 @@ typedef void (APIENTRY *GLDEBUGPROC)(GLenum source,GLenum type,GLuint id,GLenum 
 typedef void (APIENTRYP PFNGLDEBUGMESSAGECALLBACKPROC)(GLDEBUGPROC callback, const void *userParam);
 GLAPI PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback;
 
+//Timer queries - what Renderer's per-pass GPU timings are built on. Core GL 3.3, so unlike the
+//Android port (which resolves the GL_EXT_disjoint_timer_query forms through eglGetProcAddress,
+//because GLES has only those) there is nothing to feature-test here: a context that can run this
+//renderer at all has these. GL_TIME_ELAPSED measures GPU execution between Begin and End, which
+//is the entire point - a CPU timer around the same calls measures submission, and this codebase
+//has twice concluded the hard way that the two are unrelated. See Renderer::GPUPassTimer.
+#define GL_QUERY_RESULT 0x8866
+#define GL_QUERY_RESULT_AVAILABLE 0x8867
+#define GL_TIME_ELAPSED 0x88BF
+typedef void (APIENTRYP PFNGLGENQUERIESPROC)(GLsizei n, GLuint *ids);
+GLAPI PFNGLGENQUERIESPROC glGenQueries;
+typedef void (APIENTRYP PFNGLDELETEQUERIESPROC)(GLsizei n, const GLuint *ids);
+GLAPI PFNGLDELETEQUERIESPROC glDeleteQueries;
+typedef void (APIENTRYP PFNGLBEGINQUERYPROC)(GLenum target, GLuint id);
+GLAPI PFNGLBEGINQUERYPROC glBeginQuery;
+typedef void (APIENTRYP PFNGLENDQUERYPROC)(GLenum target);
+GLAPI PFNGLENDQUERYPROC glEndQuery;
+typedef void (APIENTRYP PFNGLGETQUERYOBJECTUIVPROC)(GLuint id, GLenum pname, GLuint *params);
+GLAPI PFNGLGETQUERYOBJECTUIVPROC glGetQueryObjectuiv;
+typedef void (APIENTRYP PFNGLGETQUERYOBJECTUI64VPROC)(GLuint id, GLenum pname, GLuint64 *params);
+GLAPI PFNGLGETQUERYOBJECTUI64VPROC glGetQueryObjectui64v;
+
+//Debug groups. Free to place, and they cost nothing when nobody is capturing - but they are what
+//turns a RenderDoc capture of this renderer from a wall of unnamed draws into the same pass list
+//the Performance tab shows. Deliberately pushed from the same scopes as the timers above, so the
+//name a timing is filed under and the name in a capture are the same string.
+typedef void (APIENTRYP PFNGLPUSHDEBUGGROUPPROC)(GLenum source, GLuint id, GLsizei length, const GLchar *message);
+GLAPI PFNGLPUSHDEBUGGROUPPROC glPushDebugGroup;
+typedef void (APIENTRYP PFNGLPOPDEBUGGROUPPROC)(void);
+GLAPI PFNGLPOPDEBUGGROUPPROC glPopDebugGroup;
+
 //WGL Contexts - When we want RenderDoc to work
 typedef HGLRC (APIENTRYP PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC hDC, HGLRC hShareContext, const int *attribList);
 GLAPI PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
