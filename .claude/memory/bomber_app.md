@@ -178,8 +178,15 @@ they part. With one frame, turning the corridor turned the controls with it: the
 so NOTHING happens on screen, and the key that had been walking you forward walks you into the side
 wall. `bomber_state` reports both and says which to press.
 
-**Known gap:** you can see OVER the corridor walls from the board's camera angle, so the board swap
-is visible. The corridor is a sealed box to a walker, not to the camera.
+**The camera dollies down into the corridor** (behind+above, in the CORRIDOR'S frame, so it turns
+with it and the commit rotation is invisible for free) and eases back to exactly where it was on the
+way out. That is what hides the swap - from the board's high angle you can see clean over a
+one-brick wall - and what leaves room for a score tally. **`SinkBoard` drops the old board away**,
+the pop-in run backwards, staggered by distance from the exit and squared so it accelerates; it runs
+from the SEAL and must finish before RebuildField, and is applied as a per-tick DELTA (safe only
+because SyncView returns early in the corridor). **`Hallway::f_next_ready`** is the app telling the
+rules the next board exists - without it a fast walker on a short corridor reaches a far door with
+nothing behind it.
 
 Also open: sound
 (`USE_SOUND` off - no wav yet), player animations, one bomb at a time, enemies that wander rather

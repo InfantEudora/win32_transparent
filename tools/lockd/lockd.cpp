@@ -15,11 +15,17 @@
     the builds it exists to deconflict. Hence tools/, tools.mk, its own object tree, and
     its own port.
 
-    STDIO IS DELIBERATELY NOT STARTED. MCPServer supports it, and registering this over
-    stdio would be a mistake worth naming: an stdio server is spawned by its client, so
-    every agent would get its own private broker with its own private lock table and all
-    of them would grant everything. One process, one HTTP port, many clients is the only
-    arrangement that means anything here.
+    STDIO IS DELIBERATELY NOT STARTED, AND STDIN BELONGS TO THE OPERATOR. MCPServer
+    supports an stdio transport and registering the broker over it would be a mistake worth
+    naming: an stdio server is spawned by its client, so every agent would get its own
+    private broker with its own private lock table and all of them would grant everything.
+    One process, one HTTP port, many clients is the only arrangement that means anything
+    here.
+
+    That left stdin free, and it is now spoken for: the broker runs in the FOREGROUND by
+    default with an interactive console on it - see the console section below. Nothing in
+    this program may ever call MCPServer::Get()->Start(); the stdio reader and the console
+    would race for every line typed, and the one that lost would be the person.
 */
 
 #include "MCPServer.h"  // first - winsock2.h before windows.h, see its own note
@@ -28,6 +34,8 @@
 
 #include <string>
 #include <vector>
+#include <map>
+#include <thread>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -38,6 +46,11 @@ static Debugger *debug = new Debugger("lockd", DEBUG_ALL);
 static const int DEFAULT_PORT = 8766; // NOT 8765 - that is the running app's, one at a time
 
 static LockTable *g_table = nullptr;
+
+//Only ever read as a difference against NowMs(), for the console's `status`. Set in main once
+//the table exists, so "uptime" means what an operator would expect it to: how long this broker
+//has been holding leases, not how long the process has been parsing arguments.
+static int64_t g_started_ms = 0;
 
 /*
     There used to be a priority-101 static constructor here that read GetCommandLineA() and
@@ -620,14 +633,15 @@ static bool FetchLocks(int port, json *locks) {
     return true;
 }
 
-static int CmdList(int port) {
-    json locks;
-    if (!FetchLocks(port, &locks)) {
-        return 1;
-    }
+// The lease table as a terminal shows it. Split out of CmdList so the interactive console
+// prints the identical thing from the identical code - the two sources of the same table
+// drifting apart would be a small bug that wastes a real amount of somebody's attention.
+// Takes the wire shape (what lock_list returns) rather than std::vector<Lease>, because
+// that is what the CLI client has and the console can produce it in one call.
+static void PrintLockTable(const json &locks, int port) {
     if (locks.empty()) {
         printf("No locks held (127.0.0.1:%d).\n", port);
-        return 0;
+        return;
     }
 
     //Width from the data rather than a fixed guess: most keys here are short repo-relative
@@ -652,6 +666,14 @@ static int CmdList(int port) {
                FormatDuration(lock.value("expires_in_s", (int64_t)0)).c_str(),
                Truncate(lock.value("reason", ""), 64).c_str());
     }
+}
+
+static int CmdList(int port) {
+    json locks;
+    if (!FetchLocks(port, &locks)) {
+        return 1;
+    }
+    PrintLockTable(locks, port);
     return 0;
 }
 
@@ -711,6 +733,301 @@ static int CmdRelease(int port, const std::string &owner) {
 }
 
 //---------------------------------------------------------------------------------------
+// Interactive console
+//
+// The broker runs in the FOREGROUND by default - `./lockd`, or the exe double-clicked from
+// an Explorer window - and reads commands from stdin on the main thread. That is why the
+// note at the top of this file is emphatic about MCPServer's stdio transport staying off.
+//
+// It exists because the operator commands were already here and in the wrong place. To look
+// at the table, the person watching the broker had to open a SECOND shell and run a second
+// copy of the exe against the window already in front of them; and --release-all - the one
+// button deliberately withheld from agents, since an agent able to wipe the table could undo
+// everyone else's protection in a single call - was the most awkward of the lot to reach.
+// The console puts them where the operator already is.
+//
+// The commands are the CLI's, by the same names, printing through the same PrintLockTable.
+// They call the LockTable directly rather than looping back through HTTP: the table is right
+// there behind its own mutex, and a broker that talked to itself over a socket would have one
+// more way to fail than it needs.
+//---------------------------------------------------------------------------------------
+
+// Is somebody already answering on this port? Used twice: once before binding, where a second
+// broker is the failure worth catching early, and once by `status`, where "the port I asked
+// for" and "the port I am answering on" are not the same claim and only the second is useful.
+static bool ProbePort(int port) {
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        return false; // can't tell - say no and let the bind have its go rather than refuse to run
+    }
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        WSACleanup();
+        return false;
+    }
+    sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((u_short)port);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    bool f_open = connect(sock, (sockaddr *)&addr, sizeof(addr)) != SOCKET_ERROR;
+    closesocket(sock);
+    //Safe to hand the refcount back even though the server is about to want sockets: TCPServer
+    //calls WSAStartup itself when it starts listening.
+    WSACleanup();
+    return f_open;
+}
+
+//Mute is per-Debugger-handle and reversible rather than one global switch. The global that
+//already exists, Debugger::enable_console, is all-or-nothing and would take the errors with
+//it - and an error is the one thing worth interrupting a muted console for. Each handle's
+//level is saved on the way in, so unmute restores what that handle actually had, which is not
+//necessarily DEBUG_ALL: blanket-restoring would make a deliberately quiet subsystem chatty for
+//the first time in its life.
+static std::map<std::string, int> g_saved_levels;
+static bool f_muted = false;
+
+static void SetMuted(bool f_mute) {
+    if (f_mute == f_muted) {
+        return;
+    }
+    std::map<std::string, Debugger *> *handles = Debugger::GetHandles();
+    if (f_mute) {
+        g_saved_levels.clear();
+        for (const std::pair<const std::string, Debugger *> &kv : *handles) {
+            if (!kv.second) {
+                continue;
+            }
+            g_saved_levels[kv.first] = kv.second->level;
+            kv.second->SetLevel(DEBUG_ERROR);
+        }
+    } else {
+        for (const std::pair<const std::string, Debugger *> &kv : *handles) {
+            std::map<std::string, int>::const_iterator saved = g_saved_levels.find(kv.first);
+            if (!kv.second || saved == g_saved_levels.end()) {
+                continue;
+            }
+            //Assigned, NOT SetLevel(): Debugger::SetLevel stores its argument minus one, so
+            //feeding it a value read back out of `level` would lower the bar by one on every
+            //mute/unmute cycle until everything printed again.
+            kv.second->level = saved->second;
+        }
+        g_saved_levels.clear();
+    }
+    f_muted = f_mute;
+}
+
+// Owners are session ids and the table shows only their first group (ShortOwner), so the string
+// an operator has in front of them to type is NOT the string Break matches on. Accepting any
+// unambiguous prefix is what makes `release 8923730d` do what it plainly means; without it the
+// command silently reports "no locks held by ..." for an owner visibly holding four.
+static bool ResolveOwner(const std::string &typed, std::string *out) {
+    std::vector<Lease> leases = g_table->List();
+    std::vector<std::string> matches;
+    for (const Lease &lease : leases) {
+        if (lease.owner == typed) {
+            *out = typed; // an exact hit wins outright, prefix of something else or not
+            return true;
+        }
+        if (lease.owner.compare(0, typed.size(), typed) == 0 &&
+            std::find(matches.begin(), matches.end(), lease.owner) == matches.end()) {
+            matches.push_back(lease.owner);
+        }
+    }
+    if (matches.empty()) {
+        printf("No locks held by '%s'.\n", typed.c_str());
+        return false;
+    }
+    if (matches.size() > 1) {
+        printf("'%s' matches %d owners - be more specific:\n", typed.c_str(), (int)matches.size());
+        for (const std::string &owner : matches) {
+            printf("  %s\n", owner.c_str());
+        }
+        return false;
+    }
+    *out = matches[0];
+    return true;
+}
+
+static void ConsoleList(int port) {
+    PrintLockTable(LeasesToJson(g_table->List()), port);
+}
+
+static void ConsoleStatus(int port, const std::string &root) {
+    printf("  endpoint    http://127.0.0.1:%d/mcp%s\n", port,
+           ProbePort(port) ? "" : "   -- NOT LISTENING");
+    printf("  repo root   %s\n",
+           root.empty() ? "(none - absolute paths are kept as they arrive)" : root.c_str());
+    printf("  uptime      %s\n",
+           FormatDuration((LockTable::NowMs() - g_started_ms) / 1000).c_str());
+    printf("  leases      %d\n", (int)g_table->List().size());
+    printf("  logging     %s\n", f_muted ? "muted - errors only" : "full");
+}
+
+static void ConsoleRelease(const std::string &typed) {
+    std::string owner;
+    if (!ResolveOwner(typed, &owner)) {
+        return; // ResolveOwner has already said why
+    }
+    std::vector<std::string> broken = g_table->Break(std::vector<std::string>(), owner);
+    printf("Released %d lock(s) held by %s:\n", (int)broken.size(), owner.c_str());
+    for (const std::string &key : broken) {
+        printf("  %s\n", key.c_str());
+    }
+}
+
+static void ConsoleBreak(const std::string &path) {
+    //Normalised here because Break matches keys as given, and every key in the table went
+    //through Normalize on the way in. Typing the path with backslashes, or in the case Explorer
+    //shows it, would otherwise match nothing and look like the lock was already gone.
+    std::vector<std::string> keys;
+    keys.push_back(g_table->Normalize(path));
+    std::vector<std::string> broken = g_table->Break(keys, std::string());
+    if (broken.empty()) {
+        printf("Nothing held on '%s'.\n", keys[0].c_str());
+        return;
+    }
+    for (const std::string &key : broken) {
+        printf("Broke %s\n", key.c_str());
+    }
+}
+
+static void ConsoleReleaseAll() {
+    std::vector<Lease> leases = g_table->List();
+    if (leases.empty()) {
+        printf("Nothing held - nothing to release.\n");
+        return;
+    }
+    //Printed BEFORE the break, with each owner and reason, because this throws away other
+    //agents' state: the log of what was taken is the only way to tell afterwards what was
+    //interrupted. They are not lost for long - an agent still working re-claims on its next
+    //write through the PreToolUse hook.
+    printf("Releasing %d lock(s):\n", (int)leases.size());
+    std::vector<std::string> keys;
+    for (const Lease &lease : leases) {
+        std::string reason = Truncate(lease.reason, 64);
+        printf("  %-40s %s%s%s\n", lease.key.c_str(), ShortOwner(lease.owner).c_str(),
+               reason.empty() ? "" : " - ", reason.c_str());
+        keys.push_back(lease.key);
+    }
+    printf("\nCleared %d.\n", (int)g_table->Break(keys, std::string()).size());
+}
+
+static void ConsoleHelp() {
+    printf("  list, l           the lock table (a bare Enter does the same)\n"
+           "  status            endpoint, repo root, uptime, lease count, logging\n"
+           "  release <owner>   release every lock one owner holds; any unambiguous\n"
+           "                    prefix works, so the short id in the table will do\n"
+           "  release-all       release every lock there is - the panic button\n"
+           "  break <path>      force-release one path\n"
+           "  mute, unmute      suppress engine logging below error level\n"
+           "  help, ?           this\n"
+           "  quit, exit        stop the broker, dropping every lease\n");
+}
+
+// Returns false at EOF, which is not an error: the broker may have been started with stdin
+// closed or redirected (`./lockd </dev/null &`). The caller then stops reading and goes on
+// serving, rather than spinning on it - which a naive while(fgets(...)) would do at 100% of a
+// core, in the one process nobody is watching.
+static bool ReadConsoleLine(std::string *out) {
+    out->clear();
+    char chunk[512];
+    for (;;) {
+        if (!fgets(chunk, sizeof(chunk), stdin)) {
+            return false;
+        }
+        *out += chunk;
+        if (!out->empty() && out->back() == '\n') {
+            break; // otherwise fgets stopped on a full buffer, not a line end
+        }
+    }
+    while (!out->empty() && strchr(" \t\r\n", out->back())) {
+        out->pop_back();
+    }
+    size_t start = out->find_first_not_of(" \t");
+    *out = (start == std::string::npos) ? std::string() : out->substr(start);
+    return true;
+}
+
+// True when the operator asked to quit, false at end of input. The two must not be the same
+// answer: quit stops the broker, EOF only means nobody is typing.
+static bool RunConsole(int port, const std::string &root) {
+    printf("lockd on 127.0.0.1:%d - 'help' for commands, 'quit' to stop the broker.\n", port);
+    for (;;) {
+        printf("lockd> ");
+        fflush(stdout); // a prompt is not a whole line, so nothing else will flush it
+
+        std::string line;
+        if (!ReadConsoleLine(&line)) {
+            printf("\n");
+            return false;
+        }
+        //A bare Enter re-prints the table. It is the thing wanted most often by a long way -
+        //this console exists mainly to be watched - and costs one line to make free.
+        if (line.empty()) {
+            ConsoleList(port);
+            continue;
+        }
+
+        //The argument is the whole rest of the line rather than one token, because paths and
+        //owners can contain spaces and quoting rules at a prompt are a thing to get wrong
+        //rather than a feature. No command here takes two arguments.
+        std::string cmd = line;
+        std::string arg;
+        size_t space = line.find_first_of(" \t");
+        if (space != std::string::npos) {
+            cmd = line.substr(0, space);
+            size_t arg_start = line.find_first_not_of(" \t", space);
+            if (arg_start != std::string::npos) {
+                arg = line.substr(arg_start);
+            }
+        }
+        std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
+
+        if (cmd == "list" || cmd == "l" || cmd == "ls") {
+            ConsoleList(port);
+        } else if (cmd == "status" || cmd == "st") {
+            ConsoleStatus(port, root);
+        } else if (cmd == "release") {
+            if (arg.empty()) {
+                printf("release needs an owner - 'list' shows who holds what, and the short "
+                       "id it prints is enough.\n");
+            } else {
+                ConsoleRelease(arg);
+            }
+        } else if (cmd == "release-all") {
+            ConsoleReleaseAll();
+        } else if (cmd == "break") {
+            if (arg.empty()) {
+                printf("break needs a path.\n");
+            } else {
+                ConsoleBreak(arg);
+            }
+        } else if (cmd == "mute") {
+            SetMuted(true);
+            printf("Muted - errors only. 'unmute' restores.\n");
+        } else if (cmd == "unmute") {
+            SetMuted(false);
+            printf("Unmuted.\n");
+        } else if (cmd == "help" || cmd == "?" || cmd == "h") {
+            ConsoleHelp();
+        } else if (cmd == "quit" || cmd == "exit" || cmd == "q") {
+            //Said, not asked. Stopping the broker drops every lease - the crude version of
+            //release-all - but an operator typing 'quit' at their own console means it, and a
+            //confirmation prompt on the way out of a dev tool earns nothing.
+            int held = (int)g_table->List().size();
+            if (held > 0) {
+                printf("Stopping - %d lease(s) dropped. Agents re-claim on their next write.\n",
+                       held);
+            }
+            return true;
+        } else {
+            printf("Unknown command '%s' - 'help' lists them.\n", cmd.c_str());
+        }
+    }
+}
+
+//---------------------------------------------------------------------------------------
 // Repo root
 //
 // Needed so that "core/Application.cpp" from an agent and the absolute path a PreToolUse
@@ -737,6 +1054,39 @@ static std::string DefaultRepoRoot() {
     return std::string(full);
 }
 
+// Reap on a timer as well as on access, so that an expiry in an otherwise idle broker is logged
+// when it happens rather than surfacing at the next unrelated call. On its own thread since the
+// main one now reads the console, and detached because it has no shutdown to coordinate - the
+// process exiting is its shutdown, and the table it is reaping dies with it.
+static void ReaperLoop() {
+    for (;;) {
+        Sleep(5000);
+        std::vector<Lease> reaped;
+        g_table->ReapExpired(&reaped);
+        for (const Lease &lease : reaped) {
+            debug->Warn("EXPIRED %s held by %s (%s)\n", lease.key.c_str(), lease.owner.c_str(),
+                        lease.reason.empty() ? "no reason given" : lease.reason.c_str());
+        }
+    }
+}
+
+// A window opened by double-clicking the exe closes the instant main() returns, taking whatever
+// went wrong with it. Only worth doing where there is a console to hold open; at EOF fgets
+// returns immediately, so a redirected stdin cannot wedge a startup failure here.
+static void WaitForExitKey(bool f_console) {
+    if (!f_console) {
+        return;
+    }
+    //The message this is holding the window open FOR went to stderr, and the prompt goes to
+    //stdout - two streams whose buffering differs the moment either is redirected. Flushed here
+    //so the reason always precedes the prompt rather than sometimes following it.
+    fflush(stderr);
+    printf("\nPress Enter to close.\n");
+    fflush(stdout);
+    char discard[8];
+    fgets(discard, sizeof(discard), stdin);
+}
+
 int main(int argc, char **argv) {
     int port = DEFAULT_PORT;
     std::string root;
@@ -746,6 +1096,11 @@ int main(int argc, char **argv) {
     enum Mode { MODE_SERVE, MODE_LIST, MODE_RELEASE_ALL, MODE_RELEASE };
     Mode mode = MODE_SERVE;
     std::string release_owner;
+
+    //On by DEFAULT, which is the whole point of it: the broker is meant to be a window you can
+    //see and type into. --no-console is for the older arrangement, `./lockd 2>lockd.log &`,
+    //where nothing is going to be typed and stdin may not even be attached.
+    bool f_console = true;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -760,15 +1115,20 @@ int main(int argc, char **argv) {
         } else if ((arg == "--release") && i + 1 < argc) {
             mode = MODE_RELEASE;
             release_owner = argv[++i];
+        } else if (arg == "--no-console") {
+            f_console = false;
         } else if (arg == "--help" || arg == "-h") {
             printf("lockd - advisory file-lock broker over MCP for this repo.\n"
                    "\n"
-                   "Run the broker (no arguments):\n"
+                   "Run the broker (no arguments). It runs in the foreground with an\n"
+                   "interactive console on stdin - type 'help' at its prompt:\n"
                    "  --port <n>        listen port (default %d; NOT 8765, that is the app's)\n"
                    "  --root <dir>      repo root absolute paths are made relative to\n"
                    "                    (default: three levels above the exe)\n"
+                   "  --no-console      serve without reading stdin, for running it\n"
+                   "                    backgrounded with its log redirected\n"
                    "\n"
-                   "Talk to a broker that is already running:\n"
+                   "Talk to a broker that is already running (these do not start one):\n"
                    "  --list, -l        print the lock table\n"
                    "  --release <owner> release every lock held by one owner\n"
                    "  --release-all     release every lock there is (the panic button)\n"
@@ -798,26 +1158,45 @@ int main(int argc, char **argv) {
     if (root.empty()) {
         root = DefaultRepoRoot();
     }
+
+    //Asked BEFORE binding, because the failure it catches is the quiet one. StartHttp logs a
+    //bind error and carries on with the transport off, which used to leave a silent and useless
+    //process; with a console it would leave something worse - a prompt answering every command
+    //from an empty table that no agent can see, while the real broker runs in another window.
+    //Two double-clicks on the exe is all it takes, and is now the likeliest way to start it.
+    if (ProbePort(port)) {
+        fprintf(stderr, "lockd: something is already listening on 127.0.0.1:%d - a broker is\n"
+                        "       already running. Use that one; this process would serve nobody.\n",
+                port);
+        WaitForExitKey(f_console);
+        return 1;
+    }
+
     debug->Info("lockd starting - repo root: %s\n", root.empty() ? "(none)" : root.c_str());
 
     g_table = new LockTable(root);
+    g_started_ms = LockTable::NowMs();
     RegisterTools();
 
-    // HTTP only, on purpose - see the note at the top of this file about stdio.
+    // HTTP only, on purpose - see the note at the top of this file about stdio, which is now
+    // doubly true: stdin is the console's.
     MCPServer::Get()->StartHttp(port);
 
     debug->Info("Leases are in memory only: restarting lockd clears every lock, which is "
                 "the intended way out of a wedged table.\n");
 
-    // Reap on a timer as well as on access, so that an expiry in an otherwise idle broker
-    // is logged when it happens rather than surfacing at the next unrelated call.
+    std::thread(ReaperLoop).detach();
+
+    if (f_console && RunConsole(port, root)) {
+        return 0; // 'quit' - the leases go with the process, as they always have
+    }
+
+    //Either --no-console, or the console read EOF. Neither is a reason to stop: the broker's
+    //job does not depend on anyone typing at it, and an agent mid-task is depending on it.
+    if (f_console) {
+        debug->Info("Console input closed - serving without it. Stop with Ctrl-C.\n");
+    }
     for (;;) {
-        Sleep(5000);
-        std::vector<Lease> reaped;
-        g_table->ReapExpired(&reaped);
-        for (const Lease &lease : reaped) {
-            debug->Warn("EXPIRED %s held by %s (%s)\n", lease.key.c_str(), lease.owner.c_str(),
-                        lease.reason.empty() ? "no reason given" : lease.reason.c_str());
-        }
+        Sleep(60000);
     }
 }

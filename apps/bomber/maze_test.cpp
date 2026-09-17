@@ -516,6 +516,20 @@ static void TestHallDoors(){
     Check(!HallStepOnce(hall,MAZE_DIR_NORTH),         "so walking back does nothing");
     Check(hall.player.tile_z == 1,                    "and the player is still inside");
 
+    /*
+        THE FAR DOOR WAITS FOR THE NEXT BOARD as well as for the walk.
+
+        On a short corridor a fast walker reaches the far end before the old board has finished
+        sinking out of sight, and a door that opened then would be opening onto nothing. The app
+        sets this when RebuildField has run.
+    */
+    Check(!hall.f_far_door_open,                      "the far door is shut before the board is ready");
+    hall.player.tile_z = L - 2;
+    HallTicks(hall,1);
+    Check(!hall.f_far_door_open,                      "and stays shut standing right in front of it");
+    hall.player.tile_z = 1;
+    hall.f_next_ready = true;
+
     bool f_shut_all_the_way = true;
     while (hall.player.tile_z < L - 2){
         if (hall.f_far_door_open){ f_shut_all_the_way = false; }
@@ -643,6 +657,8 @@ static void TestHallHasNoBombs(){
     MazeWalker w;
     w.health = 1;
     hall.Begin(5,w,MAZE_DIR_SOUTH);
+    //The app would set this at the commit; this test is about bombs, not about the handshake.
+    hall.f_next_ready = true;
 
     MazeInput in;
     in.direction = MAZE_DIR_SOUTH;

@@ -616,8 +616,17 @@ $(BAKED_TABLE) $(BAKED_STUB) $(BAKED_BLOB) &: $(PACK_TOOL) $(MAKEFILE_LIST) $(AS
 #Built on demand, and rebuilt when its own sources change - not merely when it is missing.
 #An app silently baking with a stale packer is the kind of thing that is only noticed much
 #later. The + hands the sub-make this make's jobserver rather than starting a second one.
+#
+#CONFIG=debug IS PINNED, AND IS LOAD-BEARING. A command-line assignment propagates to every
+#sub-make through MAKEFLAGS, so without this `make ship` - which recurses with CONFIG=release
+#- would hand tools.mk a release configuration, and tools.mk names its exe per configuration
+#exactly as this file does. The sub-make would cheerfully build assetpack_release.exe, this
+#rule's target assetpack.exe would still not exist, make would consider it updated anyway,
+#and the recipe above would fail on a missing packer in the one build nobody runs often.
+#The packer is a build-time tool whose own optimisation level has nothing to do with the
+#artifact being shipped, so pinning the default is right as well as necessary.
 $(PACK_TOOL): $(wildcard $(ROOT)/tools/assetpack/*.cpp) $(ROOT)/tools/assetpack/makefile $(ROOT)/tools/tools.mk
-	+$(MAKE) -C $(ROOT)/tools/assetpack
+	+$(MAKE) -C $(ROOT)/tools/assetpack CONFIG=debug
 
 endif
 

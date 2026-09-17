@@ -6,25 +6,19 @@
 /*
     The rules of the bomberman field: a grid of tiles, walkers on it, a bomb, and a blast.
 
-    NO ENGINE TYPE APPEARS IN THIS HEADER, the same split breakout/Field.h keeps. This side owns
-    what is true - which tiles exist, where the character is, whether it may step there, when the
-    bomb goes off and how far the flame reaches - and ApplicationBomber owns what that LOOKS like.
-    The payoff is that the rules can be stepped, printed and reasoned about without a window, and
-    that nothing in here can accidentally depend on a mesh having loaded.
+    No engine type appears in this header - the same split breakout/Field.h keeps. This side owns
+    what is true, ApplicationBomber owns what it looks like, so the rules can be stepped, printed
+    and reasoned about without a window.
 
-    EVERYTHING IS COUNTED IN TICKS AND IN TILES. No seconds, no world units: the view multiplies
-    tiles by its own cell size and the simulation never knows what that is. Durations in ticks is
-    the house rule (see Scene::GetPhysicsTick); tiles rather than metres is what lets the art be
-    rescaled without touching a rule.
+    Everything is counted in TICKS and in TILES. The view multiplies tiles by its own cell size;
+    the simulation never knows what that is, which is what lets the art be rescaled.
 
-    Tick() is the whole simulation. Call it once per tick that actually runs, hand it the intent
-    for that tick, and read the state back out.
+    Deterministic: NewGame lays the field out of this class's own stream and the enemies draw from
+    that same stream as they wander, so a seed plus a sequence of inputs is exactly one game - the
+    property a replay needs. See rng_state.
 
-    IT IS DETERMINISTIC, and that is a stronger statement than "it draws no randomness": NewGame
-    lays the field out of this class's OWN stream, and the enemies draw from that same stream as
-    they wander. Nothing else touches it and nothing touches it off a tick, so a given seed plus a
-    given sequence of inputs is still exactly one game - which is the property a replay needs, and
-    the reason the enemies do not reach for Application::rrand. See the note on rng_state.
+    Tick() is the whole simulation. Call it once per tick that runs, hand it the intent for that
+    tick, and read the state back out.
 */
 
 #define MAZE_W  16
@@ -33,14 +27,11 @@
 /*
     What is on a cell.
 
-    PASSABILITY, BLAST-BLOCKING AND DESTRUCTIBILITY ARE THREE DIFFERENT QUESTIONS and this is the
-    type that answers all three, differently. Water stops a walker and does not stop a flame - it is
-    at ground level, there is simply nothing to stand on. A brick wall stops both and survives.
-    A hedge stops both and burns. Keeping the predicates separate (IsPassable / BlocksBlast /
-    IsSoft) rather than having one `f_solid` flag is what makes that expressible at all.
+    Passability, blast-blocking and destructibility are three different questions - water stops a
+    walker but not a flame, a hedge stops both and burns - so they are three predicates
+    (IsPassable / BlocksBlast / IsSoft) rather than one f_solid flag.
 
-    THE BLOCK TYPES ARE ADJACENT AND LAST, which is what lets IsBlock be a range test rather
-    than a list that something will eventually be left out of.
+    The block types are adjacent and last, which lets IsBlock be a range test.
 */
 enum MazeTile : uint8_t {
     MAZE_TILE_GRASS = 0,    //walkable
@@ -50,26 +41,18 @@ enum MazeTile : uint8_t {
     MAZE_TILE_WALL,         //impassable, stops a blast, and nothing can remove it
     MAZE_TILE_HEDGE,        //impassable, stops a blast, burns - and an enemy can cut through it
     MAZE_TILE_WOOD,         //impassable, stops a blast, burns
-    /*
-        The exit, in the border wall. THE ONE TILE WHOSE PASSABILITY IS NOT A PROPERTY OF THE CELL:
-        it is a block until the key is found and floor afterwards, so IsPassable tests `f_has_key`
-        before it tests IsBlock rather than the two being folded together.
-
-        It stays inside the IsBlock range, which is right for everything else that asks: a blast
-        never opens it (BlocksBlast), an enemy cannot cut it (IsChoppable is hedge only), nothing
-        is scattered on it and no soft block is laid over it.
-    */
+    //The exit. The one tile whose passability is not a property of the cell: a block until the key
+    //is found, floor after, so IsPassable tests f_has_key before it tests IsBlock. It stays in the
+    //IsBlock range for everything else that asks - no blast opens it, no enemy cuts it, nothing is
+    //laid on it.
     MAZE_TILE_DOOR,
     MAZE_TILE_COUNT
 };
 
 /*
-    What is standing on a cell, on top of its tile.
-
-    Decoration, with one exception: a BRIDGE makes the water under it crossable. That is here rather
-    than as a further tile type because the tile underneath is still water - it still does not block
-    a blast, and a bomb that later removes the bridge leaves water behind rather than having to
-    remember what was there.
+    What is standing on a cell, on top of its tile. Scenery, with one exception: a bridge makes the
+    water under it crossable. That is decor rather than a tile type so the cell underneath stays
+    water - it still does not block a blast, and blowing the bridge up leaves water behind.
 */
 enum MazeDecor : uint8_t {
     MAZE_DECOR_NONE = 0,
@@ -77,52 +60,31 @@ enum MazeDecor : uint8_t {
     MAZE_DECOR_FLOWERS_TALL,    //a standing clump, tall enough to read from across the board
     MAZE_DECOR_PLANT,
     MAZE_DECOR_TURD,
-    /*
-        A lilly pad. THE ONLY DECOR THAT GOES ON WATER, and only on water with nothing else on it -
-        a pad growing through a bridge is the one arrangement that would read as a mistake.
-
-        It is scenery and nothing more: it does not make the cell crossable (that is
-        MAZE_DECOR_BRIDGE's job and IsPassable asks for that by name), it does not block a blast,
-        and walking is not affected by it, because there is no walking on water to affect.
-    */
-    MAZE_DECOR_LILLY,
-    MAZE_DECOR_BRIDGE,
+    MAZE_DECOR_LILLY,           //only goes on water, and only water with nothing else on it
+    MAZE_DECOR_BRIDGE,          //makes the water under it crossable; IsPassable asks for it by name
     MAZE_DECOR_COUNT
 };
 
 /*
     What is buried on a cell, waiting to be picked up.
 
-    A SEPARATE ARRAY FROM `decor` BECAUSE THE TWO OVERLAP IN TIME: an item is laid under a soft
-    block at generation, the block may also be carrying a plant, and the item has to outlive the
-    block being blown up. Packing both into one byte would mean losing one of them at exactly the
-    moment the other appears.
+    A separate array from `decor` because the two overlap in time: an item is laid under a soft
+    block that may also be carrying a plant, and it has to outlive the block being blown up.
 
-    An item is HIDDEN while the cell it is on is not passable, which is the whole design: they are
-    laid under hedges and wooden walls, so blowing blocks up is how you find them, and no separate
-    "revealed" flag is needed - the tile answers it.
+    An item is HIDDEN while its cell is not passable, which is the whole design - they are buried
+    under soft blocks, so digging is how you find them and no "revealed" flag is needed.
 */
 enum MazeItem : uint8_t {
     MAZE_ITEM_NONE = 0,
     MAZE_ITEM_HEALTH,       //one point of health back, up to the starting maximum
     MAZE_ITEM_SHIELD,       //MAZE_SHIELD_TICKS of not being hurt by anything
-    /*
-        The way out. Worth no points and grants nothing that helps you survive - all it does is
-        unlock MAZE_TILE_DOOR, which is why `f_has_key` is a flag on the game and not a counter.
-
-        IT IS ALWAYS BURIED, first in MAZE_ITEM_ORDER, and AddItems will not lay it under a block
-        with no open cell beside it - a key nobody can reach is a board that cannot be finished.
-    */
+    //The way out: unlocks MAZE_TILE_DOOR and grants nothing else, which is why f_has_key is a flag
+    //and not a counter. Always buried, first in MAZE_ITEM_ORDER, and never under a block with no
+    //open cell beside it - a key nobody can reach is a board that cannot be finished.
     MAZE_ITEM_KEY,
-    /*
-        The three treasures. THEY DO NOTHING BUT SCORE, which is the point of having three of them:
-        a pickup that changes how the game plays has to be balanced, and a pickup that is only worth
-        points can be made rare purely because it is pretty.
-
-        Ordered by what they are worth, and MazeItemScore below depends on that order only in the
-        sense that it has to be kept in step with it - which is why it is a switch and not
-        arithmetic on the enum.
-    */
+    //The three treasures. They do nothing but score, which is the point of having three: a pickup
+    //worth only points can be made rare purely because it is pretty. Ordered by what they are
+    //worth, and MazeItemScore has to be kept in step with that order.
     MAZE_ITEM_COIN,
     MAZE_ITEM_DIAMOND,
     MAZE_ITEM_CRYSTAL,
@@ -130,18 +92,14 @@ enum MazeItem : uint8_t {
 };
 
 //--- what treasure is worth ---------------------------------------------------------------------
-/*
-    Points per treasure, and the gaps are deliberately wide.
-
-    5x between each step, so finding a crystal is not "a few more coins", it is the thing that
-    happened this round. A flatter ladder would make the rare ones pointless to be pleased about,
-    which is the only job they have.
-*/
+//5x between each step, so finding a crystal is not "a few more coins" but the thing that happened
+//this round. A flatter ladder makes the rare ones pointless to be pleased about.
 #define MAZE_SCORE_COIN         10
 #define MAZE_SCORE_DIAMOND      50
 #define MAZE_SCORE_CRYSTAL      250
 
-//What one pickup adds to the score. 0 for the ones that pay in health or time instead.
+//What one pickup adds to the score. 0 for the ones that pay in health or time instead. A switch
+//rather than arithmetic on the enum, so reordering MazeItem cannot silently change a value.
 static inline int MazeItemScore(uint8_t item){
     switch (item){
         case MAZE_ITEM_COIN:    return MAZE_SCORE_COIN;
@@ -152,17 +110,12 @@ static inline int MazeItemScore(uint8_t item){
 }
 
 /*
-    Which way a cell may be crossed.
+    Which way a cell may be crossed - a generic property of the cell, not a property of bridges.
+    A bridge is the only thing that sets it today, but a fence gap, a doorway or a conveyor would
+    all want the same, and none of them should have to add a case to the walker.
 
-    A GENERIC PROPERTY OF THE CELL, not a property of bridges. A bridge is the only thing that sets
-    it today, because a bridge is the only asset there is with a direction - you walk along the
-    planks and the rope rails are in the way at the sides. But a fence gap, a doorway, a one-tile
-    corridor of scenery or a conveyor would all want exactly this, and none of them should have to
-    add a case to the walker.
-
-    The rule is applied to BOTH ends of a step: you may not enter a cell across its grain, and you
-    may not leave one across its grain either. Checking only the target would let you step sideways
-    off the middle of a bridge into the water.
+    Applied to BOTH ends of a step: checking only the target would let you step sideways off the
+    middle of a bridge into the water.
 */
 enum MazePassAxis : uint8_t {
     MAZE_AXIS_ANY = 0,      //no restriction
@@ -171,15 +124,10 @@ enum MazePassAxis : uint8_t {
 };
 
 /*
-    How a region of the board is laid out.
-
-    A field is a BLEND of these rather than one of them, which is the difference between this and a
-    plain bomberman board: the classic pillar grid is fair but samey, a labyrinth is interesting but
-    claustrophobic with bombs in it, and an open plaza is where a chase happens. Mixing them in one
-    field means the same match has corridors to be cornered in and rooms to run in.
-
-    Reported per cell in `zone`, so the MCP map can show which is which and a layout that plays
-    badly can be looked at rather than guessed about.
+    How a region of the board is laid out. A field is a BLEND of these rather than one of them,
+    which is the difference between this and a plain bomberman board: the pillar grid is fair but
+    samey, a labyrinth is claustrophobic with bombs in it, and a plaza is where a chase happens.
+    One field wants all three. Reported per cell in `zone`, so a bad layout can be looked at.
 */
 enum MazeStyle : uint8_t {
     MAZE_STYLE_BOMBER = 0,  //the classic: open floor with a pillar on every even/even cell
@@ -207,14 +155,9 @@ enum MazeStyle : uint8_t {
 #define MAZE_BLAST_RANGE        2
 //How long the blast stays lit. The view's fire outlives this a little - see ApplicationBomber.
 #define MAZE_BLAST_TICKS        110
-/*
-    How long the blast actually HURTS, which is much less than how long it is drawn.
-
-    The fire and the smoke it leaves behind are one effect on screen and two different things to
-    walk into: a blast that damaged for its whole visible life would make the tile it went off on
-    unusable for nearly two seconds, and being killed by smoke reads as a bug rather than as a
-    mistake. Three quarters of a second is about as long as the flame front is actually bright.
-*/
+//How long the blast actually HURTS, which is much less than how long it is drawn. Fire and the
+//smoke after it are one effect on screen and two things to walk into: damaging for the whole
+//visible life makes the tile unusable for two seconds, and dying to smoke reads as a bug.
 #define MAZE_BLAST_HURT_TICKS   45
 
 //Where the character starts. Kept as a pair of defines because the generator has to guarantee this
@@ -223,38 +166,30 @@ enum MazeStyle : uint8_t {
 #define MAZE_SPAWN_Z            1
 
 /*
-    How small a board is allowed to be before the layout is thrown away and rolled again.
+    How small a board may be before the layout is thrown away and rolled again.
 
-    THE GENERATOR CAN PRODUCE A DUD. The zones are carved independently and joined by doorways that
-    are placed, not routed, so a run of unlucky rolls can leave the spawn in a pocket with the rest
-    of the board sealed off behind it - the reachability prune then turns all of that into wall and
-    what is left is a corner of a field. Measured over seeds 1..12 the healthy ones land between
-    116 and 151 cells; seed 12 produced FOURTEEN, with no room for a single enemy.
-
-    A board that small is not a hard seed, it is a broken one, and it is not worth trying to prove
-    the carve can never fail - re-rolling it is four lines and it cannot regress. The retries draw
-    from the same stream, so the seed still determines the whole sequence and the field is still
-    reproducible.
+    The generator can produce a dud: zones are carved independently and joined by doorways that are
+    placed rather than routed, so an unlucky run leaves the spawn in a pocket and the reachability
+    prune turns the rest into wall. Healthy seeds land between 116 and 151 cells; seed 12 produced
+    FOURTEEN. Re-rolling is four lines and cannot regress, and the retries draw from the same
+    stream, so the seed still determines the whole field.
 */
 #define MAZE_MIN_PLAYABLE       90
 #define MAZE_LAYOUT_ATTEMPTS    8
 
 //--- water and the bridges over it --------------------------------------------------------------
-//How many ponds are ATTEMPTED. Attempted rather than laid: one whose seed lands on a pillar is
-//skipped rather than moved, so a board usually ends up with a few less than this.
+//How many ponds are ATTEMPTED - one whose seed lands on a pillar is skipped rather than moved, so
+//a board usually ends up with a few less than this.
 #define MAZE_NUM_PONDS          7
 /*
-    How long a pond's run TRIES to be, in cells, before the walls have their say.
+    How long a pond's run tries to be, in cells - and so how long a BRIDGE is, since a bridge spans
+    the whole pond it is on (see AddWater). Five is the ceiling because a longer span is a corridor
+    you cannot turn round in with a bomb behind you.
 
-    THIS IS THE LENGTH OF A BRIDGE, because a bridge spans the whole of the pond it is on - see
-    AddWater. Five is the ceiling because a span longer than that is a corridor you cannot turn
-    round in with a bomb behind you.
-
-    The floor is three and it is not the shortest bridge you will see: a pond about to be bridged
-    gives up a cell to any end that has no dry land to offer, so a three-cell run wedged between
-    two walls ends up as a one-cell crossing. Measured over a thousand seeds this lands at a mean
-    span of 3.1 cells with 11% of them single - a floor of two gave a mean of 2.7 with 18% single,
-    and a ceiling of six bought 3.4 at the price of visibly less floor to play on.
+    The floor of three is not the shortest bridge you will see: a pond gives up a cell to any end
+    with no dry land to offer. Over a thousand seeds that lands at a mean span of 3.1 cells with
+    11% of them single - a floor of two gave 2.7 with 18% single, a ceiling of six bought 3.4 at
+    the price of visibly less floor to play on.
 */
 #define MAZE_POND_MIN           3
 #define MAZE_POND_MAX           5
@@ -270,22 +205,18 @@ enum MazeStyle : uint8_t {
 //has somewhere to run to.
 #define MAZE_SPAWN_CLEAR        2
 /*
-    How many pickups are buried, and EXACTLY WHAT THEY ARE.
+    How many pickups are buried, and exactly what they are.
 
-    A fixed list handed out in order rather than a weighted roll, which is the same call AddItems
-    already made about which cells to use: a board then has exactly one crystal rather than a 12%
-    chance of two, and "how good was that board" is a question about where things were, not about
-    whether the dice were kind.
-
-    The list is walked front to back onto SHUFFLED cells, so the mix is exact while the placement is
-    not. It also degrades the right way: a board with only three soft blocks left to bury things
-    under keeps the coins and the health and loses the crystal, because the rare thing is at the
-    back. Eight of them on a 16x16 board with ~34 soft blocks is roughly one dig in four.
+    A fixed list handed out in order rather than a weighted roll, so a board has exactly one crystal
+    rather than a 12% chance of two, and "how good was that board" is a question about where things
+    were. It is walked front to back onto SHUFFLED cells - the mix is exact, the placement is not -
+    and it degrades the right way: a board with only three soft blocks left keeps the coins and the
+    health and loses the crystal, because the rare thing is at the back.
 */
 #define MAZE_NUM_ITEMS          9
 static const uint8_t MAZE_ITEM_ORDER[MAZE_NUM_ITEMS] = {
-    //FIRST, and that is the whole reason the list is walked in order: the key is the way out, so
-    //it is the one thing a board too small to bury everything must still bury.
+    //First, and that is the whole reason the list is walked in order: a board too small to bury
+    //everything must still bury the way out.
     MAZE_ITEM_KEY,
     MAZE_ITEM_COIN,    MAZE_ITEM_HEALTH,
     MAZE_ITEM_COIN,    MAZE_ITEM_DIAMOND,
@@ -293,22 +224,13 @@ static const uint8_t MAZE_ITEM_ORDER[MAZE_NUM_ITEMS] = {
     MAZE_ITEM_COIN,    MAZE_ITEM_CRYSTAL,
 };
 
-/*
-    How far from the spawn the exit has to be, in manhattan distance.
-
-    Far enough that finding the key is a journey rather than a detour. It is a PREFERENCE and not a
-    requirement: if no border cell that far out can be opened onto, PlaceDoor takes the best it can
-    get, because a board with a door in an awkward place is still finishable and a board with no
-    door at all is not.
-*/
+//How far from the spawn the exit has to be, in manhattan distance, so finding the key is a journey
+//rather than a detour. A PREFERENCE, not a requirement: PlaceDoor takes the best it can get, since
+//a door in an awkward place is still finishable and no door at all is not.
 #define MAZE_DOOR_MIN_DIST      12
 
-/*
-    Percentage of empty water cells that get a lilly pad.
-
-    A third, so a pond reads as a pond rather than as a lilly farm, and so two ponds on the same
-    board do not look like copies of each other.
-*/
+//Percentage of empty water cells that get a lilly pad. A third, so a pond reads as a pond rather
+//than a lilly farm, and two ponds do not look like copies of each other.
 #define MAZE_LILLY_PCT          33
 
 //--- the player ---------------------------------------------------------------------------------
@@ -332,14 +254,10 @@ static const uint8_t MAZE_ITEM_ORDER[MAZE_NUM_ITEMS] = {
 //Minimum manhattan distance from the spawn an enemy may start at, so the game does not open with
 //one already touching you.
 #define MAZE_ENEMY_MIN_DIST     7
-/*
-    How long a dead walker stays on the board before it stops being drawn.
-
-    Long enough for the Enemy_Death clip (0.83s, so 50 ticks at 60 TPS) to play out and be seen,
-    plus a moment holding the last frame. A body that vanished the instant the flame touched it
-    read as the enemy having never been there - which is the wrong feedback for the one thing the
-    player is actually trying to do.
-*/
+//How long a dead walker stays on the board before it stops being drawn. Long enough for the
+//Enemy_Death clip (0.83s, so 50 ticks at 60 TPS) to play out and be seen, plus a moment holding
+//the last frame - a body that vanished the instant the flame touched it read as never having
+//been there.
 #define MAZE_DEATH_TICKS        75
 
 //What the player is asking for this tick. A struct rather than two arguments because the next thing
@@ -352,20 +270,15 @@ struct MazeInput{
 /*
     Something that occupies a tile and moves between tiles. The player is one; so is each enemy.
 
-    A STRUCT RATHER THAN SIX FIELDS WITH A PREFIX, because the player and an enemy differ in what
-    decides their direction and in nothing else at all - they share the step, the facing, the
-    interpolation and every rule about which cells may be entered. Any rule written against one of
-    them and not the other would be a bug, and the shape of the code is what stops that.
+    One struct rather than two sets of fields, because they differ in what decides their direction
+    and in nothing else: they share the step, the facing, the interpolation and every rule about
+    which cells may be entered. Any rule written against one and not the other would be a bug.
 
-    Movement is TILE TO TILE, not free. `tile_x/tile_z` is where it is, or - while a step is in
-    progress - where it is GOING; `from_x/from_z` is where that step started and `step_ticks` counts
-    down to arrival. So the authoritative answer to "which tile is this on" is always a pair of
-    integers, and the smooth position the view draws is an interpolation derived from them.
-
-    Free movement with a collision radius is the other way to do this and is what the original does.
-    Grid stepping was chosen because it makes every rule that matters - can I go there, which tile
-    does my bomb land on, did the flame catch me - a lookup instead of an overlap test, and none of
-    those become easier by being approximate.
+    Movement is TILE TO TILE, not free. `tile_x/tile_z` is where it is, or - mid-step - where it is
+    GOING; `from_x/from_z` is where that step started and `step_ticks` counts down to arrival. So
+    "which tile is this on" is always a pair of integers, and every rule that matters - can I go
+    there, where does my bomb land, did the flame catch me - is a lookup rather than an overlap
+    test. The smooth position the view draws is derived from them.
 */
 struct MazeWalker{
     int tile_x = 0;
@@ -373,82 +286,49 @@ struct MazeWalker{
     int from_x = 0;
     int from_z = 0;
     int step_ticks = 0;             //0 = standing on tile_x/tile_z
-    /*
-        How long the step in progress was given, so the interpolation can be a fraction of it.
-
-        Carried per walker rather than read from a define, because the player and an enemy move at
-        different speeds and X()/Z() would otherwise have to be told which of the two it is holding.
-        A walker that knows its own step length is one that can be handed any speed at all.
-    */
+    //How long the step in progress was given, so X()/Z() can interpolate a fraction of it. Carried
+    //per walker rather than read from a define, because the player and an enemy move at different
+    //speeds - a walker that knows its own step length can be handed any speed at all.
     int step_total = MAZE_STEP_TICKS;
     int facing = MAZE_DIR_SOUTH;
     bool f_alive = false;
     /*
-        Ticks left of being dead, counting DOWN. ONE COUNTER, and whoever does the killing says how
-        long it runs.
+        Ticks left of being dead, counting DOWN. One counter, and whoever does the killing says how
+        long it runs: f_alive false with death_ticks > 0 is gone as far as every rule is concerned -
+        cannot be hit, blocks nothing, chops nothing - and still on the board as far as the view is
+        concerned, which is what gives a death animation somewhere to play.
 
-        A walker that has just died is `f_alive == false` with `death_ticks > 0`: gone as far as
-        every rule is concerned - it cannot be hit again, it blocks nothing, it chops nothing - and
-        still on the board as far as the view is concerned, which is what gives a death animation
-        somewhere to play. What happens at zero depends on who it is: an enemy stops being drawn,
-        the player gets up on the spawn.
-
-        THERE USED TO BE TWO of these - this one for the corpse and a `Maze::dead_ticks` counting up
-        to the respawn - and the player's death set only the second, so the player's body vanished
-        on the frame it died while the wait ran invisibly. TickEnemies sets MAZE_DEATH_TICKS here
-        and TickPlayerCondition sets MAZE_RESPAWN_TICKS, which is the whole of the difference.
-
-        The duration is here rather than in the view for the usual reason: it is a duration, it is
-        counted in ticks, and a paused simulation should freeze a death half-finished like it
-        freezes everything else.
+        TickEnemies sets MAZE_DEATH_TICKS and TickPlayerCondition sets MAZE_RESPAWN_TICKS; at zero
+        an enemy stops being drawn and the player gets up on the spawn. There used to be a second
+        counter on the Maze for the respawn, and the player's body vanished on the frame it died
+        while the wait ran invisibly.
     */
     int death_ticks = 0;
-    /*
-        How much more this body can take, and what is protecting it.
-
-        ON THE WALKER because they are facts about a BODY, which is also what makes them survive a
-        level boundary for nothing: the walker is the thing that travels from one board to the next.
-
-        `health` defaults to one - a single hit kills unless something says otherwise - and the
-        player is set to MAZE_START_HEALTH. Enemies still die outright in TickEnemies rather than
-        through this, so the field is unused for them today; it is here rather than in a parallel
-        array so that a tougher enemy is `health = 2` and not a new mechanism.
-    */
+    //How much more this body can take. On the walker because it is a fact about a BODY, which is
+    //what makes it survive a level boundary for nothing. Defaults to one - a single hit kills -
+    //and the player is set to MAZE_START_HEALTH. Enemies still die outright in TickEnemies, so it
+    //is unused for them today; it is here so a tougher enemy is `health = 2` and not a mechanism.
     int health = 1;
     int shield_ticks = 0;       //MAZE_SHIELD_TICKS of taking no damage at all
     int invuln_ticks = 0;       //the mercy window after a hit, so one flame is one hit
-    /*
-        Points, belonging to whoever is carrying them.
-
-        Here rather than on the game for two reasons: TickItems already has this walker in hand when
-        it grants one, so adding is direct; and a second player would want a second score, which
-        falls out rather than needing a design. An enemy carries a zero it can never change, which
-        costs four bytes.
-
-        It survives a death - see the respawn - and NOT a new board, which is the other reset site.
-    */
+    //Points, belonging to whoever is carrying them: TickItems already has the walker in hand when
+    //it grants one, and a second player gets a second score without a design. Survives a death,
+    //not a new board.
     uint32_t score = 0;
     /*
-        Is this walker carrying the exit key?
+        Is this walker carrying the exit key? On the walker and not on the game, and that is a rule
+        rather than tidiness: while it was a Maze member, IsPassable answered the door for whoever
+        asked - and TickEnemies asks, through CanEnter - so taking the key opened the exit for the
+        enemies too and 35 of 60 boards ended with one standing in it. A key is something a BODY
+        carries, so the door asks the body.
 
-        ON THE WALKER AND NOT ON THE GAME, and that is a rule rather than tidiness. While it was a
-        Maze member, IsPassable answered the door for whoever asked - and TickEnemies asks, through
-        CanEnter. So taking the key opened the exit for the enemies too, and 35 of 60 boards ended
-        up with one standing in it. A key is something a BODY carries, so the door asks the body.
-
-        It survives death. Dying already costs a life and the walk back; making it also cost the key
-        would mean re-digging a block whose location you have no way of remembering - see the
-        respawn in TickPlayerCondition, which is explicit about what a death takes and what it does
-        not precisely because this is here now.
+        It survives death. Dying already costs a life and the walk back; also costing the key would
+        mean re-digging a block whose location you have no way of remembering.
     */
     bool f_has_key = false;
-    /*
-        Ticks left of the swing this walker is in the middle of.
-
-        Enemies only - the player has no melee - but it lives here rather than in a parallel array
-        because it is a reason to be STANDING STILL, and standing still is a property of a walker.
-        Nonzero means busy: no step is begun and no direction is chosen until it runs out.
-    */
+    //Ticks left of the swing this walker is in the middle of. Enemies only - the player has no
+    //melee - but it lives here because it is a reason to be STANDING STILL, which is a property of
+    //a walker: nonzero means no step is begun and no direction chosen until it runs out.
     int chop_ticks = 0;
 
     //Where to draw it, in TILES, interpolated across the step in progress. Fractional on purpose
@@ -467,14 +347,10 @@ public:
     uint8_t pass_axis[MAZE_H][MAZE_W];
     uint8_t zone[MAZE_H][MAZE_W];       //a MazeStyle, for the map dump and the panel
 
-    /*
-        Bumped every time a cell's CONTENTS change - a block destroyed, an item taken.
-
-        The view's reason for existing: ApplicationBomber builds one object per cell once and then
-        only has to look at the board again when this number moves, instead of either rebuilding
-        the field (hundreds of objects, on the physics thread) or comparing 256 cells every tick.
-        NewGame bumps it too, so a view that has never looked is always out of date.
-    */
+    //Bumped every time a cell's CONTENTS change - a block destroyed, an item taken. The view's
+    //reason for existing: ApplicationBomber builds one object per cell once and then only looks at
+    //the board again when this moves, instead of rebuilding the field on the physics thread or
+    //comparing 256 cells every tick. NewGame bumps it, so a view that has never looked is stale.
     uint32_t field_version = 0;
 
     //--- the walkers --------------------------------------------------------------------------
@@ -485,35 +361,21 @@ public:
     MazeWalker enemy[MAZE_MAX_ENEMIES];
     int num_enemies = 0;
 
-    /*
-        --- what the BOARD counts, and no more -----------------------------------------------------
-        Health, the shield, the mercy window and the score used to be here. They are facts about a
-        BODY and about whoever owns it, so they live on MazeWalker now - which is also what makes
-        them survive a level boundary, since the walker is the thing that travels.
-
-        What is left is STATISTICS, and they are a different question: `deaths` and `items_taken`
-        are the player's, `blocks_destroyed`, `blocks_cut` and `enemies_killed` are the board's, and
-        what a new level does to each of them is a decision that has not been made yet. Keeping them
-        here is what stops that decision being made by accident.
-    */
+    //--- what the BOARD counts, and no more -----------------------------------------------------
+    //Statistics, and nothing that belongs to a body - health, the shield and the score live on
+    //MazeWalker, which is what makes them survive a level boundary. What a new level does to each
+    //of these has not been decided yet; keeping them here is what stops it being decided by
+    //accident. `deaths` and `items_taken` are the player's, the rest are the board's.
     int  deaths = 0;
     int  items_taken = 0;
-    /*
-        The exit, and whether it is unlocked.
-
-        The door is a CELL, so it is in `tile` like everything else; these two are only where it is,
-        so nothing has to search the border for it. WHO may walk through is not here - it is
-        `MazeWalker::f_has_key`, asked by CanEnter, so that an enemy never can.
-    */
+    //Where the exit is. The door is a CELL, so it is in `tile` like everything else; these two are
+    //only so nothing has to search the border. WHO may walk through is MazeWalker::f_has_key,
+    //asked by CanEnter, so that an enemy never can.
     int  door_x = 0;
     int  door_z = 0;
-    /*
-        Points. Treasure only - health and shields pay in other currencies and are worth 0 here.
-
-        Survives a death, because dying already costs a life and the respawn, and taking the score
-        as well would mean a board is only worth playing from full health. It does NOT survive
-        NewGame: a seed lays out a board and a board is a round.
-    */
+    //Points. Treasure only - health and shields pay in other currencies and are worth 0 here.
+    //Survives a death, because dying already costs a life and the respawn. Does NOT survive
+    //NewGame: a seed lays out a board and a board is a round.
     uint32_t score = 0;
 
     //--- the bomb -----------------------------------------------------------------------------
@@ -536,36 +398,28 @@ public:
     //in the same place do not look identical, which makes it part of the simulation rather than a
     //statistic.
     uint32_t blast_count = 0;
-    /*
-        Soft blocks removed, counted separately by WHO removed them.
-
-        Two numbers rather than one, because they answer different questions and the first run of
-        this in the live game is exactly why: a bomb took one block while the board lost four, and
-        with a single counter that difference was invisible - the other three were enemies cutting
-        hedges, which is the whole feature. `blocks_destroyed` is the difference between a bomb that
-        was placed well and one that was merely placed; `blocks_cut` is the only number that says
-        the enemies are doing anything at all when you are not watching them.
-    */
+    //Soft blocks removed, counted separately by WHO removed them. With one counter, a bomb taking
+    //one block while the board lost four was invisible - the other three were enemies cutting
+    //hedges, which is the only number that says they do anything when you are not watching.
     uint32_t blocks_destroyed = 0;      //by a blast
     uint32_t blocks_cut = 0;            //by an enemy's shears
     uint32_t enemies_killed = 0;
 
     //How many cells the walker can actually get to, counted at generation time OVER THE HARD WALLS
     //ONLY - soft blocks are laid afterwards, and a pocket behind one is somewhere you can get to
-    //once you have dug. Worth reporting: it is the one number that says whether a seed produced a
-    //playable field or a pretty one with most of itself walled off.
+    //once you have dug. The one number that says whether a seed produced a playable field or a
+    //pretty one with most of itself walled off.
     int reachable_cells = 0;
 
     //--- the game -----------------------------------------------------------------------------
-    //Lays out a fresh field and puts the character on its spawn. Draws from `seed` and nothing
-    //else, so the same seed is the same field.
     /*
-        Lays out a board and puts the player on its spawn.
+        Lays out a fresh field and puts the character on its spawn. Draws from `seed` and nothing
+        else, so the same seed is the same field.
 
-        `carry` is the walker as it arrived from the level before, or NULL for a fresh run, and this
-        is the THIRD and last of the three reset policies - the other two being the blunt one a few
-        lines into the definition and the respawn's, which keeps what a death must not take. This
-        one is a LEVEL boundary: you keep what you earned and you lose what belonged to the board.
+        `carry` is the walker as it arrived from the level before, or NULL for a fresh run. This is
+        the third of the three reset policies - the other two being the blunt one a few lines into
+        the definition and the respawn's - and it is a LEVEL boundary: you keep what you earned and
+        you lose what belonged to the board.
     */
     void NewGame(uint32_t seed, const MazeWalker* carry = NULL);
 
@@ -580,13 +434,9 @@ public:
     //Could anything stand here at all, ignoring which way it arrived? What the GENERATOR asks, and
     //what a reachability count is over. Movement asks CanEnter instead.
     bool IsPassable(int x, int z) const;
-    /*
-        May a walker step from one cell to an ADJACENT one?
-
-        This and not IsPassable is what the walker asks, because a cell can be crossable one way and
-        not the other - see MazePassAxis. Both ends are checked: leaving a bridge sideways is as
-        wrong as entering one sideways.
-    */
+    //May a walker step from one cell to an ADJACENT one? This and not IsPassable is what the walker
+    //asks, because a cell can be crossable one way and not the other - see MazePassAxis. Both ends
+    //are checked: leaving a bridge sideways is as wrong as entering one sideways.
     bool CanEnter(const MazeWalker& walker, int from_x, int from_z, int to_x, int to_z) const;
     //Does this cell stop a flame? Any of the three block types - see the note on MazeTile.
     bool BlocksBlast(int x, int z) const;
@@ -627,14 +477,10 @@ private:
     void TickPlayerCondition();
 
     //--- generation ---------------------------------------------------------------------------
-    /*
-        One attempt at a terrain layout: zones, border, doorways, water, spawn, prune.
-
-        Split out of NewGame so it can be RETRIED - see MAZE_MIN_PLAYABLE. Returns how many cells
-        the walker can reach, which is the number that decides whether this attempt was any good.
-        Everything that depends on the terrain being settled - soft blocks, items, enemies, decor -
-        stays in NewGame and runs once, on the attempt that was kept.
-    */
+    //One attempt at a terrain layout: zones, border, doorways, water, spawn, prune. Split out of
+    //NewGame so it can be RETRIED - see MAZE_MIN_PLAYABLE - and returns how many cells the walker
+    //can reach, which is what decides whether the attempt was any good. Everything that needs the
+    //terrain settled (soft blocks, items, enemies, decor) stays in NewGame and runs once.
     int LayOutTerrain();
     //Each of these fills one rectangle of the interior, inclusive of its bounds.
     void FillBomber(int x0, int z0, int x1, int z1);
@@ -651,38 +497,25 @@ private:
     void AddItems();
     //Puts the enemies down, far enough from the spawn to be a threat rather than an ambush.
     void PlaceEnemies();
-    /*
-        Puts the exit in the border wall, on a cell that can be reached from inside.
-
-        AFTER the terrain has settled and BEFORE the soft blocks, so nothing is laid on top of it -
-        the door is a block, and AddSoftBlocks only builds on open floor. A soft block CAN land on
-        the cell in front of it, which is fine: that is a bomb, not a lock.
-    */
+    //Puts the exit in the border wall, on a cell that can be reached from inside. AFTER the terrain
+    //has settled and BEFORE the soft blocks, so nothing is laid on top of it. A soft block CAN land
+    //on the cell in front of it, which is fine: that is a bomb, not a lock.
     void PlaceDoor();
     //Is there anywhere next to this cell a walker could stand? What makes a buried thing DIGGABLE:
     //a blast reaches INTO a soft block from the cell beside it, so one open neighbour is enough.
     bool HasOpenNeighbour(int x, int z) const;
     //Scatters flowers, plants and worse on dry open ground.
     void AddDecor();
-    /*
-        Flood fill from the spawn and turn anything the walker cannot get to into wall.
-
-        Not tidiness: a blended field has zones that a doorway roll can leave sealed, and a sealed
-        pocket of grass is worse than a wall there, because it looks like somewhere you are supposed
-        to be able to reach. Water is left alone - it is impassable either way and reads as scenery.
-        Returns the number of reachable cells.
-    */
+    //Flood fill from the spawn and turn anything the walker cannot get to into wall. Not tidiness:
+    //a doorway roll can leave a zone sealed, and a sealed pocket of grass is worse than a wall,
+    //because it looks like somewhere you are supposed to be able to reach. Water is left alone.
+    //Returns the number of reachable cells.
     int PruneUnreachable();
 
-    /*
-        The field's own random stream, seeded by NewGame.
-
-        Deliberately NOT Application::rrand: that one is shared with the renderer and the debug UI,
-        and there is an open backlog item about off-tick draws from those shifting it out from under
-        the simulation. A generator that belongs to the rules and is seeded by the rules cannot have
-        that problem. xorshift32 because it is four lines and the quality needed here is "scatters
-        rocks convincingly".
-    */
+    //The field's own random stream, seeded by NewGame. Deliberately NOT Application::rrand: that
+    //one is shared with the renderer and the debug UI, and off-tick draws from those shift it out
+    //from under the simulation (open backlog item). xorshift32 because it is four lines and the
+    //quality needed here is "scatters rocks convincingly".
     uint32_t rng_state = 1;
     uint32_t NextRandom();
     int RandomBelow(int n);

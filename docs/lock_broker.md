@@ -22,17 +22,65 @@ locks, because both rules are currently kept by convention and nothing enforces 
 ```bash
 export PATH="/c/msys64/mingw64/bin:$PATH"     # the toolchain is NOT on the default PATH
 cd tools/lockd && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
-./build/lockd.exe 2>lockd.log &               # http://127.0.0.1:8766/mcp
+./build/lockd.exe                             # http://127.0.0.1:8766/mcp
 ```
+
+**It runs in the foreground, in a console you type into.** Double-clicking `build/lockd.exe`
+from an Explorer window does the same thing and is a perfectly good way to start it. Leave the
+window open and it is both the log and the control panel: lease traffic scrolls past, and the
+operator commands are right there rather than in a second shell.
 
 Start it once and leave it. It holds no files open, does no I/O and costs nothing idle.
 `--port` and `--root` override the defaults; `--help` prints them.
 
-### Watching and clearing it from a terminal
+**A second instance refuses to start.** It asks the port first and exits saying so, because
+the alternative is the quiet failure: the bind fails, the transport stays off, and what is
+left is a console answering every command from an empty table while the real broker runs in
+another window. Two double-clicks on the exe is all that takes.
+
+### The console
+
+```
+lockd> list
+3 lock(s) on 127.0.0.1:8766
+
+  PATH                  OWNER     AGE      LEFT     REASON
+  core/application.cpp  8923730d  5m08s    9m51s    tetris input rework
+  apps/tetris/          8923730d  5m08s    9m51s    tetris input rework
+  #build                65345b23  0m12s    14m47s   building apps/bomber
+
+lockd> release 8923730d
+Released 2 lock(s) held by 8923730d-d1aa-4b6c-9f01-3c2b7e440a19:
+  core/application.cpp
+  apps/tetris/
+```
+
+| command | does |
+|---|---|
+| `list`, `l` | the lock table - a bare Enter does the same, since watching is most of the point |
+| `status` | endpoint, repo root, uptime, lease count, logging state |
+| `release <owner>` | every lock one owner holds |
+| `release-all` | every lock there is - the panic button |
+| `break <path>` | force-release one path |
+| `mute` / `unmute` | engine logging down to errors only, and back |
+| `help`, `?` | the list above |
+| `quit`, `exit` | stop the broker, dropping every lease |
+
+`release` takes **any unambiguous prefix** of an owner, which matters because the table shows
+only the first group of a session id: `release 8923730d` is meant to work, and without the
+prefix match it would report "no locks held by 8923730d" for an owner visibly holding two.
+An ambiguous prefix lists the candidates instead of guessing.
+
+**`mute` is worth knowing about.** The broker's own log and the console share one window, so a
+lease granted while you are halfway through typing lands in the middle of your line. The line
+is still in the input buffer and Enter still works, but `mute` drops everything below error
+level and makes the window clean to work in; `unmute` puts each logger back to the level it
+actually had, which is not necessarily the loudest one.
+
+### Watching and clearing it from another terminal
 
 The same exe is also the client. These do **not** start a server - they talk to the one
-already running and exit, which matters because a second server would fail to bind the port
-and then answer nothing, looking for all the world like it was working:
+already running and exit:
 
 ```bash
 ./build/lockd.exe --list                 # the lock table
@@ -40,26 +88,32 @@ and then answer nothing, looking for all the world like it was working:
 ./build/lockd.exe --release-all          # everything there is - the panic button
 ```
 
-```
-9 lock(s) on 127.0.0.1:8766
+They print through the same code the console does, so the two cannot drift apart. Use them
+from a script, or when the broker's own window is somewhere else.
 
-  PATH                     OWNER     AGE      LEFT     REASON
-  engine.mk                8923730d  5m08s    4m13s    auto-claimed by PreToolUse hook
-  tools/assetpack/         8923730d  5m08s    4m13s    assetpack step 4: BAKE_ASSETS rules..
-  #build                   8923730d  5m08s    4m13s    assetpack step 4: BAKE_ASSETS rules..
-  tools/lockd/lockd.cpp    65345b23  3m02s    4m33s    auto-claimed by PreToolUse hook
+### Running it without a console
+
+```bash
+./build/lockd.exe --no-console 2>lockd.log &      # the older arrangement
 ```
+
+`--no-console` serves without reading stdin, for backgrounding it with the log redirected.
+The console also stands down by itself if stdin is closed or redirected (`./lockd </dev/null &`)
+and keeps serving rather than exiting or spinning, so the flag is a statement of intent more
+than a requirement.
 
 Owner is the agent's session id, shortened to its first group. `--list` exits non-zero and
 says so plainly when nothing is listening, so it is usable from a script.
 
-**`--release-all` is an operator command and there is deliberately no MCP tool for it.** An
+**`release-all` is an operator command and there is deliberately no MCP tool for it.** An
 agent able to wipe the whole table could undo everyone else's protection in one call, which
-is a worse failure than the collisions this prevents. It is composed client-side out of
-`lock_list` and `lock_break`, so no such tool needs to exist. It prints what it took, with
-owners and reasons, before taking it - that log is the only record of what was interrupted.
-Nothing is lost for long either way: an agent still working re-claims on its next write
-through the hook.
+is a worse failure than the collisions this prevents. That is also the argument for the
+console: the panic button belongs to a person at a terminal, and it should be where that
+person already is rather than behind a second copy of the exe in a second shell. The CLI
+form is composed client-side out of `lock_list` and `lock_break`, so no such tool needs to
+exist. Either way it prints what it took, with owners and reasons, before taking it - that
+log is the only record of what was interrupted. Nothing is lost for long: an agent still
+working re-claims on its next write through the hook.
 
 Killing the broker clears the table too, and is the cruder version of the same button. Prefer
 `--release-all`: it leaves the server up, so agents' next claims succeed instead of failing
@@ -95,7 +149,9 @@ the tool list is.
 Every agent working in this checkout must reach the *same* broker. That is also why **stdio
 transport is deliberately not started** even though `core/MCPServer` supports it: an stdio server
 is spawned by its client, so each agent would get a private broker with a private table and every
-one of them would grant everything.
+one of them would grant everything. Since the console arrived there is a second reason on top of
+the first - stdin is the operator's, and an MCP reader thread would be racing them for every line
+typed - but the first one was always sufficient.
 
 `.mcp.json` registers only lockd. The apps' own server on 8765 is left out on purpose - it is
 bound by whichever app is running, often none, and a server that is usually absent is noise in
@@ -262,3 +318,13 @@ owner went silent, then being claimable by someone else. The hook was driven wit
 shape Claude Code sends: blocked with exit 2 and a usable message, allowed and auto-claimed on
 a free file, not blocked by the session's own lease, passed a `Read` straight through, and
 failed open with the broker stopped.
+
+The console was exercised on 2026-09-17: every command including `help` and an unknown one;
+`list` against a three-lease table held by two owners, matching `--list` from another shell
+exactly; `release` by the shortened owner id the table prints, releasing both of that owner's
+leases and neither of the other's; `release-all` printing owners and reasons before taking
+them; `mute` and `unmute` round-tripping each logger's level; a second instance refusing to
+start against a bound port and exiting non-zero; `--no-console` serving backgrounded with its
+log redirected; and the console started with stdin already closed (`</dev/null`), which stood
+down and went on serving - still listening, still answering `--list`, and measurably 0s of CPU
+rather than spinning on EOF.

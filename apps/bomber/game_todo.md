@@ -93,12 +93,26 @@ Roughly in the order each one unblocks the next.
    way down a corridor that looks completely normal. `bomber_state` reports both, and says which one
    to press.
 
-   **Still to polish:** you can SEE OVER THE CORRIDOR WALLS from the board's camera angle, so the
-   board swap at the commit is visible rather than hidden - the old board vanishes and the new one
-   appears somewhere else. The corridor is a sealed box to a walker and not to the camera. Cheapest
-   fixes, in order: dolly the camera in and down while in the corridor so the walls occlude (the
-   camera is already panned there, so it is a few lines), or make the corridor walls two bricks
-   high. Worth looking at before choosing.
+   **The camera comes down with you, and the old board sinks away.** Both done the same day, and
+   they solved each other: from the board's high angle you could see clean over a one-brick corridor
+   wall, so the swap was visible. The camera now sits behind and above the player IN THE CORRIDOR'S
+   FRAME - so it turns with the corridor at the commit and that rotation stays invisible for free -
+   and the walls fill the frame, which both hides the swap and leaves the corridor big enough to
+   read a score tally in. Coming out it eases back to EXACTLY where the camera was before, saved
+   rather than recomputed: the player may have orbited the board somewhere they liked.
+
+   The old board does not blink out, it FALLS. `SinkBoard` is the corridor's pop-in run backwards,
+   staggered by distance from the exit so the level collapses away behind you, and squared so it
+   starts gently and accelerates - a linear drop reads like a lift. It starts at the SEAL and must
+   finish before the commit throws the objects away, so the spread plus the fall has to stay inside
+   `BOMBER_HALL_COMMIT_TICKS`. It is applied as a per-tick DELTA, which is safe only because
+   `SyncView` returns early in the corridor and nothing else is writing those positions.
+
+   **The dolly needed a new rule, not just a camera.** Bringing the camera down means a short
+   corridor can be walked faster than the board takes to sink and the door takes to shut - so the
+   player could reach a far door with nothing behind it. `Hallway::f_next_ready` is the app telling
+   the rules the next board is standing there, and the far door will not open without it. That kept
+   the 4..8 range instead of forcing a longer minimum.
 2. ~~**Score: coin and diamond.**~~ DONE. Coin 10, diamond 50, crystal 250 - 5x steps, so a
    crystal is the thing that happened this round rather than a few more coins. `MazeItemScore` is
    the one place that says so; a treasure added later needs a line there and nothing else.

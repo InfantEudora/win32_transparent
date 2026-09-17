@@ -173,8 +173,13 @@ MCP broker that arbitrates it: claim the paths you are about to edit, edit them,
 See `docs/lock_broker.md`.
 
 ```bash
-cd tools/lockd && ./build/lockd.exe 2>lockd.log &            # http://127.0.0.1:8766/mcp
+cd tools/lockd && ./build/lockd.exe                          # http://127.0.0.1:8766/mcp
 ```
+
+It runs in the **foreground**, with a console to type at - `list`, `status`, `release <owner>`,
+`release-all`, `break <path>`, `mute`, `quit`, and `help` for the rest. Double-clicking the exe
+does the same. A second instance refuses to start rather than binding nothing and looking fine.
+`--no-console 2>lockd.log &` is the backgrounded form if you want it out of the way.
 
 `.mcp.json` at the repo root registers it for you - no `claude mcp add` needed, every agent that
 opens this checkout gets the same broker, which is the point. You are asked to approve it once,

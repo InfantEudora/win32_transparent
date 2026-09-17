@@ -538,8 +538,30 @@ private:
     //every tick for ever.
     bool f_hall_near_drawn_open = false;
     bool f_hall_far_drawn_open = false;
-    //Counts down while the camera walks back from the corridor's far door to the board's middle.
+    //Counts down while the camera walks back from the corridor to where it was over the board.
     int  hall_camera_return = 0;
+    /*
+        Where the camera was when the corridor began, so it can be put back exactly there.
+
+        Saved rather than recomputed, because the player may have orbited the board to somewhere they
+        like and a transition that quietly straightened it out would be taking that away. The next
+        board is laid out at the same origin, so the same absolute framing is the right one.
+    */
+    vec3 cam_return_pos = vec3(0,0,0);
+    vec3 cam_return_target = vec3(0,0,0);
+    /*
+        Ticks into the old board sinking out of sight, or -1 for not sinking.
+
+        The reverse of the corridor's pop-in, and it starts at the SEAL rather than at the commit:
+        the board has to be gone before RebuildField throws it away, or the throw is the pop this is
+        here to avoid.
+    */
+    int  board_sink_ticks = -1;
+    //Where the sink spreads from - the exit the player just left through. Cells nearest it go first,
+    //so the level collapses away behind them.
+    vec3 board_sink_from = vec3(0,0,0);
+    //How far each sinking object has been moved so far, applied as a delta each tick.
+    void SinkBoard();
     //Y offsets taken from each GLB node's own translation - see LoadAssets for why.
     float character_y = 0.0f;
     float bomb_y = 0.0f;

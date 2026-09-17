@@ -228,8 +228,34 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
     is that plus a moment.
 */
 #define BOMBER_HALL_COMMIT_TICKS 60
-//Ticks the camera takes to walk back from the doorway to the middle of the new board.
+//Ticks the camera takes to walk back from the corridor to where it was over the board.
 #define BOMBER_HALL_RETURN_TICKS 45
+/*
+    Where the camera sits while the player is in the corridor: behind them and above, in the
+    CORRIDOR'S frame so it turns with it.
+
+    Close and low on purpose. It is what puts the walls between the camera and the outside, which is
+    what makes the board being swapped something that happens off screen rather than a pop - and it
+    is what leaves the corridor big enough in frame for a score tally to be read in it.
+*/
+#define BOMBER_HALL_CAM_BACK    3.6f
+#define BOMBER_HALL_CAM_HEIGHT  2.6f
+//How much of the remaining distance the camera closes each tick. A fraction rather than a count, so
+//it eases in and never quite snaps.
+#define BOMBER_HALL_CAM_EASE    0.055f
+
+/*
+    The old board sinking out of sight, which is the corridor's pop-in run backwards.
+
+    It starts at the SEAL and has to be finished before the commit throws the objects away - so the
+    spread plus the fall has to fit inside BOMBER_HALL_COMMIT_TICKS. The board's far corner is about
+    22 units from any exit, so 22 * SPREAD + TICKS is the number to keep under 60.
+*/
+#define BOMBER_BOARD_SINK_TICKS  24
+#define BOMBER_BOARD_SINK_DROP   7.0f
+//Ticks of delay per world unit away from the exit. Nearest goes first, so the level collapses away
+//behind the player rather than dropping all at once.
+#define BOMBER_BOARD_SINK_SPREAD 0.9f
 
 /*
     The yaw that makes a walker LOOK in each direction. Lifted out of SyncView because the corridor
@@ -854,6 +880,13 @@ void ApplicationBomber::BeginHallway(void){
     if (f_in_hallway){
         return;
     }
+    //Where the camera is now, to be put back exactly here on the way out - see cam_return_pos.
+    Camera* cam = main_scene ? main_scene->camera : NULL;
+    if (cam){
+        cam_return_pos = cam->GetPosition();
+        cam_return_target = camera_target;
+    }
+    hall_camera_return = 0;
     //Chosen NOW rather than at the commit, so the next board's seed is settled before anything can
     //depend on it - and so a recorded run lays out the same one.
     hall_next_seed = next_auto_seed++;
@@ -954,6 +987,9 @@ void ApplicationBomber::CommitHallway(void){
         camera_target = after + turn * (camera_target - before);
     }
 
+    //The board is standing there now, so the far door is allowed to open - see f_next_ready.
+    hall.f_next_ready = true;
+    board_sink_ticks = -1;
     f_hall_committed = true;
     debug->Ok("Corridor sealed: board %u laid out, corridor turned to meet it\n",current_seed);
 }
@@ -964,8 +1000,7 @@ void ApplicationBomber::CommitHallway(void){
 */
 void ApplicationBomber::EndHallway(void){
     f_in_hallway = false;
-    //Bring the camera back over the board over the next second or so - see SyncView. Panned rather
-    //than snapped, and panned rather than re-aimed, so the angle the player chose survives.
+    //Back out to exactly where the camera was before the corridor - see cam_return_pos and SyncView.
     hall_camera_return = BOMBER_HALL_RETURN_TICKS;
     //Facing the way they walked in. The corridor ran east by the time they got here.
     maze.player.facing = MAZE_DIR_EAST;
@@ -998,6 +1033,69 @@ void ApplicationBomber::EndHallway(void){
         f_hall_far_drawn_open = false;
     }
     SyncView();
+}
+
+/*
+    The old board falling out of sight, a tick at a time.
+
+    THE CORRIDOR'S POP-IN RUN BACKWARDS, and the same shape: every piece has its own clock, staggered
+    by how far it is from the exit the player just left through, so the level collapses away behind
+    them instead of dropping in one piece.
+
+    Applied as a DELTA rather than an absolute Y, because nothing else is writing these positions
+    while the corridor is the live one - SyncView returns early - so there is no base position to
+    remember and no second copy of it to fall out of step.
+*/
+void ApplicationBomber::SinkBoard(void){
+    if (board_sink_ticks < 0){
+        return;
+    }
+    int was = board_sink_ticks;
+    board_sink_ticks++;
+
+    /*
+        How far one piece has fallen at tick t, given how far it stands from the exit.
+
+        Squared, so it starts gently and accelerates away - a linear drop reads like a lift and this
+        reads like a floor giving way.
+    */
+    struct Fall{
+        static float At(int t, float dist){
+            float delay = dist * BOMBER_BOARD_SINK_SPREAD;
+            float k = clamp(((float)t - delay) / (float)BOMBER_BOARD_SINK_TICKS,0.0f,1.0f);
+            return -(k * k) * BOMBER_BOARD_SINK_DROP;
+        }
+    };
+
+    auto sink = [&](Object* object){
+        if (!object || !object->IsVisible()){
+            return;
+        }
+        vec3 p = object->GetPosition();
+        //Distance in PLAN, so a piece does not speed up as it falls - its own Y is the one thing
+        //about it that is changing.
+        float dx = p.x - board_sink_from.x;
+        float dz = p.z - board_sink_from.z;
+        float dist = sqrtf(dx * dx + dz * dz);
+        float d = Fall::At(board_sink_ticks,dist) - Fall::At(was,dist);
+        if (d != 0.0f){
+            object->SetPosition(p + vec3(0.0f,d,0.0f));
+        }
+    };
+
+    for (Object* object:field_objects){
+        sink(object);
+    }
+    for (Object* object:enemy_objects){
+        sink(object);
+    }
+    for (Object* object:turd_objects){
+        sink(object);
+    }
+    sink(bomb);
+    //The board's own exit door goes with it. It is hidden by now - the corridor's near arch is
+    //standing in its place - but RebuildField will move it to the next board, and leaving it sunk
+    //would put it underground there.
 }
 
 /*
@@ -1089,18 +1187,25 @@ void ApplicationBomber::SyncHallwayView(void){
     }
 
     /*
-        AND THE CAMERA GOES WITH THEM, or they walk out of shot.
+        AND THE CAMERA COMES DOWN WITH THEM.
 
-        A PAN and not a re-aim: the pivot is moved onto the player and the camera is carried by the
-        same vector, so whatever angle and distance the player had chosen on the board is exactly
-        what they get in the corridor. It also makes the turn at the commit a rotation about the
-        player rather than about somewhere behind them.
+        Behind and above, in the CORRIDOR'S frame - so it turns with the corridor at the commit and
+        the turn stays invisible for free, and so the walls are between it and the outside. That is
+        what makes the board being swapped something that happens off screen: from up over the board
+        you can see clean over a one-brick wall.
+
+        Eased by a fraction of the remaining distance each tick rather than snapped, so walking into
+        the doorway pulls the camera down after you instead of cutting.
     */
     Camera* camera = main_scene ? main_scene->camera : NULL;
     if (camera){
-        vec3 d = walker_pos - camera_target;
-        camera_target = walker_pos;
-        camera->SetPosition(camera->GetPosition() + d);
+        quat turn(vec3(0,1,0),BomberDirYaw(hall.forward));
+        vec3 want_pos = walker_pos + turn * vec3(0.0f,BOMBER_HALL_CAM_HEIGHT,
+                                                 -BOMBER_HALL_CAM_BACK);
+        camera_target += (walker_pos - camera_target) * BOMBER_HALL_CAM_EASE;
+        camera->SetPosition(camera->GetPosition()
+                            + (want_pos - camera->GetPosition()) * BOMBER_HALL_CAM_EASE);
+        camera->SetLookAt(camera_target);
     }
     drawn_hall_version = hall.version;
 }
@@ -1903,7 +2008,15 @@ void ApplicationBomber::RunSimulationTick(void){
             stepped off the threshold and this waits out the clip.
         */
         if (hall.f_sealed && !f_hall_committed){
+            if (hall_commit_ticks == 0){
+                //The tick the corridor sealed. Start the board falling away now rather than at the
+                //commit - by the time RebuildField throws it out it has to be out of sight already,
+                //or the throw is the pop this exists to avoid.
+                board_sink_ticks = 0;
+                board_sink_from = CellCentre(maze.door_x,maze.door_z);
+            }
             hall_commit_ticks++;
+            SinkBoard();
             if (hall_commit_ticks >= BOMBER_HALL_COMMIT_TICKS){
                 CommitHallway();
             }
@@ -2053,11 +2166,19 @@ void ApplicationBomber::SyncView(void){
         hall_camera_return--;
         Camera* camera = main_scene ? main_scene->camera : NULL;
         if (camera){
+            /*
+                Back out to EXACTLY where the camera was before the corridor, rather than to a
+                default framing: the player may have orbited the board to somewhere they like, and
+                straightening that out for them would be taking it away. The next board is laid out
+                at the same origin, so the same absolute framing is the right one.
+
+                1/(n+1) of the remaining distance each tick lands exactly on it at n = 0.
+            */
             float t = 1.0f / (float)(hall_camera_return + 1);
-            vec3 want = camera_target + (vec3(0,0,0) - camera_target) * t;
-            vec3 d = want - camera_target;
-            camera_target = want;
-            camera->SetPosition(camera->GetPosition() + d);
+            camera_target += (cam_return_target - camera_target) * t;
+            camera->SetPosition(camera->GetPosition()
+                                + (cam_return_pos - camera->GetPosition()) * t);
+            camera->SetLookAt(camera_target);
         }
     }
     //--- what changed on the board ---------------------------------------------------------------

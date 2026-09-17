@@ -163,6 +163,7 @@ void Hallway::Begin(uint32_t seed, const MazeWalker& carry, int forward_dir){
 
     f_near_door_open = true;
     f_sealed = false;
+    f_next_ready = false;
     f_far_door_open = false;
     f_finished = false;
     version++;
@@ -201,11 +202,12 @@ void Hallway::Tick(const MazeInput& input){
     }
 
     /*
-        The far door opens when the player is standing in front of it, and only once the corridor is
-        sealed - so the next board is always laid out before there is any way to reach it. With any
-        legal `length` the seal comes first anyway; the test is here to say that it must.
+        The far door opens when the player is standing in front of it, the corridor is sealed, AND
+        the next board is standing there - see f_next_ready. On a short corridor a fast walker gets
+        here before the old board has finished sinking away, and a door that opened then would be
+        opening onto nothing.
     */
-    if (!f_far_door_open && f_sealed && player.tile_z >= length - 2){
+    if (!f_far_door_open && f_sealed && f_next_ready && player.tile_z >= length - 2){
         f_far_door_open = true;
         version++;
     }

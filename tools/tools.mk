@@ -16,9 +16,11 @@
 #
 # Build and run from the tool's folder:
 #
-#     export PATH="/c/msys64/mingw64/bin:$PATH"     # the toolchain is NOT on the default PATH
-#     cd tools/fontbake && mingw32-make.exe -j8     # mingw32-make, not /usr/bin/make
+#     export PATH="/c/msys64/mingw64/bin:$PATH"          # the toolchain is NOT on the default PATH
+#     cd tools/fontbake && mingw32-make.exe -j8          # mingw32-make, not /usr/bin/make
 #     ./build/fontbake.exe --help
+#
+#     mingw32-make.exe CONFIG=release -j8                # -> build/fontbake_release.exe
 #
 #=======================================================================================
 # TOOLS ARE WIN32-ONLY, AND THAT IS A DECISION RATHER THAN A LIMITATION.
@@ -61,14 +63,56 @@ endif
 
 .DEFAULT_GOAL := default
 
-BUILD_DIR := build
-OBJ_DIR   := $(BUILD_DIR)/obj
+#---------------------------------------------------------------------------------------
+# BUILD CONFIGURATION
+#
+# The same two configurations engine.mk has, spelled the same way, for the same reasons -
+# see its own CONFIG block for the long version. In short: each configuration gets its own
+# object tree so nothing collides and switching costs one link rather than a rebuild, and
+# the EXE IS NAMED PER CONFIGURATION because otherwise building release and switching back
+# to debug leaves make comparing the release exe against older debug objects, reporting
+# "nothing to be done", and you keep running the binary you thought you had replaced.
+#
+# This file used to argue the opposite - that a tool runs for a second on a workstation and
+# is not worth two object trees. That was true of fontbake and assetpack, which run and
+# exit. It stopped being true when tools/lockd arrived: a broker that sits running for days
+# is a program you have a reason to build small and optimised, and the argument for the
+# apps' split applies to it unchanged.
+#
+# What does NOT move is the folder the exe sits in, exactly as in engine.mk. lockd finds
+# the repo root by counting three levels up from its own path (DefaultRepoRoot), so a
+# build/<config>/ exe would silently resolve every claimed path against the wrong root.
+#
+# NO CLOSED LIST OF SETTINGS HERE, unlike engine.mk, and that is deliberate rather than an
+# omission. engine.mk rejects a command-line variable that is not one of its settings, to
+# catch `make CONIFG=release` building debug quietly. The same guard cannot live here:
+# engine.mk RECURSES into tools/assetpack for BAKE_ASSETS builds, and a command-line
+# assignment propagates to a sub-make through MAKEFLAGS, so `make ship` would arrive with
+# BAKE_ASSETS=1 USE_MCP=0 USE_NET=0 USE_IMGUI=0 in hand and a closed list would refuse a
+# build that is perfectly correct. CONFIG still validates its own value below, which is the
+# half of the guard that fits.
+#---------------------------------------------------------------------------------------
+CONFIG ?= debug
 
-#ONE CONFIGURATION, unlike engine.mk's debug/release split. A tool is a developer utility
-#that runs on a workstation for a second or two; there is nothing here worth two object
-#trees and two exe names to choose between. -O2 -g is fast enough to be unnoticeable and
-#still gives a usable stack trace when one asserts.
-CFLAGS += -std=c++17 -O2 -g -D_WIN32
+ifeq ($(CONFIG),debug)
+CONFIG_SUFFIX :=
+else ifeq ($(CONFIG),release)
+CONFIG_SUFFIX := _release
+else
+$(error CONFIG must be 'debug' or 'release', not '$(CONFIG)')
+endif
+
+BUILD_DIR := build
+OBJ_DIR   := $(BUILD_DIR)/obj/$(CONFIG)
+
+CFLAGS += -std=c++17 -D_WIN32
+
+#-O2 rather than engine.mk's -Og for the debug build: a tool has no frame budget to protect
+#and no hot loop worth stepping through, so the faster default costs nothing and the -g is
+#what actually matters when one asserts. Release matches engine.mk exactly.
+DFLAGS = -DDEBUG -O2 -g
+RFLAGS = -DRELEASE -O3 -s #O3 highest optimisation #-s to strip symbols
+CFLAGS += $(if $(CONFIG_SUFFIX),$(RFLAGS),$(DFLAGS))
 
 #Matching engine.mk, so a core source compiled in here behaves the way it does in an app.
 #Neither is inert: core/ is written without exceptions, and building it with them enabled
@@ -105,7 +149,7 @@ IPATHS += -I.
 #
 # The tool's own sources keep their own names; core sources named by the tool are mirrored
 # under the same build folder by their path below the repo root, so core/File.cpp becomes
-# build/obj/core/File.o and cannot collide with a tool source of the same name.
+# build/obj/<config>/core/File.o and cannot collide with a tool source of the same name.
 #---------------------------------------------------------------------------------------
 TOOL_OBJS := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(TOOL_SRCS))
 CORE_OBJS := $(patsubst $(ROOT)/%.cpp,$(OBJ_DIR)/%.o,$(CORE_SRCS))
@@ -120,14 +164,14 @@ DEPS = $(TOOL_OBJS:.o=.d) $(CORE_OBJS:.o=.d)
 #---------------------------------------------------------------------------------------
 #The goal is the exe BY ITS REAL PATH - naming it $(PROJECT).exe while writing it into
 #build/ would mean make never finds what it just built and relinks every time.
-EXE := $(BUILD_DIR)/$(PROJECT).exe
+EXE := $(BUILD_DIR)/$(PROJECT)$(CONFIG_SUFFIX).exe
 
 default: $(EXE)
 
 $(EXE): $(TOOL_OBJS) $(CORE_OBJS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $^ -o $@ $(LFLAGS) $(LIBS)
-	@echo "Built $@"
+	@echo "Built $@ ($(CONFIG))"
 
 $(OBJ_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
