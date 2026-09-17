@@ -7,7 +7,7 @@ been reworded: each entry is the text it carried when it was closed, including t
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
 
-Numbers are stable and are never reused. They run 1-91 across both files; **28 was never
+Numbers are stable and are never reused. They run 1-92 across both files; **28 was never
 assigned**.
 
 Sources: `docs/tetris_findings.md` (the `APP=Tetris` run) and `docs/breakout_findings.md` (the
@@ -3068,3 +3068,56 @@ object happened to construct first.
   It only handles the plain `vertices` path; line, skinned and morph meshes are not covered and
   would need the same treatment. A no-op for a mesh with no CPU-side vertices, which is what makes
   it safe to call blindly over a whole tree.
+
+- [x] **92. Intel Iris Xe drew every object with material 0, and every attempt to fix that drew
+  nothing at all.** CLOSED 2026-09-16, the day the second half of it was found. Two separate Intel
+  problems, and the first was hiding the second, which is why it had resisted every earlier look.
+
+  **Problem one: integer vertex attributes arrive as garbage.** `matindex` (`in int`, set up with
+  `glVertexArrayAttribIFormat`) reached the vertex shader as per-triangle garbage, mostly
+  negative, on the Iris Xe (driver 32.0.101.7085) - at attribute index 4 and at index 8 alike,
+  with genuine int bits in the buffer, while the four float attributes beside it in the same VBO
+  arrived perfectly. `material_slot[garbage]` then read out of bounds, Intel's bounds check
+  returned 0, and every object took material 0: stone blocks wearing the grass texture through
+  their own UVs. The skinned `bones` attribute went the same way, which is why the enemies were
+  invisible on Intel and nobody had connected the two. Correct on the RTX A500 throughout; GL debug
+  output silent throughout.
+
+  **Problem two: a divergent sampler-array index kills the frame, and it was in `deferred.frag`.**
+  `texture(material_texture[m.diffuse_texture], vuv)` indexes an array of samplers with a value
+  that is only defined if it is the same for the whole draw. It is not - one instanced draw covers
+  several objects, and the per-vertex material id makes it differ between triangles of one object
+  too. On Intel the undefined behaviour is that nothing draws for the rest of the process: ImGui
+  included, `glGetError` 0, no debug message, `glReadPixels` handing back uninitialised memory.
+  This had never fired because problem one collapsed every index to 0 - the moment any fix made
+  real material ids reach the deferred pass, the frame died, and that looked exactly like the fix
+  failing. Five candidate fixes were wrongly blamed that way (float attribute format, attribute
+  index, the line VAO sharing index 4, a dynamic `material_slot[]` index, an out-of-range
+  `materials[]` read) before forcing `deferred.frag` to `materials[0]` brought the whole scene back
+  with correct materials AND visible, correctly skinned enemies.
+
+  **The fix, which only works as a unit:**
+
+  - `matid` and `bones` are no longer vertex attributes. `Mesh::RenderInstances` binds the mesh's
+    own VBO at SSBO binding `SSBO_VERTEX_PULL` (6) and `default.vert` / `default_skinned.vert`
+    read the words by `gl_VertexID` at the strides the `static_assert`s in `Mesh.cpp` pin. The VAO
+    carries only pos/normal/tangent/uv. Storage stays `int32_t`. `core/Mesh.h` has the full note.
+  - `default.frag` and `deferred.frag` sample through `SampleMaterialTexture`, a `switch` whose
+    every case indexes with a literal, `textureGrad` with derivatives taken at the top of `main()`
+    while control flow is still uniform. `deferred.frag`'s array also moved from
+    `binding = 1 ... [15]` to the same `binding = 0 ... [24]` as `default.frag` - it had been one
+    unit off for as long as it existed, invisible because that pass only feeds the G-buffer alpha.
+  - Line meshes have a program of their own (`shaders/line.vert`, `line.frag`) instead of
+    borrowing `default.vert` and having its material-index input read the packed colour. Not the
+    Intel bug, but the defined spelling, and debug lines now keep their colour.
+
+  **Verification.** A colour probe hot-reloaded into `default.frag` - hue = `vmatindex` mod 8,
+  white for negative, dimmed when the material has no diffuse texture - paints the same per-object
+  material mosaic on the Iris Xe and the RTX A500, and the clean frame is identical on both: right
+  materials on every block, player and all four enemies present. Measured with the app driven over
+  MCP (`shader_reload`, `screenshot`), each variant a fresh process because a dead Intel frame is
+  sticky. The one open question is recorded rather than guessed at: a float `matid` attribute was
+  tried and never cleanly evaluated, since every such build still had problem two; the pull does
+  not depend on the answer. `core/Mesh.h`, `core/Mesh.cpp`, `core/type_vertex.h`,
+  `core/Renderer.cpp`, `shared_assets/shaders/default.vert`, `default_skinned.vert`,
+  `skybox.vert`, `default.frag`, `deferred.frag`, `line.vert`, `line.frag`.
