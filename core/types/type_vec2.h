@@ -39,6 +39,10 @@ struct vec2{
     vec2&  	operator+=(const vec2& rhs);                    // add rhs and update this object
     vec2  	operator*(const float scale) const;             // scale
     friend vec2 operator*(const float a, const vec2 vec);   // scale
+    //vec3 has had these all along; vec2 simply never got them, so `v / 2.0f` compiled for one
+    //and not the other. No behaviour changes - this only fills the gap.
+    vec2  	operator/(const float scale) const;             // divide by scalar
+    vec2& 	operator/=(const float scale);                  // divide by scalar and update this object
 };
 
 inline vec2& vec2::set(float x, float y) {
@@ -103,6 +107,14 @@ inline vec2 vec2::operator*(const float a) const {
 
 inline vec2 operator*(const float a, const vec2 vec) {
     return vec2(a*vec.x, a*vec.y);
+}
+
+inline vec2 vec2::operator/(const float a) const {
+	return vec2(x/a, y/a);
+}
+
+inline vec2& vec2::operator/=(const float a) {
+	x /= a; y /= a; return *this;
 }
 
 inline void vec2::print(){

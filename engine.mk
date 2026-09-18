@@ -195,6 +195,10 @@ CFLAGS += -DTINYGLTF_NO_STB_IMAGE
 IPATHS += -I$(ROOT)/core/
 IPATHS += -I$(ROOT)/core/physics
 IPATHS += -I$(ROOT)/core/skeleton
+#The vector/matrix/quaternion headers, in their own folder so `core/` lists the engine's classes
+#rather than thirteen type_ files. Included by plain name everywhere (`#include "type_vec3.h"`),
+#which is what this -I keeps working - so the move needed no include changed anywhere.
+IPATHS += -I$(ROOT)/core/types
 IPATHS += -I$(ROOT)/3rdparty/imgui/
 IPATHS += -I$(ROOT)/3rdparty/
 IPATHS += -I$(ROOT)/3rdparty/stb_image/
@@ -386,6 +390,7 @@ OBJ_DIR := $(OBJ_DIR)$(VARIANT_SUFFIX)
 CORE_DIRS += $(ROOT)/core
 CORE_DIRS += $(ROOT)/core/skeleton
 CORE_DIRS += $(ROOT)/core/physics
+CORE_DIRS += $(ROOT)/core/types
 
 CORE_SRCS := $(filter-out $(CORE_SRCS_DROP), $(wildcard $(addsuffix /*.cpp, $(CORE_DIRS))))
 
