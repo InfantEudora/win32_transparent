@@ -1,5 +1,47 @@
 #include "glad.h"
 #include "Debug.h"
+
+#if defined(__ANDROID__)
+
+#include <EGL/egl.h>
+
+/*
+    The Android half of this file. Everything below the #else is the WGL loader; this is the same
+    job for GLES, and it is small because GLES entry points are exported from libGLESv3 and want
+    declaring rather than loading. Only EXTENSIONS have to be resolved, and eglGetProcAddress is
+    how - see the note above these names in glad.h for why they carry a trailing underscore.
+*/
+PFNGLGENQUERIESEXTPROC          glGenQueriesEXT_          = NULL;
+PFNGLDELETEQUERIESEXTPROC       glDeleteQueriesEXT_       = NULL;
+PFNGLBEGINQUERYEXTPROC          glBeginQueryEXT_          = NULL;
+PFNGLENDQUERYEXTPROC            glEndQueryEXT_            = NULL;
+PFNGLGETQUERYOBJECTUIVEXTPROC   glGetQueryObjectuivEXT_   = NULL;
+PFNGLGETQUERYOBJECTUI64VEXTPROC glGetQueryObjectui64vEXT_ = NULL;
+
+PFNGLRENDERBUFFERSTORAGEMULTISAMPLEEXTPROC  glRenderbufferStorageMultisampleEXT_  = NULL;
+PFNGLFRAMEBUFFERTEXTURE2DMULTISAMPLEEXTPROC glFramebufferTexture2DMultisampleEXT_ = NULL;
+
+//Both of these are idempotent and cheap, so callers re-arm rather than tracking a 'loaded' flag:
+//a context recreation invalidates nothing here (the pointers stay valid for the process) but
+//calling again costs six lookups and removes the chance of reading a NULL after a reinit.
+bool GLLoadTimerQueryEXT(){
+    glGenQueriesEXT_          = (PFNGLGENQUERIESEXTPROC)         eglGetProcAddress("glGenQueriesEXT");
+    glDeleteQueriesEXT_       = (PFNGLDELETEQUERIESEXTPROC)      eglGetProcAddress("glDeleteQueriesEXT");
+    glBeginQueryEXT_          = (PFNGLBEGINQUERYEXTPROC)         eglGetProcAddress("glBeginQueryEXT");
+    glEndQueryEXT_            = (PFNGLENDQUERYEXTPROC)           eglGetProcAddress("glEndQueryEXT");
+    glGetQueryObjectuivEXT_   = (PFNGLGETQUERYOBJECTUIVEXTPROC)  eglGetProcAddress("glGetQueryObjectuivEXT");
+    glGetQueryObjectui64vEXT_ = (PFNGLGETQUERYOBJECTUI64VEXTPROC)eglGetProcAddress("glGetQueryObjectui64vEXT");
+    return glGenQueriesEXT_ && glDeleteQueriesEXT_ && glBeginQueryEXT_ && glEndQueryEXT_
+        && glGetQueryObjectuivEXT_ && glGetQueryObjectui64vEXT_;
+}
+
+bool GLLoadMultisampleEXT(){
+    glRenderbufferStorageMultisampleEXT_  = (PFNGLRENDERBUFFERSTORAGEMULTISAMPLEEXTPROC) eglGetProcAddress("glRenderbufferStorageMultisampleEXT");
+    glFramebufferTexture2DMultisampleEXT_ = (PFNGLFRAMEBUFFERTEXTURE2DMULTISAMPLEEXTPROC)eglGetProcAddress("glFramebufferTexture2DMultisampleEXT");
+    return glRenderbufferStorageMultisampleEXT_ && glFramebufferTexture2DMultisampleEXT_;
+}
+
+#else
 /*
     So, this is not actually glad, but only the needed thigs are pulled from one ginormous glad file.
     You could replace this with glad, it would just be bigger.
@@ -328,3 +370,5 @@ bool InitGLExtensions(void){
     extensions_loaded = true;
     return true;
 }
+
+#endif //__ANDROID__

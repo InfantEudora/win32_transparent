@@ -23,6 +23,9 @@
 #                       beside the matching flag in engine.mk; a mismatch here is an
 #                       undefined reference to tinygltf::FileExists at app link time.
 #   -DTINYGLTF_NO_WRITER compiles the glTF serializer out. Nothing here calls it, and it was
+#   -DTINYGLTF_NO_STB_IMAGE drops tinygltf's own image decoding, which GLTFLoader does not
+#                        use. Switches an in-class initialiser, so both sides must agree.
+#                        See the note in engine.mk.
 #                       the last referrer to std::endl and operator<<(ostream&, string) -
 #                       so the last thing pulling ~700 KB of libstdc++ stream machinery in.
 #   -D_WIN32            what the rest of the build assumes.
@@ -58,7 +61,7 @@ CC_C      := gcc
 BUILD_DIR := build
 OUT       := ../libs/libthirdparty.a
 
-CFLAGS := -std=c++17 -Os -fno-exceptions -DJSON_NOEXCEPTION -DTINYGLTF_NO_FS -DTINYGLTF_NO_WRITER -D_WIN32
+CFLAGS := -std=c++17 -Os -fno-exceptions -DJSON_NOEXCEPTION -DTINYGLTF_NO_FS -DTINYGLTF_NO_WRITER -DTINYGLTF_NO_STB_IMAGE -D_WIN32
 IPATHS := -I. -Itinygltf -Istb_image -Iminiz -Iminiaudio
 
 #---------------------------------------------------------------------------------------

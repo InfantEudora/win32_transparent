@@ -29,6 +29,53 @@
 
 #include <GLES3/gl31.h>
 
+/*
+    AND THE EXTENSION HEADER, for GL_EXT_multisampled_render_to_texture.
+
+    That extension is how MSAA is done on a tiler: glRenderbufferStorageMultisampleEXT and
+    glFramebufferTexture2DMultisampleEXT let the multisampled buffer live in tile memory and
+    resolve on write-out, so the 4x samples never cost 4x bandwidth to main memory. The desktop
+    path (a multisampled FBO plus an explicit glBlitFramebuffer resolve) is not the same trade
+    and is wrong here.
+
+    Only the TYPEDEFS come from this header. Both entry points are extensions, so they are
+    resolved at run time through eglGetProcAddress and stored in Renderer.cpp - gl31.h declares
+    neither. A device without the extension gets NULL back and falls to the single-sample path,
+    which is why they are function pointers rather than direct calls.
+*/
+#include <GLES2/gl2ext.h>
+
+/*
+    THE EXTENSION ENTRY POINTS, resolved rather than linked - the Android half of what the WGL
+    loader below does for the desktop, and here for the same reason: they live in glad because
+    this is the file that knows how a GL function is obtained on each platform. Renderer.cpp
+    should not.
+
+    THE TRAILING UNDERSCORE IS NOT A STYLE CHOICE. <GLES2/gl2ext.h> already declares
+    `glGenQueriesEXT` and friends as FUNCTIONS, so a pointer of the same name is a redeclaration
+    with a different type. The suffix is what lets the declaration and the pointer coexist.
+
+    WHY THE EXT NAMES AT ALL, when GLES 3.0 has query objects in core: the core ones do not
+    accept GL_TIME_ELAPSED_EXT as a target and there is no core 64-bit result readback, so a
+    timer query needs the EXT versions anyway. Resolving the whole set from EXT keeps one
+    consistent group rather than half core calls and half resolved pointers.
+
+    Both loaders return false on a device that lacks the extension, and every pointer stays NULL.
+    That is a supported outcome, not an error: pass timers read 0 and MSAA falls back to a
+    single-sample target.
+*/
+extern PFNGLGENQUERIESEXTPROC          glGenQueriesEXT_;
+extern PFNGLDELETEQUERIESEXTPROC       glDeleteQueriesEXT_;
+extern PFNGLBEGINQUERYEXTPROC          glBeginQueryEXT_;
+extern PFNGLENDQUERYEXTPROC            glEndQueryEXT_;
+extern PFNGLGETQUERYOBJECTUIVEXTPROC   glGetQueryObjectuivEXT_;
+extern PFNGLGETQUERYOBJECTUI64VEXTPROC glGetQueryObjectui64vEXT_;
+bool GLLoadTimerQueryEXT();     //GL_EXT_disjoint_timer_query
+
+extern PFNGLRENDERBUFFERSTORAGEMULTISAMPLEEXTPROC  glRenderbufferStorageMultisampleEXT_;
+extern PFNGLFRAMEBUFFERTEXTURE2DMULTISAMPLEEXTPROC glFramebufferTexture2DMultisampleEXT_;
+bool GLLoadMultisampleEXT();    //GL_EXT_multisampled_render_to_texture
+
 #else
 
 #include <windows.h>

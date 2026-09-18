@@ -175,6 +175,17 @@ CFLAGS += -DTINYGLTF_NO_FS
 #fails to link if it calls the writer rather than disagreeing about the object silently.
 #Kept here anyway so the two compiles say the same thing. See 3rdparty/tinygltf/tiny_gltf.cpp.
 CFLAGS += -DTINYGLTF_NO_WRITER
+
+#tinygltf's built-in image decoding, which core/GLTFLoader.cpp does not use: it reads the
+#still-encoded bytes out of the bufferView and decodes them with 3rdparty/stb_image through
+#Texture::LoadFromMemory. Leaving it on decoded every embedded texture a second time, compiled
+#a second stb_image in, and kept every decoded image alive inside tinygltf::Model for the life
+#of the loader - which for a glb of compressed textures is the real cost, not the ~16 KB of code.
+#
+#Both sides again, and for the STRONG reason: like NO_FS this switches an in-class initialiser
+#(TinyGLTF::LoadImageData, to nullptr), so a TU compiled without it references
+#tinygltf::LoadImageData, which the library no longer defines. Repeated in 3rdparty/makefile.
+CFLAGS += -DTINYGLTF_NO_STB_IMAGE
 #Sound is optional - see the USE_SOUND block below.
 #NOTHING links winmm now, not even a sound build: that went with OpenAL, and miniaudio's
 #WASAPI backend wants only -lole32. core/PrecisionSleeper resolves timeBeginPeriod from

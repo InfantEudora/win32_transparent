@@ -131,6 +131,19 @@ class Object{
     void SetCastsShadow(bool flag){f_casts_shadow = flag;};
     bool CastsShadow(){return f_casts_shadow;};
 
+    /*
+        SPRITE-ATLAS SUB-RECT, uploaded per instance as InstanceDataGPU.uv_transform (see
+        Renderer::UploadInstanceData). The pair is an inclusive corner-to-corner rect in atlas
+        UV space, so the shader gets offset uv0 and scale (uv1 - uv0).
+
+        PER OBJECT RATHER THAN PER MESH, which is the point: a whole sheet of sprites is one
+        quad mesh drawn many times, and each instance picks its own cell without a second
+        vertex buffer or a material per frame. The default (0,0)-(1,1) is the whole texture,
+        so an object that never touches these samples exactly as it did before they existed.
+    */
+    vec2 uv0 = vec2(0,0);
+    vec2 uv1 = vec2(1,1);
+
     meshid_t GetMeshID();
     objectid_t GetID();
 

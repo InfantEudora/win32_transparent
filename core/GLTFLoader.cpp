@@ -44,6 +44,23 @@ static bool SolveTangent(const vec3& edge1, const vec3& edge2, const vec2& delta
     return false;
 }
 
+
+//tinygltf would otherwise auto-decode every embedded image during the parse, through its own
+//bundled stb_image, into tinygltf::Image::image. NOTHING HERE EVER READS THAT: the material
+//loop below pulls the still-encoded bytes straight out of the bufferView and hands them to
+//Texture::LoadFromMemory, which decodes them through 3rdparty/stb_image. So the built-in path
+//was a second decode of every texture, a second copy of stb_image in the binary, and - the
+//expensive part - the full RGBA expansion of every image held in `model` for as long as this
+//loader lives. TINYGLTF_NO_STB_IMAGE turns it off (see engine.mk and 3rdparty/makefile).
+//
+//A callback still has to be registered: with none, tinygltf logs "No LoadImageData callback
+//specified" and fails the WHOLE parse as soon as a file contains an embedded image. This stub
+//says "handled" and does nothing. Images referenced by URI rather than bufferView were already
+//unsupported - see the debug->Fatal below - so nothing is lost.
+static bool NoOpLoadImageData(tinygltf::Image*, const int, std::string*, std::string*, int, int, const unsigned char*, int, void*){
+    return true;
+}
+
 void GLTFLoader::LoadGLTFFile(const char* input_filename){
     std::map<int, std::string> mode_strings;
     mode_strings[TINYGLTF_MODE_POINTS] = "TINYGLTF_MODE_POINTS";
@@ -63,6 +80,8 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
 
     bool ret = false;
     //ret = loader.LoadBinaryFromFile(&model, &err, &warn, input_filename.c_str());
+    loader.SetImageLoader(NoOpLoadImageData, NULL);
+
     ret = loader.LoadBinaryFromMemory(&model,&err,&warn,file_data,file_data_sz);
 
     if (!warn.empty()) {

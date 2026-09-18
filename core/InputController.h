@@ -41,6 +41,35 @@ class InputController;
     can never collide with a real key.
 */
 #define GAMEPAD_SYSKEY_BASE         0x10000
+
+/*
+    XInput's button bits, spelled out for builds with no <xinput.h>.
+
+    The GAMEPAD_KEY_* defines below are built from these, and being macros they expand only where
+    they are USED - so a platform without XInput compiles this header happily right up until the
+    first app writes GAMEPAD_KEY_A, and then reports an undeclared identifier from a header that
+    looks entirely portable. These values are a fixed part of the XInput ABI (XINPUT_GAMEPAD_*
+    in XInput.h) and cannot drift, so naming them here costs nothing and keeps the keycode space
+    identical on every platform - which matters, because a recorded input run carries these
+    numbers and has to replay the same way wherever it is played back.
+*/
+#if !defined(_WIN32)
+#define XINPUT_GAMEPAD_DPAD_UP          0x0001
+#define XINPUT_GAMEPAD_DPAD_DOWN        0x0002
+#define XINPUT_GAMEPAD_DPAD_LEFT        0x0004
+#define XINPUT_GAMEPAD_DPAD_RIGHT       0x0008
+#define XINPUT_GAMEPAD_START            0x0010
+#define XINPUT_GAMEPAD_BACK             0x0020
+#define XINPUT_GAMEPAD_LEFT_THUMB       0x0040
+#define XINPUT_GAMEPAD_RIGHT_THUMB      0x0080
+#define XINPUT_GAMEPAD_LEFT_SHOULDER    0x0100
+#define XINPUT_GAMEPAD_RIGHT_SHOULDER   0x0200
+#define XINPUT_GAMEPAD_A                0x1000
+#define XINPUT_GAMEPAD_B                0x2000
+#define XINPUT_GAMEPAD_X                0x4000
+#define XINPUT_GAMEPAD_Y                0x8000
+#endif
+
 #define GAMEPAD_KEY_DPAD_UP         (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_DPAD_UP)
 #define GAMEPAD_KEY_DPAD_DOWN       (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_DPAD_DOWN)
 #define GAMEPAD_KEY_DPAD_LEFT       (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_DPAD_LEFT)
