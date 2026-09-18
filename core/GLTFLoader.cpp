@@ -1210,6 +1210,24 @@ static int JointIndexOf(const std::vector<int>& joints, int node_index){
     return -1;
 }
 
+/*
+    The node that lists node_index among its children, or -1 when it is a root of the scene.
+
+    glTF stores the hierarchy DOWNWARDS ONLY - a node lists its children and nothing points back
+    up - so the only way to answer this is to scan every node. That is fine here: GetSkeleton
+    calls it a handful of times when a rig is loaded, never per frame.
+*/
+int GLTFLoader::ParentNodeOf(int node_index){
+    for (size_t i = 0; i < model.nodes.size(); i++){
+        for (int child : model.nodes.at(i).children){
+            if (child == node_index){
+                return (int)i;
+            }
+        }
+    }
+    return -1;
+}
+
 Bone* GLTFLoader::GetBone(int node_index, const std::vector<int>& joints, std::vector<fmat4>&invbinmatrices, AssetManager* assetmanager){
     tinygltf::Node& node = model.nodes.at(node_index);
     int joint_index = JointIndexOf(joints,node_index);
@@ -1341,16 +1359,96 @@ Skeleton*  GLTFLoader::GetSkeleton(const char* skeleton_name, AssetManager* asse
         }
     }
 
-    int num_roots = 0;
+    std::vector<int> root_joints;
     for (size_t i = 0; i < skin->joints.size(); i++){
         if (f_has_joint_parent[i]){
             continue;       //reached by recursion from its parent
         }
-        Bone* root_bone = GetBone(skin->joints[i],skin->joints,inv_binds,assetmanager);
+        root_joints.push_back((int)i);
+    }
+
+    /*
+        THE RIG HANGS UNDER ITS ARMATURE'S OWN TRANSFORM, not straight off the Skeleton.
+
+        A bone only carries its LOCAL transform (GetBone reads node.translation/rotation/scale),
+        so a bone's world transform is that chain composed down from whatever the top bone is
+        attached to. glTF's contract is that `globalJointTransform * inverseBindMatrix` is an
+        identity at the bind pose - and "global" there means all the way up the NODE tree, which
+        for a Blender export includes the armature node the joints sit under. Attaching the root
+        bones directly to the Skeleton silently drops that node, and every bone comes out short
+        by exactly its transform.
+
+        INVISIBLE ON A RIG AUTHORED AT THE ORIGIN, which is why it survived this long: in
+        bomber_assets.glb `character_armature` and `turd_armature` are both on the origin and are
+        unaffected, while `enemy_armature` sits at z +1.280 because the artist laid the three
+        models out side by side. Measured on that file, the enemy's
+        world_transform * inverse_bind came out as a pure 1.2801 translation instead of an
+        identity, so the enemy drew a metre and a quarter away from its own mesh. The other two
+        measured 0.000000 and 0.000006 - which is the shape of every bug of this kind: it is not
+        that it was never tested, it is that the test data could not express it.
+
+        THE WHOLE ANCESTOR CHAIN, one Object per node, rather than one composed matrix. Composing
+        would mean decomposing back into the position/rotation/scale an Object actually stores,
+        and that is lossy the moment a chain mixes non-uniform scale with rotation. A chain of
+        nodes reproduces exactly what the file says, and it keeps each node's NAME in the tree,
+        so an animation channel that targets the armature itself still binds by name through
+        Animation::LinkObjects.
+
+        The Skeleton's own transform is left alone - it stays the handle an app places the actor
+        with, exactly as before.
+    */
+    Object* bone_parent = skeleton;
+    if (!root_joints.empty()){
+        int armature_node = ParentNodeOf(skin->joints[root_joints[0]]);
+        for (int root_joint : root_joints){
+            int other = ParentNodeOf(skin->joints[root_joint]);
+            if (other != armature_node){
+                //A rig whose roots hang off different nodes has no single armature transform to
+                //apply. Nothing in hand does this; say so rather than silently using the first.
+                debug->Warn("Skin %s: root joint %s hangs under node %i, not %i like the first "
+                            "root - only the first node's transform is applied\n",skeleton_name,
+                            model.nodes.at(skin->joints[root_joint]).name.c_str(),other,armature_node);
+            }
+        }
+
+        //Outermost ancestor last, so the loop below can build downwards from the scene root.
+        std::vector<int> chain;
+        for (int node_index = armature_node; node_index >= 0; node_index = ParentNodeOf(node_index)){
+            chain.push_back(node_index);
+        }
+        for (int i = (int)chain.size() - 1; i >= 0; i--){
+            tinygltf::Node& node = model.nodes.at(chain[i]);
+            Object* link = new Object();
+            link->name = node.name;
+            if (node.translation.size() == 3){
+                link->SetPosition(vec3(node.translation[0],node.translation[1],node.translation[2]));
+            }
+            if (node.rotation.size() == 4){
+                link->SetRotation(quat(node.rotation[0],node.rotation[1],node.rotation[2],node.rotation[3]));
+            }
+            if (node.scale.size() == 3){
+                link->SetScale(vec3(node.scale[0],node.scale[1],node.scale[2]));
+            }
+            if (node.matrix.size() == 16){
+                //An Object stores position/rotation/scale, not a matrix, so a node written as a
+                //raw matrix cannot be reproduced without decomposing it. Blender writes TRS, so
+                //this has not come up - but it would come up silently.
+                debug->Err("Node %s above skin %s is a raw matrix, which is not applied - the rig "
+                           "will be offset by it\n",node.name.c_str(),skeleton_name);
+            }
+            bone_parent->AttachChild(link);
+            bone_parent = link;
+        }
+    }
+
+    int num_roots = 0;
+    for (int root_joint : root_joints){
+        Bone* root_bone = GetBone(skin->joints[root_joint],skin->joints,inv_binds,assetmanager);
         if (!root_bone){
             continue;
         }
-        skeleton->AttachChild(root_bone);
+        bone_parent->AttachChild(root_bone);
+        root_bone->SetReferences();
         num_roots++;
     }
 

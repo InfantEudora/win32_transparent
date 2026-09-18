@@ -1,6 +1,12 @@
 #include "Mesh.h"
 #include <cstddef>      //offsetof, for the GLES attribute offsets below
 
+#include "Debug.h"
+//DEBUG_INFO, matching Object/Shader/Renderer. This file was silent until ReUploadMeshData needed
+//to report a mesh it cannot rebuild - see the fall-through branch there for why that one has to
+//say something rather than return quietly.
+static Debugger* debug = new Debugger("Mesh",DEBUG_INFO);
+
 /*
     WHY THIS FILE HAS TWO OF EVERY BUFFER SETUP.
 
@@ -79,18 +85,81 @@ meshid_t Mesh::GetID(){
     treatment and do not have it yet. A no-op for a mesh with no CPU-side vertices, which is what
     makes it safe to call blindly over a whole tree.
 */
-void Mesh::ReUploadMeshData(){
-    if (vertices.size() > 0){
-        //The old VBO/VAO died with the context, so these handles name nothing. Zeroing them is
-        //what makes InitVBOVAO build a fresh pair instead of returning early on `vbo == 0`.
-        vbo = 0;
-        vao = 0;
+/*
+    Rebuilds this mesh's GPU objects from the vertex data it already holds, after the context that
+    owned the old ones has been replaced. Nothing in here calls it - Renderer::ReUploadAllMeshes
+    walks the scene and does. In practice that is Android only, since a Win32 context is never
+    lost, but the vertex data lives here so the rebuild does too.
 
+    BRANCHED ON WHICH VECTOR IS POPULATED, NOT ON mesh_mode. The vectors are what decide the
+    vertex FORMAT, and therefore which Init*VBOVAO is the correct one. mesh_mode is a RENDERING
+    classification that an app is free to change afterwards: a MESH_MODE_SHADER mesh is built by
+    SetMeshData and then re-tagged, so switching on mesh_mode would silently skip exactly that
+    mesh and leave it holding dead handles.
+
+    IT USED TO HANDLE `vertices` AND NOTHING ELSE, which made a skinned mesh keep the vbo/vao it
+    had from the dead context - names that refer to nothing, so it drew nothing. Measured on
+    bomber_test_port 2026-09-18: background the app and come back, and the unskinned floor tiles
+    return while all three characters are simply GONE, with no error anywhere, because a draw call
+    against a stale VAO is not an error. Line meshes and morph targets had the same hole.
+*/
+void Mesh::ReUploadMeshData(){
+    //The old VBO/VAO died with the context, so these handles name nothing. Zeroing them is what
+    //makes the Init*VBOVAO calls below build a fresh pair instead of returning early on
+    //`vbo == 0`.
+    vbo = 0;
+    vao = 0;
+
+    if (skinned_vertices.size() > 0){
+        InitSkinnedVBOVAO();
+#if defined(__ANDROID__)
+        UploadBufferData(GL_ARRAY_BUFFER, vbo, sizeof(skinned_vertex) * skinned_vertices.size(), (float*)&skinned_vertices.at(0), GL_STATIC_DRAW);
+#else
+        glNamedBufferData(vbo, sizeof(skinned_vertex) * skinned_vertices.size(), (float*)&skinned_vertices.at(0), GL_STATIC_DRAW);
+#endif
+    }else if (line_vertices.size() > 0){
+        InitLineVBOVAO();
+        //GL_DYNAMIC_DRAW, matching SetLineMeshData: a line mesh is the one kind here that is
+        //expected to be rewritten after it is built.
+#if defined(__ANDROID__)
+        UploadBufferData(GL_ARRAY_BUFFER, vbo, sizeof(line_vertex) * line_vertices.size(), (float*)&line_vertices.at(0), GL_DYNAMIC_DRAW);
+#else
+        glNamedBufferData(vbo, sizeof(line_vertex) * line_vertices.size(), (float*)&line_vertices.at(0), GL_DYNAMIC_DRAW);
+#endif
+    }else if (vertices.size() > 0){
         InitVBOVAO();
 #if defined(__ANDROID__)
         UploadBufferData(GL_ARRAY_BUFFER, vbo, sizeof(vertex) * vertices.size(), (float*)&vertices.at(0), GL_STATIC_DRAW);
 #else
         glNamedBufferData(vbo, sizeof(vertex) * vertices.size(), (float*)&vertices.at(0), GL_STATIC_DRAW);
+#endif
+    }else if (num_vertices > 0){
+        /*
+            A MESH THAT HAS VERTICES ON THE GPU AND NONE OF THE FORMATS ABOVE ON THE CPU.
+
+            There is nothing to rebuild it from, so it will draw against handles that died with
+            the context - which is silent, because a draw call on a stale VAO is not a GL error.
+            That is exactly how the skinned case hid: the gap was known and written down, and it
+            still cost an afternoon, because the branch said nothing when it fell through.
+
+            So it says something. A new vertex format needs a branch here, and this is the line
+            that will tell whoever adds one.
+        */
+        debug->Err("Mesh %lu has %u vertices but no CPU-side data in any known format - it cannot "
+                   "be rebuilt for the new GL context and will draw nothing. A new vertex format "
+                   "needs a branch in Mesh::ReUploadMeshData.\n",(unsigned long)id,num_vertices);
+    }
+
+    //A SECOND `if`, not another branch: morph targets ride ALONGSIDE a normal mesh rather than
+    //instead of one (SetMorphMeshData says so - it divides by num_vertices), so a morphed mesh
+    //has to rebuild both its VBO above and its SSBO here.
+    if (morph_vertices.size() > 0){
+        ssbo = 0;
+        InitSSBO();
+#if defined(__ANDROID__)
+        UploadBufferData(GL_SHADER_STORAGE_BUFFER, ssbo, sizeof(morph_vertex) * morph_vertices.size(), (float*)&morph_vertices.at(0), GL_STATIC_DRAW);
+#else
+        glNamedBufferStorage(ssbo, sizeof(morph_vertex) * morph_vertices.size(), (float*)&morph_vertices.at(0),0);
 #endif
     }
 }

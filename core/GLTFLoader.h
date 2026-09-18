@@ -64,6 +64,9 @@ private:
     int                     GetAccesorComponentTypeSize(const tinygltf::Accessor& accessor);
     int                     GetAccesorTypeSize(const tinygltf::Accessor& accessor);
     tinygltf::Node*         FindNode(std::string node_name);
+    //The node that lists node_index among its children, or -1 when it is a root of the scene.
+    //See GetSkeleton, which is the only thing that needs to walk UPWARDS.
+    int                     ParentNodeOf(int node_index);
     tinygltf::Skin*         FindSkin(std::string skin_name);
     tinygltf::Animation*    FindAnimation(std::string skin_name);
     void                    LoadInverseBindMatrices(std::vector<fmat4>& matrices, int accesor_index);
