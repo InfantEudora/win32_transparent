@@ -595,7 +595,13 @@ private:
     //--- MCP ----------------------------------------------------------------------------------
 #ifdef USE_MCP
     void RegisterMCPTools();
-#endif
+    /*
+        StateJson and MapJson are INSIDE the guard with RegisterMCPTools, not beside it. Their
+        return type is `json`, which only exists because core/MCPServer.h does `using json =
+        nlohmann::json` - so with USE_MCP off this header does not parse at all, and the failure
+        is 32 errors deep in the MCP block rather than on these two lines. A desktop build never
+        notices, because it is the build that has USE_MCP on.
+    */
     json StateJson();
     /*
         The board as text: one row per line, plus a second grid saying which zone style each cell
@@ -604,6 +610,7 @@ private:
         bomber_restart's schema promised a map it never returned.
     */
     json MapJson();
+#endif //USE_MCP
 
     //--- UI -----------------------------------------------------------------------------------
 #ifdef USE_IMGUI

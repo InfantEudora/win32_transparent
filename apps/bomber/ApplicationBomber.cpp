@@ -2209,25 +2209,35 @@ void ApplicationBomber::SetWaterUniforms(void){
 void ApplicationBomber::SetupInput(void){
     InputController* input = main_scene->inputcontroller;
 
-    //Arrows and WASD and the d-pad, because muscle memory differs and all three cost nothing:
-    //KeyState::f_isdown counts HELD MAPPINGS rather than being a boolean, so an action stays down
-    //while any of its keys is.
+    /*
+        EVERY MAPPING IN THIS BLOCK IS A WIN32 VIRTUAL-KEY CODE, so it is guarded rather than
+        assumed - the same treatment, and for the same reason, as the one in apps/tetris. The
+        Android port of this file builds against a device with no keyboard to press them on, and
+        VK_LEFT and friends do not exist there at all. The bare character literals are in here too:
+        'W' is only a key code because Win32 happens to number the letter keys by their ASCII
+        value, which is not a portable fact.
+
+        THE D-PAD MAPPINGS THAT USED TO SIT BESIDE EACH ARROW HAVE MOVED BELOW, out of the guard.
+        Grouping all three bindings of an action together read better, but it put portable lines
+        inside a Windows-only block, and a port then loses the d-pad for no reason. Split the way
+        tetris splits it, so the two files stay comparable.
+
+        Arrows AND WASD because muscle memory differs and both cost nothing: KeyState::f_isdown
+        counts HELD MAPPINGS rather than being a boolean, so an action stays down while any of its
+        keys is.
+    */
+#if defined(_WIN32)
     input->AddKeyMap(VK_UP,INPUT_BOMBER_NORTH);
     input->AddKeyMap('W',INPUT_BOMBER_NORTH);
-    input->AddKeyMap(GAMEPAD_KEY_DPAD_UP,INPUT_BOMBER_NORTH);
     input->AddKeyMap(VK_DOWN,INPUT_BOMBER_SOUTH);
     input->AddKeyMap('S',INPUT_BOMBER_SOUTH);
-    input->AddKeyMap(GAMEPAD_KEY_DPAD_DOWN,INPUT_BOMBER_SOUTH);
     input->AddKeyMap(VK_LEFT,INPUT_BOMBER_WEST);
     input->AddKeyMap('A',INPUT_BOMBER_WEST);
-    input->AddKeyMap(GAMEPAD_KEY_DPAD_LEFT,INPUT_BOMBER_WEST);
     input->AddKeyMap(VK_RIGHT,INPUT_BOMBER_EAST);
     input->AddKeyMap('D',INPUT_BOMBER_EAST);
-    input->AddKeyMap(GAMEPAD_KEY_DPAD_RIGHT,INPUT_BOMBER_EAST);
 
     input->AddKeyMap(VK_SPACE,INPUT_BOMBER_DROP);
     input->AddKeyMap('B',INPUT_BOMBER_DROP);
-    input->AddKeyMap(GAMEPAD_KEY_A,INPUT_BOMBER_DROP);
 
     input->AddKeyMap('R',INPUT_BOMBER_RESTART);
     input->AddKeyMap(VK_F5,INPUT_BOMBER_RELOAD_SHADER);
@@ -2245,11 +2255,26 @@ void ApplicationBomber::SetupInput(void){
         Without clearing f_escape_closes_window the window closes on the key-down and nothing below
         ever runs - the key was always arriving (Raw Input forwards every VK), it just never got a
         chance to mean anything. See the note on the flag in core/Window.h.
+
+        Inside the guard with the key it exists to serve: a platform with no Escape key has no
+        window-closing behaviour to suppress either.
     */
     input->AddKeyMap(VK_ESCAPE,INPUT_BOMBER_BACK);
     if (main_window){
         main_window->f_escape_closes_window = false;
     }
+#endif //_WIN32
+
+    /*
+        GAMEPAD. Outside the guard on purpose: GAMEPAD_KEY_* carry their own XInput bit values on
+        platforms with no <xinput.h> - see core/InputController.h - so these lines are portable as
+        written and a port gets the same layout from the same source.
+    */
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_UP,INPUT_BOMBER_NORTH);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_DOWN,INPUT_BOMBER_SOUTH);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_LEFT,INPUT_BOMBER_WEST);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_RIGHT,INPUT_BOMBER_EAST);
+    input->AddKeyMap(GAMEPAD_KEY_A,INPUT_BOMBER_DROP);
 
     /*
         The menu buttons, bound here and POSITIONED NOWHERE YET.
@@ -3932,6 +3957,15 @@ BomberKnob* ApplicationBomber::FindKnob(const std::string& name){
     return NULL;
 }
 
+//--- MCP ---------------------------------------------------------------------------------------------
+
+/*
+    The section starts HERE, not below at RegisterMCPTools. MapJson and StateJson return `json`,
+    a type that only exists when core/MCPServer.h has been included, so they are as much part of
+    the MCP surface as the tool registrations that call them - and left outside the guard they
+    stop a USE_MCP=0 build from compiling at all.
+*/
+#ifdef USE_MCP
 json ApplicationBomber::MapJson(void){
     json out;
     /*
@@ -4334,9 +4368,8 @@ json ApplicationBomber::StateJson(void){
     return result;
 }
 
-//--- MCP ---------------------------------------------------------------------------------------------
+//--- MCP: the tools themselves ------------------------------------------------------------------------
 
-#ifdef USE_MCP
 void ApplicationBomber::RegisterMCPTools(void){
     MCPServer::Get()->RegisterTool("bomber_state",
         "Everything about the game as the RULES see it: the character's tile, whether it is "
