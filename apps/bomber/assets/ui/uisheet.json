@@ -1,0 +1,67 @@
+{
+	"frames": {
+		"./button_blank": {
+			"frame": {
+				"h": 104,
+				"w": 242,
+				"x": 0,
+				"y": 390
+			},
+			"rotated": false,
+			"spriteSourceSize": {
+				"h": 104,
+				"w": 242,
+				"x": 0,
+				"y": 0
+			},
+			"sourceSize": {
+				"h": 104,
+				"w": 242
+			},
+			"trimmed": false
+		},
+		"./button_close": {
+			"frame": {
+				"h": 107,
+				"w": 118,
+				"x": 244,
+				"y": 390
+			},
+			"rotated": false,
+			"spriteSourceSize": {
+				"h": 107,
+				"w": 118,
+				"x": 0,
+				"y": 0
+			},
+			"sourceSize": {
+				"h": 107,
+				"w": 118
+			},
+			"trimmed": false
+		},
+		"./window_frame": {
+			"frame": {
+				"h": 388,
+				"w": 472,
+				"x": 0,
+				"y": 0
+			},
+			"rotated": false,
+			"spriteSourceSize": {
+				"h": 388,
+				"w": 472,
+				"x": 0,
+				"y": 0
+			},
+			"sourceSize": {
+				"h": 388,
+				"w": 472
+			},
+			"trimmed": false
+		}
+	},
+	"meta": {
+		"image": "uisheet.png"
+	}
+}

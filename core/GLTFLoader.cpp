@@ -78,6 +78,15 @@ void GLTFLoader::LoadGLTFFile(const char* input_filename){
     uint8_t* file_data = NULL;  // Data loaded from disk
     file_data = LoadFile(input_filename,&file_data_sz);
 
+    //LoadFile reports a missing asset and returns NULL rather than exiting (see File.cpp), so
+    //this has to be checked here. tinygltf happens to reject a zero-length buffer before it
+    //reads it, which is why a missing .glb has been surviving this call rather than
+    //dereferencing NULL - a property of tinygltf, not of this code, and not one to rely on.
+    if (!file_data){
+        debug->Err("Failed to load .glTF : %s (asset not found)\n", input_filename);
+        return;
+    }
+
     bool ret = false;
     //ret = loader.LoadBinaryFromFile(&model, &err, &warn, input_filename.c_str());
     loader.SetImageLoader(NoOpLoadImageData, NULL);

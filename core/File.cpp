@@ -260,14 +260,27 @@ uint8_t* LoadFile(const char* filename, size_t* size){
 	if (!asset){
 		std::string resolved;
 		if (!ResolveAssetPath(filename,resolved)){
-			debug->Fatal("LoadFile failed to load [%s] - looked in: %s\n",filename,resolved.c_str());
+			/*
+			    Err, NOT Fatal, and the difference is the whole failure policy of this function.
+			    Fatal is exit(1) (see Debug.cpp), which kills the process before anything can report
+			    what was being loaded or carry on without it. A missing asset is loud enough on its
+			    own: every caller here checks for NULL and says what it could not do, so the app comes
+			    up with one thing missing and a log line naming it - far easier to act on than a
+			    process that vanished at startup.
+
+			    It matters most where it is least recoverable. On Android there is no disk to fall
+			    back to and no console to read: an exit(1) there is an app that closes itself on
+			    launch, which looks like a crash and gets debugged like one.
+			*/
+			debug->Err("LoadFile failed to load [%s] - looked in: %s\n",filename,resolved.c_str());
 			return NULL;
 		}
 
 		FILE* file = fopen(resolved.c_str(), "rb");
 		if(!file){
 			//Resolution just proved this openable, so arriving here means it went away in between.
-			debug->Fatal("LoadFile failed to load: [%s] (resolved to %s)\n",filename,resolved.c_str());
+			//Err rather than Fatal, for the reason given above.
+			debug->Err("LoadFile failed to load: [%s] (resolved to %s)\n",filename,resolved.c_str());
 			return NULL;
 		}
 
