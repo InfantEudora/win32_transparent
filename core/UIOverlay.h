@@ -107,12 +107,11 @@ void UINineSliceRegions(vec2 min, vec2 max, const ui_nine_inset& inset,
                         vec2* out_min, vec2* out_max);
 
 /*
-    One corner of one quad. 48 bytes.
+    One corner of one quad. 52 bytes, since `sprite` joined it.
 
     Compare ImGui's ImDrawVert at 20 (pos, uv, col) and core/type_vertex.h's `vertex` at 48
-    (pos, normal, tangent, uv, matid). This sits at the same size as the scene vertex while
-    carrying completely different things, and it is its own type for exactly that reason: reusing
-    `vertex` would mean paying for a normal and a tangent that the overlay shader never reads.
+    (pos, normal, tangent, uv, matid). It is its own type rather than a reuse of `vertex`, which
+    would mean paying for a normal and a tangent the overlay shader never reads.
 
     `local` and `half_extent` are what make the rounded box analytic. `local` varies across the
     quad (it is +/- half_extent at the corners and interpolates between), `half_extent` is
@@ -128,6 +127,16 @@ struct ui_vertex{
     float    radius;            //corner radius, pixels
     float    outline;           //0 = filled; >0 = half-width of an outline, pixels
     float    distance_scale;    //pixels per unit of sampled field - see UIFontDistanceScale
+    /*
+        0 = this quad is a distance field (a glyph, or a rounded box). 1 = it is a THEMED SPRITE,
+        sampled from the theme atlas as ordinary colour.
+
+        A per-vertex float rather than a uniform, because the whole design here is one draw call
+        for the entire overlay - a uniform would mean a draw call per mode and the batch would stop
+        being a batch. It is `flat` in the shader: all six vertices of a quad carry the same value,
+        so interpolating it would be arithmetic that cannot change the answer.
+    */
+    float    sprite;
     uint32_t color;             //RGBA8, see UIColor
 };
 
@@ -194,6 +203,47 @@ public:
     void AddNineSliceDebug(vec2 min, vec2 max, const ui_nine_inset& inset, uint8_t alpha = 255);
 
     /*
+        THE THEME ATLAS: one texture holding this app's UI artwork, sampled as colour.
+
+        `tex_id` is a GL texture the CALLER owns and keeps alive - normally one the Renderer
+        already loaded, so this reuses the engine's existing decode, mipmapping and the unpack
+        alignment fix rather than growing a second image path. w/h are its pixel size, which is
+        what turns a sprite's pixel rect into UVs.
+
+        ONE TEXTURE PER APP, which is the point: the theme is a property of the app, so a single
+        sheet means the whole overlay - glyphs, boxes and artwork - still draws in ONE call. Passing
+        0 unsets it and every AddSprite call becomes a no-op rather than sampling something stale.
+    */
+    void SetThemeTexture(uint32_t tex_id, int w, int h);
+    bool HasTheme() const { return theme_tex != 0; }
+
+    /*
+        One themed sprite, stretched to fill min..max. `src_*` is its rectangle in the theme atlas,
+        in PIXELS - the sheet's own coordinates, so a caller never converts to UVs by hand.
+
+        `color` TINTS it: the texel is multiplied by it, so white is the artwork untouched and
+        anything else recolours it. That is what hover and disabled states cost - a tint, not a
+        second sprite.
+    */
+    void AddSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, int src_h,
+                   uint32_t color = 0xFFFFFFFF);
+
+    /*
+        A themed sprite drawn as a NINE-SLICE: corners unscaled, edges stretched along one axis,
+        centre stretched both ways. `inset` is in pixels of the source sprite.
+
+        Sides STRETCH rather than tile. That is the simpler of the two and it is right for art whose
+        edges are smooth; art with a repeating rhythm along its edges - visible plank joints, studs -
+        wants tiling instead, because stretching lengthens the rhythm with the panel. Revisit here
+        when the first piece of art actually needs it.
+
+        An inset of zero on an axis means no cut on that axis, so left/right insets with top and
+        bottom zero is a THREE-slice, which is what a button wants.
+    */
+    void AddNineSliceSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, int src_h,
+                            const ui_nine_inset& inset, uint32_t color = 0xFFFFFFFF);
+
+    /*
         One line of text. `pos` is the LEFT END OF THE BASELINE for UI_ALIGN_LEFT, and alignment
         moves the line relative to it - so a score growing from 9999 to 10000 stays centred
         without the caller knowing the advance.
@@ -217,8 +267,11 @@ public:
     int GetNumQuads() const { return (int)(vertices.size() / 6); }
 
 private:
+    //`sprite` defaults to 0 - a distance-field quad - so every existing caller is unchanged and
+    //only the themed paths below have to say otherwise.
     void AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
-                 float radius, float outline, float distance_scale, uint32_t color);
+                 float radius, float outline, float distance_scale, uint32_t color,
+                 float sprite = 0.0f);
     //The shader, the buffers and the atlas - everything that dies with a context. Shared by Init
     //and ReUploadGPUObjects so the two cannot drift, which is the same argument the rest of this
     //stage makes for having one code path rather than a desktop one and an Android one.
@@ -249,6 +302,15 @@ private:
     static const int ATLAS_TEXTURE_UNIT = 10;
 
     GLuint          atlas_tex = 0;
+    /*
+        The theme atlas and its unit. 11, for the same reason the font atlas is 10 rather than 0 -
+        see the long note there. Borrowed, never owned: SetThemeTexture takes a texture the caller
+        loaded and this class must not delete it.
+    */
+    static const int THEME_TEXTURE_UNIT = 11;
+    GLuint          theme_tex = 0;
+    int             theme_w = 0;
+    int             theme_h = 0;
     GLuint          vbo = 0;
     GLuint          vao = 0;
 

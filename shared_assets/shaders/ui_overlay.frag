@@ -43,6 +43,15 @@
 */
 
 uniform sampler2D atlas;
+/*
+    The THEME atlas: this app's UI artwork, sampled as ordinary colour rather than as a field.
+
+    A SECOND SAMPLER rather than a second pass, which is the whole reason the overlay is still one
+    draw call. The font atlas cannot hold this - it is GL_R8, and painted artwork is neither single
+    channel nor a distance field - so the two textures coexist and each quad says which one it means
+    via a_sprite. Always bound, even with no theme loaded; see UIOverlay::Draw.
+*/
+uniform sampler2D theme;
 
 //Where the glyph edge sits in the sampled 0..1 range. From the baked font's header rather than
 //hardcoded at 0.5, because it is a property of how the field was generated - see core/UIFont.h.
@@ -55,6 +64,7 @@ flat in vec2  v_half_extent;
 flat in float v_radius;
 flat in float v_outline;
 flat in float v_distance_scale;
+flat in float v_sprite;
 flat in vec4  v_color;
 
 layout (location = 0) out vec4 out_color;
@@ -81,10 +91,31 @@ void main(){
     //One pixel of coverage across the edge. See the note above on why this needs no derivatives.
     float alpha = clamp(0.5 - d,0.0,1.0);
 
+    /*
+        THE THEMED SPRITE, mixed in rather than branched to.
+
+        v_sprite is flat, so a branch here would be coherent across the whole quad and cheap - but
+        mix() keeps the promise the top of this file makes, that there is no mode flag and no
+        branch, and costs one texture fetch on quads that do not use it. That fetch is the honest
+        price of holding glyphs, boxes and artwork in ONE draw call; the alternative is a second
+        pass, which costs a great deal more than a fetch.
+
+        The sprite is clipped by the BOX term only - `alpha` above folds in the glyph term, which
+        for a sprite quad is meaningless. distance_scale is 0 on those quads, so the glyph term is
+        a constant 0 and would otherwise eat exactly half the sprite.
+
+        v_color TINTS: white leaves the artwork alone, anything else recolours it. That is what a
+        hover or a disabled state costs here - a tint, not a second sprite.
+    */
+    float box_alpha = clamp(0.5 - d_box,0.0,1.0);
+    vec4  texel     = texture(theme,v_uv);
+    vec4  as_field  = vec4(v_color.rgb,v_color.a * alpha);
+    vec4  as_sprite = vec4(texel.rgb * v_color.rgb,texel.a * v_color.a * box_alpha);
+
     //STRAIGHT alpha, not premultiplied, matching the GL_SRC_ALPHA/GL_ONE_MINUS_SRC_ALPHA blend
     //UIOverlay::Draw sets. Worth stating because this repo has a dormant layered-window path
     //(Window::CreateNewLayeredWindow, which nothing currently calls) whose UpdateLayeredWindow
     //uses AC_SRC_ALPHA and therefore wants PREMULTIPLIED pixels. If that path is ever revived,
     //this line and the blend func are the two places that have to change together.
-    out_color = vec4(v_color.rgb,v_color.a * alpha);
+    out_color = mix(as_field,as_sprite,v_sprite);
 }

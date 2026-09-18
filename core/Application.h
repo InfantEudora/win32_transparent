@@ -8,6 +8,10 @@
 #include <stdint.h>
 #include <mutex>
 #include <atomic>
+//The render and physics threads, and the ids below. Everything about running those two loops is
+//plain C++ - they were win32 CreateThread calls out of habit, not because they needed anything
+//win32 offered.
+#include <thread>
 //app_name is a std::string. Window.h happens to pull this in too, but an include that is only
 //there by transit is one refactor away from not being there at all.
 #include <string>
@@ -308,9 +312,14 @@ public:
 
     int Exit(void);
 
-    DWORD thread_id_main = -1;
-    DWORD thread_id_render = -1;
-    DWORD thread_id_physics = -1;
+    //Which of the three threads is which, for the "you are on the wrong thread" checks - see
+    //GetAssetsFromGLTF. std::thread::id rather than a win32 DWORD because nothing here wants a
+    //win32 thread id: these are only ever compared to each other and printed. Each one is written
+    //by the thread it names, and a default-constructed id compares equal to no running thread, so
+    //a check against one that has not started yet fails rather than passing by accident.
+    std::thread::id thread_id_main;
+    std::thread::id thread_id_render;
+    std::thread::id thread_id_physics;
 
     Window* main_window = NULL;
     Renderer* renderer = NULL;
@@ -436,9 +445,34 @@ public:
     void BuildSceneFromJSON();
 
 protected:
-    // Two main threads
-    static DWORD WINAPI FrameThreadFunction(LPVOID lpParameter);
-    static DWORD WINAPI PhysicsThreadFunction(LPVOID lpParameter);
+    // Two main threads. They take an Application* and return nothing; the DWORD WINAPI(LPVOID)
+    // shape they used to have was CreateThread's requirement, and std::thread will start anything
+    // callable, so the cast-from-void* dance goes with it.
+    static void FrameThreadFunction(Application* app);
+    static void PhysicsThreadFunction(Application* app);
+
+    /*
+        SHUTTING BOTH LOOPS DOWN, IN ORDER, BEFORE THE PROCESS GOES.
+
+        Each thread joins the one it started: Start() joins the frame thread once the message pump
+        has ended, and the frame thread joins the physics thread once its own loop has. That chain
+        is the point. The physics loop touches the scene, the renderer and the mutex between them
+        on every pass, so it has to be the first thing stopped and the last thing waited on, and
+        neither loop may still be mid-pass when main() returns and the process is torn down under
+        it. Both threads were previously detached and simply killed wherever they happened to be.
+
+        f_physics_running is what the physics loop tests instead of the `while (1)` it used to be.
+        Atomic because StopPhysicsThread clears it from the render thread while the physics thread
+        reads it once per pass.
+
+        Start and Stop are a pair so the flag and the thread cannot disagree - see the note on
+        StartPhysicsThread for what each half of that would look like as a bug.
+    */
+    void StartPhysicsThread();
+    void StopPhysicsThread();
+    std::thread frame_thread;
+    std::thread physics_thread;
+    std::atomic<bool> f_physics_running{false};
 
     objectid_t hovered_objid = OBJECTID_INVALID;
     objectid_t dragged_objid = OBJECTID_INVALID;

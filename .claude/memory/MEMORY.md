@@ -40,3 +40,4 @@
 - [Comment density ceiling](comment_density_ceiling.md) — the house "comment heavily" rule has an upper bound: one-liners on declarations, block comments for the type, no per-enum-value essays
 - [Release edges ignore focus](release_edge_ignores_focus.md) — a click NEXT TO the window still fires WasKeyReleased (RIDEV_INPUTSINK + key-up honoured unfocused); read the edge unconditionally, gate the action on IsInputLive()
 - [USE_PHYSICS flag](use_physics_flag.md) — the ONE flag that changes shared core objects: follows CONFIG's separate-core-tree pattern, not USE_MCP's _none twins; --gc-sections does not reclaim rp3d on its own
+- [Asset origin convention](asset_origin_convention.md) — models are spread across the Blender scene for authoring; the engine ignores those positions, armatures included (the android merge broke this and offset bomber's enemies by a tile)

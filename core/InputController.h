@@ -1,15 +1,66 @@
 #ifndef _INPUTCONTROLLER_H_
 #define _INPUTCONTROLLER_H_
 class InputController;
+//Only the ACQUISITION half of this class is platform-specific (PollDevices, PollGamepad, the
+//VK_*/XInput plumbing, HandleMessage) - see InputController_win32.cpp / InputController_android.cpp.
+//Everything below that line (mappings, KeyState, edges, scripted holds, axes) is portable, which
+//is why these three headers are the only Windows thing in here.
+#if defined(_WIN32)
 #include <windowsx.h>
+#endif
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include "stdint.h"
 #include <vector>
 #include <atomic>
 #include <mutex>
+#if defined(_WIN32)
 #include <xinput.h>
+#endif
 #include "Object.h"
 #include "type_int2.h"
+
+#if defined(__ANDROID__)
+// Forward declarations so the header doesn't drag the NDK's android_native_app_glue
+// and sensor headers into every translation unit that merely wants a keymap.
+struct android_app;
+struct AInputEvent;
+struct ASensorManager;
+struct ASensor;
+struct ASensorEventQueue;
+#include "type_vec2.h"
+
+// Touch sample for one pointer index, refreshed on every event (independent of any log
+// throttling) so callers -- e.g. an ImGui panel -- can show it live.
+struct TouchState {
+    char    str_action[16] = "none";
+    //The platform's STABLE id for this finger. This array is indexed by the pointer's INDEX in
+    //the event, which is not the same thing and does not survive another finger lifting -- see
+    //the fill loop in InputController_android.cpp. Carried so a debug view can show which is
+    //which, and so index-vs-id confusion is visible rather than silent.
+    int32_t id = -1;
+    int32_t action = 0;
+    float   x = 0.0f, y = 0.0f, pressure = 0.0f, size = 0.0f; //Pressure seems to always be 1.0f and size 0.0f
+    char    tool[16] = "none";
+    int drag_active = 0;
+    float drag_last_x = 0.0f;
+    float drag_last_y = 0.0f;
+    float drag_rot_x = 0.0f;
+    float drag_rot_y = 0.0f;
+};
+
+// Last key event seen from the device's buttons (hardware or touch-panel virtual keys).
+// Was called KeyState before the engine's InputController came across -- that name now
+// belongs to the mapping machinery, and these are unrelated things: this is a raw
+// "what did the OS last report", not a mapped action's state.
+struct LastKeyEvent {
+    char name[16];
+    char str_action[8];
+    int32_t action;
+    int32_t keycode;
+};
+#endif
 
 //How often to look for a gamepad that isn't there yet, in ticks (50 = about 1s at 50Hz).
 //XInputGetState on an EMPTY slot is expensive - it goes out to the driver - so probing all four
@@ -429,9 +480,28 @@ class InputController{
     */
     bool IsInputLive(){ return HasFocus() || HasSyntheticHolds(); }
 
+#if defined(_WIN32)
     //Called from thread that created the window. Takes the HWND because answering a message is
     //not always enough - WM_MOUSELEAVE has to be ASKED for, per entry, on the window it concerns.
     void HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#elif defined(__ANDROID__)
+    //--- Android acquisition -----------------------------------------------------------------
+    //The Android counterpart of HandleMessage/PollDevices: sensors and the touch panel are this
+    //platform's input hardware. These feed the SAME keymap/KeyState machinery above via
+    //SubmitSystemKey/SubmitAxisDelta, so a sensor axis is indistinguishable from a thumbstick
+    //to everything downstream -- including GetAxis, HoldAxis and any recorded/scripted run.
+    //See InputController_android.cpp.
+
+    //Enables whichever of the gyroscope/accelerometer this device actually has, both on the same
+    //event queue (a device missing one just never produces events of that type).
+    void InitSensors(struct android_app* app);
+    void DrainSensorEvents();
+
+    //Returns 1 if the event was consumed (matches android_app::onInputEvent's convention).
+    //suppress_drag is true when the caller wants this event not to affect drag_rot_x/y (e.g.
+    //because ImGui is capturing it -- dragging a slider shouldn't also spin the scene under it).
+    int32_t HandleInputEvent(AInputEvent* event, bool suppress_drag);
+#endif
 
     KeyMap* AddKeyMap(uint32_t syskey, uint32_t mapped);
     KeyMap* GetBySystemKey(uint32_t sys_code);
@@ -644,7 +714,16 @@ protected:
     //old "atomicise the odd field and hope" approach, and the `hovered_normal` TODO with it.
     std::mutex state_mutex;
     void SetMouseOverWindow(bool over); //window thread; takes state_mutex
+#if defined(__ANDROID__)
+public:
+    //On Windows this is driven from inside HandleMessage, off WM_ACTIVATE. Android has no
+    //message pump here: focus arrives as APP_CMD_GAINED_FOCUS/APP_CMD_LOST_FOCUS in
+    //Application, so the setter has to be reachable from outside the class.
+#endif
     void SetFocused(bool focused);      //window thread; raises f_release_all_keys on focus loss
+#if defined(__ANDROID__)
+protected:
+#endif
     void PollGamepad();                 //physics thread, from PollDevices
     //The shared body of AddKeyMap and AddGamePadMap: makes one mapping, giving it a fresh
     //KeyState or sharing the one an existing mapping for the same action already has.
@@ -704,6 +783,45 @@ protected:
     int2 mouse_position;    //physics thread only, from the polled cursor position
 
     std::atomic<objectid_t>hovered_object = {OBJECTID_INVALID};
+
+#if defined(__ANDROID__)
+public:
+    //--- Android sensor/touch state ------------------------------------------------------------
+    //Raw hardware state, kept as its own members rather than folded into analog_values[] because
+    //callers (hello_world's debug panel) display it directly. Mapping a sensor axis to an ACTION
+    //goes through AddGamePadMap/analog_values like a thumbstick does -- see the note there.
+
+    //Gyro: angular velocity (rad/s) plus integrated rotation from physically turning the device.
+    float latest_gyro[3] = { 0.0f, 0.0f, 0.0f };
+    float gyro_rot_x = 0.0f;
+    float gyro_rot_y = 0.0f;
+    //Accelerometer: raw proper acceleration (m/s^2, gravity included).
+    float latest_accel[3] = { 0.0f, 0.0f, 0.0f };
+
+    //One TouchState per simultaneously-down finger; pointer_count is how many of
+    //touch[0..pointer_count-1] are live right now.
+    TouchState touch[INPUT_CONTROLLER_MAX_TOUCHES];
+    int pointer_count = 0;
+    vec2 touch_midpoint = vec2();
+    vec2 two_finger_vector = vec2();
+    float two_finger_distance = 0.0f;
+    float two_finger_distance_delta = 0.0f;
+
+    //Last button (key event) seen. NOT the engine's KeyState -- that name is taken by the
+    //mapping machinery above, so this one keeps its own type (see LastKeyEvent).
+    LastKeyEvent last_key = { "none", "none", 0 };
+    bool disable_gyro = false;  //ignore gyro events; useful for debugging and testing
+#endif
+
+#if defined(__ANDROID__)
+public:
+    //NDK sensor handles, owned by InitSensors/DrainSensorEvents. Opaque here on purpose --
+    //see the forward declarations at the top of this file.
+    ASensorManager* sensor_manager = NULL;
+    const ASensor* gyroscope = NULL;
+    const ASensor* accelerometer = NULL;
+    ASensorEventQueue* sensor_queue = NULL;
+#endif
 };
 
 #endif

@@ -1,5 +1,8 @@
 #include "InputController.h"
 #include "Debug.h"
+#if defined(__ANDROID__)
+#include <android/keycodes.h>
+#endif
 static Debugger* debug = new Debugger("Input",DEBUG_INFO);
 
 InputController::InputController(){
@@ -10,6 +13,10 @@ InputController::InputController(){
     AddKeyMap(0,INPUT_MOUSE_DELTA_X);
     AddKeyMap(0,INPUT_MOUSE_DELTA_Y);
 
+    //Default hardware mappings are the one genuinely per-platform part of construction: a VK_ code
+    //and an AKEYCODE_ are different numbers for the same idea. Everything after this line -- the
+    //KeyStates these create, the edges, the scripted holds -- is identical on both.
+#if defined(_WIN32)
     AddKeyMap(VK_UP,INPUT_MOVE_UP);
     AddKeyMap(VK_DOWN,INPUT_MOVE_DOWN);
     AddKeyMap(VK_LEFT,INPUT_MOVE_LEFT);
@@ -29,6 +36,28 @@ InputController::InputController(){
     //TODO: Make multiple mappings work by somehow orring the up/down together.
     AddKeyMap(VK_LSHIFT,INPUT_SHIFT);
     AddKeyMap(VK_RSHIFT,INPUT_SHIFT);
+#elif defined(__ANDROID__)
+    //The device has a handful of hardware/virtual buttons; the D-pad codes are also what a
+    //connected gamepad's hat reports, so one set covers both. Everything else on this device
+    //arrives as touch or sensors, which map through AddGamePadMap onto analog_values[] instead.
+    AddKeyMap(AKEYCODE_DPAD_UP,INPUT_MOVE_UP);
+    AddKeyMap(AKEYCODE_DPAD_DOWN,INPUT_MOVE_DOWN);
+    AddKeyMap(AKEYCODE_DPAD_LEFT,INPUT_MOVE_LEFT);
+    AddKeyMap(AKEYCODE_DPAD_RIGHT,INPUT_MOVE_RIGHT);
+
+    AddKeyMap(AKEYCODE_W,INPUT_TURN_UP);
+    AddKeyMap(AKEYCODE_A,INPUT_TURN_LEFT);
+    AddKeyMap(AKEYCODE_S,INPUT_TURN_DOWN);
+    AddKeyMap(AKEYCODE_D,INPUT_TURN_RIGHT);
+
+    AddKeyMap(AKEYCODE_MEDIA_PLAY_PAUSE,INPUT_PAUSE);
+
+    //No mouse buttons on a touch panel. A tap is synthesised as INPUT_CLICK_LEFT by
+    //HandleInputEvent (see InputController_android.cpp) against this mapping's KeyState.
+    AddKeyMap(0,INPUT_CLICK_LEFT);
+    AddKeyMap(AKEYCODE_SHIFT_LEFT,INPUT_SHIFT);
+    AddKeyMap(AKEYCODE_SHIFT_RIGHT,INPUT_SHIFT);
+#endif
 }
 
 //One mapping, whatever kind of hardware drives it. A second mapping for an action it already
@@ -187,9 +216,11 @@ void InputController::SubmitEvent(const InputEvent& event){
     pending_events.push_back(event);
 }
 
+#if defined(_WIN32)
 void InputController::SetRawInputActive(bool active){
     f_raw_input_active = active;
 }
+#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
 
 //keymap is only ever built during setup (AddKeyMap) and read afterwards, so walking it from the
 //raw input thread is safe. f_held is touched only by the physics thread in ApplyPendingEvents.
@@ -244,6 +275,7 @@ void InputController::SubmitAxisDelta(uint32_t mapped_keycode, int32_t delta){
 //what picking and the debug UI need. Keys only when raw input isn't running - if RawInputSource
 //failed to start we fall back to GetAsyncKeyState, still emitting edges (by diffing against each
 //mapping's f_held) so the rest of the pipeline behaves identically either way.
+#if defined(_WIN32)
 void InputController::PollDevices(){
     std::vector<InputEvent> events;
 
@@ -305,6 +337,7 @@ void InputController::PollDevices(){
     }
     pending_events.insert(pending_events.end(),events.begin(),events.end());
 }
+#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
 
 //Physics thread, top of the tick. Everything submitted since the last call becomes this tick's
 //input - including whatever the window message thread pushed in from its own thread, which is the
@@ -555,6 +588,7 @@ float InputController::GetAxis(uint32_t mapped_keycode){
 
 //--- Gamepad (XInput) ---------------------------------------------------------------------------
 
+#if defined(_WIN32)
 void InputController::ListDevices(){
     debug->Info("X-Input: Checking for contollers using X-Input\n");
     XINPUT_STATE state;
@@ -579,6 +613,7 @@ void InputController::ListDevices(){
         debug->Warn("No Game Controller was found using XInput\n");
     }
 }
+#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
 
 //See the header. System keycode 0 because no KEY drives this mapping - the analog index is what
 //names its hardware.
@@ -642,6 +677,7 @@ void InputController::SubmitAnalogAxes(){
     }
 }
 
+#if defined(_WIN32)
 void InputController::PollGamepad(){
     XINPUT_STATE state;
     ZeroMemory(&state,sizeof(XINPUT_STATE));
@@ -725,10 +761,12 @@ void InputController::PollGamepad(){
         SendMotorData(lmotor,rmotor);
     }
 }
+#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
 
 //See the declaration. Deliberately routes through SubmitSystemKey rather than writing KeyState
 //directly: that is what gives a pad button the same edges, the same multi-mapping counting and the
 //same place in the recorded event stream as a key on the keyboard.
+#if defined(_WIN32)
 void InputController::ApplyGamepadButtons(uint16_t buttons){
     if (buttons == gamepad_buttons){
         return;
@@ -755,6 +793,7 @@ void InputController::ApplyGamepadButtons(uint16_t buttons){
         SubmitSystemKey(GAMEPAD_SYSKEY_BASE + bit,(buttons & bit) != 0);
     }
 }
+#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
 
 //An alias for GetAxis, kept because four apps call it by this name.
 //
@@ -768,6 +807,7 @@ float InputController::GetNormalizedAnalogValue(uint32_t mapped_key){
 }
 
 //Conclusion: Sending things with the HID interface does not work.
+#if defined(_WIN32)
 void InputController::SendMotorData(int l, int r){
     if (dev_index < 0){
         return;
@@ -777,6 +817,7 @@ void InputController::SendMotorData(int l, int r){
     v.wRightMotorSpeed = r;
     XInputSetState((DWORD)dev_index,&v);
 }
+#endif //_WIN32 -- Android equivalents live in InputController_android.cpp
 
 //--- Lookups ------------------------------------------------------------------------------------
 
@@ -987,6 +1028,7 @@ void InputController::Tick(bool f_ticked){
     }
 }
 
+#if defined(_WIN32)
 /*
     Ask for the WM_MOUSELEAVE (and WM_NCMOUSELEAVE) that ends the hover we are about to record.
     Win32 sends neither unless the window asks, once, per entry - so without this the branch that
@@ -1004,8 +1046,10 @@ static void TrackMouseLeave(HWND hWnd, DWORD flags){
     TRACKMOUSEEVENT tme = {sizeof(tme),flags,hWnd,0};
     TrackMouseEvent(&tme);
 }
+#endif
 
 //Handles message from a WIN32 message handler, which are from a different thread.
+#if defined(_WIN32)
 void InputController::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
 
     if (msg == WM_NCMOUSEMOVE){
@@ -1102,3 +1146,4 @@ void InputController::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
         debug->Trace("msg = %li (0x%04X)\n",msg,msg);
     }
 }
+#endif //_WIN32 -- Android equivalents live in InputController_android.cpp

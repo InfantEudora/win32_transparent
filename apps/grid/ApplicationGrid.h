@@ -74,8 +74,6 @@ private:
     IsoRoom* FindRoomByCell(IsoCell* cell); // Returns if supplied cell belongs to a room.
     void CreateRoom(IsoCell* center, int size_x, int size_y);
 
-    static DWORD WINAPI GridFrameThreadFunction(LPVOID lpParameter);
-
 #ifdef USE_IMGUI
     void RenderRightClickMenu_IsoCell(IsoCell* cell);
 #endif

@@ -32,6 +32,37 @@ python tools/ui_extract_probe.py [mockup.png]             # re-derive the coordi
 
 Windows Python only - MSYS's has no Pillow. See the "Two pythons" note in `CLAUDE.md`.
 
+## The sheet, the theme, and how they are drawn
+
+The three PNGs above are packed into `ui/uisheet.png` with `ui/uisheet.json` beside it. Two files
+carry the metadata, and the split is the point:
+
+- **`uisheet.json` is GENERATED** by the packer, rewritten in full on every repack. It says where
+  each sprite is and nothing else, because that is all a packer knows. Never hand-edit it.
+- **`theme.json` is HAND-AUTHORED.** It says what the sprites MEAN - which one is the window frame,
+  where its nine-slice cuts fall - none of which is derivable from a packed atlas, all of which has
+  to survive a repack.
+
+Sprites are addressed **by name**, so repacking is free: positions churn and nothing cares. A
+renamed *input file* does break it, which is why roles live in the theme rather than being parsed
+out of filename suffixes.
+
+`core/UISheet.h` reads both. It accepts either exporter shape this packer has produced so far - the
+TexturePacker hash format (a `frames` wrapper, `w`/`h`, `meta.image`) and the flat one
+(`width`/`height`, no `meta`) - because the setting changed once between two packs of the same art
+and a loader that read only one was already broken. It refuses trimmed or rotated frames rather
+than drawing them in the wrong place.
+
+nlohmann::json costs nothing here. It is **not** behind `USE_MCP`: `core/Application.h` includes it
+unconditionally, and `GLTFLoader.cpp` - never dropped from any build - is built on tinygltf, which
+is built on it. Verified by building `make ship` (`USE_MCP=0 USE_NET=0 USE_IMGUI=0`), which loads
+the sheet and theme out of the baked asset blob.
+
+Drawing goes through `UIOverlay::AddNineSliceSprite`. The theme atlas is a **second sampler** in the
+same shader, chosen per vertex by `ui_vertex::sprite`, so glyphs, rounded boxes and artwork all stay
+in **one draw call** - the property the overlay was built around. The font atlas could not hold the
+artwork: it is `GL_R8` and a distance field, and painted wood is neither.
+
 ## How the text came off the button
 
 Not by inpainting. A gradient scan across the button shows it is *constant along x* everywhere
@@ -71,8 +102,10 @@ the inner bevel and its shadow live there and belong to the frame.
 - The panel interior is flatter than the painted one, which had a subtle mottled texture.
 - `button_close.png` is one fixed sprite. It has no meaningful stretch axis; scale it, do not slice
   it.
-- Nothing here is a hover or pressed state. The mockups only ever show one state per widget, so
-  those have to be drawn, or derived at runtime (tint / offset), not extracted.
+- No sprite here is a hover or pressed state - the mockups only ever show one state per widget. The
+  themed path derives them instead: `AddSprite` multiplies the texel by a colour, so the bomber
+  menu's held button is the same sprite drawn with a darker tint. That is one number rather than a
+  second sprite to author, pack and keep in step, and it is why states were never extracted.
 
 ## Still in the mockup, not yet cut
 

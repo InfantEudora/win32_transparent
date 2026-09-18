@@ -8,6 +8,7 @@
 
 #include "Application.h"
 #include "Texture.h"
+#include "UISheet.h"
 #include "Maze.h"
 #include "Hallway.h"
 
@@ -354,6 +355,26 @@ private:
     //bind failed. Indices rather than pointers - see the warning on AddTouchButton.
     enum{BOMBER_MENU_BUTTON_COUNT = 5};
     int menu_button[BOMBER_MENU_BUTTON_COUNT] = {-1,-1,-1,-1,-1};
+
+    /*
+        THE UI THEME: a packed atlas, the sheet that says where each sprite is in it, and the theme
+        that says what each sprite MEANS. See core/UISheet.h for why those last two are two files.
+
+        Loaded from PreRender rather than Init, because `overlay` does not exist yet during Init -
+        core creates it on the render thread AFTER the app's Init returns (see Application.h). One
+        flag, one attempt: a theme that fails to load leaves f_theme_ready false and DrawMenu falls
+        back to the debug colours, so a missing or broken asset costs the artwork rather than the
+        menu.
+    */
+    UISheet  ui_sheet;
+    Texture* ui_atlas = NULL;
+    bool     f_theme_ready = false;
+    bool     f_theme_tried = false;
+    void     LoadUITheme(void);
+
+    //Draws one themed element by its role name, nine-sliced with the theme's own insets. Returns
+    //false if the theme is not up, which is the caller's cue to draw its debug stand-in instead.
+    bool DrawThemed(const char* role, vec2 min, vec2 max, uint32_t color = 0xFFFFFFFF);
 
     //The quad the title screen draws, and the two materials it swaps between. Kept so the
     //background can change without rebuilding the scene.

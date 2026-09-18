@@ -4,6 +4,9 @@
 #include "Application.h"
 #include "PrecisionSleeper.h"
 
+//For ThreadIdText below - the only way to get text out of a std::thread::id.
+#include <sstream>
+
 #include "Window.h"
 #include "Renderer.h"
 #ifdef USE_PHYSICS
@@ -18,15 +21,33 @@ using json = nlohmann::json;
 
 static Debugger *debug = new Debugger("Application", DEBUG_ALL);
 
+/*
+    A thread id as printable text. std::thread::id has no numeric value to reach - the standard
+    gives it operator<< and nothing else - so the stream lives here once instead of at every log
+    line that wants to name a thread.
+
+    WHAT COMES OUT IS NOT THE OS THREAD ID. libstdc++ prints its own counter, so the three threads
+    here log as 1, 2 and 3 while RawInput.cpp, Window.cpp and a debugger all show the win32 ids
+    (11396 and friends) for the same threads. Handy for reading a log, useless for matching one
+    against a debugger - if that is ever needed, log GetCurrentThreadId() alongside rather than
+    assuming these agree.
+*/
+static std::string ThreadIdText(std::thread::id id){
+    std::ostringstream ss;
+    ss << id;
+    return ss.str();
+}
+
 Application::Application(){
     //Init OpenGL.
     //Show some kind of loading screen and load stuff from disk.
     //Maybe we need some kind of way to get each app to get they own makefile.
     SetupConsole();
 
-    //Get the current thread ID this application was called in:
-    thread_id_main = GetCurrentThreadId();
-    debug->Info("WinMain Thread ID: %lu\n",thread_id_main);
+    //Get the current thread ID this application was called in. This is the thread that goes on to
+    //pump window messages in Start(), never the one that renders or simulates.
+    thread_id_main = std::this_thread::get_id();
+    debug->Info("Main thread id: %s\n",ThreadIdText(thread_id_main).c_str());
 
     //TODO: This only needs to be done once.
     Window::RegisterWindowClasses();
@@ -89,21 +110,13 @@ void Application::Start(void){
     //We release the window's context from this thread
     wglMakeCurrent(main_window->hDC, NULL);
 
-    //And do all render calls from a seperate thread:
-    HANDLE hThread = NULL;
-
-    // Create a new thread which will get this one's render context
-    hThread = CreateThread(
-        NULL,    // Thread attributes
-        0,       // Stack size (0 = use default)
-        FrameThreadFunction, // Thread start address
-        this,    // Parameter to pass to the thread
-        0,       // Creation flags
-        &thread_id_render);   // Thread id
-
-    if (hThread == NULL){
-        debug->Fatal("Unable to FrameFunction thread\n");
-    }
+    //And do all render calls from a seperate thread. It picks up the context released just above.
+    //
+    //Kept rather than detached, because this function joins it at the bottom - see there. Failure
+    //to start does not come back as a status: std::thread reports it by throwing, and this build
+    //is -fno-exceptions, so it aborts on the spot. Either way the old Fatal() on a NULL handle has
+    //nothing left to guard.
+    frame_thread = std::thread(FrameThreadFunction,this);
 
     //Catch all input and window related messages in this thread:
     MSG msg = {0};
@@ -127,6 +140,22 @@ void Application::Start(void){
             MsgWaitForMultipleObjectsEx(0,NULL,50,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         }
     }
+
+    /*
+        The pump has ended, so the window is on its way out. Wait for the render thread - and
+        through it the physics thread, which it joins itself - to finish the frame and the tick
+        they are in, before Start() returns and main() lets the process go.
+
+        RAISED HERE RATHER THAN ASSUMED, because the loop above has two exits and only one of them
+        sets it: WM_QUIT breaks out with f_should_quit still false, and that is the same flag the
+        render loop is watching. Joining without this would be joining a loop with no reason to
+        end. Everything downstream hangs off this one line.
+    */
+    main_window->f_should_quit = true;
+    if (frame_thread.joinable()){
+        frame_thread.join();
+    }
+    debug->Info("Both threads joined, Start() returning\n");
 }
 
 void Application::UpdateInput(){
@@ -238,20 +267,19 @@ void Application::DrawTouchButtons(){
 }
 
 //Function for rendering the frame to a window
-DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
-    Application* app = static_cast<Application*>(lpParameter);
+void Application::FrameThreadFunction(Application* app){
     if (!app){
         debug->Err("No application was supplied to FrameThread\n");
-        return 0;
+        return;
     }
 
-    app->thread_id_render = GetCurrentThreadId();
-    debug->Info("FrameFunction ThreadID: %lu\n",app->thread_id_render);
+    app->thread_id_render = std::this_thread::get_id();
+    debug->Info("FrameFunction thread id: %s\n",ThreadIdText(app->thread_id_render).c_str());
 
     //We make the window's context current to this thread
     if (!wglMakeCurrent(app->main_window->hDC, app->main_window->hRC)){
         debug->Err("FrameFunction Thread unable to get context by wglMakeCurrent\n");
-        return 0;
+        return;
     }
 
     if (!app->main_window->InitImGui()){
@@ -293,20 +321,7 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
     app->StartMCPServer();
 
     //Now that all the setup is done, we create another thread for physics.
-    HANDLE hThread = NULL;
-    DWORD thread_id;
-    // Create a new thread which will get it's own render context
-    hThread = CreateThread(
-        NULL,    // Thread attributes
-        0,       // Stack size (0 = use default)
-        PhysicsThreadFunction, // Thread start address
-        app,    // Parameter to pass to the thread
-        0,       // Creation flags
-        &app->thread_id_physics);   // Thread id
-
-    if (hThread == NULL){
-        debug->Fatal("Unable to create thread\n");
-    }
+    app->StartPhysicsThread();
 
     while (app->main_window->f_should_quit == false){
         app->tmr_render_loop->Stop();
@@ -318,8 +333,13 @@ DWORD WINAPI Application::FrameThreadFunction(LPVOID lpParameter){
         app->DrawFrame();
     }
 
+    //The window is going away, and the physics thread is this thread's to stop: it started it, and
+    //that loop reads the renderer and the scene this thread has just stopped drawing. Stopping it
+    //HERE rather than leaving it to process exit is the difference between a tick that finishes
+    //and a tick cut in half somewhere inside the solver.
+    app->StopPhysicsThread();
+
     debug->Info("FrameThreadFunction terminated\n");
-    return 1;
 }
 
 void Application::DrawFrame(){
@@ -412,15 +432,54 @@ void Application::DrawFrame(){
     main_window->SwapWindowBuffers();
 }
 
-DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
-    DWORD thread_id = GetCurrentThreadId();
-    debug->Info("Output from PhysicsThread Thread ID: %lu\n",thread_id);
+/*
+    Start and stop the simulation loop. See the block on these in Application.h for the shutdown
+    order they are half of.
 
-    Application* app = static_cast<Application*>(lpParameter);
-    if (!app){
-        debug->Err("No application was supplied to FrameThread\n");
-        return 0;
+    They are a pair because the flag and the thread have to agree, and each half alone is a bug
+    with a long fuse: creating the thread without raising f_physics_running first gives a loop that
+    tests the flag as its first act and returns having simulated nothing, and clearing the flag
+    without joining lets the loop run on into teardown, which is exactly the thing being fixed.
+*/
+void Application::StartPhysicsThread(){
+    if (f_physics_running){
+        debug->Warn("StartPhysicsThread: already running, ignoring\n");
+        return;
     }
+    f_physics_running = true;
+    physics_thread = std::thread(PhysicsThreadFunction,this);
+}
+
+void Application::StopPhysicsThread(){
+    //Not an error to stop something that never started: FrameThreadFunction can return early
+    //(no context, no ImGui) without ever reaching StartPhysicsThread, and the shutdown path
+    //below still runs.
+    if (!f_physics_running){
+        return;
+    }
+    f_physics_running = false;
+
+    //The wait is bounded by one pass, which is one tick interval plus the work in it - except
+    //under heavy slow motion, where physics_time_factor stretches that interval by up to 100x and
+    //quitting can therefore take a noticeable moment. Paused is NOT one of those cases: a paused
+    //pass still loops at the normal rate, it just does not tick.
+    if (physics_thread.joinable()){
+        physics_thread.join();
+    }
+    debug->Info("Physics thread stopped after %llu ticks\n",
+                main_scene ? (unsigned long long)main_scene->GetPhysicsTick() : 0ULL);
+}
+
+void Application::PhysicsThreadFunction(Application* app){
+    if (!app){
+        debug->Err("No application was supplied to PhysicsThread\n");
+        return;
+    }
+
+    //Recorded here rather than by whoever started us, so it is set by the thread it describes -
+    //the same way the render thread records its own.
+    app->thread_id_physics = std::this_thread::get_id();
+    debug->Info("Physics thread id: %s\n",ThreadIdText(app->thread_id_physics).c_str());
 
     //Setup debugging to run from this thread:
     app->debug_physics = new Debugger("App.Physics", DEBUG_ALL);
@@ -433,7 +492,9 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
     }
     sleeper.ResetSchedule();
 
-    while (1){
+    //Tested once per pass rather than once per tick, so a scene that is paused - or not there at
+    //all - still shuts down promptly. StopPhysicsThread is what clears it.
+    while (app->f_physics_running){
         if (app->main_scene){
             //How long one tick should take in REAL time. physics_time_factor stretches or
             //compresses this interval only - the timestep handed to the simulation stays
@@ -527,7 +588,6 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
         //debug->Ok("Physics Loop %llu completed\n",app->main_scene ? app->main_scene->GetPhysicsTick() : 0);
     }
     debug->Info("Thread terminated\n");
-    return 0;
 }
 
 //Both hooks are empty by default - see Application.h for what belongs in which.
@@ -1098,9 +1158,8 @@ void Application::BuildSceneFromJSON(){
 //Get's the currently loaded GLTF file, and imports only the requested node names that aren't already loaded.
 //This has to be called from a thread that owns the OpenGL context.
 void Application::GetAssetsFromGLTF(const std::vector<std::string>& names){
-    DWORD called_thread_id = -1;
-    called_thread_id = GetCurrentThreadId();
-    debug->Info("GetAssetsFromGLTF called from ThreadID: %lu\n", called_thread_id);
+    std::thread::id called_thread_id = std::this_thread::get_id();
+    debug->Info("GetAssetsFromGLTF called from thread id: %s\n", ThreadIdText(called_thread_id).c_str());
     if (called_thread_id != thread_id_render){
         debug->Fatal("Should be called from render thread\n");
     }
@@ -1148,9 +1207,8 @@ void Application::GetAssetsFromGLTF(const std::vector<std::string>& names){
 //Get's the currently loaded GLTF file, and imports everyting that wasn't imported.
 //This has to be called from a thread that owns the OpenGL context.
 void Application::GetAllAssetsFromGLTF(){
-    DWORD called_thread_id = -1;
-    called_thread_id = GetCurrentThreadId();
-    debug->Info("GetAllAssetsFromGLTF called from ThreadID: %lu\n", called_thread_id);
+    std::thread::id called_thread_id = std::this_thread::get_id();
+    debug->Info("GetAllAssetsFromGLTF called from thread id: %s\n", ThreadIdText(called_thread_id).c_str());
     if (called_thread_id != thread_id_render){
         debug->Fatal("Should be called from render thread\n");
     }

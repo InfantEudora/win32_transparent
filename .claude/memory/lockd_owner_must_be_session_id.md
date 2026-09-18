@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: ece7218f-cba9-4427-8bc3-24f0eb7f7b74
-  modified: 2026-09-14T10:50:58.779Z
+  modified: 2026-09-18T21:54:30.028Z
 ---
 
 `tools/lockd/claude_lock_hook.py` claims every `Edit`/`Write` target under `owner =
@@ -14,7 +14,9 @@ out: the hook sees a different owner holding the path and refuses the write with
 editing this file", naming a reason you wrote yourself.
 
 **Always pass the raw session id as `owner`** (the uuid in the scratchpad path), not a descriptive
-label like `sess-overlay-step6`.
+label like `sess-overlay-step6`. **One mistyped character in that uuid is the same failure** - copy
+it, do not retype it. Seen 2026-09-18, and the refusal even quoted back the reason string from my
+own claim.
 
 **Why:** the broker keys leases on the owner string and does not know two owners are the same agent.
 The refusal message looks exactly like a genuine collision with another agent, so the natural

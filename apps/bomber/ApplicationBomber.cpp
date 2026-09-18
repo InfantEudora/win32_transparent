@@ -3296,6 +3296,63 @@ void ApplicationBomber::ApplyMenuPage(bomber_menu_page page){
 }
 
 /*
+    Brings up the UI theme. RENDER THREAD, from PreRender, once.
+
+    THE ATLAS GOES THROUGH THE RENDERER, not through a second image path of the overlay's own. That
+    reuses the engine's decode, its mipmapping, and the unpack-alignment fix - the one that stops a
+    texture whose width times channels is not a multiple of 4 shearing diagonally, which this very
+    sheet would have hit at 507 px of content.
+*/
+void ApplicationBomber::LoadUITheme(void){
+    //One attempt. Retrying every frame would spray the log and hide the first, real message.
+    f_theme_tried = true;
+
+    ui_atlas = renderer->LoadTexture("ui/uisheet.png");
+    if (!ui_atlas){
+        debug->Err("UI theme: no ui/uisheet.png - menu falls back to debug colours\n");
+        return;
+    }
+    if (!ui_sheet.LoadSheet("ui/uisheet.json")){
+        return;
+    }
+    //Catches the one failure that is otherwise silent: the JSON and the PNG exported from
+    //different packs, so every sprite loads but samples the wrong pixels.
+    if (!ui_sheet.ValidateAgainstAtlas(ui_atlas->width,ui_atlas->height)){
+        return;
+    }
+    if (!ui_sheet.LoadTheme("ui/theme.json")){
+        return;
+    }
+
+    overlay->SetThemeTexture(ui_atlas->texture_id,ui_atlas->width,ui_atlas->height);
+    f_theme_ready = true;
+    debug->Ok("UI theme ready: %ix%i atlas, %i sprites, %i elements\n",
+              ui_atlas->width,ui_atlas->height,
+              ui_sheet.GetNumSprites(),ui_sheet.GetNumElements());
+}
+
+bool ApplicationBomber::DrawThemed(const char* role, vec2 min, vec2 max, uint32_t color){
+    if (!f_theme_ready || !overlay){
+        return false;
+    }
+    const ui_element* el = ui_sheet.FindElement(role);
+    if (!el){
+        return false;
+    }
+    const ui_sprite* sp = ui_sheet.FindSprite(el->sprite.c_str());
+    if (!sp){
+        return false;
+    }
+    ui_nine_inset inset;
+    inset.left   = el->slice_left;
+    inset.top    = el->slice_top;
+    inset.right  = el->slice_right;
+    inset.bottom = el->slice_bottom;
+    overlay->AddNineSliceSprite(min,max,sp->x,sp->y,sp->w,sp->h,inset,color);
+    return true;
+}
+
+/*
     The menu. RENDER THREAD, from DrawOverlay. See the header.
 */
 void ApplicationBomber::DrawMenu(void){
@@ -3324,14 +3381,16 @@ void ApplicationBomber::DrawMenu(void){
         default: break;
     }
 
-    //Still the debug colouring: red corners fixed, green stretches x, blue stretches y. The insets
-    //are window_frame.png's, so what is on screen is the geometry that sprite will be drawn with.
-    ui_nine_inset inset;
-    inset.left = inset.top = inset.right = inset.bottom = 30.0f;
-
     vec2 pmin = vec2(BOMBER_MENU_PANEL_X * w,BOMBER_MENU_PANEL_Y * h);
     vec2 pmax = vec2(pmin.x + BOMBER_MENU_PANEL_W * w,pmin.y + BOMBER_MENU_PANEL_H * h);
-    overlay->AddNineSliceDebug(pmin,pmax,inset,235);
+    //The artwork if the theme came up, the role colours if it did not. Same geometry either way -
+    //AddNineSliceSprite and AddNineSliceDebug both cut with UINineSliceRegions - so the fallback is
+    //a faithful stand-in rather than a different layout.
+    if (!DrawThemed("panel",pmin,pmax)){
+        ui_nine_inset inset;
+        inset.left = inset.top = inset.right = inset.bottom = 30.0f;
+        overlay->AddNineSliceDebug(pmin,pmax,inset,235);
+    }
 
     overlay->AddText(title,vec2((pmin.x + pmax.x) * 0.5f,pmin.y + text_size * 2.0f),
                      text_size,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
@@ -3352,25 +3411,22 @@ void ApplicationBomber::DrawMenu(void){
             vec2 bmin = vec2(r.x,r.y);
             vec2 bmax = vec2(r.x + r.w,r.y + r.h);
             /*
-                A THREE-SLICE, not a nine: left and right insets only.
+                Held is drawn as a TINT rather than a second sprite, which is what the themed path
+                buys: the texel is multiplied by this colour, so a darker one reads as pressed with
+                no extra artwork to author or pack. The fallback path uses it as its own alpha.
 
-                button_blank.png is 104 px tall with 42/40 of that in its top and bottom insets,
-                leaving 22 px of stretchable middle. Drawn at anything shorter than 82 px - and
-                this button is 68 - the vertical clamp takes the middle row away entirely and the
-                two halves of the plank meet in the centre. That looked wrong on screen before it
-                looked wrong in the numbers.
-
-                Zero top and bottom is the honest answer rather than a taller button: a button only
-                ever stretches to fit its LABEL, so its height is the artist's and the whole sprite
-                scales to it. The two end caps still keep their width, which is the part that has
-                to be preserved.
+                The three-slice itself now lives in theme.json - see the note on "button" there for
+                why a button is sliced on one axis only.
             */
-            ui_nine_inset binset;
-            binset.left = binset.right = 20.0f;
-            binset.top = 0.0f;
-            binset.bottom = 0.0f;
-            overlay->AddNineSliceDebug(bmin,bmax,binset,
-                                       buttons[menu_button[4]].f_down ? 255 : 210);
+            bool f_held = buttons[menu_button[4]].f_down;
+            uint32_t tint = f_held ? UIColor(170,170,170,255) : UIColor(255,255,255,255);
+            if (!DrawThemed("button",bmin,bmax,tint)){
+                ui_nine_inset binset;
+                binset.left = binset.right = 20.0f;
+                binset.top = 0.0f;
+                binset.bottom = 0.0f;
+                overlay->AddNineSliceDebug(bmin,bmax,binset,f_held ? 255 : 210);
+            }
             overlay->AddText("BACK",vec2((bmin.x + bmax.x) * 0.5f,
                                          (bmin.y + bmax.y) * 0.5f + text_size * 0.25f),
                              text_size * 0.7f,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
@@ -3852,6 +3908,10 @@ void ApplicationBomber::UpdateView(void){
 
 //Frame thread, top of every frame, before anything is drawn.
 void ApplicationBomber::PreRender(void){
+    //The UI theme, once, as soon as there is an overlay to hand it to - see LoadUITheme.
+    if (!f_theme_tried && overlay && overlay->IsReady()){
+        LoadUITheme();
+    }
     //A shader reload is GL work, so the key and the panel button only raise a flag and it is
     //serviced here. Cheap: one atomic read on a frame where nothing was asked for.
     if (f_shader_reload_requested){

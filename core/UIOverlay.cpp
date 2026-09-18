@@ -54,6 +54,7 @@ bool UIOverlay::InitBuffers(){
     UI_ATTRIB(6,1,GL_FLOAT,GL_FALSE,distance_scale)
     //GL_TRUE: the four bytes arrive in the shader as a 0..1 vec4 rather than 0..255.
     UI_ATTRIB(7,4,GL_UNSIGNED_BYTE,GL_TRUE,color)
+    UI_ATTRIB(8,1,GL_FLOAT,GL_FALSE,sprite)
     #undef UI_ATTRIB
 
     glBindVertexArray(0);
@@ -76,6 +77,7 @@ bool UIOverlay::InitBuffers(){
     UI_ATTRIB(5,1,GL_FLOAT,GL_FALSE,outline)
     UI_ATTRIB(6,1,GL_FLOAT,GL_FALSE,distance_scale)
     UI_ATTRIB(7,4,GL_UNSIGNED_BYTE,GL_TRUE,color)
+    UI_ATTRIB(8,1,GL_FLOAT,GL_FALSE,sprite)
     #undef UI_ATTRIB
 #endif
     return true;
@@ -242,7 +244,8 @@ void UIOverlay::Begin(int w, int h){
     to be created, bound and kept in step with the VAO on two platforms.
 */
 void UIOverlay::AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
-                        float radius, float outline, float distance_scale, uint32_t color){
+                        float radius, float outline, float distance_scale, uint32_t color,
+                        float sprite){
     if (!f_ready){
         return;
     }
@@ -286,6 +289,7 @@ void UIOverlay::AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
         v.radius         = radius;
         v.outline        = outline;
         v.distance_scale = distance_scale;
+        v.sprite         = sprite;
         v.color          = color;
         vertices.push_back(v);
     }
@@ -379,6 +383,95 @@ void UIOverlay::AddNineSliceDebug(vec2 min, vec2 max, const ui_nine_inset& inset
         //ARTWORK in the corner regions, never from the geometry - rounding these would round the
         //interior cuts too, and leave gaps along every seam.
         AddRect(rmin[i],rmax[i],0.0f,role[i]);
+    }
+}
+
+void UIOverlay::SetThemeTexture(uint32_t tex_id, int w, int h){
+    theme_tex = (GLuint)tex_id;
+    theme_w   = w;
+    theme_h   = h;
+}
+
+void UIOverlay::AddSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, int src_h,
+                          uint32_t color){
+    if (!f_ready || !theme_tex || theme_w <= 0 || theme_h <= 0){
+        return;
+    }
+    if (src_w <= 0 || src_h <= 0){
+        return;
+    }
+
+    /*
+        HALF-TEXEL INSET ON ALL FOUR EDGES.
+
+        A sprite's UVs address the CENTRES of its outermost texels, not the boundaries between them.
+        Sampling exactly on a boundary is a coin toss between this sprite and whatever the packer
+        put next to it, and with two pixels of padding that neighbour is transparent - so a sprite
+        drawn without this gets a faint transparent seam along its edges, worst exactly where a
+        nine-slice repeats an edge region.
+    */
+    float u0 = ((float)src_x + 0.5f) / (float)theme_w;
+    float v0 = ((float)src_y + 0.5f) / (float)theme_h;
+    float u1 = ((float)(src_x + src_w) - 0.5f) / (float)theme_w;
+    float v1 = ((float)(src_y + src_h) - 0.5f) / (float)theme_h;
+
+    //radius 0, outline 0: a sprite is a plain rectangle. Any rounding belongs to the ARTWORK, and
+    //rounding the quad as well would cut the artwork's own corners off. distance_scale 0 keeps the
+    //glyph term out of it - see the shader.
+    AddQuad(min,max,vec2(u0,v0),vec2(u1,v1),0.0f,0.0f,0.0f,color,1.0f);
+}
+
+void UIOverlay::AddNineSliceSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, int src_h,
+                                   const ui_nine_inset& inset, uint32_t color){
+    if (!f_ready || !theme_tex){
+        return;
+    }
+
+    /*
+        The DESTINATION regions come from the same function the debug colours use, so the artwork
+        lands exactly where the coloured blocks did - including the clamp that stops a panel
+        narrower than its own insets folding its corners through each other.
+
+        The SOURCE regions are cut with the insets UNCLAMPED, because the source never shrinks: the
+        sprite is whatever size the artist drew. When the destination clamps, a full-size corner is
+        drawn into a smaller box and squashes - which is correct, and the only sane thing left at a
+        size the art was never meant for.
+    */
+    vec2 dmin[UI_NINE_COUNT];
+    vec2 dmax[UI_NINE_COUNT];
+    UINineSliceRegions(min,max,inset,dmin,dmax);
+
+    const float sxs[4] = {
+        (float)src_x,
+        (float)src_x + inset.left,
+        (float)(src_x + src_w) - inset.right,
+        (float)(src_x + src_w)
+    };
+    const float sys[4] = {
+        (float)src_y,
+        (float)src_y + inset.top,
+        (float)(src_y + src_h) - inset.bottom,
+        (float)(src_y + src_h)
+    };
+
+    for (int row = 0; row < 3; row++){
+        for (int col = 0; col < 3; col++){
+            int i = row * 3 + col;
+            //A zero-width middle column is a legitimate outcome of the clamp; a zero-height source
+            //row is what an inset of 0 on that axis means, which is a three-slice. Both are skipped
+            //rather than drawn as degenerate quads.
+            if ((dmax[i].x - dmin[i].x) <= 0.0f || (dmax[i].y - dmin[i].y) <= 0.0f){
+                continue;
+            }
+            int sx = (int)sxs[col];
+            int sy = (int)sys[row];
+            int sw = (int)(sxs[col + 1] - sxs[col]);
+            int sh = (int)(sys[row + 1] - sys[row]);
+            if (sw <= 0 || sh <= 0){
+                continue;
+            }
+            AddSprite(dmin[i],dmax[i],sx,sy,sw,sh,color);
+        }
     }
 }
 
@@ -523,14 +616,28 @@ void UIOverlay::Draw(){
     //NOT unit 0 - see ATLAS_TEXTURE_UNIT in UIOverlay.h for what binding this every frame
     //did to whichever material the Android renderer had handed unit 0.
     shader->Setint("atlas",ATLAS_TEXTURE_UNIT);
+    shader->Setint("theme",THEME_TEXTURE_UNIT);
 
 #if defined(__ANDROID__)
     glActiveTexture(GL_TEXTURE0 + ATLAS_TEXTURE_UNIT);
     glBindTexture(GL_TEXTURE_2D,atlas_tex);
+    //See the desktop arm: unit 11 is always bound, to the atlas when there is no theme.
+    glActiveTexture(GL_TEXTURE0 + THEME_TEXTURE_UNIT);
+    glBindTexture(GL_TEXTURE_2D,theme_tex ? theme_tex : atlas_tex);
     //Left selected, this would make the next unpaired glBindTexture in the frame land here.
     glActiveTexture(GL_TEXTURE0);
 #else
     glBindTextureUnit(ATLAS_TEXTURE_UNIT,atlas_tex);
+    /*
+        The theme unit is bound EVERY frame, and to the font atlas when there is no theme.
+
+        The fragment shader samples both textures unconditionally - see the note there on why it
+        has no branch - so an unbound sampler would read whatever unit 11 last held. Pointing it at
+        the atlas costs nothing, because `sprite` is 0 on every quad in that case and the result is
+        multiplied out anyway. What it buys is that there is no state in which the shader samples
+        something undefined.
+    */
+    glBindTextureUnit(THEME_TEXTURE_UNIT,theme_tex ? theme_tex : atlas_tex);
 #endif
 
     glBindVertexArray(vao);
