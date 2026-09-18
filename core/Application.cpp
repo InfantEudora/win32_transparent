@@ -62,7 +62,7 @@ void Application::Start(void){
     //Create a main window
     //The app's own name in the title bar - see Application::app_name, which a subclass sets in
     //its constructor and so has already set by the time Start() runs.
-    main_window = Window::CreateNewWindow(1280,800,&Window::wcs.at(0),app_name.c_str());
+    main_window = Window::CreateNewWindow(1280,800,0,app_name.c_str());
     if (!main_window){
         debug->Fatal("Unable to create window\n");
     }

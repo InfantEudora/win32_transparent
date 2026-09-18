@@ -131,7 +131,14 @@ public:
     //`title` is what shows in the title bar and on the taskbar. Passed in at creation rather
     //than SetTitle'd afterwards so the window is never briefly called something else - see
     //Application::Start, which hands it the app's own name.
-    static Window* CreateNewWindow(int width, int height, WNDCLASSEXA* wc, const char* title);
+    /*
+        The window class is an INDEX into wcs, not a pointer, and that is what lets this signature
+        be the same on both platforms. Every caller in either tree passed &Window::wcs.at(0) - the
+        pointer bought nothing, and a WNDCLASSEXA* in the signature is what stopped Android from
+        ever sharing this entry point. Android ignores the index: it has one surface, handed to it
+        by the compositor, and no notion of a window class.
+    */
+    static Window* CreateNewWindow(int width, int height, int wc_index, const char* title);
 
     void ImGuiNewFrame();
     void ImGuiRenderDrawData();

@@ -377,7 +377,8 @@ Window* Window::CreateNewLayeredWindow(int width, int height, WNDCLASSEXA* wc){
     return wnd;
 }
 
-Window* Window::CreateNewWindow(int width, int height, WNDCLASSEXA* wc, const char* title){
+Window* Window::CreateNewWindow(int width, int height, int wc_index, const char* title){
+    WNDCLASSEXA* wc = &wcs.at(wc_index);
     Window* wnd = new Window();
 
     int left = 200;

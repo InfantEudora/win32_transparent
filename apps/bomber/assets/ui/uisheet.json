@@ -1,67 +1,93 @@
 {
-	"frames": {
-		"./button_blank": {
-			"frame": {
-				"h": 104,
-				"w": 242,
-				"x": 0,
-				"y": 390
-			},
-			"rotated": false,
-			"spriteSourceSize": {
-				"h": 104,
-				"w": 242,
-				"x": 0,
-				"y": 0
-			},
-			"sourceSize": {
-				"h": 104,
-				"w": 242
-			},
-			"trimmed": false
+	"./button_blank": {
+		"frame": {
+			"x": 0,
+			"y": 390,
+			"width": 242,
+			"height": 104
 		},
-		"./button_close": {
-			"frame": {
-				"h": 107,
-				"w": 118,
-				"x": 244,
-				"y": 390
-			},
-			"rotated": false,
-			"spriteSourceSize": {
-				"h": 107,
-				"w": 118,
-				"x": 0,
-				"y": 0
-			},
-			"sourceSize": {
-				"h": 107,
-				"w": 118
-			},
-			"trimmed": false
+		"sourceSize": {
+			"width": 242,
+			"height": 104
 		},
-		"./window_frame": {
-			"frame": {
-				"h": 388,
-				"w": 472,
-				"x": 0,
-				"y": 0
-			},
-			"rotated": false,
-			"spriteSourceSize": {
-				"h": 388,
-				"w": 472,
-				"x": 0,
-				"y": 0
-			},
-			"sourceSize": {
-				"h": 388,
-				"w": 472
-			},
-			"trimmed": false
-		}
+		"rotated": false
 	},
-	"meta": {
-		"image": "uisheet.png"
+	"./button_close": {
+		"frame": {
+			"x": 244,
+			"y": 390,
+			"width": 118,
+			"height": 107
+		},
+		"sourceSize": {
+			"width": 118,
+			"height": 107
+		},
+		"rotated": false
+	},
+	"./corner_bl": {
+		"frame": {
+			"x": 474,
+			"y": 0,
+			"width": 31,
+			"height": 38
+		},
+		"sourceSize": {
+			"width": 31,
+			"height": 38
+		},
+		"rotated": false
+	},
+	"./corner_br": {
+		"frame": {
+			"x": 364,
+			"y": 390,
+			"width": 39,
+			"height": 47
+		},
+		"sourceSize": {
+			"width": 39,
+			"height": 47
+		},
+		"rotated": false
+	},
+	"./corner_tl": {
+		"frame": {
+			"x": 474,
+			"y": 40,
+			"width": 32,
+			"height": 31
+		},
+		"sourceSize": {
+			"width": 32,
+			"height": 31
+		},
+		"rotated": false
+	},
+	"./corner_tr": {
+		"frame": {
+			"x": 474,
+			"y": 73,
+			"width": 33,
+			"height": 30
+		},
+		"sourceSize": {
+			"width": 33,
+			"height": 30
+		},
+		"rotated": false
+	},
+	"./window_frame": {
+		"frame": {
+			"x": 0,
+			"y": 0,
+			"width": 472,
+			"height": 388
+		},
+		"sourceSize": {
+			"width": 472,
+			"height": 388
+		},
+		"rotated": false
 	}
 }
