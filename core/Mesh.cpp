@@ -215,6 +215,26 @@ bool Mesh::InitVBOVAO(){
         glEnableVertexAttribArray(ATTRIB_UVCOORD);
         glVertexAttribPointer(ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, uv));
 
+        /*
+        AND THE INTEGER FIELDS AS ATTRIBUTES, which the desktop arm deliberately does not do.
+
+        The SSBO vertex pull the #else arm relies on (SSBO_VERTEX_PULL, see Mesh.h) IS NOT
+        AVAILABLE HERE. GLES 3.1 makes per-stage shader-storage-block limits implementation
+        defined and lets them be zero, and on the test device they are: linking a vertex
+        shader with one storage block fails with
+
+        The number of vertex shader storage blocks (1) is greater than the maximum
+        number allowed (0).
+
+        So the whole frame is lost, not the field. GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS = 0 is
+        a conformant answer, so this is not a driver bug to wait out.
+
+        glVertexAttribIPointer, not glVertexAttribPointer: matid is an int and must arrive as
+        one. The float entry point would convert it, and the shader reads `in int`.
+        */
+        glEnableVertexAttribArray(ATTRIB_MATINDEX);
+        glVertexAttribIPointer(ATTRIB_MATINDEX, 1, GL_INT, sizeof(vertex), (void*)offsetof(vertex, matid));
+
 
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -326,6 +346,45 @@ bool Mesh::InitSkinnedVBOVAO(){
 
     glEnableVertexAttribArray(ATTRIB_UVCOORD);
     glVertexAttribPointer(ATTRIB_UVCOORD, 2, GL_FLOAT, GL_FALSE, sizeof(skinned_vertex), (void*)offsetof(skinned_vertex, uv));
+
+    /*
+    AND THE INTEGER FIELDS AS ATTRIBUTES, which the desktop arm deliberately does not do.
+
+    The SSBO vertex pull the #else arm relies on (SSBO_VERTEX_PULL, see Mesh.h) IS NOT
+    AVAILABLE HERE. GLES 3.1 makes per-stage shader-storage-block limits implementation
+    defined and lets them be zero, and on the test device they are: linking a vertex
+    shader with one storage block fails with
+
+    The number of vertex shader storage blocks (1) is greater than the maximum
+    number allowed (0).
+
+    So the whole frame is lost, not the field. GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS = 0 is
+    a conformant answer, so this is not a driver bug to wait out.
+
+    glVertexAttribIPointer, not glVertexAttribPointer: matid is an int and must arrive as
+    one. The float entry point would convert it, and the shader reads `in int`.
+    */
+    glEnableVertexAttribArray(ATTRIB_MATINDEX);
+    glVertexAttribIPointer(ATTRIB_MATINDEX, 1, GL_INT, sizeof(skinned_vertex), (void*)offsetof(skinned_vertex, matid));
+
+    /*
+        Bone indices are the same case, and the desktop arm pulls them from the same SSBO.
+        Without this a skinned mesh here poses every vertex against bone 0.
+
+        THREE, NOT FOUR, and the count is load-bearing rather than a style choice.
+        skinned_vertex::bones is an int3 and weights a vec3 - GetSkinnedVertex keeps three
+        influences and drops the fourth on purpose. The static_asserts at the top of this file
+        pin bones at word 12 and weights at word 15, so a 4-wide read here would take words
+        12,13,14 AND weights.x, handing the shader a float bit-pattern as a bone index (a weight
+        of 0.5 arrives as 1056964608). Harmless only while the shader declares ivec3; an
+        out-of-range bone lookup the moment it declares ivec4 and touches .w.
+
+        Going to four influences is a real option, but it is FOUR coordinated changes, not this
+        number: int3 -> int4, vec3 -> vec4, GetSkinnedVertex keeping the fourth, and the word
+        stride the desktop vertex-pull shaders hardcode (18) becoming 20.
+    */
+    glEnableVertexAttribArray(ATTRIB_BONES);
+    glVertexAttribIPointer(ATTRIB_BONES, 3, GL_INT, sizeof(skinned_vertex), (void*)offsetof(skinned_vertex, bones));
 
 
     glEnableVertexAttribArray(ATTRIB_WEIGHTS);

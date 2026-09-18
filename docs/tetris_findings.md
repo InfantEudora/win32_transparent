@@ -261,6 +261,18 @@ in `wButtons`, and `InputController::PollGamepad` does not surface those as mapp
 the one control layout a gamepad Tetris actually wants — the D-pad — cannot be mapped. I mapped
 the left stick's X axis and left it there.
 
+**FIXED, and Tetris now has a full pad layout (2026-09-18).** The engine grew `GAMEPAD_KEY_*` —
+XInput's `wButtons` bits as synthetic system keycodes, bound with plain `AddKeyMap` — so the D-pad,
+the face buttons, the shoulders and start/back are all ordinary keys now. `SetupInput` carries the
+layout and the reasoning for it.
+
+Worth recording that **the stick binding left behind here did nothing**. `AddGamePadMap(0,
+INPUT_TETRIS_LEFT)` looks complete and is not: an analog mapping only ever writes
+`KeyState::fvalue`, never `f_isdown`, and `GatherInput` asks `IsKeyDown(INPUT_TETRIS_LEFT)` — so
+the stick was bound to an action nothing could observe it driving, silently, for four days. The
+stick now has its own axis codes (`INPUT_TETRIS_STICK_X/Y`) which `GatherInput` thresholds into the
+same booleans the D-pad produces, so it inherits DAS/ARR rather than growing a second repeat rule.
+
 ### 3.9 No save/load of a running scene — COST: none here, noted for completeness
 
 `BuildSceneFromJSON` restores name/position/rotation of asset-backed objects from `export.json`

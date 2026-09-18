@@ -222,7 +222,7 @@ void ApplicationTetris::Init(void){
     LoadBestScore();
     NewGame(current_seed);
 
-    main_window->Resize(600,1024);
+    main_window->Resize(1024,600);
 
     //One tick so the first frame is not an empty board.
     main_scene->StepPhysics(1);
@@ -1004,10 +1004,65 @@ void ApplicationTetris::SetupInput(){
     input->AddKeyMap('P',INPUT_PAUSE);
 #endif //_WIN32
 
-    //Gamepad: the left stick's X axis steers, which is the one analog control a Tetris has. The
-    //D-pad arrives through XInput as buttons rather than as an analog index, so it is not mapped
-    //here - see docs/tetris_findings.md on what that costs.
-    input->AddGamePadMap(0,INPUT_TETRIS_LEFT);
+    /*
+        GAMEPAD. Outside the _WIN32 guard above on purpose: GAMEPAD_KEY_* carry their own XInput
+        bit values on platforms with no <xinput.h> (see core/InputController.h), so this block is
+        portable as written and the port gets the same layout from the same lines.
+
+        --- THE LAYOUT, AND WHY ------------------------------------------------------------------
+        Left thumb moves, right thumb acts, index fingers hold. That split is the whole design:
+        moving and rotating happen at the same time constantly in this game, so they must not
+        share a digit.
+
+            D-pad left/right    move            the DAS/ARR path, same as the arrow keys
+            D-pad down          soft drop
+            D-pad up            ROTATE CW       matching VK_UP on the keyboard, NOT hard drop
+            A                   rotate CW       the button the thumb already rests on
+            B / X               rotate CCW      two of them, mirroring Z and Ctrl
+            Y                   hard drop       deliberately the far corner - see below
+            LB / RB             hold            either shoulder, mirroring C and Shift
+            Start               pause
+            Back                restart
+
+        D-PAD UP IS ROTATE, NOT HARD DROP, which is worth stating because most console Tetris puts
+        hard drop there. This app's keyboard maps VK_UP to rotate, and a player who moves between
+        the two would otherwise lose a piece to the difference - an irreversible move is the wrong
+        place to be clever. For the same reason hard drop is the one action with a single binding,
+        in the corner furthest from the thumb's resting position: every other action here is
+        recoverable, and that one is not.
+
+        Start is INPUT_PAUSE, the ENGINE's action - the same one 'P' is bound to - so this needs no
+        handling anywhere in this app.
+    */
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_LEFT,     INPUT_TETRIS_LEFT);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_RIGHT,    INPUT_TETRIS_RIGHT);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_DOWN,     INPUT_TETRIS_SOFT_DROP);
+    input->AddKeyMap(GAMEPAD_KEY_DPAD_UP,       INPUT_TETRIS_ROTATE_CW);
+    input->AddKeyMap(GAMEPAD_KEY_A,             INPUT_TETRIS_ROTATE_CW);
+    input->AddKeyMap(GAMEPAD_KEY_B,             INPUT_TETRIS_ROTATE_CCW);
+    input->AddKeyMap(GAMEPAD_KEY_X,             INPUT_TETRIS_ROTATE_CCW);
+    input->AddKeyMap(GAMEPAD_KEY_Y,             INPUT_TETRIS_HARD_DROP);
+    input->AddKeyMap(GAMEPAD_KEY_LEFT_SHOULDER, INPUT_TETRIS_HOLD);
+    input->AddKeyMap(GAMEPAD_KEY_RIGHT_SHOULDER,INPUT_TETRIS_HOLD);
+    input->AddKeyMap(GAMEPAD_KEY_START,         INPUT_PAUSE);
+    input->AddKeyMap(GAMEPAD_KEY_BACK,          INPUT_TETRIS_RESTART);
+
+    /*
+        The left stick does what the D-pad does, for the thumb that reached for it instead. Bound
+        to its own axis actions and thresholded in GatherInput - see INPUT_TETRIS_STICK_X in the
+        header for why binding a stick straight onto INPUT_TETRIS_LEFT cannot work.
+
+        7849 is XInput's own XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE, spelled out rather than included
+        because this block compiles on the port too. It is about 24%, which is larger than the 18%
+        apps/breakout steers a paddle with, and deliberately so: a paddle wants the small movements
+        that a dead zone eats, and a Tetris board has ten columns and no use for them at all.
+
+        Stick UP is left unbound. It is the natural place for hard drop and that is exactly the
+        problem - a thumb rolling from left to right across the top of the gate would drop a piece
+        on the way past. See the note on D-pad up above; same reasoning, stronger here.
+    */
+    input->AddGamePadMap(0,INPUT_TETRIS_STICK_X,7849);
+    input->AddGamePadMap(1,INPUT_TETRIS_STICK_Y,7849);
 
     /*
         Everything from here to the end of SetupInput is the ON-SCREEN TOUCH UI, which is
@@ -1018,7 +1073,7 @@ void ApplicationTetris::SetupInput(){
         what makes a rect live, so buttons bound but not drawn would sit invisible in the corners
         of a desktop window quietly eating clicks.
     */
-#if USE_TOUCH_UI
+#if 0
     /*
         On-screen buttons - the third input family, and the whole test of whether the seam was put
         in the right place: this block is the ONLY app code that changes for them. GatherInput,
@@ -1437,8 +1492,18 @@ void ApplicationTetris::GatherInput(TetrisInput& out){
     out.f_hard_drop  = input->WasKeyPressed(INPUT_TETRIS_HARD_DROP);
     out.f_hold       = input->WasKeyPressed(INPUT_TETRIS_HOLD);
 
-    //Level-triggered: soft drop is "gravity is fast while this is down".
-    out.f_soft_drop = input->IsKeyDown(INPUT_TETRIS_SOFT_DROP);
+    /*
+        The left stick, folded into the same booleans the keyboard and the D-pad produce, here and
+        nowhere else. Everything downstream - DAS/ARR, the snapshot, the MCP tools, a replay -
+        stays unable to tell which device moved the piece, which is the only reason the stick needs
+        no repeat logic of its own.
+    */
+    float stick_x = input->GetAxis(INPUT_TETRIS_STICK_X);
+    float stick_y = input->GetAxis(INPUT_TETRIS_STICK_Y);
+
+    //Level-triggered: soft drop is "gravity is fast while this is down". XInput reports Y positive
+    //UP, so pulling the stick towards you is the negative half.
+    out.f_soft_drop = input->IsKeyDown(INPUT_TETRIS_SOFT_DROP) || (stick_y < -TETRIS_STICK_THRESHOLD);
 
     /*
         DAS/ARR. A held left or right moves once immediately, then pauses for TETRIS_DAS_TICKS,
@@ -1447,8 +1512,8 @@ void ApplicationTetris::GatherInput(TetrisInput& out){
         would not be true of a millisecond timer, and is the single most important reason this
         translation lives on the physics thread rather than in the window message handler.
     */
-    bool f_left = input->IsKeyDown(INPUT_TETRIS_LEFT);
-    bool f_right = input->IsKeyDown(INPUT_TETRIS_RIGHT);
+    bool f_left = input->IsKeyDown(INPUT_TETRIS_LEFT) || (stick_x < -TETRIS_STICK_THRESHOLD);
+    bool f_right = input->IsKeyDown(INPUT_TETRIS_RIGHT) || (stick_x > TETRIS_STICK_THRESHOLD);
     //Both down: the most recent one wins, which here means "keep doing what we were doing".
     int direction = 0;
     if (f_left && !f_right){
@@ -2421,6 +2486,8 @@ void ApplicationTetris::RenderTetrisHUD(){
     ImGui::TextDisabled("Z/X or up rotate");
     ImGui::TextDisabled("space hard drop, C hold");
     ImGui::TextDisabled("R restart, P pause, M mute, F1 panels");
+    ImGui::TextDisabled("pad d-pad/stick move, A/B/X rotate");
+    ImGui::TextDisabled("pad Y drop, LB/RB hold, start pause");
 
     ImGui::End();
 }

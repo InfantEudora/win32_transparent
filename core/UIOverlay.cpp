@@ -447,13 +447,17 @@ void UIOverlay::Draw(){
     shader->Use();
     shader->Setvec2("screen_size",vec2((float)screen_w,(float)screen_h));
     shader->Setfloat("onedge",font.onedge);
-    shader->Setint("atlas",0);
+    //NOT unit 0 - see ATLAS_TEXTURE_UNIT in UIOverlay.h for what binding this every frame
+    //did to whichever material the Android renderer had handed unit 0.
+    shader->Setint("atlas",ATLAS_TEXTURE_UNIT);
 
 #if defined(__ANDROID__)
-    glActiveTexture(GL_TEXTURE0);
+    glActiveTexture(GL_TEXTURE0 + ATLAS_TEXTURE_UNIT);
     glBindTexture(GL_TEXTURE_2D,atlas_tex);
+    //Left selected, this would make the next unpaired glBindTexture in the frame land here.
+    glActiveTexture(GL_TEXTURE0);
 #else
-    glBindTextureUnit(0,atlas_tex);
+    glBindTextureUnit(ATLAS_TEXTURE_UNIT,atlas_tex);
 #endif
 
     glBindVertexArray(vao);

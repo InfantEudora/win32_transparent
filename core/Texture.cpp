@@ -13,6 +13,18 @@ Texture::Texture(){
 Texture::~Texture(){
     if (img_data){
         free(img_data);
+    /*
+        Release the GL object too. -1 is the sentinel, not 0: glGenTextures never hands out 0,
+        but this class default-initialises texture_id to -1, so that is what "never created" means.
+
+        It never mattered while every texture lived for the whole process, which was true of every
+        material and UI texture here. It starts mattering the moment something creates and destroys
+        Textures repeatedly - a folder browser reloading previews, say - where skipping this leaks
+        one GPU texture per reload.
+    */
+    if (texture_id != (GLuint)-1){
+        glDeleteTextures(1, &texture_id);
+    }
     }
     //file_data is NOT ours to free - LoadFile lends it out and the file layer keeps it for the
     //life of the process (see File.h). img_data next to it IS ours: stb decoded that for us.
@@ -29,6 +41,8 @@ void Texture::Create2D(int target, int depth){
         debug->Err("Specify GL_RGB8 or GL_RGBA8 as Create2D image format.\n");
         return;
     }
+
+    gl_target = target;     //remembered for ReUploadTexture
 
 #if defined(__ANDROID__)
     /*
@@ -266,6 +280,41 @@ vec3 Texture::GetValueAt(float x, float y){
 bool Texture::IsEmpty(){
     return (img_data_sz == 0);
 }
+
+void Texture::ReUploadTexture(){
+    if (f_is_hdr){
+        debug->Warn("ReUploadTexture: HDR re-upload not implemented (name=%s)\n", name.c_str());
+        return;
+    }
+    if (gl_target == GL_TEXTURE_CUBE_MAP){
+        debug->Warn("ReUploadTexture: cubemap re-upload not implemented (name=%s)\n", name.c_str());
+        return;
+    }
+    if (!img_data || img_data_sz == 0){
+        return; // Nothing decoded (e.g. TEXTURE_DONT_UPLOAD was used), nothing to redo.
+    }
+    Create2D(gl_target, depth);
+    UploadTexture(image_format, gl_target);
+}
+
+void Texture::InvertRGB(){
+    if (!img_data || img_data_sz == 0){
+        debug->Warn("InvertRGB: no decoded image data to invert\n");
+        return;
+    }
+    int channels = (image_format == GL_RGBA) ? 4 : 3;
+    size_t pixel_count = img_data_sz / channels;
+    for (size_t i = 0; i < pixel_count; i++){
+        uint8_t* pixel = img_data + (i * channels);
+        pixel[0] = 255 - pixel[0];
+        pixel[1] = 255 - pixel[1];
+        pixel[2] = 255 - pixel[2];
+        //pixel[3] (alpha), when channels == 4, is deliberately left alone.
+    }
+
+    UploadTexture(image_format, gl_target);
+}
+
 
 void Texture::CopyLine(uint8_t* line, int num_pixels, uint8_t* out, int num_color_channels){
     if (line && out)

@@ -50,6 +50,20 @@
 #define INPUT_TETRIS_VOL_DOWN       INPUT_LAST+11
 #define INPUT_TETRIS_VOL_UP         INPUT_LAST+12
 
+/*
+    The left stick, as two SCALAR AXES rather than as four more button actions.
+
+    They are separate codes instead of being bound onto LEFT/RIGHT/SOFT_DROP directly, because an
+    analog mapping only ever writes KeyState::fvalue - it never sets f_isdown - so a stick bound
+    straight onto INPUT_TETRIS_LEFT reads as permanently up to the IsKeyDown() that GatherInput
+    actually asks. That exact binding was here until 2026-09-18 and did nothing at all.
+
+    GatherInput thresholds these into the same f_left/f_right/f_soft_drop the D-pad produces, so
+    the stick inherits DAS/ARR unchanged rather than growing a second repeat rule of its own.
+*/
+#define INPUT_TETRIS_STICK_X        INPUT_LAST+13
+#define INPUT_TETRIS_STICK_Y        INPUT_LAST+14
+
 //Our own simulation commands, numbered from SIM_CMD_LAST. Restarting is intent arriving from
 //OUTSIDE the simulation (a button, an MCP call), which is exactly what the command queue is for.
 //value[0] carries the seed, so a replayed restart deals the same pieces.
@@ -59,6 +73,13 @@
 //between repeats. Ticks, never milliseconds - see Scene::GetPhysicsTick.
 #define TETRIS_DAS_TICKS            10
 #define TETRIS_ARR_TICKS            2
+
+//How far the left stick has to be pushed before GatherInput calls it a direction, on the -1..1
+//scale the dead zone already trimmed. Well clear of that dead zone rather than just past it: a
+//thumb resting on a gate it is not pushing still reads a few percent, and on a board ten columns
+//wide a move nobody asked for is a misdrop. This is about 62% of full deflection - a push, not a
+//lean. See INPUT_TETRIS_STICK_X above.
+#define TETRIS_STICK_THRESHOLD      0.5f
 
 //How long a piece takes to slide to a new column, in ticks. Two is enough to stop the board
 //looking like it is teleporting and short enough that it never lags behind the input.

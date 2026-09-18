@@ -18,6 +18,9 @@ public:
     ~Texture();
     GLuint texture_id = -1;         // OpenGL ID of the texture
     GLuint64 texture_handle = 0;    // OpenGL Bindless Texture Handle
+    //Remembered by Create2D so ReUploadTexture can redo the same Create2D/UploadTexture pair
+    //after a context recreation without the caller having to pass it again.
+    GLenum gl_target = GL_TEXTURE_2D;
 
     int width = 0;
     int height = 0;
@@ -48,6 +51,20 @@ public:
     //writing into it as an image, in the one case there is so far (the cloud noise in
     //shaders/noise3d.comp). Unlike Create2D this filters LINEAR and wraps on all three axes,
     //because a volume samples it at arbitrary scales and NEAREST would show the voxel grid.
+    /*
+        Redoes the GPU-upload half of LoadFromMemory after a context recreation. GL objects do
+        not survive the context they were made in - the same reason Mesh::ReUploadMeshData
+        exists - so texture_id from a previous one is meaningless. img_data (the already-decoded
+        pixels) is plain CPU memory and stays valid, so nothing is decoded twice.
+
+        MATTERS ON ANDROID AND NOWHERE ELSE SO FAR: a desktop window keeps its GL context for
+        the life of the process, while an Android app loses it on every background/foreground
+        cycle. LDR GL_TEXTURE_2D only - HDR and cubemaps log and no-op rather than pretend.
+    */
+    void ReUploadTexture();
+    //Inverts every pixel's RGB in place (255-value), leaving alpha alone, and re-uploads so the
+    //GPU copy stays in step. No-op when nothing has been decoded yet.
+    void InvertRGB();
     void Create3D(int size, GLenum format = GL_RGBA8);
     //The general form. The cubic one above is this with REPEAT wrapping, which is what tiling
     //noise wants; a lookup table like a cloud shadow map wants CLAMP_TO_EDGE instead, so that

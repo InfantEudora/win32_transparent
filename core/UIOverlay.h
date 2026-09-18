@@ -169,6 +169,26 @@ private:
 
     ui_font_header  font = {};
     Shader*         shader = NULL;
+    /*
+        THE TEXTURE UNIT THE ATLAS IS BOUND TO, and it is deliberately NOT 0.
+
+        Texture units are global GL state, not per-program, so a unit this overlay binds every
+        frame is a unit nothing else can keep anything in. It used to use 0 and that is exactly
+        what happened on the Android port: materials there are bound to real units 0..7 by
+        Renderer::UploadMaterials (the desktop renderer uses bindless handles instead and never
+        noticed), so whichever material was handed unit 0 had its texture replaced by this font
+        atlas on the first frame the overlay drew. The symptom was a grass tile sampling the SDF
+        font and rendering red - red because a single-channel atlas read as .rgb is (r,0,0).
+
+        10 sits above every unit the Android renderer hands out: 0..7 materials, 8 blit,
+        9 shadow map (see RENDERER_*_TEXTURE_UNIT in android_core/Renderer.h). The device floor
+        for GL_MAX_TEXTURE_IMAGE_UNITS is 16, and the test device reports exactly 16.
+
+        The same trap is documented on RENDERER_BLIT_TEXTURE_UNIT, which was moved off unit 0
+        for this identical reason - the overlay simply never got the same treatment.
+    */
+    static const int ATLAS_TEXTURE_UNIT = 10;
+
     GLuint          atlas_tex = 0;
     GLuint          vbo = 0;
     GLuint          vao = 0;
