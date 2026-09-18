@@ -143,15 +143,28 @@ class Renderer{
     int GetViewportWidth() const { return viewport_width > 0 ? viewport_width : width; }
     int GetViewportHeight() const { return viewport_height > 0 ? viewport_height : height; }
 
-    void CullObjects();
-    void CullLights();
+    /*
+        The world comes in as an argument, and the Renderer does not keep it.
+
+        These used to walk a `std::vector<Object*> objects` member living here, which made the
+        Renderer the owner of the world and meant every Scene sharing a Renderer shared one set of
+        objects - so switching Scene changed the camera, the physics world and the tick clock, and
+        changed nothing whatsoever about what was on screen. The list belongs to Scene now.
+
+        The split is: Scene keeps what PERSISTS, the Renderer keeps only what it REBUILDS each
+        frame from it - renderable_objects, visible_lights, glsl_lights, the batches. Taking the
+        list as a parameter rather than a Scene* is deliberate: the Renderer has no business
+        knowing what a Scene is, and this way it does not.
+    */
+    void CullObjects(const std::vector<Object*>& objects);
+    void CullLights(const std::vector<Object*>& objects);
     void GetAllRenderableVisableSubObjects(Object* object,std::vector<Object*>&objects);
     void GetAllVisibleSubLights(Object* light,std::vector<Light*>&lights);
     void RebuildUniqueMeshList();
     void ClearBatches();
     void ClearObjectBatches();
     void FillBactches();
-    void PrepareObjects();
+    void PrepareObjects(const std::vector<Object*>& objects);
 
     void DrawSkyBox(Camera* camera);
 
@@ -256,7 +269,8 @@ class Renderer{
 
     void DeferredPass(Camera* camera);
     void SSAOPass(Camera* camera);
-    void DrawFrame(Camera* camera, Shader* shader, InputController* input);
+    //`objects` is the scene's object list - see the note on CullObjects for why it is passed in.
+    void DrawFrame(const std::vector<Object*>& objects, Camera* camera, Shader* shader, InputController* input);
 
     bool CheckFrameBuffer();
     bool Init(int pipeline = PIPELINE_MSAA);
@@ -331,30 +345,7 @@ class Renderer{
     int GetNumMaterials();
     void UpdateObjectMaterials();
 
-    /*
-        Deletes every object marked by Object::Destroy, and their destroyed children. This is the
-        only thing that actually frees them and takes their rigid bodies out of the physics world;
-        Destroy() alone just stops them being drawn.
-
-        CALL IT FROM THE SIMULATION TICK - RunSimulationTick, or anything else the physics loop
-        runs while it holds physics_mutex. That is the whole constraint: this erases from the same
-        object list the render thread walks in CullObjects and DrawFrame, so it must not run while
-        that thread is in there. The physics loop holds the mutex across the tick, so a call made
-        from inside the tick is mutually exclusive with rendering for free. A call from an MCP
-        handler or any render-thread code is NOT - use a SimCommand to get onto the tick instead.
-
-        IT IS DELIBERATELY NOT AUTOMATIC. The engine could call this at the end of every pass and
-        for a while it looked like it should - four apps had each worked out the same answer
-        independently (Dozer, Ship, Tetris, Breakout). It stays opt-in because WHEN an object
-        stops existing is a gameplay decision: a tick that destroys something and then looks at it
-        again is doing something ordinary, and an app that wants everything gone before it rebuilds
-        a level - ApplicationTetris::NewGame - wants to say exactly where that happens. What was
-        actually missing was this paragraph, not a call.
-
-        An app that creates objects at run time and never calls this leaks them and, worse, keeps
-        their colliders live in the physics world for the rest of the run.
-    */
-    void DeleteDestroyedObjects();
+    //DeleteDestroyedObjects moved to Scene, which owns the list it erases from. See Scene.h.
 
     /*
         Re-uploads every mesh reachable from `objects`, children included, after the GL context has
@@ -371,7 +362,7 @@ class Renderer{
         vbo/vao and generates a new pair, so a second call for the same mesh in the same context
         leaks the pair the first one made - and Tetris has 200 board cells sharing one cube.
     */
-    void ReUploadAllMeshes();
+    void ReUploadAllMeshes(const std::vector<Object*>& objects);
 
     Texture* LoadTexture(const char* filename,int target = GL_TEXTURE_2D, int depth = 1);
 
@@ -675,7 +666,7 @@ class Renderer{
 
     //readback_buffer_t readbackbuffer;                   //A single buffer for reading back data from shader
 
-    std::vector<Object*>objects;                        //All known objects
+    //The `objects` list that used to live here is Scene::objects now - see CullObjects above.
 
     private:
     //Settings

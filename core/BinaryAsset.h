@@ -7,6 +7,21 @@
 #include <string>
 #include "miniz.h"
 
+/*
+    3rdparty/miniz is a submodule, so its configuration cannot live inside it. It lives in
+    3rdparty/miniz_export.h and reaches miniz only because miniz.h includes that header before
+    reading its own config block - which is upstream's arrangement, not a promise to us.
+
+    An upstream that stopped including it would not break the build. It would quietly compile a
+    differently configured miniz, with the ZIP and zlib APIs back and, worse, with zlib's
+    compatible names - compress, uncompress, crc32, deflate, inflate, z_stream - defined in every
+    translation unit that reaches this header, which is most of the engine. That is a symptom
+    nobody would trace back to a submodule bump, so say it here instead.
+*/
+#ifndef MINIZ_CONFIGURED
+#error "miniz.h did not pick up 3rdparty/miniz_export.h - see the note there before changing anything"
+#endif
+
 class BinaryAsset;
 
 /*

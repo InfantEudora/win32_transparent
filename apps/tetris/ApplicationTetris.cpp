@@ -1262,7 +1262,7 @@ void ApplicationTetris::NewGame(uint32_t seed){
         }
     }
     debris.clear();
-    renderer->DeleteDestroyedObjects();
+    main_scene->DeleteDestroyedObjects();
     //The popups belong to the game that scored them. Emptying the queue here (rather than
     //letting the last game's "TETRIS +3200" float over an empty board) is the whole of it; the
     //slots themselves are hidden by the frame, which is the only thread allowed to touch them.
@@ -1922,7 +1922,7 @@ void ApplicationTetris::UpdateDebris(){
         //stay in the physics world for the life of the run - only two of the eleven apps in this
         //repo call it, which is a trap rather than a feature. Safe here: RunSimulationTick holds
         //physics_mutex, so the render thread is not walking the object list.
-        renderer->DeleteDestroyedObjects();
+        main_scene->DeleteDestroyedObjects();
     }
 }
 

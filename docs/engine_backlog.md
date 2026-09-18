@@ -134,6 +134,76 @@ and 61 ended up stranded under a band that no longer said anything about them.
 
 ## Band B — under an hour each
 
+- [ ] **93. An app's asset roots are declared twice, in two languages, and nothing checks they
+  agree - so twelve of the fifteen apps still cannot `make ship`.**
+  Found 2026-09-17 while making `apps/bomber` shippable. The packing MACHINERY is not the problem
+  and wants no changes: `make ship` runs `tools/assetpack`, the grouped `&:` target writes all three
+  generated files in one invocation, `$(MAKEFILE_LIST)` is a prerequisite because the flags live
+  there, and the pack directory is per-variant because `ASSET_PACK_FLAGS` depends on the flag
+  family. Three of those exist because a measured bug happened; the comments name which.
+
+  **NOT THE SAME ITEM AS 91, and the two are worth keeping apart.** Item 91 is about WHICH ASSETS
+  get packed - making the shipped set a property of the code rather than of the tree plus a
+  hand-written exclusion list, via `ASSET_NEEDS` and a link-time section. This one is about WHERE
+  THE ROOTS ARE DECLARED, and it survives 91 intact: even once the code declares every name it
+  needs, the packer still has to be told which directories those names resolve against, and the
+  runtime still has to be told the same thing in the same order. 91 removes the `--exclude` lists;
+  it does not remove `ASSET_ROOTS`. Do this one first - it is an hour against 91's day, and it is
+  what unblocks twelve apps that cannot ship at all today.
+
+  The problem is one level up. Every app states the same thing twice:
+
+  | | where | spelling | relative to |
+  |---|---|---|---|
+  | runtime search path | `main.cpp` | `"../assets"`, `"../../../shared_assets"` | the **exe** |
+  | pack set | the app's `makefile` | `ASSET_ROOTS := assets $(ROOT)/shared_assets` | the **repo** |
+
+  The engine.mk comment literally says *"same ORDER main.cpp declares them"* - a constraint the build
+  cannot verify, between two lists that do not even look alike.
+
+  **The evidence that this is real rather than theoretical.** Measured 2026-09-17: fourteen of the
+  fifteen apps declare exactly `../assets` then `../../../shared_assets`, and `ui` declares only the
+  shared one. Only `tetris` and `ui` carry `ASSET_ROOTS` - and they are exactly the two apps with no
+  `assets/` directory of their own, which is the one case where the list is too short to get wrong.
+  The other twelve carry 16 KB to 68 MB of their own assets and have never been able to ship.
+  `tetris` already disagrees with itself: its `main.cpp` names `../assets`, which does not exist.
+
+  **The failure mode is the bad kind.** Bake the wrong set and the shipped exe resolves assets
+  differently from every build that was tested - and because a baked asset beats disk and
+  `-DASSETS_BAKED` drops the disk roots, it cannot fall back. It surfaces on someone else's machine.
+
+  **A - derive the roots from the convention.** One line in `engine.mk`, before the `BAKE_ASSETS`
+  check, since make already runs in the app's own directory:
+
+      ASSET_ROOTS ?= $(wildcard assets) $(ROOT)/shared_assets
+
+  `$(wildcard assets)` yields nothing for `tetris` and `ui`, which reproduces exactly what those two
+  declare by hand today. Every app can then ship with no per-app change. It does not remove the
+  duplication - `main.cpp` keeps its own copy - it makes the default correct.
+
+  **B - one declaration, generated into both.** `ASSET_ROOTS` becomes the single source of truth;
+  `engine.mk` emits `build/generated/app_asset_roots.h` and `main.cpp` becomes one call over a
+  generated list inside the `#ifndef ASSETS_BAKED` that `tetris`, `ui` and now `bomber` hand-roll.
+  The two lists can then no longer disagree, and the ORDER constraint is enforced rather than
+  documented. The path transform is exact and fixed rather than a general solver: the exe always
+  lives at `apps/<name>/build/`, so the exe-relative spelling is the repo-relative one with one more
+  `../`. The cost is that `main.cpp` stops being readable on its own, which cuts against how this
+  repo likes its code - and is the reason this is not simply the recommendation.
+
+  **C - a per-app `assets.mk` manifest** holding roots plus exclusions, read by the build and by any
+  tooling. Only worth it if per-app packing rules grow past `--exclude`.
+
+  **A is the recommendation, with B held until the duplication actually bites.** Either way, add the
+  check that is currently a comment asking a human: **make the bake fail when a declared root does
+  not exist or packs nothing.** That is the same move the `$(MAKEFILE_LIST)` prerequisite already
+  made for the flags, and it is what turns "did you keep the two lists in step" into a build error.
+
+  **One trap to carry into whatever is built**, learned on bomber: `--exclude` matches the ASSET
+  NAME, and an asset name is what it resolves to across ALL roots. `--exclude "sound/*"` intended to
+  drop the four shared wavs also drops the app's own seven, and the result is a build that ships and
+  runs in silence. Anything that generates exclusions has to be root-aware or name files one at a
+  time.
+
 - [ ] **43. The field is rebuilt every frame with no dirty flag.** One geometry pass plus
   log2(size)+2 dispatches, all of it repeated whether or not anything moved. Its share of the
   90 us (see the reference at the bottom) was not measured separately from the march's, so that is
@@ -192,6 +262,41 @@ and 61 ended up stranded under a band that no longer said anything about them.
   `rp3d_local_fork_hinge_motor_patch`): scale the twist bound by the manifold's contact radius,
   or expose a per-material twist coefficient so a rail can have sliding friction without it.
   Anything in this engine that rolls a small body against a wall will hit this.
+
+- [ ] **92. `UIOverlay` cannot draw an image. Give it a texture array and a per-quad layer.**
+  Found 2026-09-17 while building `apps/bomber`'s HUD, which is the overlay's first real use beyond
+  `apps/tetris`'s volume readout. The overlay binds **one** texture for the whole batch - the R8 SDF
+  font atlas - and every quad's UV indexes into it, with untextured geometry pointing at the atlas's
+  solid texel. That is exactly what buys one draw call and a fragment shader with no branch
+  (`shared_assets/shaders/ui_overlay.frag`), and it is also why there is no way to put an image on
+  screen. Bomber's key icon is four rounded rectangles and its lives are circles for that reason;
+  they read fine, but hearts and a real key would read better, and a HUD is the place a game wants
+  art rather than primitives.
+
+  **Three ways, and the middle one is the one to take.**
+
+  1. A second sampler plus a per-quad source flag. Smallest diff, and it stays one draw call only
+     while there is exactly one extra texture - so it is a change that has to be made again.
+  2. **A texture ARRAY, with the layer as a vertex attribute.** One draw call for any number of
+     images, no batch splitting, no draw-order surprises, and the existing font atlas simply becomes
+     layer 0. The cost is that every image shares one size and format, which for a fixed set of game
+     icons uploaded once at `Init` is not a cost at all. **Recommended**, and it is what the user
+     picked when this was raised.
+  3. Batch splitting on texture change, which is what ImGui does. Unlimited images at arbitrary
+     sizes, and the draw call count stops being a property of the class and starts being a property
+     of what the app asked for.
+
+  **What (2) actually touches:** `atlas_tex` becomes `GL_TEXTURE_2D_ARRAY`, `ui_vertex` grows a
+  `layer` (it is 48 bytes and already carries two floats the rect path ignores, so there is room
+  without growing it), `AddQuad` takes one, `ui_overlay.frag`'s `texture(atlas,v_uv)` becomes a
+  `sampler2DArray` lookup, and a new `AddImage(min,max,layer,color)` sits beside `AddRect`. The SDF
+  path is untouched - a glyph is layer 0 with the distance scale it already has, and an image layer
+  wants the distance term disabled, which is the `distance_scale` attribute already in the vertex
+  set to something that reads as far-inside.
+
+  **Android matters here:** `ReUploadGPUObjects` has to rebuild the array too, and the pixels have to
+  survive the same way the font's do (borrowed from `core/File.h`'s never-freed buffers). An image
+  path that forgot that would work on win32 and go blank the first time the user takes a call.
 
 ## Band C — one to three hours each
 
@@ -498,6 +603,12 @@ and 61 ended up stranded under a band that no longer said anything about them.
   one of the two has a reproducible answer. A menu never opened, a sound only a tetris plays, a
   shader behind a toggle: all absent, and nothing would say so. A runtime manifest is a **verifier**
   here, never an input.
+
+  **Item 93 is the neighbouring, smaller problem** - the asset ROOTS being declared once in
+  `main.cpp` and again in the makefile, which is why twelve apps cannot `make ship` at all. It is
+  not subsumed by anything below: even with the code declaring every name it needs, the packer must
+  still be told which directories those names resolve against. 93 is an hour and unblocks shipping;
+  this is the deeper one.
 
   Three steps, cheapest first, each useful alone:
 

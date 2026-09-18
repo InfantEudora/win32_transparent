@@ -44,6 +44,19 @@ public:
 
     PhysicsWorld* physics_world = NULL;
 
+    /*
+        Everything in this scene, top level only - children hang off their parents and are reached
+        by recursing, which is what CullObjects, ForEachObject and FindObject all do.
+
+        THIS IS WHAT MAKES A SCENE A SCENE. It used to live on Renderer, which meant every Scene
+        sharing a Renderer shared one world: switching scenes swapped the camera, the physics
+        world, the tick clock and the command handlers, and left the same objects on screen. The
+        Renderer now gets this list handed to it per frame and keeps only what it derives from it.
+
+        Owned here, and freed by DeleteDestroyedObjects below.
+    */
+    std::vector<Object*> objects;
+
 
     void UpdateInput();
     //Only on a pass that ticks, and before anything reads an edge - see
@@ -82,6 +95,34 @@ public:
     void AddObject(Object* object);
 
     /*
+        Deletes every object marked by Object::Destroy, and their destroyed children. This is the
+        only thing that actually frees them and takes their rigid bodies out of the physics world;
+        Destroy() alone just stops them being drawn.
+
+        CALL IT FROM THE SIMULATION TICK - RunSimulationTick, or anything else the physics loop
+        runs while it holds physics_mutex. That is the whole constraint: this erases from the same
+        object list the render thread walks in Renderer::CullObjects and DrawFrame, so it must not
+        run while that thread is in there. The physics loop holds the mutex across the tick, so a
+        call made from inside the tick is mutually exclusive with rendering for free. A call from
+        an MCP handler or any render-thread code is NOT - use a SimCommand to get onto the tick.
+
+        IT IS DELIBERATELY NOT AUTOMATIC. The engine could call this at the end of every pass and
+        for a while it looked like it should - four apps had each worked out the same answer
+        independently (Dozer, Ship, Tetris, Breakout). It stays opt-in because WHEN an object
+        stops existing is a gameplay decision: a tick that destroys something and then looks at it
+        again is doing something ordinary, and an app that wants everything gone before it rebuilds
+        a level - ApplicationTetris::NewGame - wants to say exactly where that happens. What was
+        actually missing was this paragraph, not a call.
+
+        An app that creates objects at run time and never calls this leaks them and, worse, keeps
+        their colliders live in the physics world for the rest of the run.
+
+        It was Renderer::DeleteDestroyedObjects until the object list moved here; a call on the
+        renderer is now a compile error rather than a silent no-op, which is the point.
+    */
+    void DeleteDestroyedObjects();
+
+    /*
         Run fn with the simulation held still. Returns whether it ran.
 
         The read-side counterpart to SubmitCommand. A command is how another thread WRITES the
@@ -114,7 +155,7 @@ public:
     */
     bool AtTickBoundary(const std::function<void()>& fn);
 
-    //All three walk the whole tree (children included), depth-first, in renderer->objects order.
+    //All three walk the whole tree (children included), depth-first, in `objects` order.
     Object* FindObject(const std::string& name);
     Object* FindObjectByID(objectid_t id);
     void ForEachObject(const std::function<void(Object*)>& fn);

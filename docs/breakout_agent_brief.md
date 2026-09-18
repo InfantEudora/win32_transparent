@@ -383,7 +383,7 @@ A brick is an `Object` with a mesh, a material slot and a position. You have two
   nothing churns the renderer's object list. This is what Tetris does and it removes a whole class
   of bug.
 - **Created and destroyed as the game runs.** Legitimate, but see §9 on `Destroy()` — it only
-  *marks*, and the actual delete happens in `Renderer::DeleteDestroyedObjects()`, which most apps
+  *marks*, and the actual delete happens in `Scene::DeleteDestroyedObjects()`, which most apps
   never call. Forget it and every dead brick leaves its rigid body in the physics world for the
   life of the run.
 
@@ -991,7 +991,7 @@ cold.
 **Objects and the scene**
 
 - **`Object::Destroy()` only marks.** The actual delete happens in
-  `Renderer::DeleteDestroyedObjects()` (`core/Renderer.cpp:1558`), which only Dozer, Ship and
+  `Scene::DeleteDestroyedObjects()`, which only Dozer, Ship and
   Tetris call. In every other app a destroyed object stops rendering but **its rigid body stays in
   the physics world forever**. If you destroy bricks, call it — from `RunSimulationTick`, where
   the mutex is held and the render thread is not walking the object list. This is open backlog

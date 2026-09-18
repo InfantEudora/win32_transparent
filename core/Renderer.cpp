@@ -170,7 +170,7 @@ void Renderer::GetAllRenderableVisableSubObjects(Object* object,std::vector<Obje
 }
 
 //For now all objects are rendered when visible
-void Renderer::CullObjects(){
+void Renderer::CullObjects(const std::vector<Object*>& objects){
     renderable_objects.clear();
     for (Object* object:objects){
         if (object->IsVisible()){
@@ -187,7 +187,7 @@ void Renderer::UpdateObjectMaterials(){
 }
 
 //For now, we simple render all objects.
-void Renderer::CullLights(){
+void Renderer::CullLights(const std::vector<Object*>& objects){
     visible_lights.clear();
     for (Object* object:objects){
         Light* light = dynamic_cast<Light*>(object);
@@ -245,7 +245,7 @@ void Renderer::ClearObjectBatches(){
 
 void Renderer::FillBactches(){
     //This should mark all meshes that need to for render, and have uploaded their data.
-    debug->Trace("objects.size() = %i\n",objects.size());
+    debug->Trace("renderable_objects.size() = %i\n",renderable_objects.size());
     debug->Trace("unique_mesh_batches.size() = %i\n",unique_mesh_batches.size());
 
     //Reset stats
@@ -452,14 +452,14 @@ void Renderer::DrawSkyBox(Camera* camera){
     }
 }
 
-void Renderer::PrepareObjects(){
+void Renderer::PrepareObjects(const std::vector<Object*>& objects){
     //First, we cull all objects we are sure of are not visible.
     //Then we make a list of all objects that need to be rendered.
     //Of those objects, we make a list for each unique mesh with object attributes and object ids.
     //No per-object state copy here any more: an object carries a single ObjectState, written by
     //the physics thread under physics_mutex - which DrawFrame holds across this whole call.
-    CullObjects();
-    CullLights();
+    CullObjects(objects);
+    CullLights(objects);
     UpdateObjectMaterials();
     RebuildUniqueMeshList();
     ClearBatches();
@@ -904,8 +904,20 @@ void Renderer::SSAOPass(Camera* camera){
     glBindTextureUnit(2, resolve_tex_id);
 
     ssao_compute_shader->Setmat4("mat_worldcam",camera->mat_cam);
+    /*
+        The eye and the view axis, because the G-buffer this pass reads is in WORLD space and the
+        occlusion test needs a distance from the camera. The shader takes it as
+        dot(p - eye, forward), which for a lookat matrix is exactly -z_view - see the block on
+        these two uniforms in ssao_compute.comp for why it is not simply a .z.
+    */
+    ssao_compute_shader->Setvec3("eye_position",camera->GetPosition());
+    ssao_compute_shader->Setvec3("camera_forward",camera->GetForward());
+    ssao_compute_shader->Setvec2("target_size",vec2((float)width,(float)height));
 
-    glDispatchCompute(width/32, height, 1);
+    //Round UP: `width/32` truncates, so on any width that is not a multiple of 32 the last few
+    //columns were never dispatched at all and kept whatever the texture held before. The shader
+    //drops the invocations that overshoot.
+    glDispatchCompute((width + 31)/32, height, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
@@ -1318,7 +1330,7 @@ void Renderer::ReadPickingAsync(InputController* input, int mouse_x, int mouse_y
     picking_pbo_write_index = (slot + 1) % PICK_PBO_SLOTS;
 }
 
-void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input){
+void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Shader* shader, InputController* input){
     if (!camera){
         debug->Fatal("DrawFrame called without camera.\n");
     }
@@ -1329,7 +1341,7 @@ void Renderer::DrawFrame(Camera* camera, Shader* shader, InputController* input)
         tmr_frame->Restart();
     }
 
-    PrepareObjects();
+    PrepareObjects(objects);
 
     camera->viewport.width = GetViewportWidth();
     camera->viewport.height = GetViewportHeight();
@@ -2302,7 +2314,7 @@ static void ReUploadMeshesRecursive(Object* object, std::vector<Mesh*>& done){
 }
 
 //See the header for why this exists when nothing on Windows can reach it.
-void Renderer::ReUploadAllMeshes(){
+void Renderer::ReUploadAllMeshes(const std::vector<Object*>& objects){
     std::vector<Mesh*> done;
     for (Object* object:objects){
         ReUploadMeshesRecursive(object,done);
@@ -2310,22 +2322,5 @@ void Renderer::ReUploadAllMeshes(){
     debug->Info("Re-uploaded %d distinct meshes for the new GL context\n",(int)done.size());
 }
 
-//Should be called when physics is done, before rendering.
-//It deletes them from the list, and actually deletes them.
-//This is now responsible for destroying objects... until something better comes to mind.
-void Renderer::DeleteDestroyedObjects(){
-    std::vector<Object*>::iterator it = objects.begin();
-    for ( ; it != objects.end(); ) {
-        Object* object = *it;
-        if (object->IsDestroyed()){
-            //We should destroy it.
-            it = objects.erase(it);
-            //Destroy object
-            //debug->Info("Object %lu is about to be destroyed\n",object->GetID());
-            delete object;
-        }else{
-            object->DeleteDestroyedChildren();
-            ++it;
-        }
-    }
-}
+//DeleteDestroyedObjects lives on Scene now - it erases from the object list, and Scene owns that.
+//"until something better comes to mind" was the note here for a long time; this was it.

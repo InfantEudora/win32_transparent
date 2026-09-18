@@ -2373,6 +2373,10 @@ object happened to construct first.
   line upstream would end it; nothing in-tree hits it today because everything reaches miniz through
   `BinaryAsset.h`.
 
+  **Correction, 2026-09-18: upstream was never missing it.** The copy in `3rdparty/miniz` was a
+  modified 3.1.0 whose `#pragma once` had been commented out by hand. `3rdparty/miniz` is a
+  submodule pinned at 3.1.2 now and the guard is back, so the trap above no longer exists.
+
   **Step 4 is DONE, 2026-09-14** — `engine.mk` has a `BAKE_ASSETS` block, proven on `apps/ui`
   (tetris's asset shape exactly, and another agent was in tetris at the time). `ui_baked.exe` runs
   with **no search path at all**: 11 assets from the baked table, 0 from disk, no fatals, and it

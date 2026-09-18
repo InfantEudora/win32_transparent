@@ -9,7 +9,31 @@ layout (binding = 0) uniform sampler2D positiontexture;
 layout (binding = 1) uniform sampler2D normaltexture;
 layout (binding = 2) uniform sampler2D albedotexture;
 
-uniform mat4 mat_worldcam;
+uniform mat4 mat_worldcam;      //World -> clip. Camera::mat_cam, which is projection * view.
+
+/*
+    THE G-BUFFER IS IN WORLD SPACE, AND THAT IS THE WHOLE REASON THESE TWO UNIFORMS EXIST.
+
+    Every published SSAO (this one started as LearnOpenGL's) works in VIEW space, where a
+    position's .z IS its distance from the eye and the occlusion test is a plain comparison of two
+    .z values. deferred.frag writes `dposition = vec4(vposition,alpha)` with vposition in WORLD
+    space, so .z here is a fixed world axis with nothing to do with the camera. Comparing world .z
+    the way the tutorial compares view .z is right only when the camera happens to look down world
+    -Z, and for every other orientation it degenerates into a half-space split that occludes about
+    half the hemisphere everywhere. The symptom was an SSAO buffer that looked plausible from the
+    app's starting camera and went completely black the moment the camera was panned.
+
+    Rather than transform the whole G-buffer into view space, depth is taken along the camera's
+    own axis: for a lookat matrix, -z_view is exactly dot(p - eye, forward). One dot product
+    instead of a mat4 multiply, and Camera::mat_look can stay private.
+*/
+uniform vec3 eye_position;
+uniform vec3 camera_forward;
+
+//The destination image's real size in pixels. NOT derivable from gl_NumWorkGroups: the dispatch
+//rounds the width UP to a whole number of groups, so gl_NumWorkGroups.x*32 is a slightly too
+//large width to divide a uv by, and the picture comes out stretched by a fraction of a pixel.
+uniform vec2 target_size;
 
 //Actual voronoi from IQ: https://www.shadertoy.com/view/MslGD8
 vec2 hashwithoutsine22(vec2 p){
@@ -36,19 +60,29 @@ vec2 hash(vec2 p){
     return fract(sin(p)*18.5453);
 }
 
+//Distance from the eye along the view axis, for a WORLD-space point. Positive in front of the
+//camera and growing with distance - the opposite sign to view-space .z, which is why the
+//occlusion test below reads "nearer than" where the tutorial's reads "further than".
+float ViewDepth(vec3 world_p){
+    return dot(world_p - eye_position, camera_forward);
+}
+
 //TODO: Provide it a random texture from RRandom.
 //This reads the texture in, and outputs to the texture out.
 void main(){
-
-
-
     ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
-    vec2 uv = vec2(texelCoord);
-    uv.x /= gl_NumWorkGroups.x * 32;
-    uv.y /= gl_NumWorkGroups.y;
+    //The dispatch rounds up, so the rightmost group carries invocations past the edge of the image.
+    if (texelCoord.x >= int(target_size.x)){
+        return;
+    }
+    //+0.5 samples the CENTRE of the texel. Without it every fetch sits on a texel corner, which
+    //under GL_NEAREST is a coin toss between two neighbours.
+    vec2 uv = (vec2(texelCoord) + 0.5) / target_size;
 
     vec3 fragPos = texture(positiontexture, uv).xyz;
-    vec3 normal    = texture(normaltexture, uv).xyz;
+    //Normalised because this arrives INTERPOLATED across the triangle and stored in RGBA16F, so it
+    //is not unit length - and every dot() and cross() below assumes that it is.
+    vec3 normal    = normalize(texture(normaltexture, uv).xyz);
     vec4 albedo    = texture(albedotexture, uv);
     float alpha = albedo.w;
     //float alpha = 1.0;
@@ -57,44 +91,87 @@ void main(){
         return;
     }
 
+    float frag_depth = ViewDepth(fragPos);
+
     float occlusion = 0.0;
     float radius = 1.5;
     float bias = 0.025;
     int kernelSize = 32;
-    for(int i = 0; i < kernelSize; ++i){
-        vec3 randomVec  = hashwithoutsine32(hashwithoutsine22(vec2(uv.x*120+i,uv.y*120-i)));
-        randomVec *=2;
-        randomVec -= vec3(1,1,1);
-        randomVec.z = 0;
-        randomVec = normalize(randomVec);
 
-        vec3 tangent   = normalize(randomVec - normal * dot(randomVec, normal));
+    /*
+        A reference axis that is NOT parallel to the normal, to build a basis out of.
+
+        This used to Gram-Schmidt a random vector with .z forced to zero, which is what the
+        view-space tutorial does and is safe there: a view-space normal always points roughly at
+        the camera, so it can never be parallel to something lying in the view XY plane. A WORLD
+        normal can be. Every block face in bomber that faces along world Z made
+        `randomVec - normal*dot(randomVec,normal)` collapse to nearly zero, and normalize() of that
+        is garbage - so a whole family of surfaces got a different, meaningless basis per pixel.
+
+        Choosing the reference off the normal guarantees the cross product has something to work
+        with, whichever way the surface faces. It is also loop-invariant, unlike what it replaces.
+    */
+    vec3 ref = (abs(normal.z) < 0.9) ? vec3(0,0,1) : vec3(1,0,0);
+    vec3 base_tangent = normalize(cross(ref, normal));
+
+    for(int i = 0; i < kernelSize; ++i){
+        //Jitter the basis per pixel so the fixed sample directions do not band across the screen.
+        //The rotation is about the normal, so the hemisphere stays a hemisphere.
+        vec2 rot = normalize(hashwithoutsine22(vec2(uv.x*120+i, uv.y*120-i)) * 2.0 - 1.0);
+        vec3 tangent   = normalize(base_tangent * rot.x + cross(normal,base_tangent) * rot.y);
         vec3 bitangent = cross(normal, tangent);
         mat3 TBN       = mat3(tangent, bitangent, normal);
 
-        // get sample in unit sphere
-        vec3 sampl = hashwithoutsine33(tangent +  vec3(float(i*3.1415)));
+        // get sample in unit hemisphere
+        //hash*() return fract(), i.e. [0,1) on every component - so the -1..1 remap has to happen
+        //BEFORE the abs() that folds the sphere into a hemisphere. Without it `sampl.z =
+        //abs(sampl.z)` was a no-op and normalize() of an all-positive vector only ever produced
+        //the +++ octant: all 32 samples crowded into an eighth of the hemisphere they must cover.
+        vec3 sampl = hashwithoutsine33(tangent + vec3(float(i*3.1415))) * 2.0 - 1.0;
         sampl.z = abs(sampl.z);
         sampl = normalize(sampl);
         float scale = float(i) / float(kernelSize);
         scale   = mix(0.1f, 1.0f, scale * scale); //mix = lerp
         sampl *= scale;
 
-        vec3 samplePos = TBN * sampl; // from tangent to view-space
+        vec3 samplePos = TBN * sampl; // tangent space to WORLD space - the normal is a world normal
         samplePos = fragPos + samplePos * radius;
 
         vec4 offset = vec4(samplePos, 1.0);
-        offset      = mat_worldcam * offset;    // from view to clip-space
+        offset      = mat_worldcam * offset;    // from world to clip-space
+        //Behind the eye: the perspective divide flips the sign and lands this sample on a
+        //mirrored, meaningless pixel rather than off-screen where it belongs.
+        if (offset.w <= 0.0){
+            continue;
+        }
+        //offset.w is the sample's own distance from the eye: this projection has vertex[2].w = -1
+        //(see fmat4::perspectivematrix), so clip.w == -z_view == ViewDepth(samplePos) exactly.
+        float want_depth = offset.w;
         offset.xyz /= offset.w;               // perspective divide
         offset.xyz  = offset.xyz * 0.5 + 0.5; // transform to range 0.0 - 1.0
+        //An off-screen sample has no G-buffer to test against. CLAMP_TO_EDGE would hand back the
+        //border texel, which is a real world position somewhere else entirely and so occludes at
+        //random; skipping counts the sample as unoccluded, which is the honest answer.
+        if (any(lessThan(offset.xy, vec2(0.0))) || any(greaterThan(offset.xy, vec2(1.0)))){
+            continue;
+        }
 
-        float sampleDepth = texture(positiontexture, offset.xy).z;
+        //Depth of whatever the camera actually SEES at the sample's pixel, against the depth the
+        //sample itself sits at. Both measured from the eye, so this is a like-for-like compare.
+        float sampleDepth = ViewDepth(texture(positiontexture, offset.xy).xyz);
         float sampleAlpha = texture(albedotexture, offset.xy).w;
 
-        float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
-        occlusion       += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck * sampleAlpha;
+        float rangeCheck = smoothstep(0.0, 1.0, radius / abs(frag_depth - sampleDepth));
+        //Occluded when the visible geometry is NEARER than the sample point, i.e. something is in
+        //the way. The tutorial's test reads the other way round only because view-space .z grows
+        //towards the camera where ViewDepth grows away from it.
+        occlusion       += (sampleDepth <= want_depth - bias ? 1.0 : 0.0) * rangeCheck * sampleAlpha;
     }
-    occlusion = 1.0 - (occlusion / (float(kernelSize) * 0.5));
+    //Divide by the FULL kernel size. This was `kernelSize * 0.5`, which maps half the samples
+    //occluded - the value a broken depth test produces almost everywhere - to exactly zero, and
+    //anything past it to a negative number stored unclamped into an RGBA16F. That halving is what
+    //turned "wrong" into "solid black".
+    occlusion = clamp(1.0 - (occlusion / float(kernelSize)), 0.0, 1.0);
     occlusion *= alpha;
 
     vec4 outval;

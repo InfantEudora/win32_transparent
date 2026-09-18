@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <mutex>
+#include <atomic>
 //app_name is a std::string. Window.h happens to pull this in too, but an include that is only
 //there by transit is one refactor away from not being there at all.
 #include <string>
@@ -86,12 +87,15 @@ public:
     virtual void Init(void);    // Called from Frame Thread
 
     //Handlers for core's own SimCommand types (see core/SimCommand.h) - object_set_transform and
-    //asset spawning. Registered on main_scene right after Init(), for the same reason
-    //RegisterCoreMCPTools is: the scene has to exist. It lives on Application rather than on
-    //Scene because spawning needs the AssetManager, which Scene has no business knowing about -
-    //and keeping Scene as pure queue-and-dispatch is what lets an app register handlers that
-    //close over its own types.
+    //asset spawning. Registered right after Init(), for the same reason RegisterCoreMCPTools is:
+    //the scenes have to exist. It lives on Application rather than on Scene because spawning needs
+    //the AssetManager, which Scene has no business knowing about - and keeping Scene as pure
+    //queue-and-dispatch is what lets an app register handlers that close over its own types.
+    //
+    //The no-argument form does EVERY scene the app built, which is what makes a second scene work
+    //at all - see the definition.
     void RegisterCoreCommandHandlers();
+    void RegisterCoreCommandHandlers(Scene* scene);
 
     //Submit a SimCommand and block until the physics thread has applied it, then return the
     //object it created or acted on (OBJECTID_INVALID on timeout, or if the handler made nothing).
@@ -316,7 +320,11 @@ public:
     int touch_layout_h = -1;
     Shader* default_shader = NULL;
     std::vector<Scene*> scenes;         // List of different scenes this application owns.
-    Scene* main_scene = NULL;           // Currently active scene.
+    Scene* main_scene = NULL;           // Currently active scene. Physics thread swaps it; see
+                                        // ApplyPendingSceneSwitch before writing it directly.
+    //A switch asked for from another thread, waiting to be applied. Atomic because the asking and
+    //the applying are on different threads and nothing else synchronises them.
+    std::atomic<Scene*> pending_scene{NULL};
     AssetManager* assetmanager = NULL;
     GLTFLoader gltfloader;              // We can only have a single GLTF loader for now
 
@@ -406,6 +414,12 @@ public:
     json shader_reload_result;
 
     Scene* CreateNewScene(const std::string& name);    // Creates a new scene, with some defaults.
+
+    //Switching which scene is simulated and drawn. See the comments on the definitions: the
+    //request is safe from any thread, the swap itself only happens on the physics thread.
+    void RequestActiveScene(Scene* scene);
+    void ApplyPendingSceneSwitch();                    // physics thread only, physics_mutex held
+    Scene* GetActiveScene(){ return main_scene; }
 
     //One liners that do many things
     Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);

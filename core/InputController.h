@@ -400,8 +400,9 @@ class InputController{
     */
     bool IsInputLive(){ return HasFocus() || HasSyntheticHolds(); }
 
-    //Called from thread that created the window
-    void HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
+    //Called from thread that created the window. Takes the HWND because answering a message is
+    //not always enough - WM_MOUSELEAVE has to be ASKED for, per entry, on the window it concerns.
+    void HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
     KeyMap* AddKeyMap(uint32_t syskey, uint32_t mapped);
     KeyMap* GetBySystemKey(uint32_t sys_code);

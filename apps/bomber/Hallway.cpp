@@ -108,18 +108,20 @@ int Hallway::LocalToWorld(int local_dir) const {
 }
 
 /*
-    A key press, in the corridor's cells.
+    A key press, in the corridor's cells. The exact inverse of LocalToWorld.
 
-    Through `control_forward` and NOT `forward`, so that turning the corridor does not turn the
-    controls - see the note at the declaration. This is deliberately not the inverse of LocalToWorld
-    once the two frames have come apart.
+    IT WAS NOT ALWAYS. A corridor used to be turned to meet the next board, so it carried a second
+    frame - `control_forward` - that the turn deliberately left alone, and this went through that
+    one instead. A corridor is never turned now (the next board's entry border follows the corridor
+    rather than the other way round), so the two frames are always equal and the second one was
+    deleted rather than left standing as a thing that can only ever agree.
 */
 int Hallway::InputToLocal(int world_dir) const {
     int i = CycleIndex(world_dir);
     if (i < 0){
         return MAZE_DIR_NONE;
     }
-    return HALL_DIR_CYCLE[((i - TurnOf(control_forward)) % MAZE_NUM_DIRS + MAZE_NUM_DIRS)
+    return HALL_DIR_CYCLE[((i - TurnOf(forward)) % MAZE_NUM_DIRS + MAZE_NUM_DIRS)
                           % MAZE_NUM_DIRS];
 }
 
@@ -135,9 +137,8 @@ void Hallway::Begin(uint32_t seed, const MazeWalker& carry, int forward_dir){
         for exactly that reason; a corridor needs one number and can do without one entirely.
     */
     length = HALL_MIN_LEN + (int)(seed % (uint32_t)(HALL_MAX_LEN - HALL_MIN_LEN + 1));
+    //And it never changes again - see the note on the member.
     forward = (forward_dir >= 0 && forward_dir < MAZE_NUM_DIRS) ? forward_dir : MAZE_DIR_SOUTH;
-    //The two frames start together and only the geometry one ever moves.
-    control_forward = forward;
 
     /*
         THE WALKER ARRIVES UNCHANGED apart from where it is standing.

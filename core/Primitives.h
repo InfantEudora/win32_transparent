@@ -45,10 +45,21 @@
 //non-cubic box has stretched texturing - bake a repeat into the material if that matters.
 Mesh* MakeBox(const vec3& size);
 
-//Flat rectangle in the XY plane facing +Z, the same orientation as a glyph or a billboard: x
-//right, y up, normal at the viewer. Rotate the Object by -90 degrees about X to lay it down as
-//a floor. Two triangles.
-Mesh* MakeQuad(float width, float height);
+/*
+    Flat rectangle in the XY plane facing +Z, the same orientation as a glyph or a billboard: x
+    right, y up, normal at the viewer. Rotate the Object by -90 degrees about X to lay it down as
+    a floor. Two triangles.
+
+    `flip_v` MIRRORS THE V COORDINATE, AND A TEXTURED QUAD WANTS IT TRUE. The quad's own UVs put
+    V=0 on the BOTTOM edge, because that is where the geometry starts; this engine's images put
+    V=0 on the TOP row, because that is glTF's convention and every loaded mesh and material
+    texture is authored against it. Sample a material texture with the raw UVs and the picture
+    arrives upside down - which went unnoticed for a long time because until bomber's title screen
+    every MakeQuad in the tree was either untextured (breakout's shield) or drawn by a custom
+    shader computing its own pattern from vuv (testfx's effects). Those want the raw orientation,
+    which is why this is a parameter and not a correction.
+*/
+Mesh* MakeQuad(float width, float height, bool flip_v = false);
 
 //UV sphere. `segments` divides the azimuth (around +Y), `rings` divides pole to pole, so the
 //triangle count is roughly segments * rings * 2 - the top and bottom rows are triangles rather

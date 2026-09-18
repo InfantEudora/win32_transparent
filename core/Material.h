@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 #include <string>
-#include "glad.h"
 #include "type_vec4.h"
 #include "Texture.h"
 /*

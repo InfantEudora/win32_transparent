@@ -18,6 +18,24 @@ Sprite* SpriteSheet::GetSprite(int index){
 	return NULL;
 }
 
+/*
+	Look one up by name. Linear, because a sheet is tens of sprites and a map would be a second
+	thing to keep in step with `sprites` for no measurable gain.
+
+	DECLARED IN THE HEADER SINCE THE CLASS WAS WRITTEN AND NEVER DEFINED until 2026-09-17 - a
+	latent link error that nothing in this tree had triggered, because nothing called it. It
+	surfaced the moment tools/spritepacker came over from the Android port, which does. Taken
+	from that port's copy, which had it all along.
+*/
+Sprite* SpriteSheet::GetSprite(const char* name){
+	for (Sprite& sprite : sprites){
+		if (sprite.name == name){
+			return &sprite;
+		}
+	}
+	return NULL;
+}
+
 Sprite* SpriteSheet::GetLastSprite(){
 	if (!sprites.empty()){
 		return &sprites.back();

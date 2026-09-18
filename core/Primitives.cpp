@@ -97,7 +97,7 @@ Mesh* MakeBox(const vec3& size){
 
 //--- quad --------------------------------------------------------------------------------------
 
-Mesh* MakeQuad(float width,float height){
+Mesh* MakeQuad(float width,float height,bool flip_v){
     if (width <= 0.0f || height <= 0.0f){
         debug->Err("MakeQuad: width and height must be positive, got %.3f x %.3f\n",width,height);
         return NULL;
@@ -111,11 +111,15 @@ Mesh* MakeQuad(float width,float height){
     std::vector<vertex>verts;
     verts.reserve(6);
 
+    //V at the bottom edge and at the top edge - swapped by flip_v, see the header for why.
+    float v_bottom = flip_v ? 1.0f : 0.0f;
+    float v_top    = flip_v ? 0.0f : 1.0f;
+
     //Counter-clockwise seen from +Z, i.e. from where the normal points.
-    vertex a = MakeVertex(vec3(-hw,-hh,0),n,t,vec2(0,0));
-    vertex b = MakeVertex(vec3( hw,-hh,0),n,t,vec2(1,0));
-    vertex c = MakeVertex(vec3( hw, hh,0),n,t,vec2(1,1));
-    vertex d = MakeVertex(vec3(-hw, hh,0),n,t,vec2(0,1));
+    vertex a = MakeVertex(vec3(-hw,-hh,0),n,t,vec2(0,v_bottom));
+    vertex b = MakeVertex(vec3( hw,-hh,0),n,t,vec2(1,v_bottom));
+    vertex c = MakeVertex(vec3( hw, hh,0),n,t,vec2(1,v_top));
+    vertex d = MakeVertex(vec3(-hw, hh,0),n,t,vec2(0,v_top));
     PushQuad(verts,a,b,c,d);
 
     return FinishMesh(verts,"MakeQuad");

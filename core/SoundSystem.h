@@ -1,7 +1,15 @@
-﻿#ifndef _SOUND_H_
+#ifndef _SOUND_H_
 #define _SOUND_H_
 
+/*
+    Nothing in this header or in SoundSystem.cpp uses <windows.h> any more -- it is left over
+    from the OpenAL version, which held an HINSTANCE for the soft_oal.dll it resolved entry
+    points out of. Kept rather than deleted so a Windows TU that leaned on it by transit does
+    not break, and guarded so the same file compiles for Android.
+*/
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>

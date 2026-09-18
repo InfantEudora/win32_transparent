@@ -34,9 +34,44 @@ APP_SRCS += ApplicationBomber.cpp
 APP_SRCS += Maze.cpp
 APP_SRCS += Hallway.cpp
 
-#No SoundSystem yet, so OpenAL is not linked - see the USE_SOUND block in engine.mk. A bomb
-#that makes no noise is a gap this app will want closing, but it is a property of the app
-#rather than of the build, so it turns on here when there is a wav to play.
+#The bomb, the shears, the pickups, the exit and the level boundary all make noise - see the
+#sound block in ApplicationBomber.cpp. This pulls core/SoundSystem.cpp and core/WaveFile.cpp
+#into the build; see the USE_SOUND block in engine.mk for why it is opt-in per app.
+USE_SOUND := 1
+
+#---------------------------------------------------------------------------------------
+# What `make ship` bakes into the exe.
+#
+# THE SAME TWO ROOTS main.cpp declares, IN THE SAME ORDER - this app's own first so its
+# shaders/bomber_explosion.frag wins, then the shared tree for default.vert, noise3d.comp
+# and the overlay's font. The order matters for the same reason it matters at run time, and
+# nothing checks that these two lists agree, so they are worth reading together.
+#
+# Only read when BAKE_ASSETS is 1, so this costs an ordinary build nothing. See the BAKED
+# ASSETS block in engine.mk and tools/assetpack_plan.md.
+#---------------------------------------------------------------------------------------
+ASSET_ROOTS := assets $(ROOT)/shared_assets
+
+#---------------------------------------------------------------------------------------
+# What it does NOT bake: 1.1 MB of the shared tree this app never asks for.
+#
+# EVERY ONE OF THESE WAS CHECKED RATHER THAN ASSUMED - nothing in core/ or in this app names
+# any of them outside a comment. That check is the whole job here: an exclusion that is wrong
+# does not fail the build, it produces an exe that dies on its first LoadFile, on a machine
+# that has no loose copy to fall back on.
+#
+# --exclude MATCHES THE ASSET NAME, NOT THE PATH, and the asset name is what a name resolves
+# to across ALL roots - so `sound/*` here would silently drop this app's OWN seven wavs along
+# with the shared four. The four are named one at a time for exactly that reason.
+#---------------------------------------------------------------------------------------
+ASSET_PACK_FLAGS += --exclude "fonts/CascadiaMono.ttf"      #371 KB - nothing selects this font
+ASSET_PACK_FLAGS += --exclude "fonts/mono_sdf.png"          #73 KB - fontbake writes it to be eyeballed
+ASSET_PACK_FLAGS += --exclude "meshes/glyphs_unispace.glb"  #312 KB - TextMesh's; this app uses UIOverlay
+#breakout's and the sound tests'. This app ships its own seven under the same category.
+ASSET_PACK_FLAGS += --exclude "sound/bleep.wav"
+ASSET_PACK_FLAGS += --exclude "sound/click.wav"
+ASSET_PACK_FLAGS += --exclude "sound/floop.wav"
+ASSET_PACK_FLAGS += --exclude "sound/hax.wav"
 
 include $(ROOT)/engine.mk
 

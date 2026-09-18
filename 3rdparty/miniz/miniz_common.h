@@ -4,8 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-//#include "miniz_export.h"
-#define MINIZ_EXPORT
+#include "miniz_export.h"
 
 /* ------------------- Types and macros */
 typedef unsigned char mz_uint8;
@@ -72,14 +71,6 @@ typedef struct mz_dummy_time_t_tag
 #endif
 
 #define MZ_READ_LE64(p) (((mz_uint64)MZ_READ_LE32(p)) | (((mz_uint64)MZ_READ_LE32((const mz_uint8 *)(p) + sizeof(mz_uint32))) << 32U))
-
-#ifdef _MSC_VER
-#define MZ_FORCEINLINE __forceinline
-#elif defined(__GNUC__)
-#define MZ_FORCEINLINE __inline__ __attribute__((__always_inline__))
-#else
-#define MZ_FORCEINLINE inline
-#endif
 
 #ifdef __cplusplus
 extern "C"

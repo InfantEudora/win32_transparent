@@ -64,6 +64,77 @@
 #define INPUT_BOMBER_DROP           INPUT_LAST+5
 #define INPUT_BOMBER_RESTART        INPUT_LAST+6
 #define INPUT_BOMBER_RELOAD_SHADER  INPUT_LAST+7
+#define INPUT_BOMBER_CAMERA         INPUT_LAST+8
+
+/*
+    The two camera modes.
+
+    BOMBER_CAM_GAME is SOLVED every pass from a yaw, a pitch, a distance and a pivot - nothing
+    integrates, so there is a framing to return to rather than only a position that has been pushed
+    around. BOMBER_CAM_FREE is the middle-mouse orbit, which is a debugging affordance and is now
+    behind a key instead of being always on.
+
+    They are a MODE rather than a flag beside the framings for the same reason apps/pinball's
+    PIN_SHOT_ORBIT is: everything that can switch the camera - a key, the panel, an MCP call - then
+    switches to both with no second thing to remember.
+
+    WHAT THE MODE COSTS AN AGENT: core's `camera_set` writes the camera directly, and in GAME mode
+    the solve overwrites it on the next pass. So camera_set only sticks in FREE, exactly as it only
+    sticks outside the orbit in pinball. `bomber_camera` switches modes.
+*/
+#define BOMBER_CAM_GAME             0
+#define BOMBER_CAM_FREE             1
+
+/*
+    The game framing over the board. All four measured against screenshots rather than reasoned
+    about, because the constraint they are up against is not obvious from the numbers.
+
+    PITCH IS NOT A MATTER OF TASTE, AND IT IS NOT FREE EITHER.
+
+    Not taste: a bomberman blast is a PLUS drawn on the floor, and from a low three-quarter view the
+    two arms running away from the camera foreshorten into the middle and the whole thing reads as a
+    blob. The original 50 degrees is about the shallowest that survives that.
+
+    Not free: the board is SQUARE and the window is 16:10, and the camera's vertical FOV is 45. The
+    board's width fills the frame, so its depth has to fit in less - and the more overhead the pitch,
+    the less the depth foreshortens and the more of it there is to fit. Going top-down therefore
+    spends board. At 58 and 19 out the whole 16x16 is in frame with the pivot centred, and the worst
+    the lean below can do is clip part of the border wall on the side AWAY from the player. At 62
+    and 17 - tried first - it was a row and a half of playfield.
+
+    So this is the most overhead the framing can be and still show the board. Anything further over
+    wants a wider FOV, which is a different change.
+*/
+#define BOMBER_CAM_PITCH            58.0f
+#define BOMBER_CAM_DISTANCE         19.0f
+/*
+    How much of the way from the middle of the board toward the player the pivot leans, and how far
+    it is ever allowed to get.
+
+    A LEAN AND A CLAMP RATHER THAN A FOLLOW. The board is the thing being played and it wants to
+    stay in frame, so the camera is centred on it and only leans toward the player; the clamp is
+    what stops a player in a corner (10.6 units out) from dragging the framing off the board
+    altogether. At 0.25 with a 2.5-unit ceiling a corner leans the view the full 2.5, which is two
+    and a half cells of lead in the direction they are playing and costs at most part of the far
+    border wall - see the note on the pitch for what the frame has to spend.
+*/
+#define BOMBER_CAM_FOLLOW           0.25f
+#define BOMBER_CAM_FOLLOW_MAX       2.5f
+//How much of the remaining distance the framing closes each pass. A fraction rather than a count,
+//so it eases and never snaps, and so redirecting it mid-move costs nothing.
+#define BOMBER_CAM_EASE             0.06f
+
+/*
+    The HUD's one unit, and everything else is a multiple of it.
+
+    A FRACTION OF THE WINDOW HEIGHT, not a pixel count: the overlay speaks pixels (see
+    core/UIOverlay.h on why), so surviving a resize is the caller's job and one scale factor is the
+    cheapest way to do it. Height rather than width because a HUD that grew with a widening window
+    would march off toward the middle of an ultrawide.
+*/
+#define BOMBER_HUD_UNIT             0.030f
+//Margin from the window edge, in the same unit.
+#define BOMBER_HUD_MARGIN           1.2f
 
 /*
     Our own simulation commands, numbered from SIM_CMD_LAST.
@@ -177,6 +248,16 @@ struct BomberKnob{
     const char* help = NULL;
 };
 
+/*
+    --- SOUND ------------------------------------------------------------------------------------
+    Guarded, because USE_SOUND is opt-in per app (see the makefile and the block in engine.mk) and
+    this header has to compile with it off. Every call site below is inside the same guard rather
+    than behind a null check, so a build without sound carries none of it.
+*/
+#ifdef USE_SOUND
+#include "SoundSystem.h"
+#endif
+
 class ApplicationBomber : public Application{
 public:
     ApplicationBomber();
@@ -195,6 +276,24 @@ public:
 private:
     //--- setup --------------------------------------------------------------------------------
     void SetupInput();
+
+    /*
+        The title screen, as a SECOND SCENE rather than as a flag the game's update path checks.
+
+        That is the whole point of it being here: switching Application::main_scene switches what
+        is simulated and what is drawn in one move, so the game does not have to be taught to stay
+        quiet - it simply is not the active scene. The three gates below (RunSimulationTick,
+        UpdateView, DrawOverlay) exist only because those are Application-level hooks that run
+        whatever the active scene is; everything else falls out for free.
+
+        Neither pointer is ever freed or reassigned after Init, which is what makes the unlocked
+        read of main_scene on the render thread safe - see Application::ApplyPendingSceneSwitch.
+    */
+    void CreateTitleScene();
+    bool IsOnTitleScreen(){ return (main_scene != NULL) && (main_scene == title_scene); }
+
+    Scene* game_scene = NULL;       //the maze, the player, the physics world - everything
+    Scene* title_scene = NULL;      //an ortho camera and one unlit quad, nothing else
     void RegisterCommandHandlers();
     void BuildLighting();
     void LoadAssets();
@@ -205,6 +304,15 @@ private:
         enemies are actually placed) runs on the physics thread. See the note at the definition.
     */
     void BuildEnemies();
+    /*
+        The player, as a skinned skeleton with whatever clips the file has.
+
+        RENDER THREAD, ONCE, from Init - the same rule the enemies and the turds keep, and it is why
+        this exists at all: the character used to be built in RebuildField out of the AssetManager,
+        which was fine for a static mesh and is not for one that uploads a skin from the physics
+        thread. See the note at the definition.
+    */
+    void BuildCharacter();
     //A pool of animated turds. Decoration, but it is the asset that multi-root rigs were fixed for.
     void BuildTurds();
     /*
@@ -304,6 +412,11 @@ private:
         cell_block for why that is the entire mechanism.
     */
     void RefreshCells();
+    //The new board rising into place, one tick of it. The mirror of SinkBoard and the same tween;
+    //see board_rise_ticks for why it exists at all. PHYSICS THREAD.
+    //`f_finish` puts every piece straight at its rest height, which is what the player stepping
+    //onto the board asks for: the rise is a view effect and it has run out of time to be one.
+    void RiseBoard(bool f_finish = false);
 
     //World centre of grid cell (cx,cz), at y=0. The board is centred on the origin so the orbit
     //camera has something symmetric to turn around.
@@ -373,6 +486,36 @@ private:
     void ReloadExplosionShader();
 
     //--- the loop -----------------------------------------------------------------------------
+    //--- the camera -----------------------------------------------------------------------------
+    /*
+        Places the camera from (yaw, pitch, distance) about `camera_target`. PHYSICS THREAD, from
+        UpdateView, every pass including paused ones - so the framing keeps easing while the
+        simulation is stopped, which is what makes pausing to look at something work.
+
+        Does nothing while the mode is BOMBER_CAM_FREE: the orbit writes the camera itself.
+    */
+    void UpdateGameCamera(bool f_snap = false);
+    //Switches mode, seeding the game framing from the live view on the way in so that leaving the
+    //free orbit eases rather than cuts. PHYSICS THREAD - the key and the MCP request both land
+    //there. The same job as ApplicationPinball::SetShot, one mode the other way round.
+    void SetCameraMode(int mode);
+    //Where the game camera wants to be RIGHT NOW - it differs on the board and in the corridor, and
+    //that difference is the whole transition. Writes the three spherical terms and the pivot.
+    void SolveGameFraming(float& yaw, float& pitch, float& distance, vec3& pivot) const;
+    /*
+        Recovers (yaw, pitch, distance) from wherever the camera actually is.
+
+        Called when GAME mode is entered, so that leaving the free orbit eases back to the game
+        framing from the view you were just looking at instead of cutting to it. The inverse of the
+        placement in UpdateGameCamera, and the same trick as ApplicationPinball::SeedOrbitFromCamera
+        one mode the other way round.
+    */
+    void SeedCameraFromView();
+    //World position of the player, wherever they are - on the board or in the corridor. The camera
+    //is the only thing that needs to ask without caring which, so it is one call rather than a
+    //branch at each site.
+    vec3 PlayerWorldPos() const;
+
     //Turns the held keys into the one direction Maze wants. See its definition for the
     //keep-what-you-have rule, which is what makes cornering feel right.
     int ReadDirection();
@@ -457,12 +600,29 @@ private:
         The shield the player wears while one is running.
 
         A CHILD OF `character`, which does three things at once: it follows the player with no code
-        at all, it turns with them, and ~Object frees it when RebuildField destroys the character -
-        so there is no second lifetime to keep in step. Its local transform is identity because the
-        artist placed it on the character in the .glb and the two nodes share an origin.
+        at all, it turns with them, and ~Object would free it with them - so there is no second
+        lifetime to keep in step. Its local transform is identity because the artist placed it on the
+        character in the .glb and the two nodes share an origin.
+
+        NOTHING DESTROYS EITHER OF THEM ANY MORE. The character became a skeleton built once in
+        Init, so the old "RebuildField frees the character and the shield goes with it" is no longer
+        how this ends - it simply lives for the process.
     */
     Object* shield_worn = NULL;
+    /*
+        The player: a SKINNED, ANIMATED skeleton since 2026-09-17, built once by BuildCharacter and
+        never rebuilt - so a restart moves it rather than replacing it, and `shield_worn` survives
+        with it. Held as Object* for the same reason the enemies are.
+    */
     Object* character = NULL;
+    /*
+        How fast the walk clip has to run so the feet keep up with the tiles.
+
+        SOLVED IN BuildCharacter from the clip's own duration and MAZE_STEP_TICKS, not a number
+        someone dialled in - the clip is an in-place walk and says nothing about distance, so the
+        board has to say it. See the note at the definition.
+    */
+    float char_walk_rate = 1.0f;
     Object* bomb = NULL;
     /*
         One SKINNED, ANIMATED skeleton per enemy the board can ever hold - MAZE_MAX_ENEMIES of them,
@@ -519,6 +679,15 @@ private:
     //The seed the next board will be laid out from, chosen when the corridor begins so the board is
     //ready the moment the corridor seals.
     uint32_t hall_next_seed = 0;
+    /*
+        What the board the player just left was worth on the clock, banked at BeginHallway.
+
+        Kept so the corridor can SHOW it - the level's time and what it paid - rather than being
+        recomputed, because `maze` is thrown away and laid out again at the commit and Maze::
+        level_ticks with it. Reported by bomber_state too.
+    */
+    uint32_t hall_level_ticks = 0;
+    uint32_t hall_time_bonus = 0;
     Object* hall_floor[HALL_MAX_LEN][HALL_W];
     //Padded by one on each side: index px is local x = px - 1, so the two side walls are px 0 and
     //px HALL_W+1 and the end caps fall out of IsPassable.
@@ -528,8 +697,9 @@ private:
 
         The near one is NOT the board's exit door even though it stands in the same place: that one
         belongs to the board and is carried off to the next one at the commit, which would happen
-        while this is still in shot. The far one is the board's ENTRY, and it stays standing at
-        BOMBER_ENTRY_X/Z for the whole level afterwards - it is the door you came in by.
+        while this is still in shot. The far one is the board's ENTRY, and it stays standing on
+        Maze::entry_x/entry_z for the whole level afterwards - it is the door you came in by. That
+        cell moves from level to level now, because the entry border follows the corridor.
     */
     Object* hall_near_arch = NULL;
     Object* hall_far_arch = NULL;
@@ -538,17 +708,6 @@ private:
     //every tick for ever.
     bool f_hall_near_drawn_open = false;
     bool f_hall_far_drawn_open = false;
-    //Counts down while the camera walks back from the corridor to where it was over the board.
-    int  hall_camera_return = 0;
-    /*
-        Where the camera was when the corridor began, so it can be put back exactly there.
-
-        Saved rather than recomputed, because the player may have orbited the board to somewhere they
-        like and a transition that quietly straightened it out would be taking that away. The next
-        board is laid out at the same origin, so the same absolute framing is the right one.
-    */
-    vec3 cam_return_pos = vec3(0,0,0);
-    vec3 cam_return_target = vec3(0,0,0);
     /*
         Ticks into the old board sinking out of sight, or -1 for not sinking.
 
@@ -556,6 +715,19 @@ private:
         the board has to be gone before RebuildField throws it away, or the throw is the pop this is
         here to avoid.
     */
+    /*
+        Ticks into the NEW board rising into place, or -1 for not rising.
+
+        The corridor's pop-in and the old board's sink, applied to the board that has just been laid
+        out. It exists because the camera stopped hiding the swap: the framing holds one world
+        direction through the whole transition now, so from over a one-brick corridor wall you can
+        watch the level change - and a level that FALLS AWAY BEHIND YOU AND RISES AHEAD OF YOU is a
+        better thing to be able to watch than a pop is a thing to have to hide.
+    */
+    int  board_rise_ticks = -1;
+    //Where the rise spreads from - the doorway the player is about to come out of. Nearest first,
+    //so the board assembles outward from where they are looking.
+    vec3 board_rise_from = vec3(0,0,0);
     int  board_sink_ticks = -1;
     //Where the sink spreads from - the exit the player just left through. Cells nearest it go first,
     //so the level collapses away behind them.
@@ -746,6 +918,22 @@ private:
     bool f_lock_human_input = false;
 
     //--- camera ---------------------------------------------------------------------------------
+    int camera_mode = BOMBER_CAM_GAME;
+    /*
+        The live framing, in spherical terms about `camera_target`.
+
+        THIS IS THE ONLY CAMERA STATE THAT INTEGRATES, and it integrates by easing toward a target
+        that is recomputed from scratch every pass - so it has somewhere to go rather than only
+        somewhere it has been. The camera's position is a pure function of these three and the
+        pivot; nothing else writes it while the mode is BOMBER_CAM_GAME.
+
+        Yaw is degrees about +Y with 0 putting the camera due SOUTH of the pivot looking north, so
+        yaw 0 is screen-up = MAZE_DIR_NORTH = the forward key. Keeping it there is the whole reason
+        the corridor stopped being confusing to walk through.
+    */
+    float cam_yaw = 0.0f;
+    float cam_pitch = BOMBER_CAM_PITCH;
+    float cam_distance = BOMBER_CAM_DISTANCE;
     /*
         The wheel, accumulated and bled off rather than applied as it arrives.
 
@@ -755,7 +943,117 @@ private:
     */
     float mouse_wheel_sum = 0.0f;
 
+#ifdef USE_SOUND
+    /*
+        --- sound ---------------------------------------------------------------------------------
+        NOTHING IN Maze CHANGED FOR THIS, and that is the point worth making.
+
+        Every event this app makes a noise for is already visible from the outside: the counters
+        Maze keeps (`blast_count`, `blocks_cut`, `items_taken`, `deaths`) and the walker state the
+        view already reads. So the sound layer is a DIFF against what it saw last tick, exactly like
+        `drawn_field_version` - which keeps sound on the view side of the one-way rule SyncView is
+        built on, and keeps `make rules` testing a class that cannot make a noise.
+
+        The alternative - an events struct out of Maze::Tick, which is what apps/breakout does - was
+        not needed here because Maze already counts everything. It would be the right move the
+        moment something wants a sound that leaves no trace in the state, and the first candidate is
+        already known: the player being HURT but not killed changes only `health` and `invuln_ticks`,
+        which this does catch, but a hit absorbed by a shield changes nothing at all.
+    */
+    SoundSystem* soundsystem = NULL;
+    //Off switches nothing but the noise - the diff below still runs, so muting mid-game cannot
+    //leave the watch stale and make the next unmute replay a backlog of events.
+    bool f_sound_enabled = true;
+
+    /*
+        What UpdateSound saw last tick. Reset by ResetSoundWatch whenever a board is laid out.
+
+        THE RESET IS NOT OPTIONAL. Maze::NewGame puts every counter back to 0, so a watch carried
+        across a level boundary would sit above the new board's counters and stay silent until they
+        caught up - which on `blast_count` means a level or two of soundless explosions.
+    */
+    struct BomberSoundWatch{
+        uint32_t blast_count = 0;
+        uint32_t blocks_cut = 0;
+        int      items_taken = 0;
+        int      deaths = 0;
+        int      health = MAZE_START_HEALTH;
+        //How many enemies had their shears in a hedge. A RISE is a new chop starting, which is what
+        //the sound is of - the hedge falling over is 90 ticks later and is `blocks_cut`.
+        int      chopping = 0;
+    };
+    BomberSoundWatch sound_watch;
+
+    //Registers the seven wavs under names that say what they MEAN rather than what file they are -
+    //see core/SoundSystem.h on why that costs nothing. RENDER THREAD, from Init.
+    void LoadSounds();
+    //One event, one noise. A no-op when sound is off or failed to start, so no call site needs a
+    //guard of its own.
+    void PlaySound(const char* name, float gain);
+    //Diffs the rules against `sound_watch` and plays whatever changed. PHYSICS THREAD, from the top
+    //of SyncView - so it runs on ticking passes only, which is what a game event is.
+    void UpdateSound();
+    //Puts the watch back in step with a board that has just been laid out. From RebuildField.
+    void ResetSoundWatch();
+#endif
+
+    /*
+        --- the HUD -------------------------------------------------------------------------------
+        What DrawOverlay draws, published by the physics thread and read by the render thread.
+
+        PUBLISHED RATHER THAN READ LIVE, and it is the same unlocked hand-off as blast_age_view: the
+        render thread must not walk `maze` or `hall` while a tick is writing them. Here it matters
+        for a second reason too - WHICH of the two owns the walker changes at a level boundary, and
+        a HUD that asked that question itself would have to know about the corridor. PublishHUD
+        answers it once, on the side that already knows.
+
+        Plain members, not atomics. Every one is a single aligned word and the worst case is a HUD
+        frame carrying last tick's number, which is one 60th of a second of a life counter being
+        stale - the same trade every other view member here makes.
+    */
+    struct BomberHUD{
+        int  health = MAZE_START_HEALTH;
+        int  shield_ticks = 0;
+        int  invuln_ticks = 0;
+        bool f_has_key = false;
+        bool f_alive = true;
+        //Ticks on the board just finished, frozen the moment the corridor takes over - see
+        //Maze::level_ticks. The clock the player is racing.
+        uint32_t level_ticks = 0;
+        /*
+            THE TALLY, and it is only filled in while the corridor is up.
+
+            The score is deliberately NOT on the board's HUD: what a board was worth is revealed on
+            the walk out of it, which is what the corridor is for. `f_tally` is what says the HUD is
+            in that mode rather than a second flag for the corridor.
+        */
+        bool     f_tally = false;
+        uint32_t time_bonus = 0;
+        uint32_t score = 0;
+    };
+    BomberHUD hud;
+    //Physics thread, top of SyncView - before the corridor branch, because it has to answer for
+    //whichever of the two currently owns the walker.
+    void PublishHUD();
+    /*
+        The HUD itself. RENDER THREAD, with `overlay` already Begin()'d at the window size - see the
+        DrawOverlay contract in core/Application.h.
+
+        NO TEXTURES ARE AVAILABLE HERE. UIOverlay binds one R8 atlas for the whole batch and every
+        quad's UV indexes into it, so the vocabulary is rounded rectangles, their outlines, and
+        printable ASCII - which is why the key below is four quads rather than a sprite. See the
+        note at DrawKeyIcon.
+    */
+    void DrawOverlay(void) override;
+    //A key, composed: a ring, a stem and two teeth. `h` is the icon's height and everything else is
+    //a fraction of it, so one number sizes it.
+    void DrawKeyIcon(vec2 centre, float h, uint32_t color);
+
     //--- requests across the thread boundary ---------------------------------------------------
+    //A camera mode asked for by `bomber_camera`. Set on an MCP thread, consumed on the physics
+    //thread at the top of UpdateView - the same shape as ApplicationPinball::requested_shot, and
+    //for the same reason: an MCP handler holds no lock and must not touch the scene itself.
+    std::atomic<int> requested_camera_mode{-1};
     //A shader reload is GL work, so the F5 key and the panel button only raise this and PreRender
     //acts on it. Same shape as ApplicationBreakout's.
     std::atomic<bool> f_shader_reload_requested{false};

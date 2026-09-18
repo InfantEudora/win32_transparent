@@ -145,10 +145,23 @@ static void TestGeneration(){
             f_full_enemies = false;
         }
 
-        //The spawn and its elbow room have to be walkable, or the game opens by digging.
-        if (!maze.IsPassable(MAZE_SPAWN_X,MAZE_SPAWN_Z) ||
-            !maze.IsPassable(MAZE_SPAWN_X + 1,MAZE_SPAWN_Z) ||
-            !maze.IsPassable(MAZE_SPAWN_X,MAZE_SPAWN_Z + 1)){
+        /*
+            The spawn and its elbow room have to be walkable, or the game opens by digging.
+
+            COUNTED RATHER THAN NAMED. The two cells cleared beside the spawn depend on which border
+            was entered by, and writing out that derivation here would only check this test against
+            itself. Two open neighbours is the property the rule is actually for.
+        */
+        if (!maze.IsPassable(maze.spawn_x,maze.spawn_z)){
+            f_spawn_clear = false;
+        }
+        int spawn_open = 0;
+        for (int d = 0; d < MAZE_NUM_DIRS; d++){
+            if (maze.IsPassable(maze.spawn_x + Maze::DirX(d),maze.spawn_z + Maze::DirZ(d))){
+                spawn_open++;
+            }
+        }
+        if (spawn_open < 2){
             f_spawn_clear = false;
         }
 
@@ -162,8 +175,8 @@ static void TestGeneration(){
         }
 
         for (int i = 0; i < maze.num_enemies; i++){
-            int dx = maze.enemy[i].tile_x - MAZE_SPAWN_X;
-            int dz = maze.enemy[i].tile_z - MAZE_SPAWN_Z;
+            int dx = maze.enemy[i].tile_x - maze.spawn_x;
+            int dz = maze.enemy[i].tile_z - maze.spawn_z;
             if (dx < 0) dx = -dx;
             if (dz < 0) dz = -dz;
             if (dx + dz < MAZE_ENEMY_MIN_DIST){
@@ -553,7 +566,7 @@ static void TestHallDoors(){
     directions throughout.
 */
 static void TestHallTurning(){
-    printf("a turned corridor still walks the way it looks\n");
+    printf("a corridor runs one way from end to end, and the keys agree with it\n");
 
     MazeWalker w;
     bool f_all_round_trip = true;
@@ -563,37 +576,35 @@ static void TestHallTurning(){
         hall.Begin(5,w,d);
         if (hall.LocalToWorld(MAZE_DIR_SOUTH) != d){ f_all_forward = false; }
         for (int e = 0; e < MAZE_NUM_DIRS; e++){
-            //While the two frames agree - which is everything up to the commit - input and geometry
-            //are still inverses, and that is worth pinning: it is what makes walking into the
-            //corridor continuous with walking on the board.
+            //Input and geometry are exact inverses, which is what makes walking into a corridor
+            //continuous with walking on the board.
             if (hall.LocalToWorld(hall.InputToLocal(e)) != e){ f_all_round_trip = false; }
-            //Opposites must stay opposite through a turn, or a corridor would fold up.
+            //Opposites must stay opposite, or a corridor would fold up.
             if (hall.InputToLocal(Maze::DirOpposite(e)) !=
                 Maze::DirOpposite(hall.InputToLocal(e))){ f_all_round_trip = false; }
         }
     }
     Check(f_all_forward,                              "local forward is the way the corridor runs");
-    Check(f_all_round_trip,                           "and turning is reversible for every heading");
+    Check(f_all_round_trip,                           "and input and geometry are inverses");
 
     /*
-        AND TURNING THE CORRIDOR DOES NOT TURN THE CONTROLS.
+        AND THE DIRECTION SURVIVES THE WHOLE WALK.
 
-        This is the one you can walk into: the corridor is picked up and rotated at the commit and
-        the camera goes with it, so nothing happens on screen and the player is still walking away
-        from the camera - but the keys are WORLD directions. With one frame instead of two, the key
-        that had been walking them forward walked them into a wall and they stopped dead half way
-        down a corridor that looked completely normal.
+        A corridor used to be picked up and rotated at the commit, to point at a board whose entry
+        cell was fixed - and the camera was rotated with it, so nothing happened on screen while the
+        WORLD-direction keys silently went a quarter turn out. That is why Hallway carried a second
+        frame. The board's entry border follows the corridor now, so this pins the simpler property
+        that replaced it: the key that walks you in walks you all the way out.
     */
-    Hallway turned;
-    turned.Begin(5,w,MAZE_DIR_NORTH);
-    Check(HallStepOnce(turned,MAZE_DIR_NORTH),        "north walks up a north-running corridor");
-    int was = turned.player.tile_z;
-    //What CommitHallway does: the geometry turns, the control frame does not.
-    turned.forward = MAZE_DIR_EAST;
-    Check(turned.LocalToWorld(MAZE_DIR_SOUTH) == MAZE_DIR_EAST,
-                                                      "the corridor now runs east");
-    Check(HallStepOnce(turned,MAZE_DIR_NORTH),        "and north STILL walks up it");
-    Check(turned.player.tile_z == was + 1,            "one more cell along");
+    Hallway straight;
+    straight.Begin(5,w,MAZE_DIR_NORTH);
+    Check(HallStepOnce(straight,MAZE_DIR_NORTH),      "north walks up a north-running corridor");
+    int was = straight.player.tile_z;
+    for (int i = 0; i < 2; i++){
+        HallStepOnce(straight,MAZE_DIR_NORTH);
+    }
+    Check(straight.forward == MAZE_DIR_NORTH,         "and it still runs north at the far end");
+    Check(straight.player.tile_z > was,               "with the same key having carried them along");
 
     //Built running EAST: pressing east walks up it, and the sides are two cells apart.
     Hallway east;
@@ -605,6 +616,112 @@ static void TestHallTurning(){
     int side = east.player.tile_x;
     HallStepOnce(east,MAZE_DIR_NORTH);
     Check(east.player.tile_x == side,                 "and the wall stops the next one");
+}
+
+/*
+    The clock, and what it pays.
+
+    The bonus is a QUERY - it does not touch the score and calling it twice gives the same answer -
+    so it can be checked without running a level boundary at all. Who pays it out is
+    ApplicationBomber, at the tick the player steps into the exit.
+*/
+static void TestTimeBonus(){
+    printf("a board's clock runs, and finishing under par pays\n");
+
+    Maze maze;
+    maze.NewGame(9);
+    Check(maze.level_ticks == 0,                      "a new board starts the clock at zero");
+    Check(maze.TimeBonus() == MAZE_TIME_PAR_TICKS / MAZE_TIME_BONUS_TICKS_PER_POINT,
+                                                      "and a board finished instantly is worth par");
+
+    RunTicks(maze,100);
+    Check(maze.level_ticks == 100,                    "the clock runs with the tick");
+    Check(maze.TimeBonus() ==
+          (MAZE_TIME_PAR_TICKS - 100) / MAZE_TIME_BONUS_TICKS_PER_POINT,
+                                                      "and the bonus falls as it does");
+
+    //A death costs TIME and nothing else - which is the whole reason the clock does not stop for
+    //one. Cheaper to assert on the clock than to stage a death: Tick is unconditional.
+    uint32_t before = maze.level_ticks;
+    maze.player.f_alive = false;
+    maze.player.death_ticks = MAZE_RESPAWN_TICKS;
+    RunTicks(maze,50);
+    Check(maze.level_ticks == before + 50,            "and it keeps running while the player is down");
+
+    //Past par it is zero, not negative - the bonus is unsigned and a slow board simply pays nothing.
+    Maze slow;
+    slow.NewGame(9);
+    RunTicks(slow,MAZE_TIME_PAR_TICKS + 10);
+    Check(slow.TimeBonus() == 0,                      "a board over par pays nothing, never a debt");
+
+    //And a new board is a new clock, whatever the last one cost.
+    slow.NewGame(10);
+    Check(slow.level_ticks == 0,                      "the next board starts it again");
+}
+
+/*
+    The way in moves with the corridor.
+
+    THE WHOLE REASON THE CORRIDOR STOPPED TURNING. A board used to have one fixed entry cell, so a
+    corridor arriving from anywhere else had to be rotated to meet it - which meant the camera had to
+    be rotated too, and that is what turned the view a quarter turn every level. `entry_dir` is the
+    outward normal of the border walked in through; everything else about the way in follows from it.
+*/
+static void TestEntryFollowsTheCorridor(){
+    printf("the entry border follows the direction the corridor ran\n");
+
+    bool f_on_border = true;
+    bool f_spawn_inside = true;
+    bool f_spawn_beside = true;
+    bool f_spawn_open = true;
+    bool f_door_elsewhere = true;
+    for (int d = 0; d < MAZE_NUM_DIRS; d++){
+        for (uint32_t seed = 1; seed <= 40; seed++){
+            Maze maze;
+            maze.NewGame(seed,NULL,d);
+
+            //The entry is a border cell, and it is the border this direction points out of.
+            int ex = maze.entry_x;
+            int ez = maze.entry_z;
+            bool f_border = (ex == 0 || ez == 0 || ex == MAZE_W - 1 || ez == MAZE_H - 1);
+            if (!f_border){ f_on_border = false; }
+            if (ex + Maze::DirX(d) >= 0 && ex + Maze::DirX(d) < MAZE_W &&
+                ez + Maze::DirZ(d) >= 0 && ez + Maze::DirZ(d) < MAZE_H){
+                //Stepping OUT through the entry has to leave the board, or it is not a border.
+                f_on_border = false;
+            }
+
+            //And the spawn is the cell one step in from it, on the board, and walkable.
+            if (maze.spawn_x <= 0 || maze.spawn_x >= MAZE_W - 1 ||
+                maze.spawn_z <= 0 || maze.spawn_z >= MAZE_H - 1){
+                f_spawn_inside = false;
+            }
+            if (abs(maze.spawn_x - ex) + abs(maze.spawn_z - ez) != 1){
+                f_spawn_beside = false;
+            }
+            if (!maze.IsPassable(maze.spawn_x,maze.spawn_z)){
+                f_spawn_open = false;
+            }
+            //The exit is never the cell you came in by - that would be a level finished by turning
+            //round, and the archway is already standing in it.
+            if (maze.door_x == ex && maze.door_z == ez){
+                f_door_elsewhere = false;
+            }
+        }
+    }
+    Check(f_on_border,                                "the entry is in the border it was walked in through");
+    Check(f_spawn_inside,                             "the spawn is on the board");
+    Check(f_spawn_beside,                             "one step in from the entry");
+    Check(f_spawn_open,                               "and walkable");
+    Check(f_door_elsewhere,                           "and the exit is never the way in");
+
+    //The default is the west border, which is where every board's spawn was before it could move.
+    Maze legacy;
+    legacy.NewGame(7);
+    Check(legacy.entry_x == 0 && legacy.entry_z == MAZE_ENTRY_OFFSET,
+                                                      "the default entry is the old fixed one");
+    Check(legacy.spawn_x == MAZE_ENTRY_OFFSET && legacy.spawn_z == MAZE_ENTRY_OFFSET,
+                                                      "so the default spawn is the old fixed one");
 }
 
 /*
@@ -640,7 +757,7 @@ static void TestHallCarriesTheWalker(){
     Check(next.player.score == 1234,                  "and the score");
     Check(!next.player.f_has_key,                     "but takes the key - a new board is a new lock");
     Check(next.player.shield_ticks == 0,              "and the shield, which belonged to the last one");
-    Check(next.player.tile_x == MAZE_SPAWN_X && next.player.tile_z == MAZE_SPAWN_Z,
+    Check(next.player.tile_x == next.spawn_x && next.player.tile_z == next.spawn_z,
                                                       "and stands them on the spawn");
 
     Maze fresh;
@@ -729,7 +846,7 @@ static void TestExitPlaced(){
         }
         //Manhattan by hand: Maze::CellDistance is private, and spelling it out here is one
         //line rather than widening the class's surface for a test.
-        int dist = abs(x - MAZE_SPAWN_X) + abs(z - MAZE_SPAWN_Z);
+        int dist = abs(x - maze.spawn_x) + abs(z - maze.spawn_z);
         if (dist < MAZE_DOOR_MIN_DIST){
             near_spawn++;
         }
@@ -1208,7 +1325,7 @@ static void TestPlayerCondition(){
     Check(die.deaths == 1,"three flames killed the player once");
     RunTicks(die,MAZE_RESPAWN_TICKS + 2);
     Check(die.player.f_alive,"and the player came back");
-    Check(die.player.tile_x == MAZE_SPAWN_X && die.player.tile_z == MAZE_SPAWN_Z,
+    Check(die.player.tile_x == die.spawn_x && die.player.tile_z == die.spawn_z,
           "on the spawn");
     Check(die.player.health == MAZE_START_HEALTH,"with full health");
 
@@ -1528,6 +1645,8 @@ int main(){
     TestHallDoors();
     TestHallTurning();
     TestHallCarriesTheWalker();
+    TestEntryFollowsTheCorridor();
+    TestTimeBonus();
     TestHallHasNoBombs();
     TestEnemiesCanAct();
     TestEnemyChopsHedge();

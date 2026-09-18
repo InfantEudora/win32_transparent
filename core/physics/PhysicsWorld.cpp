@@ -1,4 +1,5 @@
 #include <vector>
+#include <string>
 #include "PhysicsWorld.h"
 #include "Debug.h"
 
@@ -12,7 +13,12 @@ static Debugger *debug = new Debugger("PhysicsWorld", DEBUG_ALL);
 reactphysics3d::PhysicsCommon* PhysicsWorld::physicsCommon = NULL;
 
 PhysicsWorld::PhysicsWorld(){
-	debug->Info("Using ReactPhysics Version %s\n",reactphysics3d::RP3D_VERSION.c_str());
+	//RP3D_VERSION is `const std::string` in the 0.10.2 vendored under the engine's 3rdparty/, and
+	//`inline constexpr const char*` in the C:/code/reactphysics3d fork the Android tree builds
+	//against (its size/no-iostream-dependency branch, which got libstdc++'s stream and locale
+	//machinery out of every binary). std::string() accepts either, so this line does not need to
+	//know which checkout it compiled against -- one init-time log, so the temporary is free.
+	debug->Info("Using ReactPhysics Version %s\n",std::string(reactphysics3d::RP3D_VERSION).c_str());
 	if (!physicsCommon){
 		//Create once
 		physicsCommon = new reactphysics3d::PhysicsCommon();

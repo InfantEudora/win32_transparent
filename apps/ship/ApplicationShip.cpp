@@ -642,7 +642,7 @@ json ApplicationShip::GetCollectedTotals(){
 
 json ApplicationShip::GetAsteroidTelemetry(){
     json out = json::array();
-    for (Object* object:renderer->objects){
+    for (Object* object:main_scene->objects){
         Asteroid* asteroid = dynamic_cast<Asteroid*>(object);
         if (!asteroid){
             continue;
@@ -944,7 +944,7 @@ void ApplicationShip::RegisterMCPTools(){
         json{ {"type","object"},{"properties",json::object()} },
         [this](const json &args) -> json {
             json out = json::array();
-            for (Object* object:renderer->objects){
+            for (Object* object:main_scene->objects){
                 Pickup* pickup = dynamic_cast<Pickup*>(object);
                 if (!pickup){
                     continue;
@@ -1031,7 +1031,7 @@ void ApplicationShip::RunSimulationTick(){
         selected_object = NULL;
     }
 
-    renderer->DeleteDestroyedObjects();
+    main_scene->DeleteDestroyedObjects();
 
 
     if (f_lock_ship_axis && ship_character){
@@ -1067,7 +1067,7 @@ void ApplicationShip::RunSimulationTick(){
 
     //We keep the asteroids in a certain range around the ship
     //Get all asteroids in the scene
-    for (Object* object:renderer->objects){
+    for (Object* object:main_scene->objects){
         Asteroid* asteroid = dynamic_cast<Asteroid*>(object);
         if (asteroid){
             vec3 center_pos = vec3();

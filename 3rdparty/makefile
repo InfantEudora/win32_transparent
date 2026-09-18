@@ -77,6 +77,30 @@ IPATHS := -I. -Itinygltf -Istb_image -Iminiz -Iminiaudio
 MA_CFLAGS := -Os -D_WIN32
 
 #---------------------------------------------------------------------------------------
+# miniz
+#
+# A submodule since 2026-09-18, pinned at the 3.1.2 release. What stood here before was
+# 3.1.0 with seven edits made in place - five config defines switched on inside miniz.h,
+# and two changes to miniz_tdef.c to make that configuration link. A submodule cannot hold
+# any of them, so they moved: the defines to 3rdparty/miniz_export.h, which is the header
+# miniz.h includes before it reads its own config block, and the two code edits nowhere,
+# because they were only ever working around miniz.c not being in the list below.
+#
+# THAT IS WHY miniz.c IS BUILT NOW and was not before. mz_adler32 and mz_crc32 live in it,
+# OUTSIDE the MINIZ_NO_ZLIB_APIS guard, and miniz_tdef.c calls both - so stock sources
+# without stock miniz.c is an undefined reference, which is exactly the corner the old copy
+# commented its way out of. Under this configuration miniz.c is those two functions and
+# nothing else; the zlib half it otherwise holds is compiled out.
+#
+# It is C, and it gets the C++ compiler and the C++ flags anyway. That is not an oversight:
+# the files that stood here were these files renamed to .cpp and built by g++ with exactly
+# $(CFLAGS), so anything else would be a change of compiler smuggled in under a change of
+# where the source lives. miniz declares its API extern "C" either way, so the linkage the
+# engine sees is the same one it has always seen.
+#---------------------------------------------------------------------------------------
+MINIZ_CFLAGS := $(CFLAGS)
+
+#---------------------------------------------------------------------------------------
 # imgui
 #
 # Same story as libthirdparty.a: libs/libimgui.a had no build rule anywhere in the repo and
@@ -114,11 +138,14 @@ IMGUI_IPATHS := -Iimgui -Iimgui/backends
 #Object names are flat inside the archive, matching what the hand-built library held.
 SRCS := stb_image/stb_image.cpp \
         stb_image/stb_image_write.cpp \
-        tinygltf/tiny_gltf.cpp \
-        miniz/miniz_tdef.cpp \
-        miniz/miniz_tinfl.cpp
+        tinygltf/tiny_gltf.cpp
 
 C_SRCS := miniaudio_impl.c
+
+#Kept apart from C_SRCS because the two want different compilers - see the miniz block.
+MINIZ_SRCS := miniz/miniz.c
+MINIZ_SRCS += miniz/miniz_tdef.c
+MINIZ_SRCS += miniz/miniz_tinfl.c
 
 IMGUI_SRCS := imgui/imgui.cpp \
               imgui/imgui_draw.cpp \
@@ -130,8 +157,13 @@ IMGUI_SRCS := imgui/imgui.cpp \
 
 IMGUI_OBJS := $(addprefix $(BUILD_DIR)/,$(notdir $(IMGUI_SRCS:.cpp=.o)))
 
+#The C groups are named separately as well as folded into OBJS, because each one carries
+#its compiler and its flags as target-specific variables on exactly these objects.
+MA_OBJS    := $(addprefix $(BUILD_DIR)/,$(notdir $(C_SRCS:.c=.o)))
+MINIZ_OBJS := $(addprefix $(BUILD_DIR)/,$(notdir $(MINIZ_SRCS:.c=.o)))
+
 OBJS := $(addprefix $(BUILD_DIR)/,$(notdir $(SRCS:.cpp=.o)))
-OBJS += $(addprefix $(BUILD_DIR)/,$(notdir $(C_SRCS:.c=.o)))
+OBJS += $(MA_OBJS) $(MINIZ_OBJS)
 
 #Header dependencies, the same -MMD -MP arrangement the app builds use: editing
 #tiny_gltf.h or json.hpp has to rebuild tiny_gltf.o.
@@ -162,10 +194,23 @@ $(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR)
 	@echo [CC] $<
 	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 
-#miniaudio only. Its own compiler and its own flags - see the block above.
-$(BUILD_DIR)/%.o: %.c | $(BUILD_DIR) miniaudio/miniaudio.h
+#The C sources. There are two libraries here and they do NOT share a compiler - miniaudio
+#is built as C by gcc, miniz as C++ by g++ - so one pattern rule cannot hardcode either.
+#The recipe names variables and each group binds them below, which is the same
+#target-specific trick imgui's objects use above. Deliberately WITHOUT defaults: a future
+#.c source that joins neither group fails with an empty command line rather than quietly
+#inheriting whichever group happened to be written last.
+$(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	@echo [CC] $<
-	$(CC_C) -c $(DEPFLAGS) $(MA_CFLAGS) $(IPATHS) $< -o $@
+	$(C_COMPILER) -c $(DEPFLAGS) $(C_FLAGS) $(IPATHS) $< -o $@
+
+$(MA_OBJS): C_COMPILER := $(CC_C)
+$(MA_OBJS): C_FLAGS    := $(MA_CFLAGS)
+$(MA_OBJS): | miniaudio/miniaudio.h
+
+$(MINIZ_OBJS): C_COMPILER := $(CC)
+$(MINIZ_OBJS): C_FLAGS    := $(MINIZ_CFLAGS)
+$(MINIZ_OBJS): | miniz/miniz.h
 
 #A fresh clone has an empty 3rdparty/miniaudio until the submodule is checked out, and the
 #error gcc gives for that is a missing include, which reads like a broken build rather than
@@ -175,6 +220,9 @@ miniaudio/miniaudio.h:
 
 imgui/imgui.h:
 	$(error 3rdparty/imgui is empty - run: git submodule update --init 3rdparty/imgui)
+
+miniz/miniz.h:
+	$(error 3rdparty/miniz is empty - run: git submodule update --init 3rdparty/miniz)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

@@ -76,14 +76,16 @@ struct Hallway{
 
     //--- turning --------------------------------------------------------------------------------
     /*
-        TWO FRAMES, and they come apart the moment the corridor is turned. LocalToWorld is GEOMETRY
-        - where a cell is and which way a model faces - and follows `forward`. InputToLocal is the
-        PLAYER'S HANDS and follows `control_forward`, which never changes.
+        ONE FRAME, and the two functions are exact inverses. LocalToWorld is GEOMETRY - where a cell
+        is and which way a model faces. InputToLocal is the PLAYER'S HANDS. Both follow `forward`,
+        which is fixed for the life of a corridor.
 
-        They were one function to begin with, and that was a bug you could walk into: the corridor
-        is rotated at the commit and the camera with it, so on screen nothing happens - but the keys
-        are world directions, so a quarter turn meant the key that had been walking them forward now
-        walked them into a wall.
+        THERE WERE TWO. A corridor used to be picked up and rotated at the commit to point at the
+        next board's one fixed entry cell, which meant the hands had to keep a frame of their own
+        (`control_forward`) that the rotation did not touch - otherwise the key that had been walking
+        you forward walked you into the side wall, half way down a corridor that looked completely
+        normal. The next board's entry border is chosen from the corridor's direction now, so there
+        is no rotation left to survive and the second frame went with it.
 
         Local +z is MAZE_DIR_SOUTH by convention, so DirX/DirZ work on a local direction with no
         second table.
@@ -93,13 +95,16 @@ struct Hallway{
 
     //--- state ----------------------------------------------------------------------------------
     int length = HALL_MIN_LEN;
-    //World direction of local +z. Set by Begin, and changed by the app when the corridor is turned
-    //to meet the next board - which is safe only while f_sealed, when nobody can see it happen.
+    /*
+        World direction of local +z: the way the player was walking when they stepped into the exit.
+
+        SET BY Begin AND NEVER CHANGED. It used to be turned to MAZE_DIR_EAST at the commit, because
+        the next board had one fixed entry cell that had to be walked into heading east. The board's
+        entry border follows the corridor now, so a corridor runs dead straight from the level it
+        left to the one it arrives at - which is what lets the camera hold one world direction the
+        whole way through, and what killed `control_forward`.
+    */
     int forward = MAZE_DIR_SOUTH;
-    //The frame the player's HANDS are in: the direction the corridor ran when they walked into it,
-    //and it stays that way. Turning the corridor turns `forward` and leaves this alone, which is
-    //the only way a turn can be genuinely invisible rather than merely unseen.
-    int control_forward = MAZE_DIR_SOUTH;
     MazeWalker player;
     //The near door starts OPEN because the player has just walked through it, and shuts the moment
     //they are past it. `f_sealed` is that same event reported once - see the commit point above.

@@ -317,7 +317,7 @@ Everything below was read from the source.
 ### 6.1 Scene and Object
 
 `Scene` (`core/Scene.h`) is the container. `Scene::AddObject(Object*)` appends to
-`renderer->objects` — a flat list of *roots*; children are found by traversal. Lookup:
+`Scene::objects` — a flat list of *roots*; children are found by traversal. Lookup:
 `FindObject(name)`, `FindObjectByID(id)`, `ForEachObject(fn)` — all depth-first over the whole
 tree. **Names are not unique; ids are.**
 
@@ -334,7 +334,7 @@ already moved.
 Hierarchy: `AttachChild` / `DetachChild` / `FindChild`. Useful for Tetris — parent the four cells
 of the active piece to one empty `Object` and rotate the parent.
 
-Lifetime: `object->Destroy()` only **marks** it. `Renderer::DeleteDestroyedObjects()` does the
+Lifetime: `object->Destroy()` only **marks** it. `Scene::DeleteDestroyedObjects()` does the
 actual reaping — see the trap in §8.
 
 **To hang your own data on an object, subclass it.** There is no `void* user_data`, and you do not
@@ -713,11 +713,11 @@ a head start, not a complete list — find more.
   and only restores name/position/rotation of asset-backed objects. There is no save/load of a
   running scene, so no save-game.
 - **`Object::Destroy()` only marks.** The actual reaping is
-  `Renderer::DeleteDestroyedObjects()`, which **only two apps call** (Ship, Dozer). Call it
+  `Scene::DeleteDestroyedObjects()`, which **only two apps call** (Ship, Dozer). Call it
   yourself, once per tick, from `RunSimulationTick` — otherwise destroyed objects stop rendering but their
   rigid bodies stay in the physics world forever. If you spawn debris (step 9), this matters.
 - **`Scene::AddObject` during a tick invalidates the iteration.** `Scene::UpdatePhysics`
-  range-for's `renderer->objects`; an `AddObject` from inside an `UpdatePhysicsState()` override
+  range-for's `Scene::objects`; an `AddObject` from inside an `UpdatePhysicsState()` override
   `push_back`s the same vector. Stage additions and perform them in `RunSimulationTick` instead.
 - **MCP tool handlers hold no lock** (§6.10). Reading scene state from one is a race, so wrap the
   read in `Scene::AtTickBoundary` — see §6.10.

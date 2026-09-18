@@ -31,7 +31,13 @@ TOOL_SRCS += assetpack.cpp
 #and the objects it links have to agree on flags, and the library is built with the engine's.
 #The inflate half comes with it; the tool does not decompress, but the two files are one unit
 #and separating them would save a compile nobody notices.
-CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tdef.cpp
-CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tinfl.cpp
+#
+#miniz.c is the third because miniz_tdef.c calls mz_adler32, which is defined there and
+#nowhere else - leave it out and the tool fails to link. It is .c rather than .cpp because
+#3rdparty/miniz is a submodule now and these are upstream's own file names; tools.mk grew a
+#rule for that, and compiles them exactly as it compiled the .cpp copies.
+CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz.c
+CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tdef.c
+CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tinfl.c
 
 include $(ROOT)/tools/tools.mk

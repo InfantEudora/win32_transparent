@@ -160,10 +160,18 @@ enum MazeStyle : uint8_t {
 //visible life makes the tile unusable for two seconds, and dying to smoke reads as a bug.
 #define MAZE_BLAST_HURT_TICKS   45
 
-//Where the character starts. Kept as a pair of defines because the generator has to guarantee this
-//cell and its two neighbours are open, and that guarantee should name the same thing the spawn does.
-#define MAZE_SPAWN_X            1
-#define MAZE_SPAWN_Z            1
+/*
+    How far along its border the way IN sits, counted from the low corner.
+
+    The spawn is NOT a fixed cell any more - it is the cell just inside whichever border the player
+    walked in through, so `entry_dir` decides both. One offset rather than a pair of coordinates,
+    because the four cases are the same corner mirrored and writing them out four times is four
+    chances to mirror one of them wrong. See Maze::SetEntry, which is where they are derived.
+
+    Offset 1 rather than the middle of the border on purpose: it keeps the spawn in a corner, which
+    is where it has always been and is what MAZE_DOOR_MIN_DIST is tuned against.
+*/
+#define MAZE_ENTRY_OFFSET       1
 
 /*
     How small a board may be before the layout is thrown away and rolled again.
@@ -242,6 +250,24 @@ static const uint8_t MAZE_ITEM_ORDER[MAZE_NUM_ITEMS] = {
 //How long the player lies there before reappearing on the spawn. The FIELD IS NOT REGENERATED:
 //dying mid-experiment and losing the board you were looking at is worse than dying.
 #define MAZE_RESPAWN_TICKS      120
+
+/*
+    What finishing a board QUICKLY is worth.
+
+    `level_ticks` runs from the moment a board is laid out until the player steps into the exit, and
+    every MAZE_TIME_BONUS_TICKS_PER_POINT it comes in under par is one point. Par is 6000 ticks - a
+    hundred seconds at the 60 Hz this app ticks at - so a perfect run is worth 200, which is between
+    a diamond (50) and a crystal (250). That is the scale it is meant to sit on: worth hurrying for,
+    never worth more than actually playing the board.
+
+    TICKS, NOT SECONDS, all the way through - the rules have no idea what rate they are ticked at,
+    and a bonus expressed in seconds would silently change value if SetPhysicsTPS ever did.
+
+    A DEATH COSTS TIME AND NOTHING ELSE. `level_ticks` keeps running through the corpse and the
+    respawn, which is the whole reason dying is worth avoiding on a board you have already solved.
+*/
+#define MAZE_TIME_PAR_TICKS             6000
+#define MAZE_TIME_BONUS_TICKS_PER_POINT 30
 
 //--- the enemy ----------------------------------------------------------------------------------
 #define MAZE_MAX_ENEMIES        4
@@ -373,6 +399,31 @@ public:
     //asked by CanEnter, so that an enemy never can.
     int  door_x = 0;
     int  door_z = 0;
+    /*
+        Where the way IN is, and where the player starts because of it.
+
+        `entry_dir` is the outward direction of the border `entry_x/entry_z` sits in; the spawn is
+        the cell one step inward from it. All three are derived by SetEntry from NewGame's argument
+        and are then fixed for the life of the board.
+
+        THE ENTRY CELL IS STILL BORDER WALL as far as the rules are concerned. Nobody walks through
+        it: the corridor hands the player over already standing on the spawn. It is recorded because
+        the VIEW has to leave the brick off that one cell and stand the archway there, and because
+        PlaceDoor must not put the exit in it.
+    */
+    /*
+        Ticks this board has been played for. Reset by NewGame, run by Tick, and NOT run while the
+        player is in the corridor - because Maze is not ticked there, which is exactly right: the
+        walk between levels is not part of either level's time.
+
+        A rule, not telemetry: TimeBonus is paid out of it.
+    */
+    uint32_t level_ticks = 0;
+    int  entry_dir = MAZE_DIR_WEST;
+    int  entry_x = 0;
+    int  entry_z = MAZE_ENTRY_OFFSET;
+    int  spawn_x = MAZE_ENTRY_OFFSET;
+    int  spawn_z = MAZE_ENTRY_OFFSET;
     //Points. Treasure only - health and shields pay in other currencies and are worth 0 here.
     //Survives a death, because dying already costs a life and the respawn. Does NOT survive
     //NewGame: a seed lays out a board and a board is a round.
@@ -421,11 +472,31 @@ public:
         the definition and the respawn's - and it is a LEVEL boundary: you keep what you earned and
         you lose what belonged to the board.
     */
-    void NewGame(uint32_t seed, const MazeWalker* carry = NULL);
+    /*
+        `entry_dir` is the OUTWARD direction of the border the player walks in through, and it
+        decides where the spawn is - see MAZE_ENTRY_OFFSET and SetEntry. The default is the west
+        border, which is the corner every board used before the entry could move.
+
+        IT IS THE OPPOSITE OF THE WAY THEY ARE WALKING. A corridor running north arrives at this
+        board's SOUTH border, so the caller passes MAZE_DIR_SOUTH. ApplicationBomber does exactly
+        that from the direction its corridor runs, which is how the whole transition became a
+        straight line with nothing to rotate.
+    */
+    void NewGame(uint32_t seed, const MazeWalker* carry = NULL, int entry_dir_in = MAZE_DIR_WEST);
 
     //One tick of everything: the walkers, the fuse, the blast clock, and who got hurt. The only
     //entry point that changes anything.
     void Tick(const MazeInput& input);
+
+    /*
+        What this board's time is worth, in points. See MAZE_TIME_PAR_TICKS.
+
+        A QUERY AND NOT A PAYMENT - it does not touch the score, and calling it twice gives the same
+        answer. Whoever decides the level is over is the one that adds it, which is ApplicationBomber
+        at the moment the player steps into the exit. Keeping it that way means the rule can be
+        tested without running a level boundary.
+    */
+    uint32_t TimeBonus() const;
 
     //--- queries ------------------------------------------------------------------------------
     bool InBounds(int x, int z) const {
@@ -482,6 +553,10 @@ private:
     //can reach, which is what decides whether the attempt was any good. Everything that needs the
     //terrain settled (soft blocks, items, enemies, decor) stays in NewGame and runs once.
     int LayOutTerrain();
+    //Derives entry_x/entry_z and spawn_x/spawn_z from `entry_dir`. Called first thing in NewGame,
+    //because the terrain layout, the reachability flood and every distance rule below want the
+    //spawn before they run.
+    void SetEntry(int dir);
     //Each of these fills one rectangle of the interior, inclusive of its bounds.
     void FillBomber(int x0, int z0, int x1, int z1);
     void FillLabyrinth(int x0, int z0, int x1, int z1);

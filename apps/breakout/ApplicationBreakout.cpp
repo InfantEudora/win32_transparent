@@ -876,7 +876,7 @@ void ApplicationBreakout::NewGame(uint32_t seed){
     //Object::Destroy only MARKS; this is what actually frees them and takes their rigid bodies
     //out of the physics world. Safe here: we are on the physics thread with physics_mutex held,
     //so the render thread is not walking the object list.
-    renderer->DeleteDestroyedObjects();
+    main_scene->DeleteDestroyedObjects();
 
     for (int i = 0; i < BREAKOUT_MAX_RIPPLES; i++){
         ripples[i].age = -1.0f;
@@ -1304,7 +1304,7 @@ void ApplicationBreakout::UpdateCapsules(){
     }
 
     if (f_any_destroyed){
-        renderer->DeleteDestroyedObjects();
+        main_scene->DeleteDestroyedObjects();
     }
 }
 
@@ -1330,7 +1330,7 @@ void ApplicationBreakout::UpdateDebris(){
         //bodies stay in the physics world for the life of the run - and this game makes a lot of
         //them. Safe here: RunSimulationTick holds physics_mutex, so the render thread is not
         //walking the object list. Open backlog item 23.
-        renderer->DeleteDestroyedObjects();
+        main_scene->DeleteDestroyedObjects();
     }
 }
 

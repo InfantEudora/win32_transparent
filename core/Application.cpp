@@ -160,6 +160,7 @@ bool WINAPI Application::ConsoleHandler(DWORD console_event){
     return true;
 }
 
+//Virtual function. Should get overriden in each application that extends it.
 void Application::Init(){
      //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
@@ -168,10 +169,11 @@ void Application::Init(){
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
 
-    main_scene = new Scene();
-    main_scene->renderer = renderer;
-    main_scene->inputcontroller = main_window->inputcontroller;
-    main_scene->shader = default_shader;
+    //The return value is the point: CreateNewScene registers the scene and hands it back, it does
+    //not decide which one is active. Without this assignment main_scene stays NULL and the line
+    //below dereferences it - which no app hits today only because every one of them overrides
+    //Init() wholesale.
+    main_scene = CreateNewScene("Default Application Scene");
 
     //Just so the current items show on the first frame...?
     main_scene->UpdatePhysics(GetPhysicsTimestep());
@@ -437,6 +439,11 @@ DWORD WINAPI Application::PhysicsThreadFunction(LPVOID lpParameter){
             //Time spent on aquiring a lock
             app->renderer->physics_mutex.lock();
 
+            //Before anything reads main_scene this pass. A switch requested from another thread
+            //lands HERE and nowhere else, so BeginPass, the tick and UpdateView below all see the
+            //same scene - see Application::ApplyPendingSceneSwitch.
+            app->ApplyPendingSceneSwitch();
+
             //Input sampling moved INSIDE the lock: it writes KeyState (via
             //InputController::ApplyPendingEvents), and the render thread reads that same KeyState
             //from DrawImGuiUI - which holds this mutex. Sampling outside it was an unsynchronised
@@ -551,17 +558,38 @@ void Application::UpdatePhysics(){
 
 //--- Simulation commands ------------------------------------------------------------------
 
+/*
+    Registers the core handlers on EVERY scene the app built, not just the active one.
+
+    Handlers live on a Scene, and a command is drained by the scene it was submitted to - so a
+    second scene with no handlers accepts object_spawn, object_set_transform and the rest and then
+    silently does nothing with them. That is the trap an app hits the moment it has more than one
+    scene, and it costs nothing to close here: this runs once, after Init(), by which time every
+    scene an app builds in Init exists.
+
+    Each handler is bound to the scene it is registered on rather than reading main_scene, so it
+    keeps acting on its own scene whatever is active when the command is drained.
+*/
 void Application::RegisterCoreCommandHandlers(){
-    if (!main_scene){
+    if (scenes.empty()){
         debug->Err("No scene to register core command handlers on\n");
+        return;
+    }
+    for (Scene* scene:scenes){
+        RegisterCoreCommandHandlers(scene);
+    }
+}
+
+void Application::RegisterCoreCommandHandlers(Scene* scene){
+    if (!scene){
         return;
     }
 
     //Teleport. Only the fields the flags mark as present are written - a command that just wants
     //to rotate something must not also stamp a zeroed position over it.
-    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SET_TRANSFORM,
-        [this](const SimCommand& cmd) -> objectid_t {
-            Object* object = main_scene->FindObjectByID(cmd.target);
+    scene->RegisterCommandHandler(SIM_CMD_OBJECT_SET_TRANSFORM,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
+            Object* object = scene->FindObjectByID(cmd.target);
             if (!object){
                 debug->Err("SimCommand set_transform: no object with id %u\n",cmd.target);
                 return OBJECTID_INVALID;
@@ -581,8 +609,8 @@ void Application::RegisterCoreCommandHandlers(){
     //Spawn. Same three lines the debug UI's Add > Asset menu runs (build from the asset, take
     //the asset's name, add to the scene) - only now on the physics thread, on a defined tick, so
     //the id handed out is reproducible.
-    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_ASSET,
-        [this](const SimCommand& cmd) -> objectid_t {
+    scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_ASSET,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
             if (!assetmanager){
                 debug->Err("SimCommand spawn_asset: no asset manager\n");
                 return OBJECTID_INVALID;
@@ -605,7 +633,7 @@ void Application::RegisterCoreCommandHandlers(){
             if (cmd.flags & SIM_CMD_FLAG_SCALE){
                 object->SetScale(cmd.scale);
             }
-            main_scene->AddObject(object);
+            scene->AddObject(object);
             return object->GetID();
         });
 
@@ -613,9 +641,9 @@ void Application::RegisterCoreCommandHandlers(){
     //SET_TRANSFORM: one `if` per flag, so a command carrying one property leaves the other eight
     //alone. The boolean values live at the same bit positions in bool_values as their own flags,
     //which is what keeps this to one line each - see SimCommand.h.
-    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SET_PHYSICS,
-        [this](const SimCommand& cmd) -> objectid_t {
-            Object* object = main_scene->FindObjectByID(cmd.target);
+    scene->RegisterCommandHandler(SIM_CMD_OBJECT_SET_PHYSICS,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
+            Object* object = scene->FindObjectByID(cmd.target);
             if (!object){
                 debug->Err("SimCommand set_physics: no object with id %u\n",cmd.target);
                 return OBJECTID_INVALID;
@@ -656,8 +684,8 @@ void Application::RegisterCoreCommandHandlers(){
                 //Friction only takes effect on contacts that get re-evaluated, and a pile that has
                 //gone to sleep never re-evaluates - so without this the new value appears to do
                 //nothing until something else disturbs the stack.
-                if (main_scene->physics_world){
-                    main_scene->physics_world->WakeUpEveryone();
+                if (scene->physics_world){
+                    scene->physics_world->WakeUpEveryone();
                 }
             }
             if (cmd.flags & SIM_CMD_FLAG_BOUNCINESS){
@@ -670,8 +698,8 @@ void Application::RegisterCoreCommandHandlers(){
     //Light). Only the scene INSERTION is a command; anything that needs the GL context or the
     //GLTF loader (importing a skinned mesh, say) stays on the render thread and hands the
     //finished asset to SPAWN_ASSET afterwards.
-    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_PRIMITIVE,
-        [this](const SimCommand& cmd) -> objectid_t {
+    scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_PRIMITIVE,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
             Object* object = NULL;
             switch (cmd.subtype){
                 case SIM_PRIMITIVE_EMPTY:{
@@ -724,19 +752,19 @@ void Application::RegisterCoreCommandHandlers(){
             if (cmd.flags & SIM_CMD_FLAG_SCALE){
                 object->SetScale(cmd.scale);
             }
-            main_scene->AddObject(object);
+            scene->AddObject(object);
             return object->GetID();
         });
 
-    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_DUPLICATE,
-        [this](const SimCommand& cmd) -> objectid_t {
-            Object* source = main_scene->FindObjectByID(cmd.target);
+    scene->RegisterCommandHandler(SIM_CMD_OBJECT_DUPLICATE,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
+            Object* source = scene->FindObjectByID(cmd.target);
             if (!source){
                 debug->Err("SimCommand duplicate: no object with id %u\n",cmd.target);
                 return OBJECTID_INVALID;
             }
             Object* duplicated = new Object(source);
-            main_scene->AddObject(duplicated);
+            scene->AddObject(duplicated);
             //Deliberately AFTER AddObject, and only when the submitter asked for it: a copy that
             //starts inactive can be dragged into place before it begins falling, which is why the
             //Inspector's Duplicate button clears the flag.
@@ -747,9 +775,9 @@ void Application::RegisterCoreCommandHandlers(){
             return duplicated->GetID();
         });
 
-    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_DESTROY,
-        [this](const SimCommand& cmd) -> objectid_t {
-            Object* object = main_scene->FindObjectByID(cmd.target);
+    scene->RegisterCommandHandler(SIM_CMD_OBJECT_DESTROY,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
+            Object* object = scene->FindObjectByID(cmd.target);
             if (!object){
                 debug->Err("SimCommand destroy: no object with id %u\n",cmd.target);
                 return OBJECTID_INVALID;
@@ -765,22 +793,22 @@ void Application::RegisterCoreCommandHandlers(){
             return id;
         });
 
-    main_scene->RegisterCommandHandler(SIM_CMD_WORLD_SET_GRAVITY,
-        [this](const SimCommand& cmd) -> objectid_t {
-            if (!main_scene->physics_world){
+    scene->RegisterCommandHandler(SIM_CMD_WORLD_SET_GRAVITY,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
+            if (!scene->physics_world){
                 debug->Err("SimCommand set_gravity: scene has no physics world\n");
                 return OBJECTID_INVALID;
             }
-            main_scene->physics_world->SetGravity(cmd.velocity);
+            scene->physics_world->SetGravity(cmd.velocity);
             return OBJECTID_INVALID; //no object involved - the sequence alone says it landed
         });
 
     //The collider gizmo resolves its rp3d::Collider* HERE, on the physics thread, from the index
     //the command carried - which is the point: the pointer never travels, so it cannot be stale
     //and cannot end up in a recording.
-    main_scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_COLLIDER_GIZMO,
-        [this](const SimCommand& cmd) -> objectid_t {
-            Object* object = main_scene->FindObjectByID(cmd.target);
+    scene->RegisterCommandHandler(SIM_CMD_OBJECT_SPAWN_COLLIDER_GIZMO,
+        [this,scene](const SimCommand& cmd) -> objectid_t {
+            Object* object = scene->FindObjectByID(cmd.target);
             Physics* physics = object ? object->GetPhysics() : NULL;
             if (!physics || !physics->body || !physics->body->rigidbody){
                 debug->Err("SimCommand collider_gizmo: object %u has no rigidbody\n",cmd.target);
@@ -793,7 +821,7 @@ void Application::RegisterCoreCommandHandlers(){
             }
             ObjectCollider* gizmo = new ObjectCollider();
             gizmo->HookTargetCollider(physics->body->rigidbody->getCollider(cmd.subtype));
-            main_scene->AddObject(gizmo);
+            scene->AddObject(gizmo);
             return gizmo->GetID();
         });
 }
@@ -803,6 +831,43 @@ void Application::RegisterCoreCommandHandlers(){
 //same mutex to reach Scene::DrainCommands, so blocking on it deadlocks on the spot. So this is
 //deliberately fire-and-forget, and the panel simply shows the new value on a later frame - which
 //is exactly how an ImGui widget behaves anyway, since it re-reads the object every frame.
+/*
+    Asks for a different scene to become the active one. Safe to call from ANY thread.
+
+    It only records the request; ApplyPendingSceneSwitch does the actual swap on the physics
+    thread. main_scene is read by the physics thread on every pass and by the render thread on
+    every frame, so writing it from a third thread - an MCP handler, an ImGui button - is a plain
+    data race, and a swap halfway through a pass would simulate one scene and draw another.
+*/
+void Application::RequestActiveScene(Scene* scene){
+    if (!scene){
+        return;
+    }
+    pending_scene.store(scene);
+}
+
+/*
+    PHYSICS THREAD ONLY, and only with physics_mutex held - it is called from one place, at the top
+    of the pass in PhysicsThreadFunction, so that a whole pass sees one scene from BeginPass to
+    UpdateView.
+
+    THE RENDER THREAD IS NOT SYNCHRONISED WITH THIS, deliberately. It reads main_scene once per
+    frame outside this lock, so it can draw the OUTGOING scene for at most one more frame after a
+    switch. That is harmless for two reasons and it is worth knowing both: a frame of the previous
+    screen at a transition is not perceptible, and - the one that actually matters - NOTHING HERE
+    DELETES A SCENE. Both stay alive in `scenes` for the life of the app. Freeing the outgoing
+    scene on switch is exactly what would turn that benign stale frame into a use-after-free.
+*/
+void Application::ApplyPendingSceneSwitch(){
+    Scene* requested = pending_scene.exchange(NULL);
+    if (!requested || (requested == main_scene)){
+        return;
+    }
+    debug->Info("Active scene: '%s' -> '%s'\n",
+                main_scene ? main_scene->name.c_str() : "(none)",requested->name.c_str());
+    main_scene = requested;
+}
+
 void Application::SubmitUICommand(const SimCommand& cmd){
     if (main_scene){
         main_scene->SubmitCommand(cmd);
@@ -962,27 +1027,6 @@ void Application::RenderDebugMenuBarClass(){
 //tick and can be recorded, which is what makes a run replayable. Controls that only affect what
 //is DRAWN (renderer flags, materials, material slots, light colour, the camera) stay direct -
 //they are not simulation state and putting them in the stream would perturb a replay.
-
-
-
-
-//--- Scene window -------------------------------------------------------------------------------
-
-
-
-//--- Inspector ----------------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-//--- Engine window ------------------------------------------------------------------------------
-
-
-
 
 //Creates a new scene with default camera and settings
 Scene* Application::CreateNewScene(const std::string& name){

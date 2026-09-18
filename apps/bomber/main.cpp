@@ -35,9 +35,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         Relative to the EXECUTABLE, not the working directory - see GetExecutableDirectory in
         core/File.h.
+
+        NOT DECLARED AT ALL IN A BAKED BUILD (BAKE_ASSETS=1, which defines ASSETS_BAKED - see this
+        app's makefile and the BAKED ASSETS block in engine.mk). LoadFile asks the baked table
+        before it touches the search path, so with everything baked a root can only ever be
+        consulted for a name that is going to fail anyway; leaving it in would make the log claim
+        a search path the process never uses, and would hide an incomplete bake behind a disk that
+        happens to be there. The ordinary build is unaffected.
     */
+#ifndef ASSETS_BAKED
     AddAssetSearchRootFromExe("../assets");                 //apps/bomber/assets
     AddAssetSearchRootFromExe("../../../shared_assets");    //default shaders, noise3d.comp, fonts
+#endif
 
     Application* main_app = new ApplicationBomber();
     main_app->Start();

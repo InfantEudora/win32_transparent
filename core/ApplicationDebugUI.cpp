@@ -351,7 +351,7 @@ void Application::RenderDebugMenuBar(){
                 if (f){
                     fprintf(f, "{\n  \"objects\": [\n");
                     bool first = true;
-                    for (Object* object : main_scene->renderer->objects){
+                    for (Object* object : main_scene->objects){
                         vec3 pos = object->GetPosition();
                         quat rot = object->GetRotation();
                         if (!first) fprintf(f, ",\n");
@@ -363,7 +363,7 @@ void Application::RenderDebugMenuBar(){
                     }
                     fprintf(f, "\n  ]\n}\n");
                     fclose(f);
-                    debug->Info("Exported %zu objects to export.json\n", main_scene->renderer->objects.size());
+                    debug->Info("Exported %zu objects to export.json\n", main_scene->objects.size());
                 }else{
                     debug->Err("Failed to open export.json for writing\n");
                 }
@@ -485,7 +485,7 @@ void Application::RenderSceneWindow(){
 
     for (Scene* scene:scenes){
         ImGui::PushID(scene);
-        int num_objects = scene->renderer ? (int)scene->renderer->objects.size() : 0;
+        int num_objects = (int)scene->objects.size();
         const char* active = (scene == main_scene) ? " (active)" : "";
         ImGui::SeparatorText((scene->name + active).c_str());
 
@@ -508,7 +508,7 @@ void Application::RenderSceneWindow(){
             ImGui::TextDisabled("%i of %i objects match",matches,num_objects);
         }else{
             ImGui::TextDisabled("%i root objects",num_objects);
-            for (Object* object:scene->renderer->objects){
+            for (Object* object:scene->objects){
                 UpdateUISceneObjectTreeNode(object,NULL);
             }
         }

@@ -60,10 +60,15 @@ exactly as `tools/fontbake/` does:
 ROOT      := ../..
 PROJECT   := assetpack
 TOOL_SRCS += assetpack.cpp
-CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tdef.cpp
-CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tinfl.cpp
+CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz.c
+CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tdef.c
+CORE_SRCS += $(ROOT)/3rdparty/miniz/miniz_tinfl.c
 include $(ROOT)/tools/tools.mk
 ```
+
+(Two `.cpp` when this was written; three `.c` since 2026-09-18, when `3rdparty/miniz` became a
+submodule and got upstream's file names back. `miniz.c` is the third because `miniz_tdef.c` calls
+`mz_adler32`, which is defined there — see the note at the foot of step 3.)
 
 **It links no core sources**, and that is a deliberate departure from the port. The port's tool
 compiles in `File.cpp`, `BinaryAsset.cpp`, `Debug.cpp` and `Debug_win32.cpp` so that it can drive
@@ -441,6 +446,12 @@ Each step is independently verifiable and nothing before the last one changes an
    `conflicts with a previous declaration` on its enums, which reads like a toolchain fault rather
    than a double include. `assetpack.cpp` takes miniz *through* `BinaryAsset.h` only, which is what
    `core/BinaryAsset.cpp` already does. A one-line `#pragma once` upstream would end it.
+
+   **Ended 2026-09-18.** It was never upstream's doing: `3rdparty/miniz` held a *modified* 3.1.0
+   with the `#pragma once` commented out, along with five config defines and two edits to
+   `miniz_tdef.c`. It is a submodule pinned at 3.1.2 now, upstream's guard is back, and the
+   configuration lives in `3rdparty/miniz_export.h` instead — see the note in that file. This
+   tool's makefile names three miniz sources rather than two for the same reason.
 4. **The `engine.mk` rules.** **DONE 2026-09-14**, on `apps/ui` rather than tetris — identical
    asset shape (owns nothing, one shared root) and another agent was working in tetris at the time.
    An app opts in with `BAKE_ASSETS := 1` + `ASSET_ROOTS`, and `apps/ui/main.cpp` compiles its disk

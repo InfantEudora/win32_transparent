@@ -152,7 +152,13 @@ IPATHS += -I.
 # build/obj/<config>/core/File.o and cannot collide with a tool source of the same name.
 #---------------------------------------------------------------------------------------
 TOOL_OBJS := $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(TOOL_SRCS))
-CORE_OBJS := $(patsubst $(ROOT)/%.cpp,$(OBJ_DIR)/%.o,$(CORE_SRCS))
+
+#CORE_SRCS is filtered by suffix rather than substituted blind, because a .c in the list
+#would otherwise survive patsubst unchanged and be handed to the linker as a source file -
+#which works, silently, with none of the flags or dependency tracking below. The only .c
+#sources a tool names today are miniz's; see tools/assetpack/makefile.
+CORE_OBJS := $(patsubst $(ROOT)/%.cpp,$(OBJ_DIR)/%.o,$(filter %.cpp,$(CORE_SRCS)))
+CORE_OBJS += $(patsubst $(ROOT)/%.c,$(OBJ_DIR)/%.o,$(filter %.c,$(CORE_SRCS)))
 
 #Header dependency tracking, for the same reason engine.mk has it: without it a stale
 #object can link old code against a changed header and the mismatch shows up at run time.
@@ -178,6 +184,15 @@ $(OBJ_DIR)/%.o: %.cpp
 	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 
 $(OBJ_DIR)/%.o: $(ROOT)/%.cpp
+	@mkdir -p $(dir $@)
+	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
+
+#$(CC) and $(CFLAGS), the C++ ones, on a C source. That is the same choice 3rdparty/makefile
+#makes for miniz and for the same reason: these files were .cpp in this repo until miniz
+#became a submodule, so compiling them any other way would be a change of compiler arriving
+#under cover of a change of file extension. A tool naming a genuinely C-only library here
+#would need its own compiler, not this rule.
+$(OBJ_DIR)/%.o: $(ROOT)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(IPATHS) $< -o $@
 

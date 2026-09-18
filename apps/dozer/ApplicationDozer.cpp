@@ -86,7 +86,7 @@ void ApplicationDozer::RunSimulationTick(){
 
     //Check that all objects havent fallen to their doom
     bool something_was_destroyed = false;
-    for (Object* object:renderer->objects){
+    for (Object* object:main_scene->objects){
         if (object == camera){
             continue;
         }
@@ -102,7 +102,7 @@ void ApplicationDozer::RunSimulationTick(){
     }
 
     //Can't just call this... the renderer might be rendering. Now it needs a mutex around everything
-    renderer->DeleteDestroyedObjects();
+    main_scene->DeleteDestroyedObjects();
 
     //All further code requires the cursor not to be above an UI element
     if (UIWantsMouse()){
@@ -326,7 +326,7 @@ void ApplicationDozer::ExportSceneString(){
 	}
 
     //Loop over the objects we are interested in
-    for (Object* object:renderer->objects){
+    for (Object* object:main_scene->objects){
         if (object->name.compare("Wall") == 0){
             vec3 p = object->GetPosition();
             quat q = object->GetRotation();

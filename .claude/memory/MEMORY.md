@@ -38,3 +38,4 @@
 - [Animation state machine lives in Object](animation_state_machine_in_object.md) — lifted out of PlayerCharacter 2026-09-15: blending now works on any Object; SetRootBone is no longer a silent trap; mid-blend retarget still unsupported
 - [Skinned rig bone indexing](skinned_rig_bone_indexing.md) — a bone's index is its position in skin.joints, not visit order; GetSkeleton loads every root and Renderer lays matrices out by that index (multi-root rigs used to load one bone and tear the mesh)
 - [Comment density ceiling](comment_density_ceiling.md) — the house "comment heavily" rule has an upper bound: one-liners on declarations, block comments for the type, no per-enum-value essays
+- [Release edges ignore focus](release_edge_ignores_focus.md) — a click NEXT TO the window still fires WasKeyReleased (RIDEV_INPUTSINK + key-up honoured unfocused); read the edge unconditionally, gate the action on IsInputLive()

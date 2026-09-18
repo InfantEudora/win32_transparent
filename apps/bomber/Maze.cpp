@@ -458,7 +458,7 @@ void Maze::AddSoftBlocks(){
             if (pass_axis[z][x] != MAZE_AXIS_ANY){
                 continue;
             }
-            if (CellDistance(x,z,MAZE_SPAWN_X,MAZE_SPAWN_Z) <= MAZE_SPAWN_CLEAR){
+            if (CellDistance(x,z,spawn_x,spawn_z) <= MAZE_SPAWN_CLEAR){
                 continue;
             }
             if (RandomBelow(100) >= MAZE_SOFT_BLOCK_PCT){
@@ -563,12 +563,19 @@ void Maze::PlaceDoor(){
                 if (!f_border || tile[z][x] != MAZE_TILE_WALL){
                     continue;
                 }
+                //NOT THE CELL THE PLAYER CAME IN BY. The archway already standing there is the
+                //way back, the view leaves the brick off it either way, and an exit in it would be
+                //a level finished by turning round. The distance rule below keeps the exit away
+                //from the spawn in general; this is the one cell that has to be exact.
+                if (x == entry_x && z == entry_z){
+                    continue;
+                }
                 int ix = (x == 0) ? 1 : (x == MAZE_W - 1 ? MAZE_W - 2 : x);
                 int iz = (z == 0) ? 1 : (z == MAZE_H - 1 ? MAZE_H - 2 : z);
                 if ((ix == x && iz == z) || !IsPassable(ix,iz)){
                     continue;
                 }
-                bool f_far = CellDistance(x,z,MAZE_SPAWN_X,MAZE_SPAWN_Z) >= MAZE_DOOR_MIN_DIST;
+                bool f_far = CellDistance(x,z,spawn_x,spawn_z) >= MAZE_DOOR_MIN_DIST;
                 if ((pass == 0) != f_far){
                     continue;
                 }
@@ -616,7 +623,7 @@ void Maze::PlaceEnemies(){
             if (!IsPassable(x,z) || pass_axis[z][x] != MAZE_AXIS_ANY){
                 continue;
             }
-            if (CellDistance(x,z,MAZE_SPAWN_X,MAZE_SPAWN_Z) < MAZE_ENEMY_MIN_DIST){
+            if (CellDistance(x,z,spawn_x,spawn_z) < MAZE_ENEMY_MIN_DIST){
                 continue;
             }
             /*
@@ -714,10 +721,10 @@ int Maze::PruneUnreachable(){
     int queue_z[MAZE_W * MAZE_H];
     int head = 0;
     int tail = 0;
-    queue_x[tail] = MAZE_SPAWN_X;
-    queue_z[tail] = MAZE_SPAWN_Z;
+    queue_x[tail] = spawn_x;
+    queue_z[tail] = spawn_z;
     tail++;
-    seen[MAZE_SPAWN_Z][MAZE_SPAWN_X] = true;
+    seen[spawn_z][spawn_x] = true;
 
     int count = 0;
     //The flood asks CanEnter, which now wants a walker. A default one carries no key, which is the
@@ -859,12 +866,30 @@ int Maze::LayOutTerrain(){
     CarveDoorways(split_x,split_z);
     AddWater();
 
-    //The spawn and the two cells it can step to, before the reachability pass so that pass starts
-    //somewhere real.
+    /*
+        The spawn and the two cells it can step to, before the reachability pass so that pass starts
+        somewhere real.
+
+        DERIVED RATHER THAN LISTED, because the spawn is in a different corner depending on which
+        border was walked in through. One step further INWARD, and one step ALONG the border toward
+        the middle of the board - both of which are interior cells for every one of the four entry
+        sides, which a hardcoded +X/+Z pair is only for two of them.
+    */
+    int in_x = DirX(DirOpposite(entry_dir));
+    int in_z = DirZ(DirOpposite(entry_dir));
+    //The lateral runs along whichever axis `inward` does not, and points at the middle of the board
+    //so it can never step out through the far border on a 16-wide field.
+    int lat_x = 0;
+    int lat_z = 0;
+    if (in_x != 0){
+        lat_z = (spawn_z < MAZE_H / 2) ? 1 : -1;
+    }else{
+        lat_x = (spawn_x < MAZE_W / 2) ? 1 : -1;
+    }
     const int spawn[3][2] = {
-        {MAZE_SPAWN_X,  MAZE_SPAWN_Z},
-        {MAZE_SPAWN_X+1,MAZE_SPAWN_Z},
-        {MAZE_SPAWN_X,  MAZE_SPAWN_Z+1}
+        {spawn_x,        spawn_z},
+        {spawn_x + in_x, spawn_z + in_z},
+        {spawn_x + lat_x,spawn_z + lat_z}
     };
     for (int i = 0; i < 3; i++){
         tile[spawn[i][1]][spawn[i][0]] = MAZE_TILE_GRASS;
@@ -875,8 +900,39 @@ int Maze::LayOutTerrain(){
     return PruneUnreachable();
 }
 
-void Maze::NewGame(uint32_t seed, const MazeWalker* carry){
+/*
+    Where the way in is, and therefore where the player starts.
+
+    The four cases are one corner mirrored: the entry sits MAZE_ENTRY_OFFSET along its own border
+    and the spawn is the cell one step inward from it. Written as a switch rather than as arithmetic
+    over the direction vectors because the offset runs along a DIFFERENT axis in each case, and the
+    arithmetic version of that reads worse than the table it is hiding.
+*/
+void Maze::SetEntry(int dir){
+    if (dir < 0 || dir >= MAZE_NUM_DIRS){
+        dir = MAZE_DIR_WEST;
+    }
+    entry_dir = dir;
+    switch (dir){
+        case MAZE_DIR_WEST:  entry_x = 0;            entry_z = MAZE_ENTRY_OFFSET; break;
+        case MAZE_DIR_EAST:  entry_x = MAZE_W - 1;   entry_z = MAZE_ENTRY_OFFSET; break;
+        case MAZE_DIR_NORTH: entry_x = MAZE_ENTRY_OFFSET; entry_z = 0;            break;
+        default:             entry_x = MAZE_ENTRY_OFFSET; entry_z = MAZE_H - 1;   break;
+    }
+    //One step INWARD, which is the direction that undoes the border's outward normal.
+    spawn_x = entry_x + DirX(DirOpposite(entry_dir));
+    spawn_z = entry_z + DirZ(DirOpposite(entry_dir));
+}
+
+void Maze::NewGame(uint32_t seed, const MazeWalker* carry, int entry_dir_in){
     rng_state = seed ? seed : 1;
+
+    //FIRST, because the terrain layout clears the spawn's elbow room, the reachability flood starts
+    //from it, and the door and the enemies are both placed by distance from it.
+    SetEntry(entry_dir_in);
+    //A new board is a new clock. Not on the walker, because it is a fact about the BOARD - what the
+    //player carries away from it is the points it already paid out.
+    level_ticks = 0;
 
     /*
         Roll a layout, and roll again if it came out as a corner of a field rather than a field.
@@ -931,10 +987,13 @@ void Maze::NewGame(uint32_t seed, const MazeWalker* carry){
         the note there.
     */
     player = MazeWalker();
-    player.tile_x = player.from_x = MAZE_SPAWN_X;
-    player.tile_z = player.from_z = MAZE_SPAWN_Z;
+    player.tile_x = player.from_x = spawn_x;
+    player.tile_z = player.from_z = spawn_z;
     player.step_total = MAZE_STEP_TICKS;
-    player.facing = MAZE_DIR_SOUTH;
+    //Facing the way they were walking when they came in, which is inward through the entry border.
+    //On a fresh run that is east off the west border, which is the direction the old fixed spawn
+    //happened to look after a transition anyway.
+    player.facing = DirOpposite(entry_dir);
     player.f_alive = true;
     player.health = MAZE_START_HEALTH;
     /*
@@ -1401,10 +1460,10 @@ void Maze::TickPlayerCondition(){
             player = MazeWalker();
             player.f_has_key = f_kept_key;
             player.score = kept_score;
-            player.tile_x = player.from_x = MAZE_SPAWN_X;
-            player.tile_z = player.from_z = MAZE_SPAWN_Z;
+            player.tile_x = player.from_x = spawn_x;
+            player.tile_z = player.from_z = spawn_z;
             player.step_total = MAZE_STEP_TICKS;
-            player.facing = MAZE_DIR_SOUTH;
+            player.facing = DirOpposite(entry_dir);
             player.f_alive = true;
             player.health = MAZE_START_HEALTH;
             //Long enough to walk off the spawn if the spawn is what killed you.
@@ -1439,7 +1498,23 @@ void Maze::TickPlayerCondition(){
     }
 }
 
+uint32_t Maze::TimeBonus() const {
+    if (level_ticks >= MAZE_TIME_PAR_TICKS){
+        return 0;
+    }
+    return (MAZE_TIME_PAR_TICKS - level_ticks) / MAZE_TIME_BONUS_TICKS_PER_POINT;
+}
+
 void Maze::Tick(const MazeInput& input){
+    /*
+        THE CLOCK, and it is the first thing in the tick so that every board costs at least one.
+
+        Unconditional - it does not stop for a death, a respawn or a blast. The only thing that stops
+        it is the board no longer being the thing being ticked, which is what happens when the player
+        steps into the exit and the corridor takes over.
+    */
+    level_ticks++;
+
     //--- the player -------------------------------------------------------------------------
     if (player.f_alive){
         if (player.step_ticks > 0){

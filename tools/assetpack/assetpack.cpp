@@ -47,13 +47,18 @@
 #include <filesystem>
 
 /*
-    miniz arrives THROUGH BinaryAsset.h, and must not also be included directly here.
+    miniz arrives THROUGH BinaryAsset.h, and is not included directly here.
 
-    3rdparty/miniz/miniz.h has no include guard - no #pragma once, no MINIZ_HEADER_INCLUDED - so a
-    translation unit that includes it twice, once directly and once transitively, fails to compile
-    with a wall of "conflicts with a previous declaration" on its enums. core/BinaryAsset.cpp gets
-    tdefl_compress_mem_to_heap the same way, so this is the arrangement the engine already relies
-    on rather than a dodge invented here.
+    That used to be load-bearing: the copy of miniz.h that stood in 3rdparty/miniz had its
+    #pragma once commented out, so a translation unit reaching it both directly and through
+    BinaryAsset.h failed with a wall of "conflicts with a previous declaration" on its enums -
+    which reads like a broken toolchain rather than a double include. 3rdparty/miniz became a
+    submodule on 2026-09-18 and upstream's #pragma once came with it, so the trap is gone.
+
+    Coming through BinaryAsset.h is still the right arrangement, for a plainer reason: that
+    header is where this tool and the engine agree, and it is the only include that carries
+    miniz's configuration with it. core/BinaryAsset.cpp gets tdefl_compress_mem_to_heap the
+    same way.
 */
 
 /*

@@ -155,6 +155,23 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
 */
 #define BOMBER_ENEMY_SKIN   "enemy_armature"
 /*
+    The player's rig, and the clips it MAY have.
+
+    THE CLIP LIST IS PROBED, NOT ASSUMED - see BuildCharacter. The file carries `Character_Idle`
+    today and nothing else, so the walk name below currently matches nothing; exporting a clip under
+    that name is the whole of adding a walk, with no code change here. That is worth the one query
+    it costs, because the alternative is either an error logged every launch for a clip that is
+    deliberately absent, or a name that has to be added in two places later.
+
+    The bone names in this rig are MIXAMO's (`mixamorig:Hips` and 26 more), not the enemy's four
+    hand-named ones. Nothing here cares - Animation::LinkObjects binds by string against whatever
+    the skeleton has - but it is what tells you at a glance which rig a clip came from.
+*/
+#define BOMBER_CHAR_SKIN    "character_armature"
+#define BOMBER_ANIM_CHAR_IDLE  "Character_Idle"
+#define BOMBER_ANIM_CHAR_WALK  "Character_Walking"
+#define BOMBER_ANIM_CHAR_DEATH "Character_Death"
+/*
     The turd's rig and its one clip - flies buzzing round it.
 
     THIS IS THE MULTI-ROOT RIG. `turd_armature` has three joints, `Base`, `Flies` and a
@@ -206,14 +223,15 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
 
 //--- the corridor between levels --------------------------------------------------------------------
 /*
-    Where the corridor puts you back onto the board: the border cell beside the spawn.
+    Where the corridor puts you back onto the board is `Maze::entry_x/entry_z` and no longer a pair
+    of defines here.
 
-    A FIXED CELL, so the corridor always has somewhere to aim at and the board always has an archway
-    in its wall - on level one too, where nothing walked in through it. RebuildField leaves the brick
-    off this one cell for it, which is the only thing the board has to know about any of this.
+    IT MOVES NOW. The board's entry border is chosen from the direction the corridor runs, so that
+    the corridor never has to be turned to meet a fixed cell - which is what let the camera hold one
+    world direction through a whole transition. RebuildField leaves the brick off whichever cell it
+    is and stands the archway there; the board still has one on level one, where nothing walked in
+    through it, because MAZE_DIR_WEST is Maze::NewGame's default.
 */
-#define BOMBER_ENTRY_X          (MAZE_SPAWN_X - 1)
-#define BOMBER_ENTRY_Z          MAZE_SPAWN_Z
 //Ticks one cell takes to rise out of the floor, and how far behind the row in front it starts. The
 //corridor unrolls away from you rather than appearing all at once.
 #define BOMBER_HALL_RISE_TICKS  14
@@ -228,21 +246,21 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
     is that plus a moment.
 */
 #define BOMBER_HALL_COMMIT_TICKS 60
-//Ticks the camera takes to walk back from the corridor to where it was over the board.
-#define BOMBER_HALL_RETURN_TICKS 45
 /*
-    Where the camera sits while the player is in the corridor: behind them and above, in the
-    CORRIDOR'S frame so it turns with it.
+    The corridor's framing: the game framing with the pitch dropped and the distance closed in.
 
-    Close and low on purpose. It is what puts the walls between the camera and the outside, which is
-    what makes the board being swapped something that happens off screen rather than a pop - and it
-    is what leaves the corridor big enough in frame for a score tally to be read in it.
+    THE YAW IS THE ONE THING THAT DOES NOT CHANGE, and that is the entire point. It used to: the
+    camera went behind and above the player in the CORRIDOR'S frame, so a corridor running east
+    swung the view a quarter turn - and the keys are world directions, so screen-up stopped being
+    the forward key for the length of the walk. Pitch and distance can move freely, because neither
+    of them is what a thumb reads.
+
+    Coming down and in is still worth doing: the corridor is a small space and the board's framing
+    would leave the player a speck in the middle of it. This is close enough to read a score tally
+    in, which is what the corridor is eventually for.
 */
-#define BOMBER_HALL_CAM_BACK    3.6f
-#define BOMBER_HALL_CAM_HEIGHT  2.6f
-//How much of the remaining distance the camera closes each tick. A fraction rather than a count, so
-//it eases in and never quite snaps.
-#define BOMBER_HALL_CAM_EASE    0.055f
+#define BOMBER_HALL_CAM_PITCH     50.0f
+#define BOMBER_HALL_CAM_DISTANCE  7.0f
 
 /*
     The old board sinking out of sight, which is the corridor's pop-in run backwards.
@@ -256,6 +274,19 @@ static const bool BOMBER_ITEM_SPINS[MAZE_ITEM_COUNT] = {
 //Ticks of delay per world unit away from the exit. Nearest goes first, so the level collapses away
 //behind the player rather than dropping all at once.
 #define BOMBER_BOARD_SINK_SPREAD 0.9f
+
+/*
+    The NEW board rising into place, which is the sink run the other way.
+
+    IT HAS LESS TIME THAN THE SINK DOES. The sink owns the whole BOMBER_HALL_COMMIT_TICKS window
+    before the commit; the rise only has what is left of the corridor after it, and on a 4-long one
+    that is little more than the far door's 50-tick swing. The board's far corner is about 22 units
+    from the entry, so 22 * SPREAD + TICKS is the number to keep under 50 - and EndHallway finishes
+    whatever is still in the air rather than trusting the arithmetic.
+*/
+#define BOMBER_BOARD_RISE_TICKS  20
+#define BOMBER_BOARD_RISE_DROP   7.0f
+#define BOMBER_BOARD_RISE_SPREAD 0.5f
 
 /*
     The yaw that makes a walker LOOK in each direction. Lifted out of SyncView because the corridor
@@ -349,20 +380,18 @@ void ApplicationBomber::Init(void){
     */
     SetPhysicsTPS(60.0f);
 
-    main_scene = CreateNewScene("Bomber Scene");
+    game_scene = CreateNewScene("Bomber Scene");
+    main_scene = game_scene;
     assetmanager = new AssetManager();
 
     /*
-        Framed on the whole 16x16 board from 45 degrees up.
+        The game framing, placed through the same solve that maintains it - see BOMBER_CAM_PITCH.
 
-        That angle is not a matter of taste: a bomberman blast is a PLUS drawn on the floor, and
-        from a low three-quarter view the two arms running away from the camera foreshorten into
-        the middle and the whole thing reads as a blob. Halfway up is where the cross is legible
-        and the flame still has a visible silhouette. The orbit is there for going in close.
+        NOT A LITERAL POSITION any more, and that is the point: there is one description of where
+        the game camera goes, so the framing Init starts at and the framing UpdateGameCamera eases
+        back to after a transition cannot drift apart.
     */
     camera_target = vec3(0.0f,0.0f,0.0f);
-    main_scene->camera->SetPosition(vec3(0.0f,13.0f,11.0f));
-    main_scene->camera->SetLookAt(camera_target);
 
     /*
         Draw from the shared stream ONCE, here, before anything else runs. Application::rrand is a
@@ -376,6 +405,7 @@ void ApplicationBomber::Init(void){
     BuildLighting();
     LoadAssets();
     BuildEnemies();
+    BuildCharacter();
     BuildTurds();
     BuildDoor();
     BuildHallway();
@@ -391,6 +421,21 @@ void ApplicationBomber::Init(void){
     maze.NewGame(current_seed);
     RebuildField();
 
+    /*
+        AND NOW THE CAMERA, because the framing leans toward the player and there was no player to
+        lean toward until the line above ran. Called before the board exists it aims at a default
+        walker on cell (0,0) - the far corner - and the first framing anyone sees is three units off
+        the middle of the board, easing back over the next second.
+
+        Snapped rather than eased: there is no previous framing for the first one to come from.
+    */
+    UpdateGameCamera(true);
+
+#ifdef USE_SOUND
+    //After the field, so a device that takes a moment to open does not delay anything visible.
+    LoadSounds();
+#endif
+
     SetupInput();
     RegisterCommandHandlers();
 
@@ -400,8 +445,77 @@ void ApplicationBomber::Init(void){
     RegisterMCPTools();
 #endif
 
+    /*
+        LAST, and main_scene is moved onto it directly rather than through RequestActiveScene.
+
+        Both of those are about ordering. Everything above built and registered against the game
+        scene while it was the active one, so it had to go first. And a direct write is correct
+        HERE and nowhere else: Init runs on the frame thread before Application::Start creates the
+        physics thread, so no other thread is reading main_scene yet. Once the game is running,
+        RequestActiveScene is the only safe way to change it.
+    */
+    CreateTitleScene();
+    main_scene = title_scene;
+
     debug->Ok("Bomber ready - %ix%i field, seed %u, %i objects\n",
               MAZE_W,MAZE_H,current_seed,(int)field_objects.size());
+}
+
+/*
+    An orthographic camera and one unlit quad, and nothing else - no light, no physics world.
+
+    The quad is sized from the camera's own extents rather than from the window: with an
+    orthographic camera `zoom` is the half-HEIGHT in world units and the half-width is zoom*aspect
+    (Camera::CalculateLookatMatrix), so a quad of 2*zoom*aspect by 2*zoom covers the viewport
+    exactly. Renderer::DrawFrame refreshes the camera's aspect from the live viewport every frame,
+    so the CAMERA follows a window resize on its own - the quad does not, and a resized window
+    letterboxes or crops the splash until this is taught to rescale it. Fine for a title card.
+*/
+void ApplicationBomber::CreateTitleScene(){
+    title_scene = CreateNewScene("Title Screen");
+
+    const float half_height = 1.0f;
+    float aspect = (float)renderer->GetViewportWidth() / (float)renderer->GetViewportHeight();
+
+    Camera* camera = title_scene->camera;
+    camera->name = "Title Camera";
+    //Down the -Z axis at the quad, which MakeQuad builds facing +Z. Engine forward is -Z.
+    camera->SetPosition(vec3(0,0,1));
+    camera->SetLookAt(vec3(0,0,0));
+    camera->SetupOrthographic((float)renderer->GetViewportWidth(),(float)renderer->GetViewportHeight(),
+                              half_height,0.01f,10.0f);
+
+    /*
+        f_unlit, which is what this flag is for: the texture goes to the screen as it is, with no
+        light in the scene to light it and no shadow to darken it. The alternative - a light and a
+        lit material - would tint a piece of artwork that is already exactly the colour it should
+        be. See the long note on f_unlit in core/Material.h.
+    */
+    Material mat = {};
+    mat.name = "bomber_title_splash";
+    mat.glsl_material.color = vec4(1,1,1,1);
+    mat.glsl_material.f_unlit = 1;
+    Texture* tex = renderer->LoadTexture("images/splash.jpg");
+    if (tex){
+        mat.glsl_material.diffuse_texture = 0;
+        mat.glsl_material.handle_diffuse = tex->texture_handle;
+        mat.diff_texture = tex;
+    }else{
+        //Not fatal: a title screen that is a flat colour still works as one, and still takes the
+        //click that starts the game. Losing the artwork should not cost anyone the app.
+        debug->Err("Title screen: could not load images/splash.jpg\n");
+    }
+    renderer->AddMaterial(mat);
+
+    Object* splash = new Object();
+    splash->name = "Title Splash";
+    //flip_v, because this samples a MATERIAL texture and those are authored V=0 at the top row -
+    //without it the splash renders upside down. See the note on MakeQuad in core/Primitives.h.
+    splash->SetMesh(MakeQuad(2.0f * half_height * aspect,2.0f * half_height,true));
+    splash->SetMaterialSlot(0,renderer->FindMaterialIndex(mat.name));
+    //Nothing on this screen is an object the player or the inspector should be picking.
+    splash->SetPickability(false);
+    title_scene->AddObject(splash);
 }
 
 //--- the scene ------------------------------------------------------------------------------------
@@ -504,14 +618,19 @@ void ApplicationBomber::LoadAssets(void){
                       "pickup_key","pickup_coin","pickup_diamond","pickup_crystal",
                       BOMBER_SHIELD_ASSET,
                       BOMBER_DOOR_ARCH_ASSET,BOMBER_DOOR_LEAF_ASSET,
-                      BOMBER_BOMB_ASSET,BOMBER_CHAR_ASSET);
+                      BOMBER_BOMB_ASSET);
     /*
-        THE ENEMY IS NOT IN THAT LIST, and that is the whole difference between it and everything
-        else on the board. GetAssetsFromGLTF builds one Object per node and hands out copies that
-        SHARE its mesh, which is exactly right for four hundred tiles and exactly wrong for a
-        skinned character: a pose lives in the bones, the bones are the object's children, and four
-        enemies sharing one set would be one enemy drawn four times. BuildEnemies gives each its own
-        skeleton, its own bones and its own copies of the clips.
+        NEITHER THE ENEMY NOR THE CHARACTER IS IN THAT LIST, and that is the whole difference between
+        them and everything else on the board. GetAssetsFromGLTF builds one Object per node and hands
+        out copies that SHARE its mesh, which is exactly right for four hundred tiles and exactly
+        wrong for a skinned one: a pose lives in the bones, the bones are the object's children, and
+        two actors sharing one set would be one actor drawn twice. BuildEnemies and BuildCharacter
+        give each its own skeleton, its own bones and its own copies of the clips.
+
+        THE CHARACTER WAS IN IT until it became skinned on 2026-09-17, and leaving it there after
+        would not have failed - it would have loaded the skin a second time as a plain mesh, logged
+        "Loading a skinned mesh as normal mesh", and quietly kept an unused copy of it in the
+        AssetManager for the life of the process.
     */
 
     //The ones that move, so their height does not have to be looked up every tick.
@@ -653,6 +772,110 @@ void ApplicationBomber::BuildEnemies(void){
 }
 
 /*
+    The player, as a skinned skeleton. RENDER THREAD, ONCE, from Init.
+
+    ONCE AND IN Init IS THE WHOLE POINT OF THIS FUNCTION EXISTING. The character used to be made in
+    RebuildField out of the AssetManager, which was fine while it was a static mesh - but a skeleton
+    uploads a mesh, and RebuildField runs on the PHYSICS thread. So the player joins the enemies and
+    the turds under the same rule: built once here, and a restart only moves it. It is not in
+    `field_objects` and is never destroyed, which also means `shield_worn` outlives a rebuild with
+    it and the two pointers can never be left dangling by one.
+
+    THE CLIPS ARE WHATEVER THE FILE HAS. GetAnimationNames is asked rather than a fixed list being
+    passed, because the rig currently ships with an idle and no walk: naming a walk that does not
+    exist would log an error on every launch for something deliberately absent, and leaving it out
+    would mean editing this list the day one is exported. Neither is necessary - see the note at
+    BOMBER_ANIM_CHAR_WALK.
+*/
+void ApplicationBomber::BuildCharacter(void){
+    static const char* WANTED[] = {BOMBER_ANIM_CHAR_IDLE,BOMBER_ANIM_CHAR_WALK,
+                                   BOMBER_ANIM_CHAR_DEATH};
+
+    const char* clips[sizeof(WANTED)/sizeof(WANTED[0])];
+    int num_clips = 0;
+    std::vector<std::string> present = gltfloader.GetAnimationNames();
+    for (size_t w = 0; w < sizeof(WANTED)/sizeof(WANTED[0]); w++){
+        for (size_t i = 0; i < present.size(); i++){
+            if (present[i] == WANTED[w]){
+                clips[num_clips++] = WANTED[w];
+                break;
+            }
+        }
+    }
+    if (num_clips == 0){
+        debug->Err("No character clips in bomber_assets.glb - looked for %s and %s\n",
+                   BOMBER_ANIM_CHAR_IDLE,BOMBER_ANIM_CHAR_WALK);
+    }
+
+    Skeleton* skeleton = BuildSkinnedActor(BOMBER_CHAR_SKIN,BOMBER_CHAR_ASSET,clips,num_clips,true);
+    if (!skeleton){
+        return;
+    }
+    skeleton->name = "Character";
+    //Kept as an Object* from here on, exactly as the enemies are: everything this class does to it
+    //afterwards - SetPosition, SetVisibility, TransitionToAnimation - is Object's, and the skeleton
+    //half only matters while it is being built.
+    character = skeleton;
+
+    /*
+        The shield goes on as a CHILD with no transform of its own.
+
+        The artist placed `equipped_shield` on top of `character` in the .glb - both nodes sit at the
+        same origin - so identity here is exactly where it was drawn.
+
+        ON THE SKELETON'S ROOT, NOT ON A BONE, and that is a choice rather than a limitation. A bone
+        would make the bubble bob and lean with the body; the root keeps it centred on the tile the
+        player is standing on, which is what the thing actually protects. Attaching a held item -
+        a weapon, a lamp - is the case that would want a bone instead.
+    */
+    shield_worn = assetmanager->GetObjectFromAsset(BOMBER_SHIELD_ASSET);
+    if (shield_worn){
+        shield_worn->name = "Shield";
+        shield_worn->SetVisibility(false);
+        skeleton->AttachChild(shield_worn);
+    }
+
+    /*
+        DYING IS AN EVENT, NOT A STATE - the one clip here that does not loop, exactly as the enemy's
+        is. A looping death is a body repeatedly getting back up to fall over again; a one-shot stops
+        on its last frame, which is the pose a corpse should hold for the rest of MAZE_DEATH_TICKS.
+    */
+    Animation* death = skeleton->FindAnimation(BOMBER_ANIM_CHAR_DEATH);
+    if (death){
+        death->looped = false;
+    }
+
+    /*
+        HOW FAST THE WALK HAS TO RUN TO STOP THE FEET SKATING, solved rather than dialled in.
+
+        The clip is an IN-PLACE walk - every translation track in it is flat, so it says how the legs
+        move and nothing about how far that carries you. The board says that: one tile per
+        MAZE_STEP_TICKS. So the two are tied together here, by asserting the one thing that makes a
+        walk read as walking - ONE CYCLE IS TWO FOOTFALLS, AND A FOOTFALL IS A TILE.
+
+        Derived from the clip's own duration rather than written down as a number, so re-exporting a
+        longer or shorter cycle, or changing how fast a walker crosses a tile, keeps the feet on the
+        ground with nothing to remember. At 1.04 s over two 20-tick steps at 60 Hz it comes out about
+        1.56; at rate 1.0 the character covers three tiles per cycle and visibly skates.
+    */
+    Animation* walk = skeleton->FindAnimation(BOMBER_ANIM_CHAR_WALK);
+    if (walk && walk->duration > 0.0f){
+        float seconds_for_two_tiles = 2.0f * (float)MAZE_STEP_TICKS * GetPhysicsTimestep();
+        char_walk_rate = walk->duration / seconds_for_two_tiles;
+    }
+
+    //Something has to be playing or ApplyAnimation has nothing to pose and the rig stands in its
+    //bind pose, which looks exactly like a clip that failed to load. Same reason as BuildEnemies.
+    if (num_clips > 0){
+        skeleton->SwitchToAnimation(clips[0]);
+    }
+    skeleton->SetVisibility(false);
+    main_scene->AddObject(skeleton);
+    debug->Ok("Built the character: %i bone(s), %i clip(s), walk at %.2fx\n",
+              skeleton->num_bones,num_clips,char_walk_rate);
+}
+
+/*
     A pool of animated turds, buzzing.
 
     Decoration, and the only reason it is a pool rather than one per cell is that the generator
@@ -711,7 +934,7 @@ void ApplicationBomber::BuildTurds(void){
     Which looks backwards, since the leaf is the thing that moves. Two reasons, and they are the
     same two that make a Skeleton work the way it does:
 
-      - Scene::UpdateAnimations walks `renderer->objects`, which holds what was handed to
+      - Scene::UpdateAnimations walks `Scene::objects`, which holds what was handed to
         Scene::AddObject. A child is DRAWN through its parent (Renderer::CullObjects recurses) but
         it is not in that list, so ApplyAnimation would never run on the leaf. The archway is in it.
       - Object::AddAnimation calls Animation::LinkObjects(this), which resolves each track against
@@ -880,13 +1103,27 @@ void ApplicationBomber::BeginHallway(void){
     if (f_in_hallway){
         return;
     }
-    //Where the camera is now, to be put back exactly here on the way out - see cam_return_pos.
-    Camera* cam = main_scene ? main_scene->camera : NULL;
-    if (cam){
-        cam_return_pos = cam->GetPosition();
-        cam_return_target = camera_target;
+    /*
+        NOTHING IS SAVED ABOUT THE CAMERA HERE, and that is worth a line because a saved pose used
+        to be exactly what was restored on the way out. The game framing is SOLVED from the state of
+        the game, so the way back to it is simply to stop being in a corridor - see SolveGameFraming.
+    */
+    /*
+        THE LEVEL IS OVER, SO THE CLOCK PAYS OUT. Here and nowhere else: this is the tick the player
+        stepped into the exit, and it is the last moment `maze.level_ticks` means anything - the
+        commit lays out a new board and restarts it.
+
+        Onto the WALKER, because the walker is what travels (see MazeWalker) - so the points are
+        already on the body that `hall.Begin` picks up two lines down, with nothing to marshal. Both
+        halves are kept for the corridor to show; see hall_level_ticks.
+    */
+    hall_level_ticks = maze.level_ticks;
+    hall_time_bonus = maze.TimeBonus();
+    maze.player.score += hall_time_bonus;
+    if (hall_time_bonus > 0){
+        debug->Ok("Level cleared in %u ticks - time bonus %u (par %i)\n",
+                  hall_level_ticks,hall_time_bonus,MAZE_TIME_PAR_TICKS);
     }
-    hall_camera_return = 0;
     //Chosen NOW rather than at the commit, so the next board's seed is settled before anything can
     //depend on it - and so a recorded run lays out the same one.
     hall_next_seed = next_auto_seed++;
@@ -925,6 +1162,18 @@ void ApplicationBomber::BeginHallway(void){
         ParkDoor(hall_far_arch,false);
         f_hall_far_drawn_open = false;
     }
+#ifdef USE_SOUND
+    /*
+        The level itself moving, which is the one moment in this game when a mass of stone does.
+
+        THE CLIP IS block_shift.wav AND THIS IS A JUDGEMENT CALL - it is the only one of the seven
+        whose name does not name an event in this game. A destructible block breaking was the other
+        candidate; the corridor rising out of the floor while the old board falls away won because
+        it happens ONCE, and four hedges going up together with a 1.08 s tail apiece would be mud
+        under an explosion that is already playing.
+    */
+    PlaySound("level_shift",0.8f);
+#endif
     debug->Ok("Corridor: %i long, running %s, next board seed %u\n",
               hall.length,
               hall.forward == MAZE_DIR_EAST ? "east" :
@@ -942,56 +1191,74 @@ void ApplicationBomber::BeginHallway(void){
     turn could be seen. The player and the camera are carried along with it.
 */
 void ApplicationBomber::CommitHallway(void){
-    //Where the player is, and which way the corridor points, before any of it moves.
+    //Where the player is before any of it moves. The corridor's DIRECTION is not recorded,
+    //because nothing below changes it any more - see the note further down.
     vec3 before = HallCellCentre(hall.player.X(),hall.player.Z());
-    float yaw_before = BomberDirYaw(hall.forward);
 
     current_seed = hall_next_seed;
     /*
         The walker goes with them, and Maze::NewGame is where a level boundary's cost is decided -
         health and score kept, the key and the shield taken. One place, and not this one.
     */
-    maze.NewGame(current_seed,&hall.player);
+    /*
+        AND THE ENTRY BORDER COMES FROM THE CORRIDOR. It runs `forward`, so it arrives at the border
+        whose outward normal is the opposite of that - walking north into a board means coming in
+        through its south side. This one argument is what removed the rotation below.
+    */
+    maze.NewGame(current_seed,&hall.player,Maze::DirOpposite(hall.forward));
     RebuildField();
 
     /*
-        Now pick the corridor up.
+        Now slide the corridor up to it. A SLIDE AND NOTHING ELSE - `hall.forward` is not touched.
 
-        Its far doorway has to land on BOMBER_ENTRY_X/Z - the border cell beside the spawn - running
-        EAST, so that stepping out of it is a step onto the spawn. Two members say all of that: the
-        direction, and the world position of local (1,0), which is the far doorway walked back down
-        the length of the corridor.
+        THIS USED TO BE A TURN, and that turn is what the camera work was really about. The next
+        board had one fixed entry cell that had to be walked into heading east, so a corridor running
+        any other way was picked up and rotated here - and the camera had to be rotated with it to
+        keep that invisible, which is precisely how the view came to point somewhere new every level
+        with the keys still pointing where they always had. The board's entry border is chosen from
+        the corridor's direction now (Maze::NewGame above), so the corridor already points at it and
+        there is nothing left to rotate.
+
+        The far doorway is local (1, length-1), so the origin - local (1,0) - is that cell walked
+        back down the length of the corridor.
     */
-    //`forward` only. `control_forward` is left where it was, so the key that has been walking the
-    //player up the corridor goes on doing it - see the note on it.
-    hall.forward = MAZE_DIR_EAST;
-    hall_origin = CellCentre(BOMBER_ENTRY_X,BOMBER_ENTRY_Z)
-                - BomberDirVec(MAZE_DIR_EAST) * ((float)(hall.length - 1) * BOMBER_CELL_SIZE);
+    hall_origin = CellCentre(maze.entry_x,maze.entry_z)
+                - BomberDirVec(hall.forward) * ((float)(hall.length - 1) * BOMBER_CELL_SIZE);
 
     vec3 after = HallCellCentre(hall.player.X(),hall.player.Z());
-    float yaw_after = BomberDirYaw(hall.forward);
 
     /*
-        And carry the camera with it, about the PLAYER.
+        And carry the camera with it, by exactly the same translation.
 
-        Rotating the position alone would leave the view swinging round; rotating the orientation as
-        well is what makes the turn invisible. The same rotate-about-a-pivot the orbit in UpdateView
-        does, applied once.
+        A PURE TRANSLATION IS INVISIBLE TO ANY CAMERA THAT SHARES IT, which a rotation is not unless
+        the camera is turned too - and that is the whole trade this change makes. The pivot is the
+        only camera state that has to move, because everything else about the game framing is solved
+        from it; moving it outright rather than letting the ease chase it is what stops the slide
+        showing up as the camera lagging a few units behind the corridor.
     */
-    Camera* camera = main_scene ? main_scene->camera : NULL;
-    if (camera){
-        quat turn(vec3(0,1,0),yaw_after - yaw_before);
-        vec3 rel = camera->GetPosition() - before;
-        camera->SetPosition(after + turn * rel);
-        camera->RotateBy(turn);
-        camera_target = after + turn * (camera_target - before);
-    }
+    camera_target += after - before;
 
-    //The board is standing there now, so the far door is allowed to open - see f_next_ready.
+    /*
+        The board is standing there now, so the far door is allowed to open - see f_next_ready.
+
+        AND IT STARTS RISING. It was laid out at full height a few lines up, and the camera no longer
+        hides that: the framing holds one world direction all the way through a transition, so from
+        over a one-brick corridor wall the swap is in shot. A board that falls away behind you and
+        rises ahead of you is a better thing to be able to watch than a pop is a thing to hide.
+    */
     hall.f_next_ready = true;
     board_sink_ticks = -1;
+    board_rise_ticks = 0;
+    //Out of the doorway they are about to come through, so it assembles away from them.
+    board_rise_from = CellCentre(maze.entry_x,maze.entry_z);
+    //Once, now, so the first frame after the commit has the board underground rather than standing.
+    RiseBoard();
     f_hall_committed = true;
-    debug->Ok("Corridor sealed: board %u laid out, corridor turned to meet it\n",current_seed);
+    debug->Ok("Corridor sealed: board %u laid out at the %s border, corridor slid to meet it\n",
+              current_seed,
+              maze.entry_dir == MAZE_DIR_EAST  ? "east"  :
+              maze.entry_dir == MAZE_DIR_WEST  ? "west"  :
+              maze.entry_dir == MAZE_DIR_NORTH ? "north" : "south");
 }
 
 /*
@@ -1000,10 +1267,23 @@ void ApplicationBomber::CommitHallway(void){
 */
 void ApplicationBomber::EndHallway(void){
     f_in_hallway = false;
-    //Back out to exactly where the camera was before the corridor - see cam_return_pos and SyncView.
-    hall_camera_return = BOMBER_HALL_RETURN_TICKS;
-    //Facing the way they walked in. The corridor ran east by the time they got here.
-    maze.player.facing = MAZE_DIR_EAST;
+    /*
+        Put whatever is still in the air straight down on the ground.
+
+        The rise has only the tail of the corridor to run in - see BOMBER_BOARD_RISE_TICKS - and on
+        a short one that can run out. Finishing it outright is right rather than merely safe: the
+        player is standing on this board now, and a board still arriving under their feet is worse
+        than one that arrived a few ticks early.
+    */
+    if (board_rise_ticks >= 0){
+        RiseBoard(true);
+    }
+    /*
+        NOTHING SETS `facing` HERE. Maze::NewGame did, at the commit, from the entry border - which
+        is the same direction the corridor ran, because that is where the border came from. It used
+        to be forced to MAZE_DIR_EAST here because the corridor had been turned to run east by now;
+        with the turn gone there is one place that decides it and this is not it.
+    */
 
     if (door_arch){
         door_arch->SetVisibility(true);
@@ -1099,6 +1379,68 @@ void ApplicationBomber::SinkBoard(void){
 }
 
 /*
+    The NEW board rising into place. PHYSICS THREAD, from RunSimulationTick while the corridor is
+    still the live one.
+
+    SinkBoard's curve read backwards, and the same per-tick DELTA - which is safe for the same
+    reason: SyncView returns early in the corridor, so nothing else is writing these positions
+    between the commit and EndHallway. See board_rise_ticks for why the board is worth watching
+    arrive at all.
+
+    Only `field_objects`. The enemies and the turds of the board being built are placed by SyncView
+    from the rules the moment it takes over, so an offset put on them here would be overwritten on
+    the first tick out of the corridor and is simply a lie in the meantime.
+*/
+void ApplicationBomber::RiseBoard(bool f_finish){
+    if (board_rise_ticks < 0){
+        return;
+    }
+    int was = board_rise_ticks;
+    board_rise_ticks++;
+
+    /*
+        How far below its place one piece still is at tick t, given how far it stands from the way in.
+
+        Squared FROM THE FAR END rather than from the near one, so it decelerates into position
+        instead of slamming down - which is the sink's accelerating fall reversed, and is what makes
+        the two read as one move rather than as two effects that happen to share a distance.
+    */
+    struct Rise{
+        static float At(int t, float dist){
+            float delay = dist * BOMBER_BOARD_RISE_SPREAD;
+            float k = clamp(((float)t - delay) / (float)BOMBER_BOARD_RISE_TICKS,0.0f,1.0f);
+            float e = 1.0f - k;
+            return -(e * e) * BOMBER_BOARD_RISE_DROP;
+        }
+    };
+
+    for (Object* object:field_objects){
+        if (!object || !object->IsVisible()){
+            continue;
+        }
+        vec3 p = object->GetPosition();
+        //Distance in PLAN, so a piece does not change speed as it rises.
+        float dx = p.x - board_rise_from.x;
+        float dz = p.z - board_rise_from.z;
+        float dist = sqrtf(dx * dx + dz * dz);
+        /*
+            THE FIRST CALL COMES FROM NO OFFSET AT ALL, which is what puts the board underground:
+            RebuildField has just left every piece standing at its proper height, so there is no
+            previous value of this curve to step from. Every call after it steps from the last one
+            the way the sink does.
+        */
+        float from = (was == 0) ? 0.0f : Rise::At(was,dist);
+        float d = (f_finish ? 0.0f : Rise::At(board_rise_ticks,dist)) - from;
+        if (d != 0.0f){
+            object->SetPosition(p + vec3(0.0f,d,0.0f));
+        }
+    }
+    if (f_finish){
+        board_rise_ticks = -1;
+    }
+}
+
+/*
     The corridor on screen: where its cells are, how far out of the floor they have risen, and its
     two doors. PHYSICS THREAD, from SyncView, every tick while the corridor is the live one.
 */
@@ -1157,6 +1499,11 @@ void ApplicationBomber::SyncHallwayView(void){
         //the same way round, and the corridor never turns while this one is still in shot.
         if (f_hall_near_drawn_open != hall.f_near_door_open){
             f_hall_near_drawn_open = hall.f_near_door_open;
+#ifdef USE_SOUND
+            //The near door SHUTTING is the one worth hearing - it is the moment the level behind
+            //you stops existing, and it is the only thing that happens on that tick.
+            PlaySound("door",0.75f);
+#endif
             hall_near_arch->SetAnimationRate(hall.f_near_door_open ? 1.0f : -1.0f);
         }
     }
@@ -1165,6 +1512,9 @@ void ApplicationBomber::SyncHallwayView(void){
         hall_far_arch->SetRotation(quat(vec3(0,1,0),yaw));
         if (f_hall_far_drawn_open != hall.f_far_door_open){
             f_hall_far_drawn_open = hall.f_far_door_open;
+#ifdef USE_SOUND
+            PlaySound("door",0.8f);
+#endif
             hall_far_arch->SetAnimationRate(hall.f_far_door_open ? 1.0f : -1.0f);
         }
     }
@@ -1187,26 +1537,14 @@ void ApplicationBomber::SyncHallwayView(void){
     }
 
     /*
-        AND THE CAMERA COMES DOWN WITH THEM.
+        THE CAMERA IS NOT THIS FUNCTION'S BUSINESS, and it used to be.
 
-        Behind and above, in the CORRIDOR'S frame - so it turns with the corridor at the commit and
-        the turn stays invisible for free, and so the walls are between it and the outside. That is
-        what makes the board being swapped something that happens off screen: from up over the board
-        you can see clean over a one-brick wall.
-
-        Eased by a fraction of the remaining distance each tick rather than snapped, so walking into
-        the doorway pulls the camera down after you instead of cutting.
+        It came down here, behind and above the player in the CORRIDOR'S frame - which turned the
+        view a quarter or a half turn every level, because the corridor runs whichever way the exit
+        faced. UpdateGameCamera solves the corridor's framing now (SolveGameFraming), from the same
+        world yaw the board uses, so the only thing left of that block is the pitch and distance it
+        chose - and those are two constants rather than a camera write buried in a view sync.
     */
-    Camera* camera = main_scene ? main_scene->camera : NULL;
-    if (camera){
-        quat turn(vec3(0,1,0),BomberDirYaw(hall.forward));
-        vec3 want_pos = walker_pos + turn * vec3(0.0f,BOMBER_HALL_CAM_HEIGHT,
-                                                 -BOMBER_HALL_CAM_BACK);
-        camera_target += (walker_pos - camera_target) * BOMBER_HALL_CAM_EASE;
-        camera->SetPosition(camera->GetPosition()
-                            + (want_pos - camera->GetPosition()) * BOMBER_HALL_CAM_EASE);
-        camera->SetLookAt(camera_target);
-    }
     drawn_hall_version = hall.version;
 }
 
@@ -1236,6 +1574,18 @@ void ApplicationBomber::SetDoorOpen(bool f_open, bool f_snap){
         //other, and the first tick takes it to an end and pauses it there, posing the leaf.
         door_arch->SwitchToAnimation(BOMBER_ANIM_DOOR);
     }
+#ifdef USE_SOUND
+    /*
+        Only on the way OPEN, and only when it is actually swinging.
+
+        `f_snap` is a door being PARKED at one end of its clip - a new board's door starting shut -
+        and a parked door makes no noise, because nothing moved. Without that test every RebuildField
+        would creak.
+    */
+    if (f_open && !f_snap){
+        PlaySound("door",0.8f);
+    }
+#endif
     door_arch->SetAnimationRate(f_open ? 1.0f : -1.0f);
 }
 
@@ -1297,18 +1647,18 @@ void ApplicationBomber::RebuildField(void){
             cell_item[z][x] = NULL;
         }
     }
-    if (character){
-        //The worn shield is its CHILD, so ~Object takes it - see the note on shield_worn. Dropping
-        //the pointer here is the whole of this side of its lifetime.
-        character->Destroy();
-        character = NULL;
-        shield_worn = NULL;
-    }
+    /*
+        THE CHARACTER IS NOT THROWN AWAY HERE EITHER, for the same reason the enemies are not: it is
+        a skinned skeleton built once on the render thread by BuildCharacter, and this is the physics
+        one. It used to be destroyed and remade per field, back when it was a static mesh.
+
+        Its shield goes on surviving with it, which is what the two pointers being left alone means.
+    */
     if (bomb){
         bomb->Destroy();
         bomb = NULL;
     }
-    renderer->DeleteDestroyedObjects();
+    main_scene->DeleteDestroyedObjects();
 
     //How many of the pooled turds this field has used. Handed out in board order - see the decor
     //block below - and the unused tail is hidden once the walk is done.
@@ -1343,9 +1693,9 @@ void ApplicationBomber::RebuildField(void){
                 re-export wall_brick as a thin one and this is the line that should change.
             */
             const char* block_asset = BOMBER_BLOCK_ASSET[t];
-            //The way IN. The corridor's far archway stands on this cell for the whole level, so the
-            //border gets no brick here - see BOMBER_ENTRY_X.
-            if (x == BOMBER_ENTRY_X && z == BOMBER_ENTRY_Z){
+            //The way IN. The corridor's far archway stands on this cell for the whole level, so
+            //the border gets no brick here - see Maze::entry_x.
+            if (x == maze.entry_x && z == maze.entry_z){
                 block_asset = NULL;
             }
             if (block_asset){
@@ -1430,27 +1780,8 @@ void ApplicationBomber::RebuildField(void){
         }
     }
 
-    //The two that move. Not in field_objects: they outlive a rebuild conceptually, and keeping
-    //them separate is what stops the loop above destroying the thing the player is.
-    character = assetmanager->GetObjectFromAsset(BOMBER_CHAR_ASSET);
-    if (character){
-        character->name = "Character";
-        /*
-            The shield goes on as a CHILD with no transform of its own.
-
-            The artist placed `equipped_shield` on top of `character` in the .glb - both nodes sit
-            at the same origin - so identity here is exactly where it was drawn. Attaching rather
-            than positioning it every tick means it follows and turns with the player for free, and
-            it is freed with them: see the note on shield_worn.
-        */
-        shield_worn = assetmanager->GetObjectFromAsset(BOMBER_SHIELD_ASSET);
-        if (shield_worn){
-            shield_worn->name = "Shield";
-            shield_worn->SetVisibility(false);
-            character->AttachChild(shield_worn);
-        }
-        main_scene->AddObject(character);
-    }
+    //The bomb is the only mover this builds now - the character is built once in Init, and is not
+    //in field_objects, so the destroy loop above cannot reach the thing the player is.
     /*
         The exit, on the cell Maze picked for it this time.
 
@@ -1471,14 +1802,19 @@ void ApplicationBomber::RebuildField(void){
         SetDoorOpen(false,true);
     }
     /*
-        And the way in, which is a fixed cell and so is placed here once rather than moved about.
+        And the way in, which is a cell of THIS board and so is placed here once rather than moved
+        about. It is not the same cell every level any more - see the note where the entry defines
+        used to be - so the archway takes its angle from which border it landed in, exactly as the
+        exit door above does.
 
         Left where the corridor put it if one is in flight - SyncHallwayView owns it then, and moving
         it here would drag the far end of a corridor somebody is standing in.
     */
     if (hall_far_arch && !f_in_hallway){
-        hall_far_arch->SetPosition(CellCentre(BOMBER_ENTRY_X,BOMBER_ENTRY_Z));
-        hall_far_arch->SetRotation(quat(vec3(0,1,0),BOMBER_PANEL_YAW_Z));
+        bool f_entry_side = (maze.entry_x == 0 || maze.entry_x == MAZE_W - 1);
+        hall_far_arch->SetPosition(CellCentre(maze.entry_x,maze.entry_z));
+        hall_far_arch->SetRotation(quat(vec3(0,1,0),
+                                        f_entry_side ? BOMBER_PANEL_YAW_Z : BOMBER_PANEL_YAW_X));
         ParkDoor(hall_far_arch,false);
         f_hall_far_drawn_open = false;
     }
@@ -1497,6 +1833,14 @@ void ApplicationBomber::RebuildField(void){
     //Nothing has been drawn yet, so whatever the maze's version is, this view is not at it. The
     //wrap when field_version is 0 does not matter: the comparison is for difference, not order.
     drawn_field_version = maze.field_version - 1;
+#ifdef USE_SOUND
+    /*
+        And the sound watch, BEFORE that SyncView runs - NewGame has just put every counter back to
+        zero, and a watch still holding the last board's totals would sit above them and stay silent
+        until they caught up. See BomberSoundWatch.
+    */
+    ResetSoundWatch();
+#endif
     SyncView();
 }
 
@@ -1865,6 +2209,8 @@ void ApplicationBomber::SetupInput(void){
 
     input->AddKeyMap('R',INPUT_BOMBER_RESTART);
     input->AddKeyMap(VK_F5,INPUT_BOMBER_RELOAD_SHADER);
+    //The free orbit, which is a debugging affordance and is off by default now - see BOMBER_CAM_GAME.
+    input->AddKeyMap('C',INPUT_BOMBER_CAMERA);
 
     //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
     //INPUT_PAUSE is handled by Scene::BeginPass itself, so this is the whole feature - and pausing
@@ -1965,6 +2311,44 @@ void ApplicationBomber::RunSimulationTick(void){
     }
     InputController* input = main_scene->inputcontroller;
 
+    if (IsOnTitleScreen()){
+        /*
+            Click anywhere to start.
+
+            RELEASE, not press, so the click that gave the window focus does not fall through into
+            the game the instant it arrives - which is what makes a title screen feel broken. Every
+            other app in this tree that waits for a click uses WasKeyReleased for the same reason.
+
+            This runs on the physics thread inside a tick, so RequestActiveScene's request is
+            picked up at the top of the very next pass - see Application::ApplyPendingSceneSwitch.
+        */
+        /*
+            READ THE EDGE UNCONDITIONALLY, ACT ON IT ONLY WHEN THE INPUT IS OURS.
+
+            A click NEXT TO the window used to start the game, and both halves of that are the
+            engine working as designed. Raw input is registered RIDEV_INPUTSINK, so it arrives
+            whether or not we are in front; SubmitSystemKey drops a key DOWN while unfocused but
+            always honours the UP, so that anything already held can still release - and losing
+            focus additionally runs the release-all sweep, which raises a release edge for it. Fire
+            on a release edge and an out-of-window click reaches you by either route.
+
+            The read stays outside the focus test on purpose. An edge nobody has read is KEPT
+            across passes (backlog item 88, see InputController::Tick), so gating the read itself
+            would park that stray release and spend it the instant focus came back - turning
+            "starts too early" into "starts on the click that focused the window", which is worse.
+            Consuming it here and discarding it is what actually throws it away.
+
+            IsInputLive rather than HasFocus so a SCRIPTED click still works with the window in the
+            background, which is how this app is driven over MCP most of the time. A real click
+            still needs real focus; see the note on IsInputLive in core/InputController.h.
+        */
+        bool f_clicked = input->WasKeyReleased(INPUT_CLICK_LEFT);
+        if (f_clicked && input->IsInputLive()){
+            RequestActiveScene(game_scene);
+        }
+        return;
+    }
+
     /*
         While the input lock is on, the game's controls are accepted only when a SCRIPTED hold is
         running. See the note on f_lock_human_input for why that test and not a better one: the
@@ -2020,6 +2404,11 @@ void ApplicationBomber::RunSimulationTick(void){
             if (hall_commit_ticks >= BOMBER_HALL_COMMIT_TICKS){
                 CommitHallway();
             }
+        }
+        //After the commit the new board is climbing out of the floor behind the corridor's far
+        //door. The sink above and this are never both running: one ends where the other begins.
+        if (f_hall_committed){
+            RiseBoard();
         }
         if (hall.f_finished && f_hall_committed){
             EndHallway();
@@ -2147,6 +2536,13 @@ void ApplicationBomber::TickPickupView(void){
     than being integrated here.
 */
 void ApplicationBomber::SyncView(void){
+    //BEFORE the corridor branch, because it has to answer for whichever of the two owns the walker.
+    PublishHUD();
+#ifdef USE_SOUND
+    //Likewise before it: the counters it watches belong to the board, and the corridor simply
+    //leaves them all where they were.
+    UpdateSound();
+#endif
     /*
         In the corridor, the board is not being ticked and nothing on it can have moved - so it is
         left exactly as it was and only the corridor is brought up to date. After the commit there is
@@ -2155,31 +2551,6 @@ void ApplicationBomber::SyncView(void){
     if (f_in_hallway){
         SyncHallwayView();
         return;
-    }
-    /*
-        Just out of a corridor: walk the pivot back from the doorway to the middle of the board.
-
-        The same pan as in the corridor and for the same reason - the camera keeps the angle and the
-        distance the player chose, and only what it is looking at moves.
-    */
-    if (hall_camera_return > 0){
-        hall_camera_return--;
-        Camera* camera = main_scene ? main_scene->camera : NULL;
-        if (camera){
-            /*
-                Back out to EXACTLY where the camera was before the corridor, rather than to a
-                default framing: the player may have orbited the board to somewhere they like, and
-                straightening that out for them would be taking it away. The next board is laid out
-                at the same origin, so the same absolute framing is the right one.
-
-                1/(n+1) of the remaining distance each tick lands exactly on it at n = 0.
-            */
-            float t = 1.0f / (float)(hall_camera_return + 1);
-            camera_target += (cam_return_target - camera_target) * t;
-            camera->SetPosition(camera->GetPosition()
-                                + (cam_return_pos - camera->GetPosition()) * t);
-            camera->SetLookAt(camera_target);
-        }
     }
     //--- what changed on the board ---------------------------------------------------------------
     //First, so everything placed below stands on a field that already agrees with the rules. One
@@ -2245,6 +2616,53 @@ void ApplicationBomber::SyncView(void){
     };
 
     PlaceWalker(character,maze.player,character_y);
+    /*
+        Which clip the player is playing, derived from the rules exactly as the enemies' is one
+        screen down - read every tick, compared against what is actually playing, and nothing kept
+        in step by hand.
+
+        WALK IF THERE IS ONE, otherwise the idle carries both states. That is not a placeholder for
+        a missing feature, it is what having one clip means: the rig ships with `Character_Idle` and
+        no walk, so today the player idles whether moving or not, and the moment a walk is exported
+        under BOMBER_ANIM_CHAR_WALK this line starts choosing between them with nothing else to
+        change. FindAnimation answering NULL is the whole test.
+
+        NO DEATH CLIP EITHER, so a dead player holds the idle for MAZE_DEATH_TICKS rather than
+        falling over the way an enemy does - see game_todo.md for what the rig still wants.
+    */
+    if (character){
+        const MazeWalker& player = maze.player;
+        if (!player.f_alive){
+            /*
+                DEATH IS SWITCHED TO, NOT BLENDED INTO, and it is the same call the enemies make for
+                the same two reasons: blending into a death softens the one moment that should read
+                as sudden, and blending OUT of it would be a corpse standing back up.
+
+                SwitchToAnimation also REWINDS (it sets time_index to 0), which this clip needs and
+                the looping two do not - a second death would otherwise open on the last frame of
+                the first one, already flat on the floor.
+            */
+            if (player.death_ticks > 0 &&
+                strcmp(character->CurrentAnimationName(),BOMBER_ANIM_CHAR_DEATH) != 0){
+                character->SwitchToAnimation(BOMBER_ANIM_CHAR_DEATH);
+                character->SetAnimationRate(1.0f);
+            }
+        }else{
+            const char* clip = player.step_ticks > 0 ? BOMBER_ANIM_CHAR_WALK
+                                                     : BOMBER_ANIM_CHAR_IDLE;
+            //One comparison: CurrentAnimationName is what it is playing OR BECOMING, so a blend in
+            //flight already reads as its destination.
+            if (strcmp(character->CurrentAnimationName(),clip) != 0){
+                character->TransitionToAnimation(clip);
+                /*
+                    THE RATE IS PER-OBJECT, NOT PER-CLIP, so it has to be set on every switch rather
+                    than once at build time - leaving it alone would play the idle and the death at
+                    the walk's 1.56x, which on a death is a body that falls over too fast to read.
+                */
+                character->SetAnimationRate(clip == BOMBER_ANIM_CHAR_WALK ? char_walk_rate : 1.0f);
+            }
+        }
+    }
     /*
         The worn shield, which is the only feedback that a shield is running other than a number in
         a panel.
@@ -2389,11 +2807,515 @@ void ApplicationBomber::SyncView(void){
     water_time_view = (float)main_scene->GetPhysicsTick();
 }
 
+#ifdef USE_SOUND
+//--- sound --------------------------------------------------------------------------------------
+
+/*
+    The seven wavs, under names that say what they MEAN.
+
+    RENDER THREAD, from Init. A name is registered against a FILE and several names may share one
+    (core/SoundSystem.h), so naming by meaning costs nothing and leaves the call sites readable -
+    "enemy_die" rather than "death.wav" at the point where an enemy dies.
+
+    GAINS ARE AT THE CALL SITES, not here, because the same buffer is played at different volumes
+    for different reasons: `death` is the player at full and nothing else, `pickup` is quieter for a
+    coin than for the key. One number per file would have to be the loudest of those.
+*/
+void ApplicationBomber::LoadSounds(void){
+    soundsystem = new SoundSystem();
+    soundsystem->Initialise();
+    if (!soundsystem->f_initialised){
+        //Not fatal, and deliberately not silent: a machine with no audio device is a perfectly good
+        //place to develop the rest of the game, but a sound layer that failed to start and said
+        //nothing looks exactly like one whose events never fire.
+        debug->Warn("Sound: no device - bomber will run silent\n");
+        return;
+    }
+    soundsystem->AppendFile("sound/explosion.wav",    "blast");
+    soundsystem->AppendFile("sound/chop.wav",         "chop");
+    soundsystem->AppendFile("sound/pickup.wav",       "pickup");
+    soundsystem->AppendFile("sound/health.wav",       "health");
+    soundsystem->AppendFile("sound/death.wav",        "death");
+    soundsystem->AppendFile("sound/door_opening.wav", "door");
+    soundsystem->AppendFile("sound/block_shift.wav",  "level_shift");
+    debug->Ok("Sound ready - 7 clips\n");
+}
+
+void ApplicationBomber::PlaySound(const char* name, float gain){
+    if (!f_sound_enabled || !soundsystem || !soundsystem->f_initialised){
+        return;
+    }
+    //Fire and forget: the handle is dropped, the voice is recycled when the clip ends. Nothing in
+    //this game holds a sound open - see SOUND_KEEP in core/SoundSystem.h for what would.
+    soundsystem->Play(name,false,gain);
+}
+
+void ApplicationBomber::ResetSoundWatch(void){
+    sound_watch.blast_count = maze.blast_count;
+    sound_watch.blocks_cut = maze.blocks_cut;
+    sound_watch.items_taken = maze.items_taken;
+    sound_watch.deaths = maze.deaths;
+    sound_watch.health = maze.player.health;
+    sound_watch.chopping = 0;
+}
+
+/*
+    What changed since last tick, as noise. PHYSICS THREAD, from the top of SyncView.
+
+    ONE THREAD EVER CALLS Play. SoundSystem has no lock of its own, and every call site in this app
+    is downstream of RunSimulationTick - so the ImGui panel's sound checkbox sets a bool and never
+    plays anything itself. That is the same arrangement apps/breakout keeps.
+
+    Each test is `>` rather than `!=` on purpose: a counter that has gone BACKWARDS means the board
+    was laid out again underneath the watch, and the right response to that is silence rather than a
+    noise. ResetSoundWatch should have made it impossible, and this is what happens if it did not.
+*/
+void ApplicationBomber::UpdateSound(void){
+    /*
+        THE BOARD IS NOT TICKING IN THE CORRIDOR, so none of these counters can move there and the
+        whole function is a handful of comparisons that find nothing. The corridor's own noises -
+        its doors, and the level shifting - are played where they happen, because they are the app's
+        events and not the rules'.
+    */
+    if (maze.blast_count > sound_watch.blast_count){
+        //The loudest thing in the game, and the one the player asked for.
+        PlaySound("blast",0.85f);
+    }
+    /*
+        A hedge falling to an enemy's shears. THE START OF THE CUT, not the end: MAZE_CHOP_TICKS is
+        90 ticks and the clip is 0.65 s, so playing it when the hedge finally goes would be a sound
+        that arrives a second and a half after the thing it belongs to.
+
+        Counted rather than edge-detected per enemy, because what is wanted is "another one started"
+        and the enemies are interchangeable. One starting on the same tick another finishes is
+        missed, which at four enemies on a sixteen-wide board is not a case worth a bitmask.
+    */
+    int chopping = 0;
+    for (int i = 0; i < maze.num_enemies; i++){
+        if (maze.enemy[i].f_alive && maze.enemy[i].chop_ticks > 0){
+            chopping++;
+        }
+    }
+    if (chopping > sound_watch.chopping){
+        PlaySound("chop",0.55f);
+    }
+    /*
+        A pickup, and WHICH ONE is answered by what moved rather than by asking Maze.
+
+        `items_taken` says something was collected; the health clip is for the one that gave a life
+        back. A health pickup taken at full health raises nothing (Maze caps rather than banks it),
+        so it correctly falls through to the ordinary pickup noise - which is the right sound for
+        something that was wasted.
+    */
+    if (maze.items_taken > sound_watch.items_taken){
+        if (maze.player.health > sound_watch.health){
+            PlaySound("health",0.75f);
+        }else{
+            PlaySound("pickup",0.70f);
+        }
+    }
+    /*
+        The player dying. THE PLAYER ONLY.
+
+        An enemy death would be the same clip, and it is deliberately not played: an enemy can only
+        die to a blast, so it always lands on the same tick as `blast` - a 1.87 s explosion - and up
+        to four of them at once. It would be four voices spent on something nothing can hear. See
+        the sound gaps in game_todo.md, where "an enemy dying" is listed as wanting a clip of its
+        own rather than this one.
+    */
+    if (maze.deaths > sound_watch.deaths){
+        PlaySound("death",1.0f);
+    }
+
+    sound_watch.blast_count = maze.blast_count;
+    sound_watch.blocks_cut = maze.blocks_cut;
+    sound_watch.items_taken = maze.items_taken;
+    sound_watch.deaths = maze.deaths;
+    sound_watch.health = maze.player.health;
+    sound_watch.chopping = chopping;
+}
+#endif
+
+//--- the HUD ------------------------------------------------------------------------------------
+
+/*
+    The palette, in one place so the HUD reads as one thing.
+
+    Every colour here is also a STATE, which is why the lost-life and no-key colours exist at all:
+    an icon that disappears when you lose the thing it stands for tells you nothing about what you
+    have lost, and on a key it does not even tell you there was a key to find. So nothing is ever
+    removed from this HUD - it is drawn dim instead.
+*/
+#define BOMBER_HUD_LIFE        UIColor(236, 72, 76,255)
+#define BOMBER_HUD_LIFE_LOST   UIColor(236, 72, 76, 70)
+#define BOMBER_HUD_KEY         UIColor(255,198, 62,255)
+#define BOMBER_HUD_KEY_NONE    UIColor(210,215,230, 55)
+#define BOMBER_HUD_SHIELD      UIColor(104,198,255,255)
+#define BOMBER_HUD_SHIELD_BACK UIColor(104,198,255, 55)
+#define BOMBER_HUD_TEXT        UIColor(236,242,255,235)
+#define BOMBER_HUD_TEXT_DIM    UIColor(200,212,236,150)
+#define BOMBER_HUD_PANEL       UIColor(  8, 12, 20,120)
+
+/*
+    Publishes what the HUD draws. PHYSICS THREAD, from the top of SyncView.
+
+    BEFORE THE CORRIDOR BRANCH ON PURPOSE - this is the one place that knows which of `maze` and
+    `hall` currently owns the walker, and answering it here is what keeps the render thread from
+    having to know the corridor exists at all. See BomberHUD.
+*/
+void ApplicationBomber::PublishHUD(void){
+    const MazeWalker& walker = f_in_hallway ? hall.player : maze.player;
+    hud.health       = walker.health;
+    hud.shield_ticks = walker.shield_ticks;
+    hud.invuln_ticks = walker.invuln_ticks;
+    hud.f_has_key    = walker.f_has_key;
+    hud.f_alive      = walker.f_alive;
+    hud.score        = walker.score;
+    /*
+        In the corridor the clock and the bonus are the ones BANKED at BeginHallway, not the live
+        board's - `maze` has been laid out again by the commit and its own clock restarted. That is
+        the whole reason hall_level_ticks exists.
+    */
+    hud.f_tally      = f_in_hallway;
+    hud.level_ticks  = f_in_hallway ? hall_level_ticks : maze.level_ticks;
+    hud.time_bonus   = f_in_hallway ? hall_time_bonus : 0;
+}
+
+/*
+    A key, out of four rounded rectangles: a ring, a stem, and two teeth.
+
+    BECAUSE THERE IS NO SPRITE TO DRAW. UIOverlay binds ONE texture for the whole batch - the R8
+    font atlas - and every quad's UV points into it, so an arbitrary image cannot be drawn at all
+    today (see core/UIOverlay.h and shared_assets/shaders/ui_overlay.frag). What the overlay is
+    very good at instead is analytic rounded boxes at any size with exact corners, so an icon that
+    is a few of those costs one draw call like everything else and stays sharp at any HUD scale.
+
+    A capital 'K' would have been one call. It would also have read as a letter rather than as a
+    thing you are carrying, which on the one HUD element that answers "can I leave yet" is worth
+    four quads.
+*/
+void ApplicationBomber::DrawKeyIcon(vec2 centre, float h, uint32_t color){
+    if (!overlay){
+        return;
+    }
+    //The bow - a circle, which is a rounded rect whose radius is half its side.
+    float ring = h * 0.42f;
+    vec2 ring_c = vec2(centre.x - h * 0.28f,centre.y);
+    overlay->AddRectOutline(vec2(ring_c.x - ring,ring_c.y - ring),
+                            vec2(ring_c.x + ring,ring_c.y + ring),
+                            ring,h * 0.15f,color);
+    /*
+        The shank, running right from the bow.
+
+        It STARTS AT THE RING'S EDGE, not at its centre - a shank that begins inside draws a stroke
+        across the hole and the whole thing stops reading as a key and starts reading as a lollipop.
+        0.9 rather than 1.0 so the two overlap by a hair and no seam shows between them.
+    */
+    float shank = h * 0.11f;
+    overlay->AddRect(vec2(ring_c.x + ring * 0.9f,centre.y - shank),
+                     vec2(centre.x + h * 0.66f, centre.y + shank),
+                     shank,color);
+    //Two teeth on the underside of the far end. Different lengths, because a key with matching
+    //teeth reads as a comb.
+    for (int i = 0; i < 2; i++){
+        float x = centre.x + h * (0.34f + 0.20f * (float)i);
+        float drop = h * (i == 0 ? 0.34f : 0.24f);
+        overlay->AddRect(vec2(x - shank,centre.y),
+                         vec2(x + shank,centre.y + drop),
+                         shank,color);
+    }
+}
+
+/*
+    The HUD. RENDER THREAD, from Application::DrawFrame between the scene and the ImGui panels.
+
+    WHAT IS DELIBERATELY NOT HERE: the score. What a board was worth is revealed on the walk OUT of
+    it - see BomberHUD::f_tally - because a number ticking up in the corner while you play turns a
+    bomberman board into a score attack. The clock is shown, because that one is a thing the player
+    can still act on.
+
+    Everything is sized off one unit (BOMBER_HUD_UNIT x window height), so this survives a resize
+    without a layout pass. Reads `hud` and nothing else - see PublishHUD for why.
+*/
+void ApplicationBomber::DrawOverlay(void){
+    if (!overlay || !overlay->IsReady() || !main_window){
+        return;
+    }
+    //No lives, bombs or timer over a title card. This is the one gate that reads main_scene from
+    //the RENDER thread, so at a switch it can be one frame stale - a single frame of HUD over the
+    //splash, or none over the first frame of play. See Application::ApplyPendingSceneSwitch.
+    if (IsOnTitleScreen()){
+        return;
+    }
+    const float u = (float)main_window->height * BOMBER_HUD_UNIT;
+    const float margin = u * BOMBER_HUD_MARGIN;
+    const float w = (float)main_window->width;
+
+    //--- lives ----------------------------------------------------------------------------------
+    /*
+        One pip per point of MAZE_START_HEALTH, lost ones drawn dim rather than dropped, so the row
+        is the same width all game and says how much is gone as well as how much is left.
+
+        Pulsed while the mercy window runs (MAZE_HIT_INVULN_TICKS), which is the only feedback
+        anywhere that the player is briefly un-hittable - the ImGui panel had it and the game did
+        not. Square wave off the tick counter rather than a sine: it has to read as blinking at a
+        glance, and at 60 Hz a 6-tick half period is about as slow as that stays urgent.
+    */
+    const float pip = u * 0.62f;
+    const float pip_step = pip * 2.6f;
+    bool f_blink = (hud.invuln_ticks > 0) && (((hud.invuln_ticks / 6) & 1) != 0);
+    for (int i = 0; i < MAZE_START_HEALTH; i++){
+        vec2 c = vec2(margin + pip + (float)i * pip_step,margin + pip);
+        bool f_have = (i < hud.health);
+        uint32_t color = f_have ? BOMBER_HUD_LIFE : BOMBER_HUD_LIFE_LOST;
+        if (f_have && f_blink){
+            color = BOMBER_HUD_LIFE_LOST;
+        }
+        overlay->AddRect(vec2(c.x - pip,c.y - pip),vec2(c.x + pip,c.y + pip),pip,color);
+        //An outline on every slot, lit or not, so the row keeps its shape when the pips go dim.
+        overlay->AddRectOutline(vec2(c.x - pip,c.y - pip),vec2(c.x + pip,c.y + pip),
+                                pip,u * 0.09f,BOMBER_HUD_LIFE_LOST);
+    }
+
+    //--- the key --------------------------------------------------------------------------------
+    //On the same row, past the pips. Dim until it is found, which is what says one exists.
+    vec2 key_c = vec2(margin + pip + (float)MAZE_START_HEALTH * pip_step + u * 0.9f,margin + pip);
+    DrawKeyIcon(key_c,u * 1.25f,hud.f_has_key ? BOMBER_HUD_KEY : BOMBER_HUD_KEY_NONE);
+
+    //--- the shield -----------------------------------------------------------------------------
+    /*
+        A draining capsule, and the ONE element that is absent when it does not apply - a shield is
+        an event rather than a slot, and a permanently empty bar would read as something broken.
+    */
+    if (hud.shield_ticks > 0){
+        float bar_h = u * 0.42f;
+        float bar_w = u * 6.0f;
+        vec2 bar_min = vec2(margin,margin + pip * 2.0f + u * 0.85f);
+        vec2 bar_max = vec2(bar_min.x + bar_w,bar_min.y + bar_h);
+        overlay->AddRect(bar_min,bar_max,bar_h * 0.5f,BOMBER_HUD_SHIELD_BACK);
+        float left = clamp((float)hud.shield_ticks / (float)MAZE_SHIELD_TICKS,0.0f,1.0f);
+        //Never narrower than the cap radius, or the last few ticks draw as an inside-out sliver.
+        float fill = max(bar_w * left,bar_h);
+        overlay->AddRect(bar_min,vec2(bar_min.x + fill,bar_max.y),bar_h * 0.5f,BOMBER_HUD_SHIELD);
+    }
+
+    //--- the clock ------------------------------------------------------------------------------
+    /*
+        Top right. TICKS ARE THE UNIT EVERYWHERE ELSE in this app (see CLAUDE.md), and this is the
+        one place that converts - because a player reads a clock, not a tick count.
+
+        Through Application::GetPhysicsTimestep, which is 1/physics_tps and therefore the rate this
+        app ACTUALLY set in Init (60, not the engine's default 50). A hardcoded divisor would have
+        been wrong by a fifth from the day it was written, and would have looked perfectly plausible.
+    */
+    float seconds = (float)hud.level_ticks * GetPhysicsTimestep();
+    int mins = (int)(seconds / 60.0f);
+    float secs = seconds - (float)mins * 60.0f;
+
+    char text[64];
+    const float text_size = u * 1.05f;
+    snprintf(text,sizeof(text),"%i:%04.1f",mins,secs);
+    //AddText takes the BASELINE, so the first line sits one text height down from the margin.
+    vec2 clock_at = vec2(w - margin,margin + text_size);
+    overlay->AddText(text,clock_at,text_size,BOMBER_HUD_TEXT,UI_ALIGN_RIGHT);
+
+    //--- the tally ------------------------------------------------------------------------------
+    /*
+        The corridor, and the only place the score is ever shown.
+
+        Drawn under the clock rather than in the middle of the screen: the corridor's framing already
+        has the player in the middle of frame, and this is a receipt rather than an interstitial.
+    */
+    if (hud.f_tally){
+        const float line = text_size * 1.25f;
+        vec2 at = vec2(w - margin,clock_at.y + line);
+        snprintf(text,sizeof(text),"TIME BONUS  +%u",hud.time_bonus);
+        overlay->AddText(text,at,text_size * 0.8f,
+                         hud.time_bonus > 0 ? BOMBER_HUD_KEY : BOMBER_HUD_TEXT_DIM,UI_ALIGN_RIGHT);
+        at.y += line;
+        snprintf(text,sizeof(text),"SCORE  %u",hud.score);
+        overlay->AddText(text,at,text_size * 1.1f,BOMBER_HUD_TEXT,UI_ALIGN_RIGHT);
+    }
+}
+
+//--- the camera -------------------------------------------------------------------------------
+
+/*
+    The offset from the pivot to the camera, from the three spherical terms.
+
+    YAW 0 PUTS THE CAMERA DUE SOUTH OF THE PIVOT (+Z) LOOKING NORTH, which is what makes yaw 0 the
+    framing where screen-up is MAZE_DIR_NORTH - the forward key. Every other yaw is measured from
+    there, and the game framing simply never leaves it.
+*/
+static vec3 BomberCameraOffset(float yaw_degrees, float pitch_degrees, float distance){
+    float yaw = toradians(yaw_degrees);
+    float pitch = toradians(pitch_degrees);
+    //Horizontal reach at this pitch. The vertical term is the rest of the distance.
+    float flat = cosf(pitch) * distance;
+    return vec3(sinf(yaw) * flat, sinf(pitch) * distance, cosf(yaw) * flat);
+}
+
+//`to` - `from` brought into -180..180, so easing a yaw back to the game framing takes the short way
+//round. Without it a free orbit parked just past due north unwinds nearly all the way about.
+static float BomberShortestAngle(float from, float to){
+    float d = to - from;
+    while (d > 180.0f){
+        d -= 360.0f;
+    }
+    while (d < -180.0f){
+        d += 360.0f;
+    }
+    return d;
+}
+
+/*
+    Where the player is, whoever is simulating them. PHYSICS THREAD.
+
+    One call rather than a branch at each site, because the camera is the only thing that has to ask
+    without caring which of Maze and Hallway currently owns the walker.
+*/
+vec3 ApplicationBomber::PlayerWorldPos(void) const {
+    if (f_in_hallway){
+        return HallCellCentre(hall.player.X(),hall.player.Z());
+    }
+    vec3 base = CellCentre(0,0);
+    return vec3(base.x + maze.player.X() * BOMBER_CELL_SIZE,0.0f,
+                base.z + maze.player.Z() * BOMBER_CELL_SIZE);
+}
+
+/*
+    Where the game camera wants to be right now.
+
+    SOLVED FROM THE STATE OF THE GAME, not remembered - which is what makes the whole transition a
+    matter of two constants differing rather than of a saved pose being restored. The board's
+    framing and the corridor's are the same framing with a different pitch, distance and pivot; the
+    yaw is common to both and never moves.
+*/
+void ApplicationBomber::SolveGameFraming(float& yaw, float& pitch, float& distance,
+                                         vec3& pivot) const {
+    //THE ONE LINE THAT MAKES THE CONTROLS READ. See BomberCameraOffset.
+    yaw = 0.0f;
+
+    if (f_in_hallway){
+        pitch = BOMBER_HALL_CAM_PITCH;
+        distance = BOMBER_HALL_CAM_DISTANCE;
+        //Straight onto the player: there is no board left to keep in frame, and the corridor is
+        //narrow enough that anything else would put them against an edge.
+        pivot = PlayerWorldPos();
+        return;
+    }
+
+    pitch = BOMBER_CAM_PITCH;
+    distance = BOMBER_CAM_DISTANCE;
+    /*
+        On the board the pivot LEANS toward the player rather than following them.
+
+        The board is the thing being played and it wants to stay in frame, so the camera is centred
+        on it and only leans - a fraction of the way out, and never further than the clamp. A true
+        follow would put the player in the middle of the screen and the board half off it, which on
+        a game whose whole subject is a fixed 16x16 grid is worse than not tracking at all.
+
+        Taken from the two corners rather than from vec3() so that this still means "the middle of
+        the board" if CellCentre's origin ever moves.
+    */
+    vec3 centre = (CellCentre(0,0) + CellCentre(MAZE_W - 1,MAZE_H - 1)) * 0.5f;
+    vec3 lean = (PlayerWorldPos() - centre) * BOMBER_CAM_FOLLOW;
+    lean.y = 0.0f;
+    float reach = lean.length();
+    if (reach > BOMBER_CAM_FOLLOW_MAX){
+        lean = lean * (BOMBER_CAM_FOLLOW_MAX / reach);
+    }
+    pivot = centre + lean;
+}
+
+/*
+    Places the camera. PHYSICS THREAD, from UpdateView, every pass INCLUDING PAUSED ONES.
+
+    That last part is deliberate and is the same call ApplicationPinball::UpdateCameraShot makes:
+    the framing has to keep easing while the simulation is stopped, or pausing the game to look at
+    something leaves the camera stranded half way through a move.
+
+    An exponential ease rather than a keyframed move - no duration to tune, no overshoot, and
+    redirecting it mid-flight costs nothing, which matters because the corridor can begin and end at
+    any point in one.
+*/
+void ApplicationBomber::UpdateGameCamera(bool f_snap){
+    Camera* camera = main_scene ? main_scene->camera : NULL;
+    if (!camera || camera_mode != BOMBER_CAM_GAME){
+        return;
+    }
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    float distance = 0.0f;
+    vec3 pivot;
+    SolveGameFraming(yaw,pitch,distance,pivot);
+
+    float t = f_snap ? 1.0f : BOMBER_CAM_EASE;
+    cam_yaw      += BomberShortestAngle(cam_yaw,yaw) * t;
+    cam_pitch    += (pitch - cam_pitch) * t;
+    cam_distance += (distance - cam_distance) * t;
+    camera_target += (pivot - camera_target) * t;
+
+    camera->SetPosition(camera_target + BomberCameraOffset(cam_yaw,cam_pitch,cam_distance));
+    camera->SetLookAt(camera_target);
+}
+
+/*
+    Reads the three spherical terms back OUT of wherever the camera currently is.
+
+    So that leaving the free orbit eases back to the game framing FROM THE VIEW YOU WERE JUST
+    LOOKING AT rather than cutting to it. The exact inverse of the placement above, and the same
+    trick as ApplicationPinball::SeedOrbitFromCamera with the two modes swapped.
+*/
+void ApplicationBomber::SeedCameraFromView(void){
+    Camera* camera = main_scene ? main_scene->camera : NULL;
+    if (!camera){
+        return;
+    }
+    vec3 offset = camera->GetPosition() - camera_target;
+    float distance = offset.length();
+    if (distance < 0.001f){
+        //Degenerate: the camera is sitting on its own pivot and there is no direction to recover.
+        //Leave the last framing alone rather than inventing one out of a zero vector.
+        return;
+    }
+    cam_distance = distance;
+    cam_pitch = todegrees(asinf(clamp(offset.y / distance,-1.0f,1.0f)));
+    //atan2(x,z), NOT the usual (z,x): yaw here is measured from +Z, because that is where the game
+    //framing sits. Getting this pair round the wrong way is a quarter turn that only shows up on
+    //the frame the mode changes.
+    cam_yaw = todegrees(atan2f(offset.x,offset.z));
+}
+
+void ApplicationBomber::SetCameraMode(int mode){
+    if (mode != BOMBER_CAM_GAME && mode != BOMBER_CAM_FREE){
+        return;
+    }
+    if (mode == camera_mode){
+        return;
+    }
+    //Entering GAME takes its framing from where the camera already is, so the ease has somewhere to
+    //come FROM. Leaving it needs nothing: the orbit works off camera->GetPosition and the pivot,
+    //both of which the game camera has been keeping honest all along.
+    if (mode == BOMBER_CAM_GAME){
+        SeedCameraFromView();
+    }
+    camera_mode = mode;
+    debug->Ok("Camera: %s\n",mode == BOMBER_CAM_GAME ? "game" : "free (middle-drag orbits)");
+}
+
 /*
     Physics thread, every pass - including the ones that simulate nothing. Camera and the reload key
     only: neither is simulation, and nothing here may write something a tick will read.
 
-    THE CAMERA IS ApplicationShip's, not the shorter one apps/testfx uses, and the differences are
+    TWO CAMERAS LIVE HERE, and which one runs is `camera_mode`:
+
+      - BOMBER_CAM_GAME is the game's own framing, solved by UpdateGameCamera. Nothing a human does
+        moves it.
+      - BOMBER_CAM_FREE is the orbit below, which is a DEBUGGING AFFORDANCE and used to be the only
+        camera there was. <C> switches, and so does the panel and `bomber_camera`.
+
+    THE ORBIT IS ApplicationShip's, not the shorter one apps/testfx uses, and the differences are
     all things that were got wrong here first:
 
       - It reads INPUT_MOUSE_DELTA_X/Y, the raw unaccelerated movement, rather than the cursor
@@ -2414,6 +3336,11 @@ void ApplicationBomber::SyncView(void){
 */
 void ApplicationBomber::UpdateView(void){
     if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    //The title camera is static and deliberately so. Everything below solves the GAME camera, and
+    //main_scene->camera is the title one right now - it would ease the splash out of frame.
+    if (IsOnTitleScreen()){
         return;
     }
     InputController* input = main_scene->inputcontroller;
@@ -2439,10 +3366,26 @@ void ApplicationBomber::UpdateView(void){
     int cam_dy = input->GetDelta(INPUT_MOUSE_DELTA_Y);
     int wheel = input->GetDelta(INPUT_MOUSE_WHEEL);
 
+    /*
+        A mode switch asked for over MCP. BEFORE the lock, because the lock is about a HUMAN at the
+        keyboard and this is not one - an agent has to be able to put the camera where it wants it
+        without first giving the keyboard back.
+    */
+    int wanted_mode = requested_camera_mode.exchange(-1);
+    if (wanted_mode >= 0){
+        SetCameraMode(wanted_mode);
+    }
+
     if (f_lock_human_input){
-        //Everything below this line is a human moving the camera or asking for a shader reload, and
-        //under the lock neither happens. MCP still drives the camera through camera_set, which does
-        //not come through here at all - that is the point of the lock.
+        /*
+            Everything below this line is a human moving the camera or asking for a shader reload,
+            and under the lock neither happens.
+
+            THE GAME CAMERA IS OFF TOO, which is new and is the whole reason the lock still works.
+            It is solved every pass, so leaving it running would overwrite `camera_set` on the very
+            next one and an agent's framing would never survive to the screenshot. Under the lock
+            the camera belongs to MCP, exactly as it did when the orbit was the only camera.
+        */
         return;
     }
 
@@ -2450,6 +3393,16 @@ void ApplicationBomber::UpdateView(void){
         //NOT a GL call: it only raises a flag that PreRender acts on. UpdateView runs on the
         //physics thread, which may not touch the context at all.
         f_shader_reload_requested = true;
+    }
+    if (input->WasKeyReleased(INPUT_BOMBER_CAMERA)){
+        SetCameraMode(camera_mode == BOMBER_CAM_GAME ? BOMBER_CAM_FREE : BOMBER_CAM_GAME);
+    }
+
+    if (camera_mode == BOMBER_CAM_GAME){
+        //One call, and it is the whole camera. The orbit below is not merely unused in this mode -
+        //it must not run, or the two would fight over the same position every pass.
+        UpdateGameCamera();
+        return;
     }
 
     //Middle mouse orbits around camera_target, shift+middle pans both camera and pivot. Same
@@ -2728,7 +3681,18 @@ json ApplicationBomber::StateJson(void){
         {"has_key",maze.player.f_has_key},
         //Whether the shield is actually being WORN, which is the half a tick count cannot answer:
         //it is a child of the character, so this is also a test that the character exists.
-        {"wearing_shield",shield_worn ? shield_worn->IsVisible() : false}
+        {"wearing_shield",shield_worn ? shield_worn->IsVisible() : false},
+        /*
+            The clip the player is on, which the enemies have reported all along and the player could
+            not until it was skinned.
+
+            CurrentAnimationName is what it is playing OR BECOMING - it names the destination from
+            the moment a blend starts - so this is also what the selection in SyncView compares
+            against, and a caller reading it is seeing exactly what that code sees.
+        */
+        {"clip",character ? character->CurrentAnimationName() : "none"},
+        //What the walk is slowed to so the feet keep up with the tiles - see char_walk_rate.
+        {"walk_rate",char_walk_rate}
     };
     //One entry per enemy this field placed, alive or not - the index is stable, so a test can
     //follow one of them. Their TILES are what an assertion wants: "did it cut the hedge" is a
@@ -2856,6 +3820,29 @@ json ApplicationBomber::StateJson(void){
         result["door"] = door;
     }
     /*
+        The way IN, which is a different cell on every board now.
+
+        Worth reporting rather than derivable: the entry border is chosen from the direction the
+        LAST corridor ran, so nothing a caller can see on this board says where it is. `dir` is that
+        border's outward normal, which is also the opposite of the way the player walked in.
+    */
+    /*
+        The clock, and what it is currently worth.
+
+        `bonus` is what the board would pay if the player reached the exit RIGHT NOW - a query, not
+        a promise (Maze::TimeBonus), so it falls as the level runs and is 0 past par.
+    */
+    result["time"] = json{
+        {"level_ticks",maze.level_ticks},
+        {"par_ticks",MAZE_TIME_PAR_TICKS},
+        {"bonus_now",maze.TimeBonus()}
+    };
+    result["entry"] = json{
+        {"tile",json::array({maze.entry_x,maze.entry_z})},
+        {"dir",maze.entry_dir},
+        {"spawn",json::array({maze.spawn_x,maze.spawn_z})}
+    };
+    /*
         The corridor, when there is one. Which of the two is live is the first thing any caller has
         to know, because `character` and `field` describe the BOARD and the board is not where the
         player is standing while this block exists.
@@ -2866,16 +3853,20 @@ json ApplicationBomber::StateJson(void){
             {"length",hall.length},
             {"tile",json::array({hall.player.tile_x,hall.player.tile_z})},
             /*
-                TWO FRAMES, and a caller wants the second one.
+                ONE FRAME, and it is the one to press.
 
-                `forward` is where the corridor currently POINTS, which changes at the commit when it
-                is turned to meet the next board. `control_forward` is the direction whose key walks
-                the player up it, and it never changes - so that is the one to press. Reading
-                `forward` and pressing it walks you into the side wall, which is exactly what the
-                first version of the test for this did.
+                `forward` is where the corridor points AND the direction whose key walks the player
+                up it, because a corridor is never turned any more. It used to be turned at the
+                commit to meet a fixed entry cell, so there was a second frame (`control_forward`)
+                that a caller had to read instead - reading `forward` and pressing it walked you into
+                the side wall, which is exactly what the first version of the test for this did. The
+                board's entry border follows the corridor now and the second frame is gone.
             */
             {"forward",hall.forward},
-            {"control_forward",hall.control_forward},
+            //What the board just left paid out. Frozen at BeginHallway - the live `time` block
+            //above is the NEW board's clock, which the commit has already restarted.
+            {"level_ticks",hall_level_ticks},
+            {"time_bonus",hall_time_bonus},
             {"near_door_open",hall.f_near_door_open},
             //`sealed` is the RULE (the player stepped off the threshold) and `committed` is the app
             //having acted on it once the near door finished shutting - they are 60 ticks apart.
@@ -2889,6 +3880,36 @@ json ApplicationBomber::StateJson(void){
             {"has_key",hall.player.f_has_key}
         };
     }
+    /*
+        The camera, because in GAME mode it is a fact about the game rather than about the viewer.
+
+        `mode` is what decides whether `camera_set` sticks: in "game" the framing is solved every
+        pass and overwrites anything written from outside, in "free" the orbit leaves it alone. An
+        agent that wants a fixed framing switches to "free" first, or turns the input lock on - see
+        bomber_lock_input, which freezes the game camera for exactly this reason.
+    */
+    result["camera"] = json{
+        {"mode",camera_mode == BOMBER_CAM_GAME ? "game" : "free"},
+        {"yaw",cam_yaw},
+        {"pitch",cam_pitch},
+        {"distance",cam_distance},
+        {"target",json::array({camera_target.x,camera_target.y,camera_target.z})}
+    };
+#ifdef USE_SOUND
+    /*
+        The sound layer, as a number an agent can actually check.
+
+        `playing` is how many voices are audible RIGHT NOW (core/SoundSystem.h), which is the only
+        way to confirm from outside the process that an event made a noise - and the only way to
+        see this app starving itself of the 16 it has. Paired with sim_pause and sim_step it is an
+        exact test: step the tick that should make a sound, then read this.
+    */
+    result["sound"] = json{
+        {"enabled",f_sound_enabled},
+        {"device",soundsystem ? soundsystem->f_initialised : false},
+        {"playing",soundsystem ? soundsystem->GetNumPlaying() : 0}
+    };
+#endif
     result["renderers"] = json{{"tiles",f_draw_tiles},{"cross",f_draw_cross}};
     result["input_locked"] = f_lock_human_input;
     /*
@@ -3212,6 +4233,45 @@ void ApplicationBomber::RegisterMCPTools(void){
             return json{ {"input_locked",f_lock_human_input} };
         });
 
+    MCPServer::Get()->RegisterTool("bomber_camera",
+        "Switch between the two cameras. `game` is the one the game plays with: a fixed world yaw "
+        "so that screen-up is always the forward key, a near-overhead pitch so a blast reads as the "
+        "cross it is, and a pivot that leans toward the player without letting the board out of "
+        "frame. It comes down and in by itself while the player is in the corridor between levels, "
+        "keeping the same yaw the whole way - which is why walking through one no longer turns the "
+        "controls round. `free` is the middle-mouse orbit, which is a debugging view. "
+        "WHICH ONE IS ON DECIDES WHETHER camera_set STICKS: the game camera is solved every pass "
+        "and overwrites anything written from outside on the next one, so switch to `free` (or turn "
+        "bomber_lock_input on, which freezes the game camera) before placing the camera by hand. "
+        "<C> does the same thing from the keyboard. Returns the framing either way.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"mode", {{"type","string"},{"enum",json::array({"game","free"})},
+                          {"description","game for the played framing, free for the orbit"}}}
+            }},
+            {"required",json::array({"mode"})}
+        },
+        [this](const json& args) -> json {
+            std::string mode = args.value("mode",std::string("game"));
+            if (mode != "game" && mode != "free"){
+                return json{ {"error","mode must be \"game\" or \"free\""} };
+            }
+            /*
+                POSTED, NOT APPLIED. This runs on an MCP thread holding no lock; SetCameraMode reads
+                and writes the camera and the framing, both of which belong to the physics thread.
+                UpdateView picks it up at the top of the next pass - the same arrangement
+                ApplicationPinball::requested_shot uses, and for the same reason.
+            */
+            requested_camera_mode = (mode == "game") ? BOMBER_CAM_GAME : BOMBER_CAM_FREE;
+            return json{
+                {"requested",mode},
+                //What it is RIGHT NOW, which is still the old one until the next pass runs.
+                {"mode",camera_mode == BOMBER_CAM_GAME ? "game" : "free"},
+                {"note","applied on the next physics pass; read bomber_state.camera to confirm"}
+            };
+        });
+
     MCPServer::Get()->RegisterTool("bomber_reload_shader",
         "Recompile shaders/bomber_explosion.frag from disk and swap it into BOTH programs, without "
         "restarting the app - the edit-and-look loop. One source file serves both blast renderers, "
@@ -3257,11 +4317,46 @@ void ApplicationBomber::DrawImGuiUI(void){
 void ApplicationBomber::RenderBomberPanel(void){
     ImGui::Begin("Bomber");
 
-    ImGui::TextDisabled("arrows/WASD walk   space drops a bomb   R is a new field");
+    ImGui::TextDisabled("arrows/WASD walk   space drops a bomb   R is a new field   C frees the camera");
+    /*
+        The camera mode, as a radio pair rather than a checkbox: "free camera [x]" reads as a
+        property of the camera, and this is a choice between two of them.
+
+        SetCameraMode is a physics-thread call and this is the render thread - but DrawImGuiUI runs
+        with physics_mutex held (see the threading note at the top of the header), so the two cannot
+        be inside each other. The same footing every other control on this panel stands on.
+    */
+    ImGui::Text("Camera");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("game",camera_mode == BOMBER_CAM_GAME)){
+        SetCameraMode(BOMBER_CAM_GAME);
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("free orbit",camera_mode == BOMBER_CAM_FREE)){
+        SetCameraMode(BOMBER_CAM_FREE);
+    }
+    if (camera_mode == BOMBER_CAM_GAME){
+        ImGui::SameLine();
+        ImGui::TextDisabled("yaw %.0f  pitch %.0f  %.1fm",cam_yaw,cam_pitch,cam_distance);
+    }
     ImGui::Text("Field seed %u   %i cells reachable",current_seed,maze.reachable_cells);
     //Visible in the panel as well as over MCP, because a lock that is on and forgotten looks
     //exactly like a keyboard that has stopped working.
     ImGui::Checkbox("lock out keyboard/mouse (MCP only)",&f_lock_human_input);
+#ifdef USE_SOUND
+    /*
+        A mute, and nothing more - UpdateSound's diff keeps running either way.
+
+        Setting a bool is all this does on purpose: DrawImGuiUI is the RENDER thread and every
+        Play in this app is on the physics one, which is what keeps SoundSystem's lack of a lock
+        safe. A panel button that played a test sound would quietly break that.
+    */
+    ImGui::Checkbox("sound",&f_sound_enabled);
+    if (soundsystem && !soundsystem->f_initialised){
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f,0.7f,0.2f,1.0f),"no audio device");
+    }
+#endif
     if (f_lock_human_input){
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f,0.7f,0.2f,1.0f),"LOCKED");

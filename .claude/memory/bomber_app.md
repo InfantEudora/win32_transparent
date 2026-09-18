@@ -142,9 +142,27 @@ generator now re-rolls a layout scoring under `MAZE_MIN_PLAYABLE`.
 
 **Verify rules through `bomber_state`, not screenshots** - tiles and counters are the instrument.
 `bomber_input` only SUBMITS a hold and returns; on a free-running sim, reading state straight after
-it is a race. `sim_pause` then `bomber_input` then `sim_step` is the pattern that works.
+it is a race, and back-to-back holds simply OVERWRITE each other so only the last few land. Pair
+each hold with a `sim_step` of the SAME length - `bomber_input(dir, ticks=20)` then
+`sim_step(num_ticks=20)`, with 20 = `MAZE_STEP_TICKS` - and one call is exactly one cell. Anything
+longer rolls into a second step and desyncs a planned path.
 
-**The enemy is SKINNED and animated** (Walking, Chopping, Death); the player still is not. Each enemy
+**A `bomber_restart` is a SimCommand and lands on a TICK**, so `sim_pause` immediately after it and
+then reading the map gives you the OLD board. Restart, `sim_step` a few ticks, then read.
+
+**Pathfinding off `bomber_state.map` must treat the item glyphs as solid.** A buried pickup is drawn
+OVER the soft block it is under, so `+ S K c d x` are cells you cannot walk onto - a plan that
+ignores that routes straight through a hedge and the walker stops dead on it.
+
+**The enemy AND the player are SKINNED and animated.** The enemy has Walking/Chopping/Death on a
+four-bone hand-named rig; the player was skinned 2026-09-17 onto `character_armature`, 27 MIXAMO
+bones, and the file carries ONE clip - `Character_Idle`, and it really is an idle (4.5 s, upper legs
+swinging 6-11 deg). `BuildCharacter` PROBES `GetAnimationNames` for which of
+`Character_Idle`/`Character_Walking` exist rather than naming a fixed list, and SyncView picks the
+walk when `step_ticks > 0` and falls back when `FindAnimation` is NULL - so **exporting a clip named
+`Character_Walking` is the whole of adding a walk**. The character also came OUT of
+`GetAssetsFromGLTF`'s list when it was skinned; leaving it there loads the skin a second time as a
+plain mesh and keeps an unused copy for ever. Each enemy
 needs its OWN Skeleton, bones and copies of every clip - a pose lives in the bones, and
 `AddAnimation` binds a clip to the skeleton it is added to, so sharing would animate one of them.
 Built once in `Init` on the RENDER thread (`BuildEnemies`), never in `RebuildField`, which is the
@@ -167,21 +185,32 @@ phase and one of them ticks. It shares `MazeWalker` and `Maze::DirX/DirZ/DirOppo
 
 **The commit point** is the near door having FINISHED shutting - `Hallway::f_sealed` reports the tick
 the player steps off the threshold, and the app waits `BOMBER_HALL_COMMIT_TICKS` (60, past the
-50-tick clip) before throwing the old board away. Then `Maze::NewGame(seed, carry)` lays out the next
-one and the corridor is picked up, moved and TURNED so its far doorway lands on `BOMBER_ENTRY_X/Z` -
-the border cell beside the spawn - with the camera rotated about the player by the same quaternion.
+50-tick clip) before throwing the old board away. Then `Maze::NewGame(seed, carry, entry_dir)` lays
+out the next one and the corridor is SLID - not turned - so its far doorway lands on the new board's
+entry cell, with the camera carried by the same translation.
 
-**TWO FRAMES, and this is the trap.** `Hallway::forward` is the frame the corridor is BUILT in and
-turns at the commit; `control_forward` is the frame the player's HANDS are in and never does.
-`LocalToWorld` uses the first, `InputToLocal` the second, and they are deliberately not inverses once
-they part. With one frame, turning the corridor turned the controls with it: the camera rotates too,
-so NOTHING happens on screen, and the key that had been walking you forward walks you into the side
-wall. `bomber_state` reports both and says which to press.
+**THE CORRIDOR IS NEVER ROTATED, as of 2026-09-17, and the rest follows from that.** It used to be:
+the board had one fixed entry cell that had to be walked into heading east, so a corridor running any
+other way was picked up and turned at the commit and the camera turned with it. That made the turn
+invisible but left the VIEW pointing somewhere new every level while the keys stayed world
+directions - which is the bug the user actually reported. `Maze::NewGame` now takes `entry_dir`, the
+outward normal of the border walked in through, and derives `entry_x/entry_z` + `spawn_x/spawn_z`
+from it (`MAZE_SPAWN_X/Z` are GONE - the spawn is a member). A pure translation is invisible to any
+camera that shares it, so the camera can hold one world yaw the whole way. `Hallway::control_forward`
+and the two-frame `InputToLocal` went with the rotation; one frame now, exact inverses.
 
-**The camera dollies down into the corridor** (behind+above, in the CORRIDOR'S frame, so it turns
-with it and the commit rotation is invisible for free) and eases back to exactly where it was on the
-way out. That is what hides the swap - from the board's high angle you can see clean over a
-one-brick wall - and what leaves room for a score tally. **`SinkBoard` drops the old board away**,
+**The camera is two modes and the game one is SOLVED, never nudged** - `BOMBER_CAM_GAME` (default)
+from a yaw/pitch/distance/pivot every pass, `BOMBER_CAM_FREE` for the old middle-mouse orbit, toggled
+by <C>, the panel, or `bomber_camera`. Yaw is pinned at 0 (camera due south, looking north) so
+screen-up is always the forward key; the corridor only changes pitch and distance. **Pitch trades
+against how much board is in frame** - square board, 16:10 window, 45 vertical FOV, so going
+top-down spends board; 58 degrees at 19 out is the most overhead that still shows all 16x16 (62/17
+cost a row and a half). The pivot LEANS a quarter of the way toward the player, clamped at 2.5.
+**Under `bomber_lock_input` the game camera is frozen too**, or it would overwrite `camera_set` on
+the next pass; `camera_set` also does not stick in GAME mode - switch to `free` first.
+**`RiseBoard` brings the new board up** because the camera no longer always hides the swap - the
+level falls away behind you and the next climbs out ahead; `EndHallway` finishes whatever is still
+in the air. **`SinkBoard` drops the old board away**,
 the pop-in run backwards, staggered by distance from the exit and squared so it accelerates; it runs
 from the SEAL and must finish before RebuildField, and is applied as a per-tick DELTA (safe only
 because SyncView returns early in the corridor). **`Hallway::f_next_ready`** is the app telling the

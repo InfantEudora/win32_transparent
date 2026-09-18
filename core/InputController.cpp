@@ -987,18 +987,40 @@ void InputController::Tick(bool f_ticked){
     }
 }
 
+/*
+    Ask for the WM_MOUSELEAVE (and WM_NCMOUSELEAVE) that ends the hover we are about to record.
+    Win32 sends neither unless the window asks, once, per entry - so without this the branch that
+    clears f_mouse_over_window never runs and the flag latches true for the life of the process.
+    It did arrive anyway, but only because ImGui's backend arms the same request on the same
+    window: the bug was invisible in a debug build and live in every `make ship` one.
+
+    Unconditional rather than guarded by an "already armed" member: the request belongs to the
+    WINDOW, not to whoever asked for it, so ImGui's own TME_CANCEL can drop ours at any moment and
+    any flag we kept would be a lie. Re-arming an outstanding request resets it rather than queuing
+    a second message, which makes the call safe to repeat, and it costs one cheap call per
+    mouse-move message - far less than the lock SetMouseOverWindow takes on the same line.
+*/
+static void TrackMouseLeave(HWND hWnd, DWORD flags){
+    TRACKMOUSEEVENT tme = {sizeof(tme),flags,hWnd,0};
+    TrackMouseEvent(&tme);
+}
+
 //Handles message from a WIN32 message handler, which are from a different thread.
-void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
+void InputController::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
 
     if (msg == WM_NCMOUSEMOVE){
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
         SetMouseOverWindow(true);
+        //TME_NONCLIENT as well, or a pointer that touches only the title bar and then leaves the
+        //window entirely is never reported as having left.
+        TrackMouseLeave(hWnd,TME_LEAVE | TME_NONCLIENT);
         //debug->Trace("WM_NCMOUSEMOVE x,y = %li,%li\n",x,y);
     }else if (msg == WM_MOUSEMOVE){
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
         SetMouseOverWindow(true);
+        TrackMouseLeave(hWnd,TME_LEAVE);
         /*
             The mouse drives the on-screen buttons as pointer 0 - the seam that makes them testable
             on Windows without a touchscreen (docs/touch_input_plan.md step 2).
@@ -1033,8 +1055,12 @@ void InputController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam){
             SubmitAxisDelta(INPUT_MOUSE_WHEEL,d);
         }
         SetMouseOverWindow(true);
-    }else if (msg == WM_MOUSELEAVE){
-        debug->Trace("WM_MOUSELEAVE wParam= %li\n",wParam);
+    }else if ((msg == WM_MOUSELEAVE) || (msg == WM_NCMOUSELEAVE)){
+        //Both, because WM_NCMOUSEMOVE above counts as being over the window: a pointer that only
+        //ever touched the title bar and then left produces WM_NCMOUSELEAVE and no WM_MOUSELEAVE at
+        //all. Crossing between the two areas fires one of these and then a move message that sets
+        //the flag straight back, so the in-between state is never observed for longer than that.
+        debug->Trace("WM_MOUSELEAVE msg= 0x%04X wParam= %li\n",msg,wParam);
         SetMouseOverWindow(false);
     }else if (msg == WM_ACTIVATE){
         //Losing the foreground stops the simulation seeing key presses at all, and releases

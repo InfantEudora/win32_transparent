@@ -116,7 +116,19 @@ void Window::RegisterWindowClasses(){
     wc.cbWndExtra = 0;
     wc.hInstance = NULL;
     wc.hIcon = NULL; // LoadIcon(0, IDI_APPLICATION);
-    wc.hCursor = NULL; //LoadCursor(0, IDC_ARROW);
+    /*
+        NOT NULL, which is what this was. A NULL class cursor means Win32 sets no cursor at all
+        over the client area: DefWindowProc answers WM_SETCURSOR/HTCLIENT by calling SetCursor with
+        the class cursor, and with nothing to set it does nothing and returns FALSE. The pointer
+        then keeps whatever shape it was last given - and coming in over the sizing border, where
+        DefWindowProc DOES set IDC_SIZEWE, that shape is a resize arrow which then stayed one all
+        the way across the window.
+
+        Nothing in core/ or apps/ calls SetCursor, so this class cursor is the only thing that
+        decides what the pointer looks like. It appeared to work because ImGui's backend answers
+        WM_SETCURSOR itself for exactly this case; a USE_IMGUI=0 build had no cursor logic at all.
+    */
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = NULL;
     wc.lpszMenuName = NULL;
     wc.lpszClassName = "MainWindowClass";
@@ -418,7 +430,8 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     //core/WindowImGui.cpp. With USE_IMGUI=0 the twin returns 0: nothing consumes the message,
     //which is correct, because there are no panels to click on.
     int res = ImGuiForwardWndProc(hWnd, msg, wParam, lParam);
-    //Res != 0 means message was handled...
+    //Res != 0 means message was handled - which is noted rather than acted on, except for
+    //WM_SETCURSOR at the bottom of this function, where passing it on is the whole point.
 
     switch(msg){
         case WM_KEYDOWN:
@@ -588,7 +601,22 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     }
 
     if (wnd->inputcontroller){
-        wnd->inputcontroller->HandleMessage(msg,wParam,lParam);
+        wnd->inputcontroller->HandleMessage(hWnd,msg,wParam,lParam);
+    }
+
+    /*
+        The one message where ImGui's answer has to be passed on rather than just noted. TRUE is
+        the Win32 protocol for "the cursor is set, stop processing"; fall through to DefWindowProc
+        instead and it stamps the class arrow over whatever ImGui just chose, so a dock splitter or
+        a column edge would flicker between its resize cursor and the arrow. That is only a live
+        problem now that the class HAS a cursor - see Window::RegisterWindowClasses.
+
+        Anything ImGui did not handle - USE_IMGUI=0, or the pointer is on the non-client area -
+        falls through, and DefWindowProc is exactly what we want there: the sizing cursors on the
+        border, the class arrow in the client area.
+    */
+    if ((msg == WM_SETCURSOR) && res){
+        return TRUE;
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }

@@ -1162,11 +1162,13 @@ void ApplicationGrid::RenderRightClickMenu(){
 }
 
 Skeleton* FindSkeletonInScene(Scene* scene, const std::string& name){
-    if (!scene && !scene->renderer){
+    //Was `!scene && !scene->renderer`, which dereferenced scene to prove scene was non-null and
+    //so could only ever have crashed rather than returned. The renderer is not needed here now.
+    if (!scene){
         return NULL;
     }
     Skeleton* skeleton = NULL;
-    for (Object* object:scene->renderer->objects){
+    for (Object* object:scene->objects){
         skeleton = dynamic_cast<Skeleton*>(object);
         if (skeleton && (skeleton->name.compare(name) == 0)){
             return skeleton;

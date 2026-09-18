@@ -47,10 +47,6 @@ bool Scene::BeginPass(){
 }
 
 void Scene::UpdateAnimations(float delta_time){
-    if (!renderer){
-        return;
-    }
-
     /*
         Animation only advances on a tick that actually RUNS.
 
@@ -71,7 +67,7 @@ void Scene::UpdateAnimations(float delta_time){
     //drive the character's motion, so a clip advancing by a hardcoded 20ms while the sim ticks at
     //a different rate would desync the two. Each object's delta is refreshed from the simulation
     //timestep every tick, unless it was deliberately overridden (the debug UI slider).
-    for (Object* object:renderer->objects){
+    for (Object* object:objects){
         if (!object->f_animation_time_delta_override){
             object->animation_time_delta = delta_time;
         }
@@ -162,10 +158,9 @@ void Scene::DrainCommands(){
 }
 
 void Scene::UpdatePhysics(float delta_time){
-    //We need a renderer because that's were we store our objects that need to be rendered.
-    if (!renderer){
-        return;
-    }
+    //There was a `if (!renderer) return;` here, explained as "we need a renderer because that's
+    //where we store our objects". The objects are ours now, so simulating no longer depends on
+    //having something to draw with - which is what you want for a scene that is not being drawn.
     physics_timestep = delta_time;
 
     //Whether this pass ticks was settled in BeginPass, at the top of the pass. Command draining
@@ -191,7 +186,7 @@ void Scene::UpdatePhysics(float delta_time){
     }
 
     //Update all objects stored in the renderer.
-    for (Object* object:renderer->objects){
+    for (Object* object:objects){
         //debug->Info("Updating physics for obj->id %i\n",object->GetID());
 
         //Hand the object this tick's real timestep, so per-tick logic doesn't have to assume one
@@ -281,12 +276,14 @@ void Scene::DrawFrame(){
         }
     }
     renderer->physics_mutex.lock();
-    renderer->DrawFrame(camera, shader,inputcontroller);
+    renderer->DrawFrame(objects, camera, shader,inputcontroller);
     renderer->physics_mutex.unlock();
 };
 
 bool Scene::AtTickBoundary(const std::function<void()>& fn){
-    //The mutex lives on the renderer because that is what owns the object list it protects.
+    //The mutex still lives on the renderer, though the object list it guards does not any more:
+    //what it actually synchronises is the physics thread against the render thread, and the
+    //renderer is the one object both of those already have a handle on. Hence the renderer check.
     if (!renderer || !fn){
         return false;
     }
@@ -296,8 +293,26 @@ bool Scene::AtTickBoundary(const std::function<void()>& fn){
 }
 
 void Scene::AddObject(Object* object){
-    if (object && renderer){
-        renderer->objects.push_back(object);
+    if (object){
+        objects.push_back(object);
+    }
+}
+
+//See Scene.h for when this may be called - it erases from the list the render thread is walking.
+void Scene::DeleteDestroyedObjects(){
+    std::vector<Object*>::iterator it = objects.begin();
+    for ( ; it != objects.end(); ) {
+        Object* object = *it;
+        if (object->IsDestroyed()){
+            //We should destroy it.
+            it = objects.erase(it);
+            //Destroy object
+            //debug->Info("Object %lu is about to be destroyed\n",object->GetID());
+            delete object;
+        }else{
+            object->DeleteDestroyedChildren();
+            ++it;
+        }
     }
 }
 
@@ -309,10 +324,7 @@ static void ForEachObjectRecursive(Object* object,const std::function<void(Objec
 }
 
 void Scene::ForEachObject(const std::function<void(Object*)>& fn){
-    if (!renderer){
-        return;
-    }
-    for (Object* object:renderer->objects){
+    for (Object* object:objects){
         ForEachObjectRecursive(object,fn);
     }
 }

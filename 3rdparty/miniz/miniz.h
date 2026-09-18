@@ -1,4 +1,4 @@
-/* miniz.c 3.1.0 - public domain deflate/inflate, zlib-subset, ZIP reading/writing/appending, PNG writing
+/* miniz.c 3.1.2 - public domain deflate/inflate, zlib-subset, ZIP reading/writing/appending, PNG writing
    See "unlicense" statement at the end of this file.
    Rich Geldreich <richgel99@gmail.com>, last updated Oct. 13, 2013
    Implements RFC 1950: http://www.ietf.org/rfc/rfc1950.txt and RFC 1951: http://www.ietf.org/rfc/rfc1951.txt
@@ -110,10 +110,19 @@
      uses the 64-bit variants: fopen64(), stat64(), etc. Otherwise you won't be able to process large files
      (i.e. 32-bit stat() fails for me on files > 0x7FFFFFFF bytes).
 */
-//#pragma once
+#pragma once
 
-//#include "miniz_export.h"
-#define MINIZ_EXPORT
+#include "miniz_export.h"
+
+#if defined(__STRICT_ANSI__)
+#define MZ_FORCEINLINE
+#elif defined(_MSC_VER)
+#define MZ_FORCEINLINE __forceinline
+#elif defined(__GNUC__)
+#define MZ_FORCEINLINE __inline__ __attribute__((__always_inline__))
+#else
+#define MZ_FORCEINLINE inline
+#endif
 
 /* Defines to completely disable specific portions of miniz.c:
    If all macros here are defined the only functionality remaining will be CRC-32 and adler-32. */
@@ -124,7 +133,7 @@
 /* If MINIZ_NO_TIME is specified then the ZIP archive functions will not be able to get the current time, or */
 /* get/set file times, and the C run-time funcs that get/set times won't be called. */
 /* The current downside is the times written to your archives will be from 1979. */
-#define MINIZ_NO_TIME
+/*#define MINIZ_NO_TIME */
 
 /* Define MINIZ_NO_DEFLATE_APIS to disable all compression API's. */
 /*#define MINIZ_NO_DEFLATE_APIS */
@@ -133,16 +142,16 @@
 /*#define MINIZ_NO_INFLATE_APIS */
 
 /* Define MINIZ_NO_ARCHIVE_APIS to disable all ZIP archive API's. */
-#define MINIZ_NO_ARCHIVE_APIS
+/*#define MINIZ_NO_ARCHIVE_APIS */
 
 /* Define MINIZ_NO_ARCHIVE_WRITING_APIS to disable all writing related ZIP archive API's. */
-#define MINIZ_NO_ARCHIVE_WRITING_APIS
+/*#define MINIZ_NO_ARCHIVE_WRITING_APIS */
 
 /* Define MINIZ_NO_ZLIB_APIS to remove all ZLIB-style compression/decompression API's. */
-#define MINIZ_NO_ZLIB_APIS
+/*#define MINIZ_NO_ZLIB_APIS */
 
 /* Define MINIZ_NO_ZLIB_COMPATIBLE_NAME to disable zlib names, to prevent conflicts against stock zlib. */
-#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+/*#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES */
 
 /* Define MINIZ_NO_MALLOC to disable all calls to malloc, free, and realloc.
    Note if MINIZ_NO_MALLOC is defined then the user must always provide custom user alloc/free/realloc
@@ -274,11 +283,11 @@ extern "C"
         MZ_DEFAULT_COMPRESSION = -1
     };
 
-#define MZ_VERSION "11.3.0"
-#define MZ_VERNUM 0xB300
+#define MZ_VERSION "11.3.2"
+#define MZ_VERNUM 0xB302
 #define MZ_VER_MAJOR 11
 #define MZ_VER_MINOR 3
-#define MZ_VER_REVISION 0
+#define MZ_VER_REVISION 2
 #define MZ_VER_SUBREVISION 0
 
 #ifndef MINIZ_NO_ZLIB_APIS
@@ -490,39 +499,39 @@ extern "C"
 
 #ifndef MINIZ_NO_DEFLATE_APIS
     /* Compatiblity with zlib API. See called functions for documentation */
-    static int deflateInit(mz_streamp pStream, int level)
+    static MZ_FORCEINLINE int deflateInit(mz_streamp pStream, int level)
     {
         return mz_deflateInit(pStream, level);
     }
-    static int deflateInit2(mz_streamp pStream, int level, int method, int window_bits, int mem_level, int strategy)
+    static MZ_FORCEINLINE int deflateInit2(mz_streamp pStream, int level, int method, int window_bits, int mem_level, int strategy)
     {
         return mz_deflateInit2(pStream, level, method, window_bits, mem_level, strategy);
     }
-    static int deflateReset(mz_streamp pStream)
+    static MZ_FORCEINLINE int deflateReset(mz_streamp pStream)
     {
         return mz_deflateReset(pStream);
     }
-    static int deflate(mz_streamp pStream, int flush)
+    static MZ_FORCEINLINE int deflate(mz_streamp pStream, int flush)
     {
         return mz_deflate(pStream, flush);
     }
-    static int deflateEnd(mz_streamp pStream)
+    static MZ_FORCEINLINE int deflateEnd(mz_streamp pStream)
     {
         return mz_deflateEnd(pStream);
     }
-    static mz_ulong deflateBound(mz_streamp pStream, mz_ulong source_len)
+    static MZ_FORCEINLINE mz_ulong deflateBound(mz_streamp pStream, mz_ulong source_len)
     {
         return mz_deflateBound(pStream, source_len);
     }
-    static int compress(unsigned char *pDest, mz_ulong *pDest_len, const unsigned char *pSource, mz_ulong source_len)
+    static MZ_FORCEINLINE int compress(unsigned char *pDest, mz_ulong *pDest_len, const unsigned char *pSource, mz_ulong source_len)
     {
         return mz_compress(pDest, pDest_len, pSource, source_len);
     }
-    static int compress2(unsigned char *pDest, mz_ulong *pDest_len, const unsigned char *pSource, mz_ulong source_len, int level)
+    static MZ_FORCEINLINE int compress2(unsigned char *pDest, mz_ulong *pDest_len, const unsigned char *pSource, mz_ulong source_len, int level)
     {
         return mz_compress2(pDest, pDest_len, pSource, source_len, level);
     }
-    static mz_ulong compressBound(mz_ulong source_len)
+    static MZ_FORCEINLINE mz_ulong compressBound(mz_ulong source_len)
     {
         return mz_compressBound(source_len);
     }
@@ -530,56 +539,56 @@ extern "C"
 
 #ifndef MINIZ_NO_INFLATE_APIS
     /* Compatiblity with zlib API. See called functions for documentation */
-    static int inflateInit(mz_streamp pStream)
+    static MZ_FORCEINLINE int inflateInit(mz_streamp pStream)
     {
         return mz_inflateInit(pStream);
     }
 
-    static int inflateInit2(mz_streamp pStream, int window_bits)
+    static MZ_FORCEINLINE int inflateInit2(mz_streamp pStream, int window_bits)
     {
         return mz_inflateInit2(pStream, window_bits);
     }
 
-    static int inflateReset(mz_streamp pStream)
+    static MZ_FORCEINLINE int inflateReset(mz_streamp pStream)
     {
         return mz_inflateReset(pStream);
     }
 
-    static int inflate(mz_streamp pStream, int flush)
+    static MZ_FORCEINLINE int inflate(mz_streamp pStream, int flush)
     {
         return mz_inflate(pStream, flush);
     }
 
-    static int inflateEnd(mz_streamp pStream)
+    static MZ_FORCEINLINE int inflateEnd(mz_streamp pStream)
     {
         return mz_inflateEnd(pStream);
     }
 
-    static int uncompress(unsigned char* pDest, mz_ulong* pDest_len, const unsigned char* pSource, mz_ulong source_len)
+    static MZ_FORCEINLINE int uncompress(unsigned char* pDest, mz_ulong* pDest_len, const unsigned char* pSource, mz_ulong source_len)
     {
         return mz_uncompress(pDest, pDest_len, pSource, source_len);
     }
 
-    static int uncompress2(unsigned char* pDest, mz_ulong* pDest_len, const unsigned char* pSource, mz_ulong* pSource_len)
+    static MZ_FORCEINLINE int uncompress2(unsigned char* pDest, mz_ulong* pDest_len, const unsigned char* pSource, mz_ulong* pSource_len)
     {
         return mz_uncompress2(pDest, pDest_len, pSource, pSource_len);
     }
 #endif /*#ifndef MINIZ_NO_INFLATE_APIS*/
 
-    static mz_ulong crc32(mz_ulong crc, const unsigned char *ptr, size_t buf_len)
+    static MZ_FORCEINLINE mz_ulong crc32(mz_ulong crc, const unsigned char *ptr, size_t buf_len)
     {
         return mz_crc32(crc, ptr, buf_len);
     }
 
-    static mz_ulong adler32(mz_ulong adler, const unsigned char *ptr, size_t buf_len)
+    static MZ_FORCEINLINE mz_ulong adler32(mz_ulong adler, const unsigned char *ptr, size_t buf_len)
     {
         return mz_adler32(adler, ptr, buf_len);
     }
-
+    
 #define MAX_WBITS 15
 #define MAX_MEM_LEVEL 9
 
-    static const char* zError(int err)
+    static MZ_FORCEINLINE const char* zError(int err)
     {
         return mz_error(err);
     }
@@ -603,4 +612,4 @@ extern "C"
 #include "miniz_common.h"
 #include "miniz_tdef.h"
 #include "miniz_tinfl.h"
-//#include "miniz_zip.h"
+#include "miniz_zip.h"
