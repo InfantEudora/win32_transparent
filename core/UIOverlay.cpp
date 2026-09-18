@@ -309,6 +309,79 @@ void UIOverlay::AddRect(vec2 min, vec2 max, float radius, uint32_t color){
     AddQuad(min,max,solid,solid,radius,0.0f,font.distance_range_px,color);
 }
 
+void UINineSliceRegions(vec2 min, vec2 max, const ui_nine_inset& inset,
+                        vec2* out_min, vec2* out_max){
+    float w = max.x - min.x;
+    float h = max.y - min.y;
+
+    float l = inset.left;
+    float r = inset.right;
+    float t = inset.top;
+    float b = inset.bottom;
+
+    /*
+        Shrink opposing insets TOGETHER when they do not fit, keeping their ratio.
+
+        Clamping them one at a time instead would move the panel's visual centre as it narrowed,
+        because whichever inset was clamped first would keep its full size while the other gave way.
+        Scaling both by the same factor keeps a symmetric frame symmetric all the way down to zero
+        width, which is what a panel animating open looks like.
+    */
+    if ((l + r) > w && (l + r) > 0.0f){
+        float k = w / (l + r);
+        l *= k;
+        r *= k;
+    }
+    if ((t + b) > h && (t + b) > 0.0f){
+        float k = h / (t + b);
+        t *= k;
+        b *= k;
+    }
+
+    //The four cut lines, in order, on each axis. The middle span is whatever is left over and may
+    //legitimately be zero - a panel exactly as wide as its own corners has no middle column.
+    const float xs[4] = {min.x, min.x + l, max.x - r, max.x};
+    const float ys[4] = {min.y, min.y + t, max.y - b, max.y};
+
+    for (int row = 0; row < 3; row++){
+        for (int col = 0; col < 3; col++){
+            int i = row * 3 + col;
+            out_min[i] = vec2(xs[col],    ys[row]);
+            out_max[i] = vec2(xs[col + 1],ys[row + 1]);
+        }
+    }
+}
+
+void UIOverlay::AddNineSliceDebug(vec2 min, vec2 max, const ui_nine_inset& inset, uint8_t alpha){
+    if (!f_ready){
+        return;
+    }
+    vec2 rmin[UI_NINE_COUNT];
+    vec2 rmax[UI_NINE_COUNT];
+    UINineSliceRegions(min,max,inset,rmin,rmax);
+
+    //Indexed the same way as the regions - row-major from the top-left. Corners red, the edges
+    //that stretch horizontally green, the ones that stretch vertically blue, the centre grey.
+    const uint32_t role[UI_NINE_COUNT] = {
+        UIColor(224, 82, 82,alpha), UIColor( 96,200,104,alpha), UIColor(224, 82, 82,alpha),
+        UIColor( 86,150,236,alpha), UIColor(150,150,160,alpha), UIColor( 86,150,236,alpha),
+        UIColor(224, 82, 82,alpha), UIColor( 96,200,104,alpha), UIColor(224, 82, 82,alpha),
+    };
+
+    for (int i = 0; i < UI_NINE_COUNT; i++){
+        //A degenerate region is skipped rather than drawn: a zero-width middle column is a
+        //legitimate outcome of the clamp above, and a zero-area quad would still cost six
+        //vertices and an antialiasing ramp that can leave a faint line where nothing should be.
+        if (rmax[i].x - rmin[i].x <= 0.0f || rmax[i].y - rmin[i].y <= 0.0f){
+            continue;
+        }
+        //Radius 0: each region is a plain rectangle. Rounded corners on a nine-slice come from the
+        //ARTWORK in the corner regions, never from the geometry - rounding these would round the
+        //interior cuts too, and leave gaps along every seam.
+        AddRect(rmin[i],rmax[i],0.0f,role[i]);
+    }
+}
+
 void UIOverlay::AddRectOutline(vec2 min, vec2 max, float radius, float thickness, uint32_t color){
     if (!f_ready){
         return;

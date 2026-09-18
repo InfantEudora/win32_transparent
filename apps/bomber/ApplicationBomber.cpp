@@ -491,31 +491,53 @@ void ApplicationBomber::CreateTitleScene(){
         lit material - would tint a piece of artwork that is already exactly the colour it should
         be. See the long note on f_unlit in core/Material.h.
     */
-    Material mat = {};
-    mat.name = "bomber_title_splash";
-    mat.glsl_material.color = vec4(1,1,1,1);
-    mat.glsl_material.f_unlit = 1;
-    Texture* tex = renderer->LoadTexture("images/splash.jpg");
-    if (tex){
-        mat.glsl_material.diffuse_texture = 0;
-        mat.glsl_material.handle_diffuse = tex->texture_handle;
-        mat.diff_texture = tex;
-    }else{
-        //Not fatal: a title screen that is a flat colour still works as one, and still takes the
-        //click that starts the game. Losing the artwork should not cost anyone the app.
-        debug->Err("Title screen: could not load images/splash.jpg\n");
-    }
-    renderer->AddMaterial(mat);
+    /*
+        TWO materials on one quad, swapped by ApplyMenuPage - the front page keeps the painted
+        splash, every sub-page gets the empty dungeon.
 
-    Object* splash = new Object();
-    splash->name = "Title Splash";
+        Both are built here, at startup, rather than the background being loaded when a page is
+        first opened. Loading a texture is a render-thread job and opening a menu is not, so a
+        lazy load would either block the first frame of that page or need a request across the
+        thread boundary; there are two of them and they are small.
+    */
+    struct title_material{
+        const char* name;
+        const char* asset;
+        int* out_index;
+    };
+    const title_material wanted[] = {
+        {"bomber_title_splash","images/splash.jpg",         &title_material_main},
+        {"bomber_menu_back",   "images/menu_background.jpg",&title_material_menu},
+    };
+
+    for (int i = 0; i < (int)(sizeof(wanted) / sizeof(wanted[0])); i++){
+        Material mat = {};
+        mat.name = wanted[i].name;
+        mat.glsl_material.color = vec4(1,1,1,1);
+        mat.glsl_material.f_unlit = 1;
+        Texture* tex = renderer->LoadTexture(wanted[i].asset);
+        if (tex){
+            mat.glsl_material.diffuse_texture = 0;
+            mat.glsl_material.handle_diffuse = tex->texture_handle;
+            mat.diff_texture = tex;
+        }else{
+            //Not fatal: a title screen that is a flat colour still works as one, and its buttons
+            //still work. Losing the artwork should not cost anyone the app.
+            debug->Err("Title screen: could not load %s\n",wanted[i].asset);
+        }
+        renderer->AddMaterial(mat);
+        *(wanted[i].out_index) = renderer->FindMaterialIndex(mat.name);
+    }
+
+    title_splash = new Object();
+    title_splash->name = "Title Splash";
     //flip_v, because this samples a MATERIAL texture and those are authored V=0 at the top row -
     //without it the splash renders upside down. See the note on MakeQuad in core/Primitives.h.
-    splash->SetMesh(MakeQuad(2.0f * half_height * aspect,2.0f * half_height,true));
-    splash->SetMaterialSlot(0,renderer->FindMaterialIndex(mat.name));
+    title_splash->SetMesh(MakeQuad(2.0f * half_height * aspect,2.0f * half_height,true));
+    title_splash->SetMaterialSlot(0,title_material_main);
     //Nothing on this screen is an object the player or the inspector should be picking.
-    splash->SetPickability(false);
-    title_scene->AddObject(splash);
+    title_splash->SetPickability(false);
+    title_scene->AddObject(title_splash);
 }
 
 //--- the scene ------------------------------------------------------------------------------------
@@ -2216,6 +2238,41 @@ void ApplicationBomber::SetupInput(void){
     //INPUT_PAUSE is handled by Scene::BeginPass itself, so this is the whole feature - and pausing
     //mid-fireball is the single most useful thing you can do to a volumetric effect.
     input->AddKeyMap('P',INPUT_PAUSE);
+
+    /*
+        Escape, and the one line that makes it ours.
+
+        Without clearing f_escape_closes_window the window closes on the key-down and nothing below
+        ever runs - the key was always arriving (Raw Input forwards every VK), it just never got a
+        chance to mean anything. See the note on the flag in core/Window.h.
+    */
+    input->AddKeyMap(VK_ESCAPE,INPUT_BOMBER_BACK);
+    if (main_window){
+        main_window->f_escape_closes_window = false;
+    }
+
+    /*
+        The menu buttons, bound here and POSITIONED NOWHERE YET.
+
+        AddTouchButton allocates each one its own synthetic keycode and that is the part that has
+        to happen once; the rects change every time the page does. Passing a zero rect is what the
+        engine asks for - see the note on AddTouchButton - and LayoutMenuButtons owns the geometry
+        from here on. A zero rect also means nothing is live until a page is applied, which is the
+        safe direction to fail in.
+
+        The labels are for the engine's own debug drawing of these rects, which this app leaves
+        off (f_draw_touch_buttons); they cost nothing and make an ImGui dump of the button list
+        readable.
+    */
+    const InputController::TouchRect nowhere;
+    menu_button[0] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_START,  "start");
+    menu_button[1] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_LEVELS, "levels");
+    menu_button[2] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_OPTIONS,"options");
+    menu_button[3] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_SCORES, "scores");
+    menu_button[4] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_BACK,   "back");
+    //The engine's own button rendering is a debugging aid and would draw five boxes over the
+    //artwork. This app draws its own - see DrawMenu.
+    f_draw_touch_buttons = false;
 }
 
 void ApplicationBomber::RegisterCommandHandlers(void){
@@ -2305,47 +2362,136 @@ int ApplicationBomber::ReadDirection(void){
     and an edge read on a pass that does not tick would be cleared before any gameplay saw it
     (backlog item 84; the long version is on InputController::ApplyTickInput).
 */
+/*
+    The menu's navigation, and Escape everywhere. PHYSICS THREAD, from UpdateView.
+
+    FROM UpdateView RATHER THAN RunSimulationTick, WHICH IS A CORRECTION. It lived in the tick
+    first, and pausing the game exposed why that is wrong: RunSimulationTick runs only on passes
+    that TICK, so while the simulation was paused Escape did nothing - and because an unread edge
+    is KEPT rather than dropped (backlog item 88), it then fired the moment the game was unpaused.
+    Press pause, press Escape, nothing; unpause, and the menu opens by itself. Measured, not
+    theorised.
+
+    UpdateView runs on every pass including paused ones, for the reason stated where it is called
+    in core/Application.cpp - a paused editor still needs a working camera - and a paused game
+    still needs a working Escape. It is also exactly where the engine already handles the twin of
+    this: Scene::BeginPass reads INPUT_PAUSE outside the tick for the same reason.
+
+    That this sits outside the tick does NOT put it at odds with the tick-driven input direction.
+    What that is about is SIMULATION state, which has to be reproducible from a recorded input
+    stream. Which page a menu is on and which scene is active are application state: they are not
+    simulated, not recorded, and not replayed. Gameplay stays in the tick; the menu is not
+    gameplay.
+
+    READ EVERY EDGE UNCONDITIONALLY, ACT ON THEM ONLY WHEN THE INPUT IS OURS. This is the rule the
+    click-to-start handler that used to live here was built around, and it survives it because
+    nothing about it was about clicking:
+
+    A click NEXT TO the window used to start the game, and both halves of that are the engine
+    working as designed. Raw input is registered RIDEV_INPUTSINK, so it arrives whether or not we
+    are in front; SubmitSystemKey drops a key DOWN while unfocused but always honours the UP, so
+    anything already held can still release - and losing focus additionally runs the release-all
+    sweep, which raises a release edge for it. Fire on a release edge and an out-of-window click
+    reaches you by either route.
+
+    The reads stay outside the focus test on purpose. An edge nobody has read is KEPT across passes
+    (backlog item 88, see InputController::Tick), so gating the read itself would park a stray
+    release and spend it the instant focus came back - turning "starts too early" into "starts on
+    the click that focused the window", which is worse. Consuming them here and discarding them is
+    what actually throws them away. That matters MORE now than it did with one click: five parked
+    edges would fire as a burst of navigation the moment the window came forward.
+
+    RELEASE rather than press, so the click that gives the window focus does not fall through into
+    whatever happens to be under it.
+*/
+void ApplicationBomber::UpdateMenu(InputController* input){
+    bool f_start   = input->WasKeyReleased(INPUT_BOMBER_MENU_START);
+    bool f_levels  = input->WasKeyReleased(INPUT_BOMBER_MENU_LEVELS);
+    bool f_options = input->WasKeyReleased(INPUT_BOMBER_MENU_OPTIONS);
+    bool f_scores  = input->WasKeyReleased(INPUT_BOMBER_MENU_SCORES);
+    bool f_back    = input->WasKeyReleased(INPUT_BOMBER_MENU_BACK);
+    //Escape means the same thing the BACK button does, so on the menu they are simply one edge.
+    //Read separately as well, because in the GAME only Escape means it.
+    bool f_escape  = input->WasKeyReleased(INPUT_BOMBER_BACK);
+    f_back = f_back || f_escape;
+
+    //IsInputLive rather than HasFocus so a SCRIPTED click still works with the window in the
+    //background, which is how this app is driven over MCP most of the time. A real click still
+    //needs real focus; see the note on IsInputLive in core/InputController.h.
+    if (!input->IsInputLive()){
+        return;
+    }
+
+    /*
+        In the game, Escape is the way back to the menu, and it works whether or not the
+        simulation is running - see the note at the top about why this is not in the tick.
+
+        The page is put back to the front one so the menu opens where it is expected to, not on
+        whichever sub-page was last looked at before the game started.
+    */
+    if (!IsOnTitleScreen()){
+        if (f_escape){
+            menu_page = BOMBER_PAGE_MAIN;
+            RequestActiveScene(title_scene);
+        }
+        return;
+    }
+
+    if (menu_page != BOMBER_PAGE_MAIN){
+        //Every sub-page is one window and one way out of it. Back also answers the case where a
+        //page is opened and the window is resized under it, since nothing else can leave.
+        if (f_back){
+            menu_page = BOMBER_PAGE_MAIN;
+        }
+        return;
+    }
+
+    /*
+        ESCAPE ON THE FRONT PAGE DOES NOTHING, and that is a deliberate stop rather than an
+        omission.
+
+        It quit the application here first, on the reasoning that Escape backs out one level and
+        the level above the front page is the desktop. Testing it showed what that actually buys:
+        Escape out of a game lands on this page, and a second press - which is an ordinary human
+        habit, not a mistake - closes the whole app from under a player who was only backing out of
+        a board. Losing a session to a doubled keypress is a bad trade for a shortcut that the
+        title bar and Alt+F4 already provide.
+
+        To make Escape quit from here after all, set main_window->f_should_quit = true. It has to
+        be the flag rather than closing the window directly: this is the physics thread and the
+        window belongs to the one pumping its messages.
+    */
+
+    if (f_start){
+        /*
+            Into the game. RequestActiveScene rather than a direct write - this runs on the physics
+            thread and the switch is picked up at the top of the very next pass, see
+            Application::ApplyPendingSceneSwitch.
+
+            The page is NOT changed. It is already MAIN, and leaving it there is what makes a later
+            return to the title screen show the front page rather than wherever you last were.
+        */
+        RequestActiveScene(game_scene);
+        return;
+    }
+    if (f_levels){
+        menu_page = BOMBER_PAGE_LEVEL_SELECT;
+    }else if (f_options){
+        menu_page = BOMBER_PAGE_OPTIONS;
+    }else if (f_scores){
+        menu_page = BOMBER_PAGE_HIGH_SCORES;
+    }
+}
+
 void ApplicationBomber::RunSimulationTick(void){
     if (!main_scene || !main_scene->inputcontroller){
         return;
     }
     InputController* input = main_scene->inputcontroller;
 
+    //Nothing of the board runs over a title card. The menu itself is driven from UpdateView, which
+    //unlike this runs on paused passes too - see the note above UpdateMenu.
     if (IsOnTitleScreen()){
-        /*
-            Click anywhere to start.
-
-            RELEASE, not press, so the click that gave the window focus does not fall through into
-            the game the instant it arrives - which is what makes a title screen feel broken. Every
-            other app in this tree that waits for a click uses WasKeyReleased for the same reason.
-
-            This runs on the physics thread inside a tick, so RequestActiveScene's request is
-            picked up at the top of the very next pass - see Application::ApplyPendingSceneSwitch.
-        */
-        /*
-            READ THE EDGE UNCONDITIONALLY, ACT ON IT ONLY WHEN THE INPUT IS OURS.
-
-            A click NEXT TO the window used to start the game, and both halves of that are the
-            engine working as designed. Raw input is registered RIDEV_INPUTSINK, so it arrives
-            whether or not we are in front; SubmitSystemKey drops a key DOWN while unfocused but
-            always honours the UP, so that anything already held can still release - and losing
-            focus additionally runs the release-all sweep, which raises a release edge for it. Fire
-            on a release edge and an out-of-window click reaches you by either route.
-
-            The read stays outside the focus test on purpose. An edge nobody has read is KEPT
-            across passes (backlog item 88, see InputController::Tick), so gating the read itself
-            would park that stray release and spend it the instant focus came back - turning
-            "starts too early" into "starts on the click that focused the window", which is worse.
-            Consuming it here and discarding it is what actually throws it away.
-
-            IsInputLive rather than HasFocus so a SCRIPTED click still works with the window in the
-            background, which is how this app is driven over MCP most of the time. A real click
-            still needs real focus; see the note on IsInputLive in core/InputController.h.
-        */
-        bool f_clicked = input->WasKeyReleased(INPUT_CLICK_LEFT);
-        if (f_clicked && input->IsInputLive()){
-            RequestActiveScene(game_scene);
-        }
         return;
     }
 
@@ -3026,6 +3172,187 @@ void ApplicationBomber::DrawKeyIcon(vec2 centre, float h, uint32_t color){
     }
 }
 
+
+/*
+    WHERE THE FRONT PAGE'S FOUR BUTTONS ARE, in pixels of splash.jpg.
+
+    Measured off the artwork rather than chosen - tools/ui_extract_probe.py prints these, and
+    docs/ui_sprites.md is where the button sprite came from. The buttons are PAINTED INTO the
+    splash, so the hit rects have to land on them exactly or the menu is subtly wrong in a way
+    that feels like a bad touchscreen.
+
+    Fractions of the image, not of the window, because the quad the splash is drawn on covers the
+    viewport exactly (see CreateTitleScene) - so the artwork is stretched to whatever the window
+    is, and a fraction of the image is a fraction of the window whatever its aspect.
+*/
+#define BOMBER_SPLASH_W 1200.0f
+#define BOMBER_SPLASH_H  896.0f
+static const float bomber_main_button_px[4][4] = {
+    { 64.0f,771.0f, 315.0f,874.0f},     //START ADVENTURE
+    {349.0f,772.0f, 591.0f,874.0f},     //LEVEL SELECT
+    {625.0f,771.0f, 866.0f,874.0f},     //OPTIONS
+    {901.0f,771.0f,1142.0f,874.0f},     //HIGH SCORES
+};
+
+//The sub-pages' window, as fractions of the surface. One panel, centred, with room under it for
+//the one button that leaves.
+#define BOMBER_MENU_PANEL_X 0.22f
+#define BOMBER_MENU_PANEL_Y 0.20f
+#define BOMBER_MENU_PANEL_W 0.56f
+#define BOMBER_MENU_PANEL_H 0.52f
+#define BOMBER_MENU_BACK_W  0.16f
+#define BOMBER_MENU_BACK_H  0.085f
+
+void ApplicationBomber::LayoutMenuButtons(int w, int h, bomber_menu_page page){
+    if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    InputController* input = main_scene->inputcontroller;
+    const float fw = (float)w;
+    const float fh = (float)h;
+
+    /*
+        EVERY button is written every time, and the ones this page does not show are written EMPTY.
+
+        Not an optimisation to skip them: a button left at its old rect is still hit-tested, so the
+        four front-page buttons would still be live behind the options window, and clicking where
+        OPTIONS used to be would re-open it from inside itself. Nothing on screen would explain it.
+        Writing all five from one table is what makes that unrepresentable.
+    */
+    InputController::TouchRect rect[BOMBER_MENU_BUTTON_COUNT];
+
+    if (page == BOMBER_PAGE_MAIN){
+        for (int i = 0; i < 4; i++){
+            const float* r = bomber_main_button_px[i];
+            rect[i].x = (r[0] / BOMBER_SPLASH_W) * fw;
+            rect[i].y = (r[1] / BOMBER_SPLASH_H) * fh;
+            rect[i].w = ((r[2] - r[0]) / BOMBER_SPLASH_W) * fw;
+            rect[i].h = ((r[3] - r[1]) / BOMBER_SPLASH_H) * fh;
+        }
+    }else if (page != BOMBER_PAGE_NONE){
+        //Back sits centred just inside the bottom of the window it leaves.
+        rect[4].w = BOMBER_MENU_BACK_W * fw;
+        rect[4].h = BOMBER_MENU_BACK_H * fh;
+        rect[4].x = (fw - rect[4].w) * 0.5f;
+        rect[4].y = (BOMBER_MENU_PANEL_Y + BOMBER_MENU_PANEL_H) * fh - rect[4].h * 1.6f;
+    }
+
+    for (int i = 0; i < BOMBER_MENU_BUTTON_COUNT; i++){
+        if (menu_button[i] >= 0){
+            input->SetTouchButtonRect(menu_button[i],rect[i]);
+        }
+    }
+}
+
+void ApplicationBomber::LayoutTouchButtons(int w, int h){
+    //The page the RENDER thread last applied, not the live one - this is the same surface those
+    //rects were computed for, and taking the live page here would put a resize and a page change
+    //into two different orders depending on which thread won.
+    LayoutMenuButtons(w,h,menu_page_applied);
+}
+
+void ApplicationBomber::ApplyMenuPage(bomber_menu_page page){
+    if (page == menu_page_applied){
+        return;
+    }
+    menu_page_applied = page;
+
+    //The background only means anything while the title scene is up; BOMBER_PAGE_NONE is the game
+    //scene, which has its own everything.
+    if ((page != BOMBER_PAGE_NONE) && title_splash){
+        int material = (page == BOMBER_PAGE_MAIN) ? title_material_main : title_material_menu;
+        if (material >= 0){
+            title_splash->SetMaterialSlot(0,material);
+        }
+    }
+    if (main_window){
+        LayoutMenuButtons(main_window->width,main_window->height,page);
+    }
+}
+
+/*
+    The menu. RENDER THREAD, from DrawOverlay. See the header.
+*/
+void ApplicationBomber::DrawMenu(void){
+    if (!overlay || !overlay->IsReady() || !main_window){
+        return;
+    }
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float text_size = h * 0.045f;
+
+    /*
+        The front page draws NOTHING. Its four buttons are painted into splash.jpg and the rects
+        are laid on top of them, so anything drawn here would be a second set of buttons over the
+        first. That it looks identical to before is the point - the artwork was always the UI, it
+        just had no input behind it.
+    */
+    if (menu_page_applied == BOMBER_PAGE_MAIN || menu_page_applied == BOMBER_PAGE_NONE){
+        return;
+    }
+
+    const char* title = "";
+    switch (menu_page_applied){
+        case BOMBER_PAGE_LEVEL_SELECT: title = "LEVEL SELECT"; break;
+        case BOMBER_PAGE_OPTIONS:      title = "OPTIONS";      break;
+        case BOMBER_PAGE_HIGH_SCORES:  title = "HIGH SCORES";  break;
+        default: break;
+    }
+
+    //Still the debug colouring: red corners fixed, green stretches x, blue stretches y. The insets
+    //are window_frame.png's, so what is on screen is the geometry that sprite will be drawn with.
+    ui_nine_inset inset;
+    inset.left = inset.top = inset.right = inset.bottom = 30.0f;
+
+    vec2 pmin = vec2(BOMBER_MENU_PANEL_X * w,BOMBER_MENU_PANEL_Y * h);
+    vec2 pmax = vec2(pmin.x + BOMBER_MENU_PANEL_W * w,pmin.y + BOMBER_MENU_PANEL_H * h);
+    overlay->AddNineSliceDebug(pmin,pmax,inset,235);
+
+    overlay->AddText(title,vec2((pmin.x + pmax.x) * 0.5f,pmin.y + text_size * 2.0f),
+                     text_size,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
+
+    /*
+        The back button, drawn from the SAME rect the hit-test uses.
+
+        Read back out of the InputController rather than recomputed from the same constants: two
+        expressions that are meant to agree are two expressions that can stop agreeing, and a
+        button drawn a few pixels off the rectangle that responds is the single most common way a
+        menu feels broken. This way there is one number.
+    */
+    if ((menu_button[4] >= 0) && main_scene && main_scene->inputcontroller){
+        const std::vector<InputController::TouchButton>& buttons =
+            main_scene->inputcontroller->GetTouchButtons();
+        if (menu_button[4] < (int)buttons.size()){
+            const InputController::TouchRect& r = buttons[menu_button[4]].rect;
+            vec2 bmin = vec2(r.x,r.y);
+            vec2 bmax = vec2(r.x + r.w,r.y + r.h);
+            /*
+                A THREE-SLICE, not a nine: left and right insets only.
+
+                button_blank.png is 104 px tall with 42/40 of that in its top and bottom insets,
+                leaving 22 px of stretchable middle. Drawn at anything shorter than 82 px - and
+                this button is 68 - the vertical clamp takes the middle row away entirely and the
+                two halves of the plank meet in the centre. That looked wrong on screen before it
+                looked wrong in the numbers.
+
+                Zero top and bottom is the honest answer rather than a taller button: a button only
+                ever stretches to fit its LABEL, so its height is the artist's and the whole sprite
+                scales to it. The two end caps still keep their width, which is the part that has
+                to be preserved.
+            */
+            ui_nine_inset binset;
+            binset.left = binset.right = 20.0f;
+            binset.top = 0.0f;
+            binset.bottom = 0.0f;
+            overlay->AddNineSliceDebug(bmin,bmax,binset,
+                                       buttons[menu_button[4]].f_down ? 255 : 210);
+            overlay->AddText("BACK",vec2((bmin.x + bmax.x) * 0.5f,
+                                         (bmin.y + bmax.y) * 0.5f + text_size * 0.25f),
+                             text_size * 0.7f,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
+        }
+    }
+}
+
 /*
     The HUD. RENDER THREAD, from Application::DrawFrame between the scene and the ImGui panels.
 
@@ -3044,7 +3371,17 @@ void ApplicationBomber::DrawOverlay(void){
     //No lives, bombs or timer over a title card. This is the one gate that reads main_scene from
     //the RENDER thread, so at a switch it can be one frame stale - a single frame of HUD over the
     //splash, or none over the first frame of play. See Application::ApplyPendingSceneSwitch.
+    /*
+        The menu is applied HERE, from the one place that already reads main_scene on this thread,
+        so the background and the button rects change together with the page and never separately.
+        BOMBER_PAGE_NONE while the game is up is what retires the menu's buttons - they share the
+        window's one InputController with the game, so a rect left behind would be live under the
+        board. See ApplyMenuPage.
+    */
+    ApplyMenuPage(IsOnTitleScreen() ? menu_page : BOMBER_PAGE_NONE);
+
     if (IsOnTitleScreen()){
+        DrawMenu();
         return;
     }
     const float u = (float)main_window->height * BOMBER_HUD_UNIT;
@@ -3118,6 +3455,23 @@ void ApplicationBomber::DrawOverlay(void){
     //AddText takes the BASELINE, so the first line sits one text height down from the margin.
     vec2 clock_at = vec2(w - margin,margin + text_size);
     overlay->AddText(text,clock_at,text_size,BOMBER_HUD_TEXT,UI_ALIGN_RIGHT);
+
+    /*
+        THAT THE GAME IS PAUSED, which was the half of pausing that was missing.
+
+        'P' and VK_PAUSE have always been mapped, and Scene::BeginPass has always acted on them -
+        so the key worked and looked like it did not, because a paused board and a board where
+        nothing happens to be moving are the same picture. Saying so is the whole fix.
+
+        Read straight off the scene rather than published through `hud`: it is one atomic bool
+        (Scene::f_paused), the render thread may read it directly, and routing it through the
+        publish step would make it a tick stale - which on the one indicator whose entire job is
+        to say "nothing is advancing" would be a strange thing to be late about.
+    */
+    if (main_scene && main_scene->IsPhysicsPaused()){
+        overlay->AddText("PAUSED",vec2(w * 0.5f,margin + text_size * 1.6f),
+                         text_size * 1.4f,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
+    }
 
     //--- the tally ------------------------------------------------------------------------------
     /*
@@ -3338,12 +3692,17 @@ void ApplicationBomber::UpdateView(void){
     if (!main_scene || !main_scene->inputcontroller){
         return;
     }
+    InputController* input = main_scene->inputcontroller;
+
+    //The menu and Escape, BEFORE the title-screen return below, and from here rather than from the
+    //tick so they keep working while the simulation is paused. See the note above UpdateMenu.
+    UpdateMenu(input);
+
     //The title camera is static and deliberately so. Everything below solves the GAME camera, and
     //main_scene->camera is the title one right now - it would ease the splash out of frame.
     if (IsOnTitleScreen()){
         return;
     }
-    InputController* input = main_scene->inputcontroller;
     Camera* camera = main_scene->camera;
     if (!camera){
         return;
@@ -4008,14 +4367,16 @@ void ApplicationBomber::RegisterMCPTools(void){
         "Hold one of the game's controls for a number of SIMULATION TICKS, exactly as a thumb "
         "would - the event goes through InputController, so it is read by the same code a key "
         "press is and it works while the simulation is paused and being single-stepped. "
-        "`action` is north/south/east/west/bomb. A direction wants enough ticks to cross a tile "
-        "(20 at the default walk speed); `bomb` is an edge, so one tick is enough. The call "
+        "`action` is north/south/east/west/bomb while playing, or start/levels/options/scores/back "
+        "on the title screen - the menu's buttons drive ordinary actions, so they are reachable "
+        "here without a pointer. A direction wants enough ticks to cross a tile (20 at the default "
+        "walk speed); `bomb` and every menu action are edges, so one tick is enough. The call "
         "returns as soon as the hold is queued - step or wait for it to play out, then read "
         "bomber_state.",
         json{
             {"type","object"},
             {"properties", {
-                {"action", {{"type","string"},{"description","north, south, east, west or bomb"}}},
+                {"action", {{"type","string"},{"description","north, south, east, west, bomb, or a menu action: start, levels, options, scores, back"}}},
                 {"ticks", {{"type","number"},{"description","how many simulation ticks to hold it, default 20"}}}
             }},
             {"required",json::array({"action"})}
@@ -4028,8 +4389,18 @@ void ApplicationBomber::RegisterMCPTools(void){
             else if (action == "west"){ mapped = INPUT_BOMBER_WEST; }
             else if (action == "east"){ mapped = INPUT_BOMBER_EAST; }
             else if (action == "bomb"){ mapped = INPUT_BOMBER_DROP; }
+            //The menu, so the pages can be walked from a script. UpdateMenu reads these as RELEASE
+            //edges, and a hold ends in a release, so one tick is a whole button press.
+            else if (action == "start"){ mapped = INPUT_BOMBER_MENU_START; }
+            else if (action == "levels"){ mapped = INPUT_BOMBER_MENU_LEVELS; }
+            else if (action == "options"){ mapped = INPUT_BOMBER_MENU_OPTIONS; }
+            else if (action == "scores"){ mapped = INPUT_BOMBER_MENU_SCORES; }
+            //The universal back (what Escape is bound to), not the on-screen button's own action -
+            //this one is handled in the game as well as in the menu, so one scripted action
+            //exercises all three levels it backs out of.
+            else if (action == "back"){ mapped = INPUT_BOMBER_BACK; }
             else {
-                return json{ {"error","action must be north, south, east, west or bomb"} };
+                return json{ {"error","action must be north, south, east, west, bomb, start, levels, options, scores or back"} };
             }
             int ticks = (int)args.value("ticks",20.0f);
             if (ticks < 1){

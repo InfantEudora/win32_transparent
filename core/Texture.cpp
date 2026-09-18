@@ -148,6 +148,26 @@ void Texture::LoadCubeMapFile(const char* filename, int depth_in, Texture* first
 
 //Uploads entire texture. Storage should have been allocated with Create2D
 void Texture::UploadTexture(GLenum _format, int target){
+    /*
+        ROWS ARE TIGHTLY PACKED, AND GL DOES NOT ASSUME THAT.
+
+        GL_UNPACK_ALIGNMENT defaults to 4: GL expects every row of the image it is handed to start
+        on a 4-byte boundary. stb_image hands back rows with no padding at all, so the two agree
+        only when width * channels happens to be a multiple of 4 - and when they disagree, GL reads
+        each row 1 to 3 bytes further along than the last, and the picture SHEARS DIAGONALLY,
+        further with every row.
+
+        That "happens to be" is why this survived so long. Every texture in the tree until now was
+        a power of two, or RGBA (4 channels, always aligned), or - like the 1200-wide bomber splash
+        - an RGB image whose width times three was divisible by 4 anyway. The first asset that was
+        not, a 1195-wide JPEG, came out skewed, and nothing about the symptom points at the cause.
+
+        Setting 1 says what is actually true. It is restored to the default afterwards rather than
+        left, because this is global GL state and leaving it changed is how the NEXT thing to
+        surprise someone gets set up; UIOverlay::InitFontTexture already does exactly this pair
+        around its own upload.
+    */
+    glPixelStorei(GL_UNPACK_ALIGNMENT,1);
 #if defined(__ANDROID__)
     if (target == GL_TEXTURE_CUBE_MAP){
         /*
@@ -175,6 +195,7 @@ void Texture::UploadTexture(GLenum _format, int target){
         glGenerateTextureMipmap(texture_id);
     }
 #endif
+    glPixelStorei(GL_UNPACK_ALIGNMENT,4);   //back to the GL default - see the note at the top
 }
 
 //Load a decoded (PNG, JPG etc. from memory.)

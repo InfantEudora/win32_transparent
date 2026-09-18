@@ -96,6 +96,25 @@ public:
     bool f_should_quit = false;
     bool f_control_down = false;
 
+    /*
+        WHETHER ESCAPE CLOSES THE WINDOW. True by default, because that is right for the tools and
+        test apps that make up most of this tree - an app with no menu and no way out otherwise.
+
+        AN APP WITH A MENU CLEARS IT, and then maps VK_ESCAPE like any other key. Escape already
+        reaches the InputController either way: Raw Input forwards every virtual key through
+        SubmitSystemKey without looking at it (see RawInput.cpp), so the key was never the problem.
+        The problem was that the window closed out from under whatever the app wanted to do with
+        it, and this is the only thing this flag stops.
+
+        A DEFAULT RATHER THAN A POLICY, which is the point - an app that does nothing keeps the
+        behaviour it has today, and one that wants Escape for its own menu says so in one line
+        instead of the engine having to guess.
+
+        Ctrl+C on the CONSOLE is unaffected and stays: that one is the operator asking the process
+        to stop, not the player pressing a key, and those should not share a control.
+    */
+    bool f_escape_closes_window = true;
+
     //Bitmap image for layered window
     Image g_image;
     BYTE* pixels = NULL;//[width * height * 4] = {0};

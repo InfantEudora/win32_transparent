@@ -274,7 +274,7 @@ void OBJLoader::ParseOBJMatFileData(uint8_t* data, size_t size){
 
             float value = 0;
             char filename[128];
-            if (sscanf_s(argument,"-bm %f %s",&value,filename,128) != 2){
+            if (sscanf(argument,"-bm %f %127s",&value,filename) != 2){
                 //debug->Trace("Parsed Normal Line: Gain: %.1f [%s]\n",value,filename);
                 debug->Err("Unable to parse Normal Texture Line\n");
                 break;

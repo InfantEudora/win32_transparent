@@ -46,8 +46,9 @@
       - Init()               render thread, once. All GL, all mesh building, all registration.
       - RunSimulationTick()  physics thread, once per tick that RUNS, physics_mutex held. Maze::Tick
                              and the view sync live here, so the whole game pauses and steps.
-      - UpdateView()         physics thread, every pass including paused ones. Camera and the F5
-                             key only - nothing a tick will read.
+      - UpdateView()         physics thread, every pass including paused ones. Camera, the F5 key,
+                             and the MENU - nothing a tick will read. The menu is here rather than
+                             in the tick precisely BECAUSE this runs while paused: see UpdateMenu.
       - PreRender()          render thread, top of every frame. Where a shader reload happens.
       - PushBlastUniforms()  render thread, inside the custom-material pass with the program bound.
                              Reads the published view state, never the live simulation.
@@ -65,6 +66,32 @@
 #define INPUT_BOMBER_RESTART        INPUT_LAST+6
 #define INPUT_BOMBER_RELOAD_SHADER  INPUT_LAST+7
 #define INPUT_BOMBER_CAMERA         INPUT_LAST+8
+
+/*
+    The menu's actions. ONE PER BUTTON rather than one "confirm" plus a selection, because these
+    are driven by on-screen rectangles: InputController::AddTouchButton binds a rect to an action
+    and reports it as an ordinary key edge, so a menu with five buttons is five actions and no
+    state to keep about which one is highlighted.
+
+    They are also ordinary actions, so a keyboard or pad mapping can be added later without any of
+    the menu code below knowing it happened.
+*/
+#define INPUT_BOMBER_MENU_START     INPUT_LAST+9
+#define INPUT_BOMBER_MENU_LEVELS    INPUT_LAST+10
+#define INPUT_BOMBER_MENU_OPTIONS   INPUT_LAST+11
+#define INPUT_BOMBER_MENU_SCORES    INPUT_LAST+12
+#define INPUT_BOMBER_MENU_BACK      INPUT_LAST+13
+
+/*
+    Escape, which BACKS OUT ONE LEVEL wherever it is pressed: out of the game to the menu, out of a
+    sub-page to the front page, and out of the front page to the desktop.
+
+    One action rather than one per context, because "back" is one idea and the place it is pressed
+    already says what it means. It is also why the window's own Escape handling has to be turned
+    off for this app - see f_escape_closes_window in core/Window.h - since otherwise the window
+    closes before the game ever sees the key.
+*/
+#define INPUT_BOMBER_BACK           INPUT_LAST+14
 
 /*
     The two camera modes.
@@ -294,6 +321,45 @@ private:
 
     Scene* game_scene = NULL;       //the maze, the player, the physics world - everything
     Scene* title_scene = NULL;      //an ortho camera and one unlit quad, nothing else
+
+    /*
+        WHICH MENU PAGE THE TITLE SCENE IS SHOWING.
+
+        A page, not a scene. All four share one ortho camera and one quad and differ only in the
+        texture on that quad and what the overlay draws over it, so making each a Scene would mean
+        four cameras and four quads to keep in step for no gain. The title scene stays "the 2D
+        screen" and this says which one it is.
+
+        WRITTEN ON THE PHYSICS THREAD by UpdateMenu, READ ON THE RENDER THREAD by ApplyMenuPage.
+        No lock, deliberately, and it is the same trade `hud` already makes: one enum written in
+        one place and read in one place cannot tear, and the worst a stale read can cost is a
+        single frame showing the page you just left. See the note above PublishHUD.
+    */
+    enum bomber_menu_page{
+        BOMBER_PAGE_MAIN = 0,
+        BOMBER_PAGE_LEVEL_SELECT,
+        BOMBER_PAGE_OPTIONS,
+        BOMBER_PAGE_HIGH_SCORES,
+        //Not a page: "no menu is up", which is what the game scene is. ApplyMenuPage uses it to
+        //retire the buttons, and it has to be a value rather than a flag because the whole point
+        //is that it flows through the same one-place-changes-everything path the pages do.
+        BOMBER_PAGE_NONE
+    };
+    bomber_menu_page menu_page = BOMBER_PAGE_MAIN;
+    //The render thread's copy. Starts at a value menu_page can never hold, so the first frame
+    //always applies rather than relying on the initial page happening to differ.
+    bomber_menu_page menu_page_applied = BOMBER_PAGE_NONE;
+
+    //Indices into the InputController's button list, in INPUT_BOMBER_MENU_* order, or -1 if the
+    //bind failed. Indices rather than pointers - see the warning on AddTouchButton.
+    enum{BOMBER_MENU_BUTTON_COUNT = 5};
+    int menu_button[BOMBER_MENU_BUTTON_COUNT] = {-1,-1,-1,-1,-1};
+
+    //The quad the title screen draws, and the two materials it swaps between. Kept so the
+    //background can change without rebuilding the scene.
+    Object* title_splash = NULL;
+    int title_material_main = -1;   //images/splash.jpg, with the four buttons painted on it
+    int title_material_menu = -1;   //images/menu_background.jpg, the empty dungeon
     void RegisterCommandHandlers();
     void BuildLighting();
     void LoadAssets();
@@ -1048,6 +1114,42 @@ private:
     //A key, composed: a ring, a stem and two teeth. `h` is the icon's height and everything else is
     //a fraction of it, so one number sizes it.
     void DrawKeyIcon(vec2 centre, float h, uint32_t color);
+
+    /*
+        The menu. RENDER THREAD, from DrawOverlay while the title scene is up.
+
+        STILL SCAFFOLDING, and the panels are still drawn in nine-slice role colours rather than
+        with artwork - the sprites exist (docs/ui_sprites.md) but nothing can draw them yet, since
+        UIOverlay binds one R8 font atlas for the whole batch. What is real here is the structure:
+        the pages, the buttons, the background swap and the navigation between them. The texture
+        step replaces AddNineSliceDebug with a textured call and changes nothing else.
+    */
+    void DrawMenu(void);
+
+    /*
+        Menu navigation, and Escape everywhere. PHYSICS THREAD, from UpdateView - which runs on
+        every pass, INCLUDING PAUSED ONES. That is the point and it is load-bearing: from the tick
+        instead, Escape does nothing while the game is paused and then fires on unpause. The long
+        version is on the definition.
+    */
+    void UpdateMenu(InputController* input);
+
+    /*
+        Makes the world match `page`: swaps the background and re-lays the buttons. RENDER THREAD.
+
+        A CHANGE IS APPLIED IN EXACTLY ONE PLACE, which is what keeps the button rects and the
+        background from disagreeing - the failure being a page that looks right but still has the
+        previous page's buttons live at their rects, invisible and eating clicks. The warning on
+        USE_TOUCH_UI in core/Application.h is about that exact shape of bug.
+    */
+    void ApplyMenuPage(bomber_menu_page page);
+
+    //Positions the five menu buttons for `page`, in a window of w x h. Buttons that page does not
+    //show get an EMPTY rect, which is how they are retired - see ApplyMenuPage.
+    void LayoutMenuButtons(int w, int h, bomber_menu_page page);
+
+    //Called by the engine before the first frame and on every resize - see Application.h.
+    void LayoutTouchButtons(int w, int h) override;
 
     //--- requests across the thread boundary ---------------------------------------------------
     //A camera mode asked for by `bomber_camera`. Set on an MCP thread, consumed on the physics

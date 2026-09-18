@@ -8,11 +8,18 @@ These are the pieces recovered so far, and the numbers a 9-slice needs. Everythi
 reproducible - the two tools below rebuild the PNGs from the mockups, so the assets are outputs,
 not hand-painted originals, and re-running after a mockup is redrawn is the intended workflow.
 
-| asset | size | 9-slice inset (l/t/r/b) | from |
+| asset | size | slicing | from |
 |---|---|---|---|
-| `ui/button_blank.png` | 242 x 104 | 20 / 42 / 20 / 40 | splash.jpg, the OPTIONS button |
-| `ui/window_frame.png` | 472 x 388 | 30 all round | bomber_ui_example_2.png, the VIDEO panel |
+| `ui/button_blank.png` | 242 x 104 | **3-slice**, l/r = 20 | splash.jpg, the OPTIONS button |
+| `ui/window_frame.png` | 472 x 388 | 9-slice, 30 all round | bomber_ui_example_2.png, the VIDEO panel |
 | `ui/button_close.png` | 118 x 107 | fixed size, do not slice | bomber_ui_example_2.png |
+
+**The button is a three-slice, not a nine.** Its natural vertical insets would be 42 and 40, which
+leaves 22 px of stretchable middle in a 104 px sprite - so drawn at anything shorter than 82 px the
+vertical clamp removes the middle row and the two halves of the plank meet in the centre. The
+bomber menu's BACK button is 68 px and showed exactly that. A button only ever stretches to fit its
+label, so its height belongs to the artist and the whole sprite scales to it; only the end caps'
+width has to be preserved. Nine-slicing is for the window frame, which resizes in both axes.
 
 Names resolve as `<category>/<file>` against the app's asset roots, so these are `ui/…` - see
 `core/File.h`.

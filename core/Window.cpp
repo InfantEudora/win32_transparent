@@ -436,7 +436,12 @@ LRESULT CALLBACK windproc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
     switch(msg){
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE){
-                SendMessage(hWnd, WM_CLOSE, 0, 0);
+                //Only when the app has not claimed Escape for itself - see f_escape_closes_window
+                //in Window.h. Raw Input has already delivered the key to the InputController by
+                //now either way, so an app that clears this reads it like any other key.
+                if (wnd->f_escape_closes_window){
+                    SendMessage(hWnd, WM_CLOSE, 0, 0);
+                }
                 break;
             }else if (wParam == VK_CONTROL){
                 wnd->f_control_down = true;

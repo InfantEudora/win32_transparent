@@ -4,6 +4,8 @@
 #include <vector>
 #if defined(_WIN32)
 #include <windows.h>        //GetModuleFileName - see GetExecutableDirectory
+#else
+#include <sys/stat.h>       //stat/S_ISDIR - see PathExists
 #endif
 #include "File.h"
 
@@ -159,8 +161,13 @@ void AddAssetSearchRootFromExe(const char* relative){
 	AddAssetSearchRoot((base + "/" + relative).c_str());
 }
 
-//GetFileAttributes rather than fopen: it answers for a directory as well as a file, and it does
-//not open anything - resolution can try several candidates per asset and only one of them exists.
+//Asks about a path without opening it, and answers for a directory as well as a file - resolution
+//can try several candidates per asset and only one of them exists. fopen would do neither.
+//
+//Two implementations because no one call does this on both platforms. They must agree on one
+//thing only: a path that is not there, and a path that is there but is the wrong KIND of thing,
+//both answer false. ResolveAgainstRoots relies on that to keep walking to the next root.
+#if defined(_WIN32)
 static bool PathExists(const std::string& path, bool f_want_directory){
 	DWORD attr = GetFileAttributesA(path.c_str());
 	if (attr == INVALID_FILE_ATTRIBUTES){
@@ -169,6 +176,16 @@ static bool PathExists(const std::string& path, bool f_want_directory){
 	bool f_is_directory = (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 	return f_is_directory == f_want_directory;
 }
+#else
+static bool PathExists(const std::string& path, bool f_want_directory){
+	struct stat st;
+	if (stat(path.c_str(),&st) != 0){
+		return false;
+	}
+	bool f_is_directory = S_ISDIR(st.st_mode);
+	return f_is_directory == f_want_directory;
+}
+#endif
 
 //The search itself. ResolveAssetPath and ResolveAssetDirectory are the same walk asking for a
 //different kind of thing at the end of it - see File.h for why they stay two functions.
