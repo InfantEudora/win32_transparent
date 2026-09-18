@@ -100,9 +100,9 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   which is `CONFIG=release BAKE_ASSETS=1 USE_MCP=0 USE_NET=0 USE_IMGUI=0`. The result binds **no
   port** and needs **no `shared_assets/` beside it**. The flag most worth not forgetting is
   `USE_MCP=0`: a shipped game still listening on 8765 looks perfectly fine while running, which is
-  exactly why it should not be a thing anyone has to remember. `USE_SOUND` is deliberately *not* in
-  the set - it is a property of the app, not of the build. An app that has not declared
-  `ASSET_ROOTS` cannot ship yet and fails with a message saying so. Measured 2026-09-14, Tetris:
+  exactly why it should not be a thing anyone has to remember. `USE_SOUND` and `USE_PHYSICS` are
+  deliberately *not* in the set - they are properties of the app, not of the build. An app that has
+  not declared `ASSET_ROOTS` cannot ship yet and fails with a message saying so. Measured 2026-09-14, Tetris:
   debug 43.9 MB, release 3.47 MB, ship 3.40 MB - the ship exe is *smaller* than the loose release
   despite carrying 932 KB of compressed assets, because dropping ImGui and the server saves more
   than the blob costs.
@@ -111,6 +111,17 @@ cd apps/tetris && mingw32-make.exe -j8        # mingw32-make, not /usr/bin/make
   `assets/` and `build/<name>.exe`. There is no root makefile and no `APP=` any more; the fifteen
   apps are `animation bomber breakout dozer grid isoanimation ocpp pinball ship sim tank testfx
   tetris tileset ui`.
+
+- **`USE_PHYSICS := 0` drops ReactPhysics3D**, for an app that creates no `PhysicsWorld` (today
+  that is `bomber`; `ocpp`, `sim`, `testfx` and `ui` could also take it). Worth 1.20 MB of
+  bomber's ship exe and 12 MB of its debug exe, because `--gc-sections` does **not** get this back
+  on its own - the core objects every app links name rp3d's symbols whether or not the app ever
+  calls them. See the `USE_PHYSICS` block in `engine.mk` and item 73 in the closed backlog.
+
+  **It is the one flag that changes the SHARED core objects**, so unlike `USE_MCP`/`USE_IMGUI` it
+  gets its own core tree - `build/core/<config>_nophysics/` beside `build/core/<config>/`, the same
+  way `CONFIG` does. Nothing collides and nothing needs wiping, but note that flipping it rebuilds
+  core rather than relinking.
 - **`build/core` is shared between apps**, so **build one app at a time** - two concurrent builds
   race on the same object files. When a core source changes, the next build of every app relinks;
   that is a link, not a recompile, and is expected.

@@ -27,6 +27,7 @@ Object::Object(Object* object):Object(){
     //Direct assignment, not SetScale(): the collider cloned below is already the source's
     //scaled size, and SetScale would rescale it by this factor a second time.
     state.scale = object->GetScale();
+#ifdef USE_PHYSICS
     Physics* p = object->GetPhysics();
     if (p){
         AddPhysics(p->world);
@@ -45,6 +46,7 @@ Object::Object(Object* object):Object(){
         physics->SetBounciness(object->GetPhysics()->GetBounciness());
 
     }
+#endif
     SetCollisionCategoryBits(object->collision_category_bits);
     SetCollideWithMaskBits(object->collide_with_bits);
 
@@ -65,10 +67,16 @@ Object::~Object(){
     //Hands the whole thing to ~Physics rather than reaching past it to destroy the rigid body and
     //leaving the wrapper, the PhysicsBody and every collision shape behind - which is what this
     //did, at 372 bytes an object. See core/physics/Physics.cpp.
+    //
+    //Guarded rather than left to the `if`: with USE_PHYSICS off `physics` is a void*, and
+    //deleting one of those is ill-formed however unreachable the branch is. It is always NULL
+    //in that build anyway.
+#ifdef USE_PHYSICS
     if (physics){
         delete physics;
         physics = NULL;
     }
+#endif
 
     //Delete all the child objects and their children
     std::list<Object*>::iterator it = children.begin();
@@ -121,16 +129,20 @@ void Object::SetVisibility(bool flag){
 
 void Object::Hide(){
     SetVisibility(false);
+#ifdef USE_PHYSICS
     if (physics){
         physics->SetActive(false);
     }
+#endif
 }
 
 void Object::Show(){
     SetVisibility(true);
+#ifdef USE_PHYSICS
     if (physics){
         physics->SetActive(true);
     }
+#endif
 }
 
 bool Object::IsVisible(){
@@ -160,6 +172,7 @@ Mesh* Object::GetMesh(){
     return mesh;
 }
 
+#ifdef USE_PHYSICS
 Physics* Object::AddPhysics(PhysicsWorld* world){
     if (!world){
         return NULL;
@@ -209,13 +222,24 @@ rp3d::RigidBody* Object::GetRigidBody(){
     }
     return NULL;
 }
+#endif
 
+//Unguarded on purpose - see the declaration. Always false in a no-physics build, because
+//nothing can assign `physics` there.
+bool Object::HasPhysics(){
+    return physics != NULL;
+}
+
+//Not guarded - it names no rp3d type, so calling code keeps working in both builds. With
+//physics off there is never a body to reset and this is a no-op.
 void Object::ResetPhysics(){
+#ifdef USE_PHYSICS
     if (physics){
         physics->SetVelocity(vec3());
         physics->SetAngularVelocity(vec3());
         physics->SetBodyWorldOrientation(quat().identity());
     }
+#endif
 }
 
 int32_t Object::GetMeshBatchIndex(){
@@ -257,9 +281,11 @@ void Object::RotateAroundAxis(const vec3& target_axis,float by){
 void Object::SetRotation(const quat& q, bool f_write_physics){
     state.f_was_transformed = true;
     state.rotation = q;
+#ifdef USE_PHYSICS
     if (f_write_physics && physics){
         physics->SetBodyWorldOrientation(q);
     }
+#endif
 }
 
 void Object::RotateBy(const quat& r){
@@ -270,9 +296,11 @@ void Object::RotateBy(const quat& r){
 void Object::SetPosition(const vec3& newpos,bool f_write_physics){
     state.f_was_transformed = true;
     state.position = newpos;
+#ifdef USE_PHYSICS
     if (f_write_physics && physics){
         physics->SetBodyWorldPosition(GetPosition());
     }
+#endif
 }
 
 //TODO: This should set worldposition
@@ -365,6 +393,7 @@ void Object::SetScale(const vec3& newscale){
     //Colliders follow the visual: rescaled by the RATIO to the previous scale, so it doesn't
     //matter what size they were created at (colliders added after a SetScale are sized to the
     //already-scaled object by their callers, and stay right when the scale changes again).
+#ifdef USE_PHYSICS
     if (physics && physics->body && physics->body->rigidbody){
         vec3 ratio(
             fabsf(oldscale.x) > 0.0001f ? newscale.x / oldscale.x : 1.0f,
@@ -374,6 +403,9 @@ void Object::SetScale(const vec3& newscale){
             physics->ScaleColliders(ratio);
         }
     }
+#else
+    (void)oldscale;
+#endif
 }
 
 vec3 Object::GetScale(){
@@ -425,6 +457,7 @@ void Object::UpdatePhysicsState(){
     //Massages all the physics things.
 
     //If physics from colliders etc. was updated:
+#ifdef USE_PHYSICS
     if (physics){
 
         vec3 physics_wp = physics->GetBodyWorldPosition();
@@ -434,6 +467,7 @@ void Object::UpdatePhysicsState(){
         //We set the local position
         SetRotation(physics_q,false);
     }
+#endif
 
     //ApplyAnimation(animation_time_delta);
 
@@ -443,10 +477,14 @@ void Object::UpdatePhysicsState(){
 }
 
 vec3 Object::GetCenterofMass(){
+#ifdef USE_PHYSICS
     if (!physics){
         return vec3();
     }
     return physics->GetCenterofMass();
+#else
+    return vec3();
+#endif
 }
 
 //Returns local position (within parent)
@@ -1185,47 +1223,74 @@ void Object::ApplyAnimation(float time_delta){
     made from then on. They used to return silently unless a body with colliders already existed,
     so "set the filter, then build the shape" - which is the order anyone writes - did nothing.
 */
+/*
+    The six below all keep their DECLARATIONS in both builds - they name only engine types, so
+    guarding them would push an #ifdef into every caller for no gain. Each one already returns
+    early when there is no body, and with USE_PHYSICS off there never is one, so the no-physics
+    build gets the same behaviour an object without a rigid body has always had. Only the bodies
+    that reach into rp3d are compiled out.
+*/
 void Object::SetCollisionCategoryBits(uint32_t bits){
     collision_category_bits = bits;
+#ifdef USE_PHYSICS
     if (physics){
         physics->SetCollisionCategoryBits(bits);
     }
+#endif
 }
 
 //This sets all categories that this object can collide with
 void Object::SetCollideWithMaskBits(uint32_t bits){
     collide_with_bits = bits;
+#ifdef USE_PHYSICS
     if (physics){
         physics->SetCollideWithMaskBits(bits);
     }
+#endif
 }
 
 void Object::SetMass(float mass){
+#ifdef USE_PHYSICS
     if (!physics){
         return;
     }
     physics->SetMass(mass); //also rescales the inertia tensor - see Physics::SetMass
+#else
+    (void)mass;
+#endif
 }
 
 float Object::GetMass(){
+#ifdef USE_PHYSICS
     if (!physics){
         return 0.0f;
     }
     return physics->body->rigidbody->getMass();
+#else
+    return 0.0f;
+#endif
 }
 
 vec3 Object::GetVelocity(){
+#ifdef USE_PHYSICS
     if (!physics){
         return vec3();
     }
 	rp3d::Vector3 v = physics->body->rigidbody->getLinearVelocity();
 	return vec3(v.x,v.y,v.z);
+#else
+    return vec3();
+#endif
 }
 
 void Object::SetVelocity(const vec3& newvel){
+#ifdef USE_PHYSICS
     if (!physics){
         return;
     }
     rp3d::Vector3 v = (rp3d::Vector3&)newvel;
 	physics->body->rigidbody->setLinearVelocity(v);
+#else
+    (void)newvel;
+#endif
 }

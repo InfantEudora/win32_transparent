@@ -181,9 +181,11 @@ void Scene::UpdatePhysics(float delta_time){
     //Before the physics step, so this tick's simulation reacts to the new pose/velocity.
     AdvanceObjectMotions(delta_time);
 
+#ifdef USE_PHYSICS
     if (physics_world){
         physics_world->Update(delta_time);
     }
+#endif
 
     //Update all objects stored in the renderer.
     for (Object* object:objects){
@@ -214,7 +216,10 @@ void Scene::DrawFrame(){
 
     int2 m = inputcontroller->GetRelativeMousePosition();
 
-    //Update mesh for physics debugging
+    //Update mesh for physics debugging.
+    //The whole block, else branch included: with no physics there is no debug renderer to read
+    //and no PhysicsDebugObject was ever created, so there is nothing to hide either.
+#ifdef USE_PHYSICS
     if (physics_world && physics_world->IsDebugRenderingEnabled()){
         renderer->physics_mutex.lock();
         reactphysics3d::DebugRenderer* dbr = physics_world->debug_renderer;
@@ -275,6 +280,7 @@ void Scene::DrawFrame(){
             debugobject->SetVisibility(false);
         }
     }
+#endif
     renderer->physics_mutex.lock();
     renderer->DrawFrame(objects, camera, shader,inputcontroller);
     renderer->physics_mutex.unlock();
@@ -434,6 +440,9 @@ void Scene::AdvanceObjectMotions(float delta_time){
     //bit-exact, and an integrated body is further off than that), stop the body, and hand it back
     //to whatever type it was before the motion took it over. Shared by the two places a motion can
     //retire - see the comment on that split below.
+    //The Physics* parameter only exists in a physics build; without one every motion is a plain
+    //interpolated pose, which is exactly the path a bodyless object already took.
+#ifdef USE_PHYSICS
     auto FinishMotion = [](ObjectMotion& motion,Object* object,Physics* physics){
         if (physics){
             physics->SetVelocity(vec3(0,0,0));
@@ -449,6 +458,17 @@ void Scene::AdvanceObjectMotions(float delta_time){
             physics->SetBodyType(motion.previous_body_type);
         }
     };
+#else
+    auto FinishMotion = [](ObjectMotion& motion,Object* object,void* physics){
+        (void)physics;
+        if (motion.f_position){
+            object->SetPosition(motion.target_position);
+        }
+        if (motion.f_rotation){
+            object->SetRotation(motion.target_rotation);
+        }
+    };
+#endif
 
     for (size_t i = 0; i < object_motions.size();){
         ObjectMotion& motion = object_motions[i];
@@ -470,16 +490,22 @@ void Scene::AdvanceObjectMotions(float delta_time){
             continue;
         }
 
+#ifdef USE_PHYSICS
         Physics* physics = object->GetPhysics();
+#else
+        void* physics = NULL;   //no body to drive; every branch below it is dead
+#endif
 
         if (motion.ticks_done == 0){
             motion.start_position = object->GetPosition();
             motion.start_rotation = object->GetRotation();
             if (physics){
+#ifdef USE_PHYSICS
                 motion.f_kinematic = true;
                 motion.previous_body_type = physics->GetBodyType();
                 physics->SetBodyType(rp3d::BodyType::KINEMATIC);
                 physics->WakeUp();
+#endif
             }
         }
 
@@ -513,6 +539,7 @@ void Scene::AdvanceObjectMotions(float delta_time){
         vec3 next_position = motion.f_position ? motion.start_position.lerp(motion.target_position,factor) : object->GetPosition();
         quat next_rotation = motion.f_rotation ? quat::slerp(motion.start_rotation,motion.target_rotation,factor) : object->GetRotation();
 
+#ifdef USE_PHYSICS
         if (physics && delta_time > 0.0f){
             //Velocity that arrives at the next pose by the end of this tick, measured from where
             //the body actually is now (not where the ideal curve says it should be) so any
@@ -522,6 +549,9 @@ void Scene::AdvanceObjectMotions(float delta_time){
             physics->SetVelocity(motion.f_position ? (next_position - current_position) * (1.0f / delta_time) : vec3(0,0,0));
             physics->SetAngularVelocity(motion.f_rotation ? AngularVelocityBetween(current_rotation,next_rotation,delta_time) : vec3(0,0,0));
         }else{
+#else
+        {   //physics is always NULL here, so this is the only branch that can run
+#endif
             if (motion.f_position){
                 object->SetPosition(next_position);
             }

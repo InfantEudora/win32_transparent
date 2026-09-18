@@ -160,11 +160,15 @@ static json ObjectToJson(Object* object,bool verbose){
         {"name", object->name},
         {"parent_id", object->GetParent() ? json(object->GetParent()->GetID()) : json(nullptr)},
         {"position", Vec3ToJson(object->GetPosition())},
-        {"has_physics", object->GetPhysics() != NULL},
+        //Reported in both builds, and always false without physics - an agent asking "does this
+        //object have a body" gets a true answer either way rather than a missing field.
+        {"has_physics", object->HasPhysics()},
     };
+#ifdef USE_PHYSICS
     if (Physics* physics = object->GetPhysics()){
         result["static"] = physics->IsStatic();
     }
+#endif
     if (!verbose){
         return result;
     }
@@ -186,6 +190,7 @@ static json ObjectToJson(Object* object,bool verbose){
         children.push_back({{"id",child->GetID()},{"name",child->name}});
     }
     result["children"] = children;
+#ifdef USE_PHYSICS
     if (Physics* physics = object->GetPhysics()){
         result["physics"] = {
             {"static", physics->IsStatic()},
@@ -196,6 +201,7 @@ static json ObjectToJson(Object* object,bool verbose){
             {"angular_velocity", Vec3ToJson(physics->GetAngularVelocity())},
         };
     }
+#endif
     return result;
 }
 

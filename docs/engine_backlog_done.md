@@ -7,7 +7,7 @@ been reworded: each entry is the text it carried when it was closed, including t
 notes, which are the part worth keeping — several of these say exactly how a fix was proven, and
 that is the record a later regression gets checked against.
 
-Numbers are stable and are never reused. They run 1-92 across both files; **28 was never
+Numbers are stable and are never reused. They run 1-95 across both files; **28 was never
 assigned**.
 
 Sources: `docs/tetris_findings.md` (the `APP=Tetris` run) and `docs/breakout_findings.md` (the
@@ -3125,3 +3125,86 @@ object happened to construct first.
   not depend on the answer. `core/Mesh.h`, `core/Mesh.cpp`, `core/type_vertex.h`,
   `core/Renderer.cpp`, `shared_assets/shaders/default.vert`, `default_skinned.vert`,
   `skybox.vert`, `default.frag`, `deferred.frag`, `line.vert`, `line.frag`.
+
+- [x] **73. `USE_PHYSICS`, so an app can opt out of ReactPhysics3D.** CLOSED 2026-09-18, for the
+  flag itself; the host-tool half of this item is now item 94 in the open backlog. `apps/bomber`
+  is the first app built with `USE_PHYSICS := 0`, and all fifteen apps build.
+
+  **MEASURED FIRST, and the measurement is the reason this was worth doing rather than recording.**
+  The obvious objection is that `-Wl,--gc-sections` should already drop an unused physics engine.
+  It does not, and the note above `CORE_CFLAGS` in `engine.mk` already said why in general terms:
+  the linker's unit of discard is a whole object file, and nothing here is compiled with
+  `-ffunction-sections`. Measured on `apps/bomber`, `make ship`, from a `-Wl,-Map` link:
+
+  ```
+  rp3d (libreactphysics3d.a)   1,520,532     88 of ~94 archive members present
+  core/physics/*.o                85,504
+  Vehicle + Wheel                 58,224
+  ObjectCollider.o                26,320
+  Particle.o                      25,976
+  -------------------------------------
+  total                        1,716,556     = 67% of that exe's non-asset code and data
+  ```
+
+  Bomber **never creates a `PhysicsWorld`** and gives no object a rigid body. rp3d was in it
+  anyway, because the core objects it links NAME those symbols whether or not the app ever calls
+  them — `DebugRenderer` (72 KB), `QuickHull` (47 KB), `SATAlgorithm` (70 KB) and the rest are
+  statically reachable from `Scene.cpp` and `Object.cpp`. The linker collects on reachability, not
+  on behaviour, so only removing the references at SOURCE level drops any of it.
+
+  **The actual saving was 1,259,520 bytes**, 7,451,648 -> 6,192,128 on the ship build (7.11 MB ->
+  5.91 MB), which is 49% of the non-asset content. That is 457 KB LESS than the map predicted -
+  worth knowing, because it means a map-derived figure is an upper bound rather than an estimate;
+  section alignment and COMDAT folding do not all come back. The debug exe went 44.79 MB -> 32.76
+  MB. `nm` reports **0** rp3d symbols in the no-physics exe against 5,684 in `tank.exe`.
+
+  Five of the fifteen apps create no physics world at all: `bomber`, `ocpp`, `sim`, `testfx` and
+  `ui`. The open item said three of twelve; `bomber` and `testfx` only ever matched on
+  `GetPhysicsTick`/`GetPhysicsTimestep`, which are the SIM CLOCK and have nothing to do with rp3d,
+  and `ocpp`'s apparent hits were the domain word "Vehicle" - an EV, not `core/Vehicle`.
+
+  **THE BUILD-SYSTEM SHAPE, which is the part the open item got wrong.** It warned "do not just add
+  the `-D` to `CORE_CFLAGS`" and said item 72's stamp had to land with this. Both were half right.
+  A `#ifdef` in `Object.h` genuinely does have to reach the shared core objects, and no `_none`
+  twin can absorb it: `USE_MCP` and `USE_IMGUI` swap a translation unit because they change
+  function BODIES behind a fixed signature, whereas this changes a HEADER - the type of
+  `Object::physics`, the type of `Scene::physics_world`, and which methods `Object` declares.
+
+  So the precedent is **`CONFIG`, not `USE_MCP`**: a flag that legitimately changes core gets its
+  own core tree. `CORE_BUILD_DIR := $(CORE_BUILD_ROOT)/$(CONFIG)$(PHYSICS_SUFFIX)`, exactly as
+  debug-vs-release already did, plus `_nophysics` in `VARIANT_SUFFIX` for the app's own objects and
+  the exe name. `build/core/{debug,debug_nophysics,release,release_nophysics}` coexist, nothing can
+  collide, nothing needs wiping, and switching costs one rebuild of the other tree and then
+  nothing. **Which means no `.buildflags` stamp was needed** - both the shared objects and the
+  app's own are already separated by directory, so item 72 does not become load-bearing here. That
+  is the same conclusion item 79 reached for `CONFIG`.
+
+  **Layout is identical in both builds and that is load-bearing.** `Physics*` and `void*` are both
+  pointers, the three guarded methods are non-virtual, and `rp3d::BodyType` is an enum class over
+  `int` whose `STATIC` is 0. Class size, member offsets and vtable do not move, so a core object
+  built one way linked against an app object built the other fails at LINK time with an undefined
+  reference rather than corrupting anything. On the port the same mismatch failed at `dlopen`
+  naming a mangled symbol, which reads like a missing library; here it cannot get that far.
+
+  **Two things fell out that were not physics.**
+
+  - `core/Window.h` used `std::function` without including `<functional>`, and had got away with it
+    since forever because `Object.h` -> `Physics.h` -> reactphysics3d supplied it. The no-physics
+    build stopped dead in a file with nothing to do with physics. Same class of latent bug as the
+    ImGui one documented at the top of `Scene.h`; fixed by including what it uses.
+  - `core/Application.h` included `ObjectCollider.h` although **nothing in that header names the
+    type** - the only use in the engine is the gizmo `Application.cpp` spawns. Since
+    `ObjectCollider` holds an `rp3d::Collider*` and `Application.h` is reached by every app, that
+    one line dragged reactphysics3d's headers into all fifteen. Moved to the `.cpp`.
+
+  `Object::HasPhysics()` was added, unguarded, because `ApplicationMCP.cpp` reports `has_physics`
+  per object and `physics` is protected. It names no rp3d type, so the MCP surface answers the
+  question truthfully in both builds instead of dropping the field.
+
+  **Verified** by building all fifteen apps, then running `bomber_nophysics.exe`: MCP up, sim
+  ticking at 61/s, `sim_pause`/`sim_step` exact, scripted input driving the character across the
+  field, a bomb destroying a block (`blocks_destroyed` 0 -> 1, `soft_blocks_left` 26 -> 24), and a
+  screenshot showing the field, enemies, water, shadows and the raymarched blast all correct.
+  `core/Object.{h,cpp}`, `core/Scene.{h,cpp}`, `core/Application.{h,cpp}`,
+  `core/ApplicationDebugUI.cpp`, `core/ApplicationDebugUI_none.cpp`, `core/ApplicationMCP.cpp`,
+  `core/Window.h`, `engine.mk`, `apps/bomber/makefile`.

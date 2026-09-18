@@ -6,6 +6,12 @@
 
 #include "Window.h"
 #include "Renderer.h"
+#ifdef USE_PHYSICS
+//The collider-editing gizmo, spawned by SIMCMD_ADD_COLLIDER_GIZMO below. Here rather than in
+//Application.h because this is the only place in the engine that names the type - see the note
+//where that include used to be.
+#include "ObjectCollider.h"
+#endif
 
 #include "tinygltf/json.hpp"
 using json = nlohmann::json;
@@ -641,6 +647,10 @@ void Application::RegisterCoreCommandHandlers(Scene* scene){
     //SET_TRANSFORM: one `if` per flag, so a command carrying one property leaves the other eight
     //alone. The boolean values live at the same bit positions in bool_values as their own flags,
     //which is what keeps this to one line each - see SimCommand.h.
+    //Not registered at all without physics: the command exists in the enum either way (SimCommand.h
+    //is shared), and an unregistered id already reports itself as unhandled - which is a truer
+    //answer for a no-physics build than a handler that accepted the command and did nothing.
+#ifdef USE_PHYSICS
     scene->RegisterCommandHandler(SIM_CMD_OBJECT_SET_PHYSICS,
         [this,scene](const SimCommand& cmd) -> objectid_t {
             Object* object = scene->FindObjectByID(cmd.target);
@@ -693,6 +703,7 @@ void Application::RegisterCoreCommandHandlers(Scene* scene){
             }
             return object->GetID();
         });
+#endif
 
     //The engine's own object types, for the things that come from no asset (Add > Empty/Camera/
     //Light). Only the scene INSERTION is a command; anything that needs the GL context or the
@@ -768,10 +779,12 @@ void Application::RegisterCoreCommandHandlers(Scene* scene){
             //Deliberately AFTER AddObject, and only when the submitter asked for it: a copy that
             //starts inactive can be dragged into place before it begins falling, which is why the
             //Inspector's Duplicate button clears the flag.
+#ifdef USE_PHYSICS
             Physics* physics = duplicated->GetPhysics();
             if (physics && (cmd.flags & SIM_CMD_FLAG_ACTIVE)){
                 physics->SetActive(!!(cmd.bool_values & SIM_CMD_FLAG_ACTIVE));
             }
+#endif
             return duplicated->GetID();
         });
 
@@ -785,14 +798,17 @@ void Application::RegisterCoreCommandHandlers(Scene* scene){
             objectid_t id = object->GetID();
             //MARKS it - see the note on SIM_CMD_OBJECT_DESTROY. Waking the world first, while the
             //body still exists, is what lets anything resting on it start falling.
+#ifdef USE_PHYSICS
             Physics* physics = object->GetPhysics();
             if (physics && physics->world){
                 physics->world->WakeUpEveryone();
             }
+#endif
             object->Destroy();
             return id;
         });
 
+#ifdef USE_PHYSICS
     scene->RegisterCommandHandler(SIM_CMD_WORLD_SET_GRAVITY,
         [this,scene](const SimCommand& cmd) -> objectid_t {
             if (!scene->physics_world){
@@ -824,6 +840,7 @@ void Application::RegisterCoreCommandHandlers(Scene* scene){
             scene->AddObject(gizmo);
             return gizmo->GetID();
         });
+#endif
 }
 
 //Every UI path that changes the simulation goes through here. The UI must NEVER wait for a

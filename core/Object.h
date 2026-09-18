@@ -22,7 +22,14 @@ struct RootMotionDelta;
 #include "type_quat.h"
 #include "Material.h"
 #include "ObjectAnimation.h"
+//Physics (ReactPhysics3D) is optional: an app opts out with `USE_PHYSICS := 0`. When it is off
+//this header is not included, Object's physics methods are compiled out, and no rp3d symbol is
+//named anywhere - so the library is neither built nor linked. Object still HAS a `physics`
+//member either way, so all the `if (physics)` tests below compile unchanged in both builds.
+//See the USE_PHYSICS block in engine.mk for what that is worth and why it is a flag.
+#ifdef USE_PHYSICS
 #include "Physics.h"
+#endif
 
 
 typedef uint32_t objectid_t;
@@ -409,10 +416,20 @@ class Object{
     void SetAnimationRate(float rate);
 
     //Physics & Collision
+    //Only the three that NAME an rp3d type are guarded. ResetPhysics and everything below it
+    //take and return engine types, so they keep their declarations in both builds and simply
+    //do nothing when `physics` is permanently NULL - which is what lets calling code stay the
+    //same rather than growing #ifdefs of its own.
+#ifdef USE_PHYSICS
     Physics*            GetPhysics();
     Physics*            AddPhysics(PhysicsWorld* world);
-    void                ResetPhysics();
     rp3d::RigidBody*    GetRigidBody();
+#endif
+    //"Does this object have a rigid body" without naming the type that answers it, so the
+    //question can be asked in either build - which is what the MCP object reports need, since
+    //`has_physics: false` is a truer answer for a no-physics app than a missing field.
+    bool                HasPhysics();
+    void                ResetPhysics();
     void                SetCollisionCategoryBits(uint32_t bits);
     void                SetCollideWithMaskBits(uint32_t bits);
 
@@ -492,7 +509,17 @@ protected:
     */
     bool f_casts_shadow = true;
 
+    //ALWAYS PRESENT, so Object's layout and every `if (physics)` test are the same in both
+    //builds; without USE_PHYSICS nothing ever assigns it, so it is permanently NULL and every
+    //physics branch is dead code the optimiser drops. Both alternatives are pointers and the
+    //three guarded methods above are non-virtual, so the class size, member offsets and vtable
+    //are identical either way - which is what makes a core object built one way and an app
+    //object built the other fail at LINK time, loudly, rather than corrupting anything.
+#ifdef USE_PHYSICS
     Physics* physics = NULL;
+#else
+    void*    physics = NULL;
+#endif
 
     ObjectState state;  //Where this object is. Guarded by Renderer::physics_mutex.
 

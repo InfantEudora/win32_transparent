@@ -17,7 +17,12 @@
 #include "Renderer.h"
 #include "Shader.h"
 
+//Optional, the same way it is in Object.h: with USE_PHYSICS off this header is not included and
+//no rp3d symbol is named, so the library is neither built nor linked. physics_world is declared
+//either way and is simply always NULL.
+#ifdef USE_PHYSICS
 #include "PhysicsWorld.h"
+#endif
 #include "SimCommand.h"
 
 /*
@@ -42,7 +47,13 @@ public:
     Renderer* renderer = NULL;
     Shader* shader = NULL;
 
+    //Always declared so Scene's shape and every `if (physics_world)` test stay the same in both
+    //builds; without USE_PHYSICS nothing can assign it. Same treatment as Object::physics.
+#ifdef USE_PHYSICS
     PhysicsWorld* physics_world = NULL;
+#else
+    void*         physics_world = NULL;
+#endif
 
     /*
         Everything in this scene, top level only - children hang off their parents and are reached
@@ -320,7 +331,14 @@ private:
         //what makes `ticks` mean ticks for it. The claim above that the extra tick was for physics
         //motions "only" was the intent but not the behaviour until that was fixed.
         bool f_kinematic = false;
+        //int, not rp3d::BodyType, when there is no rp3d to name. Same size and same value
+        //(BodyType is a plain enum class over int, STATIC == 0), so ObjectMotion's layout does
+        //not move - and with physics off f_kinematic is never set, so it is never read either.
+#ifdef USE_PHYSICS
         rp3d::BodyType previous_body_type = rp3d::BodyType::STATIC;
+#else
+        int            previous_body_type = 0;
+#endif
     };
     std::vector<ObjectMotion> object_motions;
     std::mutex object_motions_mutex;

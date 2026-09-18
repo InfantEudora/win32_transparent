@@ -6,6 +6,12 @@
 #include <mmsystem.h>
 #include <string>
 #include <vector>
+//SetOnFileDropped/onFileDropped below. This header got <functional> for free until 2026-09-18
+//by way of Object.h -> Physics.h -> reactphysics3d, and putting physics behind USE_PHYSICS is
+//what exposed it: the no-physics build stopped at "'std::function' has not been declared" in a
+//file that has nothing to do with physics. Same rule as the ImGui note below - a header
+//includes what it uses.
+#include <functional>
 
 #include <GL/gl.h>
 #include <GL/glu.h>

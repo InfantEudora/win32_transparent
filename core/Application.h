@@ -24,7 +24,11 @@
 #include "Debug.h"
 #include "GLTFLoader.h"
 #include "RRandom.h"
-#include "ObjectCollider.h"
+//NO ObjectCollider.h. Nothing in this header names the type - the one use in the whole engine
+//is the gizmo Application.cpp spawns for SIMCMD_ADD_COLLIDER_GIZMO, so the include lives there
+//instead. It mattered because ObjectCollider holds an rp3d::Collider* and this header is
+//reached by every app: dragging reactphysics3d's headers into all fifteen of them, including
+//the ones built with USE_PHYSICS=0, for a class none of them mention.
 #include "RawInput.h"
 #include "skeleton/PlayerCharacter.h"
 //For MaybeAttachScreenshot's signature below. json.hpp only (not MCPServer.h): this is pure C++
@@ -467,7 +471,9 @@ protected:
     //One per Inspector tab. Each takes the object rather than reading selected_object, so a tab
     //cannot disagree with the header about what it is showing.
     void RenderInspectorTransformTab(Object* object);
+#ifdef USE_PHYSICS
     void RenderInspectorPhysicsTab(Object* object);
+#endif
     void RenderInspectorRenderTab(Object* object);
     void RenderInspectorAnimationTab(Object* object);
     void RenderInspectorDebugTab(Object* object);
@@ -485,7 +491,11 @@ protected:
     void RenderDebugMenuBar();
     void RenderRandTestWindow();
     void RenderShaderUI(Shader* shader);
+    //Takes a PhysicsWorld* by name, so it exists only where that type does. The USE_IMGUI=0 twin
+    //in ApplicationDebugUI_none.cpp carries the same guard.
+#ifdef USE_PHYSICS
     void UpdateUIWorldPhysics(PhysicsWorld* physics_world);
+#endif
 private:
     bool SetupConsole();
     static bool WINAPI ConsoleHandler(DWORD console_event);

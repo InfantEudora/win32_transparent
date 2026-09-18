@@ -64,6 +64,49 @@ inline uint32_t UIColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255){
 #define UI_ALIGN_RIGHT  2
 
 /*
+    The four insets of a NINE-SLICE, in pixels of the source sprite.
+
+    A themed panel cannot simply be stretched: its corners are drawn at a size the artist chose,
+    and scaling them is immediately visible as a skewed bevel. So the sprite is cut into nine
+    regions - four corners that never scale, four edges that scale along one axis only, and a
+    centre that scales both ways - and these four numbers are where the cuts fall.
+
+    Kept as source-pixel insets rather than as fractions because that is what the art means: the
+    bomber panel's corner piece is 30 px of chamfered wood whatever size the window is drawn at.
+    Fractions would make the corner grow with the window, which is the exact thing nine-slicing
+    exists to prevent.
+
+    Measured values for the assets cut from the mockups are in docs/ui_sprites.md.
+*/
+struct ui_nine_inset{
+    float left   = 0.0f;
+    float top    = 0.0f;
+    float right  = 0.0f;
+    float bottom = 0.0f;
+};
+
+//The nine regions, row-major from the top-left: 0 1 2 / 3 4 5 / 6 7 8. Named so the debug colours
+//and any later textured path index them the same way.
+#define UI_NINE_COUNT 9
+
+/*
+    Splits `min..max` into the nine regions, writing UI_NINE_COUNT pairs into out_min/out_max.
+
+    FREE FUNCTION, not a method, because both the debug drawing below and whatever eventually
+    samples a theme texture have to agree about where the cuts are. Two copies of this arithmetic
+    that drifted apart would show up as a one-pixel seam in the finished UI and be very hard to
+    place; one function cannot drift.
+
+    Handles the case that makes naive implementations fail: a target RECTANGLE SMALLER THAN ITS OWN
+    INSETS. Left plus right can exceed the width the caller asked for, and the corners then overlap
+    and the edge regions come out inside-out. The insets are scaled down together when that
+    happens, so a panel squeezed below its natural size degrades to just its corners instead of
+    turning into garbage.
+*/
+void UINineSliceRegions(vec2 min, vec2 max, const ui_nine_inset& inset,
+                        vec2* out_min, vec2* out_max);
+
+/*
     One corner of one quad. 48 bytes.
 
     Compare ImGui's ImDrawVert at 20 (pos, uv, col) and core/type_vertex.h's `vertex` at 48
@@ -133,6 +176,22 @@ public:
 
     //The same rectangle's outline, `thickness` pixels wide, centred on the edge.
     void AddRectOutline(vec2 min, vec2 max, float radius, float thickness, uint32_t color);
+
+    /*
+        The nine regions of a nine-slice, each in a flat colour naming what it does.
+
+        A SCAFFOLD, and deliberately the first half of the job. Drawing a themed panel needs a
+        second texture in this batch - the atlas here is the R8 font, and painted wood is neither
+        single-channel nor a distance field - which is a change to the vertex format, the shader
+        and the asset pipeline at once. The geometry is separable from all of it, and it is the
+        part that is easy to get subtly wrong, so it goes first and gets looked at.
+
+        Colours name the ROLE, not the cell: corners, the two edge pairs, and the centre. That is
+        what wants checking - which regions move when the panel is resized - and four colours
+        answer it at a glance where nine arbitrary ones would just be a grid. No two adjacent
+        regions share a role, so every cut is still visible.
+    */
+    void AddNineSliceDebug(vec2 min, vec2 max, const ui_nine_inset& inset, uint8_t alpha = 255);
 
     /*
         One line of text. `pos` is the LEFT END OF THE BASELINE for UI_ALIGN_LEFT, and alignment

@@ -22,9 +22,11 @@ void Application::UpdateUICameraControls(Camera* camera,int id){
     (void)id;
 }
 
+#ifdef USE_PHYSICS
 void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
     (void)physics_world;
 }
+#endif
 
 void Application::RenderDebugMenuBar(){
 }
@@ -51,9 +53,11 @@ void Application::RenderInspectorTransformTab(Object* object){
     (void)object;
 }
 
+#ifdef USE_PHYSICS
 void Application::RenderInspectorPhysicsTab(Object* object){
     (void)object;
 }
+#endif
 
 bool Application::RenderBitmaskCheckboxes(const char* id, uint32_t& mask){
     (void)id;

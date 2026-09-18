@@ -263,7 +263,9 @@ and 61 ended up stranded under a band that no longer said anything about them.
   or expose a per-material twist coefficient so a rail can have sliding friction without it.
   Anything in this engine that rolls a small body against a wall will hit this.
 
-- [ ] **92. `UIOverlay` cannot draw an image. Give it a texture array and a per-quad layer.**
+- [ ] **95. `UIOverlay` cannot draw an image. Give it a texture array and a per-quad layer.**
+  (Renumbered from 92 on 2026-09-18: that number was already held by the closed Intel Iris Xe
+  material item, and numbers here are never reused.)
   Found 2026-09-17 while building `apps/bomber`'s HUD, which is the overlay's first real use beyond
   `apps/tetris`'s volume readout. The overlay binds **one** texture for the whole batch - the R8 SDF
   font atlas - and every quad's UV indexes into it, with untextured geometry pointing at the atlas's
@@ -394,19 +396,18 @@ and 61 ended up stranded under a band that no longer said anything about them.
   is one command each side of the fix. This wants doing BEFORE the rp3d baselines are re-recorded,
   or the new baseline will bake in a tank that does not drive.*
 
-- [ ] **73. `USE_PHYSICS`, so an app can opt out of ReactPhysics3D.** `USE_SOUND` already
-  establishes the convention (`?= 0`, opt in per app, drop the sources and the `-l` when off).
-  Everything that links core today links rp3d whether or not it wants it, because `Object.h`
-  includes `Physics.h` and `Object` has a physics member.
+- [ ] **94. `engine.mk` has no notion of a target that is not an app** — the half of item 73 that
+  did not close with the flag. `USE_PHYSICS` landed on 2026-09-18 (see the closed item for the
+  measurements), but it was only ever half of 73: the other half is that a **host build tool** is
+  a different kind of consumer from a game, and this file cannot describe one.
 
-  **The case for this is host tools, not apps.** Counting the apps undersells it badly: only three
-  of the twelve never touch physics (`ocpp`, `sim` and `ui`, each of which calls `UpdatePhysics` on
-  an empty world and nothing else), and the ones that look like they would not all do — Tetris and
-  Breakout use static bodies for their walls, `tileset` calls rp3d overlap queries directly. Twelve
-  games mostly want a physics engine, which is not surprising.
+  `CFLAGS` unconditionally carries `-limgui -lsetupapi -lhid -lopengl32 -lgdi32`, plus `-lws2_32
+  -lcrypt32` from `USE_NET` — the right default for a game and wrong for anything else. A tool
+  needs either that list to become opt-in the way the sources already are, or its own small
+  makefile that includes only what it wants; the port took the second road for both of its tools
+  and it worked.
 
-  A **build tool** is a different kind of consumer, and it is the one this flag exists for. The
-  port has two, and the difference between them is the whole design:
+  The port has two, and the difference between them is the whole design:
 
   - `pack_assets.exe` links a **thin hand-listed slice** — `File.cpp`, `BinaryAsset.cpp`,
     `Debug.cpp`, `Debug_win32.cpp` and miniz, and that is all. No `Object`, so no flag needed and
@@ -419,40 +420,10 @@ and 61 ended up stranded under a band that no longer said anything about them.
     accordingly sets **`USE_PHYSICS ?= 0`, `USE_MCP ?= 0`, `USE_SOUND ?= 0`** — the flag family is
     that tool's entire relationship to the engine.
 
-  This repo has no such tool yet: `tools/` is Python plus one stray `camera_ray_test.cpp` with no
-  build rule. So the second half of this item is that **`engine.mk` has no notion of a target that
-  is not an app.** Its `CFLAGS` unconditionally carry `-lreactphysics3d -limgui -lsetupapi -lhid
-  -lopengl32 -lgdi32 -lws2_32 -lcrypt32`, which is the right default for a game and wrong for
-  anything else. A tool needs either that list to become opt-in the way the sources already are,
-  or its own small makefile that includes only what it wants — the port took the second road for
-  both of its tools and it worked.
-
-  **The mechanism is not a copy of the sound flag, and that is the rest of the work.** Dropping
-  `SoundSystem.cpp` from the source list was enough for sound. Physics needs real `#ifdef`s in
-  `core/Object.{h,cpp}` — guard the include; make `physics` a `void*` when off so every
-  `if (physics)` test and `Object`'s general shape survive unchanged; compile out only
-  `GetPhysics()`, `AddPhysics()` and `GetRigidBody()`, whose signatures name types that no longer
-  exist; leave everything else (`ResetPhysics`, `SetMass`, `Get/SetVelocity`, `UpdatePhysicsState`,
-  the transform setters, the copy constructor) declared and turn it into a no-op. `AttachChild`
-  needs no guard at all — it only tests `newchild->physics` for truthiness, which compiles against
-  a `void*`.
-
-  **And that runs straight into `engine.mk`'s "line between shared and per-app flags".** A
-  `#ifdef` in `Object.h` means `-DUSE_PHYSICS` has to reach `Object.o`, which lives in the shared
-  `build/core` — the exact thing that block forbids, and for a good reason: whichever target built
-  first would win and every other one would silently link objects compiled for someone else. Note
-  a host tool makes this *worse* than the app case, because a tool and a game genuinely do want to
-  disagree within one working tree, so "make the flag repo-wide" is not the cheap way out here
-  that it would be for apps alone. That leaves physics-dependent core sources compiling per target
-  rather than into `build/core` — correct, and it means `build/core` stops meaning "all of core".
-  **Do not just add the `-D` to `CORE_CFLAGS`.** Whichever way it goes, item 72's stamp has to
-  land with it.
-
-  What it is worth once done: link time and exe size for three apps, a tool that does not build a
-  94-source physics library to pack sprites, and `Object.{h,cpp}` stopping its drift from the
-  port's copy. On the port the flag was worth 94 rp3d sources against 0 and a 27.6 MB shared
-  object against 17.9 MB — a different toolchain and link model, so read the ratio, not the
-  numbers.
+  This repo still has no such tool: `tools/` is Python plus one stray `camera_ray_test.cpp` with
+  no build rule. So this is groundwork with no consumer yet, and worth doing when the first tool
+  wants it rather than before — the flag family it would lean on is now complete, which was the
+  part that could not be deferred.
 
 - [ ] **76. `Renderer(int w, int h)` — a renderer has no size.** `Renderer::width`/`height` are set
   once from the window and then read by eight call sites, all of them doing the same thing:

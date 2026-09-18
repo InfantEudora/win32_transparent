@@ -39,6 +39,15 @@ APP_SRCS += Hallway.cpp
 #into the build; see the USE_SOUND block in engine.mk for why it is opt-in per app.
 USE_SOUND := 1
 
+#NO PHYSICS. This game's movement is grid-stepped and its collisions are Maze's business - it
+#creates no PhysicsWorld and gives no object a rigid body, which is checkable: nothing here
+#names AddPhysics, physics_world or rp3d. The GetPhysicsTick/GetPhysicsTimestep calls in
+#ApplicationBomber.cpp are the SIM CLOCK, not the physics engine, and are unaffected.
+#
+#Worth 1.72 MB of the shipped exe, measured - see the USE_PHYSICS block in engine.mk for the
+#breakdown and for why --gc-sections does not get it back on its own.
+USE_PHYSICS := 0
+
 #---------------------------------------------------------------------------------------
 # What `make ship` bakes into the exe.
 #

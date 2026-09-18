@@ -117,7 +117,12 @@ void Application::UpdateUICameraControls(Camera* camera,int id){
     }
 }
 
-//Renders all things related to world physics
+//Renders all things related to world physics.
+//Whole function, because its parameter names a type that does not exist without USE_PHYSICS.
+//Note the tick-rate widgets at the bottom are NOT physics-specific - they belong to the sim
+//clock, which every app has - but they live inside this panel, so a no-physics build loses
+//them too. Moving them is a separate job; see docs/engine_backlog.md item 73.
+#ifdef USE_PHYSICS
 void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
     if (!physics_world){
         ImGui::BeginDisabled();
@@ -172,6 +177,7 @@ void Application::UpdateUIWorldPhysics(PhysicsWorld* physics_world){
     }
 
 }
+#endif
 
 void Application::RenderDebugMenuBar(){
     if (ImGui::BeginMainMenuBar()){
@@ -603,10 +609,12 @@ void Application::RenderInspectorWindow(){
             RenderInspectorTransformTab(object);
             ImGui::EndTabItem();
         }
+#ifdef USE_PHYSICS
         if (object->GetPhysics() && ImGui::BeginTabItem("Physics")){
             RenderInspectorPhysicsTab(object);
             ImGui::EndTabItem();
         }
+#endif
         if (ImGui::BeginTabItem("Render")){
             RenderInspectorRenderTab(object);
             ImGui::EndTabItem();
@@ -727,6 +735,9 @@ void Application::RenderInspectorTransformTab(Object* object){
     ImGui::SetItemTooltip("Colliders and their offsets follow; mass is kept and inertia recomputed.");
 }
 
+//The whole tab: it reads Physics and walks the body's rp3d colliders, and nothing without a
+//physics build can reach it - the tab is only submitted for an object that has a body.
+#ifdef USE_PHYSICS
 void Application::RenderInspectorPhysicsTab(Object* object){
     Physics* physics = object->GetPhysics();
     if (!physics){
@@ -838,6 +849,8 @@ void Application::RenderInspectorPhysicsTab(Object* object){
         }
     }
 }
+
+#endif
 
 //Eight checkboxes for one 8-bit mask, returning true when any of them changed. Two of these used
 //to be written out twice in full, inline, at 20 lines each.
@@ -1026,7 +1039,9 @@ void Application::RenderEngineWindow(){
     ImGui::Begin("Engine",&f_show_engine_window);
 
     if (main_scene){
+#ifdef USE_PHYSICS
         UpdateUIWorldPhysics(main_scene->physics_world);
+#endif
         int ui_camera_id = 0;
         UpdateUICameraControls(main_scene->camera,ui_camera_id);
     }

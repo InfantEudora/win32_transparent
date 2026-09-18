@@ -85,7 +85,7 @@ endif
 # command-line assignment would replace rather than add to them, which is a subtler version
 # of the same surprise.
 #---------------------------------------------------------------------------------------
-BUILD_SETTINGS := CONFIG USE_SOUND USE_MCP USE_NET USE_IMGUI BAKE_ASSETS
+BUILD_SETTINGS := CONFIG USE_SOUND USE_PHYSICS USE_MCP USE_NET USE_IMGUI BAKE_ASSETS
 
 CMDLINE_SETTINGS := $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $v)),$v))
 UNKNOWN_SETTINGS := $(filter-out $(BUILD_SETTINGS),$(CMDLINE_SETTINGS))
@@ -103,7 +103,7 @@ endif
 #never given has not been given a wrong value either, and its default is applied later. The
 #app makefile's own USE_SOUND := 1 is checked too, which is right - a typo is a typo wherever
 #it is written.
-BOOL_SETTINGS := USE_SOUND USE_MCP USE_NET USE_IMGUI BAKE_ASSETS
+BOOL_SETTINGS := USE_SOUND USE_PHYSICS USE_MCP USE_NET USE_IMGUI BAKE_ASSETS
 
 $(foreach v,$(BOOL_SETTINGS),$(if $(filter-out 0 1,$($v)),$(error $v must be 0 or 1, not '$($v)')))
 
@@ -153,7 +153,9 @@ CORE_BUILD_DIR  := $(CORE_BUILD_ROOT)/$(CONFIG)
 #No Console on windows, just the window
 FNOCONSOLE = -Wl,-subsystem,windows
 
-CFLAGS = -std=c++17 -L$(ROOT)/libs/ -lreactphysics3d -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
+#-lreactphysics3d is NOT here: it moved into the USE_PHYSICS block below, which is the whole
+#point of that flag. Everything else on this line is wanted by every app unconditionally.
+CFLAGS = -std=c++17 -L$(ROOT)/libs/ -lsetupapi -lhid -lthirdparty -luser32 -lopengl32 -lgdi32 -Wl,-Bstatic -static-libstdc++ -static-libgcc -static -lstdc++ -Wl,--gc-sections -D_WIN32
 CFLAGS += -lXinput9_1_0
 #CFLAGS += $(FNOCONSOLE)
 CFLAGS += -fno-exceptions -DJSON_NOEXCEPTION
@@ -192,6 +194,77 @@ CFLAGS += -DTINYGLTF_NO_STB_IMAGE
 #winmm.dll at run time anyway, and only on pre-Win10-1803 machines where the
 #high-resolution waitable timer is unavailable, so nothing needs it at link time.
 
+#---------------------------------------------------------------------------------------
+# USE_PHYSICS - ReactPhysics3D, and whether this build has one at all
+#
+# USE_PHYSICS=0 drops rp3d entirely: core/physics/*.cpp, Vehicle, Wheel, Particle and
+# ParticleEmitter leave the source list, -DUSE_PHYSICS is not defined, and every rp3d
+# reference in Object/Scene/Application compiles out. Nothing links libreactphysics3d.a.
+#
+# WHY IT IS WORTH A FLAG, measured rather than assumed. --gc-sections does NOT recover this
+# on its own: bomber never creates a PhysicsWorld, yet 88 of rp3d's ~94 archive members were
+# in its shipped exe, because the core objects it links NAME those symbols whether or not the
+# app ever calls them. The linker collects on reachability, not on behaviour. Measured on
+# apps/bomber, `make ship`, 2026-09-18:
+#
+#     rp3d                1,520,532 bytes      core/physics/*.o       85,504
+#     Vehicle + Wheel        58,224            ObjectCollider.o       26,320
+#     Particle.o             25,976            ------------------------------
+#                                              total               1,716,556
+#
+# which was 67% of that exe's non-asset code and data. Five of the fifteen apps create no
+# physics world at all (bomber, ocpp, sim, testfx, ui), and a host BUILD TOOL built on core
+# - a sprite packer, a mesh viewer - wants this even more than an app does. See item 73 in
+# docs/engine_backlog.md.
+#
+# THIS FLAG IS NOT SWITCHED THE WAY USE_MCP AND USE_IMGUI ARE, and the difference matters.
+# Those two swap a whole translation unit against a _none twin precisely so no -D ever
+# reaches core. That works for them because they change function BODIES behind a signature
+# that stays put. USE_PHYSICS changes a HEADER - the type of Object::physics, the type of
+# Scene::physics_world, and which methods Object even declares - and every TU that includes
+# Object.h sees it. No twin file can absorb that, so -DUSE_PHYSICS genuinely has to reach the
+# shared core objects, and it is therefore set ABOVE the CORE_CFLAGS line below.
+#
+# WHICH MAKES THE CORE OBJECT TREE THE THING TO GET RIGHT. An app-specific -D in CORE_CFLAGS
+# is exactly the silent mix-up that line exists to prevent: make compares objects by
+# timestamp, never by the flags they were built under, so whichever app built first would
+# win and the rest would link someone else's objects. The answer is CONFIG's, not USE_MCP's -
+# a flag that legitimately changes core gets its OWN core tree. build/core/release and
+# build/core/release_nophysics cannot collide, neither needs wiping, and switching costs one
+# rebuild of the other tree and then nothing. That is also why this needs no .buildflags
+# stamp (docs/engine_backlog.md item 72): both the shared objects and the app's own objects
+# are already separated by directory.
+#
+# DEFAULTS ON, unlike USE_SOUND. Ten of fifteen apps genuinely want a physics engine, and an
+# app that lost one silently would not shrink, it would fall through the floor.
+#---------------------------------------------------------------------------------------
+USE_PHYSICS ?= 1
+
+ifeq ($(USE_PHYSICS),1)
+CFLAGS += -DUSE_PHYSICS -lreactphysics3d
+#Only reachable when physics is on. With it off the -I goes too, so a guard someone forgot
+#fails loudly with "reactphysics3d.h: No such file" at compile time instead of quietly
+#pulling the library back into a build that asked not to have one.
+IPATHS += -I$(ROOT)/3rdparty/reactphysics3d/
+else
+#The rp3d wrapper itself.
+CORE_SRCS_DROP += $(ROOT)/core/physics/Physics.cpp
+CORE_SRCS_DROP += $(ROOT)/core/physics/PhysicsBody.cpp
+CORE_SRCS_DROP += $(ROOT)/core/physics/PhysicsWorld.cpp
+#Classes that ARE a physics body rather than merely having one - there is no meaningful
+#no-physics version of any of these, so they drop whole rather than being #ifdef'd. Nothing
+#in core includes Vehicle.h or Particle.h; only apps/tank, dozer and ship use them.
+CORE_SRCS_DROP += $(ROOT)/core/Vehicle.cpp
+CORE_SRCS_DROP += $(ROOT)/core/Wheel.cpp
+CORE_SRCS_DROP += $(ROOT)/core/Particle.cpp
+CORE_SRCS_DROP += $(ROOT)/core/ParticleEmitter.cpp
+#The collider-editing gizmo: its whole job is to hold an rp3d::Collider* and write back to it.
+CORE_SRCS_DROP += $(ROOT)/core/ObjectCollider.cpp
+#Its own core tree - see the long note above. The app's own objects and the exe are named by
+#VARIANT_SUFFIX further down, for the same reason.
+CORE_BUILD_DIR := $(CORE_BUILD_DIR)_nophysics
+endif
+
 IPATHS += -I$(ROOT)/core/
 IPATHS += -I$(ROOT)/core/physics
 IPATHS += -I$(ROOT)/core/skeleton
@@ -204,7 +277,7 @@ IPATHS += -I$(ROOT)/3rdparty/
 IPATHS += -I$(ROOT)/3rdparty/stb_image/
 IPATHS += -I$(ROOT)/3rdparty/openal-soft/
 IPATHS += -I$(ROOT)/3rdparty/miniz/
-IPATHS += -I$(ROOT)/3rdparty/reactphysics3d/
+#-I$(ROOT)/3rdparty/reactphysics3d/ is in the USE_PHYSICS block above, not here.
 #The app's own folder, so its headers find each other by plain name.
 IPATHS += -I.
 
@@ -373,6 +446,11 @@ endif
 # build gets a name, and it gets one that says what it is.
 #---------------------------------------------------------------------------------------
 VARIANT_SUFFIX :=
+#Physics first, because it is the one that also moves the SHARED core tree (see the
+#USE_PHYSICS block above) - having the exe say so as well keeps the two readable together.
+ifneq ($(USE_PHYSICS),1)
+VARIANT_SUFFIX := $(VARIANT_SUFFIX)_nophysics
+endif
 ifneq ($(USE_MCP),1)
 VARIANT_SUFFIX := $(VARIANT_SUFFIX)_nomcp
 endif

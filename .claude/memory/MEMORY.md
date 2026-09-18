@@ -39,3 +39,4 @@
 - [Skinned rig bone indexing](skinned_rig_bone_indexing.md) — a bone's index is its position in skin.joints, not visit order; GetSkeleton loads every root and Renderer lays matrices out by that index (multi-root rigs used to load one bone and tear the mesh)
 - [Comment density ceiling](comment_density_ceiling.md) — the house "comment heavily" rule has an upper bound: one-liners on declarations, block comments for the type, no per-enum-value essays
 - [Release edges ignore focus](release_edge_ignores_focus.md) — a click NEXT TO the window still fires WasKeyReleased (RIDEV_INPUTSINK + key-up honoured unfocused); read the edge unconditionally, gate the action on IsInputLive()
+- [USE_PHYSICS flag](use_physics_flag.md) — the ONE flag that changes shared core objects: follows CONFIG's separate-core-tree pattern, not USE_MCP's _none twins; --gc-sections does not reclaim rp3d on its own

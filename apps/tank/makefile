@@ -30,4 +30,25 @@ APP_SRCS += CraneCharacter.cpp
 
 #No SoundSystem here, so OpenAL is not linked - see the USE_SOUND block in engine.mk.
 
+#---------------------------------------------------------------------------------------
+# What `make ship` bakes into the exe.
+#
+# THE SAME TWO ROOTS main.cpp DECLARES, IN THE SAME ORDER - this app's own first so a file
+# in apps/tank/assets wins over a shared one of the same name, then the shared tree. The
+# order matters for the same reason it matters at run time, and nothing checks that these
+# two lists agree, so they are worth reading together.
+#
+# Only read when BAKE_ASSETS is 1, so this costs an ordinary build nothing. See the BAKED
+# ASSETS block in engine.mk.
+#---------------------------------------------------------------------------------------
+ASSET_ROOTS := assets $(ROOT)/shared_assets
+
+#NOTHING IS EXCLUDED YET, and that is the safe state rather than the finished one. This app
+#bakes about 12 MB raw where bomber bakes 7, and some of the shared tree is certainly dead
+#weight here - but an exclusion that is wrong does not fail the build, it produces an exe
+#that dies on its first LoadFile on a machine with no loose copy to fall back on. Each one
+#has to be checked rather than assumed, which is a job of its own; see the worked example
+#in apps/bomber/makefile for what that looks like when it is done.
+#ASSET_PACK_FLAGS += --exclude "..."
+
 include $(ROOT)/engine.mk
