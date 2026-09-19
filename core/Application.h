@@ -380,6 +380,50 @@ public:
     */
     std::string app_name = "Application";
 
+    /*
+        THE SHADER STAGES AN APP IS DRAWN WITH, so that an app names them once instead of spelling
+        out four asset names at three call sites in its Init().
+
+        FROM THE ANDROID PORT, and the reason they are members rather than literals is that tree
+        rather than this one: every name there gains an `_android` suffix, so a literal written in
+        a shared ApplicationXxx.cpp is right in exactly one of the two trees. Taking them from the
+        base lets one app source compile in both, each tree's Application supplying its own.
+
+        --- WHY THERE ARE TWO FRAGMENT NAMES HERE AND ONE THERE ------------------------------
+        THIS TREE HAS TWO SCENE FRAGMENT PROGRAMS AND THE PORT HAS ONE, so the port's single
+        `shader_frag_name` does not survive the trip and splitting it is not tidiness:
+
+          - deferred.frag writes the G-BUFFER. Three outputs - position, normal, object id - and
+            no lighting at all.
+          - default.frag SHADES. One output, and it is the stage that reads the lights, the shadow
+            maps and the TBN.
+
+        They are not interchangeable in either direction: default.frag in the deferred slot writes
+        one attachment where the FBO wants three, and deferred.frag under default_shader draws a
+        scene with no lighting in it. Both link, which is what makes getting it wrong expensive.
+
+        The port has no separate deferred fragment shader - its Renderer::Init builds the COLOUR
+        program from (vert,frag) - so one name serves both jobs there and `shader_lit_frag_name`
+        is simply the same file again. Keeping the member NAMES identical in both trees is what
+        the split costs, and it is what keeps an app's source copyable between them.
+    */
+    const char* shader_vert_name = "shaders/default.vert";
+    //Passed to Renderer::Init. PIPELINE_MSAA never builds a program from it - see the pipeline
+    //test in Renderer::Init - so an MSAA app may leave this alone whatever it says.
+    const char* shader_frag_name = "shaders/deferred.frag";
+    //The stage default_shader and Renderer::skinned_shader SHARE - see Renderer::UploadCloudShadow
+    //on why those two are one thing. The lighting lives here, not in shader_frag_name above.
+    const char* shader_lit_frag_name = "shaders/default.frag";
+    /*
+        The vertex stage for SKINNED meshes, built against shader_lit_frag_name - only the vertex
+        half knows about bone matrices.
+
+        NOT WIRED UP BY THE BASE in this tree, unlike the port's, where InitRendererTargets links
+        it when the app has not. Here an app assigns Renderer::skinned_shader itself, and an app
+        with no skinned mesh simply never reads this.
+    */
+    const char* shader_skinned_vert_name = "shaders/default_skinned.vert";
+
     //The one and only simulation timestep, in seconds. Constant for the life of the run - every
     //caller of Scene::UpdatePhysics/UpdateAnimations passes this, nothing computes its own.
     float GetPhysicsTimestep() const { return 1.0f / physics_tps; }

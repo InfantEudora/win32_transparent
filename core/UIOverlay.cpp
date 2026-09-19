@@ -242,21 +242,54 @@ void UIOverlay::Begin(int w, int h){
     An EBO would save a third of the vertex data and is not worth the object: a busy overlay is a
     couple of hundred quads, so the saving is tens of kilobytes a frame against a buffer that has
     to be created, bound and kept in step with the VAO on two platforms.
+
+    --- THE SHAPE IS NOT THE QUAD, AND THAT IS THE WHOLE POINT OF THIS OVERLOAD ------------------
+    `min/max` is the GEOMETRY rasterised; `shape_min/shape_max` is the rectangle the fragment
+    shader's distance field describes. They are usually the same and AddQuad below passes them
+    that way, but the two cases that need them apart are both real:
+
+      - AN OUTLINE straddles the edge, so half of it falls outside the rect asked for. The quad
+        grows to cover that half; the shape must not, or the outline moves with it.
+
+      - A CELL OF A NINE-SLICE is one of nine quads that together make ONE rectangle. The shader
+        antialiases whatever shape it is given over one pixel, so a cell given itself fades out
+        along the INTERIOR cuts too - where there is nothing to antialias and a neighbour is about
+        to be drawn. That pixel is rasterised by exactly one of the two cells (the fill rule gives
+        it to whichever contains its centre) and the other never touches it, so nothing fills the
+        coverage the ramp gave away and the scene behind shows through.
+
+        The leak is min(frac,1-frac) of the cut's position: nil when a cut lands on a pixel
+        boundary, up to half the background when it lands on a pixel centre. That is a SEAM that
+        comes and goes with the window size, which is exactly how it was found - bomber's menu
+        panel at 1280x800 puts its x cuts at .6 and .4 of a pixel and its y cuts on whole ones, so
+        it seamed vertically and not horizontally.
+
+        Handing every cell the WHOLE panel as its shape puts the distance field far inside at
+        every interior cut - alpha 1, no ramp - while the panel's outer boundary still gets its
+        one correct ramp. The cells keep their own geometry, which is what carries the UVs.
 */
-void UIOverlay::AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
-                        float radius, float outline, float distance_scale, uint32_t color,
-                        float sprite){
+void UIOverlay::AddQuadShaped(vec2 min, vec2 max, vec2 shape_min, vec2 shape_max,
+                              vec2 uv0, vec2 uv1,
+                              float radius, float outline, float distance_scale, uint32_t color,
+                              float sprite){
     if (!f_ready){
         return;
     }
     //A zero or inverted rect has no pixels and a negative half-extent would make the distance
-    //field nonsense rather than empty, so it is dropped here instead of drawn wrong.
+    //field nonsense rather than empty, so it is dropped here instead of drawn wrong. Both rects
+    //are checked: an empty QUAD rasterises nothing, an empty SHAPE is a field with no inside.
     if ((max.x <= min.x) || (max.y <= min.y)){
         return;
     }
+    if ((shape_max.x <= shape_min.x) || (shape_max.y <= shape_min.y)){
+        return;
+    }
 
-    vec2 half   = vec2((max.x - min.x) * 0.5f,(max.y - min.y) * 0.5f);
-    vec2 centre = vec2(min.x + half.x,min.y + half.y);
+    //From the SHAPE, not the quad - see the header note. Everything the distance field is built
+    //from is measured against the rectangle being described, and only `corner_pos` below comes
+    //from the geometry.
+    vec2 half   = vec2((shape_max.x - shape_min.x) * 0.5f,(shape_max.y - shape_min.y) * 0.5f);
+    vec2 centre = vec2(shape_min.x + half.x,shape_min.y + half.y);
 
     //A radius past half the shorter side would turn the rounded-box distance inside out. Clamping
     //means "very round" degrades into a capsule and then a circle, which is what a caller asking
@@ -295,6 +328,13 @@ void UIOverlay::AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
     }
 }
 
+//The ordinary case: the quad IS the shape.
+void UIOverlay::AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
+                        float radius, float outline, float distance_scale, uint32_t color,
+                        float sprite){
+    AddQuadShaped(min,max,min,max,uv0,uv1,radius,outline,distance_scale,color,sprite);
+}
+
 //The atlas's all-inside texel, as a UV. Both corners are the same point, so every fragment of an
 //untextured quad samples exactly it and the glyph term is a constant far inside - see the shader.
 static vec2 SolidUV(const ui_font_header& f){
@@ -302,7 +342,10 @@ static vec2 SolidUV(const ui_font_header& f){
                 ((float)f.solid_y + 0.5f) / (float)f.atlas_h);
 }
 
-void UIOverlay::AddRect(vec2 min, vec2 max, float radius, uint32_t color){
+//`shape_min/shape_max` is the rectangle the distance field describes, which for a nine-slice cell
+//is the whole panel rather than the cell - see AddQuadShaped for why that is not the same thing.
+void UIOverlay::AddRectShaped(vec2 min, vec2 max, vec2 shape_min, vec2 shape_max,
+                              float radius, uint32_t color){
     if (!f_ready){
         return;
     }
@@ -310,7 +353,12 @@ void UIOverlay::AddRect(vec2 min, vec2 max, float radius, uint32_t color){
     //distance_range_px as the scale is not arbitrary: it has to be big enough that the solid
     //texel's distance, (onedge - 1) * scale, lands further inside than the one-pixel coverage
     //ramp, or a filled rect would come out faintly translucent. A whole field's range is.
-    AddQuad(min,max,solid,solid,radius,0.0f,font.distance_range_px,color);
+    AddQuadShaped(min,max,shape_min,shape_max,solid,solid,radius,0.0f,font.distance_range_px,
+                  color,0.0f);
+}
+
+void UIOverlay::AddRect(vec2 min, vec2 max, float radius, uint32_t color){
+    AddRectShaped(min,max,min,max,radius,color);
 }
 
 void UINineSliceRegions(vec2 min, vec2 max, const ui_nine_inset& inset,
@@ -382,7 +430,11 @@ void UIOverlay::AddNineSliceDebug(vec2 min, vec2 max, const ui_nine_inset& inset
         //Radius 0: each region is a plain rectangle. Rounded corners on a nine-slice come from the
         //ARTWORK in the corner regions, never from the geometry - rounding these would round the
         //interior cuts too, and leave gaps along every seam.
-        AddRect(rmin[i],rmax[i],0.0f,role[i]);
+        //
+        //The SHAPE is the whole panel, so the interior cuts get no coverage ramp and the regions
+        //meet exactly - the same fix the themed path below needs, and it belongs here too or the
+        //fallback stops being the faithful stand-in this function exists to be. See AddQuadShaped.
+        AddRectShaped(rmin[i],rmax[i],min,max,0.0f,role[i]);
     }
 }
 
@@ -392,8 +444,11 @@ void UIOverlay::SetThemeTexture(uint32_t tex_id, int w, int h){
     theme_h   = h;
 }
 
-void UIOverlay::AddSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, int src_h,
-                          uint32_t color){
+//`shape_min/shape_max` is the rectangle the distance field clips against, which for a nine-slice
+//cell is the whole panel rather than the cell - see AddQuadShaped for why that is not the same
+//thing, and for the seam that having them the same produced.
+void UIOverlay::AddSpriteShaped(vec2 min, vec2 max, vec2 shape_min, vec2 shape_max,
+                                int src_x, int src_y, int src_w, int src_h, uint32_t color){
     if (!f_ready || !theme_tex || theme_w <= 0 || theme_h <= 0){
         return;
     }
@@ -418,7 +473,12 @@ void UIOverlay::AddSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, i
     //radius 0, outline 0: a sprite is a plain rectangle. Any rounding belongs to the ARTWORK, and
     //rounding the quad as well would cut the artwork's own corners off. distance_scale 0 keeps the
     //glyph term out of it - see the shader.
-    AddQuad(min,max,vec2(u0,v0),vec2(u1,v1),0.0f,0.0f,0.0f,color,1.0f);
+    AddQuadShaped(min,max,shape_min,shape_max,vec2(u0,v0),vec2(u1,v1),0.0f,0.0f,0.0f,color,1.0f);
+}
+
+void UIOverlay::AddSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, int src_h,
+                          uint32_t color){
+    AddSpriteShaped(min,max,min,max,src_x,src_y,src_w,src_h,color);
 }
 
 void UIOverlay::AddNineSliceSprite(vec2 min, vec2 max, int src_x, int src_y, int src_w, int src_h,
@@ -470,7 +530,14 @@ void UIOverlay::AddNineSliceSprite(vec2 min, vec2 max, int src_x, int src_y, int
             if (sw <= 0 || sh <= 0){
                 continue;
             }
-            AddSprite(dmin[i],dmax[i],sx,sy,sw,sh,color);
+            /*
+                THE SHAPE IS THE WHOLE PANEL, not the cell, and this one argument is the difference
+                between a clean nine-slice and a one-pixel seam down every interior cut. The cells
+                still carry their own geometry - that is what holds the UVs - but the distance
+                field they are clipped by describes the rectangle they jointly make up, so only
+                its outer boundary gets a coverage ramp. See AddQuadShaped for the measurement.
+            */
+            AddSpriteShaped(dmin[i],dmax[i],min,max,sx,sy,sw,sh,color);
         }
     }
 }
@@ -491,36 +558,16 @@ void UIOverlay::AddRectOutline(vec2 min, vec2 max, float radius, float thickness
     vec2 gmin  = vec2(min.x - grow,min.y - grow);
     vec2 gmax  = vec2(max.x + grow,max.y + grow);
 
-    //The distance field must still describe the ORIGINAL rectangle, so the quad is bigger than
-    //the shape: AddQuad derives half_extent from the quad, so the grown size is compensated here
-    //by passing the geometry through a quad whose centre matches and whose half-extent is grown.
-    //Shrinking the local space back is what keeps the outline on the edge the caller asked for.
-    vec2 half   = vec2((max.x - min.x) * 0.5f,(max.y - min.y) * 0.5f);
-    vec2 centre = vec2(min.x + half.x,min.y + half.y);
-    vec2 solid  = SolidUV(font);
-
-    float max_radius = (half.x < half.y) ? half.x : half.y;
-    if (radius > max_radius){
-        radius = max_radius;
-    }
-
-    const vec2 corner_pos[4] = {
-        vec2(gmin.x,gmin.y), vec2(gmax.x,gmin.y), vec2(gmax.x,gmax.y), vec2(gmin.x,gmax.y)
-    };
-    const int order[6] = {0,1,2, 0,2,3};
-    for (int i = 0; i < 6; i++){
-        int c = order[i];
-        ui_vertex v;
-        v.pos            = corner_pos[c];
-        v.uv             = solid;
-        v.local          = vec2(corner_pos[c].x - centre.x,corner_pos[c].y - centre.y);
-        v.half_extent    = half;                 //the SHAPE's half size, not the quad's
-        v.radius         = radius;
-        v.outline        = thickness * 0.5f;
-        v.distance_scale = font.distance_range_px;
-        v.color          = color;
-        vertices.push_back(v);
-    }
+    /*
+        The distance field must still describe the ORIGINAL rectangle, so the quad is bigger than
+        the shape - which is precisely what AddQuadShaped is for. This used to build its own six
+        vertices to get that, and the copy had already drifted: it never set `sprite`, so every
+        outline vertex carried whatever was on the stack, and a non-zero one mixes the theme
+        texel into a quad that means to be a flat colour. One function cannot drift.
+    */
+    vec2 solid = SolidUV(font);
+    AddQuadShaped(gmin,gmax,min,max,solid,solid,radius,thickness * 0.5f,
+                  font.distance_range_px,color,0.0f);
 }
 
 vec2 UIOverlay::MeasureText(const char* text, float size_px) const{

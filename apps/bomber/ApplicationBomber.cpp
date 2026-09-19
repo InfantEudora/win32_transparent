@@ -36,6 +36,44 @@ static Debugger* debug = new Debugger("ApplicationBomber",DEBUG_ALL);
 #define BLAST_MODE_CROSS    1
 
 /*
+    THE BLAST FRAGMENT SHADER, PER PLATFORM.
+
+    TWO FILES, NOT ONE FILE WITH #ifdefs IN IT. bomber_explosion.frag is `#version 430 core`, reads
+    its instance transform and the scene's lights from SSBOs in the FRAGMENT stage, samples a
+    sampler3D filled by a compute shader, and carries a default initialiser on every uniform. Not
+    one of those four survives on GLES - the device this port targets reports
+    GL_MAX_FRAGMENT_SHADER_STORAGE_BLOCKS = 0, and GLSL ES has no uniform initialisers at all. So
+    the second file is a REDUCTION rather than a port, and a reduction is a different shader.
+
+    WHAT THE TWO SHARE IS THE SHAPE, NOT THE SHADING: bomber_explosion_android.frag carries this
+    file's TILE-mode timing arithmetic unchanged, so which tiles light and when is identical on
+    both platforms and stays identical when a knob moves. Read the block at the top of it for what
+    is lost and why that is the right thing to lose.
+
+    THE VERTEX HALF IS NOT NAMED HERE. It comes from Application::shader_vert_name, which is
+    already the one place an app's vertex stage is chosen, so the blast is drawn with whatever the
+    rest of the app is drawn with rather than repeating the decision in a second place.
+*/
+#if defined(__ANDROID__)
+    #define BOMBER_BLAST_FRAG   "shaders/bomber_explosion_android.frag"
+    #define BOMBER_WATER_FRAG   "shaders/bomber_water_android.frag"
+#else
+    #define BOMBER_BLAST_FRAG   "shaders/bomber_explosion.frag"
+    #define BOMBER_WATER_FRAG   "shaders/bomber_water.frag"
+#endif
+
+/*
+    THE WATER FORK IS NOT THE SAME KIND OF THING AS THE BLAST FORK, and it is worth knowing
+    which is which before either is edited.
+
+    The blast pair is PERMANENT: one marches a noise volume through SSBO-fed instance data and
+    the other cannot, because the hardware says so. The water pair is a DIALECT split only -
+    bomber_water_android.frag is bomber_water.frag from the first #define down, character for
+    character, with an ES preamble in front of it. If the desktop file ever moves to a version
+    and a varying convention both platforms share, that second file simply goes away.
+*/
+
+/*
     Every node this app takes out of bomber_assets.glb, by its name in the file.
 
     THE ORDER OF MazeTile AND MazeDecor IS MIRRORED HERE, which is what lets the field builder
@@ -344,7 +382,22 @@ ApplicationBomber::ApplicationBomber():Application(){
 void ApplicationBomber::Init(void){
     int2 dimensions = GetDisplaySettings();
     renderer = new Renderer(main_window->width,main_window->height);
-    if (!renderer->Init("shaders/default.vert","shaders/deferred.frag",PIPELINE_DEFERRED)){
+    /*
+        THE SCENE PAIR COMES FROM Application::shader_vert_name / shader_frag_name, not from
+        literals, and that is not only about the _android suffix.
+
+        WATCH THE SECOND ARGUMENT: it does not name the same shader in both trees. The desktop
+        Renderer::Init builds its DEFERRED program from (vert,frag) - hence the "shaders/
+        deferred.frag" that used to be written here - while the Android one builds its COLOUR
+        program from them and has no separate deferred fragment shader at all. Two Inits with one
+        signature and two meanings, so a literal that is right in one tree is quietly wrong in the
+        other: it compiles, it links, and it draws the wrong thing or nothing.
+
+        Taking both names from the members is what makes this line correct on both sides without
+        being two lines. Each tree's Application supplies whatever its own Init wants, and an app
+        never has to know which of the two contracts it is talking to.
+    */
+    if (!renderer->Init(shader_vert_name,shader_frag_name,PIPELINE_DEFERRED)){
         debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
     /*
@@ -358,7 +411,14 @@ void ApplicationBomber::Init(void){
     //effect - anything else makes the fire's colour a matter of opinion.
     renderer->f_render_skybox = false;
 
-    default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+    //Both names from the members, for the reason spelled out at the Renderer::Init call above -
+    //this is the one place an app chooses its shader stages, and it has to be one place.
+    //
+    //shader_LIT_frag_name, not shader_frag_name: this is the SHADED stage, where Renderer::Init
+    //above took the G-buffer one. Two names because this tree has two scene programs and the
+    //port has one - the block on them in core/Application.h says which is which, and why using
+    //the wrong one links cleanly and then draws a scene with no lighting in it.
+    default_shader = new Shader(shader_vert_name,shader_lit_frag_name);
     /*
         The enemy is a SKINNED mesh, and a skinned mesh has nowhere to be drawn without this.
 
@@ -367,7 +427,7 @@ void ApplicationBomber::Init(void){
         missing shader. Only the fragment half is shared with default_shader; the vertex half is
         the one that knows about bone matrices.
     */
-    renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
+    renderer->skinned_shader = new Shader(shader_skinned_vert_name,shader_lit_frag_name);
 
     main_window->Resize(1280,800);
 
@@ -1879,6 +1939,23 @@ void ApplicationBomber::RebuildField(void){
     RENDER THREAD - it is a compute dispatch, and Init is on the render thread.
 */
 void ApplicationBomber::BuildBlastNoise(void){
+#if defined(__ANDROID__)
+    /*
+        NO NOISE VOLUME HERE, AND NOTHING STANDING IN FOR ONE.
+
+        Three separate things in the desktop path do not exist on this device: the compute shader
+        that fills the volume, the glBindImageTexture that gives it somewhere to write, and the
+        glBindTextureUnit that hands the result to the fragment stage (DSA, absent at every GLES
+        version up to 3.2). And the shader that would sample it does not run here either - see
+        BOMBER_BLAST_FRAG at the top of this file.
+
+        blast_noise STAYS NULL, which is the flag PushBlastUniforms already tests before binding
+        it. That is deliberate: there is no second switch to keep in step with this one, so a
+        later change that brings the volume back only has to touch this function.
+    */
+    debug->Info("Blast noise skipped: no compute shaders on this platform - the blast is drawn\n"
+                "                    analytically instead, see bomber_explosion_android.frag\n");
+#else
     blast_noise_shader = new Shader();
     blast_noise_shader->CreateComputeShader("shaders/noise3d.comp");
 
@@ -1900,6 +1977,7 @@ void ApplicationBomber::BuildBlastNoise(void){
 
     debug->Info("Built %i^3 blast noise, %i base worley cells\n",
                 BOMBER_NOISE_RESOLUTION,BOMBER_NOISE_CELLS);
+#endif //__ANDROID__
 }
 
 Mesh* ApplicationBomber::BuildBlastCube(int shader_index){
@@ -1937,7 +2015,7 @@ void ApplicationBomber::BuildExplosion(void){
     //is the flag core/Shader.h's f_fatal_on_error exists for, and setting it BEFORE the first
     //build is why Shader::Build is a method rather than only a constructor.
     tile_shader->f_fatal_on_error = false;
-    bool f_tile_ok = tile_shader->Build("shaders/default.vert","shaders/bomber_explosion.frag");
+    bool f_tile_ok = tile_shader->Build(shader_vert_name,BOMBER_BLAST_FRAG);
     tile_shader->uniform_callback = std::bind(&ApplicationBomber::SetTileUniforms,this);
     /*
         BOTH MODES DRAW AT REDUCED RESOLUTION, and they have to, not just for the frame rate:
@@ -1951,7 +2029,7 @@ void ApplicationBomber::BuildExplosion(void){
 
     cross_shader = new Shader();
     cross_shader->f_fatal_on_error = false;
-    bool f_cross_ok = cross_shader->Build("shaders/default.vert","shaders/bomber_explosion.frag");
+    bool f_cross_ok = cross_shader->Build(shader_vert_name,BOMBER_BLAST_FRAG);
     cross_shader->uniform_callback = std::bind(&ApplicationBomber::SetCrossUniforms,this);
     cross_shader->f_lowres = true;
     cross_shader_index = renderer->AddCustomShader(cross_shader);
@@ -2041,11 +2119,24 @@ void ApplicationBomber::PushBlastUniforms(Shader* shader, int mode, float box_wo
     shader->Setfloat("cell_world",BOMBER_CELL_SIZE);
     shader->Setfloat("cell_object",BOMBER_CELL_SIZE * to_object);
 
+    /*
+        EVERYTHING ABOVE THIS LINE IS SHARED, everything below it until the shared tail is the
+        march's. The split is not cosmetic: bomber_explosion_android.frag declares only the names
+        above, and a uniform a program does not declare is stripped by the GLSL compiler, so
+        pushing the march's settings at it would cost a warning per name at startup and a
+        glGetUniformLocation per name per frame for nothing.
+
+        ONE GUARD RATHER THAN TWO FUNCTIONS. The shared half is the half that decides WHICH tiles
+        burn and WHEN, and that must not be allowed to drift between platforms - keeping it in one
+        unguarded block is what makes drifting impossible rather than merely unlikely.
+    */
+#if !defined(__ANDROID__)
     //Per-mode, and deliberately not knobs.
     shader->Setfloat("shell_thickness",
                      (mode == BLAST_MODE_CROSS) ? BOMBER_CROSS_SHELL : BOMBER_TILE_SHELL);
     shader->Setfloat("core_heat",
                      (mode == BLAST_MODE_CROSS) ? BOMBER_CROSS_CORE_HEAT : BOMBER_TILE_CORE_HEAT);
+#endif
 
     {
         std::lock_guard<std::mutex> lock(knob_mutex);
@@ -2055,6 +2146,7 @@ void ApplicationBomber::PushBlastUniforms(Shader* shader, int mode, float box_wo
         shader->Setfloat("blast_radius",blast_radius * to_object);
         shader->Setfloat("rise",rise * to_object);
 
+#if !defined(__ANDROID__)
         shader->Setfloat("rim_softness",rim_softness);
         shader->Setfloat("turbulence",turbulence);
         shader->Setfloat("noise_scale",noise_scale);
@@ -2078,12 +2170,22 @@ void ApplicationBomber::PushBlastUniforms(Shader* shader, int mode, float box_wo
         shader->Setfloat("light_falloff",light_falloff);
         shader->Setfloat("max_radiance",max_radiance);
         shader->Setfloat("scatter_cutoff",scatter_cutoff);
+#endif //!__ANDROID__
+        //Shared again: both shaders draw the box when asked to.
         shader->Setint("f_show_box",debug_view);
     }
 
+#if !defined(__ANDROID__)
+    /*
+        THE NOISE VOLUME. Guarded for the entry point rather than for the pointer: glBindTextureUnit
+        is direct state access and does not exist at any GLES version, so this line has to go even
+        though blast_noise is always NULL here (see BuildBlastNoise) and the test would have covered
+        it at runtime. A call that cannot LINK is not saved by a branch that never runs.
+    */
     if (blast_noise){
         glBindTextureUnit(TEXUNIT_APP_RESERVED,blast_noise->texture_id);
     }
+#endif
 
     /*
         Render the box's INSIDE faces only, write no depth, and do not depth TEST either. Copied
@@ -2156,9 +2258,11 @@ void ApplicationBomber::BuildWater(void){
     //Soft, like the blast's: a shader that will not compile is something to read the log of and
     //fix with F5, not something to relaunch the app over.
     water_shader->f_fatal_on_error = false;
-    if (!water_shader->Build("shaders/default.vert","shaders/bomber_water.frag")){
-        debug->Err("shaders/bomber_water.frag did not compile - the water will not draw at all, "
-                   "F5 reloads it:\n%s\n",water_shader->compile_log.c_str());
+    //shader_vert_name, not a literal: the water rides the same vertex stage as everything else,
+    //and naming it here again is how a port loses one shader and not the others.
+    if (!water_shader->Build(shader_vert_name,BOMBER_WATER_FRAG)){
+        debug->Err("%s did not compile - the water will not draw at all, F5 reloads it:\n%s\n",
+                   BOMBER_WATER_FRAG,water_shader->compile_log.c_str());
     }
     water_shader->uniform_callback = std::bind(&ApplicationBomber::SetWaterUniforms,this);
     /*

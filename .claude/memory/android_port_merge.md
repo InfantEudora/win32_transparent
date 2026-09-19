@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 30c1f15b-4e38-47fd-a2d2-a2246c2cea91
-  modified: 2026-09-13T10:48:31.821Z
+  modified: 2026-09-19T09:40:20.539Z
 ---
 
 A parallel Android port of this engine lives at **`C:/code/android`** — inspired by this tree
@@ -123,5 +123,15 @@ QPC pair agree to **1-4 us in 8,400**.
 they conflate Android divergence with plain staleness, and for most small files
 (`Camera`, `AssetManager`, `Light`, `Material.h`, `GLTFLoader.h`) the entire diff is this tree
 having moved ahead, with no Android content at all.
+
+**`Application::shader_*_name` came over 2026-09-19, and the port needs ONE line back.** The port
+has a single `shader_frag_name` because its `Renderer::Init` builds the COLOUR program from
+(vert,frag); this tree's builds the DEFERRED one, and `default_shader`/`skinned_shader` need
+`default.frag` instead - two scene fragment programs where the port has one. So win32's
+`Application` carries a fourth member, `shader_lit_frag_name`, and `apps/bomber` uses it at the
+two forward call sites. **For an app source to stay copyable between the trees, `android_core/
+Application.h` needs `shader_lit_frag_name` too**, aliased to its own `default_android.frag`.
+Not done there yet - it is one line, and until it exists a copied ApplicationXxx.cpp will fail
+to compile on the port side.
 
 See [[touch_input_plan]], [[per_app_build_layout]], [[shared_build_output_coordination]].

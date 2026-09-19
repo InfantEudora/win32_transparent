@@ -2,7 +2,7 @@
 	"./button_blank": {
 		"frame": {
 			"x": 0,
-			"y": 390,
+			"y": 425,
 			"width": 242,
 			"height": 104
 		},
@@ -15,7 +15,7 @@
 	"./button_close": {
 		"frame": {
 			"x": 244,
-			"y": 390,
+			"y": 425,
 			"width": 118,
 			"height": 107
 		},
@@ -28,7 +28,7 @@
 	"./corner_bl": {
 		"frame": {
 			"x": 35,
-			"y": 496,
+			"y": 531,
 			"width": 30,
 			"height": 37
 		},
@@ -41,7 +41,7 @@
 	"./corner_br": {
 		"frame": {
 			"x": 0,
-			"y": 496,
+			"y": 531,
 			"width": 33,
 			"height": 47
 		},
@@ -53,8 +53,8 @@
 	},
 	"./corner_tl": {
 		"frame": {
-			"x": 503,
-			"y": 0,
+			"x": 101,
+			"y": 531,
 			"width": 31,
 			"height": 29
 		},
@@ -67,7 +67,7 @@
 	"./corner_tr": {
 		"frame": {
 			"x": 67,
-			"y": 496,
+			"y": 531,
 			"width": 32,
 			"height": 29
 		},
@@ -80,7 +80,7 @@
 	"./side_bottom": {
 		"frame": {
 			"x": 244,
-			"y": 499,
+			"y": 534,
 			"width": 402,
 			"height": 15
 		},
@@ -92,7 +92,7 @@
 	},
 	"./side_left": {
 		"frame": {
-			"x": 489,
+			"x": 621,
 			"y": 0,
 			"width": 12,
 			"height": 312
@@ -105,7 +105,7 @@
 	},
 	"./side_right": {
 		"frame": {
-			"x": 474,
+			"x": 606,
 			"y": 0,
 			"width": 13,
 			"height": 305
@@ -119,7 +119,7 @@
 	"./side_top": {
 		"frame": {
 			"x": 244,
-			"y": 516,
+			"y": 551,
 			"width": 402,
 			"height": 12
 		},
@@ -133,12 +133,12 @@
 		"frame": {
 			"x": 0,
 			"y": 0,
-			"width": 472,
-			"height": 388
+			"width": 604,
+			"height": 423
 		},
 		"sourceSize": {
-			"width": 472,
-			"height": 388
+			"width": 604,
+			"height": 423
 		},
 		"rotated": false
 	}

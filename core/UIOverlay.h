@@ -271,11 +271,31 @@ public:
     int GetNumQuads() const { return (int)(vertices.size() / 6); }
 
 private:
+    /*
+        THE QUAD RASTERISED AND THE SHAPE THE DISTANCE FIELD DESCRIBES, SEPARATELY.
+
+        They are the same for an ordinary quad and AddQuad below passes them that way. They are
+        NOT the same for an outline, whose quad has to grow to cover the half that falls outside
+        the rect, nor for a cell of a nine-slice, which is one of nine quads making up one
+        rectangle and must be clipped by that rectangle rather than by itself - otherwise every
+        interior cut gets a coverage ramp it should not have, and leaks the scene behind through
+        a one-pixel seam. The full reasoning, and the measurement, are in the .cpp.
+    */
+    void AddQuadShaped(vec2 min, vec2 max, vec2 shape_min, vec2 shape_max,
+                       vec2 uv0, vec2 uv1,
+                       float radius, float outline, float distance_scale, uint32_t color,
+                       float sprite);
     //`sprite` defaults to 0 - a distance-field quad - so every existing caller is unchanged and
     //only the themed paths below have to say otherwise.
     void AddQuad(vec2 min, vec2 max, vec2 uv0, vec2 uv1,
                  float radius, float outline, float distance_scale, uint32_t color,
                  float sprite = 0.0f);
+    //The two shape-aware forms the nine-slice paths draw their cells through. Public AddRect and
+    //AddSprite are these with the shape set to the quad.
+    void AddRectShaped(vec2 min, vec2 max, vec2 shape_min, vec2 shape_max,
+                       float radius, uint32_t color);
+    void AddSpriteShaped(vec2 min, vec2 max, vec2 shape_min, vec2 shape_max,
+                         int src_x, int src_y, int src_w, int src_h, uint32_t color);
     //The shader, the buffers and the atlas - everything that dies with a context. Shared by Init
     //and ReUploadGPUObjects so the two cannot drift, which is the same argument the rest of this
     //stage makes for having one code path rather than a desktop one and an Android one.
