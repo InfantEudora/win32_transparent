@@ -32,7 +32,8 @@ void Renderer::SetOpenGLState(){
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 }
 
-bool Renderer::Init(int _pipeline){
+bool Renderer::Init(const char* vert_filename, const char* frag_filename, int _pipeline,
+                    const char* skinned_vert_filename){
     pipeline = _pipeline;
     //Get some info
     int r = 0;
@@ -79,8 +80,12 @@ bool Renderer::Init(int _pipeline){
     }
 
     if (pipeline == PIPELINE_DEFERRED){
-        deferred_shader = new Shader("shaders/default.vert","shaders/deferred.frag");
-        deferred_shader_skinned = new Shader("shaders/default_skinned.vert","shaders/deferred.frag");
+        deferred_shader = new Shader(vert_filename,frag_filename);
+        //The skinned twin differs in its vertex stage only, so it links against the SAME
+        //fragment shader. An app with no skinned mesh can pass NULL and skip the link.
+        if (skinned_vert_filename){
+            deferred_shader_skinned = new Shader(skinned_vert_filename,frag_filename);
+        }
         ssao_compute_shader = new Shader();
         ssao_compute_shader->CreateComputeShader("shaders/ssao_compute.comp");
     }
@@ -594,6 +599,8 @@ Shader* Renderer::GetCustomShader(int index){
     sizes, which is the worst kind of bug to go looking for. One spare block costs nothing.
 */
 bool Renderer::RebuildLowResFBO(void){
+
+
     int scale = (lowres_scale < 1) ? 1 : lowres_scale;
     int w = (width  + scale - 1) / scale;
     int h = (height + scale - 1) / scale;
@@ -652,6 +659,12 @@ bool Renderer::RebuildLowResFBO(void){
 }
 
 bool Renderer::SetCustomShaderScale(int scale){
+    #if defined(__ANDROID__)
+    //Not supported on Android. TODO.
+    scale = 1;
+    lowres_scale = 1;
+    return true;
+    #else
     if (scale < 1){
         scale = 1;
     }
@@ -672,6 +685,7 @@ bool Renderer::SetCustomShaderScale(int scale){
         return false;
     }
     return true;
+    #endif
 }
 
 /*
@@ -2138,7 +2152,7 @@ int Renderer::GetNumMaterials(){
 //Might only need to do this once.
 void Renderer::UploadMaterials(){
     debug->Trace("Uploading materials\n");
-    last_texture_unit = 4;
+    last_texture_unit = TEXUNIT_MATERIAL_FIRST;
 
     glsl_materials.clear();
     for (Material& mat:materials){
@@ -2157,14 +2171,16 @@ void Renderer::UploadMaterials(){
         glsl_materials.push_back(mat.glsl_material);
     }
 
-    //Material textures are handed units from 4 upwards with no upper bound, so a scene with
-    //enough of them will walk into the units reserved above - the skybox cubemap at 24 and
-    //whatever an app bound at TEXUNIT_APP_RESERVED. Silently overwriting one of those is very
-    //hard to recognise from the resulting image, so say it out loud.
-    if (last_texture_unit > cubemap_texture_unit){
-        debug->Warn("Material textures reached unit %i, past the reserved units at %i and %i - "
-                    "they are now overwriting each other\n",
-                    last_texture_unit,cubemap_texture_unit,TEXUNIT_APP_RESERVED);
+    //Material textures are handed units from TEXUNIT_MATERIAL_FIRST upwards with no upper bound,
+    //so a scene with enough of them runs off the top of the range - past the last entry the
+    //shader's material_texture[] actually has, and past what the driver will accept. Under the
+    //old layout an overflow silently landed on the reserved units above; now it lands nowhere,
+    //which the shader draws as its missing-material magenta. Say it out loud either way, because
+    //"some surfaces went magenta" is not a sentence that points here on its own.
+    if (last_texture_unit > num_texture_units){
+        debug->Warn("Material textures reached unit %i, past the end of the material range "
+                    "(%i units from %i) - the surfaces above it will draw as missing\n",
+                    last_texture_unit,NUM_MATERIAL_UNITS,TEXUNIT_MATERIAL_FIRST);
     }
 
     if (glsl_materials.size() > 0){
@@ -2179,18 +2195,32 @@ void Renderer::SetSkyboxCubemap(CubeMap* cubemap){
 
 void Renderer::UploadCubeMap(CubeMap* cubemap){
     if (cubemap->cubemap_id){
-        // Built via LoadFromEquirectangular — one GL object, bind once.
-        debug->Info("UploadCubeMap: binding equirectangular cubemap to unit %i\n", cubemap_texture_unit);
-        glBindTextureUnit(cubemap_texture_unit, cubemap->cubemap_id);
+        // Built via LoadFromEquirectangular — one GL object, one unit, bind once.
+        debug->Info("UploadCubeMap: binding equirectangular cubemap to unit %i\n",TEXUNIT_SKYBOX_CUBEMAP);
+        glBindTextureUnit(TEXUNIT_SKYBOX_CUBEMAP, cubemap->cubemap_id);
         return;
     }
-    // Legacy path: 6 separate Texture objects sharing a texture_id.
-    for (int i = 0; i < 6; i++){
-        if (cubemap->texture[i]){
-            debug->Info("Loading CubeMap %i/6 : %s to texture_unit %i\n",i,cubemap->texture[0]->name.c_str(),cubemap_texture_unit+i);
-            glBindTextureUnit(cubemap_texture_unit+i, cubemap->texture[i]->texture_id);
-        }
-    }
+
+    /*
+        THE SIX-FACE PATH IS GONE, and this is the error rather than an attempt at it.
+
+        It bound the faces to six CONSECUTIVE units from the cubemap's own - which under the old
+        layout ran 24..29 straight through TEXUNIT_APP_RESERVED, both shadow maps and the low-res
+        composite, and under this one would run 7..12 through the same reserved run and into the
+        materials. That was the "binds the wrong texture units" TODO.
+
+        Renumbering it was never the fix, because it could not have worked at any numbering: the
+        shaders declare `samplerCube environment_map` on ONE unit, and six sampler2Ds spread over
+        six units is not something a samplerCube can read. Its only caller was already commented
+        out in ApplicationGrid.cpp; every live cubemap comes from LoadFromEquirectangular above.
+
+        Loading six faces into one GL_TEXTURE_CUBE_MAP is what this would have to do, and
+        CubeMap::LoadFromEquirectangular already contains that code - see its glTextureSubImage3D
+        loop. Say so here rather than in a commit message.
+    */
+    debug->Err("UploadCubeMap: this cubemap has no GL cubemap object. Six loose face textures are "
+               "no longer bound - build it with LoadFromEquirectangular, or give CubeMap a "
+               "six-face loader that fills one GL_TEXTURE_CUBE_MAP\n");
 }
 
 //Convert all the active lights in the scene to a list

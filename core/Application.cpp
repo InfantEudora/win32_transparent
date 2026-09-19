@@ -199,7 +199,7 @@ bool WINAPI Application::ConsoleHandler(DWORD console_event){
 void Application::Init(){
      //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
-    renderer->Init();
+    renderer->Init("shaders/default.vert","shaders/default.frag",PIPELINE_MSAA);
     renderer->SetVSync(true);
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");

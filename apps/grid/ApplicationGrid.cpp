@@ -553,7 +553,7 @@ Scene* ApplicationGrid::CreateBoneTestScene(){
 void ApplicationGrid::Init(){
     //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
-    renderer->Init(PIPELINE_DEFERRED);
+    renderer->Init("shaders/default.vert","shaders/deferred.frag",PIPELINE_DEFERRED);
     renderer->SetVSync(true);
     renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");
 

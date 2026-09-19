@@ -1,4 +1,8 @@
 #version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
 
 //#version 460 core
 //#extension GL_ARB_bindless_texture : require
@@ -30,9 +34,15 @@ layout (location = 8) in vec4 vshadow;    //This vertex' position as seen from s
 
 //It's set with glBindTextureUnit
 
-layout (binding = 0) uniform sampler2D material_texture[24];   //Input texture
-//layout (binding = 1) uniform sampler2D shadow_texture;
-layout (binding = 24) uniform samplerCube environment_map;
+//Materials take every unit above the engine's reserved run, so an INDEX HERE IS NOT A
+//TEXTURE UNIT: unit = TEXUNIT_MATERIAL_FIRST + index. SampleMaterialTexture is the only
+//thing that may bridge the two, and it does it with literals on both sides.
+layout (binding = TEXUNIT_MATERIAL_FIRST) uniform sampler2D material_texture[NUM_MATERIAL_UNITS];
+//The sun's depth map. A declaration of its own now rather than material_texture[0] - the
+//material array no longer covers unit 0, and reading the shadow map through it was only ever
+//working by the accident that the array happened to start there.
+layout (binding = TEXUNIT_SHADOW) uniform sampler2D shadow_texture;
+layout (binding = TEXUNIT_SKYBOX_CUBEMAP) uniform samplerCube environment_map;
 //Setting for using reflections from environment map
 uniform int f_environment_reflections = 1;
 
@@ -91,13 +101,13 @@ uniform int f_materialindex_is_color = 0;
 //Cloud shadows: the transmittance map built by shaders/cloud_shadow.comp, bound by the renderer
 //at TEXUNIT_CLOUD_SHADOW. Off unless an app has actually given the renderer a map, which only
 //the ship app does - see Renderer::UploadCloudShadow.
-layout (binding = 26) uniform sampler3D cloud_shadow_texture;
+layout (binding = TEXUNIT_CLOUD_SHADOW) uniform sampler3D cloud_shadow_texture;
 uniform mat4 mat_cloud_shadow;
 uniform int f_cloud_shadows = 0;
 //Occluder field: the top-down min/max height map built by shaders/field.frag, bound by the
 //renderer at TEXUNIT_FIELD_SHADOW. This is what shadows POINT lights - see CalcFieldShadow.
 //Off unless an app called Renderer::EnableFieldShadows.
-layout (binding = 27) uniform sampler2D field_texture;
+layout (binding = TEXUNIT_FIELD_SHADOW) uniform sampler2D field_texture;
 uniform mat4 mat_field;
 uniform vec3 field_axis = vec3(0,0,1);
 uniform int f_field_shadows = 0;
@@ -180,9 +190,13 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0){
     emits a branch tree, and a flat index only diverges where two materials meet inside one pixel
     group. The derivatives are the globals below, taken at the top of main() where control flow
     is still uniform: implicit-derivative texture() inside a divergent branch is itself undefined,
-    and every caller of this sits inside `if (m.diffuse_texture >= 0)`. Unit 0 is the shadow map
-    and is sampled with a literal directly in CalcShadow; UploadMaterials hands materials units
-    4 and upwards.
+    and every caller of this sits inside `if (m.diffuse_texture >= 0)`.
+
+    THE CASE LABEL IS A TEXTURE UNIT, THE ARRAY INDEX IS NOT. m.diffuse_texture carries the
+    absolute unit UploadMaterials bound to, and material_texture[] starts at
+    TEXUNIT_MATERIAL_FIRST, so the two differ by exactly that. Both sides stay literal after
+    the preprocessor has been at them, which is what keeps the divergent-index rule above
+    satisfied. The shadow map has its own sampler; it is not in this array.
 */
 vec2 g_uv_dx = vec2(0.0);
 vec2 g_uv_dy = vec2(0.0);
@@ -191,29 +205,29 @@ vec4 SampleMaterialTexture(int unit, vec2 uv){
     vec2 dx = g_uv_dx;
     vec2 dy = g_uv_dy;
     switch (unit){
-        case 1:  return textureGrad(material_texture[1],  uv, dx, dy);
-        case 2:  return textureGrad(material_texture[2],  uv, dx, dy);
-        case 3:  return textureGrad(material_texture[3],  uv, dx, dy);
-        case 4:  return textureGrad(material_texture[4],  uv, dx, dy);
-        case 5:  return textureGrad(material_texture[5],  uv, dx, dy);
-        case 6:  return textureGrad(material_texture[6],  uv, dx, dy);
-        case 7:  return textureGrad(material_texture[7],  uv, dx, dy);
-        case 8:  return textureGrad(material_texture[8],  uv, dx, dy);
-        case 9:  return textureGrad(material_texture[9],  uv, dx, dy);
-        case 10: return textureGrad(material_texture[10], uv, dx, dy);
-        case 11: return textureGrad(material_texture[11], uv, dx, dy);
-        case 12: return textureGrad(material_texture[12], uv, dx, dy);
-        case 13: return textureGrad(material_texture[13], uv, dx, dy);
-        case 14: return textureGrad(material_texture[14], uv, dx, dy);
-        case 15: return textureGrad(material_texture[15], uv, dx, dy);
-        case 16: return textureGrad(material_texture[16], uv, dx, dy);
-        case 17: return textureGrad(material_texture[17], uv, dx, dy);
-        case 18: return textureGrad(material_texture[18], uv, dx, dy);
-        case 19: return textureGrad(material_texture[19], uv, dx, dy);
-        case 20: return textureGrad(material_texture[20], uv, dx, dy);
-        case 21: return textureGrad(material_texture[21], uv, dx, dy);
-        case 22: return textureGrad(material_texture[22], uv, dx, dy);
-        case 23: return textureGrad(material_texture[23], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  0: return textureGrad(material_texture[ 0], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  1: return textureGrad(material_texture[ 1], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  2: return textureGrad(material_texture[ 2], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  3: return textureGrad(material_texture[ 3], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  4: return textureGrad(material_texture[ 4], uv, dx, dy);
+#if NUM_MATERIAL_UNITS > 5
+        case TEXUNIT_MATERIAL_FIRST +  5: return textureGrad(material_texture[ 5], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  6: return textureGrad(material_texture[ 6], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  7: return textureGrad(material_texture[ 7], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  8: return textureGrad(material_texture[ 8], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  9: return textureGrad(material_texture[ 9], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 10: return textureGrad(material_texture[10], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 11: return textureGrad(material_texture[11], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 12: return textureGrad(material_texture[12], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 13: return textureGrad(material_texture[13], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 14: return textureGrad(material_texture[14], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 15: return textureGrad(material_texture[15], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 16: return textureGrad(material_texture[16], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 17: return textureGrad(material_texture[17], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 18: return textureGrad(material_texture[18], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 19: return textureGrad(material_texture[19], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 20: return textureGrad(material_texture[20], uv, dx, dy);
+#endif
         //A unit nothing was bound to. The same magenta a missing material gets in main(), so a
         //bad index looks like a bad material rather than like a plausible surface.
         default: return vec4(0.9, 0.0, 0.5, 1.0);
@@ -319,7 +333,7 @@ float CalcShadow(vec4 vposinshadow){
     uvshadow.y 		= (0.5 * pos_proj.y) + (0.5);
 
     //Lookup this fragment's associated depth value from the lights point of view.
-    float closest_depth = texture(material_texture[0], uvshadow).r;
+    float closest_depth = texture(shadow_texture, uvshadow).r;
     float current_depth = (0.5 * pos_proj.z) + (0.5);
     float bias = 0.00025;
 

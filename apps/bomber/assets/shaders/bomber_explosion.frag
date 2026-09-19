@@ -1,4 +1,8 @@
 #version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
 
 /*
     A raymarched explosion, in the two shapes a bomberman blast can be built from.
@@ -142,13 +146,13 @@ layout (std430, binding = 2) buffer LightBuffer{
 
 //The deferred G-buffer of the solid scene, bound by Renderer::CustomShaderPass. The binding
 //numbers are TEXUNIT_GBUFFER_* in Renderer.h and have to stay in step with them.
-layout (binding = 1) uniform sampler2D gbuffer_depth;      //Window-space depth, 1.0 where nothing was drawn
-layout (binding = 2) uniform sampler2D gbuffer_position;   //World-space position of the solid scene
+layout (binding = TEXUNIT_GBUFFER_DEPTH) uniform sampler2D gbuffer_depth;      //Window-space depth, 1.0 where nothing was drawn
+layout (binding = TEXUNIT_GBUFFER_POSITION) uniform sampler2D gbuffer_position;   //World-space position of the solid scene
 
 //The tileable 3D worley from shaders/noise3d.comp, bound by the app at TEXUNIT_APP_RESERVED
 //(Renderer.h). All four channels are the same noise at doubling frequencies, so the FBM below
 //costs ONE fetch. Shared with the ship app - see shared_assets/shaders/noise3d.comp.
-layout (binding = 25) uniform sampler3D noise_texture;
+layout (binding = TEXUNIT_APP_RESERVED) uniform sampler3D noise_texture;
 
 //The ray origin. The default shaders get it under this same name.
 uniform vec3 eye_position;

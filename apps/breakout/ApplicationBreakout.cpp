@@ -139,7 +139,7 @@ void ApplicationBreakout::Init(void){
     //the arena walls needs that, so PIPELINE_DEFERRED is load-bearing in this app rather than a
     //default that was copied.
     renderer = new Renderer(main_window->width,main_window->height);
-    if (!renderer->Init(PIPELINE_DEFERRED)){
+    if (!renderer->Init("shaders/default.vert","shaders/deferred.frag",PIPELINE_DEFERRED)){
         debug->Fatal("Failed to initialise rendering pipeline\n");
     }
     renderer->SetVSync(true);

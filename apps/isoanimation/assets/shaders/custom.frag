@@ -27,8 +27,10 @@ layout (location = 8) in vec4 vshadow;    //This vertex' position as seen from s
 
 //It's set with glBindTextureUnit
 
-layout (binding = 0) uniform sampler2D material_texture[24];   //Input texture
-//layout (binding = 1) uniform sampler2D shadow_texture;
+//NO material_texture[] HERE. This shader never sampled it - the declaration was a copy from
+//default.frag - and an array of samplers at binding 0 would now cover units the engine map
+//reserves, putting two sampler types on one unit and failing to link. breakout_shield.frag
+//carries the same note for the same reason.
 
 struct Material{
 	vec4 color;

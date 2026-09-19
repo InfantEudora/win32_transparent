@@ -48,7 +48,7 @@ void ApplicationAnimation::Init(void){
     //Create a renderer with initial size
     int2 dimensions = GetDisplaySettings();
     renderer = new Renderer(main_window->width,main_window->height);
-    if (!renderer->Init(PIPELINE_DEFERRED)){
+    if (!renderer->Init("shaders/default.vert","shaders/deferred.frag",PIPELINE_DEFERRED)){
         debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
     renderer->skinned_shader = new Shader("shaders/default_skinned.vert","shaders/default.frag");

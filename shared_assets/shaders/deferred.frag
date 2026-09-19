@@ -1,4 +1,8 @@
 #version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
 
 layout (location = 0) out vec4 dposition;
 layout (location = 1) out vec4 dnormal;
@@ -14,13 +18,17 @@ layout (location = 6)  flat in int vmatindex;   //Material index
 layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
 /*
-    Same array, same binding, same size as default.frag: unit 0 is the shadow map, materials get
-    units 4 and up from Renderer::UploadMaterials, and an index into this array IS a texture unit.
-    This used to be `layout (binding = 1) ... material_texture[15]`, which made index 4 unit 5 -
-    every lookup in this pass was one unit off, and nobody saw it because this pass only produces
-    an alpha for the G-buffer.
+    Same array, same binding, same size as default.frag: materials get units from
+    TEXUNIT_MATERIAL_FIRST up, and AN INDEX INTO THIS ARRAY IS NOT A TEXTURE UNIT - it is
+    unit - TEXUNIT_MATERIAL_FIRST.
+
+    That distinction has drawn blood here before. This used to be `layout (binding = 1) ...
+    material_texture[15]`, which made index 4 unit 5 - every lookup in this pass was one unit
+    off, and nobody saw it because this pass only produces an alpha for the G-buffer. The array
+    is based at TEXUNIT_MATERIAL_FIRST rather than 0 again now, on purpose, so the offset is
+    named instead of implied; the switch below spells out both sides of it.
 */
-layout (binding = 0) uniform sampler2D material_texture[24];
+layout (binding = TEXUNIT_MATERIAL_FIRST) uniform sampler2D material_texture[NUM_MATERIAL_UNITS];
 
 struct Material{
 	vec4 color;
@@ -76,29 +84,29 @@ layout (std430, binding = 3) buffer ReadbackBuffer{
 */
 vec4 SampleMaterialTexture(int unit, vec2 uv, vec2 dx, vec2 dy){
     switch (unit){
-        case 1:  return textureGrad(material_texture[1],  uv, dx, dy);
-        case 2:  return textureGrad(material_texture[2],  uv, dx, dy);
-        case 3:  return textureGrad(material_texture[3],  uv, dx, dy);
-        case 4:  return textureGrad(material_texture[4],  uv, dx, dy);
-        case 5:  return textureGrad(material_texture[5],  uv, dx, dy);
-        case 6:  return textureGrad(material_texture[6],  uv, dx, dy);
-        case 7:  return textureGrad(material_texture[7],  uv, dx, dy);
-        case 8:  return textureGrad(material_texture[8],  uv, dx, dy);
-        case 9:  return textureGrad(material_texture[9],  uv, dx, dy);
-        case 10: return textureGrad(material_texture[10], uv, dx, dy);
-        case 11: return textureGrad(material_texture[11], uv, dx, dy);
-        case 12: return textureGrad(material_texture[12], uv, dx, dy);
-        case 13: return textureGrad(material_texture[13], uv, dx, dy);
-        case 14: return textureGrad(material_texture[14], uv, dx, dy);
-        case 15: return textureGrad(material_texture[15], uv, dx, dy);
-        case 16: return textureGrad(material_texture[16], uv, dx, dy);
-        case 17: return textureGrad(material_texture[17], uv, dx, dy);
-        case 18: return textureGrad(material_texture[18], uv, dx, dy);
-        case 19: return textureGrad(material_texture[19], uv, dx, dy);
-        case 20: return textureGrad(material_texture[20], uv, dx, dy);
-        case 21: return textureGrad(material_texture[21], uv, dx, dy);
-        case 22: return textureGrad(material_texture[22], uv, dx, dy);
-        case 23: return textureGrad(material_texture[23], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  0: return textureGrad(material_texture[ 0], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  1: return textureGrad(material_texture[ 1], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  2: return textureGrad(material_texture[ 2], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  3: return textureGrad(material_texture[ 3], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  4: return textureGrad(material_texture[ 4], uv, dx, dy);
+#if NUM_MATERIAL_UNITS > 5
+        case TEXUNIT_MATERIAL_FIRST +  5: return textureGrad(material_texture[ 5], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  6: return textureGrad(material_texture[ 6], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  7: return textureGrad(material_texture[ 7], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  8: return textureGrad(material_texture[ 8], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST +  9: return textureGrad(material_texture[ 9], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 10: return textureGrad(material_texture[10], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 11: return textureGrad(material_texture[11], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 12: return textureGrad(material_texture[12], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 13: return textureGrad(material_texture[13], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 14: return textureGrad(material_texture[14], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 15: return textureGrad(material_texture[15], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 16: return textureGrad(material_texture[16], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 17: return textureGrad(material_texture[17], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 18: return textureGrad(material_texture[18], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 19: return textureGrad(material_texture[19], uv, dx, dy);
+        case TEXUNIT_MATERIAL_FIRST + 20: return textureGrad(material_texture[20], uv, dx, dy);
+#endif
         //A unit nothing was bound to: opaque, so a bad index cannot punch a hole in the G-buffer.
         default: return vec4(1.0);
     }

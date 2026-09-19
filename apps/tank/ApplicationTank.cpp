@@ -108,7 +108,7 @@ Object* ApplicationTank::GetControlledObject(){
 void ApplicationTank::Init(void){
     //Create a renderer for this window
     renderer = new Renderer(main_window->width,main_window->height);
-    if (!renderer->Init(PIPELINE_DEFERRED)){
+    if (!renderer->Init("shaders/default.vert","shaders/deferred.frag",PIPELINE_DEFERRED)){
         debug->Fatal("Failed to Initilise Rendering Pipeline\n");
     }
     renderer->SetVSync(true);

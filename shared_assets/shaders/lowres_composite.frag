@@ -1,4 +1,8 @@
 #version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
 
 /*
     The upscale half of Renderer::CompositeLowRes: takes the reduced-resolution custom-shader
@@ -30,7 +34,7 @@
 
 layout (location = 0) out vec4 color;
 
-layout (binding = 28) uniform sampler2D lowres_texture;   //TEXUNIT_LOWRES_COMPOSITE in Renderer.h
+layout (binding = TEXUNIT_LOWRES_COMPOSITE) uniform sampler2D lowres_texture;
 
 //Window pixels across one low-res pixel. Matches Renderer::lowres_scale, and is what turns a
 //window coordinate into the block that was drawn for it.

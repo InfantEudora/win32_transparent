@@ -430,7 +430,7 @@ void ApplicationPinball::Init(void){
         this stage.
     */
     renderer = new Renderer(main_window->width,main_window->height);
-    if (!renderer->Init(PIPELINE_DEFERRED)){
+    if (!renderer->Init("shaders/default.vert","shaders/deferred.frag",PIPELINE_DEFERRED)){
         debug->Fatal("Failed to initialise rendering pipeline\n");
     }
     renderer->SetVSync(true);

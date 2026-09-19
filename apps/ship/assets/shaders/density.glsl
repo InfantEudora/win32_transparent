@@ -19,7 +19,10 @@
 //The tileable 3D worley written by shaders/noise3d.comp, bound by the app at
 //TEXUNIT_APP_RESERVED (Renderer.h). All four channels are the same noise at doubling
 //frequencies, so density_at builds its FBM from ONE fetch.
-layout (binding = 25) uniform sampler3D noise_texture;
+//The engine-wide texture unit map. Nested includes are fine and it is #ifndef-guarded,
+//so including it here as well as in whatever included this file costs nothing.
+#include "texture_units.glsl"
+layout (binding = TEXUNIT_APP_RESERVED) uniform sampler3D noise_texture;
 
 uniform float noise_scale = 1.0;        // Noise tiles across the box this many times
 uniform vec3 noise_offset = vec3(0);    // Scrolls the noise through the box - the wind

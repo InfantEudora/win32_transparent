@@ -19,63 +19,9 @@ class Renderer;
 #define NUM_MATERIAL_SLOTS  4
 #define NUM_MORPH_FACTOR_SLOTS	4
 
-//Texture units CustomShaderPass binds the deferred G-buffer to, so a custom material can see
-//what the scene looks like behind it (a raymarched volume needs it to stop the march at solid
-//geometry). Units 1-3: unit 0 is the shadow map, material textures are handed out from 4 up
-//(see UploadMaterials) and 24 is the skybox cubemap, so these three are the gap in between.
-//Kept as defines because the same numbers appear in the custom shaders' layout(binding = N).
-//
-//DEPTH IS THE CHANNEL THAT ANSWERS "IS THERE ANYTHING HERE". It is cleared to 1.0, which is
-//outside the range any drawn fragment can occupy, so `depth < 1.0` means geometry and nothing
-//else does. POSITION AND NORMAL ARE ONLY MEANINGFUL ONCE DEPTH HAS SAID YES.
-//
-//That matters because the obvious effect reaches for position first, and position cannot tell
-//you: its buffer is cleared to (0,0,0,0), and the world origin is a perfectly ordinary place for
-//geometry to be - in a game built around the origin it is where all of it is. So a shader that
-//samples position to find out how far away the scene is reads "the origin" for the empty sky,
-//and the soft-intersection fade everyone writes first dissolves the effect against the
-//background. Nor is w a way out: DEFERRED.FRAG WRITES THE MATERIAL'S ALPHA THERE, not a flag.
-//(The normal buffer is cleared to (1,0,0,0), a unit +X normal, which is just as legal a value.)
-//
-//The pattern, as used by shaders/breakout_shield.frag and shaders/raymarch_volume.frag:
-//
-//    float scene_depth = texture(gbuffer_depth,screen_uv).r;
-//    if (scene_depth < 1.0){                                  //something is there
-//        vec3 scene_world = texture(gbuffer_position,screen_uv).xyz;
-//        ...
-//    }
-#define TEXUNIT_GBUFFER_DEPTH     1
-#define TEXUNIT_GBUFFER_POSITION  2
-#define TEXUNIT_GBUFFER_NORMAL    3
-
-//Above the skybox cubemap at 24, so it is clear of the material textures growing up from 4.
-//An app binds its own data here (currently the ship app's 3D cloud noise); UploadMaterials warns
-//if the material textures ever reach this far, since the collision would otherwise show up as a
-//volume sampling somebody's diffuse map.
-#define TEXUNIT_APP_RESERVED      25
-
-//Cloud shadow map: the volumetric transmittance map an app may hand the renderer, sampled by
-//default.frag's CalcCloudShadow. Above TEXUNIT_APP_RESERVED for the same reason that one is
-//above the cubemap - it is the next free unit going up, well clear of the material textures.
-#define TEXUNIT_CLOUD_SHADOW      26
-
-//Occluder field: the top-down min/max height map an app may ask the renderer to build, sampled
-//by default.frag's CalcFieldShadow to shadow point lights without a cube map. Next unit up.
-#define TEXUNIT_FIELD_SHADOW      27
-
-/*
-    The reduced-resolution custom-shader target, while CompositeLowRes is scaling it back over
-    the frame. Nothing else ever samples it.
-
-    A UNIT OF ITS OWN, and not unit 0, which is the obvious choice for a one-off full-screen pass
-    and is a trap: UNIT 0 IS THE SHADOW MAP in this engine (DrawFrame binds shadow_tex_id there
-    before the colour pass, and default.frag's CalcShadow reads it). Leaving a colour texture
-    parked on unit 0 makes every surface in the scene sample its own shadow term out of whatever
-    the volume happened to draw - and since that target is cleared to zero, the whole world reads
-    as fully shadowed and renders nearly black. Which is what it did, and it looks like a lighting
-    bug rather than like a texture binding, because every symptom of it is in the lighting.
-*/
-#define TEXUNIT_LOWRES_COMPOSITE  28
+//THE TEXTURE UNIT MAP - which pass owns which unit, and why they are packed the way they are.
+//Its own header because UIOverlay.h needs the same numbers and must not pull in all of this one.
+#include "TextureUnits.h"
 
 typedef struct {
     fmat4 mat_transformscale;                   // Matrix holding object rotation, scale and translation
@@ -273,7 +219,25 @@ class Renderer{
     void DrawFrame(const std::vector<Object*>& objects, Camera* camera, Shader* shader, InputController* input);
 
     bool CheckFrameBuffer();
-    bool Init(int pipeline = PIPELINE_MSAA);
+    /*
+        `vert_filename` and `frag_filename` name the programs the RENDERER itself owns - the
+        G-buffer fill of PIPELINE_DEFERRED, and its skinned twin. They are arguments rather than
+        the constants they used to be so that this one call reads identically in the Android
+        port, where the same apps run against a different set of sources
+        (shaders/default_android.vert and friends).
+
+        skinned_vert_filename is the vertex stage for skinned meshes, linked against the SAME
+        fragment shader - only the vertex stage differs between the two. It is defaulted because
+        no app has ever wanted another one, and NULL skips that second program entirely for an
+        app that owns no skinned mesh.
+
+        In PIPELINE_MSAA the renderer owns no scene program at all - the app's own shader is
+        handed to DrawFrame per frame - so the shader names go unused there. They are still
+        given, so that changing an app's pipeline stays a one-word edit.
+    */
+    bool Init(const char* vert_filename, const char* frag_filename,
+              int pipeline = PIPELINE_DEFERRED,
+              const char* skinned_vert_filename = "shaders/default_skinned.vert");
     void SetOpenGLState();
     bool SetNumAASamples(int desired);
     bool Resize(int new_width, int new_height);
@@ -644,9 +608,12 @@ class Renderer{
     //or neither: with nothing in flight yet it only issues, which is why the first frame of
     //hovering reports nothing.
     void ReadPickingAsync(InputController* input, int mouse_x, int mouse_y);
-    int last_texture_unit = 0;
-    int num_texture_units = 24;
-    int cubemap_texture_unit = 24; //We reserve the last texture unit for the skybox cubemap, so we can easily bind it in the shader without needing to change other texture bindings.
+    //How far UploadMaterials got handing out units this upload. Absolute, not an array index -
+    //see TEXUNIT_MATERIAL_FIRST. Reset at the top of every UploadMaterials, so between calls it
+    //reads as "one past the last material unit in use".
+    int last_texture_unit = TEXUNIT_MATERIAL_FIRST;
+    //One past the top of the material range, i.e. the first unit that does not exist.
+    int num_texture_units = TEXUNIT_MATERIAL_FIRST + NUM_MATERIAL_UNITS;
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;                           // An array of unique meshes

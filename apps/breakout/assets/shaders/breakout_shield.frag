@@ -1,4 +1,8 @@
 #version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
 
 /*
     The shield across the bottom of the paddle game's arena.
@@ -43,10 +47,10 @@ layout (location = 8)  in vec4 vshadow;         //meaningless here: CustomShader
 layout (location = 0) out vec4 color;
 
 //--- the G-buffer, bound for us by CustomShaderPass -------------------------------------------
-//Deliberately NOT declaring custom.frag's `material_texture[24]` at binding 0: an array of 24
+//Deliberately NOT declaring default.frag's `material_texture[]` at TEXUNIT_MATERIAL_FIRST: an array of
 //samplers claims bindings 0..23 and would collide with these three.
-layout (binding = 1) uniform sampler2D gbuffer_depth;
-layout (binding = 2) uniform sampler2D gbuffer_position;
+layout (binding = TEXUNIT_GBUFFER_DEPTH) uniform sampler2D gbuffer_depth;
+layout (binding = TEXUNIT_GBUFFER_POSITION) uniform sampler2D gbuffer_position;
 
 //--- the scene's real lights, bound globally ---------------------------------------------------
 //Copied verbatim from shaders/custom.frag so the layout cannot drift from light_t in core/Light.h.

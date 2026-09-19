@@ -1,4 +1,8 @@
 #version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
 //When rendering to multiple color targets
 layout (location = 0) out vec4 color;
 
@@ -17,7 +21,7 @@ layout (location = 6)  flat in int vmatindex;   //Material index
 layout (location = 7)  flat in int vobjid;      //ObjectID from vertex shader
 
 //It's set with glBindTextureUnit
-layout (binding = 24) uniform samplerCube environment_map;
+layout (binding = TEXUNIT_SKYBOX_CUBEMAP) uniform samplerCube environment_map;
 
 void main(){
 

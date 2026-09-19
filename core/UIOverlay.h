@@ -9,6 +9,10 @@
 #include "glad.h"
 #include "type_vec2.h"
 #include "UIFont.h"
+//ATLAS_TEXTURE_UNIT and THEME_TEXTURE_UNIT below are entries in the engine-wide texture unit map,
+//not numbers this class chooses. Its own header rather than Renderer.h so that this stays a
+//leaf include.
+#include "TextureUnits.h"
 
 class Shader;
 
@@ -292,22 +296,22 @@ private:
         atlas on the first frame the overlay drew. The symptom was a grass tile sampling the SDF
         font and rendering red - red because a single-channel atlas read as .rgb is (r,0,0).
 
-        10 sits above every unit the Android renderer hands out: 0..7 materials, 8 blit,
-        9 shadow map (see RENDERER_*_TEXTURE_UNIT in android_core/Renderer.h). The device floor
-        for GL_MAX_TEXTURE_IMAGE_UNITS is 16, and the test device reports exactly 16.
-
-        The same trap is documented on RENDERER_BLIT_TEXTURE_UNIT, which was moved off unit 0
-        for this identical reason - the overlay simply never got the same treatment.
+        THE NUMBER IS NO LONGER THIS CLASS'S TO PICK. It comes from the engine-wide map in
+        core/TextureUnits.h, which is mirrored line for line by shaders/texture_units.glsl, so a
+        unit cannot be claimed here and quietly reused by a shader over there. The overlay sits at
+        4 and 5, inside the reserved run the map packs into 0..10 precisely so that every engine
+        unit still exists on a device whose GL_MAX_TEXTURE_IMAGE_UNITS is 16 - which is the
+        guaranteed floor and exactly what the test device reports.
     */
-    static const int ATLAS_TEXTURE_UNIT = 10;
+    static const int ATLAS_TEXTURE_UNIT = TEXUNIT_UI_ATLAS;
 
     GLuint          atlas_tex = 0;
     /*
-        The theme atlas and its unit. 11, for the same reason the font atlas is 10 rather than 0 -
-        see the long note there. Borrowed, never owned: SetThemeTexture takes a texture the caller
-        loaded and this class must not delete it.
+        The theme atlas and its unit, the one above the font atlas - see the note there.
+        Borrowed, never owned: SetThemeTexture takes a texture the caller loaded and this class
+        must not delete it.
     */
-    static const int THEME_TEXTURE_UNIT = 11;
+    static const int THEME_TEXTURE_UNIT = TEXUNIT_UI_THEME;
     GLuint          theme_tex = 0;
     int             theme_w = 0;
     int             theme_h = 0;

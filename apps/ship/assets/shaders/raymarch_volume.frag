@@ -1,4 +1,8 @@
 #version 430 core
+//The engine-wide texture unit map - every layout(binding = ...) below names an entry in
+//it rather than a number of its own. Mirrored in C++ by core/TextureUnits.h.
+#include "texture_units.glsl"
+
 
 /*
     Raymarched volume material.
@@ -65,8 +69,8 @@ layout (std430, binding = 2) buffer LightBuffer{
 
 //The deferred G-buffer of the solid scene, bound by Renderer::CustomShaderPass. The binding
 //numbers are TEXUNIT_GBUFFER_* in Renderer.h and have to stay in step with them.
-layout (binding = 1) uniform sampler2D gbuffer_depth;      //Window-space depth, 1.0 where nothing was drawn
-layout (binding = 2) uniform sampler2D gbuffer_position;   //World-space position of the solid scene
+layout (binding = TEXUNIT_GBUFFER_DEPTH) uniform sampler2D gbuffer_depth;      //Window-space depth, 1.0 where nothing was drawn
+layout (binding = TEXUNIT_GBUFFER_POSITION) uniform sampler2D gbuffer_position;   //World-space position of the solid scene
 
 //Cloud shape - density_at(), ray_box_dst(), the noise sampler and the shape uniforms - is
 //shared with shaders/cloud_shadow.comp so the shadow cannot drift away from the cloud.

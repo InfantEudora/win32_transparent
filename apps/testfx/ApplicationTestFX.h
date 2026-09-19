@@ -55,16 +55,24 @@
 */
 
 /*
-    Texture units the four iChannels are bound to.
+    Texture units the four iChannels are bound to - BORROWED FROM THE TOP OF THE MATERIAL RANGE,
+    not owned, and derived rather than written down.
 
-    Not chosen freely: unit 0 is the shadow map, 1-3 are the G-buffer CustomShaderPass binds for
-    us (TEXUNIT_GBUFFER_*), material textures are handed out from 4 up, 24 is the skybox cubemap,
-    25 is TEXUNIT_APP_RESERVED, and 26/27 are the cloud-shadow and occluder-field maps. 28 is
-    simply the next free unit going up, and four channels fit under the 32 that desktop GL
-    guarantees a fragment stage. Kept as a define because the same number appears in
-    shaders/shadertoy.glsl's layout(binding = N).
+    They used to be 28-31, picked as "the next free units going up" when the engine reserved
+    everything from 24 to 28. The map in core/TextureUnits.h now packs every reserved unit into
+    0-10 so they still exist on a 16-unit device, and materials take everything above - so there
+    is no longer an above to sit in, and four units have to come from somewhere. The top of the
+    material range is the one place where taking them costs this app nothing: a shadertoy effect
+    draws on a bare full-screen quad with no materials of its own.
+
+    A testfx scene with enough material textures to reach this far would fight the channels.
+    Renderer::UploadMaterials already warns when materials run off the top of the range, which is
+    the same wall by another name.
+
+    shaders/shadertoy.glsl computes this identically from the GLSL half of the map. Both sides
+    derive it; neither writes 28.
 */
-#define TEXUNIT_FX_CHANNEL0     28
+#define TEXUNIT_FX_CHANNEL0     (TEXUNIT_MATERIAL_FIRST + NUM_MATERIAL_UNITS - FX_NUM_CHANNELS)
 #define FX_NUM_CHANNELS         4
 
 //The vertex stage every effect here shares. See the block at the top of this file.

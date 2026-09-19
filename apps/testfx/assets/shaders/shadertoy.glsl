@@ -71,10 +71,27 @@ uniform vec4  iDate;
     iChannel0 defaults to the seeded noise from Application::rrand: reproducible bytes the
     simulation can draw from as well, which a GLSL hash function can never be.
 */
-layout (binding = 28) uniform sampler2D iChannel0;
-layout (binding = 29) uniform sampler2D iChannel1;
-layout (binding = 30) uniform sampler2D iChannel2;
-layout (binding = 31) uniform sampler2D iChannel3;
+//The engine-wide texture unit map - see core/TextureUnits.h for the C++ mirror.
+#include "texture_units.glsl"
+/*
+    THE FOUR CHANNELS ARE BORROWED FROM THE TOP OF THE MATERIAL RANGE, not owned.
+
+    They used to sit at 28-31, above everything the engine reserved. The reserved run now ends
+    at 10 and materials take everything above it, so there is no 'above everything' left to sit
+    in - four units had to come from somewhere, and the top of the material range is the one
+    place where taking them costs nothing here: a shadertoy effect draws on a bare full-screen
+    quad with no materials of its own.
+
+    It does mean a testfx scene with enough material textures to reach this far would fight the
+    channels. UploadMaterials already warns when materials run off the top of the range, which
+    is the same wall by a different name. TEXUNIT_FX_CHANNEL0 in ApplicationTestFX.h is the C++
+    side of this and derives the same number the same way.
+*/
+#define TEXUNIT_FX_CHANNEL0 (TEXUNIT_MATERIAL_FIRST + NUM_MATERIAL_UNITS - 4)
+layout (binding = TEXUNIT_FX_CHANNEL0 + 0) uniform sampler2D iChannel0;
+layout (binding = TEXUNIT_FX_CHANNEL0 + 1) uniform sampler2D iChannel1;
+layout (binding = TEXUNIT_FX_CHANNEL0 + 2) uniform sampler2D iChannel2;
+layout (binding = TEXUNIT_FX_CHANNEL0 + 3) uniform sampler2D iChannel3;
 
 uniform vec3  iChannelResolution[4];
 uniform float iChannelTime[4];

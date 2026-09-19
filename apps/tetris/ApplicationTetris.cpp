@@ -130,7 +130,7 @@ void ApplicationTetris::Init(void){
     //the Inspector. A Tetris board does not strictly need picking, but being able to click a
     //block and read it in the Inspector paid for itself twice while getting the layout right.
     renderer = new Renderer(main_window->width,main_window->height);
-    if (!renderer->Init(PIPELINE_DEFERRED)){
+    if (!renderer->Init("shaders/default.vert","shaders/deferred.frag",PIPELINE_DEFERRED)){
         debug->Fatal("Failed to initialise rendering pipeline\n");
     }
     renderer->SetVSync(true);

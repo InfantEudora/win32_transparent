@@ -44,9 +44,11 @@
     off, which is exactly the case the paragraph above is about. Turn the test geometry on before
     concluding that a depth-aware effect is broken.
 */
-layout (binding = 1) uniform sampler2D gbuffer_depth;
-layout (binding = 2) uniform sampler2D gbuffer_position;
-layout (binding = 3) uniform sampler2D gbuffer_normal;
+//The engine-wide texture unit map - see core/TextureUnits.h for the C++ mirror.
+#include "texture_units.glsl"
+layout (binding = TEXUNIT_GBUFFER_DEPTH) uniform sampler2D gbuffer_depth;
+layout (binding = TEXUNIT_GBUFFER_POSITION) uniform sampler2D gbuffer_position;
+layout (binding = TEXUNIT_GBUFFER_NORMAL) uniform sampler2D gbuffer_normal;
 
 //--- set by CustomShaderPass on every custom shader, every frame -------------------------------
 uniform mat4 mat_worldcam;
