@@ -1218,6 +1218,11 @@ void Application::RenderEngineWindow(){
             ImGui::PopID();
         }
     }
+
+    if (ImGui::CollapsingHeader("Textures")){
+
+    }
+
     ImGui::End();
 }
 

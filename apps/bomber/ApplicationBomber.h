@@ -82,6 +82,18 @@
 #define INPUT_BOMBER_MENU_OPTIONS   INPUT_LAST+11
 #define INPUT_BOMBER_MENU_SCORES    INPUT_LAST+12
 #define INPUT_BOMBER_MENU_BACK      INPUT_LAST+13
+/*
+    THE LOADING SCREEN'S "TAP TO START", and it is its own action rather than a reuse of
+    INPUT_BOMBER_MENU_START.
+
+    Two reasons, and the second is the one that bites. Its rect is the WHOLE SURFACE, so sharing
+    an action with the front page's START button would mean one action live at two very different
+    sizes and only the page telling them apart. And AddTouchButton counts f_isdown PER BUTTON by
+    allocating its own synthetic keycode - two rects on one action would share the count, so
+    releasing one while the other is held reads as released. That is the failure the keycode note
+    in core/InputController.h describes, reached from the other direction.
+*/
+#define INPUT_BOMBER_MENU_TAP       INPUT_LAST+15
 
 /*
     Escape, which BACKS OUT ONE LEVEL wherever it is pressed: out of the game to the menu, out of a
@@ -341,6 +353,15 @@ private:
         BOMBER_PAGE_LEVEL_SELECT,
         BOMBER_PAGE_OPTIONS,
         BOMBER_PAGE_HIGH_SCORES,
+        /*
+            THE LOADING SCREEN, and it is a PAGE for the same reason the other three are: it is the
+            title scene's one quad and one overlay, differing only in what is drawn over them. It
+            has no background at all - both of the menu's textures are unloaded by the time it is
+            up, which is what makes it black without anything having to ask for black.
+
+            It is also the only page with no way out by input. It leaves when the work is done.
+        */
+        BOMBER_PAGE_LOADING,
         //Not a page: "no menu is up", which is what the game scene is. ApplyMenuPage uses it to
         //retire the buttons, and it has to be a value rather than a flag because the whole point
         //is that it flows through the same one-place-changes-everything path the pages do.
@@ -351,10 +372,65 @@ private:
     //always applies rather than relying on the initial page happening to differ.
     bomber_menu_page menu_page_applied = BOMBER_PAGE_NONE;
 
+    /*
+        --- THE LOADING SCREEN --------------------------------------------------------------------
+
+        WHY THERE IS ONE AT ALL: the device has five material texture units (NUM_MATERIAL_UNITS in
+        core/TextureUnits.h) and this app owns six material textures - the menu's splash and
+        dungeon backgrounds, and the board's four tile atlases. All six resident at once does not
+        fit, and the ones past the fifth draw untextured. Neither set is needed while the other is
+        on screen, so the loading screen is where one is swapped for the other.
+
+        WHO OWNS WHAT, because this crosses the thread boundary in both directions:
+
+          - The PHYSICS thread owns the page and the scene, as it already did. It asks for a
+            transition by setting loading_target and clearing f_loading_complete, and it is the
+            one that moves off BOMBER_PAGE_LOADING when the flag comes back.
+          - The RENDER thread owns the work, because uploading and unloading textures is GL. It
+            walks loading_steps one per frame and sets f_loading_complete at the end.
+
+        Two atomics and nothing else shared, so neither side needs to know the other's timing -
+        which matters because a scene switch takes a pass or two to land and the steps must not
+        start before the loading page is actually the thing on screen. See StepLoading.
+    */
+    enum bomber_loading_target{
+        BOMBER_LOADING_NONE = 0,
+        BOMBER_LOADING_TO_GAME,     //drop the menu's backgrounds, bring up the board's atlases
+        BOMBER_LOADING_TO_MENU      //the exact reverse
+    };
+    std::atomic<int>  loading_target{BOMBER_LOADING_NONE};
+    std::atomic<bool> f_loading_complete{false};
+
+    //One texture, and which way it is going. RENDER THREAD ONLY - built and walked there, so it
+    //needs no lock of its own.
+    struct bomber_load_step{
+        Texture* texture = NULL;
+        bool     f_upload = false;  //false unloads: frees the GL name, keeps the decoded pixels
+    };
+    std::vector<bomber_load_step> loading_steps;
+    int loading_step = 0;
+
+    //Fills `menu` with the two title backgrounds and `game` with every OTHER material texture the
+    //renderer holds, each list distinct. RENDER THREAD.
+    void CollectPageTextures(std::vector<Texture*>& menu, std::vector<Texture*>& game) const;
+    //Lays out loading_steps for a transition: what to drop first, then what to bring up.
+    void BuildLoadingSteps(bomber_loading_target target);
+    /*
+        Advances the loading screen by ONE texture. RENDER THREAD, from PreRender.
+
+        One per frame rather than all of them in a loop, because the whole point of a loading
+        screen is that it is on screen while the work happens. A loop would do every upload inside
+        a single frame and show the player one frozen frame of a full progress bar.
+    */
+    void StepLoading(void);
+    //0..1 for the bar. RENDER THREAD, and meaningless off the loading page.
+    float GetLoadingProgress(void) const;
+
     //Indices into the InputController's button list, in INPUT_BOMBER_MENU_* order, or -1 if the
     //bind failed. Indices rather than pointers - see the warning on AddTouchButton.
-    enum{BOMBER_MENU_BUTTON_COUNT = 5};
-    int menu_button[BOMBER_MENU_BUTTON_COUNT] = {-1,-1,-1,-1,-1};
+    //[5] is the loading screen's full-surface tap, which is why this is six and not five.
+    enum{BOMBER_MENU_BUTTON_COUNT = 6};
+    int menu_button[BOMBER_MENU_BUTTON_COUNT] = {-1,-1,-1,-1,-1,-1};
 
     /*
         THE UI THEME: a packed atlas, the sheet that says where each sprite is in it, and the theme
@@ -381,6 +457,16 @@ private:
     Object* title_splash = NULL;
     int title_material_main = -1;   //images/splash.jpg, with the four buttons painted on it
     int title_material_menu = -1;   //images/menu_background.jpg, the empty dungeon
+    /*
+        The same two textures, kept as pointers because the loading screen UNLOADS them.
+
+        Held here rather than looked up through the materials each time because these two are the
+        definition of "the menu's textures": every other material texture in the renderer is the
+        game's, which is how CollectPageTextures tells the two sets apart without a second list to
+        keep in step with the art. See BuildLoadingSteps.
+    */
+    Texture* title_texture_main = NULL;
+    Texture* title_texture_menu = NULL;
     void RegisterCommandHandlers();
     void BuildLighting();
     void LoadAssets();
@@ -1171,6 +1257,25 @@ private:
         USE_TOUCH_UI in core/Application.h is about that exact shape of bug.
     */
     void ApplyMenuPage(bomber_menu_page page);
+
+    /*
+        THE RECTANGLE THE TITLE ARTWORK ACTUALLY COVERS, in surface pixels, top-left origin.
+
+        The art is a fixed shape and a window is whatever shape it was dragged to, so one of the
+        two has to give. Here the ART keeps its aspect and the surface gets BLACK BANDS where they
+        disagree - down the sides of a window wider than the art, above and below a taller one.
+
+        ONE PLACE, because four things have to agree about it: the quad the splash is drawn on,
+        the front page's four hit rects, the sub-pages' panel and the BACK button. The front-page
+        buttons are PAINTED INTO the splash, so a rect that disagrees with the quad by even a few
+        pixels is a menu that feels like a bad touchscreen - and it would only do so at window
+        shapes nobody happens to test.
+    */
+    void GetTitleContentRect(int w, int h, vec2* out_min, vec2* out_max) const;
+
+    //Sizes the splash quad to that rect. RENDER THREAD, from PreRender, every frame - which is
+    //what makes a resize need no hook here. See the definition.
+    void ScaleTitleSplash(void);
 
     //Positions the five menu buttons for `page`, in a window of w x h. Buttons that page does not
     //show get an EMPTY rect, which is how they are retired - see ApplyMenuPage.

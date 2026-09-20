@@ -2154,19 +2154,43 @@ void Renderer::UploadMaterials(){
     debug->Trace("Uploading materials\n");
     last_texture_unit = TEXUNIT_MATERIAL_FIRST;
 
+    /*
+        A UNIT GOES TO A TEXTURE THAT IS RESIDENT, not to one that merely EXISTS.
+
+        The two used to be the same thing, because nothing ever unloaded a texture it still
+        pointed at. Texture::Unload changed that: it frees the GL name and keeps the decoded
+        pixels, so a Texture* here can be perfectly valid C++ and have nothing on the GPU. Binding
+        it anyway spends a unit to bind (GLuint)-1 - an error every frame, and the unit gone -
+        which is the exact opposite of what unloading it was for.
+
+        -1 IS A SUPPORTED VALUE, not a poison one: every sampler in default.frag sits behind
+        `if (m.diffuse_texture >= 0)` and falls back to the material's flat colour. So a surface
+        whose texture is currently unloaded draws in its base colour rather than the missing-
+        material magenta, and comes back by itself when the texture is re-uploaded.
+
+        This is what lets an app hold more material textures than the platform has units and keep
+        only the ones it is drawing resident - see apps/bomber's loading screen, which swaps the
+        menu's two backgrounds for the game's four tile atlases on a device with five units.
+    */
     glsl_materials.clear();
     for (Material& mat:materials){
-        if (mat.diff_texture){;
+        if (mat.diff_texture && mat.diff_texture->IsResident()){
             debug->Trace("Material has diffuse Texture: Binding to Unit %i\n",last_texture_unit);
             mat.glsl_material.diffuse_texture = last_texture_unit;
             glBindTextureUnit(last_texture_unit, mat.diff_texture->texture_id);
             last_texture_unit++;
+        }else{
+            //Written every time rather than left alone: the material keeps its index from the
+            //last upload otherwise, and would go on sampling whatever moved into that unit.
+            mat.glsl_material.diffuse_texture = -1;
         }
-        if (mat.norm_texture){;
+        if (mat.norm_texture && mat.norm_texture->IsResident()){
             //debug->Trace("Material has normal Texture: Binding to Unit %i\n",texture_unit);
             mat.glsl_material.normal_texture = last_texture_unit;
             glBindTextureUnit(last_texture_unit, mat.norm_texture->texture_id);
             last_texture_unit++;
+        }else{
+            mat.glsl_material.normal_texture = -1;
         }
         glsl_materials.push_back(mat.glsl_material);
     }

@@ -16,6 +16,28 @@ class Texture{
 public:
     Texture();
     ~Texture();
+    /*
+        Release the GPU copy and keep the CPU one.
+
+        The decoded pixels (img_data) and the file bytes stay exactly where they are, so a later
+        Create2D/UploadTexture pair - or ReUploadTexture, which is that pair - brings the texture
+        back with no decode. What goes is the GL name and the bindless handle.
+
+        There was no way to do this at all before, which is why Create2D could be called twice on
+        one Texture and quietly ORPHAN the first name: glGenTextures hands out a fresh one and the
+        old allocation stays on the GPU with nothing referring to it. Create2D calls this first now,
+        so creating twice costs nothing and the second call replaces the first.
+
+        SAFE TO CALL WHEN NOTHING IS UPLOADED. texture_id defaults to (GLuint)-1, which is the "no
+        GL object" sentinel rather than 0 (glGenTextures never returns 0).
+
+        NOT for use after a context has been destroyed - the name is already gone and deleting it
+        would at best do nothing and at worst hit a DIFFERENT texture that the new context has
+        since given the same number. Whoever handles a lost context should assign
+        texture_id = (GLuint)-1 directly instead, which makes this and every later call a no-op
+        and lets a re-upload pass tell "needs rebuilding" from "already live".
+    */
+    void Unload();
     GLuint texture_id = -1;         // OpenGL ID of the texture
     GLuint64 texture_handle = 0;    // OpenGL Bindless Texture Handle
     //Remembered by Create2D so ReUploadTexture can redo the same Create2D/UploadTexture pair
@@ -44,6 +66,17 @@ public:
     //target must be one of GL_TEXTURE_1D, GL_TEXTURE_2D, GL_TEXTURE_3D, GL_TEXTURE_1D_ARRAY, GL_TEXTURE_2D_ARRAY, GL_TEXTURE_RECTANGLE, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_BUFFER, GL_TEXTURE_2D_MULTISAMPLE or GL_TEXTURE_2D_MULTISAMPLE_ARRAY.
 
     bool IsEmpty();
+
+    /*
+        Whether the GPU copy exists RIGHT NOW.
+
+        A different question from IsEmpty, which asks about the CPU pixels. An Unload()ed texture
+        still holds every decoded byte and is one ReUploadTexture away from drawing again - what it
+        does not have is a GL name, and that is the only thing a caller handing out texture units
+        can act on. See Renderer::UploadMaterials, where the distinction is the difference between
+        a freed unit and a unit spent binding nothing.
+    */
+    bool IsResident() const { return texture_id != (GLuint)-1; }
 
     void Create2D(int target = GL_TEXTURE_2D, int depth_in = 1);    //Creates a 2D openGL texture, but does not transfer any data
 

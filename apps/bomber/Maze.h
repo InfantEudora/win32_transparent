@@ -271,6 +271,17 @@ static const uint8_t MAZE_ITEM_ORDER[MAZE_NUM_ITEMS] = {
 
 //--- the enemy ----------------------------------------------------------------------------------
 #define MAZE_MAX_ENEMIES        4
+/*
+    HOW MANY THE FIRST BOARD GETS, and the start of a ramp: level one has this many, each level
+    after it one more, and from the level that reaches MAZE_MAX_ENEMIES onwards every board is
+    full. See Maze::EnemyCapForLevel.
+
+    An opening board with the maximum on it is the wrong first impression twice over. It gives a
+    player who has not yet learned what an enemy does four of them to learn it from, and it costs
+    the most on the machine at the moment the game is being judged - each enemy is a SKINNED actor,
+    which is the most expensive kind of object this game draws.
+*/
+#define MAZE_FIRST_LEVEL_ENEMIES 2
 //Slower than the player's MAZE_STEP_TICKS, so walking away from one always works and the threat is
 //being cornered rather than being outrun.
 #define MAZE_ENEMY_STEP_TICKS   30
@@ -387,6 +398,20 @@ public:
     MazeWalker enemy[MAZE_MAX_ENEMIES];
     int num_enemies = 0;
 
+    /*
+        WHICH BOARD OF THE RUN THIS IS, counting from one.
+
+        Derived rather than passed: NewGame is handed a carried walker when the player has just
+        walked in through a corridor from the board before, and is not when a run starts. So a
+        carry means "the next one" and no carry means "the first one", which is exactly the
+        distinction every caller already makes without having to be told to keep a counter in step.
+
+        The only thing that reads it so far is EnemyCapForLevel, but it is the board's own fact
+        rather than that rule's private state - a difficulty curve, a score multiplier or a HUD
+        that says which floor you are on all want the same number.
+    */
+    int level = 1;
+
     //--- what the BOARD counts, and no more -----------------------------------------------------
     //Statistics, and nothing that belongs to a body - health, the shield and the score live on
     //MazeWalker, which is what makes them survive a level boundary. What a new level does to each
@@ -483,6 +508,16 @@ public:
         straight line with nothing to rotate.
     */
     void NewGame(uint32_t seed, const MazeWalker* carry = NULL, int entry_dir_in = MAZE_DIR_WEST);
+
+    /*
+        The most enemies a board at this level may hold: MAZE_FIRST_LEVEL_ENEMIES on level one, one
+        more per level after that, never more than MAZE_MAX_ENEMIES.
+
+        A cap and not a count - PlaceEnemies may still place fewer if the terrain has nowhere legal
+        to put them. Static and pure so the ramp can be read, tested and plotted without laying out
+        a board to ask it.
+    */
+    static int EnemyCapForLevel(int level_in);
 
     //One tick of everything: the walkers, the fuse, the blast clock, and who got hurt. The only
     //entry point that changes anything.

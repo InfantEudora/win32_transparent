@@ -429,7 +429,7 @@ void ApplicationBomber::Init(void){
     */
     renderer->skinned_shader = new Shader(shader_skinned_vert_name,shader_lit_frag_name);
 
-    main_window->Resize(1280,800);
+    main_window->Resize(1024,640);
 
     /*
         60 ticks per second, not the default 50.
@@ -517,25 +517,58 @@ void ApplicationBomber::Init(void){
     CreateTitleScene();
     main_scene = title_scene;
 
-    debug->Ok("Bomber ready - %ix%i field, seed %u, %i objects\n",
-              MAZE_W,MAZE_H,current_seed,(int)field_objects.size());
+    /*
+        AND THE BOARD'S ATLASES GO STRAIGHT BACK OFF THE DEVICE.
+
+        Everything above still loads at startup - the GLB is read once and its textures uploaded
+        with it, which is the simplest thing and costs a second at launch rather than a stall
+        mid-game. What does not work is keeping them all RESIDENT: six material textures against
+        the device's five units (NUM_MATERIAL_UNITS), and the title screen samples exactly one of
+        the six.
+
+        So the app finishes Init in the same state the loading screen leaves it in on the way back
+        from a game - the menu's two on the GPU, the board's four decoded and parked in RAM. Which
+        also makes the FIRST start go through exactly the same steps as every later one, instead
+        of being the single transition whose uploads were already done and whose bar would jump.
+
+        After CreateTitleScene, necessarily: its two materials are what CollectPageTextures tells
+        the sets apart by, and they do not exist until it has run.
+    */
+    std::vector<Texture*> menu_textures;
+    std::vector<Texture*> game_textures;
+    CollectPageTextures(menu_textures,game_textures);
+    for (Texture* tex:game_textures){
+        tex->Unload();
+    }
+
+    debug->Ok("Bomber ready - %ix%i field, seed %u, %i objects, %i menu textures resident and "
+              "%i game textures parked\n",
+              MAZE_W,MAZE_H,current_seed,(int)field_objects.size(),
+              (int)menu_textures.size(),(int)game_textures.size());
 }
 
 /*
     An orthographic camera and one unlit quad, and nothing else - no light, no physics world.
 
-    The quad is sized from the camera's own extents rather than from the window: with an
-    orthographic camera `zoom` is the half-HEIGHT in world units and the half-width is zoom*aspect
-    (Camera::CalculateLookatMatrix), so a quad of 2*zoom*aspect by 2*zoom covers the viewport
-    exactly. Renderer::DrawFrame refreshes the camera's aspect from the live viewport every frame,
-    so the CAMERA follows a window resize on its own - the quad does not, and a resized window
-    letterboxes or crops the splash until this is taught to rescale it. Fine for a title card.
+    THE QUAD IS BUILT 2x2 AND SIZED BY ITS SCALE, every frame, in PreRender.
+
+    With an orthographic camera `zoom` is the half-HEIGHT in world units and the half-width is
+    zoom*aspect (Camera::CalculateLookatMatrix), so at zoom 1 the viewport is x in [-aspect,aspect]
+    by y in [-1,1] and a 2x2 quad covers a SQUARE one exactly. Everything else is the scale.
+
+    Which is what lets the splash keep its own aspect - see GetTitleContentRect - instead of being
+    stretched to whatever shape the window is. Renderer::DrawFrame already refreshes the camera's
+    aspect from the live viewport every frame; PreRender does the same for the quad, so a resize
+    needs no hook and there is no size cached anywhere to go stale.
+
+    A SCALE RATHER THAN A REBUILT MESH: Mesh::SetMeshData uploads immediately, so rebuilding this
+    on every resize would be a GPU upload per mouse-drag frame to say something a transform
+    already says.
 */
 void ApplicationBomber::CreateTitleScene(){
     title_scene = CreateNewScene("Title Screen");
 
     const float half_height = 1.0f;
-    float aspect = (float)renderer->GetViewportWidth() / (float)renderer->GetViewportHeight();
 
     Camera* camera = title_scene->camera;
     camera->name = "Title Camera";
@@ -564,10 +597,13 @@ void ApplicationBomber::CreateTitleScene(){
         const char* name;
         const char* asset;
         int* out_index;
+        //The Texture as well as the material, because the loading screen unloads these two by
+        //hand - see the block on them in the header.
+        Texture** out_texture;
     };
     const title_material wanted[] = {
-        {"bomber_title_splash","images/splash.jpg",         &title_material_main},
-        {"bomber_menu_back",   "images/menu_background.jpg",&title_material_menu},
+        {"bomber_title_splash","images/splash.jpg",         &title_material_main,&title_texture_main},
+        {"bomber_menu_back",   "images/menu_background.jpg",&title_material_menu,&title_texture_menu},
     };
 
     for (int i = 0; i < (int)(sizeof(wanted) / sizeof(wanted[0])); i++){
@@ -587,13 +623,19 @@ void ApplicationBomber::CreateTitleScene(){
         }
         renderer->AddMaterial(mat);
         *(wanted[i].out_index) = renderer->FindMaterialIndex(mat.name);
+        //NULL when the load failed, which every user of these two already has to survive - the
+        //title screen is a flat colour then and the loading screen simply has one less step.
+        *(wanted[i].out_texture) = tex;
     }
 
     title_splash = new Object();
     title_splash->name = "Title Splash";
     //flip_v, because this samples a MATERIAL texture and those are authored V=0 at the top row -
     //without it the splash renders upside down. See the note on MakeQuad in core/Primitives.h.
-    title_splash->SetMesh(MakeQuad(2.0f * half_height * aspect,2.0f * half_height,true));
+    //
+    //2x2 and unscaled here: the shape is entirely the scale PreRender sets, and it sets one
+    //before the first frame is drawn, so there is no frame where this square is seen.
+    title_splash->SetMesh(MakeQuad(2.0f * half_height,2.0f * half_height,true));
     title_splash->SetMaterialSlot(0,title_material_main);
     //Nothing on this screen is an object the player or the inspector should be picking.
     title_splash->SetPickability(false);
@@ -1128,6 +1170,9 @@ void ApplicationBomber::BuildHallway(void){
             if (o){
                 o->name = name;
                 o->SetVisibility(false);
+                //Same reasoning as the field's floor - see the SetCastsShadow note in
+                //RebuildField. Nothing is under a floor.
+                o->SetCastsShadow(false);
                 main_scene->AddObject(o);
             }
         }
@@ -1764,7 +1809,24 @@ void ApplicationBomber::RebuildField(void){
             float tile_y = gltfloader.GetNodePosition(tile_asset).y;
             //Floor tiles are turned at random too. They are square and the texture is not, so four
             //orientations is four times as much board for nothing.
-            AddCellObject(tile_asset,x,z,tile_y,0.0f,true);
+            Object* tile = AddCellObject(tile_asset,x,z,tile_y,0.0f,true);
+            /*
+                THE FLOOR CASTS NOTHING, AND THAT IS THE SINGLE CHEAPEST THING IN THIS FILE.
+
+                A floor tile is the lowest surface in the world - there is nothing beneath it for
+                its shadow to land on, and the shadows that matter (blocks, plants, characters
+                onto the ground) are unaffected, because RECEIVING a shadow does not depend on
+                this flag. So the picture is identical and the shadow pass stops re-submitting
+                every tile on the board from the light's point of view.
+
+                Measured on the MDT740: the field submits ~1.49M vertices a frame and the shadow
+                pass re-submits all of them, of which tile_grass alone is 641,472 - 43% of the
+                pass, for nothing. See Renderer's frame_vertices/shadow_vertices counters and the
+                Timing tab's "log draw breakdown" button, which is where those numbers come from.
+            */
+            if (tile){
+                tile->SetCastsShadow(false);
+            }
 
             /*
                 The block standing on it, if any.
@@ -2367,6 +2429,15 @@ void ApplicationBomber::SetupInput(void){
     if (main_window){
         main_window->f_escape_closes_window = false;
     }
+    /*
+        ENTER IS THE LOADING SCREEN'S TAP for anyone on a keyboard, and it is the only menu action
+        with a key at all - everything else on these pages is a rectangle drawn into the artwork.
+
+        Enter rather than Space, which reads as the more natural "any key": Space is already the
+        bomb (see the DROP maps above), and one key on two actions is not a thing this input layer
+        models. It maps a key to an action, and the second map would be the one that lost.
+    */
+    input->AddKeyMap(VK_RETURN,INPUT_BOMBER_MENU_TAP);
 #endif //_WIN32
 
     /*
@@ -2379,6 +2450,8 @@ void ApplicationBomber::SetupInput(void){
     input->AddKeyMap(GAMEPAD_KEY_DPAD_LEFT,INPUT_BOMBER_WEST);
     input->AddKeyMap(GAMEPAD_KEY_DPAD_RIGHT,INPUT_BOMBER_EAST);
     input->AddKeyMap(GAMEPAD_KEY_A,INPUT_BOMBER_DROP);
+    //START for the loading screen's tap, for the same reason Enter is: A is already the bomb.
+    input->AddKeyMap(GAMEPAD_KEY_START,INPUT_BOMBER_MENU_TAP);
 
     /*
         The menu buttons, bound here and POSITIONED NOWHERE YET.
@@ -2399,6 +2472,9 @@ void ApplicationBomber::SetupInput(void){
     menu_button[2] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_OPTIONS,"options");
     menu_button[3] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_SCORES, "scores");
     menu_button[4] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_BACK,   "back");
+    //The loading screen's tap. Bound like the rest and given its rect by LayoutMenuButtons, which
+    //is where it becomes the whole surface on that one page and nothing on every other.
+    menu_button[5] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_TAP,    "tap");
     //The engine's own button rendering is a debugging aid and would draw five boxes over the
     //artwork. This app draws its own - see DrawMenu.
     f_draw_touch_buttons = false;
@@ -2539,10 +2615,57 @@ void ApplicationBomber::UpdateMenu(InputController* input){
     bool f_options = input->WasKeyReleased(INPUT_BOMBER_MENU_OPTIONS);
     bool f_scores  = input->WasKeyReleased(INPUT_BOMBER_MENU_SCORES);
     bool f_back    = input->WasKeyReleased(INPUT_BOMBER_MENU_BACK);
+    bool f_tap     = input->WasKeyReleased(INPUT_BOMBER_MENU_TAP);
     //Escape means the same thing the BACK button does, so on the menu they are simply one edge.
     //Read separately as well, because in the GAME only Escape means it.
     bool f_escape  = input->WasKeyReleased(INPUT_BOMBER_BACK);
     f_back = f_back || f_escape;
+
+    /*
+        THE LOADING PAGE COMES FIRST, AND ABOVE THE INPUT GATE BELOW.
+
+        It answers to nothing but the render thread: no input leaves it, because half of what
+        either side of it needs is unloaded while it is up. Every edge read above is therefore
+        dropped on the floor here, which is the intent.
+
+        ABOVE the IsInputLive check and not below it, which is where this was first written and is
+        a hang. Finishing a load is not an input event. With the check in front of it the page only
+        advances while input is live, so a player who alt-tabs during a load - or anyone driving
+        the app over MCP once the scripted hold has expired, which is how it was found - comes back
+        to a full progress bar that never leaves.
+
+        This is also the only place either transition ENDS, in both directions, which is what keeps
+        "the textures are ready" and "the page changed" from ever being two decisions that could be
+        made in the wrong order.
+    */
+    if (menu_page == BOMBER_PAGE_LOADING){
+        if (!f_loading_complete.load()){
+            //Still uploading. Every edge read above is dropped, including the tap - its rect is
+            //live but nothing reads it yet, so an early tap is ignored rather than queued.
+            return;
+        }
+        /*
+            THE WORK IS DONE AND NOW IT WAITS FOR THE PLAYER.
+
+            The tap IS an input, so unlike the completion above it goes through the same
+            IsInputLive gate everything else on these pages does. That is not a formality: with
+            RIDEV_INPUTSINK this app sees key-up events while unfocused, so a click landing NEXT
+            to the window still raises this edge. Reading it ungated would let a click meant for
+            another window dismiss the loading screen. See the note on IsInputLive in
+            core/InputController.h.
+        */
+        if (input->IsInputLive() && f_tap){
+            const int finished = loading_target.exchange(BOMBER_LOADING_NONE);
+            if (finished == BOMBER_LOADING_TO_GAME){
+                RequestActiveScene(game_scene);
+            }
+            //MAIN either way. Going to the game it is what a later Escape lands on; coming back it
+            //is the page itself. The quad stays hidden until its texture is resident, so setting
+            //this before the scene switch cannot flash the splash - see ScaleTitleSplash.
+            menu_page = BOMBER_PAGE_MAIN;
+        }
+        return;
+    }
 
     //IsInputLive rather than HasFocus so a SCRIPTED click still works with the window in the
     //background, which is how this app is driven over MCP most of the time. A real click still
@@ -2560,7 +2683,16 @@ void ApplicationBomber::UpdateMenu(InputController* input){
     */
     if (!IsOnTitleScreen()){
         if (f_escape){
-            menu_page = BOMBER_PAGE_MAIN;
+            /*
+                Out through the loading screen, not straight to the menu: the board's atlases have
+                to come off the device before the menu's two backgrounds can go back on. The page
+                goes up now and the scene switch lands a pass or two later; StepLoading waits for
+                the page rather than for the switch, so nothing is unloaded while the board is
+                still being drawn.
+            */
+            f_loading_complete = false;
+            loading_target = BOMBER_LOADING_TO_MENU;
+            menu_page = BOMBER_PAGE_LOADING;
             RequestActiveScene(title_scene);
         }
         return;
@@ -2593,14 +2725,18 @@ void ApplicationBomber::UpdateMenu(InputController* input){
 
     if (f_start){
         /*
-            Into the game. RequestActiveScene rather than a direct write - this runs on the physics
-            thread and the switch is picked up at the top of the very next pass, see
-            Application::ApplyPendingSceneSwitch.
+            Into the game THROUGH THE LOADING SCREEN, which is where the menu's two backgrounds
+            come off the device and the board's four atlases go on. It used to switch the scene
+            here and now that is the last thing the loading page does - see the block above, which
+            is the one place either transition ends.
 
-            The page is NOT changed. It is already MAIN, and leaving it there is what makes a later
-            return to the title screen show the front page rather than wherever you last were.
+            The scene switch is still RequestActiveScene rather than a direct write when it comes:
+            this runs on the physics thread and the switch is picked up at the top of the very next
+            pass. See Application::ApplyPendingSceneSwitch.
         */
-        RequestActiveScene(game_scene);
+        f_loading_complete = false;
+        loading_target = BOMBER_LOADING_TO_GAME;
+        menu_page = BOMBER_PAGE_LOADING;
         return;
     }
     if (f_levels){
@@ -3230,6 +3366,9 @@ void ApplicationBomber::UpdateSound(void){
 #define BOMBER_HUD_TEXT        UIColor(236,242,255,235)
 #define BOMBER_HUD_TEXT_DIM    UIColor(200,212,236,150)
 #define BOMBER_HUD_PANEL       UIColor(  8, 12, 20,120)
+//One full breath of the loading screen's "TAP TO START", in TICKS - 60 at this app's 60 tps, so
+//one second. Ticks because that is the unit every duration here is in; see DrawMenu.
+#define BOMBER_TAP_PULSE_TICKS 60
 
 /*
     Publishes what the HUD draws. PHYSICS THREAD, from the top of SyncView.
@@ -3310,9 +3449,8 @@ void ApplicationBomber::DrawKeyIcon(vec2 centre, float h, uint32_t color){
     splash, so the hit rects have to land on them exactly or the menu is subtly wrong in a way
     that feels like a bad touchscreen.
 
-    Fractions of the image, not of the window, because the quad the splash is drawn on covers the
-    viewport exactly (see CreateTitleScene) - so the artwork is stretched to whatever the window
-    is, and a fraction of the image is a fraction of the window whatever its aspect.
+    Fractions of the image, not of the window: they are resolved against GetTitleContentRect, the
+    rect the splash quad actually covers, so they land on the painted buttons at any window shape.
 */
 #define BOMBER_SPLASH_W 1200.0f
 #define BOMBER_SPLASH_H  896.0f
@@ -3323,8 +3461,235 @@ static const float bomber_main_button_px[4][4] = {
     {901.0f,771.0f,1142.0f,874.0f},     //HIGH SCORES
 };
 
-//The sub-pages' window, as fractions of the surface. One panel, centred, with room under it for
-//the one button that leaves.
+/*
+    Sizes the splash quad to the content rect. RENDER THREAD, from PreRender, every frame.
+
+    UNCONDITIONAL, like SetCustomShaderScale beside it: the work is two divides and a compare, and
+    a cached surface size here would be a second copy of the one Application::DrawFrame already
+    keeps for the touch rects - two caches that have to be invalidated by the same event, which is
+    how a resize ends up moving the buttons and not the art.
+
+    Writing to a scene object from the render thread is the same liberty ApplyMenuPage already
+    takes with this object, and it is safe for the same reason: the title scene has no physics
+    world, so nothing on the physics thread is reading this transform.
+*/
+void ApplicationBomber::ScaleTitleSplash(void){
+    if (!title_splash || !renderer){
+        return;
+    }
+    const int vw = renderer->GetViewportWidth();
+    const int vh = renderer->GetViewportHeight();
+    if ((vw <= 0) || (vh <= 0)){
+        return;
+    }
+
+    vec2 cmin,cmax;
+    GetTitleContentRect(vw,vh,&cmin,&cmax);
+
+    /*
+        Pixels to the camera's world units. The viewport is x in [-aspect,aspect] by y in [-1,1]
+        (see CreateTitleScene), so a rect that is `f` of the viewport's width is f*aspect in half-
+        width, and one that is `g` of its height is g in half-height. The 2x2 quad's half extents
+        are 1, so those fractions ARE the scale.
+    */
+    const float aspect = (float)vw / (float)vh;
+    const float sx = aspect * ((cmax.x - cmin.x) / (float)vw);
+    const float sy = (cmax.y - cmin.y) / (float)vh;
+    title_splash->SetScale(vec3(sx,sy,1.0f));
+
+    /*
+        THE QUAD IS VISIBLE EXACTLY WHEN ITS TEXTURE IS THERE, asked every frame rather than set
+        when the page changes.
+
+        Which is what makes the loading screen black without a case for it anywhere: that page's
+        first steps unload both backgrounds, the quad's material stops being resident, and it
+        stops being drawn. Hiding it from ApplyMenuPage instead would need the same knowledge in
+        two places and would get the ORDER wrong in the other direction - the page becomes MAIN
+        before the splash has finished uploading, and an unloaded material draws in its flat
+        colour, which for this one is white. A full-screen white flash on the way back from every
+        game is not a subtle bug, but it is an easy one to write.
+    */
+    const Material* mat = renderer->GetMaterial(title_splash->GetMaterialSlot(0));
+    title_splash->SetVisibility((mat != NULL) && (mat->diff_texture != NULL)
+                                && mat->diff_texture->IsResident());
+}
+
+/*
+    Splits every material texture the renderer holds into the menu's and the game's.
+
+    THE MENU'S TWO ARE NAMED AND THE GAME'S ARE WHATEVER IS LEFT, rather than both being lists.
+    A second list would be a list to forget: the board's atlases arrive with the GLB, so adding a
+    fifth one to the art would silently leave it loaded across the menu - which on the device is
+    exactly one unit too many, and shows up as some other surface losing its texture rather than
+    as anything to do with the new one.
+
+    Distinct pointers only. Materials share textures here (the four tile atlases cover eleven
+    materials), and unloading the same texture twice is harmless but uploading it twice is a
+    wasted upload and a wasted step on the bar.
+*/
+void ApplicationBomber::CollectPageTextures(std::vector<Texture*>& menu,
+                                            std::vector<Texture*>& game) const{
+    menu.clear();
+    game.clear();
+    if (title_texture_main){
+        menu.push_back(title_texture_main);
+    }
+    if (title_texture_menu){
+        menu.push_back(title_texture_menu);
+    }
+
+    const int count = renderer ? renderer->GetNumMaterials() : 0;
+    for (int i = 0; i < count; i++){
+        Material* mat = renderer->GetMaterial(i);
+        if (!mat){
+            continue;
+        }
+        Texture* both[2] = {mat->diff_texture,mat->norm_texture};
+        for (int t = 0; t < 2; t++){
+            Texture* tex = both[t];
+            if (!tex){
+                continue;
+            }
+            bool f_seen = (tex == title_texture_main) || (tex == title_texture_menu);
+            for (Texture* g:game){
+                if (g == tex){
+                    f_seen = true;
+                    break;
+                }
+            }
+            if (!f_seen){
+                game.push_back(tex);
+            }
+        }
+    }
+}
+
+/*
+    DROP FIRST, THEN BRING UP, and that order is the whole reason this is a list rather than two
+    loops run back to back.
+
+    The set being dropped and the set being raised cannot both be resident - that is the situation
+    the loading screen exists for - so doing it the other way round asks the device for six units
+    when it has five, and the last upload lands nowhere. Unloading first means the peak is never
+    higher than either set alone.
+*/
+void ApplicationBomber::BuildLoadingSteps(bomber_loading_target target){
+    loading_steps.clear();
+    loading_step = 0;
+
+    std::vector<Texture*> menu;
+    std::vector<Texture*> game;
+    CollectPageTextures(menu,game);
+
+    const std::vector<Texture*>& drop = (target == BOMBER_LOADING_TO_GAME) ? menu : game;
+    const std::vector<Texture*>& raise = (target == BOMBER_LOADING_TO_GAME) ? game : menu;
+
+    for (Texture* tex:drop){
+        bomber_load_step step;
+        step.texture = tex;
+        step.f_upload = false;
+        loading_steps.push_back(step);
+    }
+    for (Texture* tex:raise){
+        bomber_load_step step;
+        step.texture = tex;
+        step.f_upload = true;
+        loading_steps.push_back(step);
+    }
+
+    debug->Info("Loading screen: %i to unload, %i to upload, going to the %s\n",
+                (int)drop.size(),(int)raise.size(),
+                (target == BOMBER_LOADING_TO_GAME) ? "game" : "menu");
+}
+
+float ApplicationBomber::GetLoadingProgress(void) const{
+    if (loading_steps.empty()){
+        //Not "nothing done" but "nothing to do" - a full bar, so a transition with no work does
+        //not flash an empty one on its way past.
+        return 1.0f;
+    }
+    float p = (float)loading_step / (float)loading_steps.size();
+    return (p < 0.0f) ? 0.0f : ((p > 1.0f) ? 1.0f : p);
+}
+
+void ApplicationBomber::StepLoading(void){
+    if (loading_target.load() == BOMBER_LOADING_NONE){
+        //The physics thread has taken the result and moved on. Dropping the list here rather than
+        //when it completes is what makes GetLoadingProgress keep reading 1.0 for the frames
+        //between the last step and the page actually changing.
+        loading_steps.clear();
+        loading_step = 0;
+        return;
+    }
+    /*
+        NOT UNTIL THE LOADING PAGE IS THE THING ON SCREEN.
+
+        Coming back from the game the physics thread asks for the page and the scene switch in the
+        same breath, and the switch is applied at the top of a later pass - so for a frame or two
+        the GAME is still what is being drawn. Unloading its atlases during those frames would
+        flatten the whole board to its base colours in full view. menu_page_applied is the render
+        thread's own record of what it last drew, which makes it the right thing to gate on.
+    */
+    if (menu_page_applied != BOMBER_PAGE_LOADING){
+        return;
+    }
+    if (f_loading_complete.load()){
+        return;
+    }
+    if (loading_steps.empty()){
+        BuildLoadingSteps((bomber_loading_target)loading_target.load());
+    }
+
+    if (loading_step < (int)loading_steps.size()){
+        const bomber_load_step& step = loading_steps.at(loading_step);
+        if (step.texture){
+            if (step.f_upload){
+                //Create2D + UploadTexture against the pixels that never left RAM - no decode, no
+                //file read. See Texture::Unload for why they are still there.
+                step.texture->ReUploadTexture();
+            }else{
+                step.texture->Unload();
+            }
+        }
+        loading_step++;
+    }
+    if (loading_step >= (int)loading_steps.size()){
+        f_loading_complete = true;
+    }
+}
+
+/*
+    See the header. The art's aspect comes from the SAME two constants the button table above is
+    measured in, which is what makes a fraction of the image a fraction of this rect.
+*/
+void ApplicationBomber::GetTitleContentRect(int w, int h, vec2* out_min, vec2* out_max) const{
+    const float fw = (float)w;
+    const float fh = (float)h;
+
+    //Fit to whichever axis runs out first. A window already the art's shape gives the same answer
+    //down either branch, so there is no equality case to get wrong.
+    float cw = fw;
+    float ch = fw * (BOMBER_SPLASH_H / BOMBER_SPLASH_W);
+    if (ch > fh){
+        ch = fh;
+        cw = fh * (BOMBER_SPLASH_W / BOMBER_SPLASH_H);
+    }
+
+    //Centred, so the bands are even on both sides. Halves rather than all of it at one edge
+    //because a picture pinned to the top-left of a black window reads as a broken layout.
+    const float cx = (fw - cw) * 0.5f;
+    const float cy = (fh - ch) * 0.5f;
+    if (out_min){
+        *out_min = vec2(cx,cy);
+    }
+    if (out_max){
+        *out_max = vec2(cx + cw,cy + ch);
+    }
+}
+
+//The sub-pages' window, as fractions of the CONTENT RECT rather than of the surface - so the
+//panel sits on the background art the same way at every window shape, instead of drifting across
+//it as the bands grow. One panel, centred, with room under it for the one button that leaves.
 #define BOMBER_MENU_PANEL_X 0.22f
 #define BOMBER_MENU_PANEL_Y 0.20f
 #define BOMBER_MENU_PANEL_W 0.56f
@@ -3337,8 +3702,17 @@ void ApplicationBomber::LayoutMenuButtons(int w, int h, bomber_menu_page page){
         return;
     }
     InputController* input = main_scene->inputcontroller;
-    const float fw = (float)w;
-    const float fh = (float)h;
+    /*
+        EVERY rect below is placed in the CONTENT RECT, not in the window. On the front page that
+        is not a preference: those four buttons are painted into the splash, and the splash is now
+        letterboxed, so a rect measured against the window would sit in the black band at any shape
+        but the art's own. The sub-pages follow the same rect so that the panel, the button that
+        leaves it and the background behind them all move together.
+    */
+    vec2 cmin,cmax;
+    GetTitleContentRect(w,h,&cmin,&cmax);
+    const float fw = cmax.x - cmin.x;
+    const float fh = cmax.y - cmin.y;
 
     /*
         EVERY button is written every time, and the ones this page does not show are written EMPTY.
@@ -3353,17 +3727,36 @@ void ApplicationBomber::LayoutMenuButtons(int w, int h, bomber_menu_page page){
     if (page == BOMBER_PAGE_MAIN){
         for (int i = 0; i < 4; i++){
             const float* r = bomber_main_button_px[i];
-            rect[i].x = (r[0] / BOMBER_SPLASH_W) * fw;
-            rect[i].y = (r[1] / BOMBER_SPLASH_H) * fh;
+            rect[i].x = cmin.x + (r[0] / BOMBER_SPLASH_W) * fw;
+            rect[i].y = cmin.y + (r[1] / BOMBER_SPLASH_H) * fh;
             rect[i].w = ((r[2] - r[0]) / BOMBER_SPLASH_W) * fw;
             rect[i].h = ((r[3] - r[1]) / BOMBER_SPLASH_H) * fh;
         }
+    }else if (page == BOMBER_PAGE_LOADING){
+        /*
+            TAP ANYWHERE, and anywhere means the WINDOW rather than the content rect - the one
+            rect on these pages that deliberately ignores the letterbox.
+
+            Everything else here is placed against the artwork because it has to line up with
+            something painted into it. This lines up with nothing: it is the whole screen saying
+            "go on then", and a player who taps in a black band and gets nothing has been told the
+            app is still busy. The bands are not out of bounds, they are just empty.
+
+            Live on this page ONLY, and only meaningful once the work is done - UpdateMenu checks
+            f_loading_complete before it reads the edge. A rect that is live while the bar is
+            still moving simply cannot do anything, which is a better shape than one that appears
+            part way through and leaves the player unsure whether the first tap counted.
+        */
+        rect[5].x = 0.0f;
+        rect[5].y = 0.0f;
+        rect[5].w = (float)w;
+        rect[5].h = (float)h;
     }else if (page != BOMBER_PAGE_NONE){
         //Back sits centred just inside the bottom of the window it leaves.
         rect[4].w = BOMBER_MENU_BACK_W * fw;
         rect[4].h = BOMBER_MENU_BACK_H * fh;
-        rect[4].x = (fw - rect[4].w) * 0.5f;
-        rect[4].y = (BOMBER_MENU_PANEL_Y + BOMBER_MENU_PANEL_H) * fh - rect[4].h * 1.6f;
+        rect[4].x = cmin.x + (fw - rect[4].w) * 0.5f;
+        rect[4].y = cmin.y + (BOMBER_MENU_PANEL_Y + BOMBER_MENU_PANEL_H) * fh - rect[4].h * 1.6f;
     }
 
     for (int i = 0; i < BOMBER_MENU_BUTTON_COUNT; i++){
@@ -3463,8 +3856,13 @@ void ApplicationBomber::DrawMenu(void){
     if (!overlay || !overlay->IsReady() || !main_window){
         return;
     }
-    const float w = (float)main_window->width;
-    const float h = (float)main_window->height;
+    //The letterboxed art, not the window - the same rect LayoutMenuButtons places the BACK button
+    //in, so the panel and the button that leaves it cannot drift apart. See GetTitleContentRect.
+    vec2 cmin,cmax;
+    GetTitleContentRect(main_window->width,main_window->height,&cmin,&cmax);
+    const float w = cmax.x - cmin.x;
+    const float h = cmax.y - cmin.y;
+    //Off the CONTENT height, so the type scales with the artwork rather than with the bands.
     const float text_size = h * 0.045f;
 
     /*
@@ -3482,10 +3880,15 @@ void ApplicationBomber::DrawMenu(void){
         case BOMBER_PAGE_LEVEL_SELECT: title = "LEVEL SELECT"; break;
         case BOMBER_PAGE_OPTIONS:      title = "OPTIONS";      break;
         case BOMBER_PAGE_HIGH_SCORES:  title = "HIGH SCORES";  break;
+        //Two words for one page, because a full bar under the word LOADING says the opposite of
+        //what the screen means at that moment.
+        case BOMBER_PAGE_LOADING:
+            title = f_loading_complete.load() ? "READY" : "LOADING";
+            break;
         default: break;
     }
 
-    vec2 pmin = vec2(BOMBER_MENU_PANEL_X * w,BOMBER_MENU_PANEL_Y * h);
+    vec2 pmin = vec2(cmin.x + BOMBER_MENU_PANEL_X * w,cmin.y + BOMBER_MENU_PANEL_Y * h);
     vec2 pmax = vec2(pmin.x + BOMBER_MENU_PANEL_W * w,pmin.y + BOMBER_MENU_PANEL_H * h);
     //The artwork if the theme came up, the role colours if it did not. Same geometry either way -
     //AddNineSliceSprite and AddNineSliceDebug both cut with UINineSliceRegions - so the fallback is
@@ -3507,6 +3910,60 @@ void ApplicationBomber::DrawMenu(void){
         button drawn a few pixels off the rectangle that responds is the single most common way a
         menu feels broken. This way there is one number.
     */
+    /*
+        THE BAR, and it is the whole of this page.
+
+        Drawn from the OVERLAY's own primitives rather than from the theme, because a progress bar
+        is the one piece of furniture here with no sprite in uisheet.json - and it does not need
+        one: AddRect's rounded ends are analytic, so a capsule of any width is exact at any size.
+        Which matters more than usual here, since the fill's width is the thing that changes.
+
+        The fill is drawn over the track rather than the track being redrawn around it, so the
+        two cannot disagree about where the ends are.
+    */
+    if (menu_page_applied == BOMBER_PAGE_LOADING){
+        const float bar_w = (pmax.x - pmin.x) * 0.62f;
+        const float bar_h = text_size * 0.55f;
+        const float bar_x = (pmin.x + pmax.x) * 0.5f - bar_w * 0.5f;
+        const float bar_y = (pmin.y + pmax.y) * 0.5f;
+        const float radius = bar_h * 0.5f;
+
+        overlay->AddRect(vec2(bar_x,bar_y),vec2(bar_x + bar_w,bar_y + bar_h),
+                         radius,BOMBER_HUD_TEXT_DIM);
+        const float filled = bar_w * GetLoadingProgress();
+        //A zero-width fill would be dropped by AddQuad anyway, but the FLOOR is what stops a
+        //just-started bar drawing as a dot: below one capsule's width there is nothing a rounded
+        //rect can honestly show.
+        if (filled > bar_h){
+            overlay->AddRect(vec2(bar_x,bar_y),vec2(bar_x + filled,bar_y + bar_h),
+                             radius,BOMBER_HUD_KEY);
+        }
+
+        /*
+            TAP TO START, and it PULSES because a line of static text on a finished bar does not
+            read as something waiting for you - it reads as a caption.
+
+            IN TICKS, off Scene::GetPhysicsTick, which is the clock the rest of this codebase
+            counts durations in and is an atomic, so reading it from the render thread is honest
+            rather than merely lucky. A count of rendered FRAMES would have been the easy thing
+            here and is the wrong unit twice over: it changes speed with the frame rate, and it
+            would be the only duration in the app not expressed the way every other one is.
+        */
+        if (f_loading_complete.load()){
+            const uint64_t tick = main_scene ? main_scene->GetPhysicsTick() : 0;
+            const float phase = (float)(tick % BOMBER_TAP_PULSE_TICKS)
+                              / (float)BOMBER_TAP_PULSE_TICKS;
+            //Cosine rather than a sawtooth: the ends of a triangle wave are a visible corner, and
+            //this sits still on screen long enough for that to be the thing you notice about it.
+            const float wave = 0.5f - 0.5f * cosf(phase * 6.2831853f);
+            const uint8_t alpha = (uint8_t)(110.0f + 145.0f * wave);
+            overlay->AddText("TAP TO START",
+                             vec2((pmin.x + pmax.x) * 0.5f,bar_y + bar_h + text_size * 1.8f),
+                             text_size * 0.7f,UIColor(236,242,255,alpha),UI_ALIGN_CENTER);
+        }
+        return;
+    }
+
     if ((menu_button[4] >= 0) && main_scene && main_scene->inputcontroller){
         const std::vector<InputController::TouchButton>& buttons =
             main_scene->inputcontroller->GetTouchButtons();
@@ -4016,6 +4473,10 @@ void ApplicationBomber::PreRender(void){
     if (!f_theme_tried && overlay && overlay->IsReady()){
         LoadUITheme();
     }
+    ScaleTitleSplash();
+    //The loading screen's one texture for this frame, if one is up. See StepLoading - it is a
+    //return on every frame that is not loading, which is nearly all of them.
+    StepLoading();
     //A shader reload is GL work, so the key and the panel button only raise a flag and it is
     //serviced here. Cheap: one atomic read on a frame where nothing was asked for.
     if (f_shader_reload_requested){
@@ -4564,7 +5025,7 @@ void ApplicationBomber::RegisterMCPTools(void){
         "Hold one of the game's controls for a number of SIMULATION TICKS, exactly as a thumb "
         "would - the event goes through InputController, so it is read by the same code a key "
         "press is and it works while the simulation is paused and being single-stepped. "
-        "`action` is north/south/east/west/bomb while playing, or start/levels/options/scores/back "
+        "`action` is north/south/east/west/bomb while playing, or start/levels/options/scores/back/tap "
         "on the title screen - the menu's buttons drive ordinary actions, so they are reachable "
         "here without a pointer. A direction wants enough ticks to cross a tile (20 at the default "
         "walk speed); `bomb` and every menu action are edges, so one tick is enough. The call "
@@ -4573,7 +5034,7 @@ void ApplicationBomber::RegisterMCPTools(void){
         json{
             {"type","object"},
             {"properties", {
-                {"action", {{"type","string"},{"description","north, south, east, west, bomb, or a menu action: start, levels, options, scores, back"}}},
+                {"action", {{"type","string"},{"description","north, south, east, west, bomb, or a menu action: start, levels, options, scores, back, tap (the loading screen's TAP TO START)"}}},
                 {"ticks", {{"type","number"},{"description","how many simulation ticks to hold it, default 20"}}}
             }},
             {"required",json::array({"action"})}
@@ -4596,8 +5057,11 @@ void ApplicationBomber::RegisterMCPTools(void){
             //this one is handled in the game as well as in the menu, so one scripted action
             //exercises all three levels it backs out of.
             else if (action == "back"){ mapped = INPUT_BOMBER_BACK; }
+            //The loading screen's "TAP TO START". Reachable here for the same reason every other
+            //menu action is: it is an ordinary action, so it needs no pointer to deliver.
+            else if (action == "tap"){ mapped = INPUT_BOMBER_MENU_TAP; }
             else {
-                return json{ {"error","action must be north, south, east, west, bomb, start, levels, options, scores or back"} };
+                return json{ {"error","action must be north, south, east, west, bomb, start, levels, options, scores, back or tap"} };
             }
             int ticks = (int)args.value("ticks",20.0f);
             if (ticks < 1){

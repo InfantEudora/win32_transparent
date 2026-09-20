@@ -612,6 +612,15 @@ void Maze::PlaceDoor(){
     Bridges are excluded by the pass_axis test, which also takes care of water - a water cell is
     only passable when it has a bridge on it, and a bridge always sets an axis.
 */
+//See the declaration in Maze.h.
+int Maze::EnemyCapForLevel(int level_in){
+    if (level_in < 1){
+        level_in = 1;
+    }
+    const int cap = MAZE_FIRST_LEVEL_ENEMIES + (level_in - 1);
+    return cap > MAZE_MAX_ENEMIES ? MAZE_MAX_ENEMIES : cap;
+}
+
 void Maze::PlaceEnemies(){
     num_enemies = 0;
 
@@ -654,7 +663,13 @@ void Maze::PlaceEnemies(){
         }
     }
 
-    int want = num_cells < MAZE_MAX_ENEMIES ? num_cells : MAZE_MAX_ENEMIES;
+    /*
+        THE CAP RAMPS WITH THE LEVEL; the CHOICE of cells is as random as it ever was. Only the
+        ceiling moved - the shuffle below, the distance rule and the can-it-act test are untouched,
+        so a full board plays exactly as it did.
+    */
+    const int cap = EnemyCapForLevel(level);
+    int want = num_cells < cap ? num_cells : cap;
     for (int i = 0; i < want; i++){
         int j = i + RandomBelow(num_cells - i);
         int tx = cell_x[i]; cell_x[i] = cell_x[j]; cell_x[j] = tx;
@@ -933,6 +948,13 @@ void Maze::NewGame(uint32_t seed, const MazeWalker* carry, int entry_dir_in){
     //A new board is a new clock. Not on the walker, because it is a fact about the BOARD - what the
     //player carries away from it is the points it already paid out.
     level_ticks = 0;
+    /*
+        AND A NEW BOARD IS EITHER THE NEXT LEVEL OR THE FIRST ONE, and `carry` is what says which:
+        a walker arrives carried only when the player has just come through a corridor from the
+        board before. See the member's own comment for why this is derived here rather than passed
+        in by a caller keeping its own count.
+    */
+    level = carry ? level + 1 : 1;
 
     /*
         Roll a layout, and roll again if it came out as a corner of a field rather than a field.
