@@ -614,6 +614,9 @@ class Renderer{
     int last_texture_unit = TEXUNIT_MATERIAL_FIRST;
     //One past the top of the material range, i.e. the first unit that does not exist.
     int num_texture_units = TEXUNIT_MATERIAL_FIRST + NUM_MATERIAL_UNITS;
+    //What the last UploadMaterials reported, so the count is logged on a CHANGE rather than every
+    //frame - see the block at the end of UploadMaterials. -1 forces the first frame to say it.
+    int last_reported_material_units = -1;
 
     //These will differ per frame
     std::vector<Mesh*> unique_meshes;                           // An array of unique meshes

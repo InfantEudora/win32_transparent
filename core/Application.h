@@ -60,7 +60,7 @@ using json = nlohmann::json;
 #if defined(__ANDROID__)
     #define USE_TOUCH_UI 1
 #else
-    #define USE_TOUCH_UI 1
+    #define USE_TOUCH_UI 0
 #endif
 
 /*
@@ -309,6 +309,41 @@ public:
         separated.
     */
     virtual void LayoutTouchButtons(int w, int h){ (void)w; (void)h; };
+
+    /*
+        Dots per inch of the display the window is on. What LayoutTouchButtons sizes against.
+
+        A TOUCH TARGET IS A REAL SIZE, not a fraction of anything. A thumb is about 10 mm wide
+        wherever it is, so a button given 12% of the width is a pinhead on a phone and a dinner
+        plate on a tablet AT THE SAME TIME, and a button given a fixed pixel count is whatever the
+        panel maker decided. Neither is a size. `GetDisplayDPI() / 25.4f` is pixels per millimetre,
+        and 11 mm is the number to reach for.
+
+        The spread is not theoretical: the two Android devices this has run on are 160 dpi
+        (6.3 px/mm) and 440 dpi (17.3 px/mm), so the same button is 69 px on one and 190 px on the
+        other. A layout in pixels is right on at most one of them.
+
+        96 here - the Win32 baseline, and the honest answer until this asks the monitor. A caller
+        gets a sane size rather than a correct one, which is the right failure.
+    */
+    float GetDisplayDPI() const;
+
+    /*
+        The part of the window that is NOT under system furniture - nav bar, gesture pill, camera
+        cutout - in window pixels, as x/y/width/height.
+
+        ANCHOR CONTROLS TO THIS, NEVER TO THE WINDOW. The surface spans the whole display on a
+        handheld, including the strip the system draws its own buttons on, and touches out there
+        go to the system and never arrive here. A button drawn there is visible, looks live, and
+        does nothing - which reads as a dead button rather than as a layout bug.
+
+        Measured on a Redmi in landscape: 130 px of unsafe strip down the right of a 2310 px
+        window, which took 130 px out of a 190 px button.
+
+        Here it is the whole window, which is the correct answer on a desktop and on a device with
+        physical buttons. Platforms that know better override it.
+    */
+    void GetSafeArea(float& x, float& y, float& w, float& h) const;
 
     int Exit(void);
 

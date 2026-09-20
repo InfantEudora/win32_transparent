@@ -433,6 +433,46 @@ private:
     int menu_button[BOMBER_MENU_BUTTON_COUNT] = {-1,-1,-1,-1,-1,-1};
 
     /*
+        --- THE GAMEPLAY TOUCH BUTTONS -------------------------------------------------------
+
+        WHY THEY EXIST: every gameplay binding in SetupInput sits inside `#if defined(_WIN32)` -
+        the arrows, space, 'P', Escape. On a touch device that is the whole control scheme
+        missing, and BACK and INPUT_PAUSE in particular have no other route in at all, so the
+        game could be entered and then not left.
+
+        A SEPARATE SET from menu_button[] above rather than more entries in it, because the two
+        are retired by OPPOSITE conditions while sharing the window's one InputController: the
+        menu's rects are live only on the title screen, these only while the board is up. A rect
+        left behind is not merely invisible, it is a live target under whatever is drawn over it -
+        so LayoutGameButtons writes all seven EMPTY off the board, exactly as LayoutMenuButtons
+        already does for the other set. ApplyMenuPage is what drives both.
+
+        Indices rather than pointers, for the reason on AddTouchButton.
+    */
+    int touch_menu  = -1;   //INPUT_BOMBER_BACK - the only way back to the title screen
+    int touch_pause = -1;   //INPUT_PAUSE - acted on by Scene::BeginPass itself
+    int touch_north = -1;
+    int touch_south = -1;
+    int touch_west  = -1;
+    int touch_east  = -1;
+    int touch_bomb  = -1;
+
+    /*
+        Places the seven above in surface pixels. `f_playing` false writes every one EMPTY, which
+        is what retires them over the title screen.
+
+        IN PIXELS, and the same numbers apps/tetris uses - see the note in its LayoutTouchButtons
+        on why that is a known placeholder and what replaces it. The chrome pair is deliberately
+        smaller than the thumb cluster: they are not played with, and a fat target up there would
+        be sitting on the board.
+    */
+    void LayoutGameButtons(int w, int h, bool f_playing);
+
+    //Draws them, through the theme and with the same tint-for-held trick as the menu's BACK
+    //button. RENDER THREAD, from DrawOverlay, and only while the board is up.
+    void DrawGameButtons(void);
+
+    /*
         THE UI THEME: a packed atlas, the sheet that says where each sprite is in it, and the theme
         that says what each sprite MEANS. See core/UISheet.h for why those last two are two files.
 
@@ -452,21 +492,116 @@ private:
     //false if the theme is not up, which is the caller's cue to draw its debug stand-in instead.
     bool DrawThemed(const char* role, vec2 min, vec2 max, uint32_t color = 0xFFFFFFFF);
 
-    //The quad the title screen draws, and the two materials it swaps between. Kept so the
-    //background can change without rebuilding the scene.
+    //The quad the title screen draws, and the dungeon background every sub-page sits on. Kept so
+    //the background can change without rebuilding the scene.
     Object* title_splash = NULL;
-    int title_material_main = -1;   //images/splash.jpg, with the four buttons painted on it
     int title_material_menu = -1;   //images/menu_background.jpg, the empty dungeon
     /*
-        The same two textures, kept as pointers because the loading screen UNLOADS them.
-
-        Held here rather than looked up through the materials each time because these two are the
-        definition of "the menu's textures": every other material texture in the renderer is the
-        game's, which is how CollectPageTextures tells the two sets apart without a second list to
-        keep in step with the art. See BuildLoadingSteps.
+        Kept as a pointer because the loading screen UNLOADS it. Together with whichever splash
+        variant is active, this is the definition of "the menu's textures" - see
+        CollectPageTextures, which tells the menu's set from the game's by these two identities
+        rather than by a second list that would have to be kept in step with the art.
     */
-    Texture* title_texture_main = NULL;
     Texture* title_texture_menu = NULL;
+
+    //--- THE TITLE ARTWORK, ONE VARIANT PER SHAPE OF SCREEN ------------------------------------
+    /*
+        HOW A BACKGROUND IS FITTED TO THE SURFACE. TWO BEHAVIOURS, AND NEITHER EVER DISTORTS -
+        the picture is scaled uniformly in both, and all they disagree about is which axis picks
+        the scale.
+
+        CONTAIN takes the SMALLER scale, so the whole picture is always visible and bands appear
+        on whichever axis has room left over - down the sides of a window wider than the art, above
+        and below a taller one. Both kinds happen, which is what makes it the right mode for the
+        sub-pages' dungeon: that background is a fixed scene with no part of it worth losing.
+
+        HEIGHT takes the height's scale and lets the width land where it falls. A window narrower
+        than the art crops the sides; a window WIDER than the art gets bands down the sides
+        instead. It never bands or crops top-to-bottom, which is the point: the title artwork is
+        composed as a horizon, so its vertical framing is the part that must not move, and its
+        left and right edges are drawn knowing they may not be seen.
+
+        THE MODE BELONGS TO THE PICTURE, not to the page. See CurrentBackground, which reads it
+        off whatever is actually on the quad rather than off which page is up - the two are a
+        frame apart when a page changes, and the frame in between is a visible jump.
+    */
+    enum bomber_splash_fit{
+        BOMBER_FIT_CONTAIN = 0,
+        BOMBER_FIT_HEIGHT
+    };
+    struct bomber_splash_variant{
+        const char* asset = NULL;
+        const char* material_name = NULL;
+        //Picked when the surface's width/height is at least this. PickSplashVariant takes the
+        //HIGHEST entry that qualifies, so the table runs widest-first and the last row, at 0, is
+        //the catch-all that always matches.
+        float min_aspect = 0.0f;
+        bomber_splash_fit fit = BOMBER_FIT_HEIGHT;
+        //Portrait stacks the four front-page buttons into a column where landscape puts them in
+        //a row. A property of the picture, because it is the picture that left room for them.
+        bool f_stack_buttons = false;
+        int      material = -1;     //both filled by CreateTitleScene
+        Texture* texture = NULL;
+    };
+    enum{BOMBER_SPLASH_VARIANT_COUNT = 2};
+    bomber_splash_variant splash_variant[BOMBER_SPLASH_VARIANT_COUNT];
+    /*
+        WHICH VARIANT IS ON THE QUAD AND RESIDENT, or -1 before the first frame.
+
+        AN INDEX RATHER THAN "LOAD THEM BOTH", and that is the texture budget talking: two
+        variants plus the dungeon background is three menu textures against the device's five for
+        everything, which puts the board back over the line the loading screen exists to keep it
+        under. EnsureSplashVariant swaps them with the same Unload/ReUploadTexture pair the
+        loading screen uses.
+    */
+    int active_splash = -1;
+
+    //Which variant a surface of w x h wants. -1 only if the table is empty.
+    int PickSplashVariant(int w, int h) const;
+    /*
+        Makes the picked variant the resident one, swapping textures if the window has changed
+        shape. RENDER THREAD, from PreRender.
+
+        DOES NOTHING unless the title screen is up and no load is in flight - see the definition.
+        Uploading a splash while the board is on screen is exactly the over-budget state
+        everything else here is arranged to avoid.
+    */
+    void EnsureSplashVariant(void);
+    /*
+        WHERE THE ARTWORK IS DRAWN, in surface pixels. Under COVER this extends BEYOND the
+        surface on one axis - that overhang is the crop - which is why it is separate from
+        GetTitleContentRect below, and why the quad is scaled from this one.
+    */
+    void GetSplashDrawRect(int w, int h, vec2* out_min, vec2* out_max) const;
+
+    /*
+        THE BACKGROUND ACTUALLY ON THE QUAD, and how it wants to be fitted.
+
+        Read off the quad's MATERIAL rather than off menu_page_applied, and that is not a detail:
+        the scale is set in PreRender and the material in DrawOverlay, a stage apart, so on the
+        frame a page changes the page has moved and the picture has not. Asking the quad makes the
+        two impossible to disagree - whatever is being drawn is what gets shaped.
+
+        Returns false when there is nothing to draw, which is also the loading screen's answer.
+    */
+    bool CurrentBackground(Texture** out_texture, bomber_splash_fit* out_fit) const;
+    /*
+        The four front-page button rects, in INPUT_BOMBER_MENU_* order, written into four-entry
+        arrays. A row or a column depending on the active variant.
+
+        FRACTIONS ONLY, no text measurement, so it needs neither the overlay nor the font and can
+        run before either is ready. The labels are fitted to these rects at draw time instead -
+        see DrawMenu, where a label too wide for its button shrinks rather than overflowing it.
+    */
+    void LayoutMainButtons(int w, int h, vec2* out_min, vec2* out_max) const;
+
+    /*
+        Draws one themed menu button with `label` centred in it, taking its rect from the
+        InputController rather than recomputing it. RENDER THREAD, from DrawMenu.
+
+        An empty rect draws nothing, so this is also how a page says it does not show a button.
+    */
+    void DrawMenuButton(int button, const char* label);
     void RegisterCommandHandlers();
     void BuildLighting();
     void LoadAssets();

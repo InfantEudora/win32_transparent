@@ -534,6 +534,11 @@ void ApplicationBomber::Init(void){
         After CreateTitleScene, necessarily: its two materials are what CollectPageTextures tells
         the sets apart by, and they do not exist until it has run.
     */
+    //Picks the splash for this window and parks the other variants, so the line below sees a
+    //settled menu set rather than every variant at once. Safe here: main_scene is already the
+    //title scene, which is the one thing EnsureSplashVariant insists on.
+    EnsureSplashVariant();
+
     std::vector<Texture*> menu_textures;
     std::vector<Texture*> game_textures;
     CollectPageTextures(menu_textures,game_textures);
@@ -593,18 +598,41 @@ void ApplicationBomber::CreateTitleScene(){
         lazy load would either block the first frame of that page or need a request across the
         thread boundary; there are two of them and they are small.
     */
+    /*
+        THE SPLASH VARIANTS, WIDEST FIRST, and the order is what PickSplashVariant reads: it takes
+        the first row the surface is at least as wide as, so the last row's 0 is the catch-all.
+
+        THE CUT IS AT 1:1 and that is a real line rather than a tuned number - it is where a
+        screen stops being landscape and starts being portrait, which is also where four buttons
+        stop fitting side by side. Between 1:1 and very wide the landscape picture is cropped
+        further and further at the sides, which is what BOMBER_FIT_HEIGHT is for and what the art
+        is drawn to survive: everything that matters is in the middle. Past the picture's own
+        2.33 the same mode stops cropping and starts banding instead, so an absurdly wide window
+        gets the whole picture rather than a letterbox slot cut out of its middle.
+    */
+    const bomber_splash_variant variants[BOMBER_SPLASH_VARIANT_COUNT] = {
+        {"images/splash_wide_noui.jpg",    "bomber_splash_wide",    1.0f,BOMBER_FIT_HEIGHT,false},
+        {"images/splash_portrait_noui.jpg","bomber_splash_portrait",0.0f,BOMBER_FIT_HEIGHT,true},
+    };
+    for (int i = 0; i < BOMBER_SPLASH_VARIANT_COUNT; i++){
+        splash_variant[i] = variants[i];
+    }
+
     struct title_material{
         const char* name;
         const char* asset;
         int* out_index;
-        //The Texture as well as the material, because the loading screen unloads these two by
-        //hand - see the block on them in the header.
+        //The Texture as well as the material, because the menu's set is unloaded by hand - see
+        //the block on the variants in the header.
         Texture** out_texture;
     };
-    const title_material wanted[] = {
-        {"bomber_title_splash","images/splash.jpg",         &title_material_main,&title_texture_main},
-        {"bomber_menu_back",   "images/menu_background.jpg",&title_material_menu,&title_texture_menu},
-    };
+    title_material wanted[BOMBER_SPLASH_VARIANT_COUNT + 1];
+    for (int i = 0; i < BOMBER_SPLASH_VARIANT_COUNT; i++){
+        wanted[i] = {splash_variant[i].material_name,splash_variant[i].asset,
+                     &splash_variant[i].material,&splash_variant[i].texture};
+    }
+    wanted[BOMBER_SPLASH_VARIANT_COUNT] = {"bomber_menu_back","images/menu_background.jpg",
+                                           &title_material_menu,&title_texture_menu};
 
     for (int i = 0; i < (int)(sizeof(wanted) / sizeof(wanted[0])); i++){
         Material mat = {};
@@ -618,13 +646,13 @@ void ApplicationBomber::CreateTitleScene(){
             mat.diff_texture = tex;
         }else{
             //Not fatal: a title screen that is a flat colour still works as one, and its buttons
-            //still work. Losing the artwork should not cost anyone the app.
+            //still work - they are drawn by the overlay now, not painted into the picture.
+            //Losing the artwork should not cost anyone the app.
             debug->Err("Title screen: could not load %s\n",wanted[i].asset);
         }
         renderer->AddMaterial(mat);
         *(wanted[i].out_index) = renderer->FindMaterialIndex(mat.name);
-        //NULL when the load failed, which every user of these two already has to survive - the
-        //title screen is a flat colour then and the loading screen simply has one less step.
+        //NULL when the load failed, which every user of these already has to survive.
         *(wanted[i].out_texture) = tex;
     }
 
@@ -636,7 +664,9 @@ void ApplicationBomber::CreateTitleScene(){
     //2x2 and unscaled here: the shape is entirely the scale PreRender sets, and it sets one
     //before the first frame is drawn, so there is no frame where this square is seen.
     title_splash->SetMesh(MakeQuad(2.0f * half_height,2.0f * half_height,true));
-    title_splash->SetMaterialSlot(0,title_material_main);
+    //No material yet: EnsureSplashVariant picks one for the surface and parks the rest, which is
+    //also what keeps only one of them resident. It runs from PreRender before the first frame.
+    title_splash->SetMaterialSlot(0,title_material_menu);
     //Nothing on this screen is an object the player or the inspector should be picking.
     title_splash->SetPickability(false);
     title_scene->AddObject(title_splash);
@@ -2475,8 +2505,44 @@ void ApplicationBomber::SetupInput(void){
     //The loading screen's tap. Bound like the rest and given its rect by LayoutMenuButtons, which
     //is where it becomes the whole surface on that one page and nothing on every other.
     menu_button[5] = input->AddTouchButton(nowhere,INPUT_BOMBER_MENU_TAP,    "tap");
+
+    /*
+        The gameplay set - see the block on these in the header. Bound to the SAME actions the
+        keyboard maps above, not to new ones: a touch button is another way to press a key, and
+        everything downstream (the DAS in UpdateView, the BACK edge in the menu handler, the
+        pause gate in Scene::BeginPass) goes on reading exactly what it read before.
+
+        INPUT_PAUSE is the engine's own action rather than one of this app's, which is why
+        pausing needs no code beyond this line and a rect.
+
+        --- ANDROID ONLY, AND THE MENU'S BUTTONS ABOVE ARE NOT ------------------------------------
+        A phone has nothing else to play with; a desktop has the arrow keys, Space and Escape
+        already, so a D-pad over the board is seven rectangles of dead weight sitting on top of
+        the game. That is what USE_TOUCH_UI says and this is the app half of it.
+
+        THE MENU'S SIX ARE BOUND UNCONDITIONALLY, a few lines up, and the difference is not an
+        oversight. Those are not a substitute for a keyboard - they ARE the interface, the only
+        thing a mouse can aim at, and on the front page the only way into the game at all. The
+        engine's flag is about on-screen GAME CONTROLS, which is a narrower thing than "rectangles
+        on the screen", and conflating the two is how the menu lost its mouse.
+
+        GATING THE BINDING, not just the drawing: an unbound button is index -1, which
+        LayoutGameButtons and DrawGameButtons both already skip, so nothing is placed and nothing
+        is live. A rect placed but not drawn would be an invisible button eating clicks in the
+        corner of a desktop window, which is the failure the note on USE_TOUCH_UI warns about.
+    */
+#if USE_TOUCH_UI
+    touch_menu  = input->AddTouchButton(nowhere,INPUT_BOMBER_BACK, "MENU");
+    touch_pause = input->AddTouchButton(nowhere,INPUT_PAUSE,       "II");
+    touch_north = input->AddTouchButton(nowhere,INPUT_BOMBER_NORTH,"^");
+    touch_south = input->AddTouchButton(nowhere,INPUT_BOMBER_SOUTH,"v");
+    touch_west  = input->AddTouchButton(nowhere,INPUT_BOMBER_WEST, "<");
+    touch_east  = input->AddTouchButton(nowhere,INPUT_BOMBER_EAST, ">");
+    touch_bomb  = input->AddTouchButton(nowhere,INPUT_BOMBER_DROP, "BOMB");
+#endif //USE_TOUCH_UI
+
     //The engine's own button rendering is a debugging aid and would draw five boxes over the
-    //artwork. This app draws its own - see DrawMenu.
+    //artwork. This app draws its own - see DrawMenu and DrawGameButtons.
     f_draw_touch_buttons = false;
 }
 
@@ -2645,7 +2711,13 @@ void ApplicationBomber::UpdateMenu(InputController* input){
             return;
         }
         /*
-            THE WORK IS DONE AND NOW IT WAITS FOR THE PLAYER.
+            THE TAP GUARDS THE WAY IN ONLY.
+
+            Going INTO the game it is worth stopping for: the board is about to start moving, and
+            a player who looked away during the load should begin when they are looking. Coming
+            BACK there is nothing to be ready for - the menu is where the app rests, so a screen
+            saying READY in front of it is a door held shut for no reason. That is what made the
+            loading window "appear again" on the way home; it now runs straight through.
 
             The tap IS an input, so unlike the completion above it goes through the same
             IsInputLive gate everything else on these pages does. That is not a formality: with
@@ -2654,7 +2726,8 @@ void ApplicationBomber::UpdateMenu(InputController* input){
             another window dismiss the loading screen. See the note on IsInputLive in
             core/InputController.h.
         */
-        if (input->IsInputLive() && f_tap){
+        const bool f_wait_for_tap = (loading_target.load() == BOMBER_LOADING_TO_GAME);
+        if (!f_wait_for_tap || (input->IsInputLive() && f_tap)){
             const int finished = loading_target.exchange(BOMBER_LOADING_NONE);
             if (finished == BOMBER_LOADING_TO_GAME){
                 RequestActiveScene(game_scene);
@@ -3442,24 +3515,150 @@ void ApplicationBomber::DrawKeyIcon(vec2 centre, float h, uint32_t color){
 
 
 /*
-    WHERE THE FRONT PAGE'S FOUR BUTTONS ARE, in pixels of splash.jpg.
+    THE FRONT PAGE'S FOUR BUTTONS, drawn by the overlay from the theme's `button` role.
 
-    Measured off the artwork rather than chosen - tools/ui_extract_probe.py prints these, and
-    docs/ui_sprites.md is where the button sprite came from. The buttons are PAINTED INTO the
-    splash, so the hit rects have to land on them exactly or the menu is subtly wrong in a way
-    that feels like a bad touchscreen.
+    THEY USED TO BE PAINTED INTO THE SPLASH and this table used to be their pixel positions in it,
+    measured off the artwork with tools/ui_extract_probe.py. That is gone with the artwork: the
+    picture a painted button lives in cannot be cropped, because cropping slides the paint out
+    from under the rectangle that answers for it, and cropping is exactly what the full-bleed
+    variants do. images/splash.jpg is still in the tree as the artist's reference for what these
+    should look like; nothing loads it.
 
-    Fractions of the image, not of the window: they are resolved against GetTitleContentRect, the
-    rect the splash quad actually covers, so they land on the painted buttons at any window shape.
+    So the rects are CHOSEN now rather than measured, which is what lets the same four buttons sit
+    in a row under a landscape picture and in a column down a portrait one.
 */
-#define BOMBER_SPLASH_W 1200.0f
-#define BOMBER_SPLASH_H  896.0f
-static const float bomber_main_button_px[4][4] = {
-    { 64.0f,771.0f, 315.0f,874.0f},     //START ADVENTURE
-    {349.0f,772.0f, 591.0f,874.0f},     //LEVEL SELECT
-    {625.0f,771.0f, 866.0f,874.0f},     //OPTIONS
-    {901.0f,771.0f,1142.0f,874.0f},     //HIGH SCORES
+static const char* const bomber_main_button_label[4] = {
+    "START","LEVELS","OPTIONS","SCORES"
 };
+
+/*
+    The row and the column, as fractions of the visible artwork.
+
+    Two sets rather than one scaled set, because a button that is comfortable in a row of four is
+    not the same shape as one in a column of four - the row is constrained by width and the column
+    by height, and a single set of numbers would have to lose one of those arguments.
+*/
+#define BOMBER_BTN_ROW_W       0.20f    //each button, of the content width
+#define BOMBER_BTN_ROW_H       0.095f   //of the content height
+#define BOMBER_BTN_ROW_GAP     0.025f   //between them, of the content width
+#define BOMBER_BTN_ROW_BOTTOM  0.055f   //from the bottom of the content, of its height
+
+#define BOMBER_BTN_COL_W       0.62f    //of the content width
+#define BOMBER_BTN_COL_H       0.075f   //of the content height
+#define BOMBER_BTN_COL_GAP     0.028f   //of the content height
+#define BOMBER_BTN_COL_BOTTOM  0.055f
+
+void ApplicationBomber::LayoutMainButtons(int w, int h, vec2* out_min, vec2* out_max) const{
+    vec2 cmin,cmax;
+    GetTitleContentRect(w,h,&cmin,&cmax);
+    const float cw = cmax.x - cmin.x;
+    const float ch = cmax.y - cmin.y;
+
+    const bool f_stack = (active_splash >= 0) && splash_variant[active_splash].f_stack_buttons;
+
+    if (f_stack){
+        const float bw = BOMBER_BTN_COL_W * cw;
+        const float bh = BOMBER_BTN_COL_H * ch;
+        const float gap = BOMBER_BTN_COL_GAP * ch;
+        const float total = 4.0f * bh + 3.0f * gap;
+        const float x = cmin.x + (cw - bw) * 0.5f;
+        //Measured UP from the bottom, not down from the top of the stack, so the lowest button
+        //keeps its margin whatever the stack's height works out to.
+        const float y0 = cmax.y - BOMBER_BTN_COL_BOTTOM * ch - total;
+        for (int i = 0; i < 4; i++){
+            const float y = y0 + (float)i * (bh + gap);
+            out_min[i] = vec2(x,y);
+            out_max[i] = vec2(x + bw,y + bh);
+        }
+        return;
+    }
+
+    const float bw = BOMBER_BTN_ROW_W * cw;
+    const float bh = BOMBER_BTN_ROW_H * ch;
+    const float gap = BOMBER_BTN_ROW_GAP * cw;
+    const float total = 4.0f * bw + 3.0f * gap;
+    const float x0 = cmin.x + (cw - total) * 0.5f;
+    const float y = cmax.y - BOMBER_BTN_ROW_BOTTOM * ch - bh;
+    for (int i = 0; i < 4; i++){
+        const float x = x0 + (float)i * (bw + gap);
+        out_min[i] = vec2(x,y);
+        out_max[i] = vec2(x + bw,y + bh);
+    }
+}
+
+int ApplicationBomber::PickSplashVariant(int w, int h) const{
+    if (h <= 0){
+        return (BOMBER_SPLASH_VARIANT_COUNT > 0) ? BOMBER_SPLASH_VARIANT_COUNT - 1 : -1;
+    }
+    const float aspect = (float)w / (float)h;
+    //The HIGHEST qualifying entry, not the first that happens to match: the table is widest-first
+    //so this is the earliest row, but saying "highest" is what makes the rule survive a reorder.
+    int best = -1;
+    for (int i = 0; i < BOMBER_SPLASH_VARIANT_COUNT; i++){
+        if (aspect < splash_variant[i].min_aspect){
+            continue;
+        }
+        if ((best < 0) || (splash_variant[i].min_aspect > splash_variant[best].min_aspect)){
+            best = i;
+        }
+    }
+    //Only reachable if no row has min_aspect 0, which would be a table with no catch-all.
+    return (best >= 0) ? best : BOMBER_SPLASH_VARIANT_COUNT - 1;
+}
+
+void ApplicationBomber::EnsureSplashVariant(void){
+    if (!title_splash || !main_window){
+        return;
+    }
+    /*
+        ONLY ON THE TITLE SCREEN, AND ONLY BETWEEN LOADS.
+
+        A resize during play would otherwise UPLOAD a splash while the board's four atlases are
+        resident - six textures against five units, which is the whole thing the loading screen
+        exists to prevent, arrived at through the back door. While the game is up the menu's
+        textures are meant to be gone and this has nothing to do; BuildLoadingSteps re-picks the
+        variant on the way back, so a window reshaped mid-game is still handled, just later.
+    */
+    if (!IsOnTitleScreen() || (menu_page_applied == BOMBER_PAGE_LOADING)
+        || (loading_target.load() != BOMBER_LOADING_NONE)){
+        return;
+    }
+
+    const int want = PickSplashVariant(main_window->width,main_window->height);
+    if ((want < 0) || (want == active_splash)){
+        //Still re-assert the material: ApplyMenuPage only runs on a page CHANGE, and the first
+        //frame of all has no page change to hang this on.
+        if ((want >= 0) && (menu_page_applied == BOMBER_PAGE_MAIN)
+            && (splash_variant[want].material >= 0)
+            && (title_splash->GetMaterialSlot(0) != splash_variant[want].material)){
+            title_splash->SetMaterialSlot(0,splash_variant[want].material);
+        }
+        return;
+    }
+
+    //Drop before raise, for the reason BuildLoadingSteps spells out: the two must never both be
+    //resident, because on the device there is no room for both.
+    for (int i = 0; i < BOMBER_SPLASH_VARIANT_COUNT; i++){
+        if ((i != want) && splash_variant[i].texture){
+            splash_variant[i].texture->Unload();
+        }
+    }
+    active_splash = want;
+    if (splash_variant[want].texture && !splash_variant[want].texture->IsResident()){
+        splash_variant[want].texture->ReUploadTexture();
+    }
+    if ((menu_page_applied == BOMBER_PAGE_MAIN) && (splash_variant[want].material >= 0)){
+        title_splash->SetMaterialSlot(0,splash_variant[want].material);
+    }
+    //The arrangement is a property of the variant - a row becomes a column here - so the rects
+    //have to be rebuilt with it rather than waiting for the next resize.
+    LayoutMenuButtons(main_window->width,main_window->height,menu_page_applied);
+
+    debug->Info("Splash variant: %s (%.3f aspect, %s)\n",
+                splash_variant[want].asset,
+                (float)main_window->width / (float)(main_window->height ? main_window->height : 1),
+                splash_variant[want].f_stack_buttons ? "buttons stacked" : "buttons in a row");
+}
 
 /*
     Sizes the splash quad to the content rect. RENDER THREAD, from PreRender, every frame.
@@ -3483,8 +3682,11 @@ void ApplicationBomber::ScaleTitleSplash(void){
         return;
     }
 
+    //The DRAW rect, not the visible one: under COVER the quad is meant to hang off the edges,
+    //and scaling it to the clipped rect would squeeze the whole picture into the window - which
+    //is a stretch, and exactly what the crop exists to avoid.
     vec2 cmin,cmax;
-    GetTitleContentRect(vw,vh,&cmin,&cmax);
+    GetSplashDrawRect(vw,vh,&cmin,&cmax);
 
     /*
         Pixels to the camera's world units. The viewport is x in [-aspect,aspect] by y in [-1,1]
@@ -3517,11 +3719,18 @@ void ApplicationBomber::ScaleTitleSplash(void){
 /*
     Splits every material texture the renderer holds into the menu's and the game's.
 
-    THE MENU'S TWO ARE NAMED AND THE GAME'S ARE WHATEVER IS LEFT, rather than both being lists.
+    THE MENU'S ARE NAMED AND THE GAME'S ARE WHATEVER IS LEFT, rather than both being lists.
     A second list would be a list to forget: the board's atlases arrive with the GLB, so adding a
     fifth one to the art would silently leave it loaded across the menu - which on the device is
     exactly one unit too many, and shows up as some other surface losing its texture rather than
     as anything to do with the new one.
+
+    THREE OUTCOMES, NOT TWO, and the third is easy to miss. A splash variant that is NOT the
+    active one belongs to neither set: the menu does not want it (only one shape of screen is
+    being drawn) and the game must not upload it (that is the unit this whole arrangement is
+    saving). It is parked in RAM and stays there until the window changes shape - see
+    EnsureSplashVariant - so it is skipped here rather than falling through into `game`, which is
+    where it would land as "whatever is left".
 
     Distinct pointers only. Materials share textures here (the four tile atlases cover eleven
     materials), and unloading the same texture twice is harmless but uploading it twice is a
@@ -3531,8 +3740,8 @@ void ApplicationBomber::CollectPageTextures(std::vector<Texture*>& menu,
                                             std::vector<Texture*>& game) const{
     menu.clear();
     game.clear();
-    if (title_texture_main){
-        menu.push_back(title_texture_main);
+    if ((active_splash >= 0) && splash_variant[active_splash].texture){
+        menu.push_back(splash_variant[active_splash].texture);
     }
     if (title_texture_menu){
         menu.push_back(title_texture_menu);
@@ -3550,7 +3759,19 @@ void ApplicationBomber::CollectPageTextures(std::vector<Texture*>& menu,
             if (!tex){
                 continue;
             }
-            bool f_seen = (tex == title_texture_main) || (tex == title_texture_menu);
+            //Any variant, active or not - see the third outcome above. The active one is already
+            //in `menu` and the rest belong in neither list.
+            bool f_variant = false;
+            for (int v = 0; v < BOMBER_SPLASH_VARIANT_COUNT; v++){
+                if (splash_variant[v].texture == tex){
+                    f_variant = true;
+                    break;
+                }
+            }
+            if (f_variant){
+                continue;
+            }
+            bool f_seen = (tex == title_texture_menu);
             for (Texture* g:game){
                 if (g == tex){
                     f_seen = true;
@@ -3576,6 +3797,24 @@ void ApplicationBomber::CollectPageTextures(std::vector<Texture*>& menu,
 void ApplicationBomber::BuildLoadingSteps(bomber_loading_target target){
     loading_steps.clear();
     loading_step = 0;
+
+    /*
+        RE-PICK THE VARIANT BEFORE COLLECTING, on the way back to the menu.
+
+        EnsureSplashVariant deliberately does nothing while the game is up, so a window reshaped
+        across 1:1 mid-game leaves active_splash pointing at the wrong picture. Choosing here, on
+        the index only, means the upload step below raises the RIGHT one - where fixing it
+        afterwards would upload one splash, then immediately unload it and upload the other.
+
+        Index only: no GL. Both variants are unloaded at this point, which is what makes moving
+        the index free.
+    */
+    if ((target == BOMBER_LOADING_TO_MENU) && main_window){
+        const int want = PickSplashVariant(main_window->width,main_window->height);
+        if (want >= 0){
+            active_splash = want;
+        }
+    }
 
     std::vector<Texture*> menu;
     std::vector<Texture*> game;
@@ -3659,24 +3898,79 @@ void ApplicationBomber::StepLoading(void){
 }
 
 /*
-    See the header. The art's aspect comes from the SAME two constants the button table above is
-    measured in, which is what makes a fraction of the image a fraction of this rect.
+    See the header. Which background, and which fit, comes off the QUAD.
+
+    THE SPLASH IS NOT THE ONLY THING THIS SHAPES. The sub-pages put the dungeon on the same quad,
+    and it is a different picture with a different shape and a different answer - 1195x896 against
+    the wide splash's 1568x672. Shaping it to the splash's numbers, which is what reading
+    active_splash unconditionally did, stretched the dungeon to 2.33 and cropped most of it away
+    on every sub-page.
 */
-void ApplicationBomber::GetTitleContentRect(int w, int h, vec2* out_min, vec2* out_max) const{
+bool ApplicationBomber::CurrentBackground(Texture** out_texture, bomber_splash_fit* out_fit) const{
+    if (out_texture){
+        *out_texture = NULL;
+    }
+    if (out_fit){
+        //The dungeon's mode, and the safe one generally: showing all of a picture cannot hide
+        //anything, where a wrong HEIGHT would silently crop.
+        *out_fit = BOMBER_FIT_CONTAIN;
+    }
+    if (!title_splash || !renderer){
+        return false;
+    }
+    const Material* mat = renderer->GetMaterial(title_splash->GetMaterialSlot(0));
+    if (!mat || !mat->diff_texture){
+        return false;
+    }
+    Texture* tex = mat->diff_texture;
+    if (out_texture){
+        *out_texture = tex;
+    }
+    //A splash variant carries its own mode; anything else on this quad is the dungeon, which
+    //CONTAINs. One loop rather than a flag on the material, because the material is the
+    //renderer's and this is the app's opinion about it.
+    for (int i = 0; i < BOMBER_SPLASH_VARIANT_COUNT; i++){
+        if ((splash_variant[i].texture == tex) && out_fit){
+            *out_fit = splash_variant[i].fit;
+            break;
+        }
+    }
+    return true;
+}
+
+/*
+    See the header. Both modes scale the picture UNIFORMLY and differ only in which axis picks
+    the scale - CONTAIN takes the smaller of the two, HEIGHT takes the height's and ignores the
+    other. Two lines, so there is nothing for them to drift apart on.
+*/
+void ApplicationBomber::GetSplashDrawRect(int w, int h, vec2* out_min, vec2* out_max) const{
     const float fw = (float)w;
     const float fh = (float)h;
 
-    //Fit to whichever axis runs out first. A window already the art's shape gives the same answer
-    //down either branch, so there is no equality case to get wrong.
-    float cw = fw;
-    float ch = fw * (BOMBER_SPLASH_H / BOMBER_SPLASH_W);
-    if (ch > fh){
-        ch = fh;
-        cw = fh * (BOMBER_SPLASH_W / BOMBER_SPLASH_H);
+    //With nothing on the quad, or a texture that failed to load, the picture IS the surface: no
+    //bands, no crop, and whatever flat colour the material has fills it.
+    float aw = fw;
+    float ah = fh;
+    Texture* tex = NULL;
+    bomber_splash_fit fit = BOMBER_FIT_CONTAIN;
+    if (CurrentBackground(&tex,&fit) && tex && (tex->width > 0) && (tex->height > 0)){
+        aw = (float)tex->width;
+        ah = (float)tex->height;
+    }
+    if ((aw <= 0.0f) || (ah <= 0.0f)){
+        aw = fw;
+        ah = fh;
     }
 
-    //Centred, so the bands are even on both sides. Halves rather than all of it at one edge
-    //because a picture pinned to the top-left of a black window reads as a broken layout.
+    const float sx = fw / aw;
+    const float sy = fh / ah;
+    const float scale = (fit == BOMBER_FIT_CONTAIN) ? ((sx < sy) ? sx : sy) : sy;
+    const float cw = aw * scale;
+    const float ch = ah * scale;
+
+    //Centred, so bands are even on both sides and a crop takes the same from each. Halves rather
+    //than all of it at one edge because a picture pinned to a corner reads as a broken layout,
+    //and because the middle of this artwork is where everything worth seeing is.
     const float cx = (fw - cw) * 0.5f;
     const float cy = (fh - ch) * 0.5f;
     if (out_min){
@@ -3684,6 +3978,29 @@ void ApplicationBomber::GetTitleContentRect(int w, int h, vec2* out_min, vec2* o
     }
     if (out_max){
         *out_max = vec2(cx + cw,cy + ch);
+    }
+}
+
+/*
+    The VISIBLE artwork: the draw rect clipped to the surface.
+
+    Under CONTAIN the two are the same rect and this costs nothing. Under COVER the draw rect
+    hangs off the edges and this is the window - which is the answer a layout wants, because a
+    button placed against the overhang would be placed off-screen.
+*/
+void ApplicationBomber::GetTitleContentRect(int w, int h, vec2* out_min, vec2* out_max) const{
+    vec2 dmin,dmax;
+    GetSplashDrawRect(w,h,&dmin,&dmax);
+
+    const float x0 = (dmin.x > 0.0f) ? dmin.x : 0.0f;
+    const float y0 = (dmin.y > 0.0f) ? dmin.y : 0.0f;
+    const float x1 = (dmax.x < (float)w) ? dmax.x : (float)w;
+    const float y1 = (dmax.y < (float)h) ? dmax.y : (float)h;
+    if (out_min){
+        *out_min = vec2(x0,y0);
+    }
+    if (out_max){
+        *out_max = vec2(x1,y1);
     }
 }
 
@@ -3725,12 +4042,16 @@ void ApplicationBomber::LayoutMenuButtons(int w, int h, bomber_menu_page page){
     InputController::TouchRect rect[BOMBER_MENU_BUTTON_COUNT];
 
     if (page == BOMBER_PAGE_MAIN){
+        //Through the same function DrawMenu reads these rects back for, so the artwork and the
+        //hit test cannot disagree about where a button is - see LayoutMainButtons.
+        vec2 bmin[4];
+        vec2 bmax[4];
+        LayoutMainButtons(w,h,bmin,bmax);
         for (int i = 0; i < 4; i++){
-            const float* r = bomber_main_button_px[i];
-            rect[i].x = cmin.x + (r[0] / BOMBER_SPLASH_W) * fw;
-            rect[i].y = cmin.y + (r[1] / BOMBER_SPLASH_H) * fh;
-            rect[i].w = ((r[2] - r[0]) / BOMBER_SPLASH_W) * fw;
-            rect[i].h = ((r[3] - r[1]) / BOMBER_SPLASH_H) * fh;
+            rect[i].x = bmin[i].x;
+            rect[i].y = bmin[i].y;
+            rect[i].w = bmax[i].x - bmin[i].x;
+            rect[i].h = bmax[i].y - bmin[i].y;
         }
     }else if (page == BOMBER_PAGE_LOADING){
         /*
@@ -3771,6 +4092,117 @@ void ApplicationBomber::LayoutTouchButtons(int w, int h){
     //rects were computed for, and taking the live page here would put a resize and a page change
     //into two different orders depending on which thread won.
     LayoutMenuButtons(w,h,menu_page_applied);
+    //BOMBER_PAGE_NONE IS the game - see ApplyMenuPage, which is the only thing that sets it.
+    LayoutGameButtons(w,h,menu_page_applied == BOMBER_PAGE_NONE);
+}
+
+/*
+    See the header. Anchored to the two bottom corners and the top-left, never laid out from one
+    origin: the board fills the middle at every window size, and anchoring each cluster to its own
+    edge is what keeps the thumbs off it whatever that size is.
+*/
+void ApplicationBomber::LayoutGameButtons(int w, int h, bool f_playing){
+    if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    //Nothing was bound, so there is nothing to place - see the USE_TOUCH_UI block in SetupInput.
+    //An early return rather than seven ignored SetTouchButtonRect calls, because the geometry
+    //below is a page of millimetre arithmetic that would be computed and thrown away every resize.
+    if (touch_bomb < 0){
+        return;
+    }
+    InputController* input = main_scene->inputcontroller;
+
+    const InputController::TouchRect nowhere;
+    if (!f_playing){
+        //Every one of them, every time. See the header on why an unplaced rect is worse than an
+        //invisible one.
+        const int all[] = {touch_menu,touch_pause,touch_north,touch_south,
+                           touch_west,touch_east,touch_bomb};
+        for (int i = 0; i < (int)(sizeof(all) / sizeof(all[0])); i++){
+            if (all[i] >= 0){
+                input->SetTouchButtonRect(all[i],nowhere);
+            }
+        }
+        return;
+    }
+
+    /*
+        SIZED IN MILLIMETRES, AND ANCHORED TO THE SAFE AREA RATHER THAN TO THE WINDOW.
+
+        Both halves were learned on hardware and neither is optional:
+
+          - A thumb is about 10 mm wherever it is, so a touch target has to be a REAL size. The
+            two Android devices this runs on are 160 and 440 dpi, which makes one 11 mm button
+            69 px on the first and 190 px on the second. Any fixed pixel count is right on at
+            most one of them - 88 px looked right at 160 dpi and is a 5 mm target at 440.
+          - The surface spans system furniture that eats touches. The same phone in landscape
+            reports 130 px of unsafe strip down its right edge, most of one button's width, and
+            a button out there is drawn, looks live and does nothing.
+
+        See Application::GetDisplayDPI and Application::GetSafeArea for both numbers.
+    */
+    const float mm    = GetDisplayDPI() / 25.4f;
+    const float s     = 11.0f * mm;     //a comfortable thumb target
+    const float g     =  2.0f * mm;     //gap
+    const float m     =  4.0f * mm;     //inset from the safe edge
+    const float small =  8.0f * mm;     //chrome, smaller on purpose - see the header
+
+    float sx,sy,sw,sh;
+    GetSafeArea(sx,sy,sw,sh);
+    /*
+        Clamped to the surface THIS call was made for. GetSafeArea reads the window, and on the
+        frame a resize is being applied the window and the size handed in here can disagree - for
+        exactly as long as it takes a button to be off the edge and noticed.
+    */
+    if (sx + sw > (float)w){ sw = (float)w - sx; }
+    if (sy + sh > (float)h){ sh = (float)h - sy; }
+
+    const float left  = sx;
+    const float right = sx + sw;
+    const float lower = sy + sh - m - s;            //bottom row of each thumb cluster
+    const float upper = lower - g - s;              //the one stacked above it
+
+    /*
+        LEFT THUMB: WEST in the corner with NORTH directly above it. RIGHT THUMB mirrors it -
+        EAST in the corner with SOUTH above - and BOMB sits INBOARD of EAST on the bottom row.
+
+        The pairing is deliberate and it is not a d-pad. Each thumb owns one horizontal direction
+        and one vertical, so no direction needs a hand to cross the screen, and the two that share
+        a thumb are at right angles rather than opposite - which is what stops a slipped press
+        turning the player back the way they came.
+    */
+    input->SetTouchButtonRect(touch_west, {left + m,lower,s,s});
+    input->SetTouchButtonRect(touch_north,{left + m,upper,s,s});
+
+    input->SetTouchButtonRect(touch_east, {right - m - s,lower,s,s});
+    input->SetTouchButtonRect(touch_south,{right - m - s,upper,s,s});
+    input->SetTouchButtonRect(touch_bomb, {right - m - s - g - s,lower,s,s});
+
+    /*
+        THE CHROME COLUMN, under the lives row on the left.
+
+        Placed off the HUD's own unit rather than off `m`, because what it has to clear is the HUD
+        and not the window: DrawOverlay sizes the pips and the shield bar in multiples of
+        BOMBER_HUD_UNIT x height, so anything measured another way drifts across them at some
+        window size and eventually sits on one.
+
+        The shield bar's slot is reserved even though the bar is only drawn sometimes - a button
+        that moves down when the player picks up a shield is worse than one placed slightly low.
+    */
+    const float u = (float)h * BOMBER_HUD_UNIT;
+    const float hud_margin = u * BOMBER_HUD_MARGIN;
+    const float pip = u * 0.62f;
+    float y = hud_margin + pip * 2.0f + u * 0.85f + u * 0.42f + g;
+    //Off the top of the safe area if the HUD's own arithmetic would have put it higher - a cutout
+    //across the top is exactly as good at eating a touch as the nav bar is.
+    if (y < sy + m){
+        y = sy + m;
+    }
+
+    input->SetTouchButtonRect(touch_menu, {left + m,y,small,small});
+    y += small + g;
+    input->SetTouchButtonRect(touch_pause,{left + m,y,small,small});
 }
 
 void ApplicationBomber::ApplyMenuPage(bomber_menu_page page){
@@ -3782,13 +4214,21 @@ void ApplicationBomber::ApplyMenuPage(bomber_menu_page page){
     //The background only means anything while the title scene is up; BOMBER_PAGE_NONE is the game
     //scene, which has its own everything.
     if ((page != BOMBER_PAGE_NONE) && title_splash){
-        int material = (page == BOMBER_PAGE_MAIN) ? title_material_main : title_material_menu;
+        //The front page gets whichever splash variant this screen's shape asked for; every other
+        //page gets the dungeon. See EnsureSplashVariant for who sets active_splash.
+        int material = title_material_menu;
+        if ((page == BOMBER_PAGE_MAIN) && (active_splash >= 0)){
+            material = splash_variant[active_splash].material;
+        }
         if (material >= 0){
             title_splash->SetMaterialSlot(0,material);
         }
     }
     if (main_window){
         LayoutMenuButtons(main_window->width,main_window->height,page);
+        //Together with the menu's, from the one place the page actually changes, so the two sets
+        //can never both be live - or both be dead - for a frame.
+        LayoutGameButtons(main_window->width,main_window->height,page == BOMBER_PAGE_NONE);
     }
 }
 
@@ -3850,6 +4290,73 @@ bool ApplicationBomber::DrawThemed(const char* role, vec2 min, vec2 max, uint32_
 }
 
 /*
+    One themed button, DRAWN FROM THE RECT THE HIT TEST USES.
+
+    Read back out of the InputController rather than recomputed from the same constants, which is
+    the rule this menu already lived by for its one BACK button and now matters four times more:
+    two expressions meant to agree are two expressions that can stop agreeing, and a button drawn
+    a few pixels off the rectangle that responds is the single most common way a menu feels broken.
+
+    THE LABEL IS FITTED TO THE BUTTON, not the other way round. Sized off the rect's height so it
+    scales with the screen, then shrunk if it does not fit the width - which is what keeps
+    "OPTIONS" inside a button sized for "START" in the portrait column, and which is cheaper than
+    asking the artist for a wider sprite. An empty rect draws nothing, so a page that does not
+    show this button costs one compare.
+*/
+void ApplicationBomber::DrawMenuButton(int button, const char* label){
+    if ((button < 0) || (button >= BOMBER_MENU_BUTTON_COUNT) || (menu_button[button] < 0)){
+        return;
+    }
+    if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    const std::vector<InputController::TouchButton>& buttons =
+        main_scene->inputcontroller->GetTouchButtons();
+    if (menu_button[button] >= (int)buttons.size()){
+        return;
+    }
+    const InputController::TouchRect& r = buttons[menu_button[button]].rect;
+    if ((r.w <= 0.0f) || (r.h <= 0.0f)){
+        return;
+    }
+    const vec2 bmin = vec2(r.x,r.y);
+    const vec2 bmax = vec2(r.x + r.w,r.y + r.h);
+
+    /*
+        Held is drawn as a TINT rather than a second sprite, which is what the themed path buys:
+        the texel is multiplied by this colour, so a darker one reads as pressed with no extra
+        artwork to author or pack. The fallback path uses it as its own alpha.
+
+        The three-slice itself lives in theme.json - see the note on "button" there for why a
+        button is sliced on one axis only.
+    */
+    const bool f_held = buttons[menu_button[button]].f_down;
+    const uint32_t tint = f_held ? UIColor(170,170,170,255) : UIColor(255,255,255,255);
+    if (!DrawThemed("button",bmin,bmax,tint)){
+        ui_nine_inset binset;
+        binset.left = binset.right = 20.0f;
+        binset.top = 0.0f;
+        binset.bottom = 0.0f;
+        overlay->AddNineSliceDebug(bmin,bmax,binset,f_held ? 255 : 210);
+    }
+
+    if (!label || !*label){
+        return;
+    }
+    float ts = r.h * 0.42f;
+    const float room = r.w * 0.80f;
+    const float need = overlay->MeasureText(label,ts).x;
+    if ((need > room) && (need > 0.0f)){
+        ts *= room / need;
+    }
+    //0.36 of the em below the centre is where this font's baseline puts a line of capitals in the
+    //middle of a box. Measured against the old BACK button, which is the same expression written
+    //in terms of the page's title size.
+    overlay->AddText(label,vec2((bmin.x + bmax.x) * 0.5f,(bmin.y + bmax.y) * 0.5f + ts * 0.36f),
+                     ts,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
+}
+
+/*
     The menu. RENDER THREAD, from DrawOverlay. See the header.
 */
 void ApplicationBomber::DrawMenu(void){
@@ -3865,13 +4372,25 @@ void ApplicationBomber::DrawMenu(void){
     //Off the CONTENT height, so the type scales with the artwork rather than with the bands.
     const float text_size = h * 0.045f;
 
+    //BOMBER_PAGE_NONE is the game. Its HUD is drawn elsewhere and none of this applies.
+    if (menu_page_applied == BOMBER_PAGE_NONE){
+        return;
+    }
+
     /*
-        The front page draws NOTHING. Its four buttons are painted into splash.jpg and the rects
-        are laid on top of them, so anything drawn here would be a second set of buttons over the
-        first. That it looks identical to before is the point - the artwork was always the UI, it
-        just had no input behind it.
+        THE FRONT PAGE IS ITS FOUR BUTTONS AND NOTHING ELSE - no panel, because the artwork is
+        the page.
+
+        It used to draw nothing at all: the buttons were painted into splash.jpg and these rects
+        were laid invisibly on top of the paint. The full-bleed variants have no buttons in them
+        and cannot have any, because they are CROPPED to the screen and paint would slide out from
+        under its rectangle. So they are the theme's buttons now, three-sliced from the same
+        sprite BACK uses, in a row or a column depending on the shape of the screen.
     */
-    if (menu_page_applied == BOMBER_PAGE_MAIN || menu_page_applied == BOMBER_PAGE_NONE){
+    if (menu_page_applied == BOMBER_PAGE_MAIN){
+        for (int i = 0; i < 4; i++){
+            DrawMenuButton(i,bomber_main_button_label[i]);
+        }
         return;
     }
 
@@ -3880,10 +4399,17 @@ void ApplicationBomber::DrawMenu(void){
         case BOMBER_PAGE_LEVEL_SELECT: title = "LEVEL SELECT"; break;
         case BOMBER_PAGE_OPTIONS:      title = "OPTIONS";      break;
         case BOMBER_PAGE_HIGH_SCORES:  title = "HIGH SCORES";  break;
-        //Two words for one page, because a full bar under the word LOADING says the opposite of
-        //what the screen means at that moment.
+        /*
+            Two words for one page, because a full bar under the word LOADING says the opposite of
+            what the screen means at that moment.
+
+            READY only on the way INTO the game, which is the only direction that waits. Coming
+            back the page leaves the same frame it finishes, so READY would be a word that
+            appears for one frame on the way to somewhere else.
+        */
         case BOMBER_PAGE_LOADING:
-            title = f_loading_complete.load() ? "READY" : "LOADING";
+            title = (f_loading_complete.load()
+                     && (loading_target.load() == BOMBER_LOADING_TO_GAME)) ? "READY" : "LOADING";
             break;
         default: break;
     }
@@ -3949,7 +4475,7 @@ void ApplicationBomber::DrawMenu(void){
             here and is the wrong unit twice over: it changes speed with the frame rate, and it
             would be the only duration in the app not expressed the way every other one is.
         */
-        if (f_loading_complete.load()){
+        if (f_loading_complete.load() && (loading_target.load() == BOMBER_LOADING_TO_GAME)){
             const uint64_t tick = main_scene ? main_scene->GetPhysicsTick() : 0;
             const float phase = (float)(tick % BOMBER_TAP_PULSE_TICKS)
                               / (float)BOMBER_TAP_PULSE_TICKS;
@@ -3964,35 +4490,8 @@ void ApplicationBomber::DrawMenu(void){
         return;
     }
 
-    if ((menu_button[4] >= 0) && main_scene && main_scene->inputcontroller){
-        const std::vector<InputController::TouchButton>& buttons =
-            main_scene->inputcontroller->GetTouchButtons();
-        if (menu_button[4] < (int)buttons.size()){
-            const InputController::TouchRect& r = buttons[menu_button[4]].rect;
-            vec2 bmin = vec2(r.x,r.y);
-            vec2 bmax = vec2(r.x + r.w,r.y + r.h);
-            /*
-                Held is drawn as a TINT rather than a second sprite, which is what the themed path
-                buys: the texel is multiplied by this colour, so a darker one reads as pressed with
-                no extra artwork to author or pack. The fallback path uses it as its own alpha.
-
-                The three-slice itself now lives in theme.json - see the note on "button" there for
-                why a button is sliced on one axis only.
-            */
-            bool f_held = buttons[menu_button[4]].f_down;
-            uint32_t tint = f_held ? UIColor(170,170,170,255) : UIColor(255,255,255,255);
-            if (!DrawThemed("button",bmin,bmax,tint)){
-                ui_nine_inset binset;
-                binset.left = binset.right = 20.0f;
-                binset.top = 0.0f;
-                binset.bottom = 0.0f;
-                overlay->AddNineSliceDebug(bmin,bmax,binset,f_held ? 255 : 210);
-            }
-            overlay->AddText("BACK",vec2((bmin.x + bmax.x) * 0.5f,
-                                         (bmin.y + bmax.y) * 0.5f + text_size * 0.25f),
-                             text_size * 0.7f,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
-        }
-    }
+    //The one way out of a sub-page, through the same helper the front page's four go through.
+    DrawMenuButton(4,"BACK");
 }
 
 /*
@@ -4131,6 +4630,66 @@ void ApplicationBomber::DrawOverlay(void){
         at.y += line;
         snprintf(text,sizeof(text),"SCORE  %u",hud.score);
         overlay->AddText(text,at,text_size * 1.1f,BOMBER_HUD_TEXT,UI_ALIGN_RIGHT);
+    }
+
+    //Last, so the thumbs are over the HUD rather than under it.
+    DrawGameButtons();
+}
+
+/*
+    See the header.
+
+    DRAWN FROM THE RECTS INPUT IS ACTUALLY USING, read back out of the InputController, rather than
+    recomputed from the same constants. A button drawn a few pixels off the rectangle that responds
+    is the single most common way a touch UI feels broken, and the only way to be sure they agree
+    is for there to be one of them - the same reasoning as the menu's BACK button.
+
+    An empty rect draws nothing, which is what makes the title screen need no case here: off the
+    board LayoutGameButtons has already written all seven empty.
+*/
+void ApplicationBomber::DrawGameButtons(void){
+    if (!overlay || !overlay->IsReady() || !main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    const std::vector<InputController::TouchButton>& buttons =
+        main_scene->inputcontroller->GetTouchButtons();
+
+    const int ids[] = {touch_menu,touch_pause,touch_north,touch_south,
+                       touch_west,touch_east,touch_bomb};
+    const char* labels[] = {"MENU","II","^","v","<",">","BOMB"};
+    /*
+        One type size per label rather than one rule for all seven: "BOMB" is four glyphs in a box
+        built for a single arrow, and a size that suits the arrow overflows the word. A strlen test
+        would get the same answer for "MENU" and "BOMB" and the wrong one for "II", which wants to
+        be large because it is a symbol rather than a word.
+    */
+    const float scale[] = {0.30f,0.52f,0.58f,0.58f,0.58f,0.58f,0.26f};
+
+    for (int i = 0; i < (int)(sizeof(ids) / sizeof(ids[0])); i++){
+        if ((ids[i] < 0) || (ids[i] >= (int)buttons.size())){
+            continue;
+        }
+        const InputController::TouchRect& r = buttons[ids[i]].rect;
+        if ((r.w <= 0.0f) || (r.h <= 0.0f)){
+            continue;
+        }
+        vec2 bmin = vec2(r.x,r.y);
+        vec2 bmax = vec2(r.x + r.w,r.y + r.h);
+
+        //Tint for held, exactly as the BACK button does it - the themed texel is multiplied by
+        //this, so a darker one reads as pressed with no second sprite to author.
+        bool f_held = buttons[ids[i]].f_down;
+        uint32_t tint = f_held ? UIColor(170,170,170,255) : UIColor(255,255,255,235);
+        if (!DrawThemed("button",bmin,bmax,tint)){
+            ui_nine_inset binset;
+            binset.left = binset.right = 20.0f;
+            binset.top = binset.bottom = 0.0f;
+            overlay->AddNineSliceDebug(bmin,bmax,binset,f_held ? 255 : 190);
+        }
+        const float size = r.h * scale[i];
+        overlay->AddText(labels[i],vec2((bmin.x + bmax.x) * 0.5f,
+                                        (bmin.y + bmax.y) * 0.5f + size * 0.35f),
+                         size,BOMBER_HUD_TEXT,UI_ALIGN_CENTER);
     }
 }
 
@@ -4473,6 +5032,9 @@ void ApplicationBomber::PreRender(void){
     if (!f_theme_tried && overlay && overlay->IsReady()){
         LoadUITheme();
     }
+    //BEFORE ScaleTitleSplash, which reads the active variant's size to shape the quad - one frame
+    //of the previous variant's aspect would be a visible stretch on the frame a window crosses 1:1.
+    EnsureSplashVariant();
     ScaleTitleSplash();
     //The loading screen's one texture for this frame, if one is up. See StepLoading - it is a
     //return on every frame that is not loading, which is nearly all of them.

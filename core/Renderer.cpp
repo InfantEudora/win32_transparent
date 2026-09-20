@@ -2207,6 +2207,26 @@ void Renderer::UploadMaterials(){
                     last_texture_unit,NUM_MATERIAL_UNITS,TEXUNIT_MATERIAL_FIRST);
     }
 
+    /*
+        HOW MANY UNITS THE MATERIALS ACTUALLY WANT, said out loud WHEN IT CHANGES.
+
+        This runs every frame, so a number printed unconditionally would be a number nobody reads.
+        Printed on the change it is one line per transition, and it is the line that answers the
+        only question the residency machinery above exists to settle: whether an app that swaps
+        texture sets is staying inside the budget, or has quietly gone one over on some path
+        nobody walked while looking.
+
+        DESKTOP CANNOT ANSWER IT BY FAILING. There are 21 units here and 5 on the device, so an
+        app that fits Windows perfectly can be two over on the phone with nothing on screen to say
+        so - the warning above never fires and the shader never runs out. This does not care which
+        platform it is on: it reports the demand, and the demand is the same in both places.
+    */
+    const int units_used = last_texture_unit - TEXUNIT_MATERIAL_FIRST;
+    if (units_used != last_reported_material_units){
+        last_reported_material_units = units_used;
+        debug->Info("Material texture units in use: %i of %i\n",units_used,NUM_MATERIAL_UNITS);
+    }
+
     if (glsl_materials.size() > 0){
         //glInvalidateBufferData(materialdata_ssbo);
         glNamedBufferData(materialdata_ssbo,glsl_materials.size()*sizeof(material_t) , &glsl_materials.at(0),GL_STREAM_DRAW);

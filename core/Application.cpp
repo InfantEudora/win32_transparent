@@ -230,6 +230,20 @@ void Application::DrawImGuiUI(){
     race with the window thread that writes it: the worst outcome is a button drawn lit one frame
     after it released, which is a frame of paint and not a missed input.
 */
+//See the declarations in Application.h. Both are the baseline answer for this platform; the
+//point of having them here at all is that an app can size and anchor a touch layout ONCE and
+//have it be right everywhere, instead of every app growing its own guess.
+float Application::GetDisplayDPI() const{
+    return 96.0f;
+}
+
+void Application::GetSafeArea(float& x, float& y, float& w, float& h) const{
+    x = 0.0f;
+    y = 0.0f;
+    w = main_window ? (float)main_window->width  : 0.0f;
+    h = main_window ? (float)main_window->height : 0.0f;
+}
+
 void Application::DrawTouchButtons(){
     if (!overlay || !overlay->IsReady() || !main_window || !main_window->inputcontroller){
         return;
@@ -373,16 +387,29 @@ void Application::DrawFrame(){
         simply joins the UI side of it.
     */
     if (overlay){
-        //Re-lay the on-screen buttons whenever the surface changes, and once before the first
-        //frame. Here rather than at Init because the size is not final there - see
-        //Application::LayoutTouchButtons for the case that proved it.
-#if USE_TOUCH_UI
+        /*
+            Re-lay the on-screen buttons whenever the surface changes, and once before the first
+            frame. Here rather than at Init because the size is not final there - see
+            Application::LayoutTouchButtons for the case that proved it.
+
+            NOT GATED ON USE_TOUCH_UI, and it used to be. That flag answers "does this platform
+            show on-screen GAME controls", and this call answers a different question: "does
+            anything in this app hold a rectangle in screen space". Those came apart the moment an
+            app had rects that are not touch controls - apps/bomber's menu buttons are the mouse's
+            only way into the menu on a desktop, and under the old gate they stopped following a
+            resize on exactly the platform where windows get resized.
+
+            Safe for an app that binds nothing: an unbound button is index -1, LayoutTouchButtons
+            hands that to SetTouchButtonRect, and that ignores it. So an app which gates its own
+            binding - as both of the apps with touch controls do - still places nothing here, and
+            the warning in Application.h about a button bound but not drawn still holds, because
+            binding is still what USE_TOUCH_UI gates in the app.
+        */
         if ((main_window->width != touch_layout_w) || (main_window->height != touch_layout_h)){
             touch_layout_w = main_window->width;
             touch_layout_h = main_window->height;
             LayoutTouchButtons(touch_layout_w,touch_layout_h);
         }
-#endif
 
         overlay->Begin(main_window->width,main_window->height);
         //NOT gated: this is the app's own 2D HUD, which a desktop build wants as much as a phone
