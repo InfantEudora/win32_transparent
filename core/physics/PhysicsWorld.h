@@ -44,6 +44,19 @@ public:
         bool hit = false;
         vec3 point = {};
         vec3 normal = {};
+        /*
+            WHAT was struck, not just where.
+
+            rp3d hands this to the callback already and it used to be dropped on the floor, which
+            made the answer half an answer: "something is 4.2 units that way" cannot be acted on,
+            because every interesting thing you do with a raycast hit - shove it, damage it, pick
+            it up, tell the player its name - needs the body. Callers were left to guess from the
+            point, which only works while no two objects are close together.
+
+            NULL when hit is false, and NULL for a hit on a body the caller has no Object for.
+            Purely additive: every existing caller reads point and normal and is unaffected.
+        */
+        reactphysics3d::RigidBody* body = NULL;
     };
     RaycastHit Raycast(const vec3& from, const vec3& to, reactphysics3d::RigidBody* exclude_rigidbody = NULL);
 

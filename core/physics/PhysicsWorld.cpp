@@ -84,6 +84,7 @@ namespace {
         bool hit = false;
         reactphysics3d::Vector3 point;
         reactphysics3d::Vector3 normal;
+        reactphysics3d::RigidBody* body = NULL;
 
         reactphysics3d::decimal notifyRaycastHit(const reactphysics3d::RaycastInfo &info) override {
             if (exclude && info.body == exclude) {
@@ -92,6 +93,10 @@ namespace {
             hit = true;
             point = info.worldPoint;
             normal = info.worldNormal;
+            //RaycastInfo carries a Body*, and every body a PhysicsWorld can contain is a
+            //RigidBody - createRigidBody is the only way to put one in, rp3d having merged
+            //CollisionBody away in 0.10. So the downcast is safe rather than hopeful.
+            body = static_cast<reactphysics3d::RigidBody*>(info.body);
             return info.hitFraction; // clip further queries to no farther than this hit
         }
     };
@@ -108,6 +113,7 @@ PhysicsWorld::RaycastHit PhysicsWorld::Raycast(const vec3& from, const vec3& to,
     if (callback.hit){
         result.point = (vec3&)callback.point;
         result.normal = (vec3&)callback.normal;
+        result.body = callback.body;
     }
     return result;
 }
