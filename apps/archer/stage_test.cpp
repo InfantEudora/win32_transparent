@@ -34,9 +34,12 @@ static void Check(bool f_ok, const char* what, const char* detail = NULL){
     printf("  FAIL  %s%s%s\n",what,detail ? " - " : "",detail ? detail : "");
 }
 
-static void CheckNear(float got, float want, float tol, const char* what){
-    char detail[160];
-    snprintf(detail,sizeof(detail),"got %.4f, wanted %.4f +/- %.4f",got,want,tol);
+//`extra` is appended to the got/wanted line, for the cases where the numbers alone do not say
+//what went wrong - which surface was meant, what the reach was, and so on.
+static void CheckNear(float got, float want, float tol, const char* what, const char* extra = NULL){
+    char detail[260];
+    snprintf(detail,sizeof(detail),"got %.4f, wanted %.4f +/- %.4f%s%s",
+             got,want,tol,extra ? "; " : "",extra ? extra : "");
     Check(fabsf(got - want) <= tol,what,detail);
 }
 
@@ -519,6 +522,340 @@ static void TestBow(){
     Check(r.y > 0.0f,"a positive aim angle points upward in both directions");
 }
 
+//--- Hanging and climbing -------------------------------------------------------------------------
+
+//The one ledge in the level that is grabbable-only: too high to land on, low enough to catch.
+static const StageBlock& HighLedge(const Stage& s){
+    float feet = ApexRise();
+    for (size_t i = 0; i < s.blocks.size(); i++){
+        if (s.blocks[i].kind == BLOCK_LEDGE && s.blocks[i].Top() > feet){
+            return s.blocks[i];
+        }
+    }
+    return s.blocks[0];
+}
+
+static void TestLedge(){
+    printf("ledges\n");
+
+    Stage probe;
+    const StageBlock& ledge = HighLedge(probe);
+    char detail[200];
+
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    ArcherInput fly = right;
+    fly.f_jump_down = true;
+    ArcherInput jump = fly;
+    jump.f_jump_pressed = true;
+    StageEvents ev;
+
+    /*
+        Stand against the high ledge's face and jump, holding INTO it.
+
+        No run-up, and that is not laziness - the ground this ledge stands on only starts 4.5 units
+        to its left, so there is nowhere to run from. It does not need one: the hands reach 5.00
+        against a 4.20 lip, so a standing jump carries them well past it, and the archer presses
+        against the face and catches it coming back down. Which is also the honest thing to test,
+        because "jump straight up and catch the thing above you" is what a player will try first.
+    */
+    Stage s;
+    s.pos = v2(ledge.Left() - ARCHER_HALF_W - 0.5f,ARCHER_HALF_H);
+    Settle(s);
+    snprintf(detail,sizeof(detail),"standing at x %.2f, y %.2f",s.pos.x,s.pos.y);
+    Check(s.f_on_ground,"the archer starts on the ground below the high ledge",detail);
+
+    s.Tick(jump,ev);
+    Check(ev.f_jumped,"and jumps at it");
+
+    bool f_grabbed = false;
+    for (int i = 0; i < 200; i++){
+        StageEvents e;
+        s.Tick(fly,e);
+        if (e.f_grabbed_ledge){
+            f_grabbed = true;
+            break;
+        }
+        if (s.f_on_ground){
+            break;
+        }
+    }
+    snprintf(detail,sizeof(detail),"ended at (%.2f,%.2f) mode %i; the lip is at %.2f and feet reach %.2f",
+             s.pos.x,s.pos.y,s.mode,ledge.Top(),ApexRise());
+    Check(f_grabbed,"a jump at a lip too high to land on CATCHES it",detail);
+    Check(s.mode == MODE_HANG,"and leaves the archer hanging",detail);
+
+    //The pose is exact, which everything downstream relies on.
+    CheckNear(s.pos.y + ARCHER_HALF_H,ledge.Top(),0.01f,"with the hands exactly on the lip");
+    CheckNear(s.pos.x + ARCHER_HALF_W,ledge.Left(),0.01f,"and the body flat against the face");
+    Check(s.facing > 0.0f,"facing the wall it caught");
+
+    //Hanging is stable: no gravity, no drift, indefinitely.
+    v2 held = s.pos;
+    ArcherInput idle;
+    Run(s,120,idle);
+    Check(s.mode == MODE_HANG,"hanging holds with no input");
+    Check(s.pos.x == held.x && s.pos.y == held.y,"and does not drift by even a float");
+
+    //A draw cannot be started with both hands on the rock.
+    ArcherInput draw;
+    draw.f_draw_down = true;
+    Run(s,10,draw);
+    Check(s.bow_mode == BOW_IDLE,"and the bow cannot be drawn from a hang");
+
+    //--- Climbing ---------------------------------------------------------------------------------
+    ArcherInput up;
+    up.f_jump_pressed = true;
+    StageEvents ce;
+    s.Tick(up,ce);
+    Check(s.mode == MODE_CLIMB,"jump from a hang starts the climb");
+
+    bool f_climbed = false;
+    for (int i = 0; i < LEDGE_CLIMB_TICKS + 30; i++){
+        StageEvents e;
+        s.Tick(idle,e);
+        if (e.f_climbed){
+            f_climbed = true;
+            break;
+        }
+    }
+    Check(f_climbed,"which finishes");
+    Check(s.mode == MODE_GROUND && s.f_on_ground,"standing on the ledge");
+    CheckNear(s.pos.y - ARCHER_HALF_H,ledge.Top(),0.02f,"with the feet on its top surface");
+    Check(s.pos.x > ledge.Left() && s.pos.x < ledge.Right(),"and the body over the block, not past it");
+
+    //And it stays there - a climb that ends in a position overlapping the block would be ejected.
+    Run(s,60,idle);
+    Check(s.f_on_ground,"and it is still standing there a second later");
+    CheckNear(s.pos.y - ARCHER_HALF_H,ledge.Top(),0.02f,"at the same height");
+
+    //--- Letting go --------------------------------------------------------------------------------
+    Stage d;
+    d.pos = v2(ledge.Left() - ARCHER_HALF_W - 0.5f,ARCHER_HALF_H);
+    Settle(d);
+    d.Tick(jump,ev);
+    for (int i = 0; i < 200 && d.mode != MODE_HANG; i++){
+        StageEvents e;
+        d.Tick(fly,e);
+    }
+    Check(d.mode == MODE_HANG,"a second archer catches the same lip");
+
+    ArcherInput drop;
+    drop.f_down_held = true;
+    StageEvents de;
+    d.Tick(drop,de);
+    Check(de.f_released_ledge && d.mode == MODE_AIR,"holding Down lets go");
+    //The cooldown is the whole reason letting go works at all.
+    Run(d,6,idle);
+    Check(d.mode == MODE_AIR,"and it does not instantly re-grab the lip it just left");
+    Run(d,180,idle);
+    Check(d.f_on_ground,"the archer falls back to the ground");
+
+    //--- Choosing to miss it -----------------------------------------------------------------------
+    Stage m;
+    m.pos = v2(ledge.Left() - ARCHER_HALF_W - 0.5f,ARCHER_HALF_H);
+    Settle(m);
+    m.Tick(jump,ev);
+    ArcherInput away;
+    away.move_axis = -1.0f;         //holding back from the wall
+    away.f_jump_down = true;
+    bool f_caught = false;
+    for (int i = 0; i < 200; i++){
+        StageEvents e;
+        m.Tick(away,e);
+        if (e.f_grabbed_ledge){
+            f_caught = true;
+            break;
+        }
+        if (m.f_on_ground){
+            break;
+        }
+    }
+    Check(!f_caught,"holding away from the lip refuses the grab");
+
+    //--- A jump that CAN be made must not be stolen -------------------------------------------------
+    /*
+        The rule that earns the falling-only condition. A standable platform is landed ON; the hands
+        cross its lip on the way up, and if a rising archer could grab, every such jump would snag.
+    */
+    const StageBlock* low = NULL;
+    for (size_t i = 0; i < probe.blocks.size(); i++){
+        if (probe.blocks[i].kind == BLOCK_LEDGE && probe.blocks[i].Top() <= ApexRise()){
+            low = &probe.blocks[i];
+        }
+    }
+    Check(low != NULL,"the level has a standable ledge to test that against");
+    if (low){
+        Stage t;
+        t.pos = v2(low->Left() - 7.0f,ARCHER_HALF_H);
+        Settle(t);
+        int guard = 0;
+        while (t.pos.x < low->Left() - 3.0f && guard++ < 400){
+            StageEvents e;
+            t.Tick(right,e);
+        }
+        t.Tick(jump,ev);
+        bool f_snagged = false;
+        for (int i = 0; i < 200; i++){
+            StageEvents e;
+            t.Tick(fly,e);
+            if (e.f_grabbed_ledge){
+                f_snagged = true;
+            }
+            if (t.f_on_ground){
+                break;
+            }
+        }
+        snprintf(detail,sizeof(detail),"its top is %.2f against a %.2f reach",low->Top(),ApexRise());
+        Check(!f_snagged,"a ledge low enough to land on is landed on, not grabbed",detail);
+        Check(t.f_on_ground && t.pos.y - ARCHER_HALF_H > low->Top() - 0.05f,
+              "and the archer ends up standing on top of it",detail);
+    }
+}
+
+//--- Props that block -----------------------------------------------------------------------------
+
+//Ticks with one obstacle re-declared every tick, which is how the app drives it: the boxes are
+//rebuilt from the bodies' live positions before each Tick, never left standing from the last one.
+static void RunWithObstacle(Stage& s, int n, const ArcherInput& in,
+                            float x, float y, float hw, float hh, int id, bool f_pushable,
+                            StageEvents* out_last = NULL){
+    for (int i = 0; i < n; i++){
+        s.ClearObstacles();
+        s.AddObstacle(x,y,hw,hh,id,f_pushable);
+        StageEvents ev;
+        s.Tick(in,ev);
+        if (out_last){
+            *out_last = ev;
+        }
+    }
+}
+
+static void TestObstacles(){
+    printf("props that block\n");
+    char detail[200];
+
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    ArcherInput idle;
+
+    //--- A crate stops you --------------------------------------------------------------------
+    Stage s;
+    Settle(s);
+    float crate_x = s.pos.x + 3.0f;
+    StageEvents last;
+    RunWithObstacle(s,90,right,crate_x,0.40f,0.40f,0.40f,7,true,&last);
+
+    //Stopped with the body flat against the crate's near face - wherever the crate has been
+    //shoved to by then, which is the point of re-reading it every tick.
+    snprintf(detail,sizeof(detail),"archer at %.2f, crate face at %.2f",s.pos.x,crate_x - 0.40f);
+    Check(s.pos.x <= crate_x - 0.40f - ARCHER_HALF_W + 0.01f,"a crate stops the archer walking into it",detail);
+    Check(s.f_on_ground,"who is still on the ground");
+
+    //--- ...and is shoved ----------------------------------------------------------------------
+    Check(last.pushes.size() > 0,"and walking into it reports a push");
+    if (last.pushes.size() > 0){
+        Check(last.pushes[0].id == 7,"naming the obstacle by the id the app gave it");
+        Check(last.pushes[0].dir > 0.0f,"in the direction of travel");
+        snprintf(detail,sizeof(detail),"%.2f, capped at %.2f",last.pushes[0].speed,ARCHER_PUSH_SPEED);
+        Check(last.pushes[0].speed > 0.1f && last.pushes[0].speed <= ARCHER_PUSH_SPEED + 0.001f,
+              "at no more than the push speed",detail);
+    }
+    //The archer's own speed is held down to the push speed too - they are walking behind a crate,
+    //not running through one.
+    snprintf(detail,sizeof(detail),"vel.x %.2f against a %.2f cap",s.vel.x,ARCHER_PUSH_SPEED);
+    Check(s.vel.x <= ARCHER_PUSH_SPEED + 0.01f,"and the archer slows to the pace of what they are pushing",detail);
+
+    //--- A static prop stops you dead -----------------------------------------------------------
+    Stage w;
+    Settle(w);
+    float wall_x = w.pos.x + 3.0f;
+    StageEvents wlast;
+    RunWithObstacle(w,90,right,wall_x,0.75f,0.40f,0.75f,3,false,&wlast);
+    Check(wlast.pushes.size() == 0,"an unpushable prop reports no push");
+    CheckNear(w.vel.x,0.0f,0.01f,"and stops the archer dead");
+    snprintf(detail,sizeof(detail),"archer at %.2f, face at %.2f",w.pos.x,wall_x - 0.40f);
+    CheckNear(w.pos.x,wall_x - 0.40f - ARCHER_HALF_W - 0.001f,0.02f,"flat against its face");
+
+    //--- You can stand on one -------------------------------------------------------------------
+    /*
+        Not a feature that was written - it falls out of resolving the obstacle on the Y axis too,
+        which is exactly why the crates by the start are stacked two high.
+    */
+    Stage t;
+    Settle(t);
+    float box_x = t.pos.x;
+    //Dropped straight onto it rather than jumped at it. A running jump clears 6.5 units, so
+    //aiming one at a 0.8-wide crate is a test of the jump arc, not of the thing being tested -
+    //the first version of this sailed clean over the crate and landed on the ground beyond.
+    t.pos = v2(box_x,3.0f);
+    t.vel = v2(0.0f,0.0f);
+    //Unpushable, so the archer cannot shove it out from under themselves on the way down.
+    RunWithObstacle(t,120,idle,box_x,0.40f,0.40f,0.40f,1,false);
+    snprintf(detail,sizeof(detail),"ended at y %.2f; the crate's top is 0.80",t.pos.y);
+    Check(t.f_on_ground,"an archer dropped onto a crate lands on it",detail);
+    CheckNear(t.pos.y - ARCHER_HALF_H,0.80f,0.05f,"standing on top of it");
+    //And stays - a floor that only holds for the tick of the landing is the classic failure here.
+    RunWithObstacle(t,60,idle,box_x,0.40f,0.40f,0.40f,1,false);
+    CheckNear(t.pos.y - ARCHER_HALF_H,0.80f,0.05f,"and is still standing on it a second later");
+
+    //--- A crate that comes to YOU must not carry you up ------------------------------------------
+    /*
+        THE REGRESSION THIS FILE MISSED FIRST TIME ROUND, so it is worth stating what it was.
+
+        A crate shoved into a wall rebounds back into the archer. The archer is standing still, so
+        there is no horizontal movement to resolve - and when the X pass only ran for a non-zero
+        step, it skipped. The Y pass then ran, as it always does because gravity always does, found
+        the overlap and resolved it the only way it knows how: by standing the archer on top. In
+        the running game that came out as the archer riding up a stack of crates without ever
+        pressing jump, 0.90 -> 1.70 -> 2.50.
+
+        Reproduced by walking the obstacle INTO a stationary archer, a little each tick. The motion
+        is the mechanism, so a box declared at a fixed spot tests nothing - the first version of
+        this did exactly that and passed happily against the broken code. Checked both ways round:
+        revert the X-pass fix and the second assertion here fails, with the crate having walked
+        clean through the archer. The Y-pass guard is belt and braces for the case the X pass
+        cannot settle on its own - two obstacles, where resolving against one leaves the archer
+        inside the other - and is not what this particular test is holding down.
+    */
+    Stage r;
+    Settle(r);
+    float ground_y = r.pos.y;
+    float highest = r.pos.y;
+    //The crate WALKS INTO the archer, a little each tick, which a fixed box cannot imitate - and
+    //the motion is the whole mechanism, so a stationary obstacle here tests nothing. It starts
+    //clear to the right and closes in; the archer presses no key at all.
+    float closing_x = r.pos.x + 1.60f;
+    for (int i = 0; i < 90; i++){
+        closing_x -= 0.05f;
+        r.ClearObstacles();
+        r.AddObstacle(closing_x,0.40f,0.40f,0.40f,4,true);
+        StageEvents ev;
+        r.Tick(idle,ev);
+        if (r.pos.y > highest){
+            highest = r.pos.y;
+        }
+    }
+    snprintf(detail,sizeof(detail),"rose to %.2f from %.2f; the crate's top is 0.80",highest,ground_y);
+    CheckNear(highest,ground_y,0.02f,"a crate shoved INTO a standing archer never carries them up",detail);
+    snprintf(detail,sizeof(detail),"archer at %.2f, crate face at %.2f",r.pos.x,closing_x - 0.40f);
+    Check(r.pos.x <= closing_x - 0.40f - ARCHER_HALF_W + 0.01f,"it pushes them along the ground instead",detail);
+
+    //--- Obstacles are per tick, not persistent ---------------------------------------------------
+    //The one way to misuse this is to leave them standing, so the fact that they evaporate is
+    //worth asserting rather than assuming.
+    Stage c;
+    Settle(c);
+    c.ClearObstacles();
+    c.AddObstacle(c.pos.x + 1.0f,0.40f,0.40f,0.40f,1,false);
+    Check(c.obstacles.size() == 1,"an obstacle can be declared");
+    c.ClearObstacles();
+    Check(c.obstacles.size() == 0,"and clearing removes it");
+    float before = c.pos.x;
+    Run(c,40,right);
+    Check(c.pos.x > before + 1.5f,"with none declared, the archer walks straight past where it was");
+}
+
 //--- Determinism ---------------------------------------------------------------------------------
 
 static void TestDeterminism(){
@@ -560,6 +897,8 @@ int main(void){
     TestJumpBuffer();
     TestGapAndPlatform();
     TestBow();
+    TestLedge();
+    TestObstacles();
     TestDeterminism();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);

@@ -143,6 +143,9 @@ void ApplicationArcher::BuildMaterials(){
         //Breakable: cracked-brick red, the colour it will burst into.
         { "ar_breakable",   vec4(0.62f,0.28f,0.24f,1.0f), 0.10f, &material_breakable },
         { "ar_archer",      vec4(0.30f,0.72f,0.42f,1.0f), 0.18f, &material_archer },
+        //Hanging and climbing. Distinct enough to read at a glance in a screenshot, close enough
+        //in hue that it still reads as the same character rather than a different object.
+        { "ar_archer_hang", vec4(0.95f,0.80f,0.25f,1.0f), 0.30f, &material_archer_hang },
         { "ar_crate",       vec4(0.68f,0.52f,0.30f,1.0f), 0.06f, &material_crate },
         { "ar_target",      vec4(0.90f,0.90f,0.88f,1.0f), 0.10f, &material_target },
         //A struck target goes green, so a hit is legible in a screenshot with no HUD at all -
@@ -562,6 +565,35 @@ void ApplicationArcher::RegisterCommandHandlers(){
             stage.aim_deg = clamp(cmd.value[0],BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
             return OBJECTID_INVALID;
         });
+
+    /*
+        Put the archer somewhere, in value[0]/value[1].
+
+        A DEVELOPMENT TOOL and unapologetically so: the level is 84 units long with two gaps in it,
+        and iterating on the ledge at x 44 should not require flying the whole approach by script
+        every time - a run that spends thirty seconds getting there and then falls in a pit has
+        measured nothing. It goes through the command queue like everything else, so it lands at a
+        known point in a known tick and would be recorded by a replay rather than corrupting one.
+
+        It clears the movement state as well as the position, which is the part worth stating: a
+        teleport that keeps the old velocity, hang and climb-timer drops the archer into the new
+        spot still hanging off a ledge that is now somewhere else entirely.
+    */
+    main_scene->RegisterCommandHandler(ARCHER_CMD_PLACE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            stage.pos = v2(cmd.value[0],cmd.value[1]);
+            stage.vel = v2(0.0f,0.0f);
+            stage.mode = MODE_AIR;
+            stage.hang_block = -1;
+            stage.climb_ticks = 0;
+            stage.grab_cooldown = 0;
+            stage.f_on_ground = false;
+            stage.coyote_ticks = 0;
+            stage.buffer_ticks = 0;
+            stage.bow_mode = BOW_IDLE;
+            stage.draw_ticks = 0;
+            return OBJECTID_INVALID;
+        });
 }
 
 void ApplicationArcher::NewGame(){
@@ -631,13 +663,17 @@ void ApplicationArcher::RunSimulationTick(void){
     ArcherInput intent;
     GatherInput(intent);
 
+    //The props, as boxes, BEFORE the tick - the archer is about to be resolved against them.
+    RefreshObstacles();
+
     StageEvents events;
     stage.Tick(intent,events);
 
     HandleEvents(events);
+    ApplyPushes(events);
     ResolveArrowsAgainstProps();
     DriveArcherBody();
-    KickProps();
+    SyncArcherView();
     SyncArrowViews();
     SyncAimArc();
     UpdateTargets();
@@ -693,6 +729,12 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
     //Sound and particles hang off here once there are any; for now the log is the feedback, and
     //only for the things worth a line. A landing every time the archer walks down a step would
     //drown the log that the MCP runs are read out of.
+    if (events.f_grabbed_ledge){
+        debug->Info("Caught a ledge at (%.2f,%.2f)\n",stage.pos.x,stage.pos.y);
+    }
+    if (events.f_climbed){
+        debug->Info("Climbed up onto the ledge, standing at (%.2f,%.2f)\n",stage.pos.x,stage.pos.y);
+    }
     if (events.f_shot){
         debug->Info("Shot at %.0f deg, power %.2f\n",stage.aim_deg,events.shot_power);
     }
@@ -831,102 +873,78 @@ void ApplicationArcher::DriveArcherBody(){
 }
 
 /*
-    The archer's shove on the props.
+    Hand Stage every live prop as a plain box, before the tick.
 
-    WHY THE ARCHER PUSHES PROPS HERE RATHER THAN THROUGH THE SOLVER. Stage resolves the archer
-    against the LEVEL and knows nothing about props, so the archer walks clean through a crate
-    rather than being stopped by it. A kinematic character controller normally gets its pushing
-    for free precisely because it IS stopped by what it pushes, keeping the overlap shallow; with
-    the overlap instead lasting as long as it takes to walk the prop's width, handing that to the
-    solver means asking it to resolve a deep overlap against infinite mass every one of those
-    ticks. Doing it here instead is bounded by construction: the push SETS a velocity rather than
-    adding a force, so it cannot accumulate over those ticks.
+    This is the whole of how "a crate blocks you" is wired, and the reason it is six numbers rather
+    than a pointer: Stage names no engine type, so it cannot be given a body, a collider or an
+    Object. It is given where the thing is and how big it is, plus an id it never interprets and
+    hands straight back on a push event.
 
-    IN FAIRNESS TO THE SOLVER, it was blamed for a while for something that was not its fault -
-    the props had no gravity and so no friction, and nothing that was ever touched came to rest.
-    See the gravity note in MakePlanarBody. Now that they behave, solver-driven pushing is worth
-    re-testing when the kick slice lands; this function is not the only possible answer, it is the
-    controllable one.
+    REBUILT EVERY TICK, never kept in sync. These are rigid bodies - a crate shoved last tick is
+    somewhere else now - and a stale box is an invisible wall standing where a crate used to be.
+    Clearing and refilling a vector of a couple of dozen PODs costs nothing next to being wrong.
 
-    This is also the seed of the kick-and-break slice, which wants a deliberate kick on a key with
-    a bigger number, aimed at the brick wall.
+    A KNOCKED-OVER prop is deliberately left out. Its axis-aligned box stops describing it the
+    moment it topples, and a board lying on the floor should be stepped over rather than walked
+    into - leaving it out gets both right for free.
 */
-void ApplicationArcher::KickProps(){
-    //A prop resting against someone standing still stays put; a shove is something you do by
-    //moving into it.
-    float speed = (stage.vel.x < 0.0f) ? -stage.vel.x : stage.vel.x;
-    float dir = (stage.vel.x > 0.0f) ? 1.0f : -1.0f;
-    /*
-        ON THE GROUND ONLY. The archer's jump arc passes clean through anything standing at head
-        height - the target board on the ledge is at exactly the height of the apex - and punting
-        it across the level while sailing over it is not a kick, it is a bug that looks like one.
-        Measured: a board at x 31 ended up against the far wall at x 72 having been jumped through.
-    */
-    bool f_may_kick = stage.f_on_ground && (speed >= ARCHER_KICK_MIN_SPEED);
-    //Scaled by how fast the archer is actually going, so walking nudges and running shoves.
-    float push = ARCHER_KICK_SPEED * clamp(speed / ARCHER_RUN_SPEED,0.0f,1.0f);
-
+void ApplicationArcher::RefreshObstacles(){
+    stage.ClearObstacles();
     for (size_t i = 0; i < prop_views.size(); i++){
-        PropView& view = prop_views[i];
-        if (!view.object){
+        const PropView& view = prop_views[i];
+        if (!view.object || view.f_lost || view.f_knocked){
             continue;
         }
         Physics* p = view.object->GetPhysics();
-        if (!p || p->IsStatic()){
-            continue;       //a brick in a standing wall is static until the kick slice frees it
-        }
-
+        //Static props - a brick in a standing wall - block without being shoved. That is what
+        //makes the brick wall a wall until the kick slice frees the bricks it breaks.
+        bool f_pushable = (p && !p->IsStatic());
         vec3 pp = view.object->GetWorldPosition();
-        //Axis-aligned overlap of the archer's body box against the prop's. Approximate for a
-        //toppled prop, which is fine - see the note on PropView::half_extents.
-        bool f_inside = true;
-        if (pp.x + view.half_extents.x < stage.pos.x - ARCHER_HALF_W){ f_inside = false; }
-        if (pp.x - view.half_extents.x > stage.pos.x + ARCHER_HALF_W){ f_inside = false; }
-        if (pp.y + view.half_extents.y < stage.pos.y - ARCHER_HALF_H){ f_inside = false; }
-        if (pp.y - view.half_extents.y > stage.pos.y + ARCHER_HALF_H){ f_inside = false; }
+        stage.AddObstacle(pp.x,pp.y,view.half_extents.x,view.half_extents.y,(int)i,f_pushable);
+    }
+}
 
-        /*
-            ONE KICK PER CONTACT, on the leading edge of the overlap.
+/*
+    Shove whatever the archer leaned on.
 
-            Kicking on every tick the overlap lasts is what a shove looks like if you write the
-            obvious thing, and it is wrong twice over: the archer walks THROUGH a prop rather than
-            being stopped by it, so the overlap lasts as long as it takes to walk the prop's width,
-            and re-applying the lift every one of those ticks holds the prop in the air travelling
-            alongside the archer instead of letting it fall away. Measured: crates and boards
-            dribbled tens of units down the level that way.
+    Stage decides WHETHER something is being pushed, in which direction and how fast, because all
+    three fall out of the sweep it already does; this decides what that means for a rigid body. The
+    velocity is SET rather than added, so it is bounded by construction however many ticks the lean
+    lasts - and the archer is capped to the same speed by the rules, so the two move together
+    instead of the archer grinding through a crate it is outrunning.
 
-            An edge means a prop takes one impulse and then falls out of the overlap on its own,
-            which is what a kick is.
-        */
-        if (!f_inside){
-            view.f_kick_contact = false;
+    No upward component. This is a shove along the floor, not a kick; the crate should slide rather
+    than hop. A kick is a separate verb with a key of its own, and belongs to the kick slice.
+*/
+void ApplicationArcher::ApplyPushes(const StageEvents& events){
+    for (size_t i = 0; i < events.pushes.size(); i++){
+        const StageEvents::StagePush& push = events.pushes[i];
+        if (push.id < 0 || push.id >= (int)prop_views.size()){
             continue;
         }
-        bool f_new_contact = !view.f_kick_contact;
-        view.f_kick_contact = true;
-        if (!f_new_contact || !f_may_kick){
-            continue;
-        }
-
-        //Only ever pushed AWAY from the archer, so a prop the archer has already walked past is
-        //not dragged back through them.
-        float away = (pp.x >= stage.pos.x) ? 1.0f : -1.0f;
-        if (away != dir){
+        PropView& view = prop_views[push.id];
+        Physics* p = view.object ? view.object->GetPhysics() : NULL;
+        if (!p || p->IsStatic()){
             continue;
         }
         vec3 v = p->GetVelocity();
-        //Set, not add. And only if this would speed it up - a crate already flying away from a
-        //kick must not be slowed down to the walking pace of the archer chasing it.
-        float want = push * dir;
-        if ((dir > 0.0f && v.x < want) || (dir < 0.0f && v.x > want)){
+        float want = push.dir * push.speed;
+        //Only if it would speed the prop up - a crate already sliding away faster than the archer
+        //walks must not be slowed to their pace by the hand still resting on it.
+        if ((push.dir > 0.0f && v.x < want) || (push.dir < 0.0f && v.x > want)){
             v.x = want;
-        }
-        if (v.y < ARCHER_KICK_LIFT){
-            v.y = ARCHER_KICK_LIFT;
         }
         p->WakeUp();
         p->SetVelocity(vec3(v.x,v.y,0.0f));
     }
+}
+
+void ApplicationArcher::SyncArcherView(){
+    if (!archer_object){
+        return;
+    }
+    bool f_on_wall = (stage.mode == MODE_HANG || stage.mode == MODE_CLIMB);
+    archer_object->SetMaterialSlot(0,f_on_wall ? material_archer_hang : material_archer);
 }
 
 void ApplicationArcher::SyncArrowViews(){
@@ -1443,6 +1461,83 @@ void ApplicationArcher::RegisterMCPTools(){
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
         });
 
+    MCPServer::Get()->RegisterTool("archer_hold",
+        "Hold any one control down for a number of SIMULATION TICKS and block until it has played "
+        "out. The general form of archer_run and archer_jump, and the way to reach the controls "
+        "that have no tool of their own: 'down' drops through a one-way platform and lets go of a "
+        "ledge, 'action' and 'knife' are wired but not yet used. Several of these can be layered by "
+        "calling with wait false and then holding the next one. Actions: left, right, down, jump, "
+        "draw, action, knife.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"action", {{"type","string"},{"description","left, right, down, jump, draw, action or knife"}}},
+                {"ticks", {{"type","number"},{"description","simulation ticks to hold it, default 20, capped at 600"}}},
+                {"wait", {{"type","boolean"},{"description","block until the hold has finished, default true; false returns at once so another hold can be layered on top"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
+            }},
+            {"required", json::array({"action"})}
+        },
+        [this](const json& args) -> json {
+            InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            std::string name = args.value("action",std::string(""));
+            uint32_t action = 0;
+            if (name == "left"){        action = INPUT_ARCHER_LEFT;   }
+            else if (name == "right"){  action = INPUT_ARCHER_RIGHT;  }
+            else if (name == "down"){   action = INPUT_ARCHER_DOWN;   }
+            else if (name == "jump"){   action = INPUT_ARCHER_JUMP;   }
+            else if (name == "draw"){   action = INPUT_ARCHER_DRAW;   }
+            else if (name == "action"){ action = INPUT_ARCHER_ACTION; }
+            else if (name == "knife"){  action = INPUT_ARCHER_KNIFE;  }
+            else{
+                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, action or knife"} };
+            }
+            int ticks = (int)clamp(args.value("ticks",20.0f),0.0f,600.0f);
+            input->HoldKey(action,(uint32_t)ticks);
+            if (args.value("wait",true)){
+                //Plus two, so the RELEASE edge has been read by a tick as well as the hold - an
+                //action read with WasKeyReleased is not delivered until then.
+                WaitTicks(ticks + 2);
+            }
+            return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
+    MCPServer::Get()->RegisterTool("archer_place",
+        "Put the archer at (x, y) and clear their movement state. A DEVELOPMENT TOOL: the level "
+        "runs from x -12 to 72 with two gaps in it, and iterating on one part of it should not mean "
+        "flying the whole approach by script every time. Useful landmarks: the ground surface is "
+        "y 0, the start is (-6, 0.9), the grabbable-only ledge stands at x 44..48 with its lip at "
+        "4.2 (jump from x 43.1 to catch it), the cracked wall is at x 57 and the brick wall at "
+        "x 49.5. y is the archer's CENTRE, so standing on the ground is y 0.9. DO NOT PLACE INSIDE "
+        "SOLID GEOMETRY: the archer is ejected out of it on the next tick, and out of a tall block "
+        "that means upward onto its roof - which looks like the placement having worked and then "
+        "the archer walking over things it should have been stopped by. x 44 is inside the ledge; "
+        "43.1 is beside it.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"x", {{"type","number"},{"description","world x"}}},
+                {"y", {{"type","number"},{"description","world y of the archer's centre; 0.9 stands on the ground"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
+            }},
+            {"required", json::array({"x"})}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            SimCommand cmd;
+            cmd.type = ARCHER_CMD_PLACE;
+            cmd.value[0] = args.value("x",0.0f);
+            cmd.value[1] = args.value("y",0.9f);
+            main_scene->SubmitCommand(cmd);
+            WaitTicks(3);
+            return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
     MCPServer::Get()->RegisterTool("archer_restart",
         "Rebuild the level and put the archer back at the start. Everything the props have "
         "accumulated - kicked crates, toppled targets, embedded arrows - is thrown away and rebuilt "
@@ -1511,8 +1606,10 @@ void ApplicationArcher::DrawImGuiUI(void){
     }
 
     ImGui::Separator();
-    ImGui::TextWrapped("A/D or arrows run.  S drops through a platform.  Space jumps - hold it for "
-                       "height.  J draws the bow, release to loose.  Up/Down tilt the aim.  "
+    ImGui::TextWrapped("A/D or arrows run.  Space jumps - hold it for height.  J draws the bow, "
+                       "release to loose.  Up/Down tilt the aim.  Jump at a ledge too high to land "
+                       "on and you CATCH it: Space then climbs up, S lets go, and holding away "
+                       "from it refuses the grab.  S also drops through a platform.  "
                        "R restarts, F1 shows the engine panels.");
 
     ImGui::End();

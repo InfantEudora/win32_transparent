@@ -29,13 +29,21 @@ static float MoveToward(float value, float target, float step){
 static const float STAGE_EPS = 0.001f;
 static const float STAGE_DEG2RAD = 3.14159265358979f / 180.0f;
 
-//Does the archer's body box, centred at (cx,cy), overlap this block?
-static bool BoxOverlapsBlock(float cx, float cy, const StageBlock& b){
-    if (cx + ARCHER_HALF_W <= b.Left())   { return false; }
-    if (cx - ARCHER_HALF_W >= b.Right())  { return false; }
-    if (cy + ARCHER_HALF_H <= b.Bottom()) { return false; }
-    if (cy - ARCHER_HALF_H >= b.Top())    { return false; }
+//Does the archer's body box, centred at (cx,cy), overlap this rectangle?
+static bool BoxOverlapsRect(float cx, float cy, float left, float right, float bottom, float top){
+    if (cx + ARCHER_HALF_W <= left)   { return false; }
+    if (cx - ARCHER_HALF_W >= right)  { return false; }
+    if (cy + ARCHER_HALF_H <= bottom) { return false; }
+    if (cy - ARCHER_HALF_H >= top)    { return false; }
     return true;
+}
+
+static bool BoxOverlapsBlock(float cx, float cy, const StageBlock& b){
+    return BoxOverlapsRect(cx,cy,b.Left(),b.Right(),b.Bottom(),b.Top());
+}
+
+static bool BoxOverlapsObstacle(float cx, float cy, const StageObstacle& o){
+    return BoxOverlapsRect(cx,cy,o.Left(),o.Right(),o.Bottom(),o.Top());
 }
 
 //--- Construction -------------------------------------------------------------------------------
@@ -62,6 +70,13 @@ void Stage::Reset(){
     bow_mode = BOW_IDLE;
     draw_ticks = 0;
     aim_deg = 20.0f;
+
+    hang_block = -1;
+    hang_side = -1.0f;
+    climb_ticks = 0;
+    climb_from = v2();
+    climb_to = v2();
+    grab_cooldown = 0;
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         arrows[i] = Arrow();
@@ -158,6 +173,23 @@ void Stage::BuildLevel(){
     props.push_back({ PROP_ROPE_ANCHOR, 36.75f, 9.00f, 0.10f, 6.00f, 1, 1 });
 }
 
+//--- The props, as the rules see them -----------------------------------------------------------
+
+void Stage::ClearObstacles(){
+    obstacles.clear();
+}
+
+void Stage::AddObstacle(float x, float y, float hw, float hh, int id, bool f_pushable){
+    StageObstacle o;
+    o.x = x;
+    o.y = y;
+    o.hw = hw;
+    o.hh = hh;
+    o.id = id;
+    o.f_pushable = f_pushable;
+    obstacles.push_back(o);
+}
+
 //--- The tick -----------------------------------------------------------------------------------
 
 void Stage::Tick(const ArcherInput& in, StageEvents& events){
@@ -196,7 +228,12 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
     aim_deg = ClampF(aim_deg + in.aim_axis * BOW_AIM_RATE_DEG * ARCHER_DT,
                      BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
 
-    if (in.f_draw_down){
+    //Both hands are on the rock. Aiming still tilts - it costs nothing and lets a player line up
+    //the shot they are about to take on landing - but no draw can START while hanging or climbing,
+    //and EnterHang cancels one already under way.
+    bool f_hands_full = (mode == MODE_HANG || mode == MODE_CLIMB);
+
+    if (in.f_draw_down && !f_hands_full){
         if (bow_mode == BOW_IDLE){
             bow_mode = BOW_DRAWING;
             draw_ticks = 0;
@@ -221,6 +258,20 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     //vibrates. Named here so the slice that adds it has an obvious place to hook in.
     if (mode == MODE_ROPE){
         return;
+    }
+    //Hanging and climbing own the position outright: no gravity, no run, no jump arc. Branching
+    //here rather than threading `if (mode == ...)` through the code below is the whole reason
+    //ArcherMode is one enum instead of a pile of booleans.
+    if (mode == MODE_CLIMB){
+        TickClimb(in,events);
+        return;
+    }
+    if (mode == MODE_HANG){
+        TickHang(in,events);
+        return;
+    }
+    if (grab_cooldown > 0){
+        grab_cooldown--;
     }
 
     //--- Horizontal ---------------------------------------------------------------------------
@@ -281,7 +332,7 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     bool f_hit_floor = false;
     bool f_hit_ceiling = false;
     bool f_hit_wall = false;
-    MoveAndCollide(vel * ARCHER_DT,in.f_down_held,f_hit_floor,f_hit_ceiling,f_hit_wall);
+    MoveAndCollide(vel * ARCHER_DT,in.f_down_held,events,f_hit_floor,f_hit_ceiling,f_hit_wall);
 
     f_on_ground = f_hit_floor;
     if (f_hit_floor && !f_was_on_ground){
@@ -302,8 +353,27 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         buffer_ticks--;
     }
 
-    //MODE_HANG and MODE_CLIMB are not reachable yet; the hang slice adds the ledge probe that
-    //enters them, and this line is where it goes.
+    /*
+        The ledge probe.
+
+        After the move, so it sees where the archer actually ended up - in particular it sees the
+        archer pressed flat against the wall face, which MoveAndCollide has just done and which is
+        exactly the position the reach test wants to measure from.
+    */
+    if (!f_on_ground){
+        float side = 0.0f;
+        int block = FindGrabbableLedge(side);
+        //Holding AWAY from the lip is how the player says they meant to miss it. The test is on
+        //the input rather than on `facing`, because facing only changes when a direction is held -
+        //so a player who let go of everything mid-jump would otherwise still be "facing" the wall.
+        bool f_holding_away = (side < 0.0f && in.move_axis < -0.5f) ||
+                              (side > 0.0f && in.move_axis > 0.5f);
+        if (block >= 0 && !f_holding_away){
+            EnterHang(block,side,events);
+            return;
+        }
+    }
+
     mode = f_on_ground ? MODE_GROUND : MODE_AIR;
 
     //Fell off the world. Restarting outright rather than dying, because there is nothing to die
@@ -323,8 +393,8 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     velocity the archer covers 0.57 units in a tick, which is wider than the one-way platform in
     this level is thick.
 */
-void Stage::MoveAndCollide(const v2& delta, bool f_down_held, bool& out_hit_floor,
-                           bool& out_hit_ceiling, bool& out_hit_wall){
+void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& events,
+                           bool& out_hit_floor, bool& out_hit_ceiling, bool& out_hit_wall){
     out_hit_floor = false;
     out_hit_ceiling = false;
     out_hit_wall = false;
@@ -358,6 +428,78 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, bool& out_hit_floo
                                         : (b.Right() + ARCHER_HALF_W + STAGE_EPS);
                 vel.x = 0.0f;
                 out_hit_wall = true;
+            }
+
+        }
+
+        /*
+            And the props, which stop the archer exactly as the level does.
+
+            OUTSIDE the `step.x != 0` guard, unlike the level, and that is the whole reason this
+            block is separate rather than sitting with the walls. A wall cannot come to you; a
+            crate can. An archer standing still while a shoved crate rebounds into them does no
+            horizontal movement at all, so a resolution that only ran when step.x was non-zero
+            skipped this entirely - and then the Y pass, which always runs because gravity always
+            runs, found the overlap and resolved it the only way it knows: by standing the archer
+            on top. Measured as the archer riding up a stack of crates without ever jumping,
+            0.90 -> 1.70 -> 2.50.
+
+            The order still matters: the LEVEL is resolved first, so an archer shoving a crate into
+            a wall ends up stopped by the crate rather than swapped through it.
+        */
+        {
+            for (size_t i = 0; i < obstacles.size(); i++){
+                const StageObstacle& o = obstacles[i];
+                if (!BoxOverlapsObstacle(pos.x,pos.y,o)){
+                    continue;
+                }
+                /*
+                    Which side to put the archer back on. Walking into it, that is the side they
+                    came from. Standing still - so the crate came to them - it is whichever side
+                    they are already nearer, which is the shortest way out and the only one that
+                    does not teleport them through the thing.
+                */
+                bool f_place_left;
+                if (step.x > 0.0f){         f_place_left = true;  }
+                else if (step.x < 0.0f){    f_place_left = false; }
+                else{                       f_place_left = (pos.x < o.x); }
+
+                float dir = f_place_left ? 1.0f : -1.0f;
+                pos.x = f_place_left ? (o.Left() - ARCHER_HALF_W - STAGE_EPS)
+                                     : (o.Right() + ARCHER_HALF_W + STAGE_EPS);
+                out_hit_wall = true;
+
+                //Being shoved by a crate is not pushing it. Only a deliberate walk into something
+                //reports a push, or a crate rebounding off a wall would drive itself.
+                if (step.x == 0.0f){
+                    continue;
+                }
+
+                /*
+                    Being stopped by something pushable IS the push. The speed reported is the one
+                    the archer was trying to walk at, capped - so leaning on a crate moves it at
+                    walking pace, and the archer then follows it at exactly that pace next tick
+                    because the crate is where they are allowed to stand up to.
+
+                    vel.x is NOT zeroed for a pushable one. Zeroing it would make the archer
+                    re-accelerate from a standstill every single tick of the push, which comes out
+                    as a crate that judders along at a fraction of the intended speed.
+                */
+                if (o.f_pushable){
+                    float want = (vel.x < 0.0f) ? -vel.x : vel.x;
+                    if (want > ARCHER_PUSH_SPEED){
+                        want = ARCHER_PUSH_SPEED;
+                    }
+                    if (vel.x > ARCHER_PUSH_SPEED){         vel.x = ARCHER_PUSH_SPEED;  }
+                    else if (vel.x < -ARCHER_PUSH_SPEED){   vel.x = -ARCHER_PUSH_SPEED; }
+                    StageEvents::StagePush push;
+                    push.id = o.id;
+                    push.dir = dir;
+                    push.speed = want;
+                    events.pushes.push_back(push);
+                }else{
+                    vel.x = 0.0f;
+                }
             }
         }
 
@@ -393,26 +535,221 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, bool& out_hit_floo
                 }
                 vel.y = 0.0f;
             }
+
+            /*
+                Props vertically too, which is what makes a crate something you can STAND ON. It
+                falls out of blocking rather than being a feature that had to be written, and it is
+                the reason the crates by the start are stacked two high.
+
+                GUARDED BY WHERE THE FEET WERE, the same rule the one-way platforms use. A prop
+                only becomes a floor to someone who was already above it. Without that, any
+                overlap arriving from the side gets resolved as a landing - which is the same
+                crate-riding bug the X pass above guards against, reached by the other road, and it
+                survives every fix to that one because the two passes can disagree about which
+                obstacle they are resolving.
+            */
+            float prev_top = prev_bottom + ARCHER_HALF_H * 2.0f;
+            for (size_t i = 0; i < obstacles.size(); i++){
+                const StageObstacle& o = obstacles[i];
+                if (!BoxOverlapsObstacle(pos.x,pos.y,o)){
+                    continue;
+                }
+                if (step.y < 0.0f){
+                    if (prev_bottom < o.Top() - STAGE_EPS){
+                        continue;       //came at it from the side, not down onto it
+                    }
+                    pos.y = o.Top() + ARCHER_HALF_H + STAGE_EPS;
+                    out_hit_floor = true;
+                }else{
+                    if (prev_top > o.Bottom() + STAGE_EPS){
+                        continue;
+                    }
+                    pos.y = o.Bottom() - ARCHER_HALF_H - STAGE_EPS;
+                    out_hit_ceiling = true;
+                }
+                vel.y = 0.0f;
+            }
         }
     }
 }
 
-bool Stage::BodyOverlapsSolid(const v2& centre, float prev_bottom, bool f_down_held) const{
+//--- Hanging and climbing -----------------------------------------------------------------------
+
+/*
+    A lip the archer could catch right now, or -1.
+
+    Only BLOCK_LEDGE is grabbable, and that is a level-design decision rather than a shortcut: it
+    means "can I hang here" is a property the level states, not one the player has to discover by
+    trying every wall in the game. A SOLID block with the same shape is deliberately not catchable.
+
+    Const and free of side effects, so the app can call it to draw a hint without the act of asking
+    changing anything.
+*/
+int Stage::FindGrabbableLedge(float& out_side) const{
+    if (grab_cooldown > 0){
+        return -1;
+    }
+    //Falling only - see the long note on the constants in Stage.h. This single condition is what
+    //stops a jump you could have made being stolen by a grab on the way up.
+    if (vel.y > LEDGE_GRAB_MAX_RISE){
+        return -1;
+    }
+
+    float hand_y = pos.y + ARCHER_HALF_H;
+    float left_edge = pos.x - ARCHER_HALF_W;
+    float right_edge = pos.x + ARCHER_HALF_W;
+
     for (size_t i = 0; i < blocks.size(); i++){
         const StageBlock& b = blocks[i];
-        if (!b.f_alive){
+        if (!b.f_alive || b.kind != BLOCK_LEDGE){
             continue;
         }
-        if (b.kind == BLOCK_PLATFORM){
-            if (f_down_held || prev_bottom < b.Top() - STAGE_EPS){
-                continue;
+        //Is the lip at hand height?
+        if (b.Top() > hand_y + LEDGE_GRAB_BAND_UP){
+            continue;
+        }
+        if (b.Top() < hand_y - LEDGE_GRAB_BAND_DOWN){
+            continue;
+        }
+
+        /*
+            Catching the LEFT corner: the archer is to the left of the block, their leading edge is
+            within reach of its left face, and they are facing it.
+
+            The facing test is what makes a grab something the player aimed at. Without it an
+            archer falling down a wall with their back to it catches every lip on the way, which
+            looks like the character being yanked about by the level.
+        */
+        if (facing > 0.0f && pos.x < b.x){
+            if (right_edge >= b.Left() - LEDGE_GRAB_REACH && right_edge <= b.Left() + ARCHER_HALF_W){
+                out_side = -1.0f;
+                return (int)i;
             }
         }
-        if (BoxOverlapsBlock(centre.x,centre.y,b)){
-            return true;
+        if (facing < 0.0f && pos.x > b.x){
+            if (left_edge <= b.Right() + LEDGE_GRAB_REACH && left_edge >= b.Right() - ARCHER_HALF_W){
+                out_side = 1.0f;
+                return (int)i;
+            }
         }
     }
-    return false;
+    return -1;
+}
+
+/*
+    Catch it: snap to the lip and stop dead.
+
+    The snap is the point. A hang that keeps whatever sub-tick position the fall happened to end on
+    leaves the archer a few centimetres off the wall or a few below the lip, differently every time
+    - and then the climb that follows starts from somewhere slightly different every time. Hanging
+    is a POSE, so it gets one exact position, and everything downstream can rely on it.
+*/
+void Stage::EnterHang(int block, float side, StageEvents& events){
+    if (block < 0 || block >= (int)blocks.size()){
+        return;
+    }
+    const StageBlock& b = blocks[block];
+
+    mode = MODE_HANG;
+    hang_block = block;
+    hang_side = side;
+    //Body flat against the face, hands exactly on the lip.
+    pos.x = (side < 0.0f) ? (b.Left() - ARCHER_HALF_W - STAGE_EPS)
+                          : (b.Right() + ARCHER_HALF_W + STAGE_EPS);
+    pos.y = b.Top() - ARCHER_HALF_H;
+    vel = v2(0.0f,0.0f);
+    f_on_ground = false;
+    coyote_ticks = 0;
+    //A jump pressed just before the catch must not fire on the tick after it - the player was
+    //asking to jump at the wall, not to let go of it the instant they arrived.
+    buffer_ticks = 0;
+    facing = (side < 0.0f) ? 1.0f : -1.0f;
+
+    //Both hands are on the rock. Cancelling rather than letting the draw continue invisibly, so
+    //the bow cannot be loosed by a release that arrives while hanging.
+    bow_mode = BOW_IDLE;
+    draw_ticks = 0;
+
+    events.f_grabbed_ledge = true;
+}
+
+void Stage::ReleaseHang(StageEvents& events){
+    mode = MODE_AIR;
+    hang_block = -1;
+    vel = v2(0.0f,0.0f);
+    //Without this, the drop re-grabs the same lip on the next tick and the archer is welded to it.
+    grab_cooldown = LEDGE_RELEASE_COOLDOWN;
+    events.f_released_ledge = true;
+}
+
+void Stage::TickHang(const ArcherInput& in, StageEvents& events){
+    //The ledge could have been removed underneath us - a BREAKABLE one will be, once the
+    //kick-and-break slice can destroy the thing you are hanging from.
+    if (hang_block < 0 || hang_block >= (int)blocks.size() || !blocks[hang_block].f_alive){
+        ReleaseHang(events);
+        return;
+    }
+    const StageBlock& b = blocks[hang_block];
+
+    //Up, or jump, pulls up over the lip.
+    if (in.f_jump_pressed){
+        mode = MODE_CLIMB;
+        climb_ticks = LEDGE_CLIMB_TICKS;
+        climb_from = pos;
+        //Onto the top surface, just inside the edge the archer came up over.
+        climb_to = v2((hang_side < 0.0f) ? (b.Left() + ARCHER_HALF_W + STAGE_EPS)
+                                         : (b.Right() - ARCHER_HALF_W - STAGE_EPS),
+                      b.Top() + ARCHER_HALF_H + STAGE_EPS);
+        return;
+    }
+
+    //Down, or holding away from the wall, lets go.
+    bool f_holding_away = (hang_side < 0.0f && in.move_axis < -0.5f) ||
+                          (hang_side > 0.0f && in.move_axis > 0.5f);
+    if (in.f_down_held || f_holding_away){
+        ReleaseHang(events);
+        return;
+    }
+
+    //Otherwise hang: no gravity, no drift, no input. Held exactly where EnterHang put us, which is
+    //re-asserted rather than assumed so that nothing else can nudge the pose.
+    pos.x = (hang_side < 0.0f) ? (b.Left() - ARCHER_HALF_W - STAGE_EPS)
+                               : (b.Right() + ARCHER_HALF_W + STAGE_EPS);
+    pos.y = b.Top() - ARCHER_HALF_H;
+    vel = v2(0.0f,0.0f);
+}
+
+/*
+    Pulling up over the lip.
+
+    UNINTERRUPTIBLE, and a straight lerp along both axes. That is not a placeholder standing in for
+    something cleverer - it is the shape a root-motion climb clip has too, which is why this is a
+    tick count and a start/end pair rather than a velocity: when the animation arrives, the clip's
+    own displacement replaces the lerp and nothing else here changes.
+*/
+void Stage::TickClimb(const ArcherInput& in, StageEvents& events){
+    (void)in;
+    climb_ticks--;
+    if (climb_ticks <= 0){
+        pos = climb_to;
+        vel = v2(0.0f,0.0f);
+        mode = MODE_GROUND;
+        f_on_ground = true;
+        hang_block = -1;
+        //Landing on top of the thing you just climbed is not a fresh chance to grab it.
+        grab_cooldown = LEDGE_RELEASE_COOLDOWN;
+        events.f_climbed = true;
+        return;
+    }
+
+    float t = 1.0f - ((float)climb_ticks / (float)LEDGE_CLIMB_TICKS);
+    //Up first, then across. Interpolating both together walks the body diagonally THROUGH the
+    //corner it is climbing over, which with a box for a character is very visible.
+    float up = ClampF(t * 1.6f,0.0f,1.0f);
+    float across = ClampF((t - 0.35f) / 0.65f,0.0f,1.0f);
+    pos.x = climb_from.x + (climb_to.x - climb_from.x) * across;
+    pos.y = climb_from.y + (climb_to.y - climb_from.y) * up;
+    vel = v2(0.0f,0.0f);
 }
 
 //--- The bow ------------------------------------------------------------------------------------

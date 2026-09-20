@@ -31,16 +31,21 @@
       kinematic body. So Stage keeps sole ownership of the archer's position - there is no second
       integrator to fight with, and no drift.
 
-    WHAT THE BODY IS AND IS NOT FOR. The intention was that a kinematic body moved by velocity
-    would shove the crates out of its way for free, which is what a kinematic character controller
-    normally buys you. IT DOES NOT WORK HERE, and the reason is structural rather than a tuning
-    miss: that trick assumes the character is STOPPED by what it pushes, so the overlap stays
-    shallow. Stage knows nothing about props - it resolves the archer against the level and walks
-    straight through a crate - so the solver instead gets a deep overlap between a light body and
-    one of infinite mass, every tick, and resolves it the only way it can. Measured twice, at two
-    different collision masks; the second time a target board left at 58 units a second. So the
-    archer collides with NOTHING (ARCHER_MASK_ARCHER is 0) and shoves props through KickProps(),
-    which sets a bounded velocity and cannot accumulate.
+    WHAT THE BODY IS AND IS NOT FOR. It collides with NOTHING (ARCHER_MASK_ARCHER is 0), because
+    Stage resolves the archer against everything itself - the level, and since the props-block
+    change, the crates and targets too. The app hands Stage each prop as a box before every tick
+    (RefreshObstacles), Stage stops the archer against it exactly as against a wall and reports
+    which one was leaned on, and the app turns that into a shove (ApplyPushes). One resolver, in
+    one place, and the solver is never asked to referee a character it cannot stop.
+
+    That arrangement replaced an earlier one worth knowing about, because the earlier one is the
+    obvious thing to try. A kinematic body moved by velocity normally shoves dynamic bodies for
+    free - but that trick quietly assumes the character is STOPPED by what it pushes, so the
+    overlap stays shallow. While Stage did not know props existed the archer walked straight
+    through a crate, and the solver spent every tick of that resolving a deep overlap against
+    infinite mass. Now that a crate really does block, that assumption holds again and the solver
+    could take the pushing back; it is still done here because "how hard can you shove a crate" is
+    a gameplay number, and gameplay numbers belong next to the rest of them.
 
     The body earns its place anyway, for two things:
 
@@ -68,11 +73,11 @@
     KEYBOARD ONLY, and laid out so that no key means two things:
 
         A / D, Left / Right     run
-        S                       drop through a one-way platform
-        Space                   jump (hold for height, tap for a hop)
+        S                       drop through a one-way platform; let go of a ledge
+        Space                   jump (hold for height, tap for a hop); climb up from a hang
         J                       hold to draw the bow, release to loose
         Up / Down               tilt the aim, whether or not the bow is drawn
-        E                       action - grab a ledge, take the rope  (later slices)
+        E                       action - take the rope                 (later slice)
         K                       knife                                 (later slice)
         R                       restart
         F1                      the engine's ImGui panels
@@ -97,6 +102,7 @@
 //the caller is on the wrong thread, and the handler runs at one known place in the tick.
 #define ARCHER_CMD_RESTART          SIM_CMD_LAST+0
 #define ARCHER_CMD_AIM              SIM_CMD_LAST+1      //value[0] = degrees, relative to facing
+#define ARCHER_CMD_PLACE            SIM_CMD_LAST+2      //value[0] = x, value[1] = y
 
 /*
     Collision filtering.
@@ -116,24 +122,16 @@
 //And what each one is allowed to touch.
 //
 //THE ARCHER TOUCHES NOTHING, which is 0 and means exactly that - "in no category, collides with
-//nothing" is a real filter, not an unset one (see the note on the bits in core/Object.h).
+//nothing" is a real filter, not an unset one (see the note on the bits in core/Object.h). Stage
+//resolves the archer against the level AND the props by hand, so there is nothing left for the
+//solver to have an opinion about, and a kinematic body of infinite mass arguing with geometry that
+//has already been resolved wins every time in the least useful way.
 //
-//Two separate things led here, and they are worth keeping apart because conflating them cost an
-//afternoon:
-//
-//  1. THE REAL BUG was not a filter at all. Every prop had gravity switched off, because a body
-//     from AddPhysics starts with it off and SetStatic(false) does not turn it on. No gravity
-//     means no weight on the floor, no normal force and therefore NO FRICTION - so anything
-//     touched once slid or drifted forever, and the level filled up with props at y = 113 doing
-//     2 units a second. It reads exactly like the solver exploding. See MakePlanarBody.
-//  2. THE FILTER IS STILL RIGHT, for its own reason: Stage resolves the archer against the level
-//     by hand, and a kinematic body of infinite mass arguing with that same static geometry is a
-//     second opinion on a settled question. Nothing good comes of it even now that the props
-//     behave.
-//
-//So the archer is out of the solver's hands and pushes props through KickProps() instead, which
-//is bounded by construction. With gravity finally correct, letting the solver do the pushing is a
-//reasonable thing for the kick-and-break slice to re-evaluate - it was never given a fair trial.
+//Worth knowing while reading the rest: the props ALSO used to have gravity switched off, because a
+//body from AddPhysics starts with it off and SetStatic(false) does not turn it on. No gravity means
+//no weight on the floor, no normal force and so NO FRICTION - anything touched once slid or drifted
+//forever, which reads exactly like the solver exploding and had three wrong theories chased at it
+//before anyone read `gravity: false` off object_get. See MakePlanarBody.
 #define ARCHER_MASK_LEVEL           (ARCHER_CAT_PROP | ARCHER_CAT_DEBRIS)
 #define ARCHER_MASK_ARCHER          0
 #define ARCHER_MASK_PROP            (ARCHER_CAT_LEVEL | ARCHER_CAT_PROP | ARCHER_CAT_ARCHER | ARCHER_CAT_DEBRIS)
@@ -150,20 +148,9 @@
 */
 #define ARROW_SPEED_TRANSFER        0.040f
 
-/*
-    How hard the archer shoves a prop they walk into, in units per second, and how much of a lift
-    the shove has in it.
-
-    A SPEED THE PROP IS SET TO, never a force added to it, which is the whole point: a set velocity
-    cannot accumulate over the ticks the archer spends inside the prop, so there is no amount of
-    walking into a crate that launches it. The lift is what makes a kicked crate hop rather than
-    grind along the floor, and is small enough that it cannot be used as a step.
-*/
-#define ARCHER_KICK_SPEED           7.0f
-#define ARCHER_KICK_LIFT            2.2f
-//Below this the archer is loitering rather than walking into something, and a prop resting against
-//a standing character should stay where it is.
-#define ARCHER_KICK_MIN_SPEED       1.5f
+//How hard the archer shoves a prop is ARCHER_PUSH_SPEED, over in Stage.h with the rest of the feel
+//numbers - the rules decide it, because the rules are what stop the archer against the thing being
+//pushed. This file only carries it out; see ApplyPushes.
 
 //The camera trails the archer rather than being welded to them - see UpdateCamera.
 #define CAMERA_DISTANCE             26.0f
@@ -238,14 +225,10 @@ struct PropView{
     int   kind = PROP_CRATE;
     int   index = -1;           //index into Stage::props, or -1 for a brick in a wall
     bool  f_knocked = false;
-    //Half extents as built, so KickProps can test an overlap without asking rp3d for a shape. A
-    //toppled board's box is no longer axis-aligned, which makes this an approximation - and the
-    //right one: it is deciding whether the archer is walking into something, not resolving a
-    //contact, and a knocked-over prop is not something you can walk into any more anyway.
+    //Half extents as built, handed to Stage every tick as the box that blocks the archer. An
+    //approximation once a board has toppled, which is why a knocked prop is not offered as an
+    //obstacle at all - you step over a fallen board rather than walking into it.
     vec3  half_extents = vec3(0.5f,0.5f,0.5f);
-    //Whether the archer was inside this prop LAST tick. A kick fires on the leading edge of that
-    //and nowhere else - see KickProps.
-    bool  f_kick_contact = false;
     //Fell out of the level and has been retired - see ReapFallenProps.
     bool  f_lost = false;
 };
@@ -300,9 +283,12 @@ private:
     //handshake note on Stage::arrows.
     void ResolveArrowsAgainstProps();
     void DriveArcherBody();
-    //The archer's push on the props, in place of the solver contact that used to do it. See the
-    //note on the definition for the two measurements that led here.
-    void KickProps();
+    //Colour the archer by what they are doing. Stands in for the animation that will say it later.
+    void SyncArcherView();
+    //Hand Stage every live prop as a box, BEFORE the tick. See the note on the definition.
+    void RefreshObstacles();
+    //Shove whatever Stage says was leaned on, AFTER it.
+    void ApplyPushes(const StageEvents& events);
     void SyncArrowViews();
     void SyncAimArc();
     //Cuts the aim arc short at the first PROP it would hit - the half of "what will this arrow
@@ -331,6 +317,10 @@ private:
     int material_platform = 0;
     int material_breakable = 0;
     int material_archer = 0;
+    //A second archer colour for MODE_HANG / MODE_CLIMB. With no animation yet, the colour IS the
+    //state readout - it is what makes "is he hanging or is he stuck in the wall" answerable from a
+    //screenshot, which is how this app gets checked over MCP.
+    int material_archer_hang = 0;
     int material_crate = 0;
     int material_target = 0;
     int material_target_hit = 0;
