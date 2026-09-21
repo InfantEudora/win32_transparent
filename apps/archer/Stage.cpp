@@ -77,6 +77,8 @@ void Stage::Reset(){
     climb_from = v2();
     climb_to = v2();
     grab_cooldown = 0;
+    kick_ticks = 0;
+    kick_cooldown = 0;
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         arrows[i] = Arrow();
@@ -210,6 +212,11 @@ void Stage::Tick(const ArcherInput& in, StageEvents& events){
     //outcome for the game's main verb.
     bool f_loose = (bow_mode == BOW_DRAWING) && in.f_draw_released;
 
+    //Before the archer moves, so the boot sweeps from where they were standing when it went out.
+    //At a full run those differ by 0.15 of a unit - the difference between connecting with the
+    //near brick of a wall and connecting with nothing.
+    TickKick(in,events);
+
     TickArcher(in,events);
 
     if (f_loose){
@@ -278,7 +285,22 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     float move_scale = (bow_mode == BOW_DRAWING) ? ARCHER_DRAW_MOVE_SCALE : 1.0f;
     float target_vx = ClampF(in.move_axis,-1.0f,1.0f) * ARCHER_RUN_SPEED * move_scale;
 
-    if (in.move_axis > 0.01f || in.move_axis < -0.01f){
+    /*
+        A KICK ON THE GROUND PLANTS THE FEET, and freezes the facing with them.
+
+        Both halves matter. The plant is what makes a kick a commitment rather than something you
+        mash while running; friction rather than a hard stop, so it reads as weight instead of as
+        the game confiscating the controls. Freezing the facing is the less obvious one: the boot's
+        box is built from `facing`, so a player who turns mid-kick would otherwise swing it through
+        180 degrees and connect with whatever happened to be behind them.
+
+        In the AIR it does neither - a flying kick keeps its arc, which is the only way to reach
+        the top of a wall.
+    */
+    bool f_planted = (kick_ticks > 0) && f_on_ground;
+    if (f_planted){
+        vel.x = MoveToward(vel.x,0.0f,KICK_ROOT_FRICTION * ARCHER_DT);
+    }else if (in.move_axis > 0.01f || in.move_axis < -0.01f){
         float accel = f_on_ground ? ARCHER_RUN_ACCEL : ARCHER_AIR_ACCEL;
         vel.x = MoveToward(vel.x,target_vx,accel * ARCHER_DT);
         //Facing follows the input even mid-draw. The aim angle is relative to facing, so turning
@@ -454,24 +476,41 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                     continue;
                 }
                 /*
-                    Which side to put the archer back on. Walking into it, that is the side they
-                    came from. Standing still - so the crate came to them - it is whichever side
-                    they are already nearer, which is the shortest way out and the only one that
-                    does not teleport them through the thing.
-                */
-                bool f_place_left;
-                if (step.x > 0.0f){         f_place_left = true;  }
-                else if (step.x < 0.0f){    f_place_left = false; }
-                else{                       f_place_left = (pos.x < o.x); }
+                    SHORTEST WAY OUT, always - the side the archer is already nearer to.
 
-                float dir = f_place_left ? 1.0f : -1.0f;
-                pos.x = f_place_left ? (o.Left() - ARCHER_HALF_W - STAGE_EPS)
-                                     : (o.Right() + ARCHER_HALF_W + STAGE_EPS);
+                    The obvious rule is "put them back on the side they came from", and it is
+                    wrong in a way that only shows up once props can move. An archer standing
+                    mostly PAST a crate, with a sliver of overlap behind them, is still moving
+                    forward - so "the side they came from" is the far side, and resolving to it
+                    teleports them backwards straight through the crate. Measured: x -5.93 became
+                    -7.38 in one tick, and the kick that followed connected with something that
+                    was, a moment earlier, behind them.
+
+                    Least penetration cannot do that. In the ordinary case - walking into a crate,
+                    a few millimetres of overlap - it gives the same answer the naive rule does,
+                    because the shallow side IS the side you came from.
+                */
+                float place_left_x  = o.Left()  - ARCHER_HALF_W - STAGE_EPS;
+                float place_right_x = o.Right() + ARCHER_HALF_W + STAGE_EPS;
+                float to_left  = pos.x - place_left_x;
+                float to_right = pos.x - place_right_x;
+                if (to_left < 0.0f){  to_left = -to_left;  }
+                if (to_right < 0.0f){ to_right = -to_right; }
+                bool f_place_left = (to_left <= to_right);
+
+                float dir = (step.x > 0.0f) ? 1.0f : -1.0f;
+                pos.x = f_place_left ? place_left_x : place_right_x;
                 out_hit_wall = true;
 
-                //Being shoved by a crate is not pushing it. Only a deliberate walk into something
-                //reports a push, or a crate rebounding off a wall would drive itself.
+                //Being shoved by a crate is not pushing it. A push is only reported when the
+                //archer was moving INTO the thing - which is to say, when the side they were put
+                //back on is the side they were coming from. A crate that rebounds off a wall into
+                //a standing archer would otherwise drive itself along.
                 if (step.x == 0.0f){
+                    continue;
+                }
+                bool f_moving_into = (step.x > 0.0f) ? f_place_left : !f_place_left;
+                if (!f_moving_into){
                     continue;
                 }
 
@@ -570,6 +609,105 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                 vel.y = 0.0f;
             }
         }
+    }
+}
+
+//--- The kick -------------------------------------------------------------------------------------
+
+/*
+    The box the boot sweeps.
+
+    In front of the archer, low, and reaching KICK_REACH past the body's leading edge. A separate
+    function because three things want it and they must not drift apart: the sweep below, the rules
+    test, and the debug draw the app puts on screen while tuning.
+*/
+void Stage::KickBox(float& out_left, float& out_right, float& out_bottom, float& out_top) const{
+    float lead = (facing > 0.0f) ? (pos.x + ARCHER_HALF_W) : (pos.x - ARCHER_HALF_W);
+    float far_edge = lead + facing * KICK_REACH;
+    out_left  = (lead < far_edge) ? lead : far_edge;
+    out_right = (lead < far_edge) ? far_edge : lead;
+    float centre_y = pos.y + KICK_Y_OFFSET;
+    out_bottom = centre_y - KICK_HALF_HEIGHT;
+    out_top    = centre_y + KICK_HALF_HEIGHT;
+}
+
+/*
+    The kick, from press to recovered.
+
+    Runs BEFORE the archer moves, so the box is swept from where the archer was standing when the
+    boot went out rather than from wherever they drifted to afterwards. On a fast run those differ
+    by a sixth of a unit, which is the difference between connecting with the near brick of a wall
+    and connecting with nothing.
+*/
+void Stage::TickKick(const ArcherInput& in, StageEvents& events){
+    if (kick_cooldown > 0){
+        kick_cooldown--;
+    }
+
+    //Both hands and both feet are busy on a wall. Hanging and climbing cannot kick.
+    bool f_busy = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE);
+
+    if (kick_ticks == 0){
+        if (in.f_kick_pressed && kick_cooldown == 0 && !f_busy){
+            kick_ticks = 1;
+            events.f_kick_started = true;
+        }
+        return;
+    }
+
+    kick_ticks++;
+    if (kick_ticks > KICK_TICKS){
+        kick_ticks = 0;
+        kick_cooldown = KICK_COOLDOWN;
+        return;
+    }
+    //Wind-up and recovery: the move is running but the boot is not live.
+    if (kick_ticks < KICK_ACTIVE_FROM || kick_ticks > KICK_ACTIVE_TO){
+        return;
+    }
+
+    float left, right, bottom, top;
+    KickBox(left,right,bottom,top);
+
+    /*
+        BREAKABLE LEVEL GEOMETRY first. Clearing f_alive is all the rules have to do - every sweep
+        in this file already skips a dead block - but the app has a collider to take out of the
+        world and a cloud of debris to make, so the index goes out as an event rather than the
+        block simply vanishing.
+    */
+    for (size_t i = 0; i < blocks.size(); i++){
+        StageBlock& b = blocks[i];
+        if (!b.f_alive || b.kind != BLOCK_BREAKABLE){
+            continue;
+        }
+        if (right <= b.Left() || left >= b.Right() || top <= b.Bottom() || bottom >= b.Top()){
+            continue;
+        }
+        b.f_alive = false;
+        events.broken_blocks.push_back((int)i);
+        events.f_kick_connected = true;
+    }
+
+    //And the props. Reported with WHERE the boot landed, because a wall of bricks wants to burst
+    //away from the impact rather than all in the same direction.
+    for (size_t i = 0; i < obstacles.size(); i++){
+        const StageObstacle& o = obstacles[i];
+        if (right <= o.Left() || left >= o.Right() || top <= o.Bottom() || bottom >= o.Top()){
+            continue;
+        }
+        StageEvents::StageKick kick;
+        kick.id = o.id;
+        kick.dir = facing;
+        kick.x = (left + right) * 0.5f;
+        kick.y = (bottom + top) * 0.5f;
+        events.kicks.push_back(kick);
+        events.f_kick_connected = true;
+    }
+
+    //One connect per kick. Without this the boot stays live for the whole window and hits the same
+    //crate five times, which is five impulses and a crate that leaves the level.
+    if (events.f_kick_connected){
+        kick_ticks = KICK_ACTIVE_TO + 1;
     }
 }
 

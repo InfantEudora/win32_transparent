@@ -44,14 +44,23 @@ dynamic on rope); bow aiming = hold J to draw, Up/Down tilt, release to loose, a
 facing; level hand-coded in the rules module rather than authored in Blender or parsed from a file;
 bow first of the four mechanics.
 
-**Slice status:** base traversal + bow DONE; ledge jump/hang/climb DONE; props-block-you DONE
-(all verified in-app). Open, in the user's stated order: kick + breakable brick walls, rope
-(balance and swing), knife. The kick slice now has its groundwork - a crate already blocks and is
-shoved at ARCHER_PUSH_SPEED, so a KICK is a separate verb on a key with a bigger number and an
-upward component, aimed at the brick wall (whose bricks are static until something frees them).
-The level already contains tagged geometry for each - a `BLOCK_BREAKABLE` cracked wall at x 57, a
-3x7 static brick wall at x 49.5 (static until the kick slice frees the bricks it breaks), and a
-rope anchor over the second gap at x 36.75.
+**Slice status:** base traversal + bow, ledge hang/climb, props-block-you, and kick + breakable
+walls are all DONE and verified in-app. Open, in the user's stated order: rope (balance and swing),
+then knife. Keys are J bow / K kick / L knife, in a row; the knife mapping exists with no rules
+behind it. The rope anchor waits over the second gap at x 36.75.
+
+**The kick** (K) is a separate verb from the walking shove and has to be: a shove is
+ARCHER_PUSH_SPEED and moves a crate at walking pace, a kick is KICK_SPEED with lift and punts one
+about ten units. Wind-up, a five-tick active window, then a cooldown - and the window CLOSES on the
+first connect, or the boot hits the same crate five times. A grounded kick plants the feet AND
+freezes the facing (the boot's box is built from `facing`, so turning mid-kick would swing it
+through 180 degrees). Air kicks keep their arc.
+
+Two things learned building it: (1) **broken bricks must stop being obstacles** or the rubble pile
+is just the wall again - it bulldozed the archer backwards 51.19 -> 54.90 over four kicks and the
+hole was never passable; `PropView::f_broken` makes them rubble that still falls and piles but no
+longer blocks. (2) a kick frees **the whole wall**, not just the bricks touched, or the rest hangs
+in the air over the hole.
 
 **The ledge grab is automatic** - no key. Only `BLOCK_LEDGE` is catchable, so the level states
 where you can hang. The rule that makes it work is **grab only while falling**

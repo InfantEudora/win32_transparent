@@ -77,8 +77,9 @@
         Space                   jump (hold for height, tap for a hop); climb up from a hang
         J                       hold to draw the bow, release to loose
         Up / Down               tilt the aim, whether or not the bow is drawn
+        K                       kick - shoves props hard, breaks walls
         E                       action - take the rope                 (later slice)
-        K                       knife                                 (later slice)
+        L                       knife                                 (later slice)
         R                       restart
         F1                      the engine's ImGui panels
 
@@ -93,7 +94,8 @@
 #define INPUT_ARCHER_AIM_UP         INPUT_LAST+6
 #define INPUT_ARCHER_AIM_DOWN       INPUT_LAST+7
 #define INPUT_ARCHER_ACTION         INPUT_LAST+8
-#define INPUT_ARCHER_KNIFE          INPUT_LAST+9
+#define INPUT_ARCHER_KICK           INPUT_LAST+9
+#define INPUT_ARCHER_KNIFE          INPUT_LAST+12
 #define INPUT_ARCHER_RESTART        INPUT_LAST+10
 #define INPUT_ARCHER_TOGGLE_UI      INPUT_LAST+11
 
@@ -151,6 +153,17 @@
 //How hard the archer shoves a prop is ARCHER_PUSH_SPEED, over in Stage.h with the rest of the feel
 //numbers - the rules decide it, because the rules are what stop the archer against the thing being
 //pushed. This file only carries it out; see ApplyPushes.
+
+/*
+    What a broken wall bursts into.
+
+    A cap, because a kick can bring down a whole wall of bricks and every chunk is a rigid body in
+    the same world everything else has to be solved against. Reaped on a timer as well, so a level
+    somebody has spent five minutes demolishing does not end up carrying its entire history.
+*/
+#define ARCHER_DEBRIS_PER_BLOCK     7
+#define ARCHER_DEBRIS_TICKS         480
+#define ARCHER_MAX_DEBRIS           120
 
 //The camera trails the archer rather than being welded to them - see UpdateCamera.
 #define CAMERA_DISTANCE             26.0f
@@ -218,6 +231,12 @@ struct ArcherSnapshot{
     bool  f_predicted = false;
 };
 
+//A chunk of a broken wall, and when to reap it.
+struct DebrisView{
+    Object*  object = NULL;
+    uint64_t reap_tick = 0;
+};
+
 //One prop, and the Object plus body that shows it. Kept so an arrow's raycast hit - which comes
 //back as an rp3d body - can be turned into "that was target 2".
 struct PropView{
@@ -231,6 +250,16 @@ struct PropView{
     vec3  half_extents = vec3(0.5f,0.5f,0.5f);
     //Fell out of the level and has been retired - see ReapFallenProps.
     bool  f_lost = false;
+    /*
+        Broken off a wall by a kick, and therefore RUBBLE rather than an obstacle.
+
+        It still falls, still piles up, still collides with the level and with the other bricks -
+        it simply stops blocking the ARCHER. That distinction is the whole difference between
+        kicking a hole in a wall and building a second wall out of the first one: with broken
+        bricks left as obstacles, the pile shoved the archer steadily backwards away from the hole
+        they had just made, 51.19 -> 54.90 over four kicks, and the way through was never open.
+    */
+    bool  f_broken = false;
 };
 
 class ApplicationArcher : public Application{
@@ -289,6 +318,12 @@ private:
     void RefreshObstacles();
     //Shove whatever Stage says was leaned on, AFTER it.
     void ApplyPushes(const StageEvents& events);
+    //And boot whatever Stage says was kicked - far harder, and it frees a brick wall to collapse.
+    void ApplyKicks(const StageEvents& events);
+    //Take a broken block's collider out of the world and burst it into chunks.
+    void BreakBlocks(const StageEvents& events);
+    void SpawnDebris(const vec3& centre, const vec3& half_extents, const vec3& impulse_dir, int material);
+    void UpdateDebris();
     void SyncArrowViews();
     void SyncAimArc();
     //Cuts the aim arc short at the first PROP it would hit - the half of "what will this arrow
@@ -325,6 +360,7 @@ private:
     int material_target = 0;
     int material_target_hit = 0;
     int material_arrow = 0;
+    int material_debris = 0;
     int material_dot = 0;
     int material_dot_hot = 0;
 
@@ -335,6 +371,7 @@ private:
     DirectionalLight* sun_light = NULL;
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
     std::vector<PropView> prop_views;
+    std::vector<DebrisView> debris;
     Object* arrow_objects[ARROW_MAX_LIVE] = {};
     Object* arc_objects[AIM_ARC_POINTS] = {};
 

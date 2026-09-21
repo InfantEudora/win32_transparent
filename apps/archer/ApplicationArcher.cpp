@@ -151,7 +151,10 @@ void ApplicationArcher::BuildMaterials(){
         //A struck target goes green, so a hit is legible in a screenshot with no HUD at all -
         //which is exactly how this app gets checked over MCP.
         { "ar_target_hit",  vec4(0.30f,0.85f,0.40f,1.0f), 0.45f, &material_target_hit },
-        { "ar_arrow",       vec4(0.95f,0.88f,0.55f,1.0f), 0.30f, &material_arrow }
+        { "ar_arrow",       vec4(0.95f,0.88f,0.55f,1.0f), 0.30f, &material_arrow },
+        //Rubble: the breakable red, knocked back and darkened so a pile of chunks reads as debris
+        //rather than as a wall that has fallen over intact.
+        { "ar_debris",      vec4(0.46f,0.22f,0.19f,1.0f), 0.05f, &material_debris }
     };
     for (size_t i = 0; i < sizeof(table)/sizeof(table[0]); i++){
         Material m;
@@ -233,6 +236,20 @@ Object* ApplicationArcher::MakePlanarBody(Mesh* mesh, const char* name, const ve
     p->SetCollideWithMaskBits(collide_mask);
     //AddBoxCollider takes HALF extents (it goes straight to rp3d's createBoxShape).
     p->AddBoxCollider(vec3(size.x * 0.5f,size.y * 0.5f,size.z * 0.5f),vec3(),quat().identity(),1.0f);
+    /*
+        SURFACE, WHICH rp3d's DEFAULTS GET WRONG FOR THIS GAME.
+
+        Add*Collider leaves friction at 0.3 and bounciness at 0.5 - see the note above
+        AddSphereCollider in core/physics/Physics.h. Half a unit of bounciness is a rubber ball,
+        and it shows: a kicked crate hit its neighbour and came straight back past the archer who
+        kicked it, ending up LEFT of where it started. 0.3 friction is ice, and a knocked-over
+        target board slid for a second and a half after it landed.
+
+        These act on `last_collider`, which is the one added on the line above - every body here
+        has exactly one, so this is the right place and the only place.
+    */
+    p->SetBounciness(0.05f);
+    p->SetFrictionCoefficient(0.65f);
 
     if (f_static){
         //A body from AddPhysics already starts STATIC; saying so is documentation as much as code.
@@ -532,7 +549,10 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap(VK_UP,INPUT_ARCHER_AIM_UP);
     input->AddKeyMap(VK_DOWN,INPUT_ARCHER_AIM_DOWN);
     input->AddKeyMap('E',INPUT_ARCHER_ACTION);
-    input->AddKeyMap('K',INPUT_ARCHER_KNIFE);
+    //J, K, L in a row: bow, kick, knife. The knife has no rules behind it yet; the mapping is here
+    //so the layout is decided once rather than argued about again when that slice lands.
+    input->AddKeyMap('K',INPUT_ARCHER_KICK);
+    input->AddKeyMap('L',INPUT_ARCHER_KNIFE);
 
     input->AddKeyMap('R',INPUT_ARCHER_RESTART);
     input->AddKeyMap(VK_F1,INPUT_ARCHER_TOGGLE_UI);
@@ -612,6 +632,13 @@ void ApplicationArcher::NewGame(){
             prop_views[i].object->Destroy();
         }
     }
+    //And the rubble, or a restart leaves the last run's broken wall lying in the new one.
+    for (size_t i = 0; i < debris.size(); i++){
+        if (debris[i].object){
+            debris[i].object->Destroy();
+        }
+    }
+    debris.clear();
     main_scene->DeleteDestroyedObjects();
     BuildBlocks();
     BuildProps();
@@ -671,6 +698,9 @@ void ApplicationArcher::RunSimulationTick(void){
 
     HandleEvents(events);
     ApplyPushes(events);
+    ApplyKicks(events);
+    BreakBlocks(events);
+    UpdateDebris();
     ResolveArrowsAgainstProps();
     DriveArcherBody();
     SyncArcherView();
@@ -698,6 +728,7 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     bool f_jump_pressed  = input->WasKeyPressed(INPUT_ARCHER_JUMP);
     bool f_draw_released = input->WasKeyReleased(INPUT_ARCHER_DRAW);
     bool f_action        = input->WasKeyPressed(INPUT_ARCHER_ACTION);
+    bool f_kick          = input->WasKeyPressed(INPUT_ARCHER_KICK);
 
     //Act on input only when it is ours to act on: this window in front, or a scripted hold running
     //(which is not OS input, and happens precisely when the window is NOT in front). One predicate
@@ -723,6 +754,7 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     out.f_draw_released = f_draw_released;
     out.f_down_held     = input->IsKeyDown(INPUT_ARCHER_DOWN);
     out.f_action_pressed = f_action;
+    out.f_kick_pressed  = f_kick;
 }
 
 void ApplicationArcher::HandleEvents(const StageEvents& events){
@@ -734,6 +766,10 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
     }
     if (events.f_climbed){
         debug->Info("Climbed up onto the ledge, standing at (%.2f,%.2f)\n",stage.pos.x,stage.pos.y);
+    }
+    if (events.f_kick_connected){
+        debug->Info("Kick connected: %i props, %i blocks broken\n",
+                    (int)events.kicks.size(),(int)events.broken_blocks.size());
     }
     if (events.f_shot){
         debug->Info("Shot at %.0f deg, power %.2f\n",stage.aim_deg,events.shot_power);
@@ -888,11 +924,223 @@ void ApplicationArcher::DriveArcherBody(){
     moment it topples, and a board lying on the floor should be stepped over rather than walked
     into - leaving it out gets both right for free.
 */
+/*
+    The boot landing on a prop.
+
+    Far harder than ApplyPushes, and that difference is the whole reason the two are separate
+    events rather than one with a magnitude on it: a shove is ARCHER_PUSH_SPEED and moves a crate
+    at walking pace, a kick is KICK_SPEED with KICK_LIFT under it and sends it. Set rather than
+    added, like the shove, so it stays bounded.
+
+    A BRICK IN A WALL IS THE INTERESTING CASE. The wall is built from static bodies - twenty-one
+    dynamic boxes holding each other up is a lot of solver time spent keeping something perfectly
+    still, and rp3d would have to be argued with to stop the stack slouching. So the bricks stand
+    static until something frees them, and a kick frees THE WHOLE WALL at once, not just the bricks
+    the boot touched. Freeing only those leaves the rest hanging in the air over the hole, which
+    looks like a bug and is one; freeing all of them lets the wall come down, which is the thing
+    the player asked for. The ones near the boot get the impulse, the rest simply lose their
+    footing - which is what a wall collapsing IS.
+*/
+void ApplicationArcher::ApplyKicks(const StageEvents& events){
+    for (size_t k = 0; k < events.kicks.size(); k++){
+        const StageEvents::StageKick& kick = events.kicks[k];
+        if (kick.id < 0 || kick.id >= (int)prop_views.size()){
+            continue;
+        }
+        PropView& hit = prop_views[kick.id];
+        if (!hit.object){
+            continue;
+        }
+
+        //Which bodies this kick is about: a lone crate or target is itself, a brick is its whole
+        //wall. `index` is the Stage prop it came from, which for every brick of one wall is the
+        //same number - that is what makes the wall identifiable at all.
+        bool f_wall = (hit.kind == PROP_BRICKWALL);
+        for (size_t i = 0; i < prop_views.size(); i++){
+            PropView& view = prop_views[i];
+            if (!view.object || view.f_lost){
+                continue;
+            }
+            if (f_wall){
+                if (view.kind != PROP_BRICKWALL || view.index != hit.index){
+                    continue;
+                }
+            }else if (i != (size_t)kick.id){
+                continue;
+            }
+
+            Physics* p = view.object->GetPhysics();
+            if (!p){
+                continue;
+            }
+            if (p->IsStatic()){
+                //Freed. Gravity has to be turned on explicitly - SetStatic(false) does not do it,
+                //and a brick without it hangs in the air looking like a broken solver. See the
+                //gravity note in MakePlanarBody.
+                p->SetStatic(false);
+                p->SetGravityEnabled(true);
+                p->SetLinearLockAxis(vec3(1.0f,1.0f,0.0f));
+                p->SetAngularLockAxis(vec3(0.0f,0.0f,1.0f));
+            }
+            //A brick off a wall is rubble from here on: it stops being something the archer can
+            //walk into, or the pile becomes the wall all over again.
+            if (view.kind == PROP_BRICKWALL){
+                view.f_broken = true;
+            }
+
+            //Impulse falls off with distance from the boot, so a wall bursts outward from where it
+            //was struck rather than every brick leaving at the same speed in the same direction.
+            vec3 pp = view.object->GetWorldPosition();
+            float dx = pp.x - kick.x;
+            float dy = pp.y - kick.y;
+            float dist = sqrtf(dx * dx + dy * dy);
+            //A gentle falloff on purpose: the bricks the boot actually touched are thrown, and
+            //the rest of the wall still gets enough of a shove to come apart rather than settling
+            //back into the same shape one row lower.
+            float falloff = 1.0f / (1.0f + dist * dist * 0.30f);
+
+            vec3 v = p->GetVelocity();
+            float want = kick.dir * KICK_SPEED * falloff;
+            if ((kick.dir > 0.0f && v.x < want) || (kick.dir < 0.0f && v.x > want)){
+                v.x = want;
+            }
+            float lift = KICK_LIFT * falloff;
+            if (v.y < lift){
+                v.y = lift;
+            }
+            p->WakeUp();
+            p->SetVelocity(vec3(v.x,v.y,0.0f));
+        }
+    }
+}
+
+/*
+    A block the kick destroyed.
+
+    Stage has already cleared its f_alive, so as far as the rules are concerned it is gone - the
+    archer walks through where it stood and arrows fly through it. What is left is the half the
+    rules cannot reach: a static collider still standing in the physics world, which crates and
+    debris would pile against forever, and nothing on screen to say it broke.
+*/
+void ApplicationArcher::BreakBlocks(const StageEvents& events){
+    for (size_t i = 0; i < events.broken_blocks.size(); i++){
+        int index = events.broken_blocks[i];
+        if (index < 0 || index >= (int)block_objects.size() || !block_objects[index]){
+            continue;
+        }
+        Object* object = block_objects[index];
+        vec3 centre = object->GetWorldPosition();
+        vec3 size = object->GetScale();
+
+        Physics* p = object->GetPhysics();
+        if (p){
+            //Deactivated rather than destroyed: the block objects are a vector indexed in step
+            //with Stage::blocks, and deleting one out of the middle of that would put every index
+            //after it out of alignment with the rules. It stops colliding, which is what matters.
+            p->SetActive(false);
+        }
+        object->SetVisibility(false);
+
+        const StageBlock& block = stage.blocks[index];
+        //Away from the archer, because a wall you kicked should fall away from you.
+        float dir = (stage.pos.x <= block.x) ? 1.0f : -1.0f;
+        SpawnDebris(centre,vec3(size.x * 0.5f,size.y * 0.5f,size.z * 0.5f),
+                    vec3(dir,0.35f,0.0f),material_breakable);
+        debug->Info("Broke block %i at (%.2f,%.2f)\n",index,centre.x,centre.y);
+    }
+}
+
+/*
+    Burst one block into chunks.
+
+    Deliberately irregular - the chunks are different sizes and leave at different speeds, because
+    a block that shatters into identical cubes all travelling the same way reads as a formation
+    rather than as rubble.
+
+    THE RANDOMNESS IS LOCAL AND SEEDED FROM THE TICK, not rand() and not the engine's RRandom.
+    rand() is not reproducible across runs, which would make a recorded session diverge the moment
+    a wall came down. RRandom would be reproducible but is a SHARED stream - the UI and the MCP
+    thread draw from the same one off-tick, so the number this gets depends on what else happened
+    to ask for a number first, which is an open problem in its own right. A local xorshift seeded
+    from the tick and the chunk index is reproducible, costs nothing, and cannot be perturbed by
+    anything outside this function.
+*/
+void ApplicationArcher::SpawnDebris(const vec3& centre, const vec3& half_extents,
+                                    const vec3& impulse_dir, int material){
+    uint32_t seed = (uint32_t)(main_scene->GetPhysicsTick() * 2654435761u) ^ 0x9E3779B9u;
+    for (int i = 0; i < ARCHER_DEBRIS_PER_BLOCK; i++){
+        if ((int)debris.size() >= ARCHER_MAX_DEBRIS){
+            return;     //the cap is the point; see the note on it
+        }
+        //xorshift32, inline so the stream belongs to this burst and to nothing else.
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        float fx = (float)(seed % 1000) / 1000.0f - 0.5f;
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        float fy = (float)(seed % 1000) / 1000.0f - 0.5f;
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        float scale = 0.30f + (float)(seed % 1000) / 1000.0f * 0.35f;
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        float fspeed = (float)(seed % 1000) / 1000.0f;
+
+        vec3 size(half_extents.x * 2.0f * scale,half_extents.y * 2.0f * scale * 0.6f,
+                  half_extents.z * 2.0f * scale);
+        vec3 at(centre.x + fx * half_extents.x * 1.2f,
+                centre.y + fy * half_extents.y * 1.4f,
+                0.0f);
+
+        char name[48];
+        snprintf(name,sizeof(name),"debris_%i_%i",(int)debris.size(),i);
+        Object* chunk = MakePlanarBody(unit_mesh,name,at,size,material,
+                                       ARCHER_CAT_DEBRIS,ARCHER_MASK_DEBRIS,1.2f,false);
+        if (!chunk){
+            continue;
+        }
+        Physics* p = chunk->GetPhysics();
+        if (p){
+            float speed = 3.0f + fspeed * 5.0f;
+            p->SetVelocity(vec3(impulse_dir.x * speed,
+                                impulse_dir.y * speed + 2.0f + fy * 3.0f,0.0f));
+            p->SetAngularVelocity(vec3(0.0f,0.0f,fx * 12.0f));
+        }
+        DebrisView view;
+        view.object = chunk;
+        view.reap_tick = main_scene->GetPhysicsTick() + ARCHER_DEBRIS_TICKS;
+        debris.push_back(view);
+    }
+}
+
+void ApplicationArcher::UpdateDebris(){
+    uint64_t now = main_scene->GetPhysicsTick();
+    bool f_any_destroyed = false;
+    for (size_t i = 0; i < debris.size(); ){
+        Object* object = debris[i].object;
+        bool f_expired = (now >= debris[i].reap_tick) ||
+                         (object && object->GetWorldPosition().y < -40.0f);
+        if (!f_expired){
+            i++;
+            continue;
+        }
+        if (object){
+            object->Destroy();
+            f_any_destroyed = true;
+        }
+        debris.erase(debris.begin() + i);
+    }
+    if (f_any_destroyed){
+        //Object::Destroy only MARKS. Without this the chunks stop rendering but their rigid bodies
+        //stay in the physics world for the life of the run - and a player demolishing a wall makes
+        //a lot of them. Safe here: RunSimulationTick holds physics_mutex, so the render thread is
+        //not walking the object list. Same reasoning as breakout's UpdateDebris.
+        main_scene->DeleteDestroyedObjects();
+    }
+}
+
 void ApplicationArcher::RefreshObstacles(){
     stage.ClearObstacles();
     for (size_t i = 0; i < prop_views.size(); i++){
         const PropView& view = prop_views[i];
-        if (!view.object || view.f_lost || view.f_knocked){
+        //Rubble and toppled boards are stepped over, not walked into. See PropView::f_broken.
+        if (!view.object || view.f_lost || view.f_knocked || view.f_broken){
             continue;
         }
         Physics* p = view.object->GetPhysics();
@@ -1471,7 +1719,7 @@ void ApplicationArcher::RegisterMCPTools(){
         json{
             {"type","object"},
             {"properties", {
-                {"action", {{"type","string"},{"description","left, right, down, jump, draw, action or knife"}}},
+                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, action or knife"}}},
                 {"ticks", {{"type","number"},{"description","simulation ticks to hold it, default 20, capped at 600"}}},
                 {"wait", {{"type","boolean"},{"description","block until the hold has finished, default true; false returns at once so another hold can be layered on top"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
@@ -1490,10 +1738,11 @@ void ApplicationArcher::RegisterMCPTools(){
             else if (name == "down"){   action = INPUT_ARCHER_DOWN;   }
             else if (name == "jump"){   action = INPUT_ARCHER_JUMP;   }
             else if (name == "draw"){   action = INPUT_ARCHER_DRAW;   }
+            else if (name == "kick"){   action = INPUT_ARCHER_KICK;   }
             else if (name == "action"){ action = INPUT_ARCHER_ACTION; }
             else if (name == "knife"){  action = INPUT_ARCHER_KNIFE;  }
             else{
-                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, action or knife"} };
+                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, action or knife"} };
             }
             int ticks = (int)clamp(args.value("ticks",20.0f),0.0f,600.0f);
             input->HoldKey(action,(uint32_t)ticks);
@@ -1607,10 +1856,11 @@ void ApplicationArcher::DrawImGuiUI(void){
 
     ImGui::Separator();
     ImGui::TextWrapped("A/D or arrows run.  Space jumps - hold it for height.  J draws the bow, "
-                       "release to loose.  Up/Down tilt the aim.  Jump at a ledge too high to land "
-                       "on and you CATCH it: Space then climbs up, S lets go, and holding away "
-                       "from it refuses the grab.  S also drops through a platform.  "
-                       "R restarts, F1 shows the engine panels.");
+                       "release to loose; Up/Down tilt the aim.  K kicks: it punts a crate far "
+                       "harder than walking into one does, and brings down the brick wall or the "
+                       "cracked wall.  Jump at a ledge too high to land on and you CATCH it: Space "
+                       "then climbs up, S lets go, and holding away from it refuses the grab.  "
+                       "S also drops through a platform.  R restarts, F1 shows the engine panels.");
 
     ImGui::End();
 }

@@ -273,6 +273,36 @@ struct StageObstacle{
 //while pushing it, and a crate that slid along at a full run would weigh nothing.
 #define ARCHER_PUSH_SPEED           4.0f
 
+/*
+    --- THE KICK ---------------------------------------------------------------------------------
+    A separate verb from the shove, and it has to be. Walking into a crate already moves it at
+    ARCHER_PUSH_SPEED, which is what leaning on something looks like; a kick is a decision, and if
+    the two were the same thing then either the shove would launch crates across the level or the
+    kick would be indistinguishable from walking.
+
+    So: a key, a wind-up, a brief window in which it actually connects, and a cooldown. The window
+    is what makes it a commitment rather than a button to mash - there is a real cost to kicking at
+    the wrong moment, which is what makes kicking at the right one worth anything.
+
+    THE ACTIVE WINDOW IS A RANGE OF TICKS, not an instant. An instant lands on whatever happened to
+    be overlapping on one exact tick, which for a moving crate is a coin toss; five ticks is 83 ms,
+    long enough that a kick aimed at something connects with it and short enough that it cannot
+    sweep up half the level on the way past.
+*/
+#define KICK_TICKS                  14      //the whole move, from press to recovered
+#define KICK_ACTIVE_FROM            3       //wind-up before this
+#define KICK_ACTIVE_TO              7       //recovery after
+#define KICK_COOLDOWN               10      //ticks before another may be started
+#define KICK_REACH                  0.75f   //how far past the body's leading edge it reaches
+#define KICK_HALF_HEIGHT            0.55f   //half the height of the box it sweeps
+#define KICK_Y_OFFSET               -0.25f  //centred low - it is a boot, not a shoulder barge
+//What a kick imparts. Far above ARCHER_PUSH_SPEED, which is the point.
+#define KICK_SPEED                  13.0f
+#define KICK_LIFT                   4.5f
+//A grounded kick plants the feet. Not a full stop - the archer keeps sliding a little, which reads
+//as weight rather than as the game taking the controls away.
+#define KICK_ROOT_FRICTION          40.0f
+
 //--- The archer's state machine -----------------------------------------------------------------
 /*
     What the archer is doing with their whole body. Deliberately one small enum rather than a pile
@@ -304,7 +334,8 @@ struct ArcherInput{
     bool  f_draw_down = false;      //held: the bow is being drawn
     bool  f_draw_released = false;  //edge: loose the arrow
     bool  f_down_held = false;      //drop through a one-way platform
-    bool  f_action_pressed = false; //edge: grab, release, knife - the later slices
+    bool  f_kick_pressed = false;   //edge: kick
+    bool  f_action_pressed = false; //edge: take the rope - the later slice
 };
 
 /*
@@ -340,6 +371,26 @@ struct StageEvents{
     bool  f_grabbed_ledge = false;  //caught a lip this tick
     bool  f_released_ledge = false; //let go of one, by choice or by dropping
     bool  f_climbed = false;        //finished pulling up over one
+    bool  f_kick_started = false;   //the boot went out; the connect comes a few ticks later
+    bool  f_kick_connected = false; //...and hit at least one thing
+
+    /*
+        Props the kick connected with. Separate from `pushes` above on purpose - a shove and a
+        kick are different events with very different numbers behind them, and collapsing them
+        into one list with a magnitude field is how the app ends up unable to tell whether to
+        play a footstep or break a wall.
+    */
+    struct StageKick{
+        int   id = -1;
+        float dir = 1.0f;
+        float x = 0.0f;         //where the boot landed, for debris and for deciding which
+        float y = 0.0f;         //bricks of a wall are nearest it
+    };
+    std::vector<StageKick> kicks;
+
+    //BLOCK_BREAKABLE blocks destroyed this tick, by index. Stage has already cleared their
+    //f_alive; the app still has to take their collider out of the world and burst them.
+    std::vector<int> broken_blocks;
 
     /*
         Props the archer walked into this tick, and how hard.
@@ -414,6 +465,9 @@ public:
     //Not derived from `facing`, because the climb needs it after facing may have changed.
     float hang_side = -1.0f;
     int   climb_ticks = 0;          //counts down through MODE_CLIMB
+    //The kick, counted UP from 1 so that 0 means "not kicking" - see KICK_ACTIVE_FROM/TO.
+    int   kick_ticks = 0;
+    int   kick_cooldown = 0;
     v2    climb_from;               //where the climb started and ends, captured on entry so the
     v2    climb_to;                 //lerp cannot drift if anything else touches pos
     int   grab_cooldown = 0;        //see LEDGE_RELEASE_COOLDOWN
@@ -467,6 +521,12 @@ public:
     int   arrows_shot = 0;
     int   arrows_hit_blocks = 0;
 
+    //The box the boot sweeps, in world units. PUBLIC because three things need it and they must
+    //not drift apart: the sweep itself, the app's debug draw while the numbers are being tuned,
+    //and the rules test. Meaningful only while kick_ticks is non-zero, but cheap and side-effect
+    //free to ask at any time.
+    void  KickBox(float& out_left, float& out_right, float& out_bottom, float& out_top) const;
+
     //A one-line dump of the archer's state, for the log, the ImGui panel and the rules test.
     std::string DebugLine() const;
 
@@ -485,6 +545,11 @@ private:
     void  ReleaseHang(StageEvents& events);
     void  TickHang(const ArcherInput& in, StageEvents& events);
     void  TickClimb(const ArcherInput& in, StageEvents& events);
+
+    //--- The kick -------------------------------------------------------------------------------
+    //Advances the kick timer and, on the ticks it is live, sweeps its box against the breakable
+    //blocks and the obstacles. Everything it finds goes into `events`.
+    void  TickKick(const ArcherInput& in, StageEvents& events);
 
     //Moves the body box by `delta`, stopping against solid geometry AND against the obstacles,
     //and reports what was hit. Axis-separated: x first and resolved, then y - which is what makes

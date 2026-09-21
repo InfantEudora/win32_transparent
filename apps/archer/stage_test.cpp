@@ -856,6 +856,207 @@ static void TestObstacles(){
     Check(c.pos.x > before + 1.5f,"with none declared, the archer walks straight past where it was");
 }
 
+//--- The kick -------------------------------------------------------------------------------------
+
+//The cracked wall, found by kind rather than by the x it happens to sit at today.
+static const StageBlock* FindBreakable(const Stage& s){
+    for (size_t i = 0; i < s.blocks.size(); i++){
+        if (s.blocks[i].kind == BLOCK_BREAKABLE && s.blocks[i].f_alive){
+            return &s.blocks[i];
+        }
+    }
+    return NULL;
+}
+
+static void TestKick(){
+    printf("the kick\n");
+    char detail[220];
+
+    ArcherInput idle;
+    ArcherInput kick;
+    kick.f_kick_pressed = true;
+
+    //--- It connects on a delay, not instantly ----------------------------------------------------
+    Stage s;
+    Settle(s);
+    StageEvents ev;
+    s.Tick(kick,ev);
+    Check(ev.f_kick_started,"pressing kick starts one");
+    Check(!ev.f_kick_connected,"which does not connect on the same tick - there is a wind-up");
+
+    //--- Breaking the cracked wall ----------------------------------------------------------------
+    Stage b;
+    const StageBlock* wall = FindBreakable(b);
+    Check(wall != NULL,"the level has a breakable wall to kick");
+    if (wall){
+        float wall_left = wall->Left();
+        //Stand against its near face, facing it.
+        b.pos = v2(wall_left - ARCHER_HALF_W - 0.05f,ARCHER_HALF_H);
+        Settle(b);
+        ArcherInput face_it;
+        face_it.move_axis = 1.0f;
+        Run(b,2,face_it);
+        Check(b.facing > 0.0f,"the archer faces the wall");
+
+        bool f_broke = false;
+        int broke_index = -1;
+        StageEvents kev;
+        b.Tick(kick,kev);
+        for (int i = 0; i < KICK_TICKS + 4 && !f_broke; i++){
+            StageEvents e;
+            b.Tick(idle,e);
+            if (e.broken_blocks.size() > 0){
+                f_broke = true;
+                broke_index = e.broken_blocks[0];
+            }
+        }
+        snprintf(detail,sizeof(detail),"wall face at %.2f, archer at %.2f",wall_left,b.pos.x);
+        Check(f_broke,"a kick breaks the cracked wall",detail);
+        if (broke_index >= 0){
+            Check(!b.blocks[broke_index].f_alive,"and the block is marked dead");
+        }
+
+        //Which is the point of breaking it: the way is now open.
+        ArcherInput right;
+        right.move_axis = 1.0f;
+        Run(b,150,right);
+        snprintf(detail,sizeof(detail),"reached %.2f; the wall stood at %.2f",b.pos.x,wall_left);
+        Check(b.pos.x > wall_left + 2.0f,"and the archer can now walk through where it stood",detail);
+        //Height check too - walking THROUGH, not over the rubble.
+        CheckNear(b.pos.y,ARCHER_HALF_H,0.1f,"at ground level",detail);
+    }
+
+    //--- A wall still standing stops you ----------------------------------------------------------
+    Stage n;
+    const StageBlock* wall2 = FindBreakable(n);
+    if (wall2){
+        float wall_left = wall2->Left();
+        n.pos = v2(wall_left - 4.0f,ARCHER_HALF_H);
+        Settle(n);
+        ArcherInput right;
+        right.move_axis = 1.0f;
+        Run(n,150,right);
+        snprintf(detail,sizeof(detail),"stopped at %.2f against a face at %.2f",n.pos.x,wall_left);
+        Check(n.pos.x < wall_left,"without kicking it, the same wall stops the archer",detail);
+    }
+
+    //--- Kicking a prop ---------------------------------------------------------------------------
+    Stage p;
+    Settle(p);
+    ArcherInput face_right;
+    face_right.move_axis = 1.0f;
+    Run(p,2,face_right);
+    //A crate just within reach of the boot.
+    float crate_x = p.pos.x + ARCHER_HALF_W + 0.35f;
+    bool f_kicked = false;
+    StageEvents::StageKick got;
+    for (int i = 0; i < KICK_TICKS + 4 && !f_kicked; i++){
+        p.ClearObstacles();
+        p.AddObstacle(crate_x,0.40f,0.40f,0.40f,9,true);
+        StageEvents e;
+        p.Tick(i == 0 ? kick : idle,e);
+        if (e.kicks.size() > 0){
+            f_kicked = true;
+            got = e.kicks[0];
+        }
+    }
+    Check(f_kicked,"a kick connects with a prop in front of the archer");
+    if (f_kicked){
+        Check(got.id == 9,"naming it by the id the app gave it");
+        Check(got.dir > 0.0f,"in the direction the archer is facing");
+    }
+
+    //--- ...but not one behind them ---------------------------------------------------------------
+    Stage back;
+    Settle(back);
+    Run(back,2,face_right);
+    float behind_x = back.pos.x - ARCHER_HALF_W - 0.35f;
+    bool f_hit_behind = false;
+    for (int i = 0; i < KICK_TICKS + 4; i++){
+        back.ClearObstacles();
+        back.AddObstacle(behind_x,0.40f,0.40f,0.40f,9,true);
+        StageEvents e;
+        back.Tick(i == 0 ? kick : idle,e);
+        if (e.kicks.size() > 0){
+            f_hit_behind = true;
+        }
+    }
+    Check(!f_hit_behind,"and never one behind them");
+
+    //--- One connect per kick ---------------------------------------------------------------------
+    /*
+        The boot is live for KICK_ACTIVE_TO - KICK_ACTIVE_FROM + 1 ticks, which is what makes a kick
+        aimed at something actually connect with it. Without closing the window on the first hit,
+        that is five impulses into the same crate and a crate that leaves the level.
+    */
+    Stage once;
+    Settle(once);
+    Run(once,2,face_right);
+    float near_x = once.pos.x + ARCHER_HALF_W + 0.35f;
+    int connects = 0;
+    for (int i = 0; i < KICK_TICKS + 6; i++){
+        once.ClearObstacles();
+        once.AddObstacle(near_x,0.40f,0.40f,0.40f,9,true);
+        StageEvents e;
+        once.Tick(i == 0 ? kick : idle,e);
+        connects += (int)e.kicks.size();
+    }
+    snprintf(detail,sizeof(detail),"connected %i times in one kick",connects);
+    Check(connects == 1,"one kick is one connect, however long the boot is out",detail);
+
+    //--- The cooldown ------------------------------------------------------------------------------
+    Stage cd;
+    Settle(cd);
+    StageEvents c1;
+    cd.Tick(kick,c1);
+    Check(c1.f_kick_started,"the first kick starts");
+    StageEvents c2;
+    cd.Tick(kick,c2);
+    Check(!c2.f_kick_started,"a second on the very next tick does not");
+    Run(cd,KICK_TICKS + KICK_COOLDOWN + 2,idle);
+    StageEvents c3;
+    cd.Tick(kick,c3);
+    Check(c3.f_kick_started,"but one after the cooldown does");
+
+    //--- A grounded kick plants the feet ------------------------------------------------------------
+    Stage plant;
+    Settle(plant);
+    Run(plant,30,face_right);
+    float running = plant.vel.x;
+    StageEvents pev;
+    plant.Tick(kick,pev);
+    Run(plant,4,face_right);
+    snprintf(detail,sizeof(detail),"was running at %.2f, now %.2f",running,plant.vel.x);
+    Check(plant.vel.x < running * 0.7f,"kicking on the ground plants the feet",detail);
+    //And the facing is frozen with them, or the boot swings through 180 degrees mid-kick.
+    ArcherInput face_left;
+    face_left.move_axis = -1.0f;
+    Run(plant,3,face_left);
+    Check(plant.facing > 0.0f,"and the facing is frozen while it plays out",detail);
+
+    //--- Hanging cannot kick -------------------------------------------------------------------------
+    Stage h;
+    const StageBlock& ledge = HighLedge(h);
+    h.pos = v2(ledge.Left() - ARCHER_HALF_W - 0.5f,ARCHER_HALF_H);
+    Settle(h);
+    ArcherInput jump;
+    jump.f_jump_pressed = true;
+    jump.f_jump_down = true;
+    ArcherInput fly;
+    fly.move_axis = 1.0f;
+    fly.f_jump_down = true;
+    StageEvents hev;
+    h.Tick(jump,hev);
+    for (int i = 0; i < 200 && h.mode != MODE_HANG; i++){
+        StageEvents e;
+        h.Tick(fly,e);
+    }
+    Check(h.mode == MODE_HANG,"an archer hanging from a ledge");
+    StageEvents hk;
+    h.Tick(kick,hk);
+    Check(!hk.f_kick_started,"cannot kick - both feet are on the wall");
+}
+
 //--- Determinism ---------------------------------------------------------------------------------
 
 static void TestDeterminism(){
@@ -899,6 +1100,7 @@ int main(void){
     TestBow();
     TestLedge();
     TestObstacles();
+    TestKick();
     TestDeterminism();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
