@@ -139,8 +139,17 @@ struct ui_vertex{
         for the entire overlay - a uniform would mean a draw call per mode and the batch would stop
         being a batch. It is `flat` in the shader: all six vertices of a quad carry the same value,
         so interpolating it would be arithmetic that cannot change the answer.
+
+        DEFAULTED HERE, AND IT HAS TO BE. Most quads go through AddQuad, which sets every field
+        from a parameter - but AddRectOutline and AddLine build their vertices by hand, because
+        their `local` does not follow the quad they emit. A hand-built `ui_vertex v;` leaves
+        anything without an initialiser as whatever was on the stack, and AddRectOutline shipped
+        for months not setting this: the garbage happened to be zero until an unrelated change to
+        a CALLER moved the stack around, and then every outline in the app turned into a themed
+        sprite sampling a texture unit nothing had bound. Found 2026-09-21. Zero here means the
+        default is "a distance field", which is what every untextured primitive is.
     */
-    float    sprite;
+    float    sprite = 0.0f;
     uint32_t color;             //RGBA8, see UIColor
 };
 
@@ -189,6 +198,32 @@ public:
 
     //The same rectangle's outline, `thickness` pixels wide, centred on the edge.
     void AddRectOutline(vec2 min, vec2 max, float radius, float thickness, uint32_t color);
+
+    /*
+        A stroke from `a` to `b`, `thickness` pixels wide, with round caps centred on the two
+        endpoints. ONE QUAD, at any angle.
+
+        THE ONLY THING HERE THAT IS NOT AXIS-ALIGNED, and the reason it can exist at all is that
+        `pos` and `local` are separate vertex attributes. The fragment stage's one distance term
+        is RoundBoxDistance(v_local,...) - it never reads gl_FragCoord and never calls fwidth -
+        so rotating the four POSITIONS while leaving `local` in the box's own frame evaluates the
+        same rounded box through a rotated mapping. No shader change, no vertex format change, no
+        second pass. A capsule is just a rounded box whose radius is half its short side, which
+        AddQuad's clamp already produces, so the caps come free as well.
+
+        WHAT IT IS FOR is the diagonal, which nothing else here can draw: the tick in a checkbox,
+        the chevron in a spinner arrow, a leader line. The font is printable ASCII only (see
+        UIFont.h), so there is no glyph to fall back on for any of those.
+
+        NOT A POLYLINE. Two strokes meeting at an angle overlap at the joint and, with a
+        translucent colour, the joint shows. Opaque strokes - which is what UI line art is -
+        are unaffected, and a real joint style is a lot of machinery for the one case.
+
+        A zero-length line draws the cap alone, which is a filled circle of diameter `thickness`.
+        That is the useful answer rather than an edge case to reject, so a caller animating an
+        endpoint does not have to special-case the instant the two meet.
+    */
+    void AddLine(vec2 a, vec2 b, float thickness, uint32_t color);
 
     /*
         The nine regions of a nine-slice, each in a flat colour naming what it does.

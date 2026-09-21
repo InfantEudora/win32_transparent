@@ -4,6 +4,8 @@
 #include "File.h"
 #include <string.h>
 #include <stddef.h>
+//sqrtf, for AddLine's direction. The only maths in this file that is not add and multiply.
+#include <math.h>
 
 static Debugger* debug = new Debugger("UIOverlay", DEBUG_INFO);
 
@@ -517,6 +519,74 @@ void UIOverlay::AddRectOutline(vec2 min, vec2 max, float radius, float thickness
         v.half_extent    = half;                 //the SHAPE's half size, not the quad's
         v.radius         = radius;
         v.outline        = thickness * 0.5f;
+        //Explicit although the member defaults to it now: this emitter sets every field by hand,
+        //and a list with one silently missing is exactly how that turned into a bug.
+        v.sprite         = 0.0f;
+        v.distance_scale = font.distance_range_px;
+        v.color          = color;
+        vertices.push_back(v);
+    }
+}
+
+//See the header for why a rotated quad needs nothing from the shader. This function is that
+//comment made real: `local` is built from the UNROTATED corners and `pos` from the rotated ones.
+void UIOverlay::AddLine(vec2 a, vec2 b, float thickness, uint32_t color){
+    if (!f_ready){
+        return;
+    }
+    if (thickness <= 0.0f){
+        return;
+    }
+
+    float dx  = b.x - a.x;
+    float dy  = b.y - a.y;
+    float len = sqrtf(dx * dx + dy * dy);
+
+    //The unit direction, and the identity for a zero-length stroke - which then draws its cap as
+    //a circle rather than dividing by zero. See the header.
+    float ux = 1.0f;
+    float uy = 0.0f;
+    if (len > 0.0f){
+        ux = dx / len;
+        uy = dy / len;
+    }
+
+    /*
+        Half the SHAPE, in its own frame: half the length plus half the thickness along the
+        stroke, half the thickness across it.
+
+        The `+ thickness * 0.5f` is what puts the round caps ON the endpoints rather than inset
+        from them. Without it a stroke from a to b stops half a thickness short at each end,
+        which is invisible on a hairline and obviously wrong on a ten-pixel one - and a tick
+        drawn as two strokes would come apart at the joint.
+    */
+    float hx = len * 0.5f + thickness * 0.5f;
+    float hy = thickness * 0.5f;
+
+    vec2 half   = vec2(hx,hy);
+    vec2 centre = vec2((a.x + b.x) * 0.5f,(a.y + b.y) * 0.5f);
+    vec2 solid  = SolidUV(font);
+
+    const vec2 corner_local[4] = {
+        vec2(-hx,-hy), vec2(hx,-hy), vec2(hx,hy), vec2(-hx,hy)
+    };
+    const int order[6] = {0,1,2, 0,2,3};
+
+    for (int i = 0; i < 6; i++){
+        int c = order[i];
+        ui_vertex v;
+        //The whole trick, in two lines: the position is the corner rotated onto the stroke's
+        //axis and carried to its centre, while `local` just below stays the corner it was.
+        v.pos            = vec2(centre.x + corner_local[c].x * ux - corner_local[c].y * uy,
+                                centre.y + corner_local[c].x * uy + corner_local[c].y * ux);
+        v.uv             = solid;
+        v.local          = corner_local[c];
+        v.half_extent    = half;
+        //Exactly the clamp limit, hy being the shorter half by construction - so the rounded box
+        //IS a capsule and the two ends are semicircles.
+        v.radius         = hy;
+        v.outline        = 0.0f;
+        v.sprite         = 0.0f;
         v.distance_scale = font.distance_range_px;
         v.color          = color;
         vertices.push_back(v);

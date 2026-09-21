@@ -153,10 +153,21 @@ void InputController::SubmitPointer(int32_t pointer_id, float x, float y, bool d
     }
 
     if (slot >= 0){
-        //A move of a pointer already down. Deliberately nothing: the button was CAPTURED on press
-        //and is held until this pointer lifts, so a drifting thumb cannot drop a held direction
-        //and an edge cannot chatter at a rect boundary. See the header on why sliding between
-        //buttons is not a feature yet.
+        /*
+            A move of a pointer already down. No re-hit-test and no edge: the button was CAPTURED
+            on press and is held until this pointer lifts, so a drifting thumb cannot drop a held
+            direction and an edge cannot chatter at a rect boundary. See the header on why sliding
+            between buttons is not a feature yet.
+
+            The POSITION is recorded, though, which is the one thing this used to throw away. A
+            slider needs to know where along itself the finger holding it is, and a keycode edge
+            cannot carry that - see TouchButton::pointer_x. Nothing about capture changes.
+        */
+        int button_index = touch_pointers[slot].button_index;
+        if ((button_index >= 0) && (button_index < (int)touch_buttons.size())){
+            touch_buttons[button_index].pointer_x = x;
+            touch_buttons[button_index].pointer_y = y;
+        }
         return;
     }
 
@@ -188,6 +199,11 @@ void InputController::SubmitPointer(int32_t pointer_id, float x, float y, bool d
 
     if (hit >= 0){
         touch_buttons[hit].f_down = true;
+        //Seeded on the press so a control that is clicked without ever being dragged still has a
+        //position to read - a slider jumps to where you tapped it, rather than to wherever the
+        //last drag happened to leave this field.
+        touch_buttons[hit].pointer_x = x;
+        touch_buttons[hit].pointer_y = y;
         SubmitSystemKey(touch_buttons[hit].system_keycode,true);
     }
 }

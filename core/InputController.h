@@ -566,6 +566,31 @@ class InputController{
         //Purely for a drawing layer: true while some pointer is holding this button. Written by
         //SubmitPointer on the same thread that hit-tests.
         bool      f_down = false;
+        /*
+            Where the pointer holding this button is NOW, in the same screen pixels as `rect`.
+            Only meaningful while f_down; stale once it clears.
+
+            THIS IS WHAT MAKES A SLIDER POSSIBLE, and it is additive rather than a change to how
+            capture works. A button's keycode carries an EDGE - pressed, released - and that is
+            the right shape for a button and the wrong one for a control whose whole value is
+            where along itself you are holding it. SubmitPointer already receives every move of a
+            held pointer (see the WM_MOUSEMOVE note in this file's win32 block, which forwards
+            the button state on every move so a release outside the window is not missed); it
+            simply had nowhere to put the position. Now it does.
+
+            Capture is UNCHANGED: the button a pointer pressed is still the button it holds until
+            that pointer lifts, wherever it travels in between. So a drag that leaves the rect
+            keeps driving the control it started on, which for a slider is exactly right - the
+            alternative, dropping the drag the moment the cursor slips off a 10-pixel track, is
+            the thing every slider in every toolkit is careful not to do.
+
+            RACY BY DESIGN, like f_down beside it: written by the thread that hit-tests, read by
+            whichever thread draws or applies it, with no lock. Two floats can be read one frame
+            apart from each other; for a control this is a sub-pixel artefact on one frame, and
+            it is not worth a mutex on the pointer path to prevent.
+        */
+        float     pointer_x = 0.0f;
+        float     pointer_y = 0.0f;
     };
 
     /*

@@ -92,6 +92,13 @@ void Window::Close(){
     SendMessage(hWnd, WM_CLOSE, 0, 0);
 }
 
+//See the comment on the declaration for why this sets the flag and does not send WM_CLOSE.
+void Window::RequestQuitAll(){
+    for (Window* wnd:windows){
+        wnd->f_should_quit = true;
+    }
+}
+
 void Window::Show(int nShowCmd){
     ShowWindow(hWnd, nShowCmd);
     //UpdateWindow(hWnd);

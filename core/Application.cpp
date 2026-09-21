@@ -185,14 +185,45 @@ bool Application::SetupConsole(){
     return true;
 }
 
+/*
+    Ctrl+C on the console, and Ctrl+Break, which is the same request by another key.
+
+    ASKS FOR THE ORDINARY SHUTDOWN rather than calling ExitProcess, which is what this did until
+    2026-09-21. ExitProcess is not broken - measured 2026-09-21 it exits cleanly - but it stops
+    every other thread exactly where it stands, which for the render thread means somewhere inside
+    the driver, mid-frame, with the window's GL context current. Nothing gets to finish: not the
+    physics tick, not the frame, not the context release the thread owes the driver. That it
+    works is luck about where the axe lands, and the close button already has a path that does not
+    need any. Ctrl+C is the operator asking the process to stop, so it should take the same one.
+
+    THE SECOND Ctrl+C STILL KILLS, and that is the point of f_quit_requested rather than a plain
+    call. The escape hatch ExitProcess gave has to survive: if the orderly shutdown ever wedges,
+    the thing an operator reaches for is Ctrl+C again, and it has to work whatever state the
+    engine is in.
+
+    This runs on a thread the OS injects for the purpose, so it touches the quit flag and nothing
+    else - no GL, no scene, no waiting on the threads it just asked to stop.
+
+    Returning FALSE for every other event is the smaller half. TRUE means "handled", and the old
+    unconditional `return true` claimed CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT
+    as well - which does not stop the system killing the process, it only makes it wait out the
+    timeout first. Say no and it happens immediately.
+*/
 bool WINAPI Application::ConsoleHandler(DWORD console_event){
+    static std::atomic<bool> f_quit_requested(false);
+
     switch(console_event){
         case CTRL_C_EVENT:
+        case CTRL_BREAK_EVENT:
+            if (f_quit_requested.exchange(true)){
+                debug->Warn("Second CTRL+C - not waiting, killing the process\n");
+                ExitProcess(1);
+            }
             debug->Ok("Shutting down by CTRL+C\n");
-            ExitProcess(1);
-        break;
+            Window::RequestQuitAll();
+            return true;
     }
-    return true;
+    return false;
 }
 
 //Virtual function. Should get overriden in each application that extends it.
@@ -338,6 +369,24 @@ void Application::FrameThreadFunction(Application* app){
     //HERE rather than leaving it to process exit is the difference between a tick that finishes
     //and a tick cut in half somewhere inside the solver.
     app->StopPhysicsThread();
+
+    /*
+        RELEASE THE GL CONTEXT BEFORE THIS THREAD ENDS. Not tidiness - without it the process
+        never exits.
+
+        Start() made this thread's context current with wglMakeCurrent at the top and, until
+        2026-09-21, nothing ever gave it back. A thread that dies with a context still current
+        leaves the ICD to clean up after it from DLL_THREAD_DETACH, under the loader lock, for a
+        window this thread has already watched be destroyed - WM_CLOSE destroys it while this
+        loop is still drawing. That cleanup deadlocks, the thread never finishes exiting, and so
+        Start()'s frame_thread.join() never returns. The symptom is exactly and only this: the
+        log ends at "FrameThreadFunction terminated", the window is gone, and the process stays
+        in the task list until it is killed. "Both threads joined" is the line that was missing.
+
+        wglMakeCurrent(NULL,NULL) is also simply what the API asks for - MSDN says to make the
+        context not current before the thread using it goes away.
+    */
+    wglMakeCurrent(NULL,NULL);
 
     debug->Info("FrameThreadFunction terminated\n");
 }
