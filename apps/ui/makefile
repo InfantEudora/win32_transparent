@@ -26,7 +26,7 @@ APP_SRCS += ApplicationUI.cpp
 #BAKED ASSETS block in engine.mk, and tools/assetpack_plan.md.
 #
 #Pass BAKE_ASSETS=0 on the command line to build this app the ordinary loose way.
-BAKE_ASSETS ?= 1
+BAKE_ASSETS ?= 0
 ASSET_ROOTS := $(ROOT)/shared_assets
 
 #Neither is loaded by anything at run time: CascadiaMono is a second font nothing selects, and

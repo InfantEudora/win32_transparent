@@ -154,6 +154,18 @@ public:
     void SetTitle(std::string);
     void RegisterDropFiles();
     void Close(void);
+
+    /*
+        Ask every window to shut down, from a thread that is not the one pumping messages.
+
+        THE FLAG ONLY, which is the difference from Close() above: Close() sends WM_CLOSE, and
+        SendMessage from another thread blocks until the pump thread has run the handler - so a
+        caller that is not the pump, and cannot assume the pump is even responsive, would be
+        waiting on the very thing it is trying to stop. Every loop in the engine already polls
+        f_should_quit, so setting it is the whole job; the pump notices within its wait timeout
+        and unwinds normally. Application::ConsoleHandler is the caller this exists for.
+    */
+    static void RequestQuitAll();
     static HWND _FindWindow(std::string title);
     static std::vector<WNDCLASSEXA>wcs;      //Different types of window classes
 
