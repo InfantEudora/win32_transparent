@@ -120,6 +120,7 @@
 #define ARCHER_CAT_ARCHER           0x02    //the kinematic body, whose only job is to shove props
 #define ARCHER_CAT_PROP             0x04    //crates, targets, bricks
 #define ARCHER_CAT_DEBRIS           0x08
+#define ARCHER_CAT_ROPE             0x10    //the links of the swinging rope
 
 //And what each one is allowed to touch.
 //
@@ -138,6 +139,36 @@
 #define ARCHER_MASK_ARCHER          0
 #define ARCHER_MASK_PROP            (ARCHER_CAT_LEVEL | ARCHER_CAT_PROP | ARCHER_CAT_ARCHER | ARCHER_CAT_DEBRIS)
 #define ARCHER_MASK_DEBRIS          ARCHER_MASK_PROP
+/*
+    A ROPE LINK COLLIDES WITH NOTHING AT ALL, including the rest of its own rope.
+
+    A chain of bodies whose links can touch each other is a chain that jitters: neighbouring links
+    overlap by construction - that is what a joint holding them together MEANS - so every tick the
+    solver is asked to both hold them together and push them apart. The joints alone make the rope,
+    and a rope that hangs through the scenery is a far smaller problem in a side view than one that
+    buzzes.
+*/
+#define ARCHER_MASK_ROPE            0
+//What the archer collides with WHILE SWINGING, which is the one time the solver owns them. Off the
+//rope it is ARCHER_MASK_ARCHER (nothing), because Stage resolves everything itself - but on the
+//rope Stage is not resolving anything, so without this the swing passes through the floor.
+#define ARCHER_MASK_ON_ROPE         (ARCHER_CAT_LEVEL | ARCHER_CAT_PROP)
+
+/*
+    The rope, as bodies.
+
+    Eight links over the six units the level declares, which is 0.75 each - short enough that the
+    rope bends visibly rather than swinging as a plank, long enough that the solver is not holding
+    thirty constraints together for a piece of set dressing. The links are light against the
+    archer's 70kg on purpose: a rope that weighs as much as the person on it swings like a wrecking
+    ball rather than like a rope.
+*/
+#define ROPE_SEGMENTS               8
+#define ROPE_SEGMENT_MASS           1.2f
+#define ROPE_SEGMENT_THICK          0.12f
+//The links near the anchor are not offered as handholds - catching a rope at the very top gives a
+//swing with no arc in it, and looks like the archer stuck to the ceiling.
+#define ROPE_FIRST_GRABBABLE        2
 
 /*
     How much of an arrow's speed the thing it hits takes, 0..1.
@@ -324,6 +355,19 @@ private:
     void BreakBlocks(const StageEvents& events);
     void SpawnDebris(const vec3& centre, const vec3& half_extents, const vec3& impulse_dir, int material);
     void UpdateDebris();
+
+    //--- The rope ---------------------------------------------------------------------------------
+    void BuildRope(const StageProp& anchor);
+    void DestroyRope();
+    //Hand Stage the links it may catch, BEFORE the tick, the same way the props are handed over.
+    void RefreshRopePoints();
+    //The handoff, both ways. See the note on AttachArcherToRope.
+    void AttachArcherToRope(int segment);
+    void DetachArcherFromRope(bool f_jump);
+    //Read the swinging body back into Stage, so the rules, the camera and the telemetry all know
+    //where the archer is while the solver is the one moving them.
+    void SyncArcherFromRope();
+    void PumpRope(float move_axis);
     void SyncArrowViews();
     void SyncAimArc();
     //Cuts the aim arc short at the first PROP it would hit - the half of "what will this arrow
@@ -372,6 +416,14 @@ private:
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
     std::vector<PropView> prop_views;
     std::vector<DebrisView> debris;
+
+    //--- The rope ---------------------------------------------------------------------------------
+    std::vector<Object*> rope_segments;         //top link first
+    //The joint holding the archer to a link while MODE_ROPE, and NULL the rest of the time. Held
+    //because it has to be destroyed again - a swing that cannot be let go of is not a swing.
+    rp3d::BallAndSocketJoint* rope_joint = NULL;
+    std::vector<rp3d::BallAndSocketJoint*> rope_joints;   //the links to each other, and to the anchor
+    Object* rope_anchor_object = NULL;
     Object* arrow_objects[ARROW_MAX_LIVE] = {};
     Object* arc_objects[AIM_ARC_POINTS] = {};
 

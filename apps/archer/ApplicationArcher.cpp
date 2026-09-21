@@ -393,6 +393,7 @@ void ApplicationArcher::BuildProps(){
             } break;
 
             case PROP_ROPE_ANCHOR: {
+                BuildRope(p);
                 //A marker, not a rope. The rope slice hangs a chain of ball-and-socket joints from
                 //here; apps/tank/CraneCharacter.cpp already builds that shape (a pendulum with a
                 //load on the end) and is the working example to copy.
@@ -406,6 +407,7 @@ void ApplicationArcher::BuildProps(){
                 view.index = (int)i;
                 view.half_extents = vec3(0.60f,0.10f,PROP_DEPTH * 0.5f);
                 prop_views.push_back(view);
+                rope_anchor_object = o;
             } break;
 
             default: break;
@@ -639,6 +641,8 @@ void ApplicationArcher::NewGame(){
         }
     }
     debris.clear();
+    //The rope's joints have to go before its bodies do, and both before BuildProps makes new ones.
+    DestroyRope();
     main_scene->DeleteDestroyedObjects();
     BuildBlocks();
     BuildProps();
@@ -690,13 +694,31 @@ void ApplicationArcher::RunSimulationTick(void){
     ArcherInput intent;
     GatherInput(intent);
 
-    //The props, as boxes, BEFORE the tick - the archer is about to be resolved against them.
+    //The props as boxes and the rope as points, BEFORE the tick - the archer is about to be
+    //resolved against the one and offered the other.
     RefreshObstacles();
+    RefreshRopePoints();
+    //And while the solver is the one moving the archer, its answer is the truth: read it back
+    //before the rules run on it.
+    if (stage.mode == MODE_ROPE){
+        SyncArcherFromRope();
+    }
 
     StageEvents events;
     stage.Tick(intent,events);
 
     HandleEvents(events);
+    //The rope handoff, in both directions. Immediately after the tick that decided it, so the
+    //joint exists (or is gone) before anything else this tick reads the body.
+    if (events.f_grabbed_rope){
+        AttachArcherToRope(events.grabbed_rope_id);
+    }
+    if (events.f_released_rope){
+        DetachArcherFromRope(events.f_rope_jump);
+    }
+    if (stage.mode == MODE_ROPE){
+        PumpRope(intent.move_axis);
+    }
     ApplyPushes(events);
     ApplyKicks(events);
     BreakBlocks(events);
@@ -885,6 +907,11 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
 void ApplicationArcher::DriveArcherBody(){
     Physics* p = archer_object ? archer_object->GetPhysics() : NULL;
     if (!p){
+        return;
+    }
+    //ON THE ROPE THE SOLVER IS DRIVING. Writing a velocity here as well would be the second
+    //integrator this whole arrangement exists to avoid.
+    if (stage.mode == MODE_ROPE){
         return;
     }
     vec3 now = p->GetBodyWorldPosition();
@@ -1133,6 +1160,219 @@ void ApplicationArcher::UpdateDebris(){
         //not walking the object list. Same reasoning as breakout's UpdateDebris.
         main_scene->DeleteDestroyedObjects();
     }
+}
+
+/*
+    The rope: a chain of light links hanging from the anchor, joined end to end.
+
+    Built once, from the anchor prop's declared length. Each link is joined to the one above by a
+    ball-and-socket at the point where they meet, and the top one to a STATIC anchor body - which is
+    what makes the whole thing hang rather than fall.
+
+    THE LINKS ARE NOT ALLOWED TO SLEEP. rp3d puts a body that has been still for a moment to sleep,
+    and a hanging rope is still by definition - so without this the rope goes to sleep on the first
+    frame and the archer swings into a bar of iron. apps/tank/CraneCharacter.cpp does the same for
+    the same reason, and it is the single easiest thing to leave out.
+*/
+void ApplicationArcher::BuildRope(const StageProp& anchor){
+    DestroyRope();
+    PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
+    if (!world){
+        return;
+    }
+
+    float seg_len = anchor.h / (float)ROPE_SEGMENTS;
+    rp3d::RigidBody* previous = NULL;
+
+    //A static body at the anchor point for the top link to hang from. Invisible - the visible bar
+    //is the prop itself, built by the caller.
+    Object* fixed = MakePlanarBody(unit_mesh,"rope_fixed",vec3(anchor.x,anchor.y,0.0f),
+                                   vec3(0.12f,0.12f,0.12f),material_ledge,
+                                   ARCHER_CAT_ROPE,ARCHER_MASK_ROPE,0.0f,true);
+    if (fixed){
+        fixed->SetVisibility(false);
+        previous = fixed->GetRigidBody();
+        rope_segments.push_back(fixed);     //index 0 is the fixed point, not a handhold
+    }
+
+    for (int i = 0; i < ROPE_SEGMENTS; i++){
+        char name[32];
+        snprintf(name,sizeof(name),"rope_%i",i);
+        float cy = anchor.y - seg_len * ((float)i + 0.5f);
+        Object* link = MakePlanarBody(unit_mesh,name,vec3(anchor.x,cy,0.0f),
+                                      vec3(ROPE_SEGMENT_THICK,seg_len * 0.92f,ROPE_SEGMENT_THICK),
+                                      material_ledge,ARCHER_CAT_ROPE,ARCHER_MASK_ROPE,
+                                      ROPE_SEGMENT_MASS,false);
+        if (!link){
+            continue;
+        }
+        Physics* lp = link->GetPhysics();
+        if (lp && lp->body && lp->body->rigidbody){
+            //See the note above: a sleeping rope is a rigid rope.
+            lp->body->rigidbody->setIsAllowedToSleep(false);
+            //A little damping, or the rope keeps swinging for a minute after it is let go and
+            //reads as being in space rather than on a windy cliff.
+            lp->SetLinearDamping(0.12f);
+            lp->SetAngularDamping(0.20f);
+        }
+        if (previous && link->GetRigidBody()){
+            vec3 pivot(anchor.x,anchor.y - seg_len * (float)i,0.0f);
+            rp3d::BallAndSocketJointInfo info(previous,link->GetRigidBody(),
+                                              (rp3d::Vector3&)pivot);
+            info.isCollisionEnabled = false;
+            rp3d::BallAndSocketJoint* joint =
+                dynamic_cast<rp3d::BallAndSocketJoint*>(world->rp_world->createJoint(info));
+            if (joint){
+                rope_joints.push_back(joint);
+            }
+        }
+        previous = link->GetRigidBody();
+        rope_segments.push_back(link);
+    }
+    debug->Info("Built a rope of %i links from (%.2f,%.2f)\n",
+                (int)rope_segments.size() - 1,anchor.x,anchor.y);
+}
+
+void ApplicationArcher::DestroyRope(){
+    PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
+    if (world){
+        //The archer's own joint first - it refers to a link that is about to stop existing.
+        if (rope_joint){
+            world->rp_world->destroyJoint(rope_joint);
+            rope_joint = NULL;
+        }
+        for (size_t i = 0; i < rope_joints.size(); i++){
+            world->rp_world->destroyJoint(rope_joints[i]);
+        }
+    }
+    rope_joints.clear();
+    for (size_t i = 0; i < rope_segments.size(); i++){
+        if (rope_segments[i]){
+            rope_segments[i]->Destroy();
+        }
+    }
+    rope_segments.clear();
+}
+
+/*
+    Which links the archer may catch, handed to Stage as plain numbers before the tick.
+
+    The top ROPE_FIRST_GRABBABLE links are left out on purpose - see the note on that constant. The
+    id is the index into rope_segments, which is exactly what comes back on the grab event.
+*/
+void ApplicationArcher::RefreshRopePoints(){
+    stage.ClearRopePoints();
+    for (size_t i = ROPE_FIRST_GRABBABLE; i < rope_segments.size(); i++){
+        if (!rope_segments[i]){
+            continue;
+        }
+        vec3 p = rope_segments[i]->GetWorldPosition();
+        stage.AddRopePoint(p.x,p.y,(int)i);
+    }
+}
+
+/*
+    THE HANDOFF. This is the one moment in the app where the archer stops being the rules' and
+    starts being the solver's, and every line of it is undoing an assumption made elsewhere:
+
+      - the body has been KINEMATIC, moved by DriveArcherBody to wherever Stage said. It becomes
+        DYNAMIC, and DriveArcherBody stands down for as long as MODE_ROPE lasts.
+      - it has collided with NOTHING, because Stage was resolving the world by hand. Now nothing is,
+        so it needs a real collision mask or the swing goes through the floor.
+      - it arrives with the velocity Stage had, which is what makes catching a rope at a run throw
+        you further than catching it standing still. That continuity is the whole feel of the
+        mechanic and it is one line.
+*/
+void ApplicationArcher::AttachArcherToRope(int segment){
+    PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
+    Physics* p = archer_object ? archer_object->GetPhysics() : NULL;
+    if (!world || !p || segment < 0 || segment >= (int)rope_segments.size()){
+        return;
+    }
+    Object* link = rope_segments[segment];
+    if (!link || !link->GetRigidBody()){
+        return;
+    }
+
+    p->SetBodyWorldPosition(vec3(stage.pos.x,stage.pos.y,0.0f));
+    p->SetBodyType(rp3d::BodyType::DYNAMIC);
+    p->SetGravityEnabled(true);
+    p->SetCollideWithMaskBits(ARCHER_MASK_ON_ROPE);
+    p->SetVelocity(vec3(stage.vel.x,stage.vel.y,0.0f));
+    p->WakeUp();
+
+    //Joined at the LINK, so the archer hangs below it and the arc is the rope's rather than a
+    //rigid offset from it.
+    vec3 pivot = link->GetWorldPosition();
+    rp3d::BallAndSocketJointInfo info(link->GetRigidBody(),archer_object->GetRigidBody(),
+                                      (rp3d::Vector3&)pivot);
+    info.isCollisionEnabled = false;
+    rope_joint = dynamic_cast<rp3d::BallAndSocketJoint*>(world->rp_world->createJoint(info));
+    debug->Info("Grabbed rope link %i at (%.2f,%.2f)\n",segment,pivot.x,pivot.y);
+}
+
+/*
+    And back again. The velocity the solver built up is READ OUT and handed to Stage, which is the
+    payoff of the whole mechanic - let go at the bottom of the arc and you keep the speed, let go at
+    the top and you do not.
+*/
+void ApplicationArcher::DetachArcherFromRope(bool f_jump){
+    PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
+    Physics* p = archer_object ? archer_object->GetPhysics() : NULL;
+    if (world && rope_joint){
+        world->rp_world->destroyJoint(rope_joint);
+    }
+    rope_joint = NULL;
+    if (!p){
+        return;
+    }
+
+    vec3 v = p->GetVelocity();
+    vec3 at = p->GetBodyWorldPosition();
+    //Letting go with JUMP adds height; letting go with action keeps only what the swing gave.
+    float vy = v.y + (f_jump ? ROPE_JUMP_BOOST : 0.0f);
+
+    p->SetBodyType(rp3d::BodyType::KINEMATIC);
+    p->SetCollideWithMaskBits(ARCHER_MASK_ARCHER);
+    p->SetVelocity(vec3());
+
+    stage.pos = v2(at.x,at.y);
+    stage.vel = v2(v.x,vy);
+    debug->Info("Let go of the rope at (%.2f,%.2f) doing (%.2f,%.2f)%s\n",
+                at.x,at.y,v.x,vy,f_jump ? " with a jump" : "");
+}
+
+//While swinging, the archer's position IS the body's. Read it back so the rules, the camera and
+//every telemetry reader agree with what is on screen.
+void ApplicationArcher::SyncArcherFromRope(){
+    Physics* p = archer_object ? archer_object->GetPhysics() : NULL;
+    if (!p){
+        return;
+    }
+    vec3 at = p->GetBodyWorldPosition();
+    vec3 v = p->GetVelocity();
+    stage.pos = v2(at.x,at.y);
+    stage.vel = v2(v.x,v.y);
+}
+
+/*
+    Pumping the swing.
+
+    A force rather than a velocity, and that is the point: a rope you can steer by setting your
+    speed is a rope with no timing in it. A force has to be applied in the right phase of the arc to
+    build anything, which is the entire skill of a rope swing and costs one line to express.
+*/
+void ApplicationArcher::PumpRope(float move_axis){
+    Physics* p = archer_object ? archer_object->GetPhysics() : NULL;
+    if (!p){
+        return;
+    }
+    if (move_axis < 0.01f && move_axis > -0.01f){
+        return;     //not leaning either way
+    }
+    p->WakeUp();
+    p->AddWorldForceAt(vec3(move_axis * ROPE_PUMP_FORCE,0.0f,0.0f),
+                       p->GetBodyWorldPosition());
 }
 
 void ApplicationArcher::RefreshObstacles(){
@@ -1856,7 +2096,9 @@ void ApplicationArcher::DrawImGuiUI(void){
 
     ImGui::Separator();
     ImGui::TextWrapped("A/D or arrows run.  Space jumps - hold it for height.  J draws the bow, "
-                       "release to loose; Up/Down tilt the aim.  K kicks: it punts a crate far "
+                       "release to loose; Up/Down tilt the aim.  E catches the rope over the second gap - lean "
+                       "into the swing to build it, then let go with E to keep the speed or with "
+                       "Space to add height.  K kicks: it punts a crate far "
                        "harder than walking into one does, and brings down the brick wall or the "
                        "cracked wall.  Jump at a ledge too high to land on and you CATCH it: Space "
                        "then climbs up, S lets go, and holding away from it refuses the grab.  "

@@ -79,6 +79,10 @@ void Stage::Reset(){
     grab_cooldown = 0;
     kick_ticks = 0;
     kick_cooldown = 0;
+    rope_id = -1;
+    rope_ticks = 0;
+    rope_cooldown = 0;
+    rope_points.clear();
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         arrows[i] = Arrow();
@@ -238,7 +242,7 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
     //Both hands are on the rock. Aiming still tilts - it costs nothing and lets a player line up
     //the shot they are about to take on landing - but no draw can START while hanging or climbing,
     //and EnterHang cancels one already under way.
-    bool f_hands_full = (mode == MODE_HANG || mode == MODE_CLIMB);
+    bool f_hands_full = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE);
 
     if (in.f_draw_down && !f_hands_full){
         if (bow_mode == BOW_IDLE){
@@ -260,11 +264,18 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
 }
 
 void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
-    //The rope slice hands the body to rp3d, and while it holds it this function must not also be
-    //driving it - two things integrating one position is the classic way to get a character that
-    //vibrates. Named here so the slice that adds it has an obvious place to hook in.
+    /*
+        ON THE ROPE THE SOLVER IS DRIVING, and this function must not also be - two things
+        integrating one position is the classic way to get a character that vibrates. TickRope
+        decides only when to let go; the app writes pos and vel back from the swinging body before
+        every tick, and takes them away again on release.
+    */
     if (mode == MODE_ROPE){
+        TickRope(in,events);
         return;
+    }
+    if (rope_cooldown > 0){
+        rope_cooldown--;
     }
     //Hanging and climbing own the position outright: no gravity, no run, no jump arc. Branching
     //here rather than threading `if (mode == ...)` through the code below is the whole reason
@@ -382,6 +393,27 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         archer pressed flat against the wall face, which MoveAndCollide has just done and which is
         exactly the position the reach test wants to measure from.
     */
+    /*
+        The rope, before the ledge. Both are "catch something you are flying past", and a player
+        who presses action at a rope means the rope - but a rope hanging beside a wall would
+        otherwise be beaten to it by the automatic ledge grab, which needs no key at all.
+    */
+    if (in.f_action_pressed && mode != MODE_HANG && mode != MODE_CLIMB){
+        int rope = FindRopePoint();
+        if (rope >= 0){
+            mode = MODE_ROPE;
+            rope_id = rope;
+            rope_ticks = 0;
+            vel = v2(vel.x,vel.y);      //kept: the swing starts with the speed you arrived at
+            events.f_grabbed_rope = true;
+            events.grabbed_rope_id = rope;
+            //Both hands on the rope.
+            bow_mode = BOW_IDLE;
+            draw_ticks = 0;
+            return;
+        }
+    }
+
     if (!f_on_ground){
         float side = 0.0f;
         int block = FindGrabbableLedge(side);
@@ -610,6 +642,86 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
             }
         }
     }
+}
+
+//--- The rope ---------------------------------------------------------------------------------
+
+void Stage::ClearRopePoints(){
+    rope_points.clear();
+}
+
+void Stage::AddRopePoint(float x, float y, int id){
+    StageRopePoint p;
+    p.x = x;
+    p.y = y;
+    p.id = id;
+    rope_points.push_back(p);
+}
+
+/*
+    A link the archer could catch, measured from the HANDS rather than from the body's centre.
+
+    Same reasoning as the ledge: the thing doing the grabbing is at the top of the body, and
+    measuring from the middle makes a rope at head height read as out of reach while one at knee
+    height reads as catchable.
+*/
+int Stage::FindRopePoint() const{
+    if (rope_cooldown > 0){
+        return -1;
+    }
+    float hand_y = pos.y + ARCHER_HALF_H * 0.6f;
+    float best = ROPE_GRAB_REACH * ROPE_GRAB_REACH;
+    int found = -1;
+    for (size_t i = 0; i < rope_points.size(); i++){
+        float dx = rope_points[i].x - pos.x;
+        float dy = rope_points[i].y - hand_y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 <= best){
+            best = d2;
+            found = rope_points[i].id;
+        }
+    }
+    return found;
+}
+
+/*
+    On the rope.
+
+    THE SOLVER IS DRIVING. pos and vel are written back from the swinging body by the app before
+    this runs, so everything in here is reading rather than integrating - and the only decision
+    left is when to let go.
+
+    Two ways off, and they are deliberately different. ACTION drops you, keeping whatever the swing
+    had given you. JUMP does that and adds ROPE_JUMP_BOOST upward, which is what turns a rope from
+    a way across a gap into a way to gain height. Both are gated behind ROPE_MIN_HOLD_TICKS,
+    because the press that caught the rope is still being held when this first runs.
+*/
+void Stage::TickRope(const ArcherInput& in, StageEvents& events){
+    rope_ticks++;
+
+    //Face the way the swing is going, so the bow points down the arc rather than at the anchor.
+    if (vel.x > 1.0f){
+        facing = 1.0f;
+    }else if (vel.x < -1.0f){
+        facing = -1.0f;
+    }
+
+    if (rope_ticks < ROPE_MIN_HOLD_TICKS){
+        return;
+    }
+    if (!in.f_jump_pressed && !in.f_action_pressed){
+        return;
+    }
+
+    mode = MODE_AIR;
+    rope_id = -1;
+    rope_cooldown = ROPE_GRAB_COOLDOWN;
+    f_on_ground = false;
+    //The swing has just handed the archer a lot of speed, and a jump buffered during it would
+    //spend it on a jump off nothing the moment they land.
+    buffer_ticks = 0;
+    events.f_released_rope = true;
+    events.f_rope_jump = in.f_jump_pressed;
 }
 
 //--- The kick -------------------------------------------------------------------------------------

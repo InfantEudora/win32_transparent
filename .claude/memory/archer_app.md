@@ -1,6 +1,6 @@
 ---
 name: archer-app
-description: "apps/archer, a side-view archer platformer prototype - the Stage/view split, the hybrid body, and the agreed slice order (bow, ledge and props-block done; kick, rope, knife open)"
+description: "apps/archer, a side-view archer platformer prototype - the Stage/view split, the hybrid body, and the agreed slice order (bow, ledge, props-block, kick and rope-swing done; tightrope and knife open)"
 metadata: 
   node_type: memory
   type: project
@@ -13,7 +13,7 @@ Started 2026-09-20. The user is making the assets and animations; the first iter
 and everything renders as scaled primitives from `core/Primitives.h`.
 
 **Structure**, following breakout/bomber: `archer/Stage.{h,cpp}` is the RULES and names no engine
-type (`make rules` builds it against `stage_test.cpp` alone - 91 checks, ~1 s, no GPU);
+type (`make rules` builds it against `stage_test.cpp` alone - 131 checks, ~1 s, no GPU);
 `ApplicationArcher` is the view and wiring. 60 TPS.
 
 **The seam, which is the thing to understand.** Simulated by hand in Stage: the archer's own
@@ -44,10 +44,30 @@ dynamic on rope); bow aiming = hold J to draw, Up/Down tilt, release to loose, a
 facing; level hand-coded in the rules module rather than authored in Blender or parsed from a file;
 bow first of the four mechanics.
 
-**Slice status:** base traversal + bow, ledge hang/climb, props-block-you, and kick + breakable
-walls are all DONE and verified in-app. Open, in the user's stated order: rope (balance and swing),
-then knife. Keys are J bow / K kick / L knife, in a row; the knife mapping exists with no rules
-behind it. The rope anchor waits over the second gap at x 36.75.
+**Slice status:** base traversal + bow, ledge hang/climb, props-block-you, kick + breakable walls,
+and the ROPE SWING are all DONE and verified in-app. Open: the TIGHTROPE (the user's brief listed
+"balancing a rope" as a separate mechanic from swinging, and only swinging is built), then the
+knife. Keys are J bow / K kick / L knife with E for the rope; the knife mapping exists with no
+rules behind it.
+
+**The rope swing** is the ONE place the solver owns the archer. A pendulum is what a constraint
+solver is good at and what a hand integrator is bad at - the appeal is that a bad release drops you
+and a good one throws you, and none of that survives being scripted. `MODE_ROPE` makes the body
+DYNAMIC, gives it a real collision mask (`ARCHER_MASK_ON_ROPE`) since Stage is no longer resolving
+anything, and joints it to a link; `Stage::TickArcher` steps aside and the app writes pos/vel back
+each tick (`SyncArcherFromRope`). Release reads the solver's velocity out into `stage.vel`, which
+is the whole payoff. The rules keep only the DECISIONS - grab reach, `ROPE_MIN_HOLD_TICKS` (the
+press that caught it is still down when TickRope first runs), the cooldown, and whether the release
+was a jump (adds `ROPE_JUMP_BOOST`).
+
+Rope-building gotchas: links must have `setIsAllowedToSleep(false)` or a hanging rope sleeps on the
+first frame and the archer swings into a bar of iron; and links collide with NOTHING, including
+each other - jointed neighbours overlap by construction, so a self-colliding chain asks the solver
+to hold them together and push them apart at once, and buzzes.
+
+**Technique matters, by design:** release mid-arc over the second gap and you fall in; release at
+the FAR EXTREME of the arc (x 41.1, y 6.9) and you land on ground C at x 41.1. That is the skill
+element, not a tuning fault - worth knowing before "re-tuning" the anchor at x 36.75.
 
 **The kick** (K) is a separate verb from the walking shove and has to be: a shove is
 ARCHER_PUSH_SPEED and moves a crate at walking pace, a kick is KICK_SPEED with lift and punts one

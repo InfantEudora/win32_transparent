@@ -254,6 +254,19 @@ struct StageProp{
     that was shoved last tick is somewhere else now, and a stale box is a wall the player cannot
     see. Clearing and refilling a vector of a dozen PODs costs nothing next to being wrong.
 */
+/*
+    A point on a rope the archer could catch, refreshed every tick like the obstacles.
+
+    The rope is a chain of rigid bodies the rules know nothing about; this is the app saying "there
+    is something grabbable here". `id` is the app's handle on the segment and is never interpreted
+    in here - it comes straight back on the grab event so the app knows which link to join to.
+*/
+struct StageRopePoint{
+    float x = 0.0f;
+    float y = 0.0f;
+    int   id = -1;
+};
+
 struct StageObstacle{
     float x = 0.0f;
     float y = 0.0f;
@@ -268,7 +281,33 @@ struct StageObstacle{
     float Top()    const { return y + hh; };
 };
 
-//How fast the archer can shove a prop along, in units per second. Well under ARCHER_RUN_SPEED on
+/*
+    --- THE ROPE ---------------------------------------------------------------------------------
+    A swing, and the one mechanic in this game where the SOLVER owns the archer rather than these
+    rules. A pendulum is exactly what a constraint solver is good at and exactly what a hand-written
+    integrator is bad at: the whole appeal of a rope is that its motion is emergent, that a badly
+    timed release drops you and a well timed one throws you, and none of that survives being
+    scripted. So MODE_ROPE hands the body over and Stage::TickArcher steps aside - see the note at
+    the top of ApplicationArcher.h, where this handoff is the reason the archer has a rigid body at
+    all.
+
+    What stays here is the DECISION - when a grab is allowed, when a release happens, and which
+    rope was caught - because those are rules. The app feeds in where the rope is (like the props,
+    as plain numbers) and carries the physics out.
+*/
+#define ROPE_GRAB_REACH             1.20f   //how near a rope point the archer's hands must be
+//A grab press must not also read as the release press on the same or the next tick. Eight ticks is
+//long enough that no human double-fires it and short enough that a panic release still works.
+#define ROPE_MIN_HOLD_TICKS         8
+#define ROPE_GRAB_COOLDOWN          20      //after letting go, before the same rope can be caught
+//Pumping. Applied by the app as a force on the swinging body, because that body is the solver's -
+//but the NUMBER lives here with the rest of the feel.
+#define ROPE_PUMP_FORCE             520.0f
+//Letting go with jump rather than action adds this much upward, so a rope can be used to gain
+//height rather than only to cross a gap. The horizontal throw comes from the swing itself.
+#define ROPE_JUMP_BOOST             7.0f
+
+//Well under ARCHER_RUN_SPEED on
 //purpose: the archer is blocked by what they are pushing, so this is also the speed they walk at
 //while pushing it, and a crate that slid along at a full run would weigh nothing.
 #define ARCHER_PUSH_SPEED           4.0f
@@ -374,6 +413,13 @@ struct StageEvents{
     bool  f_kick_started = false;   //the boot went out; the connect comes a few ticks later
     bool  f_kick_connected = false; //...and hit at least one thing
 
+    //--- The rope -------------------------------------------------------------------------------
+    //The app acts on these by creating and destroying the joint that makes the swing real.
+    bool  f_grabbed_rope = false;
+    int   grabbed_rope_id = -1;     //which link, by the id it was added with
+    bool  f_released_rope = false;
+    bool  f_rope_jump = false;      //let go WITH jump, so the app adds ROPE_JUMP_BOOST
+
     /*
         Props the kick connected with. Separate from `pushes` above on purpose - a shove and a
         kick are different events with very different numbers behind them, and collapsing them
@@ -450,6 +496,11 @@ public:
     void ClearObstacles();
     void AddObstacle(float x, float y, float hw, float hh, int id, bool f_pushable);
 
+    //And the rope, the same way. Also refreshed before every Tick - the links are swinging.
+    std::vector<StageRopePoint> rope_points;
+    void ClearRopePoints();
+    void AddRopePoint(float x, float y, int id);
+
     //--- The archer -----------------------------------------------------------------------------
     v2    pos;                      //centre of the body box
     v2    vel;
@@ -468,6 +519,11 @@ public:
     //The kick, counted UP from 1 so that 0 means "not kicking" - see KICK_ACTIVE_FROM/TO.
     int   kick_ticks = 0;
     int   kick_cooldown = 0;
+
+    //--- The rope -------------------------------------------------------------------------------
+    int   rope_id = -1;             //which link is held, while MODE_ROPE; the app's handle
+    int   rope_ticks = 0;           //how long it has been held - see ROPE_MIN_HOLD_TICKS
+    int   rope_cooldown = 0;
     v2    climb_from;               //where the climb started and ends, captured on entry so the
     v2    climb_to;                 //lerp cannot drift if anything else touches pos
     int   grab_cooldown = 0;        //see LEDGE_RELEASE_COOLDOWN
@@ -550,6 +606,13 @@ private:
     //Advances the kick timer and, on the ticks it is live, sweeps its box against the breakable
     //blocks and the obstacles. Everything it finds goes into `events`.
     void  TickKick(const ArcherInput& in, StageEvents& events);
+
+    //--- The rope -------------------------------------------------------------------------------
+    //While MODE_ROPE the solver owns the archer's position, so this decides only one thing: when
+    //to let go. The app writes pos/vel back from the body before each tick.
+    void  TickRope(const ArcherInput& in, StageEvents& events);
+    //A link within reach right now, or -1.
+    int   FindRopePoint() const;
 
     //Moves the body box by `delta`, stopping against solid geometry AND against the obstacles,
     //and reports what was hit. Axis-separated: x first and resolved, then y - which is what makes

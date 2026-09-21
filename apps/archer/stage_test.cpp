@@ -1057,6 +1057,128 @@ static void TestKick(){
     Check(!hk.f_kick_started,"cannot kick - both feet are on the wall");
 }
 
+//--- The rope -------------------------------------------------------------------------------------
+
+/*
+    Only the DECISIONS are testable here, and that is the right amount.
+
+    The swing itself is a jointed chain in reactphysics3d and is the app's - see the rope note in
+    Stage.h. What the rules own is when a grab is allowed, when a release happens and which link was
+    caught, and those are exactly the parts that would otherwise only be checkable by swinging on
+    it and squinting.
+*/
+static void TickRopeAt(Stage& s, int n, const ArcherInput& in, float x, float y, int id,
+                       StageEvents* out_last = NULL){
+    for (int i = 0; i < n; i++){
+        s.ClearRopePoints();
+        s.AddRopePoint(x,y,id);
+        StageEvents ev;
+        s.Tick(in,ev);
+        if (out_last){
+            *out_last = ev;
+        }
+    }
+}
+
+static void TestRope(){
+    printf("the rope\n");
+    char detail[220];
+
+    ArcherInput idle;
+    ArcherInput action;
+    action.f_action_pressed = true;
+
+    //--- Catching it ------------------------------------------------------------------------------
+    Stage s;
+    Settle(s);
+    float rope_x = s.pos.x;
+    float rope_y = s.pos.y + ARCHER_HALF_H * 0.6f;
+    StageEvents ev;
+    TickRopeAt(s,1,action,rope_x,rope_y,5,&ev);
+    Check(ev.f_grabbed_rope,"pressing action at a rope catches it");
+    Check(ev.grabbed_rope_id == 5,"naming the link by the id the app gave it");
+    Check(s.mode == MODE_ROPE,"and puts the archer on it");
+
+    //--- ...and only when it is in reach -----------------------------------------------------------
+    Stage far;
+    Settle(far);
+    StageEvents fev;
+    TickRopeAt(far,1,action,far.pos.x + ROPE_GRAB_REACH * 3.0f,far.pos.y,5,&fev);
+    Check(!fev.f_grabbed_rope,"a rope out of reach is not caught");
+    Check(far.mode != MODE_ROPE,"and the archer carries on");
+
+    //--- The rules stop driving --------------------------------------------------------------------
+    /*
+        The whole point of MODE_ROPE: the solver owns the archer. If the rules were still
+        integrating, gravity would drag pos down every tick and fight whatever the app wrote back.
+    */
+    v2 held = s.pos;
+    TickRopeAt(s,20,idle,rope_x,rope_y,5);
+    Check(s.pos.x == held.x && s.pos.y == held.y,
+          "while on the rope the rules do not move the archer at all - the solver does");
+
+    //--- The bow needs both hands ------------------------------------------------------------------
+    ArcherInput draw;
+    draw.f_draw_down = true;
+    TickRopeAt(s,10,draw,rope_x,rope_y,5);
+    Check(s.bow_mode == BOW_IDLE,"and the bow cannot be drawn from it");
+
+    //--- Letting go --------------------------------------------------------------------------------
+    //The press that caught it is still down when TickRope first runs, so an ungated release would
+    //fire on the very next tick and the rope could never be held at all.
+    Stage q;
+    Settle(q);
+    TickRopeAt(q,1,action,q.pos.x,q.pos.y + ARCHER_HALF_H * 0.6f,5);
+    Check(q.mode == MODE_ROPE,"a second archer catches a rope");
+    StageEvents rev;
+    TickRopeAt(q,1,action,q.pos.x,q.pos.y,5,&rev);
+    Check(!rev.f_released_rope,"an action on the very next tick does not let go");
+    Check(q.mode == MODE_ROPE,"they are still on it");
+
+    TickRopeAt(q,ROPE_MIN_HOLD_TICKS,idle,q.pos.x,q.pos.y,5);
+    StageEvents rev2;
+    TickRopeAt(q,1,action,q.pos.x,q.pos.y,5,&rev2);
+    Check(rev2.f_released_rope,"but one after the minimum hold does");
+    Check(!rev2.f_rope_jump,"reported as a plain release");
+    Check(q.mode == MODE_AIR,"and the archer is airborne");
+
+    //--- Letting go WITH jump is a different event -------------------------------------------------
+    Stage j;
+    Settle(j);
+    TickRopeAt(j,1,action,j.pos.x,j.pos.y + ARCHER_HALF_H * 0.6f,5);
+    TickRopeAt(j,ROPE_MIN_HOLD_TICKS + 1,idle,j.pos.x,j.pos.y,5);
+    ArcherInput jump;
+    jump.f_jump_pressed = true;
+    StageEvents jev;
+    TickRopeAt(j,1,jump,j.pos.x,j.pos.y,5,&jev);
+    Check(jev.f_released_rope && jev.f_rope_jump,
+          "letting go with jump is reported as such, so the app can add the boost");
+
+    //--- The cooldown -------------------------------------------------------------------------------
+    //Without it the action that let go immediately catches the same rope again, and the archer is
+    //welded to it exactly as they were to the first ledge.
+    StageEvents cev;
+    TickRopeAt(j,1,action,j.pos.x,j.pos.y,5,&cev);
+    Check(!cev.f_grabbed_rope,"the rope just released cannot be caught again straight away");
+    snprintf(detail,sizeof(detail),"cooldown is %i ticks",ROPE_GRAB_COOLDOWN);
+    TickRopeAt(j,ROPE_GRAB_COOLDOWN + 2,idle,j.pos.x,j.pos.y,5);
+    StageEvents cev2;
+    TickRopeAt(j,1,action,j.pos.x,j.pos.y,5,&cev2);
+    Check(cev2.f_grabbed_rope,"but it can once the cooldown has run out",detail);
+
+    //--- Rope points are per tick --------------------------------------------------------------------
+    Stage c;
+    Settle(c);
+    c.ClearRopePoints();
+    c.AddRopePoint(c.pos.x,c.pos.y,1);
+    Check(c.rope_points.size() == 1,"a rope point can be declared");
+    c.ClearRopePoints();
+    Check(c.rope_points.size() == 0,"and clearing removes it");
+    StageEvents nev;
+    c.Tick(action,nev);
+    Check(!nev.f_grabbed_rope,"with none declared, action catches nothing");
+}
+
 //--- Determinism ---------------------------------------------------------------------------------
 
 static void TestDeterminism(){
@@ -1101,6 +1223,7 @@ int main(void){
     TestLedge();
     TestObstacles();
     TestKick();
+    TestRope();
     TestDeterminism();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
