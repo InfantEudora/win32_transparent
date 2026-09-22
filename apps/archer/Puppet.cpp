@@ -65,23 +65,77 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     */
     { "Twirl",               true,  true,   false, false, false },
     /*
-        THE AIR SET, added 2026-09-22. Both answer "no" to every extraction column, and the
-        vertical one is the answer worth explaining.
+        THE AIR SET. EVERY EXTRACTION COLUMN IS OFF, and the vertical one is worth explaining
+        because these clips move up and down more than anything else in the table.
 
-        Jumping_Up's hips rise 0.273 rig units between the crouch and the apex - but that is the
-        body COMPRESSING AND EXTENDING, not the character leaving the ground. She is authored
-        jumping on the spot and lands where she started; the 3.2 units of actual flight belong to
-        Stage, which applies ARCHER_JUMP_SPEED against ARCHER_GRAVITY. Extracting the lift would
-        pin the hips at bind height and delete the crouch, the push and the landing absorb - which
-        is the entire clip. Same reasoning as a gait's footfall bob, an order of magnitude bigger.
+        None of that motion is the character flying. She is authored jumping and landing ON THE
+        SPOT, and the 3.2 units of real flight belong to Stage, which applies ARCHER_JUMP_SPEED
+        against ARCHER_GRAVITY. What the hips do here is compress and extend: the tuck in
+        Jump_ToAir, the stand-up in Jump_FromAir, the deep absorb in FallingIdle_ToLanding.
+        Extracting the lift would pin all of it to bind height and leave four clips of nothing.
 
-        Falling_Idle is a HELD POSE: its hip moves 0.0005 units across the whole 0.733s. Looping it
-        is free and there is nothing in it to extract.
+        The one place that reasoning does NOT reach is the head of FallingIdle_ToLanding, which
+        genuinely falls 0.52 world units before its feet land - and that is handled by entering the
+        clip at its contact frame instead, see Puppet::clip_entry. A flag could not have fixed it:
+        the same axis is a fall for 0.3s and then a performance for 0.8s.
     */
-    { "Jumping_Up",          false, false,  false, false, false },
+    { "Jump_ToAir",          false, false,  false, false, false },
     { "Falling_Idle",        true,  false,  false, false, false },
+    { "Jump_FromAir",        false, false,  false, false, false },
+    { "FallingIdle_ToLanding",false,false,  false, false, false },
     /*
-        And the draw, which arrived in the same export and has no home yet.
+        THE RUNNING JUMP, and the only air clip whose horizontal comes off the bone.
+
+        2.150 rig units of travel, 4.34 in the world over 0.933s - which is 4.65 world units a
+        second, about half the 9.0 the rules move her at. That gap is not a problem the way it
+        would be on the ground: her feet are not planted, so it reads as a jump rather than as
+        skating, and f_extract_move hands the whole question to Stage anyway.
+
+        The lift stays on the bone with the rest of the air set. Its hips arc 0.408 -> 0.636 ->
+        0.412, which is the push and the tuck, not the 3.2 units of real flight.
+    */
+    { "Running_Jump",        false, false,  false, true,  false },
+    //A held pose - hip within 0.003 across the whole 2.367s - so it loops and there is nothing in
+    //it to extract. Replaces the idle that MODE_HANG had been standing in with.
+    { "Hanging_Braced",      true,  false,  false, false, false },
+    /*
+        THE RUN-TO-STOP, and its horizontal comes off the bone for the usual reason - Stage is
+        already covering the ground. It has to, and by a wide margin: the clip travels 0.396 rig
+        units (0.80 world) coming to rest, where the rules cover 0.267. Leaving it on would slide
+        her three times too far and then snap her back.
+
+        Its yaw stays, though its -46.6 degrees is the largest of anything not marked f_turns. That
+        is her squaring up as she plants, not a change of facing - the rules never turned her - so
+        extracting it would spin the character at the end of every stop.
+    */
+    { "Running_ToStop",      false, false,  false, true,  false },
+    /*
+        The spinning kick, which is the clip that used to be called Kick_Front - -347.1 degrees of
+        net hip yaw, a genuine pivot, and the export renamed it when a non-spinning kick took the
+        old name. Nothing selects it yet. It is the one clip in the file that WANTS f_turns, and it
+        can have it safely because it pivots on the spot (0.005 units of travel).
+    */
+    { "Kick_FrontSpin",      false, false,  true,  false, false },
+    //Set dressing. It travels and spins 320 degrees, so it keeps both on the bone and plays exactly
+    //as animated - the same treatment, and for the same reason, as Twirl.
+    { "Walk_ToHandstand",    false, false,  false, false, false },
+    //The same jump baked whole, kept for comparison against the four pieces above. Nothing selects
+    //it - see the note on CLIP_JUMP_RISE for why the composable set won.
+    { "Jumping_InPlace",     false, false,  false, false, false },
+    /*
+        A SECOND whole travelling jump, slower and longer than Running_Jump: 0.776 rig units over
+        2.000s against 2.150 over 0.933s. Nothing selects it - Running_Jump won the running-jump
+        slot because its climb fits the game's almost exactly - but it is a floatier arc and is
+        worth keeping to compare against.
+
+        Its horizontal comes off the bone for the same reason Running_Jump's does, and is marked
+        now rather than when it is wired, because the flag describes the clip and getting it right
+        later is how a clip arrives already drifting. f_travels stays off: its speed is a jump's,
+        not a gait's, and measuring it would put a meaningless number beside the ladder's.
+    */
+    { "Jump_Forward",        false, false,  false, true,  false },
+    /*
+        And the draw, which has no home yet.
 
         It is a WHOLE-BODY clip for something that has to happen while she is also walking, running
         or falling, so playing it as one more state would mean she stops moving to draw. That is
@@ -90,6 +144,7 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         performance rather than a turn - so f_turns stays off with the rest.
     */
     { "Standing_DrawArrow",  false, false,  false, false, false },
+    { "Stretching2",         true,  false,  false, false, false },
 };
 
 const int PUPPET_LOCOMOTION[PUPPET_LOCOMOTION_COUNT] = { CLIP_WALK, CLIP_RUN_SLOW, CLIP_RUN_FAST };
@@ -180,6 +235,19 @@ float Puppet::BlendedSpeed(int clip, int blend_clip, float blend) const{
     return stride / duration;
 }
 
+/*
+    What Running_ToStop is actually allowed to play at. Its own function because UpdateAir needs
+    the same number to work out how long to hold the clip for, and the two drifting apart would
+    leave the stop held for the wrong number of ticks.
+*/
+float Puppet::StopRate() const{
+    if (stop_plant <= 0.01f || PUPPET_STOP_TIME <= 0.0f){
+        return 1.0f;
+    }
+    float rate = stop_plant / PUPPET_STOP_TIME;
+    return (rate > PUPPET_ACTION_RATE_MAX) ? PUPPET_ACTION_RATE_MAX : rate;
+}
+
 PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
     PuppetChoice out;
 
@@ -226,7 +294,13 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         return out;
     }
 
-    if (in.mode == MODE_HANG || in.mode == MODE_ROPE){
+    //Hanging off a ledge is authored now. The rope still is not - and it is a genuinely different
+    //pose, since a rope is gripped with both hands above the head rather than braced against a lip.
+    if (in.mode == MODE_HANG){
+        out.clip = CLIP_HANG;
+        return out;
+    }
+    if (in.mode == MODE_ROPE){
         out.clip = CLIP_IDLE;
         out.f_placeholder = true;
         return out;
@@ -243,23 +317,67 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         THE RISE IS FITTED, THE FALL IS NOT, and that asymmetry is real rather than an omission:
         a rise always takes v/g seconds and a fall takes as long as the drop is tall.
     */
+    /*
+        AIRBORNE: two clips, and vel_y alone decides between them.
+
+        NEITHER IS FITTED TO A WINDOW, which is the difference between this and the kick, the climb
+        or the earlier one-clip jump. Jump_ToAir is a TRANSITION - standing into the airborne pose,
+        0.267s of it - so it is played at its own speed and then holds the pose it arrives at. The
+        rise it covers lasts 0.390s, so the clip finishes about two thirds of the way up and holds;
+        stretching it to fill the rise would just be a slower tuck. And because the pose it holds
+        is the pose Falling_Idle loops, the handover at the apex is between two frames that already
+        match, so the crossfade there has almost nothing to blend.
+
+        A cut jump rises for as little as 0.18s, so the clip is often not finished when the apex
+        arrives. That is fine and is the right way round: the readable part of a tuck is the start.
+    */
     if (!in.f_on_ground){
-        if (in.vel_y > PUPPET_RISE_VEL){
-            out.clip = CLIP_JUMP_UP;
-            out.start_time = jump_launch;
-            /*
-                Launch-to-apex against the time the game spends climbing. On this export that is
-                0.467s of clip into 0.390s of jump - 1.20x, comfortably inside the clamp, which is
-                the first thing in this file that has fitted a one-shot without hitting its limit.
-            */
-            float span = jump_apex - jump_launch;
-            if (span > 0.01f && PUPPET_RISE_TIME > 0.0f){
-                out.wanted_rate = span / PUPPET_RISE_TIME;
+        /*
+            A RUNNING JUMP IS ONE WHOLE ARC, so it neither splits on vel_y nor needs the fall loop.
+            It was latched at takeoff (see air_clip) and simply runs; if she is still airborne when
+            it ends, a non-looping clip holds its last frame, which is already a descending
+            pre-landing pose and a better thing to hold than a static float.
+
+            Fitted to the RISE only - its climb is 0.367s against the game's 0.390s, so 0.94x. Its
+            descent is 0.566s against the game's 0.327s and no single rate can serve both; the rise
+            is the half with the push in it and the half whose length the rules guarantee. At 0.94x
+            a full jump lands about two thirds of the way through the clip, which is mid-descent.
+        */
+        if (air_clip == CLIP_RUN_JUMP){
+            out.clip = CLIP_RUN_JUMP;
+            out.start_time = 0.0f;      //every flight starts at the takeoff frame
+            if (run_jump_rise > 0.01f && PUPPET_RISE_TIME > 0.0f){
+                out.wanted_rate = run_jump_rise / PUPPET_RISE_TIME;
                 out.rate = out.wanted_rate;
                 if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
             }
-        }else{
-            out.clip = CLIP_FALL;
+            return out;
+        }
+        out.clip = (in.vel_y > PUPPET_RISE_VEL) ? CLIP_JUMP_RISE : CLIP_FALL;
+        return out;
+    }
+
+    /*
+        LANDING: an event rather than a state, so UpdateAir owns it and this only reports it.
+
+        It beats the locomotion ladder below but loses to the air above, which is the order that
+        survives a landing on the same tick as walking off the next ledge.
+    */
+    if (settle_ticks > 0 && settle_clip >= 0){
+        out.clip = settle_clip;
+        out.start_time = clip_entry[settle_clip];
+        if (settle_clip == CLIP_STOP){
+            /*
+                The stop is the one settle that is FITTED, because unlike a landing it has to keep
+                pace with something the rules are still doing. Its plant wants to land on the tick
+                she actually comes to rest, and PUPPET_STOP_TIME says that is 0.075s away.
+
+                It does not fit, and by a mile. The gap is reported rather than hidden - the same
+                arrangement as the kick and the climb, and the same conversation: either the clip
+                is trimmed to its plant or ARCHER_RUN_FRICTION comes down.
+            */
+            out.wanted_rate = (stop_plant > 0.01f) ? (stop_plant / PUPPET_STOP_TIME) : 1.0f;
+            out.rate = StopRate();
         }
         return out;
     }
@@ -373,7 +491,92 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
     return out;
 }
 
+/*
+    Both ends of a flight. See the note on the declaration for why this is the Puppet's only piece
+    of remembered state.
+*/
+void Puppet::UpdateAir(const ArcherAnimParams& in){
+    /*
+        TAKEOFF: choose the air set once, from the speed she LEFT THE GROUND at.
+
+        Latched rather than derived, because ARCHER_AIR_FRICTION would otherwise decide it again
+        halfway through the arc - see air_clip. Fires for walking off a ledge as well as for
+        jumping, because the animation cannot tell those apart and should not try: what it needs to
+        know is how fast she is travelling, not why.
+    */
+    if (!in.f_on_ground && f_was_on_ground){
+        air_clip = (in.ground_speed >= PUPPET_RUN_JUMP_SPEED) ? CLIP_RUN_JUMP : -1;
+    }
+    if (in.f_on_ground){
+        air_clip = -1;
+    }
+
+    if (settle_ticks > 0){
+        settle_ticks--;
+        //Taken back by the player. The rules never stopped her moving, so neither does this.
+        if (in.ground_speed >= PUPPET_IDLE_SPEED || !in.f_on_ground){
+            settle_ticks = 0;
+        }
+    }
+
+    /*
+        THE RUN-TO-STOP, fired on the FIRST tick of the deceleration rather than at the end of it.
+
+        Waiting until she is at rest would start a plant-and-settle after the settling was over,
+        and would also mean the blend space had already raced Running_Fast -> Running_Slow ->
+        Walking -> Idle in the five ticks it takes to stop. Firing on the first tick replaces that
+        scramble with one authored clip.
+
+        AND THE SIZE OF THE DROP IS WHAT SAYS IT WAS A STOP AT ALL. Friction can remove at most
+        PUPPET_FRICTION_STEP in a tick, so a drop of about that much is her letting go of the key,
+        and a bigger one is something being in the way - a wall zeroes the speed outright, a crate
+        clamps it to ARCHER_PUSH_SPEED. That is the discriminator, and it is a fact about the rules
+        rather than a tuned threshold. The wall's branch is empty because the clip does not exist
+        yet; it is one line when it does.
+    */
+    float drop = last_ground_speed - in.ground_speed;
+    if (in.f_on_ground && settle_ticks == 0 && last_ground_speed >= PUPPET_STOP_FROM_SPEED &&
+        drop > PUPPET_FRICTION_STEP * 0.5f){
+        if (drop < PUPPET_FRICTION_STEP * 1.5f){
+            settle_clip = CLIP_STOP;
+            settle_ticks = (int)(clip_duration[CLIP_STOP] * ARCHER_TPS / StopRate());
+        }else{
+            //Stopped by something rather than by letting go. No clip authored for it yet, so the
+            //ladder carries on down to the idle exactly as it did before.
+            settle_clip = -1;
+        }
+    }
+
+    if (in.f_on_ground && !f_was_on_ground){
+        /*
+            THE IMPACT IS LAST TICK'S vel_y, not this one's. Stage resolves the contact and zeroes
+            the velocity in the same tick that sets f_on_ground, so by the time a landing is
+            visible the number that decides how hard it was has already been thrown away. Reading
+            it one tick late is the whole reason last_vel_y exists.
+        */
+        float impact = -last_vel_y;
+        settle_clip = -1;
+        if (impact >= PUPPET_HARD_LAND_VEL){
+            settle_clip = CLIP_LAND_HARD;
+        }else if (impact >= PUPPET_LAND_VEL){
+            settle_clip = CLIP_LAND_SOFT;
+        }
+        settle_ticks = 0;
+        if (settle_clip >= 0 && in.ground_speed < PUPPET_IDLE_SPEED){
+            //The clip runs from its contact frame, so the part still to play is what is left after
+            //it - counting the whole duration would hold the landing long after it had finished.
+            float left = clip_duration[settle_clip] - clip_entry[settle_clip];
+            settle_ticks = (int)(left * ARCHER_TPS);
+        }
+    }
+
+    f_was_on_ground = in.f_on_ground;
+    last_vel_y = in.vel_y;
+    last_ground_speed = in.ground_speed;
+}
+
 void Puppet::Tick(const ArcherAnimParams& in){
+    UpdateAir(in);
     choice = Choose(in);
 
     /*

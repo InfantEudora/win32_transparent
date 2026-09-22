@@ -148,9 +148,21 @@ void Stage::BuildLevel(){
     blocks.push_back({ 71.00f,  4.00f,  1.00f, 4.00f, BLOCK_SOLID,  true });
 
     //--- Props: everything reactphysics3d owns --------------------------------------------------
-    //Kickable crates by the start, so the very first thing in reach proves the archer's hand-swept
-    //body really does shove a solved rigid body around.
-    props.push_back({ PROP_CRATE, 3.00f, 0.40f, 0.80f, 0.80f, 1, 1 });
+    /*
+        Kickable crates by the start, so the very first thing in reach proves the archer's
+        hand-swept body really does shove a solved rigid body around.
+
+        THE LONE ONE NEEDS RUNWAY, which it did not have. It sat at 3.00 with its right edge at
+        3.40 and the stack's left edge at 3.70: a kick connected, reported "1 props", and moved it
+        0.3 units into the stack, which is in turn 0.5 from the step's face at x 5.0. The whole
+        cluster was jammed against the step, so the one thing the demo exists to show - a crate
+        being punted - could not happen. Moved left to 0.60, which opens 2.7 units of clear ground
+        in front of it.
+
+        The stack stays where it is on purpose: two crates reach 1.65 and the step's top is 1.80,
+        so it is the way UP there, and that only works while it is beside the step.
+    */
+    props.push_back({ PROP_CRATE, 0.60f, 0.40f, 0.80f, 0.80f, 1, 1 });
     props.push_back({ PROP_CRATE, 4.10f, 0.40f, 0.80f, 0.80f, 1, 1 });
     props.push_back({ PROP_CRATE, 4.10f, 1.25f, 0.80f, 0.80f, 1, 1 });
 
@@ -177,6 +189,49 @@ void Stage::BuildLevel(){
     //For the rope slice. x/y is the fixed anchor point, h the length of rope hanging from it -
     //over the second gap, because a rope you can walk around is a rope nobody swings on.
     props.push_back({ PROP_ROPE_ANCHOR, 36.75f, 9.00f, 0.10f, 6.00f, 1, 1 });
+
+#if ARCHER_TEST_BAY
+    /*
+        --- The terrain test bay, x -40 .. -12 -------------------------------------------------
+        Four bays of seven units, left of the start and contiguous with the main ground run, which
+        ends at x -12. CONTIGUOUS MATTERS: TickArcher restarts the game below y -40, so a bay
+        floating in space would drop the player out of the world on the way into it.
+
+        Seven units each because the camera shows about 31.8 of them at CAMERA_DISTANCE, so all
+        four variants land in ONE screenshot - which is the entire reason for laying them out this
+        way rather than rebuilding one bay over and over.
+
+        See the SOLID-only and append-at-the-end rules in the ARCHER_TEST_BAY note in Stage.h.
+    */
+    //The left-hand wall, mirroring the one at x 71 for the same reason. Kept INSIDE bay 0's span
+    //so that it melts with the rest of it - a lone blockout box at the end of a row of terrain
+    //reads as something that failed to build rather than as a deliberate boundary.
+    blocks.push_back({ ARCHER_TEST_BAY_X_MIN + 0.25f, 4.00f, 0.25f, 4.00f, BLOCK_SOLID, true });
+
+    /*
+        THE SAME FOUR SHAPES IN EVERY BAY, so that the four variants differ only in their meshing
+        parameters and a difference between them can only be the parameters. Each shape is the
+        cheapest thing that exposes one specific failure:
+
+          the floor     a wide flat top - the surface every measurement of top-pinning is taken on
+          the step      a convex lip - does the top stay pinned exactly where the collider is?
+          the wall      the concave inside corner - does smooth union bulge into walkable space?
+          the pillar    0.5 wide, thinner than twice a typical smoothing radius - does it survive?
+
+        EACH BAY GETS ITS OWN FLOOR SEGMENT rather than one slab running under all four. The app
+        selects a bay's blocks by x range, so a block spanning every bay would belong to all of
+        them and be meshed four times into four overlapping surfaces - which is z-fighting, not a
+        comparison. The segments abut exactly, so the collision underneath is still one flat run.
+    */
+    for (int i = 0; i < ARCHER_TEST_BAY_COUNT; i++){
+        float cx = ARCHER_TEST_BAY_CENTRE(i);
+        float half = ARCHER_TEST_BAY_WIDTH * 0.5f;
+        blocks.push_back({ cx,        -2.00f, half,  2.00f, BLOCK_SOLID, true });   //floor,  top 0
+        blocks.push_back({ cx - 2.0f,  0.60f, 1.00f, 0.60f, BLOCK_SOLID, true });   //step,   top 1.2
+        blocks.push_back({ cx - 0.2f,  1.40f, 0.80f, 1.40f, BLOCK_SOLID, true });   //wall,   top 2.8
+        blocks.push_back({ cx + 2.2f,  1.00f, 0.25f, 1.00f, BLOCK_SOLID, true });   //pillar, top 2.0
+    }
+#endif
 }
 
 //--- The props, as the rules see them -----------------------------------------------------------

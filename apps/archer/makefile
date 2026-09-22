@@ -37,6 +37,9 @@ APP_SRCS += main.cpp
 APP_SRCS += ApplicationArcher.cpp
 APP_SRCS += Stage.cpp
 APP_SRCS += Puppet.cpp
+#The blockout, as terrain. The mesher itself is core/MarchingCubes.cpp and is picked up by the
+#core wildcard; this is the half that knows what a StageBlock is. See terrain_plan.md.
+APP_SRCS += Terrain.cpp
 
 #NO SOUND YET. Nothing here calls SoundSystem - the jump, the draw, the loose and the thud
 #are all places a sound obviously goes, and every one of them already has an event in

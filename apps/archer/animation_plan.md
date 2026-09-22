@@ -19,7 +19,7 @@ why "blend faster" does not fix it.
 
 ## The asset, measured
 
-`apps/archer/assets/meshes/archer.glb` — one skin, one skinned mesh, fourteen clips, one 4096x4096
+`apps/archer/assets/meshes/archer.glb` — one skin, one skinned mesh, twenty-six clips, one 4096x4096
 base-colour texture. Everything below is read out of the file rather than assumed, and the app
 re-measures all of it at load (`ApplicationArcher::MeasureClips`) so a re-export corrects these
 numbers instead of contradicting them silently.
@@ -39,13 +39,27 @@ rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_H
 | `Running_Slow` | 0.77 | yes | 1.45/s | 2.92/s | 3.1x |
 | **`Running_Fast`** | **0.57** | yes | **2.57/s** | **5.19/s** | **1.73x** |
 | `Running_TurnAround` | 0.70 | no | in place | — | — |
-| `Kick_Front` | 1.13 | no | in place | — | — |
+| `Kick_Front` | 1.63 | no | in place | — | replaced 2026-09-22; no longer spins |
 | `Climb` | 2.80 | no | a mantle: +1.01 up, 1.50 forward | — | — |
 | `Crouch` | 4.00 | no | in place | — | — |
 | `Stretching` | 11.07 | yes | in place | — | — |
 | `WarmUp` | 14.67 | yes | in place | — | — |
 | `Dance` | 8.67 | yes | in place | — | — |
 | `Twirl` | 4.00 | yes | 0.22/s | 0.44/s | 20.3x |
+| `Stretching2` | 4.00 | yes | in place | — | — |
+| `Jump_ToAir` | 0.27 | no | in place | — | the rise |
+| `Falling_Idle` | 0.73 | yes | a held pose | — | the fall |
+| `Jump_FromAir` | 0.40 | no | in place | — | lands at 0.267s |
+| `FallingIdle_ToLanding` | 1.10 | no | in place | — | lands at 0.300s |
+| `Jumping_InPlace` | 1.93 | no | in place | — | a whole jump; preview only |
+| `Jump_Forward` | 2.00 | no | 0.39/s | 0.78/s | a whole jump; not wired |
+| `Standing_DrawArrow` | 1.07 | no | in place | — | needs the mask layer |
+| `Running_Jump` | 0.93 | no | 2.30/s | 4.64/s | the running jump; climbs 0.333s |
+| `Running_JumpForward` | 0.93 | no | 2.30/s | 4.64/s | **byte-identical to `Running_Jump`** |
+| `Hanging_Braced` | 2.37 | yes | a held pose | — | holding a ledge |
+| `Running_ToStop` | 0.93 | no | 0.42/s | 0.85/s | plants at 0.267s |
+| `Kick_FrontSpin` | 1.13 | no | in place | — | the old `Kick_Front`; a real pivot |
+| `Walk_ToHandstand` | 4.00 | no | 0.33/s | 0.67/s | set dressing |
 
 (`Twirl` travels 0.879 units while spinning a full turn that nets -3.6 deg - see the yaw rule below.)
 
@@ -95,17 +109,18 @@ The state machine lives in `Object` (`core/Object.h:302-347`, `Object::ApplyAnim
 | Reverse / park a clip mid-play | Yes, one signed rate | `Object::SetAnimationRate` |
 | Per-bone mask | Yes, but static and un-layered | `ObjectAnimation.cpp:95-100` |
 | Bone influences per vertex | **Three**, not four | `GLTFLoader::GetSkinnedVertex` |
-| **Retarget to a third clip mid-blend** | **Refused** | `TransitionToAnimation`, with a note explaining why |
+| Retarget to a third clip mid-blend | Yes, since 2026-09-22 | `TransitionToAnimation` keeps the nearer side |
 | Parametric blending (blend space) | Yes, since 2026-09-22 | `Object::SetBlendPair`, `Puppet::Choose` |
 | Phase / foot sync between clips | Yes, measured per clip | `Object::blend_phase_offset`, `Puppet::clip_phase` |
 | Additive poses | No | — |
 | Time-ranged cancel windows | No | — |
 
-The refusal is the important row. `TransitionToAnimation` will rewind a blend if asked to go back
-where it came from, but a request for a genuinely new clip mid-blend is dropped with a warning,
-because honouring it would mean either blending three clips or snapping. That is the correct call
-for a two-clip crossfade — and it is exactly the wall a fast-paced game hits. The industry's answer
-was to stop crossfading clip pairs, not to extend the crossfade.
+That retarget row used to read **Refused**, and the refusal was the wall this whole plan was written
+around: a request for a genuinely new clip mid-blend was dropped with a warning, because honouring
+it means either blending three clips or snapping. Correct for a two-clip crossfade, and exactly the
+wall a fast-paced game hits — see **Step 1a** for what it cost in practice and what replaced it.
+The industry's answer was to stop crossfading clip pairs at all, not to extend the crossfade, which
+is what steps 1 to 4 are.
 
 ### Root motion, the translation half
 
@@ -410,10 +425,19 @@ at once and re-bases the phase onto whichever clip survives when the *pair* chan
 makes crossing a rung invisible rather than a pop at 0 and another at 1.
 
 **Phase sync needed no authoring.** `MeasureClipPhases` poses the model through each clip and
-watches the toe bone's height; its lowest point is the plant. Measured in-app at **0.81 / 0.67 /
-0.60** for walk / slow run / fast run, against **0.83 / 0.69 / 0.62** computed independently
-straight out of the `.glb` — two methods agreeing to within one sample step. The difference between
-two clips' values *is* the correction.
+watches the toe bone's height; its lowest point is the plant. Measured in-app at **0.83 / 0.70 /
+0.65** for walk / slow run / fast run. The difference between two clips' values *is* the correction.
+
+> Those figures read **0.81 / 0.67 / 0.60** until 2026-09-22, and the gap against the `.glb` was
+> written off here as "two methods agreeing to within one sample step". It was not sampling noise,
+> it was a **systematic bias**, and it is worth knowing about before writing another measurement
+> like these. `ObjectAnimation::GetClosestKeyframe` returns the first keyframe at or *after* the
+> time asked for — a **ceiling, not a nearest** — so a uniform-grid scan does not see a curve, it
+> sees each keyframe's value repeated across the samples leading up to it. Taking the sample index
+> where an extreme first appears therefore reports a time up to one whole keyframe interval EARLY:
+> 0.033s at 30fps, which is what the 0.02-of-a-cycle discrepancy was. Every one of these
+> measurements now asks at the **keyframe times** instead, which is exact and cheaper than the grid
+> it replaced.
 
 **`Puppet::Choose` returns two clips and a weight.** It finds the rungs bracketing the speed and
 mixes them by where the speed falls between their strides. Outside the ladder it takes the end rung
@@ -492,78 +516,260 @@ Measured after: a full sweep 0.5 → 9.0 → 0.0 in puppet mode produces exactly
 
 ---
 
-## Step 5 — the air set. PARTLY BUILT (2026-09-22).
+## Analog input, and the blend space finally earning its keep. BUILT (2026-09-22).
 
-`Jumping_Up`, `Falling_Idle` and `Standing_DrawArrow` arrived in one export. The first two are
-wired; the third has nowhere to go until step 2.
+The locomotion ladder has had almost nothing to do since it was built, and the reason was the
+keyboard. Left and right can only ask for a *full* run, so every speed between standing and 9.0
+existed for the two or three ticks acceleration took to cross it — the blend space was being asked
+to track a step function and its careful weights were never held anywhere in the middle.
 
-### The jump clip is a whole jump, and the game only has room for part of it
+**Nothing in the rules had to change.** `target_vx` was already
+`ClampF(in.move_axis,-1,1) * ARCHER_RUN_SPEED`, so the magnitude has always been honoured; only the
+input was quantised. One `AddGamePadMap(0,INPUT_ARCHER_MOVE,6000)` and one `GetAxis` added to the
+two key reads is the whole change.
 
-This is the finding worth acting on. `Jumping_Up` is authored as a complete standing jump — the
-phases are unmistakable in the hip's height, sampled straight off the root track:
+Swept with the stick held, which is the first time these numbers have been reachable at all:
 
-| phase | t | hip y |
+```
+stick    vx     clip             blend            w     rate
+ 0.15    1.35   Walking          -                      0.85
+ 0.25    2.25   Walking          Running_Slow     0.50  1.04
+ 0.35    3.15   Running_Slow     Running_Fast     0.10  1.02
+ 0.50    4.50   Running_Slow     Running_Fast     0.70  1.04
+ 0.65    5.85   Running_Fast     -                      1.13
+ 0.80    7.20   Running_Fast     -                      1.39
+ 1.00    9.00   Running_Fast     -                      1.73
+```
+
+**1.02 to 1.04 across the whole blended band** — the feet very nearly plant, held there for as long
+as the thumb holds the stick rather than for two ticks in passing. That is what step 1 was for, and
+this is the first time it has been visible.
+
+### The rate floor turns out not to bite
+
+The open item from step 1 was that `PUPPET_RATE_MIN` (0.60) clamps below the walk's own speed
+because idle is not a rung, so a very slow walk would slide. With the walk at 1.58 units/s the floor
+is reached at 0.95 units/s — and the dead zone puts the slowest a real stick can ask for at about
+18% of 9.0, which is **1.65 units/s**. The clamp is below anything the hardware can request, and at
+that slowest walk the rate is 1.04. Worth fixing one day for completeness; not worth fixing now.
+
+### Driving it without a stick
+
+`archer_run` takes an `amount` (0..1) which pushes the stick that far through `HoldAxis` instead of
+pressing a key. A key and a stick are genuinely different requests rather than two spellings of one
+— a key can only ask for everything — so both paths are kept and the tool exposes both.
+
+---
+
+## Stopping — three ways, and how they are told apart. BUILT (2026-09-22).
+
+`Running_ToStop` is wired. The other two ways of stopping are not authored yet, and the interesting
+part is that discriminating between them costs nothing.
+
+### The discriminator is arithmetic, not a threshold
+
+Ground deceleration is `ARCHER_RUN_FRICTION`, so **one tick can remove at most 2.0 units/s**. That
+single fact separates all three cases, measured in the running game:
+
+| | vx per tick | what it is |
 |---|---|---|
-| standing | 0.03 | 0.463 |
-| **anticipation crouch** | 0.34 | **0.260** ← lowest |
-| launch / extension | 0.43–0.63 | 0.296 → 0.634 |
-| **apex** | 0.79 | **0.746** ← highest |
-| falling | 0.93–1.13 | 0.690 → 0.456 |
-| **landing absorb** | 1.33 | 0.285 |
-| recovery to standing | 1.93 | 0.463 |
+| let go of the key | 9 → 7 → 5 → 3 → 1 → 0 | exactly `PUPPET_FRICTION_STEP` each tick |
+| run into a wall | **9 → 0** | `MoveAndCollide` zeroes `vel.x` outright |
+| run into a crate | **9 → 4** | clamped to `ARCHER_PUSH_SPEED`, and she keeps moving |
 
-This game's jump leaves the ground **on the tick the button goes down** — there is no anticipation
-window, and there cannot be one without adding input latency to a platformer. So 0.342s of the
-clip describes something that has already happened by the time she is airborne, and playing it
-from zero would have her tuck into a crouch while already travelling upwards.
+A drop of about one friction step is her letting go; anything larger is something being in the way.
+`PUPPET_FRICTION_STEP` is written as `ARCHER_RUN_FRICTION * ARCHER_DT` rather than typed, so
+retuning the friction moves the discriminator with it.
 
-The rise therefore starts at the **launch**, measured as the lowest hip height *before the apex*:
+Stage does compute `f_hit_wall` and then throws it away — declared at `Stage.cpp:410`, passed to
+`MoveAndCollide`, never read. Publishing it would be the exact answer rather than this inferred one,
+and it becomes worth doing when a wall-stop clip wants an impact speed to choose a soft or hard
+variant with. It is not needed while the only question is which clip to play.
 
-```
-Clip Jumping_Up   1.933s long; launch at 0.342s (hip 0.260), apex at 0.785s (hip 0.746)
-Jump rise: 0.443s of clip into 0.390s of flight -> 1.13x.
-           Anticipation 0.342s and landing 1.148s are not played by the rise.
-```
+### It fires at the START of the deceleration
 
-**1.13x is the first one-shot in this app that fits without hitting its clamp** — the kick wants
-4.9x and the climb 9.3x. The rise time is not a typed constant either: `PUPPET_RISE_TIME` is
-`ARCHER_JUMP_SPEED / ARCHER_GRAVITY`, so retuning the jump moves the fit with it.
+Not at the end. Waiting for her to come to rest would begin a plant-and-settle after the settling
+was over — and would leave the blend space to race `Running_Fast` → `Running_Slow` → `Walking` →
+`Idle` in the five ticks the stop takes. Firing on the first tick replaces that scramble with one
+authored clip.
 
-Finding the launch as "the lowest point **before the apex**" rather than the global minimum
-matters more than it looks: the landing absorb dips to 0.285 against the anticipation's 0.260, only
-7% apart. A global minimum is one re-export away from finding the landing instead and playing the
-clip from near its end.
-
-Measured through a real jump — clip, rate and the hip's own height, sampled live:
+### The fit is the worst in the file, and it is a game-feel decision
 
 ```
-world.y    vy     clip            hip.y
-   1.65  14.30    Jumping_Up      0.4117
-   3.27   8.00    Jumping_Up      0.6335
-   3.97   0.30    Jumping_Up      0.7106     apex 0.746
-   3.34  -7.96    Falling_Idle    0.4309
-   1.44 -16.46    Falling_Idle    0.4387
-   0.90   0.00    Idle            0.5038
+Clip Running_ToStop  0.933s long; plants at 0.267s against the rules' 0.075s stop
+                     -> wants 3.56x, capped at 2.50x
 ```
 
-The hip rises monotonically from the moment she leaves the ground — the crouch is skipped, not
-merely shortened — and the apex pose lands within 0.04 of the clip's own peak.
+The clip is authored for a much gentler stop than this game has. Its own entry speed is **3.41
+world units/s** decelerating over about 0.70s — roughly 4.9 u/s². The rules enter at **9.0** and
+stop in **0.075s** at **120 u/s²**, twenty-four times harder, covering 0.267 units where the clip
+covers 0.80.
 
-### What is still missing, in the order it would pay off
+So this is the same conversation as the kick and the climb, and the choice is the same shape:
+trim the clip to its plant, or bring `ARCHER_RUN_FRICTION` down. At 40 u/s² she would slide a full
+unit over 13.5 ticks, which is a readable skid; at 120 there is no room for one and the clip can
+only be a plant.
 
-1. **The landing.** She goes from `Falling_Idle` straight to `Idle` on a 0.15s crossfade, with no
-   absorb at all. The absorb *is authored*, sitting unused at t ≈ 1.15–1.93 of `Jumping_Up`. It
-   needs either splitting into its own clip or playing the tail from an offset on touchdown, and
-   it wants a soft/hard split on impact speed.
-2. **An apex.** `Falling_Idle` is a held pose (its hip moves 0.0005 units across 0.733s), so the
-   top of the arc has no hang and the fall has no acceleration in the pose. One or two frames of
-   apex would do more here than a longer fall clip.
-3. **A run-jump.** The air set ignores `ground_speed` entirely — a sprinting jump plays the same
-   standing rise. The rules test asserts this so the day a variant is authored it fails loudly
-   rather than the new clip never being reached.
+### A crossfade can eat the beat it is blending to
 
-`Falling_Idle` being static also means it costs nothing to loop and nothing to extract, which is
-why it is marked `f_looping` and nothing else.
+Worth knowing generally. At 2.50x the clip reaches its plant 6.4 ticks in — **inside** the 9-tick
+default crossfade. Measured with the default, the hip at the plant read **0.453** against the
+clip's authored **0.345**: more than half of the thing the clip exists for had been blended away,
+and nothing about that is visible in the clip or in the rate.
+
+`Object::SetBlendTime` takes a per-transition override with a wildcard source, so one line fixes it:
+
+```cpp
+archer_model->SetBlendTime("",ARCHER_CLIPS[CLIP_STOP].name,0.067f);
+```
+
+Four ticks. Re-measured, the hip now descends 0.4623 → 0.4608 → 0.4574 → 0.4489 → 0.4434 → 0.4318
+→ 0.4177 → 0.3950 → 0.3516 → **0.3523** at the plant, tracking the authored curve instead of
+flattening it. **The rule: a crossfade must be shorter than the first beat of the clip it enters**,
+or the clip's opening statement is averaged with the pose it is leaving.
+
+---
+
+## Step 5 — the air set. BUILT (2026-09-22).
+
+Four composable clips, not one baked jump. The whole chain runs: `Jump_ToAir` → `Falling_Idle` →
+`Jump_FromAir` or `FallingIdle_ToLanding` → back to the ladder.
+
+| state | clip | how it is played |
+|---|---|---|
+| rising | `Jump_ToAir` 0.267s | at rate 1.0, from frame 0, then holds |
+| falling | `Falling_Idle` 0.733s | looped |
+| routine landing | `Jump_FromAir` 0.400s | entered at 0.267s, its contact frame |
+| hard landing | `FallingIdle_ToLanding` 1.100s | entered at 0.300s, its contact frame |
+
+### Why four pieces beat the one baked jump
+
+`Jumping_InPlace` is the same jump in a single 1.933s clip, and it can only be used by slicing it:
+find the anticipation, find the apex, fit the span to the flight, throw the rest away. It works —
+it was wired that way first — but every use costs a measurement, and the landing half is
+unreachable because it is glued to a rise that has already been played.
+
+The four-piece set needs none of that, and the reason is a property of the clips rather than of
+the code: **`Jump_ToAir` ends on exactly the pose `Falling_Idle` holds.** The handover at the apex
+is between two frames that already match, so the crossfade there has almost nothing to blend.
+
+That is also why the rise is **not fitted to the climb**. It is a TRANSITION into the airborne
+pose, not a depiction of the rise, so it plays at its own speed and holds what it arrives at. The
+rise lasts 0.390s and the clip 0.267s, so it finishes about two thirds of the way up and holds the
+pose the fall is about to loop. Stretching it to fill the climb would only be a slower tuck. A cut
+jump rises for as little as 0.18s, so the clip is often not finished at all — which is the right
+way round, because the readable part of a tuck is the start. The rules test asserts rate 1.0 so
+that nobody later "fixes" it into a fitted window.
+
+### The landing clips start in the air, and the toe is the only thing that knows when
+
+A landing authored on its own begins mid-fall, because that is what a landing is to an animator.
+`FallingIdle_ToLanding`'s hip descends 0.7253 → 0.4701 (standing height) before the absorb bottoms
+out at 0.2857. By the time this game plays it she is **already standing on the ground** — Stage put
+her there, and that is what fired the landing. Played from frame 0 she sinks half a body into the
+floor and pops back out.
+
+So each landing is entered at its own contact frame, measured at load:
+
+```
+Clip Jump_FromAir           0.400s long; feet land at 0.267s, leaving 0.133s to play
+Clip FallingIdle_ToLanding  1.100s long; feet land at 0.300s, leaving 0.800s to play
+```
+
+**Measured on the TOE, not the hip**, and `Jump_FromAir` is the case that proves why: its hip only
+ever rises (0.4293 → 0.4646), so the hip track says contact is at t=0 — while the toe says 0.267s.
+She is extending her legs downward to reach the floor, which moves the foot and the hip in opposite
+directions. The hip is also useless on the other clip for the opposite reason: it keeps moving long
+after contact, because that motion *is* the absorb.
+
+Contact is the FIRST sample within a hair of the toe's lowest point, not the lowest point itself —
+that would find the middle of the plant rather than its beginning.
+
+A flag could not have solved any of this. `extract_vertical_root_motion` pins a whole axis, and on
+`FallingIdle_ToLanding` the same axis is a fall for 0.300s and then a performance for 0.800s.
+
+Measured stepping through a real hard landing, reading the hip bone live:
+
+```
+0.3621  0.2925  0.2866  0.3124  0.3587  0.4079  0.4436  0.4596  0.4623  0.4627
+                ^ deepest, against the clip's authored 0.2857          ^ standing, authored 0.4628
+```
+
+It opens already below standing height — the 0.52 world units of descent in front of it were
+skipped, not compressed — bottoms within 0.001 of the authored absorb, and recovers to standing.
+
+### Which landing, and when there is none
+
+Chosen on impact speed, against the arcs this game actually produces: a tapped jump lands at 8.6, a
+full jump at 18.7, a 5.5-unit drop at 25, and terminal velocity is 34.
+
+- below `PUPPET_LAND_VEL` (5.0) — **no landing at all**. Stepping off a kerb is not a landing, and
+  playing a recovery for one would put a hitch in ordinary walking.
+- up to `PUPPET_HARD_LAND_VEL` (25.0) — `Jump_FromAir`. A routine jump is deliberately in this
+  band: if the dramatic landing played every time you used the jump button it would stop reading as
+  dramatic.
+- above it — `FallingIdle_ToLanding`, which only a real drop reaches.
+
+**The landing cancels the moment she moves.** The rules never stopped her — she can run the tick
+she touches down — so an animation holding her through a 0.825s recovery would be the animation
+layer overruling the game. Landing at a full run goes straight to `Running_Fast`, measured. That is
+the cheap version of step 6's cancel windows and the honest one until those exist.
+
+The landing is the Puppet's only piece of remembered state, and the only thing in it that is an
+EVENT rather than a function of the current parameters — which is why it lives in `UpdateLanding`
+and why the impact speed has to be read from the tick *before* contact. Stage zeroes `vel_y` in the
+same tick it sets `f_on_ground`, so by the time a landing is visible the number that decides how
+hard it was has already been thrown away.
+
+### The running jump, and why it is latched rather than derived
+
+`Running_Jump` is **one whole arc**, not four pieces, and it does not need to be composable: every
+frame of it is airborne, so there is no anticipation to skip and no landing glued to the end. It is
+entered at takeoff, played once, and holds its last frame — already a descending pre-landing pose,
+and a better thing to hold than a static float — if she is still in the air when it runs out.
+
+```
+Clip Running_Jump           0.933s long; climbs for 0.333s against the game's 0.390s -> 0.85x
+```
+
+**Only the climb is fitted.** The clip's descent is 0.566s against the game's 0.327s, so no single
+rate serves both halves; the climb is the half with the push in it and the half whose length the
+rules actually guarantee (`PUPPET_RISE_TIME` is `ARCHER_JUMP_SPEED / ARCHER_GRAVITY`). At 0.85x a
+full jump lands about two thirds of the way through the clip, mid-descent.
+
+**Chosen by a threshold, not a blend.** Two gaits can be mixed because they are the same cycle at
+different speeds. `Jump_ToAir` is 0.267s of tuck and `Running_Jump` is a 0.933s arc — a shared
+playhead between them would mean nothing. Two discrete sets, chosen once, is the honest shape.
+
+**And latched at takeoff, which is the part that would be easy to get wrong.**
+`ARCHER_AIR_FRICTION` is 14 u/s², enough to take her from a full run to a standstill *inside a
+single flight*. A choice re-made each tick from the current `ground_speed` would therefore cross
+`PUPPET_RUN_JUMP_SPEED` in mid-air and swap a running jump for a standing one halfway through the
+arc. Measured in flight, `vx` decaying 9.00 -> 8.07 -> 7.13 with the clip unchanged:
+
+```
+y= 3.96 vy=  1.00 vx= 9.00  Running_Jump   rate=0.85
+y= 3.69 vy= -5.12 vx= 8.07  Running_Jump   rate=0.85
+y= 3.19 vy= -8.90 vx= 7.13  Running_Jump   rate=0.85
+y= 2.70 vy=  0.00 vx= 4.43  Running_Slow   rate=1.04     <- landing cancelled, she keeps running
+```
+
+The latch is re-taken on the next takeoff, and it fires for walking off a ledge as well as for
+jumping — the animation cannot tell those apart and should not try. What it needs to know is how
+fast she is travelling, not why.
+
+### Still open
+
+1. **No apex hold.** `Falling_Idle` is a held pose — its hip moves 0.0005 units across 0.733s — so
+   the standing set's fall has no acceleration in it and the top of the arc has no hang.
+2. **`Standing_DrawArrow`** (1.067s) is previewable and unselected. It is a whole-body clip for
+   something that must happen *while* she runs, so it needs step 2's mask layer, not a state.
+3. **The rope** is the last placeholder state, and it is a genuinely different pose from the ledge
+   hang — gripped overhead with both hands rather than braced against a lip.
+4. **`Running_Jump` and `Running_JumpForward` are byte-identical** — every frame of the root track
+   matches, as do the duration, the travel and the net turn. One of them can come out of the
+   export. `Jump_Forward` is a genuinely different, floatier arc (0.776 rig over 2.000s against
+   2.150 over 0.933s) and is worth keeping to compare against.
 
 ---
 
@@ -632,9 +838,61 @@ sight, and several are too fast to animate.
 
 | rules | ticks | seconds | the clip | note |
 |---|---|---|---|---|
-| `KICK_TICKS` | 14 | 0.23 | `Kick_Front` is **1.13s** | needs 4.9x to fit; clamped to 2.5x today, so the boot overruns the hit by ~13 ticks |
+| `KICK_TICKS` | **98** | **1.63** | `Kick_Front` is 1.633s | **DONE 2026-09-22** — the rules moved to the clip. Plays at 1.00x |
 | `LEDGE_CLIMB_TICKS` | 18 | 0.30 | `Climb` is **2.80s** | needs **9.3x**; clamped to 2.5x, so the clip is still playing long after she is standing. The likeliest answer is that a 0.30s mantle was never a mantle |
 | `BOW_DRAW_TICKS` | 36 | 0.60 | none yet | fine as is — that is a real draw |
+
+**The kick is settled, and it went the other way to everything else here.** Every other fit in this
+document stretches a clip to suit the rules. The kick could not: 14 ticks against a 1.633s clip
+needs 7.1x, and a kick at seven times speed is not a fast kick, it is a glitch — a kick has to have
+a wind-up to read as one at all. So the clip set the pace and `KICK_TICKS` moved to 98.
+
+The active window moved with it, and it was **measured rather than guessed**:
+
+```
+Clip Kick_Front  1.633s long; the boot connects at 0.700s (tick 42.0 of 98),
+                 and the rules' active window is ticks 40..44
+```
+
+`MeasureKickClip` poses the model at every keyframe and asks which foot is furthest from the hips —
+by REACH, not by the root track, because the kick is the one move whose whole point happens at the
+end of a limb while the hips do not move at all (0.000 units of travel across the clip). Both feet
+are checked and the furthest wins, since nothing here knows which leg was authored to kick.
+
+The rules cannot read that number — `Stage.h` names no engine type and has never seen a `.glb` — so
+the measurement does not *set* the window, it *checks* it. The app logs the strike beside the window
+every start and appends **"THE WINDOW DOES NOT COVER THE STRIKE"** when they stop lining up, which
+is what a re-export with a different impact frame looks like.
+
+Measured after: the kick plays at **rate 1.00, wanted_rate 1.00** — the first one-shot in this app
+to need no stretching at all — and connects, `"Kick connected: 1 props"`.
+
+**What a re-export does and does not fix by itself.** Trimming frames off the END of the clip does
+not move the strike, so `KICK_ACTIVE_FROM/TO` stay right; but `KICK_TICKS` is the one number in this
+app that cannot re-measure itself, and leaving it too long makes the Puppet *stretch* the shortened
+clip to fill the window — a kick in slow motion, which looks like a rate bug and is not one. So the
+app now prints the answer rather than leaving it to be noticed:
+
+```
+[warn] Kick_Front is 98 ticks but KICK_TICKS is 84, so it will play at 1.17x.
+       Set KICK_TICKS to 98 in Stage.h.
+```
+
+(Confirmed by deliberately mis-setting it, not merely by it staying quiet.) Trimming the FRONT
+would move the strike too, and the window check catches that separately.
+
+**The cost, which is real and is the next decision.** `f_planted` roots her for the whole of
+`kick_ticks`, so a kick is now a **1.63-second commitment**, and 0.93s of that is recovery *after*
+the boot has landed. That is a heavy, committal move, which may well be what a wall-breaking kick
+should be. If it wants to be lighter, the fix is to unroot at `KICK_ACTIVE_TO` and let the recovery
+be cancelled by moving — which needs the Puppet to drop the clip at the same moment, or the
+animation would be overruling the rules. That is the same cancel-on-move the settle already does.
+
+> While testing this: a kick connected and the crate moved 0.3 units. Not the kick — the crate sat
+> at 3.00 with the stack's left edge at 3.70 and the step's face at 5.0, so the whole cluster was
+> jammed and the one thing the demo exists to show could not happen. The lone crate moved to 0.60,
+> which opens 2.7 units in front of it; it now flies **0.60 → 3.79**. The stack stays put because
+> two crates reach 1.65 against the step's 1.80 top, so it is the way up there.
 
 Each of these is a decision about how the game *feels*, not a bug. A 1.0s climb is a different game
 from a 0.3s climb. `Puppet::choice.wanted_rate` reports the gap live so the argument can be had
@@ -669,12 +927,16 @@ the state, and the panel lists it.
 | walking | `Walking`, rate-matched ✓ |
 | running | `Running_Slow` / `Running_Fast` off the ladder, 1.73x at a full sprint ✓ |
 | backing up | the same rung played backwards ✓ |
-| kicking | `Kick_Front`, mistimed against `KICK_TICKS` (wants 4.9x) ✓ |
+| stopping from a run | `Running_ToStop`, fired on the first tick of the deceleration ✓ |
+| stopping against a wall | **placeholder** — nothing; the ladder falls to `Idle` |
+| pushing a crate | **placeholder** — `Running_Slow` on the spot at the push speed |
+| kicking | `Kick_Front` at **1.00x**; `KICK_TICKS` was retimed to the clip ✓ |
 | climbing | `Climb`, badly mistimed against `LEDGE_CLIMB_TICKS` (wants 9.3x) ✓ |
-| rising | `Jumping_Up` from its measured launch, fitted at 1.13x ✓ |
+| rising | `Jump_ToAir`, at rate 1.0, holding the pose the fall loops ✓ |
 | falling | `Falling_Idle`, looped ✓ |
-| landing | **placeholder** — straight to `Idle`; the absorb exists in `Jumping_Up` and is unused |
-| hanging | **placeholder** — idle |
+| landing | `Jump_FromAir`, or `FallingIdle_ToLanding` above 25 u/s; each entered at its contact frame ✓ |
+| running jump | `Running_Jump`, latched at takeoff, fitted to its climb at 0.85x ✓ |
+| hanging | `Hanging_Braced`, looped ✓ |
 | on the rope | **placeholder** — idle |
 | drawing / loosing | `Standing_DrawArrow` exists but nothing selects it — it needs step 2's mask layer |
 

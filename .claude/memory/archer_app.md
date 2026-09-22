@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1f02e4da-fa81-4634-9800-ae5b6cfa5ba7
-  modified: 2026-09-22T11:01:02.522Z
+  modified: 2026-09-22T15:54:35.920Z
 ---
 
 `apps/archer` - a side-view platformer about an archer, 3D assets, Windows, keyboard only.
@@ -186,28 +186,128 @@ flattens the 0.02-unit footfall bob. Verified by reading the hip bone live over 
 `object_list`, as `mixamorig:Hips`): Walking pinned flat on x/z and still bobbing on y, Climb pinned
 on all three, Twirl free on all three.
 
-**THE AIR SET went in 2026-09-22** from a re-export carrying Jumping_Up, Falling_Idle and
-Standing_DrawArrow. Rising plays Jumping_Up, falling loops Falling_Idle, and Standing_DrawArrow is
-previewable but unselected until step 2's mask layer exists (it is a whole-body clip for something
-that has to happen while she runs).
+**THE AIR SET went in 2026-09-22** as FOUR COMPOSABLE CLIPS, not one baked jump: Jump_ToAir (rise)
+-> Falling_Idle (loop) -> Jump_FromAir or FallingIdle_ToLanding. `Jumping_InPlace` is the same jump
+in one 1.933s clip and was wired that way first; it works but every use costs a measurement and its
+landing half is unreachable, so it is preview-only now.
 
-THE JUMP CLIP IS A WHOLE STANDING JUMP - anticipation crouch, launch, apex, fall, landing absorb,
-recovery, 1.933s - and this game jumps on the tick the button goes down, so the first 0.342s
-describes something that already happened. The rise starts at the MEASURED launch instead
-(`ApplicationArcher::MeasureJumpClip`, `PuppetChoice::start_time`, seeded BEFORE the transition or
-the crossfade fades into the start frame first). Find the launch as the lowest hip height BEFORE
-THE APEX, never the global minimum: the landing absorb dips to 0.285 against the anticipation's
-0.260, 7% apart, so a global min is one re-export away from playing the clip from near its end.
-Fit is 0.443s of clip into 0.390s of flight = 1.13x - the first one-shot here that does not hit its
-clamp (kick wants 4.9x, climb 9.3x). `PUPPET_RISE_TIME` is ARCHER_JUMP_SPEED/ARCHER_GRAVITY, a
-division not a number, so retuning the jump moves the fit with it.
+THE PIECES WIN BECAUSE OF A PROPERTY OF THE CLIPS: Jump_ToAir ENDS ON THE POSE Falling_Idle HOLDS,
+so the apex handover is between two frames that already match. That is also why the rise is played
+at rate 1.0 and NOT fitted to the climb - it is a transition into the airborne pose, not a
+depiction of the rise, so it finishes two thirds of the way up and holds. The rules test asserts
+rate 1.0 to stop anyone "fixing" that into a fitted window.
 
-Extraction for both: ALL FLAGS OFF. Jumping_Up's hips rise 0.273 rig units but that is the body
-compressing and extending in place - Stage owns the 3.2 units of actual flight - so extracting the
-lift would delete the crouch, the push and the absorb, which is the clip. Still missing: a landing
-(the absorb is authored and unused at t~1.15-1.93 of Jumping_Up), an apex hold, and a run-jump
-variant (the air set ignores ground_speed, and the rules test asserts that so a new clip fails
-loudly rather than never being reached).
+LANDING CLIPS START IN THE AIR, and the TOE is the only thing that knows when they touch.
+FallingIdle_ToLanding descends 0.52 world units before contact; played from frame 0 she sinks half
+a body into the floor. Each is entered at its measured contact frame instead
+(`MeasureLandingClips`, `Puppet::clip_entry`, `PuppetChoice::start_time` - seeded BEFORE the
+transition or the crossfade fades into the start frame first). Measured: Jump_FromAir lands at
+0.238 of 0.400s, FallingIdle_ToLanding at 0.275 of 1.100s. NOT the hip: Jump_FromAir's hip only
+RISES (0.4293->0.4646) while the legs extend downward, so the hip says contact is at t=0 and the
+toe says 0.238. Contact is the FIRST sample near the toe's minimum, not the minimum itself. A
+per-axis extract flag could not have fixed any of this - on FallingIdle_ToLanding the same axis is
+a fall for 0.275s and a performance for 0.825s.
+
+Landing choice on impact speed: <5 none (a kerb is not a landing), <25 soft, above hard. Measured
+arcs: tapped jump 8.6, full jump 18.7, terminal velocity 34. A routine jump is deliberately soft.
+IT CANCELS THE MOMENT SHE MOVES, because the rules never stunned her. The landing is the Puppet's
+ONLY remembered state and its only event, so it lives in `UpdateLanding`, and the impact speed must
+be read from the tick BEFORE contact - Stage zeroes vel_y in the same tick it sets f_on_ground.
+
+Extraction for all air clips: ALL FLAGS OFF except Running_Jump/Jump_Forward's horizontal. Their
+hips move a lot but that is the body compressing and extending in place; Stage owns the 3.2 units
+of real flight.
+
+**THE RUNNING JUMP (Running_Jump) and THE HANG (Hanging_Braced) went in the same day.** The running
+jump is ONE WHOLE ARC, not four pieces, because every frame of it is airborne - nothing to skip in
+front, nothing glued behind. Fitted to its CLIMB only (0.333s against the game's 0.390s = 0.85x);
+its descent is 0.566s against the game's 0.327s so no one rate serves both halves. Chosen by a
+THRESHOLD not a blend (PUPPET_RUN_JUMP_SPEED) - a 0.267s tuck and a 0.933s arc share no meaningful
+playhead - and **LATCHED AT TAKEOFF** (`Puppet::air_clip`), which is the part that would be easy to
+get wrong: ARCHER_AIR_FRICTION is 14 u/s^2, enough to strip a full run inside ONE flight, so a
+choice re-made each tick would swap the clip mid-arc. Verified with vx decaying 9.00->7.13 in
+flight and the clip unchanged. The latch fires for walking off a ledge too.
+
+**A MEASUREMENT BUG THAT AFFECTED EVERY SAMPLED NUMBER HERE:**
+`ObjectAnimation::GetClosestKeyframe` returns the first keyframe at or AFTER the time asked for - a
+CEILING, not a nearest. So a uniform-grid scan sees each keyframe's value repeated across the
+samples leading up to it, and taking the sample index where an extreme first appears reports a time
+up to one whole keyframe interval EARLY (0.033s at 30fps). All three measurements now ask at the
+KEYFRAME TIMES, which is exact and cheaper. Corrected: foot phases 0.81/0.67/0.60 -> 0.83/0.70/0.65
+(the old "agrees with the .glb to within one sample step" note was covering for this), landing
+contacts 0.238->0.267 and 0.275->0.300, run-jump apex 0.301->0.333. Write any future clip
+measurement against keyframes, never a grid.
+
+**STOPPING HAS THREE CASES AND ONE FACT TELLS THEM APART.** Ground deceleration is
+ARCHER_RUN_FRICTION, so a tick can remove AT MOST `PUPPET_FRICTION_STEP` (= ARCHER_RUN_FRICTION *
+ARCHER_DT = 2.0 u/s). Measured: letting go steps 9->7->5->3->1->0, exactly that each tick; a wall
+zeroes vel.x outright (9->0 in ONE tick, `MoveAndCollide`); a crate clamps to ARCHER_PUSH_SPEED
+(9->4) and she keeps moving. So a drop of about one friction step is voluntary and anything bigger
+is an obstacle - arithmetic, not a tuned threshold. Stage computes `f_hit_wall` at Stage.cpp:410,
+passes it to MoveAndCollide and NEVER READS IT; publishing it is the exact answer and is worth
+doing when a wall-stop clip wants an impact speed for a soft/hard split.
+
+`Running_ToStop` fires on the FIRST tick of the deceleration, not at rest - otherwise the settle
+starts after the settling is over, and the blend space has already raced Fast->Slow->Walking->Idle
+in the five ticks a stop takes. Wall and crate are still placeholders (the branches are there).
+
+**A CROSSFADE CAN EAT THE BEAT IT IS BLENDING TO** - the general trap this turned up. Running_ToStop
+plants 6.4 ticks in at its capped 2.50x, INSIDE the 9-tick default crossfade, and the hip at the
+plant measured 0.453 against the clip's authored 0.345: over half of the clip's whole point averaged
+away, invisible in both the clip and the rate. Fixed with a per-transition override,
+`SetBlendTime("",<clip>,0.067f)` (wildcard source). RULE: a crossfade must be shorter than the first
+beat of the clip it enters.
+
+The stop's fit is the worst in the file: it plants at 0.267s against the rules' 0.075s stop, wants
+3.56x and is capped at 2.50x. The clip is authored for ~4.9 u/s^2 of deceleration from 3.41 u/s;
+the game does 120 u/s^2 from 9.0. Same conversation as the kick and climb - trim the clip or lower
+ARCHER_RUN_FRICTION (40 would give a readable 1-unit skid).
+
+**THE KICK WAS RETIMED TO THE CLIP 2026-09-22, and it is the one place the fit runs that way.**
+Everywhere else a clip is stretched to suit the rules; the kick could not be, because 14 ticks
+against a 1.633s clip needs 7.1x and a kick at seven times speed is a glitch, not a fast kick - it
+needs a wind-up to read as one. So KICK_TICKS went 14 -> 98 and the active window 3..7 -> 40..44.
+Plays at rate 1.00 now, the only one-shot here that needs no stretching.
+
+The strike frame is MEASURED (`ApplicationArcher::MeasureKickClip`): pose at every keyframe, take
+whichever foot reaches furthest from the hips. BY REACH, not the root track - the kick is the one
+move whose point happens at the end of a limb while the hips do not move at all (0.000 travel).
+Both feet, since nothing knows which leg kicks. The rules CANNOT read it (Stage.h names no engine
+type and has never seen a .glb), so the measurement does not set the window, it CHECKS it: the app
+logs the strike beside KICK_ACTIVE_FROM/TO every start and appends "THE WINDOW DOES NOT COVER THE
+STRIKE" when they diverge.
+
+THE COST: `f_planted` roots her for all of kick_ticks, so a kick is a 1.63s commitment with 0.93s
+of it recovery AFTER the boot lands. Heavy and committal, possibly right for a wall-breaker. To
+lighten it: unroot at KICK_ACTIVE_TO and have the Puppet drop the clip on movement, the same
+cancel-on-move the settle does.
+
+KICK_TICKS is THE ONE NUMBER HERE THAT CANNOT RE-MEASURE ITSELF. Trimming frames off the END of the
+clip leaves the strike (and so KICK_ACTIVE_FROM/TO) correct but makes the Puppet STRETCH the
+shortened clip to fill the old window - a kick in slow motion that looks like a rate bug. The app
+now warns with the exact number to type ("Set KICK_TICKS to 98 in Stage.h"); verified by
+deliberately mis-setting it, not just by it staying quiet.
+
+**ANALOG MOVEMENT went in 2026-09-22 and is what finally made the blend space do real work.** The
+keyboard can only ask for a FULL run, so every speed in between existed for the two or three ticks
+acceleration took to cross it - the ladder was tracking a step function. NOTHING IN THE RULES HAD TO
+CHANGE: `target_vx` was already `move_axis * ARCHER_RUN_SPEED`, only the input was quantised. One
+`AddGamePadMap(0,INPUT_ARCHER_MOVE,6000)` (18% dead zone, breakout's figure and reasoning) plus
+`GetAxis` added to the two key reads. Measured across the stick: rate 1.02-1.04 through the whole
+blended band, held there rather than crossed. `archer_run` takes an `amount` (0..1) that uses
+HoldAxis, so the analog path is drivable over MCP with no pad plugged in.
+
+The step-1 open item (PUPPET_RATE_MIN clamps below the walk's own speed) turns out NOT to bite: the
+floor is reached at 0.95 u/s and the dead zone puts a real stick's slowest request at 1.65 u/s.
+
+Level note: the lone kickable crate was at x 3.00 with the stack's left edge at 3.70 and the step's
+face at 5.0, so a kick connected and moved it 0.3 units - the cluster was jammed. Moved to 0.60;
+it now flies 0.60 -> 3.79. The stack stays beside the step because two crates reach 1.65 against
+its 1.80 top, which is the way up.
+
+Still open: `Jump_Forward` (a floatier arc than Running_Jump) and `Kick_FrontSpin` (the old
+Kick_Front, which the export replaced with a non-spinning 1.633s one) are unwired; the rope, the
+wall stop and the crate push are the placeholder states.
 
 Worth knowing for tuning: `ARCHER_RUN_SPEED` is 9.0 but the fastest clip covers 5.19, so at a full
 hold she is always ABOVE the ladder playing Running_Fast alone at rate 1.73. The blend space only

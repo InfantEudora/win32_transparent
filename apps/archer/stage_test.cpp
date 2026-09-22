@@ -1436,59 +1436,200 @@ static void TestPuppet(){
     p.f_match_feet = true;
 
     /*
-        THE AIR SET, split on vel_y alone.
+        THE AIR SET, split on vel_y alone and fitted to nothing.
 
-        The measured numbers have to be fed in by hand here because a rules test has no .glb -
-        MeasureJumpClip supplies them in the app. These are this export's: the crouch bottoms out
-        at 0.33s and the apex is at 0.80s.
+        Jump_ToAir is a TRANSITION into the airborne pose rather than a depiction of the rise, so
+        it plays at 1.0 and holds what it arrives at - which is the pose Falling_Idle loops. That
+        is the whole reason the four-piece set beats the one baked clip, and asserting rate 1.0
+        here is what stops someone "helpfully" fitting it to the climb later.
     */
-    p.jump_launch = 0.333f;
-    p.jump_apex = 0.800f;
     in.f_on_ground = false;
     in.speed = 0.0f;
     in.ground_speed = 0.0f;
     in.vel_y = ARCHER_JUMP_SPEED;
     c = p.Choose(in);
-    Check(c.clip == CLIP_JUMP_UP,"rising plays the jump");
+    Check(c.clip == CLIP_JUMP_RISE,"rising plays the jump");
     Check(!c.f_placeholder,"which is authored now, not a stand-in");
-    CheckNear(c.start_time,0.333f,0.001f,"and starts at the launch, skipping the anticipation");
-    /*
-        The rate fits launch-to-apex into the time the rules spend climbing. Spelled out rather
-        than compared to a literal, so that retuning the jump moves the expectation with it - the
-        whole reason PUPPET_RISE_TIME is a division and not a number.
-    */
-    CheckNear(c.rate,(0.800f - 0.333f) / (ARCHER_JUMP_SPEED / ARCHER_GRAVITY),0.001f,
-              "at the rate that fits the climb");
-    Check(c.rate <= PUPPET_ACTION_RATE_MAX,"and inside the one-shot clamp, unlike the kick");
+    CheckNear(c.rate,1.0f,0.001f,"at its own speed - a transition clip is not fitted to a window");
+    Check(c.start_time < 0.0f,"and from its first frame; it is already trimmed to the launch");
 
     in.vel_y = 0.0f;
     Check(p.Choose(in).clip == CLIP_FALL,"the apex counts as falling - vel_y > 0 is the test");
     in.vel_y = -ARCHER_JUMP_SPEED;
     c = p.Choose(in);
     Check(c.clip == CLIP_FALL,"and so does actually falling");
-    Check(c.start_time < 0.0f,"the fall is a loop, so it has no start to seed");
     Check(!c.f_placeholder,"and it is authored too");
     /*
         A jump does not stop being a jump because she is moving. The air set ignores ground_speed
-        entirely today - there is no run-jump variant authored - and this says so out loud, so the
-        day one arrives the test fails rather than the blend quietly never being reached.
+        entirely today - Jump_Forward is in the table but nothing selects it - and this says so out
+        loud, so the day it is wired the test fails rather than the clip never being reached.
     */
     in.vel_y = ARCHER_JUMP_SPEED;
     in.speed = ARCHER_RUN_SPEED;
     in.ground_speed = ARCHER_RUN_SPEED;
     c = p.Choose(in);
-    Check(c.clip == CLIP_JUMP_UP,"a running jump plays the same rise - no run-jump is authored");
+    Check(c.clip == CLIP_JUMP_RISE,"speed alone does not pick the running jump - takeoff does");
     Check(c.blend_clip < 0,"and the ladder does not reach into the air");
     in.speed = 0.0f;
     in.ground_speed = 0.0f;
     in.vel_y = 0.0f;
 
-    //The states with still nothing authored fall through to the idle AND say so.
+    /*
+        THE RUNNING JUMP, latched at takeoff.
+
+        The latch is the whole behaviour worth testing, so these go through Tick. The point is that
+        the clip is chosen from the speed she LEFT THE GROUND at and then does not change, however
+        much air friction takes off her afterwards.
+    */
+    auto takeoff_at = [](float ground_speed) -> Puppet {
+        Puppet jp;
+        jp.run_jump_rise = 0.333f;
+        ArcherAnimParams a;
+        a.f_on_ground = true;
+        a.speed = ground_speed;
+        a.ground_speed = ground_speed;
+        jp.Tick(a);                 //one grounded tick, so the next one is a takeoff edge
+        a.f_on_ground = false;
+        a.vel_y = ARCHER_JUMP_SPEED;
+        jp.Tick(a);
+        return jp;
+    };
+
+    Check(takeoff_at(ARCHER_RUN_SPEED).choice.clip == CLIP_RUN_JUMP,
+          "leaving the ground at a run plays the running jump");
+    Check(takeoff_at(0.0f).choice.clip == CLIP_JUMP_RISE,
+          "and leaving it from a standstill plays the standing rise");
+    Check(takeoff_at(PUPPET_RUN_JUMP_SPEED - 0.1f).choice.clip == CLIP_JUMP_RISE,
+          "the line between them is PUPPET_RUN_JUMP_SPEED");
+    CheckNear(takeoff_at(ARCHER_RUN_SPEED).choice.rate,
+              0.333f / (ARCHER_JUMP_SPEED / ARCHER_GRAVITY),0.001f,
+              "fitted to its climb, not to its whole length");
+    {
+        /*
+            THE LATCH. Air friction can strip a full run's worth of speed inside one flight, so a
+            choice re-made in the air would swap the clip mid-arc. This is that exact scenario.
+        */
+        Puppet jp = takeoff_at(ARCHER_RUN_SPEED);
+        ArcherAnimParams a;
+        a.f_on_ground = false;
+        a.vel_y = -1.0f;            //past the apex
+        a.speed = 0.0f;
+        a.ground_speed = 0.0f;      //and now barely moving
+        jp.Tick(a);
+        Check(jp.choice.clip == CLIP_RUN_JUMP,
+              "and it stays the running jump after air friction has taken the speed away");
+        a.f_on_ground = true;
+        a.vel_y = 0.0f;
+        jp.Tick(a);
+        //Off a ledge at a standstill: still a takeoff, still re-latched, but she is already
+        //falling - so the standing set's own vel_y split picks the fall rather than the rise.
+        a.f_on_ground = false;
+        a.vel_y = -1.0f;
+        a.ground_speed = 0.0f;
+        jp.Tick(a);
+        Check(jp.choice.clip == CLIP_FALL,
+              "the latch is re-taken on the NEXT takeoff - walking off a ledge is a flight too");
+        a.f_on_ground = true;
+        a.vel_y = 0.0f;
+        jp.Tick(a);
+        a.f_on_ground = false;
+        a.vel_y = ARCHER_JUMP_SPEED;
+        jp.Tick(a);
+        Check(jp.choice.clip == CLIP_JUMP_RISE,"and a standing jump after it gets the standing rise");
+    }
+
+    //Hanging off a ledge is authored now; the rope still is not.
     in.f_on_ground = true;
     in.mode = MODE_HANG;
-    Check(p.Choose(in).f_placeholder,"and so is hanging");
+    c = p.Choose(in);
+    Check(c.clip == CLIP_HANG,"hanging off a ledge has its own clip");
+    Check(!c.f_placeholder,"and is not a stand-in any more");
+    in.mode = MODE_GROUND;
+
+    /*
+        THE LANDING, which is the one thing here that is an EVENT rather than a function of the
+        current state - so it goes through Tick, not Choose, and needs a fresh Puppet each time.
+
+        The durations and the contact frame are fed in by hand because a rules test has no .glb;
+        MeasureLandingClips supplies them in the app. These are this export's.
+    */
+    auto land_after = [](float impact, float ground_speed) -> PuppetChoice {
+        Puppet lp;
+        lp.clip_duration[CLIP_LAND_SOFT] = 0.400f;
+        lp.clip_duration[CLIP_LAND_HARD] = 1.100f;
+        lp.clip_entry[CLIP_LAND_HARD] = 0.300f;
+        ArcherAnimParams a;
+        a.f_on_ground = false;
+        a.vel_y = -impact;
+        lp.Tick(a);                 //one airborne tick, so the impact speed is remembered
+        a.f_on_ground = true;
+        a.vel_y = 0.0f;             //Stage has already zeroed it - this is the point of last_vel_y
+        a.speed = ground_speed;
+        a.ground_speed = ground_speed;
+        lp.Tick(a);
+        return lp.choice;
+    };
+
+    Check(land_after(ARCHER_JUMP_SPEED,0.0f).clip == CLIP_LAND_SOFT,
+          "a routine jump lands soft - the dramatic one is for falling off something");
+    Check(land_after(PUPPET_HARD_LAND_VEL + 1.0f,0.0f).clip == CLIP_LAND_HARD,
+          "a long drop lands hard");
+    CheckNear(land_after(PUPPET_HARD_LAND_VEL + 1.0f,0.0f).start_time,0.300f,0.001f,
+              "entered where its feet touch, not where its first frame is still falling");
+    Check(land_after(PUPPET_LAND_VEL - 1.0f,0.0f).clip == CLIP_IDLE,
+          "stepping off a kerb is not a landing at all");
+    Check(land_after(ARCHER_JUMP_SPEED,ARCHER_RUN_SPEED).clip != CLIP_LAND_SOFT,
+          "and landing at a run skips it - the rules never stopped her, so neither does this");
+
+    /*
+        THE RUN-TO-STOP, and the thing that tells it apart from running into a wall.
+
+        The discriminator is not a tuned threshold, it is arithmetic: ground friction can remove at
+        most PUPPET_FRICTION_STEP of speed in one tick, so a drop of about that much is her letting
+        go of the key and a bigger one is something being in the way. Measured in the running game,
+        releasing steps 9 -> 7 -> 5 -> 3 -> 1 -> 0 while a wall goes 9 -> 0 in a single tick.
+    */
+    auto decelerate_by = [](float from, float drop) -> PuppetChoice {
+        Puppet sp;
+        sp.stop_plant = 0.267f;
+        sp.clip_duration[CLIP_STOP] = 0.933f;
+        ArcherAnimParams a;
+        a.f_on_ground = true;
+        a.speed = from;
+        a.ground_speed = from;
+        sp.Tick(a);                         //one tick at speed, so the drop is visible next
+        a.speed = from - drop;
+        a.ground_speed = from - drop;
+        sp.Tick(a);
+        return sp.choice;
+    };
+
+    Check(decelerate_by(ARCHER_RUN_SPEED,PUPPET_FRICTION_STEP).clip == CLIP_STOP,
+          "letting go at a run plays the run-to-stop");
+    Check(decelerate_by(ARCHER_RUN_SPEED,ARCHER_RUN_SPEED).clip != CLIP_STOP,
+          "but stopping dead does not - friction cannot take that much off in one tick");
+    Check(decelerate_by(ARCHER_RUN_SPEED,ARCHER_RUN_SPEED - ARCHER_PUSH_SPEED).clip != CLIP_STOP,
+          "and nor does clamping to a crate's push speed");
+    Check(decelerate_by(PUPPET_STOP_FROM_SPEED - 0.5f,PUPPET_FRICTION_STEP).clip != CLIP_STOP,
+          "a walk does not get one either - it is a flourish, not a hitch");
+    Check(decelerate_by(ARCHER_RUN_SPEED,0.0f).clip != CLIP_STOP,
+          "and holding a steady run certainly does not");
+    /*
+        The fit, which does not. The rules stop her in PUPPET_STOP_TIME and the clip wants that long
+        again and more just to reach its plant, so this asks for the gap to be REPORTED rather than
+        for it to be small - the same arrangement as the kick and the climb.
+    */
+    {
+        PuppetChoice sc = decelerate_by(ARCHER_RUN_SPEED,PUPPET_FRICTION_STEP);
+        CheckNear(sc.wanted_rate,0.267f / (ARCHER_RUN_SPEED / ARCHER_RUN_FRICTION),0.01f,
+                  "and reports what fitting the plant to the stop would have taken");
+        CheckNear(sc.rate,PUPPET_ACTION_RATE_MAX,0.001f,"clamped, because it is over three times");
+    }
+
+    //The one state with nothing authored still falls through to the idle AND says so.
+    in.f_on_ground = true;
     in.mode = MODE_ROPE;
-    Check(p.Choose(in).f_placeholder,"and swinging on the rope");
+    Check(p.Choose(in).f_placeholder,"swinging on the rope is still a placeholder");
     in.mode = MODE_GROUND;
 
     //The kick is the one action with a real clip, and it is fitted to the window the RULES give

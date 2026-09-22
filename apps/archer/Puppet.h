@@ -53,9 +53,34 @@ enum ArcherClip{
     CLIP_WARMUP,
     CLIP_DANCE,
     CLIP_TWIRL,
-    CLIP_JUMP_UP,
-    CLIP_FALL,
-    CLIP_DRAW,
+    /*
+        THE AIR SET, as four composable pieces rather than one whole jump.
+
+        Jump_ToAir ends on exactly the pose Falling_Idle holds, so the handover at the apex is
+        between two near-identical poses and costs nothing. That composability is the reason to
+        prefer these over Jumping_InPlace, which is the same jump baked into one 1.93s clip and
+        can only be used by slicing it - see animation_plan.md. Jumping_InPlace stays previewable
+        because comparing the two is the point of having both.
+    */
+    CLIP_JUMP_RISE,         //Jump_ToAir             standing -> the airborne pose
+    CLIP_FALL,              //Falling_Idle           the airborne pose, held
+    CLIP_LAND_SOFT,         //Jump_FromAir           airborne pose -> standing, no real absorb
+    CLIP_LAND_HARD,         //FallingIdle_ToLanding  the dramatic one, with a deep absorb
+    /*
+        AND THE RUNNING JUMP, which is one whole arc rather than four pieces - because unlike the
+        standing set it does not need to be composable. Every frame of it is airborne, so there is
+        no anticipation to skip and no landing glued to the end; it is entered at takeoff, played
+        once, and holds its last frame if she is still in the air when it runs out.
+    */
+    CLIP_RUN_JUMP,          //Running_Jump           takeoff -> apex -> descending, 0.933s
+    CLIP_HANG,              //Hanging_Braced         holding a ledge
+    CLIP_STOP,              //Running_ToStop         plant and settle out of a run
+    CLIP_KICK_SPIN,         //Kick_FrontSpin         the spinning kick; a real pivot
+    CLIP_HANDSTAND,         //Walk_ToHandstand       set dressing; preview only
+    CLIP_JUMP_IN_PLACE,     //Jumping_InPlace        a whole standing jump; preview only
+    CLIP_JUMP_FORWARD,      //Jump_Forward           a whole travelling jump; not wired
+    CLIP_DRAW,              //Standing_DrawArrow     needs step 2's mask layer before it can play
+    CLIP_STRETCH2,
     CLIP_COUNT
 };
 
@@ -174,17 +199,76 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 #define PUPPET_ACTION_RATE_MAX      2.50f
 
 /*
+    HOW HARD SHE HIT, in units per second downward, and what each band is worth animating.
+
+    Measured against the arcs this game actually produces: a tapped jump lands at 8.6, a full one
+    at 18.7 (apex 3.07 units under ARCHER_FALL_GRAVITY_MUL), and a drop of 5.5 units arrives at 25.
+    So a routine jump is deliberately SOFT - the dramatic landing is for falling off something,
+    not for using the jump button, or it plays constantly and stops reading as dramatic.
+
+    Below PUPPET_LAND_VEL there is no landing clip at all. Stepping off a kerb is not a landing,
+    and playing a recovery for it would put a hitch in ordinary walking.
+*/
+#define PUPPET_LAND_VEL             5.0f
+#define PUPPET_HARD_LAND_VEL        25.0f
+
+/*
     HOW LONG THE GAME'S RISE LASTS, derived rather than typed: a jump leaves the ground at
     ARCHER_JUMP_SPEED and is pulled down by ARCHER_GRAVITY, so it stops climbing after v/g seconds.
-    0.39s at today's numbers. Retuning the jump moves this with it, which is the point of writing
-    it as a division - the clip is fitted to the game, so the game must not be able to drift away
-    from it silently.
-
-    The FALL has no equivalent constant because it has no fixed length: it runs until she hits
-    something, which is a property of the level rather than of the jump. That asymmetry is why the
-    rise is a one-shot fitted to a window and the fall is a loop.
+    0.390s at today's numbers, and the running jump's own rise is 0.367s - a 0.94x fit, the closest
+    anything in this file gets to 1.0. Written as a division so that retuning the jump moves the
+    fit with it instead of letting the clip drift quietly out of step.
 */
 #define PUPPET_RISE_TIME            (ARCHER_JUMP_SPEED / ARCHER_GRAVITY)
+
+/*
+    How fast she has to be going at TAKEOFF for the jump to be a running one.
+
+    A threshold and not a blend, which is the opposite of the choice made on the ground. Two gaits
+    can be mixed because they are the same cycle at different speeds; Jump_ToAir is 0.267s of tuck
+    and Running_Jump is a 0.933s arc, so a shared playhead between them would mean nothing. Two
+    discrete sets chosen once is the honest shape.
+
+    LATCHED AT TAKEOFF, which is the part that matters - see Puppet::air_clip. Air friction is
+    14 u/s^2, enough to take her from a full run to a standstill inside a single flight, so a
+    choice re-made every tick would swap clips in mid-air.
+
+    Set at the slow run's world speed: jogging jumps like a runner, a shuffle jumps like a stander.
+*/
+#define PUPPET_RUN_JUMP_SPEED       2.90f
+
+/*
+    THE RUN-TO-STOP, and the two numbers that decide when it plays.
+
+    PUPPET_STOP_FROM_SPEED is how fast she has to have been going for stopping to be worth
+    animating. Below it she was not running, she was shuffling, and a plant-and-settle on the end
+    of a walk is a hitch rather than a flourish.
+
+    PUPPET_STOP_TIME is how long the RULES take to stop her from a full sprint, derived rather than
+    typed: ARCHER_RUN_FRICTION removes ARCHER_RUN_SPEED in v/a seconds. 0.075s - five ticks - which
+    is the number the clip has to be fitted into and is nothing like long enough. See the gap that
+    Choose reports.
+*/
+#define PUPPET_STOP_FROM_SPEED      2.90f
+#define PUPPET_STOP_TIME            (ARCHER_RUN_SPEED / ARCHER_RUN_FRICTION)
+
+/*
+    HOW MUCH SPEED FRICTION CAN POSSIBLY REMOVE IN ONE TICK, and therefore the line between
+    stopping and being stopped.
+
+    This is the whole discriminator between a run-to-stop and a run-into-a-wall, and it is not a
+    tuned threshold - it is a fact about the rules. Deceleration on the ground is
+    ARCHER_RUN_FRICTION, so a tick can take at most this much off. A drop bigger than it did not
+    come from letting go of the key; something was in the way. Measured: releasing at a full run
+    steps 9 -> 7 -> 5 -> 3 -> 1 -> 0, exactly this much each tick, while a wall goes 9 -> 0 in one
+    and a crate clamps to ARCHER_PUSH_SPEED in one.
+
+    Stage computes `f_hit_wall` and currently throws it away, and publishing it would be the exact
+    answer rather than this inferred one. It is not needed while the only question is which of
+    these two clips to play, and it becomes worth doing when a wall-stop clip wants an impact speed
+    to pick a soft or hard variant with.
+*/
+#define PUPPET_FRICTION_STEP        (ARCHER_RUN_FRICTION * ARCHER_DT)
 
 /*
     The line between rising and falling, in units per second.
@@ -321,17 +405,89 @@ public:
     float clip_duration[CLIP_COUNT] = {};
 
     /*
-        The two moments in Jumping_Up that matter, in seconds. MEASURED off the hip's height at
-        load - see ApplicationArcher::MeasureJumpClip - because they are the difference between
-        "the clip is 1.933 seconds long" and "the part of it this game can use is 0.47 of them".
+        HOW FAR INTO EACH CLIP THE GAME'S STATE ACTUALLY BEGINS, in seconds. Zero for almost
+        everything; the landings are why it exists.
 
-        jump_launch is the bottom of the anticipation crouch, which is where the body starts
-        travelling upwards and therefore the first frame that matches a character already rising.
-        jump_apex is the top. The span between them is what gets fitted to PUPPET_RISE_TIME; the
-        anticipation before and the landing after are not played by the rise at all.
+        A landing clip authored on its own starts in the air and falls to the floor, because that
+        is what a landing looks like to an animator. FallingIdle_ToLanding descends 0.52 world
+        units before its feet touch. But by the time this game plays it she is ALREADY standing on
+        the ground - Stage put her there, that is what triggered the landing - so those frames
+        describe a fall that has happened, and playing them sinks her half a body into the floor
+        and pops her back out.
+
+        So the clip is entered at its own moment of contact, found by posing the model and watching
+        the toe (ApplicationArcher::MeasureLandingClips). Same shape of answer as the jump's
+        anticipation: the clip is right, the part of it this game can use starts later.
+
+        Measured rather than declared, so a re-export trimmed to start at contact simply measures
+        zero here and nothing needs changing.
     */
-    float jump_launch = 0.0f;
-    float jump_apex = 0.0f;
+    float clip_entry[CLIP_COUNT] = {};
+
+    /*
+        THE LANDING, which is the one piece of animation state the Puppet has to remember.
+
+        Everything else here is a pure function of the current ArcherAnimParams - the rules say
+        "running at 4.2 units/s" and the answer follows. A landing is not: it is an EVENT, fired by
+        the tick where f_on_ground goes true, and then it owns the character for as long as the
+        clip lasts. So it needs a countdown, and the impact speed has to be remembered from the
+        tick BEFORE contact because Stage has zeroed vel_y by the time the landing is visible.
+    */
+    /*
+        A SETTLE is a one-shot the animation layer holds after an event: landing, and now stopping.
+        Both are the same shape - fired by a transition the rules made, held for the clip's length,
+        and abandoned the moment she moves again - so they share one slot rather than two.
+
+        `last_vel_y` and `last_ground_speed` are read one tick late on purpose. Stage zeroes both on
+        contact, so by the time a landing or a wall stop is visible the number that says how hard it
+        was has already gone.
+    */
+    bool  f_was_on_ground = true;
+    float last_vel_y = 0.0f;
+    float last_ground_speed = 0.0f;
+    int   settle_ticks = 0;
+    int   settle_clip = -1;
+
+    /*
+        WHICH AIR SET THIS FLIGHT IS USING, latched on the tick she leaves the ground.
+
+        Not re-decided in the air, and that is the whole reason it is remembered rather than
+        derived. ARCHER_AIR_FRICTION is 14 u/s^2, so letting go of the run key at takeoff bleeds a
+        full 9 u/s off inside about two thirds of a second - less than one flight. A choice made
+        from the current ground_speed would therefore cross PUPPET_RUN_JUMP_SPEED in mid-air and
+        swap a running jump for a standing one halfway through the arc.
+
+        CLIP_RUN_JUMP for a running jump; -1 for the standing set, which then splits on vel_y.
+        Set at takeoff whether she jumped or simply walked off a ledge, because both are flights.
+    */
+    int   air_clip = -1;
+
+    /*
+        How long Running_Jump spends climbing, in seconds - its start to its highest hip. MEASURED
+        at load, because it is what the clip is fitted to: rate = this over PUPPET_RISE_TIME.
+
+        Only the RISE is fitted. The clip's descent is 0.566s against the game's 0.327s, so no
+        single rate matches both halves, and the rise is the half worth matching - it is the part
+        with the push in it, and it is the part whose length the rules actually guarantee.
+    */
+    float run_jump_rise = 0.0f;
+
+    //Where Running_ToStop plants, in seconds - its lowest hip. MEASURED at load, and the beat the
+    //clip is fitted by: the plant should land near the tick the rules actually bring her to rest.
+    float stop_plant = 0.0f;
+
+    /*
+        WHEN THE BOOT ACTUALLY CONNECTS in Kick_Front, in seconds - the frame where a foot is
+        furthest from the hips. MEASURED at load, and the only way to keep the rules' active window
+        pointed at the right moment of the clip.
+
+        The rules cannot read it: KICK_ACTIVE_FROM and KICK_ACTIVE_TO are compile-time constants in
+        Stage.h, which names no engine type and has never seen a .glb. So this does not SET the
+        window, it CHECKS it - the app logs the clip's strike beside the window the rules use, and a
+        re-export that moves the impact shows up as a number that no longer lines up rather than as
+        a kick that connects before the leg has moved.
+    */
+    float kick_strike = 0.0f;
 
     //The uniform scale the model is drawn at. A clip's speed in WORLD units is its measured speed
     //times this, which is why the two have to be known together - a rig authored half-size walks
@@ -350,9 +506,23 @@ public:
     //One tick. The only thing that changes state here is the yaw slew; the clip choice is a pure
     //function of the parameters and could be asked for at any time.
     void Tick(const ArcherAnimParams& in);
+    /*
+        BOTH ENDS OF A FLIGHT: latch the air set at takeoff, then fire, run down and cancel the
+        landing at the other end. Called by Tick BEFORE Choose, because Choose is a pure read of
+        this state and of `in` - which is what keeps it testable and what lets the panel drive it.
+
+        CANCELLED BY MOVING, deliberately. The rules do not stun her on landing, so she can run the
+        instant she touches down; an animation that held her through a 1.1s recovery would be the
+        animation layer overruling the game. Letting go the moment ground_speed picks up is the
+        cheap version of step 6's cancel windows, and it is the honest one until those exist.
+    */
+    void UpdateAir(const ArcherAnimParams& in);
 
     //The clip choice on its own, without touching the yaw. Pure - the rules test calls this.
     PuppetChoice Choose(const ArcherAnimParams& in) const;
+    //The rate Running_ToStop plays at, after the clamp. Shared so UpdateAir holds it for exactly
+    //as many ticks as it will actually take.
+    float StopRate() const;
 
     //A clip's forward speed in WORLD units per second, or 0 if it does not travel.
     float WorldClipSpeed(int clip) const;

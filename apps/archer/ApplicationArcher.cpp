@@ -7,6 +7,7 @@
 
 #include "Debug.h"
 #include "Primitives.h"
+#include "MarchingCubes.h"
 #include "type_helpers.h"
 #ifdef USE_MCP
 #include "MCPServer.h"
@@ -128,6 +129,8 @@ void ApplicationArcher::Init(void){
 
     BuildMaterials();
     BuildBlocks();
+    //After BuildBlocks, which it hides the melted half of - see the note on the declaration.
+    BuildTerrain();
     BuildProps();
     BuildArcher();
     BuildArcherModel();
@@ -174,6 +177,22 @@ void ApplicationArcher::BuildMaterials(){
     Simple table[] = {
         //Ground: neutral and dark, so everything standing on it reads first.
         { "ar_ground",      vec4(0.26f,0.28f,0.33f,1.0f), 0.04f, &material_ground },
+        /*
+            The terrain's three, in the order Terrain.cpp writes matid: grass, soil, rock.
+
+            KEPT DARK AND DESATURATED, deliberately, and not because grass is not green. The rule
+            two paragraphs up is that colour means a rule, and terrain means no rule at all - it is
+            the one surface in this level with no verb attached. If the ground out-reads the ledge
+            you can grab or the platform you can drop through, the palette has stopped doing its
+            job, and a prototype that looks better while saying less is a bad trade.
+
+            The grass/soil boundary is a HARD per-triangle line, because default.vert declares
+            vmatindex `flat`. These three have to read as distinct at that boundary rather than
+            blend, so they are separated in value as well as hue.
+        */
+        { "ar_grass",       vec4(0.34f,0.46f,0.30f,1.0f), 0.05f, &material_grass },
+        { "ar_soil",        vec4(0.31f,0.25f,0.20f,1.0f), 0.03f, &material_soil },
+        { "ar_rock",        vec4(0.30f,0.31f,0.34f,1.0f), 0.04f, &material_rock },
         //Ledge: warm, because it is the one surface with a verb attached to it.
         { "ar_ledge",       vec4(0.78f,0.55f,0.24f,1.0f), 0.12f, &material_ledge },
         //One-way platform: translucent-looking pale blue. It behaves differently from below, and
@@ -363,6 +382,160 @@ void ApplicationArcher::BuildBlocks(){
         block_objects.push_back(object);
     }
     debug->Info("Built %i level blocks\n",(int)block_objects.size());
+}
+
+#if ARCHER_TEST_BAY
+/*
+    The four variants the test bay exists to compare, left to right.
+
+    BAY 0 IS THE CONTROL and is not a setting anyone would ship: no smoothing, no noise, and just
+    enough rounding to take the glare off a corner. It is there so that the three to its right are
+    read against something rather than against a memory of what the boxes used to look like - and
+    because if bay 0 ever stops looking like the blockout, the mesher has broken rather than the
+    tuning.
+
+    The ladder from 1 to 3 moves all three knobs together on purpose. They are not independent in
+    any way a player would notice: a big smooth_k with no noise reads as melted plastic, and big
+    noise with no smoothing reads as gravel glued to boxes. What is being compared is four points
+    on one line from "blockout" to "landscape", not a parameter sweep.
+*/
+static TerrainParams TerrainVariant(int bay){
+    TerrainParams p;
+    switch (bay){
+        case 0:  p.smooth_k = 0.00f; p.round_r = 0.05f; p.noise_amp = 0.00f; break;
+        case 1:  p.smooth_k = 0.20f; p.round_r = 0.15f; p.noise_amp = 0.06f; break;
+        case 2:  p.smooth_k = 0.35f; p.round_r = 0.20f; p.noise_amp = 0.15f; break;
+        default: p.smooth_k = 0.60f; p.round_r = 0.30f; p.noise_amp = 0.25f; break;
+    }
+    return p;
+}
+#endif
+
+void ApplicationArcher::BuildTerrain(){
+    terrain_objects.clear();
+    melted_blocks.clear();
+#if ARCHER_TEST_BAY
+    /*
+        Checked once, here, rather than trusted. The 256-entry triangulation table in
+        core/MarchingCubes.cpp is copied data, and a single wrong digit in it produces a hole a few
+        cells wide somewhere on a silhouette - which is not reliably visible in a screenshot and is
+        miserable to find by looking at geometry. Two milliseconds at startup.
+    */
+    MarchingCubesSelfTest();
+
+    for (int i = 0;i < ARCHER_TEST_BAY_COUNT;i++){
+        float x0 = ARCHER_TEST_BAY_X_MIN + i * ARCHER_TEST_BAY_WIDTH;
+        float x1 = x0 + ARCHER_TEST_BAY_WIDTH;
+        TerrainParams params = TerrainVariant(i);
+        TerrainStats stats;
+        Mesh* mesh = BuildTerrainMesh(stage.blocks,x0,x1,params,&stats);
+        if (!mesh){
+            debug->Err("Terrain bay %i built nothing\n",i);
+            continue;
+        }
+
+        char name[48];
+        snprintf(name,sizeof(name),"terrain_bay_%i",i);
+        Object* object = new Object();
+        object->SetMesh(mesh);      //takes the reference; Destroy drops it and frees the mesh
+        object->name = name;
+        /*
+            IDENTITY TRANSFORM, because the mesh is already in world coordinates.
+
+            Terrain.cpp bakes the bay's world position into the vertices rather than building
+            something centred and placing it, for the same reason CreateMeshFromHeightmap does -
+            the normals are computed from the final positions, and a non-uniform Object scale
+            applied afterwards does not retroactively fix them. See the note in apps/tank/Heightmap.h.
+        */
+        object->SetPosition(vec3(0.0f,0.0f,0.0f));
+        object->SetScale(vec3(1.0f,1.0f,1.0f));
+        //Slot per matid, in the order Terrain.cpp writes them.
+        object->SetMaterialSlot(0,material_grass);
+        object->SetMaterialSlot(1,material_soil);
+        object->SetMaterialSlot(2,material_rock);
+        main_scene->AddObject(object);
+        terrain_objects.push_back(object);
+
+        debug->Info("Terrain bay %i [%.1f,%.1f): %i blocks, %i tris, %zu samples, "
+                    "dip %.4f rise %.4f over %i probes (k=%.2f r=%.2f n=%.2f)\n",
+                    i,x0,x1,stats.num_blocks,stats.num_triangles,stats.num_samples,
+                    stats.worst_dip,stats.worst_rise,stats.num_probes,
+                    params.smooth_k,params.round_r,params.noise_amp);
+        /*
+            THE ONE ASSERTION THAT MATTERS, and it is logged rather than asserted so that a bad
+            variant still renders and can be looked at.
+
+            A dip is the surface sitting BELOW a collider's exposed top face, which is the archer
+            standing in mid-air. It is a fifth of a unit at worst, invisible in a screenshot and
+            unmistakable under the feet, so it is measured instead of eyeballed.
+        */
+        if (stats.worst_dip > 0.02f){
+            debug->Err("Terrain bay %i DIPS %.4f below a top face - the archer will float there. "
+                       "See the top-pinning note in Terrain.h.\n",i,stats.worst_dip);
+        }
+    }
+
+    ApplyBlockoutVisibility();
+    debug->Info("Terrain: %i bays built, %i blockout boxes hidden\n",
+                (int)terrain_objects.size(),(int)melted_blocks.size());
+#endif
+}
+
+/*
+    Work out which blockout boxes the terrain has replaced, and hide them - hide, never skip or
+    delete, and never anything but SOLID.
+
+    block_objects is indexed in step with Stage::blocks and BreakBlocks indexes straight into it,
+    so removing entries would be a quiet corruption of the kick slice. Hiding costs one bool, keeps
+    every collider exactly where it was, and makes the debug view below a one-liner.
+
+    RECOMPUTED FROM Stage::blocks RATHER THAN REMEMBERED, because NewGame throws every block object
+    away and builds a fresh set that all start visible - so this has to run again after each
+    restart, against a block_objects that is not the one BuildTerrain saw.
+
+    NO GL IN HERE, which is what makes it safe to call from NewGame on the physics thread. Compare
+    BuildTerrain, which is render-thread only for exactly that reason.
+*/
+void ApplicationArcher::ApplyBlockoutVisibility(){
+    melted_blocks.clear();
+#if ARCHER_TEST_BAY
+    if (terrain_objects.empty()){
+        return;     //nothing has been melted, so nothing is hidden
+    }
+    for (size_t i = 0;i < stage.blocks.size() && i < block_objects.size();i++){
+        const StageBlock& b = stage.blocks[i];
+        if (b.kind != BLOCK_SOLID){
+            continue;       //only SOLID melts - see the header note in Terrain.h
+        }
+        if (b.x < ARCHER_TEST_BAY_X_MIN || b.x >= ARCHER_TEST_BAY_X_MAX){
+            continue;
+        }
+        if (!block_objects[i]){
+            continue;
+        }
+        melted_blocks.push_back((int)i);
+        if (f_show_blockout){
+            block_objects[i]->Show();
+        }else{
+            block_objects[i]->Hide();
+        }
+    }
+#endif
+}
+
+/*
+    Show or hide the blockout underneath the terrain.
+
+    The debug view that the hide-don't-delete decision above buys: with the boxes back on, any
+    place the terrain has drifted from the collision is visible as a box poking through grass, or
+    as grass with no box in it. It is the only way to check the thing the whole design rests on by
+    looking rather than by measuring - and the measurement (TerrainStats::worst_dip) only samples
+    the top faces, so this is the half that can catch a side or an underside.
+*/
+void ApplicationArcher::SetBlockoutVisible(bool f_visible){
+    f_show_blockout = f_visible;
+    ApplyBlockoutVisibility();
+    debug->Info("Blockout %s\n",f_visible ? "shown" : "hidden");
 }
 
 void ApplicationArcher::BuildProps(){
@@ -642,7 +815,8 @@ void ApplicationArcher::BuildArcherModel(){
 
     MeasureClips();
     MeasureClipPhases();
-    MeasureJumpClip();
+    MeasureAirClips();
+    MeasureKickClip();
 
     /*
         The default crossfade, kept SHORT.
@@ -654,6 +828,20 @@ void ApplicationArcher::BuildArcherModel(){
         still exists, and no transition at all for locomotion.
     */
     archer_model->animation_transition_time_max = 0.15f;
+
+    /*
+        EXCEPT INTO THE RUN-TO-STOP, WHICH HAS TO BE FASTER THAN ITS OWN FIRST BEAT.
+
+        The clip's plant is 0.267s in and it is capped at 2.50x, so the plant lands 6.4 ticks after
+        the clip starts - inside the 9 ticks the default crossfade takes. Measured with the default,
+        the hip at the plant read 0.453 against the clip's authored 0.345: more than half of the
+        thing the clip exists for had been blended away.
+
+        Four ticks. The wildcard `from` is deliberate - she can enter this off any rung of the
+        ladder, and the answer is the same from all of them. It is cheap because the poses either
+        side are close: the clip opens on a running pose, which is what she is already in.
+    */
+    archer_model->SetBlendTime("",ARCHER_CLIPS[CLIP_STOP].name,0.067f);
 
     //Start her standing, and hide the box she has been standing in for five slices.
     if (archer_clips[CLIP_IDLE]){
@@ -757,97 +945,251 @@ void ApplicationArcher::MeasureClipPhases(){
                    ARCHER_MODEL_TOE_BONE);
         return;
     }
-    //Enough to put the plant within a fiftieth of a cycle, which is under a tick at any rate these
-    //clips run at. More samples would be free here but would not say anything more.
-    const int SAMPLES = 48;
+    /*
+        SAMPLED AT THE KEYFRAMES, not on a uniform grid, and that is a correctness point rather
+        than an efficiency one.
+
+        `ObjectAnimation::GetClosestKeyframe` returns the first keyframe at or AFTER the time asked
+        for - a ceiling, not a nearest - so a uniform scan does not see a smooth curve, it sees
+        each keyframe's value repeated across the samples leading up to it. Taking the sample index
+        where the extreme first appears therefore reports a time up to one whole keyframe interval
+        EARLY, which at 30fps is 0.033s. Asking at the keyframe times instead makes the answer
+        exact, and costs fewer samples than the grid did.
+    */
     for (int i = 0; i < PUPPET_LOCOMOTION_COUNT; i++){
         int index = PUPPET_LOCOMOTION[i];
         Animation* clip = archer_clips[index];
-        if (!clip || clip->duration <= 0.0f){
+        if (!clip || !clip->root_track || clip->duration <= 0.0f){
             continue;
         }
         float lowest = 0.0f;
-        int lowest_at = 0;
-        for (int k = 0; k < SAMPLES; k++){
-            float t = clip->duration * (float)k / (float)SAMPLES;
+        float lowest_at = 0.0f;
+        bool f_first = true;
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
             //Zero-width window: poses the root bone without reporting the sample as motion.
-            clip->SampleRootMotion(t,t);
-            clip->ApplyInterval(t);
+            clip->SampleRootMotion(key->time,key->time);
+            clip->ApplyInterval(key->time);
             float y = toe->GetWorldPosition().y;
-            if (k == 0 || y < lowest){
+            if (f_first || y < lowest){
                 lowest = y;
-                lowest_at = k;
+                lowest_at = key->time;
+                f_first = false;
             }
         }
-        puppet.clip_phase[index] = (float)lowest_at / (float)SAMPLES;
+        puppet.clip_phase[index] = lowest_at / clip->duration;
         debug->Info("Clip %-20s plants the left foot at phase %.2f (toe at %.3f)\n",
                     ARCHER_CLIPS[index].name,puppet.clip_phase[index],lowest);
     }
 }
 
 /*
-    Which part of the jump clip is the jump.
+    Where each LANDING clip's feet actually touch the floor.
 
-    Jumping_Up is authored as a COMPLETE standing jump - anticipation crouch, launch, apex, fall,
-    landing absorb, recovery - in 1.93 seconds. This game's jump leaves the ground on the tick the
-    button goes down, so the 0.43s of anticipation in front of the launch describes something that
-    has already happened, and playing it would have her tuck into a crouch while travelling
-    upwards. The useful part is launch to apex, and this finds where that is.
+    A landing authored on its own starts in the air and falls, because that is what a landing is to
+    an animator - FallingIdle_ToLanding descends 0.52 world units before contact. By the time this
+    game plays one she is ALREADY standing on the ground; Stage put her there, and that is what
+    fired the landing. Playing those frames sinks her half a body into the floor and pops her out.
 
-    READ OFF THE HIP'S HEIGHT rather than declared, for the same reason as everything else here: a
-    re-export with a longer wind-up must not need a number in this file changed to match. It reads
-    the AUTHORED track through ComputeRootPose rather than posing the model, because the question
-    is about the clip and not about where the extraction flags leave the bone.
+    So it is entered at its own contact frame instead. Same answer as the jump's anticipation and
+    for the same reason: the clip is right, the part of it this game can use starts later.
 
-    THE APEX IS FOUND FIRST AND THE LAUNCH IS THE LOWEST POINT BEFORE IT, which is not the same as
-    taking the global minimum: the landing absorb dips almost as deep as the anticipation does
-    (0.285 against 0.267 on this export, 7% apart), so a global minimum is one re-export away from
-    finding the landing and playing the clip backwards from the end.
+    FOUND WITH THE TOE, not the hip, and that distinction is the whole measurement. The hip keeps
+    moving after contact - that is the absorb, and it is the point of the clip - so the hip says
+    nothing about when the feet arrive. The toe stops descending and stays put, so contact is the
+    FIRST sample within a hair of the toe's lowest point. Taking the lowest point itself would find
+    the middle of the plant rather than its beginning.
 */
-void ApplicationArcher::MeasureJumpClip(){
-    Animation* clip = archer_clips[CLIP_JUMP_UP];
-    if (!clip || !clip->root_track || clip->duration <= 0.0f){
-        return;         //not in the export; Choose still picks it and it simply will not play
+void ApplicationArcher::MeasureAirClips(){
+    Bone* toe = archer_model ? archer_model->FindBone(ARCHER_MODEL_TOE_BONE) : NULL;
+    if (!toe){
+        return;     //MeasureClipPhases has already said so; no need to say it twice
     }
-    //Twice MeasureClipPhases' rate, because this is looking for two turning points rather than one
-    //and the clip is twice as long - the same resolution per second of animation.
-    const int SAMPLES = 96;
-    float highest = 0.0f;
-    int highest_at = 0;
-    for (int k = 0; k < SAMPLES; k++){
-        float t = clip->duration * (float)k / (float)SAMPLES;
-        float y = clip->ComputeRootPose(t).authored_position.y;
-        if (k == 0 || y > highest){
-            highest = y;
-            highest_at = k;
+    const int LANDINGS[] = { CLIP_LAND_SOFT, CLIP_LAND_HARD };
+    for (int i = 0; i < (int)(sizeof(LANDINGS) / sizeof(LANDINGS[0])); i++){
+        int index = LANDINGS[i];
+        Animation* clip = archer_clips[index];
+        if (!clip || !clip->root_track || clip->duration <= 0.0f){
+            continue;
         }
-    }
-    float lowest = highest;
-    int lowest_at = 0;
-    for (int k = 0; k <= highest_at; k++){
-        float t = clip->duration * (float)k / (float)SAMPLES;
-        float y = clip->ComputeRootPose(t).authored_position.y;
-        if (k == 0 || y < lowest){
-            lowest = y;
-            lowest_at = k;
+        //At the keyframes rather than on a grid - see the note in MeasureClipPhases for why a
+        //uniform scan reports an extreme up to one keyframe interval early.
+        float lowest = 0.0f;
+        bool f_first = true;
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+            clip->SampleRootMotion(key->time,key->time);    //zero-width: poses, reports no motion
+            clip->ApplyInterval(key->time);
+            float y = toe->GetWorldPosition().y;
+            if (f_first || y < lowest){ lowest = y; f_first = false; }
         }
+        /*
+            A hair above the lowest, in WORLD units. Generous enough that a foot settling over two
+            or three frames counts as having landed on the first of them, tight enough that the
+            descent before contact never does.
+        */
+        const float SETTLED = 0.01f;
+        float contact_at = 0.0f;
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+            clip->SampleRootMotion(key->time,key->time);
+            clip->ApplyInterval(key->time);
+            if (toe->GetWorldPosition().y <= lowest + SETTLED){
+                contact_at = key->time;
+                break;
+            }
+        }
+        puppet.clip_entry[index] = contact_at;
+        debug->Info("Clip %-22s %.3fs long; feet land at %.3fs, leaving %.3fs to play\n",
+                    ARCHER_CLIPS[index].name,clip->duration,puppet.clip_entry[index],
+                    clip->duration - puppet.clip_entry[index]);
     }
-    puppet.jump_launch = clip->duration * (float)lowest_at / (float)SAMPLES;
-    puppet.jump_apex = clip->duration * (float)highest_at / (float)SAMPLES;
 
-    float span = puppet.jump_apex - puppet.jump_launch;
-    debug->Info("Clip %-20s %.3fs long; launch at %.3fs (hip %.3f), apex at %.3fs (hip %.3f)\n",
-                ARCHER_CLIPS[CLIP_JUMP_UP].name,clip->duration,
-                puppet.jump_launch,lowest,puppet.jump_apex,highest);
     /*
-        And the headline, the same shape as the one MeasureClips logs: how well the authored jump
-        fits the jump the rules actually perform. Unlike the kick and the climb this one is close,
-        so the number is worth printing to keep it that way rather than to complain about it.
+        And how long the RUNNING JUMP climbs for - its first frame to its highest hip.
+
+        The hip is the right bone here where it was the wrong one for a landing, and the difference
+        is what is being asked. A landing asks "when do the feet arrive", which only the feet know.
+        This asks "when does the body stop going up", which is the hip's whole job.
+
+        Read off the AUTHORED track rather than by posing, because the extraction flags take this
+        clip's horizontal off the bone and the question is about the clip, not about what survives
+        of it. Only the climb is measured: the descent is 0.566s against the game's 0.327s, so no
+        one rate serves both halves, and the climb is the half the rules actually guarantee.
     */
-    debug->Info("Jump rise: %.3fs of clip into %.3fs of flight -> %.2fx. Anticipation %.3fs and "
-                "landing %.3fs are not played by the rise.\n",
-                span,PUPPET_RISE_TIME,(PUPPET_RISE_TIME > 0.0f) ? (span / PUPPET_RISE_TIME) : 0.0f,
-                puppet.jump_launch,clip->duration - puppet.jump_apex);
+    Animation* run_jump = archer_clips[CLIP_RUN_JUMP];
+    if (run_jump && run_jump->root_track && run_jump->duration > 0.0f){
+        //Straight off the keyframes. No posing needed - the hip's height IS the root track - and no
+        //grid, for the reason in MeasureClipPhases: a uniform scan would put the apex a frame early.
+        float highest = 0.0f;
+        float highest_at = 0.0f;
+        bool f_first = true;
+        for (ObjectAnimationKeyFrame* key : run_jump->root_track->keyframes){
+            if (!key->f_position){
+                continue;
+            }
+            if (f_first || key->position.y > highest){
+                highest = key->position.y;
+                highest_at = key->time;
+                f_first = false;
+            }
+        }
+        puppet.run_jump_rise = highest_at;
+        float fit = (PUPPET_RISE_TIME > 0.0f) ? (puppet.run_jump_rise / PUPPET_RISE_TIME) : 0.0f;
+        debug->Info("Clip %-22s %.3fs long; climbs for %.3fs against the game's %.3fs -> %.2fx\n",
+                    ARCHER_CLIPS[CLIP_RUN_JUMP].name,run_jump->duration,
+                    puppet.run_jump_rise,(float)PUPPET_RISE_TIME,fit);
+    }
+
+    /*
+        And where the RUN-TO-STOP plants - its lowest hip, the beat that wants to land on the tick
+        the rules actually bring her to rest.
+
+        The hip again rather than the toe, and for the same reason as the jump: the question is
+        "when does the body drop into the plant", which is what the hip does. A stop has no single
+        moment of contact to look for - her feet are on the floor throughout.
+    */
+    Animation* stop = archer_clips[CLIP_STOP];
+    if (stop && stop->root_track && stop->duration > 0.0f){
+        float lowest = 0.0f;
+        float lowest_at = 0.0f;
+        bool f_first = true;
+        for (ObjectAnimationKeyFrame* key : stop->root_track->keyframes){
+            if (!key->f_position){
+                continue;
+            }
+            if (f_first || key->position.y < lowest){
+                lowest = key->position.y;
+                lowest_at = key->time;
+                f_first = false;
+            }
+        }
+        puppet.stop_plant = lowest_at;
+        /*
+            And the headline gap, which is the largest in the file after the climb. The rules stop
+            her from a full sprint in PUPPET_STOP_TIME - five ticks - and the clip wants to take
+            this long just to reach its plant. Reported rather than quietly clamped, because the
+            answer is a decision about ARCHER_RUN_FRICTION rather than a bug.
+        */
+        debug->Info("Clip %-22s %.3fs long; plants at %.3fs against the rules' %.3fs stop -> "
+                    "wants %.2fx, capped at %.2fx\n",
+                    ARCHER_CLIPS[CLIP_STOP].name,stop->duration,puppet.stop_plant,
+                    (float)PUPPET_STOP_TIME,puppet.stop_plant / (float)PUPPET_STOP_TIME,
+                    puppet.StopRate());
+    }
+}
+
+/*
+    When the boot connects.
+
+    MEASURED BY REACH, not by the root track, because a kick is the one move whose whole point
+    happens at the far end of a limb - the hips barely move (0.000 units of travel across the
+    clip) while the foot travels most of a body length. So this poses the model at every keyframe
+    and asks which foot is furthest from the hips horizontally; the peak is the strike.
+
+    BOTH FEET, and taking whichever reaches further, because nothing here knows which leg was
+    authored to do the kicking and a re-export could swap it.
+*/
+void ApplicationArcher::MeasureKickClip(){
+    Animation* clip = archer_clips[CLIP_KICK];
+    if (!clip || !clip->root_track || clip->duration <= 0.0f || !archer_model){
+        return;
+    }
+    Bone* hip = archer_model->FindBone(ARCHER_MODEL_ROOT_BONE);
+    Bone* toe[2] = { archer_model->FindBone("mixamorig:LeftToeBase"),
+                     archer_model->FindBone("mixamorig:RightToeBase") };
+    if (!hip || !toe[0] || !toe[1]){
+        return;
+    }
+    float furthest = 0.0f;
+    float furthest_at = 0.0f;
+    bool f_first = true;
+    for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+        clip->SampleRootMotion(key->time,key->time);    //zero-width: poses, reports no motion
+        clip->ApplyInterval(key->time);
+        vec3 h = hip->GetWorldPosition();
+        for (int i = 0; i < 2; i++){
+            vec3 t = toe[i]->GetWorldPosition();
+            float dx = t.x - h.x;
+            float dz = t.z - h.z;
+            float reach = sqrtf(dx * dx + dz * dz);
+            if (f_first || reach > furthest){
+                furthest = reach;
+                furthest_at = key->time;
+                f_first = false;
+            }
+        }
+    }
+    puppet.kick_strike = furthest_at;
+    /*
+        And the check the rules cannot make for themselves. KICK_ACTIVE_FROM/TO are ticks into the
+        move; at a playback rate of 1.0 those are ticks into the CLIP too, so the strike should sit
+        between them. Printed either way, because the interesting case is when it stops doing so.
+    */
+    float strike_tick = puppet.kick_strike * ARCHER_TPS;
+    debug->Info("Clip %-22s %.3fs long; the boot connects at %.3fs (tick %.1f of %d), and the "
+                "rules' active window is ticks %d..%d%s\n",
+                ARCHER_CLIPS[CLIP_KICK].name,clip->duration,puppet.kick_strike,strike_tick,
+                (int)(clip->duration * ARCHER_TPS),KICK_ACTIVE_FROM,KICK_ACTIVE_TO,
+                (strike_tick >= (float)KICK_ACTIVE_FROM && strike_tick <= (float)KICK_ACTIVE_TO)
+                    ? "" : "  <-- THE WINDOW DOES NOT COVER THE STRIKE");
+
+    /*
+        AND WHETHER KICK_TICKS STILL MATCHES THE CLIP AT ALL.
+
+        This is the one number a re-export cannot fix for itself. Everything else in this app
+        re-measures at load, but KICK_TICKS lives in Stage.h, which names no engine type and has
+        never seen a .glb - so trimming frames off the end of the clip does NOT shorten the move,
+        it makes the Puppet stretch what is left to fill the window it no longer fills. The
+        symptom is a kick in slow motion, which looks like a rate bug and is not one.
+
+        So the app prints the number to type. It cannot apply it, but it can stop it being a thing
+        anyone has to notice for themselves.
+    */
+    int clip_ticks = (int)(clip->duration * ARCHER_TPS + 0.5f);
+    if (clip_ticks < KICK_TICKS - 1 || clip_ticks > KICK_TICKS + 1){
+        debug->Warn("Kick_Front is %d ticks but KICK_TICKS is %d, so it will play at %.2fx. "
+                    "Set KICK_TICKS to %d in Stage.h.\n",
+                    clip_ticks,KICK_TICKS,
+                    clip->duration / ((float)KICK_TICKS * ARCHER_DT),clip_ticks);
+    }
 }
 
 void ApplicationArcher::BuildArrowViews(){
@@ -1015,6 +1357,21 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap(VK_LEFT,INPUT_ARCHER_LEFT);
     input->AddKeyMap('D',INPUT_ARCHER_RIGHT);
     input->AddKeyMap(VK_RIGHT,INPUT_ARCHER_RIGHT);
+    /*
+        And the left stick's X, which is the same action asked for by degree instead of by switch.
+
+        Analog index 0 is the left stick's X on every pad this engine reads. The dead zone is the
+        number worth thinking about: the default of 50 out of 32767 is nothing, and a worn stick
+        resting off-centre at that threshold would walk her slowly across the level on its own.
+        6000 is about 18%, the usual figure, and it is what breakout settled on for the same
+        reason. AddGamePadMap also DECLARES the action as a scalar, which is what makes both
+        GetAxis and a scripted HoldAxis work on it.
+    */
+    input->AddGamePadMap(0,INPUT_ARCHER_MOVE,3000);
+
+    input->AddKeyMap(GAMEPAD_KEY_A,INPUT_ARCHER_JUMP);
+    input->AddKeyMap(GAMEPAD_KEY_Y,INPUT_ARCHER_KICK);
+    input->AddKeyMap(GAMEPAD_KEY_X,INPUT_ARCHER_ACTION);
 
     //Drop-through is on S alone. Down is the AIM, and one key meaning two things is how a control
     //scheme starts fighting itself - see the layout note in ApplicationArcher.h.
@@ -1032,6 +1389,7 @@ void ApplicationArcher::SetupInput(){
 
     input->AddKeyMap('R',INPUT_ARCHER_RESTART);
     input->AddKeyMap(VK_F1,INPUT_ARCHER_TOGGLE_UI);
+    input->AddKeyMap(VK_F2,INPUT_ARCHER_TOGGLE_BLOCKOUT);
     //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
     //INPUT_PAUSE is handled by Scene::BeginPass itself, so this is the whole feature.
     input->AddKeyMap('P',INPUT_PAUSE);
@@ -1139,6 +1497,22 @@ void ApplicationArcher::NewGame(){
             block_objects[i]->Destroy();
         }
     }
+    /*
+        THE TERRAIN DELIBERATELY SURVIVES A RESTART, and this is not an oversight.
+
+        Two reasons, and the second one is a hard constraint rather than a preference:
+
+          - It cannot have changed. The terrain is a pure function of Stage::blocks, and
+            Stage::Reset rebuilds those from the same BuildLevel every time, so remeshing would
+            produce the same vertices at some cost.
+          - THIS FUNCTION RUNS ON THE PHYSICS THREAD. BuildTerrainMesh ends in Mesh::SetMeshData,
+            which calls glNamedBufferData immediately, and the physics thread may not touch GL -
+            see the thread note in core/MarchingCubes.h. A restart that remeshed here would be a
+            crash in the driver with a stack trace pointing at the wrong thing entirely.
+
+        What DOES have to happen is re-hiding: BuildBlocks below has just made a fresh set of
+        block objects, and every one of them starts visible.
+    */
     for (size_t i = 0; i < prop_views.size(); i++){
         if (prop_views[i].object){
             prop_views[i].object->Destroy();
@@ -1155,6 +1529,9 @@ void ApplicationArcher::NewGame(){
     DestroyRope();
     main_scene->DeleteDestroyedObjects();
     BuildBlocks();
+    //The blocks are new objects and start visible; put the melted ones back under the terrain.
+    //No GL in here, unlike BuildTerrain - see the note above.
+    ApplyBlockoutVisibility();
     BuildProps();
 
     Physics* p = archer_object ? archer_object->GetPhysics() : NULL;
@@ -1182,6 +1559,12 @@ void ApplicationArcher::UpdateView(void){
         f_show_scene_window = f_show_engine_ui;
         f_show_inspector_window = f_show_engine_ui;
         f_show_engine_window = f_show_engine_ui;
+    }
+    //F2: the blockout back on top of the terrain. Read unconditionally and acted on here rather
+    //than gated on IsInputLive, matching the F1 toggle beside it - a debug view is the engine's,
+    //not the game's.
+    if (input->WasKeyReleased(INPUT_ARCHER_TOGGLE_BLOCKOUT)){
+        SetBlockoutVisible(!f_show_blockout);
     }
 
     /*
@@ -1313,6 +1696,13 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     float move = 0.0f;
     if (input->IsKeyDown(INPUT_ARCHER_LEFT)){   move -= 1.0f; }
     if (input->IsKeyDown(INPUT_ARCHER_RIGHT)){  move += 1.0f; }
+    /*
+        One read for the stick, whoever is deflecting it - a thumb and a scripted HoldAxis both
+        land in the same KeyState, so this does not have to know which. ADDED to the keys rather
+        than replacing them, and then clamped: a key still means "all of it", the stick means
+        "this much of it", and holding both cannot ask for more than full.
+    */
+    move += input->GetAxis(INPUT_ARCHER_MOVE);
     out.move_axis = clamp(move,-1.0f,1.0f);
 
     float aim = 0.0f;
@@ -2567,12 +2957,16 @@ void ApplicationArcher::RegisterMCPTools(){
         "This is how a program plays: the hold emits ordinary input events, so the simulation "
         "cannot tell it from a key. The archer accelerates over about 6 ticks and tops out at 9 "
         "units a second, so a short hold nudges and a long one sprints. While the simulation is "
-        "paused the hold does not count down - use sim_step.",
+        "paused the hold does not count down - use sim_step. Pass 'amount' to push the STICK that "
+        "far instead of pressing a key, which is the only way to ask for a speed between standing "
+        "and a full sprint - 0.35 is a walk, 0.6 a jog. The rules read the magnitude, so the speed "
+        "is amount x 9 units a second.",
         json{
             {"type","object"},
             {"properties", {
                 {"direction", {{"type","string"},{"description","'left' or 'right'"}}},
                 {"ticks", {{"type","number"},{"description","simulation ticks to hold, default 30, capped at 600"}}},
+                {"amount", {{"type","number"},{"description","stick deflection 0..1; omit for a full key press"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
             }},
             {"required", json::array({"direction"})}
@@ -2584,8 +2978,20 @@ void ApplicationArcher::RegisterMCPTools(){
             }
             std::string dir = args.value("direction",std::string("right"));
             int ticks = (int)clamp(args.value("ticks",30.0f),0.0f,600.0f);
-            uint32_t action = (dir == "left") ? INPUT_ARCHER_LEFT : INPUT_ARCHER_RIGHT;
-            input->HoldKey(action,(uint32_t)ticks);
+            float sign = (dir == "left") ? -1.0f : 1.0f;
+            /*
+                A KEY OR A STICK, and they are genuinely different requests rather than two
+                spellings of one. A key can only ask for everything; the stick is the only way to
+                ask for a speed in between, which is what the locomotion blend space exists to
+                cover and what nothing could reach before this.
+            */
+            if (args.contains("amount")){
+                float amount = clamp(args.value("amount",1.0f),0.0f,1.0f);
+                input->HoldAxis(INPUT_ARCHER_MOVE,sign * amount,(uint32_t)ticks);
+            }else{
+                uint32_t action = (dir == "left") ? INPUT_ARCHER_LEFT : INPUT_ARCHER_RIGHT;
+                input->HoldKey(action,(uint32_t)ticks);
+            }
             WaitTicks(ticks + 2);
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
         });

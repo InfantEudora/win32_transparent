@@ -8,6 +8,7 @@
 #include "Application.h"
 #include "Stage.h"
 #include "Puppet.h"
+#include "Terrain.h"
 
 /*
     A side-view platformer about an archer, in 3D assets.
@@ -99,6 +100,21 @@
 #define INPUT_ARCHER_KNIFE          INPUT_LAST+12
 #define INPUT_ARCHER_RESTART        INPUT_LAST+10
 #define INPUT_ARCHER_TOGGLE_UI      INPUT_LAST+11
+//F2: put the blockout boxes back on top of the terrain. See SetBlockoutVisible.
+#define INPUT_ARCHER_TOGGLE_BLOCKOUT INPUT_LAST+13
+/*
+    The left stick's X axis, as a SCALAR rather than a pair of buttons.
+
+    Left/right on the keyboard can only ask for a full run, so every speed between standing and 9.0
+    existed only for the two or three ticks acceleration took to cross it. That is the reason the
+    blend space has had so little to do: she was always at 0 or at the top of the ladder. A stick
+    asks for any speed in between and holds it, which is what the ladder was built for.
+
+    Nothing in the rules had to change to allow it - `target_vx` was already
+    `move_axis * ARCHER_RUN_SPEED`, so the magnitude has always been honoured and only the input
+    was quantised.
+*/
+#define INPUT_ARCHER_MOVE           INPUT_LAST+14
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Both are intent arriving from OUTSIDE
 //the simulation - a key, an MCP call, later a replay - which is what the command queue is for:
@@ -432,6 +448,23 @@ private:
     //--- Setup, all on the render thread from Init() ---------------------------------------------
     void BuildMaterials();
     void BuildBlocks();
+    /*
+        The marching-cubes terrain for the test bay, one Object per bay - see
+        apps/archer/terrain_plan.md and apps/archer/Terrain.h.
+
+        Runs AFTER BuildBlocks, because it hides the block objects it has replaced rather than
+        stopping them from being built. Hiding rather than skipping keeps block_objects indexed in
+        step with Stage::blocks, which BreakBlocks and NewGame both rely on, keeps every collider
+        exactly where it was, and means Show()ing them again is a complete debug view of the
+        blockout underneath the terrain - which is the only way to see whether the surface is
+        sitting where the collider says it is.
+    */
+    void BuildTerrain();
+    //Recomputes which blocks the terrain covers and applies f_show_blockout to them. NO GL, so
+    //unlike BuildTerrain this is safe from NewGame on the physics thread. See the definition.
+    void ApplyBlockoutVisibility();
+    //Show or hide the blockout boxes the terrain replaced. See the definition.
+    void SetBlockoutVisible(bool f_visible);
     void BuildProps();
     void BuildArcher();
     //Loads meshes/archer.glb: the skin, the skinned mesh and every clip in Puppet.h's table.
@@ -446,7 +479,18 @@ private:
     void MeasureClipPhases();
     //Where the jump clip's anticipation bottoms out and where it peaks, read off the hip's height.
     //The rise plays the span between them and skips the crouch in front of it.
-    void MeasureJumpClip();
+    /*
+        The two numbers the air set needs that are not in the clip table.
+
+        Where each landing clip's feet reach the floor, read off the toe - a landing is entered
+        there rather than at its first frame, which is still falling (see Puppet::clip_entry) - and
+        how long the running jump spends climbing, read off the hip, which is what it gets fitted
+        to (see Puppet::run_jump_rise).
+    */
+    void MeasureAirClips();
+    //When the boot connects in Kick_Front, found by watching which foot reaches furthest from the
+    //hips. Checked against KICK_ACTIVE_FROM/TO rather than setting them - see Puppet::kick_strike.
+    void MeasureKickClip();
     void BuildArrowViews();
     void BuildAimArc();
     //The backdrop quad. Survivable if the image is missing - see the note on the definition.
@@ -546,6 +590,12 @@ private:
     int material_debris = 0;
     int material_dot = 0;
     int material_dot_hot = 0;
+    //The terrain's three, in the order Terrain.cpp writes matid: 0 grass, 1 soil, 2 rock. An
+    //Object has four slots (NUM_MATERIAL_SLOTS) and this uses three of them, which is the whole
+    //reason a per-vertex classification is enough and no texture is needed.
+    int material_grass = 0;
+    int material_soil = 0;
+    int material_rock = 0;
 
     //--- The scene --------------------------------------------------------------------------------
     /*
@@ -574,6 +624,17 @@ private:
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
     std::vector<PropView> prop_views;
     std::vector<DebrisView> debris;
+
+    //--- The terrain ------------------------------------------------------------------------------
+    //One Object per test bay, so each variant can be hidden on its own and object_list names them
+    //separately over MCP. Empty when ARCHER_TEST_BAY is off.
+    std::vector<Object*> terrain_objects;
+    //Which block objects BuildTerrain hid, so the debug view can put them back without having to
+    //work out again which ones melted. Indices into block_objects.
+    std::vector<int> melted_blocks;
+    //The debug view: the blockout boxes underneath the terrain. Off by default; F2 toggles it, and
+    //so does the terrain_blockout MCP tool.
+    bool f_show_blockout = false;
 
     //--- The rope ---------------------------------------------------------------------------------
     std::vector<Object*> rope_segments;         //top link first

@@ -213,6 +213,29 @@ struct StageBlock{
 };
 
 /*
+    The terrain test bay - a stretch of level LEFT of the start that exists only to compare
+    marching-cubes terrain settings against each other and against the plain blockout. See
+    apps/archer/terrain_plan.md; this switch is how the whole thing comes back out in one edit.
+
+    ONLY BLOCK_SOLID GOES IN THE BAY, and that is not a style preference. stage_test.cpp's reach
+    assertion skips SOLID and BREAKABLE, so solid test geometry is invisible to it - but its
+    HighLedge() takes the FIRST BLOCK_LEDGE above feet reach, so one test ledge in here would
+    silently move the hang-slice tests onto a piece of scenery. The bay is appended at the END of
+    BuildLevel for the matching reason: block_objects is indexed in step with blocks, and
+    stage_test's blocks[0] fallback expects the main ground run to still be first.
+*/
+#define ARCHER_TEST_BAY             1
+//Four bays of seven units, x -40 .. -12, abutting the main ground run. The app reads these to
+//work out which blocks belong to which bay - selection is BY X RANGE rather than by a new field
+//on StageBlock, so that the terrain work never has to reach into the rules.
+#define ARCHER_TEST_BAY_COUNT       4
+#define ARCHER_TEST_BAY_X_MIN       (-40.0f)
+#define ARCHER_TEST_BAY_WIDTH       7.0f
+#define ARCHER_TEST_BAY_X_MAX       (ARCHER_TEST_BAY_X_MIN + ARCHER_TEST_BAY_COUNT * ARCHER_TEST_BAY_WIDTH)
+//The centre of bay i, which is also where its three test shapes are laid out around.
+#define ARCHER_TEST_BAY_CENTRE(i)   (ARCHER_TEST_BAY_X_MIN + ((i) + 0.5f) * ARCHER_TEST_BAY_WIDTH)
+
+/*
     Something the APP builds a rigid body for, described here so that the whole level layout lives
     in one file even though the rules never touch these.
 
@@ -328,9 +351,32 @@ struct StageObstacle{
     long enough that a kick aimed at something connects with it and short enough that it cannot
     sweep up half the level on the way past.
 */
-#define KICK_TICKS                  14      //the whole move, from press to recovered
-#define KICK_ACTIVE_FROM            3       //wind-up before this
-#define KICK_ACTIVE_TO              7       //recovery after
+/*
+    THESE THREE ARE SET BY THE ANIMATION, and that is the opposite of the usual direction here.
+
+    Everywhere else in this file the rules decide and the clip is stretched to fit. The kick is the
+    one move where that could not work: it was 14 ticks against a 1.633s clip, which needed 7.1x to
+    fit, and a kick at seven times speed is not a fast kick, it is a glitch. A kick needs a wind-up
+    to read as a kick at all, so the clip sets the pace and the rules follow it.
+
+    MEASURED, not guessed. Kick_Front is 98 ticks long and its boot reaches furthest from the hips
+    at tick 42 - found by posing the model and watching both feet, see
+    ApplicationArcher::MeasureKickClip. The app logs that measurement next to this window every
+    start and says so loudly when the two stop lining up, which is what a re-export with a
+    different impact frame would look like.
+
+    The active window stays FIVE TICKS wide for the reason below; it has simply moved to where the
+    boot actually is. Everything else about the shape of the move is unchanged.
+
+    THE COST, stated plainly because it is a real one: `f_planted` roots her for the whole of
+    kick_ticks, so a kick is now a 1.63-second commitment, of which 0.93s is recovery after the
+    boot has already landed. That is a heavy, committal move. If it wants to be lighter, the fix is
+    to unroot at KICK_ACTIVE_TO and let the recovery be cancelled by moving - which needs the
+    Puppet to drop the clip at the same moment, or the animation would be overruling the rules.
+*/
+#define KICK_TICKS                  98      //the whole move; Kick_Front is 1.633s
+#define KICK_ACTIVE_FROM            40      //wind-up before this
+#define KICK_ACTIVE_TO              44      //recovery after; the boot connects at tick 42
 #define KICK_COOLDOWN               10      //ticks before another may be started
 #define KICK_REACH                  0.75f   //how far past the body's leading edge it reaches
 #define KICK_HALF_HEIGHT            0.55f   //half the height of the box it sweeps

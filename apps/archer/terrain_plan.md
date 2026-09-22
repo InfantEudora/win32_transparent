@@ -33,29 +33,60 @@ it":
 
 ### The top must be pinned
 
-A smooth-min union pulls the surface *inside* at convex corners. A block whose collider top is
-`y = 0` then renders its grass at `y = -0.2`, and the archer stands visibly in the air. In a
-platformer that is not a cosmetic problem — judging a jump by eye is the one thing the camera notes
-in `SetupCamera` say must never be compromised.
+> **Corrected 2026-09-22, while building it.** The first version of this section said a smooth-min
+> union pulls the surface inside at convex corners and is what sinks a top face. That is wrong, and
+> wrong in a way that would send a reader after the wrong term. The two displacements go in
+> *opposite* directions and only one of them can ever cause a dip:
+>
+> | term | direction | where | consequence |
+> |---|---|---|---|
+> | corner **rounding** (`sdBox(h - r) - r`) | shrinks the solid | within `r` of every edge | the last `r` of a ledge sags **below** the collider — the archer floats |
+> | **smooth union** (`smin <= min`) | grows the solid | inside corners, between blocks | ground rises **above** the collider — the archer's boots sink into grass |
+>
+> Noise is the third term and is the only one that can go either way, which is why it is the one
+> that has to be attenuated rather than arranged.
 
-**Requirement:** the iso-surface meets `block.Top()` exactly over the block's footprint.
+A block whose collider top is `y = 0` rendering its grass at `y = -0.2` is not a cosmetic problem:
+judging a jump by eye is the one thing the camera notes in `SetupCamera` say must never be
+compromised.
 
-Suggested mechanism — split the field in two and combine with a hard `max`:
+**Requirement:** the iso-surface meets `block.Top()` exactly over the whole collider footprint, and
+the surface is never *below* a top face anywhere the archer can stand.
+
+**The mechanism that works**, and it is one line rather than the two-field `max` this section used
+to propose — build each block's SDF with **asymmetric half extents**:
 
 ```
-d_top (p)  = p.y - block.Top()          exact plane, no smoothing, no noise
-d_side(p)  = smooth-min of the rounded boxes, with noise
-d     (p)  = max(d_top, d_side)
+d_block(p) = sdBox(p - centre, (hw, hh - r, depth)) - r        NOT (hw - r, hh - r, depth - r)
 ```
 
-A `max` is a hard intersection and by construction cannot lift or lower the top surface. Rounding
-and noise then live on the sides and undersides, where nothing lands.
+Adding `r` back then puts the flat top at `(hh - r) + r == hh` exactly and the bottom at `-hh`
+exactly, while x and z grow by `r`. So **the rounding rolls over the edge outside the collider's
+footprint** and every point the archer can stand on is at the height the sweep thinks it is. The
+cost is `r` of terrain overhanging the lip, which reads as turf hanging over a cliff — the error
+you want to have.
 
-**Acceptance check, to be asserted in the builder and logged once at build time:** for every
-`BLOCK_SOLID` in the meshed region, sample the field straight down through the block's centre; the
-zero crossing must be within ±0.02 of `block.Top()`. This cannot go in `stage_test.cpp` — that
-binary links no engine and must stay that way — so it belongs as a startup assert in the terrain
-builder. Measure it rather than eyeball it; the error is 0.2 units and invisible in a screenshot.
+Smooth union then cannot pull a top face down (`smin <= min` only ever adds material), and noise is
+attenuated to zero at the tops, so nothing left in the field can dip.
+
+**Measured, all four variants, `smooth_k` 0 to 0.6:** `worst_dip = 0.0000`. The fillet `rise` on
+open floor peaks at 0.26 on the most aggressive variant and 0.03 on the plan's defaults.
+
+**Acceptance check, in the builder and logged once at build time** (`TerrainStats`, and it is worth
+knowing what building it changed about this):
+
+- **Two numbers, not one.** `worst_dip` and `worst_rise` are different phenomena with different
+  causes and only one is a bug. A single absolute error would have hidden a dip behind a fillet.
+- **Nine samples across each face, not one at the centre.** A single centre probe would have missed
+  the edge entirely, and the edge is the whole question.
+- **Occluded faces are skipped.** A probe at the floor's centre finds the wall standing on it.
+  Without that test the number is meaningless on any level with something stacked on something.
+- **The probe starts above the whole bay**, not a fixed distance above the face. Starting at
+  `Top() + 0.6` put the probe *inside* a fillet at large `smooth_k`, found no sign change, and
+  reported the "no crossing" sentinel as the deepest possible dip — three of four variants failed
+  that way while the field was in fact correct.
+
+It cannot go in `stage_test.cpp` — that binary links no engine and must stay that way.
 
 ### Only `BLOCK_SOLID` melts
 
@@ -266,23 +297,42 @@ the terrain is generated, not loaded.
 
 ## 6. Build order
 
-Smallest step that answers a real question, at each stage.
+Smallest step that answers a real question, at each stage. **Steps 1–5 are built as of
+2026-09-22**; step 6 is the open one.
 
-1. **`core/MarchingCubes.cpp`** with the standard 256-case table and a trivial test field (one
-   sphere), drawn in the test bay with one material. Question answered: does the mesher produce
-   watertight, correctly wound, correctly normalled geometry at all?
-2. **`apps/archer/Terrain.cpp`** — union of the bay's `BLOCK_SOLID` rounded boxes, **no noise**, one
-   material, top-pinning in place and the ±0.02 assert firing. Question answered: does the surface
-   sit exactly where the collider does? *This is the step that decides whether the whole idea is
-   viable, and it is deliberately before anything that makes it look good.*
-3. **Four bays, four `TerrainParams`**, blockout hidden with a toggle to bring it back. Question
-   answered: which smoothing radius keeps the 0.5-unit pillar and still reads as terrain?
-4. **`matid` classification** — grass / soil / rock. Question answered: does the hard per-triangle
-   boundary read as style or as an artifact?
-5. **Noise**, zeroed near block tops. Question answered: how much can be added before the silhouette
-   stops agreeing with the collision?
-6. Only then: decide whether to apply it to the main level's `BLOCK_SOLID` ground runs, and whether
-   a custom shader for a blended grass line is worth it.
+1. ~~**`core/MarchingCubes.cpp`**~~ **DONE.** The mesher, plus `MarchingCubesSelfTest` — which
+   turned out to be worth more than the sphere-in-the-app this step originally called for. It
+   meshes an analytic sphere and checks four things, the load-bearing one being that **every
+   directed edge has exactly one matching reverse**, which is what "closed and consistently wound"
+   means and which no wrong row in the 256-entry table can survive. It also caught the sign
+   convention: Lorensen's table is written for high-is-inside, so with an SDF the winding has to be
+   reversed or every triangle faces into the ground. Result: 3692 triangles, closed, outward,
+   worst radius error 0.0015 of a 0.125 cell.
+2. ~~**`apps/archer/Terrain.cpp`**, top-pinning~~ **DONE**, and it is what corrected §1. See the
+   asymmetric half extents there. `worst_dip = 0.0000` on every variant.
+3. ~~**Four bays, four `TerrainParams`**~~ **DONE.** F2 brings the blockout back. One structural
+   change fell out of building it: **each bay needs its own floor segment.** A single slab spanning
+   all four has its centre in one bay, and selection is by centre, so it would be meshed into every
+   bay as four overlapping surfaces — z-fighting, not a comparison.
+4. ~~**`matid` classification**~~ **DONE.** Grass / soil / rock reads well; the hard per-triangle
+   boundary looks like style rather than an artifact at 0.25 cells.
+5. ~~**Noise**~~ **DONE**, and it carries the sharpest lesson in the whole exercise:
+   **`NoiseAttenuation` must be continuous in *every* axis, not just the one it is attenuating.**
+   The first version skipped a block entirely when outside its footprint, which made attenuation
+   jump 0→1 across `x == hw + r`, which made the *field* jump by a whole `noise_amp` there, which
+   made the gradient enormous and sideways — and `MarchingCubes` reads its normals off that
+   gradient. A field sampled for its gradient has to be continuous everywhere, not just where it
+   is convenient.
+6. **OPEN.** Whether to apply it to the main level's `BLOCK_SOLID` ground runs, and whether a
+   custom shader for a blended grass line is worth it.
+
+### What did not need doing, and why
+
+`NewGame` does **not** remesh, and must not: it runs on the physics thread, and `BuildTerrainMesh`
+ends in `glNamedBufferData`. It does not need to either — the terrain is a pure function of
+`Stage::blocks` and `Stage::Reset` rebuilds those identically. What a restart *does* need is
+re-hiding, because `BuildBlocks` has just made a fresh set of block objects that all start visible.
+That is `ApplyBlockoutVisibility`, which touches no GL for exactly this reason.
 
 ---
 
