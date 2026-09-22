@@ -892,8 +892,10 @@ void Object::SetAnimationRate(float rate){
 
 void Object::SwitchToAnimation(Animation* animation){
     //No blend, so nothing is being faded out - and any blend that WAS running is abandoned here
-    //rather than finished.
+    //rather than finished. That goes for a SUSTAINED blend too: asking for one clip outright is
+    //not an answer that can be half-given.
     previous_animation = NULL;
+    ClearBlend();
     if (!animation){
         current_animation = NULL;
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
@@ -904,23 +906,28 @@ void Object::SwitchToAnimation(Animation* animation){
     animation_state = ANIMATION_STATE_PLAYING;
 }
 
-void Object::TransitionToAnimation(const std::string& name){
+bool Object::TransitionToAnimation(const std::string& name){
     dbg_desired_animation_name = name;
     Animation* animation = FindAnimation(name);
     if (!animation){
         debug->Warn("TransitionToAnimation: Animation %s not found\n",name.c_str());
-        return;
+        return false;
     }
-    TransitionToAnimation(animation);
+    return TransitionToAnimation(animation);
 }
 
 //From whereever the current animation is, we attempt transition into the next animation.
-void Object::TransitionToAnimation(Animation* animation){
+bool Object::TransitionToAnimation(Animation* animation){
     if (!animation){
         previous_animation = NULL;
+        ClearBlend();
         animation_state = ANIMATION_STATE_LOAD_DEFAULT_POSE;
-        return;
+        return true;
     }
+    //A crossfade and a sustained blend are two different answers to "what is playing", and
+    //running both would mean three clips mixed by two unrelated weights. The crossfade wins,
+    //because it is the one that was just asked for.
+    ClearBlend();
 
     /*
         Already blending. `current_animation` is where it is HEADED and `previous_animation` is what
@@ -930,43 +937,79 @@ void Object::TransitionToAnimation(Animation* animation){
     if (animation_state == ANIMATION_STATE_TRANSITION ||
         animation_state == ANIMATION_STATE_TRANSITION_START){
         if (animation == current_animation){
-            return;     //already on its way there; asking again is not an error
+            return true;    //already on its way there; asking again is not an error
         }
         if (animation == previous_animation){
             //Asked to go back where it came from. Rewind the blend rather than start a second one.
             debug->Trace("Rewinding transition back to %s\n",animation->name.c_str());
             animation_state = ANIMATION_STATE_TRANSITION_BACK;
-            return;
+            return true;
         }
         /*
-            A THIRD clip, mid-blend. Not supported and deliberately not faked: honouring it would
-            mean either blending three clips or snapping, and refusing is the only answer that
-            cannot look subtly wrong. The clean fix when something needs it is a one-deep queue -
-            remember this request and start it when the current blend lands - which is what the
-            missing `next_animation` slot would be for. See the note on the animation fields.
+            A THIRD clip, mid-blend. RETARGET: drop whichever of the two clips the pose is
+            currently FURTHEST from, and blend from the other one to the new destination.
+
+            This used to be refused, and refusing turned out to be the wrong answer for a game.
+            The rules can change their mind faster than a crossfade lasts - the archer decelerates
+            at 120 u/s^2, which is 2 units per tick, so a stop from a run crosses the entire
+            walk band in ONE tick and asks for walk and then idle on consecutive ticks. A refusal
+            there leaves her crossfading into a walk she no longer wants and looping it on the
+            spot for ever, because nothing asks a second time for a clip it believes is playing.
+
+            A one-deep QUEUE - the obvious alternative, and what the note on the fields used to
+            point at - is worse for exactly the same reason. It would honour the stale walk in
+            full and only then start the idle, so the character keeps walking for two blend
+            lengths after coming to rest. Latency is not better than a small pop; it is a
+            character that visibly disagrees with the game.
+
+            The cost of retargeting is that the blend already applied toward the abandoned clip
+            is thrown away, so the pose jumps by `factor` (or 1 - `factor`) of the difference
+            between the two clips. Keeping the NEARER side is what makes that small: one tick
+            into a nine-tick fade the pose is 11% of the way over, so 11% is the error. The
+            worst case is a request landing exactly halfway, and the real fix for that is step 4,
+            inertialization - blend the POSE DELTA out rather than the clips, and there is no
+            abandoned blend to pay for because the source is a snapshot rather than a clip.
         */
-        debug->Warn("Cannot retarget to %s while blending %s -> %s; request ignored\n",
-                    animation->name.c_str(),
-                    previous_animation ? previous_animation->name.c_str() : "NULL",
-                    current_animation ? current_animation->name.c_str() : "NULL");
-        return;
+        debug->Trace("Retargeting %s -> %s to %s at %.2f\n",
+                     previous_animation ? previous_animation->name.c_str() : "NULL",
+                     current_animation->name.c_str(),
+                     animation->name.c_str(),animation_transition_factor);
+        if (animation_transition_factor < 0.5f && previous_animation){
+            //Mostly still the clip being left: keep it as the source and swap the destination.
+            //The abandoned one rewinds, so entering it again later starts at its beginning -
+            //the same courtesy a completed transition does its previous_animation.
+            current_animation->time_index = 0.0f;
+        }else{
+            //Mostly the destination already: land the blend here and fade on from it.
+            if (previous_animation){
+                previous_animation->time_index = 0.0f;
+            }
+            previous_animation = current_animation;
+        }
+        current_animation = animation;
+        animation_transition_blend_time = LookupBlendTime(previous_animation->name,
+                                                          animation->name);
+        animation_state = ANIMATION_STATE_TRANSITION_START;
+        animation_transition_time = 0.0f;
+        animation_transition_factor = 0.0f;
+        return true;
     }
 
     if (current_animation == animation){
-        return;     //already playing it
+        return true;    //already playing it
     }
 
     if (current_animation && !current_animation->interruptible &&
         !current_animation->HasFinished() && animation_state == ANIMATION_STATE_PLAYING){
         debug->Trace("Cannot interrupt %s before it finishes\n",current_animation->name.c_str());
-        return;
+        return false;
     }
 
     if (!current_animation){
         //Nothing to fade out of, so there is nothing to blend - start it outright rather than
         //running a crossfade against an empty slot.
         SwitchToAnimation(animation);
-        return;
+        return true;
     }
 
     debug->Trace("Transitioning from %s to %s\n",current_animation->name.c_str(),
@@ -979,6 +1022,7 @@ void Object::TransitionToAnimation(Animation* animation){
     animation_state = ANIMATION_STATE_TRANSITION_START;
     animation_transition_time = 0.0f;
     animation_transition_factor = 0.0f;
+    return true;
 }
 
 //TODO: This is finetuned in PlayerCharacter. Could be fixed for normal objects
@@ -1000,6 +1044,165 @@ void Object::LoadDefaultPose(){
             bone->SetPosition(bone->reference_position);
         }
     }
+}
+
+void Object::SetBlend(Animation* target, float factor, float phase_offset){
+    if (!target || target == current_animation){
+        ClearBlend();
+        return;
+    }
+    /*
+        Seed the shared phase from where the current clip already is, but only when ENTERING a
+        blend. Re-seeding on every call would restart the cycle each time the weight moved, which
+        is every tick in a blend space - the feet would stutter in place. Once the blend is
+        running, its phase is the thing that persists and the clips follow it.
+    */
+    if (!blend_animation){
+        blend_phase = 0.0f;
+        if (current_animation && current_animation->duration > 0.0f){
+            blend_phase = current_animation->time_index / current_animation->duration;
+            blend_phase -= floorf(blend_phase);
+        }
+    }
+    blend_animation = target;
+    blend_factor = (factor < 0.0f) ? 0.0f : ((factor > 1.0f) ? 1.0f : factor);
+    blend_phase_offset = phase_offset;
+}
+
+/*
+    Set BOTH sides of a sustained blend at once, keeping the shared phase continuous.
+
+    This exists because a blend space does not hold one pair for ever: as the speed rises past a
+    rung the pair slides up - (walk, slow run) becomes (slow run, fast run) - and the clip that
+    was the follower becomes the leader. Doing that through SetBlend would mean changing
+    `current_animation`, which means a crossfade, which means the blend is torn down and rebuilt
+    and the shared phase restarts. At exactly the moment the weight is 0 or 1 and the pose is
+    entirely one clip, the feet would jump. Twice, on the way up.
+
+    So the phase is re-based onto whichever clip SURVIVES the change:
+
+      - the pair slid UP, and the new leader is the old follower: it was running at
+        phase + offset, so that is the phase now.
+      - the pair slid DOWN, and the new follower is the old leader: the new leader has to be
+        placed so the old one lands where it already was, which is phase - offset.
+      - the pair is being ENTERED from a single clip that becomes the follower: the same sum
+        read the other way, phase - offset. This is the ladder's top end on the way back down.
+      - nothing in common: seed from wherever the new leader's own playhead had got to.
+
+    `follow` may be NULL, which leaves a single clip playing from the phase it had reached - that
+    is the ladder's outer ends, where there is nothing left to blend with.
+*/
+void Object::SetBlendPair(Animation* lead, Animation* follow, float factor, float phase_offset){
+    if (!lead){
+        ClearBlend();
+        return;
+    }
+    float phase = 0.0f;
+    if (blend_animation && current_animation){
+        if (lead == blend_animation){
+            phase = blend_phase + blend_phase_offset;       //slid up
+        }else if (lead == current_animation){
+            phase = blend_phase;                            //same leader, weight moved
+        }else{
+            phase = (lead->duration > 0.0f) ? (lead->time_index / lead->duration) : 0.0f;
+        }
+        if (follow && follow == current_animation){
+            phase = blend_phase - phase_offset;             //slid down: keep the old leader put
+        }
+    }else if (current_animation && follow == current_animation &&
+              current_animation->duration > 0.0f){
+        /*
+            Coming from a SINGLE clip that is about to become the FOLLOWER.
+
+            That is the ladder's ends read backwards: above the fastest gait one clip plays alone,
+            and dropping back into the blend space makes it the follower carrying most of the
+            weight. Seeding from the new LEADER's playhead - which is what the fallback below
+            does - would leave the dominant clip jumping to wherever it happened to have been
+            left, so solve for the phase that keeps IT still instead. The follower is posed at
+            phase + offset, so that phase is where it is now, less the offset.
+        */
+        phase = (current_animation->time_index / current_animation->duration) - phase_offset;
+    }else if (lead->duration > 0.0f){
+        phase = lead->time_index / lead->duration;
+    }
+    phase -= floorf(phase);
+
+    //Any crossfade in progress is abandoned rather than finished - see TransitionToAnimation.
+    previous_animation = NULL;
+    current_animation = lead;
+    blend_animation = (follow == lead) ? NULL : follow;
+    blend_factor = (factor < 0.0f) ? 0.0f : ((factor > 1.0f) ? 1.0f : factor);
+    blend_phase_offset = phase_offset;
+    blend_phase = phase;
+    animation_state = ANIMATION_STATE_PLAYING;
+    //With no follower the single-clip path takes over, and it advances time_index rather than
+    //reading the phase - so hand it the time the phase says it should be at.
+    if (!blend_animation){
+        current_animation->time_index = phase * current_animation->duration;
+    }
+}
+
+void Object::ClearBlend(){
+    /*
+        The clip that was current keeps the time the blend left it at, so dropping out of a blend
+        carries straight on rather than restarting - which is what makes "blend space until the
+        speed leaves the ladder, then a single clip" not visibly pop at the boundary.
+    */
+    blend_animation = NULL;
+    blend_factor = 0.0f;
+    blend_phase_offset = 0.0f;
+}
+
+/*
+    One tick of a sustained blend. See the block on blend_animation in the header for what this is
+    and why it is not a crossfade.
+
+    The two clips are driven from ONE normalised phase so their footfalls stay in step, and the
+    group advances at the INTERPOLATED duration so the stride rate eases between the two rather
+    than snapping to whichever clip is nominally current. Each side's sampling window is worked out
+    separately, because with a phase offset the follower wraps at a different moment than the
+    leader - and a window that spans a wrap reports the wrap itself as an enormous root-motion
+    delta, which is a character teleporting once per cycle.
+*/
+void Object::ApplyBlendedAnimation(float time_delta){
+    Animation* lead = current_animation;
+    Animation* follow = blend_animation;
+    if (!lead || !follow){
+        return;
+    }
+    float factor = blend_factor;
+
+    float duration = lead->duration + (follow->duration - lead->duration) * factor;
+    if (duration < 0.0001f){
+        duration = 0.0001f;
+    }
+
+    float lead_was = blend_phase;
+    blend_phase += (time_delta * animation_rate) / duration;
+    blend_phase -= floorf(blend_phase);
+
+    float follow_was = lead_was + blend_phase_offset;
+    follow_was -= floorf(follow_was);
+    float follow_now = blend_phase + blend_phase_offset;
+    follow_now -= floorf(follow_now);
+
+    //A phase that went BACKWARDS wrapped. Sample a zero-width window across it, exactly as the
+    //single-clip path does on a loop, so the wrap is not reported as motion.
+    float lead_from = (blend_phase < lead_was) ? blend_phase : lead_was;
+    float follow_from = (follow_now < follow_was) ? follow_now : follow_was;
+
+    float lead_new = blend_phase * lead->duration;
+    float lead_old = lead_from * lead->duration;
+    float follow_new = follow_now * follow->duration;
+    float follow_old = follow_from * follow->duration;
+
+    lead->time_index = lead_new;
+    follow->time_index = follow_new;
+
+    RootMotionDelta delta = lead->LerpRootMotion(follow,lead_old,lead_new,
+                                                 follow_old,follow_new,factor);
+    lead->Lerp(follow,lead_new,follow_new,factor);
+    ApplyRootMotion(delta);
 }
 
 void Object::ApplyAnimation(float time_delta){
@@ -1028,6 +1231,13 @@ void Object::ApplyAnimation(float time_delta){
     }
 
     if (animation_state == ANIMATION_STATE_PLAYING){
+        //A sustained blend replaces the single-clip path entirely rather than layering on top of
+        //it - both clips are sampled, and the one that happens to be `current` has no special
+        //status beyond leading the shared phase.
+        if (blend_animation){
+            ApplyBlendedAnimation(time_delta);
+            return;
+        }
         bool f_did_rewind = false;
         float last_time_index = current_animation->time_index;
         //The rate is applied HERE and nowhere else - see the note on animation_rate. A rate of 0

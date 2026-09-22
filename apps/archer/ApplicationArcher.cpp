@@ -610,6 +610,17 @@ void ApplicationArcher::BuildArcherModel(){
         }
         clip->looped = ARCHER_CLIPS[i].f_looping;
         clip->extract_yaw_root_motion = ARCHER_CLIPS[i].f_turns;
+        /*
+            And the translation, which had been left at its default of "stays on the bone" for
+            every clip until 2026-09-22 - so every gait drew itself a stride AHEAD of the position
+            Stage had already walked her to, and snapped back at the wrap. See f_extract_move.
+
+            What comes off the bone is handed to ArcherModel::ApplyRootMotion, which keeps the yaw
+            and throws the translation away, because in this game the rules are the only thing
+            allowed to decide where she is.
+        */
+        clip->extract_horizontal_root_motion = ARCHER_CLIPS[i].f_extract_move;
+        clip->extract_vertical_root_motion = ARCHER_CLIPS[i].f_extract_lift;
         archer_model->AddAnimation(clip);       //binds its tracks to these bones
         clip->SetRootBone(ARCHER_MODEL_ROOT_BONE);
         if (!clip->root_track){
@@ -630,6 +641,7 @@ void ApplicationArcher::BuildArcherModel(){
     }
 
     MeasureClips();
+    MeasureClipPhases();
 
     /*
         The default crossfade, kept SHORT.
@@ -716,6 +728,59 @@ void ApplicationArcher::MeasureClips(){
         debug->Info("Fastest authored locomotion is %.2f units/s; the game runs at %.2f. "
                     "Feet slide by %.2fx at a full run.\n",best,ARCHER_RUN_SPEED,
                     ARCHER_RUN_SPEED / best);
+    }
+}
+
+/*
+    Where in each locomotion clip's cycle the left foot is planted.
+
+    MEASURED BY POSING THE MODEL AND WATCHING THE TOE, rather than by reasoning about the track
+    data. The clip is applied at a series of times and the toe bone's world height read off each
+    time; its lowest point is the plant. That runs the engine's own evaluation - the same
+    SampleRootMotion and ApplyInterval the game will use - so the number describes what will
+    actually be on screen rather than what the file says in isolation.
+
+    This is the whole of what phase sync needs. Clips are authored with their footfalls wherever
+    the animator started, and on this export the three rungs plant at 0.83, 0.69 and 0.62 of their
+    cycle - up to a fifth of a cycle apart. Blend two of them on a shared playhead without
+    correcting and a left-foot-down pose gets mixed with a mid-stride one, which is the skate.
+    The DIFFERENCE between two of these values is the correction, so nothing has to be re-authored.
+
+    Init only, before anything is being drawn - it leaves the skeleton posed at the last sample,
+    and the first tick poses it properly.
+*/
+void ApplicationArcher::MeasureClipPhases(){
+    Bone* toe = archer_model ? archer_model->FindBone(ARCHER_MODEL_TOE_BONE) : NULL;
+    if (!toe){
+        debug->Err("No bone '%s' - locomotion clips cannot be brought into phase\n",
+                   ARCHER_MODEL_TOE_BONE);
+        return;
+    }
+    //Enough to put the plant within a fiftieth of a cycle, which is under a tick at any rate these
+    //clips run at. More samples would be free here but would not say anything more.
+    const int SAMPLES = 48;
+    for (int i = 0; i < PUPPET_LOCOMOTION_COUNT; i++){
+        int index = PUPPET_LOCOMOTION[i];
+        Animation* clip = archer_clips[index];
+        if (!clip || clip->duration <= 0.0f){
+            continue;
+        }
+        float lowest = 0.0f;
+        int lowest_at = 0;
+        for (int k = 0; k < SAMPLES; k++){
+            float t = clip->duration * (float)k / (float)SAMPLES;
+            //Zero-width window: poses the root bone without reporting the sample as motion.
+            clip->SampleRootMotion(t,t);
+            clip->ApplyInterval(t);
+            float y = toe->GetWorldPosition().y;
+            if (k == 0 || y < lowest){
+                lowest = y;
+                lowest_at = k;
+            }
+        }
+        puppet.clip_phase[index] = (float)lowest_at / (float)SAMPLES;
+        debug->Info("Clip %-20s plants the left foot at phase %.2f (toe at %.3f)\n",
+                    ARCHER_CLIPS[index].name,puppet.clip_phase[index],lowest);
     }
 }
 
@@ -1903,14 +1968,64 @@ void ApplicationArcher::SyncArcherAnimation(){
         if (clip >= 0 && clip < CLIP_COUNT && archer_clips[clip]){
             /*
                 Only on a CHANGE. Asking for the clip that is already playing would restart it
-                every tick, and asking mid-blend is refused with a warning anyway - see the note
-                on Object::TransitionToAnimation, and step 4 in animation_plan.md, which is the
-                fix for the refusal rather than a way around it.
+                every tick.
             */
-            if (clip != playing_clip){
-                archer_model->TransitionToAnimation(archer_clips[clip]);
+            int second = puppet.choice.blend_clip;
+            Animation* follow = (second >= 0 && second < CLIP_COUNT) ? archer_clips[second] : NULL;
+            /*
+                INSIDE THE LADDER the pair is handed over whole, every tick, and the pose never
+                passes through a transition at all.
+
+                That is the blend space: the weight is a continuous parameter, so there is no event
+                to interrupt or to catch halfway. SetBlendPair keeps the shared phase across a
+                change of PAIR as well as of weight, which is what makes crossing a rung invisible -
+                see the note on it. Calling it every tick is correct and cheap; it re-bases only
+                when the pair actually changes.
+
+                Entering the ladder from somewhere else - standing up out of the idle, landing,
+                letting go of a ledge - still goes through an ordinary crossfade, because those
+                really are events and a 0.15s fade is the right shape for them.
+
+                So the test is WHETHER THE POSE CAN BE CARRIED OVER, not whether there are two
+                clips to blend. It can whenever no crossfade is in flight and the new pair has a
+                clip in common with what is on screen, in either slot - SetBlendPair then solves
+                the shared phase so that the clip they have in common does not move.
+
+                Only asking "is there a follower" left both ENDS of the ladder falling out to a
+                crossfade they did not need. Past the fast run the weight is already 1.0 and the
+                pose already IS the fast run, so fading to it "from" the slow run went backwards
+                into a clip no longer visible and out again - a lurch at exactly full sprint. And
+                coming back down, the clip that had been playing alone becomes the FOLLOWER at
+                most of the weight, which is why both slots have to be checked and not just the
+                leader.
+            */
+            Animation* lead = archer_clips[clip];
+            Animation* posed_lead = archer_model->current_animation;
+            Animation* posed_follow = archer_model->blend_animation;
+            bool f_continuous = !archer_model->previous_animation
+                                && (lead == posed_lead || lead == posed_follow
+                                    || (follow && (follow == posed_lead
+                                                   || follow == posed_follow)));
+            if (f_continuous){
+                archer_model->SetBlendPair(lead,follow,puppet.choice.blend,
+                                           puppet.choice.blend_phase_offset);
+                if (clip != playing_clip){
+                    archer_model->clip_yaw = 0.0f;
+                }
                 playing_clip = clip;
-                archer_model->clip_yaw = 0.0f;
+            }else if (clip != playing_clip){
+                /*
+                    RECORDED ONLY IF IT TOOK. "Only on a change" and "assume it worked" are
+                    individually reasonable and together permanent: once playing_clip says Idle,
+                    nothing ever asks for Idle again, so a single refused request leaves her
+                    playing the wrong clip for the rest of the session. The refusal left is a
+                    non-interruptible clip that has not finished - the kick - which is precisely
+                    the case where the rules move on before the animation is willing to.
+                */
+                if (archer_model->TransitionToAnimation(lead)){
+                    playing_clip = clip;
+                    archer_model->clip_yaw = 0.0f;
+                }
             }
             archer_model->SetAnimationRate(puppet.choice.rate);
         }
@@ -2180,6 +2295,9 @@ void ApplicationArcher::PublishSnapshot(){
     s.f_paused = main_scene->IsPhysicsPaused();
 
     s.clip = playing_clip;
+    s.blend_clip = puppet.choice.blend_clip;
+    s.blend = puppet.choice.blend;
+    s.blend_phase_offset = puppet.choice.blend_phase_offset;
     s.clip_rate = puppet.choice.rate;
     s.clip_wanted_rate = puppet.choice.wanted_rate;
     s.f_clip_placeholder = puppet.choice.f_placeholder;
@@ -2331,6 +2449,13 @@ json ApplicationArcher::BuildStateJson(){
                       (s.anim_source == ANIM_FROM_PANEL) ? "panel" : "clip"},
             {"clip",(s.clip >= 0 && s.clip < CLIP_COUNT) ? json(ARCHER_CLIPS[s.clip].name)
                                                          : json(nullptr)},
+            //The blend space. A non-null blend_clip means two cycles are playing at once, mixed
+            //by `blend`, with the follower shifted by `blend_phase_offset` to put their footfalls
+            //together - see Puppet::Choose.
+            {"blend_clip",(s.blend_clip >= 0 && s.blend_clip < CLIP_COUNT)
+                          ? json(ARCHER_CLIPS[s.blend_clip].name) : json(nullptr)},
+            {"blend",s.blend},
+            {"blend_phase_offset",s.blend_phase_offset},
             {"rate",s.clip_rate},
             {"wanted_rate",s.clip_wanted_rate},
             {"placeholder",s.f_clip_placeholder},
@@ -2874,6 +2999,14 @@ void ApplicationArcher::DrawImGuiUI(void){
         const char* playing = (playing_clip >= 0 && playing_clip < CLIP_COUNT)
                             ? ARCHER_CLIPS[playing_clip].name : "none";
         ImGui::Text("playing   %s%s",playing,puppet.choice.f_placeholder ? "   (PLACEHOLDER)" : "");
+        //The blend space, when one is running. The phase offset is what puts the two clips'
+        //footfalls together and comes out of the measured column above, not out of a table.
+        int second = puppet.choice.blend_clip;
+        if (second >= 0 && second < CLIP_COUNT){
+            ImGui::Text("blending  %s",ARCHER_CLIPS[second].name);
+            ImGui::ProgressBar(puppet.choice.blend,ImVec2(-1,0),"weight");
+            ImGui::Text("phase off %+.2f cycle",puppet.choice.blend_phase_offset);
+        }
         ImGui::Text("rate      %.2f   wanted %.2f",puppet.choice.rate,puppet.choice.wanted_rate);
         ImGui::Text("model yaw %.0f deg",puppet.yaw_deg);
         if (puppet.choice.f_placeholder){

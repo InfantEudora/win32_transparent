@@ -1215,13 +1215,14 @@ static void TestPuppet(){
         1.759 world units of radius, which is its authored 0.879-unit walk-back times the model
         scale, rotated.
 
-        Extracting the translation too is not the escape, because Stage owns where the archer is and
-        the app discards it. So a clip that turns must turn ON THE SPOT, and this is the check that
-        says so before anyone has to notice it on screen.
+        The escape is f_extract_move, which takes the offset off the bone so there is nothing left
+        to sweep round. What is forbidden is extracting the yaw and LEAVING the translation, so
+        that is what this checks - before anyone has to notice it on screen.
     */
     int f_travels_and_turns = -1;
     for (int i = 0; i < CLIP_COUNT; i++){
-        if (ARCHER_CLIPS[i].f_turns && ARCHER_CLIPS[i].f_travels){
+        if (ARCHER_CLIPS[i].f_turns && ARCHER_CLIPS[i].f_travels &&
+            !ARCHER_CLIPS[i].f_extract_move){
             f_travels_and_turns = i;
         }
     }
@@ -1230,6 +1231,31 @@ static void TestPuppet(){
         snprintf(detail,sizeof(detail),"%s both travels and turns - it would orbit a point",
                  (f_travels_and_turns >= 0) ? ARCHER_CLIPS[f_travels_and_turns].name : "");
         Check(f_travels_and_turns < 0,"no clip has its yaw extracted while its travel stays on the bone",detail);
+    }
+
+    /*
+        AND THE ONE THE CLIP TABLE MUST CONTAIN: every rung of the ladder gives up its translation.
+
+        These are the clips the RULES drive her with, so Stage has already walked the distance the
+        clip is about to walk again. Leaving it on the bone draws her a full stride ahead of
+        herself and snaps her back at the wrap - 1.53 world units for Walking, 2.94 for
+        Running_Fast, and the snap on dropping to Idle reads as the character jumping backwards.
+
+        Stated over PUPPET_LOCOMOTION rather than over f_travels because those are different
+        questions: Twirl travels and is deliberately NOT extracted, since nothing plays it but the
+        preview and its step back is the performance.
+    */
+    int unextracted_rung = -1;
+    for (int i = 0; i < PUPPET_LOCOMOTION_COUNT; i++){
+        if (!ARCHER_CLIPS[PUPPET_LOCOMOTION[i]].f_extract_move){
+            unextracted_rung = PUPPET_LOCOMOTION[i];
+        }
+    }
+    {
+        char detail[200];
+        snprintf(detail,sizeof(detail),"%s is a rung of the ladder but keeps its stride on the bone",
+                 (unextracted_rung >= 0) ? ARCHER_CLIPS[unextracted_rung].name : "");
+        Check(unextracted_rung < 0,"every locomotion clip hands its travel to the character",detail);
     }
 
     ArcherAnimParams in;
@@ -1322,18 +1348,64 @@ static void TestPuppet(){
     }
 
     /*
-        The one that says the choice is made in RATIO space rather than on the difference.
+        --- the blend space ---------------------------------------------------------------------
 
-        At 3.0 the walk (2.0) is 1.0 away and the slow run (4.0) is also 1.0 away - a tie on the
-        difference - but the walk would have to stretch to 1.50x and the slow run only to 0.75x.
-        Neither is obviously better by that measure either, so the honest probe is just past it:
-        at 3.2 the slow run needs 0.80x and the walk 1.60x, and the run must win.
+        BETWEEN two rungs the answer is BOTH of them and a weight, which is the whole of what makes
+        walking-to-running stop being an event. Set cycle lengths too, because what a blend covers
+        per second depends on them - see BlendedSpeed.
     */
-    in.speed = 3.2f;
-    in.ground_speed = 3.2f;
+    p.clip_duration[CLIP_WALK]     = 1.0f;
+    p.clip_duration[CLIP_RUN_SLOW] = 0.5f;
+    p.clip_duration[CLIP_RUN_FAST] = 0.25f;
+
+    in.speed = 3.0f;
+    in.ground_speed = 3.0f;
     c = p.Choose(in);
-    Check(c.clip == CLIP_RUN_SLOW,"between two clips it takes the one needing the least stretch");
-    CheckNear(c.rate,0.80f,0.001f,"and stretches that one");
+    Check(c.clip == CLIP_WALK && c.blend_clip == CLIP_RUN_SLOW,
+          "a speed between two rungs blends those two rungs");
+    CheckNear(c.blend,0.5f,0.001f,"weighted by where it falls between their speeds",
+              "2.0 and 4.0, so 3.0 is halfway");
+
+    in.ground_speed = 3.5f;
+    in.speed = 3.5f;
+    c = p.Choose(in);
+    CheckNear(c.blend,0.75f,0.001f,"and the weight moves with the speed rather than in steps");
+
+    //Exactly ON a rung is that rung alone: there is nothing to blend it with.
+    in.ground_speed = 4.0f;
+    in.speed = 4.0f;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_RUN_SLOW && c.blend_clip < 0,"a speed exactly on a rung needs no blend");
+    CheckNear(c.rate,1.0f,0.001f,"and plays it at 1.0");
+
+    /*
+        The phase offset, which is what stops the feet skating.
+
+        Two cycles on one playhead mix whatever poses they happen to be at, so the follower is
+        shifted by the difference between the two clips' measured foot-plant phases. Nothing is
+        re-authored; the correction comes out of the asset.
+    */
+    p.clip_phase[CLIP_WALK] = 0.83f;
+    p.clip_phase[CLIP_RUN_SLOW] = 0.69f;
+    in.ground_speed = 3.0f;
+    in.speed = 3.0f;
+    c = p.Choose(in);
+    CheckNear(c.blend_phase_offset,0.69f - 0.83f,0.0001f,
+              "the follower is offset by the difference in foot-plant phase");
+
+    /*
+        And the rate is matched against what the BLEND covers, not against the interpolation of the
+        two clips' speeds - those differ whenever the cycles are different lengths, which is always.
+
+        Walk: 2.0 units/s over 1.0s = a 2.0-unit stride. Slow run: 4.0 over 0.5s = 2.0 units.
+        Halfway the stride is 2.0 and the cycle is 0.75s, so the blend covers 2.667 units/s - not
+        the 3.0 that averaging the speeds would claim. At a ground speed of 3.0 the rate therefore
+        has to be 3.0 / 2.667 = 1.125, and a test written against the naive figure would have
+        happily accepted 1.0 and shipped 12% of foot slide.
+    */
+    CheckNear(p.BlendedSpeed(CLIP_WALK,CLIP_RUN_SLOW,0.5f),2.0f / 0.75f,0.001f,
+              "a blend covers its interpolated stride over its interpolated cycle");
+    CheckNear(c.rate,3.0f / (2.0f / 0.75f),0.001f,"and the rate is matched against that");
 
     //A clip that was never measured - missing from the export - cannot be chosen, however fast.
     p.clip_speed[CLIP_RUN_FAST] = 0.0f;

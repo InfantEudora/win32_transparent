@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1f02e4da-fa81-4634-9800-ae5b6cfa5ba7
-  modified: 2026-09-20T19:06:05.569Z
+  modified: 2026-09-22T10:17:52.344Z
 ---
 
 `apps/archer` - a side-view platformer about an archer, 3D assets, Windows, keyboard only.
@@ -13,7 +13,7 @@ Started 2026-09-20. The user is making the assets and animations; the first iter
 and everything renders as scaled primitives from `core/Primitives.h`.
 
 **Structure**, following breakout/bomber: `archer/Stage.{h,cpp}` is the RULES and names no engine
-type (`make rules` builds it against `stage_test.cpp` alone - 169 checks, ~1 s, no GPU);
+type (`make rules` builds it against `stage_test.cpp` alone - 176 checks, ~1 s, no GPU);
 `ApplicationArcher` is the view and wiring. 60 TPS.
 
 **The seam, which is the thing to understand.** Simulated by hand in Stage: the archer's own
@@ -138,6 +138,58 @@ against KICK_TICKS' 0.23s (wants 4.9x) and Climb is 2.80s against LEDGE_CLIMB_TI
 version could only choose between turning and not turning, never between those and "keep the hip
 rotation in the pose", which is what a complex clip needs. The archer keeps the ArcherModel
 subclass to consume the turn and an f_turns column that sets the core flag per clip.
+
+**Step 1, the BLEND SPACE, is done (2026-09-22).** Two core additions: Object gained a SUSTAINED
+blend (`blend_animation`/`blend_factor`/`blend_phase`/`SetBlendPair`) as distinct from its timed
+crossfade - two clips sampled every tick at a weight the caller owns, sharing ONE normalised
+playhead advancing at the interpolated duration, with `blend_phase_offset` shifting the follower so
+footfalls line up. `SetBlendPair` re-bases the phase onto whichever clip survives when the PAIR
+changes, which is what stops a pop at every rung. `Puppet::Choose` now returns two clips and a
+weight.
+
+PHASE SYNC NEEDED NO AUTHORING - `MeasureClipPhases` poses the model through each clip and watches
+the toe bone's lowest point. Measured 0.81/0.67/0.60 for walk/slow-run/fast-run in-app against
+0.83/0.69/0.62 computed straight out of the .glb. Two traps worth remembering: the rate must be
+matched against the interpolated STRIDE over the interpolated DURATION (not the lerp of the two
+speeds - 4% out here, and it is 4% of the slide the blend exists to remove); and IDLE is not a rung,
+because a shared phase would play a 12.3s idle at a 1.0s walk's cycle rate. Worst stretch across the
+ladder went from 36% (discrete, at the crossover) to 4.4%.
+
+**THE ARCHER CHANGES SPEED FASTER THAN A CROSSFADE LASTS, and three bugs came out of that one
+fact.** `ARCHER_RUN_ACCEL` 90 u/s^2 and `ARCHER_RUN_FRICTION` 120 are 1.5 and 2.0 units PER TICK,
+against a ladder 1.58..5.19 wide and a 9-tick fade - so a start or a stop crosses the whole blend
+space in two or three ticks and asks for two or three different clips in a row. Fixed 2026-09-22:
+(1) core now retargets mid-blend instead of refusing, see [[animation-state-machine-in-object]],
+and the archer only records `playing_clip` when the request took; (2) the app's test for using
+SetBlendPair is now "does the new pair share a clip with what is ON SCREEN, in EITHER slot", not
+"is there a follower" - the old test dropped BOTH ends of the ladder into a crossfade, and past the
+fast run that faded backwards into a slow run that was no longer visible; (3) `SetBlendPair` gained
+the case where the single playing clip becomes the FOLLOWER (`phase = now - offset`), which is the
+top of the ladder on the way back DOWN and had been seeding from the new leader's stale playhead
+while the follower carried 83% of the weight. A 0.5 -> 9.0 -> 0.0 sweep in puppet mode now produces
+exactly two crossfades, `Idle -> Walking` and `Walking -> Idle`; it was four.
+
+**ROOT-MOTION TRANSLATION WAS NEVER EXTRACTED** until 2026-09-22 - `extract_horizontal_root_motion`
+and `extract_vertical_root_motion` sat at their `false` default on every clip while only the yaw was
+set. Stage owns her position and writes it every tick, so an un-extracted stride is drawn ON TOP of
+it: Walking's hip runs z 0.000 -> 0.756 rig (1.53 world) across one second, then snaps back at the
+wrap, and the snap on dropping to Idle reads as the character jumping backwards. Now driven by two
+new columns, `f_extract_move` / `f_extract_lift`.
+
+THEY ARE NOT `f_travels`, and assuming they were is the trap: f_travels asks "should the blend space
+measure this stride", extraction asks "is the rules layer already walking it". Climb answers no then
+yes (a mantle's speed is meaningless, but it really does carry her forward AND up, both extracted);
+Twirl answers yes then no (measured and reported, but only the preview plays it, so its 0.879-unit
+step back stays as the performance the Blender comparison asked for). Vertical is its own column
+because extraction pins the axis to the BIND pose - setting it on a gait does not remove drift, it
+flattens the 0.02-unit footfall bob. Verified by reading the hip bone live over MCP (it IS in
+`object_list`, as `mixamorig:Hips`): Walking pinned flat on x/z and still bobbing on y, Climb pinned
+on all three, Twirl free on all three.
+
+Worth knowing for tuning: `ARCHER_RUN_SPEED` is 9.0 but the fastest clip covers 5.19, so at a full
+hold she is always ABOVE the ladder playing Running_Fast alone at rate 1.73. The blend space only
+does real work while accelerating through it. A sprint clip, or a lower top speed, is what would
+change that - an authoring decision, not a bug.
 
 **Also in the view now:** a parallax backdrop (apps/archer/assets/images/background1.png on one
 unlit quad 40 units back, BACKGROUND_FOLLOW is the fraction of the camera's motion it copies)

@@ -96,8 +96,8 @@ The state machine lives in `Object` (`core/Object.h:302-347`, `Object::ApplyAnim
 | Per-bone mask | Yes, but static and un-layered | `ObjectAnimation.cpp:95-100` |
 | Bone influences per vertex | **Three**, not four | `GLTFLoader::GetSkinnedVertex` |
 | **Retarget to a third clip mid-blend** | **Refused** | `TransitionToAnimation`, with a note explaining why |
-| Parametric blending (blend space) | No | — |
-| Phase / foot sync between clips | No | — |
+| Parametric blending (blend space) | Yes, since 2026-09-22 | `Object::SetBlendPair`, `Puppet::Choose` |
+| Phase / foot sync between clips | Yes, measured per clip | `Object::blend_phase_offset`, `Puppet::clip_phase` |
 | Additive poses | No | — |
 | Time-ranged cancel windows | No | — |
 
@@ -106,6 +106,49 @@ where it came from, but a request for a genuinely new clip mid-blend is dropped 
 because honouring it would mean either blending three clips or snapping. That is the correct call
 for a two-clip crossfade — and it is exactly the wall a fast-paced game hits. The industry's answer
 was to stop crossfading clip pairs, not to extend the crossfade.
+
+### Root motion, the translation half
+
+**Set per clip on 2026-09-22, and it had been at its default of OFF for every clip since the model
+first loaded.** `extract_horizontal_root_motion` and `extract_vertical_root_motion` both default to
+"the translation stays on the bone", which is the right default for the engine — a clip should opt
+into moving the character rather than doing it by surprise — and the wrong setting for every gait
+in this game.
+
+`Stage` owns where the archer is, and `SyncArcherAnimation` writes it every tick. So an
+un-extracted stride is drawn *on top of* the position she has already been walked to: the hips
+creep ahead over the cycle and snap back when the clip wraps or is replaced. Measured off the
+authored track, Walking's hip runs `z` 0.000 → 0.756 rig units monotonically across its one
+second — **1.53 world units**, about a body width. Running_Fast is 2.94. The snap on coming to
+rest and dropping to `Idle` is the whole of that offset vanishing in one frame, which reads as the
+character jumping backwards.
+
+The column is **`f_extract_move` / `f_extract_lift`, deliberately separate from `f_travels`**, and
+conflating those two is what makes this look like a one-line fix when it is not:
+
+| | `f_travels` asks | extraction asks |
+|---|---|---|
+| | should the blend space measure this stride? | is the rules layer already walking it? |
+| Climb | **no** — a mantle's "speed" is a meaningless number | **yes** — and vertically too |
+| Twirl | **yes** — measured and reported with the rest | **no** — nothing but the preview plays it |
+
+Vertical is its own column because the answer usually differs. Extraction pins the axis to the
+**bind pose**, so setting it on a run cycle does not merely remove drift — it flattens the 0.02-unit
+footfall bob, which is the bounce. Only `Climb` has genuine rise, and `Stage` is carrying her up the
+ledge at the same time.
+
+Measured after, reading the hip bone live over MCP while the clip plays:
+
+```
+clip      extracted     hip.x              hip.y                hip.z
+Walking   move          0.0020 constant    0.4689 .. 0.4877     0.0371 constant
+Climb     move + lift   0.0020 constant    0.5056 constant      0.0371 constant
+Twirl     neither      -0.008 .. 0.117     0.4978 .. 0.5398     0.007 .. -0.405
+```
+
+Walking is pinned flat where its authored track swept 0.756, and keeps its bob. Twirl still steps
+back, which is what the Blender comparison asked for. `stage_test.cpp` asserts that every rung of
+`PUPPET_LOCOMOTION` extracts — that check caught a shifted column in the table on its first run.
 
 ### The other half of root motion: the yaw
 
@@ -165,10 +208,12 @@ the 2.020 model scale, swept round. With the yaw left on the bone the hips trave
 to 1.759 against an authored 1.776, and the model yaw stays put. Same numbers, one is a line and the
 other is a circle.
 
-Extracting the translation as well is not the escape here, because Stage owns where the archer is and
-the app discards it. So: **a clip whose yaw is extracted must turn on the spot.** `stage_test.cpp`
-enforces it — `f_turns` and `f_travels` may not both be set on the same clip, and that check was
-confirmed to fail when the rule is broken rather than merely passing today.
+Extracting the translation as well **is** the escape, and the note that used to sit here saying
+otherwise — "Stage owns where the archer is and the app discards it" — had the argument backwards.
+Discarding it is the point: `f_extract_move` takes the offset off the bone, so there is nothing left
+for the yaw to sweep round. What is forbidden is extracting the yaw and *leaving* the translation.
+`stage_test.cpp` enforces exactly that, and the check was confirmed to fail when the rule is broken
+rather than merely passing today. A pivot needs neither flag, because it turns on the spot already.
 
 `Twirl` never needed it anyway: measured net turn **−3.6°**. It spins a full turn and comes back, so
 nothing downstream ever needed to know its facing had changed. `Running_TurnAround` measures a clean
@@ -348,6 +393,105 @@ resolved only so its travel can be measured.
 
 ---
 
+## Step 1 — the blend space. BUILT.
+
+Two core additions and a rewrite of one function in `Puppet`.
+
+**`Object` gained a SUSTAINED blend**, which is a different thing from the crossfade it already
+had. A crossfade is an *event*: a fixed-length blend that ends by itself. A sustained blend is a
+*state*: two clips sampled every tick at a weight the caller owns and can move anywhere, which
+never ends on its own. That is what a blend space is, and it is why one removes transitions rather
+than speeding them up — there is no transition to interrupt, because there is no transition.
+
+The pair share **one normalised playhead** advancing at the interpolated duration, so the stride
+rate eases between the two clips instead of snapping to whichever is nominally current, and
+`blend_phase_offset` shifts the follower so the footfalls line up. `SetBlendPair` sets both sides
+at once and re-bases the phase onto whichever clip survives when the *pair* changes — which is what
+makes crossing a rung invisible rather than a pop at 0 and another at 1.
+
+**Phase sync needed no authoring.** `MeasureClipPhases` poses the model through each clip and
+watches the toe bone's height; its lowest point is the plant. Measured in-app at **0.81 / 0.67 /
+0.60** for walk / slow run / fast run, against **0.83 / 0.69 / 0.62** computed independently
+straight out of the `.glb` — two methods agreeing to within one sample step. The difference between
+two clips' values *is* the correction.
+
+**`Puppet::Choose` returns two clips and a weight.** It finds the rungs bracketing the speed and
+mixes them by where the speed falls between their strides. Outside the ladder it takes the end rung
+alone and stretches it, exactly as before.
+
+One thing that is easy to get wrong and is worth the words: the rate is matched against what the
+*blend* covers, which is the interpolated **stride over the interpolated duration** — not the
+interpolation of the two clips' speeds. Those differ whenever the cycles are different lengths,
+which is always. On this export the naive figure is 4% out at the midpoint, and that 4% would be
+foot slide introduced by the thing meant to remove it.
+
+**Idle is deliberately not a rung.** A shared normalised phase makes both clips complete a cycle
+together — right for two gaits, nonsense for a 12.3s ambient idle against a 1.0s walk, which would
+play the idle twelve times too fast. Standing up and moving off stays an ordinary crossfade. The
+skating this exists to fix happens between two *cycles*.
+
+### What it bought, measured
+
+Sweeping the panel across the ladder (1.58 → 5.19 units/s), the worst playback rate is **1.044** —
+4.4% from 1.0. The discrete nearest-rung version it replaced had its worst case at the crossover
+between two rungs, where both candidates need the same stretch: √(2.92/1.58) = **1.36**, or 36%.
+
+```
+speed   clip                    blend           weight   rate
+1.58    Walking                 -                 -      1.00
+2.30    Walking                 Running_Slow     0.54     1.04
+3.02    Running_Slow            Running_Fast     0.05     1.01
+4.47    Running_Slow            Running_Fast     0.68     1.04
+5.19    Running_Slow            Running_Fast     1.00     1.00
+```
+
+Still open from this step: the rate floor (`PUPPET_RATE_MIN`) still clamps below the walk's own
+speed, because idle is not in the space. Putting it in properly needs a follower that runs at its
+own rate rather than on the shared phase — a small addition to the blend, and the right time to
+make it is when there is an air set to blend as well.
+
+### Step 1a — the ladder's ends, and requests that arrive faster than a crossfade
+
+Three defects showed up the moment the blend space met real acceleration, and they share one
+cause: **the archer changes speed faster than a crossfade lasts.** `ARCHER_RUN_ACCEL` is 90 u/s²
+and `ARCHER_RUN_FRICTION` is 120 — 1.5 and 2.0 units *per tick*. The whole ladder is 1.58 → 5.19,
+so a start or a stop crosses all of it in two or three ticks, against a 9-tick fade.
+
+**A request arriving mid-crossfade was refused.** `Object::TransitionToAnimation` warned and
+returned, on the reasoning that honouring a third clip means either mixing three or snapping.
+In practice a stop from a run asks for `Walking` and then `Idle` on consecutive ticks, so the
+refusal fired every time — and because `SyncArcherAnimation` recorded `playing_clip` whether or
+not the request took, and only asks on a *change*, nothing ever asked again. She finished the
+fade into a walk she no longer wanted and looped it on the spot for the rest of the session.
+
+It now **retargets**: keep whichever of the two clips the pose is currently nearer, and fade from
+that one to the new destination. A one-deep queue was the obvious alternative and is worse — it
+would honour the stale walk in full and start the idle two blend-lengths after she stopped moving.
+Latency is not better than a small pop; it is a character that visibly disagrees with the game.
+Measured in play, every retarget on the real input path lands at factor **0.00** (the request
+arrives the tick after the fade begins), so nothing is discarded at all. Forced retargets at 0.14
+and 0.78 keep `Idle` and `Walking` respectively — the nearer side each time, so the discarded
+fraction is min(f, 1−f) and never exceeds 0.5. The real answer for that worst case is step 4.
+
+`TransitionToAnimation` now returns `bool`, and the archer only records `playing_clip` when it
+took. "Only ask on a change" and "assume it worked" are each reasonable and together permanent.
+
+**Both ends of the ladder fell out to a crossfade they did not need.** The app asked "is there a
+follower?" when it should have asked "can the pose be carried over?". Past the fast run the weight
+is already 1.0 and the pose already *is* the fast run, so fading to it *from* the slow run went
+backwards into a clip that was no longer visible and out again — a lurch at exactly full sprint.
+The test is now whether the new pair shares a clip with what is on screen, in **either** slot.
+
+**And coming back down, `SetBlendPair` had no case for it.** The clip that had been playing alone
+becomes the *follower*, carrying most of the weight, and the phase was being seeded from the new
+leader's stale playhead — jumping the dominant clip. It now solves for the phase that keeps the
+survivor still, `phase = now − offset`, symmetric with the slid-up case above it.
+
+Measured after: a full sweep 0.5 → 9.0 → 0.0 in puppet mode produces exactly **two** crossfades,
+`Idle → Walking` and `Walking → Idle`. Everything between them is continuous. It was four.
+
+---
+
 ## Step 0 — the seam. BUILT.
 
 The thing the original plan was missing: it was all mechanism, and said nothing about **who decides
@@ -395,7 +539,7 @@ Ordered so nothing blocks on the step after it.
 | # | Step | Code | Animation |
 |---|---|---|---|
 | 0 | **Parameter seam + puppet mode** | **done** | **none** |
-| 1 | Signed-speed 1D blend space + phase sync | blend space over the existing ladder, sync groups | **the ladder foot-phase aligned** — walk, slow run and fast run agreeing on which foot is down. The clips themselves exist |
+| 1 | **Signed-speed blend space + phase sync** | **done** | **none** — the phase alignment turned out to be measurable rather than authored |
 | 2 | Upper-body mask layer | layer via per-bone `animation_mask`, spine-up | **draw / hold / loose**, standing, masked-safe |
 | 3 | Additive aim pitch | 1D additive, or procedural spine+shoulder after the pass | **one aim-up and one aim-down reference pose** |
 | 4 | Inertialization | replaces the crossfade; deletes four states and the mid-blend refusal | none |

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 8a9b69d2-99f4-4de3-a7fd-bee7ffca5edb
-  modified: 2026-09-15T14:57:15.810Z
+  modified: 2026-09-22T10:01:59.305Z
 ---
 
 Moved 2026-09-15, at the user's request, out of `PlayerCharacter::ApplyAnimation` and into
@@ -59,11 +59,25 @@ out of an open door does nothing); rate 0 does not. It applies to `ANIMATION_STA
 a crossfade is a fixed-length blend and what "backwards" means for one is not obvious, so slowing a
 walk down does not slow the blend into it. That is a decision, not an oversight.
 
-**Still not supported, deliberately:** retargeting a transition to a THIRD clip mid-blend - refused
-with a warning. Asking to go back where it came from still rewinds (TRANSITION_BACK), and that is
-the one place the flip is not cosmetic: the rewind has to restore `current_animation` from
-`previous_animation` when it lands. The clean fix for retargeting is a one-deep queue, agreed as
-"when we feel we need it" - the user does not expect this game to need it.
+**Retargeting to a THIRD clip mid-blend WORKS as of 2026-09-22.** It was refused with a warning
+until the archer needed it, and the refusal turned out to be actively harmful rather than merely
+missing. `TransitionToAnimation` now keeps whichever of the two clips the pose is currently NEARER
+(`animation_transition_factor` < 0.5 keeps `previous_animation`, otherwise it promotes
+`current_animation`) and fades from there, so the discarded fraction is min(f, 1-f). The one-deep
+`next_animation` queue that was the agreed plan was rejected on measurement: it would honour a clip
+the game had already abandoned for two more blend lengths, and latency reads worse than a small pop.
+Inertialization is still the real answer to the f = 0.5 case.
+
+**`TransitionToAnimation` returns `bool` now** (both overloads; every existing caller ignores it).
+It can still decline - a name that does not resolve, or a non-interruptible clip that has not
+finished - and a caller that assumes it cannot will record a clip the object is not playing. That is
+silent AND permanent when the caller also only asks on a CHANGE, which is the natural way to write
+it. See [[archer-app]] for the version of that bug this came out of.
+
+Asking to go back where it came from still rewinds (TRANSITION_BACK), and that is the one place the
+flip is not cosmetic: the rewind has to restore `current_animation` from `previous_animation` when
+it lands. TRANSITION_BACK is NOT in the retarget guard, so a request arriving during a rewind still
+falls through to the ordinary path - latent and unexercised, nothing reaches it today.
 
 `Object.h` needs a `struct RootMotionDelta;` forward declaration - `Object.h` and
 `ObjectAnimation.h` include each other, so whichever is reached first sees the other half-built.

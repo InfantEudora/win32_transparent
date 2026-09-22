@@ -97,15 +97,48 @@ struct ArcherClipInfo{
         reports each clip's measured net turn so this column can be checked against the export.
 
         ONE COMBINATION IS FORBIDDEN, and the rules test enforces it: a clip may not have f_turns
-        AND f_travels. The character's rotation is applied ABOVE the root bone, so extracting the
-        yaw while the translation stays on the bone means R(yaw) * T(p) - the authored offset gets
-        SWEPT ROUND rather than translated, and a clip that walks two steps while turning orbits a
-        point instead. Extracting the translation as well is not the way out either, because Stage
-        owns where the archer is and the app throws that translation away. So: a clip that turns
-        must turn ON THE SPOT. A pivot does; a travelling spin does not and simply keeps its
-        rotation on the bone, where it still reads as a spin.
+        and a translation left on the bone. The character's rotation is applied ABOVE the root
+        bone, so R(yaw) * T(p) - an authored offset still sitting there gets SWEPT ROUND rather
+        than translated, and a clip that walks two steps while turning orbits a point instead.
+        The way out is f_extract_move, which takes the offset off the bone entirely; what is not
+        allowed is extracting the yaw and leaving the translation behind. A pivot turns on the
+        spot and needs neither. Twirl travels and spins, and keeps BOTH on the bone, where the
+        spin still reads as a spin and the step back still reads as a step back.
     */
     bool  f_turns;
+
+    /*
+        Does the hip's authored TRANSLATION belong to the character rather than to the pose?
+
+        A DIFFERENT QUESTION FROM f_travels, and conflating the two cost a session. f_travels asks
+        "should the blend space measure this clip's stride"; this asks "is that stride already
+        being walked by the rules". Climb answers no to the first (its speed would be a meaningless
+        number - it is a mantle, not a stride) and yes to the second (it really does carry the body
+        forward and up). Twirl answers the other way round.
+
+        WHERE IT GOES WRONG WHEN IT IS OFF AND SHOULD BE ON: Stage owns the archer's position and
+        SyncArcherAnimation writes it every tick, so an un-extracted stride is drawn ON TOP of the
+        position she has already been moved to. She creeps ahead of herself over the cycle - 1.53
+        world units for Walking, 2.94 for Running_Fast - and snaps back the moment the clip wraps
+        or is replaced. Coming to a stop and dropping to Idle looks like the character jumping
+        backwards, because that is exactly what the hips do.
+
+        Extracting it hands the translation to Object::ApplyRootMotion, and ArcherModel's override
+        DISCARDS it while keeping the yaw. That is the point: the pose is pinned so the rules are
+        the only thing that moves her. (An earlier note here claimed discarding it was a reason
+        NOT to extract. It is the reason TO.)
+
+        Off for a clip that is not driving her anywhere - the idle's weight shifts, the crouch's
+        squat, Twirl's authored step back - because there the translation IS the performance, and
+        pinning it flattens the thing worth looking at.
+
+        f_extract_lift is the same question for Y, and is separate because the answer usually differs: a
+        gait's vertical is a 0.02-unit footfall bob that must stay on the bone, while a climb's is
+        a metre of genuine rise that Stage is also applying. Extraction pins the axis to the BIND
+        pose, so setting this on a run cycle does not merely remove drift - it flattens the bounce.
+    */
+    bool  f_extract_move;   //X/Z
+    bool  f_extract_lift;   //Y
 };
 extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 
@@ -191,6 +224,17 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out);
 //--- The answer ---------------------------------------------------------------------------------
 struct PuppetChoice{
     int   clip = CLIP_IDLE;
+    /*
+        The second clip of a blend, or -1 for a single one.
+
+        `blend` is the weight toward it, 0..1, and `blend_phase_offset` is what brings the two
+        clips' footfalls into step. Together these are the blend space: between two rungs of the
+        locomotion ladder the answer is both of them and a weight, so there is no transition
+        between walking and running to interrupt - the weight simply moves.
+    */
+    int   blend_clip = -1;
+    float blend = 0.0f;
+    float blend_phase_offset = 0.0f;
     float rate = 1.0f;              //what to play it at, after clamping
     float wanted_rate = 1.0f;       //what matching the feet to the ground actually asked for
     /*
@@ -213,6 +257,19 @@ public:
         slide, and a re-export changes it. See ApplicationArcher::MeasureClipSpeeds.
     */
     float clip_speed[CLIP_COUNT] = {};
+
+    /*
+        Where in each clip's cycle the LEFT FOOT is planted, as a fraction 0..1, measured at load.
+
+        This is what lets two cycles be blended without the feet skating. Clips are authored with
+        their footfalls wherever the animator happened to start, and this export's three locomotion
+        clips plant the left foot at 0.83, 0.69 and 0.62 of their cycle - up to a fifth of a cycle
+        apart. Mixing them on a shared playhead without correcting for that puts a left-foot-down
+        pose against a mid-stride one, which is the classic blend-space skate. The difference
+        between two clips' values IS the phase offset the blend needs, so nothing has to be
+        re-authored to line them up.
+    */
+    float clip_phase[CLIP_COUNT] = {};
 
     //Net yaw each clip turns her through, in DEGREES, measured at load. Reported rather than acted
     //on: it is what says whether a clip's f_turns column is set right. A cycle reads near zero
@@ -247,6 +304,15 @@ public:
 
     //A clip's forward speed in WORLD units per second, or 0 if it does not travel.
     float WorldClipSpeed(int clip) const;
+
+    //How far a clip covers in ONE cycle, in world units. The blend of two cycles advances on a
+    //shared normalised phase at an interpolated duration, so the speed it produces is the
+    //interpolated STRIDE over the interpolated duration - not the interpolation of the two
+    //speeds, which is a different and slightly wrong number.
+    float WorldClipStride(int clip) const;
+    //What a blend of two clips at this weight covers per second, which is what the rate has to
+    //match against. Handles blend_clip < 0 as "just the one".
+    float BlendedSpeed(int clip, int blend_clip, float blend) const;
 
     //Which way the model should be facing for this `facing`, with no slew.
     static float TargetYaw(float facing);

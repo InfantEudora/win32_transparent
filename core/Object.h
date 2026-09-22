@@ -295,12 +295,54 @@ class Object{
 
         `animation_transition_factor` reads with them: 0 is all previous, 1 is all current.
 
-        There is deliberately no `next_animation`. A request arriving mid-blend is refused today
-        rather than queued - see TransitionToAnimation. When something actually needs queueing,
-        this is where that slot goes.
+        There is deliberately no `next_animation`. A request arriving mid-blend RETARGETS the
+        blend rather than queueing behind it - see TransitionToAnimation for why that is the
+        right answer for a game and a queue is not. If something ever does want the queue, this
+        is where that slot goes.
     */
     Animation* current_animation = NULL;
     Animation* previous_animation = NULL;
+
+    /*
+        --- A SUSTAINED BLEND, which is a different thing from the crossfade above ---------------
+
+        A crossfade is an EVENT: a fixed-length blend from one clip to another that ends by itself.
+        A sustained blend is a STATE: two clips sampled every tick at a weight the caller owns and
+        can move anywhere at any time, and which never ends on its own. That is what a blend space
+        is - idle/walk/run mixed continuously on a speed parameter - and it is why a blend space
+        removes transitions rather than speeding them up. There is no transition to interrupt,
+        because there is no transition; you move a float.
+
+        `blend_animation` non-NULL is the test for "am I in one", the same way `previous_animation`
+        is the test for "am I crossfading". Set it with SetBlend and drop it with ClearBlend;
+        starting a crossfade drops it too, because the two are different answers to the same
+        question and running both at once has no meaning.
+
+        THE PAIR SHARE ONE NORMALISED PLAYHEAD, and that is the part that stops the feet skating.
+        Two cycles advanced independently drift, so a left-foot-down pose gets mixed with a
+        right-foot-down one - the classic blend-space bug. Here `blend_phase` runs 0..1 for both,
+        the group's duration is interpolated between the two clips' (so the stride rate eases
+        between them rather than jumping), and each clip is sampled at that fraction of its OWN
+        duration. `blend_phase_offset` shifts the follower, which is how two clips that were
+        authored with their footfalls in different places are brought into step - measure each
+        clip's foot-plant phase, offset by the difference, and they land together.
+    */
+    Animation* blend_animation = NULL;
+    float blend_factor = 0.0f;          //0 is all current_animation, 1 is all blend_animation
+    float blend_phase = 0.0f;           //0..1, shared; both clips are sampled from this
+    float blend_phase_offset = 0.0f;    //added to the follower's phase, wrapped into 0..1
+
+    //Enter or update a sustained blend. A NULL target, or a target equal to the current clip,
+    //clears it. Entering one seeds the shared phase from wherever the current clip had got to, so
+    //a blend can start mid-cycle without the pose jumping.
+    void SetBlend(Animation* target, float factor, float phase_offset = 0.0f);
+    //Set both sides at once, keeping the shared phase continuous when the PAIR changes -
+    //which is what a blend space does every time the parameter crosses a clip. A NULL
+    //follower leaves a single clip playing from the phase it had reached. See the
+    //definition; the re-basing it does is the difference between a ladder that is smooth
+    //end to end and one that jumps at every rung.
+    void SetBlendPair(Animation* lead, Animation* follow, float factor, float phase_offset = 0.0f);
+    void ClearBlend();
 
     int animation_state = ANIMATION_STATE_PLAYING;
 
@@ -381,6 +423,9 @@ class Object{
         it came from, and otherwise pauses. That is unchanged and deliberately out of scope.
     */
     virtual void ApplyAnimation(float time_delta);
+    //One tick of a sustained blend - see the block on blend_animation. Called by ApplyAnimation
+    //instead of the single-clip path whenever a blend is set, and not useful on its own.
+    void ApplyBlendedAnimation(float time_delta);
     /*
         What this tick's extracted root motion should DO to this object. Base does nothing.
 
@@ -397,8 +442,17 @@ class Object{
     //Puts every Bone below this object back to its reference pose. Virtual so a character can also
     //clear whatever state it keeps alongside.
     virtual void LoadDefaultPose();
-    void TransitionToAnimation(const std::string& name);
-    void TransitionToAnimation(Animation* animation);  // Flags that we can blend into the next animation
+    /*
+        Blend into `animation` from whatever is playing. TRUE if the object is now heading there.
+
+        It returns a bool because it can decline, and a caller that assumes it cannot goes on to
+        record a clip the object is not playing - which is silent, permanent (nothing asks twice
+        for a clip it believes is already running) and looks like an animation bug rather than a
+        bookkeeping one. The two refusals left are a name that does not resolve and a
+        non-interruptible clip that has not finished; arriving mid-blend is no longer one of them.
+    */
+    bool TransitionToAnimation(const std::string& name);
+    bool TransitionToAnimation(Animation* animation);
     void SwitchToAnimation(const std::string& name);                   // Does not need a animation transistion
     void SwitchToAnimation(Animation* animation);                      // Instantly switches to the next animation, without blending
     /*

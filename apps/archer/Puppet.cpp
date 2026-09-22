@@ -18,25 +18,30 @@
     turnaround does not, despite the name - it is an in-place pivot.
 */
 const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
-    //                     loops  travels  turns
-    { "Idle",                true,  false,  false },
-    { "Idle_LookingAround",  true,  false,  false },
-    { "Walking",             true,  true,   false },
-    { "Walking2",            true,  true,   false },
-    { "Running_Slow",        true,  true,   false },
-    { "Running_Fast",        true,  true,   false },
+    //                     loops  travels  turns   move   lift
+    { "Idle",                true,  false,  false, false, false },
+    { "Idle_LookingAround",  true,  false,  false, false, false },
+    //The four gaits: their stride is walked by the RULES, so it comes off the bone. Their Y does
+    //not - that is the footfall bob, 0.02 units of it, and pinning it would flatten the bounce.
+    { "Walking",             true,  true,   false, true,  false },
+    { "Walking2",            true,  true,   false, true,  false },
+    { "Running_Slow",        true,  true,   false, true,  false },
+    { "Running_Fast",        true,  true,   false, true,  false },
     //THE ONE CLIP THAT IS A TURN. Its hip yaw is the whole point of it, where every cycle above
-    //has hip yaw that is just the gait - see f_turns.
-    { "Running_TurnAround",  false, false,  true  },
-    { "Kick_Front",          false, false,  false },
+    //has hip yaw that is just the gait - see f_turns. It pivots on the spot (0.001 units of
+    //authored travel), which is what makes extracting its yaw safe.
+    { "Running_TurnAround",  false, false,  true,  false, false },
+    { "Kick_Front",          false, false,  false, false, false },
     //THE CLIMB TRAVELS BUT IS NOT LOCOMOTION - its hip track goes a metre UP as well as forward,
     //because it is a mantle rather than a stride. Measuring its horizontal speed would produce a
-    //number that looks like a walking pace and means nothing, so it is not marked as travelling.
-    { "Climb",               false, false,  false },
-    { "Crouch",              false, false,  false },
-    { "Stretching",          true,  false,  false },
-    { "WarmUp",              true,  false,  false },
-    { "Dance",               true,  false,  false },
+    //number that looks like a walking pace and means nothing, so it is not marked as travelling -
+    //but both axes ARE the character moving, and Stage carries her up and across the ledge at the
+    //same time, so both come off the bone or she is moved twice.
+    { "Climb",               false, false,  false, true,  true  },
+    { "Crouch",              false, false,  false, false, false },
+    { "Stretching",          true,  false,  false, false, false },
+    { "WarmUp",              true,  false,  false, false, false },
+    { "Dance",               true,  false,  false, false, false },
     /*
         A pirouette - and NOT a turn, which is the opposite of what it looks like.
 
@@ -52,8 +57,13 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         as animated - she still visibly spins, because the twist is on the hips and every other bone
         hangs off them. Nothing here needs her FACING to change, and that is the only thing
         extracting the yaw buys. See the invariant in stage_test.cpp.
+
+        And its translation stays too (f_extract_move off), for the same reason: the rules never
+        play this clip, so there is no second copy of the movement to double up with, and the
+        0.879-unit step back is part of the performance. It is marked f_travels only so its speed
+        is measured and reported with the rest; it is not in PUPPET_LOCOMOTION.
     */
-    { "Twirl",               true,  true,   false },
+    { "Twirl",               true,  true,   false, false, false },
 };
 
 const int PUPPET_LOCOMOTION[PUPPET_LOCOMOTION_COUNT] = { CLIP_WALK, CLIP_RUN_SLOW, CLIP_RUN_FAST };
@@ -107,6 +117,41 @@ float Puppet::WorldClipSpeed(int clip) const{
         return 0.0f;
     }
     return clip_speed[clip] * model_scale;
+}
+
+float Puppet::WorldClipStride(int clip) const{
+    if (clip < 0 || clip >= CLIP_COUNT){
+        return 0.0f;
+    }
+    return WorldClipSpeed(clip) * clip_duration[clip];
+}
+
+/*
+    What a blend of two cycles covers per second.
+
+    NOT the interpolation of their speeds, which is the obvious thing to write and is wrong. The
+    pair share one normalised playhead and the group advances at the interpolated DURATION, so in
+    one group cycle the character covers the interpolated STRIDE over that interpolated duration.
+    Those two answers agree only when both clips happen to have the same cycle length.
+
+    Concretely, on this export: the walk is 1.00s covering 1.58 world units, the slow run 0.767s
+    covering 2.24. Halfway between them the naive answer is (1.58 + 2.92) / 2 = 2.25 units/s; the
+    real one is a 1.91-unit stride over a 0.884s cycle = 2.16. Only 4% apart here, but it is 4% of
+    foot slide introduced by the very thing meant to remove it, and it grows with how different the
+    two cycle lengths are.
+*/
+float Puppet::BlendedSpeed(int clip, int blend_clip, float blend) const{
+    if (blend_clip < 0 || blend_clip >= CLIP_COUNT || blend_clip == clip){
+        return WorldClipSpeed(clip);
+    }
+    float stride = WorldClipStride(clip)
+                 + (WorldClipStride(blend_clip) - WorldClipStride(clip)) * blend;
+    float duration = clip_duration[clip]
+                   + (clip_duration[blend_clip] - clip_duration[clip]) * blend;
+    if (duration < 0.0001f){
+        return 0.0f;
+    }
+    return stride / duration;
 }
 
 PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
@@ -188,23 +233,73 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         wanted_rate is what planting the feet would take; rate is what is allowed. Whatever is left
         between them is foot slide, and it is reported rather than hidden.
     */
-    out.clip = CLIP_WALK;
-    float best_score = 0.0f;
+    /*
+        THE BLEND SPACE. Find the two rungs of the ladder that BRACKET this speed and mix them by
+        where the speed falls between their strides; outside the ladder, take the end rung alone
+        and stretch it.
+
+        This is what replaces a transition with a parameter. Between a walk and a slow run there is
+        no longer an event to interrupt or to be caught halfway through - both clips are playing,
+        and the weight is just a number that moves. The two clips are also brought into step by
+        clip_phase, so the blend mixes a left-foot-down pose with a left-foot-down pose instead of
+        with whatever the other clip happened to be doing.
+
+        IDLE IS NOT A RUNG, deliberately. A shared normalised phase makes both clips complete a
+        cycle together, which is exactly right for two gaits and nonsense for a 12-second ambient
+        idle against a 1-second walk - the idle would play twelve times too fast. Standing up and
+        moving off stays an ordinary crossfade, which is a rare, slow, forgiving transition; the
+        skating this is here to fix happens between two CYCLES.
+    */
+    int lower = -1;
+    int upper = -1;
     for (int i = 0; i < PUPPET_LOCOMOTION_COUNT; i++){
         int clip = PUPPET_LOCOMOTION[i];
         float native = WorldClipSpeed(clip);
         if (native <= 0.01f){
             continue;       //not measured, or not in the export - it cannot be judged
         }
-        float ratio = in.ground_speed / native;
-        //Distance from 1.0 in RATIO space, so being half as fast and twice as fast score the same.
-        float score = (ratio >= 1.0f) ? ratio : (1.0f / ratio);
-        if (best_score <= 0.0f || score < best_score){
-            best_score = score;
-            out.clip = clip;
+        if (native <= in.ground_speed){
+            if (lower < 0 || native > WorldClipSpeed(lower)){ lower = clip; }
+        }
+        if (native >= in.ground_speed){
+            if (upper < 0 || native < WorldClipSpeed(upper)){ upper = clip; }
         }
     }
-    float native = WorldClipSpeed(out.clip);
+    if (lower < 0 && upper < 0){
+        out.clip = CLIP_WALK;       //nothing measured at all; fall back rather than divide by it
+        return out;
+    }
+    if (lower < 0){
+        out.clip = upper;           //slower than the slowest gait: that gait, played slower
+    }else if (upper < 0 || upper == lower){
+        out.clip = lower;           //faster than the fastest: that gait, played faster
+    }else{
+        /*
+            Between two rungs. Weighted on STRIDE SPEED, which is the quantity the feet care
+            about - a speed halfway between a walk and a run should look half walk and half run.
+        */
+        float low_speed = WorldClipSpeed(lower);
+        float high_speed = WorldClipSpeed(upper);
+        float span = high_speed - low_speed;
+        out.clip = lower;
+        out.blend_clip = upper;
+        out.blend = (span > 0.0001f) ? ((in.ground_speed - low_speed) / span) : 0.0f;
+        if (out.blend < 0.0f){ out.blend = 0.0f; }
+        if (out.blend > 1.0f){ out.blend = 1.0f; }
+        //Bring the follower's footfalls onto the leader's. The difference between the two clips'
+        //measured plant phases IS the correction; nothing has to be re-authored to line them up.
+        out.blend_phase_offset = clip_phase[upper] - clip_phase[lower];
+    }
+
+    /*
+        And the rate, matched against what the BLEND actually covers.
+
+        Not the interpolation of the two clips' speeds: the pair share one normalised playhead and
+        advance at the interpolated DURATION, so what they cover per second is the interpolated
+        stride over the interpolated duration. Those differ whenever the two clips have different
+        cycle lengths, which is always. See BlendedSpeed.
+    */
+    float native = BlendedSpeed(out.clip,out.blend_clip,out.blend);
     if (f_match_feet && native > 0.01f){
         out.wanted_rate = in.ground_speed / native;
         out.rate = out.wanted_rate;

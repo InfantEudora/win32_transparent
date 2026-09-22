@@ -221,6 +221,10 @@
 #define ARCHER_MODEL_SKIN           "archer_armature"
 #define ARCHER_MODEL_NODE           "archer"
 #define ARCHER_MODEL_ROOT_BONE      "mixamorig:Hips"
+//The bone whose height says when a foot is DOWN - see MeasureClipPhases. The toe rather than the
+//ankle because it is the last thing to leave the ground and the first to touch it, so its minimum
+//is a sharper marker than the ankle's.
+#define ARCHER_MODEL_TOE_BONE       "mixamorig:LeftToeBase"
 
 /*
     How tall the model is drawn, in world units.
@@ -362,6 +366,10 @@ struct ArcherSnapshot{
     //Puppet.h. `wanted_rate` against `rate` is the foot-slide readout, and it is here rather than
     //only in the panel so it can be measured over a run instead of watched.
     int   clip = -1;
+    //The second clip of the blend space and its weight, or -1 for a single clip.
+    int   blend_clip = -1;
+    float blend = 0.0f;
+    float blend_phase_offset = 0.0f;
     float clip_rate = 1.0f;
     float clip_wanted_rate = 1.0f;
     bool  f_clip_placeholder = false;
@@ -433,6 +441,9 @@ private:
     //answers to the Puppet. See the note on the definition - this is the number that decides
     //whether the feet slide, and it is measured rather than declared.
     void MeasureClips();
+    //Where in each locomotion clip's cycle the left foot is planted, found by posing the model
+    //through the clip and watching the toe. What the blend space needs to line two cycles up.
+    void MeasureClipPhases();
     void BuildArrowViews();
     void BuildAimArc();
     //The backdrop quad. Survivable if the image is missing - see the note on the definition.
