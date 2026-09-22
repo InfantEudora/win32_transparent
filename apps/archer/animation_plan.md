@@ -19,7 +19,7 @@ why "blend faster" does not fix it.
 
 ## The asset, measured
 
-`apps/archer/assets/meshes/archer.glb` — one skin, one skinned mesh, twenty-six clips, one 4096x4096
+`apps/archer/assets/meshes/archer.glb` — one skin, one skinned mesh, twenty-eight clips, one 4096x4096
 base-colour texture. Everything below is read out of the file rather than assumed, and the app
 re-measures all of it at load (`ApplicationArcher::MeasureClips`) so a re-export corrects these
 numbers instead of contradicting them silently.
@@ -39,7 +39,7 @@ rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_H
 | `Running_Slow` | 0.77 | yes | 1.45/s | 2.92/s | 3.1x |
 | **`Running_Fast`** | **0.57** | yes | **2.57/s** | **5.19/s** | **1.73x** |
 | `Running_TurnAround` | 0.70 | no | in place | — | — |
-| `Kick_Front` | 1.63 | no | in place | — | replaced 2026-09-22; no longer spins |
+| `Kick_Front` | **1.43** | no | in place | — | replaced 2026-09-22, then trimmed by 12 frames; the strike stayed at tick 42 |
 | `Climb` | 2.80 | no | a mantle: +1.01 up, 1.50 forward | — | — |
 | `Crouch` | 4.00 | no | in place | — | — |
 | `Stretching` | 11.07 | yes | in place | — | — |
@@ -57,6 +57,7 @@ rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_H
 | `Running_Jump` | 0.93 | no | 2.30/s | 4.64/s | the running jump; climbs 0.333s |
 | `Running_JumpForward` | 0.93 | no | 2.30/s | 4.64/s | **byte-identical to `Running_Jump`** |
 | `Hanging_Braced` | 2.37 | yes | a held pose | — | holding a ledge |
+| `Hanging_Rope` | — | yes | a held pose | — | gripping a rope, both hands overhead |
 | `Running_ToStop` | 0.93 | no | 0.42/s | 0.85/s | plants at 0.267s |
 | `Kick_FrontSpin` | 1.13 | no | in place | — | the old `Kick_Front`; a real pivot |
 | `Walk_ToHandstand` | 4.00 | no | 0.33/s | 0.67/s | set dressing |
@@ -764,12 +765,91 @@ fast she is travelling, not why.
    the standing set's fall has no acceleration in it and the top of the arc has no hang.
 2. **`Standing_DrawArrow`** (1.067s) is previewable and unselected. It is a whole-body clip for
    something that must happen *while* she runs, so it needs step 2's mask layer, not a state.
-3. **The rope** is the last placeholder state, and it is a genuinely different pose from the ledge
-   hang — gripped overhead with both hands rather than braced against a lip.
+3. ~~**The rope** is the last placeholder state.~~ Done — `Hanging_Rope`, and see the rope section
+   below for the two solver bugs that drawing her tilt made visible.
 4. **`Running_Jump` and `Running_JumpForward` are byte-identical** — every frame of the root track
    matches, as do the duration, the travel and the net turn. One of them can come out of the
    export. `Jump_Forward` is a genuinely different, floatier arc (0.776 rig over 2.000s against
    2.150 over 0.933s) and is worth keeping to compare against.
+
+---
+
+## The rope, and a kick that needs the ground. BUILT (2026-09-22).
+
+Two small things that turned out to be about the same seam from opposite sides.
+
+### A kick is something you do with your weight on the ground
+
+An air kick used to be allowed, and the note in `Stage.h` argued for it: a flying kick keeps its
+arc. What killed it was the retiming. When `KICK_TICKS` was 14 an air kick was a flourish; at 86 it
+is **1.43 seconds of hanging motionless in mid-air** — longer than a whole jump — playing a clip whose
+wind-up, plant and recovery all want a floor to push against. So `!f_on_ground` joined the busy list
+next to hanging, climbing and the rope.
+
+**Gating the start was only half of it.** The plant is friction rather than a freeze, so a kick
+thrown at a full run carries about a unit of slide, which is easily enough to go over a lip — and
+a kick that STARTED on the ground would then finish in the air, which is the same picture for the
+same second and a half. So the move ends where the ground does. Measured with the second half
+removed, she kicked in mid-air for **22 ticks**; with it, for **1**, and that one tick is the
+ordering rather than a hole (`TickKick` runs before `TickArcher`, so the tick she goes over the edge
+on has already had its kick update). The test counts them rather than forbidding them, because 1 is
+the ordering and 90 is the bug.
+
+### Hanging on a rope, and which way is up
+
+`Hanging_Rope` is a different grip from `Hanging_Braced` rather than the same pose twice: a ledge is
+braced against with bent arms and the feet on the wall, a rope is hung from with both hands
+overhead. Selecting it is one line in `Puppet::Choose`. **Which way up she hangs is not, and could
+not be** — `Stage::TickArcher` stands aside for the whole of `MODE_ROPE` so that the swing can be
+emergent, so there is nothing in the rules that knows her tilt and nothing that should. It is a view
+quantity, read off the collider the solver is already swinging.
+
+Composed OUTSIDE the yaw, which matters: the tilt is about the WORLD's Z. Inside the yaw it would be
+about her own z and would flip every time she turned to face the other way, so she would lean out of
+the swing instead of into it.
+
+### Looking at the collider was worth doing for its own sake
+
+The first measurement of the new roll said the request could not be satisfied as asked, because the
+collider was not worth aligning to. **The archer on a rope is two pendulums, not one:** the rope
+swings, and she swings about her own grip inside it — and only the rope's had any damping. Swept
+through one arc:
+
+```
+                             her tilt    the rope's    error
+before   one arc, worst        88 deg        53 deg     35 deg   ...and still growing
+after    the same arc          42 deg        39 deg      2 deg
+after    pumped much harder    72 deg        67 deg      5 deg
+```
+
+The ERROR is the figure that means anything, because the absolute angle is just how hard the swing
+was pumped. Before, it grew without bound and she was simply windmilling inside the rope; after, it
+stays within a few degrees at any amplitude.
+
+Two things were wrong and both were invisible while nothing drew her tilt:
+
+1. **The joint anchored wherever it fell.** A ball-and-socket takes its anchor on each body from
+   where that body happens to be, and she was left standing where she caught it — so the rope
+   attached through her chest, and, if she caught a link BELOW her, below her centre of mass. That
+   is not a pendulum at all, it is an inverted one: she would slowly turn over and hang upside down,
+   and nothing in the solver was wrong about it. She is now moved so the link is at the top of her
+   box, which is what catching a rope means. Checked afterwards: her hands sit **0.026 units** from
+   the link she is holding.
+2. **Nothing damped her own spin.** Her natural period about her hands is 2.2s, so critical damping
+   is about 5.6; `ROPE_HANG_DAMPING` is 3.0, a little over half. Deliberately not critical — a body
+   that snaps rigidly into line with the rope reads as a plank, and the few degrees of lag between
+   her and the rope, which lead on the push and trail at the top, are the part that looks alive.
+
+A third thing fell out of writing it down: a kinematic body keeps whatever rotation it was last
+given, and nothing else ever writes the archer's orientation — so without a reset on release the
+collider box would stay leaning at whatever angle she let go at, for the rest of the level. Both
+ends now reset it, and the release measures **drawn 0.00, collider 0.00** the tick after.
+
+**The grip point and the reach point are different numbers on purpose.** `Stage::FindRopePoint`
+measures reach from `ARCHER_HALF_H * 0.6`, chest height, because that is where hands rest; the joint
+anchors at `ARCHER_HALF_H`, the top of her, because a hanging grip is overhead. Using the reach
+point for both hung the rope through her neck — visible immediately once the model leaned with it,
+and invisible for as long as it did not.
 
 ---
 
@@ -838,19 +918,19 @@ sight, and several are too fast to animate.
 
 | rules | ticks | seconds | the clip | note |
 |---|---|---|---|---|
-| `KICK_TICKS` | **98** | **1.63** | `Kick_Front` is 1.633s | **DONE 2026-09-22** — the rules moved to the clip. Plays at 1.00x |
+| `KICK_TICKS` | **86** | **1.43** | `Kick_Front` is 1.433s | **DONE 2026-09-22**, and done twice — the rules moved to the clip, then followed it when it was trimmed. Plays at 1.00x |
 | `LEDGE_CLIMB_TICKS` | 18 | 0.30 | `Climb` is **2.80s** | needs **9.3x**; clamped to 2.5x, so the clip is still playing long after she is standing. The likeliest answer is that a 0.30s mantle was never a mantle |
 | `BOW_DRAW_TICKS` | 36 | 0.60 | none yet | fine as is — that is a real draw |
 
 **The kick is settled, and it went the other way to everything else here.** Every other fit in this
 document stretches a clip to suit the rules. The kick could not: 14 ticks against a 1.633s clip
 needs 7.1x, and a kick at seven times speed is not a fast kick, it is a glitch — a kick has to have
-a wind-up to read as one at all. So the clip set the pace and `KICK_TICKS` moved to 98.
+a wind-up to read as one at all. So the clip set the pace and `KICK_TICKS` moved to it.
 
 The active window moved with it, and it was **measured rather than guessed**:
 
 ```
-Clip Kick_Front  1.633s long; the boot connects at 0.700s (tick 42.0 of 98),
+Clip Kick_Front  1.433s long; the boot connects at 0.700s (tick 42.0 of 86),
                  and the rules' active window is ticks 40..44
 ```
 
@@ -867,22 +947,27 @@ is what a re-export with a different impact frame looks like.
 Measured after: the kick plays at **rate 1.00, wanted_rate 1.00** — the first one-shot in this app
 to need no stretching at all — and connects, `"Kick connected: 1 props"`.
 
-**What a re-export does and does not fix by itself.** Trimming frames off the END of the clip does
-not move the strike, so `KICK_ACTIVE_FROM/TO` stay right; but `KICK_TICKS` is the one number in this
-app that cannot re-measure itself, and leaving it too long makes the Puppet *stretch* the shortened
-clip to fill the window — a kick in slow motion, which looks like a rate bug and is not one. So the
-app now prints the answer rather than leaving it to be noticed:
+**What a re-export does and does not fix by itself — and this has now happened for real.**
+Trimming frames off the END of the clip does not move the strike, so `KICK_ACTIVE_FROM/TO` stay
+right; but `KICK_TICKS` is the one number in this app that cannot re-measure itself, and leaving it
+too long makes the Puppet *stretch* the shortened clip to fill the window — a kick in slow motion,
+which looks like a rate bug and is not one. So the app prints the answer rather than leaving it to
+be noticed. Twelve frames came off the end, and the next start said:
 
 ```
-[warn] Kick_Front is 98 ticks but KICK_TICKS is 84, so it will play at 1.17x.
-       Set KICK_TICKS to 98 in Stage.h.
+[warn] Kick_Front is 86 ticks but KICK_TICKS is 98, so it will play at 0.88x.
+       Set KICK_TICKS to 86 in Stage.h.
 ```
 
-(Confirmed by deliberately mis-setting it, not merely by it staying quiet.) Trimming the FRONT
-would move the strike too, and the window check catches that separately.
+Typed in, and the kick measures **rate 1.00 across 56 ticks of it** again. The window needed no
+change at all — tick 42 of 86 instead of tick 42 of 98. Trimming the FRONT would move the strike
+too, and the window check catches that separately.
+
+The warning was first confirmed by deliberately mis-setting `KICK_TICKS`, which is why it was
+already there to fire when the real trim arrived.
 
 **The cost, which is real and is the next decision.** `f_planted` roots her for the whole of
-`kick_ticks`, so a kick is now a **1.63-second commitment**, and 0.93s of that is recovery *after*
+`kick_ticks`, so a kick is a **1.43-second commitment**, and 0.73s of that is recovery *after*
 the boot has landed. That is a heavy, committal move, which may well be what a wall-breaking kick
 should be. If it wants to be lighter, the fix is to unroot at `KICK_ACTIVE_TO` and let the recovery
 be cancelled by moving — which needs the Puppet to drop the clip at the same moment, or the
@@ -930,14 +1015,17 @@ the state, and the panel lists it.
 | stopping from a run | `Running_ToStop`, fired on the first tick of the deceleration ✓ |
 | stopping against a wall | **placeholder** — nothing; the ladder falls to `Idle` |
 | pushing a crate | **placeholder** — `Running_Slow` on the spot at the push speed |
-| kicking | `Kick_Front` at **1.00x**; `KICK_TICKS` was retimed to the clip ✓ |
+| kicking | `Kick_Front` at **1.00x**; `KICK_TICKS` retimed to the clip, twice ✓ — and only on the ground |
 | climbing | `Climb`, badly mistimed against `LEDGE_CLIMB_TICKS` (wants 9.3x) ✓ |
 | rising | `Jump_ToAir`, at rate 1.0, holding the pose the fall loops ✓ |
 | falling | `Falling_Idle`, looped ✓ |
 | landing | `Jump_FromAir`, or `FallingIdle_ToLanding` above 25 u/s; each entered at its contact frame ✓ |
 | running jump | `Running_Jump`, latched at takeoff, fitted to its climb at 0.85x ✓ |
 | hanging | `Hanging_Braced`, looped ✓ |
-| on the rope | **placeholder** — idle |
+| on the rope | `Hanging_Rope`, looped, rolled to match the collider she is swinging as ✓ |
 | drawing / loosing | `Standing_DrawArrow` exists but nothing selects it — it needs step 2's mask layer |
 
-The two mistimings are the largest decisions; landing and the mask layer are the largest holes.
+Nothing the archer can DO falls through to the idle any more, and a sweep over the modes in
+`stage_test.cpp` says so rather than one line per mode, so it keeps saying it when a mode is added.
+The remaining placeholders are all things she does WHILE doing something else, or things with no
+clip authored yet. `LEDGE_CLIMB_TICKS` is the last mistiming; the mask layer is the largest hole.

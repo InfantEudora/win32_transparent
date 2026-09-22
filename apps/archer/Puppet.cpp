@@ -99,6 +99,18 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     //it to extract. Replaces the idle that MODE_HANG had been standing in with.
     { "Hanging_Braced",      true,  false,  false, false, false },
     /*
+        AND THE ROPE, which is a different pose for the same idea: a ledge is braced against with
+        the arms bent and the feet on the wall, a rope is hung from with both hands overhead.
+
+        NOTHING IS EXTRACTED, and here that is not the usual reason. Everywhere else the answer is
+        "Stage already covers this ground, so hand it over"; on the rope Stage covers no ground at
+        all - reactphysics3d owns the body and Stage::TickArcher stands aside. The app reads the
+        solver's position straight onto the model every tick, so whatever the clip's hips do is
+        sway ON a rope that is already where it is, and pinning it to bind would only flatten the
+        performance out of it.
+    */
+    { "Hanging_Rope",        true,  false,  false, false, false },
+    /*
         THE RUN-TO-STOP, and its horizontal comes off the bone for the usual reason - Stage is
         already covering the ground. It has to, and by a wide margin: the clip travels 0.396 rig
         units (0.80 world) coming to rest, where the rules cover 0.267. Leaving it on would slide
@@ -135,13 +147,18 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     */
     { "Jump_Forward",        false, false,  false, true,  false },
     /*
-        And the draw, which has no home yet.
+        And the draw, which has only HALF a home.
 
         It is a WHOLE-BODY clip for something that has to happen while she is also walking, running
-        or falling, so playing it as one more state would mean she stops moving to draw. That is
-        what step 2's upper-body mask layer is for, and until that exists this is previewable and
-        nothing selects it. Its -29.2 degrees of net hip yaw is her squaring up to aim, which is
-        performance rather than a turn - so f_turns stays off with the rest.
+        or falling, so playing it as one more state means she stops moving to draw. That is what
+        step 2's upper-body mask layer is for.
+
+        Until that exists it is selected in ONE case only - drawing while standing still - because
+        there her legs doing a draw is exactly right. See the TEMPORARY note in Puppet::Choose;
+        that branch goes away when the mask layer lands rather than growing to cover running.
+
+        Its -29.2 degrees of net hip yaw is her squaring up to aim, which is performance rather
+        than a turn - so f_turns stays off with the rest.
     */
     { "Standing_DrawArrow",  false, false,  false, false, false },
     { "Stretching2",         true,  false,  false, false, false },
@@ -254,19 +271,27 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
     /*
         WHAT IS AUTHORED TODAY, and what is standing in for what is not.
 
-        Standing, walking, two runs, the kick and the climb are all real answers. Being airborne,
-        hanging off a ledge, swinging on the rope and drawing the bow are not: they fall through to
-        the idle and are marked f_placeholder. That flag is not a failure mode, it is the list the
-        next animation pass works from, and the panel shows it live.
+        Everything the archer can DO now has a clip of its own: standing, walking, two runs, the
+        kick, the climb, the four-piece air set, the running jump, the run-to-stop, the ledge hang
+        and the rope. Drawing the bow is the one thing still half-homed, and for a reason rather
+        than for want of an export - Standing_DrawArrow is a whole-body clip for something that has
+        to happen WHILE she runs, so it waits on step 2's mask layer. It IS selected while she
+        stands still, where whole-body is the correct answer; see the TEMPORARY note in the idle
+        branch below. f_placeholder is not a failure mode, it is that list, and the panel shows it
+        live.
     */
     if (in.action == ACTION_KICK){
         out.clip = CLIP_KICK;
         /*
-            The kick is the one clip the RULES time, and the two do not agree: KICK_TICKS is 14
-            ticks (0.23s) from press to recovered, and Kick_Front runs 1.13s. Fitting it needs
-            nearly 5x, which is a blur, so it is clamped and the gap is reported instead. That gap
-            is a real decision waiting to be made - either the clip gets trimmed to its impact
-            window or KICK_TICKS grows - and it is a decision about how the GAME feels, not a bug.
+            THE ONE PLACE WHERE THE CLIP WON. Everywhere else in this file the rules set a window
+            and the clip is stretched to fill it; the kick could not be, because a kick with no
+            wind-up does not read as a kick, and 14 ticks against a 1.6-second clip needed 7.1x.
+            So KICK_TICKS moved to the clip instead, and the fit below now comes out at 1.00.
+
+            THE ARITHMETIC STAYS ANYWAY, and it is not dead code: it is what makes the mismatch
+            VISIBLE when the clip is re-exported at a different length. wanted_rate is reported
+            live, the app warns with the number to type, and until that number is typed this is
+            what keeps the move the length the rules think it is.
         */
         float window = (float)KICK_TICKS * ARCHER_DT;
         if (clip_duration[CLIP_KICK] > 0.01f && window > 0.0f){
@@ -294,15 +319,21 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         return out;
     }
 
-    //Hanging off a ledge is authored now. The rope still is not - and it is a genuinely different
-    //pose, since a rope is gripped with both hands above the head rather than braced against a lip.
+    /*
+        HANGING, both kinds. They are two clips rather than one because they are two grips: a ledge
+        is braced against with bent arms and the feet on the wall, a rope is hung from with both
+        hands overhead and the feet loose.
+
+        WHICH WAY UP SHE HANGS IS NOT DECIDED HERE, and could not be. On the rope she swings, so
+        her own tilt comes off the body the solver is swinging - a view quantity the rules never
+        see and never should. See the roll in ApplicationArcher::SyncArcherAnimation.
+    */
     if (in.mode == MODE_HANG){
         out.clip = CLIP_HANG;
         return out;
     }
     if (in.mode == MODE_ROPE){
-        out.clip = CLIP_IDLE;
-        out.f_placeholder = true;
+        out.clip = CLIP_ROPE;
         return out;
     }
 
@@ -383,6 +414,41 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
     }
 
     if (in.ground_speed < PUPPET_IDLE_SPEED){
+        /*
+            DRAWING WHILE STANDING STILL, AND ONLY WHILE STANDING STILL.
+
+            *** TEMPORARY. THIS IS WHAT THE UPPER-BODY MASK LAYER REPLACES. ***
+
+            Standing_DrawArrow is a WHOLE-BODY clip, so selecting it as a state means her legs
+            play a draw too - which is right when she is standing and wrong the instant she is
+            not. That is the entire reason the draw has had no home: it has to happen WHILE she
+            runs, walks or falls, and a whole-body clip cannot do that. Step 2's mask layer is the
+            real answer, and when it lands this branch should be DELETED rather than extended -
+            the draw becomes an upper-body layer over whatever the legs are already doing, and it
+            stops being a case in this ladder at all.
+
+            Confined to the idle branch on purpose. Below this line is the locomotion ladder, so a
+            draw started at a run is still ignored exactly as before and nothing that already
+            worked can regress. What it buys in the meantime is the thing the bow work needs most:
+            a character whose arms agree with the bow in her hands, for looking at.
+
+            FITTED TO THE RULES' WINDOW, like the kick and the climb above it. The clip runs
+            1.067s and BOW_DRAW_TICKS gives the draw 36 ticks - 0.600s - so it wants 1.78x, which
+            is inside PUPPET_ACTION_RATE_MAX. It is a one-shot, so on reaching the end it holds
+            its last frame, which is the full-draw pose - exactly what a held draw should look
+            like. The same number drives the bow's bend in ApplicationArcher::SyncBow, so the pose
+            and the bend reach full together.
+        */
+        if (in.action == ACTION_DRAW){
+            out.clip = CLIP_DRAW;
+            float window = (float)BOW_DRAW_TICKS * ARCHER_DT;
+            if (clip_duration[CLIP_DRAW] > 0.01f && window > 0.0f){
+                out.wanted_rate = clip_duration[CLIP_DRAW] / window;
+                out.rate = out.wanted_rate;
+                if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
+            }
+            return out;
+        }
         out.clip = CLIP_IDLE;
         return out;
     }

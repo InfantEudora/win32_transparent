@@ -165,6 +165,8 @@ void Stage::BuildLevel(){
     props.push_back({ PROP_CRATE, 0.60f, 0.40f, 0.80f, 0.80f, 1, 1 });
     props.push_back({ PROP_CRATE, 4.10f, 0.40f, 0.80f, 0.80f, 1, 1 });
     props.push_back({ PROP_CRATE, 4.10f, 1.25f, 0.80f, 0.80f, 1, 1 });
+    props.push_back({ PROP_CRATE, -1.10f, 1.25f, 0.80f, 0.80f, 1, 1 });
+    props.push_back({ PROP_CRATE, -1.10f, 2.25f, 0.80f, 0.80f, 1, 1 });
 
     /*
         Four targets, each demanding a different shot. This is the slice-one exercise, and it is
@@ -360,8 +362,10 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         box is built from `facing`, so a player who turns mid-kick would otherwise swing it through
         180 degrees and connect with whatever happened to be behind them.
 
-        In the AIR it does neither - a flying kick keeps its arc, which is the only way to reach
-        the top of a wall.
+        The `&& f_on_ground` is belt and braces now rather than a branch: TickKick will not start a
+        kick off the ground and ends one that leaves it, so kick_ticks > 0 already implies it. It
+        stays because this line is what the plant MEANS, and a reader should not have to go and
+        find the gate to know that a kick in the air does not root her.
     */
     bool f_planted = (kick_ticks > 0) && f_on_ground;
     if (f_planted){
@@ -811,14 +815,45 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
         kick_cooldown--;
     }
 
-    //Both hands and both feet are busy on a wall. Hanging and climbing cannot kick.
-    bool f_busy = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE);
+    /*
+        WHAT CANNOT KICK, and why each one is on the list.
+
+        Hanging, climbing and the rope are the obvious three - both hands and both feet are already
+        holding on to something.
+
+        THE AIR is the fourth and it used to be allowed. It was wrong on both counts. A kick roots
+        her for KICK_TICKS, which is 1.43 seconds - longer than an entire jump - so a flying kick
+        was really a decision to hang motionless in mid-air until the ground arrived; and
+        Kick_Front is a GROUNDED clip, a wind-up and a plant and a recovery, all of which need a
+        floor to push against and none of which read as anything but a bug when they float. A kick
+        is something you do with your weight on the ground.
+
+        f_on_ground is last tick's, because TickKick runs before TickArcher. One tick of lag on a
+        gate costs nothing and keeps the ordering note at the top of Stage::Tick true.
+    */
+    bool f_busy = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE || !f_on_ground);
 
     if (kick_ticks == 0){
         if (in.f_kick_pressed && kick_cooldown == 0 && !f_busy){
             kick_ticks = 1;
             events.f_kick_started = true;
         }
+        return;
+    }
+
+    /*
+        AND THE MOVE ENDS WHERE THE GROUND DOES.
+
+        The plant is friction rather than a freeze - see f_planted in TickArcher - so a kick thrown
+        at a full run still carries about a unit of slide, which is easily enough to go over a lip.
+        Without this the gate above would only cover kicks that STARTED in the air and she would
+        still finish one floating, which is the same picture for the same second and a half.
+
+        The cooldown applies, so landing does not hand back a free kick as a reward for falling.
+    */
+    if (!f_on_ground){
+        kick_ticks = 0;
+        kick_cooldown = KICK_COOLDOWN;
         return;
     }
 

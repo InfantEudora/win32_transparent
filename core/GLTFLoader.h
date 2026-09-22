@@ -80,6 +80,15 @@ private:
     int3             Getint3_uint8_4(unsigned char* data, int byte_offset);
 
     morph_vertex     GetMorphVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, int index);
+    //One morph vertex out of two resolved arrays; out of range contributes zero. See the definition.
+    morph_vertex     GetMorphVertexAt(const std::vector<vec3>& positions, const std::vector<vec3>& normals, int index);
+    /*
+        Reads a FLOAT VEC3 accessor into a dense array, applying a SPARSE override if it has one.
+        Blender stores morph targets sparsely - "these few vertices moved" - and such an accessor
+        may carry no bufferView at all, in which case every element starts at zero. See the
+        definition; this is what used to be a Fatal saying sparse accessors were unsupported.
+    */
+    bool             ResolveVec3Accessor(const tinygltf::Accessor& accessor, std::vector<vec3>& out);
     vertex           GetVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, int index);
     skinned_vertex   GetSkinnedVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, tinygltf::BufferView* ub, tinygltf::BufferView* bb, tinygltf::BufferView* wb,int index);
 

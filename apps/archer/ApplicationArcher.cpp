@@ -134,6 +134,9 @@ void ApplicationArcher::Init(void){
     BuildProps();
     BuildArcher();
     BuildArcherModel();
+    //After it: the grip is derived from a posed clip, and both the bones and the clips arrive with
+    //the model. See the note on the declaration.
+    BuildBow();
     BuildArrowViews();
     BuildAimArc();
     BuildBackground();
@@ -854,6 +857,30 @@ void ApplicationArcher::BuildArcherModel(){
 }
 
 /*
+    The bow into her left hand and the nocked arrow into her right.
+
+    Almost all of the thinking behind this is in apps/archer/Bow.h; what belongs here is only the
+    wiring and the one decision the app owns - WHICH CLIP IS THE REFERENCE POSE.
+
+    That is CLIP_DRAW (Standing_DrawArrow), and not because it is the draw. It is the pose the
+    artist had the character in when the items were placed in her hands, which is a fact about how
+    the asset was authored rather than about what the clip is for. If the bow is ever re-placed in
+    some other pose, this is the line that has to change - and Bow's grip assert is what will say
+    so, loudly, rather than leaving a bow floating beside a hand.
+*/
+void ApplicationArcher::BuildBow(){
+    if (!archer_model){
+        //No skeleton means no hands to hang anything off. Not an error worth shouting about: the
+        //model failing to load has already been reported by BuildArcherModel in far more detail.
+        return;
+    }
+    Animation* reference = archer_clips[CLIP_DRAW];
+    if (!bow_rig.Build(gltfloader,archer_model,renderer,reference)){
+        debug->Err("The bow could not be equipped - she plays empty-handed\n");
+    }
+}
+
+/*
     How fast each clip thinks it is moving, and how long it lasts.
 
     MEASURED FROM THE CLIP, which is the whole point. The gap between a clip's own stride speed and
@@ -1513,6 +1540,9 @@ void ApplicationArcher::NewGame(){
         What DOES have to happen is re-hiding: BuildBlocks below has just made a fresh set of
         block objects, and every one of them starts visible.
     */
+    //BEFORE the props go: an arrow still holding one would be following a deleted object on the
+    //next tick. See ReleaseStuckArrows.
+    ReleaseStuckArrows(NULL);
     for (size_t i = 0; i < prop_views.size(); i++){
         if (prop_views[i].object){
             prop_views[i].object->Destroy();
@@ -1646,6 +1676,7 @@ void ApplicationArcher::RunSimulationTick(void){
     DriveArcherBody();
     SyncArcherView();
     SyncArcherAnimation();
+    SyncBow();
     SyncArrowViews();
     SyncAimArc();
     UpdateTargets();
@@ -1827,6 +1858,9 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
         //Stuck where it struck, in Stage, which keeps the arrow's position the rules' business
         //even though this answer came from the solver.
         stage.StickArrow(i,v2(hit.point.x,hit.point.y));
+        //...and pinned to the thing it went into, so it rides a crate that is kicked and goes down
+        //with a target that topples instead of hanging in the air where the target used to be.
+        StickArrowToProp(i,struck,v2(hit.point.x,hit.point.y));
 
         if (view->kind == PROP_TARGET && !view->f_knocked){
             debug->Info("Arrow %i struck target at (%.2f,%.2f) doing %.1f\n",
@@ -2234,16 +2268,42 @@ void ApplicationArcher::AttachArcherToRope(int segment){
         return;
     }
 
-    p->SetBodyWorldPosition(vec3(stage.pos.x,stage.pos.y,0.0f));
+    /*
+        SHE IS MOVED SO THAT HER HANDS ARE ON THE ROPE, which is not where she was standing.
+
+        The joint below anchors at the LINK, and a ball-and-socket's anchor is wherever it falls on
+        each body - so leaving her where she was put the rope's attachment point wherever the reach
+        test happened to allow, which is anywhere within ROPE_GRAB_REACH of her hands. Through her
+        chest was normal. BELOW HER CENTRE OF MASS was possible, and that is not a pendulum at all,
+        it is an inverted one: she would slowly turn over and hang upside down, and nothing in the
+        solver was wrong about it.
+
+        SHE HANGS FROM THE TOP OF HER BOX, which is a DIFFERENT number from the one the rules use
+        to decide whether she can reach a rope at all - Stage::FindRopePoint measures from
+        ARCHER_HALF_H * 0.6, chest height, because that is where hands rest. These are two
+        questions and they want two answers: "can she get a hand to it" is asked from where her
+        hands already are, "where does the rope meet her" is answered at the top of her, because a
+        hanging grip is overhead. Using the reach point here hung the rope through her neck.
+
+        The move is bounded by ROPE_GRAB_REACH and lands on the one tick that is already a
+        discontinuity - kinematic to dynamic, and a mode change with it. It is also what catching a
+        rope means: the hands go to the rope, and the body swings underneath them.
+    */
+    vec3 pivot = link->GetWorldPosition();
+    p->SetBodyWorldPosition(vec3(pivot.x,pivot.y - ARCHER_HALF_H,0.0f));
+    //Upright to start with, whatever tumble the body was left in. The swing should build from
+    //hanging rather than from wherever the last one finished.
+    p->SetBodyWorldOrientation(quat(vec3(0,0,1),0.0f));
     p->SetBodyType(rp3d::BodyType::DYNAMIC);
     p->SetGravityEnabled(true);
     p->SetCollideWithMaskBits(ARCHER_MASK_ON_ROPE);
     p->SetVelocity(vec3(stage.vel.x,stage.vel.y,0.0f));
+    //See ROPE_HANG_DAMPING: she is a pendulum hanging inside a pendulum, and only the rope's was
+    //damped. Linear damping stays OFF - that is the swing itself, and it is meant to keep going.
+    p->SetAngularDamping(ROPE_HANG_DAMPING);
     p->WakeUp();
 
-    //Joined at the LINK, so the archer hangs below it and the arc is the rope's rather than a
-    //rigid offset from it.
-    vec3 pivot = link->GetWorldPosition();
+    //Joined at the LINK, which is now exactly where her hands are.
     rp3d::BallAndSocketJointInfo info(link->GetRigidBody(),archer_object->GetRigidBody(),
                                       (rp3d::Vector3&)pivot);
     info.isCollisionEnabled = false;
@@ -2275,6 +2335,11 @@ void ApplicationArcher::DetachArcherFromRope(bool f_jump){
     p->SetBodyType(rp3d::BodyType::KINEMATIC);
     p->SetCollideWithMaskBits(ARCHER_MASK_ARCHER);
     p->SetVelocity(vec3());
+    //Upright again, and undamped. A kinematic body keeps whatever rotation it was last given, so
+    //without this the collider box stays leaning at whatever angle she let go at - for the rest of
+    //the level, since nothing else ever writes the archer's orientation.
+    p->SetBodyWorldOrientation(quat(vec3(0,0,1),0.0f));
+    p->SetAngularDamping(0.0f);
 
     stage.pos = v2(at.x,at.y);
     stage.vel = v2(v.x,vy);
@@ -2388,6 +2453,31 @@ void ApplicationArcher::SyncArcherView(){
 
     Physics thread, after Stage has decided where she is.
 */
+/*
+    How far the bow is bent, and that is the whole of what this app drives on the bow per tick.
+
+    THE POSITION IS THE SKELETON'S JOB, not this function's. The bow is a child of a hand bone, so
+    Object composes its world transform from the posed bone every frame with no code at all - see
+    the long note in Bow.h. Anything here that moved the bow would be a second opinion about where
+    her hand is.
+
+    DERIVED FROM draw_ticks RATHER THAN FROM THE Bow_Draw CLIP, and the difference is not stylistic.
+    That clip runs 1.100s while BOW_DRAW_TICKS is 36 ticks - 0.600s - so a clip-driven bow reaches
+    full bend nearly half a second after the shot reaches full power. draw_ticks is the number that
+    sets the arrow's speed in Stage::Loose, so taking the bend from it makes a fully bent bow and a
+    full-power shot the same fact rather than two things that have to be kept in agreement.
+
+    Physics thread, like every other Sync* beside it, and safe for the same reason: SetShapekey
+    writes one float on the Object and touches no GL.
+*/
+void ApplicationArcher::SyncBow(){
+    float draw01 = 0.0f;
+    if (stage.bow_mode == BOW_DRAWING && BOW_DRAW_TICKS > 0){
+        draw01 = (float)stage.draw_ticks / (float)BOW_DRAW_TICKS;
+    }
+    bow_rig.SetDraw(draw01);
+}
+
 void ApplicationArcher::SyncArcherAnimation(){
     if (!archer_model){
         return;
@@ -2518,8 +2608,91 @@ void ApplicationArcher::SyncArcherAnimation(){
     //extract_yaw_root_motion is set, which is the f_turns column, set once at load. A cycle's hip
     //rotation stays on the bone where it belongs instead of arriving here to be discarded.
     float yaw = puppet.yaw_deg * ARCHER_DEG2RAD + archer_model->clip_yaw;
-    archer_model->SetRotation(quat(vec3(0,1,0),yaw));
+
+    /*
+        AND ON THE ROPE, A TILT AS WELL - the one state where which way is up for her is not
+        straight up.
+
+        Everywhere else she stands on something and only her yaw is in question. Hanging from a
+        rope she is a pendulum, and the solver is already swinging one: the archer's body is
+        DYNAMIC for the whole of MODE_ROPE, jointed to the link she caught, and free to rotate
+        about Z because MakePlanarBody locks the other two axes. That rotation was simply not being
+        looked at - so the debug box leaned with the rope while the character inside it stayed bolt
+        upright, which is the picture that started this.
+
+        IT IS NOT A RULES QUANTITY and could not be. Stage::TickArcher stands aside for the whole
+        of MODE_ROPE precisely so the swing can be emergent, so there is nothing in the rules that
+        knows about this angle and nothing that should. It is read off the collider, next to the
+        position that is already read off the same body in SyncArcherFromRope.
+
+        TAKEN FROM WHERE HER OWN UP POINTS rather than from the quaternion's z component, because
+        the planar lock is a constraint rather than a guarantee - it is solved, so it leaks a
+        little - and a rotation read off one component of a not-quite-planar quaternion goes wrong
+        slowly and unreadably. Rotating (0,1,0) and asking where it ended up cannot.
+
+        COMPOSED OUTSIDE THE YAW, which matters: the tilt is about the WORLD's Z, the axis pointing
+        at the camera. Inside the yaw it would be about HER z, so it would flip every time she
+        turned to face the other way and she would lean out of the swing instead of into it.
+    */
+    quat rotation = quat(vec3(0,1,0),yaw);
+    float roll = 0.0f;
+    Physics* body = (stage.mode == MODE_ROPE && archer_object) ? archer_object->GetPhysics() : NULL;
+    if (body){
+        vec3 up = body->GetBodyWorldOrientation() * vec3(0.0f,1.0f,0.0f);
+        roll = atan2f(-up.x,up.y);
+        rotation = quat(vec3(0,0,1),roll) * rotation;
+    }
+    archer_model->SetRotation(rotation);
     model_yaw_drawn = yaw / ARCHER_DEG2RAD;
+    model_roll_drawn = roll / ARCHER_DEG2RAD;
+}
+
+/*
+    Pin an arrow to the prop it just went into.
+
+    Recorded in the PROP's frame rather than the world's, which is the whole point: the prop is
+    about to move, and a world position would be a record of where it USED to be. Props are planar
+    - MakePlanarBody locks them to the XY plane and to rotation about Z - so "the prop's frame" is
+    a position and one angle, and this is 2D rather than a matrix inverse.
+
+    The angle is stored as a DIFFERENCE too. An arrow that went into a board at 20 degrees is still
+    at 20 degrees to that board after it has fallen over, which is what makes the board look like
+    it fell WITH the arrow in it rather than past it.
+*/
+void ApplicationArcher::StickArrowToProp(int index, Object* prop, const v2& point){
+    if (index < 0 || index >= ARROW_MAX_LIVE || !prop){
+        return;
+    }
+    vec3 at = prop->GetWorldPosition();
+    quat q = prop->GetWorldRotation();
+    //Planar, so the whole rotation is the one about Z and this is exact rather than a projection.
+    float prop_angle = 2.0f * atan2f(q.z,q.w);
+
+    float dx = point.x - at.x;
+    float dy = point.y - at.y;
+    float c = cosf(-prop_angle);
+    float s = sinf(-prop_angle);
+
+    StuckArrow& stuck = arrow_stuck[index];
+    stuck.prop = prop;
+    stuck.local = v2(dx * c - dy * s,dx * s + dy * c);
+    stuck.local_angle = stage.arrows[index].angle - prop_angle;
+}
+
+/*
+    Let go of one prop's arrows, or of all of them.
+
+    CALLED BEFORE THE PROPS ARE DESTROYED on a restart, and that is not tidiness. Object::~Object
+    deletes its children, and while these arrows are not children, the same restart rebuilds the
+    prop list - so an arrow still holding a destroyed prop would be following a dangling pointer on
+    the next tick. It is the one failure here that crashes rather than looks wrong.
+*/
+void ApplicationArcher::ReleaseStuckArrows(Object* prop){
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        if (!prop || arrow_stuck[i].prop == prop){
+            arrow_stuck[i] = StuckArrow();
+        }
+    }
 }
 
 void ApplicationArcher::SyncArrowViews(){
@@ -2528,15 +2701,58 @@ void ApplicationArcher::SyncArrowViews(){
         if (!o){
             continue;
         }
-        const Arrow& a = stage.arrows[i];
-        o->SetVisibility(a.f_live);
+        Arrow& a = stage.arrows[i];
+        StuckArrow& stuck = arrow_stuck[i];
+
+        /*
+            LET GO THE MOMENT THE ARROW STOPS BEING A STUCK ONE.
+
+            Not only when it ages out: the pool is a ring of ARROW_MAX_LIVE, so this slot can come
+            back round as a NEW arrow in flight, and one still holding a prop would be fired
+            already welded to a crate. Checking f_stuck as well as f_live is what makes a recycled
+            slot safe without the loose() path having to know this exists.
+        */
+        if (stuck.prop && (!a.f_live || !a.f_stuck)){
+            stuck = StuckArrow();
+        }
+
+        o->SetVisibility(a.f_live && (!stuck.prop || stuck.prop->IsVisible()));
         if (!a.f_live){
             continue;
         }
+
+        float angle = a.angle;
+        if (stuck.prop){
+            /*
+                CARRIED BY THE PROP. Recomputed every tick rather than written once, because the
+                prop is still being solved - a kicked crate is in the air for the best part of a
+                second and a toppling board turns through ninety degrees on its way down.
+            */
+            vec3 at = stuck.prop->GetWorldPosition();
+            quat q = stuck.prop->GetWorldRotation();
+            float prop_angle = 2.0f * atan2f(q.z,q.w);
+            float c = cosf(prop_angle);
+            float s = sinf(prop_angle);
+            a.pos = v2(at.x + stuck.local.x * c - stuck.local.y * s,
+                       at.y + stuck.local.x * s + stuck.local.y * c);
+            angle = stuck.local_angle + prop_angle;
+            /*
+                AND WRITTEN BACK INTO Stage, which looks like the wrong direction and is the
+                established one: StickArrow already takes a point the SOLVER found, and
+                SyncArcherFromRope writes a whole position and velocity back every tick of a swing.
+                A stuck arrow is inert in the rules - it only ages - so nothing downstream is being
+                driven by this. What it buys is that there is still one answer to "where is arrow
+                7", instead of a drawn position and a reported one that disagree the moment
+                anything moves.
+            */
+            a.angle = angle;
+        }
+
         o->SetPosition(vec3(a.pos.x,a.pos.y,0.0f));
-        //The mesh runs along +X, so one rotation about Z aims it. A stuck arrow keeps the angle it
-        //arrived at, which is why Stage stops updating `angle` once it sticks.
-        o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),a.angle));
+        //The mesh runs along +X, so one rotation about Z aims it. A loose stuck arrow keeps the
+        //angle it arrived at, which is why Stage stops updating `angle` once it sticks; one stuck
+        //in a prop is turned by the prop instead, above.
+        o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),angle));
     }
 }
 
@@ -2766,6 +2982,11 @@ void ApplicationArcher::PublishSnapshot(){
     s.clip_wanted_rate = puppet.choice.wanted_rate;
     s.f_clip_placeholder = puppet.choice.f_placeholder;
     s.model_yaw = model_yaw_drawn;
+    s.model_roll = model_roll_drawn;
+    s.arrows_on_props = 0;
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        if (arrow_stuck[i].prop){ s.arrows_on_props++; }
+    }
     s.anim_source = anim_source;
 
     for (size_t i = 0; i < prop_views.size(); i++){
@@ -2923,8 +3144,14 @@ json ApplicationArcher::BuildStateJson(){
             {"rate",s.clip_rate},
             {"wanted_rate",s.clip_wanted_rate},
             {"placeholder",s.f_clip_placeholder},
-            {"model_yaw_deg",s.model_yaw}
-        }}
+            {"model_yaw_deg",s.model_yaw},
+            //Zero everywhere but the rope, where it is the lean the solver is swinging her at.
+            {"model_roll_deg",s.model_roll}
+        }},
+        //Arrows currently riding a prop rather than sitting in the world. Invisible until
+        //something moves, which is exactly why it is worth a line: an arrow pinned to a prop it
+        //is no longer in looks identical to a correct one until that prop is kicked.
+        {"arrows_on_props",s.arrows_on_props}
     };
     return result;
 }

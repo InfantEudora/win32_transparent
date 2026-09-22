@@ -9,6 +9,7 @@
 #include "Stage.h"
 #include "Puppet.h"
 #include "Terrain.h"
+#include "Bow.h"
 
 /*
     A side-view platformer about an archer, in 3D assets.
@@ -197,6 +198,20 @@
 //The links near the anchor are not offered as handholds - catching a rope at the very top gives a
 //swing with no arc in it, and looks like the archer stuck to the ceiling.
 #define ROPE_FIRST_GRABBABLE        2
+/*
+    HOW HARD HER OWN SPIN IS DAMPED while she is hanging, as a decay rate in 1/s - rp3d applies it
+    as w *= 1/(1 + d*dt), so this is the e-folding rate rather than a fraction.
+
+    It exists because the archer hanging from a rope is TWO pendulums, not one: the rope swings,
+    and she swings about her own grip inside it. The second one had nothing damping it at all.
+    Measured before this line existed, her body reached 88 degrees of tilt while the rope it hung
+    from only reached 53 - she was windmilling, slowly, and building.
+
+    Her natural period about her hands is 2.2s, so critical damping is about 5.6 and this is a
+    little over half of that. Deliberately not critical: a body that snaps rigidly into line with
+    the rope reads as a plank, and the lag between her and the rope is the part that looks alive.
+*/
+#define ROPE_HANG_DAMPING           3.0f
 
 /*
     How much of an arrow's speed the thing it hits takes, 0..1.
@@ -390,6 +405,12 @@ struct ArcherSnapshot{
     float clip_wanted_rate = 1.0f;
     bool  f_clip_placeholder = false;
     float model_yaw = 0.0f;
+    float model_roll = 0.0f;    //only the rope ever gives her one
+    //How many arrows are currently riding a prop rather than sitting in the world. Reported
+    //because it is the one piece of this that is invisible until something moves: an arrow pinned
+    //to the wrong prop, or to a prop it stopped being in, looks exactly like a correct one right
+    //up until that prop is kicked.
+    int   arrows_on_props = 0;
     int   anim_source = ANIM_FROM_GAME;
 };
 
@@ -470,6 +491,15 @@ private:
     //Loads meshes/archer.glb: the skin, the skinned mesh and every clip in Puppet.h's table.
     //Survivable if it fails - the app falls back to the coloured box it has always drawn.
     void BuildArcherModel();
+    /*
+        Puts the bow in her left hand and the nocked arrow in her right - see apps/archer/Bow.h and
+        apps/archer/bow_plan.md.
+
+        AFTER BuildArcherModel, because it needs the skeleton posed at a clip to work out the grip,
+        and both the bones and the clips come from there. Survivable if it fails: the game plays,
+        she just has empty hands.
+    */
+    void BuildBow();
     //Reads each clip's own root track for how far it travels and how long it lasts, and hands the
     //answers to the Puppet. See the note on the definition - this is the number that decides
     //whether the feet slide, and it is measured rather than declared.
@@ -522,6 +552,8 @@ private:
     //Fill the animation parameters, ask the Puppet what to play, and carry the answer out on the
     //model. The whole of step 0 runs through here.
     void SyncArcherAnimation();
+    //The bow's BEND only - its position comes from the hand bone it hangs off. See the definition.
+    void SyncBow();
     //Hand Stage every live prop as a box, BEFORE the tick. See the note on the definition.
     void RefreshObstacles();
     //Shove whatever Stage says was leaned on, AFTER it.
@@ -644,6 +676,30 @@ private:
     std::vector<rp3d::BallAndSocketJoint*> rope_joints;   //the links to each other, and to the anchor
     Object* rope_anchor_object = NULL;
     Object* arrow_objects[ARROW_MAX_LIVE] = {};
+    /*
+        AN ARROW THAT STRUCK A PROP, and rides it from then on.
+
+        WHY THIS IS NOT AttachChild, which is the obvious way to do it and is wrong here: every prop
+        is ONE unit mesh stretched by SetScale, so a child inherits that scale - and S*R is a shear
+        whenever the two axes in the rotation plane differ. A crate is 0.80 x 0.80 and would have
+        been fine; a target board is 0.30 x 1.60 and a brick is 0.90 x 0.45, so an arrow stuck in
+        either at any angle off the axes would be drawn as a bent splinter. The two things in this
+        level worth shooting are exactly the two that break.
+
+        So the arrow stays a root object and FOLLOWS instead, which is the same idea one level down
+        and costs a handful of lines because props are planar: a position and one angle.
+    */
+    struct StuckArrow{
+        Object* prop = NULL;        //NULL means this arrow is loose in the world
+        v2      local;              //where it went in, in the prop's own frame
+        float   local_angle = 0.0f; //and at what angle, relative to the prop's
+    };
+    StuckArrow arrow_stuck[ARROW_MAX_LIVE];
+    //Pins an arrow to the prop it just hit, and lets one go again. Releasing matters more than it
+    //looks: the arrow pool is a 24-slot ring, and a recycled slot still holding a prop would fire
+    //the NEXT arrow welded to a crate.
+    void  StickArrowToProp(int index, Object* prop, const v2& point);
+    void  ReleaseStuckArrows(Object* prop);     //NULL releases every one of them
     Object* arc_objects[AIM_ARC_POINTS] = {};
 
     //Where the camera would like to be, before smoothing. Kept between ticks so the lerp has
@@ -654,6 +710,15 @@ private:
     //The decisions. Lives on the physics thread with the Stage, and is read by DrawImGuiUI under
     //physics_mutex like everything else here.
     Puppet puppet;
+    /*
+        The bow and the nocked arrow, hung off the hand bones.
+
+        NO PER-FRAME POSITION CODE GOES WITH THIS. The skeleton moves them, because they are
+        children of bones and Object composes a child's world transform from its parent's - see the
+        long note in Bow.h. What the app drives is the BEND, from Stage::draw_ticks, and that is
+        one call.
+    */
+    Bow bow_rig;
     //Worked out from the bind pose at load: what the rig has to be scaled by to stand
     //ARCHER_MODEL_HEIGHT tall, and where its feet sit once it has been.
     float model_scale = 1.0f;
@@ -672,6 +737,10 @@ private:
     //The yaw the model was actually drawn at, in degrees - the Puppet's answer plus a turning
     //clip's own contribution. Reported rather than recomputed, because the sum is the thing.
     float model_yaw_drawn = 0.0f;
+    //And the tilt she was drawn at, which only the rope ever gives her. Degrees, + is anticlockwise
+    //on screen. Reported for the same reason: it comes from the solver and is worth being able to
+    //read when it looks wrong.
+    float model_roll_drawn = 0.0f;
 
     //--- The backdrop -----------------------------------------------------------------------------
     Object* background_object = NULL;

@@ -1056,6 +1056,62 @@ static void TestKick(){
     StageEvents hk;
     h.Tick(kick,hk);
     Check(!hk.f_kick_started,"cannot kick - both feet are on the wall");
+
+    /*
+        --- AND NEITHER CAN SOMEONE IN THE AIR ---------------------------------------------------
+
+        Two halves, because gating only the start would leave the same second and a half of
+        floating on screen by another route: one kick that never begins, and one that begins on the
+        ground and is ended by the ground going away.
+    */
+    Stage air;
+    Settle(air);
+    StageEvents jev;
+    air.Tick(jump,jev);
+    Check(!air.f_on_ground,"an archer who has just jumped is off the ground");
+    StageEvents ak;
+    air.Tick(kick,ak);
+    Check(!ak.f_kick_started,"and cannot start a kick in mid-air");
+
+    /*
+        The second half. She kicks standing on the very edge of a platform, and the kick's own
+        slide carries her off it; the move has to end with the floor rather than play out in the
+        air. Dropped onto the lip rather than run at it, because the plant would arrest a run
+        before it reached the edge - which is the point of the plant, and no use to this test.
+    */
+    Stage off;
+    const StageBlock& lip = HighLedge(off);
+    off.pos = v2(lip.Right() - 0.05f,lip.Top() + ARCHER_HALF_H);
+    Settle(off);
+    if (off.f_on_ground){
+        StageEvents oev;
+        off.vel.x = ARCHER_RUN_SPEED;       //still carrying a run when the boot goes out
+        off.Tick(kick,oev);
+        Check(oev.f_kick_started,"a kick thrown on the lip of a platform starts");
+        /*
+            ONE TICK OF OVERLAP IS EXPECTED and is the ordering, not a hole: TickKick runs before
+            TickArcher, so the tick she actually goes over the edge on has already had its kick
+            update. What must not happen is the kick CARRYING ON in the air, which at KICK_TICKS
+            would be a second and a half of it - so this counts the ticks rather than forbidding
+            them, and 1 is the ordering while 90 is the bug.
+        */
+        int air_kick_ticks = 0;
+        bool f_left_ground = false;
+        for (int i = 0; i < KICK_TICKS + 4; i++){
+            StageEvents e;
+            off.Tick(idle,e);
+            if (!off.f_on_ground){
+                f_left_ground = true;
+                if (off.kick_ticks > 0){
+                    air_kick_ticks++;
+                }
+            }
+        }
+        Check(f_left_ground,"and the kick's own slide carries her off it");
+        snprintf(detail,sizeof(detail),"kicked in mid-air for %i ticks",air_kick_ticks);
+        Check(air_kick_ticks <= 1,"the kick ends with the ground, rather than floating out its "
+                                  "remaining ticks",detail);
+    }
 }
 
 //--- The rope -------------------------------------------------------------------------------------
@@ -1538,12 +1594,17 @@ static void TestPuppet(){
         Check(jp.choice.clip == CLIP_JUMP_RISE,"and a standing jump after it gets the standing rise");
     }
 
-    //Hanging off a ledge is authored now; the rope still is not.
+    //Both grips are authored now, and they are two clips rather than one because a lip is braced
+    //against and a rope is hung from.
     in.f_on_ground = true;
     in.mode = MODE_HANG;
     c = p.Choose(in);
     Check(c.clip == CLIP_HANG,"hanging off a ledge has its own clip");
     Check(!c.f_placeholder,"and is not a stand-in any more");
+    in.mode = MODE_ROPE;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_ROPE,"and the rope has a different one - a different grip, not the same pose");
+    Check(!c.f_placeholder,"which is also no longer a stand-in");
     in.mode = MODE_GROUND;
 
     /*
@@ -1626,10 +1687,32 @@ static void TestPuppet(){
         CheckNear(sc.rate,PUPPET_ACTION_RATE_MAX,0.001f,"clamped, because it is over three times");
     }
 
-    //The one state with nothing authored still falls through to the idle AND says so.
-    in.f_on_ground = true;
-    in.mode = MODE_ROPE;
-    Check(p.Choose(in).f_placeholder,"swinging on the rope is still a placeholder");
+    /*
+        AND NOTHING FALLS THROUGH TO THE IDLE ANY MORE.
+
+        Every mode the archer can be in now names a clip of its own. The remaining placeholder is
+        the BOW, which is not a mode - drawing is something she does while running or falling - and
+        so cannot be reached from here at all; it waits on step 2's mask layer. Stated as a sweep
+        over the modes rather than as one more line about the rope, because the useful invariant is
+        "no mode is a stand-in", and a sweep keeps saying that when a mode is added.
+    */
+    int placeholder_mode = -1;
+    {
+        const ArcherMode modes[] = { MODE_GROUND, MODE_HANG, MODE_CLIMB, MODE_ROPE };
+        for (int i = 0; i < (int)(sizeof(modes) / sizeof(modes[0])); i++){
+            ArcherAnimParams m;
+            m.f_on_ground = true;
+            m.mode = modes[i];
+            if (p.Choose(m).f_placeholder){
+                placeholder_mode = (int)modes[i];
+            }
+        }
+    }
+    {
+        char detail[100];
+        snprintf(detail,sizeof(detail),"mode %i is still standing in",placeholder_mode);
+        Check(placeholder_mode < 0,"every mode the archer can be in has a clip of its own",detail);
+    }
     in.mode = MODE_GROUND;
 
     //The kick is the one action with a real clip, and it is fitted to the window the RULES give

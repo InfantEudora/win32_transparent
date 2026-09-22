@@ -465,6 +465,129 @@ int3 GLTFLoader::Getint3_uint8_4(unsigned char* data, int byte_offset){
     return v;
 }
 
+/*
+    Reads a FLOAT VEC3 accessor into a dense array of accessor.count entries, applying a SPARSE
+    override if the accessor has one.
+
+    --- WHAT SPARSE IS, AND WHY IT TURNED UP HERE FIRST ------------------------------------------
+    A glTF accessor may store only the elements that DIFFER from a base, as a list of indices plus
+    a list of values. Blender exports morph targets that way and it is a large win for them: the
+    archer's bow has a "Drawn" shape key whose four accessors declare 30, 125, 336 and 50 elements
+    and override 1, 1, 1 and 20 of them. A bow bends at a handful of vertices, so the rest of the
+    target is zero and is simply not stored.
+
+    THE BASE IS ALL ZEROS WHEN THERE IS NO bufferView AT ALL, which is exactly the case those four
+    hit and is legal - "bufferView" is optional on an accessor, and its absence means every element
+    is zero before the sparse substitution. Reading &model.bufferViews[accessor.bufferView] with
+    bufferView == -1 is what the old code would have done, so the Fatal that used to be here was
+    protecting something real.
+
+    Returning a dense array rather than teaching every reader about sparse is deliberate: the
+    per-vertex readers below index a bufferview directly, a sparse accessor has no single
+    bufferview to index, and one materialised vector costs 12 bytes per element on a path that runs
+    once at load.
+*/
+bool GLTFLoader::ResolveVec3Accessor(const tinygltf::Accessor& accessor, std::vector<vec3>& out){
+    if (accessor.type != TINYGLTF_TYPE_VEC3){
+        debug->Err("ResolveVec3Accessor: accessor type %i is not VEC3\n",accessor.type);
+        return false;
+    }
+    if (accessor.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT){
+        debug->Err("ResolveVec3Accessor: component type %i is not FLOAT\n",accessor.componentType);
+        return false;
+    }
+    out.assign(accessor.count,vec3());
+
+    //The base, when there is one. No bufferView means every element starts at zero - see above.
+    if (accessor.bufferView >= 0){
+        tinygltf::BufferView& bv = model.bufferViews[accessor.bufferView];
+        tinygltf::Buffer& buf = model.buffers[bv.buffer];
+        //byteStride 0 means tightly packed, which for VEC3 FLOAT is 12 bytes.
+        size_t stride = (bv.byteStride > 0) ? (size_t)bv.byteStride : (3 * sizeof(float));
+        for (size_t i = 0;i < accessor.count;i++){
+            size_t offset = bv.byteOffset + accessor.byteOffset + i * stride;
+            if (offset + 3 * sizeof(float) > buf.data.size()){
+                debug->Err("ResolveVec3Accessor: element %zu runs past the buffer\n",i);
+                return false;
+            }
+            out[i] = Getvec3(&buf.data.at(0),(int)offset);
+        }
+    }
+
+    if (!accessor.sparse.isSparse){
+        return true;
+    }
+
+    if (accessor.sparse.indices.bufferView < 0 || accessor.sparse.values.bufferView < 0){
+        debug->Err("ResolveVec3Accessor: sparse accessor with no indices or values bufferView\n");
+        return false;
+    }
+    tinygltf::BufferView& ibv = model.bufferViews[accessor.sparse.indices.bufferView];
+    tinygltf::Buffer& ibuf = model.buffers[ibv.buffer];
+    tinygltf::BufferView& vbv = model.bufferViews[accessor.sparse.values.bufferView];
+    tinygltf::Buffer& vbuf = model.buffers[vbv.buffer];
+
+    for (int s = 0;s < accessor.sparse.count;s++){
+        //The index list may be bytes, shorts or ints - whichever is narrowest for the element
+        //count, which is the whole point of the encoding.
+        size_t index_base = ibv.byteOffset + accessor.sparse.indices.byteOffset;
+        uint32_t target = 0;
+        switch (accessor.sparse.indices.componentType){
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                target = *(uint8_t*)&ibuf.data.at(index_base + (size_t)s * 1);
+                break;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                target = *(uint16_t*)&ibuf.data.at(index_base + (size_t)s * 2);
+                break;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                target = *(uint32_t*)&ibuf.data.at(index_base + (size_t)s * 4);
+                break;
+            default:
+                debug->Err("ResolveVec3Accessor: sparse index component type %i is not an "
+                           "unsigned integer\n",accessor.sparse.indices.componentType);
+                return false;
+        }
+        if (target >= out.size()){
+            debug->Err("ResolveVec3Accessor: sparse index %u is past the accessor's %zu elements\n",
+                       target,out.size());
+            return false;
+        }
+        //Values are always tightly packed for a sparse accessor - the spec forbids a byteStride on
+        //the bufferViews it points at, so there is no stride to honour here.
+        size_t value_offset = vbv.byteOffset + accessor.sparse.values.byteOffset
+                            + (size_t)s * 3 * sizeof(float);
+        if (value_offset + 3 * sizeof(float) > vbuf.data.size()){
+            debug->Err("ResolveVec3Accessor: sparse value %i runs past the buffer\n",s);
+            return false;
+        }
+        out[target] = Getvec3(&vbuf.data.at(0),(int)value_offset);
+    }
+    debug->Info("Resolved a sparse accessor: %zu elements, %i of them overridden\n",
+                out.size(),accessor.sparse.count);
+    return true;
+}
+
+/*
+    One morph vertex out of two already-resolved arrays.
+
+    OUT OF RANGE IS ZERO, NOT AN ERROR. A morph target's attributes are optional - a shape key that
+    only moves vertices exports POSITION and no NORMAL - and the identity for both is the zero
+    vector, because a target is a DELTA from the base mesh rather than a replacement for it. So an
+    absent or short array simply contributes nothing, which is the correct result and not a
+    degraded one. The caller clears an array it could not resolve for exactly this reason.
+*/
+morph_vertex GLTFLoader::GetMorphVertexAt(const std::vector<vec3>& positions,
+                                          const std::vector<vec3>& normals, int index){
+    morph_vertex v = {};
+    if (index >= 0 && (size_t)index < positions.size()){
+        v.pos = positions[index];
+    }
+    if (index >= 0 && (size_t)index < normals.size()){
+        v.normal = normals[index];
+    }
+    return v;
+}
+
 morph_vertex GLTFLoader::GetMorphVertex(tinygltf::BufferView* pb, tinygltf::BufferView* nb, int index){
     morph_vertex v = {};
     //Kind of going to assume the correct accessor will be used for this:
@@ -948,47 +1071,61 @@ Mesh* GLTFLoader::GetMeshFromNode(const char* node_name, std::vector<Material>*o
             std::map<std::string, int>::const_iterator it(morph_target.begin());
             std::map<std::string, int>::const_iterator itEnd(morph_target.end());
 
-            int attrib_index = 0;
+            /*
+                RESOLVED INTO DENSE ARRAYS RATHER THAN READ THROUGH A BUFFERVIEW.
+
+                A morph target is the one place a sparse accessor shows up in practice - Blender
+                stores a shape key as "these few vertices moved" - and a sparse accessor has no
+                single bufferview to index, sometimes no bufferview at all. So each attribute is
+                materialised once here and the assembly below indexes the result. See
+                ResolveVec3Accessor for what that involves and why the base may be all zeros.
+            */
+            std::vector<vec3>target_positions;
+            std::vector<vec3>target_normals;
+            bool f_have_positions = false;
+            bool f_have_normals = false;
+
             for (; it != itEnd; it++) {
                 debug->Info("targets[%i] : %s -> accessor: %i\n",mt_i, it->first.c_str(),it->second);
-                attrib_index++;
 
                 //We expect a morph target to consist of positions and normals, for a morph_vertex
                 const tinygltf::Accessor &accessor = model.accessors[it->second];
-                int size = 1;
-                if (accessor.type == TINYGLTF_TYPE_SCALAR) {
-                    size = 1;
-                } else if (accessor.type == TINYGLTF_TYPE_VEC2) {
-                    size = 2;
-                } else if (accessor.type == TINYGLTF_TYPE_VEC3) {
-                    size = 3;
-                } else if (accessor.type == TINYGLTF_TYPE_VEC4) {
-                    size = 4;
-                } else {
-                    debug->Fatal("Invalid accessor.type: %i\n",accessor.type);
-                }
-
-                if (accessor.sparse.isSparse){
-                    debug->Fatal("We don't support sparse accessors in GLB files yet.\n");
-                    //TODO: Make it do
+                if (accessor.type != TINYGLTF_TYPE_VEC3){
+                    debug->Err("Morph target attribute %s is not VEC3 (type %i) - skipped\n",
+                               it->first.c_str(),accessor.type);
+                    continue;
                 }
 
                 if (it->first.compare("NORMAL") == 0){
-                    normal_bufferview = &model.bufferViews[accessor.bufferView];
+                    f_have_normals = ResolveVec3Accessor(accessor,target_normals);
                 }else if (it->first.compare("POSITION") == 0){
-                    position_bufferview = &model.bufferViews[accessor.bufferView];
+                    f_have_positions = ResolveVec3Accessor(accessor,target_positions);
                 }else{
                     debug->Err("Unknown Morph Target accessor %s\n",it->first.c_str());
                 }
+            }
+
+            /*
+                A target with no POSITION moves nothing, and one with no NORMAL simply keeps the
+                base mesh's normals - which is legal, and is what a Blender shape key that only
+                nudges vertices exports. Zeros are the identity for both, so an absent attribute
+                is filled rather than treated as an error.
+            */
+            if (!f_have_positions){
+                debug->Err("Morph target %i has no usable POSITION - it will do nothing\n",(int)mt_i);
+                target_positions.clear();
+            }
+            if (!f_have_normals){
+                target_normals.clear();
             }
 
             //We have to read these in using the same indices the base mesh was loaded with.
             //Assemble the triangles:
             int vertex_index = 0;
             for (int t=0;t<triangle_count;t++){
-                morph_vertex vert1 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 0));
-                morph_vertex vert2 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 1));
-                morph_vertex vert3 = GetMorphVertex(position_bufferview,normal_bufferview, GetIndex(indexAccessor,vertex_index + 2));
+                morph_vertex vert1 = GetMorphVertexAt(target_positions,target_normals, GetIndex(indexAccessor,vertex_index + 0));
+                morph_vertex vert2 = GetMorphVertexAt(target_positions,target_normals, GetIndex(indexAccessor,vertex_index + 1));
+                morph_vertex vert3 = GetMorphVertexAt(target_positions,target_normals, GetIndex(indexAccessor,vertex_index + 2));
 
                 morph_verts.push_back(vert1);
                 morph_verts.push_back(vert2);

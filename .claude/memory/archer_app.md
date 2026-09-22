@@ -60,6 +60,19 @@ is the whole payoff. The rules keep only the DECISIONS - grab reach, `ROPE_MIN_H
 press that caught it is still down when TickRope first runs), the cooldown, and whether the release
 was a jump (adds `ROPE_JUMP_BOOST`).
 
+**The archer on a rope is TWO pendulums** (found 2026-09-22, when `Hanging_Rope` was wired and her
+tilt was drawn for the first time): the rope swings, and she swings about her own grip inside it,
+and only the rope's had damping. Two bugs were invisible for as long as the model stayed upright
+inside a leaning collider - (1) the ball-and-socket anchored wherever it fell, because she was left
+standing where she caught it, so the rope attached through her chest and, if she caught a link BELOW
+her, below her centre of mass, which is an INVERTED pendulum and she slowly turns over; she is now
+moved so the link is at the top of her box. (2) nothing damped her own spin - `ROPE_HANG_DAMPING`
+3.0, a little over half of critical, deliberately not critical because a body that snaps into line
+with the rope reads as a plank. Also: a KINEMATIC body keeps whatever rotation it was last given and
+nothing else ever writes the archer's orientation, so both ends of the rope reset it or the collider
+stays leaning for the rest of the level. Note the grip point (ARCHER_HALF_H, overhead) and the reach
+point (ARCHER_HALF_H * 0.6, chest) are different numbers ON PURPOSE.
+
 Rope-building gotchas: links must have `setIsAllowedToSleep(false)` or a hanging rope sleeps on the
 first frame and the archer swings into a bar of iron; and links collide with NOTHING, including
 each other - jointed neighbours overlap by construction, so a self-colliding chain asks the solver
@@ -74,7 +87,10 @@ ARCHER_PUSH_SPEED and moves a crate at walking pace, a kick is KICK_SPEED with l
 about ten units. Wind-up, a five-tick active window, then a cooldown - and the window CLOSES on the
 first connect, or the boot hits the same crate five times. A grounded kick plants the feet AND
 freezes the facing (the boot's box is built from `facing`, so turning mid-kick would swing it
-through 180 degrees). Air kicks keep their arc.
+through 180 degrees). **It only happens on the ground** (2026-09-22): once KICK_TICKS was retimed
+to the clip a flying kick became 1.43s of hanging motionless in the air playing a clip with a plant
+in it. Both halves are needed - the START is gated on f_on_ground, and the move ENDS if she slides
+off a lip mid-kick, because the plant is friction and carries about a unit of slide.
 
 Two things learned building it: (1) **broken bricks must stop being obstacles** or the rubble pile
 is just the wall again - it bulldozed the archer backwards 51.19 -> 54.90 over four kicks and the

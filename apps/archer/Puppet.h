@@ -74,6 +74,7 @@ enum ArcherClip{
     */
     CLIP_RUN_JUMP,          //Running_Jump           takeoff -> apex -> descending, 0.933s
     CLIP_HANG,              //Hanging_Braced         holding a ledge
+    CLIP_ROPE,              //Hanging_Rope           gripping a rope, both hands overhead
     CLIP_STOP,              //Running_ToStop         plant and settle out of a run
     CLIP_KICK_SPIN,         //Kick_FrontSpin         the spinning kick; a real pivot
     CLIP_HANDSTAND,         //Walk_ToHandstand       set dressing; preview only
