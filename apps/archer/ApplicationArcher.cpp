@@ -642,6 +642,7 @@ void ApplicationArcher::BuildArcherModel(){
 
     MeasureClips();
     MeasureClipPhases();
+    MeasureJumpClip();
 
     /*
         The default crossfade, kept SHORT.
@@ -782,6 +783,71 @@ void ApplicationArcher::MeasureClipPhases(){
         debug->Info("Clip %-20s plants the left foot at phase %.2f (toe at %.3f)\n",
                     ARCHER_CLIPS[index].name,puppet.clip_phase[index],lowest);
     }
+}
+
+/*
+    Which part of the jump clip is the jump.
+
+    Jumping_Up is authored as a COMPLETE standing jump - anticipation crouch, launch, apex, fall,
+    landing absorb, recovery - in 1.93 seconds. This game's jump leaves the ground on the tick the
+    button goes down, so the 0.43s of anticipation in front of the launch describes something that
+    has already happened, and playing it would have her tuck into a crouch while travelling
+    upwards. The useful part is launch to apex, and this finds where that is.
+
+    READ OFF THE HIP'S HEIGHT rather than declared, for the same reason as everything else here: a
+    re-export with a longer wind-up must not need a number in this file changed to match. It reads
+    the AUTHORED track through ComputeRootPose rather than posing the model, because the question
+    is about the clip and not about where the extraction flags leave the bone.
+
+    THE APEX IS FOUND FIRST AND THE LAUNCH IS THE LOWEST POINT BEFORE IT, which is not the same as
+    taking the global minimum: the landing absorb dips almost as deep as the anticipation does
+    (0.285 against 0.267 on this export, 7% apart), so a global minimum is one re-export away from
+    finding the landing and playing the clip backwards from the end.
+*/
+void ApplicationArcher::MeasureJumpClip(){
+    Animation* clip = archer_clips[CLIP_JUMP_UP];
+    if (!clip || !clip->root_track || clip->duration <= 0.0f){
+        return;         //not in the export; Choose still picks it and it simply will not play
+    }
+    //Twice MeasureClipPhases' rate, because this is looking for two turning points rather than one
+    //and the clip is twice as long - the same resolution per second of animation.
+    const int SAMPLES = 96;
+    float highest = 0.0f;
+    int highest_at = 0;
+    for (int k = 0; k < SAMPLES; k++){
+        float t = clip->duration * (float)k / (float)SAMPLES;
+        float y = clip->ComputeRootPose(t).authored_position.y;
+        if (k == 0 || y > highest){
+            highest = y;
+            highest_at = k;
+        }
+    }
+    float lowest = highest;
+    int lowest_at = 0;
+    for (int k = 0; k <= highest_at; k++){
+        float t = clip->duration * (float)k / (float)SAMPLES;
+        float y = clip->ComputeRootPose(t).authored_position.y;
+        if (k == 0 || y < lowest){
+            lowest = y;
+            lowest_at = k;
+        }
+    }
+    puppet.jump_launch = clip->duration * (float)lowest_at / (float)SAMPLES;
+    puppet.jump_apex = clip->duration * (float)highest_at / (float)SAMPLES;
+
+    float span = puppet.jump_apex - puppet.jump_launch;
+    debug->Info("Clip %-20s %.3fs long; launch at %.3fs (hip %.3f), apex at %.3fs (hip %.3f)\n",
+                ARCHER_CLIPS[CLIP_JUMP_UP].name,clip->duration,
+                puppet.jump_launch,lowest,puppet.jump_apex,highest);
+    /*
+        And the headline, the same shape as the one MeasureClips logs: how well the authored jump
+        fits the jump the rules actually perform. Unlike the kick and the climb this one is close,
+        so the number is worth printing to keep it that way rather than to complain about it.
+    */
+    debug->Info("Jump rise: %.3fs of clip into %.3fs of flight -> %.2fx. Anticipation %.3fs and "
+                "landing %.3fs are not played by the rise.\n",
+                span,PUPPET_RISE_TIME,(PUPPET_RISE_TIME > 0.0f) ? (span / PUPPET_RISE_TIME) : 0.0f,
+                puppet.jump_launch,clip->duration - puppet.jump_apex);
 }
 
 void ApplicationArcher::BuildArrowViews(){
@@ -2022,6 +2088,14 @@ void ApplicationArcher::SyncArcherAnimation(){
                     non-interruptible clip that has not finished - the kick - which is precisely
                     the case where the rules move on before the animation is willing to.
                 */
+                /*
+                    Seeded BEFORE the transition, because a crossfade blends from the pose the
+                    destination is standing at - so setting the playhead afterwards would fade
+                    into the start frame and only then jump to where it was asked to begin.
+                */
+                if (puppet.choice.start_time >= 0.0f){
+                    lead->time_index = puppet.choice.start_time;
+                }
                 if (archer_model->TransitionToAnimation(lead)){
                     playing_clip = clip;
                     archer_model->clip_yaw = 0.0f;

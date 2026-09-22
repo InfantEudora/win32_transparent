@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1f02e4da-fa81-4634-9800-ae5b6cfa5ba7
-  modified: 2026-09-22T10:17:52.344Z
+  modified: 2026-09-22T11:01:02.522Z
 ---
 
 `apps/archer` - a side-view platformer about an archer, 3D assets, Windows, keyboard only.
@@ -185,6 +185,29 @@ because extraction pins the axis to the BIND pose - setting it on a gait does no
 flattens the 0.02-unit footfall bob. Verified by reading the hip bone live over MCP (it IS in
 `object_list`, as `mixamorig:Hips`): Walking pinned flat on x/z and still bobbing on y, Climb pinned
 on all three, Twirl free on all three.
+
+**THE AIR SET went in 2026-09-22** from a re-export carrying Jumping_Up, Falling_Idle and
+Standing_DrawArrow. Rising plays Jumping_Up, falling loops Falling_Idle, and Standing_DrawArrow is
+previewable but unselected until step 2's mask layer exists (it is a whole-body clip for something
+that has to happen while she runs).
+
+THE JUMP CLIP IS A WHOLE STANDING JUMP - anticipation crouch, launch, apex, fall, landing absorb,
+recovery, 1.933s - and this game jumps on the tick the button goes down, so the first 0.342s
+describes something that already happened. The rise starts at the MEASURED launch instead
+(`ApplicationArcher::MeasureJumpClip`, `PuppetChoice::start_time`, seeded BEFORE the transition or
+the crossfade fades into the start frame first). Find the launch as the lowest hip height BEFORE
+THE APEX, never the global minimum: the landing absorb dips to 0.285 against the anticipation's
+0.260, 7% apart, so a global min is one re-export away from playing the clip from near its end.
+Fit is 0.443s of clip into 0.390s of flight = 1.13x - the first one-shot here that does not hit its
+clamp (kick wants 4.9x, climb 9.3x). `PUPPET_RISE_TIME` is ARCHER_JUMP_SPEED/ARCHER_GRAVITY, a
+division not a number, so retuning the jump moves the fit with it.
+
+Extraction for both: ALL FLAGS OFF. Jumping_Up's hips rise 0.273 rig units but that is the body
+compressing and extending in place - Stage owns the 3.2 units of actual flight - so extracting the
+lift would delete the crouch, the push and the absorb, which is the clip. Still missing: a landing
+(the absorb is authored and unused at t~1.15-1.93 of Jumping_Up), an apex hold, and a run-jump
+variant (the air set ignores ground_speed, and the rules test asserts that so a new clip fails
+loudly rather than never being reached).
 
 Worth knowing for tuning: `ARCHER_RUN_SPEED` is 9.0 but the fastest clip covers 5.19, so at a full
 hold she is always ABOVE the ladder playing Running_Fast alone at rate 1.73. The blend space only

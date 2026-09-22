@@ -53,6 +53,9 @@ enum ArcherClip{
     CLIP_WARMUP,
     CLIP_DANCE,
     CLIP_TWIRL,
+    CLIP_JUMP_UP,
+    CLIP_FALL,
+    CLIP_DRAW,
     CLIP_COUNT
 };
 
@@ -171,6 +174,29 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 #define PUPPET_ACTION_RATE_MAX      2.50f
 
 /*
+    HOW LONG THE GAME'S RISE LASTS, derived rather than typed: a jump leaves the ground at
+    ARCHER_JUMP_SPEED and is pulled down by ARCHER_GRAVITY, so it stops climbing after v/g seconds.
+    0.39s at today's numbers. Retuning the jump moves this with it, which is the point of writing
+    it as a division - the clip is fitted to the game, so the game must not be able to drift away
+    from it silently.
+
+    The FALL has no equivalent constant because it has no fixed length: it runs until she hits
+    something, which is a property of the level rather than of the jump. That asymmetry is why the
+    rise is a one-shot fitted to a window and the fall is a loop.
+*/
+#define PUPPET_RISE_TIME            (ARCHER_JUMP_SPEED / ARCHER_GRAVITY)
+
+/*
+    The line between rising and falling, in units per second.
+
+    Zero, and deliberately not a band around it. The apex is the one moment where a hold pose and
+    the top of a jump arc look the same, so a clip change costs nothing there - which is exactly
+    where a hysteresis band would be spent to avoid a flicker that cannot happen anyway, since
+    vel_y passes through zero once per jump and never returns.
+*/
+#define PUPPET_RISE_VEL             0.0f
+
+/*
     How long the turnaround takes, in ticks.
 
     She is always side-on, so the model only ever faces +X or -X and a "turn" is a 180 degree yaw.
@@ -238,6 +264,19 @@ struct PuppetChoice{
     float rate = 1.0f;              //what to play it at, after clamping
     float wanted_rate = 1.0f;       //what matching the feet to the ground actually asked for
     /*
+        Where in the clip to BEGIN, in seconds, or negative for "wherever it already is".
+
+        Only the jump uses it, and only because Jumping_Up is authored as a whole standing jump -
+        anticipation crouch, launch, apex, fall, landing absorb, recovery - while this game's jump
+        leaves the ground on the tick the button goes down. Starting that clip at zero would have
+        her tucking into a crouch while already travelling upwards. So the rise starts at the
+        measured launch instead, and the 0.43s of anticipation in front of it is simply not played.
+
+        Applied on ENTRY only. A clip already running is left alone, or the playhead would be
+        pinned to the start frame every tick.
+    */
+    float start_time = -1.0f;
+    /*
         True when NOTHING IS AUTHORED for this state and some other clip is standing in.
 
         Not a warning - it is the shopping list. The panel lists every state that came back
@@ -280,6 +319,19 @@ public:
     //and it is what a ONE-SHOT clip's rate is matched against - an action has a duration to fit,
     //where a locomotion cycle has a stride to fit.
     float clip_duration[CLIP_COUNT] = {};
+
+    /*
+        The two moments in Jumping_Up that matter, in seconds. MEASURED off the hip's height at
+        load - see ApplicationArcher::MeasureJumpClip - because they are the difference between
+        "the clip is 1.933 seconds long" and "the part of it this game can use is 0.47 of them".
+
+        jump_launch is the bottom of the anticipation crouch, which is where the body starts
+        travelling upwards and therefore the first frame that matches a character already rising.
+        jump_apex is the top. The span between them is what gets fitted to PUPPET_RISE_TIME; the
+        anticipation before and the landing after are not played by the rise at all.
+    */
+    float jump_launch = 0.0f;
+    float jump_apex = 0.0f;
 
     //The uniform scale the model is drawn at. A clip's speed in WORLD units is its measured speed
     //times this, which is why the two have to be known together - a rig authored half-size walks

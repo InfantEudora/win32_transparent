@@ -444,6 +444,9 @@ private:
     //Where in each locomotion clip's cycle the left foot is planted, found by posing the model
     //through the clip and watching the toe. What the blend space needs to line two cycles up.
     void MeasureClipPhases();
+    //Where the jump clip's anticipation bottoms out and where it peaks, read off the hip's height.
+    //The rise plays the span between them and skips the crouch in front of it.
+    void MeasureJumpClip();
     void BuildArrowViews();
     void BuildAimArc();
     //The backdrop quad. Survivable if the image is missing - see the note on the definition.

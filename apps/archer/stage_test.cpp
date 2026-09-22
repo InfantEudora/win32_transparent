@@ -1435,12 +1435,55 @@ static void TestPuppet(){
     CheckNear(c.rate,1.0f,0.001f,"with matching off a clip plays at 1.0 whatever the speed");
     p.f_match_feet = true;
 
-    //Everything with no clip authored falls through to the idle AND says so.
+    /*
+        THE AIR SET, split on vel_y alone.
+
+        The measured numbers have to be fed in by hand here because a rules test has no .glb -
+        MeasureJumpClip supplies them in the app. These are this export's: the crouch bottoms out
+        at 0.33s and the apex is at 0.80s.
+    */
+    p.jump_launch = 0.333f;
+    p.jump_apex = 0.800f;
     in.f_on_ground = false;
     in.speed = 0.0f;
     in.ground_speed = 0.0f;
+    in.vel_y = ARCHER_JUMP_SPEED;
     c = p.Choose(in);
-    Check(c.f_placeholder,"airborne is a placeholder - nothing is authored for it");
+    Check(c.clip == CLIP_JUMP_UP,"rising plays the jump");
+    Check(!c.f_placeholder,"which is authored now, not a stand-in");
+    CheckNear(c.start_time,0.333f,0.001f,"and starts at the launch, skipping the anticipation");
+    /*
+        The rate fits launch-to-apex into the time the rules spend climbing. Spelled out rather
+        than compared to a literal, so that retuning the jump moves the expectation with it - the
+        whole reason PUPPET_RISE_TIME is a division and not a number.
+    */
+    CheckNear(c.rate,(0.800f - 0.333f) / (ARCHER_JUMP_SPEED / ARCHER_GRAVITY),0.001f,
+              "at the rate that fits the climb");
+    Check(c.rate <= PUPPET_ACTION_RATE_MAX,"and inside the one-shot clamp, unlike the kick");
+
+    in.vel_y = 0.0f;
+    Check(p.Choose(in).clip == CLIP_FALL,"the apex counts as falling - vel_y > 0 is the test");
+    in.vel_y = -ARCHER_JUMP_SPEED;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_FALL,"and so does actually falling");
+    Check(c.start_time < 0.0f,"the fall is a loop, so it has no start to seed");
+    Check(!c.f_placeholder,"and it is authored too");
+    /*
+        A jump does not stop being a jump because she is moving. The air set ignores ground_speed
+        entirely today - there is no run-jump variant authored - and this says so out loud, so the
+        day one arrives the test fails rather than the blend quietly never being reached.
+    */
+    in.vel_y = ARCHER_JUMP_SPEED;
+    in.speed = ARCHER_RUN_SPEED;
+    in.ground_speed = ARCHER_RUN_SPEED;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_JUMP_UP,"a running jump plays the same rise - no run-jump is authored");
+    Check(c.blend_clip < 0,"and the ladder does not reach into the air");
+    in.speed = 0.0f;
+    in.ground_speed = 0.0f;
+    in.vel_y = 0.0f;
+
+    //The states with still nothing authored fall through to the idle AND say so.
     in.f_on_ground = true;
     in.mode = MODE_HANG;
     Check(p.Choose(in).f_placeholder,"and so is hanging");

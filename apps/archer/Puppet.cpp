@@ -64,6 +64,32 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         is measured and reported with the rest; it is not in PUPPET_LOCOMOTION.
     */
     { "Twirl",               true,  true,   false, false, false },
+    /*
+        THE AIR SET, added 2026-09-22. Both answer "no" to every extraction column, and the
+        vertical one is the answer worth explaining.
+
+        Jumping_Up's hips rise 0.273 rig units between the crouch and the apex - but that is the
+        body COMPRESSING AND EXTENDING, not the character leaving the ground. She is authored
+        jumping on the spot and lands where she started; the 3.2 units of actual flight belong to
+        Stage, which applies ARCHER_JUMP_SPEED against ARCHER_GRAVITY. Extracting the lift would
+        pin the hips at bind height and delete the crouch, the push and the landing absorb - which
+        is the entire clip. Same reasoning as a gait's footfall bob, an order of magnitude bigger.
+
+        Falling_Idle is a HELD POSE: its hip moves 0.0005 units across the whole 0.733s. Looping it
+        is free and there is nothing in it to extract.
+    */
+    { "Jumping_Up",          false, false,  false, false, false },
+    { "Falling_Idle",        true,  false,  false, false, false },
+    /*
+        And the draw, which arrived in the same export and has no home yet.
+
+        It is a WHOLE-BODY clip for something that has to happen while she is also walking, running
+        or falling, so playing it as one more state would mean she stops moving to draw. That is
+        what step 2's upper-body mask layer is for, and until that exists this is previewable and
+        nothing selects it. Its -29.2 degrees of net hip yaw is her squaring up to aim, which is
+        performance rather than a turn - so f_turns stays off with the rest.
+    */
+    { "Standing_DrawArrow",  false, false,  false, false, false },
 };
 
 const int PUPPET_LOCOMOTION[PUPPET_LOCOMOTION_COUNT] = { CLIP_WALK, CLIP_RUN_SLOW, CLIP_RUN_FAST };
@@ -206,9 +232,35 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         return out;
     }
 
+    /*
+        AIRBORNE: two clips and one number decides between them, vel_y.
+
+        Rising plays Jumping_Up from its measured launch, fitted to the game's rise. Falling loops
+        Falling_Idle, which is a held float pose and has nothing to fit. There is no apex clip and
+        no landing clip yet, so the fall simply holds until the ground arrives - see the air-set
+        table in animation_plan.md for what that costs and what is still missing.
+
+        THE RISE IS FITTED, THE FALL IS NOT, and that asymmetry is real rather than an omission:
+        a rise always takes v/g seconds and a fall takes as long as the drop is tall.
+    */
     if (!in.f_on_ground){
-        out.clip = CLIP_IDLE;
-        out.f_placeholder = true;
+        if (in.vel_y > PUPPET_RISE_VEL){
+            out.clip = CLIP_JUMP_UP;
+            out.start_time = jump_launch;
+            /*
+                Launch-to-apex against the time the game spends climbing. On this export that is
+                0.467s of clip into 0.390s of jump - 1.20x, comfortably inside the clamp, which is
+                the first thing in this file that has fitted a one-shot without hitting its limit.
+            */
+            float span = jump_apex - jump_launch;
+            if (span > 0.01f && PUPPET_RISE_TIME > 0.0f){
+                out.wanted_rate = span / PUPPET_RISE_TIME;
+                out.rate = out.wanted_rate;
+                if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
+            }
+        }else{
+            out.clip = CLIP_FALL;
+        }
         return out;
     }
 

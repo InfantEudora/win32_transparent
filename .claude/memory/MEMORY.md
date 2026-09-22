@@ -46,3 +46,4 @@
 - [AddPhysics leaves gravity off](addphysics_gravity_off.md) — dynamic bodies need SetGravityEnabled(true); no gravity means no friction, and it looks exactly like the solver exploding
 - [Renderer::skinned_shader is NULL by default](renderer_skinned_shader_null.md) — an app must assign it or every skinned mesh silently fails to draw, with no warning and no error
 - [Root yaw extraction](root_yaw_always_extracted.md) — FIXED 2026-09-22 with Animation::extract_yaw_root_motion; before that a clip's hip rotation was deleted from the pose on every non-PlayerCharacter object, and it still has to be opted into per clip or run cycles wag
+- [Archer terrain plan](archer_terrain_plan.md) — AGREED 2026-09-22: marching-cubes terrain whose SDF field is built FROM the StageBlock blockout, so colliders never change; only BLOCK_SOLID melts, the top face must be pinned exactly, test bay left of the start is SOLID-only; plan at apps/archer/terrain_plan.md

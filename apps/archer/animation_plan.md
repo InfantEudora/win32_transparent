@@ -492,6 +492,81 @@ Measured after: a full sweep 0.5 → 9.0 → 0.0 in puppet mode produces exactly
 
 ---
 
+## Step 5 — the air set. PARTLY BUILT (2026-09-22).
+
+`Jumping_Up`, `Falling_Idle` and `Standing_DrawArrow` arrived in one export. The first two are
+wired; the third has nowhere to go until step 2.
+
+### The jump clip is a whole jump, and the game only has room for part of it
+
+This is the finding worth acting on. `Jumping_Up` is authored as a complete standing jump — the
+phases are unmistakable in the hip's height, sampled straight off the root track:
+
+| phase | t | hip y |
+|---|---|---|
+| standing | 0.03 | 0.463 |
+| **anticipation crouch** | 0.34 | **0.260** ← lowest |
+| launch / extension | 0.43–0.63 | 0.296 → 0.634 |
+| **apex** | 0.79 | **0.746** ← highest |
+| falling | 0.93–1.13 | 0.690 → 0.456 |
+| **landing absorb** | 1.33 | 0.285 |
+| recovery to standing | 1.93 | 0.463 |
+
+This game's jump leaves the ground **on the tick the button goes down** — there is no anticipation
+window, and there cannot be one without adding input latency to a platformer. So 0.342s of the
+clip describes something that has already happened by the time she is airborne, and playing it
+from zero would have her tuck into a crouch while already travelling upwards.
+
+The rise therefore starts at the **launch**, measured as the lowest hip height *before the apex*:
+
+```
+Clip Jumping_Up   1.933s long; launch at 0.342s (hip 0.260), apex at 0.785s (hip 0.746)
+Jump rise: 0.443s of clip into 0.390s of flight -> 1.13x.
+           Anticipation 0.342s and landing 1.148s are not played by the rise.
+```
+
+**1.13x is the first one-shot in this app that fits without hitting its clamp** — the kick wants
+4.9x and the climb 9.3x. The rise time is not a typed constant either: `PUPPET_RISE_TIME` is
+`ARCHER_JUMP_SPEED / ARCHER_GRAVITY`, so retuning the jump moves the fit with it.
+
+Finding the launch as "the lowest point **before the apex**" rather than the global minimum
+matters more than it looks: the landing absorb dips to 0.285 against the anticipation's 0.260, only
+7% apart. A global minimum is one re-export away from finding the landing instead and playing the
+clip from near its end.
+
+Measured through a real jump — clip, rate and the hip's own height, sampled live:
+
+```
+world.y    vy     clip            hip.y
+   1.65  14.30    Jumping_Up      0.4117
+   3.27   8.00    Jumping_Up      0.6335
+   3.97   0.30    Jumping_Up      0.7106     apex 0.746
+   3.34  -7.96    Falling_Idle    0.4309
+   1.44 -16.46    Falling_Idle    0.4387
+   0.90   0.00    Idle            0.5038
+```
+
+The hip rises monotonically from the moment she leaves the ground — the crouch is skipped, not
+merely shortened — and the apex pose lands within 0.04 of the clip's own peak.
+
+### What is still missing, in the order it would pay off
+
+1. **The landing.** She goes from `Falling_Idle` straight to `Idle` on a 0.15s crossfade, with no
+   absorb at all. The absorb *is authored*, sitting unused at t ≈ 1.15–1.93 of `Jumping_Up`. It
+   needs either splitting into its own clip or playing the tail from an offset on touchdown, and
+   it wants a soft/hard split on impact speed.
+2. **An apex.** `Falling_Idle` is a held pose (its hip moves 0.0005 units across 0.733s), so the
+   top of the arc has no hang and the fall has no acceleration in the pose. One or two frames of
+   apex would do more here than a longer fall clip.
+3. **A run-jump.** The air set ignores `ground_speed` entirely — a sprinting jump plays the same
+   standing rise. The rules test asserts this so the day a variant is authored it fails loudly
+   rather than the new clip never being reached.
+
+`Falling_Idle` being static also means it costs nothing to loop and nothing to extract, which is
+why it is marked `f_looping` and nothing else.
+
+---
+
 ## Step 0 — the seam. BUILT.
 
 The thing the original plan was missing: it was all mechanism, and said nothing about **who decides
@@ -596,9 +671,11 @@ the state, and the panel lists it.
 | backing up | the same rung played backwards ✓ |
 | kicking | `Kick_Front`, mistimed against `KICK_TICKS` (wants 4.9x) ✓ |
 | climbing | `Climb`, badly mistimed against `LEDGE_CLIMB_TICKS` (wants 9.3x) ✓ |
-| airborne | **placeholder** — idle |
+| rising | `Jumping_Up` from its measured launch, fitted at 1.13x ✓ |
+| falling | `Falling_Idle`, looped ✓ |
+| landing | **placeholder** — straight to `Idle`; the absorb exists in `Jumping_Up` and is unused |
 | hanging | **placeholder** — idle |
 | on the rope | **placeholder** — idle |
-| drawing / loosing | **placeholder** — nothing; the bow is invisible to the animation |
+| drawing / loosing | `Standing_DrawArrow` exists but nothing selects it — it needs step 2's mask layer |
 
-The air set is now the largest hole, and the two mistimings are the largest decisions.
+The two mistimings are the largest decisions; landing and the mask layer are the largest holes.
