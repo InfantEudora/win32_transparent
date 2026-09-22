@@ -46,6 +46,39 @@ class Animation{
     //footstep bob)? Both default to "stays on the bone" so a clip has to opt into moving the character.
     bool extract_horizontal_root_motion = false;   //X/Z - locomotion (walking, running, turning while moving)
     bool extract_vertical_root_motion = false;     //Y   - genuine height change (climbing, jumping)
+    /*
+        And the same question for the hip's YAW: is this clip TURNING the character, or is its hip
+        rotation part of the performance?
+
+        A pivot clip means the turn - drop it and the character slides round facing the wrong way.
+        A run cycle's hips counter-rotate with the stride as a matter of gait - hand THAT to the
+        world transform and the whole body wags from side to side (23 degrees of it, measured on
+        apps/archer's Running_Fast).
+
+        UNTIL 2026-09-22 THIS WAS NOT A CHOICE: the twist was taken off the bone unconditionally
+        and handed to Object::ApplyRootMotion, whose base does nothing - so on anything that was
+        not a PlayerCharacter the root bone's yaw was deleted from the POSE and then discarded.
+        Not "the character does not turn": the hips did not rotate at all, measured at exactly
+        0.00 degrees of twist across every clip in apps/archer. That is a third state nobody ever
+        wants, and this flag is what removes it. Off, the authored rotation stays on the bone and
+        the pose is exactly as animated; on, it moves to the character. Never neither.
+
+        Defaults false with the other two, and for the same reason: a clip opts into moving the
+        character rather than doing it by surprise.
+
+        IT DOES NOT COMPOSE WITH A TRANSLATION LEFT ON THE BONE, and that is the one thing to know
+        before setting it. The character's rotation is applied ABOVE the root bone, so
+        R(yaw) * T(p) = T(R(yaw)*p) * R(yaw): any authored offset still sitting on the bone is
+        ROTATED by the extracted yaw instead of translated, and a clip that walks while it turns
+        orbits a point rather than walking. Measured on apps/archer's Twirl - a 0.879-unit step
+        back while spinning - the hips traced a circle of that radius instead of a line.
+
+        So a clip whose yaw is extracted should either turn ON THE SPOT, or extract its translation
+        too. Counter-rotating the leftover offset here would need the twist at the clip's START,
+        which this function does not have and cannot sensibly guess at, so the combination is left
+        as something for the caller to avoid rather than something silently half-corrected.
+    */
+    bool extract_yaw_root_motion = false;          //Y rotation - pivots, turn-in-place, spins
 
     //If this (non-looping) animation finishes and nothing else was requested, automatically
     //transition to this animation instead of pausing on the last frame.

@@ -42,5 +42,7 @@
 - [USE_PHYSICS flag](use_physics_flag.md) — the ONE flag that changes shared core objects: follows CONFIG's separate-core-tree pattern, not USE_MCP's _none twins; --gc-sections does not reclaim rp3d on its own
 - [Asset origin convention](asset_origin_convention.md) — models are spread across the Blender scene for authoring; the engine ignores those positions, armatures included (the android merge broke this and offset bomber's enemies by a tile)
 - [Texture unit map](texture_unit_map.md) — two mirrored files (core/TextureUnits.h + shaders/texture_units.glsl); Android's 5 material units is deliberate, atlas the textures rather than widen the range
-- [Archer app](archer_app.md) — apps/archer side-view platformer prototype: Stage rules/view split, archer body collides with nothing, bow slice done; ledge/kick/rope/knife open
+- [Archer app](archer_app.md) — apps/archer side-view platformer prototype: Stage rules/view split, archer body collides with nothing, Puppet animation seam; bow/ledge/props/kick/rope + animation step 0 done, tightrope and knife parked
 - [AddPhysics leaves gravity off](addphysics_gravity_off.md) — dynamic bodies need SetGravityEnabled(true); no gravity means no friction, and it looks exactly like the solver exploding
+- [Renderer::skinned_shader is NULL by default](renderer_skinned_shader_null.md) — an app must assign it or every skinned mesh silently fails to draw, with no warning and no error
+- [Root yaw extraction](root_yaw_always_extracted.md) — FIXED 2026-09-22 with Animation::extract_yaw_root_motion; before that a clip's hip rotation was deleted from the pose on every non-PlayerCharacter object, and it still has to be opted into per clip or run cycles wag

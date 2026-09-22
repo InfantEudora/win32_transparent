@@ -16,8 +16,8 @@
 #
 #     mingw32-make.exe rules                         # -> build/stage_test.exe, then runs it
 #
-# `rules` builds stage_test.cpp against Stage.cpp ALONE - no core, no window, no GPU - and
-# checks the game's rules: that a held jump peaks where v^2/2g minus the Euler half-step
+# `rules` builds stage_test.cpp against Stage.cpp and Puppet.cpp ALONE - no core, no window,
+# no GPU - and checks the game's rules: that a held jump peaks where v^2/2g minus the Euler half-step
 # says, that a tapped one is markedly shorter, that coyote time and the jump buffer are
 # windows rather than free passes, that a running jump clears the five-unit gap, that the
 # one-way platform works from both sides, that a full-draw arrow cannot tunnel through a
@@ -36,6 +36,7 @@ PROJECT := archer
 APP_SRCS += main.cpp
 APP_SRCS += ApplicationArcher.cpp
 APP_SRCS += Stage.cpp
+APP_SRCS += Puppet.cpp
 
 #NO SOUND YET. Nothing here calls SoundSystem - the jump, the draw, the loose and the thud
 #are all places a sound obviously goes, and every one of them already has an event in
@@ -57,10 +58,9 @@ USE_SOUND := 0
 # the same reason it matters at run time, and nothing checks that these two lists agree, so
 # they are worth reading together.
 #
-# apps/archer/assets is EMPTY today: this prototype builds every mesh from
-# core/Primitives.h, so nothing resolves out of it yet. It is named anyway because the
-# archer's own model, bow and level props land there, and a root discovered late is a first
-# asset that silently fails to load.
+# apps/archer/assets now holds meshes/archer.glb - the character, her rig and every clip.
+# The level itself is still built from core/Primitives.h, so that one file is the whole of
+# what resolves out of this root today; the bow, the arrow and the props follow.
 #
 # Only read when BAKE_ASSETS is 1, so this costs an ordinary build nothing.
 #---------------------------------------------------------------------------------------
@@ -86,5 +86,5 @@ include $(ROOT)/engine.mk
 .PHONY: rules
 rules:
 	@mkdir -p build
-	$(CXX) -std=c++17 -Wall -g -o build/stage_test.exe stage_test.cpp Stage.cpp
+	$(CXX) -std=c++17 -Wall -g -o build/stage_test.exe stage_test.cpp Stage.cpp Puppet.cpp
 	@./build/stage_test.exe

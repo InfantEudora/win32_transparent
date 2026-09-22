@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include "Stage.h"
+#include "Puppet.h"
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -1181,6 +1182,276 @@ static void TestRope(){
 
 //--- Determinism ---------------------------------------------------------------------------------
 
+/*
+    --- the puppet ---------------------------------------------------------------------------
+
+    The ANIMATION's decisions, which are testable here for exactly the same reason the rules are:
+    Puppet.h names no engine type either, so "at a dead run the walk cycle is played at 1.8x" is a
+    fact that can be asserted rather than squinted at.
+
+    NO CLIP SPEEDS ARE TYPED IN FROM THE ASSET. The real ones are measured off the .glb at load
+    (ApplicationArcher::MeasureClips), and a test that repeated them here would go quietly wrong
+    the first time the walk is re-exported with a longer stride. What is checked instead is the
+    RELATIONSHIP - that the rate is the speed over the clip's own native speed, that it is clamped,
+    and that the clamp is what reports the missing animation.
+*/
+static void TestPuppet(){
+    printf("\n[the puppet]\n");
+
+    Puppet p;
+    //A deliberately round stand-in: a clip that covers one unit a second on a rig drawn at 2x
+    //walks at 2 units a second, whatever the real export happens to say.
+    p.model_scale = 2.0f;
+    p.clip_speed[CLIP_WALK] = 1.0f;
+    CheckNear(p.WorldClipSpeed(CLIP_WALK),2.0f,0.0001f,"a clip's world speed is its own speed times the model scale");
+
+    /*
+        THE ONE COMBINATION THE CLIP TABLE MAY NOT CONTAIN.
+
+        A clip whose yaw is extracted turns the CHARACTER, and the character's rotation is applied
+        above the root bone - so any translation left on that bone is rotated by it rather than
+        translated. R(yaw) * T(p) = T(R(yaw)*p) * R(yaw). A clip that walks while turning therefore
+        orbits a point instead of walking: measured on Twirl, the hips traced a circle growing to
+        1.759 world units of radius, which is its authored 0.879-unit walk-back times the model
+        scale, rotated.
+
+        Extracting the translation too is not the escape, because Stage owns where the archer is and
+        the app discards it. So a clip that turns must turn ON THE SPOT, and this is the check that
+        says so before anyone has to notice it on screen.
+    */
+    int f_travels_and_turns = -1;
+    for (int i = 0; i < CLIP_COUNT; i++){
+        if (ARCHER_CLIPS[i].f_turns && ARCHER_CLIPS[i].f_travels){
+            f_travels_and_turns = i;
+        }
+    }
+    {
+        char detail[200];
+        snprintf(detail,sizeof(detail),"%s both travels and turns - it would orbit a point",
+                 (f_travels_and_turns >= 0) ? ARCHER_CLIPS[f_travels_and_turns].name : "");
+        Check(f_travels_and_turns < 0,"no clip has its yaw extracted while its travel stays on the bone",detail);
+    }
+
+    ArcherAnimParams in;
+    in.f_on_ground = true;
+
+    //Standing still.
+    in.speed = 0.0f;
+    in.ground_speed = 0.0f;
+    PuppetChoice c = p.Choose(in);
+    Check(c.clip == CLIP_IDLE,"standing still plays the idle");
+    Check(!c.f_placeholder,"and the idle is a real clip, not a stand-in");
+
+    //Moving at exactly the clip's own speed: the feet are planted and nothing is stretched.
+    in.speed = 2.0f;
+    in.ground_speed = 2.0f;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_WALK,"moving plays the walk");
+    CheckNear(c.rate,1.0f,0.001f,"at the clip's own speed it plays at 1.0","the feet are planted");
+
+    //Three quarters of that speed gives three quarters of the rate, which is the whole of the
+    //rate-matching rule. Chosen to sit INSIDE the clamp - the clamped case is checked separately
+    //below, and a test that straddles a clamp is testing the clamp while claiming to test the rule.
+    in.speed = 1.5f;
+    in.ground_speed = 1.5f;
+    c = p.Choose(in);
+    CheckNear(c.rate,0.75f,0.001f,"at three quarters of the clip's speed it plays at three quarters rate");
+
+    /*
+        And below the floor it stops slowing down.
+
+        A walk played at a quarter speed does not read as a slow walk, it reads as a video
+        buffering - so there is a bottom to the match as well as a top. It is the cruder of the
+        two limits, because the RIGHT answer at low speed is to blend toward the idle rather than
+        to slow the walk at all; that is what the blend space (step 1) is for, and this clamp is
+        what stands in until it exists.
+    */
+    in.speed = 0.5f;
+    in.ground_speed = 0.5f;
+    c = p.Choose(in);
+    CheckNear(c.rate,PUPPET_RATE_MIN,0.001f,"very slow movement is clamped at the rate floor");
+
+    /*
+        And a full run, which is where the missing clip shows up as a number.
+
+        wanted_rate is what planting the feet would take; rate is what it is allowed. The gap
+        between them is foot slide, and this check exists so that adding a real run cycle CHANGES
+        this test rather than quietly not mattering.
+    */
+    in.speed = ARCHER_RUN_SPEED;
+    in.ground_speed = ARCHER_RUN_SPEED;
+    c = p.Choose(in);
+    CheckNear(c.wanted_rate,ARCHER_RUN_SPEED / 2.0f,0.001f,
+              "a full run asks for speed over the clip's native speed");
+    CheckNear(c.rate,PUPPET_RATE_MAX,0.001f,"but is clamped, because past that a walk is a fast-forward");
+    Check(c.wanted_rate > c.rate,"so the clamp is what reports how much clip is missing");
+
+    //Backing up is the same clip, backwards - no turn clip, no walking on the spot.
+    in.speed = -2.0f;
+    in.ground_speed = 2.0f;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_WALK,"backing up is still the walk");
+    CheckNear(c.rate,-1.0f,0.001f,"played backwards","one minus sign instead of a second clip");
+
+    /*
+        --- the locomotion ladder ---------------------------------------------------------------
+
+        With more than one way of covering ground, the clip is CHOSEN before it is stretched. Set
+        up a ladder an octave apart so the boundaries are unambiguous, and check that each speed
+        lands on the clip nearest it IN RATIO - which is the thing that would be wrong if the
+        search ever went back to comparing differences.
+    */
+    p.clip_speed[CLIP_RUN_SLOW] = 2.0f;     //4 units/s at the 2x model scale
+    p.clip_speed[CLIP_RUN_FAST] = 4.0f;     //8
+    in.f_on_ground = true;
+
+    struct { float speed; int clip; const char* what; } ladder[] = {
+        { 1.0f,  CLIP_WALK,     "a stroll picks the walk" },
+        { 2.0f,  CLIP_WALK,     "the walk's own speed picks the walk" },
+        { 4.0f,  CLIP_RUN_SLOW, "the slow run's own speed picks the slow run" },
+        { 8.0f,  CLIP_RUN_FAST, "the fast run's own speed picks the fast run" },
+        { 20.0f, CLIP_RUN_FAST, "and past every clip it stays on the fastest one" },
+    };
+    for (size_t i = 0; i < sizeof(ladder)/sizeof(ladder[0]); i++){
+        in.speed = ladder[i].speed;
+        in.ground_speed = ladder[i].speed;
+        c = p.Choose(in);
+        char detail[160];
+        snprintf(detail,sizeof(detail),"at %.1f it picked %s",ladder[i].speed,ARCHER_CLIPS[c.clip].name);
+        Check(c.clip == ladder[i].clip,ladder[i].what,detail);
+    }
+
+    /*
+        The one that says the choice is made in RATIO space rather than on the difference.
+
+        At 3.0 the walk (2.0) is 1.0 away and the slow run (4.0) is also 1.0 away - a tie on the
+        difference - but the walk would have to stretch to 1.50x and the slow run only to 0.75x.
+        Neither is obviously better by that measure either, so the honest probe is just past it:
+        at 3.2 the slow run needs 0.80x and the walk 1.60x, and the run must win.
+    */
+    in.speed = 3.2f;
+    in.ground_speed = 3.2f;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_RUN_SLOW,"between two clips it takes the one needing the least stretch");
+    CheckNear(c.rate,0.80f,0.001f,"and stretches that one");
+
+    //A clip that was never measured - missing from the export - cannot be chosen, however fast.
+    p.clip_speed[CLIP_RUN_FAST] = 0.0f;
+    in.speed = 20.0f;
+    in.ground_speed = 20.0f;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_RUN_SLOW,"a clip missing from the export is never picked");
+    p.clip_speed[CLIP_RUN_FAST] = 4.0f;
+
+    //And the climb, which has a clip and a window that disagree by a lot.
+    p.clip_duration[CLIP_CLIMB] = (float)LEDGE_CLIMB_TICKS * ARCHER_DT * 4.0f;
+    in.mode = MODE_CLIMB;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_CLIMB,"climbing plays the climb");
+    Check(!c.f_placeholder,"which is a real clip now, not a stand-in");
+    CheckNear(c.wanted_rate,4.0f,0.001f,"asking for the rate that fits LEDGE_CLIMB_TICKS");
+    CheckNear(c.rate,PUPPET_ACTION_RATE_MAX,0.001f,"clamped, so the gap is visible rather than a blur");
+    in.mode = MODE_GROUND;
+    in.speed = 2.0f;
+    in.ground_speed = 2.0f;
+
+    //With matching off, every clip plays at its authored rate and the feet skate instead.
+    p.f_match_feet = false;
+    in.speed = ARCHER_RUN_SPEED;
+    in.ground_speed = ARCHER_RUN_SPEED;
+    c = p.Choose(in);
+    CheckNear(c.rate,1.0f,0.001f,"with matching off a clip plays at 1.0 whatever the speed");
+    p.f_match_feet = true;
+
+    //Everything with no clip authored falls through to the idle AND says so.
+    in.f_on_ground = false;
+    in.speed = 0.0f;
+    in.ground_speed = 0.0f;
+    c = p.Choose(in);
+    Check(c.f_placeholder,"airborne is a placeholder - nothing is authored for it");
+    in.f_on_ground = true;
+    in.mode = MODE_HANG;
+    Check(p.Choose(in).f_placeholder,"and so is hanging");
+    in.mode = MODE_ROPE;
+    Check(p.Choose(in).f_placeholder,"and swinging on the rope");
+    in.mode = MODE_GROUND;
+
+    //The kick is the one action with a real clip, and it is fitted to the window the RULES give
+    //it rather than to any speed.
+    p.clip_duration[CLIP_KICK] = (float)KICK_TICKS * ARCHER_DT * 2.0f;   //twice as long as it may take
+    in.action = ACTION_KICK;
+    c = p.Choose(in);
+    Check(c.clip == CLIP_KICK,"a kick plays the kick clip");
+    CheckNear(c.wanted_rate,2.0f,0.001f,"at the rate that fits it into KICK_TICKS");
+    in.action = ACTION_NONE;
+
+    /*
+        The turnaround.
+
+        PUPPET_TURN_TICKS ticks to cross 180 degrees, and - the part that is a choice rather than
+        arithmetic - it passes through ZERO on the way. Zero is facing the camera; 180 is facing
+        away. Turning toward the viewer reads as a person changing their mind, turning away reads
+        as a person leaving.
+    */
+    Puppet t;
+    ArcherAnimParams turn;
+    turn.f_on_ground = true;
+    turn.facing = 1.0f;
+    t.Tick(turn);
+    CheckNear(t.yaw_deg,PUPPET_YAW_RIGHT,0.001f,"facing right holds the model at its right yaw");
+
+    turn.facing = -1.0f;
+    bool f_went_the_long_way = false;
+    bool f_monotonic = true;
+    float previous = t.yaw_deg;
+    int ticks_to_turn = 0;
+    for (int i = 0; i < PUPPET_TURN_TICKS * 3; i++){
+        t.Tick(turn);
+        //Going the LONG way round - through 180, showing the camera her back - is the failure this
+        //is looking for, and it shows up as a yaw that leaves the quarter-turn either side of zero.
+        //Checking the bound rather than for an exact zero, because with an odd number of ticks the
+        //slew steps over zero rather than landing on it.
+        if (fabsf(t.yaw_deg) > 90.0f + 0.001f){
+            f_went_the_long_way = true;
+        }
+        if (t.yaw_deg >= previous){
+            f_monotonic = false;
+        }
+        previous = t.yaw_deg;
+        if (t.yaw_deg <= PUPPET_YAW_LEFT + 0.001f){
+            ticks_to_turn = i + 1;
+            break;
+        }
+    }
+    Check(ticks_to_turn == PUPPET_TURN_TICKS,"a turnaround takes exactly PUPPET_TURN_TICKS ticks");
+    Check(!f_went_the_long_way,"and turns TOWARD the camera - it never passes behind a quarter turn");
+    Check(f_monotonic,"turning one way the whole time, with no wobble at the ends");
+
+    /*
+        And the seam itself: the rules, read into the parameters.
+
+        Signed along FACING rather than along +X, which is the property the blend space will run
+        on - so it is worth pinning down before anything depends on it.
+    */
+    Stage s;
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    Run(s,30,right);
+    ArcherAnimParams got;
+    DescribeArcher(s,got);
+    Check(got.facing > 0.0f,"running right faces right");
+    Check(got.speed > 0.0f,"and reports a POSITIVE speed - moving the way she faces");
+    CheckNear(got.ground_speed,fabsf(s.vel.x),0.0001f,"ground speed is the unsigned one");
+
+    //Now turn her around and check the sign flips while the ground speed does not.
+    ArcherInput left;
+    left.move_axis = -1.0f;
+    StageEvents ev;
+    s.Tick(left,ev);        //one tick: still facing right, now decelerating leftward
+    DescribeArcher(s,got);
+    Check(got.speed < got.ground_speed + 0.0001f,"a speed relative to facing is never above the unsigned one");
+}
+
 static void TestDeterminism(){
     printf("determinism\n");
 
@@ -1224,6 +1495,7 @@ int main(void){
     TestObstacles();
     TestKick();
     TestRope();
+    TestPuppet();
     TestDeterminism();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);

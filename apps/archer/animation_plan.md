@@ -1,7 +1,7 @@
 # Archer Animation Plan
 
-How other engines handle heavy blending and mid-clip changes, what this engine already has, and the
-order worth building it in for the archer prototype.
+How other engines handle heavy blending and mid-clip changes, what this engine already has, what the
+archer's own asset actually contains, and the order worth building it in.
 
 The problem this is answering: the archer is a **side-view, fast-paced** platformer, so most
 animations involve turning around, and actions have to start before the previous one has finished.
@@ -17,6 +17,70 @@ why "blend faster" does not fix it.
 
 ---
 
+## The asset, measured
+
+`apps/archer/assets/meshes/archer.glb` — one skin, one skinned mesh, fourteen clips, one 4096x4096
+base-colour texture. Everything below is read out of the file rather than assumed, and the app
+re-measures all of it at load (`ApplicationArcher::MeasureClips`) so a re-export corrects these
+numbers instead of contradicting them silently.
+
+```
+skin        archer_armature, 65 joints, single root (mixamorig:Hips)
+mesh        archer, 23,699 verts / 61,197 indices, skinned, elf_archer_material
+rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_HEIGHT (1.80)
+```
+
+| clip | secs | loops | native | at 2.02x | rate at a full run |
+|---|---|---|---|---|---|
+| `Idle` | 12.30 | yes | — | — | — |
+| `Idle_LookingAround` | 12.50 | yes | — | — | — |
+| `Walking` | 1.00 | yes | 0.78/s | 1.58/s | 5.7x |
+| `Walking2` | 1.90 | yes | 0.73/s | 1.48/s | 6.1x |
+| `Running_Slow` | 0.77 | yes | 1.45/s | 2.92/s | 3.1x |
+| **`Running_Fast`** | **0.57** | yes | **2.57/s** | **5.19/s** | **1.73x** |
+| `Running_TurnAround` | 0.70 | no | in place | — | — |
+| `Kick_Front` | 1.13 | no | in place | — | — |
+| `Climb` | 2.80 | no | a mantle: +1.01 up, 1.50 forward | — | — |
+| `Crouch` | 4.00 | no | in place | — | — |
+| `Stretching` | 11.07 | yes | in place | — | — |
+| `WarmUp` | 14.67 | yes | in place | — | — |
+| `Dance` | 8.67 | yes | in place | — | — |
+| `Twirl` | 4.00 | yes | 0.22/s | 0.44/s | 20.3x |
+
+(`Twirl` travels 0.879 units while spinning a full turn that nets -3.6 deg - see the yaw rule below.)
+
+**`Running_Fast` closes the locomotion gap almost entirely.** `ARCHER_RUN_SPEED` is 9.0 and that
+clip covers 5.19 units a second, so a full sprint plays it at **1.73x** — inside `PUPPET_RATE_MAX`,
+which is to say the feet very nearly plant. The first export had only the walk and slid **5.7x**.
+What is left is a ladder rather than a gap:
+
+```
+idle  ->  Walking 1.58/s  ->  Running_Slow 2.92/s  ->  Running_Fast 5.19/s  ->  game tops out 9.0
+```
+
+`Puppet::Choose` picks whichever rung needs the least stretching, judged in RATIO rather than in
+units per second, then stretches it. That is deliberately the same search the blend space wants:
+step 1 keeps it and takes the two rungs either side instead of the single best one.
+
+`Running_TurnAround` is an in-place pivot despite the name — it is a §7 option-3 clip, not
+locomotion.
+
+Two things the export decided that the app corrects:
+
+- **`metallic` arrives at 0.6.** This app turns the skybox off, and a metallic surface with no
+  environment to reflect gives up its diffuse term and gets nothing back — it renders **black**,
+  which is the trap the palette comment in `BuildMaterials` already names. `BuildArcherModel` turns
+  it down to 0.10 before the renderer takes its copies, rather than in Blender, because a number
+  the exporter writes is a number a re-export can quietly put back.
+- **A second, un-rigged copy of the body** sits at the scene root (`tripo_...`). Asking for the mesh
+  by node name leaves it behind, but it is a good fraction of the file's 5.8 MB.
+
+And one worth knowing about rather than fixing: **29% of vertices carry a fourth bone influence**,
+and this engine skins with **three** (`GLTFLoader::GetSkinnedVertex`: *"We only store 3 bones
+because that how we roll"*). The first three weights average 0.9835 and never fall below 0.761, so
+the cost is at most a few percent of shrink on 4% of vertices. Exporting with max 3 influences
+would make it exact.
+
 ## Where the engine is today
 
 The state machine lives in `Object` (`core/Object.h:302-347`, `Object::ApplyAnimation`) and is a
@@ -26,10 +90,11 @@ The state machine lives in `Object` (`core/Object.h:302-347`, `Object::ApplyAnim
 |---|---|---|
 | Crossfade between two clips | Yes | `Object::TransitionToAnimation`, `Animation::Lerp` |
 | Per-transition blend times | Yes, sparse `(from,to)` table with wildcard | `Object::SetBlendTime` / `LookupBlendTime` |
-| Root motion, position + yaw, per-axis opt-in | Yes | `Animation::SampleRootMotion`, `LerpRootMotion` |
+| Root motion, position + yaw, per-axis opt-in | Yes, yaw since 2026-09-22 | `Animation::SampleRootMotion`, `LerpRootMotion` |
 | Clip-level interruptibility | Yes, one bool for the whole clip | `Animation::interruptible` |
 | Reverse / park a clip mid-play | Yes, one signed rate | `Object::SetAnimationRate` |
 | Per-bone mask | Yes, but static and un-layered | `ObjectAnimation.cpp:95-100` |
+| Bone influences per vertex | **Three**, not four | `GLTFLoader::GetSkinnedVertex` |
 | **Retarget to a third clip mid-blend** | **Refused** | `TransitionToAnimation`, with a note explaining why |
 | Parametric blending (blend space) | No | — |
 | Phase / foot sync between clips | No | — |
@@ -41,6 +106,104 @@ where it came from, but a request for a genuinely new clip mid-blend is dropped 
 because honouring it would mean either blending three clips or snapping. That is the correct call
 for a two-clip crossfade — and it is exactly the wall a fast-paced game hits. The industry's answer
 was to stop crossfading clip pairs, not to extend the crossfade.
+
+### The other half of root motion: the yaw
+
+**Fixed in core on 2026-09-22.** Worth keeping the diagnosis, because the symptom was misleading.
+
+`SampleRootMotion` gated the root bone's POSITION on the extract flags and did not gate its YAW at
+all: the twist came off the bone unconditionally and went to `Object::ApplyRootMotion`, whose base
+implementation does nothing. So on anything that was not a `PlayerCharacter` the rotation was
+removed from the pose and then discarded — and that is not "the character does not turn", it is
+**the hips do not rotate at all**. Measured across every clip in this app: exactly 0.00 degrees of
+hip twist, while every other bone animated freely.
+
+That third state — stripped and not re-applied — is one nobody ever wants, and it was the default.
+There are only two sensible ones:
+
+| | pose | character |
+|---|---|---|
+| twist stays on the bone | as authored | does not turn |
+| twist extracted to the object | as authored | turns |
+
+`Animation::extract_yaw_root_motion` is now the choice, defaulting to false beside the two position
+flags and for the same stated reason — a clip opts into moving the character rather than doing it by
+surprise. `PinnedBoneRotation` mirrors `PinnedBonePosition`: extracting gives swing-only, not
+extracting recomposes `swing * twist * reference` and the clip plays exactly as animated.
+`LerpRootMotion` reads each side's own flag, so blending a pivot into a cycle behaves at both ends.
+
+**The archer sets it from `ArcherClipInfo::f_turns`**, which is the authored column saying whether a
+clip's hip rotation IS the clip or is the gait. Measured after the change:
+
+```
+clip                 f_turns   hip twist in the POSE   model yaw in the WORLD
+Running_Fast         no            23.11 deg                0.00 deg
+Walking              no            14.78 deg                0.00 deg
+Dance                no            40.33 deg                0.00 deg
+Running_TurnAround   YES            0.00 deg              327.10 deg
+Twirl                YES            0.00 deg              316.21 deg
+```
+
+`Dance` was losing 40 degrees of hip rotation, which is the case that matters: the more a clip is
+carrying, the more this took away. `Puppet::clip_turn_deg` reports each clip's measured net turn
+beside its column, so a pivot with no `f_turns` (a turn being thrown away) and an `f_turns` on a
+clip measuring near zero (a cycle about to wag) are both visible in the panel.
+
+The turn is **added** to the facing the game asks for, not substituted for it — a turn authored in
+a clip is relative to wherever the character was already pointing.
+
+#### Extracting the yaw does not compose with a translation left on the bone
+
+The one rule to know before setting the flag. The character's rotation is applied ABOVE the root
+bone, so `R(yaw) * T(p) = T(R(yaw)*p) * R(yaw)`: an authored offset still sitting on the bone gets
+**rotated** by the extracted yaw rather than translated. A clip that walks while it turns therefore
+orbits a point instead of walking.
+
+That is what `Twirl` was doing. Authored, it is a 0.879-unit step back while spinning; with its yaw
+extracted the hips traced a circle whose radius grew to **1.759** world units — the same 0.879 times
+the 2.020 model scale, swept round. With the yaw left on the bone the hips travel in a straight line
+to 1.759 against an authored 1.776, and the model yaw stays put. Same numbers, one is a line and the
+other is a circle.
+
+Extracting the translation as well is not the escape here, because Stage owns where the archer is and
+the app discards it. So: **a clip whose yaw is extracted must turn on the spot.** `stage_test.cpp`
+enforces it — `f_turns` and `f_travels` may not both be set on the same clip, and that check was
+confirmed to fail when the rule is broken rather than merely passing today.
+
+`Twirl` never needed it anyway: measured net turn **−3.6°**. It spins a full turn and comes back, so
+nothing downstream ever needed to know its facing had changed. `Running_TurnAround` measures a clean
+net −180° in place, which is what a pivot looks like and what the flag is for.
+
+#### Reading the export directly
+
+`tools/gltf_clip_dump.py` prints what a `.glb` actually contains — clips with their duration, travel,
+net turn and total yaw movement, plus the rig, the material and the skin-weight distribution — and
+with `--clip NAME` dumps the root track frame by frame. No Blender, no engine, no third-party
+packages.
+
+It is the right place to settle "is the clip wrong or is the engine wrong with it", because the
+export is what the engine was actually given. Read the **net** column to decide whether a clip is a
+pivot and the **yaw move** column to decide whether extracting its yaw would sweep its travel; a spin
+that returns nets zero and still sweeps. Treat a large number on a clip that plainly does not spin as
+an artefact of the swing-twist split, which is ill-conditioned when the hips leave vertical —
+`Kick_Front` reads −347°. That costs nothing while the clip's yaw is not extracted, because the
+recomposition is exact however the split behaved.
+
+**Still asymmetric, and not fixed:** the root bone's rotation write ignores `animation_mask`, where
+`ApplyIntervalOnto` respects it for every other bone. That will matter for the upper-body layer in
+step 2.
+
+### One trap worth its own paragraph
+
+**`Renderer::skinned_shader` is NULL by default and every app that draws a skinned mesh assigns it
+itself.** Forgetting it produces no warning and no error: the model loads, the skeleton binds, the
+clips play, the object reports itself visible and in the scene — and nothing appears. It reads
+exactly like a failed asset load. Bomber's own comment says so; this app found out the long way,
+after checking the mesh, the bind pose, the weights and the material first. One line, in `Init`:
+
+```cpp
+renderer->skinned_shader = new Shader(shader_skinned_vert_name,shader_lit_frag_name);
+```
 
 ---
 
@@ -92,6 +255,9 @@ Two rough edges to expect:
   cannot play the same clip twice at two different phases without a second copy of the clip.
   `Animation::CopyConfigFrom` exists for making those copies.
 
+The rig's bone names are Mixamo's, so the mask set is the usual one: everything from
+`mixamorig:Spine` up, plus both shoulder chains.
+
 ## 3. Additive / aim offsets for the bow pitch
 
 Aiming up and down should not be clips. Unreal's *AimOffset* is a blend space of **additive** poses
@@ -99,6 +265,9 @@ Aiming up and down should not be clips. Unreal's *AimOffset* is a blend space of
 is a 1D additive — or, to start, a procedural rotation applied to spine and shoulder after the
 animation pass. The `RootPose` swing/twist split is the same kind of decomposition, so the shape of
 this is already familiar ground in this engine.
+
+`ArcherAnimParams::aim_deg` already carries the angle, over the full `BOW_AIM_MIN_DEG` ..
+`BOW_AIM_MAX_DEG` range, whether or not the bow is drawn.
 
 ## 4. Parametric blending instead of clip-to-clip transitions
 
@@ -110,6 +279,10 @@ parameter. There is no transition to interrupt, because there is no transition; 
 For a side-view game, **one 1D blend space on signed horizontal speed** (-run … -walk … idle …
 walk … run) is remarkably strong, and it makes decelerate-and-reverse read correctly with no turn
 clip at all. That single change removes most of the turnaround problem.
+
+`ArcherAnimParams::speed` is that signed parameter and already exists. `Puppet::Choose` currently
+picks ONE clip from it and stretches the playback rate; the blend space is the same function
+answering with two clips and a weight.
 
 ## 5. Phase synchronisation — the bug that appears the moment two cycles blend
 
@@ -125,6 +298,9 @@ right-foot-down pose. The result is the classic skating/stuttering feet. Two sta
 so the normalised-time version needs no signature change — just a different choice of times at the
 call site. Cheap, and it is the difference between a blend that looks authored and one that looks
 broken.
+
+This will bite on the FIRST blend, not eventually: the ladder runs 1.00s / 0.77s / 0.57s, so any
+two rungs blended on independent playheads are already out of phase.
 
 ## 6. Cancel windows and input buffering — "midway through" as authored data
 
@@ -151,36 +327,134 @@ Three real options in 2.5D, in increasing cost:
 1. **Rotate the root; do not animate the turn.** Slew yaw 180° over ~4-6 ticks while the locomotion
    clip keeps running. Nearly free, and at speed it reads fine — most 2.5D platformers do exactly
    this. Add an additive spine counter-lean during the slew (see §3) and it stops looking like a
-   turntable.
+   turntable. **This is what step 0 built** — `PUPPET_TURN_TICKS`, five ticks, deliberately through
+   zero so she turns toward the camera rather than showing her back.
 2. **Signed-speed blend space** (§4), so a reverse is a deceleration through zero rather than a turn
    event at all. Best fit for "fast paced", because there is no event to interrupt.
 3. **Authored pivot clips** with extracted yaw root motion — which the twist extraction handles
    natively, and is the nicest-looking option. But they are blocking one-shots, which is the thing
    fighting the pacing. Usually reserved for stop-and-turn-from-a-sprint, gated on speed above a
-   threshold.
+   threshold. `Running_TurnAround` (0.70s, in place) is a clip of exactly this kind, and 0.70s is
+   42 ticks — long enough that it would have to be gated on a genuine sprint stop.
 
 ### One caution on root motion
 
 Driving *locomotion* from root motion tends to feel laggy in a platformer. Root motion is the right
 answer for the ledge climbs and pivots — `Stage.h:178` already notes a climb lerp standing in for a
 clip it expects to get — but for run and jump, most platformers drive velocity from code and slave
-the animation to it through the blend-space parameter. Worth deciding deliberately rather than by
-default, because the archer inherits a root-motion locomotion path from the isoanimation work.
+the animation to it through the blend-space parameter. That is the call this prototype has made:
+every clip loads with both extract flags OFF, the rules own the motion, and the root track is
+resolved only so its travel can be measured.
 
 ---
 
-## Suggested order for the prototype
+## Step 0 — the seam. BUILT.
 
-Chosen so that each step is either additive to what exists or deletes more than it adds, and so
-nothing is blocked on the step after it.
+The thing the original plan was missing: it was all mechanism, and said nothing about **who decides
+what plays**. Without that the decision logic lands as a pile of `if` statements in
+`ApplicationArcher.cpp`, and the animation prototype cannot exist separately from the physics one.
 
-| # | Step | Why here |
+`apps/archer/Puppet.h` is the answer, and it is the same split `Stage.h` makes:
+
+- **`ArcherAnimParams`** is the seam — signed speed, ground speed, vertical velocity, facing,
+  grounded, mode, action, action phase, aim angle, draw power. Everything the animation is allowed
+  to know.
+- **`DescribeArcher(stage, out)`** fills it from the rules. **A debug panel fills the same struct by
+  hand.** `Puppet::Tick` cannot tell which, which is the whole point.
+- **`Puppet`** answers: which clip, at what rate, which way to face, and whether the clip it chose
+  is a real answer or a placeholder standing in for something not yet authored.
+- **It names no engine type**, so `mingw32-make.exe rules` builds and tests it with no core, no
+  window and no GPU, exactly like `Stage`. 157 checks including the rate matching, the clamps, the
+  turnaround and the seam itself.
+
+Three sources, switched live in the Archer panel or over MCP (`archer_anim`):
+
+| source | what fills the parameters | what it is for |
 |---|---|---|
-| 1 | Signed-speed 1D blend space for locomotion | Removes most turnaround and most transitions outright; `Animation::Lerp` is the primitive |
-| 2 | Upper-body mask layer for bow actions | Per-bone `animation_mask` already supports a crude version; removes most remaining interrupt requests |
-| 3 | Additive aim pitch | Small, and the bow needs it regardless of the rest |
-| 4 | Inertialization to replace the crossfade | Deletes the four transition states and the mid-blend refusal; do it once 1-3 have shown what transitions actually remain |
-| 5 | Cancel windows + input buffer | Tuning work, and it wants real clips and real timings to tune against |
+| `game` | the rules | normal play |
+| `panel` | sliders | judging a cycle at a chosen speed, with no level in the way |
+| `clip` | nothing — one clip on loop | checking an export, including the clips the game has no use for |
 
-Phase sync (§5) is not in the list because it becomes necessary exactly when step 1 blends two
-cycles, and is a call-site change inside that step.
+In `panel` and `clip` mode the archer ignores the keyboard and stands where she was left; the rest
+of the game keeps running. `archer_anim` with no arguments reports every clip's duration, its own
+measured travel speed, and the playback rate it would need to plant the feet at a full run.
+
+**What it showed immediately:** on the first export, at `ARCHER_RUN_SPEED` the walk played at 1.80
+(the clamp) while wanting **5.70** — the missing run cycle, as a number, before anyone had to
+squint at the feet. On the export with the two runs that reads **1.73**, inside the clamp. At any
+clip's own speed the rate is exactly 1.00 and the feet are planted. The turnaround measures
+90° → 54 → 18 → −18 → −54 → −90 over exactly five ticks, through the middle, while the locomotion
+clip keeps running underneath it.
+
+---
+
+## The steps, and what each costs in animation
+
+Ordered so nothing blocks on the step after it.
+
+| # | Step | Code | Animation |
+|---|---|---|---|
+| 0 | **Parameter seam + puppet mode** | **done** | **none** |
+| 1 | Signed-speed 1D blend space + phase sync | blend space over the existing ladder, sync groups | **the ladder foot-phase aligned** — walk, slow run and fast run agreeing on which foot is down. The clips themselves exist |
+| 2 | Upper-body mask layer | layer via per-bone `animation_mask`, spine-up | **draw / hold / loose**, standing, masked-safe |
+| 3 | Additive aim pitch | 1D additive, or procedural spine+shoulder after the pass | **one aim-up and one aim-down reference pose** |
+| 4 | Inertialization | replaces the crossfade; deletes four states and the mid-blend refusal | none |
+| 5 | Air set | jump/fall driven off `vel_y` and `f_on_ground` | **jump_start / rise / apex / fall / land_soft / land_hard** |
+| 6 | Cancel windows + input buffer | `{start,end,what_may_interrupt}` ranges, 6-10 tick buffer | tuning |
+
+Inertialization sits at 4 by position but its real trigger is **the moment the action layer gets a
+second member** — once step 1 exists locomotion has no transitions left to interrupt, and every
+remaining interruption is an action interrupting an action.
+
+### 7. Retiming the mechanics to fit real clips
+
+The expensive one, and it runs the other way: the feel constants were tuned with no animation in
+sight, and several are too fast to animate.
+
+| rules | ticks | seconds | the clip | note |
+|---|---|---|---|---|
+| `KICK_TICKS` | 14 | 0.23 | `Kick_Front` is **1.13s** | needs 4.9x to fit; clamped to 2.5x today, so the boot overruns the hit by ~13 ticks |
+| `LEDGE_CLIMB_TICKS` | 18 | 0.30 | `Climb` is **2.80s** | needs **9.3x**; clamped to 2.5x, so the clip is still playing long after she is standing. The likeliest answer is that a 0.30s mantle was never a mantle |
+| `BOW_DRAW_TICKS` | 36 | 0.60 | none yet | fine as is — that is a real draw |
+
+Each of these is a decision about how the game *feels*, not a bug. A 1.0s climb is a different game
+from a 0.3s climb. `Puppet::choice.wanted_rate` reports the gap live so the argument can be had
+against a number.
+
+### 8. Bone sockets
+
+The arrow currently leaves a Stage-computed offset (`BOW_SHOULDER_UP` / `BOW_SHOULDER_FWD`). Once
+there is a rig it should leave the hand — `mixamorig:LeftHand` holds the bow, `mixamorig:RightHand`
+draws. The same mechanism carries the knife. Small, and it is the difference between a model
+playing an animation and a character holding a thing.
+
+### 9. Clip event markers
+
+Foot plants for dust and sound, and the loose frame for the arrow. There is a real decision inside
+the second one: fire on key release (responsive, can desync from the visual) or on the animation's
+release frame (correct, adds latency). For a fast-paced game, fire on release and warp the clip to
+catch up — but make it deliberately.
+
+**Not planned: foot IK.** Side view on flat blocks does not pay for it.
+
+---
+
+## What is authored, and what is standing in
+
+Read off the running game — `Puppet::choice.f_placeholder` is true whenever nothing is authored for
+the state, and the panel lists it.
+
+| state | clip today |
+|---|---|
+| standing | `Idle` ✓ |
+| walking | `Walking`, rate-matched ✓ |
+| running | `Running_Slow` / `Running_Fast` off the ladder, 1.73x at a full sprint ✓ |
+| backing up | the same rung played backwards ✓ |
+| kicking | `Kick_Front`, mistimed against `KICK_TICKS` (wants 4.9x) ✓ |
+| climbing | `Climb`, badly mistimed against `LEDGE_CLIMB_TICKS` (wants 9.3x) ✓ |
+| airborne | **placeholder** — idle |
+| hanging | **placeholder** — idle |
+| on the rope | **placeholder** — idle |
+| drawing / loosing | **placeholder** — nothing; the bow is invisible to the animation |
+
+The air set is now the largest hole, and the two mistimings are the largest decisions.

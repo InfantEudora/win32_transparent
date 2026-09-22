@@ -300,6 +300,7 @@ void Animation::CopyConfigFrom(Animation* source){
     interruptible = source->interruptible;
     extract_horizontal_root_motion = source->extract_horizontal_root_motion;
     extract_vertical_root_motion = source->extract_vertical_root_motion;
+    extract_yaw_root_motion = source->extract_yaw_root_motion;
 }
 
 void Animation::SetRootBone(const std::string& name){
@@ -374,6 +375,29 @@ static vec3 PinnedBonePosition(const RootPose& pose, Bone* bone, bool extract_ho
     return out;
 }
 
+/*
+    The same thing for the root bone's ROTATION, and it exists because for a long time it did not.
+
+    Extracting: the twist is removed and the bone is posed swing-only, because the twist is about to
+    be applied to the character's transform instead and showing it twice would double every turn.
+    NOT extracting: the bone keeps its authored rotation, exactly as PinnedBonePosition keeps an
+    un-extracted axis's authored position - the clip is simply played as animated.
+
+    What used to happen was neither: swing-only unconditionally, so a clip's hip rotation was taken
+    out of the pose whether or not anything downstream would put it back, and on every object that
+    is not a PlayerCharacter nothing did. See the block on extract_yaw_root_motion.
+
+    Recomposition relies on DecomposeSwingTwistY's ordering - it splits `relative` into
+    swing * twist - so swing * twist * reference is the authored rotation back again.
+*/
+static quat PinnedBoneRotation(const RootPose& pose, Bone* bone, bool extract_yaw){
+    if (extract_yaw){
+        return pose.swing * bone->reference_rotation;
+    }
+    quat twist(0.0f,sinf(pose.twist_angle * 0.5f),0.0f,cosf(pose.twist_angle * 0.5f));
+    return pose.swing * twist * bone->reference_rotation;
+}
+
 RootMotionDelta Animation::SampleRootMotion(float prev_time, float new_time){
     RootMotionDelta out;
     if (!root_track || !root_track->target){
@@ -394,10 +418,12 @@ RootMotionDelta Animation::SampleRootMotion(float prev_time, float new_time){
     if (extract_vertical_root_motion){
         out.position.y = cur.authored_position.y - prev.authored_position.y;
     }
-    out.yaw = WrapAngleDelta(cur.twist_angle - prev.twist_angle);
+    if (extract_yaw_root_motion){
+        out.yaw = WrapAngleDelta(cur.twist_angle - prev.twist_angle);
+    }
 
     bone->SetPosition(PinnedBonePosition(cur, bone, extract_horizontal_root_motion, extract_vertical_root_motion));
-    bone->SetRotation(cur.swing * bone->reference_rotation);
+    bone->SetRotation(PinnedBoneRotation(cur, bone, extract_yaw_root_motion));
 
     return out;
 }
@@ -428,7 +454,9 @@ RootMotionDelta Animation::LerpRootMotion(Animation* to, float from_prev, float 
         if (extract_vertical_root_motion){
             from_delta.position.y = from_cur.authored_position.y - from_prev_pose.authored_position.y;
         }
-        from_delta.yaw = WrapAngleDelta(from_cur.twist_angle - from_prev_pose.twist_angle);
+        if (extract_yaw_root_motion){
+            from_delta.yaw = WrapAngleDelta(from_cur.twist_angle - from_prev_pose.twist_angle);
+        }
     }
 
     RootMotionDelta to_delta;
@@ -443,7 +471,9 @@ RootMotionDelta Animation::LerpRootMotion(Animation* to, float from_prev, float 
         if (to->extract_vertical_root_motion){
             to_delta.position.y = to_cur.authored_position.y - to_prev_pose.authored_position.y;
         }
-        to_delta.yaw = WrapAngleDelta(to_cur.twist_angle - to_prev_pose.twist_angle);
+        if (to->extract_yaw_root_motion){
+            to_delta.yaw = WrapAngleDelta(to_cur.twist_angle - to_prev_pose.twist_angle);
+        }
     }
 
     out.position = from_delta.position.lerp(to_delta.position, factor);
@@ -454,8 +484,11 @@ RootMotionDelta Animation::LerpRootMotion(Animation* to, float from_prev, float 
     vec3 to_display = to->root_track ? PinnedBonePosition(to_cur, bone, to->extract_horizontal_root_motion, to->extract_vertical_root_motion) : bone->reference_position;
     bone->SetPosition(from_display.lerp(to_display, factor));
 
-    quat from_rot = from_cur.swing * bone->reference_rotation;
-    quat to_rot = to_cur.swing * bone->reference_rotation;
+    //Each side keeps or gives up its own twist according to ITS own flag, exactly as each side's
+    //position is pinned by its own pair - so blending a pivot into a run cycle does the right
+    //thing at both ends rather than at whichever one happens to be leading.
+    quat from_rot = PinnedBoneRotation(from_cur, bone, extract_yaw_root_motion);
+    quat to_rot = PinnedBoneRotation(to_cur, bone, to->extract_yaw_root_motion);
     bone->SetRotation(quat::slerp(from_rot, to_rot, factor));
 
     return out;

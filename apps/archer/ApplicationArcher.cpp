@@ -34,6 +34,29 @@ static Debugger* debug = new Debugger("ApplicationArcher",DEBUG_ALL);
 //A target counts as knocked over once it has tipped this far off vertical.
 #define TARGET_KNOCKED_DEG          40.0f
 
+//Stage.cpp keeps its own copy of this rather than share one, because sharing it would mean a
+//header both files include, and Stage.h deliberately includes nothing.
+static const float ARCHER_DEG2RAD = 3.14159265358979f / 180.0f;
+
+/*
+    The half of a clip's root motion this character wants: the TURN, and not the travel.
+
+    A clip that turns her - Running_TurnAround, Twirl - carries that turn as yaw on the root bone,
+    and Animation::SampleRootMotion strips it off the bone whether or not anything asked for it,
+    because stripping it is the same operation as posing the bone correctly. It then hands the yaw
+    to this method. The BASE does nothing with it, so on a plain Skeleton the rotation in every
+    clip is removed from the pose and then discarded, and the character stands there resolutely
+    not turning - which looks for all the world like a clip exported without rotation in it.
+
+    The TRAVEL is deliberately dropped instead. Stage owns where the archer is, down to the
+    collision resolution; a clip allowed to move her would walk her through walls and off ledges,
+    and there would be two things integrating one character again. Every clip loads with both
+    extract flags off, so `delta.position` is zero anyway - this is the second lock on that door.
+*/
+void ArcherModel::ApplyRootMotion(const RootMotionDelta& delta){
+    clip_yaw += delta.yaw;
+}
+
 ApplicationArcher::ApplicationArcher():Application(){
     debug->Info("ApplicationArcher constructed\n");
 }
@@ -52,6 +75,20 @@ void ApplicationArcher::Init(void){
     renderer->f_render_skybox = false;
 
     default_shader = new Shader("shaders/default.vert","shaders/default.frag");
+    /*
+        THE ARCHER IS A SKINNED MESH, AND A SKINNED MESH HAS NOWHERE TO BE DRAWN WITHOUT THIS.
+
+        Renderer::skinned_shader is NULL by default and every app that draws one assigns it
+        itself. Forgetting it produces NO warning and NO error: the model loads, the skeleton
+        binds, the clips play, the object reports itself visible and in the scene - and nothing
+        appears. It reads exactly like a failed asset load, which is how an hour went into
+        checking the mesh, the bind pose, the weights and the material before the shader.
+
+        Only the FRAGMENT half is shared with default_shader; the vertex half is the one that
+        knows about bone matrices. The deferred twin (deferred_shader_skinned) is built by
+        Renderer::Init on its own and is not this.
+    */
+    renderer->skinned_shader = new Shader(shader_skinned_vert_name,shader_lit_frag_name);
 
     //Still constructed even though this app loads nothing from disk yet: the engine reaches for it
     //unguarded in places (the Scene panel's asset list, the object_spawn command handler). It is
@@ -93,8 +130,10 @@ void ApplicationArcher::Init(void){
     BuildBlocks();
     BuildProps();
     BuildArcher();
+    BuildArcherModel();
     BuildArrowViews();
     BuildAimArc();
+    BuildBackground();
     SetupLights();
     SetupCamera();
     SetupInput();
@@ -143,6 +182,9 @@ void ApplicationArcher::BuildMaterials(){
         //Breakable: cracked-brick red, the colour it will burst into.
         { "ar_breakable",   vec4(0.62f,0.28f,0.24f,1.0f), 0.10f, &material_breakable },
         { "ar_archer",      vec4(0.30f,0.72f,0.42f,1.0f), 0.18f, &material_archer },
+        //The character herself. A plain warm off-white, because the model arrives with no textures
+        //at all - see the note where it is assigned in BuildArcherModel.
+        { "ar_archer_skin", vec4(0.82f,0.74f,0.68f,1.0f), 0.10f, &material_archer_skin },
         //Hanging and climbing. Distinct enough to read at a glance in a screenshot, close enough
         //in hue that it still reads as the same character rather than a different object.
         { "ar_archer_hang", vec4(0.95f,0.80f,0.25f,1.0f), 0.30f, &material_archer_hang },
@@ -444,6 +486,239 @@ void ApplicationArcher::BuildArcher(){
     }
 }
 
+/*
+    The character, as a skinned model.
+
+    EVERY FAILURE IN HERE IS SURVIVABLE ON PURPOSE. If the file is missing, or the skin is named
+    something else, or a clip did not make it through the export, the app keeps running on the
+    coloured box it has drawn since the first slice - because the prototype's job is the mechanics
+    and losing all of them to a bad export would be the wrong trade. What is NOT survivable is
+    failing quietly, so each of the three names this depends on is reported separately, and the
+    names the file actually contains are listed next to the one that was wanted.
+
+    RENDER THREAD ONLY - GetMeshFromNode uploads a mesh.
+*/
+void ApplicationArcher::BuildArcherModel(){
+    gltfloader.LoadGLTFFile(ARCHER_MODEL_ASSET);
+
+    /*
+        Built HERE and handed to the loader rather than returned by it, because the archer needs
+        Skeleton plus one override - see ArcherModel. GetSkeleton fills in whatever it is given.
+    */
+    archer_model = new ArcherModel();
+    if (!gltfloader.GetSkeleton(ARCHER_MODEL_SKIN,assetmanager,archer_model)){
+        delete archer_model;
+        archer_model = NULL;
+    }
+    if (!archer_model){
+        debug->Err("No skin called '%s' in %s - the archer stays a box\n",
+                   ARCHER_MODEL_SKIN,ARCHER_MODEL_ASSET);
+        std::vector<std::string> names = gltfloader.GetSkeletonNames();
+        for (size_t i = 0; i < names.size(); i++){
+            debug->Err("   the file has: %s\n",names[i].c_str());
+        }
+        return;
+    }
+
+    /*
+        The skinned mesh, by NODE name rather than by mesh name - and that distinction has bitten
+        this codebase before (see the note in bomber's BuildSkinnedActor). The export also carries
+        a second, UNRIGGED copy of the same body sitting at the scene root, which is the source
+        mesh the rig was built from; asking for the node by name is what leaves it behind.
+    */
+    std::vector<Material> loaded_materials;
+    Mesh* skinned_mesh = gltfloader.GetMeshFromNode(ARCHER_MODEL_NODE,&loaded_materials,true);
+    if (!skinned_mesh){
+        debug->Err("No skinned mesh on node '%s' in %s - the archer stays a box\n",
+                   ARCHER_MODEL_NODE,ARCHER_MODEL_ASSET);
+        archer_model = NULL;
+        return;
+    }
+    archer_model->SetMesh(skinned_mesh);
+    archer_model->name = "archer_model";
+
+    main_scene->renderer->AddMaterials(loaded_materials);
+    archer_model->TakeMaterialNames(loaded_materials);
+    archer_model->PickMaterials(loaded_materials,main_scene->renderer->materials);
+    if (loaded_materials.empty()){
+        //An export with no material at all would otherwise leave slot 0 at 0, which is the ground.
+        //A flat colour is still a character; whatever ar_ground looks like on a person is not.
+        debug->Err("No material in %s - the archer wears a flat colour\n",ARCHER_MODEL_ASSET);
+        archer_model->SetMaterialSlot(0,material_archer_skin);
+    }
+
+    /*
+        HOW BIG SHE IS, measured off the bind pose rather than typed in.
+
+        The rig is authored around 0.89 units tall and the body box the whole level is built
+        around is ARCHER_MODEL_HEIGHT, so something has to scale. Doing it from the bones means a
+        re-export at a different size corrects itself instead of silently standing the character
+        in a level built for someone twice her height - and the same walk means a different world
+        speed at a different scale, which is exactly the number MeasureClips is about to need.
+
+        Done BEFORE the scale is applied, so these are the rig's own units.
+    */
+    std::vector<Bone*> bones;
+    archer_model->GetAllBones(archer_model,bones);
+    float lo = 0.0f;
+    float hi = 0.0f;
+    for (size_t i = 0; i < bones.size(); i++){
+        float y = bones[i]->GetWorldPosition().y;
+        if (i == 0 || y < lo){ lo = y; }
+        if (i == 0 || y > hi){ hi = y; }
+    }
+    float rig_height = hi - lo;
+    if (rig_height > 0.01f){
+        model_scale = ARCHER_MODEL_HEIGHT / rig_height;
+    }
+    //Where her feet are once she has been scaled. The model is placed at the BOTTOM of the body
+    //box, so this is what stops her hovering or sinking by the height of the ankle bone.
+    model_foot_offset = lo * model_scale;
+    archer_model->SetScale(vec3(model_scale,model_scale,model_scale));
+    debug->Info("Archer rig is %.4f units over %i bones -> scale %.3f, foot offset %.4f\n",
+                rig_height,(int)bones.size(),model_scale,model_foot_offset);
+    debug->Info("Archer mesh: %u vertices, mode %i, skeleton num_bones %i, material slot %i\n",
+                skinned_mesh->num_vertices,skinned_mesh->mesh_mode,archer_model->num_bones,
+                archer_model->GetMaterialSlot(0));
+
+    main_scene->AddObject(archer_model);
+
+    /*
+        The clips.
+
+        EVERY clip in the table is loaded, including the four the game has no use for. The export
+        is all-or-nothing and "did that export correctly" is a question about all of them, so they
+        are all loaded and all previewable - see ANIM_FROM_CLIP.
+
+        POSITION extraction is left off on every one of them. That is a decision, not an oversight:
+        locomotion here is driven by the rules and the animation is slaved to it, which is what a
+        platformer wants (see the caution at the end of animation_plan.md section 7). The root
+        TRACK is still resolved, because MeasureClips reads it to find out how fast each clip
+        thinks it is moving.
+
+        YAW extraction is per clip, off the table's f_turns column. A pivot means its hip rotation
+        and has to have it taken out to the character's transform; a run cycle's hip rotation is
+        the gait and has to STAY ON THE BONE, or the whole body wags. Both of those are now real
+        options - until the core change on 2026-09-22 the yaw came off the bone whichever it was.
+    */
+    int loaded = 0;
+    for (int i = 0; i < CLIP_COUNT; i++){
+        Animation* clip = gltfloader.LoadAnimation(ARCHER_CLIPS[i].name);
+        if (!clip){
+            debug->Err("No clip called '%s' in %s\n",ARCHER_CLIPS[i].name,ARCHER_MODEL_ASSET);
+            continue;
+        }
+        clip->looped = ARCHER_CLIPS[i].f_looping;
+        clip->extract_yaw_root_motion = ARCHER_CLIPS[i].f_turns;
+        archer_model->AddAnimation(clip);       //binds its tracks to these bones
+        clip->SetRootBone(ARCHER_MODEL_ROOT_BONE);
+        if (!clip->root_track){
+            //Not fatal, but it means this clip's travel can never be measured or extracted - so
+            //it is worth saying out loud rather than discovering as a clip that refuses to slide.
+            debug->Err("Clip '%s' has no track for root bone '%s'\n",
+                       ARCHER_CLIPS[i].name,ARCHER_MODEL_ROOT_BONE);
+        }
+        archer_clips[i] = clip;
+        loaded++;
+    }
+    if (loaded < CLIP_COUNT){
+        std::vector<std::string> names = gltfloader.GetAnimationNames();
+        debug->Err("%i of %i clips loaded. The file contains:\n",loaded,CLIP_COUNT);
+        for (size_t i = 0; i < names.size(); i++){
+            debug->Err("   %s\n",names[i].c_str());
+        }
+    }
+
+    MeasureClips();
+
+    /*
+        The default crossfade, kept SHORT.
+
+        A quarter of a second is a reasonable default for a cinematic character and far too long
+        for a fast platformer - at ARCHER_RUN_SPEED she covers 2.25 units during one, which is
+        most of a jump. 0.15s is 9 ticks, still long enough to hide a pose change. This is the
+        blunt instrument that step 1 and step 4 replace: per-transition times where a transition
+        still exists, and no transition at all for locomotion.
+    */
+    archer_model->animation_transition_time_max = 0.15f;
+
+    //Start her standing, and hide the box she has been standing in for five slices.
+    if (archer_clips[CLIP_IDLE]){
+        archer_model->SwitchToAnimation(archer_clips[CLIP_IDLE]);
+        playing_clip = CLIP_IDLE;
+    }
+    if (archer_object){
+        archer_object->SetVisibility(f_show_collider);
+    }
+}
+
+/*
+    How fast each clip thinks it is moving, and how long it lasts.
+
+    MEASURED FROM THE CLIP, which is the whole point. The gap between a clip's own stride speed and
+    the speed the rules move the archer at IS the foot slide, and it is the first number worth
+    knowing about any locomotion animation. Typing it into a table would mean a re-export with a
+    longer stride silently keeping the old figure - and the symptom of that is feet that skate,
+    which is exactly what this is for.
+
+    The root track is the hip bone, so this is the hip's horizontal travel over the clip divided by
+    its duration, in the RIG's units. Puppet::WorldClipSpeed multiplies by model_scale to get world
+    units, because a rig scaled to twice its size covers twice the ground with the same clip.
+*/
+void ApplicationArcher::MeasureClips(){
+    puppet.model_scale = model_scale;
+    for (int i = 0; i < CLIP_COUNT; i++){
+        Animation* clip = archer_clips[i];
+        if (!clip){
+            continue;
+        }
+        puppet.clip_duration[i] = clip->duration;
+        puppet.clip_speed[i] = 0.0f;
+        puppet.clip_turn_deg[i] = 0.0f;
+        if (!clip->root_track || clip->duration <= 0.0f){
+            continue;
+        }
+        RootPose start = clip->ComputeRootPose(0.0f);
+        RootPose end   = clip->ComputeRootPose(clip->duration);
+        /*
+            How far this clip turns her, end against start.
+
+            Measured for EVERY clip, not just the travelling ones, because it is what says whether
+            the f_turns column is set right: a cycle reads near zero however much its hips swing
+            on the way round, and a pivot reads most of a half turn. Not acted on - the column is.
+        */
+        puppet.clip_turn_deg[i] = (end.twist_angle - start.twist_angle) / ARCHER_DEG2RAD;
+        if (!ARCHER_CLIPS[i].f_travels){
+            continue;
+        }
+        vec3 travel = end.authored_position - start.authored_position;
+        //Horizontal only: the vertical component of a hip track is the body bobbing, not the
+        //character climbing, and adding it in would report a walk as faster than it is.
+        float distance = sqrtf(travel.x * travel.x + travel.z * travel.z);
+        puppet.clip_speed[i] = distance / clip->duration;
+        debug->Info("Clip %-20s %6.3fs  travels %5.3f rig units -> %5.2f/s native, %5.2f/s at scale\n",
+                    ARCHER_CLIPS[i].name,clip->duration,distance,
+                    puppet.clip_speed[i],puppet.WorldClipSpeed(i));
+    }
+    /*
+        And the headline: how much clip is missing.
+
+        ARCHER_RUN_SPEED against the fastest thing that has been authored. Logged at startup
+        because it is the single number that decides what the next animation pass is for, and it
+        is far easier to act on as a ratio than as "the feet look wrong".
+    */
+    float best = 0.0f;
+    for (int i = 0; i < CLIP_COUNT; i++){
+        float s = puppet.WorldClipSpeed(i);
+        if (s > best){ best = s; }
+    }
+    if (best > 0.01f){
+        debug->Info("Fastest authored locomotion is %.2f units/s; the game runs at %.2f. "
+                    "Feet slide by %.2fx at a full run.\n",best,ARCHER_RUN_SPEED,
+                    ARCHER_RUN_SPEED / best);
+    }
+}
+
 void ApplicationArcher::BuildArrowViews(){
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         char name[32];
@@ -473,6 +748,74 @@ void ApplicationArcher::BuildAimArc(){
         main_scene->AddObject(o);
         arc_objects[i] = o;
     }
+}
+
+/*
+    The backdrop: one textured quad a long way behind the play plane.
+
+    SIZED FOR THE WIDEST VIEW THE ZOOM CAN PRODUCE, not for the default one. The quad is fixed, so
+    zooming out has to reveal more of the picture rather than running off the edge of it into
+    black - which is the whole reason a backdrop is a big quad and not a screen-space blit.
+
+    FITTED TO COVER. The image is portrait (1152x1536) and the view is 16:9, so fitting it to
+    CONTAIN would put black bars down both sides. Instead it is scaled until its width fills the
+    view and the extra height runs off the top and bottom; background_offset_y on the panel is
+    what chooses which band of it you see.
+
+    Unlit, casts no shadow, and not pickable: it is a picture, not scenery. Lighting it would mean
+    the sun sliding across a painted sky, and at this distance it would be nearly black anyway.
+
+    Survivable if the image is missing - the app has spent five slices against a plain background
+    and can spend a sixth.
+*/
+void ApplicationArcher::BuildBackground(){
+    Texture* texture = renderer->LoadTexture(BACKGROUND_ASSET);
+    if (!texture){
+        debug->Err("No backdrop: could not load %s\n",BACKGROUND_ASSET);
+        return;
+    }
+    Material m = {};
+    m.name = "ar_background";
+    m.glsl_material.color = vec4(1,1,1,1);
+    m.glsl_material.f_unlit = 1;
+    m.glsl_material.diffuse_texture = 0;
+    m.glsl_material.handle_diffuse = texture->texture_handle;
+    m.diff_texture = texture;
+    renderer->AddMaterial(m);
+    material_background = renderer->FindMaterialIndex(m.name);
+
+    /*
+        How big it has to be.
+
+        The view is a frustum, so what it covers at the backdrop's depth grows with the distance
+        from the camera to it - and the camera can pull back as far as CAMERA_DISTANCE_MAX. The
+        aspect is the window's, which Init resizes to 16:9 a few lines further down; a backdrop
+        that is slightly too big is invisible, one that is slightly too small is a black edge.
+    */
+    float far_distance = CAMERA_DISTANCE_MAX + BACKGROUND_DEPTH;
+    float view_height = 2.0f * far_distance * tanf(0.5f * 38.0f * ARCHER_DEG2RAD);
+    float view_width = view_height * (16.0f / 9.0f);
+    float width = view_width * BACKGROUND_COVER;
+    background_base = vec2(width,width / BACKGROUND_IMAGE_ASPECT);
+
+    //flip_v TRUE, because a quad's own V starts at the bottom and every image in this engine
+    //starts at the top - see the note on MakeQuad. Without it the sky is at her feet.
+    Mesh* quad = MakeQuad(1.0f,1.0f,true);
+    if (!quad){
+        debug->Err("No backdrop: could not build the quad\n");
+        return;
+    }
+    background_object = new Object();
+    background_object->name = "background";
+    background_object->SetMesh(quad);
+    background_object->SetMaterialSlot(0,material_background);
+    background_object->SetCastsShadow(false);
+    background_object->SetPickability(false);
+    background_object->SetPosition(vec3(0.0f,0.0f,-BACKGROUND_DEPTH));
+    background_object->SetScale(vec3(background_base.x,background_base.y,1.0f));
+    main_scene->AddObject(background_object);
+    debug->Info("Backdrop %s at %.0f x %.0f units, %.0f behind the play plane\n",
+                BACKGROUND_ASSET,background_base.x,background_base.y,BACKGROUND_DEPTH);
 }
 
 void ApplicationArcher::SetupLights(){
@@ -524,7 +867,7 @@ void ApplicationArcher::SetupCamera(){
         at the top of its lob.
     */
     camera->SetupPerspective(renderer->width,renderer->height,38.0f,0.5f,240.0f);
-    camera_target = vec3(stage.pos.x,stage.pos.y + 2.0f,0.0f);
+    camera_target = vec3(stage.pos.x,stage.pos.y + 0.5f,0.0f);
     camera_ideal = camera_target;
     camera->SetPosition(vec3(camera_target.x,camera_target.y,CAMERA_DISTANCE));
     camera->SetLookAt(camera_target);
@@ -616,6 +959,42 @@ void ApplicationArcher::RegisterCommandHandlers(){
             stage.draw_ticks = 0;
             return OBJECTID_INVALID;
         });
+
+    /*
+        Hand the animation to the panel, to a single clip, or back to the game.
+
+        The parameters it sets are the SAME struct the rules fill - see the note at the top of
+        Puppet.h. That is what makes this a measuring tool rather than a debug hack: a walk cycle
+        checked at 4 units a second here is the walk cycle the game plays at 4 units a second.
+    */
+    main_scene->RegisterCommandHandler(ARCHER_CMD_ANIM,
+        [this](const SimCommand& cmd) -> objectid_t {
+            int source = (int)cmd.subtype;
+            if (source < ANIM_FROM_GAME || source > ANIM_FROM_CLIP){
+                source = ANIM_FROM_GAME;
+            }
+            anim_source = source;
+            if (source == ANIM_FROM_CLIP){
+                int clip = (int)cmd.value[0];
+                if (clip >= 0 && clip < CLIP_COUNT){
+                    preview_clip = clip;
+                }
+                preview_rate = cmd.value[1];
+            }else if (source == ANIM_FROM_PANEL){
+                panel_params.speed = cmd.value[2];
+                panel_params.ground_speed = fabsf(cmd.value[2]);
+                //Facing follows the sign of the requested speed, because asking for "-4" and then
+                //having to set the facing separately is two ways to say one thing, and the two
+                //disagreeing is the state that produces a moonwalk.
+                panel_params.facing = (cmd.value[2] < 0.0f) ? -1.0f : 1.0f;
+                panel_params.f_on_ground = (cmd.value[3] > 0.5f);
+                panel_params.mode = panel_params.f_on_ground ? MODE_GROUND : MODE_AIR;
+            }
+            //Whatever was playing is no longer necessarily right, so let the next tick decide
+            //rather than leaving a preview clip running under the game's control.
+            playing_clip = -1;
+            return OBJECTID_INVALID;
+        });
 }
 
 void ApplicationArcher::NewGame(){
@@ -673,6 +1052,32 @@ void ApplicationArcher::UpdateView(void){
         f_show_inspector_window = f_show_engine_ui;
         f_show_engine_window = f_show_engine_ui;
     }
+
+    /*
+        The wheel pulls the camera in and out.
+
+        DRAINED EVERY PASS whether or not it will be acted on, because GetDelta is an accumulator:
+        skipping the read while the window is in the background does not discard those notches, it
+        saves them up and applies the lot in one jump when focus comes back.
+
+        Gated on HasFocus() rather than IsInputLive(), which is the rule for anything cursor-driven
+        - see the long note on IsInputLive. A scripted hold is an ACTION arriving from somewhere
+        else; a wheel notch is a hand on a mouse that is, by definition, over this window.
+
+        Multiplicative, so a notch moves the camera by a tenth of wherever it already is: the same
+        gesture is a small nudge up close and a big sweep far out, which is what a zoom should feel
+        like. Placing the camera here rather than leaving it to the next tick is what makes it work
+        while the simulation is paused.
+    */
+    int wheel = input->GetDelta(INPUT_MOUSE_WHEEL);
+    //And not while the pointer is over a panel, or scrolling the clip list also flies the camera
+    //across the level. UIWantsMouse is ImGui's own answer behind a name that exists in every
+    //build, so this needs no #ifdef - see the note on it in core/Application.h.
+    if (wheel != 0 && input->HasFocus() && !UIWantsMouse()){
+        camera_distance *= powf(1.0f - CAMERA_ZOOM_PER_NOTCH,(float)wheel);
+        camera_distance = clamp(camera_distance,CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX);
+        PlaceCamera();
+    }
 }
 
 //--- The tick -----------------------------------------------------------------------------------
@@ -726,6 +1131,7 @@ void ApplicationArcher::RunSimulationTick(void){
     ResolveArrowsAgainstProps();
     DriveArcherBody();
     SyncArcherView();
+    SyncArcherAnimation();
     SyncArrowViews();
     SyncAimArc();
     UpdateTargets();
@@ -756,6 +1162,19 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     //(which is not OS input, and happens precisely when the window is NOT in front). One predicate
     //owned by the engine - see InputController::IsInputLive.
     if (!input->IsInputLive()){
+        out = ArcherInput();
+        return;
+    }
+
+    /*
+        And while the animation is being driven by hand, she takes no orders from the keyboard.
+
+        The same reasoning as the focus check above and for the same reason it is HERE rather than
+        earlier: the edges have already been read and discarded, so leaving puppet mode does not
+        fire a jump that was pressed while the panel had the controls. The game keeps ticking -
+        the props still fall, the arrows still fly - she simply stands where she was left.
+    */
+    if (anim_source != ANIM_FROM_GAME){
         out = ArcherInput();
         return;
     }
@@ -1433,6 +1852,95 @@ void ApplicationArcher::SyncArcherView(){
     }
     bool f_on_wall = (stage.mode == MODE_HANG || stage.mode == MODE_CLIMB);
     archer_object->SetMaterialSlot(0,f_on_wall ? material_archer_hang : material_archer);
+    //The box is the fallback character when there is no model, and a debug draw when there is.
+    archer_object->SetVisibility(!archer_model || f_show_collider);
+}
+
+/*
+    The model: what it plays, how fast, and which way it faces.
+
+    THE WHOLE OF THE ANIMATION LAYER PASSES THROUGH ONE STRUCT HERE, and that is the design rather
+    than a tidy-up. ArcherAnimParams is filled by the rules, or by the panel's sliders, or not at
+    all when a single clip is being previewed - and Puppet::Tick cannot tell which. That is what
+    makes the animation prototype separable from the physics one: everything below this line
+    behaves identically whether there is a level underneath her or not.
+
+    Physics thread, after Stage has decided where she is.
+*/
+void ApplicationArcher::SyncArcherAnimation(){
+    if (!archer_model){
+        return;
+    }
+
+    /*
+        Previewing one clip bypasses the decisions entirely.
+
+        SwitchToAnimation rather than TransitionToAnimation, because a preview that blends out of
+        whatever was playing is a preview of the blend. The question being asked here is "did this
+        clip export correctly", and that wants the clip from its first frame.
+    */
+    if (anim_source == ANIM_FROM_CLIP){
+        if (preview_clip >= 0 && preview_clip < CLIP_COUNT && archer_clips[preview_clip]){
+            if (preview_clip != playing_clip){
+                archer_model->SwitchToAnimation(archer_clips[preview_clip]);
+                playing_clip = preview_clip;
+                //A new clip turns her from wherever she is now, not from wherever the last one
+                //left off - see ArcherModel::clip_yaw.
+                archer_model->clip_yaw = 0.0f;
+            }
+            archer_model->SetAnimationRate(preview_rate);
+        }
+    }else{
+        ArcherAnimParams params;
+        if (anim_source == ANIM_FROM_PANEL){
+            params = panel_params;
+        }else{
+            DescribeArcher(stage,params);
+        }
+        puppet.Tick(params);
+
+        int clip = puppet.choice.clip;
+        if (clip >= 0 && clip < CLIP_COUNT && archer_clips[clip]){
+            /*
+                Only on a CHANGE. Asking for the clip that is already playing would restart it
+                every tick, and asking mid-blend is refused with a warning anyway - see the note
+                on Object::TransitionToAnimation, and step 4 in animation_plan.md, which is the
+                fix for the refusal rather than a way around it.
+            */
+            if (clip != playing_clip){
+                archer_model->TransitionToAnimation(archer_clips[clip]);
+                playing_clip = clip;
+                archer_model->clip_yaw = 0.0f;
+            }
+            archer_model->SetAnimationRate(puppet.choice.rate);
+        }
+    }
+
+    /*
+        Where she stands, and which way she points.
+
+        The model is placed at the BOTTOM of the body box rather than at its centre, because a
+        character's origin is between their feet and Stage's is the middle of a 1.8-unit box. Get
+        this wrong by half a body and she stands waist-deep in the floor, which is the first thing
+        anyone notices and the last thing anyone suspects.
+    */
+    vec3 feet = vec3(stage.pos.x,stage.pos.y - ARCHER_HALF_H - model_foot_offset,0.0f);
+    archer_model->SetPosition(feet);
+    /*
+        Facing is the Puppet's answer PLUS whatever the clip has turned her through.
+
+        Two separate ideas added together, deliberately. The Puppet's yaw is which way the GAME
+        says she is pointing; clip_yaw is a turn the ANIMATOR authored, and it is relative to that
+        rather than instead of it - so a pivot clip works the same whichever way she was already
+        facing. Setting only the first is what made every clip's rotation look like it had not
+        been exported: see the note on ArcherModel.
+    */
+    //No filtering here any more: clip_yaw only ever accumulates from a clip whose
+    //extract_yaw_root_motion is set, which is the f_turns column, set once at load. A cycle's hip
+    //rotation stays on the bone where it belongs instead of arriving here to be discarded.
+    float yaw = puppet.yaw_deg * ARCHER_DEG2RAD + archer_model->clip_yaw;
+    archer_model->SetRotation(quat(vec3(0,1,0),yaw));
+    model_yaw_drawn = yaw / ARCHER_DEG2RAD;
 }
 
 void ApplicationArcher::SyncArrowViews(){
@@ -1599,17 +2107,44 @@ void ApplicationArcher::UpdateCamera(){
     if (stage.vel.x > 0.5f || stage.vel.x < -0.5f){
         lead = (stage.vel.x / ARCHER_RUN_SPEED) * CAMERA_LEAD;
     }
-    camera_ideal = vec3(stage.pos.x + lead,stage.pos.y + 2.0f,0.0f);
+    camera_ideal = vec3(stage.pos.x + lead,stage.pos.y + 0.5f,0.0f);
 
     camera_target.x += (camera_ideal.x - camera_target.x) * CAMERA_SMOOTH;
     camera_target.y += (camera_ideal.y - camera_target.y) * CAMERA_SMOOTH;
     camera_target.z = 0.0f;
 
-    Camera* camera = main_scene->camera;
+    PlaceCamera();
+}
+
+/*
+    Everything that hangs off where the camera is.
+
+    Its own function because a wheel notch has to move the camera on a pass that does NOT tick -
+    otherwise zooming in to look at an animation does nothing while the simulation is paused, which
+    is exactly when you want to look at one.
+*/
+void ApplicationArcher::PlaceCamera(){
+    Camera* camera = main_scene ? main_scene->camera : NULL;
     if (camera){
-        camera->SetPosition(vec3(camera_target.x,camera_target.y + CAMERA_HEIGHT,CAMERA_DISTANCE));
+        camera->SetPosition(vec3(camera_target.x,camera_target.y + CAMERA_HEIGHT,camera_distance));
         camera->SetLookAt(camera_target);
         camera->CalculateLookatMatrix();
+    }
+
+    /*
+        The backdrop, at whatever fraction of the camera's motion its distance implies.
+
+        follow 1 pins it to the camera and it never appears to move, which reads as infinitely far;
+        follow 0 nails it to the world and it slides past as fast as the ground does. The thing to
+        notice while tuning is that this is the ONLY thing that says how far away it is - the quad's
+        actual depth just keeps it behind the geometry.
+    */
+    if (background_object){
+        background_object->SetPosition(vec3(camera_target.x * background_follow,
+                                            camera_target.y * background_follow + background_offset_y,
+                                            -BACKGROUND_DEPTH));
+        background_object->SetScale(vec3(background_base.x * background_scale,
+                                         background_base.y * background_scale,1.0f));
     }
 
     //Drag the sun along with the view. The level is 84 units wide and the shadow ortho is 22, so a
@@ -1643,6 +2178,13 @@ void ApplicationArcher::PublishSnapshot(){
     s.arrows_shot = stage.arrows_shot;
     s.arrows_hit_blocks = stage.arrows_hit_blocks;
     s.f_paused = main_scene->IsPhysicsPaused();
+
+    s.clip = playing_clip;
+    s.clip_rate = puppet.choice.rate;
+    s.clip_wanted_rate = puppet.choice.wanted_rate;
+    s.f_clip_placeholder = puppet.choice.f_placeholder;
+    s.model_yaw = model_yaw_drawn;
+    s.anim_source = anim_source;
 
     for (size_t i = 0; i < prop_views.size(); i++){
         const PropView& view = prop_views[i];
@@ -1760,7 +2302,40 @@ json ApplicationArcher::BuildStateJson(){
         {"arrows_in_blocks",s.arrows_hit_blocks},
         {"live_arrows",arrows},
         {"targets",targets},
-        {"paused",s.f_paused}
+        /*
+            READ LIVE, NOT OUT OF THE SNAPSHOT - the snapshot cannot answer this question at all.
+
+            PublishSnapshot runs at the end of RunSimulationTick, and RunSimulationTick only runs
+            on a pass that TICKS. So while the simulation is paused nothing is published and the
+            snapshot keeps reporting whatever was true on the last tick that ran - which is, by
+            construction, a tick on which it was NOT paused. `paused` could therefore only ever
+            read false, however long the game had been sitting still. That cost a long detour
+            reading a stalled tick counter as a hung physics thread; everything resumed the moment
+            the pause was simply switched off.
+
+            Everything else here stays snapshot-served, which is the point of the snapshot. This
+            one field is about the simulation rather than about the game, and it is the one the
+            snapshot structurally cannot carry.
+        */
+        {"paused",main_scene->IsPhysicsPaused()},
+        /*
+            What the MODEL is doing, which is not the same question as what the archer is doing.
+
+            `wanted_rate` against `rate` is the one worth reading: it is how fast the clip would
+            have to play to keep her feet on the ground, against how fast it is allowed to. Any
+            gap between them is foot slide, and having it as a number means a run across the level
+            can be measured rather than watched.
+        */
+        {"animation",json{
+            {"source",(s.anim_source == ANIM_FROM_GAME) ? "game" :
+                      (s.anim_source == ANIM_FROM_PANEL) ? "panel" : "clip"},
+            {"clip",(s.clip >= 0 && s.clip < CLIP_COUNT) ? json(ARCHER_CLIPS[s.clip].name)
+                                                         : json(nullptr)},
+            {"rate",s.clip_rate},
+            {"wanted_rate",s.clip_wanted_rate},
+            {"placeholder",s.f_clip_placeholder},
+            {"model_yaw_deg",s.model_yaw}
+        }}
     };
     return result;
 }
@@ -2042,6 +2617,99 @@ void ApplicationArcher::RegisterMCPTools(){
             WaitTicks(3);
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
         });
+
+    MCPServer::Get()->RegisterTool("archer_anim",
+        "Inspect and drive the character's ANIMATION, separately from the game. Three modes, set "
+        "with 'source'. 'clip' plays one clip on a loop and ignores the game entirely - this is how "
+        "you check that an export came through, and it works on the four clips the game has no use "
+        "for as well as the five it does. 'panel' feeds the animation layer a ground speed and a "
+        "grounded flag BY HAND, so a walk cycle can be judged at 4 units a second with no level "
+        "underneath her. 'game' hands the controls back to the rules. With no arguments it reports "
+        "every clip: how long it is, how fast its own root track says it travels, and - the number "
+        "worth reading - what playback rate it would need to keep the feet planted at that speed. "
+        "In 'panel' and 'clip' mode the archer ignores the keyboard and stands where she was left; "
+        "the rest of the game keeps running.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"source", {{"type","string"},{"description","'game', 'panel' or 'clip'; omit to only report"}}},
+                {"clip", {{"type","string"},{"description","clip name for source 'clip', e.g. Idle, Walking, Kick_Front, Twirl"}}},
+                {"rate", {{"type","number"},{"description","playback rate for source 'clip'; negative plays it backwards, default 1"}}},
+                {"speed", {{"type","number"},{"description","ground speed for source 'panel', signed: negative backs up. The game runs at 9"}}},
+                {"on_ground", {{"type","boolean"},{"description","for source 'panel', default true"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            if (!archer_model){
+                return json{ {"error","no character model loaded - see the log for which name failed"} };
+            }
+            std::string source = args.value("source",std::string(""));
+            if (source.size()){
+                SimCommand cmd;
+                cmd.type = ARCHER_CMD_ANIM;
+                if (source == "clip"){
+                    cmd.subtype = ANIM_FROM_CLIP;
+                    std::string want = args.value("clip",std::string("Idle"));
+                    int found = -1;
+                    for (int i = 0; i < CLIP_COUNT; i++){
+                        if (want == ARCHER_CLIPS[i].name){ found = i; }
+                    }
+                    if (found < 0){
+                        return json{ {"error","no clip called '" + want + "' - call with no arguments to list them"} };
+                    }
+                    if (!archer_clips[found]){
+                        return json{ {"error","clip '" + want + "' is in the table but was not in the export"} };
+                    }
+                    cmd.value[0] = (float)found;
+                    cmd.value[1] = args.value("rate",1.0f);
+                }else if (source == "panel"){
+                    cmd.subtype = ANIM_FROM_PANEL;
+                    cmd.value[2] = args.value("speed",0.0f);
+                    cmd.value[3] = args.value("on_ground",true) ? 1.0f : 0.0f;
+                }else if (source == "game"){
+                    cmd.subtype = ANIM_FROM_GAME;
+                }else{
+                    return json{ {"error","source must be 'game', 'panel' or 'clip'"} };
+                }
+                main_scene->SubmitCommand(cmd);
+                WaitTicks(3);
+            }
+
+            /*
+                The clip table, read straight off the Puppet.
+
+                NOT from the snapshot, and that is safe rather than sloppy: these are written once
+                by MeasureClips during Init, on the render thread, and the MCP server does not
+                accept a request until Init has returned. Nothing writes them again.
+            */
+            json clips = json::array();
+            for (int i = 0; i < CLIP_COUNT; i++){
+                float world = puppet.WorldClipSpeed(i);
+                clips.push_back(json{
+                    {"name",ARCHER_CLIPS[i].name},
+                    {"loaded",archer_clips[i] != NULL},
+                    {"duration",puppet.clip_duration[i]},
+                    {"looping",ARCHER_CLIPS[i].f_looping},
+                    {"native_speed",world},
+                    //What it would take to keep the feet planted at a full run. Infinite for a
+                    //clip that does not travel, which is reported as null rather than as a number
+                    //that looks like an answer.
+                    {"rate_at_run_speed",(world > 0.01f) ? json(ARCHER_RUN_SPEED / world) : json(nullptr)}
+                });
+            }
+            json result = BuildStateJson();
+            result["clips"] = clips;
+            result["model"] = json{
+                {"scale",model_scale},
+                {"height",ARCHER_MODEL_HEIGHT},
+                {"foot_offset",model_foot_offset}
+            };
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
+        });
 }
 #endif
 
@@ -2049,6 +2717,7 @@ void ApplicationArcher::RegisterMCPTools(){
 #ifdef USE_IMGUI
 
 void ApplicationArcher::DrawImGuiUI(void){
+    RenderApplicationUI();
     Application::DrawImGuiUI();
 
     //Runs on the RENDER thread with physics_mutex held, so the live Stage can be read directly.
@@ -2092,6 +2761,125 @@ void ApplicationArcher::DrawImGuiUI(void){
         SimCommand cmd;
         cmd.type = ARCHER_CMD_RESTART;
         SubmitUICommand(cmd);
+    }
+
+    /*
+        --- The animation ---------------------------------------------------------------------
+
+        Written directly rather than through the command queue, for the same reason the arrow
+        punch slider is: this runs with physics_mutex held, and these are scalars the physics
+        thread only reads. NewGame above is the exception because it rebuilds the scene.
+    */
+    ImGui::Separator();
+    if (!archer_model){
+        ImGui::TextWrapped("No character model. Check the log for which of the skin, node or clip "
+                           "names in " ARCHER_MODEL_ASSET " did not resolve.");
+    }else if (ImGui::CollapsingHeader("Animation",ImGuiTreeNodeFlags_DefaultOpen)){
+        ImGui::Text("rig scaled %.3fx to stand %.2f tall",model_scale,ARCHER_MODEL_HEIGHT);
+
+        //The wheel is the way to do this, but the wheel cannot be scripted and cannot be nudged by
+        //exactly one unit, so the slider is here too - and it is the only way back to the default.
+        ImGui::SliderFloat("camera",&camera_distance,CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX,"%.1f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("reset")){
+            camera_distance = CAMERA_DISTANCE;
+        }
+
+        /*
+            The backdrop, which is a picture and therefore entirely a matter of taste.
+
+            `follow` is how much of the camera's motion it copies: 1 pins it to the camera and it
+            reads as infinitely far, 0 nails it to the world and it slides past as fast as the
+            ground. `scale` and `offset` choose which part of a portrait image a 16:9 view shows.
+        */
+        if (background_object){
+            ImGui::SliderFloat("bg follow",&background_follow,0.0f,1.0f,"%.2f");
+            ImGui::SliderFloat("bg scale",&background_scale,0.4f,2.5f,"%.2f");
+            ImGui::SliderFloat("bg offset y",&background_offset_y,-40.0f,40.0f,"%.1f");
+        }
+
+        //Who fills ArcherAnimParams. The three are indistinguishable downstream - see Puppet.h.
+        ImGui::RadioButton("game",&anim_source,ANIM_FROM_GAME);  ImGui::SameLine();
+        ImGui::RadioButton("panel",&anim_source,ANIM_FROM_PANEL); ImGui::SameLine();
+        ImGui::RadioButton("clip",&anim_source,ANIM_FROM_CLIP);
+
+        ImGui::Checkbox("show collider",&f_show_collider);
+        ImGui::SameLine();
+        //The one toggle worth having in front of you the whole time: play every clip at 1.0 and
+        //watch the feet skate, or stretch the rate to plant them and watch the cycle speed up.
+        //Neither looks right yet, and seeing WHY is the point of this pass.
+        ImGui::Checkbox("match feet to speed",&puppet.f_match_feet);
+
+        if (anim_source == ANIM_FROM_PANEL){
+            //The rules' own numbers as the range, so what is dialled in here is a speed the game
+            //can actually produce rather than an abstract slider.
+            ImGui::SliderFloat("speed",&panel_params.speed,-ARCHER_RUN_SPEED,ARCHER_RUN_SPEED,"%.2f");
+            panel_params.ground_speed = fabsf(panel_params.speed);
+            panel_params.facing = (panel_params.speed < 0.0f) ? -1.0f : 1.0f;
+            ImGui::Checkbox("on ground",&panel_params.f_on_ground);
+            panel_params.mode = panel_params.f_on_ground ? MODE_GROUND : MODE_AIR;
+        }
+        if (anim_source == ANIM_FROM_CLIP){
+            ImGui::SliderFloat("preview rate",&preview_rate,-3.0f,3.0f,"%.2f");
+        }
+
+        /*
+            Every clip in the file, including the ones the game has no use for.
+
+            The export is all-or-nothing, so "did that come through correctly" is a question about
+            all nine - and a clip nobody can play is a clip nobody can check. Clicking one switches
+            to preview mode, which is the only thing anyone wants when they click a clip name.
+        */
+        ImGui::Separator();
+        ImGui::Text("clip                 secs   native  at run");
+        for (int i = 0; i < CLIP_COUNT; i++){
+            ImGui::PushID(i);
+            bool f_ready = (archer_clips[i] != NULL);
+            if (!f_ready){
+                ImGui::TextDisabled("%-18s  MISSING FROM EXPORT",ARCHER_CLIPS[i].name);
+                ImGui::PopID();
+                continue;
+            }
+            if (ImGui::SmallButton((i == playing_clip) ? "||" : ">")){
+                anim_source = ANIM_FROM_CLIP;
+                preview_clip = i;
+                playing_clip = -1;      //force a restart, so a preview always plays from frame 0
+            }
+            ImGui::SameLine();
+            float world = puppet.WorldClipSpeed(i);
+            if (world > 0.01f){
+                //What planting the feet at a full run would cost this clip. Over about 1.8 it is
+                //no longer a stride, it is a fast-forward - see PUPPET_RATE_MAX.
+                ImGui::Text("%-18s %5.2f  %5.2f/s  %4.1fx",ARCHER_CLIPS[i].name,
+                            puppet.clip_duration[i],world,ARCHER_RUN_SPEED / world);
+            }else{
+                ImGui::Text("%-18s %5.2f   in place",ARCHER_CLIPS[i].name,puppet.clip_duration[i]);
+            }
+            //The measured net turn, next to whether the table says this clip is a turn. They are
+            //meant to agree: a big number with no T is a pivot being thrown away, and a T on a
+            //clip reading near zero is a cycle about to wag the whole character.
+            if (ARCHER_CLIPS[i].f_turns || puppet.clip_turn_deg[i] > 15.0f
+                                        || puppet.clip_turn_deg[i] < -15.0f){
+                ImGui::SameLine();
+                ImGui::TextColored(ARCHER_CLIPS[i].f_turns ? ImVec4(0.6f,0.9f,0.6f,1.0f)
+                                                           : ImVec4(0.95f,0.7f,0.3f,1.0f),
+                                   "  %s%.0f deg",ARCHER_CLIPS[i].f_turns ? "T " : "? ",
+                                   puppet.clip_turn_deg[i]);
+            }
+            ImGui::PopID();
+        }
+
+        //And what is actually on screen. `wanted` against the rate it got IS the foot slide.
+        ImGui::Separator();
+        const char* playing = (playing_clip >= 0 && playing_clip < CLIP_COUNT)
+                            ? ARCHER_CLIPS[playing_clip].name : "none";
+        ImGui::Text("playing   %s%s",playing,puppet.choice.f_placeholder ? "   (PLACEHOLDER)" : "");
+        ImGui::Text("rate      %.2f   wanted %.2f",puppet.choice.rate,puppet.choice.wanted_rate);
+        ImGui::Text("model yaw %.0f deg",puppet.yaw_deg);
+        if (puppet.choice.f_placeholder){
+            ImGui::TextWrapped("Nothing is authored for this state, so Idle is standing in. "
+                               "Missing today: run, jump, fall, land, draw, hang and climb.");
+        }
     }
 
     ImGui::Separator();

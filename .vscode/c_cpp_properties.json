@@ -4,12 +4,10 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**/*",
-                "C:/msys64/usr/include/**",
-                "${workspaceFolder}/core/**/*",
-                "${workspaceFolder}/apps/**/*",
-                "${workspaceFolder}/3rdparty/",
-                "${workspaceFolder}/3rdparty/miniz/"
+                "C:/msys64/usr/include/**"
+
             ],
+            "defines": ["USE_PHYSICS=1", "USE_IMGUI=1"],
             "cStandard": "c17",
             "cppStandard": "c++17",
             "intelliSenseMode": "windows-gcc-x64",

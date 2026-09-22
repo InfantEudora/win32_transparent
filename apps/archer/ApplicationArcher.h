@@ -7,6 +7,7 @@
 
 #include "Application.h"
 #include "Stage.h"
+#include "Puppet.h"
 
 /*
     A side-view platformer about an archer, in 3D assets.
@@ -105,6 +106,17 @@
 #define ARCHER_CMD_RESTART          SIM_CMD_LAST+0
 #define ARCHER_CMD_AIM              SIM_CMD_LAST+1      //value[0] = degrees, relative to facing
 #define ARCHER_CMD_PLACE            SIM_CMD_LAST+2      //value[0] = x, value[1] = y
+/*
+    Drive the animation from outside the game - subtype is an ArcherAnimSource.
+
+        ANIM_FROM_CLIP    value[0] = clip index (ArcherClip), value[1] = playback rate
+        ANIM_FROM_PANEL   value[2] = ground speed, SIGNED along facing; value[3] = 1 on the ground
+        ANIM_FROM_GAME    nothing else is read - the rules take the controls back
+
+    On the queue rather than a setter for the usual reason: an MCP handler and the ImGui panel are
+    both on the wrong thread, and this way the change lands at one known point in one known tick.
+*/
+#define ARCHER_CMD_ANIM             SIM_CMD_LAST+3
 
 /*
     Collision filtering.
@@ -196,8 +208,93 @@
 #define ARCHER_DEBRIS_TICKS         480
 #define ARCHER_MAX_DEBRIS           120
 
+/*
+    The character model, and the three names inside it that this app depends on.
+
+    ALL THREE ARE STRINGS THE EXPORT DECIDES, and each fails differently when it is wrong: a bad
+    skin name gives no skeleton at all (loud), a bad node name gives a skeleton with nothing to
+    draw (loud), and a bad ROOT BONE name gives a fully working skeleton whose root motion can
+    never be measured or extracted (silent). BuildArcherModel reports each one separately for that
+    reason. The clip names live in Puppet.h with the rest of the animation's data.
+*/
+#define ARCHER_MODEL_ASSET          "meshes/archer.glb"
+#define ARCHER_MODEL_SKIN           "archer_armature"
+#define ARCHER_MODEL_NODE           "archer"
+#define ARCHER_MODEL_ROOT_BONE      "mixamorig:Hips"
+
+/*
+    How tall the model is drawn, in world units.
+
+    It is ARCHER_HALF_H * 2 and it has to be - the level's whole blockout is derived from the body
+    box (what the feet reach, what the hands reach, how wide a gap a running jump clears), so a
+    model that disagrees with the box is a model standing in a level built for someone else. The
+    rig is authored about 0.89 units tall, so the scale this works out to is roughly 2x; it is
+    MEASURED from the bind pose at load rather than typed here, because a re-export at a different
+    size must not silently shrink the character. See BuildArcherModel.
+*/
+#define ARCHER_MODEL_HEIGHT         (ARCHER_HALF_H * 2.0f)
+
+/*
+    Where the animation's parameters come from.
+
+    The point of the split is that these are indistinguishable downstream: Puppet::Tick cannot
+    tell which one filled the struct, so what the panel shows IS what the game does. See the note
+    at the top of Puppet.h.
+*/
+enum ArcherAnimSource{
+    ANIM_FROM_GAME = 0,     //the rules fill ArcherAnimParams - normal play
+    ANIM_FROM_PANEL,        //the sliders fill it - tune the decisions with no level in the way
+    ANIM_FROM_CLIP          //one clip on loop, decisions bypassed entirely - the export check
+};
+
+/*
+    The archer's skeleton, which exists as its own class for ONE overridden method.
+
+    A clip can turn the character - `Running_TurnAround` is a 180, `Twirl` is a spin - and that
+    turn lives in the root bone's YAW. Animation::SampleRootMotion takes it off the bone
+    unconditionally (unlike the position, which is gated on the extract flags) and hands it to
+    Object::ApplyRootMotion, whose base implementation does NOTHING. So on a plain Skeleton the
+    rotation in a clip is stripped from the pose and then dropped on the floor, and the character
+    stands there not turning - which looks like the clip not having any rotation in it.
+
+    PlayerCharacter overrides this to turn AND move; the archer only wants the turn, because Stage
+    owns where she is and a clip must never be allowed to walk her off a ledge.
+*/
+class ArcherModel : public Skeleton{
+public:
+    //Radians of yaw this clip has turned her through since it started. ADDED to the facing the
+    //Puppet asks for, rather than replacing it - a turn authored in a clip is a turn relative to
+    //wherever the character was already pointing. Reset when the clip changes.
+    float clip_yaw = 0.0f;
+    void ApplyRootMotion(const RootMotionDelta& delta) override;
+};
+
+/*
+    The backdrop.
+
+    One quad, unlit, a long way behind the play plane, sized so that it still covers the view when
+    the camera is zoomed all the way out. It is PARALLAX rather than scenery: `background_follow`
+    is the fraction of the camera's motion it copies, so 1.0 pins it to the camera and it reads as
+    infinitely far away, and 0.0 nails it to the world and it slides past at the same rate as the
+    ground. Anything between is a distance.
+
+    The image is 1152x1536 - PORTRAIT, against a 16:9 view - so it is fitted to COVER rather than
+    to contain: scaled until it fills the width, with the overflow running off the top and bottom.
+    Letterboxing a backdrop is worse than cropping one.
+*/
+#define BACKGROUND_ASSET            "images/background1.png"
+#define BACKGROUND_IMAGE_ASPECT     0.75f   //1152/1536
+#define BACKGROUND_DEPTH            40.0f   //behind the play plane, in world units
+#define BACKGROUND_FOLLOW           0.85f   //0 = nailed to the world, 1 = pinned to the camera
+#define BACKGROUND_COVER            1.15f   //margin over the view it has to fill
+
 //The camera trails the archer rather than being welded to them - see UpdateCamera.
 #define CAMERA_DISTANCE             26.0f
+//And the wheel moves it in and out. Proportional rather than a fixed step, so a notch feels the
+//same close up and far away - 10% of wherever it currently is.
+#define CAMERA_ZOOM_PER_NOTCH       0.10f
+#define CAMERA_DISTANCE_MIN         5.0f    //close enough to read a hand
+#define CAMERA_DISTANCE_MAX         60.0f   //the whole of a screen's worth of level
 #define CAMERA_HEIGHT               3.2f
 #define CAMERA_LEAD                 3.0f    //world units ahead, in the direction of travel
 #define CAMERA_SMOOTH               0.10f   //per-tick lerp toward the ideal
@@ -260,6 +357,16 @@ struct ArcherSnapshot{
     float predicted_x = 0.0f;
     float predicted_y = 0.0f;
     bool  f_predicted = false;
+
+    //What the model is doing, which is a different question from what the archer is doing - see
+    //Puppet.h. `wanted_rate` against `rate` is the foot-slide readout, and it is here rather than
+    //only in the panel so it can be measured over a run instead of watched.
+    int   clip = -1;
+    float clip_rate = 1.0f;
+    float clip_wanted_rate = 1.0f;
+    bool  f_clip_placeholder = false;
+    float model_yaw = 0.0f;
+    int   anim_source = ANIM_FROM_GAME;
 };
 
 //A chunk of a broken wall, and when to reap it.
@@ -319,8 +426,17 @@ private:
     void BuildBlocks();
     void BuildProps();
     void BuildArcher();
+    //Loads meshes/archer.glb: the skin, the skinned mesh and every clip in Puppet.h's table.
+    //Survivable if it fails - the app falls back to the coloured box it has always drawn.
+    void BuildArcherModel();
+    //Reads each clip's own root track for how far it travels and how long it lasts, and hands the
+    //answers to the Puppet. See the note on the definition - this is the number that decides
+    //whether the feet slide, and it is measured rather than declared.
+    void MeasureClips();
     void BuildArrowViews();
     void BuildAimArc();
+    //The backdrop quad. Survivable if the image is missing - see the note on the definition.
+    void BuildBackground();
     void SetupLights();
     void SetupCamera();
     void SetupInput();
@@ -345,6 +461,9 @@ private:
     void DriveArcherBody();
     //Colour the archer by what they are doing. Stands in for the animation that will say it later.
     void SyncArcherView();
+    //Fill the animation parameters, ask the Puppet what to play, and carry the answer out on the
+    //model. The whole of step 0 runs through here.
+    void SyncArcherAnimation();
     //Hand Stage every live prop as a box, BEFORE the tick. See the note on the definition.
     void RefreshObstacles();
     //Shove whatever Stage says was leaned on, AFTER it.
@@ -374,6 +493,10 @@ private:
     //hit" that Stage cannot answer. See the note on the definition.
     int  TruncateArcAgainstProps(v2* points, int count);
     void UpdateCamera();
+    //Puts the camera where camera_target and camera_distance say, and drags the backdrop
+    //and the sun along with it. Called from the tick AND from the wheel, which is why it is
+    //its own function - a zoom has to show while the simulation is paused.
+    void PlaceCamera();
     void UpdateTargets();
     //Retires props that have been knocked out of the level, so they stop falling forever.
     void ReapFallenProps();
@@ -396,6 +519,8 @@ private:
     int material_platform = 0;
     int material_breakable = 0;
     int material_archer = 0;
+    //The character model's own colour - see the note where it is assigned.
+    int material_archer_skin = 0;
     //A second archer colour for MODE_HANG / MODE_CLIMB. With no animation yet, the colour IS the
     //state readout - it is what makes "is he hanging or is he stuck in the wall" answerable from a
     //screenshot, which is how this app gets checked over MCP.
@@ -409,7 +534,26 @@ private:
     int material_dot_hot = 0;
 
     //--- The scene --------------------------------------------------------------------------------
+    /*
+        THE ARCHER IS TWO OBJECTS, and keeping them apart is deliberate.
+
+        `archer_object` is the BODY: the box collider, the kinematic rigid body, the thing the rope
+        joint attaches to and the thing an arrow's raycast has to exclude. It is exactly the box
+        Stage sweeps, which is why it stays useful as a debug draw even once there is a character
+        to look at (f_show_collider) - a model that has drifted out of its own collider is a bug
+        you can only see by drawing both.
+
+        `archer_model` is the LOOK: the skinned mesh and its 65 bones, placed every tick from
+        Stage's position and posed by the Puppet. It has no physics, no collider and no opinion -
+        attaching it as a child of the body was the obvious alternative and was not done, because
+        on the rope the body becomes DYNAMIC and the model would inherit a solver's idea of an
+        orientation for a character who should stay side-on.
+    */
     Object* archer_object = NULL;
+    ArcherModel* archer_model = NULL;
+    //Every clip in Puppet.h's table, in that order. NULL for one the export did not contain,
+    //which BuildArcherModel reports and everything downstream checks for.
+    Animation* archer_clips[CLIP_COUNT] = {};
     //The sun, kept because UpdateCamera drags it along with the view every tick - the level is 84
     //units wide and one shadow ortho cannot cover that, so the light follows the camera.
     DirectionalLight* sun_light = NULL;
@@ -430,6 +574,45 @@ private:
     //Where the camera would like to be, before smoothing. Kept between ticks so the lerp has
     //something to lerp from.
     vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);
+
+    //--- The animation ----------------------------------------------------------------------------
+    //The decisions. Lives on the physics thread with the Stage, and is read by DrawImGuiUI under
+    //physics_mutex like everything else here.
+    Puppet puppet;
+    //Worked out from the bind pose at load: what the rig has to be scaled by to stand
+    //ARCHER_MODEL_HEIGHT tall, and where its feet sit once it has been.
+    float model_scale = 1.0f;
+    float model_foot_offset = 0.0f;
+
+    int anim_source = ANIM_FROM_GAME;
+    //What ANIM_FROM_PANEL feeds the Puppet. The same struct the rules fill, by hand.
+    ArcherAnimParams panel_params;
+    int   preview_clip = CLIP_IDLE;     //what ANIM_FROM_CLIP plays
+    float preview_rate = 1.0f;
+    //Draw the collider box as well as the model. Off by default once there is a model, because
+    //the box is inside the character and reads as her standing in a crate.
+    bool  f_show_collider = false;
+    //What is on screen right now, so the panel and MCP can report it without asking the model.
+    int   playing_clip = -1;
+    //The yaw the model was actually drawn at, in degrees - the Puppet's answer plus a turning
+    //clip's own contribution. Reported rather than recomputed, because the sum is the thing.
+    float model_yaw_drawn = 0.0f;
+
+    //--- The backdrop -----------------------------------------------------------------------------
+    Object* background_object = NULL;
+    int   material_background = 0;
+    //Both live on sliders, because "what would this look like" is the question being asked
+    //of the image and neither answer is knowable without seeing it move.
+    float background_follow = BACKGROUND_FOLLOW;
+    float background_scale = 1.0f;
+    float background_offset_y = 0.0f;
+    //The quad's size before background_scale, worked out once from the widest view the zoom
+    //can produce. Kept so the slider has something to scale.
+    vec2  background_base = vec2(1.0f,1.0f);
+
+    //How far back the camera sits. A member rather than CAMERA_DISTANCE outright, because the
+    //wheel moves it - the define is still the value it starts at and returns to on a restart.
+    float camera_distance = CAMERA_DISTANCE;
 
     //--- Chrome -----------------------------------------------------------------------------------
     bool f_show_engine_ui = false;

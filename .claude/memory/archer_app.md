@@ -1,6 +1,6 @@
 ---
 name: archer-app
-description: "apps/archer, a side-view archer platformer prototype - the Stage/view split, the hybrid body, and the agreed slice order (bow, ledge, props-block, kick and rope-swing done; tightrope and knife open)"
+description: "apps/archer, a side-view archer platformer prototype - the Stage/view split, the hybrid body, the Puppet animation seam, and the agreed slice order (bow, ledge, props-block, kick, rope-swing and the animation seam done; tightrope and knife parked as nice-to-haves)"
 metadata: 
   node_type: memory
   type: project
@@ -13,7 +13,7 @@ Started 2026-09-20. The user is making the assets and animations; the first iter
 and everything renders as scaled primitives from `core/Primitives.h`.
 
 **Structure**, following breakout/bomber: `archer/Stage.{h,cpp}` is the RULES and names no engine
-type (`make rules` builds it against `stage_test.cpp` alone - 131 checks, ~1 s, no GPU);
+type (`make rules` builds it against `stage_test.cpp` alone - 169 checks, ~1 s, no GPU);
 `ApplicationArcher` is the view and wiring. 60 TPS.
 
 **The seam, which is the thing to understand.** Simulated by hand in Stage: the archer's own
@@ -45,10 +45,10 @@ facing; level hand-coded in the rules module rather than authored in Blender or 
 bow first of the four mechanics.
 
 **Slice status:** base traversal + bow, ledge hang/climb, props-block-you, kick + breakable walls,
-and the ROPE SWING are all DONE and verified in-app. Open: the TIGHTROPE (the user's brief listed
-"balancing a rope" as a separate mechanic from swinging, and only swinging is built), then the
-knife. Keys are J bow / K kick / L knife with E for the rope; the knife mapping exists with no
-rules behind it.
+the ROPE SWING and step 0 of the ANIMATION are all DONE and verified in-app. The user PARKED the
+tightrope and the knife as nice-to-haves on 2026-09-21 - "the core mechanics are in" - and moved
+to animation. Keys are J bow / K kick / L knife with E for the rope; the knife mapping exists with
+no rules behind it.
 
 **The rope swing** is the ONE place the solver owns the archer. A pendulum is what a constraint
 solver is good at and what a hand integrator is bad at - the appeal is that a bad release drops you
@@ -90,11 +90,68 @@ Space climbs (an uninterruptible tick-counted lerp, shaped so a root-motion clip
 in); S lets go, with a cooldown so the drop cannot re-grab. The archer turns yellow while hanging
 because with no animation the colour IS the state readout in a screenshot.
 
+**A per-tick snapshot cannot report whether the sim is PAUSED**, and this bit hard on 2026-09-22.
+PublishSnapshot runs at the end of RunSimulationTick, which only runs on a pass that ticks - so
+while paused nothing is published and the snapshot keeps reporting the last TICKING pass, on which
+it was by construction not paused. `paused` read false for a game that had been sitting still for
+minutes, and a stalled tick counter read as a hung physics thread until sim_pause false was tried
+on a hunch. archer_state now reads IsPhysicsPaused() live. Breakout's snapshot is the same design
+and probably has the same hole.
+
 **Testing it over MCP:** `archer_place` teleports the archer (the level is 84 units with two gaps
 - do not fly the approach by script), and `archer_hold` holds any one control for N ticks, which
 is the general form that reaches `down`/`action`/`knife` without a tool per key. To catch the high
 ledge: place at (43.1, 0.9) then `archer_jump` with run right.
 
-Found on the way: [[addphysics-gravity-off]]. Also added `body` to
+**The animation, from 2026-09-21.** Plan and measurements in `apps/archer/animation_plan.md`; read
+it before touching any of this. `apps/archer/Puppet.{h,cpp}` is the SECOND rules module and makes
+the same promise `Stage` does - no engine type, built and tested by `make rules`. It owns what
+`Stage` deliberately does not: which clip plays, at what rate, and which way the model faces.
+
+`ArcherAnimParams` is the seam. `DescribeArcher(stage,out)` fills it from the rules; the debug
+panel and the `archer_anim` MCP tool fill the SAME struct by hand, and `Puppet::Tick` cannot tell
+which. That is what lets the animation prototype run with no level, no gravity and no input, which
+is what the user asked for. Three sources: `game`, `panel` (sliders), `clip` (one clip on loop,
+which is how an export gets checked - every clip in the file, including the ones the game has no
+use for). The user re-exports OFTEN and the clip set changes each time: re-measure before trusting
+any number here.
+
+**The asset** is a 65-joint Mixamo rig, 0.8911 units tall in bind pose, MEASURED at load and scaled
+2.020x to stand ARCHER_MODEL_HEIGHT - never typed in, so a re-export at another size corrects
+itself. Clip speeds are measured the same way from each clip's own root track, because the number
+that matters is the gap between them and ARCHER_RUN_SPEED. As of the 2026-09-21 evening export the
+ladder is Walking 1.58/s -> Running_Slow 2.92/s -> Running_Fast 5.19/s against a game that tops out
+at 9.0, so a full sprint stretches the fast run **1.73x** - the morning export had only a walk and
+slid 5.7x, which is what that measurement was FOR. `Puppet::Choose` picks the rung needing the
+least stretch, judged in RATIO not in units/s, which is deliberately the same search the blend
+space (step 1) wants. `Puppet::choice.wanted_rate` against `.rate` reports the remaining slide live.
+
+Clips load with BOTH root-motion extract flags off - the rules own the motion and the animation is
+slaved to it, which is what a platformer wants. The two clips the RULES time disagree badly with
+their animation and that is a gameplay decision waiting to be made, not a bug: Kick_Front is 1.13s
+against KICK_TICKS' 0.23s (wants 4.9x) and Climb is 2.80s against LEDGE_CLIMB_TICKS' 0.30s (wants
+9.33x). Both are clamped at PUPPET_ACTION_RATE_MAX and the gap is reported.
+
+**Two silent traps, both now their own memories: [[renderer-skinned-shader-null]] and
+[[root-yaw-always-extracted]].** The second turned out to be a CORE bug and was fixed there on
+2026-09-22 (Animation::extract_yaw_root_motion) rather than worked around here - the app-side
+version could only choose between turning and not turning, never between those and "keep the hip
+rotation in the pose", which is what a complex clip needs. The archer keeps the ArcherModel
+subclass to consume the turn and an f_turns column that sets the core flag per clip.
+
+**Also in the view now:** a parallax backdrop (apps/archer/assets/images/background1.png on one
+unlit quad 40 units back, BACKGROUND_FOLLOW is the fraction of the camera's motion it copies)
+and mouse-wheel zoom on CAMERA_DISTANCE_MIN..MAX. The zoom places the camera from UpdateView
+rather than waiting for the tick, so it still works while the simulation is paused - which is
+exactly when you want to look closely at an animation.
+
+**The rest of that hunt:** Also found: the engine skins with
+three bone influences, not four (29% of this mesh's vertices have a fourth; the first three average
+0.98, so it is a few percent of shrink rather than a problem); and the export's material arrives at
+metallic 0.6, which renders BLACK in this app because the skybox is off - BuildArcherModel turns it
+down to 0.10 before the renderer takes its copies, and does it there rather than in Blender because
+a re-export puts the exporter's number back.
+
+Found on the way: [[addphysics-gravity-off]] and [[renderer-skinned-shader-null]]. Also added `body` to
 `PhysicsWorld::RaycastHit` in core (additive, default NULL) so an arrow can tell what it hit.
 Related: [[per-app-build-layout]], [[shell-heredoc-limit]], [[running-app-is-user-driven]].
