@@ -88,6 +88,12 @@ public:
     //In bind pose - the CPU copy SetSkinnedMeshData keeps. Where the skin actually is, which is
     //not where the bones are: a toe joint sits inside the shoe, not under it.
     const std::vector<skinned_vertex>& GetSkinnedVertices() const {return skinned_vertices;};
+    //The morph target DELTAS, for measuring where a shape key takes a point (the archer's bow
+    //string), not for drawing. With ONE target, entry i is how far it moves vertex i of
+    //GetVertices at weight 1. With several, trust nothing: GLTFLoader writes them primitive by
+    //primitive, while default.vert reads them target by target (i*voffset + gl_VertexID), and the
+    //two only agree for a single-primitive mesh.
+    const std::vector<morph_vertex>& GetMorphVertices() const {return morph_vertices;};
 
     bool IsNormalMesh();
     bool IsSkinnedMesh();

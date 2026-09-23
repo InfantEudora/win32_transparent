@@ -80,7 +80,7 @@ enum ArcherClip{
     CLIP_HANDSTAND,         //Walk_ToHandstand       set dressing; preview only
     CLIP_JUMP_IN_PLACE,     //Jumping_InPlace        a whole standing jump; preview only
     CLIP_JUMP_FORWARD,      //Jump_Forward           a whole travelling jump; not wired
-    CLIP_DRAW,              //Standing_DrawArrow     needs step 2's mask layer before it can play
+    CLIP_DRAW,              //Standing_DrawArrow     standing only; step 2's mask layer lets it play while moving
     CLIP_STRETCH2,
     CLIP_COUNT
 };

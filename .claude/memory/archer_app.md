@@ -346,3 +346,28 @@ a re-export puts the exporter's number back.
 Found on the way: [[addphysics-gravity-off]] and [[renderer-skinned-shader-null]]. Also added `body` to
 `PhysicsWorld::RaycastHit` in core (additive, default NULL) so an arrow can tell what it hit.
 Related: [[per-app-build-layout]], [[shell-heredoc-limit]], [[running-app-is-user-driven]].
+
+**AIM + PROP ASSETS PLANNED 2026-09-23** (not built): animation_plan.md "Step 3 - aim pitch" and
+bow_plan.md §4 "The target". Aim = post-pose override in ArcherModel::ApplyAnimation over spine+arms,
+about the WORLD play-plane normal (sign = facing), rotating by aim_deg minus the draw pose's measured
+neutral (-2.2 deg; full-draw hands are at shoulder height, so the chest is the pivot), faded by an
+aim_weight, checked per tick as aim_error_deg vs Stage::AimDirection. Props: user agreed to separate
+assets, origin at the attach point, socket bones added at the END of skin.joints; nocked arrow uses
+a look-at toward the bow grip. Grip recovery from Standing_DrawArrow stays until sockets exist.
+UPDATE same day: props re-exported (origin at grip / nock, facing Blender -Y = glTF +Z = rig
+forward; scene placement ignored; sockets + Bow_Draw removed). Step 7 BUILT differently than
+planned: the nocked arrow is a CHILD OF THE BOW at identity, positioned at the string nock measured
+off the Drawn shape key (Bow::MeasureNock, core Mesh::GetMorphVertices). Nock gap to right hand at
+full draw 0.058 rig. Open: string bends before the hand reaches it (bend linear in draw_ticks vs
+the clip's hand timing); bow held sideways outside the draw until a socket bone exists.
+Core latent bug noted in Mesh.h: loader writes morph targets per primitive, shader reads them
+target-major - only a single-target mesh is safe.
+SOCKETS (export 20:09): socket_bow (LeftHand) + socket_quiver (Spine) in the rig, 67 joints; Bow::Build
+attaches bow and quiver at zero offset + BOW_SOCKET_AXIS_FIX (+90 deg X: exporter converts mesh axes
+to Y-up but not bone axes) - CONFIRMED 0.00 deg against a bow posed with Copy Transforms. Exporter
+writes socket channels in every clip, so no baking is needed. Pending: the socket ORIENTATIONS were
+posed in pose mode and not exported (rest is axis-aligned) - user to Apply Selected as Rest Pose.
+Offline check scripts lived in the session scratchpad (sockfk.py) - promote to tools/ if reused.
+Export 20:26: sockets re-posed as REST from the end of Standing_DrawArrow - verified: bow upright at
+full draw (up -0.14,0.99,-0.05), nock gap 0.048 rig, quiver on her back. Idle bow is horizontal with
+the nocked arrow pointing at the floor - per-clip socket keys or a nocking decision, not a bug.

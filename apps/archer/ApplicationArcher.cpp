@@ -920,11 +920,10 @@ void ApplicationArcher::BuildArcherModel(){
     Almost all of the thinking behind this is in apps/archer/Bow.h; what belongs here is only the
     wiring and the one decision the app owns - WHICH CLIP IS THE REFERENCE POSE.
 
-    That is CLIP_DRAW (Standing_DrawArrow), and not because it is the draw. It is the pose the
-    artist had the character in when the items were placed in her hands, which is a fact about how
-    the asset was authored rather than about what the clip is for. If the bow is ever re-placed in
-    some other pose, this is the line that has to change - and Bow's grip assert is what will say
-    so, loudly, rather than leaving a bow floating beside a hand.
+    That is CLIP_DRAW (Standing_DrawArrow): the bow's grip is chosen so it stands upright, facing
+    her forward, at the clip's LAST frame - full draw, the pose the bow is looked at in. Until the
+    rig has a socket bone for the bow (bow_plan.md §8, items 8-9) this one clip decides how the bow
+    sits in her hand in every other clip too.
 */
 void ApplicationArcher::BuildBow(){
     if (!archer_model){
@@ -1280,9 +1279,8 @@ void ApplicationArcher::MeasureKickClip(){
 /*
     The nocked arrow's mesh, turned into one that flies.
 
-    The file's arrow is authored for the HAND: its vertices are in the node's own space, along
-    whatever axis the artist modelled it and with its origin wherever that was left - it is drawn
-    under the right-hand bone with only a grip rotation, see Bow.h. Flight wants the convention the
+    The file's arrow is authored as a PROP (Bow.h): origin at the nock, pointing along +Z, the
+    character's forward - and nocked on the bow at identity. Flight wants the convention the
     box arrow always had and that SyncArrowViews relies on - the arrow runs along +X, one rotation
     about Z aims it - plus one the box did not have: THE TIP IS AT THE ORIGIN (give or take
     ARROW_TIP_EMBED). Stage's arrow is a
@@ -1292,10 +1290,11 @@ void ApplicationArcher::MeasureKickClip(){
 
     MEASURED FROM THE FILE, not typed in:
       - the LONG AXIS is the longest side of the mesh's bounding box;
-      - the TIP is the end of that axis FARTHER FROM THE NODE'S ORIGIN. The origin is the right
-        hand - Bow::EquipItem measures the arrow's rest position on that bone to five decimals -
-        and the right hand is the one holding the nock on the string, so the near end is the nock.
-        In this file the shaft runs z -0.606 .. -0.001: origin at the nock, point 0.6 away.
+      - the TIP is the end of that axis FARTHER FROM THE MESH'S ORIGIN, because the prop
+        convention puts the origin at the nock. In the 2026-09-23 export the arrow runs z
+        -0.017 .. 0.519 (the fletching reaches a little behind the nock). The prop convention
+        makes this search redundant - long axis Z, tip at +Z - and it is kept because it still
+        gets it right and costs nothing; bow_plan.md §8 item 9 replaces it.
 
         THE FIRST VERSION GUESSED "the end nearer the bow" and flew every arrow backwards - a
         close-up screenshot of one in flight showed the head trailing. In the draw pose the nock
