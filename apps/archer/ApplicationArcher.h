@@ -333,6 +333,14 @@ public:
 #define CAMERA_HEIGHT               3.2f
 #define CAMERA_LEAD                 3.0f    //world units ahead, in the direction of travel
 #define CAMERA_SMOOTH               0.10f   //per-tick lerp toward the ideal
+/*
+    The range's camera does not follow her. It looks at the middle of the range from the usual
+    distance and stays there, so she walks across the frame and every screenshot of the range is
+    taken from the same place - which is what makes two of them comparable. The range is laid out
+    to fit this frame; see Stage::BuildRangeLevel. The wheel still zooms it.
+*/
+#define RANGE_CAMERA_X              0.0f
+#define RANGE_CAMERA_Y              1.4f    //where the main camera sits when she stands on y 0
 
 /*
     What the MCP tools are allowed to see.
@@ -348,6 +356,10 @@ public:
 struct ArcherSnapshot{
     uint64_t tick = 0;
     uint64_t stage_ticks = 0;
+    //Which Stage these numbers came from - STAGE_LEVEL_MAIN or STAGE_LEVEL_RANGE. Reported because
+    //every other field here means something different on each, and a script that switched scenes
+    //should be able to tell it landed without a screenshot.
+    int   level = STAGE_LEVEL_MAIN;
     float x = 0.0f;
     float y = 0.0f;
     float vx = 0.0f;
@@ -453,6 +465,8 @@ public:
     void Init(void) override;
     void UpdateView(void) override;
     void RunSimulationTick(void) override;
+    //Swaps the live level for the parked one. Physics thread, physics_mutex held - see core.
+    void OnActiveSceneChanged(Scene* from, Scene* to) override;
 #ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
 #endif
@@ -653,6 +667,7 @@ private:
     //The sun, kept because UpdateCamera drags it along with the view every tick - the level is 84
     //units wide and one shadow ortho cannot cover that, so the light follows the camera.
     DirectionalLight* sun_light = NULL;
+    DirectionalLight* fill_light = NULL;        //held only so the range scene can share it
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
     std::vector<PropView> prop_views;
     std::vector<DebrisView> debris;
@@ -695,6 +710,61 @@ private:
         float   local_angle = 0.0f; //and at what angle, relative to the prop's
     };
     StuckArrow arrow_stuck[ARROW_MAX_LIVE];
+
+    /*
+        EVERYTHING THAT BELONGS TO ONE LEVEL RATHER THAN TO THE APP - the parked half of it.
+
+        The app has two scenes, the main level and the test range, and each has its own Stage,
+        physics world, level objects and archer BODY. The live level's copy of all that sits in the
+        ordinary members above, where the whole of this file has always found it; the other level's
+        sits in here. OnActiveSceneChanged swaps the two, member for member, so the tick, the panel
+        and the tools never have to know which level they are looking at.
+
+        THIS IS DELIBERATELY THE EASY WAY, and it is the thing to generalise next: a real
+        per-scene store would mean indexing every one of these by scene instead of swapping them.
+        What it gets right already is the split. What is NOT in here is shared by both scenes -
+        the skinned model and the bow in her hands, the arrow and aim-arc views, the backdrop, the
+        two lights, the Puppet and the animation state - because she is one character walking
+        between two places, and a second copy of a 65-bone model with thirty clips would be one
+        more thing to keep in step. Those Objects are added to BOTH scenes' lists; only the active
+        scene is drawn, ticked or animated, so each is touched once per pass.
+
+        Leaving a level PARKS it rather than resetting it. Crates stay kicked, arrows stay stuck
+        and an arrow still in flight is still in flight when you come back, because it lives in
+        that level's Stage. The archer's body stays in the parked world too, which is safe: a world
+        that is not stepped does not move it.
+    */
+    struct ArcherLevel{
+        Scene*  scene = NULL;
+        Stage   stage;
+        Object* archer_object = NULL;
+        std::vector<Object*> block_objects;
+        std::vector<PropView> prop_views;
+        std::vector<DebrisView> debris;
+        std::vector<Object*> terrain_objects;
+        std::vector<int> melted_blocks;
+        std::vector<Object*> rope_segments;
+        rp3d::BallAndSocketJoint* rope_joint = NULL;
+        std::vector<rp3d::BallAndSocketJoint*> rope_joints;
+        Object* rope_anchor_object = NULL;
+        StuckArrow arrow_stuck[ARROW_MAX_LIVE];
+        vec3 camera_target = vec3(0.0f,3.0f,0.0f);
+        vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);
+    };
+    ArcherLevel parked_level;
+    //The two scenes by what they are, so the tools and the swap can tell them apart without
+    //comparing names. world_scene is the one Init built first; main_scene is whichever is live.
+    Scene* world_scene = NULL;
+    Scene* range_scene = NULL;
+    //Exchanges the live level's members with parked_level's. See ArcherLevel.
+    void SwapLevel();
+    //Builds the range as a second scene, sharing the character with the first. See the definition.
+    void BuildRange();
+    //Adds the Objects both scenes share - see ArcherLevel - to `scene`'s list.
+    void ShareCharacterWith(Scene* scene);
+    //Puts everything view-side where the newly live level says, without advancing anything.
+    void RefreshViewAfterSwitch();
+
     //Pins an arrow to the prop it just hit, and lets one go again. Releasing matters more than it
     //looks: the arrow pool is a 24-slot ring, and a recycled slot still holding a prop would fire
     //the NEXT arrow welded to a crate.

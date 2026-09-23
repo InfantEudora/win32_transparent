@@ -69,6 +69,27 @@ meshid_t Mesh::GetID(){
     return id;
 };
 
+void Mesh::Retain(){
+    num_references++;
+}
+
+bool Mesh::Release(){
+    num_references--;
+    if (num_references > 0){
+        return false;
+    }
+    //Below zero is a Release without a matching Retain somewhere - a mesh that went straight from
+    //new to Release, never having been held. Said out loud and NOT deleted: deleting here as well
+    //would free it a second time the day the unbalanced caller is one that already did, and the
+    //crash from that points at whoever draws next rather than at the caller that is wrong.
+    if (num_references < 0){
+        debug->Err("Mesh %u released more times than it was retained\n",(unsigned)id);
+        return false;
+    }
+    delete this;
+    return true;
+}
+
 /*
     Rebuilds the VBO/VAO from the vertices this mesh already holds.
 

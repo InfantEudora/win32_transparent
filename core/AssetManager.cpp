@@ -11,8 +11,22 @@ Asset* AssetManager::AddNewAsset(const char* asset_name, Object* object){
     asset->SetName(asset_name);
     if (object){
         asset->mesh = object->GetMesh();
-        asset->mesh->num_references++;
+        if (asset->mesh){
+            asset->mesh->Retain();
+        }
         asset->material_names = object->GetMaterialNames();
+    }
+    debug->Info("Added new Asset: %s\n",asset_name);
+    RegisterAsset(asset);
+    return asset;
+}
+
+Asset* AssetManager::AddNewAsset(const char* asset_name, Mesh* mesh){
+    Asset* asset = new Asset();
+    asset->SetName(asset_name);
+    asset->mesh = mesh;
+    if (mesh){
+        mesh->Retain();
     }
     debug->Info("Added new Asset: %s\n",asset_name);
     RegisterAsset(asset);
@@ -22,13 +36,16 @@ Asset* AssetManager::AddNewAsset(const char* asset_name, Object* object){
 Asset* AssetManager::AddNewAssetFromOBJFile(const char* asset_name, const char* file_name){
     Asset* asset = new Asset();
     asset->SetName(asset_name);
+    //Retained before the temporary Object lets go of it, or deleting the Object would free the
+    //mesh it was only ever holding for us. A failed parse leaves an asset with no mesh, the same
+    //as AddNewAsset with an empty Object, rather than a NULL dereference.
     Object* object = new Object();
     object->SetMesh(OBJLoader::ParseOBJFile(file_name,&loaded_materials));
-    if (object){
-        asset->mesh = object->GetMesh();
-        asset->mesh->num_references++;
-        delete object;
+    asset->mesh = object->GetMesh();
+    if (asset->mesh){
+        asset->mesh->Retain();
     }
+    delete object;
     debug->Info("Added new Asset: %s\n",asset_name);
     RegisterAsset(asset);
     return asset;

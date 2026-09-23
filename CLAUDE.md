@@ -150,6 +150,24 @@ would be a bug that looks like a missing file.
 
 Every app embeds an MCP server on **`http://127.0.0.1:8765/mcp`**.
 
+**Start it with `--minimized` when you are the one driving it.** Someone is usually working at
+this desk, and a normally started app becomes the foreground window the moment it opens - so
+whatever they were typing or clicking lands in the game instead. `--minimized` opens it minimised
+*and without taking focus* (`SW_SHOWMINNOACTIVE`), for every app, with no per-app code:
+
+```bash
+./build/archer.exe --minimized 2>stderr.log &
+```
+
+Everything an agent uses still works, measured on archer 2026-09-23: `screenshot` returns the
+real frame (it reads the renderer's own buffer, not the window), at the app's normal size -
+1440x810, not the 1280x800 the window is created at, because `Window::Resize` sets the restored
+size of a minimised window and tells the renderer. The render loop paces itself to 60 fps while
+minimised, since vsync stops doing it (3.2 ms/frame unpaced, 16.7 ms paced). Scripted input via
+the `*_hold`/`*_run` tools works, because a scripted hold counts as live input with no focus.
+The person can restore the window from the taskbar to watch; that was checked too - it comes up
+at 1440x810 with no second resize, and vsync takes the frame rate back over.
+
 **Only one app at a time.** They all bind the same port, and a second app starts perfectly well
 while its server silently fails to bind - so `screenshot` then returns the FIRST app's window and
 nothing looks wrong. A screenshot showing the wrong game is this, every time. `netstat -ano | grep

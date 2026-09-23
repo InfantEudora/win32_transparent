@@ -2072,7 +2072,7 @@ void ApplicationBomber::BuildBlastNoise(void){
 #endif //__ANDROID__
 }
 
-Mesh* ApplicationBomber::BuildBlastCube(int shader_index){
+Mesh* ApplicationBomber::BuildBlastCube(const char* asset_name, int shader_index){
     //A unit cube centred on the origin, so the shader's box is -0.5..+0.5 on every axis. MakeBox
     //winds it counter-clockwise seen from outside, which is what lets the uniform callback flip to
     //GL_FRONT and keep exactly the inside faces. Generated rather than taken from an asset because
@@ -2083,7 +2083,9 @@ Mesh* ApplicationBomber::BuildBlastCube(int shader_index){
         debug->Fatal("Failed to build a blast cube\n");
         return NULL;
     }
-    mesh->num_references++;
+    //Held by an asset, because the blast volumes come and go and the last one letting go must not
+    //free the mesh the next blast is about to be given.
+    assetmanager->AddNewAsset(asset_name,mesh);
     mesh->mesh_mode = MESH_MODE_SHADER;
     //Says WHICH custom shader draws this mesh, and is the whole reason there are two meshes: it is
     //a property of the mesh, so it is what separates the tile volumes from the cross one.
@@ -2133,8 +2135,8 @@ void ApplicationBomber::BuildExplosion(void){
                    reload_log.c_str());
     }
 
-    tile_mesh  = BuildBlastCube(tile_shader_index);
-    cross_mesh = BuildBlastCube(cross_shader_index);
+    tile_mesh  = BuildBlastCube("bomber_blast_tile",tile_shader_index);
+    cross_mesh = BuildBlastCube("bomber_blast_cross",cross_shader_index);
 
     /*
         The volumes, created once and never destroyed.

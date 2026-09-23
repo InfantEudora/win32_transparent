@@ -59,7 +59,7 @@ void Stage::Reset(){
 
     //Above the start ground, so the first thing the archer does is land - which exercises the
     //landing path on tick one rather than leaving it untested until the first jump.
-    pos = v2(-6.0f,2.0f);
+    pos = StartPosition();
     vel = v2(0.0f,0.0f);
     mode = MODE_AIR;
     facing = 1.0f;
@@ -115,7 +115,7 @@ void Stage::Reset(){
     the high ledge here sits at 4.2 - squarely inside it, and unreachable by any amount of skill
     until hanging exists. tools/archer_reach.py re-derives all five numbers from Stage.h.
 */
-void Stage::BuildLevel(){
+void Stage::BuildMainLevel(){
     //--- The ground, in three runs with two gaps between them ----------------------------------
     blocks.push_back({  1.00f, -2.00f, 13.00f, 2.00f, BLOCK_SOLID,  true });    //x -12 .. 14
     blocks.push_back({ 26.50f, -2.00f,  7.50f, 2.00f, BLOCK_SOLID,  true });    //x  19 .. 34
@@ -234,6 +234,61 @@ void Stage::BuildLevel(){
         blocks.push_back({ cx + 2.2f,  1.00f, 0.25f, 1.00f, BLOCK_SOLID, true });   //pillar, top 2.0
     }
 #endif
+}
+
+void Stage::BuildLevel(){
+    switch (level){
+        case STAGE_LEVEL_RANGE: BuildRangeLevel(); break;
+        default:                BuildMainLevel();  break;
+    }
+}
+
+void Stage::SetLevel(int new_level){
+    level = (new_level >= 0 && new_level < STAGE_LEVEL_COUNT) ? new_level : STAGE_LEVEL_MAIN;
+    Reset();
+}
+
+v2 Stage::StartPosition() const{
+    //Both a little above the floor, so the first tick is a landing - see the note in Reset.
+    if (level == STAGE_LEVEL_RANGE){
+        return v2(0.0f,2.0f);
+    }
+    return v2(-6.0f,2.0f);
+}
+
+/*
+    The test range: one floor, a wall at each end, and targets at two distances on either side.
+
+    NARROWER THAN ONE SCREEN, on purpose. The camera shows about 31.8 units across at
+    CAMERA_DISTANCE and the range camera does not move, so with the floor at x -17 .. 17 every
+    target is always in frame and the walls sit just past its edges. The walls exist so that there
+    is nowhere to fall: an arrow that misses everything sticks in one, and she cannot walk off the
+    end of the world into a restart.
+
+    THE WALLS ARE 48 TALL, far above the top of the frame, and that height is measured rather than
+    generous. A full draw leaves at ARROW_SPEED_MAX against ARROW_GRAVITY, which straight up is an
+    apex of about 44. The first version had 8-unit walls and stage_test's range check caught every
+    shot from 30 degrees up sailing clean over them - a 30 degree lob crosses x 17 at about 9 high,
+    a 75 degree one at about 39. Change either constant and that check says whether this still
+    holds.
+
+    The targets are the same boards as the main level's and stand ON the floor (y 0.8 is half their
+    1.6 height), at 6 and 12 either side of the start - a short shot and a long one, both ways, so
+    that facing left is tested as often as facing right. Aiming is mirrored with `facing`, and a
+    range that only had targets on one side would never catch that mirroring going wrong.
+
+    Nothing here is BLOCK_LEDGE, so stage_test's HighLedge() - which takes the first ledge in
+    `blocks` - has nothing to find in this level and must not be pointed at it.
+*/
+void Stage::BuildRangeLevel(){
+    blocks.push_back({   0.00f, -2.00f, 17.00f, 2.00f, BLOCK_SOLID, true });   //the floor, top at 0
+    blocks.push_back({ -17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //left wall, top at 48
+    blocks.push_back({  17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //right wall
+
+    props.push_back({ PROP_TARGET, -12.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
+    props.push_back({ PROP_TARGET,  -6.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
+    props.push_back({ PROP_TARGET,   6.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
+    props.push_back({ PROP_TARGET,  12.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
 }
 
 //--- The props, as the rules see them -----------------------------------------------------------
@@ -492,7 +547,7 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     //Fell off the world. Restarting outright rather than dying, because there is nothing to die
     //of yet and a prototype that makes you relaunch it is a prototype nobody plays with.
     if (pos.y < -40.0f){
-        pos = v2(-6.0f,2.0f);
+        pos = StartPosition();
         vel = v2(0.0f,0.0f);
     }
 }

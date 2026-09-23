@@ -415,6 +415,12 @@ public:
     */
     std::string app_name = "Application";
 
+    //True when started with --minimized: the window opened minimised and never took focus. Read
+    //by Start() from the command line - see the note there. Public so an app can check it before
+    //doing anything that would bring the window forward (Window::Resize does not; it is a
+    //MoveWindow, which leaves a minimised window minimised).
+    bool f_start_minimized = false;
+
     /*
         THE SHADER STAGES AN APP IS DRAWN WITH, so that an app names them once instead of spelling
         out four asset names at three call sites in its Init().
@@ -512,6 +518,17 @@ public:
     void RequestActiveScene(Scene* scene);
     void ApplyPendingSceneSwitch();                    // physics thread only, physics_mutex held
     Scene* GetActiveScene(){ return main_scene; }
+    Scene* FindScene(const std::string& name);         // NULL if no scene has that name
+    /*
+        Called by ApplyPendingSceneSwitch right after main_scene changes - so on the physics thread,
+        with physics_mutex held, before anything else in that pass reads the new scene.
+
+        The hook for an app whose own state is per scene rather than per app. Most apps keep
+        everything scene-bound in the Scene itself and can ignore this; one that keeps a game's
+        rules beside the scene (archer keeps a Stage per scene) swaps them in here, which is the
+        only moment when doing so cannot race either the tick or the panel that draws them.
+    */
+    virtual void OnActiveSceneChanged(Scene* from, Scene* to){ (void)from; (void)to; }
 
     //One liners that do many things
     Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);

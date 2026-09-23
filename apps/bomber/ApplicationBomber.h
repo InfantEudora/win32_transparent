@@ -746,7 +746,7 @@ private:
     */
     void BuildExplosion();
     //A fresh unshared unit cube tagged MESH_MODE_SHADER, bound to `shader_index`.
-    Mesh* BuildBlastCube(int shader_index);
+    Mesh* BuildBlastCube(const char* asset_name, int shader_index);
     //The two Shader::uniform_callbacks. They exist as separate functions only because std::bind
     //needs a target; both are PushBlastUniforms with their own mode's constants.
     void SetTileUniforms();

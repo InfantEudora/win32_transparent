@@ -585,6 +585,82 @@ void Application::RegisterCoreMCPTools(){
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
         });
 
+    /*
+        Which scene is live, and switching it - so a change can be tested in the scene it is for.
+
+        scene_set goes through RequestActiveScene like every other switch, so the swap still lands
+        at the top of a physics pass and nowhere else; this only waits for it. That happens on every
+        pass whether or not the simulation is paused, so it completes against a paused scene too.
+
+        THE PAUSE STATE IS CARRIED ACROSS, because pause is per Scene. Without this, pausing one
+        scene and switching to another drops you into a free-running one, and every measurement
+        taken straight after the switch is a race - the exact thing sim_pause exists to prevent.
+        Set on the target before the request, so it is already true on the first pass the target
+        is live. Pass keep_paused=false to switch into whatever state the target was left in.
+    */
+    MCPServer::Get()->RegisterTool("scene_list",
+        "List the scenes this app has, by name, with which one is active and whether each is "
+        "paused. The name is what scene_set takes.",
+        json{ {"type","object"}, {"properties",json::object()} },
+        [this](const json &args) -> json {
+            (void)args;
+            json list = json::array();
+            Scene* active = main_scene;
+            for (Scene* scene:scenes){
+                if (!scene){
+                    continue;
+                }
+                list.push_back(json{
+                    {"name",scene->name},
+                    {"active",scene == active},
+                    {"paused",scene->IsPhysicsPaused()},
+                    {"tick",scene->GetPhysicsTick()},
+                    {"objects",scene->objects.size()}
+                });
+            }
+            return json{ {"scenes",list}, {"active",active ? active->name : std::string()} };
+        });
+
+    MCPServer::Get()->RegisterTool("scene_set",
+        "Make the named scene the active one - the one simulated, drawn and addressed by every "
+        "other tool - and wait for the switch to land. A paused scene switches into a paused one "
+        "unless keep_paused is false. Returns the new active scene's clock.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"name", {{"type","string"},{"description","scene name, as scene_list reports it"}}},
+                {"keep_paused", {{"type","boolean"},{"description","carry the current pause state into the target scene, default true"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG of the first frame of the new scene, default false"}}}
+            }},
+            {"required", json::array({"name"})}
+        },
+        [this](const json &args) -> json {
+            std::string name = args.value("name",std::string());
+            Scene* target = FindScene(name);
+            if (!target){
+                json names = json::array();
+                for (Scene* scene:scenes){
+                    if (scene){ names.push_back(scene->name); }
+                }
+                return json{ {"error","no scene called '" + name + "'"}, {"scenes",names} };
+            }
+            if (main_scene && args.value("keep_paused",true)){
+                target->PausePhysics(main_scene->IsPhysicsPaused());
+            }
+            RequestActiveScene(target);
+            //A pass is one tick at most, so a second is dozens of chances; the loop exits on the
+            //first pass that applies it.
+            for (int waited_ms = 0; waited_ms < 1000 && main_scene != target; waited_ms += 5){
+                Sleep(5);
+            }
+            if (main_scene != target){
+                return json{ {"error","the switch was requested but had not landed after 1s"} };
+            }
+            json result = SimClockJson();
+            result["scene"] = target->name;
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
+        });
+
     //The raw queue, exposed. Every OTHER command-shaped tool here (object_set_transform,
     //object_spawn, tank_reset) is a friendly wrapper that builds one specific SimCommand; this is
     //the generic one, and it exists for two reasons. It is how the command handlers get TESTED -

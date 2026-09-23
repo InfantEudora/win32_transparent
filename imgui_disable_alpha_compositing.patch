@@ -1,0 +1,21 @@
+diff --git a/backends/imgui_impl_win32.cpp b/backends/imgui_impl_win32.cpp
+index d1266bd01..cba8fd5cb 100644
+--- a/backends/imgui_impl_win32.cpp
++++ b/backends/imgui_impl_win32.cpp
+@@ -1077,6 +1077,8 @@ float ImGui_ImplWin32_GetDpiScaleForHwnd(void* hwnd)
+ // (the Dwm* functions are Vista era functions but we are borrowing logic from GLFW)
+ void ImGui_ImplWin32_EnableAlphaCompositing(void* hwnd)
+ {
++    return;
++    /*
+     if (!_IsWindowsVistaOrGreater())
+         return;
+ 
+@@ -1102,6 +1104,7 @@ void ImGui_ImplWin32_EnableAlphaCompositing(void* hwnd)
+         bb.dwFlags = DWM_BB_ENABLE;
+         ::DwmEnableBlurBehindWindow((HWND)hwnd, &bb);
+     }
++    */
+ }
+ 
+ //---------------------------------------------------------------------------------------------------------

@@ -6,6 +6,8 @@
 
 //For ThreadIdText below - the only way to get text out of a std::thread::id.
 #include <sstream>
+#include <string.h>     //strstr, strlen - HasCommandLineFlag
+#include <ctype.h>      //isspace
 
 #include "Window.h"
 #include "Renderer.h"
@@ -79,6 +81,31 @@ int2 Application::GetDisplaySettings(){
     return dimensions;
 }
 
+/*
+    Whether `flag` appears as a whole argument on the process's command line.
+
+    Read from GetCommandLineA rather than passed down from WinMain, so that a flag understood by
+    the engine works in every app without fifteen main.cpp files each having to forward it. A whole
+    argument means bounded by whitespace or the ends of the string, so "--minimized" does not
+    match inside some longer argument that happens to contain it.
+*/
+static bool HasCommandLineFlag(const char* flag){
+#ifdef _WIN32
+    const char* line = GetCommandLineA();
+    size_t len = strlen(flag);
+    for (const char* p = line ? strstr(line,flag) : NULL; p; p = strstr(p + 1,flag)){
+        bool f_starts = (p == line) || isspace((unsigned char)p[-1]);
+        bool f_ends = (p[len] == '\0') || isspace((unsigned char)p[len]);
+        if (f_starts && f_ends){
+            return true;
+        }
+    }
+#else
+    (void)flag;
+#endif
+    return false;
+}
+
 void Application::Start(void){
     //Create a main window
     //The app's own name in the title bar - see Application::app_name, which a subclass sets in
@@ -91,7 +118,28 @@ void Application::Start(void){
         debug->Fatal("Failed to init window\n");
     }
 
-    main_window->Show(SW_SHOWDEFAULT);
+    /*
+        --minimized: open minimised and WITHOUT TAKING FOCUS. For an app started by an agent to be
+        driven over MCP.
+
+        The problem it solves is the person at the same desk. A normally started app becomes the
+        foreground window the moment it opens, so whatever they were typing or dragging when an
+        agent launched it lands in the game instead - or worse, a key held at that instant is read
+        as the game's input. SW_SHOWMINNOACTIVE is both halves: minimised, so it is not in the way,
+        and NOT ACTIVATED, which is the half that matters - a minimised window that still took
+        focus would still eat the keystroke.
+
+        Nothing else changes. The render loop keeps drawing, because a minimised window keeps its
+        GL context and WM_SIZE's SIZE_MINIMIZED branch deliberately leaves width/height alone; and
+        `screenshot` reads the renderer's own resolve FBO, not the window's surface, so it returns
+        the real frame. The window can be restored from the taskbar at any time to watch.
+        Measured - see the note on this flag in CLAUDE.md.
+    */
+    f_start_minimized = HasCommandLineFlag("--minimized");
+    main_window->Show(f_start_minimized ? SW_SHOWMINNOACTIVE : SW_SHOWDEFAULT);
+    if (f_start_minimized){
+        debug->Info("Started minimised and unfocused (--minimized)\n");
+    }
 
     //Keyboard and mouse acquisition onto its own thread, before anything starts reading input.
     //THIS thread is about to become the window message pump below, and that pump stops dead for
@@ -368,6 +416,23 @@ void Application::FrameThreadFunction(Application* app){
     //Now that all the setup is done, we create another thread for physics.
     app->StartPhysicsThread();
 
+    /*
+        WHILE MINIMISED, THE LOOP PACES ITSELF - because nothing else does.
+
+        With the window on screen, SwapBuffers under vsync holds this loop to the display's rate.
+        Minimised, there is no vblank to wait for and SwapBuffers returns at once: measured on
+        archer started with --minimized, the loop ran at 3.2 ms a frame, about 310 fps, drawing
+        five times as many frames as a visible window and burning a GPU for a picture nobody can
+        see. The frames still have to be DRAWN - `screenshot` reads them, and an agent driving a
+        minimised app is the whole reason --minimized exists - just not that many of them.
+
+        60 fps, the rate a visible window would run at, so a screenshot is never staler than it
+        would have been on screen. Rescheduled each time the window goes down, so a restore and a
+        later minimise do not start with a run of "late" frames drawn back to back.
+    */
+    PrecisionSleeper minimised_pacer;
+    bool f_was_minimised = false;
+    const double minimised_frame_us = 1000000.0 / 60.0;
     while (app->main_window->f_should_quit == false){
         app->tmr_render_loop->Stop();
         app->tmr_render_loop->Restart();
@@ -376,6 +441,15 @@ void Application::FrameThreadFunction(Application* app){
             app->renderer->Resize(app->main_window->width,app->main_window->height);
         }
         app->DrawFrame();
+
+        bool f_minimised = app->main_window->IsMinimized();
+        if (f_minimised){
+            if (!f_was_minimised){
+                minimised_pacer.ResetSchedule();
+            }
+            minimised_pacer.SleepUntilNextTick(minimised_frame_us);
+        }
+        f_was_minimised = f_minimised;
     }
 
     //The window is going away, and the physics thread is this thread's to stop: it started it, and
@@ -1018,7 +1092,18 @@ void Application::ApplyPendingSceneSwitch(){
     }
     debug->Info("Active scene: '%s' -> '%s'\n",
                 main_scene ? main_scene->name.c_str() : "(none)",requested->name.c_str());
+    Scene* previous = main_scene;
     main_scene = requested;
+    OnActiveSceneChanged(previous,requested);
+}
+
+Scene* Application::FindScene(const std::string& name){
+    for (Scene* scene:scenes){
+        if (scene && scene->name == name){
+            return scene;
+        }
+    }
+    return NULL;
 }
 
 void Application::SubmitUICommand(const SimCommand& cmd){

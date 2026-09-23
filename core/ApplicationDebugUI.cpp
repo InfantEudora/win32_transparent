@@ -912,9 +912,9 @@ void Application::RenderInspectorRenderTab(Object* object){
     if (Mesh* mesh = object->GetMesh()){
         ImGui::SeparatorText("Mesh");
         ImGui::Text("id %lu, %lu vertices, %lu materials",mesh->GetID(),mesh->num_vertices,mesh->num_materials);
-        ImGui::TextDisabled("%s, %lu references, %lu morph targets",
+        ImGui::TextDisabled("%s, %i references, %i morph targets",
                             mesh->IsSkinnedMesh() ? "skinned" : "static",
-                            mesh->num_references,mesh->num_morph_targets);
+                            mesh->GetNumReferences(),mesh->num_morph_targets);
     }else{
         ImGui::SeparatorText("Mesh");
         ImGui::TextDisabled("No mesh - this object is not drawn.");
@@ -1037,6 +1037,58 @@ void Application::RenderInspectorDebugTab(Object* object){
 
 void Application::RenderEngineWindow(){
     ImGui::Begin("Engine",&f_show_engine_window);
+
+    /*
+        Every scene the app has, and switching between them - the panel twin of the scene_list and
+        scene_set tools.
+
+        FIRST IN THE PANEL, because every header below it (World Physics, Main Camera, and the
+        Scene window's object tree) is about whichever scene is active, and which one that is
+        should be read before any of them.
+
+        A click only REQUESTS the switch. This runs on the render thread with physics_mutex held,
+        and main_scene belongs to the physics thread - RequestActiveScene is the one safe way to
+        ask, and it lands at the top of the next pass together with the app's
+        OnActiveSceneChanged, exactly as a tool-driven switch does. It never waits, which matters
+        here: waiting for the physics thread while holding the mutex it needs is a deadlock. So
+        for the frame or two in between, the requested scene is marked as pending.
+
+        Open by default only when there is more than one scene, which is when it has something
+        to say.
+    */
+    if (!scenes.empty()){
+        ImGuiTreeNodeFlags flags = (scenes.size() > 1) ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+        if (ImGui::CollapsingHeader("Scenes",flags)){
+            Scene* pending = pending_scene.load();
+            for (size_t i = 0; i < scenes.size(); i++){
+                Scene* scene = scenes[i];
+                if (!scene){
+                    continue;
+                }
+                bool f_active = (scene == main_scene);
+                //One label rather than a Selectable and a SameLine: a Selectable spans the whole
+                //row, so anything placed after it lands past the right edge of the panel. The
+                //"###" suffix keeps the id stable while the tick in the visible text changes.
+                char label[160];
+                if (scene == pending && !f_active){
+                    snprintf(label,sizeof(label),"%s  (switching)###scene%zu",scene->name.c_str(),i);
+                }else{
+                    snprintf(label,sizeof(label),"%s  - %zu objects, tick %llu%s###scene%zu",
+                             scene->name.c_str(),scene->objects.size(),
+                             (unsigned long long)scene->GetPhysicsTick(),
+                             scene->IsPhysicsPaused() ? ", paused" : "",i);
+                }
+                if (ImGui::Selectable(label,f_active) && !f_active){
+                    //Pause carried across, as scene_set does by default - pause is per Scene, and
+                    //switching out of a paused one into a running one is a surprise either way.
+                    if (main_scene){
+                        scene->PausePhysics(main_scene->IsPhysicsPaused());
+                    }
+                    RequestActiveScene(scene);
+                }
+            }
+        }
+    }
 
     if (main_scene){
 #ifdef USE_PHYSICS

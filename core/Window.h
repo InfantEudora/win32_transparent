@@ -150,6 +150,9 @@ public:
 
     void Show(int nShowCmd);
     void Resize(int width, int height);
+    //Iconic - on the taskbar rather than on screen. The render loop paces itself by it: a
+    //minimised window gets no vsync, so SwapBuffers stops holding the loop back.
+    bool IsMinimized();
     void Move(int x, int y);
     void SetTitle(std::string);
     void RegisterDropFiles();

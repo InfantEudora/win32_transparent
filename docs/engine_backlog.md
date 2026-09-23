@@ -457,18 +457,30 @@ and 61 ended up stranded under a band that no longer said anything about them.
   object in the scene whether or not it is a sprite is the other half of the price; worth checking
   whether it belongs on `instancedata_t` at all or wants its own path.
 
-- [ ] **86. The ImGui alpha-compositing patch has no home, and reverting it silently costs a
-  link dependency.** `3rdparty/imgui` is a submodule, and `backends/imgui_impl_win32.cpp` in it
-  is locally modified: `ImGui_ImplWin32_EnableAlphaCompositing()` is short-circuited with an
-  early `return;` and its body commented out. That is deliberate and it should stay - the
-  function calls `DwmEnableBlurBehindWindow`, which fights the layered-window alpha this whole
-  project is named after.
+- [ ] **86. The ImGui alpha-compositing patch is stored but not applied, and reverting it
+  silently costs a link dependency.** `3rdparty/imgui` is a submodule, and
+  `backends/imgui_impl_win32.cpp` in it is locally modified: `ImGui_ImplWin32_EnableAlphaCompositing()`
+  is short-circuited with an early `return;` and its body commented out.
 
-  **The problem is only where it lives.** The change is uncommitted *inside the submodule*, so
-  it exists on one machine and nowhere else. `git submodule update` reverts it without saying
-  anything, a fresh clone never has it, and neither failure is a build error - the first symptom
-  is DWM blur appearing behind the window, which reads as a rendering bug rather than a lost
-  patch.
+  **What the function actually does, corrected 2026-09-23.** It calls `DwmEnableBlurBehindWindow`,
+  and this item used to say the patch keeps DWM blur off the window. It does not, on anything
+  this project runs on: Microsoft's page for the call says that "beginning with Windows 8, calling
+  this function doesn't result in the blur effect". What is left on 8 and later is the other half
+  of the same page - with blur-behind enabled "the alpha values in the window are honored", i.e.
+  DWM composites the framebuffer's per-pixel alpha. That is why GLFW, which ImGui copied this from
+  (`updateFramebufferTransparency`), still calls it on Windows 8+ with an empty blur region, and
+  it is the branch ImGui takes there. **Whether that second transparency mechanism conflicts with
+  a layered window has not been measured.** No app currently wants a transparent window, so this
+  is parked until one does; the test then is one build with and one without the patch, and a
+  screenshot of the transparent region from each.
+
+  **Where it lives.** Still uncommitted *inside the submodule*, so `git submodule update` reverts it
+  without saying anything and a fresh clone never has it. It is now also saved as
+  `imgui_disable_alpha_compositing.patch` at the repo root (functional hunk only, checked to apply
+  to the pinned commit and to match the working copy), applied with
+  `git -C 3rdparty/imgui apply ../../imgui_disable_alpha_compositing.patch`. Nothing applies it
+  automatically yet. With no transparent window in use, the only symptom of losing it is the link
+  failure below - not anything visible.
 
   **And it is not only cosmetic: the patch is also removing a link dependency.** Diffing the
   compiled objects, the unpatched backend additionally references
@@ -482,11 +494,11 @@ and 61 ended up stranded under a band that no longer said anything about them.
   that lost the patch would fail to link rather than merely look wrong - which is the better of
   the two outcomes, but only by accident, and only for that half of it.
 
-  **The fix is the one already used for reactphysics3d**: a fork with a branch carrying the
-  patch, and `.gitmodules` pointing at it. See the memory note on the rp3d fork for the shape.
-  Failing that, the change is four lines and could be carried as a `.patch` file applied by
-  `3rdparty/makefile` - the Android port already does exactly that for openal-soft's
-  `0001-guard-empty-HRTF_DATA_TARGETS.patch`, so there is precedent in the family.
+  **What remains** is making it apply itself: either the fork used for reactphysics3d (a branch
+  carrying the patch, `.gitmodules` pointing at it - see the memory note on the rp3d fork), or
+  `3rdparty/makefile` applying the root `.patch` file, as the Android port already does for
+  openal-soft's `0001-guard-empty-HRTF_DATA_TARGETS.patch`. Worth deciding together with the
+  transparency question above, since that decides whether the patch should exist at all.
 
   Whatever is chosen, `3rdparty/makefile` already warns about it at the imgui flags block and
   says to check `git -C imgui diff` is non-empty before rebuilding that library. That is a

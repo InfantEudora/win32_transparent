@@ -215,7 +215,10 @@ void ApplicationTestFX::BuildQuad(void){
     if (!effect_mesh){
         debug->Fatal("Failed to build the fullscreen quad\n");
     }
-    effect_mesh->num_references++;
+    //Retained directly rather than registered as an asset, because this app has no AssetManager.
+    //The quad belongs to one Object for the life of the bench, so this reference is only for the
+    //app's own pointer - it keeps effect_mesh valid even if that Object is ever rebuilt.
+    effect_mesh->Retain();
     //mesh_mode is a property of the MESH, which is why this quad is not shared with anything.
     effect_mesh->mesh_mode = MESH_MODE_SHADER;
     effect_mesh->custom_shader_index = effect_shader_index;

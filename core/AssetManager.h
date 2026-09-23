@@ -67,6 +67,17 @@ public:
     std::vector<Material>loaded_materials; //Only for OBJ?
 
     Asset* AddNewAsset(const char* asset_name, Object* object);
+    /*
+        A bare mesh as an asset - what an app does with a MakeBox or MakeSphere it is going to hand
+        to many objects. The asset TAKES A REFERENCE, which is the whole point: before this existed
+        such a mesh could not be registered at all, so every app kept a raw pointer and bumped the
+        count by hand to stop the last Object's DeleteMesh freeing it mid-game. The app can go on
+        holding the pointer; this is what keeps it valid.
+
+        A generated mesh has no material names, so the asset has none either and the caller still
+        assigns a slot by index on each object it builds.
+    */
+    Asset* AddNewAsset(const char* asset_name, Mesh* mesh);
     Asset* AddNewAssetFromOBJFile(const char* asset_name, const char* file_name);
 
     void ListAssets();

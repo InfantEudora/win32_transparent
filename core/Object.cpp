@@ -89,11 +89,7 @@ Object::~Object(){
 
 void Object::DeleteMesh(){
     if (mesh){
-        //debug->Info("DeleteMesh: num_references=%i\n",mesh->num_references);
-        mesh->num_references--;
-        if (mesh->num_references == 0){
-            delete mesh;
-        }
+        mesh->Release();
     }
     mesh = NULL;
 }
@@ -253,11 +249,15 @@ void Object::SetMesh(Mesh* _mesh){
     if (!_mesh){
         return;
     }
+    //Retain the new one BEFORE releasing the old, so that setting the mesh an object already has
+    //does not free it on the way through - the old one might be this one's last holder.
+    //Releasing the old one properly, rather than only decrementing, is what stops a replaced mesh
+    //with no other holder from leaking.
+    _mesh->Retain();
     if (mesh){
-        mesh->num_references--;
+        mesh->Release();
     }
     mesh = _mesh;
-    mesh->num_references++;
 }
 
 //Set's this object's mesh index when batched

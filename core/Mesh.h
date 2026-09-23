@@ -92,9 +92,30 @@ public:
 
     vec3 GetExtents();
 
+    /*
+        Shared ownership, by hand-rolled count. Every holder - an Object drawing it, an Asset in the
+        AssetManager, an app keeping a pointer to hand out later - takes one reference with Retain
+        and gives it back with Release, and the last Release deletes the mesh.
+
+        THE COUNT IS PRIVATE SO THAT THIS PAIR IS THE ONLY WAY TO MOVE IT. It used to be a public
+        int, bumped with ++ in six apps and decremented in two places in Object that disagreed:
+        DeleteMesh freed the mesh at zero and SetMesh did not, so replacing an Object's mesh leaked
+        the old one. An app that wants to keep a generated mesh around should register it with
+        AssetManager::AddNewAsset(name, mesh) rather than call Retain itself - that holds the
+        reference AND makes the mesh findable by name, which is where step 2 of the asset work
+        (colliders on assets) picks it up.
+
+        Release returns true when it deleted the mesh, so a caller can drop its pointer; after that
+        the pointer is dangling and must not be touched. No GL happens here - Mesh has no
+        destructor of its own - so this is safe on the physics thread, which is where
+        Scene::DeleteDestroyedObjects runs it.
+    */
+    void Retain();
+    bool Release();
+    int  GetNumReferences() const {return num_references;};
+
     uint32_t num_vertices = 0;
     int     num_materials = 0;
-    int     num_references = 0; //Or... maybe use shared_ptr?
     int     num_morph_targets = 0;
     int     mesh_mode = MESH_MODE_INVALID;
 
@@ -124,6 +145,7 @@ private:
     static meshid_t mesh_ids;   //Total amount of different meshes.
     meshid_t id = MESHID_INVALID;
     vec3    extents; //The size an AABB should be to encompass the mesh
+    int     num_references = 0; //See Retain/Release.
 };
 
 #endif

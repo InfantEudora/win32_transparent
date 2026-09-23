@@ -148,11 +148,10 @@ void ApplicationTetris::Init(void){
     if (!block_mesh){
         debug->Fatal("Failed to build the block mesh\n");
     }
-    //A reference for the app's own pointer, the same way AssetManager holds one for an asset's
-    //mesh. Object::DeleteMesh deletes the mesh when its last Object lets go, and a line clear
-    //can destroy a lot of cubes at once - without this, the count could reach zero while
-    //block_mesh is still about to be handed to the next Object.
-    block_mesh->num_references++;
+    //Registered as an asset so the asset holds a reference for block_mesh. A line clear can
+    //destroy a lot of cubes at once, and without a holder that outlives them the count could
+    //reach zero while block_mesh is still about to be handed to the next Object.
+    assetmanager->AddNewAsset("tetris_block",block_mesh);
 
     main_scene = CreateNewScene("Tetris");
     main_scene->physics_world = new PhysicsWorld();

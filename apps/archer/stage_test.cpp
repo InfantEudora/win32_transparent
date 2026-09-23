@@ -1819,6 +1819,121 @@ static void TestDeterminism(){
     Check(a.DebugLine() == b.DebugLine(),"and report the same state line");
 }
 
+/*
+    The test range - Stage::BuildRangeLevel. What is asserted is what the range is FOR: a floor to
+    stand on, targets on both sides of the start, walls that hold her and hold every arrow, and no
+    traversal geometry at all. And that choosing it is sticky across a restart, because the app
+    restarts a level with Reset and a restart that quietly went back to the main level would put
+    the range's scene around the main level's rules.
+*/
+static void TestRange(){
+    printf("the range\n");
+
+    Stage fresh;
+    Check(fresh.GetLevel() == STAGE_LEVEL_MAIN,"a Stage starts on the main level");
+
+    Stage s;
+    s.SetLevel(STAGE_LEVEL_RANGE);
+    Check(s.GetLevel() == STAGE_LEVEL_RANGE,"SetLevel picks the range");
+    Check(s.blocks.size() == 3,"the range is a floor and two walls");
+    int ledges = 0;
+    for (size_t i = 0; i < s.blocks.size(); i++){
+        if (s.blocks[i].kind != BLOCK_SOLID){
+            ledges++;
+        }
+    }
+    Check(ledges == 0,"and nothing in it is a ledge, a platform or breakable");
+
+    int left = 0;
+    int right = 0;
+    int other = 0;
+    v2 start = s.StartPosition();
+    for (size_t i = 0; i < s.props.size(); i++){
+        if (s.props[i].kind != PROP_TARGET){
+            other++;
+        }else if (s.props[i].x < start.x){
+            left++;
+        }else{
+            right++;
+        }
+    }
+    Check(other == 0,"the only props are targets");
+    Check(left == 2 && right == 2,"two targets either side of the start");
+
+    Settle(s);
+    Check(s.f_on_ground,"the archer lands on the range floor");
+    CheckNear(s.pos.x,start.x,0.001f,"where the range starts her");
+    CheckNear(s.pos.y,ARCHER_HALF_H,0.01f,"standing on y 0");
+
+    //Walk into each wall for longer than it could take to reach it, and check she stops at it.
+    ArcherInput run_right;
+    run_right.move_axis = 1.0f;
+    Run(s,600,run_right);
+    char detail[96];
+    snprintf(detail,sizeof(detail),"stopped at x %.3f",s.pos.x);
+    Check(s.f_on_ground && s.pos.x + ARCHER_HALF_W <= 17.0f + 0.001f && s.pos.x > 15.0f,
+          "running right, the right wall stops her",detail);
+    ArcherInput run_left;
+    run_left.move_axis = -1.0f;
+    Run(s,1200,run_left);
+    snprintf(detail,sizeof(detail),"stopped at x %.3f",s.pos.x);
+    Check(s.f_on_ground && s.pos.x - ARCHER_HALF_W >= -17.0f - 0.001f && s.pos.x < -15.0f,
+          "running left, the left wall stops her",detail);
+
+    /*
+        NO ARROW LEAVES THE RANGE, at any angle. Full power from the middle, from flat to nearly
+        straight up: each one has to end stuck in the floor or a wall, inside x -17 .. 17. The lob
+        is the one that matters - the walls are 8 tall, and an arrow that sails over one is gone.
+        Stage has no targets of its own (those are rigid bodies the app resolves), so in here every
+        arrow meets the level, which is exactly the property being asserted.
+    */
+    const float angles[] = { 0.0f, 15.0f, 30.0f, 45.0f, 60.0f, 75.0f };
+    int escaped = 0;
+    float worst_x = 0.0f;
+    float worst_angle = 0.0f;
+    for (size_t a = 0; a < sizeof(angles)/sizeof(angles[0]); a++){
+        Stage shot;
+        shot.SetLevel(STAGE_LEVEL_RANGE);
+        Settle(shot);
+        shot.aim_deg = angles[a];
+        ArcherInput draw;
+        draw.f_draw_down = true;
+        Run(shot,BOW_DRAW_TICKS + 2,draw);
+        ArcherInput loose;
+        loose.f_draw_released = true;
+        Run(shot,1,loose);
+        //Watched tick by tick and stopped at the first stick, because a stuck arrow is retired
+        //after ARROW_STUCK_TICKS - look too late and a kept arrow looks exactly like a lost one.
+        ArcherInput idle;
+        bool f_kept = false;
+        for (int t = 0; t < 600 && !f_kept; t++){
+            Run(shot,1,idle);
+            for (int i = 0; i < ARROW_MAX_LIVE; i++){
+                const Arrow& arrow = shot.arrows[i];
+                if (!arrow.f_live){
+                    continue;
+                }
+                if (fabsf(arrow.pos.x) > fabsf(worst_x)){
+                    worst_x = arrow.pos.x;
+                    worst_angle = angles[a];
+                }
+                if (arrow.f_stuck && fabsf(arrow.pos.x) <= 17.05f){
+                    f_kept = true;
+                }
+            }
+        }
+        if (!f_kept){
+            escaped++;
+        }
+    }
+    snprintf(detail,sizeof(detail),"%i of 6 escaped; furthest at x %.3f, aimed %.0f deg",
+             escaped,worst_x,worst_angle);
+    Check(escaped == 0,"every full-power arrow, flat to 75 degrees, ends stuck inside the range",detail);
+
+    s.Reset();
+    Check(s.GetLevel() == STAGE_LEVEL_RANGE && s.blocks.size() == 3,"a restart stays on the range");
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -1836,6 +1951,7 @@ int main(void){
     TestRope();
     TestPuppet();
     TestDeterminism();
+    TestRange();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

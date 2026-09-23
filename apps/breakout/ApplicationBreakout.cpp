@@ -156,12 +156,11 @@ void ApplicationBreakout::Init(void){
     if (!unit_mesh || !ball_mesh){
         debug->Fatal("Failed to build the primitive meshes\n");
     }
-    //A reference for the app's own pointer, the same way AssetManager holds one for an asset's
-    //mesh. Object::DeleteMesh deletes the mesh when its last Object lets go, and a brick burst can
-    //destroy a lot of objects at once - without this the count could reach zero while the pointer
-    //is still about to be handed to the next object.
-    unit_mesh->num_references++;
-    ball_mesh->num_references++;
+    //Registered as assets so the asset holds a reference for the app's own pointer. A brick burst
+    //can destroy a lot of objects at once, and without a holder that outlives them the count
+    //could reach zero while the pointer is still about to be handed to the next object.
+    assetmanager->AddNewAsset("bo_unit_box",unit_mesh);
+    assetmanager->AddNewAsset("bo_ball_mesh",ball_mesh);
 
     main_scene = CreateNewScene("Breakout");
     main_scene->physics_world = new PhysicsWorld();
@@ -623,7 +622,7 @@ void ApplicationBreakout::BuildShield(){
     if (!shield_mesh){
         debug->Fatal("Failed to build the shield quad\n");
     }
-    shield_mesh->num_references++;
+    assetmanager->AddNewAsset("bo_shield",shield_mesh);
     //mesh_mode is a property of the MESH, which is why this quad is not shared with anything.
     shield_mesh->mesh_mode = MESH_MODE_SHADER;
     shield_mesh->custom_shader_index = shield_shader_index;

@@ -35,6 +35,11 @@ static Debugger* debug = new Debugger("ApplicationArcher",DEBUG_ALL);
 //A target counts as knocked over once it has tipped this far off vertical.
 #define TARGET_KNOCKED_DEG          40.0f
 
+//The solver's gravity, for the props only - see the note where Init sets it. Named because both
+//scenes' physics worlds use it, and a target that falls differently on the range would make the
+//range useless for the one thing it is for.
+#define ARCHER_PROP_GRAVITY         (-18.0f)
+
 //Stage.cpp keeps its own copy of this rather than share one, because sharing it would mean a
 //header both files include, and Stage.h deliberately includes nothing.
 static const float ARCHER_DEG2RAD = 3.14159265358979f / 180.0f;
@@ -91,9 +96,8 @@ void ApplicationArcher::Init(void){
     */
     renderer->skinned_shader = new Shader(shader_skinned_vert_name,shader_lit_frag_name);
 
-    //Still constructed even though this app loads nothing from disk yet: the engine reaches for it
-    //unguarded in places (the Scene panel's asset list, the object_spawn command handler). It is
-    //also what the real meshes will arrive through once there are any.
+    //The engine reaches for it unguarded in places (the Scene panel's asset list, the object_spawn
+    //command handler), and it holds the primitive meshes below.
     assetmanager = new AssetManager();
 
     //The archer, the blocks and every prop are all scaled unit boxes, so one mesh serves them
@@ -105,12 +109,13 @@ void ApplicationArcher::Init(void){
     if (!unit_mesh || !arrow_mesh || !dot_mesh){
         debug->Fatal("Failed to build the primitive meshes\n");
     }
-    //A reference for the app's own pointer, the same way AssetManager holds one for an asset's
-    //mesh: Object::DeleteMesh frees a mesh when its last Object lets go, and these are handed to
-    //many objects over the app's life.
-    unit_mesh->num_references++;
-    arrow_mesh->num_references++;
-    dot_mesh->num_references++;
+    //Registered as assets, which is what keeps the app's own pointers valid: the asset holds a
+    //reference, so the last Object letting go of one (a debris chunk reaped, every block thrown
+    //away by NewGame) cannot free a mesh that is about to be handed to the next. It also puts them
+    //in asset_list by name - the handle step 2 of the asset work hangs colliders off.
+    assetmanager->AddNewAsset("ar_unit_box",unit_mesh);
+    assetmanager->AddNewAsset("ar_arrow_mesh",arrow_mesh);
+    assetmanager->AddNewAsset("ar_aim_dot",dot_mesh);
 
     main_scene = CreateNewScene("Archer");
     main_scene->physics_world = new PhysicsWorld();
@@ -124,7 +129,7 @@ void ApplicationArcher::Init(void){
         physical rather than snappy, so it is nearer the real one - deliberately NOT matched to
         ARCHER_GRAVITY. Two different jobs, two different numbers, and neither is wrong.
     */
-    main_scene->physics_world->SetGravity(vec3(0.0f,-18.0f,0.0f));
+    main_scene->physics_world->SetGravity(vec3(0.0f,ARCHER_PROP_GRAVITY,0.0f));
     main_scene->physics_world->SetDebugRendering(false);
 
     BuildMaterials();
@@ -144,6 +149,8 @@ void ApplicationArcher::Init(void){
     SetupCamera();
     SetupInput();
     RegisterCommandHandlers();
+    //LAST, because it shares the character the lines above built - see the note on ArcherLevel.
+    BuildRange();
 #ifdef USE_MCP
     RegisterMCPTools();
 #endif
@@ -1347,6 +1354,7 @@ void ApplicationArcher::SetupLights(){
         fill->f_casts_shadow = false;
         fill->viewport.zoom = 30.0f;
         main_scene->AddObject(fill);
+        fill_light = fill;              //kept so the range scene can share it
     }
 }
 
@@ -1367,11 +1375,161 @@ void ApplicationArcher::SetupCamera(){
         at the top of its lob.
     */
     camera->SetupPerspective(renderer->width,renderer->height,38.0f,0.5f,240.0f);
-    camera_target = vec3(stage.pos.x,stage.pos.y + 0.5f,0.0f);
+    camera_target = (stage.GetLevel() == STAGE_LEVEL_RANGE)
+                  ? vec3(RANGE_CAMERA_X,RANGE_CAMERA_Y,0.0f)
+                  : vec3(stage.pos.x,stage.pos.y + 0.5f,0.0f);
     camera_ideal = camera_target;
     camera->SetPosition(vec3(camera_target.x,camera_target.y,CAMERA_DISTANCE));
     camera->SetLookAt(camera_target);
     camera->CalculateLookatMatrix();
+}
+
+//--- The second scene ---------------------------------------------------------------------------
+
+/*
+    The test range, as a scene of its own - see bow_plan.md section 7 and the note on ArcherLevel.
+
+    BUILT BY RUNNING THE SAME BUILDERS AGAIN with the range's level swapped in, rather than by a
+    second set of builders. BuildBlocks, BuildProps, BuildArcher and SetupCamera all build into
+    main_scene from `stage`, so pointing those two at the range and calling them is the whole of
+    it - and it means a crate or a target on the range is built by exactly the code that builds
+    one in the main level, which is the property a test range most needs.
+
+    main_scene IS WRITTEN DIRECTLY HERE, which is the one place that is allowed. RequestActiveScene
+    exists because the physics and render threads both read main_scene; Init runs before either
+    exists, so there is nothing to race. It is put back before returning, and the swap undone, so
+    Init's caller finds the main level live exactly as if this had not run.
+
+    NOT BUILT: the terrain (it belongs to the main level's test bay, and BuildTerrain uploads a mesh
+    per bay), the character model and bow (shared - see ShareCharacterWith), the lights, the
+    backdrop, the input map and the MCP tools, all of which are app-wide. The command handlers ARE
+    registered again, because a Scene owns its own handler table and the tools submit to whichever
+    scene is live.
+*/
+void ApplicationArcher::BuildRange(){
+    world_scene = main_scene;
+    range_scene = CreateNewScene("Range");
+    range_scene->physics_world = new PhysicsWorld();
+    range_scene->physics_world->SetGravity(vec3(0.0f,ARCHER_PROP_GRAVITY,0.0f));
+    range_scene->physics_world->SetDebugRendering(false);
+
+    parked_level.stage.SetLevel(STAGE_LEVEL_RANGE);
+    SwapLevel();                //the members are now the range's, still empty
+    parked_level.scene = world_scene;
+    main_scene = range_scene;
+
+    BuildBlocks();
+    BuildProps();
+    BuildArcher();
+    //BuildArcherModel hides the collider box once there is a model to look at; do the same for
+    //this body, or the range has her standing inside a green crate.
+    if (archer_object && archer_model){
+        archer_object->SetVisibility(f_show_collider);
+    }
+    ShareCharacterWith(range_scene);
+    SetupCamera();
+    RegisterCommandHandlers();
+
+    main_scene = world_scene;
+    SwapLevel();
+    parked_level.scene = range_scene;
+    debug->Info("Built the range: %i blocks, %i props\n",
+                (int)parked_level.stage.blocks.size(),(int)parked_level.prop_views.size());
+}
+
+/*
+    The Objects both scenes draw - see ArcherLevel for why she is one character and not two.
+
+    Only ROOT objects go in: the bow and the nocked arrow are children of hand bones, which are
+    children of the model, and a scene draws a child by walking its parent. Adding them as well
+    would draw them twice.
+*/
+void ApplicationArcher::ShareCharacterWith(Scene* scene){
+    if (!scene){
+        return;
+    }
+    if (archer_model){
+        scene->AddObject(archer_model);
+    }
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        if (arrow_objects[i]){
+            scene->AddObject(arrow_objects[i]);
+        }
+    }
+    for (int i = 0; i < AIM_ARC_POINTS; i++){
+        if (arc_objects[i]){
+            scene->AddObject(arc_objects[i]);
+        }
+    }
+    if (background_object){
+        scene->AddObject(background_object);
+    }
+    if (sun_light){
+        scene->AddObject(sun_light);
+    }
+    if (fill_light){
+        scene->AddObject(fill_light);
+    }
+}
+
+/*
+    Member for member, the live level against the parked one. See ArcherLevel.
+
+    It does NOT touch parked_level.scene. That field names the scene whose state is parked, and
+    only the caller knows which scene it has just left - so every caller sets it straight after,
+    and OnActiveSceneChanged tests it to decide whether to swap at all.
+*/
+void ApplicationArcher::SwapLevel(){
+    std::swap(stage,parked_level.stage);
+    std::swap(archer_object,parked_level.archer_object);
+    std::swap(block_objects,parked_level.block_objects);
+    std::swap(prop_views,parked_level.prop_views);
+    std::swap(debris,parked_level.debris);
+    std::swap(terrain_objects,parked_level.terrain_objects);
+    std::swap(melted_blocks,parked_level.melted_blocks);
+    std::swap(rope_segments,parked_level.rope_segments);
+    std::swap(rope_joint,parked_level.rope_joint);
+    std::swap(rope_joints,parked_level.rope_joints);
+    std::swap(rope_anchor_object,parked_level.rope_anchor_object);
+    std::swap(arrow_stuck,parked_level.arrow_stuck);
+    std::swap(camera_target,parked_level.camera_target);
+    std::swap(camera_ideal,parked_level.camera_ideal);
+}
+
+/*
+    The engine has just made `to` the live scene - physics thread, physics_mutex held, before
+    anything else this pass has read it (see Application::OnActiveSceneChanged).
+
+    Only swaps when `to` is the scene whose level is parked. Any other switch - to a scene this app
+    did not build, or the same scene again - leaves the members alone, because swapping them would
+    park the live level under the wrong name.
+*/
+void ApplicationArcher::OnActiveSceneChanged(Scene* from, Scene* to){
+    if (!to || to != parked_level.scene){
+        return;
+    }
+    SwapLevel();
+    parked_level.scene = from;      //what is parked now is the level just left
+    RefreshViewAfterSwitch();
+}
+
+/*
+    Everything the view reads, re-read from the level that has just become live - WITHOUT a tick.
+
+    A switch while paused would otherwise draw the new scene with the shared character still
+    standing where she was in the old one, and report the old level's numbers, until something
+    stepped it. This is the view half of a tick and nothing else: it places the model and the
+    arrows, moves the camera, and republishes the snapshot, but it does not run the Puppet or the
+    rules, so switching scenes never advances either.
+*/
+void ApplicationArcher::RefreshViewAfterSwitch(){
+    if (archer_model){
+        archer_model->SetPosition(vec3(stage.pos.x,stage.pos.y - ARCHER_HALF_H - model_foot_offset,0.0f));
+    }
+    SyncArrowViews();
+    SyncAimArc();
+    UpdateCamera();
+    PublishSnapshot();
 }
 
 void ApplicationArcher::SetupInput(){
@@ -2897,7 +3055,16 @@ void ApplicationArcher::UpdateCamera(){
 
         The lead follows the VELOCITY, not the facing: turning round while drawing a bow should not
         swing the camera across the level.
+
+        EXCEPT ON THE RANGE, where it does not move at all - see RANGE_CAMERA_X. Set outright
+        rather than eased toward, so the frame is the same from the first tick.
     */
+    if (stage.GetLevel() == STAGE_LEVEL_RANGE){
+        camera_ideal = vec3(RANGE_CAMERA_X,RANGE_CAMERA_Y,0.0f);
+        camera_target = camera_ideal;
+        PlaceCamera();
+        return;
+    }
     float lead = 0.0f;
     if (stage.vel.x > 0.5f || stage.vel.x < -0.5f){
         lead = (stage.vel.x / ARCHER_RUN_SPEED) * CAMERA_LEAD;
@@ -2957,6 +3124,7 @@ void ApplicationArcher::PublishSnapshot(){
     ArcherSnapshot s;
     s.tick = main_scene->GetPhysicsTick();
     s.stage_ticks = stage.ticks;
+    s.level = stage.GetLevel();
     s.x = stage.pos.x;
     s.y = stage.pos.y;
     s.vx = stage.vel.x;
@@ -3085,6 +3253,7 @@ json ApplicationArcher::BuildStateJson(){
     json result = json{
         {"tick",s.tick},
         {"stage_ticks",s.stage_ticks},
+        {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : "main"},
         {"archer",json{
             {"x",s.x},{"y",s.y},{"vx",s.vx},{"vy",s.vy},
             {"facing",(s.facing > 0.0f) ? "right" : "left"},

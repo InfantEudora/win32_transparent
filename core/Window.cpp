@@ -638,8 +638,46 @@ void Window::RegisterDropFiles(){
     DragAcceptFiles(hWnd,true);
 }
 
+bool Window::IsMinimized(){
+    return hWnd && ::IsIconic(hWnd);
+}
+
 //Resize by doing a WinAPI Call. Using some hard coded shite
 void Window::Resize(int _width, int _height){
+    /*
+        A MINIMISED window gets no WM_SIZE for this, so without the branch below the renderer
+        would keep drawing at whatever size the window was created at. That is exactly the state
+        an app started with --minimized is in when its Init asks for its real size - measured
+        before this existed, archer came up at 1280x800 instead of the 1440x810 it asks for, and
+        every screenshot an agent took was a different shape from one taken of a normally started
+        app, which makes the two impossible to compare.
+
+        So: set the size it will RESTORE to (SetWindowPlacement's rcNormalPosition - MoveWindow on
+        an iconic window moves the icon, not the window), and hand the client size to the renderer
+        the way WM_SIZE would have. showCmd stays minimised and unactivated, so this does not bring
+        the window forward. When it is restored later, WM_SIZE arrives with the same size and takes
+        its "Window Restored." branch, so nothing is resized twice.
+    */
+    if (::IsIconic(hWnd)){
+        WINDOWPLACEMENT placement = {};
+        placement.length = sizeof(placement);
+        if (GetWindowPlacement(hWnd,&placement)){
+            placement.rcNormalPosition.left = 400;
+            placement.rcNormalPosition.top = 320;
+            placement.rcNormalPosition.right = 400 + _width + 16;
+            placement.rcNormalPosition.bottom = 320 + _height + 39;
+            placement.showCmd = SW_SHOWMINNOACTIVE;
+            SetWindowPlacement(hWnd,&placement);
+        }
+        width = _width;
+        height = _height;
+        if (!(f_istogglingfullscreen || f_fullscreen)){
+            width_windowed = width;
+            height_windowed = height;
+        }
+        f_resized = true;
+        return;
+    }
     MoveWindow(hWnd,400,320,_width + 16,_height + 39,true);
 }
 

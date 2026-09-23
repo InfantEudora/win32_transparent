@@ -251,6 +251,21 @@ enum StagePropKind{
     PROP_ROPE_ANCHOR        //the fixed top of a rope; the chain hangs from here
 };
 
+/*
+    The levels a Stage can build.
+
+    MAIN is the traversal level the whole prototype grew up in. RANGE is the test range from
+    bow_plan.md section 7: one flat floor between two walls and a few targets either side of the
+    start, and nothing else - no ledges, no rope, no gaps. It exists so the bow can be worked on
+    with a still camera and nothing to fall off, and so a screenshot of it means the same thing
+    from one run to the next.
+*/
+enum StageLevel{
+    STAGE_LEVEL_MAIN = 0,
+    STAGE_LEVEL_RANGE,
+    STAGE_LEVEL_COUNT
+};
+
 struct StageProp{
     int   kind = PROP_CRATE;
     float x = 0.0f;
@@ -534,6 +549,17 @@ public:
     //Builds the blockout and puts the archer at the start. Call it again to restart.
     void Reset();
 
+    /*
+        WHICH LEVEL this Stage builds - see StageLevel. A different level is a different Stage
+        INSTANCE, not a different mode of the one Stage: the app keeps one per scene, and each
+        carries its own archer, arrows and props, so leaving the range and coming back finds it
+        exactly as it was left. Setting it resets, because a level half-swapped is no level.
+    */
+    void SetLevel(int new_level);
+    int  GetLevel() const { return level; };
+    //Where the archer starts and where a fall off the world puts her back. Per level.
+    v2   StartPosition() const;
+
     //One tick. The whole simulation, and the only way state changes.
     void Tick(const ArcherInput& in, StageEvents& events);
 
@@ -643,7 +669,10 @@ public:
     std::string DebugLine() const;
 
 private:
+    int  level = STAGE_LEVEL_MAIN;
     void BuildLevel();
+    void BuildMainLevel();
+    void BuildRangeLevel();
     void TickBow(const ArcherInput& in, StageEvents& events);
     void TickArcher(const ArcherInput& in, StageEvents& events);
     void TickArrows(StageEvents& events);

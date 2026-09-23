@@ -454,16 +454,23 @@ void ApplicationPinball::Init(void){
     if (!unit_box_mesh || !post_mesh || !bumper_body_mesh || !ball_mesh){
         debug->Fatal("Failed to build the primitive meshes\n");
     }
-    //A reference for the app's own pointer, the way AssetManager holds one for an asset's mesh:
-    //Object::DeleteMesh frees a mesh when its last holder lets go, and these are handed out to
-    //many objects over the course of a build.
-    unit_box_mesh->num_references++;
-    post_mesh->num_references++;
-    rubber_mesh->num_references++;
-    bumper_body_mesh->num_references++;
-    bumper_cap_mesh->num_references++;
-    saucer_mesh->num_references++;
-    ball_mesh->num_references++;
+    /*
+        Registered as assets so the asset holds a reference for the app's own pointer: these are
+        handed out to many objects over the course of a build, and the last one letting go must not
+        free the mesh.
+
+        THE pin_ PREFIX IS LOAD-BEARING. HasPart asks the AssetManager whether "ball", "post",
+        "bumper_body" and the rest exist, to decide between the modelled part from parts.glb and
+        these primitives. Registered under the bare part names, the fallbacks would answer "yes"
+        for a part the file does not have.
+    */
+    assetmanager->AddNewAsset("pin_unit_box",unit_box_mesh);
+    assetmanager->AddNewAsset("pin_post",post_mesh);
+    assetmanager->AddNewAsset("pin_rubber",rubber_mesh);
+    assetmanager->AddNewAsset("pin_bumper_body",bumper_body_mesh);
+    assetmanager->AddNewAsset("pin_bumper_cap",bumper_cap_mesh);
+    assetmanager->AddNewAsset("pin_saucer",saucer_mesh);
+    assetmanager->AddNewAsset("pin_ball",ball_mesh);
 
     BuildMaterials();
     BuildEnvironment();
