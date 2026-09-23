@@ -10,6 +10,7 @@
 #include "Puppet.h"
 #include "Terrain.h"
 #include "Bow.h"
+#include "TextMesh.h"
 
 /*
     A side-view platformer about an archer, in 3D assets.
@@ -134,6 +135,9 @@
     both on the wrong thread, and this way the change lands at one known point in one known tick.
 */
 #define ARCHER_CMD_ANIM             SIM_CMD_LAST+3
+//Which camera - subtype is ARCHER_CAM_SIDE or ARCHER_CAM_ORBIT. The panel's radio buttons, for the
+//tools: the orbit could only be reached by clicking, and so could not be tested by a script.
+#define ARCHER_CMD_CAMERA           SIM_CMD_LAST+4
 
 /*
     Collision filtering.
@@ -223,6 +227,45 @@
     launching either. Tunable live in the Archer panel.
 */
 #define ARROW_SPEED_TRANSFER        0.040f
+
+/*
+    The hit counter: every arrow into a target counts, and the new count floats up out of the hit.
+
+    TICKS, not seconds, so a popup freezes with the simulation when it is paused and can be stepped
+    through frame by frame like everything else - see the house rule in CLAUDE.md.
+
+    The numbers are meshes (core/TextMesh.h), baked ONCE at Init for 1 .. HIT_NUMBERS_MAX, because
+    BuildTextMesh is render-thread only and a hit lands on the physics thread. A hit then only
+    points a pooled Object at the right, already-built mesh. Past the last one it keeps showing
+    the last one; ninety-nine arrows into one board is a stress test, not a score.
+*/
+#define HIT_POPUP_SLOTS             8       //popups up at once; the oldest is reused past that
+#define HIT_POPUP_TICKS             60      //one second at ARCHER_TPS
+#define HIT_POPUP_RISE              1.6f    //world units it climbs over its life
+#define HIT_POPUP_SCALE             0.9f    //glyph height, in world units, at full size
+#define HIT_NUMBERS_MAX             99
+
+/*
+    On the RANGE, a floating target gets its gravity back on its third hit - it hangs until it
+    has been hit this many times and then drops. The main level has no floating targets and no
+    such rule; there a hit only counts.
+*/
+#define RANGE_GRAVITY_HITS          3
+
+/*
+    And until then a floating target is DAMPED, each one differently.
+
+    Undamped - a body starts at 0, see the damping note in core/physics/Physics.h - a hit sent a
+    board drifting clean across the range into the wall: measured, one went from x 4.3 to 16 over
+    five shots and could only be hit three times by re-aiming at it every shot. Damped between
+    these two, the same three hits took four shots and moved it under a unit (x 4.3 to 5.3), so
+    three hits is a thing a player can do. RANDOM WITHIN THE RANGE so the five do not all behave
+    as one; seeded from the prop's index, so each board is the same board every run and a
+    measurement of one can be repeated. Put back to the undamped value when gravity comes on, so
+    a board that drops falls like a board rather than sinking like a leaf.
+*/
+#define FLOAT_DAMPING_MIN           1.5f
+#define FLOAT_DAMPING_MAX           4.0f
 
 //How hard the archer shoves a prop is ARCHER_PUSH_SPEED, over in Stage.h with the rest of the feel
 //numbers - the rules decide it, because the rules are what stop the archer against the thing being
@@ -330,17 +373,38 @@ public:
 #define CAMERA_ZOOM_PER_NOTCH       0.10f
 #define CAMERA_DISTANCE_MIN         5.0f    //close enough to read a hand
 #define CAMERA_DISTANCE_MAX         60.0f   //the whole of a screen's worth of level
+/*
+    How far above the target the camera sits AT CAMERA_DISTANCE. It scales with the distance
+    rather than staying put, so the view keeps one pitch as the wheel moves it: a fixed 3.2 is a
+    7-degree look down at 26 units and 33 degrees at 5, and zooming in to read a hand ended up
+    looking down on her head. At the default distance the two are the same thing.
+*/
 #define CAMERA_HEIGHT               3.2f
+/*
+    Which camera is driving. SIDE is the game's own - trailing on the world, fixed on the range,
+    always square-on to the play plane. ORBIT is the middle-mouse orbit from apps/isoanimation
+    (by way of apps/bomber, which fixed its input handling): a debugging view for looking at the
+    character and the terrain from angles the game never shows. The panel switches.
+*/
+#define ARCHER_CAM_SIDE             0
+#define ARCHER_CAM_ORBIT            1
 #define CAMERA_LEAD                 3.0f    //world units ahead, in the direction of travel
 #define CAMERA_SMOOTH               0.10f   //per-tick lerp toward the ideal
 /*
-    The range's camera does not follow her. It looks at the middle of the range from the usual
-    distance and stays there, so she walks across the frame and every screenshot of the range is
-    taken from the same place - which is what makes two of them comparable. The range is laid out
-    to fit this frame; see Stage::BuildRangeLevel. The wheel still zooms it.
+    On the range the camera follows her SLOWLY, and with no lead.
+
+    It used to not follow at all - fixed on the middle of the range, so screenshots were taken
+    from one place. It follows now, in both camera modes, but at a quarter of the main level's
+    rate: CAMERA_SMOOTH closes a tenth of the gap each tick (about a sixth of a second to settle),
+    this a fortieth (about two thirds of a second). A range is for standing and aiming, and a
+    camera that chases every step makes the targets slide around under the aim; one that drifts
+    after her keeps the targets still while she shoots and still brings her back to the middle.
+    No lead for the same reason - the lead exists to show what is coming on a run, and nothing on
+    the range is coming.
+
+    For a screenshot comparable to another, let her stand for a second first, or use camera_set.
 */
-#define RANGE_CAMERA_X              0.0f
-#define RANGE_CAMERA_Y              1.4f    //where the main camera sits when she stands on y 0
+#define RANGE_CAMERA_SMOOTH         0.025f
 
 /*
     What the MCP tools are allowed to see.
@@ -385,6 +449,11 @@ struct ArcherSnapshot{
         float y = 0.0f;
         float tilt_deg = 0.0f;
         bool  f_knocked = false;
+        int   hits = 0;             //arrows that have gone into it - the hit counter
+        bool  f_floating = false;   //built with gravity off
+        bool  f_gravity = true;     //whether gravity acts on it now
+        float linear_damping = 0.0f;
+        float angular_damping = 0.0f;
     };
     std::vector<TargetView> targets;
 
@@ -455,6 +524,15 @@ struct PropView{
         they had just made, 51.19 -> 54.90 over four kicks, and the way through was never open.
     */
     bool  f_broken = false;
+    //Targets only: how many arrows have gone into it, and whether it was built floating
+    //(StageProp::f_floating) - which is what makes the range's gravity-after-3-hits rule apply.
+    int   hits = 0;
+    bool  f_floating = false;
+    bool  f_gravity_restored = false;
+    //The damping the body had before a floating target's was raised (FLOAT_DAMPING_MIN), kept so
+    //it can be put back when gravity takes over.
+    float base_linear_damping = 0.0f;
+    float base_angular_damping = 0.0f;
 };
 
 class ApplicationArcher : public Application{
@@ -598,9 +676,13 @@ private:
     int  TruncateArcAgainstProps(v2* points, int count);
     void UpdateCamera();
     //Puts the camera where camera_target and camera_distance say, and drags the backdrop
-    //and the sun along with it. Called from the tick AND from the wheel, which is why it is
-    //its own function - a zoom has to show while the simulation is paused.
+    //and the sun along with it. Called from the tick AND from UpdateView, which is why it is
+    //its own function - a zoom has to show while the simulation is paused. In ARCHER_CAM_ORBIT it
+    //leaves the camera alone and moves only the backdrop and the sun.
     void PlaceCamera();
+    //Middle-drag orbits round camera_target, shift+middle pans, the wheel dollies. UpdateView,
+    //ARCHER_CAM_ORBIT only.
+    void UpdateOrbitCamera(int dx, int dy, int wheel);
     void UpdateTargets();
     //Retires props that have been knocked out of the level, so they stop falling forever.
     void ReapFallenProps();
@@ -612,6 +694,30 @@ private:
     //acts rather than observes ends in one of these, so a caller never has to sleep and guess.
     void WaitTicks(int ticks);
 #endif
+
+    //--- The hit counter -------------------------------------------------------------------------
+    //Loads the glyphs, bakes the numbers and makes the popup pool. Render thread, from Init.
+    void BuildHitPopups();
+    //A target has just taken an arrow at `point`: count it, show the count, and apply the range's
+    //gravity rule. Physics thread, from ResolveArrowsAgainstProps.
+    void RegisterTargetHit(PropView& view, const vec3& point);
+    void SpawnHitPopup(const vec3& at, int count);
+    //Rise, grow in, shrink out, retire. Physics thread, every tick.
+    void UpdateHitPopups();
+    //Takes every popup down - on a scene switch, whose tick clock is not the one they were timed by.
+    void ClearHitPopups();
+    GlyphSet hit_glyphs;
+    //Index is the count; [0] is unused. Held by the AssetManager as ar_hit_<n>.
+    Mesh* hit_number_meshes[HIT_NUMBERS_MAX + 1] = {};
+    struct HitPopup{
+        Object*  object = NULL;
+        uint64_t spawn_tick = 0;
+        vec3     origin;
+        bool     f_active = false;
+    };
+    HitPopup hit_popups[HIT_POPUP_SLOTS];
+    int next_hit_popup = 0;
+    int material_hit_text = 0;
 
     //--- Meshes and materials ---------------------------------------------------------------------
     Mesh* unit_mesh = NULL;         //a 1x1x1 box, scaled per block
@@ -750,6 +856,7 @@ private:
         StuckArrow arrow_stuck[ARROW_MAX_LIVE];
         vec3 camera_target = vec3(0.0f,3.0f,0.0f);
         vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);
+        vec3 orbit_follow_offset = vec3(0.0f,0.0f,0.0f);
     };
     ArcherLevel parked_level;
     //The two scenes by what they are, so the tools and the swap can tell them apart without
@@ -775,6 +882,10 @@ private:
     //Where the camera would like to be, before smoothing. Kept between ticks so the lerp has
     //something to lerp from.
     vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);
+    //In ARCHER_CAM_ORBIT, where the pivot sits relative to her: the orbit follows her by keeping
+    //this constant, and a shift+middle pan moves it. Taken from the view when the orbit is
+    //switched on, so switching moves nothing. Per level - swapped with camera_target.
+    vec3 orbit_follow_offset = vec3(0.0f,0.0f,0.0f);
 
     //--- The animation ----------------------------------------------------------------------------
     //The decisions. Lives on the physics thread with the Stage, and is read by DrawImGuiUI under
@@ -827,6 +938,15 @@ private:
     //How far back the camera sits. A member rather than CAMERA_DISTANCE outright, because the
     //wheel moves it - the define is still the value it starts at and returns to on a restart.
     float camera_distance = CAMERA_DISTANCE;
+    /*
+        ARCHER_CAM_SIDE or ARCHER_CAM_ORBIT. One for the app rather than one per level, so it is
+        not in ArcherLevel: switching scene keeps the camera you chose. Written by the panel under
+        physics_mutex, read on the physics thread.
+    */
+    int   camera_mode = ARCHER_CAM_SIDE;
+    //The mode UpdateCamera last ran in, so it can tell the tick the orbit was switched on - the
+    //panel writes camera_mode from the render thread and nothing else announces the change.
+    int   last_camera_mode = ARCHER_CAM_SIDE;
 
     //--- Chrome -----------------------------------------------------------------------------------
     bool f_show_engine_ui = false;

@@ -949,6 +949,12 @@ void InputController::SetFocused(bool focused){
     }
 }
 
+#if defined(_WIN32)
+void InputController::SyncFocusWithWindow(HWND hWnd){
+    SetFocused(hWnd && GetForegroundWindow() == hWnd);
+}
+#endif
+
 void InputController::SetHoveredObjectID(objectid_t id){
     hovered_object = id;
 }

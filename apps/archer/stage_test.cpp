@@ -1846,19 +1846,54 @@ static void TestRange(){
 
     int left = 0;
     int right = 0;
+    int floating = 0;
+    int crates_left = 0;
+    int crates_right = 0;
     int other = 0;
+    float lowest_float = 1000.0f;
     v2 start = s.StartPosition();
     for (size_t i = 0; i < s.props.size(); i++){
-        if (s.props[i].kind != PROP_TARGET){
-            other++;
-        }else if (s.props[i].x < start.x){
-            left++;
+        const StageProp& p = s.props[i];
+        if (p.kind == PROP_TARGET && p.f_floating){
+            floating++;
+            lowest_float = fminf(lowest_float,p.y - p.h * 0.5f);
+        }else if (p.kind == PROP_TARGET){
+            (p.x < start.x) ? left++ : right++;
+        }else if (p.kind == PROP_CRATE){
+            (p.x < start.x) ? crates_left++ : crates_right++;
         }else{
-            right++;
+            other++;
         }
     }
-    Check(other == 0,"the only props are targets");
-    Check(left == 2 && right == 2,"two targets either side of the start");
+    Check(other == 0,"the only props are targets and crates");
+    Check(left == 2 && right == 2,"two standing targets either side of the start");
+    Check(floating == 5,"an arch of five floating targets");
+    char detail[96];
+    snprintf(detail,sizeof(detail),"lowest board bottom at y %.2f, head at %.2f",
+             lowest_float,ARCHER_HALF_H * 2.0f);
+    Check(lowest_float > ARCHER_HALF_H * 2.0f + 0.5f,"and she can walk under all of it",detail);
+    Check(crates_left == 6 && crates_right == 6,"a stack of six crates either side");
+
+    /*
+        NO TWO PROPS START OVERLAPPING. Each is a rigid body the app builds exactly here, and two
+        that begin inside each other are pushed apart by the solver on the first tick - a crate
+        pyramid that starts interpenetrated opens the range by exploding. Checked on the declared
+        boxes, which is what the bodies are built from.
+    */
+    int overlaps = 0;
+    for (size_t a = 0; a < s.props.size(); a++){
+        for (size_t b = a + 1; b < s.props.size(); b++){
+            const StageProp& pa = s.props[a];
+            const StageProp& pb = s.props[b];
+            bool f_x = fabsf(pa.x - pb.x) < (pa.w + pb.w) * 0.5f;
+            bool f_y = fabsf(pa.y - pb.y) < (pa.h + pb.h) * 0.5f;
+            if (f_x && f_y){
+                overlaps++;
+            }
+        }
+    }
+    snprintf(detail,sizeof(detail),"%i overlapping pairs",overlaps);
+    Check(overlaps == 0,"no two props start inside each other",detail);
 
     Settle(s);
     Check(s.f_on_ground,"the archer lands on the range floor");
@@ -1869,7 +1904,6 @@ static void TestRange(){
     ArcherInput run_right;
     run_right.move_axis = 1.0f;
     Run(s,600,run_right);
-    char detail[96];
     snprintf(detail,sizeof(detail),"stopped at x %.3f",s.pos.x);
     Check(s.f_on_ground && s.pos.x + ARCHER_HALF_W <= 17.0f + 0.001f && s.pos.x > 15.0f,
           "running right, the right wall stops her",detail);

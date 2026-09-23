@@ -137,6 +137,14 @@ void Application::Start(void){
     */
     f_start_minimized = HasCommandLineFlag("--minimized");
     main_window->Show(f_start_minimized ? SW_SHOWMINNOACTIVE : SW_SHOWDEFAULT);
+    //An unactivated window gets no WM_ACTIVATE to tell it it is NOT focused, and the input
+    //controller assumes it is - see SyncFocusWithWindow. Without this, --minimized kept the window
+    //out of the way and still took every key and wheel notch typed anywhere else.
+#ifdef _WIN32
+    if (main_window->inputcontroller){
+        main_window->inputcontroller->SyncFocusWithWindow(main_window->hWnd);
+    }
+#endif
     if (f_start_minimized){
         debug->Info("Started minimised and unfocused (--minimized)\n");
     }

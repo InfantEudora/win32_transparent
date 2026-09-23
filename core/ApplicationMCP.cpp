@@ -246,11 +246,17 @@ json Application::SimClockJson(){
     if (!main_scene){
         return json{ {"error","no scene"} };
     }
+    //input_focused is whether the app believes keystrokes are its own. Reported because it was
+    //once wrong in a way nothing showed: a window started --minimized thought it had focus, and
+    //acted on keys and wheel notches typed into other programs. If scripted input or a stray key
+    //does something surprising, this is the first number to read.
+    InputController* input = main_scene->inputcontroller;
     return json{
         {"tick", main_scene->GetPhysicsTick()},
         {"paused", main_scene->IsPhysicsPaused()},
         {"pending_steps", main_scene->GetPendingPhysicsSteps()},
-        {"timestep", main_scene->GetPhysicsTimestep()}
+        {"timestep", main_scene->GetPhysicsTimestep()},
+        {"input_focused", input ? input->HasFocus() : false}
     };
 }
 

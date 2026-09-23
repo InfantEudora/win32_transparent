@@ -145,6 +145,37 @@ bool Bow::Build(GLTFLoader& loader, Skeleton* skeleton, Renderer* renderer,
     bool f_arrow = EquipItem(arrow,BOW_ARROW_NODE,BOW_NOCK_BONE,BOW_ARROW_OBJECT_NAME,
                              loader,skeleton,renderer);
 
+    /*
+        --- THE BOW'S ROTATION IS RE-TAKEN AT FULL DRAW -----------------------------------------
+        Frame 0 is where the bow was SNAPPED to the hand, so it is still the frame the zero offset
+        is checked against, above. It is not where the bow is looked at. Her left hand turns 50.7
+        degrees over Standing_DrawArrow, and in the export nothing turns the bow with it - the
+        node has no rotation at all, and Bow_Draw's translation is in some other space (see
+        bow_plan.md). Riding the hand from a frame-0 grip, the bow reached full draw tipped 48.6
+        degrees off upright with the string 0.22 rig units from the drawing hand - below it,
+        which read as a bow held upside down.
+
+        Taken at the LAST frame instead, the bow is upright at full draw and the string ends
+        0.065 from the hand. The cost is that every other clip carries it 50 degrees differently,
+        because the grip is one rotation for all of them.
+
+        THE ARROW KEEPS ITS FRAME-0 GRIP, because for it the trade goes the other way: measured
+        at full draw, its shaft is 17 degrees off the line between the hands from frame 0 and 52
+        from the last frame.
+    */
+    if (f_bow && bow.bone && reference_clip->duration > 0.0f){
+        float full = reference_clip->duration;
+        reference_clip->SampleRootMotion(full,full);
+        reference_clip->ApplyInterval(full);
+        quat bone_inverse = bow.bone->GetWorldRotation();
+        bone_inverse.inverse();
+        bow.grip = bone_inverse * loader.GetNodeRotation(BOW_NODE);
+        bow.grip.normalize();
+        bow.object->SetRotation(bow.grip);
+        debug->Info("Bow grip re-taken at full draw (%.3fs): (%.4f,%.4f,%.4f,%.4f)\n",full,
+                    bow.grip.x,bow.grip.y,bow.grip.z,bow.grip.w);
+    }
+
     //The items are CHILDREN of bones, so they inherit this scale the way the rest of her does -
     //which is why the grip above had to be derived without it.
     skeleton->SetScale(saved_scale);

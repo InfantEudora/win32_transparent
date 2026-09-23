@@ -441,6 +441,10 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         */
         if (in.action == ACTION_DRAW){
             out.clip = CLIP_DRAW;
+            //Every draw starts from the first frame - the same as the running jump. Without it, a
+            //redraw inside the crossfade out of the last one rewinds into THAT draw and resumes
+            //it at full.
+            out.start_time = 0.0f;
             float window = (float)BOW_DRAW_TICKS * ARCHER_DT;
             if (clip_duration[CLIP_DRAW] > 0.01f && window > 0.0f){
                 out.wanted_rate = clip_duration[CLIP_DRAW] / window;

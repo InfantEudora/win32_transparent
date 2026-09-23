@@ -106,13 +106,12 @@ public:
         Velocity bled off per second, independent of any contact: 0 leaves a body coasting
         forever, higher values bring it to rest on its own.
 
-        These exist because you almost certainly need to UNDO something. AddBoxCollider and
-        AddCapsuleCollider set both dampings to 0.5 behind your back (and box friction to 1.0);
-        AddSphereCollider sets neither. So two bodies built the obvious way behave differently
-        for reasons nothing states, and until now there was no setter anywhere to put it back -
-        the only route was reaching through Object::GetRigidBody(). Whether those defaults should
-        exist at all is backlog item 47 and is a separate decision; this is the means to override
-        them either way.
+        A body starts at rp3d's default of 0 for both - it coasts until something stops it. The
+        Add*Collider calls used to force their own values (box and capsule set both dampings to
+        0.5, sphere set neither), so two bodies built the obvious way behaved differently for
+        reasons nothing stated; they no longer touch damping at all - see the note above the
+        collider functions in Physics.cpp. This comment said otherwise until 2026-09-23, which
+        was caught by reading a board's damping back over MCP: it reported 0.0, not 0.5.
     */
     void SetLinearDamping(float damping);
     float GetLinearDamping();

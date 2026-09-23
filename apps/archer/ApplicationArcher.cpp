@@ -144,6 +144,8 @@ void ApplicationArcher::Init(void){
     BuildBow();
     BuildArrowViews();
     BuildAimArc();
+    //Before BuildRange, which shares the popup pool with the range scene along with the arrows.
+    BuildHitPopups();
     BuildBackground();
     SetupLights();
     SetupCamera();
@@ -578,9 +580,37 @@ void ApplicationArcher::BuildProps(){
                 Object* o = MakePlanarBody(unit_mesh,name,vec3(p.x,p.y,0.0f),
                                            vec3(p.w,p.h,PROP_DEPTH),material_target,
                                            ARCHER_CAT_PROP,ARCHER_MASK_PROP,3.0f,false);
+                /*
+                    A floating target is the same dynamic board with gravity turned back off -
+                    MakePlanarBody turned it on, see the long note there. Deliberately NOTHING
+                    else: no damping, no sleep override. What an arrow does to a body that nothing
+                    holds up and nothing slows down is the question the range's arch is asking,
+                    and a damped answer would be a different question.
+                */
                 PropView view;
+                if (p.f_floating && o && o->GetPhysics()){
+                    Physics* body = o->GetPhysics();
+                    body->SetGravityEnabled(false);
+                    /*
+                        A damping of its own, between FLOAT_DAMPING_MIN and _MAX - see the note
+                        there. xorshift32 seeded from the prop's index, inline so this stream
+                        belongs to the build and to nothing else (the same reasoning as
+                        SpawnDebris): the same board gets the same damping every run, and no
+                        other draw in the app can shift it.
+                    */
+                    uint32_t seed = 0x9E3779B9u ^ ((uint32_t)i * 2654435761u);
+                    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                    float f_lin = (float)(seed % 1000) / 999.0f;
+                    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                    float f_ang = (float)(seed % 1000) / 999.0f;
+                    view.base_linear_damping = body->GetLinearDamping();
+                    view.base_angular_damping = body->GetAngularDamping();
+                    body->SetLinearDamping(FLOAT_DAMPING_MIN + f_lin * (FLOAT_DAMPING_MAX - FLOAT_DAMPING_MIN));
+                    body->SetAngularDamping(FLOAT_DAMPING_MIN + f_ang * (FLOAT_DAMPING_MAX - FLOAT_DAMPING_MIN));
+                }
                 view.object = o;
                 view.kind = p.kind;
+                view.f_floating = p.f_floating;
                 view.index = (int)i;
                 view.half_extents = vec3(p.w * 0.5f,p.h * 0.5f,PROP_DEPTH * 0.5f);
                 prop_views.push_back(view);
@@ -754,12 +784,33 @@ void ApplicationArcher::BuildArcherModel(){
     if (rig_height > 0.01f){
         model_scale = ARCHER_MODEL_HEIGHT / rig_height;
     }
-    //Where her feet are once she has been scaled. The model is placed at the BOTTOM of the body
-    //box, so this is what stops her hovering or sinking by the height of the ankle bone.
-    model_foot_offset = lo * model_scale;
+    /*
+        Where her feet are once she has been scaled. The model is placed at the BOTTOM of the body
+        box, so this is what stops her hovering or sinking.
+
+        FROM THE SKIN, NOT THE BONES. The lowest bone is LeftToe_End at 0.0254 rig units, and that
+        joint is inside the shoe: the sole is under it. Standing the lowest bone on the floor sank
+        her by 0.0254 x 2.02 = 5.1cm in every pose, which looked like the collider sinking or the
+        export not sitting on zero. Neither - measured off the .glb, the bind-pose sole is at
+        0.0000 and Standing_DrawArrow holds it there to a tenth of a millimetre. The height above
+        stays on the bones, because a scale measured to the top of the hair would make her
+        shorter every time the hairstyle got taller.
+    */
+    float sole = lo;
+    const std::vector<skinned_vertex>& skin = skinned_mesh->GetSkinnedVertices();
+    for (size_t i = 0; i < skin.size(); i++){
+        if (i == 0 || skin[i].pos.y < sole){
+            sole = skin[i].pos.y;
+        }
+    }
+    if (skin.empty()){
+        debug->Err("No CPU copy of the skin - feet placed from the lowest bone, %.4f too low\n",lo);
+    }
+    model_foot_offset = sole * model_scale;
     archer_model->SetScale(vec3(model_scale,model_scale,model_scale));
-    debug->Info("Archer rig is %.4f units over %i bones -> scale %.3f, foot offset %.4f\n",
-                rig_height,(int)bones.size(),model_scale,model_foot_offset);
+    debug->Info("Archer rig is %.4f units over %i bones -> scale %.3f, foot offset %.4f "
+                "(sole %.4f, lowest bone %.4f)\n",
+                rig_height,(int)bones.size(),model_scale,model_foot_offset,sole,lo);
     debug->Info("Archer mesh: %u vertices, mode %i, skeleton num_bones %i, material slot %i\n",
                 skinned_mesh->num_vertices,skinned_mesh->mesh_mode,archer_model->num_bones,
                 archer_model->GetMaterialSlot(0));
@@ -1258,6 +1309,171 @@ void ApplicationArcher::BuildAimArc(){
 }
 
 /*
+    The hit counter's parts - see HIT_POPUP_SLOTS for the shape of it.
+
+    RENDER THREAD, from Init: BuildTextMesh uploads a mesh. Every number the counter can show is
+    baked here, once, and registered as an asset (ar_hit_1 .. ar_hit_99), so the AssetManager holds
+    the reference that keeps each one alive while the popups swap between them - the same job it
+    does for ar_unit_box.
+
+    UNLIT, NO SHADOW, NOT PICKABLE: the number is a readout that happens to live in the world, the
+    same argument as the aim arc's beads. A count that dims as it floats into shadow, or throws a
+    smudge across the target it came out of, is a readout that gets in the way of itself.
+
+    SURVIVABLE if the glyph file is missing: the counter still counts (archer_state reports it),
+    it just shows nothing.
+*/
+void ApplicationArcher::BuildHitPopups(){
+    {
+        Material m;
+        m.name = "ar_hit_text";
+        m.glsl_material.color = vec4(1.0f,0.93f,0.40f,1.0f);
+        m.glsl_material.f_unlit = 1;
+        renderer->AddMaterial(m);
+        material_hit_text = renderer->FindMaterialIndex(m.name);
+    }
+
+    //Metrics from shared_assets/meshes/fonts_glyphs.json, as tetris, breakout and pinball pass them.
+    if (!LoadGlyphSetFromGLB(hit_glyphs,"meshes/glyphs_unispace.glb",0.509167f,1.0f)){
+        debug->Warn("No glyphs loaded - target hits will count but not show\n");
+        return;
+    }
+    TextLayout layout;
+    layout.scale = 1.0f;            //sized per popup with the Object's scale, so one bake serves
+    layout.align = TEXT_ALIGN_CENTER;
+    layout.matid = 0;
+    int built = 0;
+    for (int n = 1; n <= HIT_NUMBERS_MAX; n++){
+        char text[8];
+        snprintf(text,sizeof(text),"%i",n);
+        Mesh* mesh = BuildTextMesh(hit_glyphs,text,layout,NULL);
+        if (!mesh){
+            continue;
+        }
+        char name[16];
+        snprintf(name,sizeof(name),"ar_hit_%i",n);
+        assetmanager->AddNewAsset(name,mesh);
+        hit_number_meshes[n] = mesh;
+        built++;
+    }
+
+    for (int i = 0; i < HIT_POPUP_SLOTS; i++){
+        char name[32];
+        snprintf(name,sizeof(name),"hit_popup_%i",i);
+        Object* o = new Object();
+        o->name = name;
+        o->SetMesh(hit_number_meshes[1]);
+        o->SetMaterialSlot(0,material_hit_text);
+        o->SetCastsShadow(false);
+        o->SetPickability(false);
+        o->Hide();
+        main_scene->AddObject(o);
+        hit_popups[i].object = o;
+    }
+    debug->Info("Hit counter: %i numbers baked, %i popups\n",built,HIT_POPUP_SLOTS);
+}
+
+/*
+    One arrow into one target. Physics thread, from ResolveArrowsAgainstProps.
+
+    THE RANGE RULE: a FLOATING target (built with gravity off, see StageProp::f_floating) gets its
+    gravity back on its RANGE_GRAVITY_HITS-th hit and drops. Only on the range and only for a
+    floating one - a standing board already has gravity, and on the main level a hit only counts.
+    Woken as well, because a body the solver has put to sleep would otherwise ignore gravity until
+    something next touched it.
+*/
+void ApplicationArcher::RegisterTargetHit(PropView& view, const vec3& point){
+    view.hits++;
+    /*
+        Just above where the arrow went in, and IN FRONT OF THE LEVEL, not just of the target.
+        The first version sat at z 0.6, which clears a 0.8-deep board - but level blocks are
+        BLOCK_DEPTH (3) deep, so a number rising from the target under the one-way platform floated
+        straight into the platform and only its foot showed underneath. Past the blocks' near face
+        at BLOCK_DEPTH / 2, nothing in the level can be in front of it.
+    */
+    SpawnHitPopup(vec3(point.x,point.y + 0.35f,BLOCK_DEPTH * 0.5f + 0.2f),view.hits);
+
+    if (stage.GetLevel() == STAGE_LEVEL_RANGE && view.f_floating && !view.f_gravity_restored
+        && view.hits >= RANGE_GRAVITY_HITS){
+        Physics* p = view.object ? view.object->GetPhysics() : NULL;
+        if (p){
+            p->SetGravityEnabled(true);
+            //Its floating damping off again, so it falls like a board - see FLOAT_DAMPING_MIN.
+            p->SetLinearDamping(view.base_linear_damping);
+            p->SetAngularDamping(view.base_angular_damping);
+            p->WakeUp();
+        }
+        view.f_gravity_restored = true;
+        debug->Info("Floating target %i took hit %i - gravity on\n",view.index,view.hits);
+    }
+}
+
+void ApplicationArcher::SpawnHitPopup(const vec3& at, int count){
+    HitPopup& popup = hit_popups[next_hit_popup];
+    next_hit_popup = (next_hit_popup + 1) % HIT_POPUP_SLOTS;
+    if (!popup.object){
+        return;
+    }
+    int n = count < 1 ? 1 : (count > HIT_NUMBERS_MAX ? HIT_NUMBERS_MAX : count);
+    if (!hit_number_meshes[n]){
+        return;         //no glyphs - see BuildHitPopups
+    }
+    popup.object->SetMesh(hit_number_meshes[n]);
+    popup.origin = at;
+    popup.spawn_tick = main_scene->GetPhysicsTick();
+    popup.f_active = true;
+    popup.object->SetPosition(at);
+    popup.object->SetScale(vec3(0.001f,0.001f,0.001f));
+    popup.object->Show();
+}
+
+/*
+    Up and out: each popup rises HIT_POPUP_RISE over HIT_POPUP_TICKS, easing off as it goes, pops
+    in over its first tenth and shrinks away over its last third - scale rather than fade, because
+    the deferred pipeline draws no transparency and a shrinking number reads as leaving just as well.
+
+    The glyph origin is the baseline, and a numeral's ink sits from about 0 to 0.8 above it, so the
+    position is lowered by half that at the current scale to keep the number centred on its path
+    as it grows and shrinks.
+*/
+void ApplicationArcher::UpdateHitPopups(){
+    uint64_t now = main_scene->GetPhysicsTick();
+    for (int i = 0; i < HIT_POPUP_SLOTS; i++){
+        HitPopup& popup = hit_popups[i];
+        if (!popup.f_active || !popup.object){
+            continue;
+        }
+        float t = (float)(now - popup.spawn_tick) / (float)HIT_POPUP_TICKS;
+        if (t >= 1.0f){
+            popup.f_active = false;
+            popup.object->Hide();
+            continue;
+        }
+        float rise = 1.0f - (1.0f - t) * (1.0f - t);          //ease out
+        float size = 1.0f;
+        if (t < 0.1f){
+            size = t / 0.1f;
+        }else if (t > 0.67f){
+            size = (1.0f - t) / 0.33f;
+        }
+        float s = HIT_POPUP_SCALE * (size > 0.001f ? size : 0.001f);
+        popup.object->SetScale(vec3(s,s,s));
+        popup.object->SetPosition(vec3(popup.origin.x,
+                                       popup.origin.y + HIT_POPUP_RISE * rise - 0.4f * s,
+                                       popup.origin.z));
+    }
+}
+
+void ApplicationArcher::ClearHitPopups(){
+    for (int i = 0; i < HIT_POPUP_SLOTS; i++){
+        hit_popups[i].f_active = false;
+        if (hit_popups[i].object){
+            hit_popups[i].object->Hide();
+        }
+    }
+}
+
+/*
     The backdrop: one textured quad a long way behind the play plane.
 
     SIZED FOR THE WIDEST VIEW THE ZOOM CAN PRODUCE, not for the default one. The quad is fixed, so
@@ -1375,9 +1591,7 @@ void ApplicationArcher::SetupCamera(){
         at the top of its lob.
     */
     camera->SetupPerspective(renderer->width,renderer->height,38.0f,0.5f,240.0f);
-    camera_target = (stage.GetLevel() == STAGE_LEVEL_RANGE)
-                  ? vec3(RANGE_CAMERA_X,RANGE_CAMERA_Y,0.0f)
-                  : vec3(stage.pos.x,stage.pos.y + 0.5f,0.0f);
+    camera_target = vec3(stage.pos.x,stage.pos.y + 0.5f,0.0f);
     camera_ideal = camera_target;
     camera->SetPosition(vec3(camera_target.x,camera_target.y,CAMERA_DISTANCE));
     camera->SetLookAt(camera_target);
@@ -1461,6 +1675,11 @@ void ApplicationArcher::ShareCharacterWith(Scene* scene){
             scene->AddObject(arc_objects[i]);
         }
     }
+    for (int i = 0; i < HIT_POPUP_SLOTS; i++){
+        if (hit_popups[i].object){
+            scene->AddObject(hit_popups[i].object);
+        }
+    }
     if (background_object){
         scene->AddObject(background_object);
     }
@@ -1494,6 +1713,7 @@ void ApplicationArcher::SwapLevel(){
     std::swap(arrow_stuck,parked_level.arrow_stuck);
     std::swap(camera_target,parked_level.camera_target);
     std::swap(camera_ideal,parked_level.camera_ideal);
+    std::swap(orbit_follow_offset,parked_level.orbit_follow_offset);
 }
 
 /*
@@ -1528,6 +1748,7 @@ void ApplicationArcher::RefreshViewAfterSwitch(){
     }
     SyncArrowViews();
     SyncAimArc();
+    ClearHitPopups();
     UpdateCamera();
     PublishSnapshot();
 }
@@ -1618,6 +1839,12 @@ void ApplicationArcher::RegisterCommandHandlers(){
         teleport that keeps the old velocity, hang and climb-timer drops the archer into the new
         spot still hanging off a ledge that is now somewhere else entirely.
     */
+    main_scene->RegisterCommandHandler(ARCHER_CMD_CAMERA,
+        [this](const SimCommand& cmd) -> objectid_t {
+            camera_mode = (cmd.subtype == ARCHER_CAM_ORBIT) ? ARCHER_CAM_ORBIT : ARCHER_CAM_SIDE;
+            return OBJECTID_INVALID;
+        });
+
     main_scene->RegisterCommandHandler(ARCHER_CMD_PLACE,
         [this](const SimCommand& cmd) -> objectid_t {
             stage.pos = v2(cmd.value[0],cmd.value[1]);
@@ -1742,16 +1969,27 @@ void ApplicationArcher::UpdateView(void){
         return;
     }
     InputController* input = main_scene->inputcontroller;
-    if (input->WasKeyReleased(INPUT_ARCHER_TOGGLE_UI)){
+    /*
+        F1 the engine panels, F2 the blockout back on top of the terrain.
+
+        Both edges are READ every pass and ACTED ON only while this window has focus. Raw input
+        reports keys typed into other programs (RIDEV_INPUTSINK), so ungated, an F1 pressed in an
+        editor toggled this app's panels behind it - and with the app started --minimized for an
+        agent, nobody would even see that it had happened. HasFocus rather than IsInputLive,
+        because these are the person's own view toggles and no scripted hold ever means them;
+        reading the edge regardless is what stops a press made elsewhere firing when focus returns.
+        They are still not gated on anim_source, which is the other thing IsInputLive-style gates
+        in GatherInput do: a debug view is the engine's, not the game's.
+    */
+    bool f_toggle_ui = input->WasKeyReleased(INPUT_ARCHER_TOGGLE_UI);
+    bool f_toggle_blockout = input->WasKeyReleased(INPUT_ARCHER_TOGGLE_BLOCKOUT);
+    if (f_toggle_ui && input->HasFocus()){
         f_show_engine_ui = !f_show_engine_ui;
         f_show_scene_window = f_show_engine_ui;
         f_show_inspector_window = f_show_engine_ui;
         f_show_engine_window = f_show_engine_ui;
     }
-    //F2: the blockout back on top of the terrain. Read unconditionally and acted on here rather
-    //than gated on IsInputLive, matching the F1 toggle beside it - a debug view is the engine's,
-    //not the game's.
-    if (input->WasKeyReleased(INPUT_ARCHER_TOGGLE_BLOCKOUT)){
+    if (f_toggle_blockout && input->HasFocus()){
         SetBlockoutVisible(!f_show_blockout);
     }
 
@@ -1772,14 +2010,34 @@ void ApplicationArcher::UpdateView(void){
         while the simulation is paused.
     */
     int wheel = input->GetDelta(INPUT_MOUSE_WHEEL);
+    /*
+        The orbit's mouse movement, drained for the same reason and on EVERY pass, in either mode.
+        InputController only clears a delta that was read, so reading it only while the middle
+        button is down - or only in orbit mode - lets movement pile up in between, and the first
+        frame of a drag applies all of it at once. Raw deltas rather than cursor position, because
+        they keep coming with the pointer against the edge of the screen.
+    */
+    int orbit_dx = input->GetDelta(INPUT_MOUSE_DELTA_X);
+    int orbit_dy = input->GetDelta(INPUT_MOUSE_DELTA_Y);
+
+    if (camera_mode == ARCHER_CAM_ORBIT){
+        UpdateOrbitCamera(orbit_dx,orbit_dy,wheel);
+        return;
+    }
+
     //And not while the pointer is over a panel, or scrolling the clip list also flies the camera
     //across the level. UIWantsMouse is ImGui's own answer behind a name that exists in every
     //build, so this needs no #ifdef - see the note on it in core/Application.h.
     if (wheel != 0 && input->HasFocus() && !UIWantsMouse()){
         camera_distance *= powf(1.0f - CAMERA_ZOOM_PER_NOTCH,(float)wheel);
         camera_distance = clamp(camera_distance,CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX);
-        PlaceCamera();
     }
+    /*
+        Placed every pass rather than only on a notch, so that the distance slider and switching
+        back from the orbit both show while the simulation is paused - neither goes through the
+        wheel, and the tick that would otherwise place the camera is not running.
+    */
+    PlaceCamera();
 }
 
 //--- The tick -----------------------------------------------------------------------------------
@@ -1793,7 +2051,13 @@ void ApplicationArcher::RunSimulationTick(void){
     //Restart is read whether or not anything else is happening. Already on the physics thread
     //inside the tick, so this is a direct call rather than a command - a command would be a round
     //trip through the queue to arrive back here one tick later.
-    if (input->WasKeyReleased(INPUT_ARCHER_RESTART)){
+    //
+    //ACTED ON only when the input is ours, though, for the reason in GatherInput: raw input sees
+    //keys typed into other programs, and an 'r' typed anywhere on the machine threw the level
+    //away. That is the worst of these for an agent's run, because it silently resets every number
+    //the run was measuring. Read regardless, so a press made elsewhere does not fire later.
+    bool f_restart = input->WasKeyReleased(INPUT_ARCHER_RESTART);
+    if (f_restart && input->IsInputLive()){
         NewGame();
         return;
     }
@@ -1831,6 +2095,7 @@ void ApplicationArcher::RunSimulationTick(void){
     BreakBlocks(events);
     UpdateDebris();
     ResolveArrowsAgainstProps();
+    UpdateHitPopups();
     DriveArcherBody();
     SyncArcherView();
     SyncArcherAnimation();
@@ -2020,9 +2285,10 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
         //with a target that topples instead of hanging in the air where the target used to be.
         StickArrowToProp(i,struck,v2(hit.point.x,hit.point.y));
 
-        if (view->kind == PROP_TARGET && !view->f_knocked){
+        if (view->kind == PROP_TARGET){
             debug->Info("Arrow %i struck target at (%.2f,%.2f) doing %.1f\n",
                         i,hit.point.x,hit.point.y,speed);
+            RegisterTargetHit(*view,hit.point);
         }
     }
 }
@@ -2703,10 +2969,18 @@ void ApplicationArcher::SyncArcherAnimation(){
                 most of the weight, which is why both slots have to be checked and not just the
                 leader.
             */
+            /*
+                ONLY FOR A CYCLE. SetBlendPair carries the pose over as a PHASE and wraps it with
+                floorf, so a one-shot sitting on its last frame - phase 1.0 - is handed back its
+                first. Every tick it was the only clip on screen, the draw went through here and
+                started again the instant it reached full, when it was meant to hold there. A
+                one-shot has no phase to carry; it is either a change of clip, below, or nothing.
+            */
             Animation* lead = archer_clips[clip];
             Animation* posed_lead = archer_model->current_animation;
             Animation* posed_follow = archer_model->blend_animation;
-            bool f_continuous = !archer_model->previous_animation
+            bool f_continuous = lead->looped
+                                && !archer_model->previous_animation
                                 && (lead == posed_lead || lead == posed_follow
                                     || (follow && (follow == posed_lead
                                                    || follow == posed_follow)));
@@ -3056,23 +3330,45 @@ void ApplicationArcher::UpdateCamera(){
         The lead follows the VELOCITY, not the facing: turning round while drawing a bow should not
         swing the camera across the level.
 
-        EXCEPT ON THE RANGE, where it does not move at all - see RANGE_CAMERA_X. Set outright
-        rather than eased toward, so the frame is the same from the first tick.
+        ON THE RANGE it follows too, but slowly and with no lead - see RANGE_CAMERA_SMOOTH.
+
+        THE ORBIT FOLLOWS HER AS WELL, at the same rate as the side camera would on this level.
+        camera_target is the orbit's pivot, and the pivot is kept at orbit_follow_offset from her;
+        the camera is moved by exactly the step the pivot takes, so the angle and distance the
+        mouse set are left alone and the whole view simply travels with her. The offset is taken
+        from the view on the tick the orbit is switched on, so switching moves nothing on screen,
+        and a shift+middle pan adds to it - a panned view keeps its framing and keeps following.
+        The backdrop and the sun follow the pivot, in both modes, through PlaceCamera.
     */
-    if (stage.GetLevel() == STAGE_LEVEL_RANGE){
-        camera_ideal = vec3(RANGE_CAMERA_X,RANGE_CAMERA_Y,0.0f);
-        camera_target = camera_ideal;
+    bool f_range = (stage.GetLevel() == STAGE_LEVEL_RANGE);
+    float smooth = f_range ? RANGE_CAMERA_SMOOTH : CAMERA_SMOOTH;
+    vec3 body(stage.pos.x,stage.pos.y + 0.5f,0.0f);
+
+    if (camera_mode == ARCHER_CAM_ORBIT){
+        if (last_camera_mode != ARCHER_CAM_ORBIT){
+            orbit_follow_offset = camera_target - body;
+        }
+        last_camera_mode = camera_mode;
+        camera_ideal = body + orbit_follow_offset;
+        vec3 step = (camera_ideal - camera_target) * smooth;
+        camera_target += step;
+        Camera* camera = main_scene ? main_scene->camera : NULL;
+        if (camera){
+            camera->SetPosition(camera->GetPosition() + step);
+        }
         PlaceCamera();
         return;
     }
+    last_camera_mode = camera_mode;
+
     float lead = 0.0f;
-    if (stage.vel.x > 0.5f || stage.vel.x < -0.5f){
+    if (!f_range && (stage.vel.x > 0.5f || stage.vel.x < -0.5f)){
         lead = (stage.vel.x / ARCHER_RUN_SPEED) * CAMERA_LEAD;
     }
-    camera_ideal = vec3(stage.pos.x + lead,stage.pos.y + 0.5f,0.0f);
+    camera_ideal = vec3(body.x + lead,body.y,0.0f);
 
-    camera_target.x += (camera_ideal.x - camera_target.x) * CAMERA_SMOOTH;
-    camera_target.y += (camera_ideal.y - camera_target.y) * CAMERA_SMOOTH;
+    camera_target.x += (camera_ideal.x - camera_target.x) * smooth;
+    camera_target.y += (camera_ideal.y - camera_target.y) * smooth;
     camera_target.z = 0.0f;
 
     PlaceCamera();
@@ -3087,8 +3383,10 @@ void ApplicationArcher::UpdateCamera(){
 */
 void ApplicationArcher::PlaceCamera(){
     Camera* camera = main_scene ? main_scene->camera : NULL;
-    if (camera){
-        camera->SetPosition(vec3(camera_target.x,camera_target.y + CAMERA_HEIGHT,camera_distance));
+    if (camera && camera_mode == ARCHER_CAM_SIDE){
+        //Height in proportion to distance, so the zoom keeps one pitch - see CAMERA_HEIGHT.
+        float height = CAMERA_HEIGHT * camera_distance / CAMERA_DISTANCE;
+        camera->SetPosition(vec3(camera_target.x,camera_target.y + height,camera_distance));
         camera->SetLookAt(camera_target);
         camera->CalculateLookatMatrix();
     }
@@ -3117,6 +3415,69 @@ void ApplicationArcher::PlaceCamera(){
     if (sun_light){
         sun_light->SetPosition(vec3(camera_target.x - 9.0f,camera_target.y + 20.0f,10.0f));
         sun_light->SetLookAt(vec3(camera_target.x,camera_target.y,0.0f));
+    }
+}
+
+/*
+    The free orbit: apps/isoanimation's scheme, in the form apps/bomber settled on.
+
+    It starts from wherever the side camera was. The side camera is always looking straight at
+    camera_target, so taking that as the pivot means switching modes moves nothing on screen.
+
+    The deltas arrive already drained - see UpdateView for why that has to happen every pass and
+    not only while the button is down.
+*/
+void ApplicationArcher::UpdateOrbitCamera(int dx, int dy, int wheel){
+    Camera* camera = main_scene ? main_scene->camera : NULL;
+    InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+    if (!camera || !input){
+        return;
+    }
+    //Focus and the panels for the same reasons as the wheel in UpdateView: a drag across a slider
+    //is not a drag of the view.
+    bool f_ours = input->HasFocus() && !UIWantsMouse();
+
+    if (f_ours && input->IsKeyDown(INPUT_CLICK_MIDDLE)){
+        if (input->IsKeyDown(INPUT_SHIFT)){
+            //Pan, carrying the pivot with the camera so the viewing angle is left alone.
+            vec3 d = camera->MoveSidewaysBy(-dx / 100.0f);
+            d += camera->MoveUpBy(dy / 100.0f);
+            camera_target += d;
+            //Kept as an offset from her too, so a panned view goes on following her.
+            orbit_follow_offset += d;
+        }else{
+            //Up/down turns the camera round its own left axis, then re-aims at the pivot keeping
+            //the current up - which is what allows a full turn over the top.
+            vec3 p = camera->GetPosition() - camera_target;
+            quat q(camera->GetLeft(),-dy / 50.0f);
+            p = q * p;
+            camera->SetPosition(p + camera_target);
+            vec3 up = camera->GetUp();
+            camera->SetLookAt(camera_target,&up);
+
+            //Left/right turns round world Y, the look direction with it.
+            p = camera->GetPosition() - camera_target;
+            q.set_rotation(vec3(0,1,0),-dx / 50.0f);
+            p = q * p;
+            camera->SetPosition(p + camera_target);
+            camera->RotateBy(q);
+        }
+    }
+
+    /*
+        The wheel dollies toward the pivot by the same 10% a notch as the side camera zooms, so the
+        two feel the same, and within the same limits. Along the line to the pivot, so the view
+        direction does not change. The limits are there because a proportional step compounds:
+        without them a few seconds of scrolling out leaves the level a speck on the backdrop.
+    */
+    if (wheel != 0 && f_ours){
+        vec3 offset = camera->GetPosition() - camera_target;
+        float distance = offset.length();
+        if (distance > 0.0001f){
+            float wanted = distance * powf(1.0f - CAMERA_ZOOM_PER_NOTCH,(float)wheel);
+            wanted = clamp(wanted,CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX);
+            camera->SetPosition(camera_target + offset * (wanted / distance));
+        }
     }
 }
 
@@ -3169,6 +3530,11 @@ void ApplicationArcher::PublishSnapshot(){
         vec3 up = view.object->GetWorldUp();
         t.tilt_deg = todegrees(acosf(clamp(up.y,-1.0f,1.0f)));
         t.f_knocked = view.f_knocked;
+        t.hits = view.hits;
+        t.f_floating = view.f_floating;
+        t.f_gravity = view.object->GetPhysics() ? view.object->GetPhysics()->IsGravityEnabled() : true;
+        t.linear_damping = view.object->GetPhysics() ? view.object->GetPhysics()->GetLinearDamping() : 0.0f;
+        t.angular_damping = view.object->GetPhysics() ? view.object->GetPhysics()->GetAngularDamping() : 0.0f;
         s.targets.push_back(t);
     }
 
@@ -3236,7 +3602,11 @@ json ApplicationArcher::BuildStateJson(){
             {"x",s.targets[i].x},
             {"y",s.targets[i].y},
             {"tilt_deg",s.targets[i].tilt_deg},
-            {"knocked",s.targets[i].f_knocked}
+            {"knocked",s.targets[i].f_knocked},
+            {"hits",s.targets[i].hits},
+            {"floating",s.targets[i].f_floating},
+            {"gravity",s.targets[i].f_gravity},
+            {"damping",json::array({s.targets[i].linear_damping,s.targets[i].angular_damping})}
         });
     }
     json arrows = json::array();
@@ -3603,6 +3973,35 @@ void ApplicationArcher::RegisterMCPTools(){
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
         });
 
+    MCPServer::Get()->RegisterTool("archer_camera",
+        "Choose the camera: 'side' (the game's camera - trails her with lead on the main level, "
+        "follows slowly with no lead on the range) or 'orbit' (the free orbit - middle-drag turns "
+        "it, shift+middle pans, wheel dollies; its pivot follows her at the same rates, keeping "
+        "whatever angle and distance it was left at). Switching keeps the current view. Returns "
+        "the camera as camera_get reports it, once the switch has landed.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"mode", {{"type","string"},{"description","side or orbit"}}}
+            }},
+            {"required", json::array({"mode"})}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            std::string mode = args.value("mode",std::string());
+            if (mode != "side" && mode != "orbit"){
+                return json{ {"error","mode must be 'side' or 'orbit'"} };
+            }
+            SimCommand cmd;
+            cmd.type = ARCHER_CMD_CAMERA;
+            cmd.subtype = (mode == "orbit") ? ARCHER_CAM_ORBIT : ARCHER_CAM_SIDE;
+            //Commands drain on every pass, paused or not, so this lands even on a paused scene.
+            SubmitCommandAndWait(cmd,1000);
+            return json{ {"mode",mode} };
+        });
+
     MCPServer::Get()->RegisterTool("archer_restart",
         "Rebuild the level and put the archer back at the start. Everything the props have "
         "accumulated - kicked crates, toppled targets, embedded arrows - is thrown away and rebuilt "
@@ -3778,8 +4177,17 @@ void ApplicationArcher::DrawImGuiUI(void){
     }else if (ImGui::CollapsingHeader("Animation",ImGuiTreeNodeFlags_DefaultOpen)){
         ImGui::Text("rig scaled %.3fx to stand %.2f tall",model_scale,ARCHER_MODEL_HEIGHT);
 
+        //Which camera. Only the mode is written here; UpdateView and the tick do the moving, on
+        //the physics thread, and the orbit picks up from wherever the side camera was looking.
+        ImGui::RadioButton("side camera",&camera_mode,ARCHER_CAM_SIDE); ImGui::SameLine();
+        ImGui::RadioButton("free orbit",&camera_mode,ARCHER_CAM_ORBIT);
+        if (camera_mode == ARCHER_CAM_ORBIT){
+            ImGui::TextDisabled("middle-drag orbits, shift+middle pans, wheel dollies");
+        }
+
         //The wheel is the way to do this, but the wheel cannot be scripted and cannot be nudged by
         //exactly one unit, so the slider is here too - and it is the only way back to the default.
+        //The SIDE camera's distance; the orbit keeps its own, in where the camera actually is.
         ImGui::SliderFloat("camera",&camera_distance,CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX,"%.1f");
         ImGui::SameLine();
         if (ImGui::SmallButton("reset")){

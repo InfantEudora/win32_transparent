@@ -260,8 +260,10 @@ v2 Stage::StartPosition() const{
     The test range: one floor, a wall at each end, and targets at two distances on either side.
 
     NARROWER THAN ONE SCREEN, on purpose. The camera shows about 31.8 units across at
-    CAMERA_DISTANCE and the range camera does not move, so with the floor at x -17 .. 17 every
-    target is always in frame and the walls sit just past its edges. The walls exist so that there
+    CAMERA_DISTANCE, so with the floor at x -17 .. 17 the whole range fits in one frame when she
+    stands in the middle, and the walls sit just past its edges. The range camera follows her
+    slowly (RANGE_CAMERA_SMOOTH in ApplicationArcher.h), so walking to one end brings that wall
+    into view and loses the far one. The walls exist so that there
     is nowhere to fall: an arrow that misses everything sticks in one, and she cannot walk off the
     end of the world into a restart.
 
@@ -289,6 +291,53 @@ void Stage::BuildRangeLevel(){
     props.push_back({ PROP_TARGET,  -6.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
     props.push_back({ PROP_TARGET,   6.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
     props.push_back({ PROP_TARGET,  12.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
+
+    /*
+        An arch of FLOATING targets over the start - five boards on a half circle of radius 5
+        centred a unit above the floor, at 30, 60, 90, 120 and 150 degrees. Gravity off (see
+        StageProp::f_floating), so this is where "what does an arrow do to a body nothing holds
+        up" gets looked at. Upright rather than turned along the curve, because StageProp has no
+        rotation and a board is read the same way standing up.
+
+        The top one is at x 0, directly overhead, and she cannot hit it from where she starts:
+        the aim stops at BOW_AIM_MAX_DEG (85), and an 85 degree shot has drifted half a unit
+        sideways by the time it is up there - more than the board is wide. A step to one side
+        is the answer, which is a fair thing to ask of a range.
+    */
+    const float arch_r = 5.0f;
+    const float arch_cy = 1.0f;
+    const float arch_deg[] = { 30.0f, 60.0f, 90.0f, 120.0f, 150.0f };
+    for (size_t i = 0; i < sizeof(arch_deg)/sizeof(arch_deg[0]); i++){
+        float rad = arch_deg[i] * 3.14159265358979f / 180.0f;
+        StageProp t = { PROP_TARGET, arch_r * cosf(rad), arch_cy + arch_r * sinf(rad), 0.30f, 1.60f, 1, 1 };
+        t.f_floating = true;
+        props.push_back(t);
+    }
+
+    /*
+        A crate pyramid near each wall: 3, 2, 1 - six crates a side. The main level's crates, the
+        same 0.80 box and the same 0.05 gap between rows that its two-high stacks use, so a stack
+        here settles the way a stack there does.
+
+        Centred at 14, so the base spans 12.8 .. 15.2: inside the frame with her standing at the
+        start (about 15.9 either side - the first layout, at 15, had half of each pyramid cut off
+        by the screen edge, back when the range camera did not move), and just BEHIND the far targets at 12, so a board knocked off its
+        feet falls into a pyramid rather than onto bare floor - which is the interaction the
+        stacks are here to produce.
+    */
+    const float crate = 0.80f;
+    const float step = 0.85f;           //crate plus a 0.05 gap, side to side and row to row
+    const float sides[] = { -14.0f, 14.0f };
+    for (size_t s = 0; s < 2; s++){
+        for (int row = 0; row < 3; row++){
+            int count = 3 - row;
+            float y = crate * 0.5f + row * step;
+            for (int c = 0; c < count; c++){
+                float x = sides[s] + ((float)c - (float)(count - 1) * 0.5f) * step;
+                props.push_back({ PROP_CRATE, x, y, crate, crate, 1, 1 });
+            }
+        }
+    }
 }
 
 //--- The props, as the rules see them -----------------------------------------------------------

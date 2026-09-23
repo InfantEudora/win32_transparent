@@ -484,6 +484,20 @@ class InputController{
     //Called from thread that created the window. Takes the HWND because answering a message is
     //not always enough - WM_MOUSELEAVE has to be ASKED for, per entry, on the window it concerns.
     void HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    /*
+        Sets the focus flag from whether `hWnd` really is the foreground window. Call once after
+        the window is first shown.
+
+        NEEDED BECAUSE f_has_focus STARTS TRUE and only WM_ACTIVATE / WM_SETFOCUS / WM_KILLFOCUS
+        ever move it. A window that is shown and activated gets those, so the default is harmless;
+        a window shown WITHOUT activation - --minimized uses SW_SHOWMINNOACTIVE - gets none of
+        them, and so believed it had focus until the first time someone clicked it. With raw input
+        delivering keys typed into other programs, that meant every keystroke and wheel notch on
+        the machine was the game's: measured, a mouse wheel in a browser zoomed a minimised archer
+        all the way in, and a 'p' typed elsewhere paused it. The true default stays, for Android,
+        which has no activation messages to correct it.
+    */
+    void SyncFocusWithWindow(HWND hWnd);
 #elif defined(__ANDROID__)
     //--- Android acquisition -----------------------------------------------------------------
     //The Android counterpart of HandleMessage/PollDevices: sensors and the touch panel are this

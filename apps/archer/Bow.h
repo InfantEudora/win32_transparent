@@ -41,6 +41,10 @@
         bow   in mixamorig:LeftHand    translation (0,0,0)   rotation 196.25 deg
         arrow in mixamorig:RightHand   translation (0,0,0)   rotation  90.00 deg about X
 
+    EXCEPT THE BOW'S ROTATION, which is re-taken at the clip's LAST frame - full draw - because
+    her left hand turns 50 degrees over the draw and the export never turns the bow with it. So
+    196.25 is its frame-0 grip and not the one in use; see the note in Bow::Build.
+
     - ZERO TRANSLATION for both, because the items were snapped to the bones. That is not a
     coincidence, it is the signature of how they were authored, which makes it an invariant worth
     asserting: see grip_error and BOW_GRIP_EPSILON. If someone re-poses frame 0 of the reference
@@ -93,7 +97,8 @@ public:
         GL immediately, and it poses the skeleton, which nothing else may be doing at the time.
         Application::Init is the place.
 
-        IT LEAVES THE SKELETON POSED at the reference clip's first frame. That is harmless because
+        IT LEAVES THE SKELETON POSED at the reference clip's LAST frame (the bow's rotation is taken
+    there - see the header note). That is harmless because
         the animation update re-poses every frame before anything is drawn, and it is exactly what
         MeasureClipPhases already does, but it is worth knowing if a caller measures something
         immediately afterwards.

@@ -274,6 +274,14 @@ struct StageProp{
     float h = 1.0f;         //by a sweep, and full extents are what that wants
     int   cols = 1;         //PROP_BRICKWALL only
     int   rows = 1;         //PROP_BRICKWALL only
+    /*
+        Hangs where it is put instead of falling: the app builds it with gravity OFF. Still a
+        dynamic body, so an arrow still knocks it - and with nothing pulling it down and nothing
+        slowing it, a knocked one drifts and spins until it meets something. That is the thing the
+        range's arch of targets is there to find out about; setting it static instead would be the
+        other answer. Last in the struct so every existing brace-initialised prop stays as it is.
+    */
+    bool  f_floating = false;
 };
 
 /*

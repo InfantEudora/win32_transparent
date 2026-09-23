@@ -85,6 +85,9 @@ public:
     void SetMorphMeshData(morph_vertex* verts, int vertex_count);
 
     const std::vector<vertex>& GetVertices() const {return vertices;};
+    //In bind pose - the CPU copy SetSkinnedMeshData keeps. Where the skin actually is, which is
+    //not where the bones are: a toe joint sits inside the shoe, not under it.
+    const std::vector<skinned_vertex>& GetSkinnedVertices() const {return skinned_vertices;};
 
     bool IsNormalMesh();
     bool IsSkinnedMesh();

@@ -75,26 +75,52 @@ DWORD WINAPI MCPServer::ReaderThreadFunc(LPVOID param) {
     return 0;
 }
 
+/*
+    Reads newline-delimited JSON-RPC off stdin.
+
+    WITH ReadFile ON THE RAW HANDLE, NEVER fgets(stdin) - which is what this was, and it kept the
+    process alive after the window closed. fgets holds the CRT's lock on `stdin` for as long as it
+    is blocked waiting for input, and the CRT's exit path (after WinMain returns) flushes every
+    stream, which takes that same lock. So whenever stdin was open with nothing on it - an idle
+    terminal, which is how a person launches the app, or a client pipe - shutdown got as far as
+    "Both threads joined, Start() returning" and then waited on this thread forever. Reproduced
+    2026-09-23 with `sleep 60 | archer.exe`: hung on close, and exited by itself the moment `sleep`
+    ended and the pipe closed. From a terminal nothing ever closes it.
+
+    ReadFile takes no CRT lock, so the exit path has nothing to wait for; a thread still blocked in
+    it when the process ends is simply terminated by ExitProcess, like any other. It also reads a
+    console fine (line-buffered, returning on Enter). The line splitting that fgets did is done by
+    hand below, including a line that arrives across several reads.
+*/
 void MCPServer::ReaderLoop() {
-    std::string line;
+    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+    if (input == NULL || input == INVALID_HANDLE_VALUE) {
+        debug->Info("MCP: no stdin, reader thread exiting\n");
+        return;
+    }
+
+    std::string pending;
     char chunk[4096];
 
     while (m_running) {
-        if (!fgets(chunk, sizeof(chunk), stdin)) {
-            break; // stdin closed or error
+        DWORD got = 0;
+        if (!ReadFile(input, chunk, sizeof(chunk), &got, NULL) || got == 0) {
+            break; // stdin closed (ERROR_BROKEN_PIPE on a pipe, 0 bytes at EOF) or error
         }
-        line += chunk;
-        if (line.empty() || line.back() != '\n') {
-            continue; // fgets stopped because its buffer filled, not at a line end
+        pending.append(chunk, got);
+
+        size_t start = 0;
+        for (size_t nl = pending.find('\n', start); nl != std::string::npos; nl = pending.find('\n', start)) {
+            std::string line = pending.substr(start, nl - start);
+            start = nl + 1;
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            if (!line.empty()) {
+                HandleLine(line);
+            }
         }
-        line.pop_back();
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        if (!line.empty()) {
-            HandleLine(line);
-        }
-        line.clear();
+        pending.erase(0, start);   // keep only a partial line still waiting for its '\n'
     }
 
     debug->Info("MCP stdin closed, reader thread exiting\n");

@@ -446,7 +446,22 @@ void Application::RenderApplicationUI(){
         dock_layout_checked = true;
         if (ImGui::DockBuilderGetNode(dockspace_id) == NULL){
             ImGui::DockBuilderAddNode(dockspace_id,ImGuiDockNodeFlags_DockSpace);
-            ImGui::DockBuilderSetNodeSize(dockspace_id,ImGui::GetMainViewport()->WorkSize);
+            /*
+                NOT ZERO, which is what the viewport is on a start with --minimized: the window
+                has no client area yet, and DockBuilderSetNodeSize asserts on it - so a fresh
+                checkout (no imgui.ini) started minimised died here on its first frame.
+
+                Substituted rather than skipped. Skipping is not "try again later":
+                DockSpaceOverViewport below creates the node this frame regardless, the check
+                above then finds it, and the default layout is never built - an empty dockspace,
+                which imgui.ini then saves. Any positive size gives the same result, because the
+                splits are fractions and the dockspace is resized to the real viewport every frame.
+            */
+            ImVec2 dock_size = ImGui::GetMainViewport()->WorkSize;
+            if (dock_size.x <= 0.0f || dock_size.y <= 0.0f){
+                dock_size = ImVec2(1280.0f,800.0f);
+            }
+            ImGui::DockBuilderSetNodeSize(dockspace_id,dock_size);
             ImGuiID left_id = 0;
             ImGuiID centre_id = 0;
             ImGui::DockBuilderSplitNode(dockspace_id,ImGuiDir_Left,0.24f,&left_id,&centre_id);

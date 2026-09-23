@@ -71,13 +71,15 @@ USE_SOUND := 0
 #---------------------------------------------------------------------------------------
 ASSET_ROOTS := assets $(ROOT)/shared_assets
 
-#Nothing in this app selects a font, builds text meshes or plays a sound, so the shared
-#tree's copies of those would be baked for nobody. EVERY ONE OF THESE WAS CHECKED RATHER
-#THAN ASSUMED - an exclusion that is wrong does not fail the build, it produces an exe that
-#dies on its first LoadFile on a machine with no loose copy to fall back on.
+#Nothing in this app selects a font or plays a sound, so the shared tree's copies of those
+#would be baked for nobody. EVERY ONE OF THESE WAS CHECKED RATHER THAN ASSUMED - an exclusion
+#that is wrong does not fail the build, it produces an exe that dies on its first LoadFile on
+#a machine with no loose copy to fall back on.
+#
+#meshes/glyphs_unispace.glb is NOT excluded any more: since 2026-09-23 the target hit counter
+#builds its numbers from it (ApplicationArcher::BuildHitPopups). It used to be on this list.
 ASSET_PACK_FLAGS += --exclude "fonts/CascadiaMono.ttf"
 ASSET_PACK_FLAGS += --exclude "fonts/mono_sdf.png"
-ASSET_PACK_FLAGS += --exclude "meshes/glyphs_unispace.glb"
 ASSET_PACK_FLAGS += --exclude "sound/bleep.wav"
 ASSET_PACK_FLAGS += --exclude "sound/click.wav"
 ASSET_PACK_FLAGS += --exclude "sound/floop.wav"

@@ -35,8 +35,21 @@ bool Scene::BeginPass(){
     //command applied while paused lands between ticks rather than on one - fine, because
     //GetPhysicsTick() is unchanged by it, so it is unambiguous which tick it precedes.
     DrainCommands();
-    if (inputcontroller && inputcontroller->WasKeyReleased(INPUT_PAUSE)){
-        PausePhysics(!f_paused);
+    /*
+        The pause key, ONLY WHEN THE INPUT IS OURS - and the edge read first either way.
+
+        Raw input reports key-ups while the window is in the background (RIDEV_INPUTSINK), so
+        without the IsInputLive gate a 'p' typed into any other program on the machine paused
+        this one. Found with an app started --minimized for an agent: it paused itself a second
+        after launch, while the person at the desk was typing a message elsewhere. The edge is
+        consumed regardless, so a press made while unfocused does not fire later when focus
+        returns - the same rule as ApplicationArcher::GatherInput.
+    */
+    if (inputcontroller){
+        bool f_pause_released = inputcontroller->WasKeyReleased(INPUT_PAUSE);
+        if (f_pause_released && inputcontroller->IsInputLive()){
+            PausePhysics(!f_paused);
+        }
     }
 
     //Running freely ticks every pass. Paused, a pass ticks only if StepPhysics has queued one.
