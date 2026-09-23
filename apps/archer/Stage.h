@@ -146,8 +146,24 @@ struct v2{
 #define BOW_AIM_MIN_DEG             -85.0f
 #define BOW_AIM_MAX_DEG             85.0f
 #define BOW_AIM_RATE_DEG            110.0f      //degrees per second while a tilt key is held
-#define BOW_SHOULDER_UP             0.35f       //where the arrow leaves, relative to the archer's
-#define BOW_SHOULDER_FWD            0.40f       //centre, before the aim angle is applied
+/*
+    THE ARROW IS A SEGMENT: an ANCHOR (the nock, on the string), a direction (the aim) and a
+    length. The tip - the point that flies and strikes - starts ARROW_LENGTH along the aim from
+    the anchor, and the arrow's first sweep runs from the anchor, not from the tip. So anything
+    between the string and the arrowhead catches it: pressed against a wall she hits the near face
+    instead of burying the arrow in it, and a post thinner than an arrow is long cannot be shot
+    through from point blank.
+
+    MEASURED from the model rather than guessed, and typed in here because this header names no
+    engine type (bow_plan.md §5). The anchor is the nocked arrow's origin at full draw, relative
+    to her centre, averaged over aim -80..+80 with the aim override on - it moves about 0.2 across
+    that range, since she turns about her chest rather than about the nock. The length is the
+    arrow mesh, nock to point, at the rig's scale: 0.519 x 2.020. ApplicationArcher checks the
+    length against the loaded mesh at every start and says which number to change.
+*/
+#define BOW_NOCK_UP                 0.54f       //the anchor, above her centre
+#define BOW_NOCK_FWD                0.11f       //and ahead of it, before the aim is applied
+#define ARROW_LENGTH                1.05f       //nock to point
 
 #define ARROW_SPEED_MIN             16.0f       //at BOW_MIN_POWER
 #define ARROW_SPEED_MAX             46.0f       //at a full draw
@@ -673,8 +689,11 @@ public:
     */
     int   PredictArc(v2* out_points, int max_points) const;
 
-    //Where an arrow would leave the bow, given the current facing and aim. The app draws the bow
-    //there, and Loose() spawns from it.
+    //The nocked arrow's ANCHOR - where the string holds it - for the current facing and aim. An
+    //arrow's first sweep starts here; see ARROW_LENGTH.
+    v2    AnchorPosition() const;
+    //Where the arrow's TIP is at the loose: the anchor plus ARROW_LENGTH along the aim. Loose()
+    //spawns the flying point here and PredictArc draws from here.
     v2    MuzzlePosition() const;
     v2    AimDirection() const;
 

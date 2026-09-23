@@ -297,6 +297,17 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 #define PUPPET_YAW_RIGHT            90.0f
 #define PUPPET_YAW_LEFT             -90.0f
 
+/*
+    How long the AIM takes to take hold of her body, and to let go of it, in ticks.
+
+    The aim override (animation_plan.md, Step 3) bends her spine and shoulders to point the bow
+    along aim_deg - but only while she is in the draw pose, since bending a running torso that is
+    not holding a bow up is wrong. This is the ease between the two, so starting or ending a draw
+    does not snap her chest through the whole aim angle in one frame. Six ticks is 0.1s: well
+    inside BOW_DRAW_TICKS' 36, so the aim is fully on long before the bow is fully drawn.
+*/
+#define PUPPET_AIM_BLEND_TICKS      6
+
 //--- What the animation is allowed to know ------------------------------------------------------
 /*
     THE SEAM. Filled by DescribeArcher from the rules, or by hand from the debug panel, and those
@@ -501,6 +512,17 @@ public:
 
     //Where the model is facing right now, in degrees, slewed toward the side `facing` asks for.
     float yaw_deg = PUPPET_YAW_RIGHT;
+
+    /*
+        How much of the aim angle her body takes, 0..1, eased over PUPPET_AIM_BLEND_TICKS.
+
+        1 only while the chosen clip is the DRAW - the pose the aim override is written against.
+        Keyed on the clip rather than on ACTION_DRAW on purpose: a draw started at a run is still a
+        run cycle today (step 2's mask layer is what changes that), and bending that would lean a
+        running torso that is not holding a bow up. When the mask layer lands, the draw is on the
+        upper body during every clip, and this becomes "is the upper-body draw playing".
+    */
+    float aim_weight = 0.0f;
 
     PuppetChoice choice;
 

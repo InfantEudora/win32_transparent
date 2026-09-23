@@ -1211,6 +1211,9 @@ void Application::RenderEngineWindow(){
             renderer->SetNumAASamples(num_samples);
         }
         ImGui::SliderFloat("Alpha clip",&renderer->alpha_clip,0.0f,1.0f);
+        //In shadow-map texels. The GPU cost steps up at each whole number - 1, 9, 25, 49 gathers
+        //a fragment - so watch the colour pass in Performance while dragging it.
+        ImGui::SliderFloat("Sun shadow softness",&renderer->shadow_pcf_radius,0.0f,3.0f);
 
         //Only an app that called EnableFieldShadows has anything to show here, which is one of
         //them - the controls would otherwise be four dead widgets in every other app's panel.

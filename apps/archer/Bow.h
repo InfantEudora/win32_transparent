@@ -166,6 +166,14 @@ public:
     bool  f_nock_measured = false;              //false: no shape key found, arrow sits at the grip
     float nock_pull_axis_error = 0.0f;          //degrees between the pull and -Z; see the header
     float nock_gap = 0.0f;                      //hand to nock at full draw, in RIG units
+    /*
+        Where the draw pose ALREADY points the bow, in degrees above her forward, measured at full
+        draw. The aim override turns her by aim_deg MINUS this, so a pose authored aiming a little
+        up or down still ends exactly on aim_deg. Measured, never typed: a re-posed draw corrects
+        itself. The plane is her forward (+Z) against up (+Y); the socket's small sideways lean is
+        ignored, because the side view cannot see it.
+    */
+    float neutral_pitch_deg = 0.0f;
 
 private:
     Object* LoadProp(const char* node_name, const char* object_name, GLTFLoader& loader,

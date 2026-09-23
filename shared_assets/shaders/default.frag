@@ -117,6 +117,18 @@ uniform float alpha_clip = 1.0f;
 //Width of a cone light's soft edge, in cosine space - the `epsilon` of the reference
 //shader. Shared with raymarch_volume.frag so a cone matches between surfaces and fog.
 uniform float cone_softness = 0.15;
+//The sun's shadow filter radius, in shadow-map TEXELS - see CalcShadow. From
+//Renderer::shadow_pcf_radius; the default here is only what an app that never sets it gets.
+uniform float shadow_pcf_radius = 1.0;
+//The sun's matrix, the one the vertex stage already projects vshadow with. Declared here as
+//well, with the same location and initialiser (both have to match for the program to link), so
+//CalcShadow can project a point of its own choosing rather than only the interpolated vertex one.
+layout(location = 1) uniform mat4 mat_shadow = mat4(
+	1		,0		,0		,0,
+	0		,1		,0		,0,
+	0		,0		,1		,0,
+	0		,0		,0		,1
+);
 
 //This gets set when lighting calculation is done, and is this fragments resulting normal.
 vec3 sampled_normal = vec3(0,0,0);
@@ -315,9 +327,60 @@ float GetTransparency(){
 }
 
 
-//Compute shadow from sun shadowmap
-float CalcShadow(vec4 vposinshadow){
-    //Linearise
+/*
+    One BILINEAR shadow compare: the four texels that bilinear filtering would blend at uv, each
+    compared against depth on its own, and the four yes/no answers blended by where uv sits between
+    them. Filtering the depths first and comparing after would be wrong - an edge texel's average
+    depth is a surface nobody drew - so it is the answers that get filtered, never the depths.
+
+    This alone turns the edge from a stair of whole texels into a one-texel ramp. The map itself is
+    NEAREST; textureGather ignores the filter mode and always returns the linear-filter footprint.
+*/
+float ShadowCompare2x2(vec2 uv, float depth, vec2 size){
+    vec4 lit = step(vec4(depth),textureGather(shadow_texture,uv,0));
+    vec2 f = fract(uv * size - 0.5);
+    //textureGather's component order runs anticlockwise from the top left: x (0,1), y (1,1),
+    //z (1,0), w (0,0) - so w/z are the bottom row and x/y the top.
+    return mix(mix(lit.w,lit.z,f.x),mix(lit.x,lit.y,f.x),f.y);
+}
+
+/*
+    The sun's shadow: percentage-closer filtering over the depth map.
+
+    A grid of ShadowCompare2x2 taps spread over shadow_pcf_radius texels either side, averaged. The
+    grid is sized from the radius so the taps are never more than a texel apart - wider than that
+    and the bilinear ramps stop overlapping and the edge bands. 0 is a single tap, 1 is 3x3, 2 is
+    5x5; capped at 3 (49 taps), past which a bigger map is the better answer.
+
+    THE RADIUS IS IN TEXELS, NOT WORLD UNITS, so the softness is a fraction of the map's own
+    resolution: an app that fits its ortho to the view (apps/archer does) gets an edge of constant
+    width on screen, and one with a fixed ortho gets one of constant width in the world.
+
+    NORMAL OFFSET, because a wider filter is also a wider self-shadowing test. Every tap is a lookup
+    up to (radius + 1) texels away across the receiver's OWN surface, and on a surface steep to the
+    light that surface is deeper there than here by (distance * tan) - so a plain depth bias big
+    enough for a 3x3 at a grazing angle would detach every shadow from its caster. Lifting the
+    lookup off the surface along the normal by (reach * sin) keeps the receiver in front of its own
+    surface for the whole kernel, scales to nothing on faces square to the sun, and costs one extra
+    matrix multiply. The constant bias only has to cover depth quantisation after that.
+*/
+float CalcShadow(vec3 world_pos, vec3 normal, vec3 to_light){
+    vec2 size = vec2(textureSize(shadow_texture,0));
+
+    //World units per texel, read off the sun's own matrix: an orthographic projection scales x by
+    //1/(half width), so the length of the matrix's first ROW is exactly that. Both axes, in case a
+    //map is ever not square.
+    vec3 row_x = vec3(mat_shadow[0][0],mat_shadow[1][0],mat_shadow[2][0]);
+    vec3 row_y = vec3(mat_shadow[0][1],mat_shadow[1][1],mat_shadow[2][1]);
+    float texel_world = max(2.0 / (length(row_x) * size.x),2.0 / (length(row_y) * size.y));
+
+    float radius = clamp(shadow_pcf_radius,0.0,3.0);
+    float cos_l = clamp(dot(normal,normalize(to_light)),0.0,1.0);
+    float sin_l = sqrt(1.0 - cos_l * cos_l);
+    //+1 for the bilinear tap's own reach, +0.5 of margin for where the rasteriser put the texel.
+    vec3 lifted = world_pos + normal * (texel_world * (radius + 1.5) * sin_l);
+
+    vec4 vposinshadow = mat_shadow * vec4(lifted,1.0);
     vec3 pos_proj = vposinshadow.xyz / vposinshadow.w;
 
     //Anything outside the sun's ortho box has no depth information, so it cannot be shadowed.
@@ -327,18 +390,24 @@ float CalcShadow(vec4 vposinshadow){
         return 1.0;
     }
 
-    //Map to UV coordinates
-    vec2 uvshadow;
-	uvshadow.x 		= (0.5 * pos_proj.x) + (0.5);
-    uvshadow.y 		= (0.5 * pos_proj.y) + (0.5);
-
-    //Lookup this fragment's associated depth value from the lights point of view.
-    float closest_depth = texture(shadow_texture, uvshadow).r;
-    float current_depth = (0.5 * pos_proj.z) + (0.5);
+    vec2 uvshadow = (0.5 * pos_proj.xy) + 0.5;
+    float current_depth = (0.5 * pos_proj.z) + 0.5;
     float bias = 0.00025;
+    float depth = current_depth - bias;
 
-    float shadow = (current_depth - bias) > closest_depth  ? 0.2 : 1.0;
-    return shadow;
+    int n = int(ceil(radius));
+    float spacing = (n > 0) ? (radius / float(n)) : 0.0;
+    float lit = 0.0;
+    for (int y = -n; y <= n; y++){
+        for (int x = -n; x <= n; x++){
+            lit += ShadowCompare2x2(uvshadow + (vec2(x,y) * spacing) / size,depth,size);
+        }
+    }
+    lit /= float((2 * n + 1) * (2 * n + 1));
+
+    //0.2 rather than 0: what the hard compare always left in shadow, so existing scenes keep the
+    //darkness they were lit for.
+    return mix(0.2,1.0,lit);
 /*
 
     vec3 sunpos = sun.position;
@@ -596,7 +665,7 @@ vec4 CalcPBRLighting(){
             //Sun. Two independent occluders: opaque geometry through the depth shadow map, and
             //cloud through the transmittance map. They multiply - one is a compare, the other an
             //integral, and neither can express the other.
-            float shadow = CalcShadow(vshadow);
+            float shadow = CalcShadow(vposition,normalize(vnormal),lightdirection);
             light_value = shadow * CalcCloudShadow(vposition);
         }
 

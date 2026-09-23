@@ -668,4 +668,15 @@ void Puppet::Tick(const ArcherAnimParams& in){
         yaw_deg -= step;
         if (yaw_deg < target){ yaw_deg = target; }
     }
+
+    //The aim's hold on her body, eased - see aim_weight. The same move-toward as the yaw.
+    float aim_target = (choice.clip == CLIP_DRAW) ? 1.0f : 0.0f;
+    float aim_step = 1.0f / (float)PUPPET_AIM_BLEND_TICKS;
+    if (aim_weight < aim_target){
+        aim_weight += aim_step;
+        if (aim_weight > aim_target){ aim_weight = aim_target; }
+    }else if (aim_weight > aim_target){
+        aim_weight -= aim_step;
+        if (aim_weight < aim_target){ aim_weight = aim_target; }
+    }
 }

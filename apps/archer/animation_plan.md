@@ -896,7 +896,57 @@ clip keeps running underneath it.
 
 ---
 
-## Step 3 — aim pitch: pointing up makes her point up. PLANNED (2026-09-23).
+## Step 3 — aim pitch: pointing up makes her point up. BUILT (2026-09-23).
+
+### What was built, and what it measured
+
+As planned below, with two refinements the build found:
+
+- **The shoulders, not the arms, take the upper share** (`ARCHER_AIM_*_SHARE` in
+  `ApplicationArcher.h`: Spine/Spine1/Spine2 0.15 each, LeftShoulder/RightShoulder 0.55 each, Neck
+  0.35 on top). The arms pivot a shoulder-width apart, so turning them pulls the drawing hand off
+  the nock by that width times the angle; the clavicles pivot together at the top of the chest.
+- **The override undoes itself before the clips pose** (`ArcherModel::ApplyAnimation`), because
+  the base does not re-write every bone on every pass - a finished one-shot or a stepped debug
+  override leaves last tick's pose - and bending an already-bent pose accumulates.
+- **The neutral is taken off the BOW, not the hands**: the bow's front at full draw in the rig,
+  now that the arrow rides the bow (`Bow::neutral_pitch_deg`, −1.5 degrees on the 20:39 export).
+  The check reads the bow's world front too (`ArcherModel::aim_drawn_deg`).
+- `Puppet::aim_weight` eases over `PUPPET_AIM_BLEND_TICKS` (6) and is 1 only while the chosen clip
+  is `CLIP_DRAW` - so a draw at a run does not bend her until step 2. Four rules checks.
+
+**Measured across the full range, both facings:** `aim_error_deg` **0.00** at every angle from −85
+to +85 - the world-axis property doing exactly what it promises. Reported live in `archer_state`
+(`bow.aim_drawn_deg`, `aim_error_deg`, `aim_weight`, `aim_neutral_deg`) and the Archer panel.
+
+**How it looks:** level is the authored pose; +45 reads well (she leans back from the chest, head
+following); +85 is a strong lean-back with the bow overhead and still believable; −45 bends her at
+the waist and is the most compressed of the set - the first candidate for an authored aim-down
+pose if one is ever made. Facing left mirrors correctly (+30 is up-left; the model is turned, not
+mirrored, so you see her back).
+
+**Where the arrow leaves - measured, not yet changed.** Fitting Stage's own shape of answer
+(`shoulder + reach * AimDirection`) to the nocked arrow's TIP over −80..+80:
+
+```
+visible tip   = (0.07 fwd, 0.54 up) + 1.10 * aim_dir     worst residual 0.21
+Stage today   = (0.40 fwd, 0.35 up) + 0.25 * aim_dir     (BOW_SHOULDER_FWD/UP + MuzzlePosition's 0.25)
+```
+
+So the arc started 0.57 short of the visible arrow at level and about a unit off at steep angles.
+The nock itself barely moves - (0.12, 0.57) give or take 0.2 - which is the chest pivot working.
+
+**FIXED the same day, by making the arrow a segment** (the user's framing: an arrow has an anchor,
+a direction and a length, and the sweep starts at the anchor - nothing else). `BOW_SHOULDER_*`
+became `BOW_NOCK_FWD` 0.11 / `BOW_NOCK_UP` 0.54 (the measured nock, averaged over the sweep) plus
+`ARROW_LENGTH` 1.05 (the mesh, nock to point, checked against the loaded file at every start).
+`MuzzlePosition` = anchor + length * aim; an arrow's FIRST step sweeps from the anchor, in
+`TickArrows`, `PredictArc` and the app's prop raycasts alike. Measured after: the loosed arrow
+spawns within 0.03 of the nocked arrow's tip, and pressed against the test bay's 0.5-wide pillar a
+level shot sticks in the near face - where before it buried itself 0.29 inside (the new rules
+check failed against the old code first, on purpose). See bow_plan.md §8 item 6.
+
+### The plan, as written before the build
 
 `Stage::aim_deg` runs −85..+85 relative to facing and already bends the predicted arc. Nothing
 bends HER: the draw pose aims wherever `Standing_DrawArrow` left it. This step makes the visible
@@ -1023,7 +1073,7 @@ Ordered so nothing blocks on the step after it.
 | 0 | **Parameter seam + puppet mode** | **done** | **none** |
 | 1 | **Signed-speed blend space + phase sync** | **done** | **none** — the phase alignment turned out to be measurable rather than authored |
 | 2 | Upper-body mask layer | layer via per-bone `animation_mask`, spine-up | **draw / hold / loose**, standing, masked-safe |
-| 3 | Aim pitch | **procedural first** (planned 2026-09-23, see *Step 3 — aim pitch*); 1D additive only if the extremes need it | **none to start**; one aim-up and one aim-down pose if the procedural extremes look wrong |
+| 3 | **Aim pitch** | **done 2026-09-23** — procedural, 0.00 deg error over ±85 (see *Step 3 — aim pitch*); 1D additive only if the extremes need it | **none**; an aim-down pose is the first candidate if −45 and below want more |
 | 4 | Inertialization | replaces the crossfade; deletes four states and the mid-blend refusal | none |
 | 5 | Air set | jump/fall driven off `vel_y` and `f_on_ground` | **jump_start / rise / apex / fall / land_soft / land_hard** |
 | 6 | Cancel windows + input buffer | `{start,end,what_may_interrupt}` ranges, 6-10 tick buffer | tuning |
@@ -1111,9 +1161,9 @@ The held items ride the hand bones already (`Bow.{h,cpp}`, bow_plan §3-4), but 
 bones in the rig and props exported on their own, origin at the attach point** — bow_plan §4,
 *The target*. The same sockets carry the knife and a quiver.
 
-The arrow still LEAVES from a Stage constant (`BOW_SHOULDER_UP` / `BOW_SHOULDER_FWD`), and that is
-right — Stage names no engine type. What changes is the constants, which should come from the
-measured shoulder pivot; see *Step 3 — aim pitch*, "The pivot".
+The arrow still LEAVES from Stage constants, and that is right — Stage names no engine type.
+Since 2026-09-23 they are the measured nock and the arrow's length (`BOW_NOCK_FWD`/`BOW_NOCK_UP`/
+`ARROW_LENGTH`), and the arrow is swept from the nock; see *Step 3 — aim pitch*.
 
 ### 9. Clip event markers
 
@@ -1149,7 +1199,7 @@ the state, and the panel lists it.
 | hanging | `Hanging_Braced`, looped ✓ |
 | on the rope | `Hanging_Rope`, looped, rolled to match the collider she is swinging as ✓ |
 | drawing / loosing | `Standing_DrawArrow`, fitted to `BOW_DRAW_TICKS` at 1.78x — **standing only**, a temporary branch in `Puppet::Choose`; drawing while moving needs step 2's mask layer |
-| aiming | **placeholder** — `aim_deg` moves the predicted arc, not the body; see *Step 3 — aim pitch* |
+| aiming | the draw pose bent by the aim override, standing only; 0.00 deg against `aim_deg` ✓ — see *Step 3 — aim pitch* |
 
 Nothing the archer can DO falls through to the idle any more, and a sweep over the modes in
 `stage_test.cpp` says so rather than one line per mode, so it keeps saying it when a mode is added.

@@ -63,6 +63,71 @@ void ArcherModel::ApplyRootMotion(const RootMotionDelta& delta){
     clip_yaw += delta.yaw;
 }
 
+bool ArcherModel::BuildAimChain(){
+    //Parents before children: each bone's parent-space axis is worked out from its parent's
+    //world rotation, which has to already include the turn given to the bones above it.
+    const char* names[ARCHER_AIM_BONES] = {
+        "mixamorig:Spine","mixamorig:Spine1","mixamorig:Spine2",
+        "mixamorig:LeftShoulder","mixamorig:RightShoulder","mixamorig:Neck"
+    };
+    const float shares[ARCHER_AIM_BONES] = {
+        ARCHER_AIM_SPINE_SHARE,ARCHER_AIM_SPINE_SHARE,ARCHER_AIM_SPINE_SHARE,
+        ARCHER_AIM_SHOULDER_SHARE,ARCHER_AIM_SHOULDER_SHARE,ARCHER_AIM_NECK_SHARE
+    };
+    for (int i = 0; i < ARCHER_AIM_BONES; i++){
+        aim_bones[i] = FindBone(names[i]);
+        aim_shares[i] = shares[i];
+        if (!aim_bones[i] || !aim_bones[i]->GetParent()){
+            debug->Err("Aim override is OFF: no bone '%s' (or it has no parent)\n",names[i]);
+            for (int j = 0; j < ARCHER_AIM_BONES; j++){ aim_bones[j] = NULL; }
+            return false;
+        }
+    }
+    return true;
+}
+
+void ArcherModel::ApplyAnimation(float time_delta){
+    if (f_aim_applied){
+        for (int i = 0; i < ARCHER_AIM_BONES; i++){
+            if (aim_bones[i]){ aim_bones[i]->SetRotation(aim_clean[i]); }
+        }
+        f_aim_applied = false;
+    }
+
+    Skeleton::ApplyAnimation(time_delta);
+
+    if (aim_bones[0] && aim_weight > 0.0f){
+        const vec3 axis_world(0.0f,0.0f,1.0f);
+        //+ is up in both directions: facing +X, a positive turn about +Z lifts +X toward +Y;
+        //facing -X the same lift is a negative turn. Same mirroring as Stage::AimDirection.
+        float angle = aim_delta_deg * aim_weight * aim_facing * ARCHER_DEG2RAD;
+        for (int i = 0; i < ARCHER_AIM_BONES; i++){
+            Bone* bone = aim_bones[i];
+            aim_clean[i] = bone->GetRotation();
+            /*
+                A world turn R applied to a bone whose world rotation is P * L (parent times
+                local) gives R * P * L = P * (P^-1 R P) * L - and P^-1 R P is the same angle about
+                the axis carried into the parent's space. So the local rotation gains a turn about
+                P^-1 * axis, and the bone's position does not move.
+            */
+            quat parent_inverse = bone->GetParent()->GetWorldRotation();
+            parent_inverse.inverse();
+            vec3 axis_local = parent_inverse * axis_world;
+            quat turn(axis_local,angle * aim_shares[i]);
+            quat local = turn * aim_clean[i];
+            local.normalize();
+            bone->SetRotation(local);
+        }
+        f_aim_applied = true;
+    }
+
+    //What came out: the bow's front in the play plane, relative to facing. See aim_drawn_deg.
+    if (aim_probe){
+        vec3 front = aim_probe->GetWorldRotation() * vec3(0.0f,0.0f,1.0f);
+        aim_drawn_deg = atan2f(front.y,front.x * aim_facing) / ARCHER_DEG2RAD;
+    }
+}
+
 ApplicationArcher::ApplicationArcher():Application(){
     debug->Info("ApplicationArcher constructed\n");
 }
@@ -935,6 +1000,9 @@ void ApplicationArcher::BuildBow(){
     if (!bow_rig.Build(gltfloader,archer_model,renderer,reference)){
         debug->Err("The bow could not be equipped - she plays empty-handed\n");
     }
+    //The aim override bends the chain that carries the bow, and checks itself against the bow.
+    archer_model->BuildAimChain();
+    archer_model->aim_probe = bow_rig.bow.object;
 }
 
 /*
@@ -1389,6 +1457,20 @@ Mesh* ApplicationArcher::BuildFlightArrowMesh(){
                 "(x%.3f), tip at the %s end (%.3f from the hand, nock %.3f)\n",
                 BOW_ARROW_NODE,"XYZ"[axis],local_length,world_length,scale,
                 f_tip_is_hi ? "+" : "-",f_tip_is_hi ? d_hi : d_lo,f_tip_is_hi ? d_lo : d_hi);
+
+    /*
+        THE RULES' ARROW LENGTH, checked against this mesh. Stage cannot read a .glb, so
+        ARROW_LENGTH is typed in - and this is what keeps it honest, the same arrangement as
+        KICK_TICKS. Origin to point: the prop convention puts the origin at the nock, which is
+        where the string holds it and where the rules' ANCHOR is.
+    */
+    float nock_to_tip = (f_tip_is_hi ? d_hi : d_lo) * scale;
+    if (fabsf(nock_to_tip - ARROW_LENGTH) > 0.03f){
+        debug->Warn("The arrow is %.3f from nock to point but ARROW_LENGTH is %.3f, so the loosed "
+                    "arrow will appear %.3f %s the nocked one. Set ARROW_LENGTH to %.2f in "
+                    "Stage.h.\n",nock_to_tip,ARROW_LENGTH,fabsf(nock_to_tip - ARROW_LENGTH),
+                    (ARROW_LENGTH > nock_to_tip) ? "ahead of" : "behind",nock_to_tip);
+    }
     return mesh;
 }
 
@@ -1675,11 +1757,11 @@ void ApplicationArcher::SetupLights(){
         //shadows ON THE GROUND beside things, where they read as contact - a sun raked in from the
         //front throws them backwards, behind the very objects casting them, and the level renders
         //looking flatly unlit for reasons that are nothing to do with the lighting being broken.
-        sun->SetPosition(vec3(-9.0f,20.0f,10.0f));
-        sun->SetLookAt(vec3(0.0f,2.0f,0.0f));
+        sun->SetPosition(SUN_OFFSET);
+        sun->SetLookAt(vec3(0.0f,0.0f,0.0f));
         sun->color = vec3(1.0f,0.96f,0.88f);
         sun->brightness = 4.0f;
-        sun->viewport.zoom = 22.0f;     //half extent in world units, a little over one screenful
+        sun->viewport.zoom = SUN_SHADOW_EXTENT;     //PlaceCamera rescales it with the zoom
         main_scene->AddObject(sun);
         sun_light = sun;                //UpdateCamera drags it along every tick
     }
@@ -1898,10 +1980,18 @@ void ApplicationArcher::SetupInput(){
         GetAxis and a scripted HoldAxis work on it.
     */
     input->AddGamePadMap(0,INPUT_ARCHER_MOVE,3000);
+    //And the right stick's Y (index 3, positive up) for the aim. The fuller 6000 dead zone here
+    //because the aim is a rate: a stick resting slightly off-centre would not stand still, it
+    //would drift the bow up or down for as long as nobody touched it.
+    input->AddGamePadMap(3,INPUT_ARCHER_AIM,6000);
 
     input->AddKeyMap(GAMEPAD_KEY_A,INPUT_ARCHER_JUMP);
-    input->AddKeyMap(GAMEPAD_KEY_Y,INPUT_ARCHER_KICK);
-    input->AddKeyMap(GAMEPAD_KEY_X,INPUT_ARCHER_ACTION);
+    input->AddKeyMap(GAMEPAD_KEY_B,INPUT_ARCHER_KICK);
+    input->AddKeyMap(GAMEPAD_KEY_Y,INPUT_ARCHER_ACTION);
+    input->AddKeyMap(GAMEPAD_KEY_L1,INPUT_ARCHER_DRAW);
+    //The shoulders mirror J and L on the keyboard: bow on the left, knife on the right. The knife
+    //has no rules yet, so R1 does nothing until that slice lands - see the 'L' mapping below.
+    input->AddKeyMap(GAMEPAD_KEY_R1,INPUT_ARCHER_KNIFE);
 
     //Drop-through is on S alone. Down is the AIM, and one key meaning two things is how a control
     //scheme starts fighting itself - see the layout note in ApplicationArcher.h.
@@ -2024,7 +2114,6 @@ void ApplicationArcher::RegisterCommandHandlers(){
 
 void ApplicationArcher::NewGame(){
     stage.Reset();
-    f_arrow_nocked = true;          //she starts every run with an arrow in hand
     //The level geometry is rebuilt from Stage every time, rather than being reset in place. It is
     //a few dozen boxes once per restart, and it means a change to BuildLevel cannot leave stale
     //geometry behind - which the prop bodies, with their accumulated velocities and tip-overs,
@@ -2287,6 +2376,12 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     float aim = 0.0f;
     if (input->IsKeyDown(INPUT_ARCHER_AIM_UP)){   aim += 1.0f; }
     if (input->IsKeyDown(INPUT_ARCHER_AIM_DOWN)){ aim -= 1.0f; }
+    //The stick, squared with its sign kept. Linear, the first third of the throw already tilts at
+    //a third of full rate, and lining up a long shot means nudging the stick and letting go; the
+    //square gives half a throw a quarter of the rate, which is where the fine control is wanted,
+    //and still reaches the keys' full rate at the end of the throw.
+    float aim_stick = input->GetAxis(INPUT_ARCHER_AIM);
+    aim += aim_stick * fabsf(aim_stick);
     out.aim_axis = clamp(aim,-1.0f,1.0f);
 
     out.f_jump_down     = input->IsKeyDown(INPUT_ARCHER_JUMP);
@@ -2314,7 +2409,6 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
     }
     if (events.f_shot){
         debug->Info("Shot at %.0f deg, power %.2f\n",stage.aim_deg,events.shot_power);
-        f_arrow_nocked = false;     //it is the one in flight now - see f_arrow_nocked
     }
     for (size_t i = 0; i < events.arrow_hits.size(); i++){
         const StageEvents::ArrowHit& h = events.arrow_hits[i];
@@ -3026,11 +3120,13 @@ void ApplicationArcher::SyncBow(){
         draw01 = (float)stage.draw_ticks / (float)BOW_DRAW_TICKS;
     }
     bow_rig.SetDraw(draw01);
-    //A new draw takes a new arrow. After HandleEvents, so a tap - drawn and loosed inside one
-    //tick, leaving bow_mode idle - ends with the hand empty rather than refilled.
-    if (stage.bow_mode == BOW_DRAWING){
-        f_arrow_nocked = true;
-    }
+    /*
+        The nocked arrow is on the string FOR THE WHOLE DRAW AND ONLY THEN. An archer nocks as she
+        draws; carried at other times the arrow rides the bow wherever the socket puts it, which at
+        idle is pointing at the floor. After HandleEvents, so a tap - drawn and loosed inside one
+        tick, leaving bow_mode idle - ends with the string empty.
+    */
+    f_arrow_nocked = (stage.bow_mode == BOW_DRAWING);
     bow_rig.SetArrowNocked(f_arrow_nocked);
 }
 
@@ -3057,6 +3153,8 @@ void ApplicationArcher::SyncArcherAnimation(){
             }
             archer_model->SetAnimationRate(preview_rate);
         }
+        //A clip preview is the clip as exported - nothing bends it.
+        archer_model->aim_weight = 0.0f;
     }else{
         ArcherAnimParams params;
         if (anim_source == ANIM_FROM_PANEL){
@@ -3065,6 +3163,16 @@ void ApplicationArcher::SyncArcherAnimation(){
             DescribeArcher(stage,params);
         }
         puppet.Tick(params);
+
+        /*
+            The aim, handed to the model's post-pose override (ArcherModel::ApplyAnimation).
+            Relative to the draw pose's own aim, which Bow measured at full draw - so aim_deg 0
+            is level whatever the animator's draw happens to point at. From the SAME params as the
+            clip choice, so the panel's aim slider bends her exactly as the game's aim does.
+        */
+        archer_model->aim_delta_deg = params.aim_deg - bow_rig.neutral_pitch_deg;
+        archer_model->aim_weight = puppet.aim_weight;
+        archer_model->aim_facing = (params.facing < 0.0f) ? -1.0f : 1.0f;
 
         int clip = puppet.choice.clip;
         if (clip >= 0 && clip < CLIP_COUNT && archer_clips[clip]){
@@ -3343,7 +3451,9 @@ int ApplicationArcher::TruncateArcAgainstProps(v2* points, int count){
     }
     rp3d::RigidBody* exclude = archer_object ? archer_object->GetRigidBody() : NULL;
 
-    v2 from = stage.MuzzlePosition();
+    //From the ANCHOR, like the rules' own first sweep - so a crate between the string and the
+    //arrowhead stops the preview too. See ARROW_LENGTH in Stage.h.
+    v2 from = stage.AnchorPosition();
     for (int i = 0; i < count; i++){
         v2 to = points[i];
         if (from.x == to.x && from.y == to.y){
@@ -3545,8 +3655,35 @@ void ApplicationArcher::PlaceCamera(){
     //Held as a pointer rather than looked up by name: this runs every tick, and Scene::FindObject
     //is a walk of the whole tree comparing strings.
     if (sun_light){
-        sun_light->SetPosition(vec3(camera_target.x - 9.0f,camera_target.y + 20.0f,10.0f));
-        sun_light->SetLookAt(vec3(camera_target.x,camera_target.y,0.0f));
+        //Fit the ortho to how much of the level is on screen - see SUN_SHADOW_EXTENT. The side
+        //camera's distance is camera_distance; the orbit keeps its own, as the length to the pivot.
+        float distance = camera_distance;
+        if (camera && camera_mode == ARCHER_CAM_ORBIT){
+            distance = (camera->GetPosition() - camera_target).length();
+        }
+        sun_light->viewport.zoom = SUN_SHADOW_EXTENT * distance / CAMERA_DISTANCE;
+
+        vec3 target(camera_target.x,camera_target.y,0.0f);
+        sun_light->SetPosition(target + SUN_OFFSET);
+        sun_light->SetLookAt(target);
+
+        /*
+            Snap the light to its own texel grid. It follows an eased camera, so it moves by a
+            fraction of a texel nearly every tick, and every edge in the map is re-rasterised a
+            little differently each time: the shadow's stair steps crawl along its edges while she
+            runs, which is far more visible than the steps themselves. Moving the eye only within
+            the light's image plane, and only by whole texels, keeps every texel boundary nailed to
+            the same place in the world. The direction never changes, so neither does the grid's
+            orientation, and a zoom notch is a single re-snap rather than a continuous shimmer.
+        */
+        float texel = (2.0f * sun_light->viewport.zoom) / sun_light->viewport.width;
+        vec3 left = sun_light->GetLeft();
+        vec3 up = sun_light->GetUp();
+        vec3 eye = sun_light->GetPosition();
+        float l = eye.dot(left);
+        float u = eye.dot(up);
+        eye += left * (roundf(l / texel) * texel - l) + up * (roundf(u / texel) * texel - u);
+        sun_light->SetPosition(eye);
     }
 }
 
@@ -3630,6 +3767,11 @@ void ApplicationArcher::PublishSnapshot(){
     s.draw_ticks = stage.draw_ticks;
     s.draw_power = stage.DrawPower();
     s.aim_deg = stage.aim_deg;
+    if (archer_model){
+        s.aim_drawn_deg = archer_model->aim_drawn_deg;
+        s.aim_weight = archer_model->aim_weight;
+    }
+    s.aim_neutral_deg = bow_rig.neutral_pitch_deg;
     s.live_arrows = stage.NumLiveArrows();
     s.arrows_shot = stage.arrows_shot;
     s.arrows_hit_blocks = stage.arrows_hit_blocks;
@@ -3769,6 +3911,11 @@ json ApplicationArcher::BuildStateJson(){
             {"draw_ticks_full",BOW_DRAW_TICKS},
             {"draw_power",s.draw_power},
             {"aim_deg",s.aim_deg},
+            //The aim override's check - see ArcherSnapshot::aim_drawn_deg.
+            {"aim_drawn_deg",s.aim_drawn_deg},
+            {"aim_error_deg",s.aim_drawn_deg - s.aim_deg},
+            {"aim_weight",s.aim_weight},
+            {"aim_neutral_deg",s.aim_neutral_deg},
             {"predicted_landing",s.f_predicted ? json{{"x",s.predicted_x},{"y",s.predicted_y}}
                                                : json(nullptr)}
         }},
@@ -4270,6 +4417,13 @@ void ApplicationArcher::DrawImGuiUI(void){
 
     ImGui::Separator();
     ImGui::Text("aim       %.0f deg %s",stage.aim_deg,(stage.facing > 0.0f) ? "right" : "left");
+    if (archer_model){
+        //The override's check: the drawn bow against the rules' aim. Off by the neutral when the
+        //weight is 0, which is the pose as authored; should agree to a degree or two at weight 1.
+        ImGui::Text("bow at    %.1f deg (%+.1f), body %.0f%%, pose neutral %.1f",
+                    archer_model->aim_drawn_deg,archer_model->aim_drawn_deg - stage.aim_deg,
+                    archer_model->aim_weight * 100.0f,bow_rig.neutral_pitch_deg);
+    }
     ImGui::ProgressBar((float)stage.draw_ticks / (float)BOW_DRAW_TICKS,ImVec2(-1,0),"draw");
     ImGui::Text("arrows    %i live, %i shot, %i in walls",
                 stage.NumLiveArrows(),stage.arrows_shot,stage.arrows_hit_blocks);

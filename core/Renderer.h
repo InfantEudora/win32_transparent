@@ -478,6 +478,10 @@ class Renderer{
     //to the volume shader by whichever app owns it, so a cone's edge matches between the hull
     //it lights and the fog around it.
     float cone_softness = 0.15f;
+    //How far the sun's shadow filter reaches either side, in shadow-map TEXELS, not world units -
+    //see CalcShadow in default.frag. 0 is one bilinear tap (already no stair steps), 1 a 3x3 grid,
+    //and the cost goes with the square: (2*ceil(r)+1)^2 gathers per lit fragment, capped at r = 3.
+    float shadow_pcf_radius = 1.0f;
     int pipeline = PIPELINE_MSAA;     // Which pipeline to initialise
     bool f_normal_mapping = true;     // Enable/disable normal mapping
     bool f_render_skybox = true;      // Enable/disable skybox rendering

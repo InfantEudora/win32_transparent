@@ -191,9 +191,11 @@ bool Bow::Build(GLTFLoader& loader, Skeleton* skeleton, Renderer* renderer,
         quat r = bow.object->GetWorldRotation();
         vec3 up = r * vec3(0.0f,1.0f,0.0f);
         vec3 fwd = r * vec3(0.0f,0.0f,1.0f);
+        neutral_pitch_deg = atan2f(fwd.y,fwd.z) * 57.29578f;
         debug->Info("At full draw the bow's up is (%.2f,%.2f,%.2f) and its front (%.2f,%.2f,%.2f); "
-                    "upright facing her forward would be (0,1,0) and (0,0,1)\n",
-                    up.x,up.y,up.z,fwd.x,fwd.y,fwd.z);
+                    "upright facing her forward would be (0,1,0) and (0,0,1). The pose aims "
+                    "%.1f deg above level - the aim override's neutral\n",
+                    up.x,up.y,up.z,fwd.x,fwd.y,fwd.z,neutral_pitch_deg);
     }
 
     //The quiver: on its socket or not at all. There is no sensible guess at where one goes.

@@ -131,6 +131,11 @@ struct LastKeyEvent {
 #define GAMEPAD_KEY_RIGHT_THUMB     (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_RIGHT_THUMB)
 #define GAMEPAD_KEY_LEFT_SHOULDER   (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_LEFT_SHOULDER)
 #define GAMEPAD_KEY_RIGHT_SHOULDER  (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_RIGHT_SHOULDER)
+//The same two buttons by their PlayStation names (LB/RB on an Xbox pad). There are deliberately no
+//L2/R2 keys: XInput reports the triggers as ANALOG, and they arrive as axes 4 and 5 - map them
+//with AddGamePadMap, not AddKeyMap.
+#define GAMEPAD_KEY_L1              GAMEPAD_KEY_LEFT_SHOULDER
+#define GAMEPAD_KEY_R1              GAMEPAD_KEY_RIGHT_SHOULDER
 #define GAMEPAD_KEY_A               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_A)
 #define GAMEPAD_KEY_B               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_B)
 #define GAMEPAD_KEY_X               (GAMEPAD_SYSKEY_BASE + XINPUT_GAMEPAD_X)

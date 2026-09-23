@@ -371,3 +371,13 @@ Offline check scripts lived in the session scratchpad (sockfk.py) - promote to t
 Export 20:26: sockets re-posed as REST from the end of Standing_DrawArrow - verified: bow upright at
 full draw (up -0.14,0.99,-0.05), nock gap 0.048 rig, quiver on her back. Idle bow is horizontal with
 the nocked arrow pointing at the floor - per-clip socket keys or a nocking decision, not a bug.
+AIM OVERRIDE BUILT 2026-09-23: ArcherModel::ApplyAnimation (undo-own-rotation first, then base, then
+world-Z turn split Spine x3 0.15 / Shoulders 0.55 / Neck +0.35), Puppet::aim_weight (CLIP_DRAW only),
+neutral from Bow::neutral_pitch_deg. 0.00 deg error over +-85 both facings. Nocked arrow shown only
+while BOW_DRAWING. OPEN: Stage muzzle wants (0.07,0.54)+1.10*dir vs today's (0.40,0.35)+0.25*dir -
+needs a shoulder->muzzle sweep at loose first or arrows skip a wall she stands against.
+ARROW IS A SEGMENT (2026-09-23, user's framing: anchor + direction + length, sweep from the anchor):
+BOW_NOCK_FWD 0.11 / BOW_NOCK_UP 0.54 / ARROW_LENGTH 1.05 replaced BOW_SHOULDER_*; Loose leaves the
+anchor in prev_pos and the FIRST step (TickArrows, PredictArc, app prop raycasts) sweeps from it.
+Loosed arrow spawns within 0.03 of the nocked tip; point-blank at the 0.5 test-bay pillar it sticks
+in the near face (rules check, failed on the old code first). 237 checks.

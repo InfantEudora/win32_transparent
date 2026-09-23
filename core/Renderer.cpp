@@ -1462,6 +1462,7 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
 
     shader->Setint("f_environment_reflections",f_use_reflections);
     shader->Setfloat("cone_softness",cone_softness);
+    shader->Setfloat("shadow_pcf_radius",shadow_pcf_radius);
     shader->Setint("f_materialindex_is_color",0);
     UploadCloudShadow(shader);
     UploadFieldShadow(shader);
@@ -1487,6 +1488,7 @@ void Renderer::DrawFrame(const std::vector<Object*>& objects, Camera* camera, Sh
         }
         skinned_shader->Setint("f_environment_reflections",f_use_reflections);
         skinned_shader->Setfloat("cone_softness",cone_softness);
+        skinned_shader->Setfloat("shadow_pcf_radius",shadow_pcf_radius);
         skinned_shader->Setfloat("alpha_clip",alpha_clip);
         skinned_shader->Setint("f_materialindex_is_color",0);
         UploadCloudShadow(skinned_shader);

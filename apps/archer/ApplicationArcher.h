@@ -74,18 +74,18 @@
 /*
     Our own input actions, numbered from INPUT_LAST like every other app's.
 
-    KEYBOARD ONLY, and laid out so that no key means two things:
+    Laid out so that no key means two things. The pad column is the gamepad (see SetupInput):
 
-        A / D, Left / Right     run
-        S                       drop through a one-way platform; let go of a ledge
-        Space                   jump (hold for height, tap for a hop); climb up from a hang
-        J                       hold to draw the bow, release to loose
-        Up / Down               tilt the aim, whether or not the bow is drawn
-        K                       kick - shoves props hard, breaks walls
-        E                       action - take the rope                 (later slice)
-        L                       knife                                 (later slice)
-        R                       restart
-        F1                      the engine's ImGui panels
+        A / D, Left / Right     left stick   run
+        S                                    drop through a one-way platform; let go of a ledge
+        Space                   A            jump (hold for height, tap for a hop); climb up
+        J                       L1           hold to draw the bow, release to loose
+        Up / Down               right stick  tilt the aim, whether or not the bow is drawn
+        K                       B            kick - shoves props hard, breaks walls
+        E                       Y            action - take the rope             (later slice)
+        L                       R1           knife                             (later slice)
+        R                                    restart
+        F1                                   the engine's ImGui panels
 
     Aim is on Up/Down and drop-through is on S rather than Down, which is the one arrangement that
     keeps every key unambiguous while leaving both the arrows and WASD usable for running.
@@ -117,6 +117,10 @@
     was quantised.
 */
 #define INPUT_ARCHER_MOVE           INPUT_LAST+14
+//The right stick's Y, the aim's scalar twin of Up/Down in the same way MOVE is of Left/Right.
+//It is a RATE, not an angle: Stage tilts by aim_axis * BOW_AIM_RATE_DEG, so a small deflection
+//creeps the aim and a full one tilts as fast as the keys. GatherInput squares it on the way in.
+#define INPUT_ARCHER_AIM            INPUT_LAST+15
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Both are intent arriving from OUTSIDE
 //the simulation - a key, an MCP call, later a replay - which is what the command queue is for:
@@ -338,6 +342,29 @@ enum ArcherAnimSource{
     PlayerCharacter overrides this to turn AND move; the archer only wants the turn, because Stage
     owns where she is and a clip must never be allowed to walk her off a ledge.
 */
+/*
+    --- THE AIM OVERRIDE (animation_plan.md, Step 3) ---------------------------------------------
+    After the clips have posed her, the spine and shoulders are turned about the WORLD's Z - the
+    play plane's normal, the axis pointing at the camera - so the bow points along aim_deg.
+
+    Rotations about one shared world axis ADD, whichever bone they are applied to. So however the
+    angle is split over the chain below, every bone downstream of all of it turns by exactly the
+    whole angle - and the bow hangs off LeftHand, downstream of Spine..Spine2 and LeftShoulder. The
+    shares on the bow's path therefore have to sum to 1, and that is what makes the drawn bow and
+    Stage's arc agree to rounding rather than roughly. The neck's share is on top: the head is not
+    on the bow's path, so it only decides how far she looks along the arrow.
+
+    The shoulders rather than the arms, for the nock: LeftShoulder and RightShoulder pivot close
+    together at the top of the chest, so turning both keeps the drawing hand near the string. The
+    arms pivot a shoulder-width apart, and turning them would pull the hand off the nock by about
+    that width times the angle.
+*/
+#define ARCHER_AIM_SPINE_SHARE      0.15f   //each of Spine, Spine1, Spine2
+#define ARCHER_AIM_SHOULDER_SHARE   0.55f   //each of LeftShoulder, RightShoulder; 3*0.15 + 0.55 = 1
+#define ARCHER_AIM_NECK_SHARE       0.35f   //on top, so her head follows most of the way
+
+#define ARCHER_AIM_BONES            6
+
 class ArcherModel : public Skeleton{
 public:
     //Radians of yaw this clip has turned her through since it started. ADDED to the facing the
@@ -345,6 +372,39 @@ public:
     //wherever the character was already pointing. Reset when the clip changes.
     float clip_yaw = 0.0f;
     void ApplyRootMotion(const RootMotionDelta& delta) override;
+
+    /*
+        The clips' pose, then the aim on top of it. See the note above.
+
+        IT UNDOES ITS OWN ROTATION FIRST. The base only writes a bone on a pass that actually poses
+        - a paused sim, a stepped debug override or a finished one-shot may leave last tick's pose
+        in place - and an override applied on top of a pose it has already bent would accumulate,
+        turning her a little further every frame. So each bone's clean (clip-posed) rotation is
+        kept, put back before the base runs, and the aim re-applied to whatever the base left.
+    */
+    void ApplyAnimation(float time_delta) override;
+
+    //Finds the chain. Call once the skeleton is loaded; with any bone missing the override is off.
+    bool BuildAimChain();
+
+    //Set by the app each tick. The angle is aim_deg MINUS the draw pose's own measured aim.
+    float aim_delta_deg = 0.0f;
+    float aim_weight = 0.0f;        //0..1, from Puppet::aim_weight
+    float aim_facing = 1.0f;        //+1 right, -1 left
+
+    /*
+        What the override produced, for checking it: the angle the bow's front actually makes in
+        the play plane, relative to facing, + up - the same convention as Stage::aim_deg. NaN-free
+        and always written, weight or no weight, so the panel can show the neutral pose too.
+    */
+    Object* aim_probe = NULL;       //the bow
+    float   aim_drawn_deg = 0.0f;
+
+private:
+    Bone* aim_bones[ARCHER_AIM_BONES] = {};
+    float aim_shares[ARCHER_AIM_BONES] = {};
+    quat  aim_clean[ARCHER_AIM_BONES];
+    bool  f_aim_applied = false;    //aim_clean holds a pose the override has since bent
 };
 
 /*
@@ -380,6 +440,16 @@ public:
     looking down on her head. At the default distance the two are the same thing.
 */
 #define CAMERA_HEIGHT               3.2f
+/*
+    Half the width of the sun's shadow ortho AT CAMERA_DISTANCE, in world units. PlaceCamera scales
+    it with the zoom, so shadow texels stay the same size ON SCREEN rather than in the world: a
+    fixed 22 is half a pixel a texel at the default view, several pixels a texel at
+    CAMERA_DISTANCE_MIN (the stair-stepped edges), and narrower than the view itself at
+    CAMERA_DISTANCE_MAX, where shadows simply stopped short of the screen edges. 22 over the
+    ~15.9 of half-view at the default is the margin for casters just off screen.
+*/
+#define SUN_SHADOW_EXTENT           22.0f
+#define SUN_OFFSET                  vec3(-9.0f,20.0f,10.0f)   //from the view's target, see SetupLights
 /*
     Which camera is driving. SIDE is the game's own - trailing on the world, fixed on the range,
     always square-on to the play plane. ORBIT is the middle-mouse orbit from apps/isoanimation
@@ -437,6 +507,15 @@ struct ArcherSnapshot{
     int   draw_ticks = 0;
     float draw_power = 0.0f;
     float aim_deg = 0.0f;
+    /*
+        THE AIM CHECK: where the drawn bow actually points (ArcherModel::aim_drawn_deg, same
+        convention as aim_deg), how much of the aim her body has taken, and the neutral the
+        override works from. With aim_weight at 1 the drawn angle should equal aim_deg to within a
+        degree or two - that is the promise the override makes, and this is how it is kept.
+    */
+    float aim_drawn_deg = 0.0f;
+    float aim_weight = 0.0f;
+    float aim_neutral_deg = 0.0f;
     int   live_arrows = 0;
     int   arrows_shot = 0;
     int   arrows_hit_blocks = 0;
@@ -907,13 +986,12 @@ private:
     */
     Bow bow_rig;
     /*
-        Whether the nocked arrow is in her hand. Hidden the tick an arrow is loosed and shown again
-        the tick she starts the next draw - so between shots her hand is empty, and the arrow in
-        flight is the only one on screen. Before the flying arrows were the real mesh this did not
-        matter; once they were, the one left in her hand read as a second arrow. Shared by both
-        scenes like the rest of the character; a restart puts it back.
+        Whether an arrow is on the string: exactly while she draws (bow_mode == BOW_DRAWING), set
+        every tick by SyncBow. So between shots the string is empty and the arrow in flight is the
+        only one on screen - one left on the bow read as a second arrow - and at idle there is no
+        arrow riding the socket pointing at the floor.
     */
-    bool f_arrow_nocked = true;
+    bool f_arrow_nocked = false;
     //Worked out from the bind pose at load: what the rig has to be scaled by to stand
     //ARCHER_MODEL_HEIGHT tall, and where its feet sit once it has been.
     float model_scale = 1.0f;

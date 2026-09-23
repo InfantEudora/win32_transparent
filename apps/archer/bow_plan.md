@@ -302,9 +302,10 @@ the shape at a time the rules choose, rather than letting the clip run the clock
 
 ### Where the arrow leaves
 
-`BOW_SHOULDER_UP` (0.35) and `BOW_SHOULDER_FWD` (0.40) say where the arrow is born, relative to the
+`BOW_SHOULDER_UP` (0.35) and `BOW_SHOULDER_FWD` (0.40) said where the arrow is born, relative to the
 archer's centre. Once there is a real bow those numbers and the visible nock have to agree, or the
-aim arc starts in mid-air beside the bow.
+aim arc starts in mid-air beside the bow. (**Done 2026-09-23**, and the constants are now the
+arrow's anchor and length - `BOW_NOCK_FWD`/`BOW_NOCK_UP`/`ARROW_LENGTH`; see §8 item 6.)
 
 **Fix it by moving the model, or by changing those two constants once and re-running `make rules`.
 Not by having `Stage` read a bone.** `Stage.h` names no engine type on purpose, and the moment it
@@ -445,10 +446,25 @@ any measured screenshot with `camera_get`.
 
    This is a **core** change and every app links it. Nothing else in the tree used morph targets,
    so nothing else can have regressed, but it is worth knowing it is there.
-6. **Aim override from `aim_deg`** — planned in detail in animation_plan.md, *Step 3 — aim pitch*.
-   Then check the arc actually starts at the nock, and fix it with the two constants, per §5. The
-   file already says they are off: the full-draw hands sit ≈ 0.50 above her centre against
-   `BOW_SHOULDER_UP`'s 0.35 (rough, confirm in the app).
+6. ~~**Aim override from `aim_deg`**~~ **DONE 2026-09-23** — animation_plan.md, *Step 3 — aim
+   pitch*: 0.00 degrees between the drawn bow and `aim_deg` across ±85, both facings. The nocked
+   arrow is on the string for the whole draw and only then (`SyncBow`).
+
+   **Where the arrow leaves: DONE the same day - the arrow is a SEGMENT.** It has an anchor (the
+   nock), a direction (the aim) and a length, and its first sweep starts at the anchor. In Stage:
+   `BOW_NOCK_FWD` 0.11 / `BOW_NOCK_UP` 0.54 (the nocked arrow's origin, measured over aim
+   −80..+80 with the override on; it moves about 0.2 across that range) and `ARROW_LENGTH` 1.05
+   (nock to point, 0.519 x 2.020 - the app warns at start if the mesh disagrees).
+   `MuzzlePosition()` = `AnchorPosition()` + length * aim; `Loose` leaves the anchor in
+   `prev_pos`, and the first step of `TickArrows`, of `PredictArc` and of the app's prop raycasts
+   all sweep from it - so the arc is still the flight, tick for tick.
+   - Measured: the loosed arrow spawns within **0.03** of where the nocked arrow's tip was (it
+     used to appear 0.57 ahead of it).
+   - Pressed against the test bay's 0.5-wide pillar, a level shot sticks in the **near face**
+     (x −34.57 against a face at −34.55). The new rules check was run against the OLD code first
+     and failed as expected - the arrow buried itself 0.29 inside the pillar.
+   - Left as it is: before the loose, the nocked arrowhead still pokes through a post she is
+     pressed against. That is the pose - the bow is a meter ahead of her chest - not the rules.
 7. ~~**The nocked arrow**~~ **DONE 2026-09-23** — not the look-at first planned: with the props
    re-exported to the convention, the arrow is a child of the bow at identity rotation, placed at
    the string's nock measured off the `Drawn` shape key (§4, *The target*). Verified in-app at

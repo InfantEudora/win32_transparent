@@ -1215,12 +1215,12 @@ v2 Stage::AimDirection() const{
     return v2(cosf(a) * facing,sinf(a));
 }
 
+v2 Stage::AnchorPosition() const{
+    return pos + v2(BOW_NOCK_FWD * facing,BOW_NOCK_UP);
+}
+
 v2 Stage::MuzzlePosition() const{
-    v2 shoulder = pos + v2(BOW_SHOULDER_FWD * facing,BOW_SHOULDER_UP);
-    //Pushed a little further along the aim so the arrow is not born inside the archer's own body
-    //box - which would be invisible here, where the rules do not collide arrows against the
-    //archer, but shows up the moment something else does.
-    return shoulder + AimDirection() * 0.25f;
+    return AnchorPosition() + AimDirection() * ARROW_LENGTH;
 }
 
 void Stage::Loose(StageEvents& events){
@@ -1245,7 +1245,9 @@ void Stage::Loose(StageEvents& events){
     Arrow& a = arrows[slot];
     a = Arrow();
     a.pos = MuzzlePosition();
-    a.prev_pos = a.pos;
+    //The segment the first sweep covers starts at the ANCHOR, not at the tip - see ARROW_LENGTH.
+    //TickArrows reads it from here on the arrow's first step, and so does the app's prop raycast.
+    a.prev_pos = AnchorPosition();
     /*
         The archer's own velocity is NOT added in.
 
@@ -1282,16 +1284,22 @@ void Stage::TickArrows(StageEvents& events){
             continue;
         }
 
-        //Kept for the app: the segment it needs to ask rp3d whether this arrow went through a
-        //crate or a target on the way. See the handshake note on Stage::arrows.
-        a.prev_pos = a.pos;
+        /*
+            Where this step's sweep starts: the tip, except on the arrow's FIRST step, where it is
+            the anchor Loose left in prev_pos - so the nock-to-tip span is swept as part of the
+            flight rather than skipped. See ARROW_LENGTH. Kept in prev_pos for the app either way:
+            it is the segment rp3d is asked about for crates and targets. See the handshake note
+            on Stage::arrows.
+        */
+        v2 from = (a.age_ticks == 0) ? a.prev_pos : a.pos;
+        a.prev_pos = from;
 
         a.vel.y -= ARROW_GRAVITY * ARCHER_DT;
         v2 next = a.pos + a.vel * ARCHER_DT;
 
         v2 point;
         v2 normal;
-        int block = SegmentHitsBlock(a.pos,next,point,normal);
+        int block = SegmentHitsBlock(from,next,point,normal);
         if (block >= 0){
             float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
             //Backed off along the face so the shaft is embedded rather than coplanar with the
@@ -1450,6 +1458,8 @@ int Stage::PredictArc(v2* out_points, int max_points) const{
     float speed = ARROW_SPEED_MIN + (ARROW_SPEED_MAX - ARROW_SPEED_MIN) * power;
     v2 p = MuzzlePosition();
     v2 v = AimDirection() * speed;
+    //The first step sweeps from the anchor, exactly as TickArrows does - see ARROW_LENGTH.
+    v2 from = AnchorPosition();
 
     int written = 0;
     int limit = (max_points < AIM_ARC_POINTS) ? max_points : AIM_ARC_POINTS;
@@ -1459,7 +1469,9 @@ int Stage::PredictArc(v2* out_points, int max_points) const{
             v2 next = p + v * ARCHER_DT;
             v2 point;
             v2 normal;
-            if (SegmentHitsBlock(p,next,point,normal) >= 0){
+            int hit = SegmentHitsBlock(from,next,point,normal);
+            from = next;
+            if (hit >= 0){
                 out_points[written++] = point;
                 return written;
             }

@@ -510,6 +510,44 @@ static void TestBow(){
     Check(!f_any_past,"a full-draw arrow does not tunnel through the cracked wall",detail);
     Check(t.arrows_hit_blocks > 0,"it registers as a hit on the wall instead");
 
+    //--- An arrow is born as a SEGMENT, nock to tip ------------------------------------------------
+    /*
+        Standing pressed against something and shooting into it. The arrow's tip starts a full
+        arrow length ahead of the nock, and the nock is in front of her chest - so the tip can be
+        born INSIDE a block, or clean PAST a thin one. A point that only starts sweeping from where
+        it was born would bury itself in the first case and fly through in the second.
+
+        The test bay's pillar is the thin case - 0.5 wide, thinner than an arrow is long - with her
+        pressed against its near face. A level full-draw shot must stick IN THAT FACE: not inside
+        the pillar, not beyond it.
+    */
+#if ARCHER_TEST_BAY
+    {
+        float cx = ARCHER_TEST_BAY_CENTRE(0);
+        float pillar_left = cx + 2.2f - 0.25f;
+        float pillar_right = cx + 2.2f + 0.25f;
+        Stage p;
+        p.pos = v2(pillar_left - ARCHER_HALF_W - 0.01f,ARCHER_HALF_H);
+        p.facing = 1.0f;
+        Settle(p);
+        p.aim_deg = 0.0f;
+        Run(p,BOW_DRAW_TICKS + 4,draw);
+        StageEvents pe;
+        p.Tick(loose,pe);
+        int shot = -1;
+        for (int i = 0; i < ARROW_MAX_LIVE; i++){
+            if (p.arrows[i].f_live){ shot = i; }
+        }
+        Check(shot >= 0 && p.arrows[shot].f_stuck,
+              "pressed against a thin pillar, a level shot sticks on the tick it is loosed");
+        char pd[160];
+        snprintf(pd,sizeof(pd),"stuck at x %.3f; the pillar spans %.3f .. %.3f",
+                 (shot >= 0) ? p.arrows[shot].pos.x : 0.0f,pillar_left,pillar_right);
+        Check(shot >= 0 && p.arrows[shot].pos.x <= pillar_left + 0.001f,
+              "in the pillar's NEAR face - not buried inside it, not through it",pd);
+    }
+#endif
+
     //--- Aim is relative to facing -----------------------------------------------------------------
     Stage m;
     Settle(m);
@@ -1765,6 +1803,42 @@ static void TestPuppet(){
     Check(ticks_to_turn == PUPPET_TURN_TICKS,"a turnaround takes exactly PUPPET_TURN_TICKS ticks");
     Check(!f_went_the_long_way,"and turns TOWARD the camera - it never passes behind a quarter turn");
     Check(f_monotonic,"turning one way the whole time, with no wobble at the ends");
+
+    /*
+        THE AIM'S HOLD ON HER BODY: on only in the draw pose, eased both ways.
+
+        The run case is the one worth pinning. Drawing at a run is a real thing the rules allow,
+        but until step 2's mask layer the clip underneath is still a run cycle - and bending that
+        would lean a running torso that is holding nothing up.
+    */
+    {
+        Puppet a;
+        ArcherAnimParams draw;
+        draw.action = ACTION_DRAW;
+        for (int i = 0; i < PUPPET_AIM_BLEND_TICKS - 1; i++){
+            a.Tick(draw);
+        }
+        Check(a.aim_weight > 0.0f && a.aim_weight < 1.0f,"the aim eases in rather than snapping");
+        a.Tick(draw);
+        CheckNear(a.aim_weight,1.0f,0.0001f,"and holds fully after PUPPET_AIM_BLEND_TICKS of a standing draw");
+
+        ArcherAnimParams idle;
+        for (int i = 0; i < PUPPET_AIM_BLEND_TICKS; i++){
+            a.Tick(idle);
+        }
+        CheckNear(a.aim_weight,0.0f,0.0001f,"and lets go over the same ticks when the draw ends");
+
+        ArcherAnimParams run_draw;
+        run_draw.action = ACTION_DRAW;
+        run_draw.speed = 5.0f;
+        run_draw.ground_speed = 5.0f;
+        a.clip_speed[CLIP_RUN_FAST] = 2.5f;
+        a.model_scale = 2.0f;
+        for (int i = 0; i < PUPPET_AIM_BLEND_TICKS * 2; i++){
+            a.Tick(run_draw);
+        }
+        CheckNear(a.aim_weight,0.0f,0.0001f,"a draw at a run does not bend her - that waits for the mask layer");
+    }
 
     /*
         And the seam itself: the rules, read into the parameters.
