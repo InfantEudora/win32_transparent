@@ -326,12 +326,24 @@ any measured screenshot with `camera_get`.
    scale does not rotate anything and the skeleton happened to be unrotated at that moment.
    `Bow::Build` now neutralises the skeleton's whole transform for the measurement and restores it
    after, which removes all three components at once and cannot be broken by moving the call.
-4. **The range scene.** Now it earns its keep: a still camera is what you want while tuning a bend.
+4. ~~**The range scene.**~~ **DONE 2026-09-23** — a second `Scene` ("Range") with its own
+   `Stage` (`STAGE_LEVEL_RANGE`), switched with the `scene_set` MCP tool or the Engine panel's
+   Scenes list. Two departures from §7, both deliberate:
+   - **Not walk-only.** The input mask was dropped; the range's one rule is a lower top speed,
+     `ARCHER_RANGE_RUN_SPEED` 3.0 against 9.0, which is Running_Slow's own pace. Every verb still
+     works, so the two levels show the same character with two feels - including the jump, which
+     from a jog is a different jump.
+   - **Not a still camera.** It follows her slowly (`RANGE_CAMERA_SMOOTH`), in both camera modes.
+   Also on the range: floating targets in an arch that take gravity on their third hit, crate
+   pyramids, and the hit counter. The arrows in flight are the file's arrow now, not boxes -
+   `ApplicationArcher::BuildFlightArrowMesh`.
 5. ~~**`SetShapekey(0, draw_ticks / BOW_DRAW_TICKS)`**~~ **DONE 2026-09-22** —
    `ApplicationArcher::SyncBow`, beside the other `Sync*` calls on the physics thread
    (`SetShapekey` writes one float and touches no GL). Verified at full draw: `draw_ticks` 36 of
-   36, string pulled back, limbs flexed. The nocked arrow is still always visible; hiding it on
-   loose is the remaining piece.
+   36, string pulled back, limbs flexed. **Hiding the nocked arrow on loose: DONE 2026-09-23** -
+   hidden the tick an arrow is loosed, shown again when the next draw starts (a one-tick tap ends
+   with the hand empty). See `f_arrow_nocked`. It mattered once the flying arrows became the real
+   mesh: the one left in her hand read as a second arrow.
 
    **This needed a core engine change first**, and it is the reason this step was not the one-liner
    it looks like. The app died on startup with

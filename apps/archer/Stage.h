@@ -98,6 +98,20 @@ struct v2{
 #define ARCHER_MAX_FALL_SPEED       34.0f
 
 #define ARCHER_RUN_SPEED            9.0f
+/*
+    The top speed ON THE RANGE, and the only rule the range changes.
+
+    The bow plan wanted the range walk-only - no jump, no kick - by masking input. That was
+    dropped for this: every verb still works, she is just slower, so the range shows the same
+    character with a different feel instead of a crippled one, and the jump there is the jump you
+    get from a jog rather than from a sprint. That difference is worth having side by side.
+
+    3.0 because it is Running_Slow's own pace - 2.92 units/s at her scale, measured by
+    MeasureClips - so at full stick the feet do not slide, where the main level's 9.0 slides them
+    1.73x past the fastest clip there is. Everything that scales with speed (the jump's reach, the
+    blend-space rung, the stop) follows from target_vx, so nothing else needs to know.
+*/
+#define ARCHER_RANGE_RUN_SPEED      3.0f
 #define ARCHER_RUN_ACCEL            90.0f       //full speed from rest in about 6 ticks
 #define ARCHER_RUN_FRICTION         120.0f      //decel with no input on the ground; higher than
                                                 //accel so stopping is crisper than starting
@@ -567,6 +581,8 @@ public:
     int  GetLevel() const { return level; };
     //Where the archer starts and where a fall off the world puts her back. Per level.
     v2   StartPosition() const;
+    //Her top speed on this level: ARCHER_RUN_SPEED, or ARCHER_RANGE_RUN_SPEED on the range.
+    float RunSpeed() const;
 
     //One tick. The whole simulation, and the only way state changes.
     void Tick(const ArcherInput& in, StageEvents& events);

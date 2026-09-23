@@ -1277,14 +1277,139 @@ void ApplicationArcher::MeasureKickClip(){
     }
 }
 
+/*
+    The nocked arrow's mesh, turned into one that flies.
+
+    The file's arrow is authored for the HAND: its vertices are in the node's own space, along
+    whatever axis the artist modelled it and with its origin wherever that was left - it is drawn
+    under the right-hand bone with only a grip rotation, see Bow.h. Flight wants the convention the
+    box arrow always had and that SyncArrowViews relies on - the arrow runs along +X, one rotation
+    about Z aims it - plus one the box did not have: THE TIP IS AT THE ORIGIN (give or take
+    ARROW_TIP_EMBED). Stage's arrow is a
+    point swept through the level, and that point is where it strikes; putting the tip on it means
+    an arrow flies point-first and sticks with its head in the target, where the centred box stuck
+    with half its length buried.
+
+    MEASURED FROM THE FILE, not typed in:
+      - the LONG AXIS is the longest side of the mesh's bounding box;
+      - the TIP is the end of that axis FARTHER FROM THE NODE'S ORIGIN. The origin is the right
+        hand - Bow::EquipItem measures the arrow's rest position on that bone to five decimals -
+        and the right hand is the one holding the nock on the string, so the near end is the nock.
+        In this file the shaft runs z -0.606 .. -0.001: origin at the nock, point 0.6 away.
+
+        THE FIRST VERSION GUESSED "the end nearer the bow" and flew every arrow backwards - a
+        close-up screenshot of one in flight showed the head trailing. In the draw pose the nock
+        and the bow are both near the middle of her, so distance to the bow says little; the
+        origin being ON the hand says it outright.
+      - the SIZE is the nocked arrow's size in the world, read through its own world matrix, so a
+        flying arrow is the arrow she was holding - whatever the rig scale and the bone chain do.
+
+    The copy is a new mesh with the vertices rotated and scaled (normals and tangents rotated with
+    them), registered as the asset ar_arrow_flight. The roll about the shaft is whatever the axis
+    swap leaves; the fletching reads the same at any roll from a side-on camera.
+*/
+/*
+    How far the head reaches PAST the arrow's point, in world units - so a stuck arrow is IN what
+    it hit rather than touching it. Stage parks a stuck arrow 0.02 outside the surface it struck
+    (Stage::TickArrows), which with the tip exactly on the point left the head resting against the
+    wall; measured on a close-up, it read as leaning, not stuck. In flight this is 0.12 of a
+    1.22-unit arrow at 46 units a second, which is nothing anyone can see.
+*/
+#define ARROW_TIP_EMBED             0.12f
+
+static float AxisOf(const vec3& v, int axis){
+    return (axis == 0) ? v.x : ((axis == 1) ? v.y : v.z);
+}
+
+Mesh* ApplicationArcher::BuildFlightArrowMesh(){
+    Object* nocked = bow_rig.arrow.object;
+    Mesh* source = nocked ? nocked->GetMesh() : NULL;
+    if (!source || source->GetVertices().empty()){
+        return NULL;
+    }
+    const std::vector<vertex>& in = source->GetVertices();
+
+    vec3 lo = in[0].pos;
+    vec3 hi = in[0].pos;
+    for (size_t i = 1; i < in.size(); i++){
+        const vec3& p = in[i].pos;
+        lo = vec3(fminf(lo.x,p.x),fminf(lo.y,p.y),fminf(lo.z,p.z));
+        hi = vec3(fmaxf(hi.x,p.x),fmaxf(hi.y,p.y),fmaxf(hi.z,p.z));
+    }
+    vec3 size = hi - lo;
+    int axis = 0;
+    if (size.y > AxisOf(size,axis)){ axis = 1; }
+    if (size.z > AxisOf(size,axis)){ axis = 2; }
+
+    //The two ends of the shaft, on the long axis through the middle of the box.
+    vec3 centre = (lo + hi) * 0.5f;
+    vec3 end_lo = centre;
+    vec3 end_hi = centre;
+    if (axis == 0){ end_lo.x = lo.x; end_hi.x = hi.x; }
+    if (axis == 1){ end_lo.y = lo.y; end_hi.y = hi.y; }
+    if (axis == 2){ end_lo.z = lo.z; end_hi.z = hi.z; }
+
+    //Which end is the head: the one farther from the node's origin, which is the nocking hand.
+    float d_lo = end_lo.length();
+    float d_hi = end_hi.length();
+    bool f_tip_is_hi = (d_hi > d_lo);
+    vec3 tip = f_tip_is_hi ? end_hi : end_lo;
+    vec3 nock = f_tip_is_hi ? end_lo : end_hi;
+
+    //World length as drawn in her hand, over local length: the scale that makes the copy match.
+    fmat4& world = nocked->GetWorldTransformScaleMatrix();
+    float world_length = (world * tip - world * nock).length();
+    float local_length = (tip - nock).length();
+    float scale = (local_length > 0.0001f) ? world_length / local_length : 1.0f;
+
+    /*
+        The rotation that takes the tip direction (nock -> tip, a signed unit axis) to +X. Six
+        cases, each a quarter or half turn; about Y for Z, about Z for Y. Positive rotation about
+        Y takes +Z to +X, and positive rotation about Z takes +X to +Y, so -90 about Z takes +Y
+        to +X.
+    */
+    const float half_pi = 1.5707963f;
+    float sign = f_tip_is_hi ? 1.0f : -1.0f;
+    quat to_x = quat().identity();
+    if (axis == 0 && sign < 0.0f){ to_x = quat(vec3(0,1,0),2.0f * half_pi); }
+    if (axis == 1){ to_x = quat(vec3(0,0,1),-sign * half_pi); }
+    if (axis == 2){ to_x = quat(vec3(0,1,0), sign * half_pi); }
+
+    std::vector<vertex> out(in.begin(),in.end());
+    for (size_t i = 0; i < out.size(); i++){
+        out[i].pos = (to_x * (out[i].pos - tip)) * scale + vec3(ARROW_TIP_EMBED,0.0f,0.0f);
+        out[i].normal = to_x * out[i].normal;
+        out[i].tangent = to_x * out[i].tangent;
+    }
+    Mesh* mesh = new Mesh();
+    mesh->SetMeshData(out.data(),(int)out.size());
+    mesh->num_materials = source->num_materials;
+    assetmanager->AddNewAsset("ar_arrow_flight",mesh);
+
+    debug->Info("Flight arrow from '%s': long axis %c, %.3f long in the file -> %.3f in the world "
+                "(x%.3f), tip at the %s end (%.3f from the hand, nock %.3f)\n",
+                BOW_ARROW_NODE,"XYZ"[axis],local_length,world_length,scale,
+                f_tip_is_hi ? "+" : "-",f_tip_is_hi ? d_hi : d_lo,f_tip_is_hi ? d_lo : d_hi);
+    return mesh;
+}
+
 void ApplicationArcher::BuildArrowViews(){
+    //The real arrow if the bow loaded, the box it replaced if not - see BuildFlightArrowMesh.
+    Mesh* flight = BuildFlightArrowMesh();
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         char name[32];
         snprintf(name,sizeof(name),"arrow_%i",i);
         Object* o = new Object();
-        o->SetMesh(arrow_mesh);
         o->name = name;
-        o->SetMaterialSlot(0,material_arrow);
+        if (flight){
+            o->SetMesh(flight);
+            //By NAME, the nocked arrow's own: its three primitives are three materials, and the
+            //names resolve to whatever the loader registered them as.
+            o->SetMaterialNames(bow_rig.arrow.object->GetMaterialNames());
+        }else{
+            o->SetMesh(arrow_mesh);
+            o->SetMaterialSlot(0,material_arrow);
+        }
         //An arrow is a marker, not a wall: it should not throw a shadow across the level it is
         //stuck in. See f_casts_shadow in core/Object.h, which exists for exactly this.
         o->SetVisibility(false);
@@ -1900,6 +2025,7 @@ void ApplicationArcher::RegisterCommandHandlers(){
 
 void ApplicationArcher::NewGame(){
     stage.Reset();
+    f_arrow_nocked = true;          //she starts every run with an arrow in hand
     //The level geometry is rebuilt from Stage every time, rather than being reset in place. It is
     //a few dozen boxes once per restart, and it means a change to BuildLevel cannot leave stale
     //geometry behind - which the prop bodies, with their accumulated velocities and tip-overs,
@@ -2189,6 +2315,7 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
     }
     if (events.f_shot){
         debug->Info("Shot at %.0f deg, power %.2f\n",stage.aim_deg,events.shot_power);
+        f_arrow_nocked = false;     //it is the one in flight now - see f_arrow_nocked
     }
     for (size_t i = 0; i < events.arrow_hits.size(); i++){
         const StageEvents::ArrowHit& h = events.arrow_hits[i];
@@ -2900,6 +3027,12 @@ void ApplicationArcher::SyncBow(){
         draw01 = (float)stage.draw_ticks / (float)BOW_DRAW_TICKS;
     }
     bow_rig.SetDraw(draw01);
+    //A new draw takes a new arrow. After HandleEvents, so a tap - drawn and loosed inside one
+    //tick, leaving bow_mode idle - ends with the hand empty rather than refilled.
+    if (stage.bow_mode == BOW_DRAWING){
+        f_arrow_nocked = true;
+    }
+    bow_rig.SetArrowNocked(f_arrow_nocked);
 }
 
 void ApplicationArcher::SyncArcherAnimation(){

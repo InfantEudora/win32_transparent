@@ -614,6 +614,12 @@ private:
     //hips. Checked against KICK_ACTIVE_FROM/TO rather than setting them - see Puppet::kick_strike.
     void MeasureKickClip();
     void BuildArrowViews();
+    /*
+        The arrow in her hand, re-baked for flight: along +X with the TIP AT THE ORIGIN, at the
+        size it is drawn in her hand. NULL if the bow did not load, and the arrows stay boxes.
+        Render thread - it uploads a mesh. See the definition for how the tip is found.
+    */
+    Mesh* BuildFlightArrowMesh();
     void BuildAimArc();
     //The backdrop quad. Survivable if the image is missing - see the note on the definition.
     void BuildBackground();
@@ -900,6 +906,14 @@ private:
         one call.
     */
     Bow bow_rig;
+    /*
+        Whether the nocked arrow is in her hand. Hidden the tick an arrow is loosed and shown again
+        the tick she starts the next draw - so between shots her hand is empty, and the arrow in
+        flight is the only one on screen. Before the flying arrows were the real mesh this did not
+        matter; once they were, the one left in her hand read as a second arrow. Shared by both
+        scenes like the rest of the character; a restart puts it back.
+    */
+    bool f_arrow_nocked = true;
     //Worked out from the bind pose at load: what the rig has to be scaled by to stand
     //ARCHER_MODEL_HEIGHT tall, and where its feet sit once it has been.
     float model_scale = 1.0f;

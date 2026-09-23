@@ -1964,6 +1964,21 @@ static void TestRange(){
              escaped,worst_x,worst_angle);
     Check(escaped == 0,"every full-power arrow, flat to 75 degrees, ends stuck inside the range",detail);
 
+    //THE RANGE'S ONE RULE: a lower top speed, and nothing else - the main level keeps its own.
+    {
+        ArcherInput run;
+        run.move_axis = 1.0f;
+        Stage slow;
+        slow.SetLevel(STAGE_LEVEL_RANGE);
+        Settle(slow);
+        Run(slow,40,run);
+        CheckNear(slow.vel.x,ARCHER_RANGE_RUN_SPEED,0.01f,"on the range she tops out at ARCHER_RANGE_RUN_SPEED");
+        Stage fast;
+        Settle(fast);
+        Run(fast,40,run);
+        CheckNear(fast.vel.x,ARCHER_RUN_SPEED,0.01f,"and on the main level still at ARCHER_RUN_SPEED");
+    }
+
     s.Reset();
     Check(s.GetLevel() == STAGE_LEVEL_RANGE && s.blocks.size() == 3,"a restart stays on the range");
 }

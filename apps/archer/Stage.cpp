@@ -248,6 +248,10 @@ void Stage::SetLevel(int new_level){
     Reset();
 }
 
+float Stage::RunSpeed() const{
+    return (level == STAGE_LEVEL_RANGE) ? ARCHER_RANGE_RUN_SPEED : ARCHER_RUN_SPEED;
+}
+
 v2 Stage::StartPosition() const{
     //Both a little above the floor, so the first tick is a landing - see the note in Reset.
     if (level == STAGE_LEVEL_RANGE){
@@ -455,7 +459,7 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
 
     //--- Horizontal ---------------------------------------------------------------------------
     float move_scale = (bow_mode == BOW_DRAWING) ? ARCHER_DRAW_MOVE_SCALE : 1.0f;
-    float target_vx = ClampF(in.move_axis,-1.0f,1.0f) * ARCHER_RUN_SPEED * move_scale;
+    float target_vx = ClampF(in.move_axis,-1.0f,1.0f) * RunSpeed() * move_scale;
 
     /*
         A KICK ON THE GROUND PLANTS THE FEET, and freezes the facing with them.
