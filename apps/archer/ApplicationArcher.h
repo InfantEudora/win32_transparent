@@ -13,8 +13,10 @@
 #include "Terrain.h"
 #include "Foliage.h"
 #include "Vine.h"
+#include "RopeMesh.h"
 #include "Bow.h"
 #include "TextMesh.h"
+#include "SoundSystem.h"
 
 /*
     A side-view platformer about an archer, in 3D assets.
@@ -228,6 +230,17 @@
     the rope reads as a plank, and the lag between her and the rope is the part that looks alive.
 */
 #define ROPE_HANG_DAMPING           3.0f
+/*
+    The drawn rope's thickness, as a multiplier on the file's pieces (her scale already applied).
+    Only the cross-section and the pieces: the length is always the chain's. 1 draws the rope as
+    modelled - rope_segment is 0.17 across in the file, 0.34 in the world, which is thick beside
+    her hands; that is the number to turn if it reads as a hawser.
+*/
+#define ROPE_MESH_SCALE             1.0f
+//The collars: two under the anchor and one over the tassel, as in the reference model, stacked by
+//their own MEASURED height with this much rope showing between them - so a re-exported collar of
+//another size is spaced by itself rather than overlapping a typed-in position.
+#define ROPE_COLLAR_GAP             0.06f
 
 /*
     How much of an arrow's speed the thing it hits takes, 0..1.
@@ -640,6 +653,7 @@ struct ArcherSnapshot{
     //to the wrong prop, or to a prop it stopped being in, looks exactly like a correct one right
     //up until that prop is kicked.
     int   arrows_on_props = 0;
+    int   sounds_playing = -1;          //audible voices; -1 with no sound system
     int   anim_source = ANIM_FROM_GAME;
 };
 
@@ -827,6 +841,17 @@ private:
     //--- Per tick, physics thread -----------------------------------------------------------------
     void GatherInput(ArcherInput& out);
     void HandleEvents(const StageEvents& events);
+    /*
+        The bow's sounds, once per tick after the rules have run - see the definition. The loose
+        and the level hits come off `events`; the creak off the nock's EDGE, which is state rather
+        than an event, and so is the one sound this has to remember something to play.
+    */
+    void UpdateSound(const StageEvents& events);
+    //One arrow strike, at `point` and `speed`. Level hits come through UpdateSound, prop hits
+    //from ResolveArrowsAgainstProps, which is the only place those are found.
+    void PlayArrowHit(float x, float speed);
+    //Loads the three wavs. Survivable: a missing file leaves that one sound silent.
+    void SetupSound();
     //The other half of the arrow hit test - the half that knows about rigid bodies. See the
     //handshake note on Stage::arrows.
     void ResolveArrowsAgainstProps();
@@ -854,6 +879,19 @@ private:
     //--- The rope ---------------------------------------------------------------------------------
     void BuildRope(const StageProp& anchor);
     void DestroyRope();
+    /*
+        What is DRAWN over the chain: one skinned mesh (RopeMesh.h) with a Bone per link. BUILT
+        ONCE PER LEVEL on the render thread, after that level's BuildProps - never from BuildRope,
+        which NewGame runs on the physics thread, where there is no GL. The chain under it is
+        rebuilt on every restart and the skin simply carries on, because BuildRope always lays it
+        in the same straight bind pose. The link boxes are hidden while a skin exists.
+    */
+    void BuildRopeSkin();
+    //Loads rope_segment/ring/collar/tassel out of archer.glb, once. Render thread.
+    void LoadRopeParts();
+    //Copies each link's transform onto its bone. Every tick, physics thread.
+    void UpdateRopeSkin();
+    void ApplyRopeLinkVisibility();
     //Hand Stage the links it may catch, BEFORE the tick, the same way the props are handed over.
     void RefreshRopePoints();
     //The handoff, both ways. See the note on AttachArcherToRope.
@@ -1050,6 +1088,16 @@ private:
     */
     bool f_level_entry_getup = false;
 
+    //--- Sound ------------------------------------------------------------------------------------
+    //NULL in a USE_SOUND=0 build, and every caller copes - see SetupSound.
+    SoundSystem* soundsystem = NULL;
+    //The creak that is playing, so a loose or a cancel can cut it. 0 when there is none.
+    soundhandle_t snd_bow_tension = SOUND_INVALID_HANDLE;
+    //Last tick's Stage::IsNocked, for the edge the creak starts on.
+    bool f_was_nocked = false;
+    //Master gain for the lot, 0..1, on the panel.
+    float sound_volume = 0.8f;
+
     //--- The rope ---------------------------------------------------------------------------------
     std::vector<Object*> rope_segments;         //top link first
     //The joint holding the archer to a link while MODE_ROPE, and NULL the rest of the time. Held
@@ -1057,6 +1105,20 @@ private:
     rp3d::BallAndSocketJoint* rope_joint = NULL;
     std::vector<rp3d::BallAndSocketJoint*> rope_joints;   //the links to each other, and to the anchor
     Object* rope_anchor_object = NULL;
+    //The drawn rope, this level's: the Skeleton owns the skinned mesh, bone i follows
+    //rope_segments[i + 1] (index 0 there is the fixed anchor body). NULL on a level with no rope.
+    Skeleton* rope_skin = NULL;
+    std::vector<Bone*> rope_bones;
+    //The pieces, shared by every level's rope, in world units (the file's scale, the node's own
+    //scale and ROPE_MESH_SCALE folded in). An empty tile means the placeholder was used.
+    enum{ ROPE_PART_SEGMENT = 0, ROPE_PART_RING, ROPE_PART_COLLAR, ROPE_PART_TASSEL, ROPE_PART_COUNT };
+    bool f_rope_parts_loaded = false;
+    std::vector<vertex> rope_parts[ROPE_PART_COUNT];
+    float rope_part_scale[ROPE_PART_COUNT] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    bool  f_rope_part_from_asset[ROPE_PART_COUNT] = {};
+    std::vector<Material> rope_materials;       //one list for the whole skin, matids remapped to it
+    //Debug: draw the rp3d links as well (they are hidden under a skin). Panel checkbox.
+    bool  f_show_rope_links = false;
     Object* arrow_objects[ARROW_MAX_LIVE] = {};
     /*
         AN ARROW THAT STRUCK A PROP, and rides it from then on.
@@ -1117,6 +1179,8 @@ private:
         rp3d::BallAndSocketJoint* rope_joint = NULL;
         std::vector<rp3d::BallAndSocketJoint*> rope_joints;
         Object* rope_anchor_object = NULL;
+        Skeleton* rope_skin = NULL;
+        std::vector<Bone*> rope_bones;
         StuckArrow arrow_stuck[ARROW_MAX_LIVE];
         vec3 camera_target = vec3(0.0f,3.0f,0.0f);
         vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);

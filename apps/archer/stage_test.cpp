@@ -23,6 +23,7 @@
 #include "Puppet.h"
 #include "Foliage.h"
 #include "Vine.h"
+#include "RopeMesh.h"
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -2719,6 +2720,182 @@ static void TestRopeLevel(){
     Check(end_y > ARCHER_HALF_H * 2.0f * 0.5f,"and hangs clear of the floor",d);
 }
 
+/*
+    The skinned rope - apps/archer/RopeMesh.h. What the skinning shader will do with it is done
+    here by hand, sum of weight * (R (p - bind centre) + centre) over a pose of the chain, so the
+    three things that matter are checked without a GPU: the weights are a partition of unity, a
+    rope swung whole moves as one rigid thing, and a bent one stays in one piece.
+*/
+struct RopeTestPose{
+    std::vector<quat> rot;
+    std::vector<vec3> centre;
+};
+
+//The chain hanging from the anchor with link i at angle a[i] off straight down, joined end to end
+//- the shape rp3d's ball-and-socket joints hold it in.
+static RopeTestPose PoseRope(const RopeMeshInput& in, const std::vector<float>& a){
+    RopeTestPose pose;
+    float seg = in.length / (float)in.links;
+    vec3 joint = in.anchor;
+    for (int i = 0; i < in.links; i++){
+        quat q(vec3(0.0f,0.0f,1.0f),a[i]);
+        vec3 dir = q * vec3(0.0f,-1.0f,0.0f);
+        pose.rot.push_back(q);
+        pose.centre.push_back(joint + dir * (seg * 0.5f));
+        joint = joint + dir * seg;
+    }
+    return pose;
+}
+
+static vec3 SkinVertex(const skinned_vertex& v, const RopeMeshInput& in, const RopeTestPose& pose){
+    int b[3] = { v.bones.x, v.bones.y, v.bones.z };
+    float w[3] = { v.weights.x, v.weights.y, v.weights.z };
+    vec3 out;
+    for (int k = 0; k < 3; k++){
+        if (w[k] == 0.0f){
+            continue;
+        }
+        vec3 local = v.pos - RopeLinkBindCentre(in,b[k]);
+        out = out + (pose.rot[b[k]] * local + pose.centre[b[k]]) * w[k];
+    }
+    return out;
+}
+
+static void TestRopeMesh(){
+    printf("\nrope mesh\n");
+    char d[200];
+
+    //--- Weights ---
+    const int links = 8;
+    const float seg = 1.125f;
+    float worst_sum = 0.0f;
+    int bad = 0;
+    for (int i = 0; i <= 400; i++){
+        float s = -1.0f + (links * seg + 2.0f) * (float)i / 400.0f;
+        int3 b;
+        vec3 w;
+        RopeWeights(s,seg,links,b,w);
+        float sum = w.x + w.y + w.z;
+        if (fabsf(sum - 1.0f) > worst_sum){ worst_sum = fabsf(sum - 1.0f); }
+        if (w.x < 0.0f || w.y < 0.0f || w.z < 0.0f || b.x < 0 || b.y < 0 || b.z < 0 ||
+            b.x >= links || b.y >= links || b.z >= links){
+            bad++;
+        }
+    }
+    snprintf(d,sizeof(d),"worst |sum - 1| %.2e, %i out of range",worst_sum,bad);
+    Check(worst_sum < 1e-5f && bad == 0,"weights: non-negative, in the chain, summing to 1",d);
+    int3 b;
+    vec3 w;
+    RopeWeights(0.0f,seg,links,b,w);
+    Check(b.x == 0 && fabsf(w.x - 1.0f) < 1e-6f,"the top of the rope is wholly the first link");
+    RopeWeights(links * seg,seg,links,b,w);
+    Check(b.x == links - 1 && fabsf(w.x - 1.0f) < 1e-6f,"its end is wholly the last link");
+    RopeWeights(3.5f * seg,seg,links,b,w);
+    snprintf(d,sizeof(d),"links %i/%i/%i at %.3f/%.3f/%.3f",b.x,b.y,b.z,w.x,w.y,w.z);
+    Check(b.y == 3 && fabsf(w.y - 0.75f) < 1e-5f && fabsf(w.x - 0.125f) < 1e-5f,
+          "at a link's centre: 0.75 to it, 0.125 to each neighbour",d);
+
+    //--- The mesh ---
+    std::vector<vertex> tile, piece;
+    MakeVinePlaceholderTile(tile);
+    MakeVinePlaceholderLeaf(piece);       //a stand-in for the ring and the tassel: any rigid shape
+    std::vector<vertex> ring = piece;
+    for (size_t i = 0; i < ring.size(); i++){
+        ring[i].pos.z = -ring[i].pos.z;   //the ring's convention: above the join, along -Z
+    }
+    RopeMeshInput in;
+    in.anchor = vec3(0.0f,11.0f,0.0f);
+    in.length = links * seg;
+    in.links = links;
+    in.tile = &tile;
+    in.ring = &ring;
+    in.tassel = &piece;
+    in.collar = &piece;
+    in.collar_at = { 0.4f, in.length - 0.4f };
+    std::vector<skinned_vertex> mesh;
+    Check(BuildRopeMesh(in,mesh) && !mesh.empty(),"the rope builds");
+    size_t tile_verts = 0;
+    {
+        Spline line;
+        line.points = { in.anchor, in.anchor + vec3(0.0f,-in.length,0.0f) };
+        line.Build(0.05f);
+        std::vector<vertex> only;
+        SplineDeformParams dp;
+        DeformAlongSpline(line,tile,dp,only);
+        tile_verts = only.size();
+    }
+    snprintf(d,sizeof(d),"%zu verts, %zu of them the middle",mesh.size(),tile_verts);
+    Check(mesh.size() == tile_verts + piece.size() * 4,"the middle, a ring, two collars and a tassel",d);
+    float ring_low = 1e9f, tassel_high = -1e9f;
+    size_t ring_from = tile_verts, tassel_from = tile_verts + piece.size() * 3;
+    for (size_t i = ring_from; i < ring_from + piece.size(); i++){
+        if (mesh[i].pos.y < ring_low){ ring_low = mesh[i].pos.y; }
+    }
+    for (size_t i = tassel_from; i < mesh.size(); i++){
+        if (mesh[i].pos.y > tassel_high){ tassel_high = mesh[i].pos.y; }
+    }
+    snprintf(d,sizeof(d),"ring down to %.3f, anchor %.3f; tassel up to %.3f, end %.3f",
+             ring_low,in.anchor.y,tassel_high,in.anchor.y - in.length);
+    Check(ring_low >= in.anchor.y - 1e-4f && tassel_high <= in.anchor.y - in.length + 1e-4f,
+          "the ring sits above the anchor and the tassel below the end",d);
+
+    //--- Swung whole: rigid ---
+    std::vector<float> same(links,0.5f);
+    RopeTestPose swung = PoseRope(in,same);
+    quat q(vec3(0.0f,0.0f,1.0f),0.5f);
+    float worst_rigid = 0.0f;
+    for (size_t i = 0; i < mesh.size(); i++){
+        vec3 want = q * (mesh[i].pos - in.anchor) + in.anchor;
+        float e = SkinVertex(mesh[i],in,swung).distance(want);
+        if (e > worst_rigid){ worst_rigid = e; }
+    }
+    snprintf(d,sizeof(d),"worst %.2e",worst_rigid);
+    Check(worst_rigid < 1e-4f,"swung whole, the rope moves as one rigid thing",d);
+
+    //--- Bent: still one piece ---
+    std::vector<float> bent;
+    for (int i = 0; i < links; i++){
+        bent.push_back(0.45f * sinf(1.3f * (float)i) + 0.1f * (float)i);
+    }
+    RopeTestPose pose = PoseRope(in,bent);
+    float worst_top = 0.0f;
+    float worst_ratio_hi = 1.0f, worst_ratio_lo = 1.0f;
+    for (size_t i = 0; i + 2 < tile_verts; i += 3){
+        for (int k = 0; k < 3; k++){
+            const skinned_vertex& a = mesh[i + k];
+            const skinned_vertex& c = mesh[i + (k + 1) % 3];
+            float bind = a.pos.distance(c.pos);
+            if (bind < 1e-4f){
+                continue;
+            }
+            float now = SkinVertex(a,in,pose).distance(SkinVertex(c,in,pose));
+            float r = now / bind;
+            if (r > worst_ratio_hi){ worst_ratio_hi = r; }
+            if (r < worst_ratio_lo){ worst_ratio_lo = r; }
+        }
+        //The very top ring of the middle stays on the anchor, whatever the rope does below.
+        if (fabsf(mesh[i].pos.y - in.anchor.y) < 1e-4f){
+            vec3 axis_now = SkinVertex(mesh[i],in,pose);
+            vec3 want = pose.rot[0] * (mesh[i].pos - in.anchor) + in.anchor;
+            float e = axis_now.distance(want);
+            if (e > worst_top){ worst_top = e; }
+        }
+    }
+    snprintf(d,sizeof(d),"edges stretch %.3f..%.3f of their bind length",worst_ratio_lo,worst_ratio_hi);
+    Check(worst_ratio_lo > 0.6f && worst_ratio_hi < 1.6f,"bent, the middle stays in one piece",d);
+    snprintf(d,sizeof(d),"worst %.2e",worst_top);
+    Check(worst_top < 1e-4f,"its top turns about the anchor with the first link",d);
+    //The tassel rides the last link rigidly.
+    float worst_tassel = 0.0f;
+    for (size_t i = tassel_from; i < mesh.size(); i++){
+        vec3 want = pose.rot[links - 1] * (mesh[i].pos - RopeLinkBindCentre(in,links - 1)) + pose.centre[links - 1];
+        float e = SkinVertex(mesh[i],in,pose).distance(want);
+        if (e > worst_tassel){ worst_tassel = e; }
+    }
+    snprintf(d,sizeof(d),"worst %.2e",worst_tassel);
+    Check(worst_tassel < 1e-4f,"the tassel swings rigidly with the last link",d);
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -2744,6 +2921,7 @@ int main(void){
     TestSway();
     TestKneelPuppet();
     TestRopeLevel();
+    TestRopeMesh();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

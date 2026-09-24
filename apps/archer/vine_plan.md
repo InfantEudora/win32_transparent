@@ -167,5 +167,24 @@ The chain in `BuildRope` stays. What changes is only how it is drawn.
    stay useful for the rope and for generated drapes, just not needed here.
    The step vine moved to the FRONT of the lane (z +1.1): behind, the crates hid it.
 4. **Procedural skeleton** driven by the existing chain; replaces the rope boxes. The risky step.
+   *(BUILT 2026-09-24 - `apps/archer/RopeMesh.{h,cpp}` builds the bind-pose vertices and
+   weights, engine-free, 11 checks in `make rules`; `ApplicationArcher::BuildRopeSkin` makes a
+   plain core `Skeleton` with one `Bone` per link and `UpdateRopeSkin` copies the link poses on
+   every tick. No core change beyond `GLTFLoader::GetNodeScale`. Verified in the Rope scene
+   swinging under her weight: one smooth curve over 12 links.)*
+   - **Weights are a quadratic B-spline over the link centres** (0.125 / 0.75 / 0.125 at a
+     centre), which is what hides the joints; clamped at the ends so the top stays on the anchor
+     and the tassel rides the last link rigidly. Nothing is weight-painted in Blender.
+   - **Built once per level on the render thread**, never from BuildRope: NewGame rebuilds the
+     chain on the physics thread, where there is no GL, and the skin carries on over the new
+     links because the bind pose is always the same straight hang.
+   - **One tick behind the solver, deliberately** - read before the step, with her, so her hands
+     and the rope are drawn from the same instant (see UpdateRopeSkin).
+   - The link boxes are hidden under the skin; the panel's Rope section puts them back.
 5. **Rope preset** (ends, collars, twisted tile) plus grip-at-a-point with hand IK.
+   *(The preset is BUILT with step 4: `rope_segment`, `rope_ring` (its unapplied node scale of 2
+   is honoured), three `rope_collar`s stacked by their measured height, `rope_tassel`, all baked
+   into the one skinned mesh. Open: grip-at-a-point and hand IK, which go with the rope
+   animation work - she currently holds a link's centre, which is the lowest link from the
+   ground, down among the collar and tassel.)*
 6. **Gameplay**: rope arrow, cutting, growth - if wanted.

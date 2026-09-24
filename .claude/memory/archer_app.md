@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1f02e4da-fa81-4634-9800-ae5b6cfa5ba7
-  modified: 2026-09-24T13:08:23.989Z
+  modified: 2026-09-24T13:34:39.144Z
 ---
 
 `apps/archer` - a side-view platformer about an archer, 3D assets, Windows, keyboard only.
@@ -435,6 +435,13 @@ construction. NOT in Reset (tests would all wait); app calls StartGetUp in Init 
 fall off the world is not a level entry. StartGetUp sweeps her down onto the floor first. archer_place ends it.
 DEFAULT OFF (user, same day - it slowed testing): `f_level_entry_getup` in ApplicationArcher gates both calls;
 the panel's "level entry get-up" checkbox turns it on, effective at the next restart.
+
+SOUND ON (2026-09-24, USE_SOUND := 1): assets/sound bow_tension / arrow_leave / arrow_hitting. Creak starts
+on the NOCK EDGE (Stage::IsNocked, not the press - the reach is slack) and is Stop()ped when the nock ends
+(loose, cancel, grab, restart); loose gain by shot_power; hits from events.arrow_hits AND
+ResolveArrowsAgainstProps (props are found there only), gain by speed and by |x - her x| (full within 12,
+floor 0.15 by 40 - no panning in SoundSystem). archer_state reports `sounds_playing` (a successful Play logs
+nothing, so that is the only way to verify over MCP). Jump/land/kick have events but no sounds yet.
 MCP GOTCHA: archer_hold's argument is `action`, not `control` - a wrong key returns an error and holds nothing,
 which silently makes an "input is ignored" check pass.
 

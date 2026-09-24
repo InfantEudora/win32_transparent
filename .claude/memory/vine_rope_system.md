@@ -32,9 +32,15 @@ tile_length - its own bounds overhang the period (slanted strands) and would dri
 placeholder for it. The step vine now sits in FRONT of the lane (z +1.1). All pieces load from the
 glb and look right in-app.
 
-Next: step 4 - a Skeleton
-built in code, bones driven from the rp3d rope links, so the rope/vine is one skinned mesh. That
-is the unproven core piece.
+STEP 4 DONE 2026-09-24: the swinging rope is ONE skinned mesh - RopeMesh.{h,cpp} (engine-free,
+quadratic B-spline weights over link centres, no weight painting), a plain core Skeleton + one
+Bone per link built ONCE per level at Init/BuildExtraLevel (render thread, never from BuildRope,
+which NewGame runs on the physics thread), UpdateRopeSkin copies link poses pre-step (one tick
+behind the solver ON PURPOSE, same instant as her). Rope parts rope_segment/ring/collar/tassel;
+rope_ring has an unapplied node scale 2, read via the new GLTFLoader::GetNodeScale. The user built
+a separate Rope scene (scene_set "Rope" over MCP) for the rope and its animation.
+
+Next: the rope ANIMATION with the user (crude today) - grip-at-a-point + hand IK onto the curve.
 
 Gotchas: `archer_place` blocks (HTTP timeout) while the sim is paused - the next sim_step
 delivers it. To frame a close screenshot use `archer_camera orbit` then `camera_set`; the side

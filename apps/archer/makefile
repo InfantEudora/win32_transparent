@@ -47,12 +47,14 @@ APP_SRCS += Foliage.cpp
 #The vines: a trunk bent along a core/Spline, leaves along it. Engine-free apart from core's maths
 #and the two spline files, which `rules` compiles in beside it. See vine_plan.md.
 APP_SRCS += Vine.cpp
+#The rope as one skinned mesh over its physics links. Engine-free, so `rules` tests it too.
+APP_SRCS += RopeMesh.cpp
 
-#NO SOUND YET. Nothing here calls SoundSystem - the jump, the draw, the loose and the thud
-#are all places a sound obviously goes, and every one of them already has an event in
-#StageEvents waiting for it (see HandleEvents). Flip this to 1 and fill them in; see the
-#USE_SOUND block in engine.mk for why it is opt-in per app.
-USE_SOUND := 0
+#SOUND, for the bow: the string's creak from the nock, the loose, and the arrow striking
+#something - assets/sound/*.wav, played from ApplicationArcher::UpdateSound. The jump, the
+#landing and the kick have events waiting for sounds of their own. See the USE_SOUND block in
+#engine.mk for why it is opt-in per app; the app compiles and runs silent with it at 0.
+USE_SOUND := 1
 
 #PHYSICS, and genuinely: the crates, the targets and - later - the brick debris and the rope
 #are reactphysics3d's. The ARCHER is not, and neither is an arrow; both are integrated by
@@ -99,6 +101,6 @@ include $(ROOT)/engine.mk
 rules:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
-		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Vine.cpp \
+		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Vine.cpp RopeMesh.cpp \
 		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe

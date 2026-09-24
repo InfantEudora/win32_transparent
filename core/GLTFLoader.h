@@ -48,6 +48,7 @@ public:
 
     vec3                        GetNodePosition(const char* node_name);
     quat                        GetNodeRotation(const char* node_name);
+    vec3                        GetNodeScale(const char* node_name);    //(1,1,1) if it has none
 
     std::vector<Material>&      GetAllUniqueLoadedMaterials(){return loaded_materials;};
 

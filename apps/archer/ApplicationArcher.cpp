@@ -424,6 +424,8 @@ void ApplicationArcher::Init(void){
     //After BuildArcherModel too, for the loader and the character's scale - see the declaration.
     BuildFoliage();
     BuildVines();
+    //After BuildProps (the chain it is laid over) and BuildArcherModel (her scale, and the loader).
+    BuildRopeSkin();
     BuildArrowViews();
     BuildAimArc();
     //Before BuildRange, which shares the popup pool with the range scene along with the arrows.
@@ -432,6 +434,7 @@ void ApplicationArcher::Init(void){
     SetupLights();
     SetupCamera();
     SetupInput();
+    SetupSound();
     RegisterCommandHandlers();
     //LAST, because they share the character the lines above built - see the note on ArcherLevel.
     world_scene = main_scene;
@@ -2674,6 +2677,8 @@ Scene* ApplicationArcher::BuildExtraLevel(int level, const char* name){
 
     BuildBlocks();
     BuildProps();
+    //Render thread, like the main level's - see the declaration.
+    BuildRopeSkin();
     BuildArcher();
     //BuildArcherModel hides the collider box once there is a model to look at; do the same for
     //this body, or the range has her standing inside a green crate.
@@ -2752,6 +2757,8 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(rope_joint,parked.rope_joint);
     std::swap(rope_joints,parked.rope_joints);
     std::swap(rope_anchor_object,parked.rope_anchor_object);
+    std::swap(rope_skin,parked.rope_skin);
+    std::swap(rope_bones,parked.rope_bones);
     std::swap(arrow_stuck,parked.arrow_stuck);
     std::swap(camera_target,parked.camera_target);
     std::swap(camera_ideal,parked.camera_ideal);
@@ -3147,6 +3154,8 @@ void ApplicationArcher::RunSimulationTick(void){
     //resolved against the one and offered the other.
     RefreshObstacles();
     RefreshRopePoints();
+    //The drawn rope follows the same link positions the rules were just handed.
+    UpdateRopeSkin();
     //And while the solver is the one moving the archer, its answer is the truth: read it back
     //before the rules run on it.
     if (stage.mode == MODE_ROPE){
@@ -3157,6 +3166,7 @@ void ApplicationArcher::RunSimulationTick(void){
     stage.Tick(intent,events);
 
     HandleEvents(events);
+    UpdateSound(events);
     //The rope handoff, in both directions. Immediately after the tick that decided it, so the
     //joint exists (or is gone) before anything else this tick reads the body.
     if (events.f_grabbed_rope){
@@ -3257,6 +3267,88 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     out.f_action_pressed = f_action;
     out.f_kick_pressed  = f_kick;
     out.f_kneel_pressed = f_kneel;
+}
+
+//--- Sound --------------------------------------------------------------------------------------
+
+/*
+    The bow's three sounds, named after what they MEAN rather than after the file - SoundSystem's
+    intended use, so a second hit sound later is a second file under a name that already exists
+    in the code, not a rename. A file that will not load leaves its sound silent and says so in
+    the log; nothing else depends on it.
+
+    Everything here is compiled out with USE_SOUND=0, and soundsystem stays NULL, which is what
+    every caller checks.
+*/
+void ApplicationArcher::SetupSound(){
+#ifdef USE_SOUND
+    soundsystem = new SoundSystem();
+    soundsystem->Initialise();
+    soundsystem->AppendFile("sound/bow_tension.wav","bow_tension");
+    soundsystem->AppendFile("sound/arrow_leave.wav","arrow_leave");
+    soundsystem->AppendFile("sound/arrow_hitting.wav","arrow_hit");
+#endif
+}
+
+/*
+    Once per tick, straight after the rules - physics thread, so each sound lands on the tick of the
+    thing it is the sound of, and a paused or single-stepped game is exactly as quiet or as loud as
+    what it is doing.
+
+    THE CREAK STARTS ON THE NOCK, NOT ON THE PRESS. The first BOW_NOCK_TICKS of a draw are her
+    reaching back to the quiver with the string slack; it is the arrow going on that puts the bow
+    under load. The pull from there to full draw is only 13 ticks against a 1.05 s creak, so the
+    sound runs on into the hold, which is right - a held bow is still a bent one.
+
+    AND IT IS CUT THE MOMENT THE STRING GOES, by whatever ends the draw: a loose, a release before
+    the nock (which never started it), a ledge grab, a restart. Read off the nock's edge rather
+    than off each of those, so a new way to end a draw cannot leave a creak playing over it.
+*/
+void ApplicationArcher::UpdateSound(const StageEvents& events){
+    bool f_nocked = stage.IsNocked();
+#ifdef USE_SOUND
+    if (soundsystem){
+        if (f_nocked && !f_was_nocked){
+            snd_bow_tension = soundsystem->Play("bow_tension",false,0.7f * sound_volume);
+        }
+        if (!f_nocked && f_was_nocked){
+            soundsystem->Stop(snd_bow_tension);     //inert if it already finished
+            snd_bow_tension = SOUND_INVALID_HANDLE;
+        }
+        //Louder the harder the draw: a half-drawn lob leaves the string with far less in it.
+        if (events.f_shot){
+            soundsystem->Play("arrow_leave",false,(0.55f + 0.45f * events.shot_power) * sound_volume);
+        }
+    }
+#endif
+    //The level's strikes. The props' come from ResolveArrowsAgainstProps, which finds them.
+    for (size_t i = 0; i < events.arrow_hits.size(); i++){
+        PlayArrowHit(events.arrow_hits[i].point.x,events.arrow_hits[i].speed);
+    }
+    f_was_nocked = f_nocked;
+}
+
+/*
+    One arrow going into something.
+
+    By speed, so a spent arrow dropping onto the grass is a tap and a full-draw shot into a crate is
+    a thud. And by DISTANCE FROM HER, the one piece of placing a flat, unpanned sound system can do:
+    the view is about 32 units wide, so anything within 12 of her is on screen and at full volume,
+    fading to a floor of 0.15 by 40 - a shot lobbed over the cracked wall is still heard landing,
+    just not as though it landed at her feet.
+*/
+void ApplicationArcher::PlayArrowHit(float x, float speed){
+#ifdef USE_SOUND
+    if (!soundsystem){
+        return;
+    }
+    float by_speed = 0.35f + 0.65f * clamp(speed / ARROW_SPEED_MAX,0.0f,1.0f);
+    float by_distance = clamp(1.0f - (fabsf(x - stage.pos.x) - 12.0f) / 28.0f,0.15f,1.0f);
+    soundsystem->Play("arrow_hit",false,by_speed * by_distance * sound_volume);
+#else
+    (void)x;
+    (void)speed;
+#endif
 }
 
 void ApplicationArcher::HandleEvents(const StageEvents& events){
@@ -3379,6 +3471,7 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
         //...and pinned to the thing it went into, so it rides a crate that is kicked and goes down
         //with a target that topples instead of hanging in the air where the target used to be.
         StickArrowToProp(i,struck,v2(hit.point.x,hit.point.y));
+        PlayArrowHit(hit.point.x,speed);
 
         if (view->kind == PROP_TARGET){
             debug->Info("Arrow %i struck target at (%.2f,%.2f) doing %.1f\n",
@@ -3728,6 +3821,8 @@ void ApplicationArcher::BuildRope(const StageProp& anchor){
     }
     debug->Info("Built a rope of %i links from (%.2f,%.2f)\n",
                 (int)rope_segments.size() - 1,anchor.x,anchor.y);
+    //A restart rebuilds the chain under a skin that is already there - hide the new boxes too.
+    ApplyRopeLinkVisibility();
 }
 
 void ApplicationArcher::DestroyRope(){
@@ -3749,6 +3844,193 @@ void ApplicationArcher::DestroyRope(){
         }
     }
     rope_segments.clear();
+}
+
+//--- The drawn rope -------------------------------------------------------------------------------
+
+//The archer.glb node for each ROPE_PART_*, in that enum's order.
+static const char* ROPE_PART_NODES[] = { "rope_segment", "rope_ring", "rope_collar", "rope_tassel" };
+
+void ApplicationArcher::LoadRopeParts(){
+    if (f_rope_parts_loaded){
+        return;
+    }
+    f_rope_parts_loaded = true;
+    rope_materials.clear();
+    for (int k = 0; k < ROPE_PART_COUNT; k++){
+        std::vector<Material> mats;
+        Mesh* mesh = gltfloader.GetMeshFromNode(ROPE_PART_NODES[k],&mats,false);
+        f_rope_part_from_asset[k] = (mesh != NULL);
+        rope_parts[k].clear();
+        if (!mesh){
+            continue;
+        }
+        rope_parts[k] = mesh->GetVertices();
+        /*
+            The node's own scale, which GetMeshFromNode does not apply: rope_ring arrives scaled 2
+            in Blender and never applied, and without this it is drawn at half the size it is
+            modelled at. Uniform only - a squashed piece is taken at its largest axis and said so.
+        */
+        vec3 ns = gltfloader.GetNodeScale(ROPE_PART_NODES[k]);
+        float node_scale = fmaxf(ns.x,fmaxf(ns.y,ns.z));
+        if (fabsf(ns.x - ns.y) > 1e-3f || fabsf(ns.y - ns.z) > 1e-3f){
+            debug->Warn("'%s' has a non-uniform node scale (%.3f,%.3f,%.3f); drawn at %.3f. Apply the "
+                        "scale in Blender to keep its shape.\n",ROPE_PART_NODES[k],ns.x,ns.y,ns.z,node_scale);
+        }
+        rope_part_scale[k] = model_scale * ROPE_MESH_SCALE * node_scale;
+
+        //One material list for the whole skin: each part's matid is remapped onto it by name.
+        for (size_t i = 0; i < rope_parts[k].size(); i++){
+            vertex& v = rope_parts[k][i];
+            std::string mname = (v.matid >= 0 && v.matid < (int)mats.size()) ? mats[v.matid].name : "";
+            int slot = -1;
+            for (size_t m = 0; m < rope_materials.size(); m++){
+                if (rope_materials[m].name == mname){
+                    slot = (int)m;
+                }
+            }
+            if (slot < 0 && v.matid >= 0 && v.matid < (int)mats.size() &&
+                rope_materials.size() < NUM_MATERIAL_SLOTS){
+                rope_materials.push_back(mats[v.matid]);
+                slot = (int)rope_materials.size() - 1;
+            }
+            v.matid = (slot >= 0) ? slot : 0;
+        }
+        float z0 = 0.0f, zl = 0.0f;
+        SplineDeformMeasure(rope_parts[k],z0,zl);
+        debug->Info("Rope part '%s': %zu tris, %.3f long at scale 1, x%.3f to world%s\n",
+                    ROPE_PART_NODES[k],rope_parts[k].size() / 3,zl,rope_part_scale[k],
+                    (node_scale != 1.0f) ? " (node scale included)" : "");
+    }
+    if (!rope_materials.empty()){
+        renderer->AddMaterials(rope_materials);
+    }
+    //No segment in the file: the vine's stand-in tile, which is in world units already. The pieces
+    //are decoration and simply go missing.
+    if (rope_parts[ROPE_PART_SEGMENT].empty()){
+        MakeVinePlaceholderTile(rope_parts[ROPE_PART_SEGMENT]);
+        rope_part_scale[ROPE_PART_SEGMENT] = ROPE_MESH_SCALE;
+    }
+}
+
+void ApplicationArcher::BuildRopeSkin(){
+    //A level being built starts with none - the members were swapped in empty.
+    rope_skin = NULL;
+    rope_bones.clear();
+    const StageProp* anchor = NULL;
+    for (size_t i = 0; i < stage.props.size(); i++){
+        if (stage.props[i].kind == PROP_ROPE_ANCHOR){
+            anchor = &stage.props[i];
+            break;
+        }
+    }
+    if (!anchor || rope_segments.size() < 2 || !main_scene){
+        return;
+    }
+    LoadRopeParts();
+
+    RopeMeshInput in;
+    in.anchor = vec3(anchor->x,anchor->y,0.0f);
+    in.length = anchor->h;
+    in.links = (int)rope_segments.size() - 1;     //index 0 is the fixed anchor body
+    in.tile = &rope_parts[ROPE_PART_SEGMENT];
+    in.tile_scale = rope_part_scale[ROPE_PART_SEGMENT];
+    if (!rope_parts[ROPE_PART_RING].empty()){
+        in.ring = &rope_parts[ROPE_PART_RING];
+        in.ring_scale = rope_part_scale[ROPE_PART_RING];
+    }
+    if (!rope_parts[ROPE_PART_TASSEL].empty()){
+        in.tassel = &rope_parts[ROPE_PART_TASSEL];
+        in.tassel_scale = rope_part_scale[ROPE_PART_TASSEL];
+    }
+    if (!rope_parts[ROPE_PART_COLLAR].empty()){
+        in.collar = &rope_parts[ROPE_PART_COLLAR];
+        in.collar_scale = rope_part_scale[ROPE_PART_COLLAR];
+        //Centred pieces, so each is placed by its middle: half its height clear of whatever is
+        //above it, plus the gap.
+        float z0 = 0.0f, zl = 0.0f;
+        SplineDeformMeasure(rope_parts[ROPE_PART_COLLAR],z0,zl);
+        float h = zl * in.collar_scale;
+        float first = ROPE_COLLAR_GAP + 0.5f * h;
+        in.collar_at = { first, first + h + ROPE_COLLAR_GAP, in.length - ROPE_COLLAR_GAP - 0.5f * h };
+    }
+    std::vector<skinned_vertex> verts;
+    if (!BuildRopeMesh(in,verts) || verts.empty()){
+        debug->Err("The rope's skin did not build - the links stay visible\n");
+        return;
+    }
+
+    Skeleton* skin = new Skeleton();
+    skin->name = "rope_skin";
+    skin->num_bones = in.links;
+    skin->SetPickability(false);
+    Mesh* mesh = new Mesh();
+    mesh->SetSkinnedMeshData(verts.data(),(int)verts.size());
+    mesh->num_materials = rope_materials.empty() ? 1 : (int)rope_materials.size();
+    skin->SetMesh(mesh);
+    if (f_rope_part_from_asset[ROPE_PART_SEGMENT] && !rope_materials.empty()){
+        skin->TakeMaterialNames(rope_materials);
+    }else{
+        skin->SetMaterialSlot(0,material_crate);
+    }
+    /*
+        One bone per link, bound where BuildRope lays the link: its centre, no rotation. The
+        inverse bind is then just the translation back, and UpdateRopeSkin only ever has to copy
+        the link's pose on - no offset, because a link's origin IS its centre.
+    */
+    for (int i = 0; i < in.links; i++){
+        Bone* bone = new Bone();
+        char name[32];
+        snprintf(name,sizeof(name),"rope_bone_%i",i);
+        bone->name = name;
+        bone->bone_index = i;
+        vec3 c = RopeLinkBindCentre(in,i);
+        bone->inverse_bind_matrix = fmat4().identity();
+        bone->inverse_bind_matrix.set_position(vec3(-c.x,-c.y,-c.z));
+        bone->SetPosition(c,false);
+        skin->AttachChild(bone);
+        rope_bones.push_back(bone);
+    }
+    main_scene->AddObject(skin);
+    rope_skin = skin;
+    ApplyRopeLinkVisibility();
+    debug->Info("Rope skin: %i bones, %zu tris, segment %s, ring %s, collars %s, tassel %s\n",
+                in.links,verts.size() / 3,
+                f_rope_part_from_asset[ROPE_PART_SEGMENT] ? "archer.glb" : "placeholder",
+                in.ring ? "yes" : "no",in.collar ? "3" : "no",in.tassel ? "yes" : "no");
+}
+
+/*
+    ONE TICK BEHIND THE SOLVER, ON PURPOSE. This runs before the physics step, beside
+    RefreshRopePoints and SyncArcherFromRope, so the skin shows the links where they were when the
+    tick began - measured mid-swing, bones up to 0.039 behind their links, which is one tick of the
+    swing's motion. Reading them after the step instead would put the rope a tick AHEAD of her,
+    since she is drawn from the same pre-step read; her hands would slide along it. The two are
+    drawn from the same instant, which is the thing that has to hold.
+*/
+void ApplicationArcher::UpdateRopeSkin(){
+    //The chain is rebuilt with the same anchor and so the same count; a mismatch means it was not,
+    //and posing the wrong links would tear the mesh - better left in its bind pose.
+    if (!rope_skin || rope_bones.size() + 1 != rope_segments.size()){
+        return;
+    }
+    for (size_t i = 0; i < rope_bones.size(); i++){
+        Object* link = rope_segments[i + 1];
+        if (!link){
+            continue;
+        }
+        rope_bones[i]->SetPosition(link->GetWorldPosition(),false);
+        rope_bones[i]->SetRotation(link->GetWorldRotation(),false);
+    }
+}
+
+void ApplicationArcher::ApplyRopeLinkVisibility(){
+    //Index 0 is the fixed anchor body, which is never drawn.
+    for (size_t i = 1; i < rope_segments.size(); i++){
+        if (rope_segments[i]){
+            rope_segments[i]->SetVisibility(!rope_skin || f_show_rope_links);
+        }
+    }
 }
 
 /*
@@ -4777,6 +5059,8 @@ void ApplicationArcher::PublishSnapshot(){
     s.f_clip_placeholder = puppet.choice.f_placeholder;
     s.model_yaw = model_yaw_drawn;
     s.model_roll = model_roll_drawn;
+    //Here, on the physics thread, which is the one that starts them - not in the MCP handler.
+    s.sounds_playing = soundsystem ? soundsystem->GetNumPlaying() : -1;
     s.arrows_on_props = 0;
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         if (arrow_stuck[i].prop){ s.arrows_on_props++; }
@@ -4976,7 +5260,10 @@ json ApplicationArcher::BuildStateJson(){
         //Arrows currently riding a prop rather than sitting in the world. Invisible until
         //something moves, which is exactly why it is worth a line: an arrow pinned to a prop it
         //is no longer in looks identical to a correct one until that prop is kicked.
-        {"arrows_on_props",s.arrows_on_props}
+        {"arrows_on_props",s.arrows_on_props},
+        //How many sounds are audible, as of the last tick - the only way to tell over MCP that a
+        //sound fired, since a successful Play logs nothing. -1 with no sound system.
+        {"sounds_playing",s.sounds_playing}
     };
     return result;
 }
@@ -5508,6 +5795,10 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::Checkbox("level entry get-up",&f_level_entry_getup);
     ImGui::SetItemTooltip("Start each level lying down and getting up, controls locked for 3.5 s. "
                           "Takes effect at the next restart.");
+    //Read by the sounds as they start, so a change is heard from the next one on.
+    if (soundsystem){
+        ImGui::SliderFloat("volume",&sound_volume,0.0f,1.0f,"%.2f");
+    }
 
     /*
         --- The terrain -----------------------------------------------------------------------
@@ -5566,6 +5857,20 @@ void ApplicationArcher::DrawImGuiUI(void){
                     foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER]);
         if (f_rescatter){
             f_rescatter_foliage = true;
+        }
+    }
+
+    //The drawn rope over the physics chain. The links are hidden under it; this puts them back.
+    if (ImGui::CollapsingHeader("Rope")){
+        ImGui::Text("skin: %s, %i bones over %i links",rope_skin ? "built" : "none on this level",
+                    (int)rope_bones.size(),rope_segments.empty() ? 0 : (int)rope_segments.size() - 1);
+        ImGui::Text("segment %s, ring %s, collar %s, tassel %s",
+                    f_rope_part_from_asset[ROPE_PART_SEGMENT] ? "archer.glb" : "placeholder",
+                    f_rope_part_from_asset[ROPE_PART_RING] ? "archer.glb" : "none",
+                    f_rope_part_from_asset[ROPE_PART_COLLAR] ? "archer.glb" : "none",
+                    f_rope_part_from_asset[ROPE_PART_TASSEL] ? "archer.glb" : "none");
+        if (ImGui::Checkbox("show the physics links",&f_show_rope_links)){
+            ApplyRopeLinkVisibility();
         }
     }
 

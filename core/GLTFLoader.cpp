@@ -757,6 +757,24 @@ quat GLTFLoader::GetNodeRotation(const char* node_name){
     return q;
 }
 
+/*
+    The node's own scale, (1,1,1) when it has none. GetMeshFromNode hands out the vertices as
+    authored and ignores the node's transform - on purpose for position (props are spread across
+    the Blender scene to be worked on) - but an object scaled in Blender and never applied is
+    only that size through this.
+*/
+vec3 GLTFLoader::GetNodeScale(const char* node_name){
+    tinygltf::Node* node = FindNode(node_name);
+    if (!node){
+        debug->Warn("Unable to find Node %s for you.\n",node_name);
+        return vec3(1.0f,1.0f,1.0f);
+    }
+    if (node->scale.size() != 3){
+        return vec3(1.0f,1.0f,1.0f);
+    }
+    return vec3((float)node->scale.at(0),(float)node->scale.at(1),(float)node->scale.at(2));
+}
+
 //Lookup material by name
 Material* GLTFLoader::LookupLoadedMaterial(const std::string& material_name){
     for(size_t i=0;i<loaded_materials.size();i++){
