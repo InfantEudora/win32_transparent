@@ -56,6 +56,15 @@ void Stage::Reset(){
     blocks.clear();
     props.clear();
     BuildLevel();
+    //An editor's moves, laid back over the code's. See KeepBlockLayout.
+    if (kept_layout.size() == blocks.size()){
+        for (size_t i = 0; i < blocks.size(); i++){
+            blocks[i].x  = kept_layout[i].x;
+            blocks[i].y  = kept_layout[i].y;
+            blocks[i].hw = kept_layout[i].hw;
+            blocks[i].hh = kept_layout[i].hh;
+        }
+    }
 
     //Above the start ground, so the first thing the archer does is land - which exercises the
     //landing path on tick one rather than leaving it untested until the first jump.
@@ -91,6 +100,7 @@ void Stage::Reset(){
 
     ticks = 0;
     arrows_shot = 0;
+    draws_cancelled = 0;
     arrows_hit_blocks = 0;
 }
 
@@ -195,45 +205,55 @@ void Stage::BuildMainLevel(){
 #if ARCHER_TEST_BAY
     /*
         --- The terrain test bay, x -40 .. -12 -------------------------------------------------
-        Four bays of seven units, left of the start and contiguous with the main ground run, which
-        ends at x -12. CONTIGUOUS MATTERS: TickArcher restarts the game below y -40, so a bay
-        floating in space would drop the player out of the world on the way into it.
+        Left of the start and contiguous with the main ground run, which ends at x -12.
+        CONTIGUOUS MATTERS: TickArcher restarts the game below y -40, so ground floating in space
+        would drop the player out of the world on the way into it.
 
-        Seven units each because the camera shows about 31.8 of them at CAMERA_DISTANCE, so all
-        four variants land in ONE screenshot - which is the entire reason for laying them out this
-        way rather than rebuilding one bay over and over.
+        Two bays - see ARCHER_TEST_BAY in Stage.h. This is the starting layout; the point of the
+        bays now is to move these boxes in the editor and regenerate, so read it as a sketch.
 
         See the SOLID-only and append-at-the-end rules in the ARCHER_TEST_BAY note in Stage.h.
     */
-    //The left-hand wall, mirroring the one at x 71 for the same reason. Kept INSIDE bay 0's span
-    //so that it melts with the rest of it - a lone blockout box at the end of a row of terrain
+    //The left-hand wall, mirroring the one at x 71 for the same reason. Kept INSIDE the ground
+    //bay so that it melts with the rest of it - a lone blockout box at the end of a row of terrain
     //reads as something that failed to build rather than as a deliberate boundary.
     blocks.push_back({ ARCHER_TEST_BAY_X_MIN + 0.25f, 4.00f, 0.25f, 4.00f, BLOCK_SOLID, true });
 
-    /*
-        THE SAME FOUR SHAPES IN EVERY BAY, so that the four variants differ only in their meshing
-        parameters and a difference between them can only be the parameters. Each shape is the
-        cheapest thing that exposes one specific failure:
+    //ONE floor under the whole ground bay. It used to be four abutting segments, one per bay, and
+    //a smooth union over a seam between two equal tops lifts the surface there by up to k/4.
+    blocks.push_back({ (ARCHER_TEST_BAY_X_MIN + ARCHER_TEST_BAY_X_MAX) * 0.5f, -2.00f,
+                       (ARCHER_TEST_BAY_X_MAX - ARCHER_TEST_BAY_X_MIN) * 0.5f, 2.00f,
+                       BLOCK_SOLID, true });                                        //floor, top 0
 
-          the floor     a wide flat top - the surface every measurement of top-pinning is taken on
+    /*
+        Four copies of the same shapes along it. Each is the cheapest thing that exposes one
+        specific failure:
+
           the step      a convex lip - does the top stay pinned exactly where the collider is?
           the wall      the concave inside corner - does smooth union bulge into walkable space?
           the pillar    0.5 wide, thinner than twice a typical smoothing radius - does it survive?
-
-        EACH BAY GETS ITS OWN FLOOR SEGMENT rather than one slab running under all four. The app
-        selects a bay's blocks by x range, so a block spanning every bay would belong to all of
-        them and be meshed four times into four overlapping surfaces - which is z-fighting, not a
-        comparison. The segments abut exactly, so the collision underneath is still one flat run.
     */
-    for (int i = 0; i < ARCHER_TEST_BAY_COUNT; i++){
-        float cx = ARCHER_TEST_BAY_CENTRE(i);
-        float half = ARCHER_TEST_BAY_WIDTH * 0.5f;
-        blocks.push_back({ cx,        -2.00f, half,  2.00f, BLOCK_SOLID, true });   //floor,  top 0
+    for (int i = 0; i < ARCHER_TEST_BAY_SHAPE_SETS; i++){
+        float cx = ARCHER_TEST_BAY_SHAPE_CENTRE(i);
         blocks.push_back({ cx - 2.0f,  0.60f, 1.00f, 0.60f, BLOCK_SOLID, true });   //step,   top 1.2
         blocks.push_back({ cx - 0.2f,  1.40f, 0.80f, 1.40f, BLOCK_SOLID, true });   //wall,   top 2.8
         blocks.push_back({ cx + 2.2f,  1.00f, 0.25f, 1.00f, BLOCK_SOLID, true });   //pillar, top 2.0
     }
+
+    /*
+        The upper bay: an island floating clear of everything below - its underside at 8 or more,
+        above the 3.2 a jump lifts the feet, so nothing on the ground can reach it. A slab, a hill
+        on it, and one spike hanging under it, so the island has a top, a bump and an underside
+        to look at. Every centre is above ARCHER_TEST_BAY_SPLIT_Y, which is what puts them here.
+    */
+    blocks.push_back({ -26.00f, 10.50f, 8.00f, 0.75f, BLOCK_SOLID, true });         //slab,  top 11.25
+    blocks.push_back({ -29.00f, 11.75f, 1.50f, 0.50f, BLOCK_SOLID, true });         //hill,  top 12.25
+    blocks.push_back({ -21.00f,  9.00f, 0.40f, 1.00f, BLOCK_SOLID, true });         //spike, bottom 8
 #endif
+}
+
+void Stage::KeepBlockLayout(){
+    kept_layout = blocks;
 }
 
 void Stage::BuildLevel(){
@@ -376,10 +396,19 @@ void Stage::Tick(const ArcherInput& in, StageEvents& events){
     */
     TickBow(in,events);
 
-    //Computed after TickBow, which is what makes a press-and-release inside a single tick fire a
-    //minimum-power shot rather than being swallowed. A dropped key press is the worst possible
-    //outcome for the game's main verb.
-    bool f_loose = (bow_mode == BOW_DRAWING) && in.f_draw_released;
+    /*
+        A release looses only with an arrow ON THE STRING - see BOW_NOCK_TICKS. Before that it
+        cancels the draw: she was still reaching for the quiver, and an arrow leaving the bow from
+        there is what made a tap look wrong. (This used to be the opposite, deliberately: a press
+        and release inside one tick fired a minimum-power shot so a tap was never swallowed. The
+        draw animation made the tap visible, and a shot out of an empty bow is worse than none.)
+    */
+    bool f_loose = IsNocked() && in.f_draw_released;
+    if (bow_mode == BOW_DRAWING && in.f_draw_released && !f_loose){
+        bow_mode = BOW_IDLE;
+        draw_ticks = 0;
+        draws_cancelled++;
+    }
 
     //Before the archer moves, so the boot sweeps from where they were standing when it went out.
     //At a full run those differ by 0.15 of a unit - the difference between connecting with the
@@ -1203,7 +1232,8 @@ void Stage::TickClimb(const ArcherInput& in, StageEvents& events){
 //--- The bow ------------------------------------------------------------------------------------
 
 float Stage::DrawPower() const{
-    float t = (float)draw_ticks / (float)BOW_DRAW_TICKS;
+    //Over the PULL only - from the nock to full draw - which is what the string does on screen.
+    float t = (float)(draw_ticks - BOW_NOCK_TICKS) / (float)(BOW_DRAW_TICKS - BOW_NOCK_TICKS);
     return BOW_MIN_POWER + (1.0f - BOW_MIN_POWER) * ClampF(t,0.0f,1.0f);
 }
 

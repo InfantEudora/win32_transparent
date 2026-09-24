@@ -403,15 +403,50 @@ static void TestBow(){
     Stage s;
     Settle(s);
 
-    //--- A tap still produces an arrow -------------------------------------------------------------
+    //--- Nothing leaves the bow before the arrow is on it ------------------------------------------
+    /*
+        BOW_NOCK_TICKS: she spends the start of a draw reaching back to the quiver, and letting go
+        then CANCELS the draw. This used to be the opposite on purpose - a tap fired a minimum
+        shot so the main verb never swallowed a press - until the draw animation made it visible
+        that the arrow was leaving an empty bow.
+    */
     ArcherInput tap;
     tap.f_draw_down = true;
     tap.f_draw_released = true;      //pressed and let go inside one tick
     StageEvents ev;
     s.Tick(tap,ev);
-    Check(ev.f_shot,"a press and release inside one tick still looses an arrow");
-    CheckNear(ev.shot_power,BOW_MIN_POWER,0.001f,"at the minimum power");
-    Check(s.NumLiveArrows() == 1,"and the arrow exists");
+    Check(!ev.f_shot && s.NumLiveArrows() == 0,"a press and release inside one tick looses nothing");
+    Check(s.bow_mode == BOW_IDLE && s.draws_cancelled == 1,"it cancels the draw instead");
+
+    ArcherInput hold;
+    hold.f_draw_down = true;
+    ArcherInput letgo;
+    letgo.f_draw_released = true;
+    Stage early;
+    Settle(early);
+    Run(early,BOW_NOCK_TICKS,hold);         //draw_ticks ends one short of the nock
+    Check(!early.IsNocked(),"one tick short of BOW_NOCK_TICKS there is no arrow on the string");
+    StageEvents ee0;
+    early.Tick(letgo,ee0);
+    Check(!ee0.f_shot && early.NumLiveArrows() == 0,"and letting go then shoots nothing");
+
+    Stage nock;
+    Settle(nock);
+    Run(nock,BOW_NOCK_TICKS + 1,hold);
+    Check(nock.IsNocked(),"at BOW_NOCK_TICKS the arrow is on the string");
+    StageEvents en;
+    nock.Tick(letgo,en);
+    Check(en.f_shot && nock.NumLiveArrows() == 1,"and letting go looses it");
+    CheckNear(en.shot_power,BOW_MIN_POWER,0.001f,"at the minimum power - the pull has only begun");
+
+    //Power is the PULL, from the nock to full draw - what the string does on screen.
+    Stage half;
+    Settle(half);
+    half.bow_mode = BOW_DRAWING;
+    half.draw_ticks = (BOW_NOCK_TICKS + BOW_DRAW_TICKS) / 2;
+    float want = BOW_MIN_POWER + (1.0f - BOW_MIN_POWER) *
+                 (float)(half.draw_ticks - BOW_NOCK_TICKS) / (float)(BOW_DRAW_TICKS - BOW_NOCK_TICKS);
+    CheckNear(half.DrawPower(),want,0.0001f,"halfway through the pull, power is halfway from the minimum");
 
     //--- A full draw is stronger -------------------------------------------------------------------
     Stage f;
@@ -523,7 +558,7 @@ static void TestBow(){
     */
 #if ARCHER_TEST_BAY
     {
-        float cx = ARCHER_TEST_BAY_CENTRE(0);
+        float cx = ARCHER_TEST_BAY_SHAPE_CENTRE(0);
         float pillar_left = cx + 2.2f - 0.25f;
         float pillar_right = cx + 2.2f + 0.25f;
         Stage p;
@@ -1805,39 +1840,75 @@ static void TestPuppet(){
     Check(f_monotonic,"turning one way the whole time, with no wobble at the ends");
 
     /*
-        THE AIM'S HOLD ON HER BODY: on only in the draw pose, eased both ways.
+        THE UPPER LAYER AND THE AIM (animation_plan.md, Step 2).
 
-        The run case is the one worth pinning. Drawing at a run is a real thing the rules allow,
-        but until step 2's mask layer the clip underneath is still a run cycle - and bending that
-        would lean a running torso that is holding nothing up.
+        The draw is an upper-body layer in every stance, its clip pinned to the rules' progress and
+        handing on to the held loop at full draw. The aim takes hold only from the NOCK - the live
+        neutral reads the posed bow, which means nothing before the bow is up - and, now that the
+        layer carries the draw over any legs, a draw at a run bends her like a standing one.
     */
     {
+        //The draw, then at full draw the held loop - on the base when standing, on the layer always.
+        Puppet h;
+        ArcherAnimParams drawing;
+        drawing.action = ACTION_DRAW;
+        drawing.action_phase = 0.5f;
+        Check(h.Choose(drawing).clip == CLIP_DRAW,"a standing draw under way plays the draw on her legs");
+        PuppetChoice up;
+        Puppet::ChooseUpper(drawing,up);
+        Check(up.upper_clip == CLIP_DRAW,"and on the upper layer");
+        CheckNear(up.upper_phase,0.5f,0.0001f,"sampled where the RULES' draw has got to");
+        drawing.action_phase = 1.0f;
+        Check(h.Choose(drawing).clip == CLIP_AIM_IDLE,"at full draw it hands on to the held loop");
+        Puppet::ChooseUpper(drawing,up);
+        Check(up.upper_clip == CLIP_AIM_IDLE && up.upper_phase < 0.0f,
+              "the layer too, and the loop runs on its own clock");
+        Check(ARCHER_CLIPS[CLIP_AIM_IDLE].f_looping,"which loops for as long as she holds");
+        Check(Puppet::IsDrawPose(CLIP_AIM_IDLE),"and counts as a draw pose");
+
+        //The aim waits for the nock.
         Puppet a;
         ArcherAnimParams draw;
         draw.action = ACTION_DRAW;
+        draw.action_phase = (float)(BOW_NOCK_TICKS - 1) / (float)BOW_DRAW_TICKS;
+        for (int i = 0; i < PUPPET_AIM_BLEND_TICKS * 2; i++){
+            a.Tick(draw);
+        }
+        CheckNear(a.aim_weight,0.0f,0.0001f,"before the nock the aim does not touch her");
+        CheckNear(a.upper_weight,1.0f,0.0001f,"though the upper layer is fully on");
+        draw.action_phase = (float)BOW_NOCK_TICKS / (float)BOW_DRAW_TICKS;
         for (int i = 0; i < PUPPET_AIM_BLEND_TICKS - 1; i++){
             a.Tick(draw);
         }
-        Check(a.aim_weight > 0.0f && a.aim_weight < 1.0f,"the aim eases in rather than snapping");
+        Check(a.aim_weight > 0.0f && a.aim_weight < 1.0f,"from the nock the aim eases in rather than snapping");
         a.Tick(draw);
-        CheckNear(a.aim_weight,1.0f,0.0001f,"and holds fully after PUPPET_AIM_BLEND_TICKS of a standing draw");
+        CheckNear(a.aim_weight,1.0f,0.0001f,"and holds fully after PUPPET_AIM_BLEND_TICKS");
 
         ArcherAnimParams idle;
+        a.Tick(idle);
+        Check(a.upper_weight < 1.0f && a.choice.upper_clip == CLIP_DRAW,
+              "letting go fades the layer out of the pose she let go in");
         for (int i = 0; i < PUPPET_AIM_BLEND_TICKS; i++){
             a.Tick(idle);
         }
-        CheckNear(a.aim_weight,0.0f,0.0001f,"and lets go over the same ticks when the draw ends");
+        CheckNear(a.aim_weight,0.0f,0.0001f,"and the aim lets go over the same ticks");
+        Check(a.upper_weight == 0.0f && a.upper_latched < 0,"until the layer is off and forgotten");
 
+        //At a run: the legs run, the layer draws, and from the nock the aim bends her.
+        Puppet r;
         ArcherAnimParams run_draw;
         run_draw.action = ACTION_DRAW;
+        run_draw.action_phase = 1.0f;
         run_draw.speed = 5.0f;
         run_draw.ground_speed = 5.0f;
-        a.clip_speed[CLIP_RUN_FAST] = 2.5f;
-        a.model_scale = 2.0f;
+        r.clip_speed[CLIP_RUN_FAST] = 2.5f;
+        r.model_scale = 2.0f;
         for (int i = 0; i < PUPPET_AIM_BLEND_TICKS * 2; i++){
-            a.Tick(run_draw);
+            r.Tick(run_draw);
         }
-        CheckNear(a.aim_weight,0.0f,0.0001f,"a draw at a run does not bend her - that waits for the mask layer");
+        Check(!Puppet::IsDrawPose(r.choice.clip),"a draw at a run keeps her legs running");
+        Check(r.choice.upper_clip == CLIP_AIM_IDLE && r.upper_weight == 1.0f,"with the draw on her upper body");
+        CheckNear(r.aim_weight,1.0f,0.0001f,"and the aim bending her - the layer is what makes that right");
     }
 
     /*

@@ -507,8 +507,11 @@ class Object{
     //into this object's LOCAL state, and AddPhysics seeds the body from the local one as though
     //it were world - so a parent transform gets applied on top of a position that is already
     //final, and the object ends up where neither the solver nor the scene tree thinks it is.
-    //Both AttachChild and AddPhysics call debug->Fatal rather than let that happen silently.
+    //Both AttachChild and AddPhysics log an error rather than let that happen silently.
     //Give the body to the PARENT and leave children visual-only, or use DetachChildToWorld.
+    //The one exception is a parent chain that is all identity - no offset, rotation or scale -
+    //where local IS world; that is allowed, for grouping bodies in the scene tree. Moving such a
+    //parent afterwards brings the bug straight back, and nothing catches it then.
     std::list<Object*>children;
     bool    AttachChild(Object* newchild); //Attaches an object as a child.
     void    DetachChild(Object* targetchild);

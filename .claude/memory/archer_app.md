@@ -381,3 +381,31 @@ BOW_NOCK_FWD 0.11 / BOW_NOCK_UP 0.54 / ARROW_LENGTH 1.05 replaced BOW_SHOULDER_*
 anchor in prev_pos and the FIRST step (TickArrows, PredictArc, app prop raycasts) sweeps from it.
 Loosed arrow spawns within 0.03 of the nocked tip; point-blank at the 0.5 test-bay pillar it sticks
 in the near face (rules check, failed on the old code first). 237 checks.
+STRING FOLLOWS THE HAND (2026-09-23): Bow::TrackHand projects mixamorig:RightHand onto the string's
+pull line every tick (world space, no inverse); latches "arrow on string" once within
+BOW_HAND_ON_STRING 0.12 rig, released when the draw ends. Only while the draw POSE is on screen
+(puppet.choice.clip == CLIP_DRAW or previewing it); a draw at a run keeps the draw_ticks bend. Live:
+arrow on at tick 24 (clip 0.60), full at tick 39. Draw clip phases: reach 0-0.333, carry -0.60,
+pull -1.067. User added Standing_AimArrowIdle (3.8s loop) + Standing_OverdrawArrow (1.93s), unwired.
+Gameplay: user rejected "accept the tap"; leaning to no-loose-before-nock + power during the pull,
+to be settled once AimArrowIdle is in. Next: socket_arrow in right hand (user) for the carry.
+ARROW IN HAND (2026-09-23): socket_arrow under RightHand, keyed in Standing_DrawArrow (holds to the
+grab at 0.333, turns ~170 deg, settles ~0.667). Second Object arrow_in_hand on it (visibility swap,
+never re-parent mid-draw: render thread walks children). Latched when its nock is within
+BOW_HAND_AT_QUIVER 0.06 of the quiver opening (quiver mesh max +Y); handed to the bow's nocked arrow
+when the string latch fires. Live: in hand tick 17, on string tick 24. Hand-off pops ~30 deg: the bow
+still tilts down at nock time. EXPORT GOTCHA: with the armature left in REST position the glTF export
+writes every clip constant (file 6.1 -> 3.5 MB) - check a clip varies before trusting an export.
+NOCK RULE + HELD LOOP (2026-09-24): BOW_NOCK_TICKS 23 in Stage.h - release before it CANCELS the draw
+(draws_cancelled), power ramps over the pull only (nock -> BOW_DRAW_TICKS); the tap-fires-min-shot
+behaviour is GONE on purpose. Aim arc only when Stage::IsNocked. App's CheckNockTicks warns if the
+hand's latch tick drifts >2 from the constant. CLIP_AIM_IDLE (Standing_AimArrowIdle, looping) follows
+CLIP_DRAW at action_phase>=1 with a 0.0 blend (starts on the draw's last pose to 3 decimals);
+Puppet::IsDrawPose covers both. CLIP_OVERDRAW added, preview only. 246 rules checks.
+UPPER LAYER + LIVE NEUTRAL BUILT (2026-09-24, animation_plan Step 2): ArcherModel::ApplyAnimation =
+restore base pose -> base -> upper layer (57 bones under Spine, Spine 0.3 / Spine1 0.6 / rest 1.0) ->
+read bow angle (live neutral) -> aim turn. MUST BLEND IN MODEL SPACE: local copying put the draw's
+side-on upper body on forward-facing walk hips, bow pointed into the screen, aim folded her backwards.
+Puppet::ChooseUpper/upper_weight/upper_latched; aim_weight waits for the nock. Standing + walking both
+0.00 deg error. Decided: C = kneel (toggle state, shorter box, no move/jump, can draw); aim wobble =
+deterministic sway in PredictArc, wide standing, narrow kneeling. Kneel clips not exported yet.

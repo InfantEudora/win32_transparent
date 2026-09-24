@@ -896,6 +896,123 @@ clip keeps running underneath it.
 
 ---
 
+## Step 2 — the upper-body layer, and kneeling. DESIGNED (2026-09-24).
+
+What sections 2 and 6 above argued for, now with the use cases that make it necessary: drawing
+while running, walking or falling, and a KNEEL stance whose legs come from one clip while the arms
+come from another (the kneel clip has a rifle baked into its upper body).
+
+### What the engine has, and why the bone mask is not the tool
+
+- A clip writes each bone's local rotation OUTRIGHT (`Animation::ApplyIntervalOnto`); there is one
+  playing clip, or two during a crossfade or a blend pair, and nothing layers on top.
+- `Object::animation_mask` is per BONE, so it applies to every clip that touches that bone. "Legs
+  from clip A, arms from clip B" would need it saved and restored around each clip. A layer's mask
+  has to belong to the LAYER.
+- A clip's playhead lives on the `Animation` (`time_index`). Not a problem here: the layer reads
+  keyframes at its OWN time through `ObjectAnimation::GetClosestKeyframe` and never touches the
+  playhead, so the base can play the draw while the layer samples it too.
+
+### The design: base, upper, aim
+
+1. **Base layer, full body** - everything that plays today: locomotion blend space, air set, kick,
+   and the kneel. It keeps root motion and owns the hips and legs.
+2. **Upper layer** - one clip with its own time and eased weight, and a per-bone weight table:
+   every bone under `mixamorig:Spine`, graded `Spine` 0.3, `Spine1` 0.6, everything from `Spine2`
+   up 1.0, so the torso keeps some of the base's lean (a run's tilt, the kneel's hunch) while the
+   arms, shoulders and head are the layer's. The sockets hang off the hands, so they follow the
+   layer, keys and all. Applied as `bone = slerp(base, layer, weight * bone_weight)`.
+3. **The aim override**, after both (Step 3).
+
+The props, the string-follows-hand, both nock latches and the arrow in her hand all read BONES, so
+they carry over untouched.
+
+**The draw becomes an upper-layer clip in every stance.** Standing still, the base plays the
+draw's own legs, so the standing draw looks exactly as authored (hips squaring up included);
+starting to move mid-draw, the base crossfades to locomotion while the layer carries on; kneeling,
+the base is the kneel. The upper clip's time is PINNED to the rules' draw progress
+(`draw_ticks / BOW_DRAW_TICKS` of the clip) rather than free-running, the same principle as the
+bend: the rules are authoritative and the visual follows. `Standing_AimArrowIdle` free-runs, since
+it is a loop.
+
+**Prototype first in `ArcherModel::ApplyAnimation`, then lift into `Object`** - the path the
+crossfade state machine took. The prototype extends the aim override's undo-then-reapply scheme to
+every layered bone, for the same reason: a pass that does not re-pose must not accumulate.
+
+### The aim neutral goes live (agreed 2026-09-24)
+
+On a layer the hips come from the base, so the draw's 29 degrees of squaring up is gone over a run
+or a kneel and the bow sits at a different angle in each stance - the fixed neutral measured once
+from the whole-body draw is wrong there. So: after the layers are posed, READ where the bow points
+and turn the spine by the difference to `aim_deg`. It applies only once an arrow is on the string
+(the rules' nock), easing in over `PUPPET_AIM_BLEND_TICKS` from there. She brings the bow up with
+the animation's own motion and the aim takes over as she nocks; and the bow holds EXACTLY on the
+arc in every clip, which retires the 3.5-degree breathing gap in `Standing_AimArrowIdle` (the
+breath moves into her body).
+
+### Kneeling (agreed 2026-09-24)
+
+- **C** kneels and stands - a state she gets into and out of, not a hold.
+- **Rules:** a kneel stance on the ground, with timed transitions whose lengths come from the
+  clips (the `KICK_TICKS` arrangement: the app warns with the number to type). While kneeling she
+  cannot run or jump, kick or take a rope; she CAN draw and aim. **She is shorter** - a kneeling
+  collision box, as a future crouch would have - which is moot while she cannot move, and means
+  standing up must be refused under something low. The arrow leaves LOWER: a kneeling nock height,
+  measured like the standing one.
+- **Animation:** base = kneel down (one-shot) -> kneel idle (loop) -> stand up (one-shot). The
+  upper layer is on for the WHOLE kneel, transitions included, because the base's arms hold a
+  rifle: at rest it holds `Standing_DrawArrow`'s first frame (bow lowered in the left hand - the
+  pose the draw starts from, so drawing from a kneel needs no blend), and the draw and hold over it
+  when she draws. No dedicated clip for the resting upper body yet; frame 0 stands in.
+
+### Aim wobble, and why kneeling steadies it (proposed 2026-09-24)
+
+The user's idea: a standing shot should wobble within a cone, and kneeling should make it more
+accurate. Proposed shape, to keep the promise the rules are built on (the arc drawn on screen IS
+the flight):
+
+- **A deterministic sway, not a random spread.** An angle added to `aim_deg` while drawn, from a
+  smooth function of the draw's own tick count (two or three incommensurate sines), with an
+  amplitude per stance - standing wide, kneeling narrow, later perhaps growing with overdraw
+  fatigue. No RNG, so replays and `make rules` stay exact (see the shared-`RRandom` note in
+  memory), and `PredictArc` includes it, so the dots show the wobble and the arrow goes where
+  they point.
+- **Skill, not dice:** the player sees the aim drift and times the release, which is a better
+  archery verb than a hidden spread. The bow on screen sways with it for free, because the live
+  aim neutral turns her to whatever angle the rules hold.
+
+### The prototype: BUILT 2026-09-24
+
+`ArcherModel::ApplyAnimation` now runs restore base pose → base clips → upper layer → read the
+live neutral → aim turn. `Puppet::ChooseUpper` picks the layer's clip (the draw pinned to the rules'
+progress, then the hold on its own clock); `Puppet::upper_weight` eases it over
+`PUPPET_UPPER_BLEND_TICKS` and latches the clip so a release fades out of the pose she let go in;
+`Puppet::aim_weight` now waits for the nock. The mask is the 57 bones under `mixamorig:Spine`.
+
+**The layer has to blend in MODEL space, and the first version showed why.** Bone-local copying
+put the draw's upper body onto a walk's hips, which face forward where an archer's face sideways -
+the whole upper body swung round with them, the bow pointed into the screen (155 degrees off in
+the play plane), and the aim, which only turns about the camera axis, folded her over backwards
+trying to fix it. Blending each bone's orientation RELATIVE TO THE CHARACTER - chained up from the
+layer clip's own hips, then converted back to local under the new parent - is Unreal's "mesh space
+rotation blend", the standard setting for aim layers, and it fixed it outright.
+
+Measured: standing, `aim_error_deg` 0.00 from the nock on (the clips alone point the bow anywhere
+from −2 to +38 degrees; the live neutral absorbs all of it). Walking while drawing, the layered
+pose points the bow exactly as the standing draw does (−1.6 against −1.5 in the hold, 16.1
+against 16.1 mid-pull) and the error is 0.00. The screenshots show her walking with the reach,
+the arrow in hand, the pull and a held aim on top. 255 rules checks, including the replaced
+"a draw at a run does not bend her" - which is now its opposite.
+
+### Order
+
+1. ~~Upper layer + live neutral, with the draw over locomotion.~~ **Built** (above).
+2. Kneel rules + the kneel base clips + the frame-0 rest overlay, once the kneel set is exported.
+3. Wobble, once kneeling exists to be the steady case.
+4. Lift the layer into `Object`.
+
+---
+
 ## Step 3 — aim pitch: pointing up makes her point up. BUILT (2026-09-23).
 
 ### What was built, and what it measured

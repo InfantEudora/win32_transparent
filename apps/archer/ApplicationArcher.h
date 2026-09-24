@@ -1,6 +1,8 @@
 #ifndef _APPLICATION_ARCHER_H_
 #define _APPLICATION_ARCHER_H_
 
+#include <atomic>
+#include <unordered_map>
 #include <mutex>
 #include <vector>
 #include <string>
@@ -365,6 +367,17 @@ enum ArcherAnimSource{
 
 #define ARCHER_AIM_BONES            6
 
+/*
+    --- THE UPPER-BODY LAYER (animation_plan.md, Step 2) -----------------------------------------
+    A second clip over the base, on every bone under mixamorig:Spine, graded so the torso keeps
+    some of the base's lean while the arms, shoulders and head are the layer's: Spine and Spine1
+    take part of it, everything from Spine2 up takes all of it. A PROTOTYPE living here until it
+    earns a place in Object, the way the crossfade did.
+*/
+#define ARCHER_UPPER_ROOT           "mixamorig:Spine"
+#define ARCHER_UPPER_SPINE_SHARE    0.3f    //mixamorig:Spine
+#define ARCHER_UPPER_SPINE1_SHARE   0.6f    //mixamorig:Spine1; everything above is 1.0
+
 class ArcherModel : public Skeleton{
 public:
     //Radians of yaw this clip has turned her through since it started. ADDED to the facing the
@@ -374,37 +387,59 @@ public:
     void ApplyRootMotion(const RootMotionDelta& delta) override;
 
     /*
-        The clips' pose, then the aim on top of it. See the note above.
+        The base clips' pose, then the upper layer over it, then the aim over both. See the notes
+        above.
 
-        IT UNDOES ITS OWN ROTATION FIRST. The base only writes a bone on a pass that actually poses
-        - a paused sim, a stepped debug override or a finished one-shot may leave last tick's pose
-        in place - and an override applied on top of a pose it has already bent would accumulate,
-        turning her a little further every frame. So each bone's clean (clip-posed) rotation is
-        kept, put back before the base runs, and the aim re-applied to whatever the base left.
+        IT UNDOES ITS OWN WORK FIRST. The base only writes a bone on a pass that actually poses - a
+        paused sim, a stepped debug override or a finished one-shot may leave last tick's pose in
+        place - and a layer or a turn applied on top of a pose it has already changed would
+        accumulate: the spine creeping toward the layer's pose, the aim turning her a little further
+        every frame. So every bone either touches has its base (clip-posed) transform kept, put back
+        before the base runs, and the layer and aim re-applied to whatever the base left.
     */
     void ApplyAnimation(float time_delta) override;
 
     //Finds the chain. Call once the skeleton is loaded; with any bone missing the override is off.
     bool BuildAimChain();
+    //Finds the upper layer's bones and their shares. Call once the skeleton is loaded.
+    bool BuildUpperMask();
 
-    //Set by the app each tick. The angle is aim_deg MINUS the draw pose's own measured aim.
-    float aim_delta_deg = 0.0f;
+    //--- Set by the app each tick ---
+    Animation* upper_clip = NULL;   //NULL: no upper layer
+    float upper_time = 0.0f;        //seconds into upper_clip to sample
+    float upper_weight = 0.0f;      //0..1, from Puppet::upper_weight
+    float aim_target_deg = 0.0f;    //Stage::aim_deg
     float aim_weight = 0.0f;        //0..1, from Puppet::aim_weight
     float aim_facing = 1.0f;        //+1 right, -1 left
 
     /*
-        What the override produced, for checking it: the angle the bow's front actually makes in
-        the play plane, relative to facing, + up - the same convention as Stage::aim_deg. NaN-free
-        and always written, weight or no weight, so the panel can show the neutral pose too.
+        THE LIVE NEUTRAL, and the check on it: the angle the bow's front makes in the play plane,
+        relative to facing, + up - Stage::aim_deg's convention. `aim_pose_deg` is read after the
+        layers and BEFORE the aim turn, and the turn is aim_target_deg minus it, so a pose aiming
+        anywhere ends on the rules' angle. `aim_drawn_deg` is read after the turn - the check.
     */
     Object* aim_probe = NULL;       //the bow
+    float   aim_pose_deg = 0.0f;
     float   aim_drawn_deg = 0.0f;
 
 private:
     Bone* aim_bones[ARCHER_AIM_BONES] = {};
     float aim_shares[ARCHER_AIM_BONES] = {};
-    quat  aim_clean[ARCHER_AIM_BONES];
-    bool  f_aim_applied = false;    //aim_clean holds a pose the override has since bent
+
+    std::unordered_map<Object*,float> upper_share;  //bone -> its share of the layer
+    std::vector<Bone*> upper_order;                 //the same bones, parents before children
+
+    //Every bone the layer or the aim may change, with its base transform from the last pass that
+    //changed any - see ApplyAnimation.
+    std::vector<Bone*> layered_bones;
+    std::vector<quat>  layered_rot;
+    std::vector<vec3>  layered_pos;
+    bool  f_layered = false;        //the saved transforms hold a pose the layer or aim has changed
+
+    void SaveBasePose();
+    void RestoreBasePose();
+    void ApplyUpperLayer();
+    float BowAimDeg();              //the bow's front, in the play plane, relative to facing
 };
 
 /*
@@ -515,7 +550,16 @@ struct ArcherSnapshot{
     */
     float aim_drawn_deg = 0.0f;
     float aim_weight = 0.0f;
-    float aim_neutral_deg = 0.0f;
+    float aim_neutral_deg = 0.0f;   //the LIVE neutral - see ArcherModel::aim_pose_deg
+    int   upper_clip = -1;          //the upper-body layer's clip, and its weight
+    float upper_weight = 0.0f;
+    //The string: how far it is drawn on screen, whether an arrow is on it, and how far the drawing
+    //hand is from its pull line (rig units) - see Bow::TrackHand.
+    float string_draw = 0.0f;
+    bool  f_arrow_on_string = false;
+    float hand_off_string = 0.0f;
+    bool  f_arrow_in_hand = false;  //taken from the quiver, not yet on the string
+    float hand_off_quiver = 0.0f;
     int   live_arrows = 0;
     int   arrows_shot = 0;
     int   arrows_hit_blocks = 0;
@@ -624,6 +668,8 @@ public:
     void RunSimulationTick(void) override;
     //Swaps the live level for the parked one. Physics thread, physics_mutex held - see core.
     void OnActiveSceneChanged(Scene* from, Scene* to) override;
+    //Render thread, before the scene is drawn. Services f_regenerate_terrain.
+    void PreRender(void) override;
 #ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
 #endif
@@ -652,6 +698,11 @@ private:
         sitting where the collider says it is.
     */
     void BuildTerrain();
+    //Remeshes one bay from `stage` as it stands, reusing its Object and Mesh. Render thread.
+    void RemeshTerrainBay(int bay);
+    //Reads the blocks back off their (editor-moved) objects into `stage`, keeps that layout for
+    //restarts, and remeshes every bay. Render thread; takes physics_mutex. See the definition.
+    void RegenerateTerrain();
     //Recomputes which blocks the terrain covers and applies f_show_blockout to them. NO GL, so
     //unlike BuildTerrain this is safe from NewGame on the physics thread. See the definition.
     void ApplyBlockoutVisibility();
@@ -712,10 +763,11 @@ private:
 
     //Builds one dynamic box body, pinned to the play plane. Every prop goes through here, which is
     //what guarantees none of them can drift out of z = 0 - see the axis-lock note in
-    //core/physics/Physics.h for what happens when one does.
+    //core/physics/Physics.h for what happens when one does. `parent`, if given, must be an
+    //identity-transform grouping object (blockout_group); NULL makes it a scene root.
     Object* MakePlanarBody(Mesh* mesh, const char* name, const vec3& position, const vec3& size,
                            int material, uint32_t category, uint32_t collide_mask,
-                           float mass, bool f_static);
+                           float mass, bool f_static, Object* parent = NULL);
 
     //--- Per tick, physics thread -----------------------------------------------------------------
     void GatherInput(ArcherInput& out);
@@ -731,6 +783,8 @@ private:
     void SyncArcherAnimation();
     //The bow's BEND only - its position comes from the hand bone it hangs off. See the definition.
     void SyncBow();
+    //Warns when the hand reaches the string on a different tick from BOW_NOCK_TICKS.
+    void CheckNockTicks();
     //Hand Stage every live prop as a box, BEFORE the tick. See the note on the definition.
     void RefreshObstacles();
     //Shove whatever Stage says was leaned on, AFTER it.
@@ -860,13 +914,30 @@ private:
     DirectionalLight* sun_light = NULL;
     DirectionalLight* fill_light = NULL;        //held only so the range scene can share it
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
+    //The scene-tree parent of every block object, per level. Identity transform, no mesh, and it
+    //must stay that way - see BuildBlocks.
+    Object* blockout_group = NULL;
     std::vector<PropView> prop_views;
     std::vector<DebrisView> debris;
 
     //--- The terrain ------------------------------------------------------------------------------
-    //One Object per test bay, so each variant can be hidden on its own and object_list names them
+    //One Object per test bay, so each can be hidden on its own and object_list names them
     //separately over MCP. Empty when ARCHER_TEST_BAY is off.
     std::vector<Object*> terrain_objects;
+    /*
+        Asks the render thread to run RegenerateTerrain on its next frame.
+
+        A flag rather than a call because the remesh is GL, and neither caller may do GL: the
+        panel button fires in the middle of ImGui's frame with physics_mutex held (RegenerateTerrain
+        takes it itself), and the MCP tool runs on the server thread. PreRender is the one place
+        that is both render thread and outside the lock.
+    */
+    std::atomic<bool> f_regenerate_terrain{false};
+    //Bumped at the end of every RegenerateTerrain, which is how the MCP tool knows it has run.
+    //The two counts are written before the bump and so are safe to read once it is seen.
+    std::atomic<int> terrain_generation{0};
+    int last_regen_moved = 0;
+    int last_regen_hidden = 0;
     //Which block objects BuildTerrain hid, so the debug view can put them back without having to
     //work out again which ones melted. Indices into block_objects.
     std::vector<int> melted_blocks;
@@ -930,6 +1001,7 @@ private:
         Stage   stage;
         Object* archer_object = NULL;
         std::vector<Object*> block_objects;
+        Object* blockout_group = NULL;
         std::vector<PropView> prop_views;
         std::vector<DebrisView> debris;
         std::vector<Object*> terrain_objects;
@@ -992,6 +1064,14 @@ private:
         arrow riding the socket pointing at the floor.
     */
     bool f_arrow_nocked = false;
+    //The bend SyncBow last put on the string, 0..1 - from her hand or from draw_ticks, see SyncBow.
+    float bow_draw_shown = 0.0f;
+    int   nock_warned_at = -1;      //the draw tick CheckNockTicks last warned about
+    //The upper-body layer as handed to the model: which clip, its loop clock, and the time last
+    //sampled (held when a non-looping clip fades out). See SyncArcherAnimation.
+    int   upper_clip_shown = -1;
+    float upper_loop_time = 0.0f;
+    float upper_time_shown = 0.0f;
     //Worked out from the bind pose at load: what the rig has to be scaled by to stand
     //ARCHER_MODEL_HEIGHT tall, and where its feet sit once it has been.
     float model_scale = 1.0f;

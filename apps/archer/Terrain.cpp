@@ -291,24 +291,17 @@ static void MeasureTops(const std::vector<const StageBlock*>& blocks, const Terr
 
 //--- the build ----------------------------------------------------------------------------------
 
-bool BuildTerrainVerts(const std::vector<StageBlock>& blocks, float x_min, float x_max,
+bool BuildTerrainVerts(const std::vector<StageBlock>& blocks, const TerrainRegion& region,
                        const TerrainParams& params, std::vector<vertex>& out,
                        TerrainStats* stats){
-    //Only BLOCK_SOLID melts - see the header. Selected by CENTRE so that a block belongs to
-    //exactly one range and nothing is meshed twice into two overlapping surfaces.
+    //Only BLOCK_SOLID melts - see the header - and TerrainRegion::Contains says so.
     std::vector<const StageBlock*>mine;
     for (size_t i = 0;i < blocks.size();i++){
-        const StageBlock& b = blocks[i];
-        if (b.kind != BLOCK_SOLID || !b.f_alive){
-            continue;
+        if (region.Contains(blocks[i])){
+            mine.push_back(&blocks[i]);
         }
-        if (b.x < x_min || b.x >= x_max){
-            continue;
-        }
-        mine.push_back(&b);
     }
     if (mine.empty()){
-        debug->Err("BuildTerrainVerts: no solid blocks with a centre in [%.2f,%.2f)\n",x_min,x_max);
         return false;
     }
 
@@ -396,19 +389,4 @@ bool BuildTerrainVerts(const std::vector<StageBlock>& blocks, float x_min, float
         MeasureTops(mine,params,*stats);
     }
     return true;
-}
-
-Mesh* BuildTerrainMesh(const std::vector<StageBlock>& blocks, float x_min, float x_max,
-                       const TerrainParams& params, TerrainStats* stats){
-    std::vector<vertex>verts;
-    if (!BuildTerrainVerts(blocks,x_min,x_max,params,verts,stats)){
-        return NULL;
-    }
-    if (verts.empty()){
-        debug->Err("BuildTerrainMesh: [%.2f,%.2f) produced no surface\n",x_min,x_max);
-        return NULL;
-    }
-    Mesh* mesh = new Mesh();
-    mesh->SetMeshData(verts.data(),(int)verts.size());
-    return mesh;
 }

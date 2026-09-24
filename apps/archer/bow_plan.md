@@ -478,6 +478,81 @@ any measured screenshot with `camera_get`.
      no hand on it. Worth fixing by making the VISIBLE bend follow the hand: measure, per keyframe
      of the draw clip, the right hand's distance from the bow's grip, and map the bend from that,
      while the rules keep `draw_ticks` for power. The same measure-per-keyframe shape as the kick.
+
+     **Measured 2026-09-23 (export of 20:39)** - the right hand per keyframe of
+     `Standing_DrawArrow`, clip seconds of 1.067:
+
+     | clip time | the hand | measured |
+     |---|---|---|
+     | 0 → 0.333 | reaches back to the quiver | 0.30 → **0.055** from the quiver's opening |
+     | 0.333 → 0.600 | carries the arrow to the bow | **0.08** from the string's rest nock at 0.600 |
+     | 0.600 → 1.067 | pulls the string | along the pull line 0.14 → 0.54 → 0.99 → 1.11, and within 0.02-0.11 of it |
+
+     So the arrow belongs in her HAND from about 0.33 to 0.60 and on the STRING after that, and the
+     string should follow the hand only in the last phase. Played at 1.78x into `BOW_DRAW_TICKS`,
+     the three phases are 0.19s, 0.15s and 0.26s: the visible pull is the last 0.26s of the rules'
+     0.6s, while `DrawPower` ramps from BOW_MIN_POWER at tick 0.
+
+     **Built the same day - the string follows the hand, and the arrow goes on when the hand
+     arrives** (`Bow::TrackHand`, called from `SyncBow`). Every tick the right hand is projected
+     onto the string's pull line; once it comes within `BOW_HAND_ON_STRING` (0.12 rig) the arrow is
+     on the string, latched until the draw ends, and the bend is the hand's position along the
+     line. Measured over a stepped draw: no arrow and no bend for ticks 1-23 (the closest pass,
+     at the quiver, is 0.141 and does not latch), arrow on at **tick 24** (hand 0.110 off, clip
+     time 0.60 as predicted), string 0.12 → 0.54 → 0.91 → **1.00 at tick 39**. Only while the draw
+     POSE is on screen; a draw at a run keeps the `draw_ticks` bend and an arrow for the whole draw,
+     since her hand is nowhere near the string in a run cycle. `archer_state` reports
+     `string_draw`, `arrow_on_string` and `hand_off_string`; the panel shows the string beside the
+     rules' draw bar.
+
+     **The arrow in her hand: BUILT the same day.** `socket_arrow` under `mixamorig:RightHand`,
+     keyed in `Standing_DrawArrow` by the user: it holds still to the grab at **0.333** (exactly the
+     moment the hand measured closest to the quiver), turns about 170 degrees by ~0.43 and settles
+     at ~0.667. A second Object, `arrow_in_hand`, rides it - a visibility swap at the hand-off rather
+     than a re-parent, since moving an Object between parents mid-draw edits a children list the
+     render thread may be walking. It appears when its nock comes within `BOW_HAND_AT_QUIVER` (0.06)
+     of the quiver's opening (the quiver mesh's far end along +Y) and hands over to the bow's arrow
+     when the string latch fires. Measured over a stepped draw: in hand at **tick 17** (0.039 from
+     the opening), on the string at **tick 24**; the screenshots show it pulled point-down out of
+     the quiver, swung forward over the bow, and nocked.
+
+     **The hand-off turns the arrow by about 30 degrees in one frame** (tick 23 → 24). Offline, at
+     clip 0.60-0.667 the in-hand arrow points 26-36 degrees away from the bow's front and sits 0.07
+     from its nock; by full draw the two agree to 1.9 degrees. It is the BOW that is off at that
+     moment - still tilted down, because its socket is set for full draw and her left wrist is
+     still turning. Two answers, not exclusive: line the arrow and the bow up at the frame her hand
+     reaches the string in Blender (a key on `socket_bow` there, or on `socket_arrow`), and/or blend
+     the nocked arrow from the hand's pose to the nock over a few ticks after the latch - which is
+     worth having anyway, since the latch and the key can never coincide exactly.
+
+     **An export gotcha found on the way:** with the armature left in REST position, the glTF export
+     writes every clip constant - the file dropped from 6.1 to 3.5 MB and nothing animated. Check
+     that a clip actually varies (`tools/gltf_clip_dump.py`) before trusting a new export.
+
+     **Still open, in this order:**
+     - **The hand-off turn** above.
+     - ~~**The gameplay timing.**~~ **DONE 2026-09-24.** "Accept the tap" was rejected - a tap
+       shooting from the quiver looks wrong. `BOW_NOCK_TICKS` (23, the tick her hand measures on
+       the string) in `Stage.h`: letting go before it CANCELS the draw (`draws_cancelled`), with no
+       arrow and no shot - cancel rather than queue, since a queued shot fires 0.4s after a tap and
+       reads as lag. Power builds over the PULL only, `BOW_MIN_POWER` at the nock to full at
+       `BOW_DRAW_TICKS`, which is what the string does on screen. The aim arc shows only once
+       `Stage::IsNocked()`. The app checks the constant against the hand every draw
+       (`CheckNockTicks`) and prints the number to type if they drift more than two ticks apart.
+       Verified in the game: holds of 10 and 22 ticks shoot nothing, 24 and 30 shoot; no warning.
+       Rules tests replace "a tap looses a minimum shot" with its opposite and pin the nock
+       boundary and the ramp - 246 checks.
+     - ~~**`Standing_AimArrowIdle`**~~ **WIRED 2026-09-24** as `CLIP_AIM_IDLE`, looping: the draw
+       hands on to it at full draw (`action_phase` >= 1, now progress through the WHOLE draw rather
+       than power). It starts on exactly the draw's last pose - bow angle, hand on the string and
+       grip agree to three decimals - so the hand-over has a 0.0 blend and nothing shows. It
+       counts as a draw pose (`Puppet::IsDrawPose`), so the aim override and the string-follows-hand
+       carry on through it. Measured: aim error 0.0 at the hand-over, then up to 3.5 degrees of the
+       loop's own breathing (its bow sways −1.5..+2.7); the hand stays within 0.04 of the string.
+     - `Standing_OverdrawArrow` (1.93s) is in the clip table as `CLIP_OVERDRAW`, preview only. It
+       starts on the same full-draw pose and pulls the string to 1.40, so wiring it wants `SetDraw`
+       to allow a little past 1.0. Release animations wait for the upper-body layer, since the
+       hand-only motion applies over both.
    - **Outside the draw the bow is held sideways** - low and horizontal at idle - because its grip
      is one rotation chosen for full draw. That is item 4's to fix (the socket bone), as expected.
 8. **Blender: props as separate assets** — **done** (items 1-3 of §4, *The target*). **Socket
@@ -512,29 +587,31 @@ any measured screenshot with `camera_get`.
 9. **Code: attach to sockets** — **done 2026-09-23** for the bow and the quiver (`Bow::Build`):
    zero offset plus `BOW_SOCKET_AXIS_FIX`, nothing measured; the full-draw grip stays as the
    fallback for a file with no `socket_bow`. `Bow::Build` logs the bow's up and front at full
-   draw, which is the number to read after a re-pose. Still to do: delete the fallback once the
-   sockets are settled, and simplify `BuildFlightArrowMesh` to the declared axis.
+   draw, which is the number to read after a re-pose. **Cleanup done 2026-09-23:** the fallback
+   grip is gone - a rig without `socket_bow` plays empty-handed and says why - and
+   `BuildFlightArrowMesh` reads the declared axis (nock at the origin, point along +Z) instead of
+   searching the bounding box, reporting a mesh that breaks the convention.
 ---
 
 ## 9. Open questions
 
 Recorded because they are genuinely unknown, not rhetorical:
 
-- **Does `GetSkeleton` load a mesh node parented under a joint?** It walks `skin.joints`; a non-joint
-  child may be skipped. If it is, the bow has to be loaded separately with `GetMeshFromNode` and
-  attached by hand — which is fine, and is what step 3 does anyway. Worth knowing before blaming the
-  export.
-- **Adding the socket bones changes `skin.joints` from 65 to 67** (two sockets, now planned - §4,
-  *The target*). A bone's index is its position in `skin.joints`, and the renderer lays bone
-  matrices out by that index. Adding them at the end should be harmless; adding one in the middle
-  renumbers everything after it. Check the bone-matrix capacity before assuming 67 fits.
+- ~~**Does `GetSkeleton` load a mesh node parented under a joint?**~~ **Moot** - the props are
+  separate assets attached to socket bones, never mesh nodes under a joint.
+- ~~**Adding the socket bones changes `skin.joints` from 65 to 67.**~~ **Answered 2026-09-23:**
+  harmless wherever they land. Bone matrices go in an unbounded SSBO (`BoneDataBuffer` in
+  `default_skinned.vert`), so there is no capacity to exceed; the mesh's joint indices refer to
+  the same export's `skin.joints`, so a renumbering is self-consistent; and the app finds bones by
+  name. In the event `socket_bow` landed at index 38, mid-list, and nothing moved.
 - **The bow has 4 primitives and 4 distinct materials; the arrow has 3.** `NUM_MATERIAL_SLOTS` is 4,
   so the bow is exactly at the limit as its own Object and has no room for a fifth. This is a real
   argument for keeping the bow a separate Object rather than ever merging it into the skinned mesh,
   where it would have to share four slots with `elf_archer_material` and `shirt`.
 - **`Standing_DrawArrow` carries -29.2 degrees of net yaw.** Whatever the other clips needed for yaw
   handling, this one needs too, and a draw that slowly rotates her is what it looks like when it
-  does not get it.
+  does not get it. **Still unverified** - nothing in any screenshot so far has looked like a slow
+  turn, and its f_turns column is off so the yaw stays in the pose, but nobody has measured it.
 - ~~**The bow bends but the character does not draw it.**~~ **Addressed 2026-09-22, temporarily.**
   `Puppet::Choose` now selects `CLIP_DRAW` in the idle branch only - drawing while standing still -
   so the pose and the bend agree. It is fitted to the rules' window at 1.778x (1.067s clip into

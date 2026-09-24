@@ -82,6 +82,8 @@ enum ArcherClip{
     CLIP_JUMP_FORWARD,      //Jump_Forward           a whole travelling jump; not wired
     CLIP_DRAW,              //Standing_DrawArrow     standing only; step 2's mask layer lets it play while moving
     CLIP_STRETCH2,
+    CLIP_AIM_IDLE,          //Standing_AimArrowIdle  held at full draw, looping; follows the draw
+    CLIP_OVERDRAW,          //Standing_OverdrawArrow pulled past full draw; preview only for now
     CLIP_COUNT
 };
 
@@ -307,6 +309,9 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
     inside BOW_DRAW_TICKS' 36, so the aim is fully on long before the bow is fully drawn.
 */
 #define PUPPET_AIM_BLEND_TICKS      6
+//And how long the upper-body layer takes to come on and go off. The same 0.1s: the draw's first
+//frames are the arm swinging back to the quiver, which reads fine arriving over six ticks.
+#define PUPPET_UPPER_BLEND_TICKS    6
 
 //--- What the animation is allowed to know ------------------------------------------------------
 /*
@@ -380,6 +385,15 @@ struct PuppetChoice{
         remembered.
     */
     bool  f_placeholder = false;
+
+    /*
+        THE UPPER-BODY LAYER (animation_plan.md, Step 2): a clip for the spine and up, over
+        whatever `clip` does with the legs. -1 for none. `upper_phase` is where in it to sample,
+        0..1 of its length, PINNED to the rules' draw progress - or negative for a loop that runs
+        on its own clock (the hold at full draw). Its weight is Puppet::upper_weight.
+    */
+    int   upper_clip = -1;
+    float upper_phase = -1.0f;
 };
 
 class Puppet{
@@ -516,13 +530,20 @@ public:
     /*
         How much of the aim angle her body takes, 0..1, eased over PUPPET_AIM_BLEND_TICKS.
 
-        1 only while the chosen clip is the DRAW - the pose the aim override is written against.
+        1 only while the chosen clip is a draw pose (IsDrawPose: the draw, and the hold at full
+        draw that follows it) - the poses the aim override is written against.
         Keyed on the clip rather than on ACTION_DRAW on purpose: a draw started at a run is still a
         run cycle today (step 2's mask layer is what changes that), and bending that would lean a
         running torso that is not holding a bow up. When the mask layer lands, the draw is on the
         upper body during every clip, and this becomes "is the upper-body draw playing".
     */
     float aim_weight = 0.0f;
+
+    //The upper layer's weight, 0..1, eased over PUPPET_UPPER_BLEND_TICKS - on while she draws, in
+    //any stance. `upper_latched` keeps the last upper clip on while the weight fades back out,
+    //so letting go does not snap the arms to whatever the legs are doing.
+    float upper_weight = 0.0f;
+    int   upper_latched = -1;
 
     PuppetChoice choice;
 
@@ -561,6 +582,19 @@ public:
 
     //Which way the model should be facing for this `facing`, with no slew.
     static float TargetYaw(float facing);
+
+    //Is this one of the bow-up poses - the draw or the hold at full draw? The aim override bends
+    //these, and the string follows the hand in them. Overdraw joins when it is wired.
+    static bool IsDrawPose(int clip);
+
+    //The upper layer's clip and phase for these parameters - the draw pinned to the rules'
+    //progress, then the hold. Pure, like Choose; Tick adds the weight and the fade-out latch.
+    static void ChooseUpper(const ArcherAnimParams& in, PuppetChoice& out);
+
+    //Is an arrow on the string, judged from the draw's progress the way Stage::IsNocked judges it
+    //from draw_ticks? The aim takes hold only from here (animation_plan.md, Step 2, the live
+    //neutral).
+    static bool IsNocked(const ArcherAnimParams& in);
 };
 
 #endif

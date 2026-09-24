@@ -142,6 +142,20 @@ struct v2{
     directions, which a world-space angle would not.
 */
 #define BOW_DRAW_TICKS              36          //0.6 s to full draw
+/*
+    THE ARROW IS ON THE STRING only this many ticks into a draw. Before it she is reaching back to
+    the quiver and bringing an arrow over, and there is nothing to shoot: letting go then CANCELS
+    the draw - no arrow, no shot - and power builds only over the pull that follows, from
+    BOW_MIN_POWER here to full at BOW_DRAW_TICKS.
+
+    Cancel rather than queue the shot until the nock: a queued shot fires 0.4s after a tap, which
+    reads as input lag on the game's main verb. A cancelled tap reads as a tap.
+
+    MEASURED from Standing_DrawArrow, the same arrangement as KICK_TICKS: the app watches her hand
+    reach the string (Bow::TrackHand) and warns, with the number to type here, when that tick and
+    this constant drift apart - which is what re-timing the clip, or BOW_DRAW_TICKS, does.
+*/
+#define BOW_NOCK_TICKS              23
 #define BOW_MIN_POWER               0.25f
 #define BOW_AIM_MIN_DEG             -85.0f
 #define BOW_AIM_MAX_DEG             85.0f
@@ -255,15 +269,22 @@ struct StageBlock{
     stage_test's blocks[0] fallback expects the main ground run to still be first.
 */
 #define ARCHER_TEST_BAY             1
-//Four bays of seven units, x -40 .. -12, abutting the main ground run. The app reads these to
-//work out which blocks belong to which bay - selection is BY X RANGE rather than by a new field
-//on StageBlock, so that the terrain work never has to reach into the rules.
-#define ARCHER_TEST_BAY_COUNT       4
+/*
+    Two bays over the same stretch, x -40 .. -12, abutting the main ground run: bay 0 is the ground
+    and everything standing on it, bay 1 an island floating well above. A block belongs to the bay
+    its CENTRE is in - inside the stretch, and below or above ARCHER_TEST_BAY_SPLIT_Y - so moving a
+    box in the editor and regenerating moves it between bays. Selection by position rather than by
+    a new field on StageBlock, so that the terrain work never has to reach into the rules.
+*/
+#define ARCHER_TEST_BAY_COUNT       2
 #define ARCHER_TEST_BAY_X_MIN       (-40.0f)
-#define ARCHER_TEST_BAY_WIDTH       7.0f
-#define ARCHER_TEST_BAY_X_MAX       (ARCHER_TEST_BAY_X_MIN + ARCHER_TEST_BAY_COUNT * ARCHER_TEST_BAY_WIDTH)
-//The centre of bay i, which is also where its three test shapes are laid out around.
-#define ARCHER_TEST_BAY_CENTRE(i)   (ARCHER_TEST_BAY_X_MIN + ((i) + 0.5f) * ARCHER_TEST_BAY_WIDTH)
+#define ARCHER_TEST_BAY_X_MAX       (-12.0f)
+#define ARCHER_TEST_BAY_SPLIT_Y     6.0f
+//The ground bay repeats one set of test shapes along its length at this spacing. stage_test finds
+//the first set's pillar by it.
+#define ARCHER_TEST_BAY_SHAPE_SETS      4
+#define ARCHER_TEST_BAY_SHAPE_SPACING   7.0f
+#define ARCHER_TEST_BAY_SHAPE_CENTRE(i) (ARCHER_TEST_BAY_X_MIN + ((i) + 0.5f) * ARCHER_TEST_BAY_SHAPE_SPACING)
 
 /*
     Something the APP builds a rigid body for, described here so that the whole level layout lives
@@ -608,6 +629,18 @@ public:
     std::vector<StageProp>  props;
 
     /*
+        Makes the blocks' CURRENT geometry the level's, so that Reset puts it back instead of
+        BuildLevel's. The app calls this when an editor has moved boxes and the terrain has been
+        regenerated to match - without it, the first restart would snap every box back while the
+        terrain stayed where they had been moved to.
+
+        Geometry only: x, y, hw and hh. Kind and f_alive still come from BuildLevel, so a restart
+        still brings a broken wall back. Ignored if the block count no longer matches, which is
+        BuildLevel having been edited since - the code is newer than the edit.
+    */
+    void KeepBlockLayout();
+
+    /*
         The props as boxes in the way, refreshed by the app BEFORE every Tick.
 
         Not filled by Stage and not persistent: `ClearObstacles` then one `AddObstacle` per live
@@ -655,7 +688,12 @@ public:
     int   draw_ticks = 0;           //0..BOW_DRAW_TICKS
     float aim_deg = 20.0f;          //relative to facing; + is up. Survives a release, so the next
                                     //shot starts where the last one was aimed.
-    float DrawPower() const;        //0..1, what draw_ticks is worth after the minimum
+    //0..1: BOW_MIN_POWER at the nock, rising over the pull to 1 at BOW_DRAW_TICKS. Before the nock
+    //there is no shot to have a power; it reads BOW_MIN_POWER so the arc has something to draw.
+    float DrawPower() const;
+    //Is an arrow on the string - drawing, and at least BOW_NOCK_TICKS in? Only then can she loose.
+    bool  IsNocked() const { return bow_mode == BOW_DRAWING && draw_ticks >= BOW_NOCK_TICKS; }
+    int   draws_cancelled = 0;      //let go before the nock; see BOW_NOCK_TICKS
 
     /*
         The arrows, live and stuck.
@@ -713,6 +751,8 @@ public:
 
 private:
     int  level = STAGE_LEVEL_MAIN;
+    //What KeepBlockLayout recorded, laid over BuildLevel's blocks by Reset. Empty until then.
+    std::vector<StageBlock> kept_layout;
     void BuildLevel();
     void BuildMainLevel();
     void BuildRangeLevel();

@@ -16,6 +16,9 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <chrono>
+#include <thread>
+#include <algorithm>
 
 static Debugger* debug = new Debugger("ApplicationArcher",DEBUG_ALL);
 
@@ -83,27 +86,202 @@ bool ArcherModel::BuildAimChain(){
             return false;
         }
     }
+    //The aim bones are layered bones too - their base pose is saved and restored with the rest.
+    for (int i = 0; i < ARCHER_AIM_BONES; i++){
+        if (std::find(layered_bones.begin(),layered_bones.end(),aim_bones[i]) == layered_bones.end()){
+            layered_bones.push_back(aim_bones[i]);
+        }
+    }
+    layered_rot.resize(layered_bones.size());
+    layered_pos.resize(layered_bones.size());
     return true;
 }
 
-void ArcherModel::ApplyAnimation(float time_delta){
-    if (f_aim_applied){
-        for (int i = 0; i < ARCHER_AIM_BONES; i++){
-            if (aim_bones[i]){ aim_bones[i]->SetRotation(aim_clean[i]); }
-        }
-        f_aim_applied = false;
+bool ArcherModel::BuildUpperMask(){
+    Bone* root = FindBone(ARCHER_UPPER_ROOT);
+    if (!root){
+        debug->Err("Upper-body layer is OFF: no bone '%s'\n",ARCHER_UPPER_ROOT);
+        return false;
     }
+    /*
+        Every BONE from the spine up. GetAllSubObjects also returns the props hanging off the
+        hands and the back (the bow, the arrows, the quiver) - those are filtered out, since no clip
+        animates them and their transforms belong to Bow (the nocked arrow's position is written
+        every tick by SyncBow, and restoring it here would fight that).
+    */
+    std::vector<Object*> subtree;
+    root->GetAllSubObjects(subtree);
+    for (Object* o : subtree){
+        Bone* bone = dynamic_cast<Bone*>(o);
+        if (!bone){
+            continue;
+        }
+        float share = 1.0f;
+        if (bone->name == "mixamorig:Spine"){ share = ARCHER_UPPER_SPINE_SHARE; }
+        if (bone->name == "mixamorig:Spine1"){ share = ARCHER_UPPER_SPINE1_SHARE; }
+        upper_share[bone] = share;
+        upper_order.push_back(bone);    //depth-first from the spine: parents before children
+        if (std::find(layered_bones.begin(),layered_bones.end(),bone) == layered_bones.end()){
+            layered_bones.push_back(bone);
+        }
+    }
+    layered_rot.resize(layered_bones.size());
+    layered_pos.resize(layered_bones.size());
+    debug->Info("Upper-body layer: %d bones from %s up\n",(int)upper_share.size(),ARCHER_UPPER_ROOT);
+    return !upper_share.empty();
+}
+
+void ArcherModel::SaveBasePose(){
+    for (size_t i = 0; i < layered_bones.size(); i++){
+        layered_rot[i] = layered_bones[i]->GetRotation();
+        layered_pos[i] = layered_bones[i]->GetPosition();
+    }
+    f_layered = true;
+}
+
+void ArcherModel::RestoreBasePose(){
+    if (!f_layered){
+        return;
+    }
+    for (size_t i = 0; i < layered_bones.size(); i++){
+        layered_bones[i]->SetRotation(layered_rot[i]);
+        layered_bones[i]->SetPosition(layered_pos[i]);
+    }
+    f_layered = false;
+}
+
+/*
+    The upper clip, sampled at upper_time and blended over the base on the masked bones only.
+
+    Reads the clip's keyframes directly and never touches its playhead (Animation::time_index), so
+    the base can be playing the very same clip - the standing draw is exactly that - without the
+    two interfering. The keyframe lookup is GetClosestKeyframe, the same one the base uses.
+
+    --- BLENDED IN MODEL SPACE, NOT BONE-LOCAL (Unreal's "mesh space rotation blend") ------------
+    An archer stands SIDE-ON: in Standing_DrawArrow her hips face sideways, and every upper-body
+    rotation in the clip is authored relative to those hips. Copied as LOCAL rotations onto a
+    walk's hips, which face forward, the whole upper body swung round with them - measured, the
+    bow ended up pointing into the screen (155 degrees off in the play plane), and the aim override,
+    which only turns about the camera axis, folded her over backwards trying to fix it.
+
+    So each bone takes the orientation it has RELATIVE TO THE CHARACTER in the layer clip - its
+    model-space rotation, chained up from the clip's own hips - blended against the base's
+    model-space rotation by its share, and is then converted back to a local rotation under
+    whatever its parent became. Whatever the legs' hips do, the torso squares up exactly as it
+    does in the clip, and the graded Spine/Spine1 shares spread the twist over the waist.
+*/
+void ArcherModel::ApplyUpperLayer(){
+    //The layer clip's local rotation for every bone it animates, the root (hips) track included -
+    //the chain has to start from the clip's OWN hips.
+    std::unordered_map<Object*,quat> clip_local;
+    std::unordered_map<Object*,ObjectAnimationKeyFrame*> clip_key;
+    for (ObjectAnimation* track : upper_clip->object_animations){
+        if (!track->target){
+            continue;
+        }
+        ObjectAnimationKeyFrame* key = track->GetClosestKeyframe(upper_time);
+        if (key){
+            clip_key[track->target] = key;
+            if (key->f_rotation){
+                clip_local[track->target] = key->rotation;
+            }
+        }
+    }
+
+    quat skel_inverse = GetWorldRotation();
+    skel_inverse.inverse();
+
+    //Pass 1, before anything is written: every masked bone's BASE model-space rotation, and the
+    //clip's, in parent-before-child order (upper_order is a depth-first walk from the spine).
+    std::unordered_map<Object*,quat> base_model;
+    std::unordered_map<Object*,quat> clip_model;
+    for (Bone* bone : upper_order){
+        base_model[bone] = skel_inverse * bone->GetWorldRotation();
+        Object* parent = bone->GetParent();
+        quat parent_clip;
+        std::unordered_map<Object*,quat>::iterator pc = clip_model.find(parent);
+        if (pc != clip_model.end()){
+            parent_clip = pc->second;
+        }else{
+            //The layer's root: its parent is the hips, which the layer does not own - so the
+            //clip's hips chain is built from the clip's hips track, up to the skeleton.
+            parent_clip = quat().identity();
+            std::vector<Object*> chain;
+            for (Object* p = parent; p && p != this; p = p->GetParent()){
+                chain.push_back(p);
+            }
+            for (int i = (int)chain.size() - 1; i >= 0; i--){
+                std::unordered_map<Object*,quat>::iterator cl = clip_local.find(chain[i]);
+                parent_clip = parent_clip * ((cl != clip_local.end()) ? cl->second : chain[i]->GetRotation());
+            }
+        }
+        std::unordered_map<Object*,quat>::iterator cl = clip_local.find(bone);
+        clip_model[bone] = parent_clip * ((cl != clip_local.end()) ? cl->second : bone->GetRotation());
+    }
+
+    //Pass 2: blend in model space, and write each back as a local rotation under its parent's
+    //NEW model-space rotation (a masked parent has just been written; the hips have not).
+    std::unordered_map<Object*,quat> new_model;
+    for (Bone* bone : upper_order){
+        float w = upper_weight * upper_share[bone];
+        quat desired = quat::slerp(base_model[bone],clip_model[bone],w);
+        desired.normalize();
+        new_model[bone] = desired;
+        Object* parent = bone->GetParent();
+        quat parent_model;
+        std::unordered_map<Object*,quat>::iterator pm = new_model.find(parent);
+        if (pm != new_model.end()){
+            parent_model = pm->second;
+        }else{
+            parent_model = skel_inverse * parent->GetWorldRotation();
+        }
+        quat parent_inverse = parent_model;
+        parent_inverse.inverse();
+        quat local = parent_inverse * desired;
+        local.normalize();
+        bone->SetRotation(local);
+
+        //Positions stay local: on this rig they are bone lengths and hardly move.
+        std::unordered_map<Object*,ObjectAnimationKeyFrame*>::iterator ck = clip_key.find(bone);
+        if (ck != clip_key.end() && ck->second->f_position){
+            bone->SetPosition(bone->GetPosition().lerp(ck->second->position,w));
+        }
+    }
+}
+
+float ArcherModel::BowAimDeg(){
+    if (!aim_probe){
+        return 0.0f;
+    }
+    vec3 front = aim_probe->GetWorldRotation() * vec3(0.0f,0.0f,1.0f);
+    return atan2f(front.y,front.x * aim_facing) / ARCHER_DEG2RAD;
+}
+
+void ArcherModel::ApplyAnimation(float time_delta){
+    RestoreBasePose();
 
     Skeleton::ApplyAnimation(time_delta);
 
-    if (aim_bones[0] && aim_weight > 0.0f){
+    bool f_upper = (upper_clip && upper_weight > 0.0f && !upper_share.empty());
+    bool f_aim = (aim_bones[0] && aim_weight > 0.0f);
+    if (f_upper || f_aim){
+        SaveBasePose();
+    }
+    if (f_upper){
+        ApplyUpperLayer();
+    }
+
+    //The live neutral: where the layered pose points the bow, before the aim turns her.
+    aim_pose_deg = BowAimDeg();
+
+    if (f_aim){
         const vec3 axis_world(0.0f,0.0f,1.0f);
         //+ is up in both directions: facing +X, a positive turn about +Z lifts +X toward +Y;
         //facing -X the same lift is a negative turn. Same mirroring as Stage::AimDirection.
-        float angle = aim_delta_deg * aim_weight * aim_facing * ARCHER_DEG2RAD;
+        float angle = (aim_target_deg - aim_pose_deg) * aim_weight * aim_facing * ARCHER_DEG2RAD;
         for (int i = 0; i < ARCHER_AIM_BONES; i++){
             Bone* bone = aim_bones[i];
-            aim_clean[i] = bone->GetRotation();
+            quat clean = bone->GetRotation();
             /*
                 A world turn R applied to a bone whose world rotation is P * L (parent times
                 local) gives R * P * L = P * (P^-1 R P) * L - and P^-1 R P is the same angle about
@@ -114,18 +292,14 @@ void ArcherModel::ApplyAnimation(float time_delta){
             parent_inverse.inverse();
             vec3 axis_local = parent_inverse * axis_world;
             quat turn(axis_local,angle * aim_shares[i]);
-            quat local = turn * aim_clean[i];
+            quat local = turn * clean;
             local.normalize();
             bone->SetRotation(local);
         }
-        f_aim_applied = true;
     }
 
     //What came out: the bow's front in the play plane, relative to facing. See aim_drawn_deg.
-    if (aim_probe){
-        vec3 front = aim_probe->GetWorldRotation() * vec3(0.0f,0.0f,1.0f);
-        aim_drawn_deg = atan2f(front.y,front.x * aim_facing) / ARCHER_DEG2RAD;
-    }
+    aim_drawn_deg = BowAimDeg();
 }
 
 ApplicationArcher::ApplicationArcher():Application(){
@@ -342,7 +516,8 @@ void ApplicationArcher::BuildMaterials(){
 */
 Object* ApplicationArcher::MakePlanarBody(Mesh* mesh, const char* name, const vec3& position,
                                           const vec3& size, int material, uint32_t category,
-                                          uint32_t collide_mask, float mass, bool f_static){
+                                          uint32_t collide_mask, float mass, bool f_static,
+                                          Object* parent){
     Object* object = new Object();
     object->SetMesh(mesh);
     object->name = name;
@@ -351,7 +526,13 @@ Object* ApplicationArcher::MakePlanarBody(Mesh* mesh, const char* name, const ve
     //A generated mesh carries no material names, so there is nothing for
     //Renderer::UpdateObjectMaterials to resolve over this slot on the next frame.
     object->SetMaterialSlot(0,material);
-    main_scene->AddObject(object);
+    //Attached BEFORE AddPhysics, and only ever to an identity parent - see the note on the
+    //declaration. `position` is then world as well as local, which is what the body is seeded with.
+    if (parent){
+        parent->AttachChild(object);
+    }else{
+        main_scene->AddObject(object);
+    }
 
     Physics* p = object->AddPhysics(main_scene->physics_world);
     if (!p){
@@ -419,6 +600,22 @@ Object* ApplicationArcher::MakePlanarBody(Mesh* mesh, const char* name, const ve
 
 void ApplicationArcher::BuildBlocks(){
     block_objects.clear();
+    /*
+        Every box goes under one "blockout" object, purely so the scene tree shows the level as one
+        collapsible group instead of dozens of loose roots.
+
+        IT MUST STAY AT THE ORIGIN, UNROTATED AND UNSCALED. These are rigid bodies, and a body
+        writes its WORLD pose into its object's LOCAL one every tick - which is only right because
+        this parent adds nothing. Move it in the Inspector and every box is drawn one offset away
+        from where it collides. See the hierarchy note in core/Object.h.
+
+        Made once per level and kept across restarts: NewGame destroys the children, not the group.
+    */
+    if (!blockout_group){
+        blockout_group = new Object();
+        blockout_group->name = "blockout";
+        main_scene->AddObject(blockout_group);
+    }
     for (size_t i = 0; i < stage.blocks.size(); i++){
         const StageBlock& b = stage.blocks[i];
         int material = material_ground;
@@ -446,7 +643,7 @@ void ApplicationArcher::BuildBlocks(){
         Object* object = NULL;
         if (f_collides){
             object = MakePlanarBody(unit_mesh,name,vec3(b.x,b.y,0.0f),size,material,
-                                    ARCHER_CAT_LEVEL,ARCHER_MASK_LEVEL,0.0f,true);
+                                    ARCHER_CAT_LEVEL,ARCHER_MASK_LEVEL,0.0f,true,blockout_group);
         }else{
             object = new Object();
             object->SetMesh(unit_mesh);
@@ -454,7 +651,7 @@ void ApplicationArcher::BuildBlocks(){
             object->SetPosition(vec3(b.x,b.y,0.0f));
             object->SetScale(size);
             object->SetMaterialSlot(0,material);
-            main_scene->AddObject(object);
+            blockout_group->AttachChild(object);
         }
         block_objects.push_back(object);
     }
@@ -462,29 +659,25 @@ void ApplicationArcher::BuildBlocks(){
 }
 
 #if ARCHER_TEST_BAY
-/*
-    The four variants the test bay exists to compare, left to right.
+//Which blocks bay `bay` is built from: 0 below ARCHER_TEST_BAY_SPLIT_Y, 1 above. Shared by the
+//mesher and by ApplyBlockoutVisibility, so what is hidden is exactly what was melted.
+static TerrainRegion TerrainBayRegion(int bay){
+    TerrainRegion r;
+    r.x_min = ARCHER_TEST_BAY_X_MIN;
+    r.x_max = ARCHER_TEST_BAY_X_MAX;
+    r.y_min = (bay == 0) ? -1e30f : ARCHER_TEST_BAY_SPLIT_Y;
+    r.y_max = (bay == 0) ? ARCHER_TEST_BAY_SPLIT_Y : 1e30f;
+    return r;
+}
 
-    BAY 0 IS THE CONTROL and is not a setting anyone would ship: no smoothing, no noise, and just
-    enough rounding to take the glare off a corner. It is there so that the three to its right are
-    read against something rather than against a memory of what the boxes used to look like - and
-    because if bay 0 ever stops looking like the blockout, the mesher has broken rather than the
-    tuning.
-
-    The ladder from 1 to 3 moves all three knobs together on purpose. They are not independent in
-    any way a player would notice: a big smooth_k with no noise reads as melted plastic, and big
-    noise with no smoothing reads as gravel glued to boxes. What is being compared is four points
-    on one line from "blockout" to "landscape", not a parameter sweep.
-*/
-static TerrainParams TerrainVariant(int bay){
-    TerrainParams p;
-    switch (bay){
-        case 0:  p.smooth_k = 0.00f; p.round_r = 0.05f; p.noise_amp = 0.00f; break;
-        case 1:  p.smooth_k = 0.20f; p.round_r = 0.15f; p.noise_amp = 0.06f; break;
-        case 2:  p.smooth_k = 0.35f; p.round_r = 0.20f; p.noise_amp = 0.15f; break;
-        default: p.smooth_k = 0.60f; p.round_r = 0.30f; p.noise_amp = 0.25f; break;
+//True if any bay melts this block.
+static bool IsInTerrainBay(const StageBlock& b){
+    for (int i = 0;i < ARCHER_TEST_BAY_COUNT;i++){
+        if (TerrainBayRegion(i).Contains(b)){
+            return true;
+        }
     }
-    return p;
+    return false;
 }
 #endif
 
@@ -500,21 +693,12 @@ void ApplicationArcher::BuildTerrain(){
     */
     MarchingCubesSelfTest();
 
+    //One object per bay, made whether or not the bay has anything in it yet: an edit can move
+    //boxes into an empty bay, and RemeshTerrainBay then only has to fill the object in.
     for (int i = 0;i < ARCHER_TEST_BAY_COUNT;i++){
-        float x0 = ARCHER_TEST_BAY_X_MIN + i * ARCHER_TEST_BAY_WIDTH;
-        float x1 = x0 + ARCHER_TEST_BAY_WIDTH;
-        TerrainParams params = TerrainVariant(i);
-        TerrainStats stats;
-        Mesh* mesh = BuildTerrainMesh(stage.blocks,x0,x1,params,&stats);
-        if (!mesh){
-            debug->Err("Terrain bay %i built nothing\n",i);
-            continue;
-        }
-
         char name[48];
         snprintf(name,sizeof(name),"terrain_bay_%i",i);
         Object* object = new Object();
-        object->SetMesh(mesh);      //takes the reference; Destroy drops it and frees the mesh
         object->name = name;
         /*
             IDENTITY TRANSFORM, because the mesh is already in world coordinates.
@@ -532,30 +716,128 @@ void ApplicationArcher::BuildTerrain(){
         object->SetMaterialSlot(2,material_rock);
         main_scene->AddObject(object);
         terrain_objects.push_back(object);
-
-        debug->Info("Terrain bay %i [%.1f,%.1f): %i blocks, %i tris, %zu samples, "
-                    "dip %.4f rise %.4f over %i probes (k=%.2f r=%.2f n=%.2f)\n",
-                    i,x0,x1,stats.num_blocks,stats.num_triangles,stats.num_samples,
-                    stats.worst_dip,stats.worst_rise,stats.num_probes,
-                    params.smooth_k,params.round_r,params.noise_amp);
-        /*
-            THE ONE ASSERTION THAT MATTERS, and it is logged rather than asserted so that a bad
-            variant still renders and can be looked at.
-
-            A dip is the surface sitting BELOW a collider's exposed top face, which is the archer
-            standing in mid-air. It is a fifth of a unit at worst, invisible in a screenshot and
-            unmistakable under the feet, so it is measured instead of eyeballed.
-        */
-        if (stats.worst_dip > 0.02f){
-            debug->Err("Terrain bay %i DIPS %.4f below a top face - the archer will float there. "
-                       "See the top-pinning note in Terrain.h.\n",i,stats.worst_dip);
-        }
+        RemeshTerrainBay(i);
     }
 
     ApplyBlockoutVisibility();
     debug->Info("Terrain: %i bays built, %i blockout boxes hidden\n",
                 (int)terrain_objects.size(),(int)melted_blocks.size());
 #endif
+}
+
+/*
+    Meshes one bay from the blocks as they stand in `stage` right now. RENDER THREAD ONLY - it ends
+    in Mesh::SetMeshData.
+
+    The bay keeps its Object and its Mesh; only the vertices are replaced. So regenerating never
+    adds or removes anything from the scene, which is what makes it safe to do in the middle of a
+    running game - nothing the render thread is walking changes shape underneath it. An empty bay
+    is hidden rather than given an empty mesh, which SetMeshData cannot take.
+*/
+void ApplicationArcher::RemeshTerrainBay(int bay){
+#if ARCHER_TEST_BAY
+    if (bay < 0 || bay >= (int)terrain_objects.size() || !terrain_objects[bay]){
+        return;
+    }
+    Object* object = terrain_objects[bay];
+    //Every bay on the defaults. The four-way comparison those were chosen from is in the history
+    //and in terrain_plan.md; Terrain.h's TerrainParams is where to argue with them.
+    TerrainParams params;
+    TerrainStats stats;
+    std::vector<vertex> verts;
+    if (!BuildTerrainVerts(stage.blocks,TerrainBayRegion(bay),params,verts,&stats) || verts.empty()){
+        object->SetVisibility(false);
+        debug->Info("Terrain bay %i has no solid blocks in it - hidden\n",bay);
+        return;
+    }
+    Mesh* mesh = object->GetMesh();
+    if (!mesh){
+        mesh = new Mesh();
+        object->SetMesh(mesh);      //takes the reference; Destroy drops it and frees the mesh
+    }
+    mesh->SetMeshData(verts.data(),(int)verts.size());
+    object->SetVisibility(true);
+
+    debug->Info("Terrain bay %i: %i blocks, %i tris, %zu samples, "
+                "dip %.4f rise %.4f over %i probes (k=%.2f r=%.2f n=%.2f)\n",
+                bay,stats.num_blocks,stats.num_triangles,stats.num_samples,
+                stats.worst_dip,stats.worst_rise,stats.num_probes,
+                params.smooth_k,params.round_r,params.noise_amp);
+    /*
+        THE ONE ASSERTION THAT MATTERS, and it is logged rather than asserted so that a bad
+        layout still renders and can be looked at.
+
+        A dip is the surface sitting BELOW a collider's exposed top face, which is the archer
+        standing in mid-air. It is a fifth of a unit at worst, invisible in a screenshot and
+        unmistakable under the feet, so it is measured instead of eyeballed.
+    */
+    if (stats.worst_dip > 0.02f){
+        debug->Err("Terrain bay %i DIPS %.4f below a top face - the archer will float there. "
+                   "See the top-pinning note in Terrain.h.\n",bay,stats.worst_dip);
+    }
+#else
+    (void)bay;
+#endif
+}
+
+/*
+    The editor's round trip: boxes moved in the Inspector become the level, and the terrain is
+    remeshed over them. RENDER THREAD, from PreRender - see the request flag in the header.
+
+    THE OBJECTS ARE THE SOURCE OF TRUTH HERE, NOT Stage::blocks. The Inspector moves a block's
+    Object (and its body, which follows), but the rules never hear about it - Stage still sweeps
+    the archer against the box where BuildLevel put it. So each block's centre and size are read
+    back off its object first: position is the centre, scale the full size, because every block is
+    the unit cube scaled - see BuildBlocks. Rotation is ignored; a StageBlock is axis-aligned and
+    so is the collision for the archer and the arrows.
+
+    Then KeepBlockLayout, so the next restart rebuilds the moved boxes rather than the original
+    ones - otherwise a fall off the world would snap every box back under a terrain that no longer
+    matches them.
+
+    Under physics_mutex for the whole of it: this writes the Stage the tick reads, and reads the
+    objects the tick writes.
+*/
+void ApplicationArcher::RegenerateTerrain(){
+    main_scene->AtTickBoundary([this](){
+        int moved = 0;
+        for (size_t i = 0;i < stage.blocks.size() && i < block_objects.size();i++){
+            Object* object = block_objects[i];
+            StageBlock& b = stage.blocks[i];
+            if (!object || !b.f_alive){
+                continue;       //a broken wall has no box left to read
+            }
+            vec3 p = object->GetWorldPosition();
+            vec3 s = object->GetScale();
+            float hw = fabsf(s.x) * 0.5f;
+            float hh = fabsf(s.y) * 0.5f;
+            if (b.x != p.x || b.y != p.y || b.hw != hw || b.hh != hh){
+                moved++;
+            }
+            b.x = p.x;
+            b.y = p.y;
+            b.hw = hw;
+            b.hh = hh;
+        }
+        stage.KeepBlockLayout();
+        //The terrain belongs to the main level's test bay; on the range this still keeps the
+        //moved boxes, there is just nothing to mesh.
+        for (int i = 0;i < (int)terrain_objects.size();i++){
+            RemeshTerrainBay(i);
+        }
+        ApplyBlockoutVisibility();
+        debug->Info("Terrain regenerated: %i of %i blocks moved, %i hidden under terrain\n",
+                    moved,(int)stage.blocks.size(),(int)melted_blocks.size());
+        last_regen_moved = moved;
+        last_regen_hidden = (int)melted_blocks.size();
+    });
+    terrain_generation++;
+}
+
+void ApplicationArcher::PreRender(void){
+    if (f_regenerate_terrain.exchange(false)){
+        RegenerateTerrain();
+    }
 }
 
 /*
@@ -566,9 +848,15 @@ void ApplicationArcher::BuildTerrain(){
     so removing entries would be a quiet corruption of the kick slice. Hiding costs one bool, keeps
     every collider exactly where it was, and makes the debug view below a one-liner.
 
+    SetVisibility, NOT Hide(). Object::Hide also deactivates the body, and this used to call it -
+    which quietly switched off the collider of every melted box, so a prop landing on the terrain
+    fell straight through it. Visibility is the only thing that should change here.
+
     RECOMPUTED FROM Stage::blocks RATHER THAN REMEMBERED, because NewGame throws every block object
     away and builds a fresh set that all start visible - so this has to run again after each
-    restart, against a block_objects that is not the one BuildTerrain saw.
+    restart, against a block_objects that is not the one BuildTerrain saw. And every SOLID block is
+    visited, not just the melted ones: after an edit a box may have been dragged OUT of a bay, and
+    has to be shown again.
 
     NO GL IN HERE, which is what makes it safe to call from NewGame on the physics thread. Compare
     BuildTerrain, which is render-thread only for exactly that reason.
@@ -581,21 +869,16 @@ void ApplicationArcher::ApplyBlockoutVisibility(){
     }
     for (size_t i = 0;i < stage.blocks.size() && i < block_objects.size();i++){
         const StageBlock& b = stage.blocks[i];
-        if (b.kind != BLOCK_SOLID){
-            continue;       //only SOLID melts - see the header note in Terrain.h
-        }
-        if (b.x < ARCHER_TEST_BAY_X_MIN || b.x >= ARCHER_TEST_BAY_X_MAX){
+        //Only SOLID melts - see the header note in Terrain.h. Leaving the other kinds alone also
+        //keeps this from un-hiding a broken wall, which BreakBlocks hid for good.
+        if (b.kind != BLOCK_SOLID || !block_objects[i]){
             continue;
         }
-        if (!block_objects[i]){
-            continue;
+        bool f_melted = IsInTerrainBay(b);
+        if (f_melted){
+            melted_blocks.push_back((int)i);
         }
-        melted_blocks.push_back((int)i);
-        if (f_show_blockout){
-            block_objects[i]->Show();
-        }else{
-            block_objects[i]->Hide();
-        }
+        block_objects[i]->SetVisibility(!f_melted || f_show_blockout);
     }
 #endif
 }
@@ -969,6 +1252,14 @@ void ApplicationArcher::BuildArcherModel(){
     */
     archer_model->SetBlendTime("",ARCHER_CLIPS[CLIP_STOP].name,0.067f);
 
+    /*
+        None at all from the draw into the hold at full draw. Standing_AimArrowIdle begins on the
+        draw's last pose to three decimals, so there is nothing to blend - and a crossfade would
+        blend the draw's held last frame with a loop that has already started moving, which is a
+        small hitch rather than no hitch.
+    */
+    archer_model->SetBlendTime(ARCHER_CLIPS[CLIP_DRAW].name,ARCHER_CLIPS[CLIP_AIM_IDLE].name,0.0f);
+
     //Start her standing, and hide the box she has been standing in for five slices.
     if (archer_clips[CLIP_IDLE]){
         archer_model->SwitchToAnimation(archer_clips[CLIP_IDLE]);
@@ -1001,6 +1292,8 @@ void ApplicationArcher::BuildBow(){
         debug->Err("The bow could not be equipped - she plays empty-handed\n");
     }
     //The aim override bends the chain that carries the bow, and checks itself against the bow.
+    //The upper layer's mask is built here too, after the props are on, so it can leave them out.
+    archer_model->BuildUpperMask();
     archer_model->BuildAimChain();
     archer_model->aim_probe = bow_rig.bow.object;
 }
@@ -1356,20 +1649,14 @@ void ApplicationArcher::MeasureKickClip(){
     an arrow flies point-first and sticks with its head in the target, where the centred box stuck
     with half its length buried.
 
-    MEASURED FROM THE FILE, not typed in:
-      - the LONG AXIS is the longest side of the mesh's bounding box;
-      - the TIP is the end of that axis FARTHER FROM THE MESH'S ORIGIN, because the prop
-        convention puts the origin at the nock. In the 2026-09-23 export the arrow runs z
-        -0.017 .. 0.519 (the fletching reaches a little behind the nock). The prop convention
-        makes this search redundant - long axis Z, tip at +Z - and it is kept because it still
-        gets it right and costs nothing; bow_plan.md §8 item 9 replaces it.
+    DECLARED BY THE PROP CONVENTION, not searched for: the nock is at the origin and the point is
+    the furthest the mesh reaches along +Z (0.519 in the 2026-09-23 export; the fletching reaches
+    a little behind the nock, to −0.017). An earlier version searched the bounding box for the
+    long axis and the far end, from before the props had a convention; a mesh that breaks the
+    convention is now reported rather than accommodated.
 
-        THE FIRST VERSION GUESSED "the end nearer the bow" and flew every arrow backwards - a
-        close-up screenshot of one in flight showed the head trailing. In the draw pose the nock
-        and the bow are both near the middle of her, so distance to the bow says little; the
-        origin being ON the hand says it outright.
-      - the SIZE is the nocked arrow's size in the world, read through its own world matrix, so a
-        flying arrow is the arrow she was holding - whatever the rig scale and the bone chain do.
+    The SIZE is the nocked arrow's size in the world, read through its own world matrix, so a
+    flying arrow is the arrow she was holding - whatever the rig scale and the bone chain do.
 
     The copy is a new mesh with the vertices rotated and scaled (normals and tangents rotated with
     them), registered as the asset ar_arrow_flight. The roll about the shaft is whatever the axis
@@ -1384,9 +1671,6 @@ void ApplicationArcher::MeasureKickClip(){
 */
 #define ARROW_TIP_EMBED             0.12f
 
-static float AxisOf(const vec3& v, int axis){
-    return (axis == 0) ? v.x : ((axis == 1) ? v.y : v.z);
-}
 
 Mesh* ApplicationArcher::BuildFlightArrowMesh(){
     Object* nocked = bow_rig.arrow.object;
@@ -1404,43 +1688,28 @@ Mesh* ApplicationArcher::BuildFlightArrowMesh(){
         hi = vec3(fmaxf(hi.x,p.x),fmaxf(hi.y,p.y),fmaxf(hi.z,p.z));
     }
     vec3 size = hi - lo;
-    int axis = 0;
-    if (size.y > AxisOf(size,axis)){ axis = 1; }
-    if (size.z > AxisOf(size,axis)){ axis = 2; }
 
-    //The two ends of the shaft, on the long axis through the middle of the box.
-    vec3 centre = (lo + hi) * 0.5f;
-    vec3 end_lo = centre;
-    vec3 end_hi = centre;
-    if (axis == 0){ end_lo.x = lo.x; end_hi.x = hi.x; }
-    if (axis == 1){ end_lo.y = lo.y; end_hi.y = hi.y; }
-    if (axis == 2){ end_lo.z = lo.z; end_hi.z = hi.z; }
+    //The one check the convention still needs: the shaft runs along Z. A prop exported lying some
+    //other way would fly sideways, and this says so instead of leaving it to be spotted in flight.
+    if (size.z < size.x || size.z < size.y || hi.z <= 0.0f){
+        debug->Err("The arrow mesh is not along +Z (box %.3f x %.3f x %.3f, z up to %.3f). The "
+                   "prop convention is origin at the nock and the point toward the character's "
+                   "forward - Blender -Y, glTF +Z; see Bow.h. It will fly crooked.\n",
+                   size.x,size.y,size.z,hi.z);
+    }
 
-    //Which end is the head: the one farther from the node's origin, which is the nocking hand.
-    float d_lo = end_lo.length();
-    float d_hi = end_hi.length();
-    bool f_tip_is_hi = (d_hi > d_lo);
-    vec3 tip = f_tip_is_hi ? end_hi : end_lo;
-    vec3 nock = f_tip_is_hi ? end_lo : end_hi;
+    //Nock at the origin, point at +Z - the furthest the mesh reaches along it.
+    vec3 nock(0.0f,0.0f,0.0f);
+    vec3 tip(0.0f,0.0f,hi.z);
 
-    //World length as drawn in her hand, over local length: the scale that makes the copy match.
+    //World length as drawn on the bow, over local length: the scale that makes the copy match.
     fmat4& world = nocked->GetWorldTransformScaleMatrix();
     float world_length = (world * tip - world * nock).length();
-    float local_length = (tip - nock).length();
+    float local_length = hi.z;
     float scale = (local_length > 0.0001f) ? world_length / local_length : 1.0f;
 
-    /*
-        The rotation that takes the tip direction (nock -> tip, a signed unit axis) to +X. Six
-        cases, each a quarter or half turn; about Y for Z, about Z for Y. Positive rotation about
-        Y takes +Z to +X, and positive rotation about Z takes +X to +Y, so -90 about Z takes +Y
-        to +X.
-    */
-    const float half_pi = 1.5707963f;
-    float sign = f_tip_is_hi ? 1.0f : -1.0f;
-    quat to_x = quat().identity();
-    if (axis == 0 && sign < 0.0f){ to_x = quat(vec3(0,1,0),2.0f * half_pi); }
-    if (axis == 1){ to_x = quat(vec3(0,0,1),-sign * half_pi); }
-    if (axis == 2){ to_x = quat(vec3(0,1,0), sign * half_pi); }
+    //+90 about Y takes +Z to +X, the direction SyncArrowViews aims along.
+    quat to_x = quat(vec3(0,1,0),1.5707963f);
 
     std::vector<vertex> out(in.begin(),in.end());
     for (size_t i = 0; i < out.size(); i++){
@@ -1453,10 +1722,8 @@ Mesh* ApplicationArcher::BuildFlightArrowMesh(){
     mesh->num_materials = source->num_materials;
     assetmanager->AddNewAsset("ar_arrow_flight",mesh);
 
-    debug->Info("Flight arrow from '%s': long axis %c, %.3f long in the file -> %.3f in the world "
-                "(x%.3f), tip at the %s end (%.3f from the hand, nock %.3f)\n",
-                BOW_ARROW_NODE,"XYZ"[axis],local_length,world_length,scale,
-                f_tip_is_hi ? "+" : "-",f_tip_is_hi ? d_hi : d_lo,f_tip_is_hi ? d_lo : d_hi);
+    debug->Info("Flight arrow from '%s': nock to point %.3f in the file -> %.3f in the world "
+                "(x%.3f)\n",BOW_ARROW_NODE,local_length,world_length,scale);
 
     /*
         THE RULES' ARROW LENGTH, checked against this mesh. Stage cannot read a .glb, so
@@ -1464,7 +1731,7 @@ Mesh* ApplicationArcher::BuildFlightArrowMesh(){
         KICK_TICKS. Origin to point: the prop convention puts the origin at the nock, which is
         where the string holds it and where the rules' ANCHOR is.
     */
-    float nock_to_tip = (f_tip_is_hi ? d_hi : d_lo) * scale;
+    float nock_to_tip = world_length;
     if (fabsf(nock_to_tip - ARROW_LENGTH) > 0.03f){
         debug->Warn("The arrow is %.3f from nock to point but ARROW_LENGTH is %.3f, so the loosed "
                     "arrow will appear %.3f %s the nocked one. Set ARROW_LENGTH to %.2f in "
@@ -1908,6 +2175,7 @@ void ApplicationArcher::SwapLevel(){
     std::swap(stage,parked_level.stage);
     std::swap(archer_object,parked_level.archer_object);
     std::swap(block_objects,parked_level.block_objects);
+    std::swap(blockout_group,parked_level.blockout_group);
     std::swap(prop_views,parked_level.prop_views);
     std::swap(debris,parked_level.debris);
     std::swap(terrain_objects,parked_level.terrain_objects);
@@ -2129,8 +2397,9 @@ void ApplicationArcher::NewGame(){
         Two reasons, and the second one is a hard constraint rather than a preference:
 
           - It cannot have changed. The terrain is a pure function of Stage::blocks, and
-            Stage::Reset rebuilds those from the same BuildLevel every time, so remeshing would
-            produce the same vertices at some cost.
+            Stage::Reset rebuilds those from BuildLevel plus whatever layout the last
+            RegenerateTerrain kept - which is exactly what the terrain was last meshed from - so
+            remeshing would produce the same vertices at some cost.
           - THIS FUNCTION RUNS ON THE PHYSICS THREAD. BuildTerrainMesh ends in Mesh::SetMeshData,
             which calls glNamedBufferData immediately, and the physics thread may not touch GL -
             see the thread note in core/MarchingCubes.h. A restart that remeshed here would be a
@@ -2205,6 +2474,20 @@ void ApplicationArcher::UpdateView(void){
     }
     if (f_toggle_blockout && input->HasFocus()){
         SetBlockoutVisible(!f_show_blockout);
+    }
+
+    /*
+        Hover and click-to-select, which is what puts something in the Inspector.
+
+        Not on by default: an app that never calls CheckObjectSelection has no selection and no
+        error saying so. Here, above the orbit's early return, so it works in both camera modes.
+        Focus-gated because the left-button release edge fires for a click NEXT TO the window too,
+        and would clear the selection whenever the person clicked in another program. The panels
+        need no gate here - CheckObjectSelection already stands down while ImGui wants the mouse.
+        Nothing in the game itself uses the left button, so selecting cannot also fire an action.
+    */
+    if (input->HasFocus()){
+        CheckObjectSelection();
     }
 
     /*
@@ -3105,29 +3388,79 @@ void ApplicationArcher::SyncArcherView(){
     the long note in Bow.h. Anything here that moved the bow would be a second opinion about where
     her hand is.
 
-    DERIVED FROM draw_ticks RATHER THAN FROM THE Bow_Draw CLIP, and the difference is not stylistic.
-    That clip runs 1.100s while BOW_DRAW_TICKS is 36 ticks - 0.600s - so a clip-driven bow reaches
-    full bend nearly half a second after the shot reaches full power. draw_ticks is the number that
-    sets the arrow's speed in Stage::Loose, so taking the bend from it makes a fully bent bow and a
-    full-power shot the same fact rather than two things that have to be kept in agreement.
+    TWO SOURCES FOR THE BEND, chosen by whether the draw POSE is on screen:
 
-    Physics thread, like every other Sync* beside it, and safe for the same reason: SetShapekey
-    writes one float on the Object and touches no GL.
+      - It is (standing, or previewing the draw clip): THE STRING FOLLOWS HER HAND - Bow::TrackHand,
+        measured off the posed skeleton every tick. Nothing bends and no arrow is on the string
+        until her hand gets there, which in Standing_DrawArrow is 0.6s of 1.067 in: she reaches back
+        to the quiver first and carries the arrow over (bow_plan.md §8 item 7).
+      - It is not (a draw at a run, until the mask layer puts the draw on her upper body): the old
+        rule - the bend from draw_ticks and the arrow on the string for the whole draw. Her hand is
+        nowhere near the string in a run cycle, so tracking it would show nothing at all until the
+        arrow flew, and some feedback beats none.
+
+    The rules' POWER is unchanged either way: it is draw_ticks, as Stage::Loose reads it. Making the
+    visible draw and the power agree is the gameplay decision still open (bow_plan.md §8 item 7).
+
+    Physics thread, like every other Sync* beside it, and after the animation pass that posed her
+    this tick, so the hand TrackHand reads is the hand on screen. Safe for the usual reason:
+    SetShapekey and SetPosition write floats on Objects and touch no GL.
 */
 void ApplicationArcher::SyncBow(){
+    bool f_drawing = (stage.bow_mode == BOW_DRAWING);
+    //On the base (standing) or on the upper layer (any stance, once it is mostly on).
+    bool f_draw_pose = (anim_source == ANIM_FROM_CLIP) ? Puppet::IsDrawPose(playing_clip)
+                     : (Puppet::IsDrawPose(puppet.choice.clip) ||
+                        (puppet.upper_weight > 0.5f && Puppet::IsDrawPose(puppet.choice.upper_clip)));
     float draw01 = 0.0f;
-    if (stage.bow_mode == BOW_DRAWING && BOW_DRAW_TICKS > 0){
-        draw01 = (float)stage.draw_ticks / (float)BOW_DRAW_TICKS;
+    if (f_draw_pose){
+        //Previewing the clip draws it whatever the rules think, so a new draw clip can be checked
+        //on its own - which is what the preview is for.
+        bool f_was_on_string = bow_rig.f_hand_on_string;
+        draw01 = bow_rig.TrackHand(f_drawing || anim_source == ANIM_FROM_CLIP);
+        f_arrow_nocked = bow_rig.f_hand_on_string;
+        if (f_arrow_nocked && !f_was_on_string && f_drawing){
+            CheckNockTicks();
+        }
+    }else{
+        bow_rig.TrackHand(false);
+        /*
+            No draw pose to read the hand off - a draw at a run - so the string shows the rules'
+            own pull: nothing until the nock, then the same ramp the power takes. After
+            HandleEvents, so a draw cancelled or loosed this tick ends with the string empty.
+        */
+        if (stage.IsNocked()){
+            float pull = (float)(stage.draw_ticks - BOW_NOCK_TICKS) /
+                         (float)(BOW_DRAW_TICKS - BOW_NOCK_TICKS);
+            draw01 = (pull < 0.0f) ? 0.0f : ((pull > 1.0f) ? 1.0f : pull);
+        }
+        f_arrow_nocked = stage.IsNocked();
     }
     bow_rig.SetDraw(draw01);
-    /*
-        The nocked arrow is on the string FOR THE WHOLE DRAW AND ONLY THEN. An archer nocks as she
-        draws; carried at other times the arrow rides the bow wherever the socket puts it, which at
-        idle is pointing at the floor. After HandleEvents, so a tap - drawn and loosed inside one
-        tick, leaving bow_mode idle - ends with the string empty.
-    */
-    f_arrow_nocked = (stage.bow_mode == BOW_DRAWING);
-    bow_rig.SetArrowNocked(f_arrow_nocked);
+    //The in-hand arrow only exists with the draw pose on screen - TrackHand(false) clears it.
+    bow_rig.SetArrowNocked(f_arrow_nocked,bow_rig.f_arrow_in_hand);
+    bow_draw_shown = draw01;
+}
+
+/*
+    BOW_NOCK_TICKS, checked against the hand. Called on the tick her hand reaches the string in a
+    real draw. Stage cannot see the hand, so the rules' nock is a typed constant, and this is what
+    keeps it honest - the same arrangement as KICK_TICKS. A gap of a tick or two is the animation
+    running one tick behind the rules and means nothing; more than that means the clip or
+    BOW_DRAW_TICKS moved, and the message says what to type. Once per distinct value, not per draw.
+*/
+void ApplicationArcher::CheckNockTicks(){
+    int seen = stage.draw_ticks;
+    int gap = seen - BOW_NOCK_TICKS;
+    if (gap < -2 || gap > 2){
+        if (nock_warned_at != seen){
+            debug->Warn("Her hand reached the string at draw tick %d but BOW_NOCK_TICKS is %d, so "
+                        "the rules %s. Set BOW_NOCK_TICKS to %d in Stage.h.\n",seen,BOW_NOCK_TICKS,
+                        (gap > 0) ? "let her loose an arrow that is not on the string yet"
+                                  : "refuse a shot with the arrow already on the string",seen);
+            nock_warned_at = seen;
+        }
+    }
 }
 
 void ApplicationArcher::SyncArcherAnimation(){
@@ -3153,8 +3486,9 @@ void ApplicationArcher::SyncArcherAnimation(){
             }
             archer_model->SetAnimationRate(preview_rate);
         }
-        //A clip preview is the clip as exported - nothing bends it.
+        //A clip preview is the clip as exported - nothing bends it and nothing layers over it.
         archer_model->aim_weight = 0.0f;
+        archer_model->upper_weight = 0.0f;
     }else{
         ArcherAnimParams params;
         if (anim_source == ANIM_FROM_PANEL){
@@ -3165,14 +3499,41 @@ void ApplicationArcher::SyncArcherAnimation(){
         puppet.Tick(params);
 
         /*
-            The aim, handed to the model's post-pose override (ArcherModel::ApplyAnimation).
-            Relative to the draw pose's own aim, which Bow measured at full draw - so aim_deg 0
-            is level whatever the animator's draw happens to point at. From the SAME params as the
-            clip choice, so the panel's aim slider bends her exactly as the game's aim does.
+            The aim, handed to the model's post-pose override (ArcherModel::ApplyAnimation). The
+            TARGET only: the model reads where the posed bow already points (the live neutral,
+            animation_plan.md Step 2) and turns her by the difference. From the SAME params as
+            the clip choice, so the panel's aim slider bends her exactly as the game's aim does.
         */
-        archer_model->aim_delta_deg = params.aim_deg - bow_rig.neutral_pitch_deg;
+        archer_model->aim_target_deg = params.aim_deg;
         archer_model->aim_weight = puppet.aim_weight;
         archer_model->aim_facing = (params.facing < 0.0f) ? -1.0f : 1.0f;
+
+        /*
+            The upper-body layer. Its time is PINNED to the rules' draw progress when the Puppet
+            gives a phase - the visual follows the rules, as the bend does - and runs on its own
+            clock for a loop. A non-looping clip on its own clock is the draw fading out after a
+            release: it holds the frame it was let go on.
+        */
+        int upper = puppet.choice.upper_clip;
+        Animation* upper_anim = (upper >= 0 && upper < CLIP_COUNT) ? archer_clips[upper] : NULL;
+        if (upper != upper_clip_shown){
+            upper_loop_time = 0.0f;
+            upper_clip_shown = upper;
+        }
+        if (upper_anim){
+            if (puppet.choice.upper_phase >= 0.0f){
+                upper_time_shown = puppet.choice.upper_phase * upper_anim->duration;
+            }else if (upper_anim->looped){
+                upper_loop_time += ARCHER_DT;
+                if (upper_anim->duration > 0.0f){
+                    upper_loop_time = fmodf(upper_loop_time,upper_anim->duration);
+                }
+                upper_time_shown = upper_loop_time;
+            }
+        }
+        archer_model->upper_clip = upper_anim;
+        archer_model->upper_time = upper_time_shown;
+        archer_model->upper_weight = puppet.upper_weight;
 
         int clip = puppet.choice.clip;
         if (clip >= 0 && clip < CLIP_COUNT && archer_clips[clip]){
@@ -3472,7 +3833,9 @@ int ApplicationArcher::TruncateArcAgainstProps(v2* points, int count){
 }
 
 void ApplicationArcher::SyncAimArc(){
-    bool f_drawing = (stage.bow_mode == BOW_DRAWING);
+    //Only with an arrow on the string: before the nock, letting go does not shoot (BOW_NOCK_TICKS),
+    //and an arc drawn then would promise a shot the rules will not take.
+    bool f_drawing = stage.IsNocked();
     if (!f_drawing){
         for (int i = 0; i < AIM_ARC_POINTS; i++){
             if (arc_objects[i]){
@@ -3771,7 +4134,14 @@ void ApplicationArcher::PublishSnapshot(){
         s.aim_drawn_deg = archer_model->aim_drawn_deg;
         s.aim_weight = archer_model->aim_weight;
     }
-    s.aim_neutral_deg = bow_rig.neutral_pitch_deg;
+    s.aim_neutral_deg = archer_model ? archer_model->aim_pose_deg : 0.0f;
+    s.upper_clip = puppet.choice.upper_clip;
+    s.upper_weight = puppet.upper_weight;
+    s.string_draw = bow_draw_shown;
+    s.f_arrow_on_string = f_arrow_nocked;
+    s.hand_off_string = bow_rig.hand_off_string;
+    s.f_arrow_in_hand = bow_rig.f_arrow_in_hand;
+    s.hand_off_quiver = bow_rig.hand_off_quiver;
     s.live_arrows = stage.NumLiveArrows();
     s.arrows_shot = stage.arrows_shot;
     s.arrows_hit_blocks = stage.arrows_hit_blocks;
@@ -3915,7 +4285,16 @@ json ApplicationArcher::BuildStateJson(){
             {"aim_drawn_deg",s.aim_drawn_deg},
             {"aim_error_deg",s.aim_drawn_deg - s.aim_deg},
             {"aim_weight",s.aim_weight},
-            {"aim_neutral_deg",s.aim_neutral_deg},
+            //The live neutral: where the clips alone point the bow, before the aim turns her.
+            {"aim_pose_deg",s.aim_neutral_deg},
+            {"upper_clip",(s.upper_clip >= 0 && s.upper_clip < CLIP_COUNT) ? json(ARCHER_CLIPS[s.upper_clip].name)
+                                                                           : json(nullptr)},
+            {"upper_weight",s.upper_weight},
+            {"string_draw",s.string_draw},
+            {"arrow_on_string",s.f_arrow_on_string},
+            {"hand_off_string",s.hand_off_string},
+            {"arrow_in_hand",s.f_arrow_in_hand},
+            {"hand_off_quiver",s.hand_off_quiver},
             {"predicted_landing",s.f_predicted ? json{{"x",s.predicted_x},{"y",s.predicted_y}}
                                                : json(nullptr)}
         }},
@@ -4137,7 +4516,9 @@ void ApplicationArcher::RegisterMCPTools(){
 
     MCPServer::Get()->RegisterTool("archer_shoot",
         "Draw the bow for a number of ticks and loose. A full draw is 36 ticks and gives an arrow "
-        "46 units a second; a 1-tick tap gives the minimum 23.5. Optionally sets the aim first, so "
+        "46 units a second. The arrow is on the string only from tick 23 (BOW_NOCK_TICKS): letting "
+        "go before that CANCELS the draw and nothing is shot, and at tick 23 the shot is the "
+        "minimum 23.5 units a second. Optionally sets the aim first, so "
         "one call is one complete, measurable shot. Returns once the arrow is away - poll "
         "archer_state, or pass wait_ticks, to see where it ended up. Arrows fly under their own "
         "gravity (24, against the archer's 42) and are swept against the level, so a fast arrow "
@@ -4297,6 +4678,34 @@ void ApplicationArcher::RegisterMCPTools(){
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
         });
 
+    MCPServer::Get()->RegisterTool("archer_terrain_regenerate",
+        "The panel's 'Regenerate terrain' button. Reads every block's centre and size back off its "
+        "Object - so move boxes first with object_set_transform (position is the centre, scale the "
+        "full size; they are the block_N children of 'blockout') - writes them into the rules, keeps "
+        "that layout across restarts, and remeshes both terrain bays over it. Bay 0 melts solid "
+        "blocks centred at x -40..-12 below y 6, bay 1 the ones above. Returns how many blocks had "
+        "moved and how many are now hidden under terrain.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            //The render thread does the work - see f_regenerate_terrain - so wait for its counter.
+            int before = terrain_generation.load();
+            f_regenerate_terrain = true;
+            for (int i = 0; i < 200 && terrain_generation.load() == before; i++){
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (terrain_generation.load() == before){
+                return json{ {"error","the render thread did not regenerate within 2 s"} };
+            }
+            json out = json{ {"moved_blocks",last_regen_moved},{"hidden_blocks",last_regen_hidden},
+                             {"generation",terrain_generation.load()} };
+            return MaybeAttachScreenshot(out,args.value("include_screenshot",false));
+        });
+
     MCPServer::Get()->RegisterTool("archer_anim",
         "Inspect and drive the character's ANIMATION, separately from the game. Three modes, set "
         "with 'source'. 'clip' plays one clip on a loop and ignores the game entirely - this is how "
@@ -4418,13 +4827,21 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::Separator();
     ImGui::Text("aim       %.0f deg %s",stage.aim_deg,(stage.facing > 0.0f) ? "right" : "left");
     if (archer_model){
-        //The override's check: the drawn bow against the rules' aim. Off by the neutral when the
-        //weight is 0, which is the pose as authored; should agree to a degree or two at weight 1.
-        ImGui::Text("bow at    %.1f deg (%+.1f), body %.0f%%, pose neutral %.1f",
+        //The override's check: the drawn bow against the rules' aim, and the live neutral it
+        //corrected from. At full weight the drawn angle IS the aim; the pose angle is what the
+        //clips alone would have pointed at. And the upper layer's clip and weight.
+        ImGui::Text("bow at    %.1f deg (%+.1f), body %.0f%%, pose %.1f",
                     archer_model->aim_drawn_deg,archer_model->aim_drawn_deg - stage.aim_deg,
-                    archer_model->aim_weight * 100.0f,bow_rig.neutral_pitch_deg);
+                    archer_model->aim_weight * 100.0f,archer_model->aim_pose_deg);
+        int up = puppet.choice.upper_clip;
+        ImGui::Text("upper     %s %.0f%%",(up >= 0 && up < CLIP_COUNT) ? ARCHER_CLIPS[up].name : "-",
+                    puppet.upper_weight * 100.0f);
     }
     ImGui::ProgressBar((float)stage.draw_ticks / (float)BOW_DRAW_TICKS,ImVec2(-1,0),"draw");
+    //The string as drawn on screen, beside the rules' draw above: with the draw pose on screen it
+    //follows her hand, so the two bars disagree until her hand reaches the string. That gap IS the
+    //open timing question in bow_plan.md §8 item 7.
+    ImGui::ProgressBar(bow_draw_shown,ImVec2(-1,0),f_arrow_nocked ? "string (arrow on)" : "string");
     ImGui::Text("arrows    %i live, %i shot, %i in walls",
                 stage.NumLiveArrows(),stage.arrows_shot,stage.arrows_hit_blocks);
 
@@ -4448,6 +4865,29 @@ void ApplicationArcher::DrawImGuiUI(void){
         cmd.type = ARCHER_CMD_RESTART;
         SubmitUICommand(cmd);
     }
+
+    /*
+        --- The terrain -----------------------------------------------------------------------
+
+        Move boxes in the Inspector - the blockout checkbox shows the melted ones, and they are all
+        under "blockout" in the Scene tree - then regenerate. The button only raises a flag: the
+        remesh is GL and takes physics_mutex, and this code already holds it (see PreRender).
+        The checkbox is written directly, like the sliders above: ApplyBlockoutVisibility does no
+        GL and only touches visibility flags.
+    */
+#if ARCHER_TEST_BAY
+    ImGui::Separator();
+    if (ImGui::Button("Regenerate terrain")){
+        f_regenerate_terrain = true;
+    }
+    ImGui::SameLine();
+    bool f_blockout = f_show_blockout;
+    if (ImGui::Checkbox("show blockout (F2)",&f_blockout)){
+        SetBlockoutVisible(f_blockout);
+    }
+    ImGui::TextDisabled("%i boxes under terrain, regenerated %i times",
+                        (int)melted_blocks.size(),terrain_generation.load());
+#endif
 
     /*
         --- The animation ---------------------------------------------------------------------

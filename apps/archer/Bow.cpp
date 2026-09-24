@@ -107,13 +107,15 @@ bool Bow::Build(GLTFLoader& loader, Skeleton* skeleton, Renderer* renderer,
         return false;
     }
     if (!reference_clip || reference_clip->duration <= 0.0f){
-        debug->Err("Build: no reference clip - the bow's grip is taken at its full-draw frame and "
-                   "cannot be worked out without it\n");
+        debug->Err("Build: no reference clip - the full-draw checks are taken at its last frame "
+                   "and cannot be made without it\n");
         return false;
     }
-    Bone* hand = skeleton->FindBone(BOW_GRIP_BONE);
-    if (!hand){
-        debug->Err("No bone '%s' - the bow cannot be equipped\n",BOW_GRIP_BONE);
+    Bone* socket = skeleton->FindBone(BOW_SOCKET);
+    if (!socket){
+        debug->Err("No '%s' bone in the rig - the bow has nowhere to go and she plays "
+                   "empty-handed. It is a non-deforming child of %s; see BOW_SOCKET in Bow.h.\n",
+                   BOW_SOCKET,BOW_GRIP_BONE);
         return false;
     }
 
@@ -147,46 +149,22 @@ bool Bow::Build(GLTFLoader& loader, Skeleton* skeleton, Renderer* renderer,
     reference_clip->SampleRootMotion(full,full);
     reference_clip->ApplyInterval(full);
 
-    /*
-        --- THE GRIP ----------------------------------------------------------------------------
-        With a socket bone, the socket IS the grip: zero offset and the fixed axis turn, nothing
-        measured (see BOW_SOCKET_AXIS_FIX).
-
-        Without one, the fallback: at full draw the bow should stand as authored - upright, facing
-        her forward - which in the rig's space is identity. world = parent_world * local, so the
-        local rotation that gives an identity world rotation is the inverse of the hand's.
-    */
-    Bone* socket = skeleton->FindBone(BOW_SOCKET);
-    f_bow_on_socket = (socket != NULL);
-    if (socket){
-        bow.parent = socket;
-        bow.grip = BOW_SOCKET_AXIS_FIX;
-    }else{
-        bow.parent = hand;
-        bow.grip = hand->GetWorldRotation();
-        bow.grip.inverse();
-        bow.grip.normalize();
-    }
-    //Attached first, transform second: AttachChild is about the hierarchy and the local transform
-    //is about where the child sits inside it.
-    if (!bow.parent->AttachChild(bow.object)){
-        debug->Err("Could not attach '%s' to '%s'\n",BOW_OBJECT_NAME,bow.parent->name.c_str());
+    //The socket IS the grip: zero offset - the bow's origin is its grip, by the prop convention -
+    //and the fixed axis turn, nothing measured (see BOW_SOCKET_AXIS_FIX). Attached first,
+    //transform second: AttachChild is about the hierarchy, the local transform about where the
+    //child sits inside it.
+    bow.parent = socket;
+    bow.grip = BOW_SOCKET_AXIS_FIX;
+    if (!socket->AttachChild(bow.object)){
+        debug->Err("Could not attach '%s' to '%s'\n",BOW_OBJECT_NAME,BOW_SOCKET);
         return false;
     }
-    //Zero: the bow's origin IS its grip, by the prop convention.
     bow.object->SetPosition(vec3(0.0f,0.0f,0.0f));
     bow.object->SetRotation(bow.grip);
-    if (f_bow_on_socket){
-        debug->Info("Equipped '%s' on socket bone '%s'\n",BOW_OBJECT_NAME,BOW_SOCKET);
-    }else{
-        debug->Info("Equipped '%s' on %s: no '%s' bone in the file, so the grip is the fallback "
-                    "(%.4f,%.4f,%.4f,%.4f), upright at full draw (%.3fs)\n",
-                    BOW_OBJECT_NAME,BOW_GRIP_BONE,BOW_SOCKET,
-                    bow.grip.x,bow.grip.y,bow.grip.z,bow.grip.w,full);
-    }
+    debug->Info("Equipped '%s' on socket bone '%s'\n",BOW_OBJECT_NAME,BOW_SOCKET);
 
-    //Where the bow actually points at full draw, whichever way it was attached. Upright and
-    //forward is +Y and +Z in the rig; this is the number to read when a socket is re-posed.
+    //Where the bow actually points at full draw. Upright and forward is +Y and +Z in the rig;
+    //this is the number to read when the socket is re-posed.
     {
         quat r = bow.object->GetWorldRotation();
         vec3 up = r * vec3(0.0f,1.0f,0.0f);
@@ -208,7 +186,42 @@ bool Bow::Build(GLTFLoader& loader, Skeleton* skeleton, Renderer* renderer,
             quiver.object->SetPosition(vec3(0.0f,0.0f,0.0f));
             quiver.object->SetRotation(quiver.grip);
             debug->Info("Equipped 'quiver_worn' on socket bone '%s'\n",BOW_QUIVER_SOCKET);
+            //The opening: the end of the quiver along its +Y, the prop's up.
+            Mesh* qmesh = quiver.object->GetMesh();
+            if (qmesh && !qmesh->GetVertices().empty()){
+                float top = -1e9f;
+                for (const vertex& v : qmesh->GetVertices()){
+                    if (v.pos.y > top){ top = v.pos.y; }
+                }
+                quiver_opening = vec3(0.0f,top,0.0f);
+            }
         }
+    }
+
+    /*
+        The arrow between the quiver and the string: a second Object sharing the arrow's mesh, on
+        the drawing hand's socket - see TrackHand for why it is a second Object. Zero offset and
+        the axis fix, like every prop on a socket: its origin is the nock, and the socket's head is
+        where the animator put the nock.
+    */
+    Bone* arrow_socket = skeleton->FindBone(BOW_ARROW_SOCKET);
+    if (arrow_socket && arrow.object && quiver.object){
+        arrow_hand.object = new Object();
+        arrow_hand.object->SetMesh(arrow.object->GetMesh());
+        arrow_hand.object->name = BOW_ARROW_HAND_OBJECT_NAME;
+        arrow_hand.object->SetMaterialNames(arrow.object->GetMaterialNames());
+        if (arrow_socket->AttachChild(arrow_hand.object)){
+            arrow_hand.parent = arrow_socket;
+            arrow_hand.grip = BOW_SOCKET_AXIS_FIX;
+            arrow_hand.object->SetPosition(vec3(0.0f,0.0f,0.0f));
+            arrow_hand.object->SetRotation(arrow_hand.grip);
+            arrow_hand.object->Hide();
+            debug->Info("Equipped '%s' on socket bone '%s'; the quiver opens %.3f up its axis\n",
+                        BOW_ARROW_HAND_OBJECT_NAME,BOW_ARROW_SOCKET,quiver_opening.y);
+        }
+    }else if (!arrow_socket){
+        debug->Info("No '%s' bone - the arrow appears on the string, never in her hand\n",
+                    BOW_ARROW_SOCKET);
     }
 
     bool f_arrow = false;
@@ -231,7 +244,7 @@ bool Bow::Build(GLTFLoader& loader, Skeleton* skeleton, Renderer* renderer,
         worth printing: it is the one place the draw pose and the bow can disagree without
         anything else noticing.
     */
-    Bone* nock_hand = skeleton->FindBone(BOW_NOCK_BONE);
+    nock_hand = skeleton->FindBone(BOW_NOCK_BONE);
     if (nock_hand && f_nock_measured){
         vec3 nock_world = bow.object->GetWorldTransformScaleMatrix() * NockAt(1.0f);
         nock_gap = (nock_world - nock_hand->GetWorldPosition()).length();
@@ -264,13 +277,66 @@ void Bow::SetDraw(float draw01){
     }
 }
 
-void Bow::SetArrowNocked(bool f_nocked){
-    if (!arrow.object){
-        return;
+float Bow::TrackHand(bool f_drawing){
+    if (!f_drawing || !bow.object || !nock_hand || !f_nock_measured){
+        f_hand_on_string = false;
+        f_arrow_in_hand = false;
+        return 0.0f;
     }
-    if (f_nocked){
-        arrow.object->Show();
-    }else{
-        arrow.object->Hide();
+
+    /*
+        In WORLD space, through the bow's own matrix, rather than by carrying the hand into the
+        bow's space: that needs an inverse, and this engine's fmat4::inverse_transform is rigid
+        only while the rig is scaled 2.02x. Three points through the matrix instead - the nock at
+        rest, the nock at full pull, the hand - and the scale falls out of the pull's own length,
+        so the distance can be reported in rig units against BOW_HAND_ON_STRING.
+    */
+    fmat4& world = bow.object->GetWorldTransformScaleMatrix();
+    vec3 nock0 = world * NockAt(0.0f);
+    vec3 pull = (world * NockAt(1.0f)) - nock0;
+    float pull_len2 = pull.dot(pull);
+    if (pull_len2 < 1e-10f){
+        return 0.0f;
+    }
+    vec3 hand = nock_hand->GetWorldPosition();
+    float w = (hand - nock0).dot(pull) / pull_len2;
+    if (w < 0.0f){ w = 0.0f; }
+    if (w > 1.0f){ w = 1.0f; }
+    float world_per_rig = sqrtf(pull_len2) / nock_pull.length();
+    hand_off_string = (hand - (nock0 + pull * w)).length() / world_per_rig;
+
+    if (hand_off_string < BOW_HAND_ON_STRING){
+        f_hand_on_string = true;
+    }
+
+    //The step before: has she taken an arrow out of the quiver yet? Same units, same latch.
+    if (arrow_hand.object && quiver.object && !f_hand_on_string){
+        vec3 opening = quiver.object->GetWorldTransformScaleMatrix() * quiver_opening;
+        hand_off_quiver = (arrow_hand.object->GetWorldPosition() - opening).length() / world_per_rig;
+        if (hand_off_quiver < BOW_HAND_AT_QUIVER){
+            f_arrow_in_hand = true;
+        }
+    }
+    //On the string it is the bow's arrow now; the one in her hand has been handed over.
+    if (f_hand_on_string){
+        f_arrow_in_hand = false;
+    }
+    return f_hand_on_string ? w : 0.0f;
+}
+
+void Bow::SetArrowNocked(bool f_nocked, bool f_in_hand){
+    if (arrow.object){
+        if (f_nocked){
+            arrow.object->Show();
+        }else{
+            arrow.object->Hide();
+        }
+    }
+    if (arrow_hand.object){
+        if (f_in_hand && !f_nocked){
+            arrow_hand.object->Show();
+        }else{
+            arrow_hand.object->Hide();
+        }
     }
 }

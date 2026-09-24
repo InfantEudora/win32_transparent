@@ -169,6 +169,36 @@ Mesh* Object::GetMesh(){
 }
 
 #ifdef USE_PHYSICS
+/*
+    Would a child of `o` have its local pose equal to its world pose? True when `o` and every
+    ancestor is at the origin, unrotated and unscaled.
+
+    That is the one case in which a body CAN be a child: UpdatePhysicsState writes world into local
+    and AddPhysics seeds world from local, and under an identity chain those are the same numbers.
+    It is what lets an app group bodies purely for the scene tree - apps/archer's "blockout" parent
+    over every level box. Checked when the pairing is made, not every tick, so moving such a
+    parent AFTERWARDS is still the original bug; a grouping parent is for looking at, not moving.
+*/
+static bool IsIdentityChain(Object* o){
+    const float eps = 1e-5f;
+    for (;o;o = o->GetParent()){
+        vec3 p = o->GetPosition();
+        vec3 s = o->GetScale();
+        quat q = o->GetRotation();
+        if (fabsf(p.x) > eps || fabsf(p.y) > eps || fabsf(p.z) > eps){
+            return false;
+        }
+        if (fabsf(s.x - 1.0f) > eps || fabsf(s.y - 1.0f) > eps || fabsf(s.z - 1.0f) > eps){
+            return false;
+        }
+        //q and -q are the same rotation, so it is |w| that has to be 1.
+        if (fabsf(q.x) > eps || fabsf(q.y) > eps || fabsf(q.z) > eps || fabsf(fabsf(q.w) - 1.0f) > eps){
+            return false;
+        }
+    }
+    return true;
+}
+
 Physics* Object::AddPhysics(PhysicsWorld* world){
     if (!world){
         return NULL;
@@ -197,8 +227,9 @@ Physics* Object::AddPhysics(PhysicsWorld* world){
             physics->body->rigidbody->setUserData(this);
         }
         //Catches the "parent first, body second" ordering. Note the two SetBody* calls above
-        //already assume this object is a root: they seed the body from the LOCAL transform.
-        if (parent){
+        //already assume this object is a root: they seed the body from the LOCAL transform - which
+        //an identity parent chain makes true anyway, so that one case is allowed.
+        if (parent && !IsIdentityChain(parent)){
             debug->Err("Object '%s' (id=%i) has a rigid body AND a parent '%s' (id=%i). leave "
                  "this child visual-only, or detach it with DetachChildToWorld.\n",
                  name.c_str(),id,parent->name.c_str(),parent->id);
@@ -680,8 +711,9 @@ bool Object::AttachChild(Object* newchild){
     children.push_back(newchild);
     newchild->parent = this;
 
-    //Catches the "body first, parent second" ordering.
-    if (newchild->physics){
+    //Catches the "body first, parent second" ordering. Not raised under an identity parent chain,
+    //where local and world agree - see IsIdentityChain.
+    if (newchild->physics && !IsIdentityChain(this)){
         debug->Err("Object '%s' (id=%i) has a rigid body AND a parent '%s' (id=%i). "
                 "Put the body on the parent and leave "
              "this child visual-only, or detach it with DetachChildToWorld.\n",

@@ -1,8 +1,11 @@
 ---
 name: archer-terrain-plan
-description: BUILT 2026-09-22 - marching-cubes terrain for apps/archer; SDF field built FROM the StageBlock blockout so colliders never change; core/MarchingCubes + apps/archer/Terrain, plan at apps/archer/terrain_plan.md
+description: "BUILT 2026-09-22 - marching-cubes terrain for apps/archer; SDF field built FROM the StageBlock blockout so colliders never change; core/MarchingCubes + apps/archer/Terrain, plan at apps/archer/terrain_plan.md"
 metadata:
+  node_type: memory
   type: project
+  originSessionId: 39fa8ccf-f5eb-4248-82ec-ef317508c311
+  modified: 2026-09-24T09:51:32.532Z
 ---
 
 Steps 1-5 of `apps/archer/terrain_plan.md` are BUILT and measured as of 2026-09-22. Code is
@@ -25,6 +28,15 @@ all found by measurement rather than by reading:
 - **`NewGame` runs on the PHYSICS thread**, so it must never remesh (`SetMeshData` calls GL). It
   does not need to - the terrain is a pure function of the blocks - but it must re-hide the fresh
   block objects `BuildBlocks` just made. See `ApplyBlockoutVisibility`.
+
+2026-09-24: the four comparison bays became TWO (ground, and an island above
+`ARCHER_TEST_BAY_SPLIT_Y`), selected by `TerrainRegion` (block centre in x AND y), all on default
+`TerrainParams`. Every `block_N` is now a child of an identity-transform `blockout` object - core
+now allows a body under an all-identity parent chain (`IsIdentityChain` in Object.cpp). The panel's
+"Regenerate terrain" / MCP `archer_terrain_regenerate` reads block centre+size back off the objects
+(editor moves), calls `Stage::KeepBlockLayout` so restarts keep them (in memory only - not saved to
+disk), and remeshes in `PreRender`. Gotcha found: `Object::Hide()` DEACTIVATES the body -
+`ApplyBlockoutVisibility` used it and switched off every melted box's collider; use SetVisibility.
 
 Also: the test bay must be `BLOCK_SOLID` only, or `stage_test.cpp`'s `HighLedge()` hijacks the
 hang-slice assertions onto a piece of scenery. `make rules` stays green (187 checks).

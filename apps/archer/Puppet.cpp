@@ -162,7 +162,16 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     */
     { "Standing_DrawArrow",  false, false,  false, false, false },
     { "Stretching2",         true,  false,  false, false, false },
+    //Held at full draw, looping for as long as she holds - it starts on the draw's last pose. Its
+    //bow sways -1.5..+2.7 degrees and the hand stays within 0.04 of the string.
+    { "Standing_AimArrowIdle", true, false, false, false, false },
+    //Pulled past full draw - the string goes to 1.40. Preview only for now.
+    { "Standing_OverdrawArrow", false, false, false, false, false },
 };
+
+bool Puppet::IsDrawPose(int clip){
+    return clip == CLIP_DRAW || clip == CLIP_AIM_IDLE;
+}
 
 const int PUPPET_LOCOMOTION[PUPPET_LOCOMOTION_COUNT] = { CLIP_WALK, CLIP_RUN_SLOW, CLIP_RUN_FAST };
 
@@ -200,7 +209,9 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
         out.action = ACTION_HANG;
     }else if (stage.bow_mode == BOW_DRAWING){
         out.action = ACTION_DRAW;
-        out.action_phase = stage.DrawPower();
+        //Progress through the WHOLE draw, reach and nock included - not DrawPower, which only
+        //moves during the pull. 1 is full draw, where the held loop takes over.
+        out.action_phase = (float)stage.draw_ticks / (float)BOW_DRAW_TICKS;
     }
     if (out.action_phase < 0.0f){ out.action_phase = 0.0f; }
     if (out.action_phase > 1.0f){ out.action_phase = 1.0f; }
@@ -415,22 +426,14 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
 
     if (in.ground_speed < PUPPET_IDLE_SPEED){
         /*
-            DRAWING WHILE STANDING STILL, AND ONLY WHILE STANDING STILL.
+            DRAWING WHILE STANDING STILL: the draw's own LEGS on the base.
 
-            *** TEMPORARY. THIS IS WHAT THE UPPER-BODY MASK LAYER REPLACES. ***
-
-            Standing_DrawArrow is a WHOLE-BODY clip, so selecting it as a state means her legs
-            play a draw too - which is right when she is standing and wrong the instant she is
-            not. That is the entire reason the draw has had no home: it has to happen WHILE she
-            runs, walks or falls, and a whole-body clip cannot do that. Step 2's mask layer is the
-            real answer, and when it lands this branch should be DELETED rather than extended -
-            the draw becomes an upper-body layer over whatever the legs are already doing, and it
-            stops being a case in this ladder at all.
-
-            Confined to the idle branch on purpose. Below this line is the locomotion ladder, so a
-            draw started at a run is still ignored exactly as before and nothing that already
-            worked can regress. What it buys in the meantime is the thing the bow work needs most:
-            a character whose arms agree with the bow in her hands, for looking at.
+            Since the upper-body layer (animation_plan.md, Step 2) the draw is carried by the
+            layer in every stance, and this branch only decides what her LEGS do while she stands
+            and draws: the draw clip's own, so the standing draw looks exactly as authored - hips
+            squaring up included - with the layer sampling the same clip over it. Once she moves,
+            the ladder below takes her legs and the layer carries on. This used to be marked
+            TEMPORARY, to be deleted when the layer landed; it stayed, for that reason.
 
             FITTED TO THE RULES' WINDOW, like the kick and the climb above it. The clip runs
             1.067s and BOW_DRAW_TICKS gives the draw 36 ticks - 0.600s - so it wants 1.78x, which
@@ -439,6 +442,16 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
             like. The same number drives the bow's bend in ApplicationArcher::SyncBow, so the pose
             and the bend reach full together.
         */
+        /*
+            AT FULL DRAW, THE HELD LOOP. Standing_AimArrowIdle begins on exactly the pose the draw
+            ends on - bow angle, hand on the string and grip agree to three decimals - so the hand
+            over needs no blend (see the zero blend time set for it in BuildArcherModel), and it
+            loops for as long as she holds. Played at 1.0: it is a breath, not a timed action.
+        */
+        if (in.action == ACTION_DRAW && in.action_phase >= 1.0f){
+            out.clip = CLIP_AIM_IDLE;
+            return out;
+        }
         if (in.action == ACTION_DRAW){
             out.clip = CLIP_DRAW;
             //Every draw starts from the first frame - the same as the running jump. Without it, a
@@ -669,8 +682,38 @@ void Puppet::Tick(const ArcherAnimParams& in){
         if (yaw_deg < target){ yaw_deg = target; }
     }
 
-    //The aim's hold on her body, eased - see aim_weight. The same move-toward as the yaw.
-    float aim_target = (choice.clip == CLIP_DRAW) ? 1.0f : 0.0f;
+    /*
+        The upper layer: on while she draws, in any stance, eased both ways. The clip it plays is
+        latched so that when she lets go the layer fades out of the hold she was in, rather than
+        snapping to "no clip" and leaving the weight nothing to fade.
+    */
+    ChooseUpper(in,choice);
+    bool f_drawing = (in.action == ACTION_DRAW);
+    if (choice.upper_clip >= 0){
+        upper_latched = choice.upper_clip;
+    }
+    float upper_step = 1.0f / (float)PUPPET_UPPER_BLEND_TICKS;
+    if (f_drawing){
+        upper_weight += upper_step;
+        if (upper_weight > 1.0f){ upper_weight = 1.0f; }
+    }else{
+        upper_weight -= upper_step;
+        if (upper_weight <= 0.0f){
+            upper_weight = 0.0f;
+            upper_latched = -1;
+        }
+        //Fading out: keep showing the hold she let go of, on its own clock.
+        choice.upper_clip = upper_latched;
+        choice.upper_phase = -1.0f;
+    }
+
+    /*
+        The aim's hold on her body, eased - see aim_weight. From the NOCK, not from the start of the
+        draw: the aim neutral is measured live off the posed bow (animation_plan.md, Step 2), which
+        is only meaningful once the bow is up with an arrow on it. Before that she brings the bow
+        up with the animation's own motion.
+    */
+    float aim_target = (f_drawing && IsNocked(in)) ? 1.0f : 0.0f;
     float aim_step = 1.0f / (float)PUPPET_AIM_BLEND_TICKS;
     if (aim_weight < aim_target){
         aim_weight += aim_step;
@@ -679,4 +722,23 @@ void Puppet::Tick(const ArcherAnimParams& in){
         aim_weight -= aim_step;
         if (aim_weight < aim_target){ aim_weight = aim_target; }
     }
+}
+
+void Puppet::ChooseUpper(const ArcherAnimParams& in, PuppetChoice& out){
+    out.upper_clip = -1;
+    out.upper_phase = -1.0f;
+    if (in.action != ACTION_DRAW){
+        return;
+    }
+    if (in.action_phase >= 1.0f){
+        out.upper_clip = CLIP_AIM_IDLE;         //the hold, looping on its own clock
+    }else{
+        out.upper_clip = CLIP_DRAW;
+        out.upper_phase = (in.action_phase < 0.0f) ? 0.0f : in.action_phase;
+    }
+}
+
+bool Puppet::IsNocked(const ArcherAnimParams& in){
+    return in.action == ACTION_DRAW &&
+           in.action_phase * (float)BOW_DRAW_TICKS >= (float)BOW_NOCK_TICKS - 0.001f;
 }

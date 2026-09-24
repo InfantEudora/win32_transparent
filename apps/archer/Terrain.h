@@ -110,24 +110,33 @@ struct TerrainStats{
 };
 
 /*
-    Builds the surface for every BLOCK_SOLID block whose CENTRE falls in [x_min,x_max).
+    Which blocks one piece of terrain is built from: every live BLOCK_SOLID whose CENTRE is in
+    [x_min,x_max) x [y_min,y_max).
 
-    Selection is by x range rather than by a flag on StageBlock, which is what keeps Stage.h free
-    of this whole subject. A block spanning several ranges would be built into each of them, so
-    the level is laid out to avoid that - see the per-bay floor note in Stage::BuildLevel.
-
-    matid is written per vertex: 0 grass, 1 soil, 2 rock. `out` is appended to, not cleared.
-    Returns false and logs if the range contains no solid blocks at all.
+    By position rather than by a flag on StageBlock, which is what keeps Stage.h free of this whole
+    subject - and what makes dragging a box from one region into another in the editor the whole
+    of moving it between bays. Half-open, so regions that share an edge never share a block and
+    nothing is meshed twice into two overlapping surfaces.
 */
-bool BuildTerrainVerts(const std::vector<StageBlock>& blocks, float x_min, float x_max,
-                       const TerrainParams& params, std::vector<vertex>& out,
-                       TerrainStats* stats = NULL);
+struct TerrainRegion{
+    float x_min = 0.0f, x_max = 0.0f;
+    float y_min = 0.0f, y_max = 0.0f;
+
+    bool Contains(const StageBlock& b) const{
+        return b.kind == BLOCK_SOLID && b.f_alive &&
+               b.x >= x_min && b.x < x_max && b.y >= y_min && b.y < y_max;
+    }
+};
 
 /*
-    The same, wrapped in a Mesh the caller owns. RENDER THREAD ONLY - it ends in
-    Mesh::SetMeshData, which talks to GL immediately. Returns NULL and logs on failure.
+    Builds the surface for every block `region` contains.
+
+    matid is written per vertex: 0 grass, 1 soil, 2 rock. `out` is appended to, not cleared.
+    Returns false if the region contains no blocks at all - quietly, because after an edit that
+    is a legitimate state rather than a failure.
 */
-Mesh* BuildTerrainMesh(const std::vector<StageBlock>& blocks, float x_min, float x_max,
-                       const TerrainParams& params, TerrainStats* stats = NULL);
+bool BuildTerrainVerts(const std::vector<StageBlock>& blocks, const TerrainRegion& region,
+                       const TerrainParams& params, std::vector<vertex>& out,
+                       TerrainStats* stats = NULL);
 
 #endif
