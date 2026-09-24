@@ -167,6 +167,13 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     { "Standing_AimArrowIdle", true, false, false, false, false },
     //Pulled past full draw - the string goes to 1.40. Preview only for now.
     { "Standing_OverdrawArrow", false, false, false, false, false },
+    //The kneel. Nothing extracted: the hips drop and rise on the spot, and that drop IS the move.
+    { "Stand_ToKneel",       false, false,  false, false, false },
+    { "Kneel_Idle",          true,  false,  false, false, false },
+    { "Kneel_ToStand",       false, false,  false, false, false },
+    //The level entry. Nothing extracted: the hips rise 0.05 -> 0.48 on the spot (within 0.07 of it
+    //across the floor) and end 0.03 under Idle's, so she stands up where the rules have her.
+    { "Laying_StandingUp",   false, false,  false, false, false },
 };
 
 bool Puppet::IsDrawPose(int clip){
@@ -185,8 +192,9 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.facing       = stage.facing;
     out.f_on_ground  = stage.f_on_ground;
     out.mode         = stage.mode;
-    out.aim_deg      = stage.aim_deg;
+    out.aim_deg      = stage.ShotAimDeg();  //the sway included, so the bow sways with the arc
     out.draw_power   = stage.DrawPower();
+    out.kneel_phase  = (stage.mode == MODE_KNEEL) ? stage.kneel_phase : -1;
 
     /*
         The action, and its phase.
@@ -345,6 +353,48 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
     }
     if (in.mode == MODE_ROPE){
         out.clip = CLIP_ROPE;
+        return out;
+    }
+
+    /*
+        GETTING UP, the level entry: the whole clip, from its first frame, fitted to GETUP_TICKS -
+        which IS its length, so this reads 1.00 until a re-export changes it and the app says so.
+        Unlike the kneel's transitions there is no settle to stop at: it is meant to play out.
+    */
+    if (in.mode == MODE_GETUP){
+        out.clip = CLIP_LAYING_UP;
+        out.start_time = 0.0f;
+        float window = (float)GETUP_TICKS * ARCHER_DT;
+        if (clip_duration[CLIP_LAYING_UP] > 0.01f && window > 0.0f){
+            out.wanted_rate = clip_duration[CLIP_LAYING_UP] / window;
+            out.rate = out.wanted_rate;
+            if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
+        }
+        return out;
+    }
+
+    /*
+        KNEELING: the legs only - the arms are the upper layer's for the whole kneel, since all
+        three clips hold a rifle. The two transitions are FITTED to the rules' windows like the
+        kick - but only the part of each clip where she actually moves (clip_settle), which is
+        what the windows were measured from, so the fit reads 1.00 until a re-export moves it.
+        Each starts from its first frame.
+    */
+    if (in.mode == MODE_KNEEL){
+        if (in.kneel_phase == KNEEL_HELD){
+            out.clip = CLIP_KNEEL_IDLE;
+            return out;
+        }
+        bool f_down = (in.kneel_phase != KNEEL_RISING);
+        out.clip = f_down ? CLIP_KNEEL_DOWN : CLIP_KNEEL_UP;
+        out.start_time = 0.0f;
+        float window = (float)(f_down ? KNEEL_DOWN_TICKS : KNEEL_UP_TICKS) * ARCHER_DT;
+        float used = (clip_settle[out.clip] > 0.01f) ? clip_settle[out.clip] : clip_duration[out.clip];
+        if (used > 0.01f && window > 0.0f){
+            out.wanted_rate = used / window;
+            out.rate = out.wanted_rate;
+            if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
+        }
         return out;
     }
 
@@ -594,6 +644,12 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
         air_clip = -1;
     }
 
+    //A kneel pressed at a run brakes her exactly like letting go, which would otherwise read as a
+    //run-to-stop and play it the moment she stood back up. A restart mid-run does the same thing
+    //to the get-up.
+    if (in.mode == MODE_KNEEL || in.mode == MODE_GETUP){
+        settle_ticks = 0;
+    }
     if (settle_ticks > 0){
         settle_ticks--;
         //Taken back by the player. The rules never stopped her moving, so neither does this.
@@ -683,9 +739,9 @@ void Puppet::Tick(const ArcherAnimParams& in){
     }
 
     /*
-        The upper layer: on while she draws, in any stance, eased both ways. The clip it plays is
-        latched so that when she lets go the layer fades out of the hold she was in, rather than
-        snapping to "no clip" and leaving the weight nothing to fade.
+        The upper layer: on while she draws, in any stance, and for the whole of a kneel - eased
+        both ways. The clip it plays is latched so that when it goes off the layer fades out of the
+        pose she was in, rather than snapping to "no clip" and leaving the weight nothing to fade.
     */
     ChooseUpper(in,choice);
     bool f_drawing = (in.action == ACTION_DRAW);
@@ -693,7 +749,7 @@ void Puppet::Tick(const ArcherAnimParams& in){
         upper_latched = choice.upper_clip;
     }
     float upper_step = 1.0f / (float)PUPPET_UPPER_BLEND_TICKS;
-    if (f_drawing){
+    if (choice.upper_clip >= 0){
         upper_weight += upper_step;
         if (upper_weight > 1.0f){ upper_weight = 1.0f; }
     }else{
@@ -706,6 +762,34 @@ void Puppet::Tick(const ArcherAnimParams& in){
         choice.upper_clip = upper_latched;
         choice.upper_phase = -1.0f;
     }
+
+    /*
+        And the crossfade, when the layer's pose would JUMP with its weight still on - see
+        upper_mix. Judged against what was shown last tick, and only while the layer was showing.
+    */
+    bool f_jump = false;
+    if (upper_prev_clip >= 0 && choice.upper_clip >= 0){
+        if (choice.upper_clip != upper_prev_clip){
+            f_jump = !(upper_prev_clip == CLIP_DRAW && choice.upper_clip == CLIP_AIM_IDLE);
+        }else if (choice.upper_phase >= 0.0f && upper_prev_phase >= 0.0f){
+            f_jump = (choice.upper_phase < upper_prev_phase - 0.001f);
+        }
+    }
+    if (f_jump){
+        upper_from = upper_prev_clip;
+        upper_mix = 0.0f;
+        upper_xfade_serial++;
+    }
+    if (upper_mix < 1.0f){
+        upper_mix += upper_step;
+        if (upper_mix >= 1.0f){
+            upper_mix = 1.0f;
+            upper_from = -1;
+        }
+    }
+    choice.upper_from_clip = (upper_mix < 1.0f) ? upper_from : -1;
+    upper_prev_clip = (upper_weight > 0.0f) ? choice.upper_clip : -1;
+    upper_prev_phase = choice.upper_phase;
 
     /*
         The aim's hold on her body, eased - see aim_weight. From the NOCK, not from the start of the
@@ -728,6 +812,12 @@ void Puppet::ChooseUpper(const ArcherAnimParams& in, PuppetChoice& out){
     out.upper_clip = -1;
     out.upper_phase = -1.0f;
     if (in.action != ACTION_DRAW){
+        //Kneeling at rest: the draw's first frame - bow lowered in the left hand, the pose every
+        //draw starts from, so drawing from a kneel needs no blend. No clip of its own yet.
+        if (in.mode == MODE_KNEEL){
+            out.upper_clip = CLIP_DRAW;
+            out.upper_phase = 0.0f;
+        }
         return;
     }
     if (in.action_phase >= 1.0f){

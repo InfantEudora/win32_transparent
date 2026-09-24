@@ -11,6 +11,8 @@
 #include "Stage.h"
 #include "Puppet.h"
 #include "Terrain.h"
+#include "Foliage.h"
+#include "Vine.h"
 #include "Bow.h"
 #include "TextMesh.h"
 
@@ -84,6 +86,7 @@
         J                       L1           hold to draw the bow, release to loose
         Up / Down               right stick  tilt the aim, whether or not the bow is drawn
         K                       B            kick - shoves props hard, breaks walls
+        C                       X            kneel / stand up - a toggle; kneeling she can draw
         E                       Y            action - take the rope             (later slice)
         L                       R1           knife                             (later slice)
         R                                    restart
@@ -123,6 +126,8 @@
 //It is a RATE, not an angle: Stage tilts by aim_axis * BOW_AIM_RATE_DEG, so a small deflection
 //creeps the aim and a full one tilts as fast as the keys. GatherInput squares it on the way in.
 #define INPUT_ARCHER_AIM            INPUT_LAST+15
+//C, or X on a pad: kneel, and stand back up. A toggle, so it is read as a press edge.
+#define INPUT_ARCHER_KNEEL          INPUT_LAST+16
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Both are intent arriving from OUTSIDE
 //the simulation - a key, an MCP call, later a replay - which is what the command queue is for:
@@ -196,13 +201,14 @@
 /*
     The rope, as bodies.
 
-    Eight links over the six units the level declares, which is 0.75 each - short enough that the
+    Links of about ROPE_LINK_LENGTH - eight over the main level's six units - short enough that the
     rope bends visibly rather than swinging as a plank, long enough that the solver is not holding
-    thirty constraints together for a piece of set dressing. The links are light against the
+    thirty constraints together for a piece of set dressing. The count follows the rope's declared
+    length, so the rope test's nine-unit rope gets twelve. The links are light against the
     archer's 70kg on purpose: a rope that weighs as much as the person on it swings like a wrecking
     ball rather than like a rope.
 */
-#define ROPE_SEGMENTS               8
+#define ROPE_LINK_LENGTH            0.75f
 #define ROPE_SEGMENT_MASS           1.2f
 #define ROPE_SEGMENT_THICK          0.12f
 //The links near the anchor are not offered as handholds - catching a rope at the very top gives a
@@ -408,6 +414,11 @@ public:
     Animation* upper_clip = NULL;   //NULL: no upper layer
     float upper_time = 0.0f;        //seconds into upper_clip to sample
     float upper_weight = 0.0f;      //0..1, from Puppet::upper_weight
+    //The layer's own crossfade (Puppet::upper_mix): the clip it is leaving and the time that clip
+    //was last shown at, frozen. NULL when not crossfading.
+    Animation* upper_from_clip = NULL;
+    float upper_from_time = 0.0f;
+    float upper_mix = 1.0f;
     float aim_target_deg = 0.0f;    //Stage::aim_deg
     float aim_weight = 0.0f;        //0..1, from Puppet::aim_weight
     float aim_facing = 1.0f;        //+1 right, -1 left
@@ -439,6 +450,8 @@ private:
     void SaveBasePose();
     void RestoreBasePose();
     void ApplyUpperLayer();
+    void LayerClipModel(Animation* clip, float time, std::unordered_map<Object*,quat>& out_model,
+                        std::unordered_map<Object*,vec3>& out_pos);
     float BowAimDeg();              //the bow's front, in the play plane, relative to facing
 };
 
@@ -550,9 +563,21 @@ struct ArcherSnapshot{
     */
     float aim_drawn_deg = 0.0f;
     float aim_weight = 0.0f;
+    float aim_sway_deg = 0.0f;      //Stage::AimSwayDeg; aim_deg above already includes it
     float aim_neutral_deg = 0.0f;   //the LIVE neutral - see ArcherModel::aim_pose_deg
     int   upper_clip = -1;          //the upper-body layer's clip, and its weight
     float upper_weight = 0.0f;
+    int   kneel_phase = -1;         //KneelPhase while kneeling, else -1
+    float body_height = 0.0f;       //Stage::BodyHeight - shorter while kneeling
+    /*
+        THE ANCHOR CHECK: the nocked arrow's origin on the model, relative to her centre with x
+        along facing, beside the anchor the rules shoot from (Stage::AnchorPosition). At full draw
+        the two should agree to a few hundredths - BOW_NOCK_* and KNEEL_NOCK_* are this, measured.
+    */
+    float nock_fwd = 0.0f;
+    float nock_up = 0.0f;
+    float anchor_fwd = 0.0f;
+    float anchor_up = 0.0f;
     //The string: how far it is drawn on screen, whether an arrow is on it, and how far the drawing
     //hand is from its pull line (rig units) - see Bow::TrackHand.
     float string_draw = 0.0f;
@@ -708,6 +733,9 @@ private:
     void ApplyBlockoutVisibility();
     //Show or hide the blockout boxes the terrain replaced. See the definition.
     void SetBlockoutVisible(bool f_visible);
+    //Loads the crate out of archer.glb into crate_mesh, falling back to the box. Render thread;
+    //before BuildProps, which NewGame also calls from the physics thread - so the upload is here.
+    void BuildCrateMesh();
     void BuildProps();
     void BuildArcher();
     //Loads meshes/archer.glb: the skin, the skinned mesh and every clip in Puppet.h's table.
@@ -722,6 +750,30 @@ private:
         she just has empty hands.
     */
     void BuildBow();
+    /*
+        The ferns and flowers on the blockout - see apps/archer/Foliage.h for where they go.
+
+        BuildFoliage loads the three meshes out of archer.glb (render thread, GL) and scatters
+        once. ScatterFoliageObjects is the part that runs again: it re-places a pool of Objects
+        from `stage` as it stands, with no GL and nothing removed from the scene, so it is safe
+        from RegenerateTerrain and PreRender under the lock. Main level only - the range grows
+        nothing.
+
+        AFTER BuildArcherModel, because the plants take the character's scale: the file is
+        authored with everything to scale with her, so one factor keeps them in proportion.
+    */
+    void BuildFoliage();
+    void ScatterFoliageObjects();
+    /*
+        The decorative vines - see apps/archer/Vine.h and vine_plan.md. Built ONCE, render thread
+        (each trunk is a generated Mesh, and SetMeshData uploads), and never touched again: they
+        are static, and nothing in a running game moves them. Takes `vine_trunk`, `vine_leaf_1`
+        and `vine_leaf_2` out of archer.glb where they exist and falls back per piece to the
+        placeholders in Vine.cpp, so it works before the asset does. `vine_curl`, the wrap, has no
+        placeholder and is only laid over the file's own trunk. After BuildFoliage, for the
+        same reason it comes after BuildArcherModel: the character's scale.
+    */
+    void BuildVines();
     //Reads each clip's own root track for how far it travels and how long it lasts, and hands the
     //answers to the Puppet. See the note on the definition - this is the number that decides
     //whether the feet slide, and it is measured rather than declared.
@@ -743,6 +795,9 @@ private:
     //When the boot connects in Kick_Front, found by watching which foot reaches furthest from the
     //hips. Checked against KICK_ACTIVE_FROM/TO rather than setting them - see Puppet::kick_strike.
     void MeasureKickClip();
+    //The kneel set against the rules: both transitions' lengths against KNEEL_DOWN/UP_TICKS, and
+    //her kneeling height against KNEEL_HALF_H. Warns with the number to type, like the kick.
+    void MeasureKneelClips();
     void BuildArrowViews();
     /*
         The arrow in her hand, re-baked for flight: along +X with the TIP AT THE ORIGIN, at the
@@ -860,6 +915,11 @@ private:
 
     //--- Meshes and materials ---------------------------------------------------------------------
     Mesh* unit_mesh = NULL;         //a 1x1x1 box, scaled per block
+    //What a crate is drawn with: archer.glb's wooden_crate re-baked into unit_mesh's shape, or
+    //unit_mesh itself if the export lacks it. See BuildCrateMesh.
+    Mesh* crate_mesh = NULL;
+    std::vector<Material> crate_materials;
+    bool f_crate_from_asset = false;
     Mesh* arrow_mesh = NULL;
     Mesh* dot_mesh = NULL;          //the aim arc's beads
 
@@ -887,6 +947,9 @@ private:
     int material_grass = 0;
     int material_soil = 0;
     int material_rock = 0;
+    //The placeholder vine's two, used only for a piece archer.glb does not have yet.
+    int material_vine = 0;
+    int material_vine_leaf = 0;
 
     //--- The scene --------------------------------------------------------------------------------
     /*
@@ -938,12 +1001,54 @@ private:
     std::atomic<int> terrain_generation{0};
     int last_regen_moved = 0;
     int last_regen_hidden = 0;
+
+    //--- The foliage ------------------------------------------------------------------------------
+    //One mesh per FoliageKind, shared by every plant of that kind - the renderer batches Objects
+    //by mesh, so a few hundred plants are three draws. NULL for a node the export lacks.
+    Mesh* foliage_meshes[FOLIAGE_KIND_COUNT] = {};
+    std::vector<Material> foliage_materials[FOLIAGE_KIND_COUNT];
+    //Radius in the ground plane and height of each mesh at scale 1, measured off its vertices.
+    float foliage_mesh_radius[FOLIAGE_KIND_COUNT] = {};
+    float foliage_mesh_height[FOLIAGE_KIND_COUNT] = {};
+    //The scene-tree parent, identity like blockout_group.
+    Object* foliage_group = NULL;
+    //The pool. Grown, never shrunk: a rescatter re-places these and hides whatever is spare, so
+    //nothing is ever deleted out from under the render thread. Children of foliage_group.
+    std::vector<Object*> foliage_objects;
+    FoliageParams foliage_params;
+    //How big a plant is drawn: the character's own scale unless the panel says otherwise.
+    float foliage_scale = 1.0f;
+    int   foliage_counts[FOLIAGE_KIND_COUNT] = {};
+    //Asks PreRender to rescatter - the panel's sliders raise it on release, not every frame.
+    std::atomic<bool> f_rescatter_foliage{false};
+
+    //--- The vines --------------------------------------------------------------------------------
+    //One Object per trunk, its own generated mesh in world coordinates, and the leaves as Objects
+    //sharing one mesh per kind like the ferns. All children of vine_group; built once, never moved.
+    Object* vine_group = NULL;
+    std::vector<Object*> vine_trunks;
+    std::vector<Object*> vine_wraps;            //vine_curl laid over each trunk, if the file has it
+    std::vector<Object*> vine_leaves;
+    VineParams vine_params;
+    int vine_leaf_counts[VINE_LEAF_KIND_COUNT] = {};
+    //Which pieces came from archer.glb rather than Vine.cpp's placeholders, for the panel.
+    bool f_vine_trunk_from_asset = false;
+    bool f_vine_wrap_from_asset = false;
+    bool f_vine_leaf_from_asset[VINE_LEAF_KIND_COUNT] = {};
     //Which block objects BuildTerrain hid, so the debug view can put them back without having to
     //work out again which ones melted. Indices into block_objects.
     std::vector<int> melted_blocks;
     //The debug view: the blockout boxes underneath the terrain. Off by default; F2 toggles it, and
     //so does the terrain_blockout MCP tool.
     bool f_show_blockout = false;
+    /*
+        Whether a level starts with her getting up (GETTING UP in Stage.h). OFF by default: it
+        locks the controls for 3.5 s after every start and restart, which is the right entrance
+        and the wrong thing to sit through fifty times while testing. The panel's checkbox turns it
+        on; it takes effect at the next restart. Written by the panel with physics_mutex held and
+        read by NewGame on the physics thread under it, so a plain bool is enough.
+    */
+    bool f_level_entry_getup = false;
 
     //--- The rope ---------------------------------------------------------------------------------
     std::vector<Object*> rope_segments;         //top link first
@@ -976,14 +1081,16 @@ private:
     /*
         EVERYTHING THAT BELONGS TO ONE LEVEL RATHER THAN TO THE APP - the parked half of it.
 
-        The app has two scenes, the main level and the test range, and each has its own Stage,
-        physics world, level objects and archer BODY. The live level's copy of all that sits in the
-        ordinary members above, where the whole of this file has always found it; the other level's
-        sits in here. OnActiveSceneChanged swaps the two, member for member, so the tick, the panel
-        and the tools never have to know which level they are looking at.
+        The app has three scenes - the main level, the test range and the rope test - and each has
+        its own Stage, physics world, level objects and archer BODY. The live level's copy of all
+        that sits in the ordinary members above, where the whole of this file has always found it;
+        every other level's sits in one of these, in parked_levels. OnActiveSceneChanged swaps the
+        live members with the slot holding the scene being switched TO, and that slot then holds
+        the level just left - so the tick, the panel and the tools never have to know which level
+        they are looking at, and a fourth scene is one more BuildExtraLevel call.
 
-        THIS IS DELIBERATELY THE EASY WAY, and it is the thing to generalise next: a real
-        per-scene store would mean indexing every one of these by scene instead of swapping them.
+        THIS IS DELIBERATELY THE EASY WAY: a real per-scene store would mean indexing every one of
+        these by scene instead of swapping them.
         What it gets right already is the split. What is NOT in here is shared by both scenes -
         the skinned model and the bow in her hands, the arrow and aim-arc views, the backdrop, the
         two lights, the Puppet and the animation state - because she is one character walking
@@ -1015,15 +1122,16 @@ private:
         vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);
         vec3 orbit_follow_offset = vec3(0.0f,0.0f,0.0f);
     };
-    ArcherLevel parked_level;
-    //The two scenes by what they are, so the tools and the swap can tell them apart without
-    //comparing names. world_scene is the one Init built first; main_scene is whichever is live.
+    std::vector<ArcherLevel> parked_levels;     //one per scene that is not live
+    //The scenes by what they are, so the tools and the swap can tell them apart without comparing
+    //names. world_scene is the one Init built first; main_scene is whichever is live.
     Scene* world_scene = NULL;
     Scene* range_scene = NULL;
-    //Exchanges the live level's members with parked_level's. See ArcherLevel.
-    void SwapLevel();
-    //Builds the range as a second scene, sharing the character with the first. See the definition.
-    void BuildRange();
+    Scene* rope_scene = NULL;
+    //Exchanges the live level's members with this parked slot's. See ArcherLevel.
+    void SwapLevel(ArcherLevel& parked);
+    //Builds `level` as a scene of its own called `name`, sharing the character. See the definition.
+    Scene* BuildExtraLevel(int level, const char* name);
     //Adds the Objects both scenes share - see ArcherLevel - to `scene`'s list.
     void ShareCharacterWith(Scene* scene);
     //Puts everything view-side where the newly live level says, without advancing anything.
@@ -1072,6 +1180,8 @@ private:
     int   upper_clip_shown = -1;
     float upper_loop_time = 0.0f;
     float upper_time_shown = 0.0f;
+    int   upper_xfade_seen = 0;         //Puppet::upper_xfade_serial as of the last freeze
+    float upper_from_time = 0.0f;       //the leaving clip's time, frozen when the crossfade began
     //Worked out from the bind pose at load: what the rig has to be scaled by to stand
     //ARCHER_MODEL_HEIGHT tall, and where its feet sit once it has been.
     float model_scale = 1.0f;

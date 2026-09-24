@@ -84,6 +84,15 @@ enum ArcherClip{
     CLIP_STRETCH2,
     CLIP_AIM_IDLE,          //Standing_AimArrowIdle  held at full draw, looping; follows the draw
     CLIP_OVERDRAW,          //Standing_OverdrawArrow pulled past full draw; preview only for now
+    /*
+        THE KNEEL, as three pieces: down, held, up. All three hold a RIFLE in the arms, which is
+        why the upper layer is on for the whole of a kneel - the legs are the clips', the arms are
+        the draw's first frame (Puppet::ChooseUpper).
+    */
+    CLIP_KNEEL_DOWN,        //Stand_ToKneel          standing -> one knee, fitted to KNEEL_DOWN_TICKS
+    CLIP_KNEEL_IDLE,        //Kneel_Idle             held on one knee, looping
+    CLIP_KNEEL_UP,          //Kneel_ToStand          one knee -> standing, fitted to KNEEL_UP_TICKS
+    CLIP_LAYING_UP,         //Laying_StandingUp      the level entry, MODE_GETUP; plays whole
     CLIP_COUNT
 };
 
@@ -333,6 +342,7 @@ struct ArcherAnimParams{
     float action_phase = 0.0f;      //0..1 through whatever `action` is, for one-shot clips
     float aim_deg = 0.0f;
     float draw_power = 0.0f;        //0..1
+    int   kneel_phase = -1;         //KneelPhase while mode is MODE_KNEEL, else -1
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and
@@ -394,6 +404,12 @@ struct PuppetChoice{
     */
     int   upper_clip = -1;
     float upper_phase = -1.0f;
+    /*
+        While the layer CROSSFADES between two of its own poses, the clip it is leaving, else -1;
+        the mix toward upper_clip is Puppet::upper_mix. The app samples the leaving clip at the
+        time it last showed it, frozen - see Puppet::upper_xfade_serial.
+    */
+    int   upper_from_clip = -1;
 };
 
 class Puppet{
@@ -449,6 +465,16 @@ public:
         zero here and nothing needs changing.
     */
     float clip_entry[CLIP_COUNT] = {};
+
+    /*
+        And the other end: HOW FAR INTO A TRANSITION CLIP THE MOVE IS DONE, in seconds - zero for
+        "all of it". The kneel set is why: Stand_ToKneel has her down by 0.7s and then holds still
+        for another 0.8, so the rules are timed to the drop (KNEEL_DOWN_TICKS) and the still tail
+        is never played - the base crossfades on to Kneel_Idle, which holds the same pose. The
+        mirror image of clip_entry, found by watching the hip settle
+        (ApplicationArcher::MeasureKneelClips).
+    */
+    float clip_settle[CLIP_COUNT] = {};
 
     /*
         THE LANDING, which is the one piece of animation state the Puppet has to remember.
@@ -545,6 +571,24 @@ public:
     float upper_weight = 0.0f;
     int   upper_latched = -1;
 
+    /*
+        THE LAYER'S OWN CROSSFADE, for when its pose would otherwise JUMP with the weight still on.
+        Kneeling is what needs it: the layer stays on after a release, so the hold (or a draw
+        cancelled halfway) has to ease back to the resting frame, where standing the whole layer
+        simply fades out. A jump is a change of clip, or the draw's phase going BACKWARDS; the draw
+        handing over to the hold is authored seamless and is not one, and neither is a draw
+        starting from the rest pose, which is its own first frame.
+
+        `upper_mix` runs 0 -> 1 over PUPPET_UPPER_BLEND_TICKS; `upper_xfade_serial` counts
+        crossfades, so the app knows when to freeze the leaving clip's time even when a second one
+        starts before the first has finished.
+    */
+    float upper_mix = 1.0f;
+    int   upper_xfade_serial = 0;
+    int   upper_from = -1;
+    int   upper_prev_clip = -1;
+    float upper_prev_phase = -1.0f;
+
     PuppetChoice choice;
 
     //One tick. The only thing that changes state here is the yaw slew; the clip choice is a pure
@@ -588,7 +632,8 @@ public:
     static bool IsDrawPose(int clip);
 
     //The upper layer's clip and phase for these parameters - the draw pinned to the rules'
-    //progress, then the hold. Pure, like Choose; Tick adds the weight and the fade-out latch.
+    //progress, then the hold; kneeling and not drawing, the draw's first frame. Pure, like
+    //Choose; Tick adds the weight, the fade-out latch and the crossfade.
     static void ChooseUpper(const ArcherAnimParams& in, PuppetChoice& out);
 
     //Is an arrow on the string, judged from the draw's progress the way Stage::IsNocked judges it

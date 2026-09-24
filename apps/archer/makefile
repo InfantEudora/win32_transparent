@@ -42,6 +42,11 @@ APP_SRCS += Puppet.cpp
 APP_SRCS += Terrain.cpp
 #Equipping the bow and the arrow to the hand bones, and bending the bow. See bow_plan.md.
 APP_SRCS += Bow.cpp
+#Where the ferns and flowers grow on the blockout. Engine-free, so `rules` tests it too.
+APP_SRCS += Foliage.cpp
+#The vines: a trunk bent along a core/Spline, leaves along it. Engine-free apart from core's maths
+#and the two spline files, which `rules` compiles in beside it. See vine_plan.md.
+APP_SRCS += Vine.cpp
 
 #NO SOUND YET. Nothing here calls SoundSystem - the jump, the draw, the loose and the thud
 #are all places a sound obviously goes, and every one of them already has an event in
@@ -93,5 +98,7 @@ include $(ROOT)/engine.mk
 .PHONY: rules
 rules:
 	@mkdir -p build
-	$(CXX) -std=c++17 -Wall -g -o build/stage_test.exe stage_test.cpp Stage.cpp Puppet.cpp
+	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
+		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Vine.cpp \
+		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe

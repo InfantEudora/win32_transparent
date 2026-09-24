@@ -179,6 +179,25 @@ struct v2{
 #define BOW_NOCK_FWD                0.11f       //and ahead of it, before the aim is applied
 #define ARROW_LENGTH                1.05f       //nock to point
 
+/*
+    THE AIM SWAYS once an arrow is on the string: a smooth drift added to aim_deg, up to this many
+    degrees either way, narrowing as she kneels (animation_plan.md, Step 2). DETERMINISTIC - a sum
+    of incommensurate sines of the ticks since the nock, no RNG - so PredictArc includes it, the
+    dots drift with it, and the arrow still goes exactly where they point: the skill is timing the
+    release, not rolling dice. Replays and `make rules` stay exact for the same reason. It eases
+    in from zero over AIM_SWAY_RAMP_TICKS after the nock, so the arc does not jump when it
+    appears; the bow on screen sways with it because the live aim neutral turns her to whatever
+    angle this says.
+
+    EACH DRAW SWAYS DIFFERENTLY. A function of the time since the nock alone is the same drift
+    every draw - measured, every quick shot went about 3 degrees high, and "release at one
+    second" would have been a thing to learn. So each draw starts the drift at its own point,
+    picked from the draw count (draws_started) - still no RNG, and still the same in a replay.
+*/
+#define AIM_SWAY_STAND_DEG          4.0f
+#define AIM_SWAY_KNEEL_DEG          1.0f
+#define AIM_SWAY_RAMP_TICKS         15      //0.25s from still to the full drift
+
 #define ARROW_SPEED_MIN             16.0f       //at BOW_MIN_POWER
 #define ARROW_SPEED_MAX             46.0f       //at a full draw
 //Lighter than the archer's gravity so an arrow draws a long readable arc rather than a mortar
@@ -310,10 +329,14 @@ enum StagePropKind{
     start, and nothing else - no ledges, no rope, no gaps. It exists so the bow can be worked on
     with a still camera and nothing to fall off, and so a screenshot of it means the same thing
     from one run to the next.
+
+    ROPE is the same idea for the rope: a floor, two walls and ONE long rope in the middle, and
+    nothing else - the place to work on catching, swinging and climbing it.
 */
 enum StageLevel{
     STAGE_LEVEL_MAIN = 0,
     STAGE_LEVEL_RANGE,
+    STAGE_LEVEL_ROPE,
     STAGE_LEVEL_COUNT
 };
 
@@ -472,6 +495,52 @@ struct StageObstacle{
 //as weight rather than as the game taking the controls away.
 #define KICK_ROOT_FRICTION          40.0f
 
+/*
+    --- KNEELING ---------------------------------------------------------------------------------
+    C kneels, C again stands - a stance she gets into and out of, not a hold (animation_plan.md,
+    Step 2). Kneeling she cannot run, jump, kick or take a rope, and she keeps her facing; she CAN
+    draw, aim and loose. Only from the ground, and never mid-kick.
+
+    THE TRANSITIONS ARE TIMED BY THE CLIPS, the KICK_TICKS arrangement: Stand_ToKneel and
+    Kneel_ToStand set these, and the app warns with the number to type when a re-export moves
+    them. Timed to where each clip's HIP SETTLES, not to its end - both hold still for a long
+    tail (Stand_ToKneel is down at 0.67s of 1.53), which is never played; see Puppet::clip_settle.
+    A press during either transition is ignored; standing up starts only from the held kneel.
+
+    SHE IS SHORTER while down: the body box keeps its feet and loses its top, to 2 * KNEEL_HALF_H
+    tall (`pos` stays the centre of the STANDING box, so the feet are pos.y - ARCHER_HALF_H in
+    every stance and nothing that places the model has to know). It shrinks as she starts down and
+    grows back as she starts up - which is why standing up is REFUSED with something low overhead.
+    Moot while a kneel cannot move; it is the box a crouch-walk will need. MEASURED from Kneel_Idle
+    against Idle, head over toes; the app reports the ratio at every start.
+
+    And the arrow leaves LOWER: the kneeling anchor, measured like BOW_NOCK_UP/FWD - the nocked
+    arrow's origin at full draw, averaged over the aim range. The anchor eases between the two
+    over a transition, so a draw held through one keeps its arc on the bow.
+*/
+#define KNEEL_DOWN_TICKS            40      //Stand_ToKneel's hip settles at 0.667s
+#define KNEEL_UP_TICKS              42      //Kneel_ToStand's at 0.700s
+#define KNEEL_HALF_H                0.54f   //60% of her standing height, head over toes
+#define KNEEL_NOCK_UP               0.02f   //the kneeling anchor, above the STANDING centre, averaged
+#define KNEEL_NOCK_FWD              0.07f   //over aim -60..+80 (measured 2026-09-24)
+
+/*
+    --- GETTING UP -------------------------------------------------------------------------------
+    The level entry: she starts lying on the ground and gets up, and nothing the player does counts
+    until she is on her feet. Stage::Tick hands the whole tick an EMPTY ArcherInput while it runs,
+    so "no input" is true of every verb by construction - no move, jump, draw, aim, kick, rope or
+    kneel, and nothing buffered to fire the moment it ends - rather than being a gate each verb has
+    to remember.
+
+    NOT started by Reset, which every rules test calls and none of them wants to wait 3.5 seconds
+    through. The app calls StartGetUp when a level starts; a test that wants it calls it too.
+
+    THE WHOLE CLIP, not timed to a settle the way the kneel is: this one is meant to play to its
+    end. So GETUP_TICKS is Laying_StandingUp's full length, and the app warns with the number to
+    type when a re-export changes it - the KICK_TICKS arrangement.
+*/
+#define GETUP_TICKS                 210     //Laying_StandingUp is 3.500s
+
 //--- The archer's state machine -----------------------------------------------------------------
 /*
     What the archer is doing with their whole body. Deliberately one small enum rather than a pile
@@ -486,7 +555,16 @@ enum ArcherMode{
     MODE_AIR,
     MODE_HANG,          //hanging from a ledge - the ledge slice
     MODE_CLIMB,         //pulling up over one - the ledge slice
-    MODE_ROPE           //on the rope, where rp3d owns the body instead - the rope slice
+    MODE_ROPE,          //on the rope, where rp3d owns the body instead - the rope slice
+    MODE_KNEEL,         //down on one knee, or getting down or up - see kneel_phase
+    MODE_GETUP          //the level entry: lying, getting up, no input - see GETUP_TICKS
+};
+
+//Where in a kneel she is, while MODE_KNEEL.
+enum KneelPhase{
+    KNEEL_LOWERING = 0,     //Stand_ToKneel, KNEEL_DOWN_TICKS
+    KNEEL_HELD,             //Kneel_Idle, for as long as she stays down
+    KNEEL_RISING            //Kneel_ToStand, KNEEL_UP_TICKS
 };
 
 enum BowMode{
@@ -505,6 +583,7 @@ struct ArcherInput{
     bool  f_down_held = false;      //drop through a one-way platform
     bool  f_kick_pressed = false;   //edge: kick
     bool  f_action_pressed = false; //edge: take the rope - the later slice
+    bool  f_kneel_pressed = false;  //edge: kneel, or stand back up
 };
 
 /*
@@ -536,12 +615,17 @@ struct StageEvents{
     float land_speed = 0.0f;        //how hard; the app scales dust and shake by it
     bool  f_shot = false;
     float shot_power = 0.0f;        //0..1, the draw at the moment of release
+    float shot_aim_deg = 0.0f;      //and the angle it left at, sway included
     bool  f_bumped_head = false;
     bool  f_grabbed_ledge = false;  //caught a lip this tick
     bool  f_released_ledge = false; //let go of one, by choice or by dropping
     bool  f_climbed = false;        //finished pulling up over one
     bool  f_kick_started = false;   //the boot went out; the connect comes a few ticks later
     bool  f_kick_connected = false; //...and hit at least one thing
+    bool  f_knelt = false;          //started down onto one knee
+    bool  f_stood = false;          //finished standing back up
+    bool  f_got_up = false;         //the level entry finished; the controls are hers
+    bool  f_stand_blocked = false;  //asked to stand with no room overhead; stays down
 
     //--- The rope -------------------------------------------------------------------------------
     //The app acts on these by creating and destroying the joint that makes the swing real.
@@ -607,6 +691,9 @@ public:
 
     //Builds the blockout and puts the archer at the start. Call it again to restart.
     void Reset();
+    //Lays her down where she stands - dropped onto whatever is under her - and starts the level
+    //entry: GETUP_TICKS with no input. See GETTING UP.
+    void StartGetUp();
 
     /*
         WHICH LEVEL this Stage builds - see StageLevel. A different level is a different Stage
@@ -675,6 +762,19 @@ public:
     int   kick_ticks = 0;
     int   kick_cooldown = 0;
 
+    //--- Kneeling -------------------------------------------------------------------------------
+    int   kneel_phase = KNEEL_LOWERING; //meaningful only while MODE_KNEEL
+    int   kneel_ticks = 0;          //counts up through a transition; 0 while held
+    int   getup_ticks = 0;          //counts up through MODE_GETUP, to GETUP_TICKS
+    //How far down she is, 0 standing .. 1 kneeling, eased through the transitions. The anchor
+    //moves by it; the Puppet reads the phase instead.
+    float KneelAmount() const;
+    //The body box's height: 2 * ARCHER_HALF_H standing, 2 * KNEEL_HALF_H from the moment she
+    //starts down until she starts up. Its bottom is always pos.y - ARCHER_HALF_H.
+    float BodyHeight() const;
+    //Is there room to stand up - would the standing box fit where she kneels?
+    bool  CanStandUp() const;
+
     //--- The rope -------------------------------------------------------------------------------
     int   rope_id = -1;             //which link is held, while MODE_ROPE; the app's handle
     int   rope_ticks = 0;           //how long it has been held - see ROPE_MIN_HOLD_TICKS
@@ -694,6 +794,12 @@ public:
     //Is an arrow on the string - drawing, and at least BOW_NOCK_TICKS in? Only then can she loose.
     bool  IsNocked() const { return bow_mode == BOW_DRAWING && draw_ticks >= BOW_NOCK_TICKS; }
     int   draws_cancelled = 0;      //let go before the nock; see BOW_NOCK_TICKS
+    int   sway_ticks = 0;           //ticks since the nock, uncapped - draw_ticks stops at full
+    int   draws_started = 0;        //every draw begun; picks where its sway starts
+    //The sway on top of aim_deg right now, degrees - 0 unless nocked. See AIM_SWAY_STAND_DEG.
+    float AimSwayDeg() const;
+    //What the arrow is actually aimed at: aim_deg plus the sway. AimDirection follows it.
+    float ShotAimDeg() const { return aim_deg + AimSwayDeg(); }
 
     /*
         The arrows, live and stuck.
@@ -756,6 +862,7 @@ private:
     void BuildLevel();
     void BuildMainLevel();
     void BuildRangeLevel();
+    void BuildRopeLevel();
     void TickBow(const ArcherInput& in, StageEvents& events);
     void TickArcher(const ArcherInput& in, StageEvents& events);
     void TickArrows(StageEvents& events);
@@ -774,6 +881,15 @@ private:
     //Advances the kick timer and, on the ticks it is live, sweeps its box against the breakable
     //blocks and the obstacles. Everything it finds goes into `events`.
     void  TickKick(const ArcherInput& in, StageEvents& events);
+
+    //--- Kneeling -------------------------------------------------------------------------------
+    //The whole of MODE_KNEEL: the phase clock, standing up, and a planted body that still falls
+    //if the floor goes.
+    void  TickKneel(const ArcherInput& in, StageEvents& events);
+    //The whole of MODE_GETUP: the clock, and a body that still falls if the floor goes.
+    void  TickGetUp(StageEvents& events);
+    //How much of the standing box's top is missing right now - 0 unless kneeling.
+    float HeadDrop() const;
 
     //--- The rope -------------------------------------------------------------------------------
     //While MODE_ROPE the solver owns the archer's position, so this decides only one thing: when

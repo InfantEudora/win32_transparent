@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1f02e4da-fa81-4634-9800-ae5b6cfa5ba7
-  modified: 2026-09-22T15:54:35.920Z
+  modified: 2026-09-24T13:08:23.989Z
 ---
 
 `apps/archer` - a side-view platformer about an archer, 3D assets, Windows, keyboard only.
@@ -409,3 +409,35 @@ side-on upper body on forward-facing walk hips, bow pointed into the screen, aim
 Puppet::ChooseUpper/upper_weight/upper_latched; aim_weight waits for the nock. Standing + walking both
 0.00 deg error. Decided: C = kneel (toggle state, shorter box, no move/jump, can draw); aim wobble =
 deterministic sway in PredictArc, wide standing, narrow kneeling. Kneel clips not exported yet.
+
+2026-09-24 kneel + sway BUILT: MODE_KNEEL (C / pad X; lowering/held/rising), box keeps feet (pos = standing
+centre always), KNEEL_* measured by MeasureKneelClips at start. Kneel clips hold still for long tails ->
+transitions timed to the HIP SETTLE (Puppet::clip_settle), 40/42 ticks not 92/62. Upper layer on for the whole
+kneel (draw frame 0 at rest) + its own crossfade (upper_mix/upper_xfade_serial) for a release while kneeling.
+Sway: AimSwayDeg, per-draw offset from draws_started (identical-every-draw was a learnable pattern).
+Tests merged into stage_test.cpp (354 checks). Object-lift of the layer DEFERRED by the user (no other
+apps' animations to test it on).
+
+FOLIAGE BUILT 2026-09-24: `Foliage.{h,cpp}` (engine-free, in `make rules`) scatters fern_1/fern_2/flower
+(nodes in archer.glb, origin at base) over exposed SOLID/LEDGE tops outside the terrain bays; density
+from a 2D AO (16 rays over the upper half-circle, hit weight 1-(t/R)^2, raw x2 since a wall is half the
+sky). Spacing 0.8 not 1.1 - 1.1 capped corners at ~3/unit whatever the density. User chose: character's
+scale (model_scale 2.02), no plants on the one-way platform, no shadows. App keeps a pooled, non-pickable
+set under a `foliage` group, rescattered by Regenerate terrain and the panel's Foliage sliders (on release).
+
+CRATES use archer.glb `wooden_crate` (2026-09-24), re-baked to unit_mesh's 1x1x1 centred box so MakePlanarBody
+is unchanged; FITTED TO THE 0.8 COLLIDER, not model_scale (a crate's size is gameplay). Box fallback if the node
+is missing. archer.glb is now loaded ONCE at the top of Init (BuildProps needs it before BuildArcherModel).
+
+LEVEL ENTRY = GET-UP (2026-09-24): MODE_GETUP, GETUP_TICKS 210 = Laying_StandingUp's full 3.5s (user: must
+play to the end, no input). Stage::Tick swaps in an EMPTY ArcherInput while in it - the lock is total by
+construction. NOT in Reset (tests would all wait); app calls StartGetUp in Init (main level) and NewGame; a
+fall off the world is not a level entry. StartGetUp sweeps her down onto the floor first. archer_place ends it.
+DEFAULT OFF (user, same day - it slowed testing): `f_level_entry_getup` in ApplicationArcher gates both calls;
+the panel's "level entry get-up" checkbox turns it on, effective at the next restart.
+MCP GOTCHA: archer_hold's argument is `action`, not `control` - a wrong key returns an error and holds nothing,
+which silently makes an "input is ignored" check pass.
+
+2026-09-24 rope test scene BUILT: STAGE_LEVEL_ROPE / scene "Rope" (one 9-unit rope, 12 links). App scenes are
+now a list (parked_levels + BuildExtraLevel). Rope climbing PROPOSED in animation_plan.md (Up/Down climb on the
+rope, grip distance + joint re-created with local anchors each tick); waiting on the user for a rope-climb clip.

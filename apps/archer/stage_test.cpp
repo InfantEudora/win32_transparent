@@ -21,6 +21,8 @@
 
 #include "Stage.h"
 #include "Puppet.h"
+#include "Foliage.h"
+#include "Vine.h"
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -2128,6 +2130,595 @@ static void TestRange(){
     Check(s.GetLevel() == STAGE_LEVEL_RANGE && s.blocks.size() == 3,"a restart stays on the range");
 }
 
+/*
+    The garden - apps/archer/Foliage.h. Engine-free like the rules, so it is checked here with them.
+
+    On a bare floor with one wall and one box standing on it, which is the smallest level that has
+    all three things the scatter has to get right: open ground, an inside corner, and a stack.
+*/
+/*
+    The level entry - GETTING UP in Stage.h. The promise under test is that NOTHING counts until
+    she is up: every verb at once, held and pressed, for the whole get-up, and not one of them
+    leaves a mark - not even a buffered jump firing on the tick the controls come back.
+*/
+static void TestGetUp(){
+    printf("\ngetting up\n");
+    Stage s;
+    v2 start = s.pos;
+    s.StartGetUp();
+    char d[160];
+    snprintf(d,sizeof(d),"centre at %.3f, started at %.3f",s.pos.y,start.y);
+    Check(s.mode == MODE_GETUP,"StartGetUp starts the get-up");
+    Check(fabsf(s.pos.y - ARCHER_HALF_H) < 0.01f && s.f_on_ground,
+          "she is laid ON the floor, not left to fall onto it lying down",d);
+    Check(s.pos.x == start.x,"where she started, across");
+
+    ArcherInput all;
+    all.move_axis = 1.0f;
+    all.aim_axis = 1.0f;
+    all.f_jump_down = true;
+    all.f_jump_pressed = true;
+    all.f_draw_down = true;
+    all.f_kick_pressed = true;
+    all.f_action_pressed = true;
+    all.f_kneel_pressed = true;
+    float aim_before = s.aim_deg;
+    bool f_ever_moved = false, f_ever_drew = false, f_ever_kicked = false, f_ended_early = false;
+    bool f_got_up_early = false;
+    for (int t = 0; t < GETUP_TICKS - 1; t++){
+        StageEvents e;
+        s.Tick(all,e);
+        if (fabsf(s.pos.x - start.x) > 0.0001f){ f_ever_moved = true; }
+        if (s.bow_mode != BOW_IDLE){ f_ever_drew = true; }
+        if (s.kick_ticks != 0){ f_ever_kicked = true; }
+        if (s.mode != MODE_GETUP){ f_ended_early = true; }
+        if (e.f_got_up){ f_got_up_early = true; }
+    }
+    Check(!f_ever_moved,"no run or jump moves her while she gets up");
+    Check(!f_ever_drew && s.NumLiveArrows() == 0,"no draw starts, and nothing is loosed");
+    Check(!f_ever_kicked,"no kick starts");
+    Check(s.aim_deg == aim_before,"the aim does not tilt");
+    Check(!f_ended_early && !f_got_up_early,"and it lasts the whole of GETUP_TICKS");
+
+    StageEvents last;
+    s.Tick(all,last);
+    Check(last.f_got_up && s.mode == MODE_GROUND,"on the last tick she is up, on the ground");
+
+    //The jump was pressed on every tick of the get-up. If any of it had been buffered, it would
+    //fire here, on the first tick with nothing pressed.
+    ArcherInput none;
+    StageEvents after;
+    s.Tick(none,after);
+    Check(!after.f_jumped && s.vel.y <= 0.0f,"nothing pressed during it fires afterwards");
+
+    ArcherInput run;
+    run.move_axis = 1.0f;
+    float x = s.pos.x;
+    Run(s,10,run);
+    Check(s.pos.x > x + 0.5f,"and then the controls are hers");
+
+    Puppet p;
+    p.clip_duration[CLIP_LAYING_UP] = (float)GETUP_TICKS * ARCHER_DT;
+    ArcherAnimParams in;
+    in.mode = MODE_GETUP;
+    in.f_on_ground = true;
+    PuppetChoice c = p.Choose(in);
+    snprintf(d,sizeof(d),"rate %.3f",c.rate);
+    Check(c.clip == CLIP_LAYING_UP && fabsf(c.rate - 1.0f) < 0.001f && c.start_time == 0.0f,
+          "the Puppet plays Laying_StandingUp whole, from its first frame, at 1.00",d);
+}
+
+static void TestFoliage(){
+    printf("\nfoliage\n");
+    std::vector<StageBlock> blocks;
+    blocks.push_back({   0.0f, -1.0f, 12.0f, 1.0f, BLOCK_SOLID,     true });   //floor, x -12..12, top 0
+    blocks.push_back({   8.0f,  2.0f,  1.0f, 2.0f, BLOCK_SOLID,     true });   //wall,  x 7..9, top 4
+    blocks.push_back({  -6.0f,  0.5f,  1.5f, 0.5f, BLOCK_SOLID,     true });   //a box on the floor, x -7.5..-4.5
+    blocks.push_back({   2.0f,  3.0f,  1.0f, 0.1f, BLOCK_PLATFORM,  true });   //one-way, x 1..3
+    blocks.push_back({ -10.0f,  0.5f,  0.5f, 0.5f, BLOCK_BREAKABLE, true });   //cracked wall
+    std::vector<bool> grows(blocks.size(),true);
+    FoliageParams params;
+
+    float open = FoliageOcclusion(blocks,-1.0f,0.0f,params);
+    float corner = FoliageOcclusion(blocks,6.95f,0.0f,params);
+    char d[160];
+    snprintf(d,sizeof(d),"open %.3f, foot of the wall %.3f",open,corner);
+    Check(open < 0.01f,"open floor is unoccluded",d);
+    Check(corner > 0.35f,"the foot of a wall is about half occluded",d);
+    float lip = FoliageOcclusion(blocks,-4.55f,1.0f,params);
+    snprintf(d,sizeof(d),"%.3f",lip);
+    Check(lip < 0.01f,"a box's outer edge is a convex corner, and unoccluded",d);
+
+    std::vector<FoliagePlant> plants;
+    ScatterFoliage(blocks,grows,params,plants);
+    snprintf(d,sizeof(d),"%zu plants",plants.size());
+    Check(plants.size() > 20,"the scatter grows something",d);
+
+    int under_box = 0, on_box = 0, on_platform = 0, on_breakable = 0, in_wall = 0;
+    int near_wall = 0, in_open = 0;
+    for (size_t i = 0; i < plants.size(); i++){
+        const FoliagePlant& p = plants[i];
+        bool f_ground = fabsf(p.y - 0.0f) < 0.001f;
+        if (f_ground && p.x > -7.5f && p.x < -4.5f){ under_box++; }
+        if (fabsf(p.y - 1.0f) < 0.001f){ on_box++; }
+        if (fabsf(p.y - 3.1f) < 0.001f){ on_platform++; }
+        if (f_ground && p.x > -10.5f && p.x < -9.5f){ on_breakable++; }
+        if (f_ground && p.x > 7.0f && p.x < 9.0f){ in_wall++; }
+        if (f_ground && p.x > 5.5f && p.x < 7.0f){ near_wall++; }
+        if (f_ground && p.x > -3.5f && p.x < 0.5f){ in_open++; }
+    }
+    Check(under_box == 0,"nothing grows on the floor underneath a box standing on it");
+    Check(on_box > 0,"the box's own top grows instead");
+    Check(in_wall == 0,"nothing grows inside the wall's footprint");
+    Check(on_platform == 0,"nothing grows on a one-way platform");
+    Check(on_breakable == 0,"nothing grows under the breakable wall");
+    //Per unit of length: 1.5 units at the wall's foot against 4 of open floor.
+    float per_corner = near_wall / 1.5f;
+    float per_open = in_open / 4.0f;
+    snprintf(d,sizeof(d),"%.1f per unit at the wall's foot, %.1f in the open",per_corner,per_open);
+    Check(per_corner > 2.0f * per_open,"plants are at least twice as dense in the corner",d);
+
+    std::vector<FoliagePlant> again;
+    ScatterFoliage(blocks,grows,params,again);
+    bool f_same = (again.size() == plants.size());
+    for (size_t i = 0; f_same && i < plants.size(); i++){
+        f_same = (again[i].x == plants[i].x && again[i].z == plants[i].z &&
+                  again[i].kind == plants[i].kind);
+    }
+    Check(f_same,"the same blocks grow the same garden");
+
+    std::vector<bool> none(blocks.size(),false);
+    ScatterFoliage(blocks,none,params,again);
+    Check(again.empty(),"a block the mask excludes grows nothing");
+}
+
+/*
+    The vines - apps/archer/Vine.h. Checked on the real level's declarations, with the placeholder
+    pieces, because what can go wrong is specific to where they are: a path laid through a block,
+    a leaf buried in the ground it lies on. The curve and the deform themselves are checked by
+    tools/spline_test.cpp.
+*/
+static void TestVines(){
+    printf("\nvines\n");
+    Stage s;
+    std::vector<VinePath> paths;
+    DeclareVines(STAGE_LEVEL_MAIN,paths);
+    Check(!paths.empty(),"the main level declares vines");
+    std::vector<VinePath> none;
+    DeclareVines(STAGE_LEVEL_RANGE,none);
+    Check(none.empty(),"the range has none");
+
+    std::vector<vertex> tile;
+    MakeVinePlaceholderTile(tile);
+    std::vector<vertex> leaf_mesh;
+    MakeVinePlaceholderLeaf(leaf_mesh);
+    VineParams params;
+    params.tile_radius = VineTileRadius(tile);
+    float leaf_len = 0.0f;
+    for (size_t i = 0; i < leaf_mesh.size(); i++){
+        if (leaf_mesh[i].pos.z > leaf_len){ leaf_len = leaf_mesh[i].pos.z; }
+    }
+    params.leaf_length = leaf_len;
+    char d[160];
+    snprintf(d,sizeof(d),"radius %.3f, leaf %.3f",params.tile_radius,params.leaf_length);
+    Check(params.tile_radius > 0.08f && params.tile_radius < 0.13f,"the placeholder is measured, not assumed",d);
+
+    //The same hemisphere test the deform's own check uses: every face of the placeholder tile
+    //faces away from its axis, or the trunk renders inside out.
+    int inward = 0;
+    for (size_t i = 0; i + 2 < tile.size(); i += 3){
+        vec3 n = (tile[i + 1].pos - tile[i].pos).cross(tile[i + 2].pos - tile[i].pos);
+        vec3 c = (tile[i].pos + tile[i + 1].pos + tile[i + 2].pos) / 3.0f;
+        if (n.x * c.x + n.y * c.y <= 0.0f){ inward++; }
+    }
+    snprintf(d,sizeof(d),"%i of %zu",inward,tile.size() / 3);
+    Check(inward == 0,"the placeholder tile's faces point outward",d);
+
+    int total_leaves = 0, buried = 0, far_from_trunk = 0, backwards = 0, in_margin = 0;
+    float worst_off_axis = 0.0f;
+    for (size_t v = 0; v < paths.size(); v++){
+        Spline sp;
+        bool f_built = BuildVineSpline(paths[v],sp);
+        snprintf(d,sizeof(d),"vine %zu, length %.2f",v,sp.GetLength());
+        Check(f_built && sp.GetLength() > 1.0f,"each vine builds a curve of some length",d);
+
+        std::vector<vertex> trunk;
+        int tiles = BuildVineTrunk(sp,paths[v],tile,params,trunk);
+        Check(tiles > 0 && trunk.size() == tile.size() * (size_t)tiles,"...and a trunk of whole tiles",d);
+        //The wrap overlay is laid copy for copy with the trunk even though it overhangs the
+        //period - a stand-in here, the tile fattened and stretched past both ends the way
+        //vine_curl's slanted strands are.
+        std::vector<vertex> overlay = tile;
+        for (size_t i = 0; i < overlay.size(); i++){
+            overlay[i].pos = vec3(overlay[i].pos.x * 1.4f,overlay[i].pos.y * 1.4f,overlay[i].pos.z * 1.06f - 0.01f);
+        }
+        std::vector<vertex> wrap;
+        int wraps = BuildVineOverlay(sp,paths[v],overlay,tile,params,wrap);
+        snprintf(d,sizeof(d),"vine %zu: %i wrap copies, %i trunk tiles",v,wraps,tiles);
+        Check(wraps == tiles,"...and the wrap lays exactly one copy per trunk tile",d);
+        //No vertex further from the curve than the widest the cross-section gets.
+        float bound = params.tile_radius * params.tile_scale * paths[v].thickness;
+        for (size_t i = 0; i < trunk.size(); i += 7){
+            float off = trunk[i].pos.distance(sp.PositionAt(sp.ClosestDistance(trunk[i].pos)));
+            if (off - bound > worst_off_axis){ worst_off_axis = off - bound; }
+        }
+
+        std::vector<VineLeaf> leaves;
+        ScatterVineLeaves(sp,paths[v],params,&s.blocks,leaves);
+        total_leaves += (int)leaves.size();
+        for (size_t i = 0; i < leaves.size(); i++){
+            const VineLeaf& l = leaves[i];
+            vec3 fwd = l.rotation * vec3(0.0f,0.0f,1.0f);
+            vec3 tip = l.position + fwd * (params.leaf_length * l.scale);
+            for (size_t k = 0; k < s.blocks.size(); k++){
+                const StageBlock& b = s.blocks[k];
+                if (b.f_alive && tip.x > b.Left() && tip.x < b.Right() && tip.y > b.Bottom() && tip.y < b.Top()){
+                    buried++;
+                    break;
+                }
+            }
+            vec3 on_axis = sp.PositionAt(l.s);
+            if (l.position.distance(on_axis) > bound * 1.01f){ far_from_trunk++; }
+            //Toward the growing tip: the blade leans along the curve, never back down it.
+            if (fwd.dot(sp.TangentAt(l.s)) <= 0.0f){ backwards++; }
+            if (l.s < params.leaf_end_margin - 0.05f || l.s > sp.GetLength() - params.leaf_end_margin + 0.05f){
+                in_margin++;
+            }
+        }
+        //Deterministic: grown twice, the same leaves.
+        std::vector<VineLeaf> again;
+        ScatterVineLeaves(sp,paths[v],params,&s.blocks,again);
+        bool f_same = again.size() == leaves.size();
+        for (size_t i = 0; f_same && i < leaves.size(); i++){
+            f_same = again[i].position.distance(leaves[i].position) == 0.0f && again[i].kind == leaves[i].kind;
+        }
+        Check(f_same,"the same vine grows the same leaves",d);
+    }
+    snprintf(d,sizeof(d),"worst %.4f beyond the cross-section",worst_off_axis);
+    Check(worst_off_axis < 0.005f,"the trunk stays within its cross-section of the curve",d);
+    snprintf(d,sizeof(d),"%i leaves",total_leaves);
+    Check(total_leaves > 20,"the vines grow leaves",d);
+    snprintf(d,sizeof(d),"%i buried",buried);
+    Check(buried == 0,"no leaf tip is inside a block",d);
+    snprintf(d,sizeof(d),"%i",far_from_trunk);
+    Check(far_from_trunk == 0,"every stem is on the trunk",d);
+    snprintf(d,sizeof(d),"%i",backwards);
+    Check(backwards == 0,"every leaf leans toward the tip",d);
+    snprintf(d,sizeof(d),"%i",in_margin);
+    Check(in_margin == 0,"no leaf in the tapered ends",d);
+
+    //And that the blocks were what kept them out: with none given, the vine along the ground
+    //buries some - otherwise the check above has no teeth.
+    Spline sp;
+    BuildVineSpline(paths[0],sp);
+    std::vector<VineLeaf> blind;
+    ScatterVineLeaves(sp,paths[0],params,NULL,blind);
+    int blind_buried = 0;
+    for (size_t i = 0; i < blind.size(); i++){
+        vec3 tip = blind[i].position + (blind[i].rotation * vec3(0.0f,0.0f,1.0f)) * (params.leaf_length * blind[i].scale);
+        for (size_t k = 0; k < s.blocks.size(); k++){
+            const StageBlock& b = s.blocks[k];
+            if (b.f_alive && tip.x > b.Left() && tip.x < b.Right() && tip.y > b.Bottom() && tip.y < b.Top()){
+                blind_buried++;
+                break;
+            }
+        }
+    }
+    snprintf(d,sizeof(d),"%i of %zu buried without them",blind_buried,blind.size());
+    Check(blind_buried > 0,"...and it is the blocks that keep them out",d);
+
+    //QuatFromBasis against quat's own rotation: the axes it was given must be where X, Y, Z go.
+    vec3 bx = vec3(0.36f,0.48f,-0.8f);
+    vec3 bz = vec3(0.8f,-0.6f,0.0f);
+    vec3 by = bz.cross(bx);
+    quat q = QuatFromBasis(bx,by,bz);
+    float err = (q * vec3(1,0,0)).distance(bx) + (q * vec3(0,1,0)).distance(by) + (q * vec3(0,0,1)).distance(bz);
+    snprintf(d,sizeof(d),"error %.2e",err);
+    Check(err < 1e-5f,"QuatFromBasis maps X, Y, Z onto the basis",d);
+    //And the branches Shepperd's method takes for a trace <= 0: a half turn about each axis.
+    float worst_q = 0.0f;
+    for (int a = 0; a < 3; a++){
+        vec3 x = (a == 0) ? vec3(1,0,0) : vec3(-1,0,0);
+        vec3 y = (a == 1) ? vec3(0,1,0) : vec3(0,-1,0);
+        vec3 z = (a == 2) ? vec3(0,0,1) : vec3(0,0,-1);
+        quat h = QuatFromBasis(x,y,z);
+        float e = (h * vec3(1,0,0)).distance(x) + (h * vec3(0,1,0)).distance(y) + (h * vec3(0,0,1)).distance(z);
+        if (e > worst_q){ worst_q = e; }
+    }
+    snprintf(d,sizeof(d),"error %.2e",worst_q);
+    Check(worst_q < 1e-5f,"...including half turns",d);
+}
+
+//--- Kneeling -------------------------------------------------------------------------------------
+/*
+    C kneels and C stands (animation_plan.md, Step 2): a stance with timed transitions, a shorter
+    body, no run, jump, kick or turn - and a bow that still draws, lower. Written against the
+    KNEEL_* constants, so re-timing the clips does not turn this red.
+*/
+static void TestKneel(){
+    printf("\nkneeling\n");
+    char detail[200];
+    ArcherInput idle;
+    ArcherInput press;
+    press.f_kneel_pressed = true;
+
+    Stage s;
+    s.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(s);
+    float feet = s.pos.y - ARCHER_HALF_H;
+    float facing = s.facing;
+    StageEvents e;
+    s.Tick(press,e);
+    Check(e.f_knelt && s.mode == MODE_KNEEL && s.kneel_phase == KNEEL_LOWERING,
+          "C on the ground starts her down onto one knee");
+    CheckNear(s.BodyHeight(),2.0f * KNEEL_HALF_H,0.0001f,"and the body box is the kneeling one at once");
+    CheckNear(s.pos.y - ARCHER_HALF_H,feet,0.0001f,"with its feet where they were");
+    Run(s,KNEEL_DOWN_TICKS - 2,idle);
+    Check(s.kneel_phase == KNEEL_LOWERING,"still going down one tick before KNEEL_DOWN_TICKS");
+    Run(s,1,idle);
+    Check(s.kneel_phase == KNEEL_HELD,"and down on the knee at KNEEL_DOWN_TICKS");
+    CheckNear(s.KneelAmount(),1.0f,0.0001f,"fully kneeling");
+
+    //Nothing moves her.
+    ArcherInput go;
+    go.move_axis = -1.0f;
+    go.f_jump_pressed = true;
+    go.f_jump_down = true;
+    go.f_kick_pressed = true;
+    float x = s.pos.x;
+    Run(s,30,go);
+    CheckNear(s.pos.x,x,0.0001f,"kneeling, the stick does not move her");
+    Check(s.facing == facing,"or turn her round");
+    Check(s.mode == MODE_KNEEL && s.f_on_ground,"a jump press does not jump");
+    Check(s.kick_ticks == 0,"and a kick press does not kick");
+    Run(s,10,idle);
+    Check(s.mode == MODE_KNEEL && s.vel.y <= 0.0f,"nor does a buffered jump fire later");
+
+    //The bow still works, from lower down.
+    Stage stand;
+    stand.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(stand);
+    CheckNear(s.AnchorPosition().y - stand.AnchorPosition().y,KNEEL_NOCK_UP - BOW_NOCK_UP,0.0001f,
+              "the kneeling anchor is lower by exactly the measured difference");
+    ArcherInput draw;
+    draw.f_draw_down = true;
+    Run(s,BOW_DRAW_TICKS + 20,draw);
+    Check(s.IsNocked(),"she draws while kneeling");
+    v2 arc[AIM_ARC_POINTS];
+    int n = s.PredictArc(arc,AIM_ARC_POINTS);
+    Check(n > 0,"and the arc is drawn from the kneeling anchor");
+    ArcherInput loose;
+    loose.f_draw_released = true;
+    StageEvents le;
+    s.Tick(loose,le);
+    Check(le.f_shot && s.mode == MODE_KNEEL,"and looses without standing up");
+
+    //Standing up.
+    StageEvents ue;
+    s.Tick(press,ue);
+    Check(s.kneel_phase == KNEEL_RISING,"C again starts her standing up");
+    CheckNear(s.BodyHeight(),2.0f * ARCHER_HALF_H,0.0001f,"with the full box from the first tick up");
+    bool f_stood = false;
+    for (int i = 0; i < KNEEL_UP_TICKS && !f_stood; i++){
+        StageEvents te;
+        s.Tick(idle,te);
+        f_stood = te.f_stood;
+    }
+    Check(f_stood && s.mode == MODE_GROUND,"and she is standing after KNEEL_UP_TICKS");
+    ArcherInput run;
+    run.move_axis = 1.0f;
+    Run(s,10,run);
+    Check(s.vel.x > 0.0f,"and runs again");
+
+    //A press during a transition is ignored.
+    Stage t;
+    t.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(t);
+    Run(t,1,press);
+    Run(t,5,press);
+    Check(t.mode == MODE_KNEEL && t.kneel_phase == KNEEL_LOWERING,
+          "pressing C while going down does not turn her round halfway");
+
+    //Not from the air.
+    Stage a;
+    a.SetLevel(STAGE_LEVEL_RANGE);
+    a.pos.y += 3.0f;
+    a.f_on_ground = false;
+    a.mode = MODE_AIR;
+    Run(a,1,press);
+    Check(a.mode != MODE_KNEEL,"C in the air does nothing");
+
+    //At a run she brakes to a stop.
+    Stage r;
+    r.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(r);
+    Run(r,20,run);
+    float vx = r.vel.x;
+    Run(r,1,press);
+    Run(r,8,idle);
+    snprintf(detail,sizeof(detail),"running at %.2f, %.3f left after 8 ticks",vx,r.vel.x);
+    Check(r.mode == MODE_KNEEL && r.vel.x == 0.0f,"kneeling at a run brakes her to a stop",detail);
+
+    //No room to stand: something low overhead.
+    Stage low;
+    low.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(low);
+    Run(low,1,press);
+    Run(low,KNEEL_DOWN_TICKS + 2,idle);
+    float kneel_top = low.pos.y - ARCHER_HALF_H + 2.0f * KNEEL_HALF_H;
+    float stand_top = low.pos.y + ARCHER_HALF_H;
+    float cy = (kneel_top + stand_top) * 0.5f + 0.25f;
+    low.ClearObstacles();
+    low.AddObstacle(low.pos.x,cy,1.0f,0.25f,7,false);
+    Check(!low.CanStandUp(),"a box between the kneeling and standing heads leaves no room to stand");
+    StageEvents be;
+    low.Tick(press,be);
+    Check(be.f_stand_blocked && low.kneel_phase == KNEEL_HELD,"so C is refused and she stays down");
+    low.ClearObstacles();
+    StageEvents ge;
+    low.Tick(press,ge);
+    Check(low.kneel_phase == KNEEL_RISING,"and stands once it is gone");
+}
+
+//--- The aim sway -------------------------------------------------------------------------------
+static void TestSway(){
+    printf("\naim sway\n");
+    ArcherInput draw;
+    draw.f_draw_down = true;
+
+    Stage s;
+    s.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(s);
+    Run(s,BOW_NOCK_TICKS + 1,draw);
+    Check(s.IsNocked(),"nocked");
+    CheckNear(s.AimSwayDeg(),0.0f,0.0001f,"the sway is exactly zero on the nock, so the arc does not jump");
+
+    //Bounded by the amplitude, and actually moving.
+    float lo = 0.0f;
+    float hi = 0.0f;
+    for (int i = 0; i < 600; i++){
+        Run(s,1,draw);
+        float w = s.AimSwayDeg();
+        if (w < lo){ lo = w; }
+        if (w > hi){ hi = w; }
+    }
+    char detail[160];
+    snprintf(detail,sizeof(detail),"%.2f .. %.2f over ten seconds",lo,hi);
+    Check(hi <= AIM_SWAY_STAND_DEG && lo >= -AIM_SWAY_STAND_DEG,"standing, it stays inside AIM_SWAY_STAND_DEG",detail);
+    Check(hi - lo > AIM_SWAY_STAND_DEG,"and really drifts",detail);
+    CheckNear(s.ShotAimDeg(),s.aim_deg + s.AimSwayDeg(),0.0001f,"the shot's angle is the aim plus the sway");
+
+    //Kneeling narrows it.
+    Stage k;
+    k.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(k);
+    ArcherInput press;
+    press.f_kneel_pressed = true;
+    ArcherInput idle;
+    Run(k,1,press);
+    Run(k,KNEEL_DOWN_TICKS + 2,idle);
+    Run(k,BOW_NOCK_TICKS + 1,draw);
+    float klo = 0.0f;
+    float khi = 0.0f;
+    for (int i = 0; i < 600; i++){
+        Run(k,1,draw);
+        float w = k.AimSwayDeg();
+        if (w < klo){ klo = w; }
+        if (w > khi){ khi = w; }
+    }
+    snprintf(detail,sizeof(detail),"%.2f .. %.2f kneeling",klo,khi);
+    Check(khi <= AIM_SWAY_KNEEL_DEG && klo >= -AIM_SWAY_KNEEL_DEG,"kneeling, it stays inside AIM_SWAY_KNEEL_DEG",detail);
+
+    //Two draws do not sway alike, and the same draw in a second Stage does.
+    Stage a;
+    Stage b;
+    a.SetLevel(STAGE_LEVEL_RANGE);
+    b.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(a);
+    Settle(b);
+    Run(a,BOW_NOCK_TICKS + 40,draw);
+    Run(b,BOW_NOCK_TICKS + 40,draw);
+    CheckNear(a.AimSwayDeg(),b.AimSwayDeg(),0.0f,"the sway is the same in a replay");
+    ArcherInput loose;
+    loose.f_draw_released = true;
+    Run(a,1,loose);
+    Run(a,BOW_NOCK_TICKS + 40,draw);
+    Check(fabsf(a.AimSwayDeg() - b.AimSwayDeg()) > 0.05f,"but the next draw sways differently");
+}
+
+//--- The kneel, animated ------------------------------------------------------------------------
+static void TestKneelPuppet(){
+    printf("\nkneeling, animated\n");
+    Puppet p;
+    ArcherAnimParams in;
+    in.mode = MODE_KNEEL;
+    in.kneel_phase = KNEEL_LOWERING;
+    PuppetChoice c = p.Choose(in);
+    Check(c.clip == CLIP_KNEEL_DOWN && c.start_time == 0.0f,"going down plays Stand_ToKneel from its start");
+    in.kneel_phase = KNEEL_HELD;
+    Check(p.Choose(in).clip == CLIP_KNEEL_IDLE,"held, Kneel_Idle");
+    in.kneel_phase = KNEEL_RISING;
+    Check(p.Choose(in).clip == CLIP_KNEEL_UP,"getting up, Kneel_ToStand");
+
+    //The layer is on for the whole kneel; at rest it holds the draw's first frame.
+    in.kneel_phase = KNEEL_HELD;
+    for (int i = 0; i < PUPPET_UPPER_BLEND_TICKS + 2; i++){
+        p.Tick(in);
+    }
+    Check(p.choice.upper_clip == CLIP_DRAW && p.choice.upper_phase == 0.0f,
+          "kneeling at rest, the upper body is the draw's first frame");
+    CheckNear(p.upper_weight,1.0f,0.0001f,"at full weight");
+    Check(p.choice.upper_from_clip < 0,"with no crossfade running");
+
+    //Draw and hold, then let go: the layer stays on and CROSSFADES back to rest.
+    in.action = ACTION_DRAW;
+    in.action_phase = 0.0f;
+    p.Tick(in);
+    Check(p.choice.upper_from_clip < 0,"starting a draw from rest needs no crossfade - it is its own first frame");
+    in.action_phase = 1.0f;
+    for (int i = 0; i < 20; i++){
+        p.Tick(in);
+    }
+    Check(p.choice.upper_clip == CLIP_AIM_IDLE && p.choice.upper_from_clip < 0,
+          "the draw hands over to the hold without one either");
+    in.action = ACTION_NONE;
+    in.action_phase = 0.0f;
+    p.Tick(in);
+    Check(p.choice.upper_clip == CLIP_DRAW && p.choice.upper_from_clip == CLIP_AIM_IDLE,
+          "letting go while kneeling crossfades from the hold back to rest");
+    CheckNear(p.upper_weight,1.0f,0.0001f,"with the layer still fully on");
+    Check(p.upper_mix < 1.0f,"part way");
+    for (int i = 0; i < PUPPET_UPPER_BLEND_TICKS; i++){
+        p.Tick(in);
+    }
+    Check(p.choice.upper_from_clip < 0 && p.upper_mix == 1.0f,"and it finishes in PUPPET_UPPER_BLEND_TICKS");
+
+    //Standing, a release fades the layer out instead - no crossfade.
+    Puppet q;
+    ArcherAnimParams st;
+    st.action = ACTION_DRAW;
+    st.action_phase = 1.0f;
+    for (int i = 0; i < 20; i++){
+        q.Tick(st);
+    }
+    st.action = ACTION_NONE;
+    st.action_phase = 0.0f;
+    q.Tick(st);
+    Check(q.choice.upper_from_clip < 0 && q.upper_weight < 1.0f,"standing, letting go fades the layer out rather than crossfading");
+}
+
+//--- The rope test level ------------------------------------------------------------------------
+/*
+    One rope and nothing else. What makes it a rope TEST is that its lowest link is in reach from
+    standing - which is where climbing starts - so that is asserted against FindRopePoint's own
+    reach numbers rather than eyeballed.
+*/
+static void TestRopeLevel(){
+    printf("\nthe rope test level\n");
+    Stage s;
+    s.SetLevel(STAGE_LEVEL_ROPE);
+    int ropes = 0;
+    int others = 0;
+    const StageProp* rope = NULL;
+    for (size_t i = 0; i < s.props.size(); i++){
+        if (s.props[i].kind == PROP_ROPE_ANCHOR){ ropes++; rope = &s.props[i]; }
+        else{ others++; }
+    }
+    Check(ropes == 1 && others == 0,"the rope level has one rope and no other props");
+    Settle(s);
+    Check(s.f_on_ground && s.mode == MODE_GROUND,"she lands on its floor");
+    if (!rope){
+        return;
+    }
+    //The rope's end, and the reach from her chest when standing under it (FindRopePoint).
+    float end_y = rope->y - rope->h;
+    float hand_y = ARCHER_HALF_H + ARCHER_HALF_H * 0.6f;
+    char d[160];
+    snprintf(d,sizeof(d),"rope ends at %.2f, her hands are at %.2f, reach %.2f",end_y,hand_y,ROPE_GRAB_REACH);
+    Check(end_y - hand_y < ROPE_GRAB_REACH,"its end is within reach from standing, so climbing can start there",d);
+    Check(end_y > ARCHER_HALF_H * 2.0f * 0.5f,"and hangs clear of the floor",d);
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -2146,6 +2737,13 @@ int main(void){
     TestPuppet();
     TestDeterminism();
     TestRange();
+    TestGetUp();
+    TestFoliage();
+    TestVines();
+    TestKneel();
+    TestSway();
+    TestKneelPuppet();
+    TestRopeLevel();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

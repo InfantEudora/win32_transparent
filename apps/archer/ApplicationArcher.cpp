@@ -170,37 +170,36 @@ void ArcherModel::RestoreBasePose(){
     whatever its parent became. Whatever the legs' hips do, the torso squares up exactly as it
     does in the clip, and the graded Spine/Spine1 shares spread the twist over the waist.
 */
-void ArcherModel::ApplyUpperLayer(){
-    //The layer clip's local rotation for every bone it animates, the root (hips) track included -
-    //the chain has to start from the clip's OWN hips.
+/*
+    One layer clip's pose at `time`, as MODEL-space rotations of the masked bones - chained from the
+    clip's own hips - plus the local positions it keys. Pass 1 of ApplyUpperLayer, for each clip
+    the layer is showing (two during its crossfade).
+*/
+void ArcherModel::LayerClipModel(Animation* clip, float time, std::unordered_map<Object*,quat>& out_model,
+                                 std::unordered_map<Object*,vec3>& out_pos){
+    //The clip's local rotation for every bone it animates, the root (hips) track included - the
+    //chain has to start from the clip's OWN hips.
     std::unordered_map<Object*,quat> clip_local;
-    std::unordered_map<Object*,ObjectAnimationKeyFrame*> clip_key;
-    for (ObjectAnimation* track : upper_clip->object_animations){
+    for (ObjectAnimation* track : clip->object_animations){
         if (!track->target){
             continue;
         }
-        ObjectAnimationKeyFrame* key = track->GetClosestKeyframe(upper_time);
+        ObjectAnimationKeyFrame* key = track->GetClosestKeyframe(time);
         if (key){
-            clip_key[track->target] = key;
             if (key->f_rotation){
                 clip_local[track->target] = key->rotation;
             }
+            if (key->f_position){
+                out_pos[track->target] = key->position;
+            }
         }
     }
-
-    quat skel_inverse = GetWorldRotation();
-    skel_inverse.inverse();
-
-    //Pass 1, before anything is written: every masked bone's BASE model-space rotation, and the
-    //clip's, in parent-before-child order (upper_order is a depth-first walk from the spine).
-    std::unordered_map<Object*,quat> base_model;
-    std::unordered_map<Object*,quat> clip_model;
+    //Parent-before-child order: upper_order is a depth-first walk from the spine.
     for (Bone* bone : upper_order){
-        base_model[bone] = skel_inverse * bone->GetWorldRotation();
         Object* parent = bone->GetParent();
         quat parent_clip;
-        std::unordered_map<Object*,quat>::iterator pc = clip_model.find(parent);
-        if (pc != clip_model.end()){
+        std::unordered_map<Object*,quat>::iterator pc = out_model.find(parent);
+        if (pc != out_model.end()){
             parent_clip = pc->second;
         }else{
             //The layer's root: its parent is the hips, which the layer does not own - so the
@@ -216,15 +215,43 @@ void ArcherModel::ApplyUpperLayer(){
             }
         }
         std::unordered_map<Object*,quat>::iterator cl = clip_local.find(bone);
-        clip_model[bone] = parent_clip * ((cl != clip_local.end()) ? cl->second : bone->GetRotation());
+        out_model[bone] = parent_clip * ((cl != clip_local.end()) ? cl->second : bone->GetRotation());
+    }
+}
+
+void ArcherModel::ApplyUpperLayer(){
+    quat skel_inverse = GetWorldRotation();
+    skel_inverse.inverse();
+
+    //Pass 1, before anything is written: every masked bone's BASE model-space rotation (read
+    //now - once a parent is rewritten its children's world rotations move with it), the layer's
+    //pose, and during its own crossfade the pose it is leaving, mixed toward the new by upper_mix.
+    std::unordered_map<Object*,quat> base_model;
+    for (Bone* bone : upper_order){
+        base_model[bone] = skel_inverse * bone->GetWorldRotation();
+    }
+    std::unordered_map<Object*,quat> clip_model;
+    std::unordered_map<Object*,vec3> clip_pos;
+    LayerClipModel(upper_clip,upper_time,clip_model,clip_pos);
+    bool f_xfade = (upper_from_clip && upper_mix < 1.0f);
+    std::unordered_map<Object*,quat> from_model;
+    std::unordered_map<Object*,vec3> from_pos;
+    if (f_xfade){
+        LayerClipModel(upper_from_clip,upper_from_time,from_model,from_pos);
     }
 
-    //Pass 2: blend in model space, and write each back as a local rotation under its parent's
-    //NEW model-space rotation (a masked parent has just been written; the hips have not).
+    //Pass 2: blend against the base in model space, and write each back as a local rotation under
+    //its parent's NEW model-space rotation (a masked parent has just been written; the hips have
+    //not).
     std::unordered_map<Object*,quat> new_model;
     for (Bone* bone : upper_order){
         float w = upper_weight * upper_share[bone];
-        quat desired = quat::slerp(base_model[bone],clip_model[bone],w);
+        quat target = clip_model[bone];
+        if (f_xfade){
+            target = quat::slerp(from_model[bone],target,upper_mix);
+            target.normalize();
+        }
+        quat desired = quat::slerp(base_model[bone],target,w);
         desired.normalize();
         new_model[bone] = desired;
         Object* parent = bone->GetParent();
@@ -242,9 +269,15 @@ void ArcherModel::ApplyUpperLayer(){
         bone->SetRotation(local);
 
         //Positions stay local: on this rig they are bone lengths and hardly move.
-        std::unordered_map<Object*,ObjectAnimationKeyFrame*>::iterator ck = clip_key.find(bone);
-        if (ck != clip_key.end() && ck->second->f_position){
-            bone->SetPosition(bone->GetPosition().lerp(ck->second->position,w));
+        std::unordered_map<Object*,vec3>::iterator cp = clip_pos.find(bone);
+        if (cp != clip_pos.end()){
+            vec3 p = cp->second;
+            if (f_xfade){
+                std::unordered_map<Object*,vec3>::iterator fp = from_pos.find(bone);
+                vec3 from = (fp != from_pos.end()) ? fp->second : bone->GetPosition();
+                p = from.lerp(p,upper_mix);
+            }
+            bone->SetPosition(bone->GetPosition().lerp(p,w));
         }
     }
 }
@@ -372,6 +405,13 @@ void ApplicationArcher::Init(void){
     main_scene->physics_world->SetDebugRendering(false);
 
     BuildMaterials();
+    /*
+        The character's file holds the props as well as her, and the first of them - the crate - is
+        wanted by BuildProps below, well before BuildArcherModel. So it is read once, here, rather
+        than by BuildArcherModel; everything after this finds it already loaded.
+    */
+    gltfloader.LoadGLTFFile(ARCHER_MODEL_ASSET);
+    BuildCrateMesh();
     BuildBlocks();
     //After BuildBlocks, which it hides the melted half of - see the note on the declaration.
     BuildTerrain();
@@ -381,6 +421,9 @@ void ApplicationArcher::Init(void){
     //After it: the grip is derived from a posed clip, and both the bones and the clips arrive with
     //the model. See the note on the declaration.
     BuildBow();
+    //After BuildArcherModel too, for the loader and the character's scale - see the declaration.
+    BuildFoliage();
+    BuildVines();
     BuildArrowViews();
     BuildAimArc();
     //Before BuildRange, which shares the popup pool with the range scene along with the arrows.
@@ -390,17 +433,31 @@ void ApplicationArcher::Init(void){
     SetupCamera();
     SetupInput();
     RegisterCommandHandlers();
-    //LAST, because it shares the character the lines above built - see the note on ArcherLevel.
-    BuildRange();
+    //LAST, because they share the character the lines above built - see the note on ArcherLevel.
+    world_scene = main_scene;
+    parked_levels.reserve(2);           //BuildExtraLevel holds a reference into it while it builds
+    range_scene = BuildExtraLevel(STAGE_LEVEL_RANGE,"Range");
+    rope_scene = BuildExtraLevel(STAGE_LEVEL_ROPE,"Rope");
 #ifdef USE_MCP
     RegisterMCPTools();
 #endif
+
+    /*
+        The level entry: she starts lying down and gets up, with the controls locked until she has
+        (GETTING UP in Stage.h). After BuildRange, which leaves the main level live. The range gets
+        none on its first visit - walking into it is not the level starting - but a restart there
+        plays it, because NewGame does. Only when f_level_entry_getup is on, which it is not by
+        default - see the note on it.
+    */
+    if (f_level_entry_getup){
+        stage.StartGetUp();
+    }
 
     //The rules denominate everything in ticks and were written against this rate - see ARCHER_TPS
     //in Stage.h, which is the one number they cannot look up for themselves.
     SetPhysicsTPS(ARCHER_TPS);
 
-    main_window->Resize(1440,810);      //16:9; a side-scroller wants width far more than height
+    main_window->Resize(1440,900);      //16:9; a side-scroller wants width far more than height
 
     //One tick so the first frame is not an empty level.
     main_scene->StepPhysics(1);
@@ -466,7 +523,11 @@ void ApplicationArcher::BuildMaterials(){
         { "ar_arrow",       vec4(0.95f,0.88f,0.55f,1.0f), 0.30f, &material_arrow },
         //Rubble: the breakable red, knocked back and darkened so a pile of chunks reads as debris
         //rather than as a wall that has fallen over intact.
-        { "ar_debris",      vec4(0.46f,0.22f,0.19f,1.0f), 0.05f, &material_debris }
+        { "ar_debris",      vec4(0.46f,0.22f,0.19f,1.0f), 0.05f, &material_debris },
+        //The placeholder vine: an olive stem and a leaf green a step brighter than the grass, so a
+        //vine lying on grass still reads as a separate thing.
+        { "ar_vine",        vec4(0.36f,0.42f,0.20f,1.0f), 0.04f, &material_vine },
+        { "ar_vine_leaf",   vec4(0.30f,0.55f,0.24f,1.0f), 0.06f, &material_vine_leaf }
     };
     for (size_t i = 0; i < sizeof(table)/sizeof(table[0]); i++){
         Material m;
@@ -826,6 +887,8 @@ void ApplicationArcher::RegenerateTerrain(){
             RemeshTerrainBay(i);
         }
         ApplyBlockoutVisibility();
+        //The plants grow on the boxes too, so a moved box takes its garden with it.
+        ScatterFoliageObjects();
         debug->Info("Terrain regenerated: %i of %i blocks moved, %i hidden under terrain\n",
                     moved,(int)stage.blocks.size(),(int)melted_blocks.size());
         last_regen_moved = moved;
@@ -838,6 +901,327 @@ void ApplicationArcher::PreRender(void){
     if (f_regenerate_terrain.exchange(false)){
         RegenerateTerrain();
     }
+    if (f_rescatter_foliage.exchange(false)){
+        main_scene->AtTickBoundary([this](){ ScatterFoliageObjects(); });
+    }
+}
+
+//--- Foliage ------------------------------------------------------------------------------------
+
+//The archer.glb node for each FoliageKind, in that enum's order.
+static const char* FOLIAGE_NODES[FOLIAGE_KIND_COUNT] = { "fern_1", "fern_2", "flower" };
+
+/*
+    Loads the three plants and grows the first garden. RENDER THREAD - GetMeshFromNode uploads.
+
+    Survivable per kind, like the bow: a node missing from the export is reported and that kind
+    simply does not grow. The sizes the scatter spaces them by are measured off the vertices
+    rather than typed in, so a re-exported fern that got bigger gets more room automatically.
+*/
+void ApplicationArcher::BuildFoliage(){
+    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+        Mesh* mesh = gltfloader.GetMeshFromNode(FOLIAGE_NODES[k],&foliage_materials[k],false);
+        if (!mesh){
+            debug->Err("No mesh on node '%s' in %s - that plant will not grow\n",
+                       FOLIAGE_NODES[k],ARCHER_MODEL_ASSET);
+            continue;
+        }
+        //Held here as well as by every plant drawing it, so a rescatter that happens to use none
+        //of a kind cannot free the mesh out from under the next one.
+        mesh->Retain();
+        foliage_meshes[k] = mesh;
+        renderer->AddMaterials(foliage_materials[k]);
+
+        //From the origin, which is where the plant stands: the props are authored base-down.
+        float radius = 0.0f;
+        float height = 0.0f;
+        const std::vector<vertex>& verts = mesh->GetVertices();
+        for (size_t i = 0; i < verts.size(); i++){
+            float r = sqrtf(verts[i].pos.x * verts[i].pos.x + verts[i].pos.z * verts[i].pos.z);
+            if (r > radius){ radius = r; }
+            if (verts[i].pos.y > height){ height = verts[i].pos.y; }
+        }
+        foliage_mesh_radius[k] = radius;
+        foliage_mesh_height[k] = height;
+        debug->Info("Foliage '%s': radius %.3f, height %.3f at scale 1\n",FOLIAGE_NODES[k],radius,height);
+    }
+    //The character's scale, which is 1 if the model did not load - and then nothing is to scale
+    //with anything anyway.
+    foliage_scale = model_scale;
+
+    foliage_group = new Object();
+    foliage_group->name = "foliage";
+    main_scene->AddObject(foliage_group);
+    ScatterFoliageObjects();
+}
+
+/*
+    Re-places the pool from `stage.blocks` as they are now. No GL.
+
+    Called with physics_mutex held (RegenerateTerrain, PreRender) or before the threads start
+    (Init) - it reads the Stage the tick writes and re-points Objects the render thread draws.
+
+    THE TERRAIN BAYS ARE MASKED OUT, by the same test that hides their boxes: the marching-cubes
+    surface there is not the box's top, so a plant placed on the box would float or sink.
+*/
+void ApplicationArcher::ScatterFoliageObjects(){
+    if (!foliage_group || stage.GetLevel() != STAGE_LEVEL_MAIN){
+        return;
+    }
+    std::vector<bool> grows(stage.blocks.size(),true);
+#if ARCHER_TEST_BAY
+    for (size_t i = 0; i < stage.blocks.size(); i++){
+        grows[i] = !IsInTerrainBay(stage.blocks[i]);
+    }
+#endif
+    FoliageParams params = foliage_params;
+    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+        params.radius[k] = foliage_mesh_radius[k] * foliage_scale;
+        params.height[k] = foliage_mesh_height[k] * foliage_scale;
+    }
+    std::vector<FoliagePlant> plants;
+    ScatterFoliage(stage.blocks,grows,params,plants);
+
+    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+        foliage_counts[k] = 0;
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < plants.size(); i++){
+        const FoliagePlant& p = plants[i];
+        Mesh* mesh = foliage_meshes[p.kind];
+        if (!mesh){
+            continue;
+        }
+        if (used >= foliage_objects.size()){
+            Object* o = new Object();
+            //Not pickable: a click on a box being edited must not land on the fern in front of it.
+            o->SetPickability(false);
+            //No shadows, for now - small, many, and not worth a place in the shadow pass.
+            o->SetCastsShadow(false);
+            foliage_group->AttachChild(o);
+            foliage_objects.push_back(o);
+        }
+        Object* o = foliage_objects[used++];
+        char name[32];
+        snprintf(name,sizeof(name),"%s.%i",FOLIAGE_NODES[p.kind],foliage_counts[p.kind]);
+        o->name = name;
+        o->SetMesh(mesh);
+        o->TakeMaterialNames(foliage_materials[p.kind]);
+        o->SetPosition(vec3(p.x,p.y,p.z));
+        o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),p.yaw));
+        float s = foliage_scale * p.scale;
+        o->SetScale(vec3(s,s,s));
+        o->SetVisibility(true);
+        foliage_counts[p.kind]++;
+    }
+    for (size_t i = used; i < foliage_objects.size(); i++){
+        foliage_objects[i]->SetVisibility(false);
+    }
+    debug->Info("Foliage: %i ferns, %i low ferns, %i flowers\n",foliage_counts[FOLIAGE_FERN],
+                foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER]);
+}
+
+//--- Vines --------------------------------------------------------------------------------------
+
+//The archer.glb nodes for the vine's pieces. Any that is missing falls back to Vine.cpp's stand-in.
+static const char* VINE_TRUNK_NODE = "vine_trunk";
+//The wrap has no stand-in: it only means something on the trunk tile it was modelled round.
+static const char* VINE_WRAP_NODE  = "vine_curl";
+static const char* VINE_LEAF_NODES[VINE_LEAF_KIND_COUNT] = { "vine_leaf_1", "vine_leaf_2" };
+
+void ApplicationArcher::BuildVines(){
+    std::vector<VinePath> paths;
+    DeclareVines(STAGE_LEVEL_MAIN,paths);
+    if (paths.empty()){
+        return;
+    }
+
+    //--- The trunk tile ---
+    std::vector<vertex> tile;
+    std::vector<Material> trunk_materials;
+    Mesh* trunk_source = gltfloader.GetMeshFromNode(VINE_TRUNK_NODE,&trunk_materials,false);
+    f_vine_trunk_from_asset = (trunk_source != NULL);
+    if (trunk_source){
+        tile = trunk_source->GetVertices();
+        renderer->AddMaterials(trunk_materials);
+        vine_params.tile_scale = model_scale;
+        /*
+            The one authoring mistake that would otherwise produce a baffling result: a tile modelled
+            along the wrong axis deforms into a flat ribbon wrapped round the curve. Said out loud,
+            with the fix, rather than left to be worked out from a screenshot.
+        */
+        vec3 lo = tile.empty() ? vec3() : tile[0].pos, hi = lo;
+        for (size_t i = 1; i < tile.size(); i++){
+            const vec3& p = tile[i].pos;
+            lo = vec3(fminf(lo.x,p.x),fminf(lo.y,p.y),fminf(lo.z,p.z));
+            hi = vec3(fmaxf(hi.x,p.x),fmaxf(hi.y,p.y),fmaxf(hi.z,p.z));
+        }
+        vec3 size = hi - lo;
+        debug->Info("Vine tile '%s': %zu tris, %.3f x %.3f x %.3f (x,y,z) at scale 1\n",
+                    VINE_TRUNK_NODE,tile.size() / 3,size.x,size.y,size.z);
+        if (size.z < size.x || size.z < size.y){
+            debug->Warn("The vine tile is not longest along +Z (glTF), which is the axis it is laid "
+                        "along. Model it along Blender's -Y.\n");
+        }
+    }else{
+        MakeVinePlaceholderTile(tile);
+        vine_params.tile_scale = 1.0f;
+    }
+    vine_params.tile_radius = VineTileRadius(tile);
+
+    //--- The wrap ---
+    /*
+        The thin strands round the trunk, modelled round the trunk TILE and laid in step with it.
+        So it only makes sense on the tile it was modelled round: laid over the placeholder it
+        would be at the wrong scale and the wrong period, and is left off.
+    */
+    std::vector<vertex> wrap_tile;
+    std::vector<Material> wrap_materials;
+    Mesh* wrap_source = gltfloader.GetMeshFromNode(VINE_WRAP_NODE,&wrap_materials,false);
+    f_vine_wrap_from_asset = false;
+    if (wrap_source && trunk_source){
+        wrap_tile = wrap_source->GetVertices();
+        renderer->AddMaterials(wrap_materials);
+        f_vine_wrap_from_asset = true;
+        float wz0 = 0.0f, wlen = 0.0f, tz0 = 0.0f, tlen = 0.0f;
+        SplineDeformMeasure(wrap_tile,wz0,wlen);
+        SplineDeformMeasure(tile,tz0,tlen);
+        debug->Info("Vine wrap '%s': %zu tris, z %.3f..%.3f, laid at the trunk's period %.3f\n",
+                    VINE_WRAP_NODE,wrap_tile.size() / 3,wz0,wz0 + wlen,tlen);
+    }else if (wrap_source){
+        debug->Warn("'%s' is in the file but '%s' is not - a wrap is laid in step with the trunk "
+                    "tile it was modelled round, so it is left off the placeholder trunk.\n",
+                    VINE_WRAP_NODE,VINE_TRUNK_NODE);
+    }
+
+    //--- The leaves ---
+    //One mesh per kind, shared by every leaf of it, and each kind's own scale to world: the file's
+    //pieces are authored to her scale, the placeholder is in world units.
+    Mesh* leaf_meshes[VINE_LEAF_KIND_COUNT] = {};
+    std::vector<Material> leaf_materials[VINE_LEAF_KIND_COUNT];
+    float leaf_to_world[VINE_LEAF_KIND_COUNT] = {};
+    Mesh* placeholder_leaf = NULL;
+    float leaf_length = 0.0f;
+    for (int k = 0; k < VINE_LEAF_KIND_COUNT; k++){
+        Mesh* mesh = gltfloader.GetMeshFromNode(VINE_LEAF_NODES[k],&leaf_materials[k],false);
+        f_vine_leaf_from_asset[k] = (mesh != NULL);
+        if (mesh){
+            mesh->Retain();
+            renderer->AddMaterials(leaf_materials[k]);
+            leaf_to_world[k] = model_scale;
+        }else{
+            if (!placeholder_leaf){
+                std::vector<vertex> verts;
+                MakeVinePlaceholderLeaf(verts);
+                placeholder_leaf = new Mesh();
+                placeholder_leaf->SetMeshData(verts.data(),(int)verts.size());
+                placeholder_leaf->num_materials = 1;
+                assetmanager->AddNewAsset("ar_vine_leaf_placeholder",placeholder_leaf);
+            }
+            mesh = placeholder_leaf;
+            leaf_to_world[k] = 1.0f;
+        }
+        leaf_meshes[k] = mesh;
+        //Stem to tip, for keeping tips out of the blocks. The longer kind decides, so neither pokes
+        //through.
+        const std::vector<vertex>& verts = mesh->GetVertices();
+        for (size_t i = 0; i < verts.size(); i++){
+            float z = verts[i].pos.z * leaf_to_world[k];
+            if (z > leaf_length){ leaf_length = z; }
+        }
+    }
+    vine_params.leaf_length = leaf_length;
+
+    vine_group = new Object();
+    vine_group->name = "vines";
+    main_scene->AddObject(vine_group);
+
+    for (size_t v = 0; v < paths.size(); v++){
+        Spline spline;
+        if (!BuildVineSpline(paths[v],spline)){
+            continue;
+        }
+        std::vector<vertex> verts;
+        int tiles = BuildVineTrunk(spline,paths[v],tile,vine_params,verts);
+        if (tiles <= 0 || verts.empty()){
+            continue;
+        }
+        Object* trunk = new Object();
+        char name[32];
+        snprintf(name,sizeof(name),"vine_%zu",v);
+        trunk->name = name;
+        //IDENTITY, because the vertices are already in world coordinates - like the terrain, and
+        //for the same reason: the normals were computed from the final positions.
+        trunk->SetPosition(vec3(0.0f,0.0f,0.0f));
+        trunk->SetScale(vec3(1.0f,1.0f,1.0f));
+        trunk->SetPickability(false);
+        Mesh* mesh = new Mesh();
+        mesh->SetMeshData(verts.data(),(int)verts.size());
+        mesh->num_materials = trunk_source ? trunk_source->num_materials : 1;
+        trunk->SetMesh(mesh);       //takes the reference
+        if (trunk_source){
+            trunk->TakeMaterialNames(trunk_materials);
+        }else{
+            trunk->SetMaterialSlot(0,material_vine);
+        }
+        vine_group->AttachChild(trunk);
+        vine_trunks.push_back(trunk);
+
+        //The wrap: its own Object, because it carries its own materials; world coordinates too.
+        size_t wrap_tris = 0;
+        if (f_vine_wrap_from_asset){
+            std::vector<vertex> wrap_verts;
+            int copies = BuildVineOverlay(spline,paths[v],wrap_tile,tile,vine_params,wrap_verts);
+            if (copies > 0 && !wrap_verts.empty()){
+                Object* wrap = new Object();
+                snprintf(name,sizeof(name),"vine_%zu.wrap",v);
+                wrap->name = name;
+                wrap->SetPosition(vec3(0.0f,0.0f,0.0f));
+                wrap->SetScale(vec3(1.0f,1.0f,1.0f));
+                wrap->SetPickability(false);
+                Mesh* wmesh = new Mesh();
+                wmesh->SetMeshData(wrap_verts.data(),(int)wrap_verts.size());
+                wmesh->num_materials = wrap_source->num_materials;
+                wrap->SetMesh(wmesh);
+                wrap->TakeMaterialNames(wrap_materials);
+                vine_group->AttachChild(wrap);
+                vine_wraps.push_back(wrap);
+                wrap_tris = wrap_verts.size() / 3;
+            }
+        }
+
+        std::vector<VineLeaf> leaves;
+        ScatterVineLeaves(spline,paths[v],vine_params,&stage.blocks,leaves);
+        for (size_t i = 0; i < leaves.size(); i++){
+            const VineLeaf& l = leaves[i];
+            Object* o = new Object();
+            snprintf(name,sizeof(name),"vine_%zu.leaf%zu",v,i);
+            o->name = name;
+            //Not pickable, for the ferns' reason; no shadow, because a leaf's shadow on the trunk
+            //it grows from is a speckle, not a shape.
+            o->SetPickability(false);
+            o->SetCastsShadow(false);
+            o->SetMesh(leaf_meshes[l.kind]);
+            if (f_vine_leaf_from_asset[l.kind]){
+                o->TakeMaterialNames(leaf_materials[l.kind]);
+            }else{
+                o->SetMaterialSlot(0,material_vine_leaf);
+            }
+            o->SetPosition(l.position);
+            o->SetRotation(l.rotation);
+            float s = l.scale * leaf_to_world[l.kind];
+            o->SetScale(vec3(s,s,s));
+            vine_group->AttachChild(o);
+            vine_leaves.push_back(o);
+            vine_leaf_counts[l.kind]++;
+        }
+        debug->Info("Vine %zu: %.2f long, %i tiles, %zu tris + %zu wrap, %zu leaves\n",v,
+                    spline.GetLength(),tiles,verts.size() / 3,wrap_tris,leaves.size());
+    }
+    debug->Info("Vines: %zu built, trunk from %s, leaves from %s / %s\n",vine_trunks.size(),
+                f_vine_trunk_from_asset ? "archer.glb" : "the placeholder",
+                f_vine_leaf_from_asset[VINE_LEAF_1] ? "archer.glb" : "the placeholder",
+                f_vine_leaf_from_asset[VINE_LEAF_2] ? "archer.glb" : "the placeholder");
 }
 
 /*
@@ -898,6 +1282,69 @@ void ApplicationArcher::SetBlockoutVisible(bool f_visible){
     debug->Info("Blockout %s\n",f_visible ? "shown" : "hidden");
 }
 
+//The archer.glb node the crates are drawn with.
+static const char* CRATE_NODE = "wooden_crate";
+
+/*
+    The crate's mesh: archer.glb's wooden_crate, re-baked into the shape unit_mesh has - a 1x1x1
+    box centred on its origin - so that a crate is still built by MakePlanarBody exactly as before,
+    with its collider and its picture both coming from the one size in Stage.cpp. Nothing about a
+    crate's physics, its obstacle box or its kick changes; only what is drawn.
+
+    FITTED TO THE COLLIDER, NOT DRAWN AT HER SCALE, and this is the one prop that differs from the
+    rest of the file on that. Everything else is drawn at model_scale because its size is only a
+    look. A crate's size is a gameplay number - it is what she pushes, stacks and stands on, and the
+    stack beside the step is exactly tall enough to be the way up - so the picture follows the box.
+    The model is 0.50 across: at her scale it would be 1.01 against the 0.80 box the rules push.
+
+    One UNIFORM factor, from the largest extent, so the normals stay right and a model that is not
+    quite a cube keeps its proportions inside the box rather than being stretched to fill it.
+
+    Survivable the way the vine is: no node in the export, and the crates stay the plain brown
+    boxes they have always been, with material_crate.
+*/
+void ApplicationArcher::BuildCrateMesh(){
+    crate_mesh = unit_mesh;
+    f_crate_from_asset = false;
+    Mesh* mesh = gltfloader.GetMeshFromNode(CRATE_NODE,&crate_materials,false);
+    if (!mesh){
+        debug->Warn("No '%s' in %s - the crates stay boxes\n",CRATE_NODE,ARCHER_MODEL_ASSET);
+        return;
+    }
+    std::vector<vertex> verts = mesh->GetVertices();
+    if (verts.empty()){
+        debug->Warn("'%s' has no CPU copy of its vertices - the crates stay boxes\n",CRATE_NODE);
+        return;
+    }
+    vec3 lo = verts[0].pos, hi = lo;
+    for (size_t i = 1; i < verts.size(); i++){
+        const vec3& p = verts[i].pos;
+        lo = vec3(fminf(lo.x,p.x),fminf(lo.y,p.y),fminf(lo.z,p.z));
+        hi = vec3(fmaxf(hi.x,p.x),fmaxf(hi.y,p.y),fmaxf(hi.z,p.z));
+    }
+    vec3 size = hi - lo;
+    float extent = fmaxf(size.x,fmaxf(size.y,size.z));
+    if (extent < 0.0001f){
+        debug->Warn("'%s' has no size - the crates stay boxes\n",CRATE_NODE);
+        return;
+    }
+    //Centred on the bounds rather than trusted to be at the origin, since unit_mesh is.
+    vec3 centre = (lo + hi) * 0.5f;
+    float k = 1.0f / extent;
+    for (size_t i = 0; i < verts.size(); i++){
+        verts[i].pos = (verts[i].pos - centre) * k;
+    }
+    mesh->SetMeshData(verts.data(),(int)verts.size());
+    renderer->AddMaterials(crate_materials);
+    //Registered for the reason unit_mesh is: NewGame throws every crate away and builds new ones,
+    //and the last Object letting go must not free a mesh the next one is about to be handed.
+    assetmanager->AddNewAsset("ar_crate_mesh",mesh);
+    crate_mesh = mesh;
+    f_crate_from_asset = true;
+    debug->Info("Crate '%s': %.3f x %.3f x %.3f in the file, fitted to the box\n",
+                CRATE_NODE,size.x,size.y,size.z);
+}
+
 void ApplicationArcher::BuildProps(){
     prop_views.clear();
     for (size_t i = 0; i < stage.props.size(); i++){
@@ -910,9 +1357,13 @@ void ApplicationArcher::BuildProps(){
                 //Light enough that a walking archer visibly shifts it, heavy enough that it does
                 //not fly off like a beach ball. This is the first thing anyone will touch, so it
                 //is the first number worth tuning.
-                Object* o = MakePlanarBody(unit_mesh,name,vec3(p.x,p.y,0.0f),
+                Object* o = MakePlanarBody(crate_mesh,name,vec3(p.x,p.y,0.0f),
                                            vec3(p.w,p.h,PROP_DEPTH),material_crate,
                                            ARCHER_CAT_PROP,ARCHER_MASK_PROP,6.0f,false);
+                //The file's own material over material_crate, when the crate came from the file.
+                if (o && f_crate_from_asset){
+                    o->TakeMaterialNames(crate_materials);
+                }
                 PropView view;
                 view.object = o;
                 view.kind = p.kind;
@@ -1060,7 +1511,7 @@ void ApplicationArcher::BuildArcher(){
     RENDER THREAD ONLY - GetMeshFromNode uploads a mesh.
 */
 void ApplicationArcher::BuildArcherModel(){
-    gltfloader.LoadGLTFFile(ARCHER_MODEL_ASSET);
+    //ARCHER_MODEL_ASSET is already loaded - Init reads it before BuildCrateMesh.
 
     /*
         Built HERE and handed to the loader rather than returned by it, because the archer needs
@@ -1226,6 +1677,25 @@ void ApplicationArcher::BuildArcherModel(){
     MeasureClipPhases();
     MeasureAirClips();
     MeasureKickClip();
+    MeasureKneelClips();
+
+    /*
+        GETUP_TICKS lives in Stage.h, which has never seen a .glb, so like KICK_TICKS it cannot
+        follow a re-export by itself: a shorter clip would be stretched to fill the old lock, a
+        longer one squeezed. Say the number to type instead.
+    */
+    if (archer_clips[CLIP_LAYING_UP]){
+        float duration = archer_clips[CLIP_LAYING_UP]->duration;
+        int clip_ticks = (int)(duration * ARCHER_TPS + 0.5f);
+        if (clip_ticks < GETUP_TICKS - 1 || clip_ticks > GETUP_TICKS + 1){
+            debug->Warn("%s is %d ticks but GETUP_TICKS is %d, so it will play at %.2fx. "
+                        "Set GETUP_TICKS to %d in Stage.h.\n",ARCHER_CLIPS[CLIP_LAYING_UP].name,
+                        clip_ticks,GETUP_TICKS,duration / ((float)GETUP_TICKS * ARCHER_DT),clip_ticks);
+        }
+    }else{
+        debug->Warn("No %s in the export - the level entry still locks the controls for %d ticks, "
+                    "standing\n",ARCHER_CLIPS[CLIP_LAYING_UP].name,GETUP_TICKS);
+    }
 
     /*
         The default crossfade, kept SHORT.
@@ -1635,6 +2105,101 @@ void ApplicationArcher::MeasureKickClip(){
                     clip_ticks,KICK_TICKS,
                     clip->duration / ((float)KICK_TICKS * ARCHER_DT),clip_ticks);
     }
+}
+
+/*
+    The kneel set, checked against the rules - which cannot read a .glb, so the app prints the
+    numbers to type, the KICK_TICKS arrangement.
+
+    THE TRANSITIONS ARE TIMED TO WHERE THE HIP SETTLES, not to the clip's end - see
+    Puppet::clip_settle. Read off the authored hip track: the first keyframe after which the hip
+    stays within KNEEL_SETTLE_FRACTION of its whole travel from the final height.
+
+    THE HEIGHT is head over toes: HeadTop_End above the lowest toe, in Kneel_Idle (its lowest
+    keyframe, so the box is never shorter than she gets) against Idle's first frame, as a ratio of
+    the standing body. A ratio because the toe bone sits a little above the sole in both, and that
+    offset cancels.
+*/
+void ApplicationArcher::MeasureKneelClips(){
+    if (!archer_model){
+        return;
+    }
+    const struct { int clip; int ticks; const char* define; } TRANSITIONS[] = {
+        { CLIP_KNEEL_DOWN, KNEEL_DOWN_TICKS, "KNEEL_DOWN_TICKS" },
+        { CLIP_KNEEL_UP,   KNEEL_UP_TICKS,   "KNEEL_UP_TICKS"   },
+    };
+    const float KNEEL_SETTLE_FRACTION = 0.02f;
+    for (int i = 0; i < 2; i++){
+        int index = TRANSITIONS[i].clip;
+        Animation* clip = archer_clips[index];
+        if (!clip || !clip->root_track || clip->duration <= 0.0f || clip->root_track->keyframes.empty()){
+            continue;
+        }
+        float lo = 0.0f;
+        float hi = 0.0f;
+        bool f_first = true;
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+            if (!key->f_position){ continue; }
+            if (f_first || key->position.y < lo){ lo = key->position.y; }
+            if (f_first || key->position.y > hi){ hi = key->position.y; }
+            f_first = false;
+        }
+        float final_y = clip->root_track->keyframes.back()->position.y;
+        float band = (hi - lo) * KNEEL_SETTLE_FRACTION;
+        //Walking backwards from the end, the last keyframe still OUTSIDE the band; settled after it.
+        float settle = 0.0f;
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+            if (key->f_position && fabsf(key->position.y - final_y) > band){
+                settle = key->time;
+            }
+        }
+        //One keyframe on, so the move is finished rather than nearly finished.
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+            if (key->time > settle){
+                settle = key->time;
+                break;
+            }
+        }
+        puppet.clip_settle[index] = settle;
+        int settle_ticks = (int)(settle * ARCHER_TPS + 0.5f);
+        debug->Info("Clip %-22s %.3fs long; the hip settles at %.3fs (tick %d), and %s is %d%s\n",
+                    ARCHER_CLIPS[index].name,clip->duration,settle,settle_ticks,
+                    TRANSITIONS[i].define,TRANSITIONS[i].ticks,
+                    (settle_ticks < TRANSITIONS[i].ticks - 1 || settle_ticks > TRANSITIONS[i].ticks + 1)
+                        ? "  <-- SET IT IN Stage.h" : "");
+    }
+
+    Bone* head = archer_model->FindBone("mixamorig:HeadTop_End");
+    Bone* toe[2] = { archer_model->FindBone("mixamorig:LeftToeBase"),
+                     archer_model->FindBone("mixamorig:RightToeBase") };
+    Animation* idle = archer_clips[CLIP_IDLE];
+    Animation* kneel = archer_clips[CLIP_KNEEL_IDLE];
+    if (!head || !toe[0] || !toe[1] || !idle || !kneel || !idle->root_track || !kneel->root_track ||
+        idle->root_track->keyframes.empty()){
+        return;
+    }
+    //Head over the lower toe, with `clip` posed at `time`.
+    auto height_at = [&](Animation* clip, float time) -> float {
+        clip->SampleRootMotion(time,time);      //zero-width: poses, reports no motion
+        clip->ApplyInterval(time);
+        float floor = fminf(toe[0]->GetWorldPosition().y,toe[1]->GetWorldPosition().y);
+        return head->GetWorldPosition().y - floor;
+    };
+    float standing = height_at(idle,idle->root_track->keyframes.front()->time);
+    float kneeling = 0.0f;
+    bool f_first = true;
+    for (ObjectAnimationKeyFrame* key : kneel->root_track->keyframes){
+        float h = height_at(kneel,key->time);
+        if (f_first || h < kneeling){ kneeling = h; f_first = false; }
+    }
+    if (standing <= 0.01f){
+        return;
+    }
+    float half_h = ARCHER_HALF_H * kneeling / standing;
+    debug->Info("Clip %-22s kneels to %.0f%% of her standing height -> KNEEL_HALF_H %.3f "
+                "(Stage.h has %.3f)%s\n",ARCHER_CLIPS[CLIP_KNEEL_IDLE].name,
+                100.0f * kneeling / standing,half_h,KNEEL_HALF_H,
+                (fabsf(half_h - KNEEL_HALF_H) > 0.03f) ? "  <-- SET IT IN Stage.h" : "");
 }
 
 /*
@@ -2071,16 +2636,17 @@ void ApplicationArcher::SetupCamera(){
     camera->CalculateLookatMatrix();
 }
 
-//--- The second scene ---------------------------------------------------------------------------
+//--- The other scenes ---------------------------------------------------------------------------
 
 /*
-    The test range, as a scene of its own - see bow_plan.md section 7 and the note on ArcherLevel.
+    A test level as a scene of its own - the range (bow_plan.md section 7) and the rope test - see
+    the note on ArcherLevel.
 
-    BUILT BY RUNNING THE SAME BUILDERS AGAIN with the range's level swapped in, rather than by a
-    second set of builders. BuildBlocks, BuildProps, BuildArcher and SetupCamera all build into
-    main_scene from `stage`, so pointing those two at the range and calling them is the whole of
-    it - and it means a crate or a target on the range is built by exactly the code that builds
-    one in the main level, which is the property a test range most needs.
+    BUILT BY RUNNING THE SAME BUILDERS AGAIN with the level swapped in, rather than by a second set
+    of builders. BuildBlocks, BuildProps, BuildArcher and SetupCamera all build into main_scene from
+    `stage`, so pointing those two at the new level and calling them is the whole of it - and it
+    means a crate, a target or a rope there is built by exactly the code that builds one in the
+    main level, which is the property a test level most needs.
 
     main_scene IS WRITTEN DIRECTLY HERE, which is the one place that is allowed. RequestActiveScene
     exists because the physics and render threads both read main_scene; Init runs before either
@@ -2093,17 +2659,18 @@ void ApplicationArcher::SetupCamera(){
     registered again, because a Scene owns its own handler table and the tools submit to whichever
     scene is live.
 */
-void ApplicationArcher::BuildRange(){
-    world_scene = main_scene;
-    range_scene = CreateNewScene("Range");
-    range_scene->physics_world = new PhysicsWorld();
-    range_scene->physics_world->SetGravity(vec3(0.0f,ARCHER_PROP_GRAVITY,0.0f));
-    range_scene->physics_world->SetDebugRendering(false);
+Scene* ApplicationArcher::BuildExtraLevel(int level, const char* name){
+    Scene* scene = CreateNewScene(name);
+    scene->physics_world = new PhysicsWorld();
+    scene->physics_world->SetGravity(vec3(0.0f,ARCHER_PROP_GRAVITY,0.0f));
+    scene->physics_world->SetDebugRendering(false);
 
-    parked_level.stage.SetLevel(STAGE_LEVEL_RANGE);
-    SwapLevel();                //the members are now the range's, still empty
-    parked_level.scene = world_scene;
-    main_scene = range_scene;
+    parked_levels.push_back(ArcherLevel());
+    ArcherLevel& parked = parked_levels.back();
+    parked.stage.SetLevel(level);
+    SwapLevel(parked);          //the members are now the new level's, still empty
+    Scene* live = main_scene;
+    main_scene = scene;
 
     BuildBlocks();
     BuildProps();
@@ -2113,15 +2680,16 @@ void ApplicationArcher::BuildRange(){
     if (archer_object && archer_model){
         archer_object->SetVisibility(f_show_collider);
     }
-    ShareCharacterWith(range_scene);
+    ShareCharacterWith(scene);
     SetupCamera();
     RegisterCommandHandlers();
 
-    main_scene = world_scene;
-    SwapLevel();
-    parked_level.scene = range_scene;
-    debug->Info("Built the range: %i blocks, %i props\n",
-                (int)parked_level.stage.blocks.size(),(int)parked_level.prop_views.size());
+    main_scene = live;
+    SwapLevel(parked);
+    parked.scene = scene;
+    debug->Info("Built the %s scene: %i blocks, %i props\n",name,
+                (int)parked.stage.blocks.size(),(int)parked.prop_views.size());
+    return scene;
 }
 
 /*
@@ -2167,44 +2735,49 @@ void ApplicationArcher::ShareCharacterWith(Scene* scene){
 /*
     Member for member, the live level against the parked one. See ArcherLevel.
 
-    It does NOT touch parked_level.scene. That field names the scene whose state is parked, and
-    only the caller knows which scene it has just left - so every caller sets it straight after,
-    and OnActiveSceneChanged tests it to decide whether to swap at all.
+    It does NOT touch parked.scene. That field names the scene whose state is parked, and only the
+    caller knows which scene it has just left - so every caller sets it straight after, and
+    OnActiveSceneChanged tests it to find the slot to swap with.
 */
-void ApplicationArcher::SwapLevel(){
-    std::swap(stage,parked_level.stage);
-    std::swap(archer_object,parked_level.archer_object);
-    std::swap(block_objects,parked_level.block_objects);
-    std::swap(blockout_group,parked_level.blockout_group);
-    std::swap(prop_views,parked_level.prop_views);
-    std::swap(debris,parked_level.debris);
-    std::swap(terrain_objects,parked_level.terrain_objects);
-    std::swap(melted_blocks,parked_level.melted_blocks);
-    std::swap(rope_segments,parked_level.rope_segments);
-    std::swap(rope_joint,parked_level.rope_joint);
-    std::swap(rope_joints,parked_level.rope_joints);
-    std::swap(rope_anchor_object,parked_level.rope_anchor_object);
-    std::swap(arrow_stuck,parked_level.arrow_stuck);
-    std::swap(camera_target,parked_level.camera_target);
-    std::swap(camera_ideal,parked_level.camera_ideal);
-    std::swap(orbit_follow_offset,parked_level.orbit_follow_offset);
+void ApplicationArcher::SwapLevel(ArcherLevel& parked){
+    std::swap(stage,parked.stage);
+    std::swap(archer_object,parked.archer_object);
+    std::swap(block_objects,parked.block_objects);
+    std::swap(blockout_group,parked.blockout_group);
+    std::swap(prop_views,parked.prop_views);
+    std::swap(debris,parked.debris);
+    std::swap(terrain_objects,parked.terrain_objects);
+    std::swap(melted_blocks,parked.melted_blocks);
+    std::swap(rope_segments,parked.rope_segments);
+    std::swap(rope_joint,parked.rope_joint);
+    std::swap(rope_joints,parked.rope_joints);
+    std::swap(rope_anchor_object,parked.rope_anchor_object);
+    std::swap(arrow_stuck,parked.arrow_stuck);
+    std::swap(camera_target,parked.camera_target);
+    std::swap(camera_ideal,parked.camera_ideal);
+    std::swap(orbit_follow_offset,parked.orbit_follow_offset);
 }
 
 /*
     The engine has just made `to` the live scene - physics thread, physics_mutex held, before
     anything else this pass has read it (see Application::OnActiveSceneChanged).
 
-    Only swaps when `to` is the scene whose level is parked. Any other switch - to a scene this app
-    did not build, or the same scene again - leaves the members alone, because swapping them would
-    park the live level under the wrong name.
+    Swaps with the slot holding `to`, which then holds the level just left. Any other switch - to a
+    scene this app did not build, or the same scene again - finds no slot and leaves the members
+    alone, because swapping them would park the live level under the wrong name.
 */
 void ApplicationArcher::OnActiveSceneChanged(Scene* from, Scene* to){
-    if (!to || to != parked_level.scene){
+    if (!to){
         return;
     }
-    SwapLevel();
-    parked_level.scene = from;      //what is parked now is the level just left
-    RefreshViewAfterSwitch();
+    for (size_t i = 0; i < parked_levels.size(); i++){
+        if (parked_levels[i].scene == to){
+            SwapLevel(parked_levels[i]);
+            parked_levels[i].scene = from;      //what is parked there now is the level just left
+            RefreshViewAfterSwitch();
+            return;
+        }
+    }
 }
 
 /*
@@ -2256,6 +2829,7 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap(GAMEPAD_KEY_A,INPUT_ARCHER_JUMP);
     input->AddKeyMap(GAMEPAD_KEY_B,INPUT_ARCHER_KICK);
     input->AddKeyMap(GAMEPAD_KEY_Y,INPUT_ARCHER_ACTION);
+    input->AddKeyMap(GAMEPAD_KEY_X,INPUT_ARCHER_KNEEL);
     input->AddKeyMap(GAMEPAD_KEY_L1,INPUT_ARCHER_DRAW);
     //The shoulders mirror J and L on the keyboard: bow on the left, knife on the right. The knife
     //has no rules yet, so R1 does nothing until that slice lands - see the 'L' mapping below.
@@ -2274,6 +2848,7 @@ void ApplicationArcher::SetupInput(){
     //so the layout is decided once rather than argued about again when that slice lands.
     input->AddKeyMap('K',INPUT_ARCHER_KICK);
     input->AddKeyMap('L',INPUT_ARCHER_KNIFE);
+    input->AddKeyMap('C',INPUT_ARCHER_KNEEL);
 
     input->AddKeyMap('R',INPUT_ARCHER_RESTART);
     input->AddKeyMap(VK_F1,INPUT_ARCHER_TOGGLE_UI);
@@ -2331,7 +2906,8 @@ void ApplicationArcher::RegisterCommandHandlers(){
         [this](const SimCommand& cmd) -> objectid_t {
             stage.pos = v2(cmd.value[0],cmd.value[1]);
             stage.vel = v2(0.0f,0.0f);
-            stage.mode = MODE_AIR;
+            stage.mode = MODE_AIR;      //which is also what ends a get-up early
+            stage.getup_ticks = 0;
             stage.hang_block = -1;
             stage.climb_ticks = 0;
             stage.grab_cooldown = 0;
@@ -2382,6 +2958,11 @@ void ApplicationArcher::RegisterCommandHandlers(){
 
 void ApplicationArcher::NewGame(){
     stage.Reset();
+    //A restart is a level entry too - see the note in Init. The blocks exist again by now, so she
+    //is laid on the real floor.
+    if (f_level_entry_getup){
+        stage.StartGetUp();
+    }
     //The level geometry is rebuilt from Stage every time, rather than being reset in place. It is
     //a few dozen boxes once per restart, and it means a change to BuildLevel cannot leave stale
     //geometry behind - which the prop bodies, with their accumulated velocities and tip-overs,
@@ -2622,6 +3203,7 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     bool f_draw_released = input->WasKeyReleased(INPUT_ARCHER_DRAW);
     bool f_action        = input->WasKeyPressed(INPUT_ARCHER_ACTION);
     bool f_kick          = input->WasKeyPressed(INPUT_ARCHER_KICK);
+    bool f_kneel         = input->WasKeyPressed(INPUT_ARCHER_KNEEL);
 
     //Act on input only when it is ours to act on: this window in front, or a scripted hold running
     //(which is not OS input, and happens precisely when the window is NOT in front). One predicate
@@ -2674,6 +3256,7 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     out.f_down_held     = input->IsKeyDown(INPUT_ARCHER_DOWN);
     out.f_action_pressed = f_action;
     out.f_kick_pressed  = f_kick;
+    out.f_kneel_pressed = f_kneel;
 }
 
 void ApplicationArcher::HandleEvents(const StageEvents& events){
@@ -2683,6 +3266,15 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
     if (events.f_grabbed_ledge){
         debug->Info("Caught a ledge at (%.2f,%.2f)\n",stage.pos.x,stage.pos.y);
     }
+    if (events.f_knelt){
+        debug->Info("Kneeling at (%.2f,%.2f)\n",stage.pos.x,stage.pos.y);
+    }
+    if (events.f_stood){
+        debug->Info("Stood up at (%.2f,%.2f)\n",stage.pos.x,stage.pos.y);
+    }
+    if (events.f_stand_blocked){
+        debug->Info("No room to stand up at (%.2f,%.2f); staying down\n",stage.pos.x,stage.pos.y);
+    }
     if (events.f_climbed){
         debug->Info("Climbed up onto the ledge, standing at (%.2f,%.2f)\n",stage.pos.x,stage.pos.y);
     }
@@ -2691,7 +3283,7 @@ void ApplicationArcher::HandleEvents(const StageEvents& events){
                     (int)events.kicks.size(),(int)events.broken_blocks.size());
     }
     if (events.f_shot){
-        debug->Info("Shot at %.0f deg, power %.2f\n",stage.aim_deg,events.shot_power);
+        debug->Info("Shot at %.1f deg, power %.2f\n",events.shot_aim_deg,events.shot_power);
     }
     for (size_t i = 0; i < events.arrow_hits.size(); i++){
         const StageEvents::ArrowHit& h = events.arrow_hits[i];
@@ -3082,7 +3674,11 @@ void ApplicationArcher::BuildRope(const StageProp& anchor){
         return;
     }
 
-    float seg_len = anchor.h / (float)ROPE_SEGMENTS;
+    int links = (int)(anchor.h / ROPE_LINK_LENGTH + 0.5f);
+    if (links < 2){
+        links = 2;
+    }
+    float seg_len = anchor.h / (float)links;
     rp3d::RigidBody* previous = NULL;
 
     //A static body at the anchor point for the top link to hang from. Invisible - the visible bar
@@ -3096,7 +3692,7 @@ void ApplicationArcher::BuildRope(const StageProp& anchor){
         rope_segments.push_back(fixed);     //index 0 is the fixed point, not a handhold
     }
 
-    for (int i = 0; i < ROPE_SEGMENTS; i++){
+    for (int i = 0; i < links; i++){
         char name[32];
         snprintf(name,sizeof(name),"rope_%i",i);
         float cy = anchor.y - seg_len * ((float)i + 0.5f);
@@ -3516,6 +4112,19 @@ void ApplicationArcher::SyncArcherAnimation(){
         */
         int upper = puppet.choice.upper_clip;
         Animation* upper_anim = (upper >= 0 && upper < CLIP_COUNT) ? archer_clips[upper] : NULL;
+        /*
+            The layer's own crossfade (Puppet::upper_mix). When a new one starts, the clip it is
+            leaving is frozen at the time it was LAST SHOWN - which is still in upper_time_shown,
+            since this tick's has not been worked out yet.
+        */
+        if (puppet.upper_xfade_serial != upper_xfade_seen){
+            upper_xfade_seen = puppet.upper_xfade_serial;
+            upper_from_time = upper_time_shown;
+        }
+        int from = puppet.choice.upper_from_clip;
+        archer_model->upper_from_clip = (from >= 0 && from < CLIP_COUNT) ? archer_clips[from] : NULL;
+        archer_model->upper_from_time = upper_from_time;
+        archer_model->upper_mix = puppet.upper_mix;
         if (upper != upper_clip_shown){
             upper_loop_time = 0.0f;
             upper_clip_shown = upper;
@@ -3945,7 +4554,8 @@ void ApplicationArcher::UpdateCamera(){
         and a shift+middle pan adds to it - a panned view keeps its framing and keeps following.
         The backdrop and the sun follow the pivot, in both modes, through PlaceCamera.
     */
-    bool f_range = (stage.GetLevel() == STAGE_LEVEL_RANGE);
+    //The rope test is framed like the range: one screen wide, followed slowly.
+    bool f_range = (stage.GetLevel() != STAGE_LEVEL_MAIN);
     float smooth = f_range ? RANGE_CAMERA_SMOOTH : CAMERA_SMOOTH;
     vec3 body(stage.pos.x,stage.pos.y + 0.5f,0.0f);
 
@@ -4129,7 +4739,8 @@ void ApplicationArcher::PublishSnapshot(){
     s.bow_mode = stage.bow_mode;
     s.draw_ticks = stage.draw_ticks;
     s.draw_power = stage.DrawPower();
-    s.aim_deg = stage.aim_deg;
+    s.aim_deg = stage.ShotAimDeg();     //what the arrow is aimed at, sway included
+    s.aim_sway_deg = stage.AimSwayDeg();
     if (archer_model){
         s.aim_drawn_deg = archer_model->aim_drawn_deg;
         s.aim_weight = archer_model->aim_weight;
@@ -4137,6 +4748,16 @@ void ApplicationArcher::PublishSnapshot(){
     s.aim_neutral_deg = archer_model ? archer_model->aim_pose_deg : 0.0f;
     s.upper_clip = puppet.choice.upper_clip;
     s.upper_weight = puppet.upper_weight;
+    s.kneel_phase = (stage.mode == MODE_KNEEL) ? stage.kneel_phase : -1;
+    s.body_height = stage.BodyHeight();
+    if (bow_rig.arrow.object){
+        vec3 nock = bow_rig.arrow.object->GetWorldPosition();
+        s.nock_fwd = (nock.x - stage.pos.x) * stage.facing;
+        s.nock_up = nock.y - stage.pos.y;
+    }
+    v2 anchor = stage.AnchorPosition();
+    s.anchor_fwd = (anchor.x - stage.pos.x) * stage.facing;
+    s.anchor_up = anchor.y - stage.pos.y;
     s.string_draw = bow_draw_shown;
     s.f_arrow_on_string = f_arrow_nocked;
     s.hand_off_string = bow_rig.hand_off_string;
@@ -4238,7 +4859,7 @@ json ApplicationArcher::BuildStateJson(){
         s = snapshot;
     }
 
-    static const char* mode_names[] = { "ground","air","hang","climb","rope" };
+    static const char* mode_names[] = { "ground","air","hang","climb","rope","kneel","getup" };
 
     json targets = json::array();
     for (size_t i = 0; i < s.targets.size(); i++){
@@ -4267,12 +4888,16 @@ json ApplicationArcher::BuildStateJson(){
     json result = json{
         {"tick",s.tick},
         {"stage_ticks",s.stage_ticks},
-        {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : "main"},
+        {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" : "main"},
         {"archer",json{
             {"x",s.x},{"y",s.y},{"vx",s.vx},{"vy",s.vy},
             {"facing",(s.facing > 0.0f) ? "right" : "left"},
-            {"mode",mode_names[(s.mode >= 0 && s.mode <= MODE_ROPE) ? s.mode : 0]},
+            {"mode",mode_names[(s.mode >= 0 && s.mode <= MODE_GETUP) ? s.mode : 0]},
             {"on_ground",s.f_on_ground},
+            {"kneel",(s.kneel_phase == KNEEL_LOWERING) ? json("lowering") :
+                     (s.kneel_phase == KNEEL_HELD) ? json("held") :
+                     (s.kneel_phase == KNEEL_RISING) ? json("rising") : json(nullptr)},
+            {"body_height",s.body_height},
             {"coyote_ticks",s.coyote_ticks}
         }},
         {"bow",json{
@@ -4281,6 +4906,7 @@ json ApplicationArcher::BuildStateJson(){
             {"draw_ticks_full",BOW_DRAW_TICKS},
             {"draw_power",s.draw_power},
             {"aim_deg",s.aim_deg},
+            {"aim_sway_deg",s.aim_sway_deg},
             //The aim override's check - see ArcherSnapshot::aim_drawn_deg.
             {"aim_drawn_deg",s.aim_drawn_deg},
             {"aim_error_deg",s.aim_drawn_deg - s.aim_deg},
@@ -4290,6 +4916,8 @@ json ApplicationArcher::BuildStateJson(){
             {"upper_clip",(s.upper_clip >= 0 && s.upper_clip < CLIP_COUNT) ? json(ARCHER_CLIPS[s.upper_clip].name)
                                                                            : json(nullptr)},
             {"upper_weight",s.upper_weight},
+            {"nock",json{{"fwd",s.nock_fwd},{"up",s.nock_up}}},
+            {"anchor",json{{"fwd",s.anchor_fwd},{"up",s.anchor_up}}},
             {"string_draw",s.string_draw},
             {"arrow_on_string",s.f_arrow_on_string},
             {"hand_off_string",s.hand_off_string},
@@ -4561,11 +5189,11 @@ void ApplicationArcher::RegisterMCPTools(){
         "that have no tool of their own: 'down' drops through a one-way platform and lets go of a "
         "ledge, 'action' and 'knife' are wired but not yet used. Several of these can be layered by "
         "calling with wait false and then holding the next one. Actions: left, right, down, jump, "
-        "draw, action, knife.",
+        "draw, kick, kneel (a toggle: any hold is one press), action, knife.",
         json{
             {"type","object"},
             {"properties", {
-                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, action or knife"}}},
+                {"action", {{"type","string"},{"description","left, right, down, jump, draw, kick, kneel, action or knife"}}},
                 {"ticks", {{"type","number"},{"description","simulation ticks to hold it, default 20, capped at 600"}}},
                 {"wait", {{"type","boolean"},{"description","block until the hold has finished, default true; false returns at once so another hold can be layered on top"}}},
                 {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
@@ -4585,10 +5213,11 @@ void ApplicationArcher::RegisterMCPTools(){
             else if (name == "jump"){   action = INPUT_ARCHER_JUMP;   }
             else if (name == "draw"){   action = INPUT_ARCHER_DRAW;   }
             else if (name == "kick"){   action = INPUT_ARCHER_KICK;   }
+            else if (name == "kneel"){  action = INPUT_ARCHER_KNEEL;  }
             else if (name == "action"){ action = INPUT_ARCHER_ACTION; }
             else if (name == "knife"){  action = INPUT_ARCHER_KNIFE;  }
             else{
-                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, action or knife"} };
+                return json{ {"error","unknown action '" + name + "'; expected left, right, down, jump, draw, kick, kneel, action or knife"} };
             }
             int ticks = (int)clamp(args.value("ticks",20.0f),0.0f,600.0f);
             input->HoldKey(action,(uint32_t)ticks);
@@ -4601,7 +5230,8 @@ void ApplicationArcher::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("archer_place",
-        "Put the archer at (x, y) and clear their movement state. A DEVELOPMENT TOOL: the level "
+        "Put the archer at (x, y) and clear their movement state - which also ends the level-entry "
+        "get-up if it is still playing. A DEVELOPMENT TOOL: the level "
         "runs from x -12 to 72 with two gaps in it, and iterating on one part of it should not mean "
         "flying the whole approach by script every time. Useful landmarks: the ground surface is "
         "y 0, the start is (-6, 0.9), the grabbable-only ledge stands at x 44..48 with its lip at "
@@ -4665,7 +5295,10 @@ void ApplicationArcher::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("archer_restart",
         "Rebuild the level and put the archer back at the start. Everything the props have "
         "accumulated - kicked crates, toppled targets, embedded arrows - is thrown away and rebuilt "
-        "from archer/Stage's BuildLevel, so this is the way to get a clean measurement.",
+        "from archer/Stage's BuildLevel, so this is the way to get a clean measurement. IF the "
+        "panel's 'level entry get-up' is ticked (it is off by default) she then gets up: mode "
+        "'getup' for 210 ticks (3.5 s), during which EVERY input is ignored - runs, jumps, draws "
+        "and holds sent then do nothing. Wait it out, or archer_place ends it at once.",
         json{ {"type","object"}, {"properties",json::object()} },
         [this](const json& args) -> json {
             if (!main_scene){
@@ -4819,19 +5452,24 @@ void ApplicationArcher::DrawImGuiUI(void){
                 (stage.mode == MODE_GROUND) ? "ground" :
                 (stage.mode == MODE_AIR) ? "air" :
                 (stage.mode == MODE_HANG) ? "hang" :
-                (stage.mode == MODE_CLIMB) ? "climb" : "rope",
+                (stage.mode == MODE_CLIMB) ? "climb" :
+                (stage.mode == MODE_GETUP) ? "getting up - no input" :
+                (stage.mode == MODE_KNEEL) ? ((stage.kneel_phase == KNEEL_HELD) ? "kneel" :
+                                              (stage.kneel_phase == KNEEL_RISING) ? "kneel, rising" :
+                                                                                    "kneel, lowering") : "rope",
                 stage.f_on_ground ? "" : "  (airborne)");
     ImGui::Text("coyote    %i    buffer %i",stage.coyote_ticks,stage.buffer_ticks);
     ImGui::Text("velocity  %.2f, %.2f",stage.vel.x,stage.vel.y);
 
     ImGui::Separator();
-    ImGui::Text("aim       %.0f deg %s",stage.aim_deg,(stage.facing > 0.0f) ? "right" : "left");
+    ImGui::Text("aim       %.0f deg %s, sway %+.1f",stage.aim_deg,(stage.facing > 0.0f) ? "right" : "left",
+                stage.AimSwayDeg());
     if (archer_model){
         //The override's check: the drawn bow against the rules' aim, and the live neutral it
         //corrected from. At full weight the drawn angle IS the aim; the pose angle is what the
         //clips alone would have pointed at. And the upper layer's clip and weight.
         ImGui::Text("bow at    %.1f deg (%+.1f), body %.0f%%, pose %.1f",
-                    archer_model->aim_drawn_deg,archer_model->aim_drawn_deg - stage.aim_deg,
+                    archer_model->aim_drawn_deg,archer_model->aim_drawn_deg - stage.ShotAimDeg(),
                     archer_model->aim_weight * 100.0f,archer_model->aim_pose_deg);
         int up = puppet.choice.upper_clip;
         ImGui::Text("upper     %s %.0f%%",(up >= 0 && up < CLIP_COUNT) ? ARCHER_CLIPS[up].name : "-",
@@ -4865,6 +5503,11 @@ void ApplicationArcher::DrawImGuiUI(void){
         cmd.type = ARCHER_CMD_RESTART;
         SubmitUICommand(cmd);
     }
+    ImGui::SameLine();
+    //Written directly, like the sliders below: NewGame reads it under the same lock.
+    ImGui::Checkbox("level entry get-up",&f_level_entry_getup);
+    ImGui::SetItemTooltip("Start each level lying down and getting up, controls locked for 3.5 s. "
+                          "Takes effect at the next restart.");
 
     /*
         --- The terrain -----------------------------------------------------------------------
@@ -4888,6 +5531,54 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::TextDisabled("%i boxes under terrain, regenerated %i times",
                         (int)melted_blocks.size(),terrain_generation.load());
 #endif
+
+    /*
+        --- The foliage -----------------------------------------------------------------------
+
+        Written directly, like the sliders above, and rescattered only when a slider is LET GO:
+        a scatter is a few milliseconds, which is fine once and a stutter every frame of a drag.
+        Regenerate terrain rescatters too, so moving a box needs nothing from here.
+    */
+    if (foliage_group && ImGui::CollapsingHeader("Foliage")){
+        bool f_rescatter = false;
+        ImGui::SliderFloat("open density",&foliage_params.density_open,0.0f,4.0f,"%.2f /unit");
+        f_rescatter |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("corner density",&foliage_params.density_corner,0.0f,30.0f,"%.1f /unit");
+        f_rescatter |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("corner reach",&foliage_params.ao_radius,0.5f,6.0f,"%.2f");
+        f_rescatter |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("corner falloff",&foliage_params.ao_gamma,0.3f,3.0f,"%.2f");
+        f_rescatter |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("spacing",&foliage_params.spacing,0.4f,1.6f,"%.2f");
+        f_rescatter |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("plant size",&foliage_scale,0.5f,5.0f,"%.2f");
+        f_rescatter |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("= her")){
+            foliage_scale = model_scale;
+            f_rescatter = true;
+        }
+        if (ImGui::Button("Rescatter")){
+            f_rescatter = true;
+        }
+        ImGui::SameLine();
+        ImGui::Text("%i ferns, %i low ferns, %i flowers",foliage_counts[FOLIAGE_FERN],
+                    foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER]);
+        if (f_rescatter){
+            f_rescatter_foliage = true;
+        }
+    }
+
+    //The vines are static - built once - so this only says what was built and from what.
+    if (vine_group && ImGui::CollapsingHeader("Vines")){
+        ImGui::Text("%i vines, %i + %i leaves",(int)vine_trunks.size(),
+                    vine_leaf_counts[VINE_LEAF_1],vine_leaf_counts[VINE_LEAF_2]);
+        ImGui::Text("trunk: %s, wrap: %s, leaves: %s / %s",
+                    f_vine_trunk_from_asset ? "archer.glb" : "placeholder",
+                    f_vine_wrap_from_asset ? "archer.glb" : "none",
+                    f_vine_leaf_from_asset[VINE_LEAF_1] ? "archer.glb" : "placeholder",
+                    f_vine_leaf_from_asset[VINE_LEAF_2] ? "archer.glb" : "placeholder");
+    }
 
     /*
         --- The animation ---------------------------------------------------------------------

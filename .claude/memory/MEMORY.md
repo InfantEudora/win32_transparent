@@ -49,3 +49,4 @@
 - [glTF sparse accessors](gltf_sparse_accessors.md) — core/GLTFLoader gained sparse accessor support 2026-09-22; Blender exports SHAPE KEYS that way and it used to be a Fatal at load; GLTFLoader logs at DEBUG_WARN so its Info lines never show
 - [Archer terrain plan](archer_terrain_plan.md) — BUILT 2026-09-22 (steps 1-5): marching-cubes terrain whose SDF field comes FROM the StageBlock blockout; round OUTWARD or ledges sag; any field sampled for gradients must be continuous in every axis; NewGame is the physics thread so it must not remesh
 - [OK to stop running apps](ok_to_stop_running_apps.md) — user allows killing a running app exe to relink or free port 8765; say so in the reply
+- [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform shared by vines and the rope; static vines + modelled wrap (vine_curl) BUILT 2026-09-24 (steps 1-3), glb node names; next is a code-built skeleton for the rope; plan in apps/archer/vine_plan.md

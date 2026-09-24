@@ -29,21 +29,22 @@ static float MoveToward(float value, float target, float step){
 static const float STAGE_EPS = 0.001f;
 static const float STAGE_DEG2RAD = 3.14159265358979f / 180.0f;
 
-//Does the archer's body box, centred at (cx,cy), overlap this rectangle?
-static bool BoxOverlapsRect(float cx, float cy, float left, float right, float bottom, float top){
+//Does the archer's body box, centred at (cx,cy) when standing, overlap this rectangle? `head_drop`
+//takes that much off the TOP - the kneeling box keeps its feet (see KNEEL_HALF_H).
+static bool BoxOverlapsRect(float cx, float cy, float head_drop, float left, float right, float bottom, float top){
     if (cx + ARCHER_HALF_W <= left)   { return false; }
     if (cx - ARCHER_HALF_W >= right)  { return false; }
-    if (cy + ARCHER_HALF_H <= bottom) { return false; }
+    if (cy + ARCHER_HALF_H - head_drop <= bottom) { return false; }
     if (cy - ARCHER_HALF_H >= top)    { return false; }
     return true;
 }
 
-static bool BoxOverlapsBlock(float cx, float cy, const StageBlock& b){
-    return BoxOverlapsRect(cx,cy,b.Left(),b.Right(),b.Bottom(),b.Top());
+static bool BoxOverlapsBlock(float cx, float cy, float head_drop, const StageBlock& b){
+    return BoxOverlapsRect(cx,cy,head_drop,b.Left(),b.Right(),b.Bottom(),b.Top());
 }
 
-static bool BoxOverlapsObstacle(float cx, float cy, const StageObstacle& o){
-    return BoxOverlapsRect(cx,cy,o.Left(),o.Right(),o.Bottom(),o.Top());
+static bool BoxOverlapsObstacle(float cx, float cy, float head_drop, const StageObstacle& o){
+    return BoxOverlapsRect(cx,cy,head_drop,o.Left(),o.Right(),o.Bottom(),o.Top());
 }
 
 //--- Construction -------------------------------------------------------------------------------
@@ -88,6 +89,9 @@ void Stage::Reset(){
     grab_cooldown = 0;
     kick_ticks = 0;
     kick_cooldown = 0;
+    kneel_phase = KNEEL_LOWERING;
+    kneel_ticks = 0;
+    getup_ticks = 0;
     rope_id = -1;
     rope_ticks = 0;
     rope_cooldown = 0;
@@ -101,6 +105,8 @@ void Stage::Reset(){
     ticks = 0;
     arrows_shot = 0;
     draws_cancelled = 0;
+    sway_ticks = 0;
+    draws_started = 0;
     arrows_hit_blocks = 0;
 }
 
@@ -259,6 +265,7 @@ void Stage::KeepBlockLayout(){
 void Stage::BuildLevel(){
     switch (level){
         case STAGE_LEVEL_RANGE: BuildRangeLevel(); break;
+        case STAGE_LEVEL_ROPE:  BuildRopeLevel();  break;
         default:                BuildMainLevel();  break;
     }
 }
@@ -276,6 +283,9 @@ v2 Stage::StartPosition() const{
     //Both a little above the floor, so the first tick is a landing - see the note in Reset.
     if (level == STAGE_LEVEL_RANGE){
         return v2(0.0f,2.0f);
+    }
+    if (level == STAGE_LEVEL_ROPE){
+        return v2(-6.0f,2.0f);      //a run-up's distance from the rope
     }
     return v2(-6.0f,2.0f);
 }
@@ -306,6 +316,28 @@ v2 Stage::StartPosition() const{
     Nothing here is BLOCK_LEDGE, so stage_test's HighLedge() - which takes the first ledge in
     `blocks` - has nothing to find in this level and must not be pointed at it.
 */
+/*
+    The rope test: a floor, a wall at each end, and one rope - nothing to fall off, nothing else to
+    catch, and nothing in the way of a swing.
+
+    THE ROPE IS LONG and hangs LOW on purpose: 9 units from an anchor 11 up, so its end is 2 above
+    the floor. Its lowest link is then within reach standing (FindRopePoint measures from chest
+    height), which is where climbing starts, and there are 9 units of rope above to climb. Hung
+    from there she swings with her feet 0.6 off the floor; the main level's rope is 6 long and
+    caught with a jump.
+
+    The floor is as wide as the main level's run-up needs: at ARCHER_RUN_SPEED from the start at
+    -6 she reaches the rope at full speed, so catching it at a run is testable. The walls are the
+    range's height, so an arrow always stays in.
+*/
+void Stage::BuildRopeLevel(){
+    blocks.push_back({   0.00f, -2.00f, 17.00f, 2.00f, BLOCK_SOLID, true });   //the floor, top at 0
+    blocks.push_back({ -17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //left wall
+    blocks.push_back({  17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //right wall
+
+    props.push_back({ PROP_ROPE_ANCHOR, 0.00f, 11.00f, 0.10f, 9.00f, 1, 1 });
+}
+
 void Stage::BuildRangeLevel(){
     blocks.push_back({   0.00f, -2.00f, 17.00f, 2.00f, BLOCK_SOLID, true });   //the floor, top at 0
     blocks.push_back({ -17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //left wall, top at 48
@@ -383,7 +415,15 @@ void Stage::AddObstacle(float x, float y, float hw, float hh, int id, bool f_pus
 
 //--- The tick -----------------------------------------------------------------------------------
 
-void Stage::Tick(const ArcherInput& in, StageEvents& events){
+void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
+    /*
+        GETTING UP, NOTHING COUNTS: the whole tick runs on an empty input, which is what makes the
+        lock total - every verb below reads `in`, so none of them can be forgotten, and an edge
+        pressed during the get-up is dropped rather than held for the tick it ends on. See GETUP_TICKS.
+    */
+    static const ArcherInput no_input;
+    const ArcherInput& in = (mode == MODE_GETUP) ? no_input : in_raw;
+
     /*
         Order matters and is not arbitrary:
 
@@ -442,8 +482,17 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
         if (bow_mode == BOW_IDLE){
             bow_mode = BOW_DRAWING;
             draw_ticks = 0;
-        }else if (draw_ticks < BOW_DRAW_TICKS){
-            draw_ticks++;
+            sway_ticks = 0;
+            draws_started++;
+        }else{
+            if (draw_ticks < BOW_DRAW_TICKS){
+                draw_ticks++;
+            }
+            //Counted from the tick AFTER the nock, so the sway is exactly zero when the arc first
+            //appears.
+            if (draw_ticks > BOW_NOCK_TICKS){
+                sway_ticks++;
+            }
         }
         return;
     }
@@ -458,6 +507,12 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
 }
 
 void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
+    //Getting up owns the body outright, like the climb below - it is not a stance anything else
+    //layers on top of.
+    if (mode == MODE_GETUP){
+        TickGetUp(events);
+        return;
+    }
     /*
         ON THE ROPE THE SOLVER IS DRIVING, and this function must not also be - two things
         integrating one position is the classic way to get a character that vibrates. TickRope
@@ -484,6 +539,22 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     }
     if (grab_cooldown > 0){
         grab_cooldown--;
+    }
+
+    /*
+        Kneeling owns the body the same way. Getting down is decided HERE, on the tick of the
+        press, so that tick already brakes: from the ground only - f_on_ground is last tick's, like
+        the kick's gate - and not mid-kick, whose plant and boot box belong to standing.
+    */
+    if (in.f_kneel_pressed && mode == MODE_GROUND && f_on_ground && kick_ticks == 0){
+        mode = MODE_KNEEL;
+        kneel_phase = KNEEL_LOWERING;
+        kneel_ticks = 0;
+        events.f_knelt = true;
+    }
+    if (mode == MODE_KNEEL){
+        TickKneel(in,events);
+        return;
     }
 
     //--- Horizontal ---------------------------------------------------------------------------
@@ -658,6 +729,9 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
     //over, large enough that an ordinary tick is a single pass.
     int steps = 1 + (int)(span / (ARCHER_HALF_W * 0.5f));
     v2 step = delta * (1.0f / (float)steps);
+    //The box's missing top while kneeling. Everything below places the box by its FEET or, against
+    //a ceiling, by its top - which is ARCHER_HALF_H - head_drop above pos.
+    float head_drop = HeadDrop();
 
     for (int s = 0; s < steps; s++){
         //--- X ----------------------------------------------------------------------------------
@@ -671,7 +745,7 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                 if (!b.f_alive || b.kind == BLOCK_PLATFORM){
                     continue;
                 }
-                if (!BoxOverlapsBlock(pos.x,pos.y,b)){
+                if (!BoxOverlapsBlock(pos.x,pos.y,head_drop,b)){
                     continue;
                 }
                 pos.x = (step.x > 0.0f) ? (b.Left() - ARCHER_HALF_W - STAGE_EPS)
@@ -700,7 +774,7 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
         {
             for (size_t i = 0; i < obstacles.size(); i++){
                 const StageObstacle& o = obstacles[i];
-                if (!BoxOverlapsObstacle(pos.x,pos.y,o)){
+                if (!BoxOverlapsObstacle(pos.x,pos.y,head_drop,o)){
                     continue;
                 }
                 /*
@@ -790,14 +864,14 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                         continue;
                     }
                 }
-                if (!BoxOverlapsBlock(pos.x,pos.y,b)){
+                if (!BoxOverlapsBlock(pos.x,pos.y,head_drop,b)){
                     continue;
                 }
                 if (step.y < 0.0f){
                     pos.y = b.Top() + ARCHER_HALF_H + STAGE_EPS;
                     out_hit_floor = true;
                 }else{
-                    pos.y = b.Bottom() - ARCHER_HALF_H - STAGE_EPS;
+                    pos.y = b.Bottom() - (ARCHER_HALF_H - head_drop) - STAGE_EPS;
                     out_hit_ceiling = true;
                 }
                 vel.y = 0.0f;
@@ -815,10 +889,10 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                 survives every fix to that one because the two passes can disagree about which
                 obstacle they are resolving.
             */
-            float prev_top = prev_bottom + ARCHER_HALF_H * 2.0f;
+            float prev_top = prev_bottom + ARCHER_HALF_H * 2.0f - head_drop;
             for (size_t i = 0; i < obstacles.size(); i++){
                 const StageObstacle& o = obstacles[i];
-                if (!BoxOverlapsObstacle(pos.x,pos.y,o)){
+                if (!BoxOverlapsObstacle(pos.x,pos.y,head_drop,o)){
                     continue;
                 }
                 if (step.y < 0.0f){
@@ -831,7 +905,7 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                     if (prev_top > o.Bottom() + STAGE_EPS){
                         continue;
                     }
-                    pos.y = o.Bottom() - ARCHER_HALF_H - STAGE_EPS;
+                    pos.y = o.Bottom() - (ARCHER_HALF_H - head_drop) - STAGE_EPS;
                     out_hit_ceiling = true;
                 }
                 vel.y = 0.0f;
@@ -967,8 +1041,11 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
 
         f_on_ground is last tick's, because TickKick runs before TickArcher. One tick of lag on a
         gate costs nothing and keeps the ordering note at the top of Stage::Tick true.
+
+        And KNEELING: the kick is a standing move, and a knee on the floor is not a plant.
     */
-    bool f_busy = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE || !f_on_ground);
+    bool f_busy = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE || mode == MODE_KNEEL ||
+                   !f_on_ground);
 
     if (kick_ticks == 0){
         if (in.f_kick_pressed && kick_cooldown == 0 && !f_busy){
@@ -1047,6 +1124,180 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
     //crate five times, which is five impulses and a crate that leaves the level.
     if (events.f_kick_connected){
         kick_ticks = KICK_ACTIVE_TO + 1;
+    }
+}
+
+//--- Kneeling -----------------------------------------------------------------------------------
+
+float Stage::HeadDrop() const{
+    //Binary rather than following the clip down: the box is shorter from the first tick down to
+    //the first tick up, and standing up is only started once the full box is known to fit.
+    if (mode != MODE_KNEEL || kneel_phase == KNEEL_RISING){
+        return 0.0f;
+    }
+    return 2.0f * (ARCHER_HALF_H - KNEEL_HALF_H);
+}
+
+float Stage::BodyHeight() const{
+    return 2.0f * ARCHER_HALF_H - HeadDrop();
+}
+
+bool Stage::CanStandUp() const{
+    for (size_t i = 0; i < blocks.size(); i++){
+        const StageBlock& b = blocks[i];
+        //A one-way platform overhead is passable from below, so it never stops her standing.
+        if (!b.f_alive || b.kind == BLOCK_PLATFORM){
+            continue;
+        }
+        if (BoxOverlapsBlock(pos.x,pos.y,0.0f,b)){
+            return false;
+        }
+    }
+    for (size_t i = 0; i < obstacles.size(); i++){
+        if (BoxOverlapsObstacle(pos.x,pos.y,0.0f,obstacles[i])){
+            return false;
+        }
+    }
+    return true;
+}
+
+float Stage::KneelAmount() const{
+    if (mode != MODE_KNEEL){
+        return 0.0f;
+    }
+    //Smoothstepped: both clips ease in and out of the move, so the anchor should too.
+    float t = 1.0f;
+    if (kneel_phase == KNEEL_LOWERING){
+        t = ClampF((float)kneel_ticks / (float)KNEEL_DOWN_TICKS,0.0f,1.0f);
+    }else if (kneel_phase == KNEEL_RISING){
+        t = 1.0f - ClampF((float)kneel_ticks / (float)KNEEL_UP_TICKS,0.0f,1.0f);
+    }
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/*
+    MODE_KNEEL, from the first tick down to the last tick up.
+
+    NO RUN, NO JUMP, NO TURN: the move axis only brakes her - ARCHER_RUN_FRICTION, as if the stick
+    had been let go, so a kneel pressed at a run skids to a stop in about five ticks rather than
+    freezing on the spot - and a jump press is dropped outright, buffer included, so it does not
+    fire the moment she is back up. Facing is left alone: a kneeling archer turning on the spot
+    would need a clip, and standing up is how she turns round.
+
+    GRAVITY STILL RUNS, because the floor is not guaranteed - a crate she knelt on can be knocked
+    out from under her. Losing it ends the kneel and hands her to the air, standing box and all.
+*/
+void Stage::TickKneel(const ArcherInput& in, StageEvents& events){
+    if (in.f_kneel_pressed && kneel_phase == KNEEL_HELD){
+        if (CanStandUp()){
+            kneel_phase = KNEEL_RISING;
+            kneel_ticks = 0;
+        }else{
+            events.f_stand_blocked = true;
+        }
+    }
+
+    if (kneel_phase == KNEEL_LOWERING){
+        kneel_ticks++;
+        if (kneel_ticks >= KNEEL_DOWN_TICKS){
+            kneel_phase = KNEEL_HELD;
+            kneel_ticks = 0;
+        }
+    }else if (kneel_phase == KNEEL_RISING){
+        kneel_ticks++;
+        if (kneel_ticks >= KNEEL_UP_TICKS){
+            mode = MODE_GROUND;
+            kneel_phase = KNEEL_LOWERING;
+            kneel_ticks = 0;
+            events.f_stood = true;
+        }
+    }
+
+    buffer_ticks = 0;
+    vel.x = MoveToward(vel.x,0.0f,ARCHER_RUN_FRICTION * ARCHER_DT);
+    vel.y -= ARCHER_GRAVITY * ARCHER_FALL_GRAVITY_MUL * ARCHER_DT;
+    if (vel.y < -ARCHER_MAX_FALL_SPEED){
+        vel.y = -ARCHER_MAX_FALL_SPEED;
+    }
+    bool f_hit_floor = false;
+    bool f_hit_ceiling = false;
+    bool f_hit_wall = false;
+    MoveAndCollide(vel * ARCHER_DT,false,events,f_hit_floor,f_hit_ceiling,f_hit_wall);
+    f_on_ground = f_hit_floor;
+    if (f_on_ground){
+        coyote_ticks = ARCHER_COYOTE_TICKS;
+        return;
+    }
+    mode = MODE_AIR;
+    kneel_phase = KNEEL_LOWERING;
+    kneel_ticks = 0;
+}
+
+//--- Getting up ---------------------------------------------------------------------------------
+
+/*
+    Starts the level entry from wherever she is.
+
+    DROPPED ONTO THE FLOOR FIRST, in one sweep, because the start position is deliberately a little
+    above the ground (see Reset) and the clip's first frame is her lying ON it: left to gravity she
+    would fall the last few centimetres lying flat, which reads as being dropped into the level.
+    Ten units is well past any start this file has; if there is no floor within it she simply falls
+    the rest, still getting up.
+
+    Everything a restart might have left mid-flight is cleared with it - a draw, a kick, a kneel,
+    the jump buffer - so nothing resumes the moment the controls come back.
+*/
+void Stage::StartGetUp(){
+    mode = MODE_GETUP;
+    getup_ticks = 0;
+    vel = v2(0.0f,0.0f);
+    bow_mode = BOW_IDLE;
+    draw_ticks = 0;
+    kick_ticks = 0;
+    kneel_phase = KNEEL_LOWERING;
+    kneel_ticks = 0;
+    buffer_ticks = 0;
+    coyote_ticks = 0;
+
+    StageEvents scratch;
+    bool f_hit_floor = false;
+    bool f_hit_ceiling = false;
+    bool f_hit_wall = false;
+    MoveAndCollide(v2(0.0f,-10.0f),false,scratch,f_hit_floor,f_hit_ceiling,f_hit_wall);
+    vel = v2(0.0f,0.0f);
+    f_on_ground = f_hit_floor;
+}
+
+/*
+    MODE_GETUP. No input reaches here at all - Stage::Tick has already swapped it for an empty one.
+
+    The clock runs to GETUP_TICKS and then she is simply standing: MODE_GROUND if there is floor
+    under her, MODE_AIR if not. GRAVITY STILL RUNS, the kneel's reason - nothing guarantees the
+    floor, and a crate knocked out from under a lying archer should not leave her lying on air.
+    Unlike the kneel, losing the floor does NOT end it: the level entry plays to its end either way.
+*/
+void Stage::TickGetUp(StageEvents& events){
+    getup_ticks++;
+
+    vel.x = MoveToward(vel.x,0.0f,ARCHER_RUN_FRICTION * ARCHER_DT);
+    vel.y -= ARCHER_GRAVITY * ARCHER_FALL_GRAVITY_MUL * ARCHER_DT;
+    if (vel.y < -ARCHER_MAX_FALL_SPEED){
+        vel.y = -ARCHER_MAX_FALL_SPEED;
+    }
+    bool f_hit_floor = false;
+    bool f_hit_ceiling = false;
+    bool f_hit_wall = false;
+    MoveAndCollide(vel * ARCHER_DT,false,events,f_hit_floor,f_hit_ceiling,f_hit_wall);
+    f_on_ground = f_hit_floor;
+    if (f_on_ground){
+        vel.y = 0.0f;
+        coyote_ticks = ARCHER_COYOTE_TICKS;
+    }
+
+    if (getup_ticks >= GETUP_TICKS){
+        mode = f_on_ground ? MODE_GROUND : MODE_AIR;
+        getup_ticks = 0;
+        events.f_got_up = true;
     }
 }
 
@@ -1237,8 +1488,32 @@ float Stage::DrawPower() const{
     return BOW_MIN_POWER + (1.0f - BOW_MIN_POWER) * ClampF(t,0.0f,1.0f);
 }
 
+/*
+    The sway: three sines, weighted 0.6 / 0.3 / 0.1 so the sum never passes the amplitude. Periods
+    1.9s and 3.1s make a slow drift that never quite repeats; 0.7s adds a small tremor on top.
+
+    Each draw enters the drift at its own offset - the golden ratio's fractional steps spread
+    successive draws evenly over 30 seconds of it, so no two neighbouring draws start alike - and
+    the smoothstepped ramp brings it in from exactly zero at the nock.
+*/
+float Stage::AimSwayDeg() const{
+    if (!IsNocked()){
+        return 0.0f;
+    }
+    const float TWO_PI = 6.28318530718f;
+    float spread = (float)draws_started * 0.6180339887f;
+    float t = (spread - floorf(spread)) * 30.0f + (float)sway_ticks * ARCHER_DT;
+    float ramp = ClampF((float)sway_ticks / (float)AIM_SWAY_RAMP_TICKS,0.0f,1.0f);
+    ramp = ramp * ramp * (3.0f - 2.0f * ramp);
+    float k = KneelAmount();
+    float amplitude = AIM_SWAY_STAND_DEG + (AIM_SWAY_KNEEL_DEG - AIM_SWAY_STAND_DEG) * k;
+    return amplitude * ramp * (0.6f * sinf(TWO_PI * t / 1.9f) +
+                               0.3f * sinf(TWO_PI * t / 3.1f) +
+                               0.1f * sinf(TWO_PI * t / 0.7f));
+}
+
 v2 Stage::AimDirection() const{
-    float a = aim_deg * STAGE_DEG2RAD;
+    float a = ShotAimDeg() * STAGE_DEG2RAD;
     //Mirrored through facing, so +30 degrees means "thirty up from straight ahead" whichever way
     //the archer is looking. A world-space angle would mean the same key tilted the wrong way
     //half the time.
@@ -1246,7 +1521,11 @@ v2 Stage::AimDirection() const{
 }
 
 v2 Stage::AnchorPosition() const{
-    return pos + v2(BOW_NOCK_FWD * facing,BOW_NOCK_UP);
+    //Eased from the standing anchor to the kneeling one as she goes down, and back.
+    float k = KneelAmount();
+    float fwd = BOW_NOCK_FWD + (KNEEL_NOCK_FWD - BOW_NOCK_FWD) * k;
+    float up = BOW_NOCK_UP + (KNEEL_NOCK_UP - BOW_NOCK_UP) * k;
+    return pos + v2(fwd * facing,up);
 }
 
 v2 Stage::MuzzlePosition() const{
@@ -1257,6 +1536,7 @@ void Stage::Loose(StageEvents& events){
     float power = DrawPower();
     float speed = ARROW_SPEED_MIN + (ARROW_SPEED_MAX - ARROW_SPEED_MIN) * power;
     v2 dir = AimDirection();
+    float shot_aim_deg = ShotAimDeg();      //read before the draw is cleared below takes the sway
 
     //A free slot, or the oldest arrow if every slot is live. Recycling rather than refusing: an
     //input that silently does nothing is the one failure mode a main verb must not have.
@@ -1298,6 +1578,7 @@ void Stage::Loose(StageEvents& events){
 
     events.f_shot = true;
     events.shot_power = power;
+    events.shot_aim_deg = shot_aim_deg;
 }
 
 void Stage::TickArrows(StageEvents& events){
@@ -1513,12 +1794,12 @@ int Stage::PredictArc(v2* out_points, int max_points) const{
 }
 
 std::string Stage::DebugLine() const{
-    static const char* mode_names[] = { "ground","air","hang","climb","rope" };
+    static const char* mode_names[] = { "ground","air","hang","climb","rope","kneel","getup" };
     char buf[256];
     snprintf(buf,sizeof(buf),
              "t=%llu %s pos=(%.2f,%.2f) vel=(%.2f,%.2f) face=%+.0f aim=%.0f draw=%d/%d arrows=%d/%d",
              (unsigned long long)ticks,
-             mode_names[(mode >= 0 && mode <= MODE_ROPE) ? mode : 0],
+             mode_names[(mode >= 0 && mode <= MODE_GETUP) ? mode : 0],
              pos.x,pos.y,vel.x,vel.y,facing,aim_deg,draw_ticks,BOW_DRAW_TICKS,
              NumLiveArrows(),arrows_shot);
     return std::string(buf);

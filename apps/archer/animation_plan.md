@@ -854,6 +854,47 @@ anchors at `ARCHER_HALF_H`, the top of her, because a hanging grip is overhead. 
 point for both hung the rope through her neck — visible immediately once the model leaned with it,
 and invisible for as long as it did not.
 
+### The rope test scene. BUILT 2026-09-24.
+
+`STAGE_LEVEL_ROPE`, a third scene called "Rope" (`scene_set` with that name): the range's floor and
+walls and ONE rope, 9 long from an anchor 11 up, so its end hangs 2 above the floor. Its lowest link
+is in reach standing (asserted in `stage_test`'s `TestRopeLevel` against `FindRopePoint`'s own
+numbers) - where climbing will start - with 9 units of rope above it; she hangs with her feet 0.6
+off the floor. The start at x -6 is a full run-up away. The rope's link count now follows its
+length (`ROPE_LINK_LENGTH` 0.75: the main rope keeps its 8, this one has 12), and a 12-link chain
+under her 70 kg measured stable through a pumped swing.
+
+The app's two-scene swap became a list: `parked_levels` holds every scene that is not live, and a
+switch swaps the live members with the slot holding the target scene, which then holds the level
+just left. `BuildExtraLevel(level, name)` builds one; the range and the rope scene are two calls.
+
+### Climbing the rope (PROPOSED 2026-09-24)
+
+What exists: catch with E (a link within reach of her chest, not the top two), pump with the stick
+(a force, so it has timing), let go with E or jump off with Space. `Hanging_Rope` looped, rolled
+with the swinging body. She cannot move along the rope at all - where she caught it is where she
+stays.
+
+- **Control:** Up/Down climb while on the rope. They are the aim keys, and the aim is meaningless
+  there (both hands are on the rope, no draw can start), so the rope takes them rather than adding
+  a key; the aim stops tilting while roped.
+- **Rules:** the DECISION - a climb direction and speed (`ROPE_CLIMB_SPEED`, later measured from
+  the clip) and the limits (not above the grabbable links, not off the bottom) - lives in Stage,
+  as grabbing and letting go already do. The rope's geometry stays the app's.
+- **Physics: a grip DISTANCE along the rope, and the joint re-made as it moves.** rp3d cannot move
+  a joint's anchor after creation, but `BallAndSocketJointInfo` takes explicit LOCAL anchors - one
+  on the link, one on her. So each tick she climbs, the joint is re-created with the link-side
+  anchor moved along the rope (onto the next link when she crosses one) and her side still at her
+  hands; the solver then pulls her the few centimetres to it. Nothing teleports, the swing carries
+  on, and climbing while swinging changes the pendulum's length - which pumps or damps it for
+  real, the way a person on a rope actually does.
+- **Clips wanted:** a hand-over-hand rope climb, up (Mixamo has rope climbs; in place, like the
+  others). Down can be the same cycle backwards to start with, or a slide - hands above, legs
+  wrapped, a held pose - if a fast slide down is wanted as its own verb. The climb's rate is fitted
+  by the HANDS the way the gaits are fitted by the feet: its rise per cycle, measured at load,
+  sets `ROPE_CLIMB_SPEED` or the playback rate. Until it exists, `Hanging_Rope` stands in and the
+  state reads as a placeholder.
+
 ---
 
 ## Step 0 — the seam. BUILT.
@@ -896,7 +937,7 @@ clip keeps running underneath it.
 
 ---
 
-## Step 2 — the upper-body layer, and kneeling. DESIGNED (2026-09-24).
+## Step 2 — the upper-body layer, and kneeling. BUILT (2026-09-24).
 
 What sections 2 and 6 above argued for, now with the use cases that make it necessary: drawing
 while running, walking or falling, and a KNEEL stance whose legs come from one clip while the arms
@@ -950,7 +991,7 @@ the animation's own motion and the aim takes over as she nocks; and the bow hold
 arc in every clip, which retires the 3.5-degree breathing gap in `Standing_AimArrowIdle` (the
 breath moves into her body).
 
-### Kneeling (agreed 2026-09-24)
+### Kneeling (agreed 2026-09-24, built the same day - see below)
 
 - **C** kneels and stands - a state she gets into and out of, not a hold.
 - **Rules:** a kneel stance on the ground, with timed transitions whose lengths come from the
@@ -965,7 +1006,7 @@ breath moves into her body).
   pose the draw starts from, so drawing from a kneel needs no blend), and the draw and hold over it
   when she draws. No dedicated clip for the resting upper body yet; frame 0 stands in.
 
-### Aim wobble, and why kneeling steadies it (proposed 2026-09-24)
+### Aim wobble, and why kneeling steadies it (agreed 2026-09-24, built the same day - see below)
 
 The user's idea: a standing shot should wobble within a cone, and kneeling should make it more
 accurate. Proposed shape, to keep the promise the rules are built on (the arc drawn on screen IS
@@ -1004,11 +1045,55 @@ against 16.1 mid-pull) and the error is 0.00. The screenshots show her walking w
 the arrow in hand, the pull and a held aim on top. 255 rules checks, including the replaced
 "a draw at a run does not bend her" - which is now its opposite.
 
+### Kneeling and the sway: BUILT 2026-09-24
+
+**Rules.** `MODE_KNEEL` with three phases (`KNEEL_LOWERING`, `KNEEL_HELD`, `KNEEL_RISING`) and
+`Stage::TickKneel`, which owns the body the way `TickHang` does: the stick only brakes her (a kneel
+pressed at a run stops her in about five ticks), a jump press is dropped buffer and all, the kick
+and the rope are refused, facing is frozen - standing up is how she turns round. Gravity still runs;
+losing the floor ends the kneel. The box keeps its feet and loses its top (`pos` stays the
+STANDING centre, so nothing that places the model changed); `CanStandUp` refuses C with something
+between the two head heights. A press during a transition is ignored. Input: C, and X on a pad.
+
+**Measured, not guessed**, all reported at every start by `ApplicationArcher::MeasureKneelClips`
+with the number to type:
+
+- `KNEEL_HALF_H` 0.54 - `Kneel_Idle` is 60% of her standing height, head over toes.
+- `KNEEL_DOWN_TICKS` 40 and `KNEEL_UP_TICKS` 42 - NOT the clip lengths (92 and 62). Both clips
+  hold still for a long tail: `Stand_ToKneel`'s hip is down at 0.667s of 1.533, `Kneel_ToStand`'s
+  up at 0.700 of 1.033. Timed to the settle, the tail is never played - the base crossfades on to
+  `Kneel_Idle` / `Idle`, which hold the same pose. `Puppet::clip_settle` is the mirror of
+  `clip_entry`, and the fit against it reads 1.00.
+- `KNEEL_NOCK_FWD` 0.07 / `KNEEL_NOCK_UP` 0.02 - the nocked arrow's origin at full draw, averaged
+  over aim −60..+80 while kneeling (it moves ±0.18 fore-and-aft over that range, as standing).
+  The anchor eases between standing and kneeling through a transition. The snapshot now carries
+  `bow.nock` beside `bow.anchor`, so this is checkable any time.
+
+**Animation.** Base = the three kneel clips (fitted to the windows). The upper layer is on for the
+whole kneel with `Standing_DrawArrow` frame 0 at rest, and the layer gained its OWN CROSSFADE for
+the one case that needed it: a release while kneeling, where the layer stays on and the hold (or a
+draw cancelled halfway) must ease back to the rest frame instead of snapping. A crossfade fires
+when the layer's pose would jump with its weight on - a change of clip, or the draw's phase going
+backwards - except the authored-seamless draw-to-hold and a draw starting from rest.
+`ArcherModel::LayerClipModel` chains either clip in model space and the two are slerped by
+`Puppet::upper_mix`; the leaving clip is frozen at the time it was last shown. Measured: kneeling
+the aim error is 0.00 from −60 to +80; after a kneeling shot the arms are back at rest in 8 ticks.
+
+**The sway** (`AIM_SWAY_STAND_DEG` 4, `AIM_SWAY_KNEEL_DEG` 1, `Stage::AimSwayDeg`), as proposed
+with one change the first run forced: a pure function of the time since the nock swayed
+IDENTICALLY every draw - every quick shot went about 3 degrees high, a pattern to learn rather
+than a drift to read. So each draw now enters the drift at its own offset, picked from the draw
+count by golden-ratio steps (still no RNG, still exact in a replay), eased in from zero over
+`AIM_SWAY_RAMP_TICKS`. Everything that aims reads `ShotAimDeg()` - the arc, the loose, and the
+Puppet, so the bow sways with the dots (within 0.2 degrees at the fastest drift). Measured:
+standing it spans about ±3, kneeling ±0.8; the rules test that holds the arc against the flight
+now runs with the sway on and still agrees point for point.
+
 ### Order
 
 1. ~~Upper layer + live neutral, with the draw over locomotion.~~ **Built** (above).
-2. Kneel rules + the kneel base clips + the frame-0 rest overlay, once the kneel set is exported.
-3. Wobble, once kneeling exists to be the steady case.
+2. ~~Kneel rules + the kneel base clips + the frame-0 rest overlay.~~ **Built** (above).
+3. ~~Wobble, once kneeling exists to be the steady case.~~ **Built** (above).
 4. Lift the layer into `Object`.
 
 ---
