@@ -11,6 +11,7 @@
 #include "type_helpers.h"
 #ifdef USE_MCP
 #include "MCPServer.h"
+#include "PlaceHash.h"
 #endif
 
 #include <math.h>
@@ -95,6 +96,137 @@ bool ArcherModel::BuildAimChain(){
     layered_rot.resize(layered_bones.size());
     layered_pos.resize(layered_bones.size());
     return true;
+}
+
+bool ArcherModel::BuildLegChains(){
+    const char* names[2][ARCHER_LEG_BONES] = {
+        { "mixamorig:LeftUpLeg","mixamorig:LeftLeg","mixamorig:LeftFoot","mixamorig:LeftToeBase" },
+        { "mixamorig:RightUpLeg","mixamorig:RightLeg","mixamorig:RightFoot","mixamorig:RightToeBase" }
+    };
+    int found = 0;
+    for (int leg = 0; leg < 2; leg++){
+        bool f_all = true;
+        for (int j = 0; j < ARCHER_LEG_BONES; j++){
+            leg_bones[leg][j] = FindBone(names[leg][j]);
+            if (!leg_bones[leg][j] || !leg_bones[leg][j]->GetParent()){
+                debug->Err("Loose legs: no bone '%s' - that leg stays as the clip has it\n",names[leg][j]);
+                f_all = false;
+            }
+        }
+        if (!f_all){
+            for (int j = 0; j < ARCHER_LEG_BONES; j++){ leg_bones[leg][j] = NULL; }
+            continue;
+        }
+        found++;
+        //Only the three that turn are layered; the toe is where the foot points, and only read.
+        for (int j = 0; j < ARCHER_LEG_BONES - 1; j++){
+            if (std::find(layered_bones.begin(),layered_bones.end(),leg_bones[leg][j]) == layered_bones.end()){
+                layered_bones.push_back(leg_bones[leg][j]);
+            }
+        }
+    }
+    layered_rot.resize(layered_bones.size());
+    layered_pos.resize(layered_bones.size());
+    leg_params.stiffness = ARCHER_LEG_STIFFNESS;
+    leg_params.damping = ARCHER_LEG_DAMPING;
+    leg_params.follow = ARCHER_LEG_FOLLOW;
+    return found == 2;
+}
+
+void ArcherModel::TurnInWorld(Bone* bone, const vec3& axis_world, float angle){
+    quat parent_inverse = bone->GetParent()->GetWorldRotation();
+    parent_inverse.inverse();
+    vec3 axis_local = parent_inverse * axis_world;
+    quat local = quat(axis_local,angle) * bone->GetRotation();
+    local.normalize();
+    bone->SetRotation(local);
+}
+
+/*
+    Each leg's chain, one tick. Stepped EVERY tick, whatever the weight, so that when the legs come
+    loose they come loose from a chain that has been following her all along rather than from
+    wherever it was last left - a stale chain would whip her legs across on the first frame.
+
+    The pose the chain springs toward is the clip's, turned about the hip by the pump's lead; the
+    turn put on the bones is measured against the clip's own, so the lead is what shows. In a
+    plane every turn is about the one axis, so each bone takes its segment's swing less its
+    parent's - turning the parent has already carried it that far.
+*/
+void ArcherModel::ApplyLegChains(float time_delta){
+    /*
+        THE PLANE IS HERS, not the screen's: the one her legs swing fore and aft in, whose normal is
+        her own left (the rig's -X, as drawn - yawed, and tilted with the rope). Side-on that IS
+        the play plane, +Z facing right and -Z facing left. Fixed to the screen instead, every turn
+        she makes on the rope - the rules flip her facing each time the swing reverses - swept her
+        legs through the plane and read as a swing of 40 degrees in a few ticks.
+        About her left, + swings a leg FORWARD, and the knee folds the foot back: always -.
+    */
+    vec3 axis = GetWorldRotation() * vec3(-1.0f,0.0f,0.0f);
+    axis.normalize();
+    const int knee_sign = -1;
+    //The lead is the Puppet's, in the world: + toward +X. About her left that is + facing right and
+    //- facing left, fading through zero as she turns - her normal's own z.
+    float lead = leg_lead_deg * ARCHER_DEG2RAD * axis.z;
+    leg_params.plane_normal = axis;
+    /*
+        HER TURNS ARE CARRIED, not simulated. She yaws round on the rope every time the swing
+        reverses; left to the particles, the legs were left behind by her own turn and flung 40-60
+        degrees about as she came round. The turn is about her own up - the rope's tilt of it - through
+        the model's origin, which is what SetRotation turns her about.
+    */
+    if (f_leg_yaw_seen && leg_drawn_yaw != leg_last_yaw){
+        quat tilt_inverse = leg_drawn_tilt;
+        tilt_inverse.inverse();
+        quat turn = leg_drawn_tilt * quat(vec3(0.0f,1.0f,0.0f),leg_drawn_yaw - leg_last_yaw) * tilt_inverse;
+        turn.normalize();
+        for (int leg = 0; leg < 2; leg++){
+            leg_chain[leg].Carry(turn,GetWorldPosition());
+        }
+    }
+    leg_last_yaw = leg_drawn_yaw;
+    f_leg_yaw_seen = true;
+    std::vector<DynamicChainLimit> limits(ARCHER_LEG_BONES - 1);
+    limits[0].lo = -ARCHER_LEG_HIP_LIMIT;   limits[0].hi = ARCHER_LEG_HIP_LIMIT;
+    limits[1].lo = -ARCHER_LEG_KNEE_LIMIT;  limits[1].hi = ARCHER_LEG_KNEE_LIMIT;
+    limits[1].bend_sign = knee_sign;
+    limits[2].lo = -ARCHER_LEG_ANKLE_LIMIT; limits[2].hi = ARCHER_LEG_ANKLE_LIMIT;
+    leg_params.dt = time_delta;
+    for (int leg = 0; leg < 2; leg++){
+        leg_swing_deg[leg] = 0.0f;
+        leg_knee_deg[leg] = 0.0f;
+        if (!leg_bones[leg][0]){
+            continue;
+        }
+        std::vector<vec3> pose(ARCHER_LEG_BONES);
+        for (int j = 0; j < ARCHER_LEG_BONES; j++){
+            pose[j] = leg_bones[leg][j]->GetWorldPosition();
+        }
+        std::vector<vec3> target = pose;
+        if (lead != 0.0f){
+            quat q(axis,lead);
+            for (int j = 1; j < ARCHER_LEG_BONES; j++){
+                target[j] = pose[0] + q * (pose[j] - pose[0]);
+            }
+        }
+        //In HER frame, so the clip's own leg motion arrives unlagged (leg_params.follow) and only
+        //the body's swing is left to the chain.
+        leg_chain[leg].Step(target,leg_params,limits,GetWorldRotation());
+        if (leg_weight > 0.0f){
+            const std::vector<vec3>& sim = leg_chain[leg].Points();
+            float carried = 0.0f;
+            for (int k = 0; k < ARCHER_LEG_BONES - 1; k++){
+                float swing = DynamicChain::SignedAngle(pose[k + 1] - pose[k],sim[k + 1] - sim[k],axis) * leg_weight;
+                TurnInWorld(leg_bones[leg][k],axis,swing - carried);
+                carried = swing;
+                if (k == 0){
+                    leg_swing_deg[leg] = swing / ARCHER_DEG2RAD;
+                }
+            }
+        }
+        vec3 thigh = leg_bones[leg][1]->GetWorldPosition() - leg_bones[leg][0]->GetWorldPosition();
+        vec3 shin = leg_bones[leg][2]->GetWorldPosition() - leg_bones[leg][1]->GetWorldPosition();
+        leg_knee_deg[leg] = DynamicChain::SignedAngle(thigh,shin,axis) * (float)knee_sign / ARCHER_DEG2RAD;
+    }
 }
 
 bool ArcherModel::BuildUpperMask(){
@@ -297,12 +429,15 @@ void ArcherModel::ApplyAnimation(float time_delta){
 
     bool f_upper = (upper_clip && upper_weight > 0.0f && !upper_share.empty());
     bool f_aim = (aim_bones[0] && aim_weight > 0.0f);
-    if (f_upper || f_aim){
+    bool f_legs = (leg_weight > 0.0f);
+    if (f_upper || f_aim || f_legs){
         SaveBasePose();
     }
     if (f_upper){
         ApplyUpperLayer();
     }
+    //Every tick, loose or not - see ApplyLegChains.
+    ApplyLegChains(time_delta);
 
     //The live neutral: where the layered pose points the bow, before the aim turns her.
     aim_pose_deg = BowAimDeg();
@@ -313,21 +448,7 @@ void ArcherModel::ApplyAnimation(float time_delta){
         //facing -X the same lift is a negative turn. Same mirroring as Stage::AimDirection.
         float angle = (aim_target_deg - aim_pose_deg) * aim_weight * aim_facing * ARCHER_DEG2RAD;
         for (int i = 0; i < ARCHER_AIM_BONES; i++){
-            Bone* bone = aim_bones[i];
-            quat clean = bone->GetRotation();
-            /*
-                A world turn R applied to a bone whose world rotation is P * L (parent times
-                local) gives R * P * L = P * (P^-1 R P) * L - and P^-1 R P is the same angle about
-                the axis carried into the parent's space. So the local rotation gains a turn about
-                P^-1 * axis, and the bone's position does not move.
-            */
-            quat parent_inverse = bone->GetParent()->GetWorldRotation();
-            parent_inverse.inverse();
-            vec3 axis_local = parent_inverse * axis_world;
-            quat turn(axis_local,angle * aim_shares[i]);
-            quat local = turn * clean;
-            local.normalize();
-            bone->SetRotation(local);
+            TurnInWorld(aim_bones[i],axis_world,angle * aim_shares[i]);
         }
     }
 
@@ -336,6 +457,9 @@ void ArcherModel::ApplyAnimation(float time_delta){
 }
 
 ApplicationArcher::ApplicationArcher():Application(){
+    //The title bar, and what input recordings are named and stamped with - a recording refuses to
+    //replay in an app with a different name.
+    app_name = "Archer";
     debug->Info("ApplicationArcher constructed\n");
 }
 
@@ -1811,6 +1935,14 @@ void ApplicationArcher::BuildArcherModel(){
             debug->Err("No clip called '%s' in %s\n",ARCHER_CLIPS[i].name,ARCHER_MODEL_ASSET);
             continue;
         }
+        //First, so that every measurement below is taken off the clip as it will be played.
+        if (ARCHER_CLIPS[i].trim_start > 0.0f || ARCHER_CLIPS[i].trim_end > 0.0f){
+            float full = clip->duration;
+            clip->Trim(ARCHER_CLIPS[i].trim_start,ARCHER_CLIPS[i].trim_end);
+            debug->Info("Clip %-22s trimmed to %.3f..%.3f of its %.3fs: %.3fs, %d ticks\n",
+                        ARCHER_CLIPS[i].name,clip->trim_offset,clip->trim_offset + clip->duration,
+                        full,clip->duration,(int)(clip->duration * ARCHER_TPS + 0.5f));
+        }
         clip->looped = ARCHER_CLIPS[i].f_looping;
         clip->extract_yaw_root_motion = ARCHER_CLIPS[i].f_turns;
         /*
@@ -1936,6 +2068,7 @@ void ApplicationArcher::BuildBow(){
     //The upper layer's mask is built here too, after the props are on, so it can leave them out.
     archer_model->BuildUpperMask();
     archer_model->BuildAimChain();
+    archer_model->BuildLegChains();
     archer_model->aim_probe = bow_rig.bow.object;
 }
 
@@ -3121,12 +3254,112 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap('L',INPUT_ARCHER_KNIFE);
     input->AddKeyMap('C',INPUT_ARCHER_KNEEL);
 
-    input->AddKeyMap('R',INPUT_ARCHER_RESTART);
+    //Restart is on Home and Start, well away from everything else. It used to be R, next to E,
+    //and one slip off the action key threw the whole level away.
+    input->AddKeyMap(VK_HOME,INPUT_ARCHER_RESTART);
+    input->AddKeyMap(GAMEPAD_KEY_START,INPUT_ARCHER_RESTART);
     input->AddKeyMap(VK_F1,INPUT_ARCHER_TOGGLE_UI);
     input->AddKeyMap(VK_F2,INPUT_ARCHER_TOGGLE_BLOCKOUT);
     //'P' alongside the default VK_PAUSE, because most keyboards no longer have a Pause key.
     //INPUT_PAUSE is handled by Scene::BeginPass itself, so this is the whole feature.
     input->AddKeyMap('P',INPUT_PAUSE);
+
+    /*
+        Input recording on the pad as well as F9, so a run can be recorded without taking a hand
+        off the controller. Back, because Start is already restart - and pressing restart when you
+        meant record throws away the very position you set up to record from.
+    */
+    input->AddKeyMap(GAMEPAD_KEY_BACK,INPUT_RECORD_TOGGLE);
+    //The view toggles are the person's, not the game's - a replay should not flip the panels.
+    input->SetRecorded(INPUT_ARCHER_TOGGLE_UI,false);
+    input->SetRecorded(INPUT_ARCHER_TOGGLE_BLOCKOUT,false);
+    //What a recording file calls each action. The archer_hold tool's names where it has one, so a
+    //line in a recording and a tool call say the same thing.
+    input->NameAction(INPUT_ARCHER_LEFT,"left");
+    input->NameAction(INPUT_ARCHER_RIGHT,"right");
+    input->NameAction(INPUT_ARCHER_DOWN,"down");
+    input->NameAction(INPUT_ARCHER_JUMP,"jump");
+    input->NameAction(INPUT_ARCHER_DRAW,"draw");
+    input->NameAction(INPUT_ARCHER_AIM_UP,"up");
+    input->NameAction(INPUT_ARCHER_AIM_DOWN,"aim_down");
+    input->NameAction(INPUT_ARCHER_ACTION,"action");
+    input->NameAction(INPUT_ARCHER_KICK,"kick");
+    input->NameAction(INPUT_ARCHER_KNIFE,"knife");
+    input->NameAction(INPUT_ARCHER_KNEEL,"kneel");
+    input->NameAction(INPUT_ARCHER_RESTART,"restart");
+    input->NameAction(INPUT_ARCHER_TOGGLE_UI,"toggle_ui");
+    input->NameAction(INPUT_ARCHER_TOGGLE_BLOCKOUT,"toggle_blockout");
+    input->NameAction(INPUT_ARCHER_MOVE,"move");
+    input->NameAction(INPUT_ARCHER_AIM,"aim");
+}
+
+/*
+    Where a recording starts from, written into its `state` line - see
+    Application::CaptureRecordingState. PHYSICS THREAD, at a pass boundary.
+
+    Only what RestoreRecordingState below can put back: her position, velocity, facing and aim.
+    The rest of the level is not captured, because it cannot be restored piecemeal - a knocked-over
+    prop or a swinging rope is rp3d body state. Instead `restart` asks for the level to be rebuilt
+    first, which puts every prop, target and the rope back at rest where the level builds them. So
+    a recording is most faithful when it starts with the level undisturbed around her, and a
+    person who wants the world as they left it can set `restart` false in the file.
+
+    Starting a recording while she is on the rope or hanging off a ledge is allowed and records
+    fine, but replays from standing (or falling) at that spot - those modes are not restorable.
+*/
+json ApplicationArcher::CaptureRecordingState(){
+    return json{
+        {"restart",true},
+        {"x",stage.pos.x},
+        {"y",stage.pos.y},
+        {"vx",stage.vel.x},
+        {"vy",stage.vel.y},
+        {"facing",stage.facing},
+        {"aim_deg",stage.aim_deg},
+        //Standing, as opposed to anything else. It matters more than it looks: placed in the air,
+        //her first tick of input is air control rather than ground acceleration, and a recording
+        //that starts with a step replayed 0.03 units short of the original.
+        {"on_ground",stage.mode == MODE_GROUND && stage.f_on_ground},
+        {"coyote_ticks",stage.coyote_ticks}
+    };
+}
+
+void ApplicationArcher::RestoreRecordingState(const json& state){
+    //Off the rope first, whatever else happens: the joint belongs to a body NewGame is about to
+    //rebuild, and a placement with the joint still in place would be dragged straight back.
+    if (stage.mode == MODE_ROPE){
+        DetachArcherFromRope(false);
+    }
+    if (state.value("restart",true)){
+        NewGame();
+    }
+    PlaceArcher(v2(state.value("x",stage.pos.x),state.value("y",stage.pos.y)));
+    stage.vel = v2(state.value("vx",0.0f),state.value("vy",0.0f));
+    stage.facing = (state.value("facing",stage.facing) < 0.0f) ? -1.0f : 1.0f;
+    if (state.contains("aim_deg")){
+        stage.aim_deg = clamp(state.value("aim_deg",stage.aim_deg),BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
+    }
+    if (state.value("on_ground",false)){
+        stage.mode = MODE_GROUND;
+        stage.f_on_ground = true;
+        stage.coyote_ticks = state.value("coyote_ticks",0);
+    }
+}
+
+//ARCHER_CMD_PLACE's body, shared with RestoreRecordingState. Physics thread.
+void ApplicationArcher::PlaceArcher(v2 pos){
+    stage.pos = pos;
+    stage.vel = v2(0.0f,0.0f);
+    stage.mode = MODE_AIR;      //which is also what ends a get-up early
+    stage.getup_ticks = 0;
+    stage.hang_block = -1;
+    stage.climb_ticks = 0;
+    stage.grab_cooldown = 0;
+    stage.f_on_ground = false;
+    stage.coyote_ticks = 0;
+    stage.buffer_ticks = 0;
+    stage.bow_mode = BOW_IDLE;
+    stage.draw_ticks = 0;
 }
 
 void ApplicationArcher::RegisterCommandHandlers(){
@@ -3175,18 +3408,7 @@ void ApplicationArcher::RegisterCommandHandlers(){
 
     main_scene->RegisterCommandHandler(ARCHER_CMD_PLACE,
         [this](const SimCommand& cmd) -> objectid_t {
-            stage.pos = v2(cmd.value[0],cmd.value[1]);
-            stage.vel = v2(0.0f,0.0f);
-            stage.mode = MODE_AIR;      //which is also what ends a get-up early
-            stage.getup_ticks = 0;
-            stage.hang_block = -1;
-            stage.climb_ticks = 0;
-            stage.grab_cooldown = 0;
-            stage.f_on_ground = false;
-            stage.coyote_ticks = 0;
-            stage.buffer_ticks = 0;
-            stage.bow_mode = BOW_IDLE;
-            stage.draw_ticks = 0;
+            PlaceArcher(v2(cmd.value[0],cmd.value[1]));
             return OBJECTID_INVALID;
         });
 
@@ -3561,6 +3783,9 @@ void ApplicationArcher::SetupSound(){
     soundsystem->AppendFile("sound/bow_tension.wav","bow_tension");
     soundsystem->AppendFile("sound/arrow_leave.wav","arrow_leave");
     soundsystem->AppendFile("sound/arrow_hitting.wav","arrow_hit");
+    soundsystem->AppendFile("sound/kick_swing.wav","kick_swing");
+    soundsystem->AppendFile("sound/kick_land.wav","kick_land");
+    soundsystem->AppendFile("sound/kick_hyaa.wav","kick_hyaa");
 #endif
 }
 
@@ -3592,6 +3817,42 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
         //Louder the harder the draw: a half-drawn lob leaves the string with far less in it.
         if (events.f_shot){
             soundsystem->Play("arrow_leave",false,(0.55f + 0.45f * events.shot_power) * sound_volume);
+        }
+        /*
+            The kick is two sounds. The SWING is the leg going out, heard whether or not it finds
+            anything, so it is on a TICK of the move - the clip has no events, and the only kick
+            event that always fires is the start, too early. kick_ticks counts up by one per tick
+            and is zeroed if the kick is cut short, so this fires at most once per kick.
+
+            The LAND is the boot hitting something, so it is on the connect and nothing else: a
+            kick at thin air has nothing to land on. f_kick_connected fires once per kick, inside
+            the KICK_ACTIVE window, which is timing enough.
+        */
+        if (stage.kick_ticks == kick_swing_tick){
+            soundsystem->Play("kick_swing",false,0.8f * sound_volume);
+        }
+        if (events.f_kick_connected){
+            soundsystem->Play("kick_land",false,0.8f * sound_volume);
+        }
+        /*
+            And her shout, on SOME kicks and on a tick that wanders: whether, and when, is drawn
+            once as the kick starts. Hashed from the physics tick, the SpawnDebris arrangement -
+            a recorded session shouts on exactly the same kicks when it is played back, and
+            nothing here draws from the engine's shared RRandom stream, which a sound has no
+            business perturbing.
+        */
+        if (events.f_kick_started){
+            uint64_t tick = main_scene->GetPhysicsTick();
+            kick_hyaa_tick = 0;
+            if (Hash01(0.0f,0.0f,(int)tick,1) < kick_hyaa_chance){
+                int span = std::max(kick_hyaa_to - kick_hyaa_from,0) + 1;
+                int pick = (int)(Hash01(0.0f,0.0f,(int)tick,2) * (float)span);
+                //Tick 1 is this one, already past, so the earliest a shout can be is 2.
+                kick_hyaa_tick = std::max(kick_hyaa_from + std::min(pick,span - 1),2);
+            }
+        }
+        if (kick_hyaa_tick > 0 && stage.kick_ticks == kick_hyaa_tick){
+            soundsystem->Play("kick_hyaa",false,0.8f * sound_volume);
         }
     }
 #endif
@@ -5081,6 +5342,7 @@ void ApplicationArcher::SyncArcherAnimation(){
         //A clip preview is the clip as exported - nothing bends it and nothing layers over it.
         archer_model->aim_weight = 0.0f;
         archer_model->upper_weight = 0.0f;
+        archer_model->leg_weight = 0.0f;
     }else{
         ArcherAnimParams params;
         if (anim_source == ANIM_FROM_PANEL){
@@ -5099,6 +5361,18 @@ void ApplicationArcher::SyncArcherAnimation(){
         archer_model->aim_target_deg = params.aim_deg;
         archer_model->aim_weight = puppet.aim_weight;
         archer_model->aim_facing = (params.facing < 0.0f) ? -1.0f : 1.0f;
+
+        /*
+            The loose legs: the Puppet's weight and lead, and the gravity of the world she is
+            swinging in - the rope scene's is not the rules' ARCHER_GRAVITY, and legs that fell
+            faster than the rope does would lead the swing instead of trailing it.
+        */
+        archer_model->leg_weight = puppet.leg_weight;
+        archer_model->leg_lead_deg = puppet.leg_lead_deg;
+        if (main_scene->physics_world){
+            rp3d::Vector3 g = main_scene->physics_world->rp_world->getGravity();
+            archer_model->leg_params.gravity = vec3(g.x,g.y,g.z) * puppet.leg_gravity;
+        }
 
         /*
             The upper-body layer. Its time is PINNED to the rules' draw progress when the Puppet
@@ -5323,6 +5597,8 @@ void ApplicationArcher::SyncArcherAnimation(){
     climb_base_posed = base_pinned;
     archer_model->SetPosition(feet);
     archer_model->SetRotation(rotation);
+    archer_model->leg_drawn_yaw = yaw;
+    archer_model->leg_drawn_tilt = body ? quat(vec3(0,0,1),roll) : quat(0.0f,0.0f,0.0f,1.0f);
     model_yaw_drawn = yaw / ARCHER_DEG2RAD;
     model_roll_drawn = roll / ARCHER_DEG2RAD;
 }
@@ -5834,6 +6110,12 @@ void ApplicationArcher::PublishSnapshot(){
     s.model_roll = model_roll_drawn;
     s.rope_joint_gap = rope_joint_gap;
     s.rope_hands_off = rope_hands_off;
+    s.leg_weight = archer_model ? archer_model->leg_weight : 0.0f;
+    s.leg_lead_deg = archer_model ? archer_model->leg_lead_deg : 0.0f;
+    for (int leg = 0; leg < 2; leg++){
+        s.leg_swing_deg[leg] = archer_model ? archer_model->leg_swing_deg[leg] : 0.0f;
+        s.leg_knee_deg[leg] = archer_model ? archer_model->leg_knee_deg[leg] : 0.0f;
+    }
     s.climb_pinned_time = puppet.choice.pinned_time;
     s.climb_lift_posed = climb_lift_posed;
     s.rope_grip_s = (stage.mode == MODE_ROPE) ? rope_grip_s : -1.0f;
@@ -6052,6 +6334,11 @@ json ApplicationArcher::BuildStateJson(){
             //which belongs to the playhead pinned the tick before - see climb_lift_posed.
             {"climb_pinned_time",s.climb_pinned_time},
             {"climb_lift",s.climb_lift_posed},
+            //The loose legs: how much of the chain is on, the pump's lead, and per leg the thigh's
+            //swing off the clip's pose and the knee's bend (+ the way a knee folds), degrees.
+            {"legs",{{"weight",s.leg_weight},{"lead_deg",s.leg_lead_deg},
+                     {"left",{{"swing_deg",s.leg_swing_deg[0]},{"knee_deg",s.leg_knee_deg[0]}}},
+                     {"right",{{"swing_deg",s.leg_swing_deg[1]},{"knee_deg",s.leg_knee_deg[1]}}}}},
             //Where the joint holds the rope (distance down it), and each hand against the drawn
             //rope: distance down it and distance off it. A gripping hand's `s` stays put while she
             //climbs; if it creeps, the hand is sliding. -1 off the rope.
@@ -6427,6 +6714,39 @@ void ApplicationArcher::RegisterMCPTools(){
                          {"rope_attach",f_show_rope_attach} };
         });
 
+    MCPServer::Get()->RegisterTool("archer_legs",
+        "The loose legs (core/DynamicChain on each leg, on while she hangs from the rope or stops "
+        "mid-climb). Optional `stiffness` and `damping`, each 0..1 per tick - the same two as the "
+        "panel's sliders: 0 stiffness is dead weight, 1 is the clip exactly. Returns them, with the "
+        "Puppet's weight, pump lead and gravity share; the per-leg swing is in archer_state's "
+        "animation.legs.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"stiffness", {{"type","number"}}},
+                {"damping",   {{"type","number"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!archer_model){
+                return json{ {"error","no model"} };
+            }
+            json out;
+            main_scene->AtTickBoundary([&](){
+                DynamicChainParams& p = archer_model->leg_params;
+                if (args.contains("stiffness") && args["stiffness"].is_number()){
+                    p.stiffness = fminf(fmaxf(args["stiffness"].get<float>(),0.0f),1.0f);
+                }
+                if (args.contains("damping") && args["damping"].is_number()){
+                    p.damping = fminf(fmaxf(args["damping"].get<float>(),0.0f),1.0f);
+                }
+                out = json{ {"stiffness",p.stiffness},{"damping",p.damping},
+                            {"weight",puppet.leg_weight},{"lead_deg",puppet.leg_lead_deg},
+                            {"gravity_share",puppet.leg_gravity} };
+            });
+            return out;
+        });
+
     /*
         The rope test bench - see MeasureRopeStretch. Settings first, then the readout, all inside
         one tick boundary except the rebuild a link-mass change needs, which is a restart command.
@@ -6701,6 +7021,12 @@ void ApplicationArcher::DrawImGuiUI(void){
         int up = puppet.choice.upper_clip;
         ImGui::Text("upper     %s %.0f%%",(up >= 0 && up < CLIP_COUNT) ? ARCHER_CLIPS[up].name : "-",
                     puppet.upper_weight * 100.0f);
+        //The loose legs: how much is on, and each thigh's swing off the clip. The two knobs are how
+        //loose - a float each, read by the next tick's step.
+        ImGui::Text("legs      %.0f%%, lead %+.0f, swing L %+.1f R %+.1f deg",archer_model->leg_weight * 100.0f,
+                    archer_model->leg_lead_deg,archer_model->leg_swing_deg[0],archer_model->leg_swing_deg[1]);
+        ImGui::SliderFloat("leg stiffness",&archer_model->leg_params.stiffness,0.0f,0.3f,"%.3f");
+        ImGui::SliderFloat("leg damping",&archer_model->leg_params.damping,0.0f,0.3f,"%.3f");
     }
     ImGui::ProgressBar((float)stage.draw_ticks / (float)BOW_DRAW_TICKS,ImVec2(-1,0),"draw");
     //The string as drawn on screen, beside the rules' draw above: with the draw pose on screen it
@@ -6743,6 +7069,15 @@ void ApplicationArcher::DrawImGuiUI(void){
     //Read by the sounds as they start, so a change is heard from the next one on.
     if (soundsystem){
         ImGui::SliderFloat("volume",&sound_volume,0.0f,1.0f,"%.2f");
+        ImGui::SliderInt("kick swing tick",&kick_swing_tick,1,KICK_TICKS);
+        ImGui::SetItemTooltip("Which tick of the %d-tick kick the swing plays on. The boot connects "
+                              "at tick %.0f, and the land sound plays then if it hits something.",
+                              KICK_TICKS,puppet.kick_strike * ARCHER_TPS);
+        ImGui::SliderFloat("kick shout chance",&kick_hyaa_chance,0.0f,1.0f,"%.2f");
+        ImGui::SliderInt("kick shout from",&kick_hyaa_from,2,KICK_TICKS);
+        ImGui::SliderInt("kick shout to",&kick_hyaa_to,2,KICK_TICKS);
+        ImGui::SetItemTooltip("The shout starts on a random tick between these two, on the "
+                              "fraction of kicks the chance says. Its loud part is about 7 ticks in.");
     }
 
     /*
@@ -7014,7 +7349,7 @@ void ApplicationArcher::DrawImGuiUI(void){
                        "harder than walking into one does, and brings down the brick wall or the "
                        "cracked wall.  Jump at a ledge too high to land on and you CATCH it: Space "
                        "then climbs up, S lets go, and holding away from it refuses the grab.  "
-                       "S also drops through a platform.  R restarts, F1 shows the engine panels.");
+                       "S also drops through a platform.  Home (or Start) restarts, F1 shows the engine panels.");
 
     ImGui::End();
 }

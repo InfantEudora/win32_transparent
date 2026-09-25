@@ -3180,6 +3180,39 @@ static void TestRopeClimb(){
     climbing.rope_climb = 1;
     none.Tick(climbing);
     Check(none.choice.clip == CLIP_ROPE,"with no climb clip measured, climbing keeps the hang");
+
+    //--- The loose legs: the Puppet's three decisions ---
+    Puppet lg;
+    lg.climb_times = p.climb_times;
+    lg.climb_rise = p.climb_rise;
+    lg.climb_cycle_rise = p.climb_cycle_rise;
+    lg.clip_duration[CLIP_ROPE_CLIMB] = 2.0f;
+    ArcherAnimParams ground;
+    lg.Tick(ground);
+    Check(lg.leg_weight == 0.0f && lg.leg_lead_deg == 0.0f,"on the ground the legs are the clip's");
+    ArcherAnimParams hang;
+    hang.mode = MODE_ROPE;
+    lg.Tick(hang);
+    Check(lg.leg_weight > 0.0f && lg.leg_weight < 1.0f,"caught, they come loose gradually");
+    for (int i = 0; i < PUPPET_LEG_BLEND_TICKS; i++){ lg.Tick(hang); }
+    Check(lg.leg_weight == 1.0f && lg.leg_gravity == PUPPET_LEG_GRAVITY_HANG,
+          "hanging, fully loose, under all of gravity");
+    hang.rope_pump = -1.0f;
+    lg.Tick(hang);
+    snprintf(d,sizeof(d),"lead %.1f",lg.leg_lead_deg);
+    Check(fabsf(lg.leg_lead_deg + PUPPET_LEG_PUMP_DEG) < 1e-4f,"pumping left leads the legs left",d);
+    hang.rope_pump = 0.0f;
+    hang.rope_climb = 1;
+    hang.rope_climbed = 0.1f;
+    for (int i = 0; i < PUPPET_LEG_BLEND_TICKS; i++){ lg.Tick(hang); }
+    Check(lg.leg_weight == 0.0f,"climbing, the clip has the legs back - its feet grip the rope");
+    hang.rope_climb = 0;
+    for (int i = 0; i < PUPPET_LEG_BLEND_TICKS; i++){ lg.Tick(hang); }
+    Check(lg.leg_weight == 1.0f && lg.leg_gravity == PUPPET_LEG_GRAVITY_GRIP,
+          "stopped mid-climb, loose again about the gripping pose, under a share of gravity");
+    lg.Tick(ground);
+    Check(lg.leg_lead_deg == 0.0f && lg.leg_weight < 1.0f && lg.leg_gravity == PUPPET_LEG_GRAVITY_HANG,
+          "off the rope, easing back to the clip");
 }
 
 int main(void){

@@ -1246,6 +1246,68 @@ void Application::RenderEngineWindow(){
         ImGui::Text("Hovered object    : %s",hovered_object ? hovered_object->name.c_str() : "none");
     }
 
+    /*
+        Input recording - F9 and F10 with buttons on, and the files there are to replay. Every
+        button only REQUESTS (see Application::RequestRecordingStart): this runs on the render
+        thread with physics_mutex held, and waiting here for the physics thread would deadlock.
+        The file list is read from disk each time the header is open, which is a directory listing
+        per frame of a folder with a few dozen files in it at most.
+    */
+    if (ImGui::CollapsingHeader("Input recording")){
+        InputController* input = main_window->inputcontroller;
+        //View state, the person's own preference for this session - not simulation state.
+        static bool f_restore_state = true;
+        float tps = (physics_tps > 0.0f) ? physics_tps : 50.0f;
+        if (input->IsRecording()){
+            ImGui::TextColored(ImVec4(1.0f,0.35f,0.35f,1.0f),"Recording: %u ticks (%.1f s)",
+                               input->GetRecordingTicks(),input->GetRecordingTicks() / tps);
+            if (ImGui::Button("Stop recording (F9)")){
+                RequestRecordingStop();
+            }
+        }else{
+            if (ImGui::Button("Record (F9)")){
+                RequestRecordingStart();
+            }
+        }
+        if (input->IsReplaying()){
+            ImGui::SameLine();
+            if (ImGui::Button("Stop replay (F10)")){
+                RequestReplayStop();
+            }
+            ImGui::Text("Replaying: tick %u of %u",input->GetReplayPosition(),input->GetReplayEnd());
+        }
+        ImGui::Checkbox("Restore start state on replay",&f_restore_state);
+
+        json status = InputRecordingStatusJson();
+        std::string last = status.value("last_recording",std::string(""));
+        ImGui::Text("Last: %s",last.empty() ? "(none this session)" : last.c_str());
+        if (status.contains("last_error")){
+            ImGui::TextColored(ImVec4(1.0f,0.5f,0.3f,1.0f),"%s",status["last_error"].get<std::string>().c_str());
+        }
+
+        //Newest first: the one just made is the one most likely wanted.
+        std::vector<std::string> files = ListRecordings();
+        static std::string replay_error;
+        for (int i = (int)files.size() - 1; i >= 0; i--){
+            ImGui::PushID(i);
+            if (ImGui::SmallButton("Replay")){
+                replay_error.clear();
+                if (!RequestReplay(files[i],f_restore_state,replay_error)){
+                    debug->Warn("Replay: %s\n",replay_error.c_str());
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(files[i].c_str());
+            ImGui::PopID();
+        }
+        if (files.empty()){
+            ImGui::TextDisabled("No recordings in %s/",recordings_dir.c_str());
+        }
+        if (!replay_error.empty()){
+            ImGui::TextColored(ImVec4(1.0f,0.5f,0.3f,1.0f),"%s",replay_error.c_str());
+        }
+    }
+
     if (ImGui::CollapsingHeader("Window")){
         ImGui::Text("Current size : %i x %i",main_window->width,main_window->height);
     }

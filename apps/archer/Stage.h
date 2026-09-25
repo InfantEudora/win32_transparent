@@ -491,23 +491,24 @@ struct StageObstacle{
     fit, and a kick at seven times speed is not a fast kick, it is a glitch. A kick needs a wind-up
     to read as a kick at all, so the clip sets the pace and the rules follow it.
 
-    MEASURED, not guessed. Kick_Front is 86 ticks long and its boot reaches furthest from the hips
-    at tick 42 - found by posing the model and watching both feet, see
+    MEASURED, not guessed. Kick_Front as played is 66 ticks long and its boot reaches furthest from
+    the hips at tick 22 - found by posing the model and watching both feet, see
     ApplicationArcher::MeasureKickClip. The app logs that measurement next to this window every
     start and says so loudly when the two stop lining up, which is what a re-export with a
     different impact frame would look like.
 
-    IT HAS ALREADY EARNED ITS KEEP ONCE. The clip was 98 ticks when these numbers were first fitted
-    and is 86 now, because twelve frames came off the end of it; the app said so on the next start,
-    in the form of the number to type. Trimming the END does not move the strike, so the window
-    below was untouched by that - tick 42 of 86 rather than tick 42 of 98 - and only the total had
-    to change. Trimming the FRONT would move it, and the window check is what catches that.
+    IT HAS EARNED ITS KEEP TWICE. The clip was 98 ticks when these numbers were first fitted and
+    86 after twelve frames came off its END in Blender; trimming the end does not move the strike,
+    so only the total changed. Then on 2026-09-25 ten frames came off its FRONT, at load, through
+    Kick_Front's trim_start in ARCHER_CLIPS - her dropping her guard, which the crossfade in does
+    better - and that moves everything by 20 ticks: 86 -> 66, the strike 42 -> 22, the window
+    40..44 -> 20..24.
 
     The active window stays FIVE TICKS wide for the reason below; it has simply moved to where the
     boot actually is. Everything else about the shape of the move is unchanged.
 
     THE COST, stated plainly because it is a real one: `f_planted` roots her for the whole of
-    kick_ticks, so a kick is a 1.43-second commitment, of which 0.73s is recovery after the boot
+    kick_ticks, so a kick is a 1.1-second commitment, of which 0.73s is recovery after the boot
     has already landed. That is a heavy, committal move. If it wants to be lighter, the fix is
     to unroot at KICK_ACTIVE_TO and let the recovery be cancelled by moving - which needs the
     Puppet to drop the clip at the same moment, or the animation would be overruling the rules.
@@ -516,9 +517,9 @@ struct StageObstacle{
     it was a second and a half of hanging motionless in the air playing a clip that has a plant in
     it, and the plant is what a kick IS. See the gate at the top of Stage::TickKick.
 */
-#define KICK_TICKS                  86      //the whole move; Kick_Front is 1.433s
-#define KICK_ACTIVE_FROM            40      //wind-up before this
-#define KICK_ACTIVE_TO              44      //recovery after; the boot connects at tick 42 of 86
+#define KICK_TICKS                  66      //the whole move; Kick_Front trimmed is 1.100s
+#define KICK_ACTIVE_FROM            20      //wind-up before this
+#define KICK_ACTIVE_TO              24      //recovery after; the boot connects at tick 22 of 66
 #define KICK_COOLDOWN               10      //ticks before another may be started
 #define KICK_REACH                  0.75f   //how far past the body's leading edge it reaches
 #define KICK_HALF_HEIGHT            0.55f   //half the height of the box it sweeps
@@ -823,7 +824,10 @@ public:
     float rope_s = 0.0f;
     int   rope_climb = 0;           //this tick: +1 up, -1 down, 0 holding still
     float rope_climbed = 0.0f;      //since the catch, signed, up is + - the climb clip's playhead
-    v2    climb_from;               //where the climb started and ends, captured on entry so the
+    //This tick's pump, -1..1 along world X: the lean the app pushes the swing with, recorded so the
+    //animation can show it (her legs kick with it). 0 off the rope.
+    float rope_pump = 0.0f;
+    v2    climb_from;              //where the climb started and ends, captured on entry so the
     v2    climb_to;                 //lerp cannot drift if anything else touches pos
     int   grab_cooldown = 0;        //see LEDGE_RELEASE_COOLDOWN
 

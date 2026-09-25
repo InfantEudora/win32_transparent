@@ -25,6 +25,8 @@
 #include "AssetManager.h"
 #include "Object.h"
 #include "Debug.h"
+#include <chrono>
+#include <functional>
 
 static Debugger* debug = new Debugger("ApplicationMCP", DEBUG_ALL);
 
@@ -588,6 +590,146 @@ void Application::RegisterCoreMCPTools(){
             json result = SimClockJson();
             result["ticks_advanced"] = advanced;
             result["requested_ticks"] = num_ticks;
+            return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
+        });
+
+    /*
+        Input recording and replay - the tool twins of F9/F10 and the Engine panel's header. See
+        Application::RequestRecordingStart.
+
+        They WAIT, briefly, for the physics thread to act on the request, because the answer worth
+        returning is what happened (the file written, the replay running) rather than that it was
+        asked for. The request is serviced on every pass, paused or not, so none of these waits
+        depends on the simulation running - except input_replay's `wait`, which waits for the
+        replay itself and so needs ticks.
+    */
+    MCPServer::Get()->RegisterTool("input_record",
+        "Record input the way a person at the controls does with F9: 'start' begins, 'stop' ends and "
+        "writes recordings/<app>_<date>_<time>.rec, 'status' reports. Everything the simulation "
+        "receives while recording - keyboard, pad, and scripted holds from other tools - is written "
+        "with the tick it applied before, so a run driven by tools can be recorded too. The app "
+        "also writes down where the recording started (for archer: position, facing, aim) so a "
+        "replay can put things back there. Replay with input_replay.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"action", {{"type","string"},{"description","'start', 'stop' or 'status' (default)"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            InputController* input = main_window ? main_window->inputcontroller : NULL;
+            if (!input){
+                return json{ {"error","no input controller"} };
+            }
+            std::string action = args.value("action",std::string("status"));
+            auto wait_until = [](std::function<bool()> done, int timeout_ms){
+                for (int waited = 0; waited < timeout_ms && !done(); waited += 5){
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                return done();
+            };
+            if (action == "start"){
+                if (input->IsRecording()){
+                    json result = InputRecordingStatusJson();
+                    result["note"] = "already recording";
+                    return result;
+                }
+                RequestRecordingStart();
+                if (!wait_until([input](){ return input->IsRecording(); },2000)){
+                    return json{ {"error","the physics thread did not start the recording within 2 s"} };
+                }
+            }else if (action == "stop"){
+                if (!input->IsRecording()){
+                    return json{ {"error","not recording"} };
+                }
+                uint32_t saved_before = GetRecordingsSaved();
+                RequestRecordingStop();
+                if (!wait_until([this,saved_before](){ return GetRecordingsSaved() != saved_before; },3000)){
+                    return json{ {"error","the recording did not finish within 3 s"} };
+                }
+            }else if (action != "status"){
+                return json{ {"error","action must be 'start', 'stop' or 'status'"} };
+            }
+            json result = InputRecordingStatusJson();
+            result["recordings"] = ListRecordings();
+            return result;
+        });
+
+    MCPServer::Get()->RegisterTool("input_replay",
+        "Replay a recording made with F9 or input_record. Its events go back in as ordinary input at "
+        "the ticks they were recorded at, so the simulation cannot tell the replay from the person "
+        "who made it; like every scripted hold it advances only on ticks that run, so it pauses with "
+        "sim_pause and is exact under sim_step, and it drives the app while the window is "
+        "unfocused. Before the first tick it switches to the scene the recording was made in and "
+        "(restore_state, default true) puts the app back where the recording started. Only the "
+        "file's begin..end window replays - edit those two numbers to trim it. Everything still held "
+        "is released at the end. 'file' is a name in recordings/ or a path, default the last one "
+        "recorded this session.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"action", {{"type","string"},{"description","'start' (default), 'stop' or 'status'"}}},
+                {"file", {{"type","string"},{"description","recording name (in recordings/, .rec optional) or path; default the last one recorded"}}},
+                {"restore_state", {{"type","boolean"},{"description","restore the app's recorded start state first, default true"}}},
+                {"wait", {{"type","boolean"},{"description","block until the replay has finished, default false; ignored while paused"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG when it returns, default false"}}}
+            }}
+        },
+        [this](const json &args) -> json {
+            InputController* input = main_window ? main_window->inputcontroller : NULL;
+            if (!input || !main_scene){
+                return json{ {"error","no input controller"} };
+            }
+            std::string action = args.value("action",std::string("start"));
+            if (action == "stop"){
+                RequestReplayStop();
+                for (int waited = 0; waited < 2000 && input->IsReplaying(); waited += 5){
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                return InputRecordingStatusJson();
+            }
+            if (action == "status"){
+                json result = InputRecordingStatusJson();
+                result["recordings"] = ListRecordings();
+                return result;
+            }
+            if (action != "start"){
+                return json{ {"error","action must be 'start', 'stop' or 'status'"} };
+            }
+            std::string error;
+            std::string file = args.value("file",std::string(""));
+            if (!RequestReplay(file,args.value("restore_state",true),error)){
+                return json{ {"error",error} };
+            }
+            //Armed within a pass or two - more if it has to switch scene first.
+            for (int waited = 0; waited < 2000 && !input->IsReplaying(); waited += 5){
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            json result = InputRecordingStatusJson();
+            result["file"] = ResolveRecordingPath(file);
+            if (!input->IsReplaying()){
+                result["error"] = "the replay did not start within 2 s";
+                return result;
+            }
+            if (args.value("wait",false)){
+                if (main_scene->IsPhysicsPaused()){
+                    result["note"] = "paused, so not waiting - advance it with sim_step";
+                }else{
+                    //The replay's own length at the current rate, with room to spare. A timeout is
+                    //reported rather than hidden: the replay keeps running either way.
+                    uint32_t ticks = input->GetReplayEnd() - input->GetReplayPosition() + 2;
+                    double ms = ticks * physics_us_per_tick / 1000.0 / max(physics_time_factor,0.01f);
+                    int timeout_ms = (int)(ms * 1.5) + 2000;
+                    for (int waited = 0; waited < timeout_ms && input->IsReplaying(); waited += 5){
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                    result = InputRecordingStatusJson();
+                    result["file"] = ResolveRecordingPath(file);
+                    if (input->IsReplaying()){
+                        result["note"] = "timed out waiting; the replay is still running";
+                    }
+                }
+            }
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false));
         });
 

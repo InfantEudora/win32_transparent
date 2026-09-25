@@ -36,6 +36,27 @@ class Animation{
     float time_index = 0.0f;    // When playing
     bool looped = false;
 
+    /*
+        Cuts the clip down to [start, end] seconds of its CURRENT timeline and re-times it to start
+        at 0, so afterwards it simply IS the shorter clip - Blender's trim, done at load.
+
+        Destructive rather than a playback window on purpose. Everything that plays, blends or
+        measures a clip assumes it runs 0..duration - the wrap, the end clamp, every rewind, the
+        blend phase, and whatever an app measures off the keyframes at load - and a window would
+        have to be taught to each of them, with any one missed drifting quietly out of step.
+
+        Cut ON keyframes, the way playback samples them: GetClosestKeyframe returns the first key
+        at or after the time asked for, so that is the key the trimmed clip opens and closes on,
+        and the pose at any time inside the window is exactly what it was before. end <= 0 means
+        "to the end". Call it before anything measures the clip. A looped clip trimmed at both
+        ends no longer meets itself, which is the caller's business, as it would be in Blender.
+    */
+    void Trim(float start, float end = -1.0f);
+    //What Trim has done, in the clip's ORIGINAL time: the seconds cut off the front, and whether
+    //it was trimmed at all. Kept so CopyConfigFrom can cut a fresh copy of the clip the same way.
+    float trim_offset = 0.0f;
+    bool f_trimmed = false;
+
     //If false, a request to transition away from this animation is refused until it finishes playing
     //(or, if looped, is simply always interruptible). Used for connector clips like "StandToFreeHang"
     //that must be allowed to complete.
@@ -90,6 +111,8 @@ class Animation{
     //redoing that setup by hand per skeleton. Deliberately does NOT touch object_animations/keyframes
     //(each skeleton's own linked bone data) or auto_continue_to (points at the SOURCE's own Animation*
     //instances, which wouldn't resolve correctly here, and preview-only skeletons don't chain anyway).
+    //The one exception is a TRIM, which is applied to this copy's own keyframes if the source was
+    //trimmed and this one was not - otherwise a preview would play frames the character never does.
     void CopyConfigFrom(Animation* source);
 
     //The root/hip bone's animation track, resolved once via SetRootBone(). NULL if this clip has no

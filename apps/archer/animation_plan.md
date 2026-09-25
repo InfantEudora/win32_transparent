@@ -969,6 +969,42 @@ stays.
   not. The skin is re-weighted into separate pieces (vine_plan.md step 4), and the loose piece lands
   on the level (`ARCHER_MASK_ROPE_LOOSE`) - before, it fell through the floor for good.
 
+### Loose legs on the rope (AGREED and BUILT 2026-09-25)
+
+No clip exists for idling on the rope, and the legs were welded to whatever pose was on screen.
+So the legs are a **dynamic chain** - secondary motion, generic by construction:
+
+- **`core/DynamicChain`**, engine-free (`tools/dynamic_chain_test.cpp`, 20 checks): the joint
+  positions of a run of bones, the root pinned to the animation, the rest verlet particles in
+  WORLD space - so inertia comes free: the body moves, the particles are left behind, gravity
+  hangs them. Per tick: the pose's own motion passed through (`follow`), verlet, a pull back
+  toward the pose hung from the simulated parent (`stiffness`, 0 dead weight, 1 the clip), segment
+  lengths, an optional plane, and planar joint limits (a deviation from the pose's own bend, plus
+  `bend_sign` for a joint that folds one way). `Carry` moves it rigidly for motion that is a
+  decision rather than physics. Deterministic per tick, view-only.
+- **Applied as a third post-pose pass** in `ArcherModel::ApplyAnimation` - base, upper layer,
+  LEGS, aim - with the aim's world-axis turn lifted into `ArcherModel::TurnInWorld`. Once a fourth
+  appears, these become a pose-modifier list on core's Skeleton.
+- **The Puppet decides** (rules-tested): `leg_weight` - on while she hangs, off while the climb
+  is MOVING (Rope_Climbing's feet grip the rope), back on when she stops; `leg_lead_deg` - the
+  pump (`Stage::rope_pump`, now recorded by the rules) turns the pose the legs spring toward by
+  `PUPPET_LEG_PUMP_DEG`, so the input shows as a kick; `leg_gravity` - all of it hanging, a fifth
+  stopped mid-climb, where full gravity sagged the gripping feet 12-27 degrees off the rope.
+- **Three things it took, found in the Rope scene:**
+  1. **The plane is hers, not the screen's.** She yaws round every time the swing reverses; in
+     the screen's plane that swept her legs through it and read as 40-60 degrees in a few ticks.
+     The normal is her own left, so the knee's fold sign is a constant and + swing is forward.
+  2. **Her turn is carried, not simulated** (`Carry` about the model's origin, through her tilted
+     up) - the particles were left behind by the yaw itself.
+  3. **The clip's own leg motion passes through** (`follow` 1, measured against her world
+     rotation as the frame). Without it the chain lagged Hanging_Rope's authored leg motion too,
+     and a knee authored at 40 wobbled 18-64 while she hung still. Now only the body's motion is
+     left to inertia: the catch swings the knees out to ~64, settled within a second.
+- Knobs: `ARCHER_LEG_*` (stiffness 0.04, damping 0.06, limits hip 1.0 / knee 0.7 / ankle 0.35
+  rad), the panel's two sliders, and MCP `archer_legs`; readout in archer_state `animation.legs`.
+- **Next, separately:** the feet gripping the rope DURING the climb want IK onto the rope's curve
+  (sockets on the feet, like the hands) - the same problem as the open hand IK.
+
 ---
 
 ## Step 0 — the seam. BUILT.

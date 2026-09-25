@@ -182,6 +182,18 @@ struct ArcherClipInfo{
     */
     bool  f_extract_move;   //X/Z
     bool  f_extract_lift;   //Y
+
+    /*
+        The part of the clip this game plays, in SECONDS of the export (30 fps, so frame n is
+        n/30), cut at load by Animation::Trim before anything measures the clip. Left off a row,
+        both are 0 and the whole clip plays; trim_end <= 0 means "to the end".
+
+        A trim moves every measurement taken off the clip, which is the point - but it does not
+        move the constants in Stage.h that were fitted to the untrimmed one. The kick's are the
+        ones that care, and MeasureKickClip says so at load if they have been left behind.
+    */
+    float trim_start = 0.0f;
+    float trim_end = 0.0f;
 };
 extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 
@@ -335,6 +347,22 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 //And how long the upper-body layer takes to come on and go off. The same 0.1s: the draw's first
 //frames are the arm swinging back to the quiver, which reads fine arriving over six ticks.
 #define PUPPET_UPPER_BLEND_TICKS    6
+//The loose legs (Puppet::leg_weight) come on and go off over a quarter second: slower than the
+//arms, because the climb clip hands its feet over to the swing rather than snapping between them.
+#define PUPPET_LEG_BLEND_TICKS      15
+//How far the pump swings her legs toward the way she is pushing, in degrees about the camera
+//axis. A real swinger pumps WITH the legs; this is the input made visible, and the chain's spring
+//turns the step into a kick.
+#define PUPPET_LEG_PUMP_DEG         25.0f
+/*
+    How much of the world's gravity the loose legs feel. All of it hanging: Hanging_Rope's legs are
+    loose, and dead weight is what makes them trail and float. A fifth of it stopped mid-climb,
+    where the pose is her FEET GRIPPING THE ROPE: at full gravity the chain sagged them 12-27
+    degrees off it, a climber letting go with her feet; held up by the pose's own muscle they stay
+    on, and the swing still moves them.
+*/
+#define PUPPET_LEG_GRAVITY_HANG     1.0f
+#define PUPPET_LEG_GRAVITY_GRIP     0.2f
 
 //--- What the animation is allowed to know ------------------------------------------------------
 /*
@@ -361,6 +389,7 @@ struct ArcherAnimParams{
     //climbed since catching it, signed - up is +. Stage::rope_climb / rope_climbed.
     int   rope_climb = 0;
     float rope_climbed = 0.0f;
+    float rope_pump = 0.0f;         //-1..1 along world X, the lean pushing the swing. Stage::rope_pump
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and
@@ -635,6 +664,17 @@ public:
     //so letting go does not snap the arms to whatever the legs are doing.
     float upper_weight = 0.0f;
     int   upper_latched = -1;
+
+    /*
+        THE LOOSE LEGS, 0..1, eased over PUPPET_LEG_BLEND_TICKS: how much of the legs' dynamic chain
+        (core/DynamicChain, ArcherModel::ApplyLegChains) replaces the clip's own legs. And
+        `leg_lead_deg`, how far the pump turns the pose the chain springs toward - world degrees
+        about the camera axis, + toward +X. The chain itself is view state; these two are the only
+        decisions in it, and they are made here so `make rules` checks them.
+    */
+    float leg_weight = 0.0f;
+    float leg_lead_deg = 0.0f;
+    float leg_gravity = PUPPET_LEG_GRAVITY_HANG;   //the share of gravity - see PUPPET_LEG_GRAVITY_GRIP
 
     /*
         THE LAYER'S OWN CROSSFADE, for when its pose would otherwise JUMP with the weight still on.

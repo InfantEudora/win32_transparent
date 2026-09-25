@@ -209,6 +209,11 @@ typedef enum{
     INPUT_CLICK_MIDDLE,
     INPUT_CLICK_RIGHT,
     INPUT_SHIFT,
+    //Start/stop an input recording, and replay the last one - F9 and F10 in every app, acted on by
+    //Application::ServiceInputRecording. Never written INTO a recording themselves (see
+    //SetRecorded): a replay that pressed its own stop key would end itself.
+    INPUT_RECORD_TOGGLE,
+    INPUT_REPLAY_TOGGLE,
     INPUT_LAST
 }keycode_t;
 
@@ -233,6 +238,14 @@ struct InputEvent{
     uint16_t mapped_keycode = INPUT_NONE;   //keycode_t this event is about
     int32_t value = 0;                      //integer payload; system keycode for key events
     float fvalue = 0.0f;                    //scalar payload, INPUT_EVENT_AXIS_SCALAR only
+};
+
+//One event of a recording: the event, and the tick it was applied before, counted from the tick
+//the recording started on. Relative rather than absolute so a recording replays from wherever
+//the clock happens to be. See core/InputRecording.h for the file this is written to.
+struct RecordedInputEvent{
+    uint32_t tick = 0;
+    InputEvent event;
 };
 
 //A scripted input hold. Exists only because a caller whose round trip is slower than the tick
@@ -396,6 +409,9 @@ class InputController{
     //scripted action (a rotate, a fire, a hard drop) while never missing a held one. That is the
     //one case the gate exists to allow, so the flag has to outlive the hold by the tick that
     //carries its edge.
+    //
+    //A running REPLAY counts, with the same one-tick tail after it ends, for the same reason: it is
+    //scripted input, and is most often run exactly when the window is not in front.
     bool HasSyntheticHolds();
     //Current value of a scalar axis. 0 when nothing is driving it.
     float GetAxis(uint32_t mapped_keycode);
@@ -439,6 +455,87 @@ class InputController{
     //What ApplyPendingEvents just applied: the exact input this tick ran with. A recorder writes
     //this out; a replay submits it back. Physics thread only, valid until the next call.
     const std::vector<InputEvent>& GetTickEvents() const { return tick_events; }
+
+    /*
+        RECORDING: everything applied between BeginRecording and EndRecording, stamped with the
+        tick it was applied before.
+
+        The hook is DrainAndApplyEvents, not the tick, and that is what makes it exact. Input is
+        drained on every physics pass, including the ones that do not tick (paused, or waiting on
+        a sim_step), and whatever a non-ticking pass applies is part of the NEXT tick's input. So
+        each event is stamped with the clock as it read when the event was applied - which is the
+        tick that will run with it - and a replay that applies the same events before the same
+        ticks reproduces the same KeyState at the top of every tick.
+
+        Both calls are PHYSICS THREAD ONLY - Application::ServiceInputRecording makes them, at a
+        pass boundary. Other threads ask the Application, which is also what gives the app its
+        chance to write down where the recording started (Application::CaptureRecordingState).
+
+        BeginRecording writes the state already held as tick-0 events - a key held down when the
+        recording started, a stick already deflected - or the replay would start with those
+        controls up. A key held that way replays as PRESSED at tick 0, so an edge-triggered action
+        on it fires once at the start of the replay where the original had pressed it earlier.
+    */
+    void BeginRecording(uint64_t sim_tick);
+    //Stops, and hands over what was recorded plus its length in ticks - the ticks that ran while
+    //recording, so a replay knows how long to hold the controls after the last event.
+    void EndRecording(uint64_t sim_tick, std::vector<RecordedInputEvent>& out, uint32_t& length_ticks);
+    //Any thread.
+    bool IsRecording() const { return f_recording; }
+    //Ticks recorded so far, for a readout. Any thread.
+    uint32_t GetRecordingTicks() const { return record_ticks; }
+
+    /*
+        Whether an action goes into a recording at all. True unless turned off.
+
+        OFF BY DEFAULT for the cursor family - position, raw deltas, wheel and the three mouse
+        buttons - and for pause and the record/replay keys. The cursor is VIEW input (see
+        IsInputLive for the rule): it drives cameras and picking, and a replay that moved the
+        camera or clicked in the Inspector would be perturbing the thing it is supposed to be
+        watching. The cursor position is also polled every pass, so recording it would bury the
+        file in lines. An app whose GAMEPLAY is on a mouse button turns it back on; an app with
+        view toggles of its own (archer's F1/F2) turns those off.
+
+        Setup only, like AddKeyMap.
+    */
+    void SetRecorded(uint32_t mapped, bool f_recorded);
+    bool IsRecorded(uint32_t mapped) const;
+
+    /*
+        A name for an action, as it appears in a recording file: "12 down jump key=SPACE" rather
+        than "12 down 22 key=0x20". Unnamed actions are written as their number, which still
+        replays - the name is for the person trimming the file, and it survives an app
+        renumbering its actions, which a number does not. Setup only.
+    */
+    void NameAction(uint32_t mapped, const char* name);
+    const char* GetActionName(uint32_t mapped) const;  //NULL when unnamed
+    uint32_t FindActionByName(const char* name) const; //INPUT_NONE when unknown
+
+    /*
+        REPLAY: feeds a recording back in as ordinary events, at the tick each one was recorded
+        before - so, like a scripted hold, neither the simulation nor a second recording can tell
+        it from a person. It is injected where the scripted holds are (ApplyTickInput), so it only
+        advances on ticks that run: it pauses with the simulation and is exact under sim_step.
+
+        `begin` and `end` are the window of the recording to play, in its own ticks. Events before
+        `begin` are applied together on the first replayed tick, so a key held across the cut is
+        still held; the replay then runs until `end` and RELEASES everything it is still holding,
+        so a replay can never leave a control stuck down. That is what lets the person trimming a
+        file cut the lead-in and tail by changing two numbers.
+
+        It counts as scripted input for IsInputLive, so a replay drives an unfocused window - the
+        --minimized case. Hardware input is not blocked while one runs: last writer wins, the same
+        as a thumb against a HoldAxis.
+
+        StartReplay replaces a replay already running (releasing what it held first). PHYSICS
+        THREAD ONLY, both - see Application::RequestReplay for the any-thread form.
+    */
+    void StartReplay(const std::vector<RecordedInputEvent>& events, uint32_t begin, uint32_t end);
+    void StopReplay();
+    //Any thread. position is in the recording's own ticks, so it runs from begin to end.
+    bool IsReplaying() const { return f_replaying; }
+    uint32_t GetReplayPosition() const { return replay_position; }
+    uint32_t GetReplayEnd() const { return replay_end; }
     //Samples whatever still has to be polled. The absolute cursor position always (Raw Input
     //reports movement, not a cursor), and the keyboard/mouse buttons only when raw input is not
     //running - see SetRawInputActive.
@@ -812,8 +909,50 @@ protected:
     //last drain and apply it. f_append keeps what tick_events already holds, so a ticking pass
     //ends up with the hardware input it sampled AND the scripted input its tick advanced - which
     //together are that tick's input, and are what a recorder has to write out.
-    void DrainAndApplyEvents(bool f_append);
+    //sim_tick is what a recording stamps the drained events with - see BeginRecording.
+    void DrainAndApplyEvents(bool f_append, uint64_t sim_tick);
     WindowInputState window_state;
+
+    //--- Recording, see BeginRecording. Physics thread only, except the two atomics. ----------------
+    std::atomic<bool> f_recording{false};
+    std::atomic<uint32_t> record_ticks{0};
+    uint64_t record_start_tick = 0;
+    std::vector<RecordedInputEvent> recorded_events;
+    //Actions SetRecorded turned off. A short list, walked per recorded event.
+    std::vector<uint32_t> unrecorded_actions;
+    struct ActionName{
+        uint32_t mapped = 0;
+        char name[24] = "";
+    };
+    std::vector<ActionName> action_names;
+    void RecordEvent(uint64_t sim_tick, const InputEvent& e);
+
+    //--- Replay, see StartReplay. Physics thread only, except the atomics. -------------------------
+    std::vector<RecordedInputEvent> replay_events;
+    size_t replay_cursor = 0;
+    uint64_t replay_first_tick = 0;         //the sim tick the replay's `begin` landed on
+    bool f_replay_armed = false;            //started, but no tick has run it yet
+    uint32_t replay_begin = 0;
+    std::atomic<uint32_t> replay_end{0};
+    std::atomic<uint32_t> replay_position{0};
+    std::atomic<bool> f_replaying{false};
+    //Raised on the tick the replay's releases are delivered, cleared on the next - the replay's
+    //counterpart of f_synthetic_release_tick.
+    std::atomic<bool> f_replay_release_tick{false};
+    //What the replay is currently holding, so ending it can release exactly that. A key is its
+    //(action, system key) pair, because that pair is what names one mapping.
+    struct ReplayHeldKey{
+        uint32_t mapped = 0;
+        int32_t system_keycode = 0;
+    };
+    std::vector<ReplayHeldKey> replay_held_keys;
+    std::vector<uint32_t> replay_held_axes;
+    //Physics thread, from ApplyTickInput beside AdvanceSyntheticHolds: queues whatever the replay
+    //has due before this tick.
+    void AdvanceReplay(uint64_t sim_tick);
+    //Queues a release for everything the replay holds and forgets it. Caller holds state_mutex.
+    void QueueReplayReleases();
+    void TrackReplayEvent(const InputEvent& e);
 
     //Read on the physics thread every poll, written from the window thread, and only ever a plain
     //flag - atomic is enough and avoids taking the lock in the polling hot path.

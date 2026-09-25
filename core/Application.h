@@ -34,6 +34,7 @@
 //reached by every app: dragging reactphysics3d's headers into all fifteen of them, including
 //the ones built with USE_PHYSICS=0, for a class none of them mention.
 #include "RawInput.h"
+#include "InputRecording.h"
 #include "skeleton/PlayerCharacter.h"
 //For MaybeAttachScreenshot's signature below. json.hpp only (not MCPServer.h): this is pure C++
 //with no winsock in it, so it sidesteps the include-order trap MCPServer.h documents.
@@ -530,6 +531,55 @@ public:
     */
     virtual void OnActiveSceneChanged(Scene* from, Scene* to){ (void)from; (void)to; }
 
+    /*
+        INPUT RECORDING: press F9, play, press F9 again, and what you did is in
+        recordings/<app>_<date>_<time>.rec beside imgui.ini. F10 replays the last one. The same
+        four requests are behind the Engine panel's "Input recording" header and the
+        input_record / input_replay MCP tools, so a recording made by hand replays from a script.
+
+        All four are safe from ANY thread and never wait: they leave a request that
+        ServiceInputRecording acts on at the next physics pass boundary, which is the only place a
+        recording can start or stop at an exact tick. See InputController::BeginRecording for what
+        is recorded and core/InputRecording.h for the file.
+    */
+    void RequestRecordingStart();
+    void RequestRecordingStop();
+    //Loads the file HERE, on the caller's thread, so a bad file is reported to whoever asked
+    //rather than logged from the physics thread. An empty path means the last recording saved.
+    //f_restore_state hands the file's `state` to RestoreRecordingState before the first tick.
+    bool RequestReplay(const std::string& path, bool f_restore_state, std::string& error);
+    void RequestReplayStop();
+
+    /*
+        The app's say in where a replay starts from. A recording is input and nothing else, so it
+        only reproduces a run from the place that run started - and "the place" is app state core
+        cannot see (archer: where she stands, which way she faces, the aim).
+
+        Capture runs when a recording starts, and whatever it returns is written into the file's
+        `state` line, where the person trimming it can also read and edit it. Restore runs when a
+        replay starts, before its first tick. BOTH ON THE PHYSICS THREAD with physics_mutex held,
+        at a pass boundary - so Restore may do what a command handler may. The scene the recording
+        was made in is core's business and is switched to before Restore is called.
+
+        The defaults record nothing and restore nothing, which is a correct replay for an app
+        whose runs always start from the same place.
+    */
+    virtual json CaptureRecordingState(){ return json::object(); }
+    virtual void RestoreRecordingState(const json& state){ (void)state; }
+
+    //Relative to the working directory, which is the app's folder when started as CLAUDE.md
+    //describes - so recordings land in apps/<name>/recordings/.
+    std::string recordings_dir = "recordings";
+    //A bare name ("archer_20260925_140311") becomes a file in recordings_dir, with .rec added if
+    //needed; anything with a slash in it is taken as given. Empty is the last recording saved.
+    std::string ResolveRecordingPath(const std::string& name);
+    std::vector<std::string> ListRecordings();     //file names in recordings_dir, oldest first
+    //Recording/replay state for a tool or panel: whether each is running, how far, the last file.
+    json InputRecordingStatusJson();
+    //Bumped every time a finished recording is written (or fails to be), so a caller that asked
+    //for a stop can wait for the file rather than for a flag.
+    uint32_t GetRecordingsSaved(){ return recordings_saved; }
+
     //One liners that do many things
     Object* CreateNewObjectFromGLTF(const std::string& nodename, Scene* target_scene);
     void GetAllAssetsFromGLTF();
@@ -573,6 +623,32 @@ protected:
     objectid_t hovered_objid = OBJECTID_INVALID;
     objectid_t dragged_objid = OBJECTID_INVALID;
     void CheckObjectSelection();
+
+    //--- Input recording, see RequestRecordingStart ---------------------------------------------
+    //Physics thread, every pass, between BeginPass and the tick: reads F9/F10 and carries out
+    //whatever has been requested. Between those two because a replay has to be armed (and the
+    //app's start state restored) BEFORE the tick it is to begin on, on a paused pass as well.
+    void ServiceInputRecording();
+    void FinishRecording(uint64_t sim_tick);
+    //REC / REPLAY in the corner of the window, so a hotkey that toggles something invisible says
+    //that it did. Render thread, drawn with the overlay.
+    void DrawInputRecordingBadge();
+    std::mutex recording_mutex;             //guards everything below up to recordings_saved
+    bool f_record_start_requested = false;
+    bool f_record_stop_requested = false;
+    bool f_replay_requested = false;
+    bool f_replay_stop_requested = false;
+    bool f_pending_replay_restore = true;
+    int replay_scene_wait_passes = 0;       //passes spent waiting for a replay's scene switch
+    InputRecording pending_replay;
+    std::string last_recording_path;
+    std::string last_recording_error;
+    std::atomic<uint32_t> recordings_saved{0};
+    //Physics thread only: what the recording now running started from.
+    json recording_start_state;
+    std::string recording_scene;
+    std::string recording_started_at;       //"2026-09-25 14:03:11", for the file
+    std::string recording_file_stamp;       //"20260925_140311", for its name
 
     /*
         Does the debug UI want the mouse, or the keyboard?

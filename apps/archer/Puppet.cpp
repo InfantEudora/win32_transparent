@@ -31,7 +31,9 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     //has hip yaw that is just the gait - see f_turns. It pivots on the spot (0.001 units of
     //authored travel), which is what makes extracting its yaw safe.
     { "Running_TurnAround",  false, false,  true,  false, false },
-    { "Kick_Front",          false, false,  false, false, false },
+    //The first ten frames are her dropping her fists from a guard to arms down, which the
+    //crossfade in from whatever she was doing already covers - and blends better than they do.
+    { "Kick_Front",          false, false,  false, false, false, 10.0f / 30.0f },
     //THE CLIMB TRAVELS BUT IS NOT LOCOMOTION - its hip track goes a metre UP as well as forward,
     //because it is a mantle rather than a stride. Measuring its horizontal speed would produce a
     //number that looks like a walking pace and means nothing, so it is not marked as travelling -
@@ -206,6 +208,7 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.kneel_phase  = (stage.mode == MODE_KNEEL) ? stage.kneel_phase : -1;
     out.rope_climb   = (stage.mode == MODE_ROPE) ? stage.rope_climb : 0;
     out.rope_climbed = (stage.mode == MODE_ROPE) ? stage.rope_climbed : 0.0f;
+    out.rope_pump = (stage.mode == MODE_ROPE) ? stage.rope_pump : 0.0f;
 
     /*
         The action, and its phase.
@@ -894,6 +897,25 @@ void Puppet::Tick(const ArcherAnimParams& in){
         aim_weight -= aim_step;
         if (aim_weight < aim_target){ aim_weight = aim_target; }
     }
+
+    /*
+        The loose legs - see leg_weight. On the rope, EXCEPT while the climb is moving: Rope_Climbing
+        grips the rope with the feet, and a leg the clip is placing on the rope is not a leg to let
+        swing. Stopped mid-climb she holds its pose, and the legs come loose about it.
+    */
+    float leg_target = (in.mode == MODE_ROPE && in.rope_climb == 0) ? 1.0f : 0.0f;
+    float leg_step = 1.0f / (float)PUPPET_LEG_BLEND_TICKS;
+    //Snapped within a step: fifteen steps of 1/15 leave a 1e-7 that never reads as off.
+    if (fabsf(leg_weight - leg_target) <= leg_step + 1e-4f){
+        leg_weight = leg_target;
+    }else if (leg_weight < leg_target){
+        leg_weight = fminf(leg_weight + leg_step,leg_target);
+    }else{
+        leg_weight = fmaxf(leg_weight - leg_step,leg_target);
+    }
+    leg_lead_deg = (in.mode == MODE_ROPE) ? in.rope_pump * PUPPET_LEG_PUMP_DEG : 0.0f;
+    //Once she has climbed, the pose held is the climb's, feet on the rope; before, the hang's.
+    leg_gravity = f_rope_climbing ? PUPPET_LEG_GRAVITY_GRIP : PUPPET_LEG_GRAVITY_HANG;
 }
 
 void Puppet::ChooseUpper(const ArcherAnimParams& in, PuppetChoice& out){

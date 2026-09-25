@@ -1,5 +1,7 @@
 #include "InputController.h"
 #include "Debug.h"
+#include <algorithm>
+#include <cstring>
 #if defined(__ANDROID__)
 #include <android/keycodes.h>
 #endif
@@ -58,6 +60,51 @@ InputController::InputController(){
     AddKeyMap(AKEYCODE_SHIFT_LEFT,INPUT_SHIFT);
     AddKeyMap(AKEYCODE_SHIFT_RIGHT,INPUT_SHIFT);
 #endif
+
+#if defined(_WIN32)
+    //No pad button by default: every free one is somebody's action in some app (Tetris restarts on
+    //Back). An app that wants recording on the pad maps one itself - archer puts it on Back.
+    AddKeyMap(VK_F9,INPUT_RECORD_TOGGLE);
+    AddKeyMap(VK_F10,INPUT_REPLAY_TOGGLE);
+#else
+    //So the actions exist, and a pad mapping added by an app has a KeyState to share.
+    AddKeyMap(0,INPUT_RECORD_TOGGLE);
+    AddKeyMap(0,INPUT_REPLAY_TOGGLE);
+#endif
+
+    //View input and the recorder's own controls stay out of recordings - see SetRecorded.
+    SetRecorded(INPUT_MOUSE_X,false);
+    SetRecorded(INPUT_MOUSE_Y,false);
+    SetRecorded(INPUT_MOUSE_WHEEL,false);
+    SetRecorded(INPUT_MOUSE_DELTA_X,false);
+    SetRecorded(INPUT_MOUSE_DELTA_Y,false);
+    SetRecorded(INPUT_CLICK_LEFT,false);
+    SetRecorded(INPUT_CLICK_MIDDLE,false);
+    SetRecorded(INPUT_CLICK_RIGHT,false);
+    SetRecorded(INPUT_PAUSE,false);
+    SetRecorded(INPUT_RECORD_TOGGLE,false);
+    SetRecorded(INPUT_REPLAY_TOGGLE,false);
+
+    NameAction(INPUT_TURN_LEFT,"turn_left");
+    NameAction(INPUT_TURN_RIGHT,"turn_right");
+    NameAction(INPUT_TURN_UP,"turn_up");
+    NameAction(INPUT_TURN_DOWN,"turn_down");
+    NameAction(INPUT_MOVE_LEFT,"move_left");
+    NameAction(INPUT_MOVE_RIGHT,"move_right");
+    NameAction(INPUT_MOVE_UP,"move_up");
+    NameAction(INPUT_MOVE_DOWN,"move_down");
+    NameAction(INPUT_PAUSE,"pause");
+    NameAction(INPUT_MOUSE_X,"mouse_x");
+    NameAction(INPUT_MOUSE_Y,"mouse_y");
+    NameAction(INPUT_MOUSE_WHEEL,"mouse_wheel");
+    NameAction(INPUT_MOUSE_DELTA_X,"mouse_dx");
+    NameAction(INPUT_MOUSE_DELTA_Y,"mouse_dy");
+    NameAction(INPUT_CLICK_LEFT,"click_left");
+    NameAction(INPUT_CLICK_MIDDLE,"click_middle");
+    NameAction(INPUT_CLICK_RIGHT,"click_right");
+    NameAction(INPUT_SHIFT,"shift");
+    NameAction(INPUT_RECORD_TOGGLE,"record");
+    NameAction(INPUT_REPLAY_TOGGLE,"replay");
 }
 
 //One mapping, whatever kind of hardware drives it. A second mapping for an action it already
@@ -310,7 +357,11 @@ void InputController::PollDevices(){
         }
     }
 
-    if (!f_raw_input_active){
+    //Not while a replay runs. This path diffs each key against its mapping's f_held, and a replayed
+    //key-down sets f_held on a key nobody is pressing - so the next poll would "release" it and the
+    //replay would lose every held key a pass after pressing it. Raw input is event-driven and has
+    //no such diff, which is why only this fallback needs the exception.
+    if (!f_raw_input_active && !f_replaying){
         bool sample_keys = f_has_focus;
         for (KeyMap& map: keymap){
             if (map.system_keycode == 0){
@@ -359,11 +410,8 @@ void InputController::PollDevices(){
 //input - including whatever the window message thread pushed in from its own thread, which is the
 //handoff that used to be an unsynchronised write straight into KeyState.
 void InputController::ApplyPendingEvents(uint64_t sim_tick){
-    //sim_tick is unused here now that scripted holds advance from ApplyTickInput instead. Kept in
-    //the signature because this is the call every pass makes and the tick it belongs to is worth
-    //having at hand - a recorder stamping hardware input wants it, and item 7 will.
-    (void)sim_tick;
-    DrainAndApplyEvents(false);
+    //sim_tick is what a recording stamps this pass's hardware input with - see BeginRecording.
+    DrainAndApplyEvents(false,sim_tick);
 }
 
 void InputController::ApplyTickInput(uint64_t sim_tick){
@@ -378,15 +426,28 @@ void InputController::ApplyTickInput(uint64_t sim_tick){
         f_hold_tick_valid = true;
         last_hold_tick = sim_tick;
         AdvanceSyntheticHolds();
+        //Beside the holds and under the same guard, for the same reason: a replay is denominated
+        //in ticks and must advance exactly once per tick that runs.
+        AdvanceReplay(sim_tick);
     }
     //Appended: this pass already applied whatever hardware input it sampled, and that is part of
     //this tick's input too.
-    DrainAndApplyEvents(true);
+    DrainAndApplyEvents(true,sim_tick);
 }
 
-void InputController::DrainAndApplyEvents(bool f_append){
+void InputController::DrainAndApplyEvents(bool f_append, uint64_t sim_tick){
     {
         std::lock_guard<std::mutex> lock(state_mutex);
+        //Recorded as they are drained, which is the moment they become input - see BeginRecording.
+        //From pending_events rather than tick_events because in the append case tick_events
+        //already holds this pass's earlier drain, which was recorded when IT was drained.
+        if (f_recording){
+            for (const InputEvent& e: pending_events){
+                RecordEvent(sim_tick,e);
+            }
+            //The readout's clock, kept moving through stretches with no input in them.
+            record_ticks = (sim_tick > record_start_tick) ? (uint32_t)(sim_tick - record_start_tick) : 0;
+        }
         if (f_append){
             tick_events.insert(tick_events.end(),pending_events.begin(),pending_events.end());
         }else{
@@ -408,6 +469,15 @@ void InputController::DrainAndApplyEvents(bool f_append){
                 if (km.state->f_isdown == 0){
                     km.state->f_was_released = true;
                 }
+            }
+            //This release is not an event, so it has to be written down as one - or a key held
+            //while the person alt-tabbed stays down in the recording until its replay ends.
+            if (f_recording){
+                InputEvent up;
+                up.type = INPUT_EVENT_KEY_UP;
+                up.mapped_keycode = (uint16_t)km.mapped_keycode;
+                up.value = (int32_t)km.system_keycode;
+                RecordEvent(sim_tick,up);
             }
         }
     }
@@ -543,7 +613,7 @@ void InputController::ReleaseSynthetic(){
 bool InputController::HasSyntheticHolds(){
     std::lock_guard<std::mutex> lock(state_mutex);
     //...or the tick a hold released on, which is the tick its edge is readable. See the header.
-    return !synthetic_holds.empty() || f_synthetic_release_tick;
+    return !synthetic_holds.empty() || f_synthetic_release_tick || f_replaying || f_replay_release_tick;
 }
 
 void InputController::AdvanceSyntheticHolds(){
@@ -592,6 +662,253 @@ void InputController::AdvanceSyntheticHolds(){
     }
 
     pending_events.insert(pending_events.end(),events.begin(),events.end());
+}
+
+//--- Recording ----------------------------------------------------------------------------------
+
+void InputController::SetRecorded(uint32_t mapped, bool f_recorded){
+    for (size_t i = 0; i < unrecorded_actions.size(); i++){
+        if (unrecorded_actions[i] == mapped){
+            if (f_recorded){
+                unrecorded_actions.erase(unrecorded_actions.begin() + i);
+            }
+            return;
+        }
+    }
+    if (!f_recorded){
+        unrecorded_actions.push_back(mapped);
+    }
+}
+
+bool InputController::IsRecorded(uint32_t mapped) const{
+    for (uint32_t a: unrecorded_actions){
+        if (a == mapped){
+            return false;
+        }
+    }
+    return true;
+}
+
+void InputController::NameAction(uint32_t mapped, const char* name){
+    if (!name || !name[0]){
+        return;
+    }
+    for (ActionName& n: action_names){
+        if (n.mapped == mapped){
+            snprintf(n.name,sizeof(n.name),"%s",name);
+            return;
+        }
+    }
+    ActionName n;
+    n.mapped = mapped;
+    snprintf(n.name,sizeof(n.name),"%s",name);
+    action_names.push_back(n);
+}
+
+const char* InputController::GetActionName(uint32_t mapped) const{
+    for (const ActionName& n: action_names){
+        if (n.mapped == mapped){
+            return n.name;
+        }
+    }
+    return NULL;
+}
+
+uint32_t InputController::FindActionByName(const char* name) const{
+    if (!name){
+        return INPUT_NONE;
+    }
+    for (const ActionName& n: action_names){
+        if (strcmp(n.name,name) == 0){
+            return n.mapped;
+        }
+    }
+    return INPUT_NONE;
+}
+
+void InputController::RecordEvent(uint64_t sim_tick, const InputEvent& e){
+    if (!IsRecorded(e.mapped_keycode)){
+        return;
+    }
+    RecordedInputEvent r;
+    //Clamped rather than trusted: a tick earlier than the start cannot happen on this thread, but
+    //an unsigned wrap here would put the event four billion ticks into the replay.
+    r.tick = (sim_tick > record_start_tick) ? (uint32_t)(sim_tick - record_start_tick) : 0;
+    r.event = e;
+    recorded_events.push_back(r);
+}
+
+void InputController::BeginRecording(uint64_t sim_tick){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    recorded_events.clear();
+    record_start_tick = sim_tick;
+    record_ticks = 0;
+
+    //What is ALREADY held goes in as tick 0, or the replay starts with it up. Keys per mapping, so a
+    //key held on each of two mappings of one action replays as both; axes once per KeyState, since
+    //an axis has one value however many sticks are mapped to it.
+    for (const KeyMap& km: keymap){
+        if (!km.f_held || km.IsAnalog()){
+            continue;
+        }
+        InputEvent down;
+        down.type = INPUT_EVENT_KEY_DOWN;
+        down.mapped_keycode = (uint16_t)km.mapped_keycode;
+        down.value = (int32_t)km.system_keycode;
+        RecordEvent(sim_tick,down);
+    }
+    std::vector<const KeyState*> seen;
+    for (const KeyMap& km: keymap){
+        if (!km.state || km.state->fvalue == 0.0f){
+            continue;
+        }
+        bool f_seen = false;
+        for (const KeyState* s: seen){
+            if (s == km.state){
+                f_seen = true;
+                break;
+            }
+        }
+        if (f_seen){
+            continue;
+        }
+        seen.push_back(km.state);
+        InputEvent axis;
+        axis.type = INPUT_EVENT_AXIS_SCALAR;
+        axis.mapped_keycode = (uint16_t)km.mapped_keycode;
+        axis.fvalue = km.state->fvalue;
+        RecordEvent(sim_tick,axis);
+    }
+    //Raised last, so anything that sees IsRecording() true sees a recording that already has its
+    //opening state in it.
+    f_recording = true;
+    debug->Info("Recording input from tick %llu\n",(unsigned long long)sim_tick);
+}
+
+void InputController::EndRecording(uint64_t sim_tick, std::vector<RecordedInputEvent>& out, uint32_t& length_ticks){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    f_recording = false;
+    length_ticks = (sim_tick > record_start_tick) ? (uint32_t)(sim_tick - record_start_tick) : 0;
+    out.swap(recorded_events);
+    recorded_events.clear();
+    debug->Info("Recorded %u ticks of input, %u events\n",length_ticks,(unsigned)out.size());
+}
+
+//--- Replay -------------------------------------------------------------------------------------
+
+void InputController::StartReplay(const std::vector<RecordedInputEvent>& events, uint32_t begin, uint32_t end){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    if (f_replaying){
+        //A new replay must not inherit the old one's held keys, or they stay down for good - the
+        //new one's tracking would never have seen them go down.
+        QueueReplayReleases();
+    }
+    replay_events = events;
+    //Stable, so events a person reordered by hand still apply in file order within one tick - and
+    //a down/up pair on one tick stays a press rather than becoming a release of nothing.
+    std::stable_sort(replay_events.begin(),replay_events.end(),
+        [](const RecordedInputEvent& a, const RecordedInputEvent& b){ return a.tick < b.tick; });
+    replay_cursor = 0;
+    replay_begin = begin;
+    replay_end = (end > begin) ? end : begin;
+    replay_position = begin;
+    f_replay_armed = true;
+    f_replaying = true;
+    debug->Info("Replaying %u events, ticks %u..%u\n",(unsigned)replay_events.size(),begin,(uint32_t)replay_end);
+}
+
+void InputController::StopReplay(){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    if (!f_replaying){
+        return;
+    }
+    QueueReplayReleases();
+    f_replaying = false;
+    f_replay_release_tick = true;
+    replay_events.clear();
+    debug->Info("Replay stopped at tick %u\n",(uint32_t)replay_position);
+}
+
+void InputController::TrackReplayEvent(const InputEvent& e){
+    if (e.type == INPUT_EVENT_KEY_DOWN || e.type == INPUT_EVENT_KEY_UP){
+        for (size_t i = 0; i < replay_held_keys.size(); i++){
+            if (replay_held_keys[i].mapped == e.mapped_keycode && replay_held_keys[i].system_keycode == e.value){
+                replay_held_keys.erase(replay_held_keys.begin() + i);
+                break;
+            }
+        }
+        if (e.type == INPUT_EVENT_KEY_DOWN){
+            ReplayHeldKey k;
+            k.mapped = e.mapped_keycode;
+            k.system_keycode = e.value;
+            replay_held_keys.push_back(k);
+        }
+    }else if (e.type == INPUT_EVENT_AXIS_SCALAR){
+        for (size_t i = 0; i < replay_held_axes.size(); i++){
+            if (replay_held_axes[i] == e.mapped_keycode){
+                replay_held_axes.erase(replay_held_axes.begin() + i);
+                break;
+            }
+        }
+        if (e.fvalue != 0.0f){
+            replay_held_axes.push_back(e.mapped_keycode);
+        }
+    }
+}
+
+void InputController::QueueReplayReleases(){
+    for (const ReplayHeldKey& k: replay_held_keys){
+        InputEvent up;
+        up.type = INPUT_EVENT_KEY_UP;
+        up.mapped_keycode = (uint16_t)k.mapped;
+        up.value = k.system_keycode;
+        pending_events.push_back(up);
+    }
+    for (uint32_t mapped: replay_held_axes){
+        InputEvent zero;
+        zero.type = INPUT_EVENT_AXIS_SCALAR;
+        zero.mapped_keycode = (uint16_t)mapped;
+        zero.fvalue = 0.0f;
+        pending_events.push_back(zero);
+    }
+    replay_held_keys.clear();
+    replay_held_axes.clear();
+}
+
+void InputController::AdvanceReplay(uint64_t sim_tick){
+    std::lock_guard<std::mutex> lock(state_mutex);
+    //Cleared here, once per tick, for the same reason f_synthetic_release_tick is.
+    f_replay_release_tick = false;
+    if (!f_replaying){
+        return;
+    }
+    if (f_replay_armed){
+        //The first tick that runs is the recording's `begin`, whenever that is - so a replay
+        //started while paused waits for the first sim_step rather than losing its opening.
+        f_replay_armed = false;
+        replay_first_tick = sim_tick;
+    }
+    uint32_t position = replay_begin + (uint32_t)(sim_tick - replay_first_tick);
+    replay_position = position;
+
+    //Everything due at or before this position. On the first tick that includes everything before
+    //`begin`, all at once, which is what keeps a key held across the cut held.
+    while (replay_cursor < replay_events.size() && replay_events[replay_cursor].tick <= position){
+        const InputEvent& e = replay_events[replay_cursor].event;
+        pending_events.push_back(e);
+        TrackReplayEvent(e);
+        replay_cursor++;
+    }
+
+    if (position >= replay_end){
+        //The tick after the last recorded one: let go of everything, so a replay ends with the
+        //controls where a person's hands would leave them - off.
+        QueueReplayReleases();
+        f_replaying = false;
+        f_replay_release_tick = true;
+        replay_events.clear();
+        debug->Info("Replay finished at tick %u\n",position);
+    }
 }
 
 float InputController::GetAxis(uint32_t mapped_keycode){

@@ -184,6 +184,14 @@ Generic tools in every app: `status`, `object_list`, `object_get`, `object_set_t
 It includes the ImGui debug panels by default — telemetry, the inspector, buttons and sliders exist
 only there — so pass `include_ui: false` when you want the clean 3D scene instead.
 
+**Input recordings** are how a person hands you a scenario. F9 (pad Back in archer) starts and
+stops one, F10 replays the last; files land in `apps/<name>/recordings/*.rec` and are plain text,
+one event per line - see `core/InputRecording.h`. `input_record` and `input_replay` are the tool
+forms; a replay advances only on ticks that run, so pair it with `sim_pause`/`sim_step` for an
+exact run. Trimming a file is editing its `begin`/`end` lines. A replay reproduces the INPUT
+exactly; how faithfully the run follows depends on what the app's `RestoreRecordingState` puts
+back, so compare replay against replay rather than against the original.
+
 **Pause before you measure.** A tool handler holds no lock, so reading a free-running simulation
 races the physics thread. `sim_pause` freezes the simulation while leaving the render loop running
 (the window stays responsive and `screenshot` still works), and `sim_step` then advances by an exact

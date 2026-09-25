@@ -1,6 +1,7 @@
 #include "ObjectAnimation.h"
 #include "type_helpers.h"
 #include "skeleton/Bone.h"
+#include <algorithm>
 
 #include "Debug.h"
 static Debugger *debug = new Debugger("ObjectAnimation", DEBUG_INFO);
@@ -301,6 +302,66 @@ void Animation::CopyConfigFrom(Animation* source){
     extract_horizontal_root_motion = source->extract_horizontal_root_motion;
     extract_vertical_root_motion = source->extract_vertical_root_motion;
     extract_yaw_root_motion = source->extract_yaw_root_motion;
+    if (source->f_trimmed && !f_trimmed){
+        Trim(source->trim_offset,source->trim_offset + source->duration);
+    }
+}
+
+void Animation::Trim(float start, float end){
+    if (start < 0.0f){
+        start = 0.0f;
+    }
+    if (end <= 0.0f || end > duration){
+        end = duration;
+    }
+    if (end - start <= 0.0f){
+        debug->Err("Trim: %s has nothing between %.3f and %.3f (it is %.3fs long); left as it was\n",
+                   name.c_str(),start,end,duration);
+        return;
+    }
+    /*
+        A little slack on both cuts, because the times come from the glTF as floats: a cut at
+        10/30 of a second has to land ON the key at 0.3333 whichever side of it the two roundings
+        fell, not skip to the next frame for being a ten-millionth late.
+    */
+    const float SLACK = 1e-4f;
+    for (ObjectAnimation* track : object_animations){
+        std::list<ObjectAnimationKeyFrame*>& keys = track->keyframes;
+        if (keys.empty()){
+            continue;
+        }
+        //From the key sampled at `start` through the key sampled at `end`, and nothing either side.
+        std::list<ObjectAnimationKeyFrame*> kept;
+        for (ObjectAnimationKeyFrame* key : keys){
+            if (key->time < start - SLACK){
+                continue;
+            }
+            kept.push_back(key);
+            if (key->time >= end - SLACK){
+                break;
+            }
+        }
+        //A track that stopped before `start` - a bone keyed once and then left alone. Sampling
+        //past its last key returns that key, so that is the pose the trimmed clip holds.
+        if (kept.empty()){
+            kept.push_back(keys.back());
+        }
+        for (ObjectAnimationKeyFrame* key : keys){
+            if (std::find(kept.begin(),kept.end(),key) == kept.end()){
+                delete key;
+            }
+        }
+        for (ObjectAnimationKeyFrame* key : kept){
+            key->time = (key->time > start) ? key->time - start : 0.0f;
+        }
+        keys.swap(kept);
+    }
+    duration = end - start;
+    trim_offset += start;
+    f_trimmed = true;
+    if (time_index > duration){
+        time_index = duration;
+    }
 }
 
 void Animation::SetRootBone(const std::string& name){

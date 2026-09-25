@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 95091de0-2e6d-47f4-a5dd-59fe26a32d0c
-  modified: 2026-09-24T16:09:17.929Z
+  modified: 2026-09-25T11:04:30.358Z
 ---
 
 Agreed with the user 2026-09-24: a rope and a vine are one system - a curve with three operations
@@ -65,6 +65,14 @@ distance's time capped at PUPPET_CLIMB_RATE_MAX (hip pauses used to pass in 1 ti
 RopeMeshInput::cuts splits skin weights per section (re-uploaded from PreRender when the chain's
 cut joints differ), grab points only above the first cut, Stage lets go past the last point
 (f_rope_lost), loose links get ARCHER_MASK_ROPE_LOOSE (they fell through the floor forever).
+
+LOOSE LEGS BUILT 2026-09-25 (animation_plan.md "Loose legs on the rope"): core/DynamicChain
+(verlet dynamic bone, engine-free, tools/dynamic_chain_test.cpp 20 checks) as a post-pose pass
+ArcherModel::ApplyLegChains; Puppet owns leg_weight/leg_lead_deg (pump, Stage::rope_pump)/
+leg_gravity. Lessons: planar chain must use the CHARACTER's plane (she yaws on every swing
+reversal), carry her yaw rigidly (DynamicChain::Carry), and pass the clip's own motion through
+(follow=1 with her world rotation as frame) or a soft chain smears the clip. Feet gripping the
+rope DURING the climb = foot IK/sockets, a separate later step (user agreed).
 
 Next: the rope ANIMATION with the user (crude today) - grip-at-a-point + hand IK onto the curve.
 

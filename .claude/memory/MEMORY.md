@@ -50,3 +50,4 @@
 - [Archer terrain plan](archer_terrain_plan.md) — BUILT 2026-09-22 (steps 1-5): marching-cubes terrain whose SDF field comes FROM the StageBlock blockout; round OUTWARD or ledges sag; any field sampled for gradients must be continuous in every axis; NewGame is the physics thread so it must not remesh
 - [OK to stop running apps](ok_to_stop_running_apps.md) — user allows killing a running app exe to relink or free port 8765; say so in the reply
 - [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform shared by vines and the rope; static vines + modelled wrap (vine_curl) BUILT 2026-09-24 (steps 1-3) and the skinned rope (step 4); next is rope animation + grip-at-a-point; plan in apps/archer/vine_plan.md
+- [Input recording](input_recording.md) — BUILT 2026-09-25: F9/F10 + input_record/input_replay, recordings/*.rec text, trim = edit begin/end; input is tick-exact but archer replays drift because animation state isn't restored

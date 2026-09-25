@@ -14,6 +14,7 @@
 #include "Foliage.h"
 #include "Vine.h"
 #include "RopeMesh.h"
+#include "DynamicChain.h"
 #include "Bow.h"
 #include "TextMesh.h"
 #include "SoundSystem.h"
@@ -91,7 +92,7 @@
         C                       X            kneel / stand up - a toggle; kneeling she can draw
         E                       Y            action - take the rope             (later slice)
         L                       R1           knife                             (later slice)
-        R                                    restart
+        Home                    Start        restart
         F1                                   the engine's ImGui panels
 
     Aim is on Up/Down and drop-through is on S rather than Down, which is the one arrangement that
@@ -470,6 +471,29 @@ enum ArcherAnimSource{
 #define ARCHER_UPPER_SPINE_SHARE    0.3f    //mixamorig:Spine
 #define ARCHER_UPPER_SPINE1_SHARE   0.6f    //mixamorig:Spine1; everything above is 1.0
 
+/*
+    --- THE LOOSE LEGS (animation_plan.md, "Loose legs") -----------------------------------------
+    Each leg a core/DynamicChain - hip, knee, ankle, toe - stepped every tick in world space and
+    swung in the play plane, so her legs trail, float and overshoot with the swing instead of
+    being welded to her pose. Its weight and the pump's lead are the Puppet's (leg_weight,
+    leg_lead_deg); how loose is the model's, on the panel.
+
+    The defaults: soft enough to trail a catch or a turn at the end of an arc by a good few
+    degrees, stiff enough that she is still holding the pose rather than hanging dead. The limits
+    keep a leg a leg - the hip within ARCHER_LEG_HIP_LIMIT of the pose, the knee folding one way
+    only and within its own, the ankle nearly set.
+*/
+#define ARCHER_LEG_BONES            4       //UpLeg, Leg, Foot, ToeBase: the chain's four points
+#define ARCHER_LEG_STIFFNESS        0.07f
+#define ARCHER_LEG_DAMPING          0.06f
+//All of the clip's own leg motion passed straight through (DynamicChainParams::follow). Without
+//it the chain lagged Hanging_Rope's authored leg swing too, and a knee authored at 3 degrees
+//wobbled between 25 and 60 while she hung still.
+#define ARCHER_LEG_FOLLOW           1.0f
+#define ARCHER_LEG_HIP_LIMIT        1.0f    //radians off the pose, either way
+#define ARCHER_LEG_KNEE_LIMIT       0.7f
+#define ARCHER_LEG_ANKLE_LIMIT      0.35f
+
 class ArcherModel : public Skeleton{
 public:
     //Radians of yaw this clip has turned her through since it started. ADDED to the facing the
@@ -479,8 +503,8 @@ public:
     void ApplyRootMotion(const RootMotionDelta& delta) override;
 
     /*
-        The base clips' pose, then the upper layer over it, then the aim over both. See the notes
-        above.
+        The base clips' pose, then the upper layer over it, then the loose legs, then the aim over
+        all of it. See the notes above.
 
         IT UNDOES ITS OWN WORK FIRST. The base only writes a bone on a pass that actually poses - a
         paused sim, a stepped debug override or a finished one-shot may leave last tick's pose in
@@ -519,7 +543,40 @@ public:
     float   aim_pose_deg = 0.0f;
     float   aim_drawn_deg = 0.0f;
 
+    //--- The loose legs - see ARCHER_LEG_BONES ---
+    //Finds both legs' bones. Call once the skeleton is loaded; a leg with any bone missing stays
+    //as the clip has it.
+    bool  BuildLegChains();
+    float leg_weight = 0.0f;        //0..1, from Puppet::leg_weight
+    float leg_lead_deg = 0.0f;      //from Puppet::leg_lead_deg
+    //Gravity is the app's to set, from the physics world the swing is in; stiffness and damping
+    //are the panel's.
+    DynamicChainParams leg_params;
+    //Her yaw (radians) and the rope's tilt as last drawn - set with the model's rotation. A change
+    //of yaw is a TURN, her decision, and the chains are carried through it rigidly; only the
+    //swing is left to their inertia. See ApplyLegChains.
+    float leg_drawn_yaw = 0.0f;
+    quat  leg_drawn_tilt = quat(0.0f,0.0f,0.0f,1.0f);
+    //Measured each tick, left then right: the thigh's swing off the pose as drawn (+ forward), and
+    //the knee's bend (+ the way a knee folds), degrees. For archer_state.
+    float leg_swing_deg[2] = {};
+    float leg_knee_deg[2] = {};
+
+    /*
+        Turns a bone by `angle` about a WORLD axis, keeping where it is. A world turn R on a bone
+        whose world rotation is P * L gives R * P * L = P * (P^-1 R P) * L, and P^-1 R P is the
+        same angle about the axis carried into the parent's space - so the local rotation gains a
+        turn about that. The aim and the legs both use it.
+    */
+    static void TurnInWorld(Bone* bone, const vec3& axis_world, float angle);
+
 private:
+    Bone* leg_bones[2][ARCHER_LEG_BONES] = {};
+    DynamicChain leg_chain[2];
+    bool  f_leg_yaw_seen = false;
+    float leg_last_yaw = 0.0f;      //the yaw the chains were last stepped under
+    void  ApplyLegChains(float time_delta);
+
     Bone* aim_bones[ARCHER_AIM_BONES] = {};
     float aim_shares[ARCHER_AIM_BONES] = {};
 
@@ -729,6 +786,10 @@ struct ArcherSnapshot{
     //of it. -1 off the rope. See BuildRopeAttachMarkers.
     float rope_joint_gap = -1.0f;
     float rope_hands_off = -1.0f;
+    float leg_weight = 0.0f;            //the loose legs - see ArcherModel::ApplyLegChains
+    float leg_lead_deg = 0.0f;
+    float leg_swing_deg[2] = {};
+    float leg_knee_deg[2] = {};
     float climb_pinned_time = -1.0f;    //the rope climb's playhead as pinned this tick, -1 unpinned
     float climb_lift_posed = 0.0f;      //and the lift the model was lowered by (last tick's pin)
     //Each hand (left, right) on the drawn rope: how far down it, and how far off it. -1 off the rope.
@@ -809,6 +870,9 @@ public:
     void RunSimulationTick(void) override;
     //Swaps the live level for the parked one. Physics thread, physics_mutex held - see core.
     void OnActiveSceneChanged(Scene* from, Scene* to) override;
+    //Where an input recording starts, and putting her back there for its replay. Physics thread.
+    json CaptureRecordingState() override;
+    void RestoreRecordingState(const json& state) override;
     //Render thread, before the scene is drawn. Services f_regenerate_terrain.
     void PreRender(void) override;
 #ifdef USE_IMGUI
@@ -1076,6 +1140,8 @@ private:
     void ReapFallenProps();
     void PublishSnapshot();
     void NewGame();
+    //Teleport, clearing the movement state with it - ARCHER_CMD_PLACE and a replay's restore.
+    void PlaceArcher(v2 pos);
 #ifdef USE_MCP
     json BuildStateJson();
     //Blocks until `ticks` more simulation ticks have run, or the timeout expires. Every tool that
@@ -1260,6 +1326,20 @@ private:
     bool f_was_nocked = false;
     //Master gain for the lot, 0..1, on the panel.
     float sound_volume = 0.8f;
+    //Which tick of the kick (Stage::kick_ticks, 1..KICK_TICKS) the swing's whoosh plays on. On
+    //the panel, because the clip has no events and this is found by ear. 11 is where the swing
+    //sat inside the old combined kick.wav as it was tuned by ear, so the timing carried over.
+    int   kick_swing_tick = 11;
+    /*
+        Her shout on a kick - some kicks, not all, and not always on the same tick, because the
+        same yell on the same frame every time is the thing that makes a sound effect read as one.
+        Chosen on the kick's first tick; see UpdateSound. On the panel, found by ear like the swing.
+        The defaults put the loud part of kick_hyaa.wav, about 7 ticks in, around the strike.
+    */
+    float kick_hyaa_chance = 0.4f;
+    int   kick_hyaa_from = 10;      //earliest kick tick it can start on
+    int   kick_hyaa_to = 16;        //latest
+    int   kick_hyaa_tick = 0;       //this kick's, or 0 when this one is quiet
 
     //--- The rope ---------------------------------------------------------------------------------
     std::vector<Object*> rope_segments;         //top link first

@@ -8,6 +8,9 @@
 #include <sstream>
 #include <string.h>     //strstr, strlen - HasCommandLineFlag
 #include <ctype.h>      //isspace
+#include <time.h>       //the recording's timestamp
+#include <math.h>
+#include <algorithm>
 
 #include "Window.h"
 #include "Renderer.h"
@@ -553,6 +556,8 @@ void Application::DrawFrame(){
             DrawTouchButtons();
         }
 #endif
+        //Last, so no HUD can cover it.
+        DrawInputRecordingBadge();
         renderer->BeginGPUPass(Renderer::GPU_PASS_OVERLAY);
         overlay->Draw();
         renderer->EndGPUPass(Renderer::GPU_PASS_OVERLAY);
@@ -681,6 +686,9 @@ void Application::PhysicsThreadFunction(Application* app){
             //disagreeing about whether a tick happened. BeginPass also drains the command queue
             //and services the pause key, both of which must happen on every pass. See Scene.h.
             bool f_tick = app->main_scene->BeginPass();
+            //Recording starts and stops, and replays are armed, here: after this pass's input has
+            //been applied and before the tick that input belongs to. See ServiceInputRecording.
+            app->ServiceInputRecording();
 
             //Time spent on this pass's work
             app->tmr_physics->Restart();
@@ -1244,6 +1252,323 @@ void Application::NextInput(bool f_ticked){
         return;
     }
     main_scene->inputcontroller->Tick(f_ticked);
+}
+
+//--- Input recording ----------------------------------------------------------------------------
+//See the block on RequestRecordingStart in Application.h.
+
+void Application::RequestRecordingStart(){
+    std::lock_guard<std::mutex> lock(recording_mutex);
+    f_record_start_requested = true;
+    f_record_stop_requested = false;
+}
+
+void Application::RequestRecordingStop(){
+    std::lock_guard<std::mutex> lock(recording_mutex);
+    f_record_stop_requested = true;
+    f_record_start_requested = false;
+}
+
+void Application::RequestReplayStop(){
+    std::lock_guard<std::mutex> lock(recording_mutex);
+    f_replay_stop_requested = true;
+    f_replay_requested = false;
+}
+
+std::string Application::ResolveRecordingPath(const std::string& name){
+    if (name.empty()){
+        std::lock_guard<std::mutex> lock(recording_mutex);
+        return last_recording_path;
+    }
+    if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos){
+        return name;
+    }
+    std::string path = recordings_dir + "/" + name;
+    bool f_has_ext = (path.size() >= 4) && (path.compare(path.size() - 4,4,".rec") == 0);
+    return f_has_ext ? path : path + ".rec";
+}
+
+bool Application::RequestReplay(const std::string& path_or_name, bool f_restore_state, std::string& error){
+    std::string path = ResolveRecordingPath(path_or_name);
+    if (path.empty()){
+        error = "nothing recorded yet this session - name a file";
+        return false;
+    }
+    InputRecording rec;
+    //Names from the controller the file will be replayed into. Every scene shares the window's
+    //one controller, so which scene is live does not matter here.
+    const InputController* names = main_window ? main_window->inputcontroller : NULL;
+    if (!rec.Load(path,names,error)){
+        return false;
+    }
+    if (!rec.app.empty() && rec.app != app_name){
+        //Refused rather than warned: action numbers are per app, so another app's recording
+        //presses whatever this app happens to have put on the same numbers.
+        error = "'" + path + "' was recorded in " + rec.app + ", this is " + app_name;
+        return false;
+    }
+    if (rec.tick_rate > 0.0f && fabsf(rec.tick_rate - physics_tps) > 0.01f){
+        debug->Warn("%s was recorded at %g ticks/s and replays at %g - durations in it are ticks, "
+                    "so it will play %s\n",path.c_str(),rec.tick_rate,physics_tps,
+                    (physics_tps > rec.tick_rate) ? "faster" : "slower");
+    }
+    debug->Info("Replay requested: %s (%u events, ticks %u..%u)\n",path.c_str(),
+                (unsigned)rec.events.size(),rec.begin,rec.end);
+    std::lock_guard<std::mutex> lock(recording_mutex);
+    pending_replay = std::move(rec);
+    f_pending_replay_restore = f_restore_state;
+    f_replay_requested = true;
+    f_replay_stop_requested = false;
+    replay_scene_wait_passes = 0;
+    return true;
+}
+
+std::vector<std::string> Application::ListRecordings(){
+    std::vector<std::string> names;
+#ifdef _WIN32
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA((recordings_dir + "/*.rec").c_str(),&fd);
+    if (h != INVALID_HANDLE_VALUE){
+        do{
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)){
+                names.push_back(fd.cFileName);
+            }
+        }while (FindNextFileA(h,&fd));
+        FindClose(h);
+    }
+#endif
+    //By name, which is by date: the name is the app and the time the recording started.
+    std::sort(names.begin(),names.end());
+    return names;
+}
+
+json Application::InputRecordingStatusJson(){
+    json result = json::object();
+    InputController* input = main_window ? main_window->inputcontroller : NULL;
+    if (input){
+        result["recording"] = input->IsRecording();
+        if (input->IsRecording()){
+            result["recorded_ticks"] = input->GetRecordingTicks();
+        }
+        result["replaying"] = input->IsReplaying();
+        if (input->IsReplaying()){
+            result["replay_tick"] = input->GetReplayPosition();
+            result["replay_end"] = input->GetReplayEnd();
+        }
+    }
+    std::lock_guard<std::mutex> lock(recording_mutex);
+    result["last_recording"] = last_recording_path;
+    if (!last_recording_error.empty()){
+        result["last_error"] = last_recording_error;
+    }
+    return result;
+}
+
+//Local time as "2026-09-25 14:03:11", or as "20260925_140311" for a file name.
+static std::string LocalTimeText(bool f_for_filename){
+    time_t now = time(NULL);
+    struct tm local;
+#ifdef _WIN32
+    localtime_s(&local,&now);
+#else
+    localtime_r(&now,&local);
+#endif
+    char buf[32];
+    strftime(buf,sizeof(buf),f_for_filename ? "%Y%m%d_%H%M%S" : "%Y-%m-%d %H:%M:%S",&local);
+    return buf;
+}
+
+void Application::FinishRecording(uint64_t sim_tick){
+    InputController* input = main_scene->inputcontroller;
+    InputRecording rec;
+    input->EndRecording(sim_tick,rec.events,rec.end);
+    rec.app = app_name;
+    rec.scene = recording_scene;
+    rec.tick_rate = physics_tps;
+    rec.recorded_at = recording_started_at;
+    rec.begin = 0;
+    rec.state = recording_start_state;
+
+    //The app name as a file name: spaces and anything a path would choke on become underscores.
+    std::string stem = app_name;
+    for (char& c: stem){
+        if (!isalnum((unsigned char)c) && c != '-' && c != '_'){
+            c = '_';
+        }
+        c = (char)tolower((unsigned char)c);
+    }
+#ifdef _WIN32
+    CreateDirectoryA(recordings_dir.c_str(),NULL);     //fails harmlessly if it exists
+#endif
+    std::string path = recordings_dir + "/" + stem + "_" + recording_file_stamp + ".rec";
+
+    /*
+        Written HERE, on the physics thread with the mutex held, and that is a choice rather than an
+        oversight. It is one fopen and a few kilobytes - a long recording with a stick in use every
+        tick is a few hundred - once, at the moment the person has just stopped playing. Handing it
+        to another thread would buy back a millisecond nobody is watching for, at the price of a
+        stop that returns before the file exists.
+    */
+    std::string error;
+    bool f_ok = rec.Save(path,input,error);
+    if (f_ok){
+        debug->Ok("Saved input recording %s (%u ticks, %u events)\n",path.c_str(),rec.end,
+                  (unsigned)rec.events.size());
+    }else{
+        debug->Err("Input recording not saved: %s\n",error.c_str());
+    }
+    std::lock_guard<std::mutex> lock(recording_mutex);
+    if (f_ok){
+        last_recording_path = path;
+        last_recording_error.clear();
+    }else{
+        last_recording_error = error;
+    }
+    recordings_saved++;
+}
+
+void Application::ServiceInputRecording(){
+    if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    InputController* input = main_scene->inputcontroller;
+    uint64_t tick = main_scene->GetPhysicsTick();
+
+    /*
+        The hotkeys. Edges read every pass and acted on only while the window has focus, the same
+        rule as archer's F1: these are the person's own keys, a scripted hold never means them,
+        and raw input reports keys typed into other programs. Pressed rather than released, so the
+        recording starts the moment the key goes down and not a fraction of a second later.
+    */
+    bool f_record_key = input->WasKeyPressed(INPUT_RECORD_TOGGLE);
+    bool f_replay_key = input->WasKeyPressed(INPUT_REPLAY_TOGGLE);
+    if (input->HasFocus()){
+        if (f_record_key){
+            if (input->IsRecording()){
+                RequestRecordingStop();
+            }else{
+                RequestRecordingStart();
+            }
+        }
+        if (f_replay_key){
+            if (input->IsReplaying()){
+                RequestReplayStop();
+            }else{
+                std::string error;
+                if (!RequestReplay("",true,error)){
+                    debug->Warn("F10: %s\n",error.c_str());
+                }
+            }
+        }
+    }
+
+    bool f_start = false;
+    bool f_stop = false;
+    bool f_replay = false;
+    bool f_replay_stop = false;
+    bool f_restore = true;
+    int wait_passes = 0;
+    InputRecording replay;
+    {
+        std::lock_guard<std::mutex> lock(recording_mutex);
+        f_start = f_record_start_requested;
+        f_stop = f_record_stop_requested;
+        f_replay = f_replay_requested;
+        f_replay_stop = f_replay_stop_requested;
+        f_record_start_requested = false;
+        f_record_stop_requested = false;
+        f_replay_requested = false;
+        f_replay_stop_requested = false;
+        if (f_replay){
+            replay = std::move(pending_replay);
+            f_restore = f_pending_replay_restore;
+            wait_passes = replay_scene_wait_passes;
+        }
+    }
+
+    if (f_replay_stop){
+        input->StopReplay();
+    }
+    if (f_stop && input->IsRecording()){
+        FinishRecording(tick);
+    }
+    if (f_start && !input->IsRecording()){
+        //The app's start state first, on this same pass, so it describes the tick the recording's
+        //first event applies before.
+        recording_start_state = CaptureRecordingState();
+        recording_scene = main_scene->name;
+        recording_started_at = LocalTimeText(false);
+        recording_file_stamp = LocalTimeText(true);
+        input->BeginRecording(tick);
+    }
+
+    if (f_replay){
+        /*
+            Into the scene it was recorded in, first. The switch only lands at the top of the next
+            pass (ApplyPendingSceneSwitch), so the replay is put back and tried again then - with a
+            limit, so a switch that never lands cannot leave a request circling forever. The pause
+            state is carried across, as scene_set does, or a replay started into a paused scene
+            would start free-running in the other.
+        */
+        if (!replay.scene.empty() && replay.scene != main_scene->name){
+            Scene* target = FindScene(replay.scene);
+            if (target && wait_passes < 10){
+                if (wait_passes == 0){
+                    target->PausePhysics(main_scene->IsPhysicsPaused());
+                    RequestActiveScene(target);
+                }
+                std::lock_guard<std::mutex> lock(recording_mutex);
+                if (!f_replay_requested){      //unless a newer request arrived meanwhile
+                    pending_replay = std::move(replay);
+                    f_pending_replay_restore = f_restore;
+                    f_replay_requested = true;
+                    replay_scene_wait_passes = wait_passes + 1;
+                }
+                return;
+            }
+            debug->Warn("Replay was recorded in scene '%s', which %s - replaying in '%s'\n",
+                        replay.scene.c_str(),target ? "could not be switched to" : "this app does not have",
+                        main_scene->name.c_str());
+        }
+        if (f_restore){
+            RestoreRecordingState(replay.state);
+        }
+        input->StartReplay(replay.events,replay.begin,replay.end);
+    }
+}
+
+void Application::DrawInputRecordingBadge(){
+    if (!overlay || !overlay->IsReady() || !main_window || !main_window->inputcontroller){
+        return;
+    }
+    InputController* input = main_window->inputcontroller;
+    bool f_rec = input->IsRecording();
+    bool f_rep = input->IsReplaying();
+    if (!f_rec && !f_rep){
+        return;
+    }
+    //Seconds rather than ticks: this is for the person at the desk, who counts in seconds.
+    char text[64];
+    float tps = (physics_tps > 0.0f) ? physics_tps : 50.0f;
+    if (f_rec){
+        snprintf(text,sizeof(text),"REC  %.1f s",input->GetRecordingTicks() / tps);
+    }else{
+        snprintf(text,sizeof(text),"REPLAY  %.1f / %.1f s",input->GetReplayPosition() / tps,
+                 input->GetReplayEnd() / tps);
+    }
+    float size = 22.0f;
+    vec2 extent = overlay->MeasureText(text,size);
+    //Top centre, clear of the corners where the apps put their HUDs and ImGui its panels.
+    float w = extent.x + size * 2.2f;
+    float h = size * 1.7f;
+    float x = (main_window->width - w) * 0.5f;
+    float y = 12.0f;
+    overlay->AddRect(vec2(x,y),vec2(x + w,y + h),h * 0.5f,UIColor(20,20,24,190));
+    uint32_t dot = f_rec ? UIColor(235,50,50,255) : UIColor(80,200,120,255);
+    float r = size * 0.32f;
+    vec2 c = vec2(x + size * 0.85f,y + h * 0.5f);
+    overlay->AddRect(c - vec2(r,r),c + vec2(r,r),r,dot);
+    overlay->AddText(text,vec2(x + size * 1.5f,y + h * 0.5f + size * 0.34f),size,UIColor(255,255,255,235));
 }
 
 

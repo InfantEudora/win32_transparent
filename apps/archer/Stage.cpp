@@ -98,6 +98,7 @@ void Stage::Reset(){
     rope_s = 0.0f;
     rope_climb = 0;
     rope_climbed = 0.0f;
+    rope_pump = 0.0f;
     rope_points.clear();
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
@@ -985,6 +986,7 @@ int Stage::FindRopePoint(float* out_s) const{
 */
 void Stage::TickRope(const ArcherInput& in, StageEvents& events){
     rope_ticks++;
+    rope_pump = ClampF(in.move_axis,-1.0f,1.0f);
 
     /*
         CLIMBING: the DECISION only - which way, how fast, how far. The app turns rope_s into where
@@ -1038,6 +1040,7 @@ void Stage::TickRope(const ArcherInput& in, StageEvents& events){
 
     mode = MODE_AIR;
     rope_id = -1;
+    rope_pump = 0.0f;
     rope_cooldown = ROPE_GRAB_COOLDOWN;
     f_on_ground = false;
     //The swing has just handed the archer a lot of speed, and a jump buffered during it would
@@ -1088,7 +1091,7 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
         holding on to something.
 
         THE AIR is the fourth and it used to be allowed. It was wrong on both counts. A kick roots
-        her for KICK_TICKS, which is 1.43 seconds - longer than an entire jump - so a flying kick
+        her for KICK_TICKS, which is 1.1 seconds - longer than an entire jump - so a flying kick
         was really a decision to hang motionless in mid-air until the ground arrived; and
         Kick_Front is a GROUNDED clip, a wind-up and a plant and a recovery, all of which need a
         floor to push against and none of which read as anything but a bug when they float. A kick
