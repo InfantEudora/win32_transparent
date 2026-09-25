@@ -216,7 +216,39 @@ void SoundSystem::AppendFile(const char* filename, const char* handle_name){
                 (unsigned long long)buffers.back().frame_count);
 }
 
-soundhandle_t SoundSystem::Play(const char* handle_name, bool looping, float gain, uint32_t flags){
+float SoundSystem::LoudestAt(const char* handle_name, float window){
+    int buffer_index = FindBufferByName(handle_name);
+    if (buffer_index < 0){
+        return -1.0f;
+    }
+    const SoundBuffer& sb = buffers[buffer_index];
+    if (sb.channels == 0 || sb.sample_rate == 0 || sb.frame_count == 0){
+        return -1.0f;
+    }
+    const int16_t* pcm = (const int16_t*)sb.pcm.data();
+    ma_uint64 step = (ma_uint64)(window * (float)sb.sample_rate);
+    if (step < 1){
+        step = 1;
+    }
+    double best = -1.0;
+    ma_uint64 best_at = 0;
+    for (ma_uint64 start = 0; start + step <= sb.frame_count; start += step){
+        double sum = 0.0;
+        for (ma_uint64 f = start; f < start + step; f++){
+            for (ma_uint32 c = 0; c < sb.channels; c++){
+                double s = (double)pcm[f * sb.channels + c];
+                sum += s * s;
+            }
+        }
+        if (sum > best){
+            best = sum;
+            best_at = start;
+        }
+    }
+    return (float)best_at / (float)sb.sample_rate;
+}
+
+soundhandle_t SoundSystem::Play(const char* handle_name, bool looping, float gain, uint32_t flags, float start_seconds){
     if (!f_initialised){
         return SOUND_INVALID_HANDLE;
     }
@@ -275,6 +307,14 @@ soundhandle_t SoundSystem::Play(const char* handle_name, bool looping, float gai
 
     ma_sound_set_volume(&voice->sound,gain);
     ma_sound_set_looping(&voice->sound,looping ? MA_TRUE : MA_FALSE);
+    //Partway in - see Play. In the buffer's own frames, which is what the data source counts in.
+    if (start_seconds > 0.0f){
+        ma_uint64 frame = (ma_uint64)(start_seconds * (float)sb.sample_rate);
+        if (frame >= sb.frame_count){
+            frame = (sb.frame_count > 0) ? sb.frame_count - 1 : 0;
+        }
+        ma_sound_seek_to_pcm_frame(&voice->sound,frame);
+    }
 
     result = ma_sound_start(&voice->sound);
     if (result != MA_SUCCESS){

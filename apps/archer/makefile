@@ -49,6 +49,8 @@ APP_SRCS += Foliage.cpp
 APP_SRCS += Vine.cpp
 #The rope as one skinned mesh over its physics links. Engine-free, so `rules` tests it too.
 APP_SRCS += RopeMesh.cpp
+#Text on props - a signpost's boards - placed by empties authored on the model. See Sign.h.
+APP_SRCS += Sign.cpp
 
 #SOUND, for the bow: the string's creak from the nock, the loose, and the arrow striking
 #something - assets/sound/*.wav, played from ApplicationArcher::UpdateSound. The jump, the

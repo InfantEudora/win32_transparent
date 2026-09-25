@@ -49,6 +49,10 @@ public:
     vec3                        GetNodePosition(const char* node_name);
     quat                        GetNodeRotation(const char* node_name);
     vec3                        GetNodeScale(const char* node_name);    //(1,1,1) if it has none
+    //The names of a node's direct children, in the file's order; empty if it has none or does not
+    //exist. The three getters above then read each child's transform RELATIVE TO THIS NODE, which
+    //is what makes an empty parented to a prop in Blender usable as a marker on it.
+    std::vector<std::string>    GetNodeChildNames(const char* node_name);
 
     std::vector<Material>&      GetAllUniqueLoadedMaterials(){return loaded_materials;};
 

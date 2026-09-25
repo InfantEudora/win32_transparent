@@ -56,6 +56,8 @@ Stage::Stage(){
 void Stage::Reset(){
     blocks.clear();
     props.clear();
+    signs.clear();
+    scenery.clear();
     BuildLevel();
     //An editor's moves, laid back over the code's. See KeepBlockLayout.
     if (kept_layout.size() == blocks.size()){
@@ -237,30 +239,80 @@ void Stage::BuildMainLevel(){
                        BLOCK_SOLID, true });                                        //floor, top 0
 
     /*
-        Four copies of the same shapes along it. Each is the cheapest thing that exposes one
-        specific failure:
-
-          the step      a convex lip - does the top stay pinned exactly where the collider is?
-          the wall      the concave inside corner - does smooth union bulge into walkable space?
-          the pillar    0.5 wide, thinner than twice a typical smoothing radius - does it survive?
+        The ground: one low mound on the left and one hill on the right, and nothing else. It used
+        to be four copies of a step, a wall and a pillar - each the cheapest shape that exposed one
+        meshing failure - which did their job and read as a row of teeth once the terrain looked
+        like terrain. Both are under 3.0 tall, so she can cross either way on foot and nothing down
+        here can pen her in.
     */
-    for (int i = 0; i < ARCHER_TEST_BAY_SHAPE_SETS; i++){
-        float cx = ARCHER_TEST_BAY_SHAPE_CENTRE(i);
-        blocks.push_back({ cx - 2.0f,  0.60f, 1.00f, 0.60f, BLOCK_SOLID, true });   //step,   top 1.2
-        blocks.push_back({ cx - 0.2f,  1.40f, 0.80f, 1.40f, BLOCK_SOLID, true });   //wall,   top 2.8
-        blocks.push_back({ cx + 2.2f,  1.00f, 0.25f, 1.00f, BLOCK_SOLID, true });   //pillar, top 2.0
-    }
+    blocks.push_back({ -35.00f,  0.40f, 2.50f, 0.40f, BLOCK_SOLID, true });         //mound, top 0.8
+    blocks.push_back({ -14.50f,  1.20f, 1.50f, 1.20f, BLOCK_SOLID, true });         //hill,  x -16..-13, top 2.4
 
     /*
-        The upper bay: an island floating clear of everything below - its underside at 8 or more,
-        above the 3.2 a jump lifts the feet, so nothing on the ground can reach it. A slab, a hill
-        on it, and one spike hanging under it, so the island has a top, a bump and an underside
-        to look at. Every centre is above ARCHER_TEST_BAY_SPLIT_Y, which is what puts them here.
+        The upper bay: an island floating clear of everything below - its underside at 9.75, far
+        above the 3.2 a jump lifts the feet. A slab, a hill on it, and one spike hanging under it,
+        so the island has a top, a bump and an underside to look at.
     */
     blocks.push_back({ -26.00f, 10.50f, 8.00f, 0.75f, BLOCK_SOLID, true });         //slab,  top 11.25
     blocks.push_back({ -29.00f, 11.75f, 1.50f, 0.50f, BLOCK_SOLID, true });         //hill,  top 12.25
     blocks.push_back({ -21.00f,  9.00f, 0.40f, 1.00f, BLOCK_SOLID, true });         //spike, bottom 8
+
+    /*
+        THE WAY UP: the hill, then three stones, zig-zagging up the island's right end - 2.4 a rise,
+        well inside the 3.2 a jump lifts the feet. Each stone is placed so that NOTHING IS OVER HER
+        HEAD on the jump that reaches it: the first layout had the third stone between the second
+        and the island, and the jump from the first stone to the second bonked on its underside
+        and fell short. So the third is on the far side, and the last move is a running jump LEFT
+        onto the island, over open air.
+
+          hill   2.4    x -16 .. -13
+          one    4.8    x -20.5 .. -18.2, tucked under the island's end (headroom 4.95)
+          two    7.2    x -15.3 .. -13.3, a 2.9 gap back to the right
+          three  9.6    x -13.8 .. -12.0, stepped onto from the left end of two
+          island 11.25  a 4.2 gap, 1.65 up
+
+        stage_test's TestBayClimb plays this route and searches every jump for anything else in the
+        bay she can stand on - move a stone and it says whether the island is still reachable.
+        Stone one's centre is below ARCHER_TEST_BAY_SPLIT_Y, so it melts with the ground bay rather
+        than the island's; it is floating either way.
+    */
+    blocks.push_back({ -19.35f,  4.40f, 1.15f, 0.40f, BLOCK_SOLID, true });         //stone one,   top 4.8
+    blocks.push_back({ -14.30f,  6.80f, 1.00f, 0.40f, BLOCK_SOLID, true });         //stone two,   top 7.2
+    blocks.push_back({ -12.90f,  9.20f, 0.90f, 0.40f, BLOCK_SOLID, true });         //stone three, top 9.6
+
+    /*
+        Two floaters to look at and never stand on. The first hangs under the middle of the island,
+        where a jump from the ground falls 3 short of it and the island's own underside stops
+        anyone dropping in from above: 10 from stone one's edge and 3 in from the island's left
+        end, with a ceiling at 9.75 flattening every arc. The second is above the island,
+        its underside past the 15.45 a jump from the island's hill reaches.
+    */
+    blocks.push_back({ -30.00f,  6.50f, 1.00f, 0.30f, BLOCK_SOLID, true });         //under the island, top 6.8
+    blocks.push_back({ -23.00f, 16.10f, 1.20f, 0.30f, BLOCK_SOLID, true });         //over it, bottom 15.8
 #endif
+
+    /*
+        The two authored terrain tiles, floating to the right of stone three in the play plane, so
+        they can be judged against the marching-cubes stones beside them - and stood on. The big
+        one level with stone three across a 2.9 gap, the round one 2.05 further and 1.2 down.
+
+        The colliders are the tiles' walkable tops as measured off the meshes at her scale (the
+        app re-measures and warns if these drift): the big one 3.21 wide with a flat underside
+        1.52 below, the round one 3.79 wide - taken in a little, its lip rolls over - and only 1.0
+        deep, because its rock tapers away underneath and a full-width box down to the tip would
+        bump her head on air.
+    */
+    AddScenery({ SCENERY_TILE_BIG,   -7.50f, 9.60f, 0.00f, 0.0f, 1.60f, 0.76f });
+    AddScenery({ SCENERY_TILE_ROUND, -2.00f, 8.40f, 0.00f, 0.0f, 1.85f, 0.50f });
+}
+
+void Stage::AddScenery(const StageScenery& s){
+    scenery.push_back(s);
+    if (s.collider_hw > 0.0f && s.collider_hh > 0.0f){
+        StageBlock b = { s.x, s.y - s.collider_hh, s.collider_hw, s.collider_hh, BLOCK_SOLID, true };
+        b.f_invisible = true;
+        blocks.push_back(b);
+    }
 }
 
 void Stage::KeepBlockLayout(){
@@ -300,9 +352,9 @@ v2 Stage::StartPosition() const{
 
     NARROWER THAN ONE SCREEN, on purpose. The camera shows about 31.8 units across at
     CAMERA_DISTANCE, so with the floor at x -17 .. 17 the whole range fits in one frame when she
-    stands in the middle, and the walls sit just past its edges. The range camera follows her
-    slowly (RANGE_CAMERA_SMOOTH in ApplicationArcher.h), so walking to one end brings that wall
-    into view and loses the far one. The walls exist so that there
+    stands in the middle, and the walls sit just past its edges. The camera follows her (see
+    ArcherCameraTuning in ApplicationArcher.h), so walking to one end brings that wall into view
+    and loses the far one. The walls exist so that there
     is nowhere to fall: an arrow that misses everything sticks in one, and she cannot walk off the
     end of the world into a restart.
 
@@ -334,13 +386,31 @@ v2 Stage::StartPosition() const{
     The floor is as wide as the main level's run-up needs: at ARCHER_RUN_SPEED from the start at
     -6 she reaches the rope at full speed, so catching it at a run is testable. The walls are the
     range's height, so an arrow always stays in.
+
+    A PIT OFF EACH END, for falls and landings (2026-09-25). Their depths are picked off the fall:
+    under ARCHER_GRAVITY * ARCHER_FALL_GRAVITY_MUL (56.7) she passes PUPPET_HARD_LAND_VEL after
+    5.5 units and reaches ARCHER_MAX_FALL_SPEED after 10.2.
+    - Left, 3 deep: lands at 18.4 u/s, a soft landing much like a full jump's 19. The floor's
+      last unit is a LEDGE, so a jump from the pit catches its lip and climbs out - a block of its
+      own rather than the whole floor, so only the lip is drawn as something to catch.
+    - Right, 15 deep: through the hard landing and on at top speed for the last 4.8 units. Nothing
+      gets out of it - Restart. 14 wide, so a sprint off the edge (landing about 6.5 out) still
+      comes down on its floor.
+    The blocks go down to -16 and below, so nothing reads as a slab floating over a void.
 */
 void Stage::BuildRopeLevel(){
-    blocks.push_back({   0.00f, -2.00f, 17.00f, 2.00f, BLOCK_SOLID, true });   //the floor, top at 0
-    blocks.push_back({ -17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //left wall
-    blocks.push_back({  17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //right wall
+    blocks.push_back({   0.50f, -8.00f, 16.50f,  8.00f, BLOCK_SOLID, true });  //the floor, top at 0
+    blocks.push_back({ -16.50f, -8.00f,  0.50f,  8.00f, BLOCK_LEDGE, true });  //its left lip
+    blocks.push_back({ -21.00f, -9.50f,  4.00f,  6.50f, BLOCK_SOLID, true });  //the shallow pit's floor, top -3
+    blocks.push_back({ -25.50f, 22.50f,  0.50f, 25.50f, BLOCK_SOLID, true });  //left wall
+    blocks.push_back({  24.00f,-17.00f,  7.00f,  2.00f, BLOCK_SOLID, true });  //the deep pit's floor, top -15
+    blocks.push_back({  31.50f, 16.50f,  0.50f, 31.50f, BLOCK_SOLID, true });  //right wall
 
     props.push_back({ PROP_ROPE_ANCHOR, 0.00f, 11.00f, 0.10f, 9.00f, 1, 1 });
+
+    //Between the start and the rope, behind her walking line. The lower board points right, at
+    //the rope; the upper one points left, where the drop is to go.
+    signs.push_back({ SIGN_POST, -3.00f, 0.00f, -1.00f, 0.0f, { "DROP", "ROPE" } });
 }
 
 void Stage::BuildRangeLevel(){
@@ -1439,10 +1509,10 @@ void Stage::EnterHang(int block, float side, StageEvents& events){
     mode = MODE_HANG;
     hang_block = block;
     hang_side = side;
-    //Body flat against the face, hands exactly on the lip.
+    //Body flat against the face, fingers on the lip - see LEDGE_HANG_DROP.
     pos.x = (side < 0.0f) ? (b.Left() - ARCHER_HALF_W - STAGE_EPS)
                           : (b.Right() + ARCHER_HALF_W + STAGE_EPS);
-    pos.y = b.Top() - ARCHER_HALF_H;
+    pos.y = b.Top() - ARCHER_HALF_H - LEDGE_HANG_DROP;
     vel = v2(0.0f,0.0f);
     f_on_ground = false;
     coyote_ticks = 0;
@@ -1482,9 +1552,14 @@ void Stage::TickHang(const ArcherInput& in, StageEvents& events){
         mode = MODE_CLIMB;
         climb_ticks = LEDGE_CLIMB_TICKS;
         climb_from = pos;
-        //Onto the top surface, just inside the edge the archer came up over.
-        climb_to = v2((hang_side < 0.0f) ? (b.Left() + ARCHER_HALF_W + STAGE_EPS)
-                                         : (b.Right() - ARCHER_HALF_W - STAGE_EPS),
+        //Onto the top surface, LEDGE_CLIMB_INSET past the edge she came up over - or as far as a
+        //narrow block allows, and never less than just inside it.
+        float inset = ClampF(LEDGE_CLIMB_INSET,ARCHER_HALF_W + STAGE_EPS,
+                             b.hw * 2.0f - ARCHER_HALF_W - STAGE_EPS);
+        if (inset < ARCHER_HALF_W + STAGE_EPS){
+            inset = ARCHER_HALF_W + STAGE_EPS;
+        }
+        climb_to = v2((hang_side < 0.0f) ? (b.Left() + inset) : (b.Right() - inset),
                       b.Top() + ARCHER_HALF_H + STAGE_EPS);
         return;
     }
@@ -1501,17 +1576,39 @@ void Stage::TickHang(const ArcherInput& in, StageEvents& events){
     //re-asserted rather than assumed so that nothing else can nudge the pose.
     pos.x = (hang_side < 0.0f) ? (b.Left() - ARCHER_HALF_W - STAGE_EPS)
                                : (b.Right() + ARCHER_HALF_W + STAGE_EPS);
-    pos.y = b.Top() - ARCHER_HALF_H;
+    pos.y = b.Top() - ARCHER_HALF_H - LEDGE_HANG_DROP;
     vel = v2(0.0f,0.0f);
+}
+
+/*
+    The path, measured off `Climb` from the grab (1.033s) to its end - see LEDGE_CLIMB_TICKS, and
+    LEDGE_CLIMB_REGRIP for why the rise is not the clip's alone. ApplicationArcher::
+    MeasureLedgeClimb prints these again at every start if they have drifted.
+*/
+const float LEDGE_CLIMB_UP[LEDGE_CLIMB_PATH_SAMPLES] = {
+    0.000f, 0.144f, 0.281f, 0.398f, 0.513f, 0.604f, 0.653f, 0.672f, 0.721f,
+    0.783f, 0.828f, 0.858f, 0.913f, 0.950f, 0.975f, 0.991f, 1.000f };
+const float LEDGE_CLIMB_ACROSS[LEDGE_CLIMB_PATH_SAMPLES] = {
+    0.000f, 0.170f, 0.304f, 0.385f, 0.403f, 0.422f, 0.464f, 0.486f, 0.472f,
+    0.448f, 0.455f, 0.520f, 0.617f, 0.728f, 0.843f, 0.943f, 1.000f };
+
+static float SampleClimbPath(const float* path, float t){
+    float f = ClampF(t,0.0f,1.0f) * (float)(LEDGE_CLIMB_PATH_SAMPLES - 1);
+    int i = (int)f;
+    if (i >= LEDGE_CLIMB_PATH_SAMPLES - 1){
+        return path[LEDGE_CLIMB_PATH_SAMPLES - 1];
+    }
+    return path[i] + (path[i + 1] - path[i]) * (f - (float)i);
 }
 
 /*
     Pulling up over the lip.
 
-    UNINTERRUPTIBLE, and a straight lerp along both axes. That is not a placeholder standing in for
-    something cleverer - it is the shape a root-motion climb clip has too, which is why this is a
-    tick count and a start/end pair rather than a velocity: when the animation arrives, the clip's
-    own displacement replaces the lerp and nothing else here changes.
+    UNINTERRUPTIBLE, and along the clip's own path, so the hands the pose has on the lip stay
+    there. The body box goes INTO the wall on the way - the hips close on it by 0.4 while she is
+    still below the lip - which nothing minds: nothing collides with her during the move, and the
+    box is never drawn. The straight up-then-across lerp this replaced kept the box out of the
+    corner, which mattered only while the box was what you saw.
 */
 void Stage::TickClimb(const ArcherInput& in, StageEvents& events){
     (void)in;
@@ -1529,10 +1626,8 @@ void Stage::TickClimb(const ArcherInput& in, StageEvents& events){
     }
 
     float t = 1.0f - ((float)climb_ticks / (float)LEDGE_CLIMB_TICKS);
-    //Up first, then across. Interpolating both together walks the body diagonally THROUGH the
-    //corner it is climbing over, which with a box for a character is very visible.
-    float up = ClampF(t * 1.6f,0.0f,1.0f);
-    float across = ClampF((t - 0.35f) / 0.65f,0.0f,1.0f);
+    float up = SampleClimbPath(LEDGE_CLIMB_UP,t);
+    float across = SampleClimbPath(LEDGE_CLIMB_ACROSS,t);
     pos.x = climb_from.x + (climb_to.x - climb_from.x) * across;
     pos.y = climb_from.y + (climb_to.y - climb_from.y) * up;
     vel = v2(0.0f,0.0f);
@@ -1660,15 +1755,12 @@ void Stage::TickArrows(StageEvents& events){
             it is the segment rp3d is asked about for crates and targets. See the handshake note
             on Stage::arrows.
         */
-        v2 from = (a.age_ticks == 0) ? a.prev_pos : a.pos;
-        a.prev_pos = from;
-
-        a.vel.y -= ARROW_GRAVITY * ARCHER_DT;
-        v2 next = a.pos + a.vel * ARCHER_DT;
-
+        v2 from;
+        v2 next;
         v2 point;
         v2 normal;
-        int block = SegmentHitsBlock(from,next,point,normal);
+        int block = FlyArrow(a,from,next,point,normal);
+        a.prev_pos = from;
         if (block >= 0){
             float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
             //Backed off along the face so the shaft is embedded rather than coplanar with the
@@ -1696,6 +1788,51 @@ void Stage::TickArrows(StageEvents& events){
             a.f_live = false;
         }
     }
+}
+
+int Stage::FlyArrow(Arrow& a, v2& from, v2& next, v2& point, v2& normal) const{
+    from = (a.age_ticks == 0) ? a.prev_pos : a.pos;
+    a.vel.y -= ARROW_GRAVITY * ARCHER_DT;
+    next = a.pos + a.vel * ARCHER_DT;
+    return SegmentHitsBlock(from,next,point,normal);
+}
+
+StageArrowImpact Stage::PredictArrowImpact(int index, int horizon, std::vector<v2>* path) const{
+    StageArrowImpact out;
+    if (path){
+        path->clear();
+    }
+    if (index < 0 || index >= ARROW_MAX_LIVE || !arrows[index].f_live || arrows[index].f_stuck){
+        return out;
+    }
+    Arrow a = arrows[index];
+    for (int i = 1; i <= horizon; i++){
+        v2 from;
+        v2 next;
+        v2 point;
+        v2 normal;
+        int block = FlyArrow(a,from,next,point,normal);
+        if (path){
+            if (path->empty()){
+                path->push_back(from);
+            }
+            path->push_back((block >= 0) ? point : next);
+        }
+        if (block >= 0){
+            out.f_hits = true;
+            out.ticks = i;
+            out.point = point;
+            out.block = block;
+            return out;
+        }
+        //The rest of TickArrows' step for a flight that carries on, and its end.
+        a.pos = next;
+        a.age_ticks++;
+        if (a.age_ticks > ARROW_MAX_AGE_TICKS || a.pos.y < -60.0f){
+            return out;
+        }
+    }
+    return out;
 }
 
 int Stage::NumLiveArrows() const{
@@ -1809,6 +1946,48 @@ int Stage::SegmentHitsBlock(const v2& a, const v2& b, v2& out_point, v2& out_nor
         out_normal = best_normal;
     }
     return best;
+}
+
+/*
+    The landing forecast - see the declaration. The whole Stage is copied rather than the few
+    fields a fall reads, because a copy that leaves something out is a second model of the rules,
+    and a second model drifts; this one cannot, since it IS the rules. A copy is a few kilobytes
+    and a fall rarely needs a full horizon, so it costs less than it sounds.
+*/
+StageLanding Stage::PredictLanding(const ArcherInput& in, int horizon) const{
+    StageLanding out;
+    if (mode != MODE_AIR || horizon < 1){
+        return out;
+    }
+    ArcherInput held = in;
+    held.f_jump_pressed = false;
+    held.f_draw_released = false;
+    held.f_kick_pressed = false;
+    held.f_action_pressed = false;
+    held.f_kneel_pressed = false;
+
+    Stage ahead = *this;
+    for (int i = 1; i <= horizon; i++){
+        StageEvents e;
+        ahead.Tick(held,e);
+        if (e.f_landed){
+            out.f_lands = true;
+            out.ticks = i;
+            out.speed = e.land_speed;
+            out.pos = ahead.pos;
+            return out;
+        }
+        if (ahead.mode == MODE_HANG){
+            out.f_caught = true;
+            out.ticks = i;
+            out.pos = ahead.pos;
+            return out;
+        }
+        if (ahead.mode != MODE_AIR){
+            return out;
+        }
+    }
+    return out;
 }
 
 /*

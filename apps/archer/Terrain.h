@@ -123,7 +123,8 @@ struct TerrainRegion{
     float y_min = 0.0f, y_max = 0.0f;
 
     bool Contains(const StageBlock& b) const{
-        return b.kind == BLOCK_SOLID && b.f_alive &&
+        //Not an invisible one: that block already has a look, the model it sits under.
+        return b.kind == BLOCK_SOLID && b.f_alive && !b.f_invisible &&
                b.x >= x_min && b.x < x_max && b.y >= y_min && b.y < y_max;
     }
 };

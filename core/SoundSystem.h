@@ -130,8 +130,20 @@ public:
         The same name may be played any number of times at once, up to NUM_SOUND_VOICES - they
         overlap instead of cutting each other off. Returns SOUND_INVALID_HANDLE if the name is
         not registered, or if every voice is busy with a kept one.
+
+        `start_seconds` starts it that far in rather than at its first sample - for a sound that
+        leads up to a moment (a whoosh that peaks on an impact) when the moment is nearer than
+        the sound's lead: playing its tail keeps the peak on the moment. Clamped to the sound.
     */
-    soundhandle_t Play(const char* handle_name, bool looping = false, float gain = 1.0f, uint32_t flags = SOUND_ONESHOT);
+    soundhandle_t Play(const char* handle_name, bool looping = false, float gain = 1.0f, uint32_t flags = SOUND_ONESHOT,
+                       float start_seconds = 0.0f);
+
+    /*
+        Where a registered sound is loudest: the start, in seconds, of its loudest `window` (RMS
+        over every channel). For lining a sound's moment up with a game's - measured off the file
+        rather than typed, so a re-cut sound re-measures itself. -1 for a name not registered.
+    */
+    float LoudestAt(const char* handle_name, float window = 0.01f);
 
     //All of these do nothing, harmlessly, for a handle whose voice is gone - see soundhandle_t.
     void Stop(soundhandle_t handle);        //ends it and returns the voice to the pool

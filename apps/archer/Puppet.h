@@ -82,7 +82,7 @@ enum ArcherClip{
     CLIP_HANDSTAND,         //Walk_ToHandstand       set dressing; preview only
     CLIP_JUMP_IN_PLACE,     //Jumping_InPlace        a whole standing jump; preview only
     CLIP_JUMP_FORWARD,      //Jump_Forward           a whole travelling jump; not wired
-    CLIP_DRAW,              //Standing_DrawArrow     standing only; step 2's mask layer lets it play while moving
+    CLIP_DRAW,              //Standing_DrawArrow     the upper layer's draw, pinned to the rules', over any base
     CLIP_STRETCH2,
     CLIP_AIM_IDLE,          //Standing_AimArrowIdle  held at full draw, looping; follows the draw
     CLIP_OVERDRAW,          //Standing_OverdrawArrow pulled past full draw; preview only for now
@@ -350,6 +350,11 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
 //The loose legs (Puppet::leg_weight) come on and go off over a quarter second: slower than the
 //arms, because the climb clip hands its feet over to the swing rather than snapping between them.
 #define PUPPET_LEG_BLEND_TICKS      15
+//The fall pose (Puppet::fall_weight): full at this fall speed - just over a full jump's 19, so a
+//routine jump never quite gets there and the whole pose is kept for real drops - and eased over a
+//crossfade's worth of ticks (0.15s, animation_transition_time_max).
+#define PUPPET_FALL_POSE_VEL        20.0f
+#define PUPPET_FALL_BLEND_TICKS     9
 //How far the pump swings her legs toward the way she is pushing, in degrees about the camera
 //axis. A real swinger pumps WITH the legs; this is the input made visible, and the chain's spring
 //turns the step into a kick.
@@ -390,6 +395,13 @@ struct ArcherAnimParams{
     int   rope_climb = 0;
     float rope_climbed = 0.0f;
     float rope_pump = 0.0f;         //-1..1 along world X, the lean pushing the swing. Stage::rope_pump
+    /*
+        Her next landing as Stage::PredictLanding forecasts it: in how many ticks (1 = the next
+        one; -1 when none is in sight) and how hard. Not the rules' state, so DescribeArcher cannot
+        fill it - the forecast needs this tick's input - and the app does.
+    */
+    int   land_in_ticks = -1;
+    float land_speed = 0.0f;
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and
@@ -476,6 +488,14 @@ struct PuppetChoice{
     float pinned_time = -1.0f;
     float lift = 0.0f;
     float lift_base = 0.0f;
+    /*
+        A WHOLE-BODY OVERLAY: one clip held at one time, blended over the base pose at a weight -
+        ArcherModel::ApplyOverlay. The fall pose (Puppet::fall_weight) is what uses it: the hard
+        landing's airborne opening, both arms up and legs reaching, over Falling_Idle. -1 for none.
+    */
+    int   overlay_clip = -1;
+    float overlay_time = 0.0f;
+    float overlay_weight = 0.0f;
 };
 
 class Puppet{
@@ -609,6 +629,29 @@ public:
     int   air_clip = -1;
 
     /*
+        THE LANDING'S LEAD-IN (animation_plan.md, *Meeting the ground*). While the forecast landing
+        is closer than a landing clip's contact frame, that clip plays in the air, its playhead
+        pinned so the contact frame falls on the contact tick. `lead_clip` is the one playing, -1
+        for none; at contact it IS the landing, so the choice made in the air is not re-made from
+        a speed read one tick apart and flipped on the tick she touches down.
+
+        The lead-in's authored descent - FallingIdle_ToLanding's hips come down 0.5 before its feet
+        touch - is taken back out by the app, which keeps the hips at standing height on the body
+        all through a flight (ApplicationArcher::SyncArcherAnimation, `air_hip_weight`).
+    */
+    int   lead_clip = -1;
+
+    /*
+        THE FALL POSE, 0..1: how much of the hard landing's airborne opening (arms up, legs
+        reaching) is laid over Falling_Idle - which is a photograph, 0.0005 of hip motion in
+        0.733s, so without this the second half of every flight was one still pose. Aims at
+        smoothstep(fall speed / PUPPET_FALL_POSE_VEL) and eases there over PUPPET_FALL_BLEND_TICKS,
+        so it grows as she speeds up and fades out, crossfade-length, when a lead-in or anything
+        else takes over. Standing set only, falling only, and not while a lead-in plays.
+    */
+    float fall_weight = 0.0f;
+
+    /*
         How long Running_Jump spends climbing, in seconds - its start to its highest hip. MEASURED
         at load, because it is what the clip is fitted to: rate = this over PUPPET_RISE_TIME.
 
@@ -728,6 +771,13 @@ public:
 
     //A clip's forward speed in WORLD units per second, or 0 if it does not travel.
     float WorldClipSpeed(int clip) const;
+
+    //The landing a touchdown at `speed` gets: CLIP_LAND_HARD, CLIP_LAND_SOFT, or -1 for none.
+    static int LandingClipFor(float speed);
+    //The landing whose lead-in should be playing now, from the forecast in `in`; -1 for none.
+    int   LeadInClip(const ArcherAnimParams& in) const;
+    //Where fall_weight is heading this tick. Pure.
+    float FallPoseTarget(const ArcherAnimParams& in) const;
 
     //How far a clip covers in ONE cycle, in world units. The blend of two cycles advances on a
     //shared normalised phase at an interpolated duration, so the speed it produces is the

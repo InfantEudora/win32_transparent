@@ -1108,6 +1108,25 @@ void Application::ApplyPendingSceneSwitch(){
     }
     debug->Info("Active scene: '%s' -> '%s'\n",
                 main_scene ? main_scene->name.c_str() : "(none)",requested->name.c_str());
+    /*
+        A RECORDING OR A REPLAY ENDS HERE. Each is one run in one scene, and neither survives a
+        switch. A recording would go on stamping events with the NEW scene's tick counter - every
+        scene has its own - so the rest of the file lands hundreds of ticks off, or clamps to 0
+        when the new counter is lower. And the level switched to resumes as it was parked, which no
+        recording captures, so the second half could never replay from the same world anyway.
+        What was recorded up to the switch is saved; a replay's input would now be driving a
+        different world, so it is stopped. A replay switching INTO its own scene is not caught by
+        this: it only starts once the switch has landed (see ServiceInputRecording).
+    */
+    InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+    if (input && input->IsRecording()){
+        debug->Warn("Scene switch: input recording stopped and saved - a recording is one scene\n");
+        FinishRecording(main_scene->GetPhysicsTick());
+    }
+    if (input && input->IsReplaying()){
+        debug->Warn("Scene switch: the replay in '%s' stopped - a replay is one scene\n",main_scene->name.c_str());
+        input->StopReplay();
+    }
     Scene* previous = main_scene;
     main_scene = requested;
     OnActiveSceneChanged(previous,requested);

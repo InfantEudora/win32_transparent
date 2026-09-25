@@ -39,7 +39,9 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     //number that looks like a walking pace and means nothing, so it is not marked as travelling -
     //but both axes ARE the character moving, and Stage carries her up and across the ledge at the
     //same time, so both come off the bone or she is moved twice.
-    { "Climb",               false, false,  false, true,  true  },
+    //Its first 31 frames are a run-up to the wall and a jump for the lip, which the game does from
+    //a hang; the hands land on the lip at 1.033s, where the move starts here.
+    { "Climb",               false, false,  false, true,  true,  31.0f / 30.0f },
     { "Crouch",              false, false,  false, false, false },
     { "Stretching",          true,  false,  false, false, false },
     { "WarmUp",              true,  false,  false, false, false },
@@ -336,18 +338,28 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
     }
 
     /*
-        The climb has a clip, and the two disagree even more than the kick does: Climb runs 2.8s
-        and LEDGE_CLIMB_TICKS gives it 18 ticks - 0.30s. Fitting that needs over 9x. It is fitted
-        as far as the clamp allows and the rest is reported, because the real answer is almost
-        certainly that a 0.3s mantle was too fast to be a mantle and the RULE should move.
+        The climb: PINNED to the rules' progress, not played at a rate. Stage carries the body
+        along the clip's own hip path (LEDGE_CLIMB_UP/ACROSS), so the hands stay on the lip only if
+        the pose is at the same point of the move as the body - which a rate cannot promise past a
+        crossfade, and a pin does to the tick. So any LEDGE_CLIMB_TICKS plays it through once.
+
+        ONE TICK AHEAD, because the pose on screen is the one pinned the tick before (the engine
+        poses the rig before the tick runs - see climb_lift_posed) while the body is placed this
+        tick. climb_ticks falls by exactly one a tick, so next tick's phase is known.
     */
     if (in.mode == MODE_CLIMB){
         out.clip = CLIP_CLIMB;
         float window = (float)LEDGE_CLIMB_TICKS * ARCHER_DT;
-        if (clip_duration[CLIP_CLIMB] > 0.01f && window > 0.0f){
-            out.wanted_rate = clip_duration[CLIP_CLIMB] / window;
-            out.rate = out.wanted_rate;
-            if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
+        float dur = clip_duration[CLIP_CLIMB];
+        if (dur > 0.01f && window > 0.0f){
+            float shown = in.action_phase + 1.0f / (float)LEDGE_CLIMB_TICKS;
+            if (shown > 1.0f){ shown = 1.0f; }
+            //Short of the very end, where a clip that does not loop counts as over.
+            out.pinned_time = shown * dur;
+            if (out.pinned_time > dur - 0.001f){ out.pinned_time = dur - 0.001f; }
+            out.rate = 0.0f;
+            //Not applied - the playhead is set, not advanced - but it is the number to argue over.
+            out.wanted_rate = dur / window;
         }
         return out;
     }
@@ -472,6 +484,29 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
                 out.rate = out.wanted_rate;
                 if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
             }
+            return out;
+        }
+        /*
+            THE LANDING, BEFORE IT HAPPENS. Once the forecast touchdown is nearer than the landing
+            clip's contact frame, the clip plays its lead-in - the legs reaching for the floor -
+            with the playhead PINNED so the contact frame falls on the contact tick: contact frame
+            less the time still to fall. Pinned rather than started and left to run, so a forecast
+            that moves moves the playhead with it, and one that goes (she steered off the edge)
+            simply drops back to the fall below. One tick ahead, because the pose on screen is the
+            one pinned the tick before - see the ledge climb.
+
+            The standing set only. A running jump is one authored arc whose last stretch already
+            reaches for the ground, and cutting it for Jump_FromAir's lead-in would throw that away.
+        */
+        int lead = LeadInClip(in);
+        if (lead >= 0){
+            float entry = clip_entry[lead];
+            float t = entry - (float)(in.land_in_ticks - 1) * ARCHER_DT;
+            if (t < 0.0f){ t = 0.0f; }
+            out.clip = lead;
+            out.pinned_time = t;
+            out.start_time = t;
+            out.rate = 0.0f;
             return out;
         }
         out.clip = (in.vel_y > PUPPET_RISE_VEL) ? CLIP_JUMP_RISE : CLIP_FALL;
@@ -672,6 +707,18 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
     if (in.f_on_ground){
         air_clip = -1;
     }
+    //Which landing's lead-in is playing, remembered for the contact below. After air_clip, which
+    //it reads.
+    if (!in.f_on_ground){
+        lead_clip = LeadInClip(in);
+    }
+    //The fall pose, eased toward where the fall speed puts it - see fall_weight.
+    {
+        float target = FallPoseTarget(in);
+        float step = 1.0f / (float)PUPPET_FALL_BLEND_TICKS;
+        if (fall_weight < target){ fall_weight = (fall_weight + step > target) ? target : fall_weight + step; }
+        else if (fall_weight > target){ fall_weight = (fall_weight - step < target) ? target : fall_weight - step; }
+    }
 
     //A kneel pressed at a run brakes her exactly like letting go, which would otherwise read as a
     //run-to-stop and play it the moment she stood back up. A restart mid-run does the same thing
@@ -723,12 +770,10 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
             it one tick late is the whole reason last_vel_y exists.
         */
         float impact = -last_vel_y;
-        settle_clip = -1;
-        if (impact >= PUPPET_HARD_LAND_VEL){
-            settle_clip = CLIP_LAND_HARD;
-        }else if (impact >= PUPPET_LAND_VEL){
-            settle_clip = CLIP_LAND_SOFT;
-        }
+        //Already chosen in the air if a lead-in played: that clip is at its contact frame now, and
+        //choosing again from a speed read a tick apart could swap it on the tick she touches down.
+        settle_clip = (lead_clip >= 0) ? lead_clip : LandingClipFor(impact);
+        lead_clip = -1;
         settle_ticks = 0;
         if (settle_clip >= 0 && in.ground_speed < PUPPET_IDLE_SPEED){
             //The clip runs from its contact frame, so the part still to play is what is left after
@@ -741,6 +786,38 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
     f_was_on_ground = in.f_on_ground;
     last_vel_y = in.vel_y;
     last_ground_speed = in.ground_speed;
+}
+
+int Puppet::LandingClipFor(float speed){
+    if (speed >= PUPPET_HARD_LAND_VEL){ return CLIP_LAND_HARD; }
+    if (speed >= PUPPET_LAND_VEL){ return CLIP_LAND_SOFT; }
+    return -1;
+}
+
+int Puppet::LeadInClip(const ArcherAnimParams& in) const{
+    if (in.f_on_ground || air_clip == CLIP_RUN_JUMP || in.land_in_ticks <= 0){
+        return -1;
+    }
+    int clip = LandingClipFor(in.land_speed);
+    if (clip < 0 || clip_entry[clip] <= 0.0f){
+        return -1;      //no landing at all, or one entered at its first frame - nothing to lead in
+    }
+    //In the window once the time still to fall - less the tick the pose shows late - fits in front
+    //of the contact frame.
+    if ((float)(in.land_in_ticks - 1) * ARCHER_DT > clip_entry[clip]){
+        return -1;
+    }
+    return clip;
+}
+
+float Puppet::FallPoseTarget(const ArcherAnimParams& in) const{
+    if (in.f_on_ground || in.mode != MODE_AIR || air_clip == CLIP_RUN_JUMP || in.vel_y >= 0.0f ||
+        LeadInClip(in) >= 0 || clip_entry[CLIP_LAND_HARD] <= 0.0f){
+        return 0.0f;    //the last: no measured hard landing, so nothing to lay over the fall
+    }
+    float x = -in.vel_y / PUPPET_FALL_POSE_VEL;
+    if (x > 1.0f){ x = 1.0f; }
+    return x * x * (3.0f - 2.0f * x);
 }
 
 void Puppet::UpdateRope(const ArcherAnimParams& in){
@@ -808,6 +885,13 @@ void Puppet::Tick(const ArcherAnimParams& in){
     UpdateAir(in);
     UpdateRope(in);
     choice = Choose(in);
+    //The fall pose is eased state, so it goes on here rather than in Choose, which stays pure. Its
+    //frame is the hard landing's first: the airborne opening its own lead-in starts from.
+    if (fall_weight > 0.0f){
+        choice.overlay_clip = CLIP_LAND_HARD;
+        choice.overlay_time = 0.0f;
+        choice.overlay_weight = fall_weight;
+    }
 
     /*
         The turnaround, as a yaw slew (animation_plan.md section 7, option 1).

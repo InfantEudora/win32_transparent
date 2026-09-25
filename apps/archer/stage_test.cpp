@@ -555,16 +555,17 @@ static void TestBow(){
         born INSIDE a block, or clean PAST a thin one. A point that only starts sweeping from where
         it was born would bury itself in the first case and fly through in the second.
 
-        The test bay's pillar is the thin case - 0.5 wide, thinner than an arrow is long - with her
-        pressed against its near face. A level full-draw shot must stick IN THAT FACE: not inside
-        the pillar, not beyond it.
+        A pillar is the thin case - 0.5 wide, thinner than an arrow is long - with her pressed
+        against its near face. A level full-draw shot must stick IN THAT FACE: not inside the
+        pillar, not beyond it. The pillar is this test's own, stood on open ground: it used to be
+        the terrain bay's, and went when the bay was re-laid as a level.
     */
-#if ARCHER_TEST_BAY
     {
-        float cx = ARCHER_TEST_BAY_SHAPE_CENTRE(0);
-        float pillar_left = cx + 2.2f - 0.25f;
-        float pillar_right = cx + 2.2f + 0.25f;
+        const float pillar_x = -8.0f;
+        float pillar_left = pillar_x - 0.25f;
+        float pillar_right = pillar_x + 0.25f;
         Stage p;
+        p.blocks.push_back({ pillar_x, 1.00f, 0.25f, 1.00f, BLOCK_SOLID, true });
         p.pos = v2(pillar_left - ARCHER_HALF_W - 0.01f,ARCHER_HALF_H);
         p.facing = 1.0f;
         Settle(p);
@@ -584,7 +585,6 @@ static void TestBow(){
         Check(shot >= 0 && p.arrows[shot].pos.x <= pillar_left + 0.001f,
               "in the pillar's NEAR face - not buried inside it, not through it",pd);
     }
-#endif
 
     //--- Aim is relative to facing -----------------------------------------------------------------
     Stage m;
@@ -663,7 +663,8 @@ static void TestLedge(){
     Check(s.mode == MODE_HANG,"and leaves the archer hanging",detail);
 
     //The pose is exact, which everything downstream relies on.
-    CheckNear(s.pos.y + ARCHER_HALF_H,ledge.Top(),0.01f,"with the hands exactly on the lip");
+    CheckNear(s.pos.y + ARCHER_HALF_H + LEDGE_HANG_DROP,ledge.Top(),0.01f,
+              "with the body hung LEDGE_HANG_DROP below the lip, which puts her fingers on it");
     CheckNear(s.pos.x + ARCHER_HALF_W,ledge.Left(),0.01f,"and the body flat against the face");
     Check(s.facing > 0.0f,"facing the wall it caught");
 
@@ -687,16 +688,31 @@ static void TestLedge(){
     s.Tick(up,ce);
     Check(s.mode == MODE_CLIMB,"jump from a hang starts the climb");
 
+    //Along the clip's path: halfway through the move, halfway through the table.
+    v2 from = s.climb_from;
+    v2 to = s.climb_to;
     bool f_climbed = false;
+    int climb_took = 0;
     for (int i = 0; i < LEDGE_CLIMB_TICKS + 30; i++){
         StageEvents e;
         s.Tick(idle,e);
+        climb_took++;
+        if (i + 1 == LEDGE_CLIMB_TICKS / 2){
+            const int mid = (LEDGE_CLIMB_PATH_SAMPLES - 1) / 2;
+            CheckNear(s.pos.y,from.y + (to.y - from.y) * LEDGE_CLIMB_UP[mid],1e-4f,
+                      "halfway, she has risen as far as the clip's hips have");
+            CheckNear(s.pos.x,from.x + (to.x - from.x) * LEDGE_CLIMB_ACROSS[mid],1e-4f,
+                      "and stepped across as far");
+        }
         if (e.f_climbed){
             f_climbed = true;
             break;
         }
     }
     Check(f_climbed,"which finishes");
+    Check(climb_took == LEDGE_CLIMB_TICKS,"in exactly LEDGE_CLIMB_TICKS");
+    CheckNear(fabsf(s.pos.x - from.x) - ARCHER_HALF_W,LEDGE_CLIMB_INSET,0.01f,
+              "standing LEDGE_CLIMB_INSET past the lip, where the clip's hips finish");
     Check(s.mode == MODE_GROUND && s.f_on_ground,"standing on the ledge");
     CheckNear(s.pos.y - ARCHER_HALF_H,ledge.Top(),0.02f,"with the feet on its top surface");
     Check(s.pos.x > ledge.Left() && s.pos.x < ledge.Right(),"and the body over the block, not past it");
@@ -1547,14 +1563,25 @@ static void TestPuppet(){
     Check(c.clip == CLIP_RUN_SLOW,"a clip missing from the export is never picked");
     p.clip_speed[CLIP_RUN_FAST] = 4.0f;
 
-    //And the climb, which has a clip and a window that disagree by a lot.
+    //And the climb, which is PINNED to the rules' progress - however far the clip and the window
+    //disagree, a pin plays it through once and keeps the pose where the body is.
     p.clip_duration[CLIP_CLIMB] = (float)LEDGE_CLIMB_TICKS * ARCHER_DT * 4.0f;
     in.mode = MODE_CLIMB;
+    in.action = ACTION_CLIMB;
+    in.action_phase = 0.5f;
     c = p.Choose(in);
     Check(c.clip == CLIP_CLIMB,"climbing plays the climb");
     Check(!c.f_placeholder,"which is a real clip now, not a stand-in");
-    CheckNear(c.wanted_rate,4.0f,0.001f,"asking for the rate that fits LEDGE_CLIMB_TICKS");
-    CheckNear(c.rate,PUPPET_ACTION_RATE_MAX,0.001f,"clamped, so the gap is visible rather than a blur");
+    CheckNear(c.wanted_rate,4.0f,0.001f,"reporting the rate the pin amounts to");
+    CheckNear(c.rate,0.0f,0.0001f,"but held there, not advanced");
+    CheckNear(c.pinned_time,(0.5f + 1.0f / (float)LEDGE_CLIMB_TICKS) * p.clip_duration[CLIP_CLIMB],1e-4f,
+              "a tick ahead of the rules, because the pose shows a tick late");
+    in.action_phase = 1.0f;
+    c = p.Choose(in);
+    Check(c.pinned_time < p.clip_duration[CLIP_CLIMB] && c.pinned_time > p.clip_duration[CLIP_CLIMB] - 0.01f,
+          "and it stops just short of the end, where a one-shot counts as over");
+    in.action = ACTION_NONE;
+    in.action_phase = 0.0f;
     in.mode = MODE_GROUND;
     in.speed = 2.0f;
     in.ground_speed = 2.0f;
@@ -1717,6 +1744,95 @@ static void TestPuppet(){
           "stepping off a kerb is not a landing at all");
     Check(land_after(ARCHER_JUMP_SPEED,ARCHER_RUN_SPEED).clip != CLIP_LAND_SOFT,
           "and landing at a run skips it - the rules never stopped her, so neither does this");
+
+    /*
+        THE LEAD-IN: with a forecast, the landing clip starts in the air, pinned so its contact
+        frame falls on the contact tick. The hip curve is a stand-in shaped like the hard landing's
+        - 0.5 above its contact height at the start, descending to it at the contact frame.
+    */
+    {
+        Puppet lp;
+        lp.clip_duration[CLIP_LAND_SOFT] = 0.400f;
+        lp.clip_duration[CLIP_LAND_HARD] = 1.100f;
+        lp.clip_entry[CLIP_LAND_SOFT] = 0.267f;
+        lp.clip_entry[CLIP_LAND_HARD] = 0.300f;
+        ArcherAnimParams a;
+        a.f_on_ground = false;
+        a.vel_y = -30.0f;
+        a.land_speed = PUPPET_HARD_LAND_VEL + 5.0f;
+        a.land_in_ticks = 25;
+        lp.Tick(a);
+        Check(lp.choice.clip == CLIP_FALL,"a landing further off than the clip's lead-in keeps the fall");
+        a.land_in_ticks = 18;
+        lp.Tick(a);
+        Check(lp.choice.clip == CLIP_LAND_HARD,"within it, the landing the forecast speed calls for starts in the air");
+        CheckNear(lp.choice.pinned_time,0.300f - 17.0f * ARCHER_DT,1e-4f,
+                  "pinned so its contact frame falls on the contact tick - one tick ahead, as the pose shows late");
+        a.land_in_ticks = -1;
+        lp.Tick(a);
+        Check(lp.choice.clip == CLIP_FALL,"a forecast that goes (she steered off the edge) drops back to the fall");
+        a.land_in_ticks = 1;
+        lp.Tick(a);
+        CheckNear(lp.choice.pinned_time,0.300f,1e-4f,"on the last tick in the air the pin is the contact frame");
+        //Touchdown, with last tick's vel_y reading as a SOFT landing: the lead-in's clip stands.
+        a.vel_y = -(PUPPET_HARD_LAND_VEL - 2.0f);
+        lp.Tick(a);
+        a.f_on_ground = true;
+        a.vel_y = 0.0f;
+        a.land_in_ticks = -1;
+        lp.Tick(a);
+        Check(lp.choice.clip == CLIP_LAND_HARD,"at contact the clip the lead-in chose IS the landing, not re-chosen");
+
+        //A running jump keeps its own arc.
+        Puppet rp;
+        rp.clip_entry[CLIP_LAND_SOFT] = 0.267f;
+        ArcherAnimParams r;
+        r.f_on_ground = true;
+        r.speed = ARCHER_RUN_SPEED;
+        r.ground_speed = ARCHER_RUN_SPEED;
+        rp.Tick(r);
+        r.f_on_ground = false;
+        r.vel_y = -10.0f;
+        r.land_speed = ARCHER_JUMP_SPEED;
+        r.land_in_ticks = 5;
+        rp.Tick(r);
+        Check(rp.choice.clip == CLIP_RUN_JUMP,"a running jump keeps its own arc to the ground");
+
+        //THE FALL POSE: grows with the fall speed, eased; gone in a lead-in, on the ground, rising.
+        Puppet fp;
+        fp.clip_entry[CLIP_LAND_HARD] = 0.300f;
+        fp.clip_entry[CLIP_LAND_SOFT] = 0.267f;
+        ArcherAnimParams f;
+        f.f_on_ground = true;
+        fp.Tick(f);
+        f.f_on_ground = false;
+        f.mode = MODE_AIR;
+        f.vel_y = 5.0f;
+        fp.Tick(f);
+        Check(fp.fall_weight == 0.0f && fp.choice.overlay_clip < 0,"rising, no fall pose");
+        f.vel_y = -PUPPET_FALL_POSE_VEL * 0.5f;
+        float was = fp.fall_weight;
+        fp.Tick(f);
+        CheckNear(fp.fall_weight - was,1.0f / (float)PUPPET_FALL_BLEND_TICKS,1e-5f,"falling, it eases in a crossfade's step a tick");
+        for (int i = 0; i < 30; i++){ fp.Tick(f); }
+        CheckNear(fp.fall_weight,0.5f,1e-4f,"to smoothstep of the fall speed over PUPPET_FALL_POSE_VEL - half at half");
+        Check(fp.choice.overlay_clip == CLIP_LAND_HARD && fp.choice.overlay_time == 0.0f && fp.choice.overlay_weight == fp.fall_weight,
+              "laid over the fall as the hard landing's airborne opening");
+        f.vel_y = -PUPPET_FALL_POSE_VEL * 2.0f;
+        for (int i = 0; i < 30; i++){ fp.Tick(f); }
+        CheckNear(fp.fall_weight,1.0f,1e-5f,"and all of it past that speed");
+        f.land_speed = PUPPET_HARD_LAND_VEL + 5.0f;
+        f.land_in_ticks = 10;
+        fp.Tick(f);
+        CheckNear(fp.fall_weight,1.0f - 1.0f / (float)PUPPET_FALL_BLEND_TICKS,1e-5f,
+                  "a lead-in takes over, and the fall pose fades out as long as its crossfade takes");
+        f.f_on_ground = true;
+        f.mode = MODE_GROUND;
+        f.vel_y = 0.0f;
+        f.land_in_ticks = -1;
+        for (int i = 0; i < PUPPET_FALL_BLEND_TICKS; i++){ fp.Tick(f); }
+        Check(fp.fall_weight == 0.0f && fp.choice.overlay_clip < 0,"and it is gone on the ground");
+    }
 
     /*
         THE RUN-TO-STOP, and the thing that tells it apart from running into a wall.
@@ -2721,6 +2837,275 @@ static void TestRopeLevel(){
 }
 
 /*
+    The rope level's two pits - a soft landing and a hard one, by construction. See BuildRopeLevel
+    for why those depths.
+*/
+static void TestRopePits(){
+    printf("\nthe rope level's pits\n");
+    ArcherInput left;
+    left.move_axis = -1.0f;
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    char d[160];
+
+    //Walked off the left end: 3 down, a soft landing.
+    Stage s;
+    s.SetLevel(STAGE_LEVEL_ROPE);
+    Settle(s);
+    s.pos = v2(-15.5f,ARCHER_HALF_H + 0.001f);
+    Settle(s);
+    float speed = -1.0f;
+    for (int i = 0; i < 240 && speed < 0.0f; i++){
+        StageEvents e;
+        s.Tick(left,e);
+        if (e.f_landed && s.pos.x < -17.0f){ speed = e.land_speed; }
+    }
+    snprintf(d,sizeof(d),"landed at (%.2f,%.2f)",s.pos.x,s.pos.y - ARCHER_HALF_H);
+    CheckNear(s.pos.y - ARCHER_HALF_H,-3.0f,0.01f,"walking off the left end lands on the shallow pit's floor",d);
+    CheckNear(speed,sqrtf(2.0f * ARCHER_GRAVITY * ARCHER_FALL_GRAVITY_MUL * 3.0f),0.8f,
+              "at the speed three units of fall give");
+    Check(speed < PUPPET_HARD_LAND_VEL,"which is a soft landing");
+
+    //And out again: a jump at the wall catches the floor's lip, and the climb stands her on it.
+    ArcherInput up = right;
+    up.f_jump_down = true;
+    up.f_jump_pressed = true;
+    StageEvents je;
+    s.Tick(up,je);
+    up.f_jump_pressed = false;
+    bool f_hung = false;
+    for (int i = 0; i < 120 && !f_hung; i++){
+        StageEvents e;
+        s.Tick(up,e);
+        f_hung = (s.mode == MODE_HANG);
+    }
+    Check(f_hung,"a jump from the shallow pit catches the floor's lip");
+    ArcherInput climb;
+    climb.f_jump_pressed = true;
+    StageEvents ce;
+    s.Tick(climb,ce);
+    Run(s,LEDGE_CLIMB_TICKS + 10,ArcherInput());
+    Check(s.f_on_ground && fabsf(s.pos.y - ARCHER_HALF_H) < 0.01f && s.pos.x > -17.0f,
+          "and the climb stands her back on the floor");
+
+    //Walked off the right end: 15 down, through the hard landing to top speed.
+    Stage r;
+    r.SetLevel(STAGE_LEVEL_ROPE);
+    Settle(r);
+    r.pos = v2(15.5f,ARCHER_HALF_H + 0.001f);
+    Settle(r);
+    speed = -1.0f;
+    for (int i = 0; i < 240 && speed < 0.0f; i++){
+        StageEvents e;
+        r.Tick(right,e);
+        if (e.f_landed && r.pos.x > 17.0f){ speed = e.land_speed; }
+    }
+    CheckNear(r.pos.y - ARCHER_HALF_H,-15.0f,0.01f,"walking off the right end lands on the deep pit's floor");
+    Check(speed >= PUPPET_HARD_LAND_VEL,"hard");
+    CheckNear(speed,ARCHER_MAX_FALL_SPEED,0.01f,"at top fall speed");
+
+    //A sprint off the edge still comes down inside it.
+    Stage q;
+    q.SetLevel(STAGE_LEVEL_ROPE);
+    Settle(q);
+    q.pos = v2(4.0f,ARCHER_HALF_H + 0.001f);
+    Settle(q);
+    bool f_landed = false;
+    for (int i = 0; i < 400 && !f_landed; i++){
+        StageEvents e;
+        q.Tick(right,e);
+        f_landed = e.f_landed && q.pos.x > 17.0f;
+    }
+    snprintf(d,sizeof(d),"landed at x %.2f, the far wall is at 31",q.pos.x);
+    Check(f_landed && q.pos.x + ARCHER_HALF_W < 31.0f,"a sprint off the right edge lands on the deep pit's floor, short of its wall",d);
+}
+
+/*
+    Stage::PredictLanding. The forecast IS the rules, so with the input unchanged it must be exact
+    - the same tick, the same speed, the same place, to the bit - and not merely close. When the
+    input changes, the old forecast is wrong and the next one is right; that is the whole contract.
+*/
+static void TestLandingForecast(){
+    printf("\nthe landing forecast\n");
+    char d[200];
+
+    //Standing still, there is nothing to forecast.
+    Stage g;
+    Settle(g);
+    Check(!g.PredictLanding(ArcherInput()).f_lands,"on the ground there is no landing to forecast");
+
+    //A drop: forecast on the first tick in the air, then fall for real.
+    Stage s;
+    Settle(s);
+    s.pos = v2(s.pos.x,s.pos.y + 4.0f);
+    ArcherInput idle;
+    Run(s,1,idle);
+    StageLanding f = s.PredictLanding(idle);
+    int ticks = 0;
+    StageEvents land;
+    for (int i = 0; i < 120; i++){
+        StageEvents e;
+        s.Tick(idle,e);
+        ticks++;
+        if (e.f_landed){ land = e; break; }
+    }
+    snprintf(d,sizeof(d),"forecast %i ticks at %.4f, landed after %i at %.4f",f.ticks,f.speed,ticks,land.land_speed);
+    Check(f.f_lands && f.ticks == ticks,"a drop lands on exactly the tick forecast",d);
+    Check(f.speed == land.land_speed,"at exactly the speed forecast",d);
+    Check(f.pos.x == s.pos.x && f.pos.y == s.pos.y,"in exactly the place forecast");
+
+    //A long fall into the rope level's deep pit, running: past the horizon nothing is reported,
+    //and once the landing is in sight it stays on the same tick all the way down.
+    Stage r;
+    r.SetLevel(STAGE_LEVEL_ROPE);
+    Settle(r);
+    r.pos = v2(14.0f,ARCHER_HALF_H + 0.001f);
+    Settle(r);
+    ArcherInput run;
+    run.move_axis = 1.0f;
+    int now = 0;
+    int landing_at = -1;
+    bool f_consistent = true;
+    bool f_beyond_quiet = true;
+    bool f_saw_horizon = false;
+    for (int i = 0; i < 300; i++){
+        StageEvents e;
+        r.Tick(run,e);
+        now++;
+        if (e.f_landed && r.pos.x > 17.0f){
+            f_consistent = f_consistent && (landing_at == now);
+            break;
+        }
+        StageLanding k = r.PredictLanding(run);
+        if (r.mode != MODE_AIR){ continue; }
+        if (!k.f_lands){
+            f_beyond_quiet = f_beyond_quiet && (landing_at < 0);
+            continue;
+        }
+        if (k.ticks == STAGE_PREDICT_TICKS){ f_saw_horizon = true; }
+        if (landing_at < 0){ landing_at = now + k.ticks; }
+        f_consistent = f_consistent && (now + k.ticks == landing_at);
+    }
+    Check(f_saw_horizon,"a long fall's landing first appears at the edge of the horizon");
+    Check(f_beyond_quiet,"and nothing is reported before it comes into range");
+    Check(landing_at > 0 && f_consistent,"and from then on every forecast names the same tick, which is the tick she lands");
+
+    //Changing the input makes the old forecast wrong and the next one right. A jump off the main
+    //floor's left end holding left lands in the shallow pit; turning back mid-air lands on the
+    //floor instead, and sooner.
+    Stage j;
+    j.SetLevel(STAGE_LEVEL_ROPE);
+    Settle(j);
+    j.pos = v2(-16.0f,ARCHER_HALF_H + 0.001f);
+    Settle(j);
+    ArcherInput go_left;
+    go_left.move_axis = -1.0f;
+    go_left.f_jump_down = true;
+    go_left.f_jump_pressed = true;
+    StageEvents je;
+    j.Tick(go_left,je);
+    go_left.f_jump_pressed = false;
+    Run(j,4,go_left);
+    StageLanding before = j.PredictLanding(go_left,120);
+    ArcherInput go_right;
+    go_right.move_axis = 1.0f;
+    go_right.f_jump_down = true;
+    StageLanding after = j.PredictLanding(go_right,120);
+    int flown = 0;
+    for (int i = 0; i < 200; i++){
+        StageEvents e;
+        j.Tick(go_right,e);
+        flown++;
+        if (e.f_landed){ break; }
+    }
+    snprintf(d,sizeof(d),"held left: %i ticks at y %.2f; turned back: %i at y %.2f; flew %i, landed at y %.2f",
+             before.ticks,before.pos.y - ARCHER_HALF_H,after.ticks,after.pos.y - ARCHER_HALF_H,flown,
+             j.pos.y - ARCHER_HALF_H);
+    Check(before.f_lands && before.pos.y - ARCHER_HALF_H < -2.9f,"held left, the forecast lands her in the pit",d);
+    Check(after.f_lands && after.ticks == flown && fabsf(j.pos.y - ARCHER_HALF_H) < 0.01f,
+          "turned back, the forecast from that tick is the landing on the floor",d);
+    Check(after.ticks < before.ticks,"and it is sooner, so a clip started off the first would have been late");
+
+    //A ledge catch ends a forecast as a catch, on the tick it happens.
+    Stage c;
+    Settle(c);
+    c.pos = v2(43.1f,ARCHER_HALF_H + 0.001f);
+    Settle(c);
+    ArcherInput reach;
+    reach.move_axis = 1.0f;
+    reach.f_jump_down = true;
+    reach.f_jump_pressed = true;
+    StageEvents re;
+    c.Tick(reach,re);
+    reach.f_jump_pressed = false;
+    StageLanding catchf = c.PredictLanding(reach,120);
+    int caught = -1;
+    for (int i = 1; i <= 200; i++){
+        StageEvents e;
+        c.Tick(reach,e);
+        if (c.mode == MODE_HANG){ caught = i; break; }
+    }
+    snprintf(d,sizeof(d),"forecast a catch in %i, caught after %i",catchf.ticks,caught);
+    Check(catchf.f_caught && !catchf.f_lands && catchf.ticks == caught,"a jump at the high ledge forecasts the catch, to the tick",d);
+}
+
+/*
+    Stage::PredictArrowImpact: an arrow's flight takes no input, so its forecast is exact - the
+    tick and the point it sticks, to the bit - and its path is the segments the real one sweeps.
+*/
+static void TestArrowForecast(){
+    printf("\nthe arrow forecast\n");
+    char d[200];
+    Stage s;
+    s.SetLevel(STAGE_LEVEL_RANGE);
+    Settle(s);
+    ArcherInput hold;
+    hold.f_draw_down = true;
+    Run(s,BOW_DRAW_TICKS + 2,hold);
+    ArcherInput letgo;
+    letgo.f_draw_released = true;
+    StageEvents le;
+    s.Tick(letgo,le);
+    int index = -1;
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        if (s.arrows[i].f_live && !s.arrows[i].f_stuck){ index = i; }
+    }
+    Check(le.f_shot && index >= 0,"a full draw looses an arrow along the range");
+    if (index < 0){
+        return;
+    }
+    std::vector<v2> path;
+    StageArrowImpact f = s.PredictArrowImpact(index,600,&path);
+    ArcherInput idle;
+    int flown = 0;
+    StageEvents::ArrowHit hit;
+    bool f_hit = false;
+    std::vector<v2> swept;
+    for (int i = 0; i < 600 && !f_hit; i++){
+        StageEvents e;
+        s.Tick(idle,e);
+        flown++;
+        if (swept.empty()){ swept.push_back(s.arrows[index].prev_pos); }
+        for (size_t h = 0; h < e.arrow_hits.size(); h++){
+            if (e.arrow_hits[h].arrow == index){ hit = e.arrow_hits[h]; f_hit = true; }
+        }
+        swept.push_back(f_hit ? hit.point : s.arrows[index].pos);
+    }
+    snprintf(d,sizeof(d),"forecast %i ticks to (%.3f,%.3f), struck after %i at (%.3f,%.3f)",
+             f.ticks,f.point.x,f.point.y,flown,hit.point.x,hit.point.y);
+    Check(f.f_hits && f_hit && f.ticks == flown,"it strikes on exactly the tick forecast",d);
+    Check(f.point.x == hit.point.x && f.point.y == hit.point.y && f.block == hit.block,
+          "at exactly the point, in the block forecast",d);
+    bool f_same = (path.size() == swept.size());
+    for (size_t i = 0; f_same && i < path.size(); i++){
+        f_same = (path[i].x == swept[i].x && path[i].y == swept[i].y);
+    }
+    snprintf(d,sizeof(d),"forecast %zu points, flown %zu",path.size(),swept.size());
+    Check(f_same,"and the path handed back is the path it swept, so a prop raycast along it finds what the flight will",d);
+    Check(!s.PredictArrowImpact(index,600).f_hits,"a stuck arrow has nothing left to forecast");
+}
+
+/*
     The skinned rope - apps/archer/RopeMesh.h. What the skinning shader will do with it is done
     here by hand, sum of weight * (R (p - bind centre) + centre) over a pose of the chain, so the
     three things that matter are checked without a GPU: the weights are a partition of unity, a
@@ -3215,6 +3600,270 @@ static void TestRopeClimb(){
           "off the rope, easing back to the clip");
 }
 
+//--- The terrain bay: a way up, and two floaters with none ---------------------------------------
+#if ARCHER_TEST_BAY
+/*
+    The bay is part of the level now rather than a test pattern (Stage.cpp, BuildMainLevel), and
+    it makes two promises the eye cannot check: the island can be climbed onto, and the two
+    floaters cannot.
+
+    The first is PLAYED - the route the layout was built around, hop by hop. The second is
+    SEARCHED, because "nobody can get there" is a claim about every jump rather than one: from
+    each surface already reached, stand at points along it, run up for a while either way (or
+    not), jump with a short, middling or full hold (or just walk off), steer either way or not at
+    all, and see what she lands on. Coarse - a player can mix those - but coarse the same way for
+    the island, which it must find, as for the floaters, which it must not.
+*/
+
+//Longer than Settle: a landing can hold the controls for a few ticks, and the next hop wants them.
+static void SettleBay(Stage& s){
+    ArcherInput idle;
+    for (int i = 0; i < 300 && !s.f_on_ground; i++){
+        StageEvents ev;
+        s.Tick(idle,ev);
+    }
+    Run(s,30,idle);
+}
+
+static float Feet(const Stage& s){
+    return s.pos.y - ARCHER_HALF_H;
+}
+
+//The block she is standing on, or -1.
+static int StandingOn(const Stage& s){
+    if (!s.f_on_ground){
+        return -1;
+    }
+    for (size_t i = 0; i < s.blocks.size(); i++){
+        const StageBlock& b = s.blocks[i];
+        if (fabsf(b.Top() - Feet(s)) < 0.05f &&
+            s.pos.x + ARCHER_HALF_W > b.Left() && s.pos.x - ARCHER_HALF_W < b.Right()){
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+//The block whose top is `top` and which spans `x`, or -1 - how the checks name a surface.
+static int BlockAt(const Stage& s, float x, float top){
+    for (size_t i = 0; i < s.blocks.size(); i++){
+        const StageBlock& b = s.blocks[i];
+        if (fabsf(b.Top() - top) < 0.01f && x > b.Left() && x < b.Right()){
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+//A running jump: run toward `dir` until past jump_x, jump on a full hold, steer `dir` to landing.
+static void BayHop(Stage& s, float dir, float jump_x){
+    ArcherInput run;
+    run.move_axis = dir;
+    for (int i = 0; i < 600; i++){
+        if ((dir < 0.0f) ? (s.pos.x <= jump_x) : (s.pos.x >= jump_x)){
+            break;
+        }
+        StageEvents ev;
+        s.Tick(run,ev);
+    }
+    ArcherInput jump = run;
+    jump.f_jump_pressed = true;
+    jump.f_jump_down = true;
+    StageEvents ev;
+    s.Tick(jump,ev);
+    ArcherInput fly = run;
+    fly.f_jump_down = true;
+    Run(s,3,fly);
+    for (int i = 0; i < 240 && !s.f_on_ground; i++){
+        StageEvents e;
+        s.Tick(fly,e);
+    }
+    SettleBay(s);
+}
+
+//A running jump that stops where it is aimed: steer `dir` until past land_x, then steer back to
+//brake - air friction alone would carry a full-speed jump nearly three units further.
+static void BayLeap(Stage& s, float dir, float jump_x, float land_x){
+    ArcherInput run;
+    run.move_axis = dir;
+    for (int i = 0; i < 600; i++){
+        if ((dir < 0.0f) ? (s.pos.x <= jump_x) : (s.pos.x >= jump_x)){
+            break;
+        }
+        StageEvents ev;
+        s.Tick(run,ev);
+    }
+    ArcherInput jump = run;
+    jump.f_jump_pressed = true;
+    jump.f_jump_down = true;
+    StageEvents ev;
+    s.Tick(jump,ev);
+    ArcherInput fly;
+    fly.f_jump_down = true;
+    bool f_past = false;
+    for (int i = 0; i < 240; i++){
+        f_past = f_past || ((dir < 0.0f) ? (s.pos.x <= land_x) : (s.pos.x >= land_x));
+        fly.move_axis = !f_past ? dir : ((s.vel.x * dir > 0.3f) ? -dir : 0.0f);
+        StageEvents e;
+        s.Tick(fly,e);
+        if (s.f_on_ground && i > 2){
+            break;
+        }
+    }
+    SettleBay(s);
+}
+
+//A short climb onto a narrow stone: walk to x_at, jump straight up, and step toward `dir` only
+//once the feet are above `top` - holding the direction throughout overshoots a 1.8-wide stone.
+static void BayRiseStep(Stage& s, float dir, float x_at, float top){
+    ArcherInput walk;
+    walk.move_axis = (x_at < s.pos.x) ? -1.0f : 1.0f;
+    for (int i = 0; i < 600 && fabsf(s.pos.x - x_at) > 0.08f; i++){
+        StageEvents ev;
+        s.Tick(walk,ev);
+    }
+    SettleBay(s);
+    ArcherInput jump;
+    jump.f_jump_pressed = true;
+    jump.f_jump_down = true;
+    StageEvents ev;
+    s.Tick(jump,ev);
+    ArcherInput fly;
+    fly.f_jump_down = true;
+    for (int i = 0; i < 240; i++){
+        fly.move_axis = (Feet(s) > top + 0.05f) ? dir : 0.0f;
+        StageEvents e;
+        s.Tick(fly,e);
+        if (s.f_on_ground && i > 2){
+            break;
+        }
+    }
+    SettleBay(s);
+}
+
+static void TestBayClimb(){
+    printf("\nthe terrain bay\n");
+    char d[160];
+
+    //--- The route ----------------------------------------------------------------------------
+    Stage s;
+    s.pos = v2(-10.0f,ARCHER_HALF_H);
+    SettleBay(s);
+    BayHop(s,-1.0f,-11.40f);
+    snprintf(d,sizeof(d),"at x %.2f",s.pos.x);
+    CheckNear(Feet(s),2.40f,0.02f,"from the main ground onto the hill",d);
+    BayHop(s,-1.0f,-15.85f);
+    snprintf(d,sizeof(d),"at x %.2f",s.pos.x);
+    CheckNear(Feet(s),4.80f,0.02f,"from its left end onto stone one, under the island's end",d);
+    BayHop(s,1.0f,-18.40f);
+    snprintf(d,sizeof(d),"at x %.2f",s.pos.x);
+    CheckNear(Feet(s),7.20f,0.02f,"back right across 2.9 onto stone two, nothing overhead",d);
+    BayRiseStep(s,1.0f,-14.40f,9.60f);
+    snprintf(d,sizeof(d),"at x %.2f",s.pos.x);
+    CheckNear(Feet(s),9.60f,0.02f,"up onto stone three",d);
+    BayHop(s,-1.0f,-13.75f);
+    snprintf(d,sizeof(d),"at x %.2f",s.pos.x);
+    CheckNear(Feet(s),11.25f,0.02f,"and a running jump left, onto the island",d);
+
+    //--- The authored tiles, right of stone three ----------------------------------------------
+    //Colliders out of StageScenery: invisible SOLID blocks whose tops are the tiles' grass.
+    {
+        Stage r;
+        int big = BlockAt(r,-7.5f,9.60f);
+        int round = BlockAt(r,-2.0f,8.40f);
+        Check(big >= 0 && round >= 0 && r.blocks[big].f_invisible && r.blocks[round].f_invisible,
+              "both terrain tiles have an invisible collider under their grass");
+        r.pos = v2(-12.9f,9.60f + ARCHER_HALF_H + 0.02f);
+        SettleBay(r);
+        BayLeap(r,1.0f,-12.30f,-8.00f);
+        snprintf(d,sizeof(d),"at x %.2f",r.pos.x);
+        CheckNear(Feet(r),9.60f,0.02f,"from stone three, a running jump right onto the big tile",d);
+        BayLeap(r,1.0f,-6.40f,-2.50f);
+        snprintf(d,sizeof(d),"at x %.2f",r.pos.x);
+        CheckNear(Feet(r),8.40f,0.02f,"and on, down onto the round one",d);
+    }
+
+    //--- The search ---------------------------------------------------------------------------
+    const Stage level;
+    int island = BlockAt(level,-26.0f,11.25f);
+    int under = BlockAt(level,-30.0f,6.80f);
+    int over = BlockAt(level,-23.0f,16.40f);
+    Check(island >= 0 && under >= 0 && over >= 0,"the island and both floaters are where this test looks");
+
+    const float x_lo = ARCHER_TEST_BAY_X_MIN;
+    const float x_hi = ARCHER_TEST_BAY_X_MAX + 1.0f;       //a little of the main ground, to enter by
+    std::vector<bool> reached(level.blocks.size(),false);
+    std::vector<int> queue;
+    {
+        Stage g = level;
+        g.pos = v2(-11.0f,ARCHER_HALF_H);
+        SettleBay(g);
+        int b = StandingOn(g);
+        if (b >= 0){
+            reached[b] = true;
+            queue.push_back(b);
+        }
+    }
+    int sims = 0;
+    const int runups[] = { 0, 6, 12, 24 };
+    const int holds[] = { 0, 10, 30 };                      //0 is walking off, no jump
+    while (!queue.empty()){
+        int from = queue.back();
+        queue.pop_back();
+        const StageBlock blk = level.blocks[from];
+        float lo = fmaxf(blk.Left() + 0.05f,x_lo);
+        float hi = fminf(blk.Right() - 0.05f,x_hi);
+        for (float x = lo; x <= hi; x += 0.5f){
+            Stage base = level;
+            base.pos = v2(x,blk.Top() + ARCHER_HALF_H + 0.02f);
+            SettleBay(base);
+            if (StandingOn(base) != from){
+                continue;
+            }
+            for (int d1 = -1; d1 <= 1; d1++){
+            for (int k : runups){
+            for (int h : holds){
+            for (int d2 = -1; d2 <= 1; d2++){
+                if (d1 == 0 && k > 0){
+                    continue;
+                }
+                Stage t = base;
+                ArcherInput run;
+                run.move_axis = (float)d1;
+                Run(t,k,run);
+                if (h > 0){
+                    ArcherInput jump = run;
+                    jump.f_jump_pressed = true;
+                    jump.f_jump_down = true;
+                    StageEvents ev;
+                    t.Tick(jump,ev);
+                }
+                ArcherInput fly;
+                fly.move_axis = (float)d2;
+                for (int i = 0; i < 260; i++){
+                    fly.f_jump_down = (i < h);
+                    StageEvents ev;
+                    t.Tick(fly,ev);
+                    if (t.f_on_ground && i > 2){
+                        break;
+                    }
+                }
+                sims++;
+                int to = StandingOn(t);
+                if (to >= 0 && !reached[to]){
+                    reached[to] = true;
+                    queue.push_back(to);
+                }
+            }}}}
+        }
+    }
+    snprintf(d,sizeof(d),"%i jumps tried",sims);
+    Check(island >= 0 && reached[island],"the search finds the island - so it would notice losing it",d);
+    Check(under >= 0 && !reached[under],"nothing reaches the floater under the island",d);
+    Check(over >= 0 && !reached[over],"nor the one above it",d);
+}
+#endif
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -3240,8 +3889,14 @@ int main(void){
     TestSway();
     TestKneelPuppet();
     TestRopeLevel();
+    TestRopePits();
+    TestLandingForecast();
+    TestArrowForecast();
     TestRopeMesh();
     TestRopeClimb();
+#if ARCHER_TEST_BAY
+    TestBayClimb();
+#endif
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

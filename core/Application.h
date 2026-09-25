@@ -537,6 +537,9 @@ public:
         four requests are behind the Engine panel's "Input recording" header and the
         input_record / input_replay MCP tools, so a recording made by hand replays from a script.
 
+        ONE SCENE EACH: switching the active scene saves a recording up to the switch and stops a
+        replay (see ApplyPendingSceneSwitch).
+
         All four are safe from ANY thread and never wait: they leave a request that
         ServiceInputRecording acts on at the next physics pass boundary, which is the only place a
         recording can start or stop at an exact tick. See InputController::BeginRecording for what

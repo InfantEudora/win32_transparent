@@ -524,8 +524,15 @@ class InputController{
         file cut the lead-in and tail by changing two numbers.
 
         It counts as scripted input for IsInputLive, so a replay drives an unfocused window - the
-        --minimized case. Hardware input is not blocked while one runs: last writer wins, the same
-        as a thumb against a HoldAxis.
+        --minimized case.
+
+        A REPLAY OWNS EVERY RECORDED ACTION while it runs. Live input for them - keys, pad, touch,
+        and scripted holds from tools - is dropped at the drain (DrainAndApplyEvents), and whatever
+        was held live when it started is released first. This used to be last-writer-wins, and a
+        person at the desk, or a tool call, changed the run being replayed: two replays of one
+        file came out different. What is NOT recorded stays live - the cursor, pause, the
+        record/replay keys, an app's view toggles - because those are the person watching, and
+        stopping a replay with F10 has to work.
 
         StartReplay replaces a replay already running (releasing what it held first). PHYSICS
         THREAD ONLY, both - see Application::RequestReplay for the any-thread form.
@@ -947,6 +954,10 @@ protected:
     };
     std::vector<ReplayHeldKey> replay_held_keys;
     std::vector<uint32_t> replay_held_axes;
+    //The replay's own events - its input and its releases - kept apart from pending_events so the
+    //drain can drop live input for recorded actions and still let these through. Guarded by
+    //state_mutex.
+    std::vector<InputEvent> replay_pending;
     //Physics thread, from ApplyTickInput beside AdvanceSyntheticHolds: queues whatever the replay
     //has due before this tick.
     void AdvanceReplay(uint64_t sim_tick);

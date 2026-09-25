@@ -51,3 +51,4 @@
 - [OK to stop running apps](ok_to_stop_running_apps.md) — user allows killing a running app exe to relink or free port 8765; say so in the reply
 - [Vine and rope system](vine_rope_system.md) — core/Spline + SplineDeform shared by vines and the rope; static vines + modelled wrap (vine_curl) BUILT 2026-09-24 (steps 1-3) and the skinned rope (step 4); next is rope animation + grip-at-a-point; plan in apps/archer/vine_plan.md
 - [Input recording](input_recording.md) — BUILT 2026-09-25: F9/F10 + input_record/input_replay, recordings/*.rec text, trim = edit begin/end; input is tick-exact but archer replays drift because animation state isn't restored
+- [Sign text anchors](sign_text_anchors.md) — text on props via parented Cube empties text_<n> (scale = box, depth = relief); apps/archer/Sign.h; user-approved pattern for asset markers

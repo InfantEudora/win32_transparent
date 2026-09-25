@@ -238,10 +238,51 @@ struct v2{
 //After letting go, the same ledge cannot be caught again for this long - without it, dropping off
 //a ledge re-grabs it on the very next tick and the archer is welded there.
 #define LEDGE_RELEASE_COOLDOWN      14
-//Climbing up is a fixed, uninterruptible move. It is a lerp today because there is no animation to
-//drive it; a root-motion clip replaces it exactly, which is the reason it is a duration in ticks
-//and a start/end pair rather than a velocity.
-#define LEDGE_CLIMB_TICKS           18
+/*
+    How far BELOW the lip the body box's top hangs. The box is not the hands: Hanging_Braced holds
+    them well above her head, and with the box's top at the lip her fingers lay 0.33 above the
+    stone. This drops her until the finger joints rest on it; MeasureLedgeHang checks it against
+    the clip at every start and prints the number to type.
+*/
+#define LEDGE_HANG_DROP             0.31f
+/*
+    Climbing up is a fixed, uninterruptible move: a duration, a start and an end, and the path
+    between them - the shape `Climb`'s hips take from the grab to standing, so the hands stay on
+    the lip while the rules carry the body. Stage cannot read the clip, so the path is a copy, and
+    ApplicationArcher::MeasureLedgeClimb re-measures it at every start and prints the table to
+    type if the export has moved away from it (the KICK_TICKS arrangement).
+
+    LEDGE_CLIMB_TICKS IS THE FEEL: the clip is pinned to the rules' progress, so any length plays
+    it through exactly once. The grab-to-standing part is 1.77s; 60 ticks plays it at 1.77x. It
+    was 18 (0.30s) before there was a clip - a hop onto the ledge, not a mantle.
+*/
+#define LEDGE_CLIMB_TICKS           60
+//How far past the lip the body stands when the climb ends: where the clip's hips finish, less
+//the half width. Clamped to the block, so a narrow one still takes her.
+#define LEDGE_CLIMB_INSET           0.65f
+#define LEDGE_CLIMB_PATH_SAMPLES    17
+/*
+    Fractions of the whole rise and the whole step across, at evenly spaced points through the
+    move. The step across stalls in the middle, because the hips close on the wall while she pulls
+    up and only walk on once she is over the lip.
+
+    THE RISE IS NOT THE CLIP'S ALONE. The rules rise 2.11, hang to standing (the body's height and
+    LEDGE_HANG_DROP); the clip's hips rise 1.61 from the grab. The 0.50 between them is put where
+    no hand is planted, since that is the one place a body moving more than its pose does not show:
+    LEDGE_CLIMB_REGRIP of it over the first samples - the crossfade in, where her hands move from
+    hooked over the lip to flat on top, and the hang's hips sit lower under her hands than the
+    grab's - and the rest over the stand-up, from LEDGE_CLIMB_STANDUP_FROM, where the clip ends
+    0.08 higher than Idle stands. Spread evenly instead, the planted hand slid up the move.
+
+    The re-grip is a quarter of the move, and the app sets the hang-to-climb crossfade to match
+    it: a crossfade shorter than the re-grip would plant the hands while the body is still
+    hitching up under them.
+*/
+#define LEDGE_CLIMB_REGRIP          (0.12f + LEDGE_HANG_DROP)
+#define LEDGE_CLIMB_REGRIP_SAMPLES  4
+#define LEDGE_CLIMB_STANDUP_FROM    12
+extern const float LEDGE_CLIMB_UP[LEDGE_CLIMB_PATH_SAMPLES];
+extern const float LEDGE_CLIMB_ACROSS[LEDGE_CLIMB_PATH_SAMPLES];
 
 //--- The level ----------------------------------------------------------------------------------
 /*
@@ -268,6 +309,10 @@ struct StageBlock{
     float hh = 0.5f;
     int   kind = BLOCK_SOLID;
     bool  f_alive = true;       //BREAKABLE blocks clear this; nothing else ever does
+    //Collision only: something else is its look - an authored model (StageScenery) - so the app
+    //draws no box for it outside the F2 blockout view, and it neither melts nor grows plants.
+    //The rules never read it; to Stage it is an ordinary block of its kind.
+    bool  f_invisible = false;
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
@@ -299,11 +344,6 @@ struct StageBlock{
 #define ARCHER_TEST_BAY_X_MIN       (-40.0f)
 #define ARCHER_TEST_BAY_X_MAX       (-12.0f)
 #define ARCHER_TEST_BAY_SPLIT_Y     6.0f
-//The ground bay repeats one set of test shapes along its length at this spacing. stage_test finds
-//the first set's pillar by it.
-#define ARCHER_TEST_BAY_SHAPE_SETS      4
-#define ARCHER_TEST_BAY_SHAPE_SPACING   7.0f
-#define ARCHER_TEST_BAY_SHAPE_CENTRE(i) (ARCHER_TEST_BAY_X_MIN + ((i) + 0.5f) * ARCHER_TEST_BAY_SHAPE_SPACING)
 
 /*
     Something the APP builds a rigid body for, described here so that the whole level layout lives
@@ -379,6 +419,63 @@ struct StageProp{
 enum TargetVariant{
     TARGET_BOARD = 0,
     TARGET_STAND
+};
+
+/*
+    Scenery with writing on it. NOT a prop: nothing collides with it and no body is built for it,
+    so it has no size here and the rules never read it. It lives in the Stage only so that a
+    level's whole layout, words included, is in one place.
+
+    The variant picks the model; the model says where its text goes (apps/archer/Sign.h), so the
+    level gives only the strings, in slot order - text[0] on the model's text_0 and so on.
+    STRING LITERALS ONLY: they are held as pointers, and levels are built from code.
+*/
+enum SignVariant{
+    SIGN_POST = 0,          //archer.glb's signpost: two arrow boards, text_0 the upper one
+    SIGN_VARIANT_COUNT
+};
+
+#define STAGE_SIGN_MAX_TEXTS 4
+
+struct StageSign{
+    int   variant = SIGN_POST;
+    float x = 0.0f;
+    float y = 0.0f;         //the ground it stands on, not a centre - the models are base-down
+    float z = 0.0f;         //depth in the slab; behind her (negative) keeps it out of her way
+    float yaw_deg = 0.0f;   //about +Y; 0 faces the camera
+    const char* text[STAGE_SIGN_MAX_TEXTS] = {};
+};
+
+/*
+    A piece of authored scenery - a model out of archer.glb stood in the level as it is. Like a
+    sign, NOT a prop: no rigid body, and the rules never read the model.
+
+    PLACED BY ITS WALKABLE SURFACE, not its origin. The terrain tiles are the first of these, and
+    their origin sits inside the rock, off-centre; what a level cares about is where the grass
+    is. So (x, y) is the centre and height of the model's flat top, and the app fits the model to
+    it - measured off the up-facing triangles, so the grass blades sticking up above the surface
+    do not count (on terrain_tile_big they would have lifted her a quarter of a unit off it).
+
+    A COLLIDER IS OPTIONAL: collider_hw > 0 makes AddScenery put an invisible SOLID block under
+    that surface, its top exactly at y. The level types its size rather than the rules measuring
+    the mesh, because Stage builds headless and must not load a file; the app checks the two
+    agree when it loads the model and says so if they do not. Axis-aligned, so a model with a
+    collider should keep yaw_deg at 0.
+*/
+enum SceneryVariant{
+    SCENERY_TILE_BIG = 0,   //terrain_tile_big: a flat-topped chunk of ground, about 3.3 wide at her scale
+    SCENERY_TILE_ROUND,     //terrain_tile_round: a rounder one, about 3.9 wide
+    SCENERY_VARIANT_COUNT
+};
+
+struct StageScenery{
+    int   variant = SCENERY_TILE_BIG;
+    float x = 0.0f;         //centre of the walkable top
+    float y = 0.0f;         //its height
+    float z = 0.0f;
+    float yaw_deg = 0.0f;
+    float collider_hw = 0.0f;   //0: no collider
+    float collider_hh = 0.0f;   //the block hangs this far below y, times two
 };
 
 /*
@@ -623,6 +720,31 @@ struct ArcherInput{
 };
 
 /*
+    A forecast of her next landing - see Stage::PredictLanding. `ticks` counts from now: 1 is the
+    next tick. f_caught instead of f_lands when a ledge catch comes first.
+*/
+#define STAGE_PREDICT_TICKS         30      //half a second: the longest landing lead-in is 18 ticks
+struct StageLanding{
+    bool  f_lands = false;
+    bool  f_caught = false;
+    int   ticks = 0;
+    float speed = 0.0f;             //the land_speed that tick will report
+    v2    pos;                      //where the body box's centre will be
+};
+
+/*
+    Where a live arrow will strike a BLOCK, if it does - see Stage::PredictArrowImpact. `ticks`
+    counts from now, 1 being the next tick. Props (crates, targets) are the app's to find: it
+    raycasts the path the forecast hands back, as it does the real flight.
+*/
+struct StageArrowImpact{
+    bool  f_hits = false;
+    int   ticks = 0;
+    v2    point;
+    int   block = -1;
+};
+
+/*
     An arrow in flight, or stuck in something.
 
     prev_pos is kept because the app needs THIS TICK'S SEGMENT to ask rp3d whether the arrow
@@ -751,6 +873,8 @@ public:
     //--- The world ------------------------------------------------------------------------------
     std::vector<StageBlock> blocks;
     std::vector<StageProp>  props;
+    std::vector<StageSign>  signs;
+    std::vector<StageScenery> scenery;
 
     /*
         Makes the blocks' CURRENT geometry the level's, so that Reset puts it back instead of
@@ -881,6 +1005,16 @@ public:
     */
     int   PredictArc(v2* out_points, int max_points) const;
 
+    /*
+        The same, for an arrow already in flight: where it will strike a block, and when, within
+        `horizon` ticks. It runs FlyArrow - the step TickArrows takes - on a copy of the arrow, so
+        it is the flight and not a sketch of it; an arrow's flight takes no input, so nothing can
+        make it wrong except the app's props, which the rules never see. `path`, if given, gets
+        the positions the arrow sweeps through, one per tick after the first - the segments the
+        app raycasts for props, as ResolveArrowsAgainstProps does the real ones.
+    */
+    StageArrowImpact PredictArrowImpact(int index, int horizon, std::vector<v2>* path = NULL) const;
+
     //The nocked arrow's ANCHOR - where the string holds it - for the current facing and aim. An
     //arrow's first sweep starts here; see ARROW_LENGTH.
     v2    AnchorPosition() const;
@@ -888,6 +1022,23 @@ public:
     //spawns the flying point here and PredictArc draws from here.
     v2    MuzzlePosition() const;
     v2    AimDirection() const;
+
+    /*
+        Where and when she comes down, if she keeps doing what she is doing - PredictArc's idea
+        for her own body: a COPY of the rules ticked forward, so the forecast is the flight, not a
+        model of it. Exact while the input holds; the moment it changes, the next tick's forecast
+        is the one to believe. That is the prediction half of rollback netcode (a remote player's
+        input is assumed unchanged until the real one arrives), pointed at the future.
+
+        `in` is this tick's input. HELD things stay held and EDGES do not repeat - a jump pressed
+        this tick is not pressed again next tick - which is also why a rope is never caught in a
+        forecast: taking one is a press. A ledge IS caught, because the rules catch one on their
+        own, and a catch ends the forecast as surely as a landing.
+
+        Only from the air; anything else reports nothing. What the rules cannot see they cannot
+        forecast: the obstacles are the app's copy of the props as of this tick.
+    */
+    StageLanding PredictLanding(const ArcherInput& in, int horizon = STAGE_PREDICT_TICKS) const;
 
     //--- Bookkeeping ----------------------------------------------------------------------------
     uint64_t ticks = 0;
@@ -911,9 +1062,18 @@ private:
     void BuildMainLevel();
     void BuildRangeLevel();
     void BuildRopeLevel();
+    //Adds `s` to `scenery`, and its invisible collider to `blocks` if it has one. See StageScenery.
+    void AddScenery(const StageScenery& s);
     void TickBow(const ArcherInput& in, StageEvents& events);
     void TickArcher(const ArcherInput& in, StageEvents& events);
     void TickArrows(StageEvents& events);
+    /*
+        One tick of an arrow's flight: gravity, then the sweep from where this step starts (the
+        anchor on its first step - see ARROW_LENGTH) to `next`, against the blocks. Returns the
+        block struck, or -1; moves nothing but the velocity. TickArrows and PredictArrowImpact
+        both fly by it, which is what keeps the forecast honest.
+    */
+    int  FlyArrow(Arrow& a, v2& from, v2& next, v2& point, v2& normal) const;
     void Loose(StageEvents& events);
 
     //--- Hanging and climbing -------------------------------------------------------------------

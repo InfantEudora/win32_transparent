@@ -438,6 +438,27 @@ void InputController::ApplyTickInput(uint64_t sim_tick){
 void InputController::DrainAndApplyEvents(bool f_append, uint64_t sim_tick){
     {
         std::lock_guard<std::mutex> lock(state_mutex);
+        /*
+            WHILE A REPLAY RUNS, IT ALONE DRIVES THE RECORDED ACTIONS: live input for them is
+            dropped here, where every source - raw input, the pad, touch, the fallback poll, the
+            scripted holds - has already been queued. The unrecorded actions (the cursor, pause,
+            the record/replay keys, view toggles) are the person watching and pass. The replay's
+            own events come after, from their own queue, so its releases are never dropped - even
+            the ones queued by the StopReplay that has just cleared f_replaying.
+        */
+        if (f_replaying){
+            size_t kept = 0;
+            for (size_t i = 0; i < pending_events.size(); i++){
+                if (!IsRecorded(pending_events[i].mapped_keycode)){
+                    pending_events[kept++] = pending_events[i];
+                }
+            }
+            pending_events.resize(kept);
+        }
+        if (!replay_pending.empty()){
+            pending_events.insert(pending_events.end(),replay_pending.begin(),replay_pending.end());
+            replay_pending.clear();
+        }
         //Recorded as they are drained, which is the moment they become input - see BeginRecording.
         //From pending_events rather than tick_events because in the append case tick_events
         //already holds this pass's earlier drain, which was recorded when IT was drained.
@@ -803,6 +824,35 @@ void InputController::StartReplay(const std::vector<RecordedInputEvent>& events,
         //new one's tracking would never have seen them go down.
         QueueReplayReleases();
     }
+    /*
+        And what is held LIVE goes up too - the mirror of BeginRecording writing the held keys in
+        as tick 0. A key the person was holding when the replay started would otherwise stay down
+        under it for its whole length, since the drain now drops that key's live release. Scripted
+        holds are dropped for the same reason: their events could not get through anyway.
+    */
+    std::vector<const KeyState*> zeroed;
+    for (const KeyMap& km: keymap){
+        if (!IsRecorded(km.mapped_keycode)){
+            continue;
+        }
+        if (km.f_held && !km.IsAnalog()){
+            InputEvent up;
+            up.type = INPUT_EVENT_KEY_UP;
+            up.mapped_keycode = (uint16_t)km.mapped_keycode;
+            up.value = (int32_t)km.system_keycode;
+            replay_pending.push_back(up);
+        }
+        if (km.state && km.state->fvalue != 0.0f &&
+            std::find(zeroed.begin(),zeroed.end(),km.state) == zeroed.end()){
+            zeroed.push_back(km.state);
+            InputEvent zero;
+            zero.type = INPUT_EVENT_AXIS_SCALAR;
+            zero.mapped_keycode = (uint16_t)km.mapped_keycode;
+            zero.fvalue = 0.0f;
+            replay_pending.push_back(zero);
+        }
+    }
+    synthetic_holds.clear();
     replay_events = events;
     //Stable, so events a person reordered by hand still apply in file order within one tick - and
     //a down/up pair on one tick stays a press rather than becoming a release of nothing.
@@ -862,14 +912,14 @@ void InputController::QueueReplayReleases(){
         up.type = INPUT_EVENT_KEY_UP;
         up.mapped_keycode = (uint16_t)k.mapped;
         up.value = k.system_keycode;
-        pending_events.push_back(up);
+        replay_pending.push_back(up);
     }
     for (uint32_t mapped: replay_held_axes){
         InputEvent zero;
         zero.type = INPUT_EVENT_AXIS_SCALAR;
         zero.mapped_keycode = (uint16_t)mapped;
         zero.fvalue = 0.0f;
-        pending_events.push_back(zero);
+        replay_pending.push_back(zero);
     }
     replay_held_keys.clear();
     replay_held_axes.clear();
@@ -895,7 +945,7 @@ void InputController::AdvanceReplay(uint64_t sim_tick){
     //`begin`, all at once, which is what keeps a key held across the cut held.
     while (replay_cursor < replay_events.size() && replay_events[replay_cursor].tick <= position){
         const InputEvent& e = replay_events[replay_cursor].event;
-        pending_events.push_back(e);
+        replay_pending.push_back(e);
         TrackReplayEvent(e);
         replay_cursor++;
     }

@@ -19,14 +19,14 @@ why "blend faster" does not fix it.
 
 ## The asset, measured
 
-`apps/archer/assets/meshes/archer.glb` — one skin, one skinned mesh, twenty-eight clips, one 4096x4096
+`apps/archer/assets/meshes/archer.glb` — one skin, one skinned mesh, thirty-five clips, one 4096x4096
 base-colour texture. Everything below is read out of the file rather than assumed, and the app
 re-measures all of it at load (`ApplicationArcher::MeasureClips`) so a re-export corrects these
 numbers instead of contradicting them silently.
 
 ```
-skin        archer_armature, 65 joints, single root (mixamorig:Hips)
-mesh        archer, 23,699 verts / 61,197 indices, skinned, elf_archer_material
+skin        archer_armature, 68 joints, single root (mixamorig:Hips)
+mesh        archer, 22,678 verts, skinned, elf_archer_material
 rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_HEIGHT (1.80)
 ```
 
@@ -39,8 +39,8 @@ rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_H
 | `Running_Slow` | 0.77 | yes | 1.45/s | 2.92/s | 3.1x |
 | **`Running_Fast`** | **0.57** | yes | **2.57/s** | **5.19/s** | **1.73x** |
 | `Running_TurnAround` | 0.70 | no | in place | — | — |
-| `Kick_Front` | **1.43** | no | in place | — | replaced 2026-09-22, then trimmed by 12 frames; the strike stayed at tick 42 |
-| `Climb` | 2.80 | no | a mantle: +1.01 up, 1.50 forward | — | — |
+| `Kick_Front` | **1.43** | no | in place | — | replaced 2026-09-22, then trimmed at both ends; plays 0.333..1.433 (1.10s), the strike at tick 22 |
+| `Climb` | 2.80 | no | a run-up, a jump for the lip and a mantle | — | plays from the grab, 1.033..2.800 (1.77s): +0.80 up, 0.50 forward |
 | `Crouch` | 4.00 | no | in place | — | — |
 | `Stretching` | 11.07 | yes | in place | — | — |
 | `WarmUp` | 14.67 | yes | in place | — | — |
@@ -53,11 +53,18 @@ rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_H
 | `FallingIdle_ToLanding` | 1.10 | no | in place | — | lands at 0.300s |
 | `Jumping_InPlace` | 1.93 | no | in place | — | a whole jump; preview only |
 | `Jump_Forward` | 2.00 | no | 0.39/s | 0.78/s | a whole jump; not wired |
-| `Standing_DrawArrow` | 1.07 | no | in place | — | played while standing only; moving needs the mask layer |
+| `Standing_DrawArrow` | 1.07 | no | in place | — | the upper layer's draw, over any base |
+| `Standing_AimArrowIdle` | 3.80 | yes | in place | — | the held aim, after the draw |
+| `Standing_OverdrawArrow` | 1.93 | no | in place | — | preview only |
 | `Running_Jump` | 0.93 | no | 2.30/s | 4.64/s | the running jump; climbs 0.333s |
 | `Running_JumpForward` | 0.93 | no | 2.30/s | 4.64/s | **byte-identical to `Running_Jump`** |
 | `Hanging_Braced` | 2.37 | yes | a held pose | — | holding a ledge |
-| `Hanging_Rope` | — | yes | a held pose | — | gripping a rope, both hands overhead |
+| `Hanging_Rope` | 2.63 | yes | a held pose | — | gripping a rope, both hands overhead |
+| `Rope_Climbing` | 1.87 | yes | +0.28 up a cycle | — | hand over hand; pinned to the distance climbed |
+| `Stand_ToKneel` | 1.53 | no | in place | — | settles at tick 40 = `KNEEL_DOWN_TICKS` |
+| `Kneel_Idle` | 1.53 | yes | a held pose | — | 60% of her standing height |
+| `Kneel_ToStand` | 1.03 | no | in place | — | settles at tick 42 = `KNEEL_UP_TICKS` |
+| `Laying_StandingUp` | 3.50 | no | in place | — | the level entry, played whole |
 | `Running_ToStop` | 0.93 | no | 0.42/s | 0.85/s | plants at 0.267s |
 | `Kick_FrontSpin` | 1.13 | no | in place | — | the old `Kick_Front`; a real pivot |
 | `Walk_ToHandstand` | 4.00 | no | 0.33/s | 0.67/s | set dressing |
@@ -90,9 +97,9 @@ Two things the export decided that the app corrects:
 - ~~**A second, un-rigged copy of the body** sits at the scene root (`tripo_...`).~~ **Gone** —
   checked 2026-09-23, the file holds three meshes: `archer_mesh`, the arrow and the bow.
 
-And one worth knowing about rather than fixing: **29% of vertices carry a fourth bone influence**,
+And one worth knowing about rather than fixing: **26% of vertices carry a fourth bone influence**,
 and this engine skins with **three** (`GLTFLoader::GetSkinnedVertex`: *"We only store 3 bones
-because that how we roll"*). The first three weights average 0.9835 and never fall below 0.761, so
+because that how we roll"*). The first three weights average 0.9843 and never fall below 0.761, so
 the cost is at most a few percent of shrink on 4% of vertices. Exporting with max 3 influences
 would make it exact.
 
@@ -113,8 +120,13 @@ The state machine lives in `Object` (`core/Object.h:302-347`, `Object::ApplyAnim
 | Retarget to a third clip mid-blend | Yes, since 2026-09-22 | `TransitionToAnimation` keeps the nearer side |
 | Parametric blending (blend space) | Yes, since 2026-09-22 | `Object::SetBlendPair`, `Puppet::Choose` |
 | Phase / foot sync between clips | Yes, measured per clip | `Object::blend_phase_offset`, `Puppet::clip_phase` |
+| Clip trimming at load | Yes | `Animation::Trim`, `ArcherClipInfo::trim_start/end` |
+| A playhead pinned to gameplay | Yes, app-side | `PuppetChoice::pinned_time` (the draw, both climbs) |
+| Layers after the base pose | Yes, **app-side** — upper body, loose legs, aim | `ArcherModel::ApplyAnimation`; not yet lifted into `Object` |
+| Secondary motion (verlet chains) | Yes, since 2026-09-25 | `core/DynamicChain` |
 | Additive poses | No | — |
 | Time-ranged cancel windows | No | — |
+| Inertialization | No | — |
 
 That retarget row used to read **Refused**, and the refusal was the wall this whole plan was written
 around: a request for a genuinely new clip mid-blend was dropped with a warning, because honouring
@@ -766,14 +778,96 @@ fast she is travelling, not why.
 
 1. **No apex hold.** `Falling_Idle` is a held pose — its hip moves 0.0005 units across 0.733s — so
    the standing set's fall has no acceleration in it and the top of the arc has no hang.
-2. **`Standing_DrawArrow`** (1.067s) is previewable and unselected. It is a whole-body clip for
-   something that must happen *while* she runs, so it needs step 2's mask layer, not a state.
+2. ~~**`Standing_DrawArrow`** (1.067s) is previewable and unselected. It is a whole-body clip for
+   something that must happen *while* she runs, so it needs step 2's mask layer, not a state.~~
+   Done — it is the upper layer's draw since 2026-09-24, over any base (*Step 2*).
 3. ~~**The rope** is the last placeholder state.~~ Done — `Hanging_Rope`, and see the rope section
    below for the two solver bugs that drawing her tilt made visible.
 4. **`Running_Jump` and `Running_JumpForward` are byte-identical** — every frame of the root track
    matches, as do the duration, the travel and the net turn. One of them can come out of the
    export. `Jump_Forward` is a genuinely different, floatier arc (0.776 rig over 2.000s against
    2.150 over 0.933s) and is worth keeping to compare against.
+
+### Meeting the ground: forecasting the landing (agreed 2026-09-25; steps 1-2 BUILT)
+
+Item 1 above, and a wider point: **the landing clips are entered at their contact frame**, so their
+lead-in - the legs reaching for the ground, 0.267s of `Jump_FromAir` and 0.300s of
+`FallingIdle_ToLanding` - is thrown away every time. Almost every Mixamo clip has one. A lead-in
+wants the event BEFORE it happens, and for the events the world causes (a landing, an arrow's
+impact, a ledge catch, reaching a wall) it can be had: the rules are a pure function of state and
+input, so a copy ticked forward is the future, the way `PredictArc` is the arrow's. For the events
+the PLAYER causes (a jump) it cannot, short of delaying them - so takeoff stays as it is.
+
+It is the prediction half of rollback netcode: assume the input holds, and re-predict when it does
+not. Here the rule is **decide every tick, never latch** - a clip started off a forecast that
+turns out wrong (she steers off the edge) backs out to the fall, which the lead-in of a landing,
+mostly legs reaching down, survives. And **split what is predicted from what is confirmed**: the
+anticipation comes off the forecast, but dust, the sound and the hard-or-soft choice come off the
+real contact - an arrow's incoming "ssssh" off its forecast, its thunk on the tick it hits, so a
+wrong forecast is a near miss rather than an early hit.
+
+The order agreed:
+
+1. ~~**A place to fall.**~~ **Built.** The rope scene has a pit off each end (`BuildRopeLevel`):
+   3 deep on the left, a soft landing at 18.4 u/s, with a ledge lip to climb back out; 15 deep on
+   the right, through the hard landing to top fall speed (34) for its last 4.8 units - Restart to
+   get out. And the camera had to learn to follow a fall: it trails a steady speed by
+   `speed * dt / smooth`, 23 units at 34 u/s on this scene's slow follow, so she left the frame.
+   Falling, it now aims below her by exactly that lag - on her at a steady fall, eased in as she
+   speeds up, and no overshoot at the landing because the lead goes with the speed. Measured down
+   the deep pit: within 0.5 of her the whole way. **Then made one camera for every scene** (the
+   range's and the rope scene's slow follow gone) with its numbers on the panel's sliders and on
+   `archer_camera` - `ArcherCameraTuning`: follow across, follow up/down, lead, keep in frame. The
+   lead became a fraction of the view's half-width, so it shrinks with the zoom (3 world units was
+   two thirds of the view zoomed right in), and `keep_in` holds her body box inside 0.7 of the
+   view whatever the rates, zoom or speed. Zoomed to the minimum, a sprint, a turn at a sprint and
+   the deep pit keep her within 0.28 of the half-width and 0.18 of the half-height.
+2. ~~**The forecast.**~~ **Built.** `Stage::PredictLanding(in, horizon)`: a copy of the whole Stage
+   ticked forward with held input held and edges not repeated - so it catches ledges (the rules do
+   that themselves) and never ropes (taking one is a press). 30 ticks ahead
+   (`STAGE_PREDICT_TICKS`), the longest lead-in being 18. The rules test holds it to the bit, not
+   to a tolerance: same tick, speed and place; one tick in a long fall's landing appears exactly at
+   the horizon and never moves; a turn mid-air makes the old forecast wrong and the next right; a
+   ledge catch is forecast to the tick. In the game (`archer_state.landing_forecast`): down the
+   deep pit the landing appeared 30 ticks out naming tick 84 and she landed on 84; the shallow pit
+   the same. It costs 5-8 us a tick, 30 at worst.
+3. ~~**The landing clips entered early.**~~ **Built.** The app hands the forecast to the Puppet
+   (`ArcherAnimParams::land_in_ticks`, `land_speed`). Once the touchdown is nearer than a landing's
+   contact frame, `Puppet::LeadInClip` starts that landing IN THE AIR - picked by the forecast
+   speed - with its playhead pinned to contact frame less the time still to fall (one tick ahead,
+   as the pose shows late). Re-decided every tick: a forecast that moves moves the playhead, one
+   that goes drops back to the fall. At contact the clip the lead-in chose IS the landing
+   (`lead_clip`), not re-chosen from a speed read a tick apart. The running jump keeps its own arc.
+   Measured down the deep pit: `FallingIdle_ToLanding` from 22 ticks out, a tick of clip per tick,
+   its contact frame (0.375s) on the last airborne tick, and her toes at +0.058 on the contact
+   tick - standing height. The shallow pit the same with `Jump_FromAir`.
+4. ~~**The fall pose.**~~ **Built** - item 1 above. A **whole-body overlay** on `ArcherModel`
+   (`ApplyOverlay`: every bone's local rotation slerped toward one clip at one time, after the
+   base and before the upper layer) lays `FallingIdle_ToLanding`'s first frame - arms up, legs
+   reaching - over `Falling_Idle`. `Puppet::fall_weight` aims at smoothstep(fall speed /
+   `PUPPET_FALL_POSE_VEL` 20) and eases over a crossfade's 9 ticks, so it grows as she speeds up
+   and fades out while a lead-in crossfades in (the engine's blend pair could not do this: with
+   the rate at 0 its follower freezes wherever the leader's phase happened to be).
+   **And in the air the hips ride the body** (`air_hip_ref`, `air_hip_weight`): the app reads the
+   posed hips' height and moves the model to hold them at the routine landing's contact-frame
+   height, whatever crossfade or overlay made the pose. A per-clip lowering came first and dropped
+   her 0.5 under the body mid-crossfade; holding at standing height let go of 0.08 on the contact
+   tick, and releasing that over the last ticks showed the lead-in's steepest descent instead. At
+   the contact-frame height (0.938 soft, 0.950 hard) there is nothing to let go of: a standing
+   jump, the deep pit and the shallow pit now move the hips at most 0.011-0.033 against the body
+   in any tick, and meet the floor on the contact tick.
+5. ~~**The arrow's pre-rolled whoosh and its thunk.**~~ **Built** with `arrow_swoosh.wav` (0.309s,
+   building to its loudest at 0.260s - `SoundSystem::LoudestAt` measures that at load, so a re-cut
+   sound re-times itself). `Stage::PredictArrowImpact` flies a copy of a live arrow by `FlyArrow`,
+   the step `TickArrows` itself now takes, and returns the block, the tick and the swept path; the
+   app raycasts that path for props, the way `ResolveArrowsAgainstProps` does the real flight.
+   Once the impact is within the swoosh's lead it starts - PARTWAY IN when the impact is nearer
+   than the whole lead (`SoundSystem::Play`'s new `start_seconds`), so the peak still lands on it.
+   The thwack stays on the real strike, so a prop that moves costs a near miss, never an early
+   thud. The rules test holds the forecast to the bit (tick, point, block, path). In the game,
+   four shots on the range - three into the near target, which only the prop raycast could find,
+   and one into the far wall - each peaked on the tick of their hit: 166/166, 358/358, 545/545,
+   755/755, started 0.193, 0.177, 0.143 and 0.010s in.
 
 ---
 
@@ -1367,9 +1461,8 @@ angle the bow is not pointing.
 
 - **Buildable now**, against drawing while standing — the temporary `CLIP_DRAW` branch in
   `Puppet::Choose` gives it a full-draw pose to bend.
-- **Aiming while moving needs step 2**, the mask layer. Without it the override would bend a
-  running torso that is not holding a bow up. The override itself does not change when step 2
-  lands; it runs after whatever the layers produced.
+- ~~**Aiming while moving needs step 2**, the mask layer.~~ Done 2026-09-24: the aim runs after
+  the upper layer, so it bends a torso that is holding the bow up whatever the legs are doing.
 - **The nocked arrow follows the aim for free** since 2026-09-23: it is a child of the bow, at the
   string's nock (bow_plan §4, *The target*). So the aim check can read the BOW's world +Z - the
   arrow's direction by construction - rather than the line between the hands.
@@ -1384,7 +1477,7 @@ Ordered so nothing blocks on the step after it.
 |---|---|---|---|
 | 0 | **Parameter seam + puppet mode** | **done** | **none** |
 | 1 | **Signed-speed blend space + phase sync** | **done** | **none** — the phase alignment turned out to be measurable rather than authored |
-| 2 | Upper-body mask layer | layer via per-bone `animation_mask`, spine-up | **draw / hold / loose**, standing, masked-safe |
+| 2 | **Upper-body layer + kneeling** | **done 2026-09-24** — blended in model space, not by bone mask (see *Step 2*) | **none** — the standing draw and hold serve, over any base |
 | 3 | **Aim pitch** | **done 2026-09-23** — procedural, 0.00 deg error over ±85 (see *Step 3 — aim pitch*); 1D additive only if the extremes need it | **none**; an aim-down pose is the first candidate if −45 and below want more |
 | 4 | Inertialization | replaces the crossfade; deletes four states and the mid-blend refusal | none |
 | 5 | Air set | jump/fall driven off `vel_y` and `f_on_ground` | **jump_start / rise / apex / fall / land_soft / land_hard** |
@@ -1401,8 +1494,8 @@ sight, and several are too fast to animate.
 
 | rules | ticks | seconds | the clip | note |
 |---|---|---|---|---|
-| `KICK_TICKS` | **86** | **1.43** | `Kick_Front` is 1.433s | **DONE 2026-09-22**, and done twice — the rules moved to the clip, then followed it when it was trimmed. Plays at 1.00x |
-| `LEDGE_CLIMB_TICKS` | 18 | 0.30 | `Climb` is **2.80s** | needs **9.3x**; clamped to 2.5x, so the clip is still playing long after she is standing. The likeliest answer is that a 0.30s mantle was never a mantle |
+| `KICK_TICKS` | **66** | **1.10** | `Kick_Front` trimmed is 1.100s | **DONE 2026-09-22**, and done three times — the rules moved to the clip, then followed it through two trims. Plays at 1.00x |
+| `LEDGE_CLIMB_TICKS` | **60** | **1.00** | `Climb` from the grab is 1.767s | **DONE 2026-09-25** — was 18 ticks, which showed only the clip's run-up. Trimmed to the grab, pinned to the rules, played at 1.77x; see *The ledge climb* below |
 | `BOW_DRAW_TICKS` | 36 | 0.60 | none yet | fine as is — that is a real draw |
 
 **The kick is settled, and it went the other way to everything else here.** Every other fit in this
@@ -1449,9 +1542,13 @@ too, and the window check catches that separately.
 The warning was first confirmed by deliberately mis-setting `KICK_TICKS`, which is why it was
 already there to fire when the real trim arrived.
 
+**And trimmed again, at the front** (`trim_start` 10 frames: the drop from a guard, which the
+crossfade in already covers). That one DOES move the strike - to 0.367s, tick 22 of 66 - so
+`KICK_TICKS` went to 66 and the window to 20..24, the two checks above saying which numbers to type.
+
 **The cost, which is real and is the next decision.** `f_planted` roots her for the whole of
-`kick_ticks`, so a kick is a **1.43-second commitment**, and 0.73s of that is recovery *after*
-the boot has landed. That is a heavy, committal move, which may well be what a wall-breaking kick
+`kick_ticks`, so a kick is a **1.10-second commitment**, and 0.70s of that (ticks 24..66) is
+recovery *after* the boot has landed. That is a heavy, committal move, which may well be what a wall-breaking kick
 should be. If it wants to be lighter, the fix is to unroot at `KICK_ACTIVE_TO` and let the recovery
 be cancelled by moving — which needs the Puppet to drop the clip at the same moment, or the
 animation would be overruling the rules. That is the same cancel-on-move the settle already does.
@@ -1461,6 +1558,53 @@ animation would be overruling the rules. That is the same cancel-on-move the set
 > jammed and the one thing the demo exists to show could not happen. The lone crate moved to 0.60,
 > which opens 2.7 units in front of it; it now flies **0.60 → 3.79**. The stack stays put because
 > two crates reach 1.65 against the step's 1.80 top, so it is the way up there.
+
+#### The ledge climb (2026-09-25)
+
+**18 ticks was never showing the climb.** `Climb` is not a mantle from a hang: it is a run-up to the
+wall (0..0.83s), a jump (0.93s), and only then the hands on the lip (1.033s) and the pull-up. At
+the 2.5x clamp, 18 ticks played 0.75s of it - the run-up, on the spot, against a wall, after which
+she was already standing.
+
+- **Trimmed to the grab** (`trim_start` 31 frames), which leaves 1.767s from hands-on-the-lip to
+  standing.
+- **Pinned, not played**: `Puppet::Choose` sets the playhead from the rules' progress, one tick
+  ahead because the pose shows a tick late (the rope climb's arrangement). So `LEDGE_CLIMB_TICKS`
+  is purely the feel, and any value plays the clip through once. **60** (1.0s, 1.77x) was the
+  pick; 106 is the clip's own pace and 42 is where the old clamp would have been.
+- **Stage carries her along the clip's hip path**, not an up-then-across lerp: `LEDGE_CLIMB_UP` /
+  `LEDGE_CLIMB_ACROSS` (17 samples) and `LEDGE_CLIMB_INSET` 0.65 (she stands where the clip's hips
+  finish, 1.00 across; before it was 0.70). The box goes 0.4 into the wall while she pulls up,
+  which nothing minds - nothing collides with her mid-climb, and the box is never drawn.
+- **The hang came down first.** With the box's top at the lip, `Hanging_Braced`'s fingers lay
+  0.33 above the stone - a visible gap under both hands. `LEDGE_HANG_DROP` 0.31 hangs the body
+  that much lower, which rests the finger joints 0.03 above the lip, curled over it by up to 0.12
+  (`MeasureLedgeHang` checks it at every start). A rules change rather than a view offset, so
+  letting go falls from where she is drawn instead of popping up 0.31 first.
+- **The rise is not the clip's alone.** Hang to standing is 2.11 in the rules; the clip's hips
+  rise 1.61. Spread evenly, the planted hand slid up the move. So the gap goes where no hand is
+  planted: `LEDGE_CLIMB_REGRIP` 0.43 over the first quarter (the drop, plus 0.12: the hang's hips
+  sit that much lower under her hands than the grab's), which is when her hands leave the lip and
+  are placed flat on top - and the hang-to-climb crossfade is set to the same 0.25s, so the hands
+  are not planted while the body is still hitching up. The remaining 0.07 goes over the stand-up.
+- **`MeasureLedgeClimb` checks all of it at every start** and prints the table to type if a
+  re-export moves it, the `KICK_TICKS` arrangement:
+
+```
+Clip Climb           1.767s from the grab; rises 1.614 and steps 1.000 across (the rules: 2.111,
+                     0.430 of it in the re-grip and 0.067 in the stand-up, and 1.000);
+                     LEDGE_CLIMB_TICKS 60 plays it at 1.77x; path within 0.001 of Stage's
+Clip Hanging_Braced  fingers 0.029 above the lip, hung LEDGE_HANG_DROP 0.31 below it
+```
+
+Measured in the game, bone world positions against the lip, tick by tick: in the re-grip the
+hand lifts to 0.25 and reaches 0.44 over the top before it is placed at 0.25 - a reach, and it
+reads as one; planted, the right hand holds within 0.05 for eight ticks, then rises with the
+clip's own hand; the left
+foot stands on top at 0.02-0.08 through the pull-up, where `Idle` stands at 0.05. **What is left**
+is the end: the clip's last pose stands 0.08 higher than `Idle`, so her feet lift to 0.13 in the
+stand-up and the crossfade to `Idle` sets them back down over ~9 ticks. Fixing that is the view's
+job (lowering the pose, like the rope climb's lift), and it is small.
 
 Each of these is a decision about how the game *feels*, not a bug. A 1.0s climb is a different game
 from a 0.3s climb. `Puppet::choice.wanted_rate` reports the gap live so the argument can be had
@@ -1502,18 +1646,22 @@ the state, and the panel lists it.
 | stopping from a run | `Running_ToStop`, fired on the first tick of the deceleration ✓ |
 | stopping against a wall | **placeholder** — nothing; the ladder falls to `Idle` |
 | pushing a crate | **placeholder** — `Running_Slow` on the spot at the push speed |
-| kicking | `Kick_Front` at **1.00x**; `KICK_TICKS` retimed to the clip, twice ✓ — and only on the ground |
-| climbing | `Climb`, badly mistimed against `LEDGE_CLIMB_TICKS` (wants 9.3x) ✓ |
+| getting up (level entry) | `Laying_StandingUp`, whole, fitted to `GETUP_TICKS` at 1.00x ✓ |
+| kicking | `Kick_Front` at **1.00x**; `KICK_TICKS` retimed to the clip through two trims ✓ — and only on the ground |
+| climbing a ledge | `Climb` from the grab, pinned to the rules' progress at 1.77x, the body on its hip path ✓ |
 | rising | `Jump_ToAir`, at rate 1.0, holding the pose the fall loops ✓ |
 | falling | `Falling_Idle`, looped ✓ |
 | landing | `Jump_FromAir`, or `FallingIdle_ToLanding` above 25 u/s; each entered at its contact frame ✓ |
 | running jump | `Running_Jump`, latched at takeoff, fitted to its climb at 0.85x ✓ |
 | hanging | `Hanging_Braced`, looped ✓ |
-| on the rope | `Hanging_Rope`, looped, rolled to match the collider she is swinging as ✓ |
-| drawing / loosing | `Standing_DrawArrow`, fitted to `BOW_DRAW_TICKS` at 1.78x — **standing only**, a temporary branch in `Puppet::Choose`; drawing while moving needs step 2's mask layer |
-| aiming | the draw pose bent by the aim override, standing only; 0.00 deg against `aim_deg` ✓ — see *Step 3 — aim pitch* |
+| on the rope | `Hanging_Rope`, looped, rolled to match the collider she is swinging as, the legs loose ✓ |
+| climbing the rope | `Rope_Climbing`, pinned to the distance climbed; the legs the clip's while moving ✓ |
+| kneeling | `Stand_ToKneel` / `Kneel_Idle` / `Kneel_ToStand`, each timed to where the hip settles ✓ |
+| drawing / loosing | `Standing_DrawArrow` on the upper layer, pinned to the rules' draw — over standing, walking, running and kneeling alike ✓ — see *Step 2* |
+| aiming | `Standing_AimArrowIdle` on the upper layer, bent by the aim override over any base; 0.00 deg against `aim_deg`, plus the sway ✓ — see *Step 3 — aim pitch* |
 
 Nothing the archer can DO falls through to the idle any more, and a sweep over the modes in
 `stage_test.cpp` says so rather than one line per mode, so it keeps saying it when a mode is added.
-The remaining placeholders are all things she does WHILE doing something else, or things with no
-clip authored yet. `LEDGE_CLIMB_TICKS` is the last mistiming; the mask layer is the largest hole.
+The two placeholders left have no clip authored for them. The ledge climb was the last clip
+stretched past what it could take (2026-09-25); the rest play close to 1.00x or are pinned to
+the rules' progress.

@@ -775,6 +775,20 @@ vec3 GLTFLoader::GetNodeScale(const char* node_name){
     return vec3((float)node->scale.at(0),(float)node->scale.at(1),(float)node->scale.at(2));
 }
 
+std::vector<std::string> GLTFLoader::GetNodeChildNames(const char* node_name){
+    std::vector<std::string> names;
+    tinygltf::Node* node = FindNode(node_name);
+    if (!node){
+        return names;
+    }
+    for (int child : node->children){
+        if (child >= 0 && child < (int)model.nodes.size()){
+            names.push_back(model.nodes.at(child).name);
+        }
+    }
+    return names;
+}
+
 //Lookup material by name
 Material* GLTFLoader::LookupLoadedMaterial(const std::string& material_name){
     for(size_t i=0;i<loaded_materials.size();i++){

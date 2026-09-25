@@ -17,6 +17,7 @@
 #include "DynamicChain.h"
 #include "Bow.h"
 #include "TextMesh.h"
+#include "Sign.h"
 #include "SoundSystem.h"
 
 /*
@@ -519,6 +520,8 @@ public:
     bool BuildAimChain();
     //Finds the upper layer's bones and their shares. Call once the skeleton is loaded.
     bool BuildUpperMask();
+    //Finds every bone for the whole-body overlay. Call once the skeleton is loaded.
+    bool BuildOverlay();
 
     //--- Set by the app each tick ---
     Animation* upper_clip = NULL;   //NULL: no upper layer
@@ -529,6 +532,10 @@ public:
     Animation* upper_from_clip = NULL;
     float upper_from_time = 0.0f;
     float upper_mix = 1.0f;
+    //The whole-body overlay (PuppetChoice::overlay_clip): one clip at one time over the base.
+    Animation* overlay_clip = NULL;
+    float overlay_time = 0.0f;
+    float overlay_weight = 0.0f;
     float aim_target_deg = 0.0f;    //Stage::aim_deg
     float aim_weight = 0.0f;        //0..1, from Puppet::aim_weight
     float aim_facing = 1.0f;        //+1 right, -1 left
@@ -582,6 +589,8 @@ private:
 
     std::unordered_map<Object*,float> upper_share;  //bone -> its share of the layer
     std::vector<Bone*> upper_order;                 //the same bones, parents before children
+    std::vector<Bone*> overlay_bones;               //every bone of the body, for the overlay
+    void  ApplyOverlay();
 
     //Every bone the layer or the aim may change, with its base transform from the last pass that
     //changed any - see ApplyAnimation.
@@ -649,23 +658,24 @@ private:
 */
 #define ARCHER_CAM_SIDE             0
 #define ARCHER_CAM_ORBIT            1
-#define CAMERA_LEAD                 3.0f    //world units ahead, in the direction of travel
-#define CAMERA_SMOOTH               0.10f   //per-tick lerp toward the ideal
+#define CAMERA_FOV                  38.0f   //vertical, degrees - see SetupCamera
 /*
-    On the range the camera follows her SLOWLY, and with no lead.
+    How the side camera follows her: ONE set for every scene, on the panel's sliders so it can be
+    tuned by feel. The range and the rope scene used to follow at a quarter of the main level's
+    rate (to keep the range's targets still under the aim), and the rope scene's pits lost her.
 
-    It used to not follow at all - fixed on the middle of the range, so screenshots were taken
-    from one place. It follows now, in both camera modes, but at a quarter of the main level's
-    rate: CAMERA_SMOOTH closes a tenth of the gap each tick (about a sixth of a second to settle),
-    this a fortieth (about two thirds of a second). A range is for standing and aiming, and a
-    camera that chases every step makes the targets slide around under the aim; one that drifts
-    after her keeps the targets still while she shoots and still brings her back to the middle.
-    No lead for the same reason - the lead exists to show what is coming on a run, and nothing on
-    the range is coming.
-
-    For a screenshot comparable to another, let her stand for a second first, or use camera_set.
+    `follow_x` / `follow_y` are the per-tick ease toward where it wants to be: 0.10 closes a tenth
+    of the gap a tick, about a sixth of a second to settle. `lead` is how far ahead of a full
+    sprint it looks, as a fraction of the view's half-width, so it scales with the zoom - 0.21 is
+    the old 3.0 units at the default distance. `keep_in` is the hard limit: her body box stays
+    inside that fraction of the view's half-extents whatever the rates, the zoom or the speed.
 */
-#define RANGE_CAMERA_SMOOTH         0.025f
+struct ArcherCameraTuning{
+    float follow_x = 0.10f;
+    float follow_y = 0.10f;
+    float lead = 0.21f;
+    float keep_in = 0.70f;
+};
 
 /*
     What the MCP tools are allowed to see.
@@ -792,6 +802,10 @@ struct ArcherSnapshot{
     float leg_knee_deg[2] = {};
     float climb_pinned_time = -1.0f;    //the rope climb's playhead as pinned this tick, -1 unpinned
     float climb_lift_posed = 0.0f;      //and the lift the model was lowered by (last tick's pin)
+    StageLanding landing_forecast;      //her next landing as forecast this tick
+    float fall_weight = 0.0f;           //Puppet::fall_weight, the fall pose's share
+    float air_hip_weight = 0.0f;        //how much the hips are held at standing height in the air
+    float landing_forecast_us = 0.0f;   //and what the forecast cost
     //Each hand (left, right) on the drawn rope: how far down it, and how far off it. -1 off the rope.
     //A gripping hand's distance down stays put while she climbs; if it creeps, the hand is sliding.
     float rope_hand_s[2] = { -1.0f, -1.0f };
@@ -884,8 +898,12 @@ public:
     //which also run there) and from DrawImGuiUI, which holds physics_mutex. Everything else goes
     //through `snapshot`.
     Stage stage;
+    //Her next landing as of this tick, and what forecasting it cost - see Stage::PredictLanding.
+    StageLanding landing_forecast;
+    float landing_forecast_us = 0.0f;
 
     vec3 camera_target = vec3(0.0f,3.0f,0.0f);
+    ArcherCameraTuning camera_tuning;
 
 private:
     //--- Setup, all on the render thread from Init() ---------------------------------------------
@@ -959,6 +977,26 @@ private:
         same reason it comes after BuildArcherModel: the character's scale.
     */
     void BuildVines();
+    /*
+        The level's signs (StageSign), into main_scene - see apps/archer/Sign.h for how a model's
+        text finds its boards. Built once per level, like the vines: they are static, and
+        NewGame's rebuild leaves them alone. The models load on the first call. RENDER THREAD,
+        and after BuildHitPopups, whose glyph set the text is baked from.
+    */
+    void BuildSigns();
+    SignModel sign_models[SIGN_VARIANT_COUNT];
+    bool f_sign_models_loaded = false;
+    int material_sign_text = 0;
+    //The level's authored scenery (StageScenery), the same way: once per level, models loaded on
+    //the first call, each fitted to its walkable surface at the character's scale. RENDER THREAD.
+    void BuildScenery();
+    Mesh* scenery_meshes[SCENERY_VARIANT_COUNT] = {};
+    std::vector<Material> scenery_materials[SCENERY_VARIANT_COUNT];
+    //Each model's flat top at scale 1, measured by MeasureWalkableTop: its centre, height, width.
+    float scenery_top_x[SCENERY_VARIANT_COUNT] = {};
+    float scenery_top_y[SCENERY_VARIANT_COUNT] = {};
+    float scenery_top_w[SCENERY_VARIANT_COUNT] = {};
+    bool f_scenery_loaded = false;
     //Reads each clip's own root track for how far it travels and how long it lasts, and hands the
     //answers to the Puppet. See the note on the definition - this is the number that decides
     //whether the feet slide, and it is measured rather than declared.
@@ -989,6 +1027,12 @@ private:
         it. See Puppet::climb_rise for why distance rather than time.
     */
     void MeasureRopeClimb();
+    //Climb's hip path from the grab against LEDGE_CLIMB_UP/ACROSS and LEDGE_CLIMB_INSET, which
+    //Stage carries her along. Prints the table to type if the export has moved away from it.
+    void MeasureLedgeClimb();
+    //Where Hanging_Braced's fingers rest against the lip, as LEDGE_HANG_DROP puts her. Prints the
+    //drop to type if they float above the stone or sink into it.
+    void MeasureLedgeHang();
     void BuildArrowViews();
     /*
         The arrow in her hand, re-baked for flight: along +X with the TIP AT THE ORIGIN, at the
@@ -1027,6 +1071,20 @@ private:
     //One arrow strike, at `point` and `speed`. Level hits come through UpdateSound, prop hits
     //from ResolveArrowsAgainstProps, which is the only place those are found.
     void PlayArrowHit(float x, float speed);
+    //How loud an arrow sound is, by its speed and by how far from her it happens - see PlayArrowHit.
+    float ArrowSoundGain(float x, float speed);
+    /*
+        THE INCOMING SWOOSH, timed so its loudest moment lands on the impact: for every arrow in
+        flight, Stage::PredictArrowImpact says when it strikes a block, a raycast along the path it
+        hands back says whether a prop comes first, and once that is within the swoosh's lead the
+        sound starts - partway in, if the impact is nearer than the whole lead, so the peak still
+        lands on it. Once per flight. The hit itself stays on the real strike (PlayArrowHit), so a
+        forecast a moving prop proves wrong costs a near miss, never an early thud.
+    */
+    void StartArrowSwooshes();
+    float arrow_swoosh_peak = -1.0f;            //seconds into arrow_swoosh.wav it is loudest; -1 unloaded
+    bool  arrow_swooshed[ARROW_MAX_LIVE] = {};  //this flight's swoosh has been started
+    std::vector<v2> arrow_path;                 //scratch for the forecast's path
     //Loads the three wavs. Survivable: a missing file leaves that one sound silent.
     void SetupSound();
     //The other half of the arrow hit test - the half that knows about rigid bodies. See the
@@ -1160,7 +1218,7 @@ private:
     void UpdateHitPopups();
     //Takes every popup down - on a scene switch, whose tick clock is not the one they were timed by.
     void ClearHitPopups();
-    GlyphSet hit_glyphs;
+    GlyphSet hit_glyphs;            //the app's one glyph set - the signs are baked from it too
     //Index is the count; [0] is unused. Held by the AssetManager as ar_hit_<n>.
     Mesh* hit_number_meshes[HIT_NUMBERS_MAX + 1] = {};
     struct HitPopup{
@@ -1569,6 +1627,20 @@ private:
     //model was lowered by this tick, for archer_state.
     bool  f_climb_posed = false;
     float climb_base_posed = 0.0f;
+    /*
+        IN THE AIR, THE HIPS RIDE THE BODY. The model is moved so the posed hips sit at the height
+        a landing meets the ground with (air_hip_ref: the routine landing's contact frame, measured
+        at load) - whatever mix of clips and overlay put them elsewhere. That height rather than
+        standing, 0.08 higher: held at standing, the hold let go of 0.08 in the one tick of
+        contact, and letting go over the last ticks instead showed the lead-in's steepest descent. A landing's lead-in is an authored descent onto the floor, a tuck lifts
+        the feet by dropping the hips, and in flight none of that is the body moving: the rules'
+        box is. `air_hip_weight` eases it in over a crossfade when she leaves the ground, the rope
+        or a ledge (Hanging_Braced's hips are 0.16 above standing, and snapping that away read as
+        a drop) - which also takes up the 0.08 between standing and the reference at a takeoff -
+        and it has nothing to let go of at a landing's contact frame.
+    */
+    float air_hip_ref = 0.0f;
+    float air_hip_weight = 0.0f;
     float climb_lift_posed = 0.0f;
 
     //--- The backdrop -----------------------------------------------------------------------------

@@ -11,8 +11,8 @@
 #include "type_helpers.h"
 #ifdef USE_MCP
 #include "MCPServer.h"
-#include "PlaceHash.h"
 #endif
+#include "PlaceHash.h"
 
 #include <math.h>
 #include <string.h>
@@ -229,6 +229,62 @@ void ArcherModel::ApplyLegChains(float time_delta){
     }
 }
 
+/*
+    Every BONE under the hips, the hips included, parents before children - the whole-body
+    overlay's list. The props on the hands and back are not bones and are left out, as in
+    BuildUpperMask.
+*/
+bool ArcherModel::BuildOverlay(){
+    Bone* root = FindBone(ARCHER_MODEL_ROOT_BONE);
+    if (!root){
+        debug->Err("Whole-body overlay is OFF: no bone '%s'\n",ARCHER_MODEL_ROOT_BONE);
+        return false;
+    }
+    overlay_bones.clear();
+    overlay_bones.push_back(root);
+    std::vector<Object*> subtree;
+    root->GetAllSubObjects(subtree);
+    for (Object* o : subtree){
+        Bone* bone = dynamic_cast<Bone*>(o);
+        if (!bone){
+            continue;
+        }
+        overlay_bones.push_back(bone);
+    }
+    for (Bone* bone : overlay_bones){
+        if (std::find(layered_bones.begin(),layered_bones.end(),bone) == layered_bones.end()){
+            layered_bones.push_back(bone);
+        }
+    }
+    layered_rot.resize(layered_bones.size());
+    layered_pos.resize(layered_bones.size());
+    return true;
+}
+
+/*
+    The overlay: each bone's LOCAL rotation slerped toward the overlay clip's at overlay_time.
+    Local is right here where the upper layer needed model space - that was a torso squared up over
+    hips that faced another way; this is the whole body, hips included, so the chain is the clip's
+    own. Positions are left alone: on this rig they are bone lengths, and the hips' height in the
+    air is the app's (air_hip_ref). Reads the keyframes directly, never the clip's playhead, so the
+    base may be playing the same clip.
+*/
+void ArcherModel::ApplyOverlay(){
+    for (ObjectAnimation* track : overlay_clip->object_animations){
+        Bone* bone = dynamic_cast<Bone*>(track->target);
+        if (!bone){
+            continue;
+        }
+        ObjectAnimationKeyFrame* key = track->GetClosestKeyframe(overlay_time);
+        if (!key || !key->f_rotation){
+            continue;
+        }
+        quat r = quat::slerp(bone->GetRotation(),key->rotation,overlay_weight);
+        r.normalize();
+        bone->SetRotation(r);
+    }
+}
+
 bool ArcherModel::BuildUpperMask(){
     Bone* root = FindBone(ARCHER_UPPER_ROOT);
     if (!root){
@@ -427,11 +483,17 @@ void ArcherModel::ApplyAnimation(float time_delta){
 
     Skeleton::ApplyAnimation(time_delta);
 
+    bool f_overlay = (overlay_clip && overlay_weight > 0.0f && !overlay_bones.empty());
     bool f_upper = (upper_clip && upper_weight > 0.0f && !upper_share.empty());
     bool f_aim = (aim_bones[0] && aim_weight > 0.0f);
     bool f_legs = (leg_weight > 0.0f);
-    if (f_upper || f_aim || f_legs){
+    if (f_overlay || f_upper || f_aim || f_legs){
         SaveBasePose();
+    }
+    //Base, overlay, upper layer, legs, aim: the overlay is part of the whole-body pose the rest
+    //are laid over.
+    if (f_overlay){
+        ApplyOverlay();
     }
     if (f_upper){
         ApplyUpperLayer();
@@ -558,6 +620,9 @@ void ApplicationArcher::Init(void){
     BuildRopeAttachMarkers();
     //Before BuildRange, which shares the popup pool with the range scene along with the arrows.
     BuildHitPopups();
+    //After it, for the glyphs. The main level has none yet; this is where they would come from.
+    BuildSigns();
+    BuildScenery();
     BuildBackground();
     SetupLights();
     SetupCamera();
@@ -616,22 +681,6 @@ void ApplicationArcher::BuildMaterials(){
     Simple table[] = {
         //Ground: neutral and dark, so everything standing on it reads first.
         { "ar_ground",      vec4(0.26f,0.28f,0.33f,1.0f), 0.04f, &material_ground },
-        /*
-            The terrain's three, in the order Terrain.cpp writes matid: grass, soil, rock.
-
-            KEPT DARK AND DESATURATED, deliberately, and not because grass is not green. The rule
-            two paragraphs up is that colour means a rule, and terrain means no rule at all - it is
-            the one surface in this level with no verb attached. If the ground out-reads the ledge
-            you can grab or the platform you can drop through, the palette has stopped doing its
-            job, and a prototype that looks better while saying less is a bad trade.
-
-            The grass/soil boundary is a HARD per-triangle line, because default.vert declares
-            vmatindex `flat`. These three have to read as distinct at that boundary rather than
-            blend, so they are separated in value as well as hue.
-        */
-        { "ar_grass",       vec4(0.34f,0.46f,0.30f,1.0f), 0.05f, &material_grass },
-        { "ar_soil",        vec4(0.31f,0.25f,0.20f,1.0f), 0.03f, &material_soil },
-        { "ar_rock",        vec4(0.30f,0.31f,0.34f,1.0f), 0.04f, &material_rock },
         //Ledge: warm, because it is the one surface with a verb attached to it.
         { "ar_ledge",       vec4(0.78f,0.55f,0.24f,1.0f), 0.12f, &material_ledge },
         //One-way platform: translucent-looking pale blue. It behaves differently from below, and
@@ -673,6 +722,51 @@ void ApplicationArcher::BuildMaterials(){
                                         table[i].emissive);
         renderer->AddMaterial(m);
         *table[i].out = renderer->FindMaterialIndex(m.name);
+    }
+
+    /*
+        The terrain's three, in the order Terrain.cpp writes matid: grass, soil, rock.
+
+        MATCHED TO THE AUTHORED TERRAIN TILES (archer.glb's terrain_tile_big and _round, material
+        terrain_texture), so the marching-cubes ground and the tiles read as one set. They used to
+        be held dark and desaturated so that ground with no verb could never out-read a ledge;
+        the terrain is meant to look like the art now, and the gameplay colours above are the
+        blockout's, which the art will replace anyway.
+
+        MEASURED, NOT PICKED: every tile triangle bucketed by its face normal exactly as
+        Terrain.cpp buckets a vertex (rock below ny 0.25, grass above 0.70, soil between), the
+        texture averaged over it and weighted by area. The engine does no sRGB conversion, so that
+        average IS the flat colour that matches. What it found:
+          - tops:  olive grass;
+          - slopes: grass as well - the tiles' grass lip hangs over their edges, so soil is the
+            same green a shade warmer, and the grass-to-soil line vanishes the way it does on them;
+          - sides and undersides: a warm orange-brown earth, grey stones averaged in. That is
+            "rock" here, which is every vertical face, so the cliffs are earth now and not grey.
+
+        AND THE TILES' LIGHTING TERMS, not the table's: metallic 0.4, roughness 0.8, no emissive.
+        The same colour under a different metallic renders a different brightness in this app (no
+        environment - see the note on the table), so matching one without the other matches
+        nothing.
+    */
+    struct TerrainColour{
+        const char* name;
+        vec4 colour;
+        int* out;
+    };
+    TerrainColour terrain[] = {
+        { "ar_grass",   vec4(0.38f,0.50f,0.11f,1.0f), &material_grass },
+        { "ar_soil",    vec4(0.42f,0.49f,0.14f,1.0f), &material_soil },
+        { "ar_rock",    vec4(0.47f,0.35f,0.16f,1.0f), &material_rock }
+    };
+    for (size_t i = 0; i < sizeof(terrain)/sizeof(terrain[0]); i++){
+        Material m;
+        m.name = terrain[i].name;
+        m.glsl_material.color = terrain[i].colour;
+        m.glsl_material.metallic = 0.4f;
+        m.glsl_material.roughness = 0.8f;
+        m.glsl_material.emissive = vec4(0.0f,0.0f,0.0f,0.0f);
+        renderer->AddMaterial(m);
+        *terrain[i].out = renderer->FindMaterialIndex(m.name);
     }
 
     {   //The aim arc's beads. UNLIT, which is the right tool and not a hack: these are a HUD
@@ -844,6 +938,10 @@ void ApplicationArcher::BuildBlocks(){
             object->SetScale(size);
             object->SetMaterialSlot(0,material);
             blockout_group->AttachChild(object);
+        }
+        //Still a body - a kicked crate lands on a tile too - but drawn only in the blockout view.
+        if (object && b.f_invisible){
+            object->SetVisibility(f_show_blockout);
         }
         block_objects.push_back(object);
     }
@@ -1103,9 +1201,17 @@ void ApplicationArcher::ScatterFoliageObjects(){
         return;
     }
     std::vector<bool> grows(stage.blocks.size(),true);
+    /*
+        Nor on a scenery collider: the terrain tiles carry their own grass blades for now. Once the
+        blades are an asset of their own and grown like the ferns, this is the line to drop - the
+        collider's top is the tile's grass by construction, so plants would stand on it exactly.
+    */
+    for (size_t i = 0; i < stage.blocks.size(); i++){
+        grows[i] = !stage.blocks[i].f_invisible;
+    }
 #if ARCHER_TEST_BAY
     for (size_t i = 0; i < stage.blocks.size(); i++){
-        grows[i] = !IsInTerrainBay(stage.blocks[i]);
+        grows[i] = grows[i] && !IsInTerrainBay(stage.blocks[i]);
     }
 #endif
     FoliageParams params = foliage_params;
@@ -1153,6 +1259,182 @@ void ApplicationArcher::ScatterFoliageObjects(){
     }
     debug->Info("Foliage: %i ferns, %i low ferns, %i flowers\n",foliage_counts[FOLIAGE_FERN],
                 foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER]);
+}
+
+//--- Signs --------------------------------------------------------------------------------------
+
+//The archer.glb node for each SignVariant, in that enum's order.
+static const char* SIGN_NODES[SIGN_VARIANT_COUNT] = { "signpost" };
+
+/*
+    See the declaration. Survivable per variant, like the foliage: a model missing from the export
+    is reported once and its signs are not stood up, and the level plays the same without them.
+*/
+void ApplicationArcher::BuildSigns(){
+    if (!f_sign_models_loaded){
+        f_sign_models_loaded = true;
+        for (int v = 0; v < SIGN_VARIANT_COUNT; v++){
+            if (LoadSignModel(gltfloader,SIGN_NODES[v],sign_models[v])){
+                renderer->AddMaterials(sign_models[v].materials);
+            }else{
+                debug->Err("No '%s' in %s - signs of that kind will not stand\n",
+                           SIGN_NODES[v],ARCHER_MODEL_ASSET);
+            }
+        }
+        /*
+            Paint, not ink: LIT, unlike the hit counter, because the letters are part of the board
+            and should darken with it in shade. Dark and rough so they read against the wood from
+            across the screen without catching a highlight.
+        */
+        Material m;
+        m.name = "ar_sign_text";
+        m.glsl_material.color = vec4(0.10f,0.06f,0.035f,1.0f);
+        m.glsl_material.roughness = 0.9f;
+        m.glsl_material.metallic = 0.0f;
+        renderer->AddMaterial(m);
+        material_sign_text = renderer->FindMaterialIndex(m.name);
+    }
+
+    for (size_t i = 0; i < stage.signs.size(); i++){
+        const StageSign& s = stage.signs[i];
+        if (s.variant < 0 || s.variant >= SIGN_VARIANT_COUNT){
+            continue;
+        }
+        char name[32];
+        snprintf(name,sizeof(name),"sign_%i",(int)i);
+        Object* o = BuildSignObject(sign_models[s.variant],hit_glyphs,s.text,STAGE_SIGN_MAX_TEXTS,
+                                    material_sign_text,name);
+        if (!o){
+            continue;
+        }
+        //The character's scale, like every prop out of the same file.
+        o->SetPosition(vec3(s.x,s.y,s.z));
+        o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),s.yaw_deg * 3.14159265358979f / 180.0f));
+        o->SetScale(vec3(model_scale,model_scale,model_scale));
+        main_scene->AddObject(o);
+    }
+}
+
+//--- Scenery ------------------------------------------------------------------------------------
+
+//The archer.glb node for each SceneryVariant, in that enum's order.
+static const char* SCENERY_NODES[SCENERY_VARIANT_COUNT] = { "terrain_tile_big", "terrain_tile_round" };
+
+/*
+    Where a model's walkable top is: the AREA-WEIGHTED MEDIAN HEIGHT OF ITS UP-FACING TRIANGLES,
+    and the x extent of those at that height. Not the highest vertex - grass blades stand above
+    the surface, and on terrain_tile_big the highest point is a blade tip a quarter of a unit (at
+    her scale) above the grass she should be walking on. Blades are near-vertical, so the
+    up-facing test drops them without having to know they are there.
+
+    The mesh is a flat triangle list (GLTFLoader expands the indices), so triangles are triplets.
+    False if nothing faces up.
+*/
+static bool MeasureWalkableTop(const Mesh* mesh, float& out_x, float& out_y, float& out_w){
+    struct Up{ float y, area; int first; };
+    std::vector<Up> up;
+    const std::vector<vertex>& v = mesh->GetVertices();
+    float total = 0.0f;
+    for (size_t i = 0; i + 2 < v.size(); i += 3){
+        vec3 e1 = v[i + 1].pos - v[i].pos;
+        vec3 e2 = v[i + 2].pos - v[i].pos;
+        vec3 n(e1.y * e2.z - e1.z * e2.y,e1.z * e2.x - e1.x * e2.z,e1.x * e2.y - e1.y * e2.x);
+        float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
+        if (len < 1e-12f || n.y / len < 0.9f){
+            continue;
+        }
+        Up u;
+        u.y = (v[i].pos.y + v[i + 1].pos.y + v[i + 2].pos.y) / 3.0f;
+        u.area = 0.5f * len;
+        u.first = (int)i;
+        up.push_back(u);
+        total += u.area;
+    }
+    if (up.empty()){
+        return false;
+    }
+    std::sort(up.begin(),up.end(),[](const Up& a, const Up& b){ return a.y < b.y; });
+    float acc = 0.0f;
+    float top = up.back().y;
+    for (size_t i = 0; i < up.size(); i++){
+        acc += up[i].area;
+        if (acc >= 0.5f * total){
+            top = up[i].y;
+            break;
+        }
+    }
+    float lo = 1e30f, hi = -1e30f;
+    for (size_t i = 0; i < up.size(); i++){
+        if (fabsf(up[i].y - top) > 0.04f){
+            continue;
+        }
+        for (int k = 0; k < 3; k++){
+            lo = fminf(lo,v[up[i].first + k].pos.x);
+            hi = fmaxf(hi,v[up[i].first + k].pos.x);
+        }
+    }
+    out_x = 0.5f * (lo + hi);
+    out_y = top;
+    out_w = hi - lo;
+    return true;
+}
+
+//See the declaration. Survivable per variant, like the signs and the foliage.
+void ApplicationArcher::BuildScenery(){
+    if (!f_scenery_loaded){
+        f_scenery_loaded = true;
+        for (int v = 0; v < SCENERY_VARIANT_COUNT; v++){
+            Mesh* mesh = gltfloader.GetMeshFromNode(SCENERY_NODES[v],&scenery_materials[v],false);
+            if (!mesh){
+                debug->Err("No '%s' in %s - that scenery will not stand\n",SCENERY_NODES[v],ARCHER_MODEL_ASSET);
+                continue;
+            }
+            mesh->Retain();
+            scenery_meshes[v] = mesh;
+            renderer->AddMaterials(scenery_materials[v]);
+            if (!MeasureWalkableTop(mesh,scenery_top_x[v],scenery_top_y[v],scenery_top_w[v])){
+                //Nothing faces up: place it by its origin, which is all there is to go on.
+                debug->Warn("Scenery '%s' has no up-facing surface - placed by its origin\n",SCENERY_NODES[v]);
+            }
+            debug->Info("Scenery '%s': walkable top at y %.3f, x %.3f, %.3f wide (%.2f at her scale)\n",
+                        SCENERY_NODES[v],scenery_top_y[v],scenery_top_x[v],scenery_top_w[v],
+                        scenery_top_w[v] * model_scale);
+        }
+    }
+
+    for (size_t i = 0; i < stage.scenery.size(); i++){
+        const StageScenery& s = stage.scenery[i];
+        if (s.variant < 0 || s.variant >= SCENERY_VARIANT_COUNT || !scenery_meshes[s.variant]){
+            continue;
+        }
+        char name[48];
+        snprintf(name,sizeof(name),"%s_%i",SCENERY_NODES[s.variant],(int)i);
+        Object* o = new Object();
+        o->name = name;
+        o->SetMesh(scenery_meshes[s.variant]);
+        //TakeMaterialNames writes the list, so each Object hands over its own copy.
+        std::vector<Material> materials = scenery_materials[s.variant];
+        o->TakeMaterialNames(materials);
+        //The measured top's centre onto (x, y). Unrotated, which is what a collider requires anyway.
+        o->SetPosition(vec3(s.x - scenery_top_x[s.variant] * model_scale,
+                            s.y - scenery_top_y[s.variant] * model_scale,s.z));
+        o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),s.yaw_deg * 3.14159265358979f / 180.0f));
+        o->SetScale(vec3(model_scale,model_scale,model_scale));
+        main_scene->AddObject(o);
+
+        /*
+            The level typed the collider; the mesh says how wide the grass really is. A quarter of a
+            unit either way is the tolerance - her half-width is 0.35, so a collider that far out
+            has her standing on the air past the lip or dropping off grass she can see.
+        */
+        if (s.collider_hw > 0.0f){
+            float measured = scenery_top_w[s.variant] * model_scale;
+            if (fabsf(2.0f * s.collider_hw - measured) > 0.25f){
+                debug->Warn("%s: collider is %.2f wide but the model's walkable top is %.2f - "
+                            "update its collider_hw in Stage.cpp\n",name,2.0f * s.collider_hw,measured);
+            }
+        }
+    }
 }
 
 //--- Vines --------------------------------------------------------------------------------------
@@ -1381,6 +1663,12 @@ void ApplicationArcher::BuildVines(){
 */
 void ApplicationArcher::ApplyBlockoutVisibility(){
     melted_blocks.clear();
+    //A scenery collider is hidden the way a melted box is, bay or no bay: its model is its look.
+    for (size_t i = 0;i < stage.blocks.size() && i < block_objects.size();i++){
+        if (stage.blocks[i].f_invisible && block_objects[i]){
+            block_objects[i]->SetVisibility(f_show_blockout);
+        }
+    }
 #if ARCHER_TEST_BAY
     if (terrain_objects.empty()){
         return;     //nothing has been melted, so nothing is hidden
@@ -1389,7 +1677,7 @@ void ApplicationArcher::ApplyBlockoutVisibility(){
         const StageBlock& b = stage.blocks[i];
         //Only SOLID melts - see the header note in Terrain.h. Leaving the other kinds alone also
         //keeps this from un-hiding a broken wall, which BreakBlocks hid for good.
-        if (b.kind != BLOCK_SOLID || !block_objects[i]){
+        if (b.kind != BLOCK_SOLID || b.f_invisible || !block_objects[i]){
             continue;
         }
         bool f_melted = IsInTerrainBay(b);
@@ -1981,6 +2269,8 @@ void ApplicationArcher::BuildArcherModel(){
     MeasureKickClip();
     MeasureKneelClips();
     MeasureRopeClimb();
+    MeasureLedgeClimb();
+    MeasureLedgeHang();
 
     /*
         GETUP_TICKS lives in Stage.h, which has never seen a .glb, so like KICK_TICKS it cannot
@@ -2033,6 +2323,16 @@ void ApplicationArcher::BuildArcherModel(){
     */
     archer_model->SetBlendTime(ARCHER_CLIPS[CLIP_DRAW].name,ARCHER_CLIPS[CLIP_AIM_IDLE].name,0.0f);
 
+    /*
+        Out of the ledge hang into the climb, as long as the re-grip: the stretch of the move where
+        Stage lifts her more than the clip does while her hands go from hooked over the lip to flat
+        on top (LEDGE_CLIMB_REGRIP). Shorter, and the crossfade would plant the hands while the
+        body was still hitching up under them. 0.25s at 60 ticks.
+    */
+    archer_model->SetBlendTime(ARCHER_CLIPS[CLIP_HANG].name,ARCHER_CLIPS[CLIP_CLIMB].name,
+                               (float)LEDGE_CLIMB_TICKS * ARCHER_DT * (float)LEDGE_CLIMB_REGRIP_SAMPLES /
+                               (float)(LEDGE_CLIMB_PATH_SAMPLES - 1));
+
     //Start her standing, and hide the box she has been standing in for five slices.
     if (archer_clips[CLIP_IDLE]){
         archer_model->SwitchToAnimation(archer_clips[CLIP_IDLE]);
@@ -2067,6 +2367,7 @@ void ApplicationArcher::BuildBow(){
     //The aim override bends the chain that carries the bow, and checks itself against the bow.
     //The upper layer's mask is built here too, after the props are on, so it can leave them out.
     archer_model->BuildUpperMask();
+    archer_model->BuildOverlay();
     archer_model->BuildAimChain();
     archer_model->BuildLegChains();
     archer_model->aim_probe = bow_rig.bow.object;
@@ -2223,6 +2524,7 @@ void ApplicationArcher::MeasureAirClips(){
     if (!toe){
         return;     //MeasureClipPhases has already said so; no need to say it twice
     }
+    Bone* hips = archer_model->FindBone(ARCHER_MODEL_ROOT_BONE);
     const int LANDINGS[] = { CLIP_LAND_SOFT, CLIP_LAND_HARD };
     for (int i = 0; i < (int)(sizeof(LANDINGS) / sizeof(LANDINGS[0])); i++){
         int index = LANDINGS[i];
@@ -2256,6 +2558,21 @@ void ApplicationArcher::MeasureAirClips(){
             }
         }
         puppet.clip_entry[index] = contact_at;
+        /*
+            The hips' height at that contact frame, above the model's origin - what they are held
+            at in the air (air_hip_ref). The routine landing's, and the hard one's is reported
+            beside it: when the two agree, the hold has nothing to let go of at either touchdown.
+        */
+        if (hips){
+            clip->SampleRootMotion(contact_at,contact_at);
+            clip->ApplyInterval(contact_at);
+            float at_contact = hips->GetWorldPosition().y - archer_model->GetWorldPosition().y;
+            if (index == CLIP_LAND_SOFT || air_hip_ref <= 0.0f){
+                air_hip_ref = at_contact;
+            }
+            debug->Info("Clip %-22s hips at %.3f on its contact frame%s\n",ARCHER_CLIPS[index].name,
+                        at_contact,(index == CLIP_LAND_SOFT) ? " - held there in the air" : "");
+        }
         debug->Info("Clip %-22s %.3fs long; feet land at %.3fs, leaving %.3fs to play\n",
                     ARCHER_CLIPS[index].name,clip->duration,puppet.clip_entry[index],
                     clip->duration - puppet.clip_entry[index]);
@@ -2463,6 +2780,142 @@ void ApplicationArcher::MeasureRopeClimb(){
     debug->Info("Rope_Climbing: %zu keys, rises %.3f a cycle of %.3fs - %.3f/s native, climbed at %.2f/s "
                 "(the pose runs %.2fx)\n",puppet.climb_times.size(),puppet.climb_cycle_rise,clip->duration,
                 native,ROPE_CLIMB_SPEED,(native > 0.0f) ? ROPE_CLIMB_SPEED / native : 0.0f);
+}
+
+/*
+    Climb's hip path, against the copy Stage carries her along - the KICK_TICKS arrangement: Stage
+    has never seen a .glb, so the app measures and prints what to type.
+
+    Interpolated between KEYFRAMES rather than read off ComputeRootPose on a grid, whose
+    closest-keyframe lookup would read every sample early (see MeasureRopeClimb). Up is the hips'
+    Y, across their Z - the clip's forward, towards the wall.
+*/
+/*
+    Hanging_Braced's fingers against the lip - LEDGE_HANG_DROP's check.
+
+    The finger JOINTS, both middle fingers, averaged: they lie flat over the lip in this clip, so
+    they are what rests on the stone, and a joint sits about a finger's half-thickness above the
+    skin it is inside - hence the 0.02 aimed for rather than 0. Read off the posed model at its
+    first frame: the hang is not extracted and has no layer over it, so this is the pose on
+    screen. Only heights are compared, which the model's load-time yaw does not touch.
+*/
+void ApplicationArcher::MeasureLedgeHang(){
+    Animation* clip = archer_clips[CLIP_HANG];
+    if (!clip || !clip->root_track || clip->root_track->keyframes.empty() || !archer_model){
+        return;
+    }
+    const char* names[] = { "mixamorig:LeftHandMiddle1", "mixamorig:LeftHandMiddle2",
+                            "mixamorig:LeftHandMiddle3", "mixamorig:LeftHandMiddle4",
+                            "mixamorig:RightHandMiddle1", "mixamorig:RightHandMiddle2",
+                            "mixamorig:RightHandMiddle3", "mixamorig:RightHandMiddle4" };
+    float t = clip->root_track->keyframes.front()->time;
+    clip->SampleRootMotion(t,t);    //zero-width: poses, reports no motion
+    clip->ApplyInterval(t);
+    float sum = 0.0f;
+    int n = 0;
+    for (const char* name : names){
+        Bone* b = archer_model->FindBone(name);
+        if (b){
+            sum += b->GetWorldPosition().y - archer_model->GetWorldPosition().y;
+            n++;
+        }
+    }
+    if (n == 0){
+        return;
+    }
+    //The model's origin is model_foot_offset below the body's bottom, and the body's top hangs
+    //LEDGE_HANG_DROP below the lip.
+    const float rest = 0.02f;
+    float above_top = sum / (float)n - ARCHER_HALF_H * 2.0f - model_foot_offset;
+    float fingers = above_top - LEDGE_HANG_DROP;
+    debug->Info("Clip %-22s fingers %.3f above the lip, hung LEDGE_HANG_DROP %.2f below it\n",
+                ARCHER_CLIPS[CLIP_HANG].name,fingers,LEDGE_HANG_DROP);
+    if (fabsf(fingers - rest) > 0.02f){
+        debug->Warn("Hanging_Braced's fingers %s the lip by %.3f. Set LEDGE_HANG_DROP to %.2f in "
+                    "Stage.h (and re-check LEDGE_CLIMB_UP, which MeasureLedgeClimb will print).\n",
+                    (fingers > rest) ? "float above" : "sink into",fabsf(fingers - rest),
+                    above_top - rest);
+    }
+}
+
+void ApplicationArcher::MeasureLedgeClimb(){
+    Animation* clip = archer_clips[CLIP_CLIMB];
+    if (!clip || !clip->root_track || clip->root_track->keyframes.size() < 2 || clip->duration <= 0.0f){
+        debug->Warn("No Climb clip - the ledge climb has nothing to follow\n");
+        return;
+    }
+    std::vector<float> times;
+    std::vector<vec3> hips;
+    for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+        times.push_back(key->time);
+        hips.push_back(clip->ComputeRootPose(key->time).authored_position);
+    }
+    auto at = [&](float t){
+        if (t <= times.front()){ return hips.front(); }
+        for (size_t i = 1; i < times.size(); i++){
+            if (t <= times[i]){
+                float f = (t - times[i - 1]) / (times[i] - times[i - 1]);
+                return hips[i - 1] + (hips[i] - hips[i - 1]) * f;
+            }
+        }
+        return hips.back();
+    };
+    vec3 start = at(0.0f);
+    vec3 end = at(clip->duration);
+    float rise = end.y - start.y;
+    float across = end.z - start.z;
+    if (fabsf(rise) < 1e-4f || fabsf(across) < 1e-4f){
+        debug->Warn("Climb's hips do not travel - the ledge climb path cannot be measured\n");
+        return;
+    }
+    /*
+        The rise as Stage should take it: the clip's own, plus the gap to the rules' rise put
+        where no hand is planted - LEDGE_CLIMB_REGRIP over the crossfade in, the rest over the
+        stand-up. See LEDGE_CLIMB_REGRIP.
+    */
+    float rules_rise = ARCHER_HALF_H * 2.0f + LEDGE_HANG_DROP + 0.001f;  //hang to standing, STAGE_EPS included
+    float standup = rules_rise - rise * model_scale - LEDGE_CLIMB_REGRIP;
+    const int last = LEDGE_CLIMB_PATH_SAMPLES - 1;
+    float up_frac[LEDGE_CLIMB_PATH_SAMPLES];
+    float across_frac[LEDGE_CLIMB_PATH_SAMPLES];
+    float worst = 0.0f;
+    for (int i = 0; i < LEDGE_CLIMB_PATH_SAMPLES; i++){
+        vec3 h = at(clip->duration * (float)i / (float)last);
+        float regrip = fminf(1.0f,(float)i / (float)LEDGE_CLIMB_REGRIP_SAMPLES);
+        float stand = fmaxf(0.0f,(float)(i - LEDGE_CLIMB_STANDUP_FROM) /
+                                 (float)(last - LEDGE_CLIMB_STANDUP_FROM));
+        up_frac[i] = ((h.y - start.y) * model_scale + LEDGE_CLIMB_REGRIP * regrip + standup * stand) /
+                     rules_rise;
+        across_frac[i] = (h.z - start.z) / across;
+        worst = fmaxf(worst,fmaxf(fabsf(up_frac[i] - LEDGE_CLIMB_UP[i]),
+                                  fabsf(across_frac[i] - LEDGE_CLIMB_ACROSS[i])));
+    }
+    float window = (float)LEDGE_CLIMB_TICKS * ARCHER_DT;
+    float inset = across * model_scale - ARCHER_HALF_W;
+    debug->Info("Clip %-22s %.3fs from the grab; rises %.3f and steps %.3f across (the rules: %.3f, "
+                "%.3f of it in the re-grip and %.3f in the stand-up, and %.3f); LEDGE_CLIMB_TICKS %d "
+                "plays it at %.2fx; path within %.3f of Stage's\n",
+                ARCHER_CLIPS[CLIP_CLIMB].name,clip->duration,rise * model_scale,across * model_scale,
+                rules_rise,LEDGE_CLIMB_REGRIP,standup,LEDGE_CLIMB_INSET + ARCHER_HALF_W,
+                LEDGE_CLIMB_TICKS,clip->duration / window,worst);
+    if (worst > 0.02f){
+        std::string up_row, across_row;
+        char buf[16];
+        for (int i = 0; i < LEDGE_CLIMB_PATH_SAMPLES; i++){
+            snprintf(buf,sizeof(buf),"%s%.3ff",i ? ", " : "",up_frac[i]);
+            up_row += buf;
+            snprintf(buf,sizeof(buf),"%s%.3ff",i ? ", " : "",across_frac[i]);
+            across_row += buf;
+        }
+        debug->Warn("Climb's path has moved %.3f from LEDGE_CLIMB_UP/ACROSS, so her hands will slide "
+                    "on the lip. Set them in Stage.cpp to\n    UP     { %s }\n    ACROSS { %s }\n",
+                    worst,up_row.c_str(),across_row.c_str());
+    }
+    if (fabsf(inset - LEDGE_CLIMB_INSET) > 0.05f){
+        debug->Warn("Climb ends %.2f past the lip but LEDGE_CLIMB_INSET is %.2f, so she steps %s "
+                    "than the clip does. Set LEDGE_CLIMB_INSET to %.2f in Stage.h.\n",
+                    inset,LEDGE_CLIMB_INSET,(inset > LEDGE_CLIMB_INSET) ? "less far" : "further",inset);
+    }
 }
 
 void ApplicationArcher::MeasureKneelClips(){
@@ -2816,6 +3269,13 @@ void ApplicationArcher::RegisterTargetHit(PropView& view, const vec3& point){
             archery_score += points;
             SpawnHitPopup(popup_at,points);
         }
+        //The centre ring, and only that: she says so. On the physics thread inside the tick, like
+        //the hit sound itself, so it lands on the tick the arrow does.
+#ifdef USE_SOUND
+        if (soundsystem && points == STAND_POINTS[0]){
+            soundsystem->Play("nice_shot",false,0.8f * sound_volume);
+        }
+#endif
         debug->Info("Stand %i: %i points (%i on it, %i this level)\n",
                     view.index,points,view.score,archery_score);
     }else{
@@ -3019,7 +3479,7 @@ void ApplicationArcher::SetupCamera(){
         is the jump arc (3.2) with the level's tallest structures and enough sky to see an arrow
         at the top of its lob.
     */
-    camera->SetupPerspective(renderer->width,renderer->height,38.0f,0.5f,240.0f);
+    camera->SetupPerspective(renderer->width,renderer->height,CAMERA_FOV,0.5f,240.0f);
     camera_target = vec3(stage.pos.x,stage.pos.y + 0.5f,0.0f);
     camera_ideal = camera_target;
     camera->SetPosition(vec3(camera_target.x,camera_target.y,CAMERA_DISTANCE));
@@ -3065,6 +3525,8 @@ Scene* ApplicationArcher::BuildExtraLevel(int level, const char* name){
 
     BuildBlocks();
     BuildProps();
+    BuildSigns();
+    BuildScenery();
     //Render thread, like the main level's - see the declaration.
     BuildRopeSkin();
     BuildArcher();
@@ -3320,7 +3782,10 @@ json ApplicationArcher::CaptureRecordingState(){
         //her first tick of input is air control rather than ground acceleration, and a recording
         //that starts with a step replayed 0.03 units short of the original.
         {"on_ground",stage.mode == MODE_GROUND && stage.f_on_ground},
-        {"coyote_ticks",stage.coyote_ticks}
+        {"coyote_ticks",stage.coyote_ticks},
+        //How long the level had been running: the seed for anything random in it - the debris a
+        //broken wall throws, the kick's shout. A replay restarts the level, which zeroes this.
+        {"level_ticks",stage.ticks}
     };
 }
 
@@ -3332,6 +3797,11 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
     }
     if (state.value("restart",true)){
         NewGame();
+    }
+    //Back to where the level's clock stood, so the random bits come out as they did. A file from
+    //before this was written has none, and replays with the restart's 0 as it always did.
+    if (state.contains("level_ticks")){
+        stage.ticks = state.value("level_ticks",(uint64_t)0);
     }
     PlaceArcher(v2(state.value("x",stage.pos.x),state.value("y",stage.pos.y)));
     stage.vel = v2(state.value("vx",0.0f),state.value("vy",0.0f));
@@ -3673,11 +4143,23 @@ void ApplicationArcher::RunSimulationTick(void){
             ReanchorRopeJoint();
         }
     }
+    /*
+        Where she will come down, for the animation to meet it (Stage::PredictLanding). After the
+        rope handoff, which is where a release gets its jump boost, so the forecast starts from the
+        velocity she will actually fly with.
+    */
+    {
+        auto t0 = std::chrono::steady_clock::now();
+        landing_forecast = stage.PredictLanding(intent);
+        landing_forecast_us = (float)std::chrono::duration<double,std::micro>(
+                                  std::chrono::steady_clock::now() - t0).count();
+    }
     ApplyPushes(events);
     ApplyKicks(events);
     BreakBlocks(events);
     UpdateDebris();
     ResolveArrowsAgainstProps();
+    StartArrowSwooshes();
     UpdateHitPopups();
     DriveArcherBody();
     SyncArcherView();
@@ -3783,9 +4265,15 @@ void ApplicationArcher::SetupSound(){
     soundsystem->AppendFile("sound/bow_tension.wav","bow_tension");
     soundsystem->AppendFile("sound/arrow_leave.wav","arrow_leave");
     soundsystem->AppendFile("sound/arrow_hitting.wav","arrow_hit");
+    soundsystem->AppendFile("sound/arrow_swoosh.wav","arrow_swoosh");
+    //The swoosh builds to the impact; how far in it peaks is how early it has to start.
+    arrow_swoosh_peak = soundsystem->LoudestAt("arrow_swoosh");
+    debug->Info("arrow_swoosh peaks %.3fs in - started that long before a forecast impact (%.1f ticks)\n",
+                arrow_swoosh_peak,arrow_swoosh_peak * ARCHER_TPS);
     soundsystem->AppendFile("sound/kick_swing.wav","kick_swing");
     soundsystem->AppendFile("sound/kick_land.wav","kick_land");
     soundsystem->AppendFile("sound/kick_hyaa.wav","kick_hyaa");
+    soundsystem->AppendFile("sound/speech/nice_shot.wav","nice_shot");
 #endif
 }
 
@@ -3836,13 +4324,13 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
         }
         /*
             And her shout, on SOME kicks and on a tick that wanders: whether, and when, is drawn
-            once as the kick starts. Hashed from the physics tick, the SpawnDebris arrangement -
+            once as the kick starts. Hashed from the level's tick, the SpawnDebris arrangement -
             a recorded session shouts on exactly the same kicks when it is played back, and
             nothing here draws from the engine's shared RRandom stream, which a sound has no
             business perturbing.
         */
         if (events.f_kick_started){
-            uint64_t tick = main_scene->GetPhysicsTick();
+            uint64_t tick = stage.ticks;
             kick_hyaa_tick = 0;
             if (Hash01(0.0f,0.0f,(int)tick,1) < kick_hyaa_chance){
                 int span = std::max(kick_hyaa_to - kick_hyaa_from,0) + 1;
@@ -3872,14 +4360,80 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
     fading to a floor of 0.15 by 40 - a shot lobbed over the cracked wall is still heard landing,
     just not as though it landed at her feet.
 */
+float ApplicationArcher::ArrowSoundGain(float x, float speed){
+    float by_speed = 0.35f + 0.65f * clamp(speed / ARROW_SPEED_MAX,0.0f,1.0f);
+    float by_distance = clamp(1.0f - (fabsf(x - stage.pos.x) - 12.0f) / 28.0f,0.15f,1.0f);
+    return by_speed * by_distance * sound_volume;
+}
+
+/*
+    See the declaration. After ResolveArrowsAgainstProps, so an arrow that struck a prop this tick
+    is already stuck and has nothing to forecast.
+*/
+void ApplicationArcher::StartArrowSwooshes(){
+#ifdef USE_SOUND
+    if (!soundsystem || arrow_swoosh_peak <= 0.0f){
+        return;
+    }
+    int horizon = (int)ceilf(arrow_swoosh_peak * ARCHER_TPS) + 1;
+    PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
+    rp3d::RigidBody* exclude = archer_object ? archer_object->GetRigidBody() : NULL;
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        const Arrow& a = stage.arrows[i];
+        if (!a.f_live || a.f_stuck){
+            arrow_swooshed[i] = false;      //the slot is free for the next flight
+            continue;
+        }
+        if (arrow_swooshed[i]){
+            continue;
+        }
+        StageArrowImpact f = stage.PredictArrowImpact(i,horizon,&arrow_path);
+        int ticks = f.f_hits ? f.ticks : -1;
+        float x = f.point.x;
+        //A prop before the block? Segment k of the path is the one flown in tick k + 1.
+        for (size_t k = 0; world && k + 1 < arrow_path.size(); k++){
+            if (ticks > 0 && (int)k + 1 >= ticks){
+                break;
+            }
+            vec3 from(arrow_path[k].x,arrow_path[k].y,0.0f);
+            vec3 to(arrow_path[k + 1].x,arrow_path[k + 1].y,0.0f);
+            if (from.x == to.x && from.y == to.y){
+                continue;
+            }
+            PhysicsWorld::RaycastHit hit = world->Raycast(from,to,exclude);
+            Object* struck = (hit.hit && hit.body) ? (Object*)hit.body->getUserData() : NULL;
+            bool f_prop = false;
+            for (size_t v = 0; struck && v < prop_views.size(); v++){
+                f_prop = f_prop || (prop_views[v].object == struck);
+            }
+            if (f_prop){
+                ticks = (int)k + 1;
+                x = hit.point.x;
+                break;
+            }
+        }
+        if (ticks < 0){
+            continue;
+        }
+        float lead = (float)ticks * ARCHER_DT;
+        if (lead > arrow_swoosh_peak){
+            continue;       //not yet
+        }
+        float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
+        soundsystem->Play("arrow_swoosh",false,ArrowSoundGain(x,speed),SOUND_ONESHOT,arrow_swoosh_peak - lead);
+        arrow_swooshed[i] = true;
+        debug->Info("Arrow %i swoosh: strikes at level tick %llu (%i from now), started %.3fs in\n",i,
+                    (unsigned long long)(stage.ticks + ticks),ticks,arrow_swoosh_peak - lead);
+    }
+#endif
+}
+
 void ApplicationArcher::PlayArrowHit(float x, float speed){
 #ifdef USE_SOUND
     if (!soundsystem){
         return;
     }
-    float by_speed = 0.35f + 0.65f * clamp(speed / ARROW_SPEED_MAX,0.0f,1.0f);
-    float by_distance = clamp(1.0f - (fabsf(x - stage.pos.x) - 12.0f) / 28.0f,0.15f,1.0f);
-    soundsystem->Play("arrow_hit",false,by_speed * by_distance * sound_volume);
+    soundsystem->Play("arrow_hit",false,ArrowSoundGain(x,speed));
 #else
     (void)x;
     (void)speed;
@@ -4209,7 +4763,10 @@ void ApplicationArcher::BreakBlocks(const StageEvents& events){
         float dir = (stage.pos.x <= block.x) ? 1.0f : -1.0f;
         SpawnDebris(centre,vec3(size.x * 0.5f,size.y * 0.5f,size.z * 0.5f),
                     vec3(dir,0.35f,0.0f),material_breakable);
-        debug->Info("Broke block %i at (%.2f,%.2f)\n",index,centre.x,centre.y);
+        //With the level tick, which seeds the debris - a replay that breaks it on a different one
+        //throws different rubble.
+        debug->Info("Broke block %i at (%.2f,%.2f), level tick %llu\n",index,centre.x,centre.y,
+                    (unsigned long long)stage.ticks);
     }
 }
 
@@ -4230,7 +4787,11 @@ void ApplicationArcher::BreakBlocks(const StageEvents& events){
 */
 void ApplicationArcher::SpawnDebris(const vec3& centre, const vec3& half_extents,
                                     const vec3& impulse_dir, int material){
-    uint32_t seed = (uint32_t)(main_scene->GetPhysicsTick() * 2654435761u) ^ 0x9E3779B9u;
+    //The LEVEL's tick (Stage::ticks, from the build), not the scene's, which keeps counting across
+    //restarts: a replay restarts the level and restores this counter (RestoreRecordingState), so
+    //the wall comes down in the same pieces. Seeded from the scene's tick it did not - a replay
+    //never starts at the absolute tick the recording did.
+    uint32_t seed = (uint32_t)(stage.ticks * 2654435761u) ^ 0x9E3779B9u;
     for (int i = 0; i < ARCHER_DEBRIS_PER_BLOCK; i++){
         if ((int)debris.size() >= ARCHER_MAX_DEBRIS){
             return;     //the cap is the point; see the note on it
@@ -5343,12 +5904,17 @@ void ApplicationArcher::SyncArcherAnimation(){
         archer_model->aim_weight = 0.0f;
         archer_model->upper_weight = 0.0f;
         archer_model->leg_weight = 0.0f;
+        archer_model->overlay_weight = 0.0f;
     }else{
         ArcherAnimParams params;
         if (anim_source == ANIM_FROM_PANEL){
             params = panel_params;
         }else{
             DescribeArcher(stage,params);
+            //The forecast needs this tick's input, which the rules' state does not hold - so it
+            //is the app's to hand over, from RunSimulationTick's Stage::PredictLanding.
+            params.land_in_ticks = landing_forecast.f_lands ? landing_forecast.ticks : -1;
+            params.land_speed = landing_forecast.speed;
         }
         puppet.Tick(params);
 
@@ -5413,6 +5979,11 @@ void ApplicationArcher::SyncArcherAnimation(){
         archer_model->upper_clip = upper_anim;
         archer_model->upper_time = upper_time_shown;
         archer_model->upper_weight = puppet.upper_weight;
+        //The whole-body overlay - today, the fall pose (Puppet::fall_weight).
+        int overlay = puppet.choice.overlay_clip;
+        archer_model->overlay_clip = (overlay >= 0 && overlay < CLIP_COUNT) ? archer_clips[overlay] : NULL;
+        archer_model->overlay_time = puppet.choice.overlay_time;
+        archer_model->overlay_weight = puppet.choice.overlay_weight;
 
         int clip = puppet.choice.clip;
         if (clip >= 0 && clip < CLIP_COUNT && archer_clips[clip]){
@@ -5592,6 +6163,24 @@ void ApplicationArcher::SyncArcherAnimation(){
         feet = centre + tilt * vec3(0.0f,-(ARCHER_HALF_H + model_foot_offset) - climb_lift_posed,0.0f);
     }else{
         climb_lift_posed = 0.0f;
+        /*
+            In the air the hips ride the body - see air_hip_ref. Read off the pose on screen (posed
+            before this tick) against the model's own position, so whatever crossfade, lead-in or
+            overlay made that pose, this is how far its hips are from standing height. A per-clip
+            number cannot know that mid-crossfade: the first version lowered by the landing clip's
+            descent alone, and dropped her 0.5 under the body while the pose was still mostly
+            Falling_Idle.
+        */
+        bool f_air = (stage.mode == MODE_AIR && puppet.air_clip != CLIP_RUN_JUMP &&
+                      anim_source != ANIM_FROM_CLIP && air_hip_ref > 0.0f);
+        float step = 1.0f / (float)PUPPET_FALL_BLEND_TICKS;
+        air_hip_weight = f_air ? fminf(1.0f,air_hip_weight + step) : 0.0f;
+        float hold = air_hip_weight;
+        Bone* hips = archer_model->FindBone(ARCHER_MODEL_ROOT_BONE);
+        if (hips && hold > 0.0f){
+            float posed = hips->GetWorldPosition().y - archer_model->GetWorldPosition().y;
+            feet.y -= (posed - air_hip_ref) * hold;
+        }
     }
     f_climb_posed = f_pinned;
     climb_base_posed = base_pinned;
@@ -5865,7 +6454,8 @@ void ApplicationArcher::ReapFallenProps(){
 
 void ApplicationArcher::UpdateCamera(){
     /*
-        A trailing camera with lead.
+        A trailing camera with lead - one camera for every scene, tuned by camera_tuning (the
+        panel's camera sliders).
 
         Welding the camera to the archer makes a fast platformer unreadable - the world slides
         under a character who never moves, and the eye has nothing to track. So the camera aims at
@@ -5873,11 +6463,11 @@ void ApplicationArcher::UpdateCamera(){
         both shows more of where they are going and lets the character move within the frame.
 
         The lead follows the VELOCITY, not the facing: turning round while drawing a bow should not
-        swing the camera across the level.
+        swing the camera across the level. It is a fraction of the half-width ON SCREEN, so it
+        shrinks with the zoom; in world units, 3.0 at the default distance was two thirds of the
+        whole view once zoomed right in, and a turn swung her out of it.
 
-        ON THE RANGE it follows too, but slowly and with no lead - see RANGE_CAMERA_SMOOTH.
-
-        THE ORBIT FOLLOWS HER AS WELL, at the same rate as the side camera would on this level.
+        THE ORBIT FOLLOWS HER AS WELL, at the side camera's horizontal rate.
         camera_target is the orbit's pivot, and the pivot is kept at orbit_follow_offset from her;
         the camera is moved by exactly the step the pivot takes, so the angle and distance the
         mouse set are left alone and the whole view simply travels with her. The offset is taken
@@ -5885,9 +6475,7 @@ void ApplicationArcher::UpdateCamera(){
         and a shift+middle pan adds to it - a panned view keeps its framing and keeps following.
         The backdrop and the sun follow the pivot, in both modes, through PlaceCamera.
     */
-    //The rope test is framed like the range: one screen wide, followed slowly.
-    bool f_range = (stage.GetLevel() != STAGE_LEVEL_MAIN);
-    float smooth = f_range ? RANGE_CAMERA_SMOOTH : CAMERA_SMOOTH;
+    const ArcherCameraTuning& tune = camera_tuning;
     vec3 body(stage.pos.x,stage.pos.y + 0.5f,0.0f);
 
     if (camera_mode == ARCHER_CAM_ORBIT){
@@ -5896,7 +6484,7 @@ void ApplicationArcher::UpdateCamera(){
         }
         last_camera_mode = camera_mode;
         camera_ideal = body + orbit_follow_offset;
-        vec3 step = (camera_ideal - camera_target) * smooth;
+        vec3 step = (camera_ideal - camera_target) * tune.follow_x;
         camera_target += step;
         Camera* camera = main_scene ? main_scene->camera : NULL;
         if (camera){
@@ -5907,15 +6495,45 @@ void ApplicationArcher::UpdateCamera(){
     }
     last_camera_mode = camera_mode;
 
-    float lead = 0.0f;
-    if (!f_range && (stage.vel.x > 0.5f || stage.vel.x < -0.5f)){
-        lead = (stage.vel.x / ARCHER_RUN_SPEED) * CAMERA_LEAD;
-    }
-    camera_ideal = vec3(body.x + lead,body.y,0.0f);
+    //What the view shows at this zoom, as half-extents around its target. The camera sits
+    //CAMERA_HEIGHT-in-proportion above the target and looks at it, so the target is the centre.
+    float height = CAMERA_HEIGHT * camera_distance / CAMERA_DISTANCE;
+    float half_h = sqrtf(camera_distance * camera_distance + height * height) *
+                   tanf(CAMERA_FOV * 0.5f * ARCHER_DEG2RAD);
+    float aspect = (renderer && renderer->height > 0) ? (float)renderer->width / (float)renderer->height
+                                                      : 16.0f / 9.0f;
+    float half_w = half_h * aspect;
 
-    camera_target.x += (camera_ideal.x - camera_target.x) * smooth;
-    camera_target.y += (camera_ideal.y - camera_target.y) * smooth;
+    float lead = 0.0f;
+    if (stage.vel.x > 0.5f || stage.vel.x < -0.5f){
+        lead = (stage.vel.x / ARCHER_RUN_SPEED) * tune.lead * half_w;
+    }
+    /*
+        DOWN, THE CAMERA LEADS HER BY EXACTLY ITS OWN LAG. A lerp closing `follow` of the gap a
+        tick trails anything moving at a steady speed by speed * dt / follow - 5.7 units at her top
+        fall speed on 0.10, and two screens on the range's old 0.025, which is how the rope
+        scene's pits lost her. Aiming that far below her cancels the trail: at a steady fall the
+        camera sits on her, it still eases in as she speeds up, and it cannot overshoot a landing,
+        because the lead goes with the speed on the tick she stops. Only falling - a jump's rise
+        and the rope's swing keep the plain ease.
+    */
+    float fall_lead = (stage.vel.y < 0.0f) ? stage.vel.y * ARCHER_DT / tune.follow_y : 0.0f;
+    camera_ideal = vec3(body.x + lead,body.y + fall_lead,0.0f);
+
+    camera_target.x += (camera_ideal.x - camera_target.x) * tune.follow_x;
+    camera_target.y += (camera_ideal.y - camera_target.y) * tune.follow_y;
     camera_target.z = 0.0f;
+
+    /*
+        AND SHE NEVER LEAVES THE FRAME. Whatever the rates, the zoom and the speed, her body box is
+        held inside `keep_in` of the view's half-extents - the ease decides where the camera goes,
+        this only stops it being somewhere she is not. At the default rates it acts only when
+        zoomed well in, or when a turn at a sprint swings the lead across.
+    */
+    float room_x = fmaxf(0.0f,tune.keep_in * half_w - ARCHER_HALF_W);
+    float room_y = fmaxf(0.0f,tune.keep_in * half_h - ARCHER_HALF_H);
+    camera_target.x = clamp(camera_target.x,stage.pos.x - room_x,stage.pos.x + room_x);
+    camera_target.y = clamp(camera_target.y,stage.pos.y - room_y,stage.pos.y + room_y);
 
     PlaceCamera();
 }
@@ -6118,6 +6736,10 @@ void ApplicationArcher::PublishSnapshot(){
     }
     s.climb_pinned_time = puppet.choice.pinned_time;
     s.climb_lift_posed = climb_lift_posed;
+    s.landing_forecast = landing_forecast;
+    s.fall_weight = puppet.fall_weight;
+    s.air_hip_weight = air_hip_weight;
+    s.landing_forecast_us = landing_forecast_us;
     s.rope_grip_s = (stage.mode == MODE_ROPE) ? rope_grip_s : -1.0f;
     for (int h = 0; h < 2; h++){
         s.rope_hand_s[h] = rope_hand_s[h];
@@ -6242,6 +6864,15 @@ json ApplicationArcher::BuildStateJson(){
     json result = json{
         {"tick",s.tick},
         {"stage_ticks",s.stage_ticks},
+        //Stage::PredictLanding as of this tick: `ticks` from now, 1 being the next one.
+        {"landing_forecast",json{
+            {"lands",s.landing_forecast.f_lands},
+            {"caught",s.landing_forecast.f_caught},
+            {"ticks",s.landing_forecast.ticks},
+            {"speed",s.landing_forecast.speed},
+            {"x",s.landing_forecast.pos.x},
+            {"y",s.landing_forecast.pos.y},
+            {"cost_us",s.landing_forecast_us}}},
         {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" : "main"},
         {"archer",json{
             {"x",s.x},{"y",s.y},{"vx",s.vx},{"vy",s.vy},
@@ -6334,6 +6965,8 @@ json ApplicationArcher::BuildStateJson(){
             //which belongs to the playhead pinned the tick before - see climb_lift_posed.
             {"climb_pinned_time",s.climb_pinned_time},
             {"climb_lift",s.climb_lift_posed},
+            {"fall_pose",s.fall_weight},
+            {"air_hip_hold",s.air_hip_weight},
             //The loose legs: how much of the chain is on, the pump's lead, and per leg the thigh's
             //swing off the clip's pose and the knee's bend (+ the way a knee folds), degrees.
             {"legs",{{"weight",s.leg_weight},{"lead_deg",s.leg_lead_deg},
@@ -6648,32 +7281,52 @@ void ApplicationArcher::RegisterMCPTools(){
         });
 
     MCPServer::Get()->RegisterTool("archer_camera",
-        "Choose the camera: 'side' (the game's camera - trails her with lead on the main level, "
-        "follows slowly with no lead on the range) or 'orbit' (the free orbit - middle-drag turns "
-        "it, shift+middle pans, wheel dollies; its pivot follows her at the same rates, keeping "
-        "whatever angle and distance it was left at). Switching keeps the current view. Returns "
-        "the camera as camera_get reports it, once the switch has landed.",
+        "Choose and tune the camera. 'mode': 'side' (the game's camera - trails her with lead, in "
+        "every scene) or 'orbit' (the free orbit - middle-drag turns it, shift+middle pans, wheel "
+        "dollies; its pivot follows her, keeping whatever angle and distance it was left at). "
+        "Switching keeps the current view. All optional, and the panel's camera sliders are the "
+        "same numbers: 'distance' (the side camera's zoom, 5..60, default 26), 'follow_x' / "
+        "'follow_y' (per-tick ease, 0.01..1, default 0.10), 'lead' (how far ahead of a sprint, as a "
+        "fraction of the half-width, default 0.21), 'keep_in' (her body box stays inside this "
+        "fraction of the view, default 0.70). Returns the values in force.",
         json{
             {"type","object"},
             {"properties", {
-                {"mode", {{"type","string"},{"description","side or orbit"}}}
-            }},
-            {"required", json::array({"mode"})}
+                {"mode", {{"type","string"},{"description","side or orbit"}}},
+                {"distance", {{"type","number"}}},
+                {"follow_x", {{"type","number"}}},
+                {"follow_y", {{"type","number"}}},
+                {"lead", {{"type","number"}}},
+                {"keep_in", {{"type","number"}}}
+            }}
         },
         [this](const json& args) -> json {
             if (!main_scene){
                 return json{ {"error","no scene"} };
             }
             std::string mode = args.value("mode",std::string());
-            if (mode != "side" && mode != "orbit"){
-                return json{ {"error","mode must be 'side' or 'orbit'"} };
+            if (!mode.empty()){
+                if (mode != "side" && mode != "orbit"){
+                    return json{ {"error","mode must be 'side' or 'orbit'"} };
+                }
+                SimCommand cmd;
+                cmd.type = ARCHER_CMD_CAMERA;
+                cmd.subtype = (mode == "orbit") ? ARCHER_CAM_ORBIT : ARCHER_CAM_SIDE;
+                //Commands drain on every pass, paused or not, so this lands even on a paused scene.
+                SubmitCommandAndWait(cmd,1000);
             }
-            SimCommand cmd;
-            cmd.type = ARCHER_CMD_CAMERA;
-            cmd.subtype = (mode == "orbit") ? ARCHER_CAM_ORBIT : ARCHER_CAM_SIDE;
-            //Commands drain on every pass, paused or not, so this lands even on a paused scene.
-            SubmitCommandAndWait(cmd,1000);
-            return json{ {"mode",mode} };
+            //View-only numbers, written the way the panel's sliders write them.
+            if (args.contains("distance")){
+                camera_distance = clamp(args.value("distance",CAMERA_DISTANCE),CAMERA_DISTANCE_MIN,CAMERA_DISTANCE_MAX);
+            }
+            if (args.contains("follow_x")){ camera_tuning.follow_x = clamp(args.value("follow_x",0.1f),0.01f,1.0f); }
+            if (args.contains("follow_y")){ camera_tuning.follow_y = clamp(args.value("follow_y",0.1f),0.01f,1.0f); }
+            if (args.contains("lead")){     camera_tuning.lead = clamp(args.value("lead",0.21f),0.0f,1.0f); }
+            if (args.contains("keep_in")){  camera_tuning.keep_in = clamp(args.value("keep_in",0.7f),0.1f,1.0f); }
+            return json{ {"mode",(camera_mode == ARCHER_CAM_ORBIT) ? "orbit" : "side"},
+                         {"distance",camera_distance},
+                         {"follow_x",camera_tuning.follow_x},{"follow_y",camera_tuning.follow_y},
+                         {"lead",camera_tuning.lead},{"keep_in",camera_tuning.keep_in} };
         });
 
     /*
@@ -7234,6 +7887,14 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::SameLine();
         if (ImGui::SmallButton("reset")){
             camera_distance = CAMERA_DISTANCE;
+        }
+        //How the side camera follows her - see ArcherCameraTuning. Read by the next tick.
+        ImGui::SliderFloat("follow across",&camera_tuning.follow_x,0.01f,1.0f,"%.3f");
+        ImGui::SliderFloat("follow up/down",&camera_tuning.follow_y,0.01f,1.0f,"%.3f");
+        ImGui::SliderFloat("lead",&camera_tuning.lead,0.0f,0.6f,"%.2f");
+        ImGui::SliderFloat("keep in frame",&camera_tuning.keep_in,0.2f,1.0f,"%.2f");
+        if (ImGui::SmallButton("reset follow")){
+            camera_tuning = ArcherCameraTuning();
         }
 
         /*
