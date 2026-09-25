@@ -2894,6 +2894,292 @@ static void TestRopeMesh(){
     }
     snprintf(d,sizeof(d),"worst %.2e",worst_tassel);
     Check(worst_tassel < 1e-4f,"the tassel swings rigidly with the last link",d);
+
+    //--- Cut: two pieces that share no bone ---
+    const int cut = 3;
+    int ranged_bad = 0;
+    for (int i = 0; i <= 200; i++){
+        float s = (links * seg) * (float)i / 200.0f;
+        RopeWeights(s,seg,cut,links - 1,b,w);
+        int bb[3] = { b.x, b.y, b.z };
+        float ww[3] = { w.x, w.y, w.z };
+        for (int k = 0; k < 3; k++){
+            if (ww[k] > 0.0f && (bb[k] < cut || bb[k] > links - 1)){
+                ranged_bad++;
+            }
+        }
+        if (fabsf(w.x + w.y + w.z - 1.0f) > 1e-5f){
+            ranged_bad++;
+        }
+    }
+    snprintf(d,sizeof(d),"%i bad",ranged_bad);
+    Check(ranged_bad == 0,"a section's weights stay inside its own links and still sum to 1",d);
+
+    RopeMeshInput cut_in = in;
+    cut_in.cuts = { cut };
+    cut_in.cut_end = &piece;
+    std::vector<skinned_vertex> cut_mesh;
+    Check(BuildRopeMesh(cut_in,cut_mesh),"a cut rope builds");
+    snprintf(d,sizeof(d),"%zu verts, uncut %zu",cut_mesh.size(),mesh.size());
+    Check(cut_mesh.size() == mesh.size() + piece.size() * 2,"the same rope plus a cut end on each side",d);
+    int mixed = 0;
+    for (size_t i = 0; i + 2 < cut_mesh.size(); i += 3){
+        int above = 0, below = 0;
+        for (size_t c = i; c < i + 3; c++){
+            const skinned_vertex& v = cut_mesh[c];
+            int bb[3] = { v.bones.x, v.bones.y, v.bones.z };
+            float ww[3] = { v.weights.x, v.weights.y, v.weights.z };
+            for (int k = 0; k < 3; k++){
+                if (ww[k] > 0.0f){
+                    if (bb[k] < cut){ above++; }else{ below++; }
+                }
+            }
+        }
+        if (above > 0 && below > 0){
+            mixed++;
+        }
+    }
+    snprintf(d,sizeof(d),"%i triangles on both sides",mixed);
+    Check(mixed == 0,"every triangle belongs wholly to one piece",d);
+
+    //Pulled apart: the lower piece carried off sideways, as if it had fallen away.
+    RopeTestPose apart = PoseRope(in,bent);
+    for (int i = cut; i < links; i++){
+        apart.centre[i] = apart.centre[i] + vec3(4.0f,-2.0f,0.0f);
+    }
+    float cut_hi = 1.0f, uncut_hi = 1.0f;
+    for (size_t i = 0; i + 2 < tile_verts; i += 3){
+        for (int k = 0; k < 3; k++){
+            float bind = cut_mesh[i + k].pos.distance(cut_mesh[i + (k + 1) % 3].pos);
+            if (bind < 1e-4f){
+                continue;
+            }
+            float r = SkinVertex(cut_mesh[i + k],in,apart).distance(SkinVertex(cut_mesh[i + (k + 1) % 3],in,apart)) / bind;
+            if (r > cut_hi){ cut_hi = r; }
+            float ru = SkinVertex(mesh[i + k],in,apart).distance(SkinVertex(mesh[i + (k + 1) % 3],in,apart)) / bind;
+            if (ru > uncut_hi){ uncut_hi = ru; }
+        }
+    }
+    snprintf(d,sizeof(d),"worst edge %.2f of its bind length cut, %.2f uncut",cut_hi,uncut_hi);
+    Check(cut_hi < 1.6f && uncut_hi > 3.0f,"pulled apart, nothing stretches across the gap - uncut, it would",d);
+
+    //The two cut ends, in the order they are added: the upper piece's, then the lower's.
+    size_t end_up = tile_verts + piece.size() * 4, end_down = end_up + piece.size();
+    float cut_y = in.anchor.y - (float)cut * seg;
+    float worst_up = 0.0f, worst_down = 0.0f, lowest_flipped = 1e9f;
+    for (size_t i = end_up; i < end_down; i++){
+        vec3 want = apart.rot[cut - 1] * (cut_mesh[i].pos - RopeLinkBindCentre(in,cut - 1)) + apart.centre[cut - 1];
+        float e = SkinVertex(cut_mesh[i],in,apart).distance(want);
+        if (e > worst_up){ worst_up = e; }
+    }
+    for (size_t i = end_down; i < cut_mesh.size(); i++){
+        vec3 want = apart.rot[cut] * (cut_mesh[i].pos - RopeLinkBindCentre(in,cut)) + apart.centre[cut];
+        float e = SkinVertex(cut_mesh[i],in,apart).distance(want);
+        if (e > worst_down){ worst_down = e; }
+        if (cut_mesh[i].pos.y < lowest_flipped){ lowest_flipped = cut_mesh[i].pos.y; }
+    }
+    snprintf(d,sizeof(d),"worst %.2e above, %.2e below; the lower one's bottom %.3f, the cut %.3f",
+             worst_up,worst_down,lowest_flipped,cut_y);
+    Check(worst_up < 1e-4f && worst_down < 1e-4f && lowest_flipped >= cut_y - 1e-4f,
+          "each cut end rides the link it caps, the lower one turned up over its piece",d);
+
+    RopeMeshInput top_in = in;
+    top_in.cuts = { 0 };
+    top_in.cut_end = &piece;
+    std::vector<skinned_vertex> top_mesh;
+    BuildRopeMesh(top_in,top_mesh);
+    Check(top_mesh.size() == mesh.size(),"a cut at the anchor splits nothing - the rope is one piece");
+}
+
+/*
+    Climbing the rope - the grip distance in Stage, and the pose chosen by distance in the Puppet.
+
+    The rope here is the shape the app offers: a vertical line of points every 0.25 down from an
+    anchor, each carrying its distance down, from the first grabbable one to the bottom.
+*/
+static void OfferRope(Stage& s, float x, float anchor_y, float s_from, float s_to){
+    s.ClearRopePoints();
+    int id = 0;
+    for (float d = s_from; d <= s_to + 1e-4f; d += 0.25f){
+        s.AddRopePoint(x,anchor_y - d,id++,d);
+    }
+}
+
+static void TickOnRope(Stage& s, int n, const ArcherInput& in, float x, float anchor_y,
+                       float s_from, float s_to){
+    for (int i = 0; i < n; i++){
+        OfferRope(s,x,anchor_y,s_from,s_to);
+        StageEvents ev;
+        s.Tick(in,ev);
+    }
+}
+
+static void TestRopeClimb(){
+    printf("\nclimbing the rope\n");
+    char d[200];
+    ArcherInput idle, action, up, down;
+    action.f_action_pressed = true;
+    up.aim_axis = 1.0f;
+    down.aim_axis = -1.0f;
+
+    Stage s;
+    Settle(s);
+    //Anchored so the point 6.0 down the rope is exactly at her hands.
+    float x = s.pos.x;
+    float anchor_y = s.pos.y + ARCHER_HALF_H * 0.6f + 6.0f;
+    const float top = 1.5f, bottom = 8.75f;
+    TickOnRope(s,1,action,x,anchor_y,top,bottom);
+    snprintf(d,sizeof(d),"grip at %.3f",s.rope_s);
+    Check(s.mode == MODE_ROPE && fabsf(s.rope_s - 6.0f) < 1e-4f,
+          "the catch takes the grip distance of the point it caught",d);
+    Check(s.rope_climbed == 0.0f && s.rope_climb == 0,"and starts with nothing climbed");
+
+    float aim_before = s.aim_deg;
+    TickOnRope(s,60,up,x,anchor_y,top,bottom);
+    snprintf(d,sizeof(d),"grip %.3f, climbed %.3f",s.rope_s,s.rope_climbed);
+    Check(fabsf(s.rope_s - (6.0f - ROPE_CLIMB_SPEED)) < 1e-3f && fabsf(s.rope_climbed - ROPE_CLIMB_SPEED) < 1e-3f,
+          "holding up for a second climbs ROPE_CLIMB_SPEED up the rope",d);
+    Check(s.rope_climb == 1,"and says so, this tick");
+    Check(s.aim_deg == aim_before,"the up key climbs rather than tilting the aim");
+    Check(s.pos.x == x,"and the rules still do not move her - the joint does");
+
+    TickOnRope(s,1,idle,x,anchor_y,top,bottom);
+    Check(s.rope_climb == 0,"let go of the key, and she holds where she is");
+
+    TickOnRope(s,60 * 20,up,x,anchor_y,top,bottom);
+    snprintf(d,sizeof(d),"grip %.3f",s.rope_s);
+    Check(fabsf(s.rope_s - top) < 1e-4f,"no further up than the highest point she could have caught",d);
+    Check(s.rope_climb == 0,"and at the top a held key is not a climb");
+
+    TickOnRope(s,60 * 30,down,x,anchor_y,top,bottom);
+    snprintf(d,sizeof(d),"grip %.3f, climbed %.3f",s.rope_s,s.rope_climbed);
+    Check(fabsf(s.rope_s - bottom) < 1e-4f,"nor off the bottom going down",d);
+    Check(fabsf(s.rope_climbed - (6.0f - bottom)) < 1e-3f,"climbed is signed: all of it undone and more",d);
+
+    //Caught again: a fresh grip and a fresh count.
+    TickOnRope(s,ROPE_MIN_HOLD_TICKS,idle,x,anchor_y,top,bottom);
+    TickOnRope(s,1,action,x,anchor_y,top,bottom);
+    Check(s.mode != MODE_ROPE,"let go");
+
+    //--- Cut: the app stops offering points below the cut ---
+    ArcherInput jump;
+    jump.f_jump_pressed = true;
+    Stage below;
+    Settle(below);
+    TickOnRope(below,1,action,x,anchor_y,top,bottom);
+    TickOnRope(below,1,idle,x,anchor_y,top,7.0f);
+    Check(below.mode == MODE_ROPE,"cut below her hands, she keeps hold of what still hangs");
+
+    Stage cut;
+    Settle(cut);
+    TickOnRope(cut,1,action,x,anchor_y,top,bottom);
+    OfferRope(cut,x,anchor_y,top,4.25f);
+    StageEvents cev;
+    cut.Tick(jump,cev);
+    Check(cut.mode == MODE_AIR && cev.f_released_rope && cev.f_rope_lost,
+          "cut above them, she lets go at once - inside the minimum hold, pressing nothing to");
+    Check(!cev.f_rope_jump,"and falling with the piece is not a jump, whatever is pressed");
+
+    Stage bare;
+    Settle(bare);
+    TickOnRope(bare,1,action,x,anchor_y,top,bottom);
+    bare.ClearRopePoints();
+    StageEvents nev;
+    bare.Tick(idle,nev);
+    Check(bare.mode != MODE_ROPE && nev.f_rope_lost,"a rope offering nothing at all is let go of too");
+
+    Stage kept;
+    Settle(kept);
+    TickOnRope(kept,1,action,x,anchor_y,top,bottom);
+    StageEvents kev;
+    OfferRope(kept,x,anchor_y,top,bottom);
+    kept.Tick(idle,kev);
+    Check(kept.mode == MODE_ROPE && !kev.f_rope_lost,"an uncut rope is not");
+
+    //--- The pose, by distance ---
+    Puppet p;
+    const float times[] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f };
+    const float rise[]  = { 0.0f, 0.2f, 0.2f, 0.5f, 0.6f };   //a pause between 0.5 and 1.0
+    p.climb_times.assign(times,times + 5);
+    p.climb_rise.assign(rise,rise + 5);
+    p.climb_cycle_rise = 0.6f;
+    p.clip_duration[CLIP_ROPE_CLIMB] = 2.0f;
+    float lift = 0.0f;
+    float t1 = p.ClimbTimeAt(0.1f,lift);
+    snprintf(d,sizeof(d),"t %.3f lift %.3f",t1,lift);
+    Check(fabsf(t1 - 0.25f) < 1e-4f && fabsf(lift - 0.1f) < 1e-5f,"distance maps to the time the hips had risen that far",d);
+    float t2 = p.ClimbTimeAt(0.2f,lift);
+    snprintf(d,sizeof(d),"t %.3f",t2);
+    Check(fabsf(t2 - 0.5f) < 1e-4f,"a pause maps to its first frame - the target passes it over; the playhead follows, below",d);
+    float t3 = p.ClimbTimeAt(0.7f,lift);
+    snprintf(d,sizeof(d),"t %.3f lift %.3f",t3,lift);
+    Check(fabsf(t3 - 0.25f) < 1e-4f && fabsf(lift - 0.1f) < 1e-5f,"a second cycle wraps round",d);
+    float t4 = p.ClimbTimeAt(-0.1f,lift);
+    snprintf(d,sizeof(d),"t %.3f lift %.3f",t4,lift);
+    Check(fabsf(t4 - 1.5f) < 1e-4f && fabsf(lift - 0.5f) < 1e-5f,"and so does climbing down past the catch",d);
+
+    ArcherAnimParams in;
+    in.mode = MODE_ROPE;
+    p.Tick(in);
+    Check(p.choice.clip == CLIP_ROPE,"caught and still: the hang");
+    in.rope_climb = 1;
+    in.rope_climbed = 0.1f;
+    p.Tick(in);
+    snprintf(d,sizeof(d),"clip %i, pinned %.3f, rate %.2f, lift %.3f",p.choice.clip,p.choice.pinned_time,
+             p.choice.rate,p.choice.lift);
+    Check(p.choice.clip == CLIP_ROPE_CLIMB && fabsf(p.choice.pinned_time - 0.25f) < 1e-4f &&
+          p.choice.rate == 0.0f && fabsf(p.choice.lift - 0.1f) < 1e-5f,
+          "climbing: the climb, its playhead set from the distance, not run",d);
+    in.rope_climb = 0;
+    p.Tick(in);
+    Check(p.choice.clip == CLIP_ROPE_CLIMB && fabsf(p.choice.pinned_time - 0.25f) < 1e-4f,
+          "stopping holds the climb's pose where she stopped");
+    in.mode = MODE_AIR;
+    p.Tick(in);
+    in.mode = MODE_ROPE;
+    in.rope_climbed = 0.0f;
+    p.Tick(in);
+    Check(p.choice.clip == CLIP_ROPE,"off the rope and on again: the hang, until she climbs");
+
+    //--- A steady climb through the pause and round the loop ---
+    Puppet sc;
+    sc.climb_times = p.climb_times;
+    sc.climb_rise = p.climb_rise;
+    sc.climb_cycle_rise = p.climb_cycle_rise;
+    sc.clip_duration[CLIP_ROPE_CLIMB] = 2.0f;
+    ArcherAnimParams st;
+    st.mode = MODE_ROPE;
+    st.rope_climb = 1;
+    float cap = fmaxf(PUPPET_CLIMB_RATE_MAX,1.5f * ROPE_CLIMB_SPEED * 2.0f / 0.6f) * ARCHER_DT;
+    float worst_step = 0.0f, worst_lag = 0.0f, last_t = -1.0f, last_base = 0.0f;
+    int base_jumps_off_wrap = 0, wraps = 0;
+    for (int i = 0; i < 200; i++){
+        st.rope_climbed = (float)i * ROPE_CLIMB_SPEED * ARCHER_DT;
+        sc.Tick(st);
+        float t = sc.choice.pinned_time;
+        bool f_wrapped = (last_t >= 0.0f && t < last_t - 1.0f);
+        if (last_t >= 0.0f && !f_wrapped && t - last_t > worst_step){ worst_step = t - last_t; }
+        if (f_wrapped && t + 2.0f - last_t > worst_step){ worst_step = t + 2.0f - last_t; }
+        if (f_wrapped){ wraps++; }
+        if (i > 0 && sc.choice.lift_base != last_base && !f_wrapped){ base_jumps_off_wrap++; }
+        if (sc.climb_target - sc.climb_playhead > worst_lag){ worst_lag = sc.climb_target - sc.climb_playhead; }
+        last_t = t;
+        last_base = sc.choice.lift_base;
+    }
+    snprintf(d,sizeof(d),"largest step %.4f s against a cap of %.4f; worst lag %.3f s",worst_step,cap,worst_lag);
+    Check(worst_step <= cap + 1e-4f && worst_lag > 0.1f,
+          "the pause is played out at the capped rate rather than passed in one tick",d);
+    Check(fabsf(sc.climb_target - sc.climb_playhead) < 1e-4f,"and the playhead catches the distance up again after it",d);
+    snprintf(d,sizeof(d),"%i wraps, %i base changes elsewhere",wraps,base_jumps_off_wrap);
+    Check(wraps >= 2 && base_jumps_off_wrap == 0,
+          "the cycle's base moves on exactly when the shown pose wraps, so the gripping hand has no seam",d);
+
+    Puppet none;
+    ArcherAnimParams climbing;
+    climbing.mode = MODE_ROPE;
+    climbing.rope_climb = 1;
+    none.Tick(climbing);
+    Check(none.choice.clip == CLIP_ROPE,"with no climb clip measured, climbing keeps the hang");
 }
 
 int main(void){
@@ -2922,6 +3208,7 @@ int main(void){
     TestKneelPuppet();
     TestRopeLevel();
     TestRopeMesh();
+    TestRopeClimb();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

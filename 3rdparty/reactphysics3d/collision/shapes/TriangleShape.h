@@ -178,8 +178,10 @@ class TriangleShape : public ConvexPolyhedronShape {
                                                      const Transform& shape1ToWorld, const Transform& shape2ToWorld,
                                                      decimal penetrationDepth, Vector3& outSmoothVertexNormal);
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const override;
+#endif
 
         // ---------- Friendship ---------- //
 
@@ -285,11 +287,13 @@ RP3D_FORCE_INLINE void TriangleShape::setRaycastTestType(TriangleRaycastSide tes
     mRaycastTestType = testType;
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Return the string representation of the shape
 RP3D_FORCE_INLINE std::string TriangleShape::to_string() const {
     return "TriangleShape{v1=" + mPoints[0].to_string() + ", v2=" + mPoints[1].to_string() + "," +
             "v3=" + mPoints[2].to_string() + "}";
 }
+#endif
 
 // Compute and return the volume of the collision shape
 RP3D_FORCE_INLINE decimal TriangleShape::getVolume() const {

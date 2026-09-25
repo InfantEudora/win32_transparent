@@ -100,8 +100,10 @@ class SphereShape : public ConvexShape {
         /// Compute the transformed AABB
         virtual AABB computeTransformedAABB(const Transform& transform) const override;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const override;
+#endif
 
         // ----- Friendship ----- //
 
@@ -182,10 +184,12 @@ RP3D_FORCE_INLINE bool SphereShape::testPointInside(const Vector3& localPoint, C
     return (localPoint.lengthSquare() < mMargin * mMargin);
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Return the string representation of the shape
 RP3D_FORCE_INLINE std::string SphereShape::to_string() const {
     return "SphereShape{radius=" + std::to_string(getRadius()) + "}";
 }
+#endif
 
 }
 

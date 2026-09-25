@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1f02e4da-fa81-4634-9800-ae5b6cfa5ba7
-  modified: 2026-09-24T13:34:39.144Z
+  modified: 2026-09-24T15:09:38.995Z
 ---
 
 `apps/archer` - a side-view platformer about an archer, 3D assets, Windows, keyboard only.
@@ -442,6 +442,17 @@ on the NOCK EDGE (Stage::IsNocked, not the press - the reach is slack) and is St
 ResolveArrowsAgainstProps (props are found there only), gain by speed and by |x - her x| (full within 12,
 floor 0.15 by 40 - no panning in SoundSystem). archer_state reports `sounds_playing` (a successful Play logs
 nothing, so that is the only way to verify over MCP). Jump/land/kick have events but no sounds yet.
+
+ARCHERY STAND (2026-09-24): PROP_TARGET with StageProp.variant = TARGET_STAND (a variant, not a new kind, so
+every target path covers it). archer.glb `archery_target` at model_scale, yawed STAND_YAW_DEG 70 from the
+camera toward the level start (user: "10 from facing her" = set by eye to -70 in the Inspector; it was first
+built wrongly at 10 from the camera). Level box w 0.70. Body = board cylinder (core Physics::AddCylinderCollider, NEW) + 3 leg boxes, shape measured
+off the mesh's 4 pieces into StandShape. "Heavier" is a HEFT (STAND_HEFT = 6): arrow push /heft; kick =
+STAND_KICK_SCALE 0.25 + spin 2.2 (0.45/3.5 cartwheeled it); walking push unchanged. Score by HEIGHT on the
+face (board ~coplanar with the arrow plane, so distance-from-centre always reads outer ring): 10/8/6/4/2,
+leg = 0. BuildProps moved AFTER BuildArcherModel (needs model_scale). PropPlaneAngle replaced
+2*atan2(q.z,q.w) for stuck arrows (wrong on yawed props). rp3d scaled-convex raycast bug: see
+[[rp3d-local-fork-hinge-motor-patch]].
 MCP GOTCHA: archer_hold's argument is `action`, not `control` - a wrong key returns an error and holds nothing,
 which silently makes an "input is ignored" check pass.
 

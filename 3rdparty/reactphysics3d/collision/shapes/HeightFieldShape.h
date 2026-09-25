@@ -95,8 +95,10 @@ class HeightFieldShape : public ConcaveShape {
                                                    Array<Vector3>& triangleVerticesNormals, Array<uint32>& shapeIds,
                                                    MemoryAllocator& allocator) const override;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const override;
+#endif
 
         // ---------- Friendship ----------- //
 

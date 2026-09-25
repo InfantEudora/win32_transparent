@@ -31,7 +31,6 @@
 #include <limits>
 #include <cfloat>
 #include <utility>
-#include <sstream>
 #include <string>
 #include <cmath>
 #include <reactphysics3d/decimal.h>
@@ -149,7 +148,10 @@ constexpr decimal SAME_CONTACT_POINT_DISTANCE_THRESHOLD = decimal(0.01);
 constexpr uint8 GLOBAL_ALIGNMENT = 16;
 
 /// Current version of ReactPhysics3D
-const std::string RP3D_VERSION = std::string("0.10.2");
+/// Declared as an inline constexpr pointer rather than a std::string: a namespace-scope
+/// const std::string gives every translation unit that includes this header its own static
+/// constructor and atexit registration, and forces a dependency on <string> everywhere.
+inline constexpr const char* RP3D_VERSION = "0.10.2";
 
 }
 

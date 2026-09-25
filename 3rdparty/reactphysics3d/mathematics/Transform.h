@@ -110,8 +110,10 @@ class Transform {
         /// Return true if the two transforms are different
         bool operator!=(const Transform& transform2) const;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation
         std::string to_string() const;
+#endif
 
 };
 
@@ -233,10 +235,12 @@ RP3D_FORCE_INLINE bool Transform::operator!=(const Transform& transform2) const 
     return !(*this == transform2);
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Get the string representation
 RP3D_FORCE_INLINE std::string Transform::to_string() const {
     return "Transform(" + mPosition.to_string() + "," + mOrientation.to_string() + ")";
 }
+#endif
 
 }
 

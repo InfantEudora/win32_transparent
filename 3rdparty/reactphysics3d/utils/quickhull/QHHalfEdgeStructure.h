@@ -348,8 +348,10 @@ class QHHalfEdgeStructure {
         /// Return true if the half-edge structure is valid (for debugging purpose)
         bool isValid() const;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return a string representation of the half-edge structure
         std::string to_string() const;        
+#endif
 };
 
 // Return the number of faces

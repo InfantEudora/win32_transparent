@@ -175,8 +175,10 @@ class HeightField {
         /// Return the minimum bounds of the height-field in the x,y,z direction
         const AABB& getBounds() const;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         std::string to_string() const;
+#endif
 
 #ifdef IS_RP3D_PROFILING_ENABLED
 

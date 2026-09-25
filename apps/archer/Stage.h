@@ -356,6 +356,29 @@ struct StageProp{
         other answer. Last in the struct so every existing brace-initialised prop stays as it is.
     */
     bool  f_floating = false;
+    /*
+        Which LOOK a prop has, where one kind has several - see TargetVariant. The rules never read
+        it: a target is a target whatever it looks like. The app picks the model, the collider and
+        the weight by it. Last again, for the same reason as f_floating.
+    */
+    int   variant = 0;
+};
+
+/*
+    The targets there are, as the app builds them. Only the app reads this; it is here so the level
+    can say which it wants.
+
+      TARGET_BOARD   the plain board on end: light, and it topples when struck - the original.
+      TARGET_STAND   archer.glb's archery_target, a round board on a wooden tripod: heavy enough
+                     that an arrow does not knock it over, and scored by the ring an arrow hits.
+                     A kick still tips it.
+
+    `w` and `h` are the box the level author places it by (y is its centre, as for every prop), so
+    a stand wants h = 1.40 to stand on the ground - its height at the character's scale.
+*/
+enum TargetVariant{
+    TARGET_BOARD = 0,
+    TARGET_STAND
 };
 
 /*
@@ -385,6 +408,7 @@ struct StageRopePoint{
     float x = 0.0f;
     float y = 0.0f;
     int   id = -1;
+    float s = 0.0f;     //how far down the rope from its anchor - what a grab and a climb are in
 };
 
 struct StageObstacle{
@@ -426,6 +450,17 @@ struct StageObstacle{
 //Letting go with jump rather than action adds this much upward, so a rope can be used to gain
 //height rather than only to cross a gap. The horizontal throw comes from the swing itself.
 #define ROPE_JUMP_BOOST             7.0f
+/*
+    CLIMBING, with the aim keys - both hands are on the rope, so there is no aim to tilt.
+
+    A SPEED THE RULES CHOOSE, not the clip's. Rope_Climbing's own rise is 0.305 world units a second
+    at her scale, which makes the rope scene's nine units a thirty-second climb; this is about twice
+    that. The animation does not stretch to it by playback rate - its playhead is set from the
+    distance climbed (Puppet::ClimbTimeAt) - so any number here keeps the gripping hand on the rope,
+    and the only thing it changes is how brisk the hand-over-hand looks.
+*/
+#define ROPE_CLIMB_SPEED            0.60f
+#define ROPE_CLIMB_DEADZONE         0.30f   //of the aim axis, so a resting stick does not creep
 
 //Well under ARCHER_RUN_SPEED on
 //purpose: the archer is blocked by what they are pushing, so this is also the speed they walk at
@@ -633,6 +668,7 @@ struct StageEvents{
     int   grabbed_rope_id = -1;     //which link, by the id it was added with
     bool  f_released_rope = false;
     bool  f_rope_jump = false;      //let go WITH jump, so the app adds ROPE_JUMP_BOOST
+    bool  f_rope_lost = false;      //let go because what she held came away - see Stage::TickRope
 
     /*
         Props the kick connected with. Separate from `pushes` above on purpose - a shove and a
@@ -741,7 +777,7 @@ public:
     //And the rope, the same way. Also refreshed before every Tick - the links are swinging.
     std::vector<StageRopePoint> rope_points;
     void ClearRopePoints();
-    void AddRopePoint(float x, float y, int id);
+    void AddRopePoint(float x, float y, int id, float s = 0.0f);
 
     //--- The archer -----------------------------------------------------------------------------
     v2    pos;                      //centre of the body box
@@ -776,9 +812,17 @@ public:
     bool  CanStandUp() const;
 
     //--- The rope -------------------------------------------------------------------------------
-    int   rope_id = -1;             //which link is held, while MODE_ROPE; the app's handle
+    int   rope_id = -1;             //which rope point was caught, while MODE_ROPE; the app's handle
     int   rope_ticks = 0;           //how long it has been held - see ROPE_MIN_HOLD_TICKS
     int   rope_cooldown = 0;
+    /*
+        THE GRIP, as a distance down the rope from its anchor - where the app anchors the joint.
+        Set by the grab to the caught point's `s`, moved by climbing, and held inside the span of the
+        points the app offers, so she can climb only as far as she could have caught it.
+    */
+    float rope_s = 0.0f;
+    int   rope_climb = 0;           //this tick: +1 up, -1 down, 0 holding still
+    float rope_climbed = 0.0f;      //since the catch, signed, up is + - the climb clip's playhead
     v2    climb_from;               //where the climb started and ends, captured on entry so the
     v2    climb_to;                 //lerp cannot drift if anything else touches pos
     int   grab_cooldown = 0;        //see LEDGE_RELEASE_COOLDOWN
@@ -896,7 +940,7 @@ private:
     //to let go. The app writes pos/vel back from the body before each tick.
     void  TickRope(const ArcherInput& in, StageEvents& events);
     //A link within reach right now, or -1.
-    int   FindRopePoint() const;
+    int   FindRopePoint(float* out_s = NULL) const;
 
     //Moves the body box by `delta`, stopping against solid geometry AND against the obstacles,
     //and reports what was hit. Axis-separated: x first and resolved, then y - which is what makes

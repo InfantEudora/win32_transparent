@@ -33,7 +33,6 @@
 #include <reactphysics3d/components/Components.h>
 #include <reactphysics3d/containers/Map.h>
 #include <reactphysics3d/containers/Set.h>
-#include <iostream>
 
 // ReactPhysics3D namespace
 namespace reactphysics3d {

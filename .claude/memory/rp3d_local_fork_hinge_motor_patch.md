@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: ac29a5ca-063a-4012-9f01-e719344e12da
-  modified: 2026-09-04T18:30:00.000Z
+  modified: 2026-09-24T15:09:30.518Z
 ---
 
 `libs/libreactphysics3d-0.10.2.a` is built from the user's rp3d fork (github InfantEudora/reactphysics3d, branch `crane_testbed`, upstream v0.10.2). Two identical checkouts exist and were in sync on 2026-09-04: `C:/code/reactphysics3d` (the one CMake was configured from - build.ninja hardcodes C:/code paths) and `C:/IDE-E/Mijn Documenten/Projects/code/test/reactphysics3d`. Prefer `C:/code/reactphysics3d` for builds. Build is CMake + Ninja now (NOT the old MSYS Makefiles): `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRP3D_COMPILE_TESTBED=ON -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"` then `cmake --build build -j` (run with `C:/msys64/mingw64/bin` on PATH). Produces `build/libreactphysics3d.a` (copy over `libs/libreactphysics3d-0.10.2.a`, then `rm wind.exe` and relink - the makefile doesn't track the lib) and `build/testbed/testbed.exe` (nanogui/GLFW testbed; user added a Crane scene under testbed/scenes/crane). Unit tests: `test/` with a hand-rolled TestSuite, wired in `test/CMakeLists.txt` + `test/main.cpp`. The stock-lib backup `.orig-hinge-motor-bug` has been deleted. A Jolt checkout (v5.6.0+) sits at `C:/code/JoltPhysics` - its `Jolt/Physics/Vehicle/` is the reference design for a planned rp3d wheel/suspension constraint (see [[rp3d-vehicle-constraint-plan]]).
@@ -16,6 +16,21 @@ metadata:
 3. `src/body/RigidBody.cpp` setType(STATIC) and setIsSleeping(true): also zero `mConstrained{Linear,Angular}Velocities` - the solver reads those for both joint bodies and they're only refreshed for enabled bodies, so a body made static while moving kept "moving" for every joint on it.
 
 Plus a merged upstream PR (GrzegorzSzczodrzec, commit 3327ff94): angular velocity integration in the body's local frame via Euler's equations, with a unit test in `test/tests/systems/TestDynamicSystem.h`.
+
+**UPDATED 2026-09-24 - the installed lib now comes from `C:/code/reactphysics3d/build-nologger`** on branch
+`size/no-iostream-dependency` (the user's "furthest ahead" branch), commit 91db8e9c, configured
+`-DRP3D_COMPILE_DEFAULT_LOGGER=OFF -DRP3D_COMPILE_DEBUG_STRINGS=OFF` (2.3 MB vs 3.0). It is copied to
+`libs/libreactphysics3d.a` (the name the makefiles link). DEBUG_STRINGS OFF CHANGES VTABLES (to_string
+compiled out), so `3rdparty/reactphysics3d` headers MUST match the lib's commit or the link fails with
+"duplicate section .rdata$_ZTV...Shape has different size" - they were synced from the fork's include/ the
+same day (they had been at ebe8141b). Keep lib and headers moving together.
+- 91db8e9c fixed ConvexMeshShape raycast + testPointInside using the UNSCALED vertex with the scaled normal
+  (raycasts hit the unit hull). Regression test `testScaledConvexMesh` in test/tests/collision/TestRaycast.h
+  was added UNCOMMITTED; verified 4 failures without the fix, pass with it. Test build dir: `build-tests`.
+- STILL OPEN: `getLocalSupportPointWithoutMargin` picks the max-dot vertex against the UNSCALED mesh (wrong
+  under non-uniform scale); the obvious fix `(direction * mScale).dot(v)` SEGFAULTS rp3d's test suite -
+  needs investigating. Core's AddCylinderCollider avoids it by building hulls at real size (scale 1), and
+  ScaleColliders only rescales convex shapes uniformly.
 
 **Why:** Hinge joints on anything but an identity-oriented, never-moving static body were unusable on stock rp3d 0.10.2. User has hit other rp3d bugs before, considers it semi-abandoned but functional; expect more.
 

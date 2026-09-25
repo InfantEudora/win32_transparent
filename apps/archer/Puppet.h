@@ -3,6 +3,8 @@
 
 #include "Stage.h"
 
+#include <vector>
+
 /*
     The PUPPET: what the archer's model is doing, as opposed to what the archer is doing.
 
@@ -93,6 +95,7 @@ enum ArcherClip{
     CLIP_KNEEL_IDLE,        //Kneel_Idle             held on one knee, looping
     CLIP_KNEEL_UP,          //Kneel_ToStand          one knee -> standing, fitted to KNEEL_UP_TICKS
     CLIP_LAYING_UP,         //Laying_StandingUp      the level entry, MODE_GETUP; plays whole
+    CLIP_ROPE_CLIMB,        //Rope_Climbing          hand over hand; playhead pinned to the distance climbed
     CLIP_COUNT
 };
 
@@ -209,6 +212,17 @@ extern const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT];
     kick and the climb hit this today - see the retiming table in animation_plan.md.
 */
 #define PUPPET_ACTION_RATE_MAX      2.50f
+
+/*
+    THE FASTEST THE ROPE CLIMB'S PLAYHEAD MAY CATCH UP, as a multiple of the clip's own speed.
+    Mapped purely by distance, a pause in the hips - Rope_Climbing has one at the end of its cycle,
+    0.28s in which the right hand reaches up - is passed in a single tick, and the reaching hand
+    snapped half a metre in two frames. Capped, the pause plays out over a few ticks while the
+    playhead lags the distance by a few centimetres of climb. It must stay well above the average
+    rate a steady climb needs (1.97 at ROPE_CLIMB_SPEED today) or the lag would never close; the
+    Puppet raises it to 1.5x that average if the climb speed ever outgrows it.
+*/
+#define PUPPET_CLIMB_RATE_MAX       3.50f
 
 /*
     HOW HARD SHE HIT, in units per second downward, and what each band is worth animating.
@@ -343,6 +357,10 @@ struct ArcherAnimParams{
     float aim_deg = 0.0f;
     float draw_power = 0.0f;        //0..1
     int   kneel_phase = -1;         //KneelPhase while mode is MODE_KNEEL, else -1
+    //On the rope: which way she is climbing this tick (+1 up, -1 down, 0 not), and how far she has
+    //climbed since catching it, signed - up is +. Stage::rope_climb / rope_climbed.
+    int   rope_climb = 0;
+    float rope_climbed = 0.0f;
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and
@@ -410,6 +428,25 @@ struct PuppetChoice{
         time it last showed it, frozen - see Puppet::upper_xfade_serial.
     */
     int   upper_from_clip = -1;
+    /*
+        The base clip's playhead, SET rather than advanced, in seconds - or negative for a clip on
+        its own clock. The rope climb uses it: the pose is chosen by how far she has climbed, not by
+        how long she has been climbing. `rate` is 0 whenever this is set.
+
+        `lift` goes with it: how far the chosen pose has raised her hips above the clip's first
+        frame, in world units. Rope_Climbing is not in place - the hips rise 0.28 rig units over a
+        cycle while the gripping hand stays still - so the app LOWERS the model by this along her
+        up, which leaves the hips where the rules' body is and the gripping hand where the rope is.
+
+        Precisely, `lift` is how far she has climbed since the START of the cycle the pose is in,
+        `lift_base` the distance climbed at that start: the rise the pose carries while the playhead
+        keeps up, and a little more while it lags a pause (PUPPET_CLIMB_RATE_MAX). Measured that way
+        the gripping hand stays on the rope even then - the hips sag the few centimetres instead.
+        The app lowers a pose by rope_climbed - lift_base, the tick it is SHOWN.
+    */
+    float pinned_time = -1.0f;
+    float lift = 0.0f;
+    float lift_base = 0.0f;
 };
 
 class Puppet{
@@ -475,6 +512,34 @@ public:
         (ApplicationArcher::MeasureKneelClips).
     */
     float clip_settle[CLIP_COUNT] = {};
+
+    /*
+        THE ROPE CLIMB, as distance rather than time. `climb_times` are the clip's keyframe times and
+        `climb_rise` how far its hips have risen by each, in WORLD units from the first - measured at
+        load (ApplicationArcher::MeasureRopeClimb) and made monotonic, because the playhead is found
+        by inverting it. `climb_cycle_rise` is one whole cycle's rise; 0 means no clip to climb with.
+
+        WHY DISTANCE. The clip's rise is not steady: the hips pause for 0.2s at mid-cycle and slow
+        toward the end, while the rules climb at one speed. Played by time, the gripping hand would
+        slide by the difference; played by distance, every frame is the pose that belongs to how far
+        up she is, so the hand that holds the rope stays on it. Down is the same curve run backwards.
+    */
+    std::vector<float> climb_times;
+    std::vector<float> climb_rise;
+    float climb_cycle_rise = 0.0f;
+    //Latched on the first tick she climbs; cleared when she leaves the rope. Once she has climbed
+    //she holds the climb's pose where she stopped - hands staggered on the rope - rather than
+    //crossfading back to Hanging_Rope, whose two hands are at one height.
+    bool  f_rope_climbing = false;
+    /*
+        The climb's playhead, UNWRAPPED - whole cycles times the clip's duration plus the time in
+        this one - so a cycle boundary is a number going past a multiple rather than a jump back to
+        0 that could not be told from climbing down. It follows the distance's own time (the
+        target) no faster than PUPPET_CLIMB_RATE_MAX; see UpdateRope.
+    */
+    bool  f_climb_playhead = false;
+    float climb_playhead = 0.0f;
+    float climb_target = 0.0f;          //where the distance alone would put it, for the panel
 
     /*
         THE LANDING, which is the one piece of animation state the Puppet has to remember.
@@ -605,6 +670,15 @@ public:
         cheap version of step 6's cancel windows, and it is the honest one until those exist.
     */
     void UpdateAir(const ArcherAnimParams& in);
+    //Latches f_rope_climbing and moves the climb's playhead. Called by Tick before Choose, like
+    //UpdateAir.
+    void UpdateRope(const ArcherAnimParams& in);
+    /*
+        The climb's playhead for a climbed distance, in seconds - wrapped into one cycle either way,
+        so climbing down past where she caught the rope keeps cycling backwards - and in `lift` the
+        rise that pose carries, which is the distance's remainder in the cycle. -1 without a curve.
+    */
+    float ClimbTimeAt(float climbed, float& lift) const;
 
     //The clip choice on its own, without touching the yaw. Pure - the rules test calls this.
     PuppetChoice Choose(const ArcherAnimParams& in) const;

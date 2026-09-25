@@ -163,8 +163,10 @@ struct Quaternion {
         /// Overloaded operator for equality condition
         bool operator==(const Quaternion& quaternion) const;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation
         std::string to_string() const;
+#endif
 
     private:
 
@@ -384,11 +386,13 @@ RP3D_FORCE_INLINE bool Quaternion::operator==(const Quaternion& quaternion) cons
             z == quaternion.z && w == quaternion.w);
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Get the string representation
 RP3D_FORCE_INLINE std::string Quaternion::to_string() const {
     return "Quaternion(" + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z) + "," +
             std::to_string(w) + ")";
 }
+#endif
 
 }
 

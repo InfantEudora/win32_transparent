@@ -144,8 +144,10 @@ class BallAndSocketJoint : public Joint {
         /// Return the torque (in Newtons * meters) on body 2 required to satisfy the joint constraint in world-space
         virtual Vector3 getReactionTorque(decimal timeStep) const override;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return a string representation
         virtual std::string to_string() const override;
+#endif
 
         /// Deleted assignment operator
         BallAndSocketJoint& operator=(const BallAndSocketJoint& constraint) = delete;

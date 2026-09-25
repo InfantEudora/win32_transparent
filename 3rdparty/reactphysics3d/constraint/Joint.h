@@ -149,8 +149,10 @@ class Joint {
         /// Return the entity id of the joint
         Entity getEntity() const;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return a string representation
         virtual std::string to_string() const=0;
+#endif
 
         // -------------------- Friendship -------------------- //
 

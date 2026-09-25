@@ -149,8 +149,10 @@ class CollisionShape {
         /// Compute the transformed AABB of the collision shape given a transform
         virtual AABB computeTransformedAABB(const Transform& transform) const;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const=0;
+#endif
 
 #ifdef IS_RP3D_PROFILING_ENABLED
 

@@ -181,9 +181,16 @@
 //no weight on the floor, no normal force and so NO FRICTION - anything touched once slid or drifted
 //forever, which reads exactly like the solver exploding and had three wrong theories chased at it
 //before anyone read `gravity: false` off object_get. See MakePlanarBody.
-#define ARCHER_MASK_LEVEL           (ARCHER_CAT_PROP | ARCHER_CAT_DEBRIS)
+//The level accepts the ARCHER too, and that matters only on the rope: a pair collides when EACH
+//side's mask takes the other's category, and off the rope her own mask is 0. Without it the level
+//never took her, so ARCHER_MASK_ON_ROPE below was half a filter and a swing - or a cut rope - went
+//straight through the floor (found 2026-09-24 on the rope bench, her at y -6 under the floor).
+//The level and the props accept the ROPE as well, for the same reason: only a cut-off piece ever
+//asks (ARCHER_MASK_ROPE_LOOSE) - a rope still hanging asks for nothing, so it still passes through.
+#define ARCHER_MASK_LEVEL           (ARCHER_CAT_PROP | ARCHER_CAT_DEBRIS | ARCHER_CAT_ARCHER | ARCHER_CAT_ROPE)
 #define ARCHER_MASK_ARCHER          0
-#define ARCHER_MASK_PROP            (ARCHER_CAT_LEVEL | ARCHER_CAT_PROP | ARCHER_CAT_ARCHER | ARCHER_CAT_DEBRIS)
+#define ARCHER_MASK_PROP            (ARCHER_CAT_LEVEL | ARCHER_CAT_PROP | ARCHER_CAT_ARCHER | ARCHER_CAT_DEBRIS | \
+                                     ARCHER_CAT_ROPE)
 #define ARCHER_MASK_DEBRIS          ARCHER_MASK_PROP
 /*
     A ROPE LINK COLLIDES WITH NOTHING AT ALL, including the rest of its own rope.
@@ -195,6 +202,13 @@
     buzzes.
 */
 #define ARCHER_MASK_ROPE            0
+/*
+    EXCEPT ONCE IT IS CUT OFF. A piece below a cut is loose - it falls, and with the mask above it
+    fell through the floor for good (found at y -1356). It lands on the level and the props instead;
+    its links still ignore each other, for the reason above. Set by CutRopeJoint, undone by the
+    restart that rebuilds the chain.
+*/
+#define ARCHER_MASK_ROPE_LOOSE      (ARCHER_CAT_LEVEL | ARCHER_CAT_PROP)
 //What the archer collides with WHILE SWINGING, which is the one time the solver owns them. Off the
 //rope it is ARCHER_MASK_ARCHER (nothing), because Stage resolves everything itself - but on the
 //rope Stage is not resolving anything, so without this the swing passes through the floor.
@@ -230,13 +244,31 @@
     the rope reads as a plank, and the lag between her and the rope is the part that looks alive.
 */
 #define ROPE_HANG_DAMPING           3.0f
+//The rope is offered to Stage as a point every this far down it, not one per link, so she catches it
+//at the point nearest her hands rather than at the centre of whichever link is nearest.
+#define ROPE_GRAB_STEP              0.25f
+/*
+    WHERE ON HER THE ROPE HOLDS - the body's end of the joint, above her centre in her own frame.
+
+    THE MOUNT, and a decision still open (vine_plan.md step 5): the top of her box today. The drawn
+    hands of Hanging_Rope sit about 0.19 above it; the climb's gripping hand is what this is being
+    judged against. One number, so moving the mount is changing it.
+*/
+#define ROPE_GRIP_BODY_Y            ARCHER_HALF_H
+//Over how much climbing the anchor carried across a link crossing fades back onto the link's own
+//geometry. A crossing is a joint's stretch (0.13 - 0.20 loaded) to absorb; this spreads it over
+//about half a second of climb. See ReanchorRopeJoint.
+#define ROPE_GRIP_BLEND             0.30f
+//The rope bench's peak gap is the worst over this long, so a spike is still on the readout by the
+//time anyone looks.
+#define ROPE_PEAK_TICKS             180
 /*
     The drawn rope's thickness, as a multiplier on the file's pieces (her scale already applied).
     Only the cross-section and the pieces: the length is always the chain's. 1 draws the rope as
     modelled - rope_segment is 0.17 across in the file, 0.34 in the world, which is thick beside
     her hands; that is the number to turn if it reads as a hawser.
 */
-#define ROPE_MESH_SCALE             1.0f
+#define ROPE_MESH_SCALE             0.7f
 //The collars: two under the anchor and one over the tassel, as in the reference model, stacked by
 //their own MEASURED height with this much rope showing between them - so a re-exported collar of
 //another size is spaced by itself rather than overlapping a typed-in position.
@@ -276,6 +308,47 @@
     such rule; there a hit only counts.
 */
 #define RANGE_GRAVITY_HITS          3
+
+/*
+    --- THE ARCHERY STAND (TARGET_STAND) -----------------------------------------------------------
+    archer.glb's archery_target: a round board on a tripod, drawn at the character's scale. Its body
+    is the board as a flat CYLINDER and each leg as a BOX - Physics::AddCylinderCollider - so it
+    rolls, tips and lands like the thing it looks like, not like its bounding box.
+
+    HEAVY, NOT PINNED. It can tip, and a kick tips it; an arrow must not. "Heavier" cannot simply be
+    a bigger mass here, because every shove in this app is a VELOCITY - the arrow's is scaled by the
+    struck body's own mass so that every prop takes the same speed from the same shot (see
+    ARROW_SPEED_TRANSFER), and the walk and the kick set speeds outright. So the weight is a HEFT:
+    what an arrow gives a stand is divided by it, and a kick uses its own, gentler speed plus a spin
+    that tips the stand away from the boot rather than sending it flying. The walk still shoves it
+    at her pace, like a crate - moving it about is meant to be possible.
+
+    The legs are the dense part, so the centre of mass sits low and a shove along the floor slides
+    it rather than tipping it over its own feet; and it is less grippy than a crate for the same
+    reason - friction at the feet times the height of the mass is what tips a sliding thing.
+*/
+#define TARGET_BOARD_MASS           3.0f    //the plain board, and the heft's yardstick
+#define STAND_MASS                  18.0f
+#define STAND_HEFT                  (STAND_MASS / TARGET_BOARD_MASS)
+#define STAND_LEG_DENSITY           4.0f    //against the board's 1
+#define STAND_FRICTION              0.35f
+//Turned this far from facing the camera toward where she comes in: mostly at her, so her arrows go
+//into the FACE, and the last 20 degrees left toward the camera so the rings still read. Set by eye
+//in the Inspector (-70 about Y for a stand to her right).
+#define STAND_YAW_DEG               70.0f
+//A kick: this fraction of KICK_SPEED and KICK_LIFT, and this much spin (rad/s) away from the boot.
+//MEASURED DOWN from 0.45 and 3.5, which cartwheeled it: up 1.3 units, past upside down (163 deg)
+//and 4.5 units along before it settled. A heavy stand is knocked over, not thrown.
+#define STAND_KICK_SCALE            0.25f
+#define STAND_KICK_SPIN             2.2f
+/*
+    The rings, as fractions of the board's radius from its centre, and what each is worth: the red
+    centre, white, red, white, then the wooden rim. Read off the model and meant to be checked
+    against it. An arrow outside the board - a leg - scores nothing and pops nothing.
+*/
+#define STAND_RING_COUNT            5
+static const float STAND_RINGS[STAND_RING_COUNT]  = { 0.20f, 0.40f, 0.60f, 0.80f, 1.00f };
+static const int   STAND_POINTS[STAND_RING_COUNT] = { 10,    8,     6,     4,     2 };
 
 /*
     And until then a floating target is DAMPED, each one differently.
@@ -615,8 +688,12 @@ struct ArcherSnapshot{
         bool  f_gravity = true;     //whether gravity acts on it now
         float linear_damping = 0.0f;
         float angular_damping = 0.0f;
+        bool  f_stand = false;      //TARGET_STAND rather than a plain board
+        int   score = 0;            //a stand's points so far
     };
     std::vector<TargetView> targets;
+    int   archery_score = 0;        //points on every stand this level
+    int   archery_last_points = -1; //the last arrow into a stand; -1 before there has been one
 
     //Live arrows, so a miss can be diagnosed rather than guessed at.
     struct ArrowView{
@@ -648,6 +725,17 @@ struct ArcherSnapshot{
     bool  f_clip_placeholder = false;
     float model_yaw = 0.0f;
     float model_roll = 0.0f;    //only the rope ever gives her one
+    //On the rope: how far the joint has opened, and how far her drawn hands are from the rope's end
+    //of it. -1 off the rope. See BuildRopeAttachMarkers.
+    float rope_joint_gap = -1.0f;
+    float rope_hands_off = -1.0f;
+    float climb_pinned_time = -1.0f;    //the rope climb's playhead as pinned this tick, -1 unpinned
+    float climb_lift_posed = 0.0f;      //and the lift the model was lowered by (last tick's pin)
+    //Each hand (left, right) on the drawn rope: how far down it, and how far off it. -1 off the rope.
+    //A gripping hand's distance down stays put while she climbs; if it creeps, the hand is sliding.
+    float rope_hand_s[2] = { -1.0f, -1.0f };
+    float rope_hand_off[2] = { -1.0f, -1.0f };
+    float rope_grip_s = -1.0f;      //where the joint holds the rope, down from the anchor
     //How many arrows are currently riding a prop rather than sitting in the world. Reported
     //because it is the one piece of this that is invisible until something moves: an arrow pinned
     //to the wrong prop, or to a prop it stopped being in, looks exactly like a correct one right
@@ -695,6 +783,20 @@ struct PropView{
     //it can be put back when gravity takes over.
     float base_linear_damping = 0.0f;
     float base_angular_damping = 0.0f;
+
+    //--- Targets by variant - see TargetVariant ---
+    int   variant = TARGET_BOARD;
+    //What an arrow and a kick are divided by: 1 for everything but a stand. See STAND_HEFT.
+    float heft = 1.0f;
+    //How far above the object's ORIGIN the centre of half_extents is, along its own up. 0 for the
+    //unit-cube props, whose origin is their centre; a stand's model stands on its origin.
+    float obstacle_lift = 0.0f;
+    //A stand's board, in the object's own frame at world scale: its centre, the axis running up
+    //the face, and its radius - what a hit is scored against.
+    vec3  board_centre = vec3(0.0f,0.0f,0.0f);
+    vec3  board_up = vec3(0.0f,1.0f,0.0f);
+    float board_radius = 0.0f;
+    int   score = 0;                //points scored on this stand
 };
 
 class ApplicationArcher : public Application{
@@ -750,6 +852,11 @@ private:
     //Loads the crate out of archer.glb into crate_mesh, falling back to the box. Render thread;
     //before BuildProps, which NewGame also calls from the physics thread - so the upload is here.
     void BuildCrateMesh();
+    //Loads archery_target for TARGET_STAND. Render thread, beside BuildCrateMesh and for its reason.
+    void BuildStandMesh();
+    //One TARGET_STAND: the model, its cylinder-and-legs body, and the PropView that tracks it.
+    //Falls back to a plain board when the model is missing. No GL - NewGame calls it too.
+    PropView MakeTargetStand(const StageProp& p, int index);
     void BuildProps();
     void BuildArcher();
     //Loads meshes/archer.glb: the skin, the skinned mesh and every clip in Puppet.h's table.
@@ -812,6 +919,12 @@ private:
     //The kneel set against the rules: both transitions' lengths against KNEEL_DOWN/UP_TICKS, and
     //her kneeling height against KNEEL_HALF_H. Warns with the number to type, like the kick.
     void MeasureKneelClips();
+    /*
+        Rope_Climbing's hip rise at every keyframe, in world units from its first, made monotonic
+        and handed to the Puppet - which pins the climb's playhead to the distance climbed through
+        it. See Puppet::climb_rise for why distance rather than time.
+    */
+    void MeasureRopeClimb();
     void BuildArrowViews();
     /*
         The arrow in her hand, re-baked for flight: along +X with the TIP AT THE ORIGIN, at the
@@ -887,15 +1000,58 @@ private:
         in the same straight bind pose. The link boxes are hidden while a skin exists.
     */
     void BuildRopeSkin();
+    //The skin's input for this level's rope, without the cuts. False on a level with no rope.
+    bool MakeRopeMeshInput(RopeMeshInput& in);
+    /*
+        A CUT CHANGES THE SKIN'S WEIGHTS, so each piece moves with its own links and nothing
+        stretches across the gap (RopeMeshInput::cuts). The tick compares the chain's cut joints
+        with the ones the skin was built for and raises f_rope_skin_stale; PreRender rebuilds and
+        re-uploads the mesh - GL, so render thread, inside AtTickBoundary since it reads the chain.
+        A restart puts the joints back, and the same comparison rebuilds it whole.
+    */
+    void CheckRopeSkinCuts();
+    void RebuildRopeSkinWeights();
+    //The joints of the chain that are cut, in order.
+    std::vector<int> RopeCutJoints() const;
     //Loads rope_segment/ring/collar/tassel out of archer.glb, once. Render thread.
     void LoadRopeParts();
     //Copies each link's transform onto its bone. Every tick, physics thread.
     void UpdateRopeSkin();
     void ApplyRopeLinkVisibility();
+    /*
+        A debug view of where the rope holds her, because rp3d's debug renderer draws colliders
+        and contacts but not joint anchors. Three beads while MODE_ROPE: RED the rope's end of the
+        joint (the link's centre), BLUE her end (the top of her box), YELLOW where the MODEL's hands
+        actually are. Red and blue apart is the joint stretching; yellow away from red is the
+        animation not holding the rope where the physics does. Both distances are also measured
+        every tick and published in archer_state, so they can be read rather than squinted at.
+    */
+    void BuildRopeAttachMarkers();
+    void UpdateRopeAttachMarkers();
+    /*
+        THE ROPE TEST BENCH - a debug tool, not a rule. Every tick: how far each joint of the chain
+        has opened, the rope's loaded length against its rest length, and the worst gap now and over
+        the last ROPE_PEAK_TICKS. Knobs: the scene's solver iterations, the links' mass (applied by
+        rebuilding the level), and cutting a joint on command. Over MCP as `rope_test`, and in the
+        panel's Rope section. Built to find the stretch in animation_plan.md "Climbing the rope".
+    */
+    void MeasureRopeStretch();
+    bool CutRopeJoint(int joint);
+    void SetRopeSolverIterations(int velocity, int position);
     //Hand Stage the links it may catch, BEFORE the tick, the same way the props are handed over.
     void RefreshRopePoints();
     //The handoff, both ways. See the note on AttachArcherToRope.
     void AttachArcherToRope(int segment);
+    /*
+        A distance down the rope as a link and a point on it in the link's own frame. False with no
+        rope. Past either end it clamps onto the end link.
+    */
+    bool RopeDistanceToLink(float s, int& link, vec3& local) const;
+    //How many links from the top still hang from the anchor - all of them unless it was cut.
+    int  RopeAnchoredLinks() const;
+    //Makes the joint at stage.rope_s: destroys the old one and creates it again with EXPLICIT LOCAL
+    //anchors, because rp3d cannot move an anchor after creation. Called when climbing moves the grip.
+    void ReanchorRopeJoint();
     void DetachArcherFromRope(bool f_jump);
     //Read the swinging body back into Stage, so the rules, the camera and the telemetry all know
     //where the archer is while the solver is the one moving them.
@@ -958,6 +1114,13 @@ private:
     Mesh* crate_mesh = NULL;
     std::vector<Material> crate_materials;
     bool f_crate_from_asset = false;
+    //archer.glb's archery_target, as it comes from the file - drawn at model_scale. NULL if the
+    //export lacks it, and a stand is then built as a plain board.
+    Mesh* stand_mesh = NULL;
+    std::vector<Material> stand_materials;
+    //Points scored on every stand this level, and on the last hit - for the panel and archer_state.
+    int archery_score = 0;
+    int archery_last_points = -1;
     Mesh* arrow_mesh = NULL;
     Mesh* dot_mesh = NULL;          //the aim arc's beads
 
@@ -1109,6 +1272,8 @@ private:
     //rope_segments[i + 1] (index 0 there is the fixed anchor body). NULL on a level with no rope.
     Skeleton* rope_skin = NULL;
     std::vector<Bone*> rope_bones;
+    std::vector<int> rope_skin_cuts;            //the cut joints the skin's weights were built for
+    std::atomic<bool> f_rope_skin_stale{false}; //raised by the tick, cleared by PreRender
     //The pieces, shared by every level's rope, in world units (the file's scale, the node's own
     //scale and ROPE_MESH_SCALE folded in). An empty tile means the placeholder was used.
     enum{ ROPE_PART_SEGMENT = 0, ROPE_PART_RING, ROPE_PART_COLLAR, ROPE_PART_TASSEL, ROPE_PART_COUNT };
@@ -1119,6 +1284,53 @@ private:
     std::vector<Material> rope_materials;       //one list for the whole skin, matids remapped to it
     //Debug: draw the rp3d links as well (they are hidden under a skin). Panel checkbox.
     bool  f_show_rope_links = false;
+    //The attachment beads - see BuildRopeAttachMarkers. Shared by every scene, like the aim arc.
+    enum{ ROPE_MARK_LINK = 0, ROPE_MARK_BODY, ROPE_MARK_HAND_L, ROPE_MARK_HAND_R, ROPE_MARK_COUNT };
+    Object* rope_marks[ROPE_MARK_COUNT] = {};
+    Bone*   hand_bones[2] = {};             //left, right; found on the model once
+    bool    f_show_rope_attach = false;
+    //Measured every tick on the rope, -1 off it. World units.
+    float   rope_joint_gap = -1.0f;         //red to blue
+    float   rope_hands_off = -1.0f;         //red to the point between the yellows
+    float   rope_hand_s[2] = { -1.0f, -1.0f };
+    float   rope_hand_off[2] = { -1.0f, -1.0f };
+    /*
+        THE GRIP on the rope as the joint holds it: the distance down it that the joint was last
+        made at, the link that distance falls on, and the point on that link in its own frame.
+        Re-made whenever Stage's rope_s moves - see ReanchorRopeJoint.
+    */
+    float   rope_grip_s = -1.0f;
+    int     rope_grip_link = -1;
+    vec3    rope_grip_local;
+    //How far the anchor sits from the link's geometry, carried over at the last crossing - the
+    //stretch of the joint she climbed across. See ReanchorRopeJoint.
+    vec3    rope_grip_offset;
+    float   rope_grip_cross_s = 0.0f;       //where the last crossing was; the offset fades from there
+    float   rope_grip_drift = 0.0f;         //how far the anchor sits off the link's geometry now
+
+    //--- The rope test bench (debug) - see MeasureRopeStretch ---
+    //The links' mass, used by BuildRope. ROPE_SEGMENT_MASS unless the bench has changed it; a change
+    //takes effect when the level is rebuilt.
+    float   rope_link_mass = ROPE_SEGMENT_MASS;
+    //This scene's solver iterations as last set - rp3d has setters but no getters. Core's defaults.
+    int     solver_velocity_iterations = 12;
+    int     solver_position_iterations = 10;
+    struct RopeStretch{
+        int   joints = 0;
+        float rest_length = 0.0f;           //links * link length
+        float loaded_length = 0.0f;         //the same plus every intact joint's gap
+        float worst_gap = 0.0f;             //now
+        int   worst_joint = -1;
+        float peak_gap = 0.0f;              //the worst over the last ROPE_PEAK_TICKS
+        int   peak_joint = -1;
+        int   peak_age = 0;
+        std::vector<float> gaps;            //per joint, top first; -1 where cut
+        int   cuts = 0;
+    };
+    RopeStretch rope_stretch;
+    int     rope_cut_request = 1;           //the panel's joint number
+    //Each link's length, recorded by BuildRope - what turns a distance down the rope into a link.
+    float   rope_seg_len = 0.0f;
     Object* arrow_objects[ARROW_MAX_LIVE] = {};
     /*
         AN ARROW THAT STRUCK A PROP, and rides it from then on.
@@ -1181,6 +1393,10 @@ private:
         Object* rope_anchor_object = NULL;
         Skeleton* rope_skin = NULL;
         std::vector<Bone*> rope_bones;
+        std::vector<int> rope_skin_cuts;
+        float rope_seg_len = 0.0f;
+        int   solver_velocity_iterations = 12;
+        int   solver_position_iterations = 10;
         StuckArrow arrow_stuck[ARROW_MAX_LIVE];
         vec3 camera_target = vec3(0.0f,3.0f,0.0f);
         vec3 camera_ideal = vec3(0.0f,3.0f,0.0f);
@@ -1268,6 +1484,12 @@ private:
     //on screen. Reported for the same reason: it comes from the solver and is worth being able to
     //read when it looks wrong.
     float model_roll_drawn = 0.0f;
+    //The rope climb's playhead pinned LAST tick - the pose the engine is showing, since the rig is
+    //posed before the tick runs - by its cycle's base (PuppetChoice::lift_base). And the lift the
+    //model was lowered by this tick, for archer_state.
+    bool  f_climb_posed = false;
+    float climb_base_posed = 0.0f;
+    float climb_lift_posed = 0.0f;
 
     //--- The backdrop -----------------------------------------------------------------------------
     Object* background_object = NULL;

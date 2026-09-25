@@ -206,8 +206,10 @@ class ConcaveMeshShape : public ConcaveShape {
         /// Return the local bounds of the shape in x, y and z directions.
         virtual AABB getLocalBounds() const override;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const override;
+#endif
 
 #ifdef IS_RP3D_PROFILING_ENABLED
 

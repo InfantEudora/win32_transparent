@@ -135,8 +135,10 @@ class ConvexMeshShape : public ConvexPolyhedronShape {
         /// Compute and return the volume of the collision shape
         virtual decimal getVolume() const override;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const override;
+#endif
 
         // ----- Friendship ----- //
 

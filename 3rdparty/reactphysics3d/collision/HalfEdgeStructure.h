@@ -125,8 +125,10 @@ class HalfEdgeStructure {
         /// Reserve some memory for vertices, faces and edges
         void reserve(uint32 facesCapacity, uint32 verticesCapacity, uint32 edgesCapacity);
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return a string representation of the half-edge structure
         std::string to_string() const;
+#endif
 
 };
 

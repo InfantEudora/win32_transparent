@@ -1,9 +1,81 @@
 #include <vector>
+#include <map>
+#include <unordered_map>
+#include <math.h>
 #include "Physics.h"
 #include "PhysicsWorld.h"
 #include "Debug.h"
 
 static Debugger *debug = new Debugger("Physics", DEBUG_ALL);
+
+/*
+	THE CONVEX SHAPES THIS FILE MADE, and the hull under each.
+
+	A ConvexMeshShape is a thin handle over a ConvexMesh, the hull itself, and rp3d gives no way to
+	get the mesh back from the shape - mConvexMesh is protected. So the pairing is remembered here,
+	for the two things that need it: CloneShape, which makes a fresh handle over the SAME hull so a
+	duplicate can be rescaled on its own, and ~Physics, which frees the handles this file owns and
+	only those. A convex shape not in this map came from somewhere else and is left alone, the
+	same rule the mesh and heightfield shapes already follow.
+
+	The hulls are never freed: one per cylinder SIZE (see CylinderMesh), a few hundred bytes each,
+	shared by every collider of that size for the life of the process.
+*/
+static std::unordered_map<rp3d::CollisionShape*,rp3d::ConvexMesh*> convex_shape_mesh;
+
+/*
+	A cylinder of `radius` and `half_height` along +Y, as the hull of two rings of `segments`
+	points. One per size, built on first use and shared.
+
+	A HULL, BECAUSE rp3d HAS NO CYLINDER. Its shapes are sphere, capsule, box, convex mesh and the
+	two static-only concave ones. A true cylinder would be a new shape type in the fork with its own
+	support function and narrow-phase pairings; an N-gon prism is a convex polyhedron rp3d already
+	collides with everything, and at 16 sides it is within 2% of round. That is the trade.
+
+	BUILT AT ITS REAL SIZE, NOT AS A UNIT HULL SCALED - a scaled ConvexMeshShape has had two bugs.
+
+	  - RAYCAST, FIXED in the fork (91db8e9c, "Scaling fix for ConvexMeshShape", with a test in
+	    TestRaycast.h). Stock 0.10.2 built each face plane from the scaled normal and the UNSCALED
+	    vertex, so a ray hit the unit hull: a stand built as a scaled unit cylinder rolled on its
+	    real rim while its arrows went into a phantom board of radius 1 - sticking in the air half a
+	    unit in front of it, or passing straight through from close up. testPointInside had the same.
+	  - SUPPORT POINT, NOT FIXED: getLocalSupportPointWithoutMargin chooses its vertex against the
+	    unscaled mesh and then scales it, which picks the wrong vertex under a NON-UNIFORM scale -
+	    and a cylinder scaled from a unit hull is non-uniform by nature (radius != half-height).
+	    The obvious one-line fix crashed rp3d's own test suite, so it is open.
+
+	Built at its size, the scale stays 1 and neither can bite. The cost is one hull per size
+	instead of one per segment count, which for a level's worth of props is nothing.
+*/
+static rp3d::ConvexMesh* CylinderMesh(float radius,float half_height,int segments){
+	//Keyed to a tenth of a millimetre, so the same stand built twice finds the same hull.
+	static std::map<std::vector<long>,rp3d::ConvexMesh*> meshes;
+	std::vector<long> key = { lroundf(radius * 10000.0f),lroundf(half_height * 10000.0f),(long)segments };
+	std::map<std::vector<long>,rp3d::ConvexMesh*>::iterator it = meshes.find(key);
+	if (it != meshes.end()){
+		return it->second;
+	}
+	std::vector<float> points;
+	for (int i = 0;i < segments;i++){
+		float a = 6.28318530718f * (float)i / (float)segments;
+		float x = cosf(a) * radius;
+		float z = sinf(a) * radius;
+		points.push_back(x); points.push_back(-half_height); points.push_back(z);
+		points.push_back(x); points.push_back( half_height); points.push_back(z);
+	}
+	//The hull is computed inside createConvexMesh, so `points` only has to outlive this call.
+	rp3d::VertexArray vertices(points.data(),3 * sizeof(float),(rp3d::uint32)(2 * segments),
+	                           rp3d::VertexArray::DataType::VERTEX_FLOAT_TYPE);
+	std::vector<rp3d::Message> messages;
+	rp3d::ConvexMesh* mesh = PhysicsWorld::physicsCommon->createConvexMesh(vertices,messages);
+	for (rp3d::Message& msg:messages){
+		debug->Warn("CylinderMesh(%.3f,%.3f,%i): %s\n",radius,half_height,segments,msg.text.c_str());
+	}
+	if (mesh){
+		meshes[key] = mesh;
+	}
+	return mesh;
+}
 
 Physics::Physics(PhysicsWorld* _world){
 	//debug->Info("New Physics from world %p\n",_world);
@@ -55,6 +127,10 @@ Physics::~Physics(){
 				(name == rp3d::CollisionShapeName::CAPSULE)){
 				own_shapes.push_back(shape);
 			}
+			//A convex shape only if this file made it - see convex_shape_mesh.
+			if (name == rp3d::CollisionShapeName::CONVEX_MESH && convex_shape_mesh.count(shape)){
+				own_shapes.push_back(shape);
+			}
 		}
 
 		world->rp_world->destroyRigidBody(body->rigidbody);
@@ -72,6 +148,11 @@ Physics::~Physics(){
 						break;
 					case rp3d::CollisionShapeName::CAPSULE:
 						PhysicsWorld::physicsCommon->destroyCapsuleShape(static_cast<rp3d::CapsuleShape*>(shape));
+						break;
+					case rp3d::CollisionShapeName::CONVEX_MESH:
+						//The handle only; the hull under it is shared and stays.
+						convex_shape_mesh.erase(shape);
+						PhysicsWorld::physicsCommon->destroyConvexMeshShape(static_cast<rp3d::ConvexMeshShape*>(shape));
 						break;
 					default:
 						break;
@@ -349,6 +430,39 @@ void Physics::AddSphereCollider(const float size,const vec3& pos,const quat& ori
 	//debug->Info("Sphere Collider: Object's mass: %.1f kg\n",body->rigidbody->getMass());
 }
 
+/*
+	A cylinder along the collider's local +Y: `radius` round, 2 * half_height long. Rotate it with
+	`orientation` to point the axis anywhere else - a coin lying flat is identity, a wheel or an
+	archery board standing up is a quarter turn about X.
+
+	A `segments`-sided prism rather than a true cylinder - see UnitCylinderMesh for why, and why
+	that is no loss. Dynamic bodies are fine: unlike a triangle mesh, a convex hull is not
+	static-only. Density works like every other Add*Collider here, and so does the collision filter.
+*/
+void Physics::AddCylinderCollider(float radius,float half_height,const vec3& pos,const quat& orientation,
+                                  float density,int segments){
+	if (segments < 3){
+		segments = 3;
+	}
+	rp3d::ConvexMesh* mesh = CylinderMesh(radius,half_height,segments);
+	if (!mesh){
+		debug->Err("AddCylinderCollider: could not build a %i-sided hull\n",segments);
+		return;
+	}
+	//Scale 1, always - see the raycast note on CylinderMesh.
+	rp3d::ConvexMeshShape* shape = PhysicsWorld::physicsCommon->createConvexMeshShape(mesh);
+	convex_shape_mesh[shape] = mesh;
+	rp3d::Transform t = rp3d::Transform::identity();
+	t.setPosition((rp3d::Vector3&)pos);
+	t.setOrientation((rp3d::Quaternion&)orientation);
+	if (body->rigidbody){
+		body->last_collider = body->rigidbody->addCollider(shape,t);
+		ApplyCollisionBits(body->last_collider);
+		body->last_collider->getMaterial().setMassDensity(density);
+		body->rigidbody->updateMassPropertiesFromColliders();
+	}
+}
+
 //Static terrain collider from a heightmap grid. reactphysics3d only allows concave shapes
 //(like this one) on static bodies - call SetStatic(true) on this Physics before using this.
 void Physics::AddHeightFieldCollider(const std::vector<float>& heights,int columns,int rows,float cell_size_x,float cell_size_z,const vec3& pos,const quat& orientation){
@@ -418,6 +532,24 @@ void Physics::ScaleColliders(const vec3& ratio){
 				capsule->setHeight(capsule->getHeight() * ratio.y);
 				break;
 			}
+			case rp3d::CollisionShapeName::CONVEX_MESH:{
+				/*
+					UNIFORMLY ONLY. A uniform scale is safe since the fork's raycast fix; a
+					non-uniform one would hit the support-point bug - see CylinderMesh - so contacts
+					would pick the wrong vertices, which is worse than not scaling at all. A
+					non-uniform rescale of a convex shape properly means a new hull at the new size.
+				*/
+				float mean = (ratio.x + ratio.y + ratio.z) / 3.0f;
+				bool f_uniform = fabsf(ratio.x - mean) < 0.001f * mean && fabsf(ratio.y - mean) < 0.001f * mean &&
+				                 fabsf(ratio.z - mean) < 0.001f * mean;
+				if (!f_uniform){
+					debug->Warn("ScaleColliders: collider %u is a convex shape, not rescaled non-uniformly (see CylinderMesh)\n",i);
+					continue;
+				}
+				rp3d::ConvexMeshShape* convex = static_cast<rp3d::ConvexMeshShape*>(shape);
+				convex->setScale(convex->getScale() * mean);
+				break;
+			}
 			default:
 				debug->Warn("ScaleColliders: collider %u is a mesh/heightfield shape, not rescaled\n",i);
 				continue;
@@ -453,6 +585,18 @@ rp3d::CollisionShape* Physics::CloneShape(rp3d::CollisionShape* shape){
 		case rp3d::CollisionShapeName::CAPSULE:{
 			rp3d::CapsuleShape* capsule = static_cast<rp3d::CapsuleShape*>(shape);
 			return PhysicsWorld::physicsCommon->createCapsuleShape(capsule->getRadius(),capsule->getHeight());
+		}
+		case rp3d::CollisionShapeName::CONVEX_MESH:{
+			//A new handle over the same hull, when this file made the original - see
+			//convex_shape_mesh. Anyone else's convex shape is shared, as before.
+			std::unordered_map<rp3d::CollisionShape*,rp3d::ConvexMesh*>::iterator it = convex_shape_mesh.find(shape);
+			if (it == convex_shape_mesh.end()){
+				return shape;
+			}
+			rp3d::ConvexMeshShape* copy = PhysicsWorld::physicsCommon->createConvexMeshShape(
+				it->second,static_cast<rp3d::ConvexMeshShape*>(shape)->getScale());
+			convex_shape_mesh[copy] = it->second;
+			return copy;
 		}
 		default:
 			return shape;

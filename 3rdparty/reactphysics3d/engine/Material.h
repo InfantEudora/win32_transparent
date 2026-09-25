@@ -84,8 +84,10 @@ class Material {
         /// Set the mass density of the collider
         void setMassDensity(decimal massDensity);
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return a string representation for the material
         std::string to_string() const;
+#endif
 
         // ---------- Friendship ---------- //
 
@@ -150,16 +152,14 @@ RP3D_FORCE_INLINE void Material::setMassDensity(decimal massDensity) {
    mMassDensity = massDensity;
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Return a string representation for the material
 RP3D_FORCE_INLINE std::string Material::to_string() const {
 
-    std::stringstream ss;
-
-    ss << "frictionCoefficient=" << (mFrictionCoefficientSqrt * mFrictionCoefficientSqrt) << std::endl;
-    ss << "bounciness=" << mBounciness << std::endl;
-
-    return ss.str();
+    return "frictionCoefficient=" + std::to_string(mFrictionCoefficientSqrt * mFrictionCoefficientSqrt) + "\n" +
+           "bounciness=" + std::to_string(mBounciness) + "\n";
 }
+#endif
 
 }
 

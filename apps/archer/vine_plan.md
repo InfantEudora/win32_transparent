@@ -181,10 +181,28 @@ The chain in `BuildRope` stays. What changes is only how it is drawn.
    - **One tick behind the solver, deliberately** - read before the step, with her, so her hands
      and the rope are drawn from the same instant (see UpdateRopeSkin).
    - The link boxes are hidden under the skin; the panel's Rope section puts them back.
+   - **A cut splits the skin into pieces** (2026-09-24). `RopeMeshInput::cuts` clamps each
+     section's weights inside its own links, puts every triangle wholly on one side (by its
+     middle), and caps both sides of the cut with the tassel - hanging from the upper piece, turned
+     up over the lower. The bind and the bones do not change, so the tick only notices the chain's
+     cut joints differ from the skin's (`CheckRopeSkinCuts`) and PreRender re-uploads the mesh; a
+     restart re-weights it whole the same way. 6 more checks, pulled apart: worst edge under 1.6x
+     its bind length cut, over 3x uncut.
 5. **Rope preset** (ends, collars, twisted tile) plus grip-at-a-point with hand IK.
    *(The preset is BUILT with step 4: `rope_segment`, `rope_ring` (its unapplied node scale of 2
    is honoured), three `rope_collar`s stacked by their measured height, `rope_tassel`, all baked
    into the one skinned mesh. Open: grip-at-a-point and hand IK, which go with the rope
    animation work - she currently holds a link's centre, which is the lowest link from the
    ground, down among the collar and tassel.)*
+
+   **Found 2026-09-24 while looking at the swing, and FIXED: the model was tilted about its
+   feet while the collider tilts about its centre** (SyncArcherAnimation placed the feet
+   straight below the centre, then applied the roll). The error grew with the swing - about
+   0.39 at 24 degrees, 1.3 at 90, the model lying beside its own collider. Nothing to do with
+   gripping. With a debug view for it (`archer_debug_view rope_attach`, or the panel's Rope
+   section; distances in archer_state) the joint measures 0.000 open and the drawn hands sit a
+   CONSTANT 0.18-0.20 from the attachment across -24..+19 degrees of swing - what is left is
+   Hanging_Rope's grip being higher above her feet than the top of the 1.8 box, a fixed offset
+   to take out one of two ways: hang the MODEL by its hands (place it so the clip's measured
+   grip meets the joint), or move the joint's body anchor up to the clip's grip height.
 6. **Gameplay**: rope arrow, cutting, growth - if wanted.

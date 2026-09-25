@@ -114,8 +114,10 @@ class CapsuleShape : public ConvexShape {
         /// Return the local inertia tensor of the collision shape
         virtual Vector3 getLocalInertiaTensor(decimal mass) const override;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const override;
+#endif
 
         // ----- Friendship ----- //
 
@@ -205,10 +207,12 @@ RP3D_FORCE_INLINE Vector3 CapsuleShape::getLocalSupportPointWithoutMargin(const 
     }
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Return the string representation of the shape
 RP3D_FORCE_INLINE std::string CapsuleShape::to_string() const {
     return "CapsuleShape{halfHeight=" + std::to_string(mHalfHeight) + ", radius=" + std::to_string(getRadius()) + "}";
 }
+#endif
 
 }
 

@@ -174,6 +174,15 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
     //The level entry. Nothing extracted: the hips rise 0.05 -> 0.48 on the spot (within 0.07 of it
     //across the floor) and end 0.03 under Idle's, so she stands up where the rules have her.
     { "Laying_StandingUp",   false, false,  false, false, false },
+    /*
+        THE ROPE CLIMB CLIMBS - its hips rise 0.28 rig units a cycle - but NOTHING is extracted,
+        and that is not an oversight. Extraction pins an axis to the BIND pose, and the bind hips are
+        well below where either rope clip holds them, so switching between Hanging_Rope and this
+        would drop her. Instead its playhead is pinned to the distance climbed and the app lowers the
+        model by the pose's own measured rise (PuppetChoice::lift) - relative to the clip's FIRST
+        frame, which sits within 0.03 of the hang.
+    */
+    { "Rope_Climbing",       true,  false,  false, false, false },
 };
 
 bool Puppet::IsDrawPose(int clip){
@@ -195,6 +204,8 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.aim_deg      = stage.ShotAimDeg();  //the sway included, so the bow sways with the arc
     out.draw_power   = stage.DrawPower();
     out.kneel_phase  = (stage.mode == MODE_KNEEL) ? stage.kneel_phase : -1;
+    out.rope_climb   = (stage.mode == MODE_ROPE) ? stage.rope_climb : 0;
+    out.rope_climbed = (stage.mode == MODE_ROPE) ? stage.rope_climbed : 0.0f;
 
     /*
         The action, and its phase.
@@ -352,6 +363,21 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         return out;
     }
     if (in.mode == MODE_ROPE){
+        float dur = clip_duration[CLIP_ROPE_CLIMB];
+        if (f_rope_climbing && f_climb_playhead && dur > 0.0f){
+            float cycle = floorf(climb_playhead / dur);
+            out.clip = CLIP_ROPE_CLIMB;
+            out.pinned_time = climb_playhead - cycle * dur;
+            out.lift_base = cycle * climb_cycle_rise;
+            out.lift = in.rope_climbed - out.lift_base;
+            out.rate = 0.0f;
+            //What the pin amounts to as a playback rate, for the panel: the rules' climb speed over
+            //the clip's own. Not applied - the playhead is set, not advanced.
+            float native = (clip_duration[CLIP_ROPE_CLIMB] > 0.0f) ?
+                           climb_cycle_rise / clip_duration[CLIP_ROPE_CLIMB] : 0.0f;
+            out.wanted_rate = (native > 0.0f && in.rope_climb != 0) ? ROPE_CLIMB_SPEED / native : 0.0f;
+            return out;
+        }
         out.clip = CLIP_ROPE;
         return out;
     }
@@ -714,8 +740,70 @@ void Puppet::UpdateAir(const ArcherAnimParams& in){
     last_ground_speed = in.ground_speed;
 }
 
+void Puppet::UpdateRope(const ArcherAnimParams& in){
+    if (in.mode != MODE_ROPE){
+        f_rope_climbing = false;
+    }else if (in.rope_climb != 0){
+        f_rope_climbing = true;
+    }
+    float dur = clip_duration[CLIP_ROPE_CLIMB];
+    float lift = 0.0f;
+    float t = (f_rope_climbing && dur > 0.0f) ? ClimbTimeAt(in.rope_climbed,lift) : -1.0f;
+    if (t < 0.0f){
+        f_climb_playhead = false;
+        return;
+    }
+    //Whole cycles by floorf, which agrees with ClimbTimeAt's wrap on either side of zero.
+    climb_target = floorf(in.rope_climbed / climb_cycle_rise) * dur + t;
+    /*
+        FOLLOWED, NOT SET. Where the distance's curve is flat the target leaps - a whole pause in
+        one tick - and the playhead goes after it at the capped rate instead, catching up on the
+        steep part that follows. A lag of more than half a cycle is not a pause being played out
+        but a jump in the distance itself, and is taken at once.
+    */
+    float average = (climb_cycle_rise > 0.0f) ? ROPE_CLIMB_SPEED * dur / climb_cycle_rise : 0.0f;
+    float cap = fmaxf(PUPPET_CLIMB_RATE_MAX,1.5f * average) * ARCHER_DT;
+    float gap = climb_target - climb_playhead;
+    if (!f_climb_playhead || fabsf(gap) > 0.5f * dur){
+        climb_playhead = climb_target;
+    }else if (gap > cap){
+        climb_playhead += cap;
+    }else if (gap < -cap){
+        climb_playhead -= cap;
+    }else{
+        climb_playhead = climb_target;
+    }
+    f_climb_playhead = true;
+}
+
+float Puppet::ClimbTimeAt(float climbed, float& lift) const{
+    lift = 0.0f;
+    size_t n = climb_times.size();
+    if (n < 2 || climb_rise.size() != n || climb_cycle_rise <= 1e-5f){
+        return -1.0f;
+    }
+    float d = fmodf(climbed,climb_cycle_rise);
+    if (d < 0.0f){
+        d += climb_cycle_rise;
+    }
+    lift = d;
+    //The first keyframe the rise reaches d at, then between it and the one before. Monotonic, so
+    //a flat stretch - the hips pausing - maps to its first frame and is passed over as she climbs.
+    size_t hi = 1;
+    while (hi < n - 1 && climb_rise[hi] < d){
+        hi++;
+    }
+    float r0 = climb_rise[hi - 1];
+    float r1 = climb_rise[hi];
+    float k = (r1 - r0 > 1e-6f) ? (d - r0) / (r1 - r0) : 0.0f;
+    if (k < 0.0f){ k = 0.0f; }
+    if (k > 1.0f){ k = 1.0f; }
+    return climb_times[hi - 1] + (climb_times[hi] - climb_times[hi - 1]) * k;
+}
+
 void Puppet::Tick(const ArcherAnimParams& in){
     UpdateAir(in);
+    UpdateRope(in);
     choice = Choose(in);
 
     /*

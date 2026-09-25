@@ -30,7 +30,6 @@
 #include <reactphysics3d/containers/Array.h>
 #include <reactphysics3d/containers/Map.h>
 #include <string>
-#include <iostream>
 
 /// ReactPhysics3D namespace
 namespace reactphysics3d {

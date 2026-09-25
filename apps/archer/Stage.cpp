@@ -95,6 +95,9 @@ void Stage::Reset(){
     rope_id = -1;
     rope_ticks = 0;
     rope_cooldown = 0;
+    rope_s = 0.0f;
+    rope_climb = 0;
+    rope_climbed = 0.0f;
     rope_points.clear();
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
@@ -194,12 +197,13 @@ void Stage::BuildMainLevel(){
           beyond the cracked wall        - a lob, the only way over 2.5 units of wall
 
         w/h here are the board's full size, and the app stands it up as a dynamic body so a hit
-        knocks it over instead of just scoring.
+        knocks it over instead of just scoring. The two on open ground are archery stands - see
+        TargetVariant - which score by ring and take a kick, not an arrow, to knock down.
     */
-    props.push_back({ PROP_TARGET, 20.00f, 0.80f, 0.30f, 1.60f, 1, 1 });   //across the first gap
+    props.push_back({ PROP_TARGET, 20.00f, 0.70f, 0.70f, 1.40f, 1, 1, false, TARGET_STAND });  //across the first gap
     props.push_back({ PROP_TARGET, 24.50f, 0.80f, 0.30f, 1.60f, 1, 1 });   //under the one-way, 2.5 of headroom
     props.push_back({ PROP_TARGET, 31.00f, 3.40f, 0.30f, 1.60f, 1, 1 });   //standing on the ledge
-    props.push_back({ PROP_TARGET, 62.00f, 0.80f, 0.30f, 1.60f, 1, 1 });   //behind the cracked wall
+    props.push_back({ PROP_TARGET, 62.00f, 0.70f, 0.70f, 1.40f, 1, 1, false, TARGET_STAND });  //behind the cracked wall
 
     //For the kick-and-break slice. w/h are the WHOLE wall; cols/rows subdivide it into bricks.
     props.push_back({ PROP_BRICKWALL, 49.50f, 1.60f, 2.70f, 3.15f, 3, 7 });
@@ -343,9 +347,10 @@ void Stage::BuildRangeLevel(){
     blocks.push_back({ -17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //left wall, top at 48
     blocks.push_back({  17.50f, 24.00f,  0.50f, 24.00f, BLOCK_SOLID, true });  //right wall
 
+    //Boards at the ends, stands nearer in, so the two kinds can be shot side by side.
     props.push_back({ PROP_TARGET, -12.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
-    props.push_back({ PROP_TARGET,  -6.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
-    props.push_back({ PROP_TARGET,   6.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
+    props.push_back({ PROP_TARGET,  -6.00f, 0.70f, 0.70f, 1.40f, 1, 1, false, TARGET_STAND });
+    props.push_back({ PROP_TARGET,   6.00f, 0.70f, 0.70f, 1.40f, 1, 1, false, TARGET_STAND });
     props.push_back({ PROP_TARGET,  12.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
 
     /*
@@ -470,8 +475,12 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
 
     //Aim tilts whether or not the bow is drawn, so the next shot starts where the last one was
     //pointed and a player can line up before committing to a draw.
-    aim_deg = ClampF(aim_deg + in.aim_axis * BOW_AIM_RATE_DEG * ARCHER_DT,
-                     BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
+    //Except on the rope, where the same keys climb - see ROPE_CLIMB_SPEED. The aim is simply left
+    //where it was, so she comes off the rope pointing where she got on.
+    if (mode != MODE_ROPE){
+        aim_deg = ClampF(aim_deg + in.aim_axis * BOW_AIM_RATE_DEG * ARCHER_DT,
+                         BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
+    }
 
     //Both hands are on the rock. Aiming still tilts - it costs nothing and lets a player line up
     //the shot they are about to take on landing - but no draw can START while hanging or climbing,
@@ -666,11 +675,15 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         otherwise be beaten to it by the automatic ledge grab, which needs no key at all.
     */
     if (in.f_action_pressed && mode != MODE_HANG && mode != MODE_CLIMB){
-        int rope = FindRopePoint();
+        float grip = 0.0f;
+        int rope = FindRopePoint(&grip);
         if (rope >= 0){
             mode = MODE_ROPE;
             rope_id = rope;
             rope_ticks = 0;
+            rope_s = grip;
+            rope_climb = 0;
+            rope_climbed = 0.0f;
             vel = v2(vel.x,vel.y);      //kept: the swing starts with the speed you arrived at
             events.f_grabbed_rope = true;
             events.grabbed_rope_id = rope;
@@ -920,11 +933,12 @@ void Stage::ClearRopePoints(){
     rope_points.clear();
 }
 
-void Stage::AddRopePoint(float x, float y, int id){
+void Stage::AddRopePoint(float x, float y, int id, float s){
     StageRopePoint p;
     p.x = x;
     p.y = y;
     p.id = id;
+    p.s = s;
     rope_points.push_back(p);
 }
 
@@ -935,7 +949,7 @@ void Stage::AddRopePoint(float x, float y, int id){
     measuring from the middle makes a rope at head height read as out of reach while one at knee
     height reads as catchable.
 */
-int Stage::FindRopePoint() const{
+int Stage::FindRopePoint(float* out_s) const{
     if (rope_cooldown > 0){
         return -1;
     }
@@ -949,6 +963,9 @@ int Stage::FindRopePoint() const{
         if (d2 <= best){
             best = d2;
             found = rope_points[i].id;
+            if (out_s){
+                *out_s = rope_points[i].s;
+            }
         }
     }
     return found;
@@ -969,6 +986,40 @@ int Stage::FindRopePoint() const{
 void Stage::TickRope(const ArcherInput& in, StageEvents& events){
     rope_ticks++;
 
+    /*
+        CLIMBING: the DECISION only - which way, how fast, how far. The app turns rope_s into where
+        the joint holds her and the solver moves her there, so she climbs while the rope swings and
+        the pendulum really does shorten under her.
+
+        The limits are the span of the points the app offers, which is the span she could have
+        caught - so she cannot climb into the top links the app keeps out of reach, and cannot climb
+        off the bottom.
+
+        AND A GRIP PAST THE LAST POINT IS A GRIP ON NOTHING. The app offers points only on the part
+        of the rope still hanging from its anchor, so a rope cut above her hands, or one offering
+        no points at all, means what she is holding has come away - and she lets go, whatever she
+        is pressing and however long she has held on. Nothing else in the rules needs to know a
+        rope can be cut.
+    */
+    rope_climb = 0;
+    float lo = 0.0f;
+    float hi = -1.0f;
+    for (size_t i = 0; i < rope_points.size(); i++){
+        if (i == 0 || rope_points[i].s < lo){ lo = rope_points[i].s; }
+        if (i == 0 || rope_points[i].s > hi){ hi = rope_points[i].s; }
+    }
+    //rope_s is only ever a point's own s or clamped between them, so any real excess is a cut.
+    bool f_holding = !rope_points.empty() && rope_s <= hi + 1e-3f;
+    if (f_holding){
+        int want = (in.aim_axis > ROPE_CLIMB_DEADZONE) ? 1 : ((in.aim_axis < -ROPE_CLIMB_DEADZONE) ? -1 : 0);
+        float next = ClampF(rope_s - (float)want * ROPE_CLIMB_SPEED * ARCHER_DT,lo,hi);
+        if (next != rope_s){
+            rope_climb = want;
+            rope_climbed += rope_s - next;
+            rope_s = next;
+        }
+    }
+
     //Face the way the swing is going, so the bow points down the arc rather than at the anchor.
     if (vel.x > 1.0f){
         facing = 1.0f;
@@ -976,11 +1027,13 @@ void Stage::TickRope(const ArcherInput& in, StageEvents& events){
         facing = -1.0f;
     }
 
-    if (rope_ticks < ROPE_MIN_HOLD_TICKS){
-        return;
-    }
-    if (!in.f_jump_pressed && !in.f_action_pressed){
-        return;
+    if (f_holding){
+        if (rope_ticks < ROPE_MIN_HOLD_TICKS){
+            return;
+        }
+        if (!in.f_jump_pressed && !in.f_action_pressed){
+            return;
+        }
     }
 
     mode = MODE_AIR;
@@ -991,7 +1044,9 @@ void Stage::TickRope(const ArcherInput& in, StageEvents& events){
     //spend it on a jump off nothing the moment they land.
     buffer_ticks = 0;
     events.f_released_rope = true;
-    events.f_rope_jump = in.f_jump_pressed;
+    //Falling with the piece she held is not a jump, whatever was pressed.
+    events.f_rope_jump = f_holding && in.f_jump_pressed;
+    events.f_rope_lost = !f_holding;
 }
 
 //--- The kick -------------------------------------------------------------------------------------

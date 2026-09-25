@@ -26,6 +26,9 @@
 #ifndef REACTPHYSICS3D_DEFAULT_LOGGER_H
 #define REACTPHYSICS3D_DEFAULT_LOGGER_H
 
+// If the built-in default logger is enabled
+#ifdef IS_RP3D_DEFAULT_LOGGER_ENABLED
+
 // Libraries
 #include <reactphysics3d/utils/Logger.h>
 #include <reactphysics3d/containers/Array.h>
@@ -543,5 +546,7 @@ namespace std {
     }
   };
 }
+
+#endif
 
 #endif

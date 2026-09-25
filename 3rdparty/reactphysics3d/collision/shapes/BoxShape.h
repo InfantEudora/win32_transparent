@@ -130,8 +130,10 @@ class BoxShape : public ConvexPolyhedronShape {
         /// Return the centroid of the polyhedron
         virtual Vector3 getCentroid() const override;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation of the shape
         virtual std::string to_string() const override;
+#endif
 
         // ----- Friendship ----- //
 
@@ -234,10 +236,12 @@ RP3D_FORCE_INLINE decimal BoxShape::getVolume() const {
     return 8 * mHalfExtents.x * mHalfExtents.y * mHalfExtents.z;
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Return the string representation of the shape
 RP3D_FORCE_INLINE std::string BoxShape::to_string() const {
     return "BoxShape{extents=" + mHalfExtents.to_string() + "}";
 }
+#endif
 
 // Return the number of half-edges of the polyhedron
 RP3D_FORCE_INLINE uint32 BoxShape::getNbHalfEdges() const {

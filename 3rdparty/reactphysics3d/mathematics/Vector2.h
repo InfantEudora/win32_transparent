@@ -127,8 +127,10 @@ struct Vector2 {
         /// Overloaded less than operator for ordering to be used inside std::set for instance
         bool operator<(const Vector2& vector) const;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation
         std::string to_string() const;
+#endif
 
         /// Return a vector taking the minimum components of two vectors
         static Vector2 min(const Vector2& vector1, const Vector2& vector2);
@@ -337,10 +339,12 @@ RP3D_FORCE_INLINE Vector2 Vector2::max(const Vector2& vector1, const Vector2& ve
                    std::max(vector1.y, vector2.y));
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Get the string representation
 RP3D_FORCE_INLINE std::string Vector2::to_string() const {
     return "Vector2(" + std::to_string(x) + "," + std::to_string(y) + ")";
 }
+#endif
 
 // Return the zero vector
 RP3D_FORCE_INLINE Vector2 Vector2::zero() {

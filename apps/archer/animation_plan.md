@@ -895,6 +895,80 @@ stays.
   sets `ROPE_CLIMB_SPEED` or the playback rate. Until it exists, `Hanging_Rope` stands in and the
   state reads as a placeholder.
 
+**BUILT 2026-09-24**, mostly as proposed, and one thing about the clip changed the plan:
+
+- **`Rope_Climbing` is NOT in place.** The dump tool reports 0 travel because it measures only the
+  horizontal; its hips RISE 0.282 rig units a cycle (0.569 world, 1.867s, so 0.305/s native), and
+  in the rig's own space the gripping hand is STATIONARY - left at ~0.96 for 0-1.1s, right at
+  ~1.1 for 0-1.6s, each then reaching 0.28-0.36 up. The loop is seamless: end pose = start pose +
+  one cycle's rise. So the hands need no IK: a body that rises at the clip's rate keeps the
+  gripping hand on the rope by construction.
+- **Played by DISTANCE, not time.** The rise is uneven (a 0.2s pause mid-cycle), so a constant
+  climb speed against a clip playing in time would slide the hand. `Puppet::ClimbTimeAt` inverts
+  the measured, monotonic rise curve (`MeasureRopeClimb`, at the keyframes) and SETS the playhead;
+  down is the same curve backwards. `ROPE_CLIMB_SPEED` 0.60 is a free choice - the pose runs 1.97x
+  its own pace at it, and any value keeps the hand planted.
+- **Nothing extracted.** Core's vertical extraction pins the hips to the BIND pose, well below both
+  rope clips, so switching to it would drop her. The app lowers the model by the pose's own rise
+  instead (`PuppetChoice::lift`, from the clip's first frame, within 0.03 of Hanging_Rope's hips).
+- **Rules:** `Stage::rope_s`, a grip distance; the aim keys climb within the span of the offered
+  points; the aim does not tilt on the rope. Points are now offered every `ROPE_GRAB_STEP` (0.25)
+  down the rope, carrying their distance, so she also catches it at the nearest point. 21 checks.
+- **Physics:** the joint is re-made with explicit local anchors whenever `rope_s` moves.
+  **Crossing onto the next link must CARRY the anchor over, not snap to the geometry** - the
+  joints between links open 0.13-0.20 each under her 70 kg on 1.2 kg links, and snapping put that
+  whole gap into her joint in one tick; the solver kicked her by up to a link's length (once 9.9).
+  Carried over, the joint gap holds at 0.010 through every crossing.
+- **Measured climbing, per hand** (`archer_state` animation.rope_hand_left/right): the hands
+  alternate as authored; a holding hand creeps 0.05-0.15 per grip phase, part of it authored (the
+  right hand drifts 0.08 rig units during its grip in the file itself); the midpoint of the hands
+  wanders +-0.2 about the joint through the cycle and AVERAGES ON IT - so for the climb, the top of
+  the box is the right mount. It is Hanging_Rope whose hands sit 0.19 higher.
+- ~~Open: the chain stretches under her weight.~~ **WRONG, corrected the same day with the rope
+  test bench** (`rope_test` over MCP, the panel's Rope section: per-joint gaps, loaded length,
+  peak, solver iterations, link mass, cut a joint). Hanging still the rope is only +3%. The
+  0.13-0.20 gaps, and the runaway the user reproduced by climbing (her 8 units under the floor on a
+  9-unit rope), were three bugs in the climb, not the mass ratio:
+  1. **The climb pulled the rope down instead of lifting her.** Each re-made joint was a climb
+     step out, and a joint closes its error in inverse proportion to mass - 70 kg against 1.2 kg,
+     so 98% of every step moved the LINK. Climbing, the rope grew to +24% and relaxed to exactly
+     its rest length within 2 s of stopping. Fix: move HER the step first (bounded), so the new
+     joint is born satisfied. Climbing is now +3%, worst gap 0.041, her joint 0.000.
+  2. **The carried-over anchor offset accumulated**, one joint's stretch per crossing, until the
+     anchor sat far off its link on a lever. Fix: it fades out over ROPE_GRIP_BLEND of climb.
+  3. **On the rope she never collided with the level at all** - ARCHER_MASK_LEVEL did not accept
+     her category, and a pair needs both masks. A swing, a runaway or a cut rope went straight
+     through the floor. Fix: the level's mask takes the archer (harmless off the rope, where her
+     own mask is 0). NOTE for the main level: her feet now meet the gap's edges on a wide swing.
+
+  **Solver iterations, measured** (hanging stretch / worst gap hanging / worst gap climbing, after
+  the fixes): 12/10 (core default) +2.9% / 0.022 / 0.041; 30/30 +1.1% / 0.009 / 0.010; 60/60
+  +0.4% / 0.003 / 0.005; and at 12/10 with 5 kg links, 0.0% / 0.000 / 0.006. Roughly proportional
+  to the iteration count, per scene (each scene has its own world). With the fixes the default is
+  fine; the numbers are here for when it is not.
+
+- **The jump at the loop (fixed 2026-09-24), two causes.**
+  1. **The lift was a tick ahead of the pose.** Core poses the rig in `Scene::UpdateAnimations`,
+     BEFORE `RunSimulationTick`, so the pose on screen is the playhead pinned LAST tick, while the
+     model was lowered by THIS tick's lift. A centimetre most of the time; at the loop the lift fell
+     from 0.57 to 0 with the pose still on its last frame, and for one frame she (and the hand
+     beads) stood 0.57 too high. Now the model is lowered by `rope_climbed` less the cycle base of
+     the pose actually shown (`PuppetChoice::lift_base`, `climb_base_posed`).
+  2. **A pause in the hips was passed in one tick.** The clip's last 0.28s is a hip pause while
+     the right hand reaches, and the distance map (correctly) has nothing to spend on it: the
+     playhead went 1.65 -> 0.06 and the hand moved 0.5 in two frames. The playhead now FOLLOWS the
+     distance's time at most `PUPPET_CLIMB_RATE_MAX` (3.5x native), unwrapped so a cycle boundary is
+     not a jump. The reach plays over 4 ticks; the lag is a few centimetres of climb, taken up by
+     the hips sagging, not by the gripping hand (lift is measured from the cycle's start, not from
+     the pose's rise). The reach is still quick - at 0.60 u/s the whole clip runs 2x - and a slower
+     `ROPE_CLIMB_SPEED` is the knob if it reads as a flick.
+
+- **Cutting it (the bench's cut, and later an arrow's).** The app offers grab points only above
+  the first cut joint; Stage lets go of any grip past the last point offered (`f_rope_lost`, never a
+  jump, not held back by the minimum hold), so a cut above her hands drops her and one below does
+  not. The skin is re-weighted into separate pieces (vine_plan.md step 4), and the loose piece lands
+  on the level (`ARCHER_MASK_ROPE_LOOSE`) - before, it fell through the floor for good.
+
 ---
 
 ## Step 0 — the seam. BUILT.

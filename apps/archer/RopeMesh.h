@@ -31,6 +31,9 @@
     the first link, which pivots about the anchor, so it stays on the anchor; the tassel is wholly
     the last link and swings with it rigidly.
 
+    A cut changes the weights, not the bind: the same pose, rebuilt with `cuts`, re-uploaded over
+    the old mesh. See RopeMeshInput::cuts.
+
     No engine type beyond core's maths, so `make rules` builds and checks it with no GPU.
 */
 
@@ -59,14 +62,32 @@ struct RopeMeshInput{
     std::vector<float> collar_at;
     const std::vector<vertex>* tassel = NULL;
     float tassel_scale = 1.0f;
+
+    /*
+        A CUT ROPE: the joints that no longer hold, by the chain's numbering - joint j is the top of
+        link j, at s = j * seg, and joint 0 is the anchor. Each cut splits the skin into SECTIONS
+        that share no bone: a section's weights clamp inside its own links exactly as the whole
+        rope's clamp at its ends, and every triangle belongs wholly to one side (by its middle), so
+        nothing is left to stretch across the gap. A cut at joint 0 splits nothing - the rope is
+        one piece that has come off its anchor.
+
+        `cut_end`, optional, caps both sides of every cut, authored like the tassel (origin where it
+        meets the rope, along +Z away from it): hanging below the upper section, and turned end
+        over end on top of the lower one.
+    */
+    std::vector<int> cuts;
+    const std::vector<vertex>* cut_end = NULL;
+    float cut_end_scale = 1.0f;
 };
 
 //Link i's centre in the bind pose.
 vec3  RopeLinkBindCentre(const RopeMeshInput& in, int link);
 
 //The weights for a point `s` down the rope: up to three links and their weights, summing to 1.
-//Unused slots are link 0 at weight 0.
+//Unused slots are the first link at weight 0. The second form keeps them inside links first..last - one
+//section of a cut rope.
 void  RopeWeights(float s, float seg, int links, int3& bones, vec3& weights);
+void  RopeWeights(float s, float seg, int first, int last, int3& bones, vec3& weights);
 
 //The whole rope in its bind pose, a triangle list for Mesh::SetSkinnedMeshData. False (and `out`
 //empty) without a usable tile.

@@ -54,7 +54,6 @@
 #include <reactphysics3d/systems/DynamicsSystem.h>
 #include <reactphysics3d/engine/Islands.h>
 #include <reactphysics3d/utils/DebugRenderer.h>
-#include <sstream>
 
 /// Namespace ReactPhysics3D
 namespace reactphysics3d {
@@ -141,27 +140,29 @@ class PhysicsWorld {
 
             ~WorldSettings() = default;
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
             /// Return a string with the world settings
             std::string to_string() const {
 
-                std::stringstream ss;
+                std::string ss;
 
-                ss << "worldName=" << worldName << std::endl;
-                ss << "gravity=" << gravity.to_string() << std::endl;
-                ss << "persistentContactDistanceThreshold=" << persistentContactDistanceThreshold << std::endl;
-                ss << "defaultFrictionCoefficient=" << defaultFrictionCoefficient << std::endl;
-                ss << "defaultBounciness=" << defaultBounciness << std::endl;
-                ss << "restitutionVelocityThreshold=" << restitutionVelocityThreshold << std::endl;
-                ss << "isSleepingEnabled=" << isSleepingEnabled << std::endl;
-                ss << "defaultVelocitySolverNbIterations=" << defaultVelocitySolverNbIterations << std::endl;
-                ss << "defaultPositionSolverNbIterations=" << defaultPositionSolverNbIterations << std::endl;
-                ss << "defaultTimeBeforeSleep=" << defaultTimeBeforeSleep << std::endl;
-                ss << "defaultSleepLinearVelocity=" << defaultSleepLinearVelocity << std::endl;
-                ss << "defaultSleepAngularVelocity=" << defaultSleepAngularVelocity << std::endl;
-                ss << "cosAngleSimilarContactManifold=" << cosAngleSimilarContactManifold << std::endl;
+                ss += "worldName=" + worldName + "\n";
+                ss += "gravity=" + gravity.to_string() + "\n";
+                ss += "persistentContactDistanceThreshold=" + std::to_string(persistentContactDistanceThreshold) + "\n";
+                ss += "defaultFrictionCoefficient=" + std::to_string(defaultFrictionCoefficient) + "\n";
+                ss += "defaultBounciness=" + std::to_string(defaultBounciness) + "\n";
+                ss += "restitutionVelocityThreshold=" + std::to_string(restitutionVelocityThreshold) + "\n";
+                ss += "isSleepingEnabled=" + std::to_string(isSleepingEnabled) + "\n";
+                ss += "defaultVelocitySolverNbIterations=" + std::to_string(defaultVelocitySolverNbIterations) + "\n";
+                ss += "defaultPositionSolverNbIterations=" + std::to_string(defaultPositionSolverNbIterations) + "\n";
+                ss += "defaultTimeBeforeSleep=" + std::to_string(defaultTimeBeforeSleep) + "\n";
+                ss += "defaultSleepLinearVelocity=" + std::to_string(defaultSleepLinearVelocity) + "\n";
+                ss += "defaultSleepAngularVelocity=" + std::to_string(defaultSleepAngularVelocity) + "\n";
+                ss += "cosAngleSimilarContactManifold=" + std::to_string(cosAngleSimilarContactManifold) + "\n";
 
-                return ss.str();
+                return ss;
             }
+#endif
         };
 
     protected :

@@ -72,6 +72,10 @@ public:
     void AddBoxCollider(const vec3& box,const vec3& pos,const quat& orientation, float density = 1.0f);
     void AddCapsuleCollider(const float radius, const float v,const vec3& pos,const quat& orientation,float density = 1.0f);
     void AddSphereCollider(const float size,const vec3& pos,const quat& orientation,float density = 1.0f);
+    //A cylinder along the collider's local +Y, as a `segments`-sided convex prism - rp3d has no
+    //cylinder shape. Works on dynamic bodies. See the definition.
+    void AddCylinderCollider(float radius,float half_height,const vec3& pos,const quat& orientation,
+                             float density = 1.0f,int segments = 16);
     //Static terrain collider. heights is a row-major grid (index = z*columns+x), same layout
     //as CreateMeshFromHeightmap. cell_size_x/cell_size_z stretch the (columns-1)x(rows-1) local
     //grid to world-space spacing - pass the same values used to build the matching render mesh.
@@ -81,9 +85,11 @@ public:
     //height by Y (its axis), and each collider's local offset. Then recomputes centre of mass
     //and inertia for the new shape while keeping the body's mass what it was - rp3d's own
     //shape setters only re-insert the AABB into the broadphase and leave mass properties stale.
-    //Mesh/heightfield colliders are left alone (rp3d can't resize those in place).
+    //Mesh/heightfield colliders are left alone (rp3d can't resize those in place); a cylinder from
+    //AddCylinderCollider is rescaled only uniformly - see CylinderMesh in Physics.cpp for why.
     void ScaleColliders(const vec3& ratio);
-    //A fresh, unshared copy of a primitive shape (box/sphere/capsule) with the same size, or the
+    //A fresh, unshared copy of a primitive shape (box/sphere/capsule, or a cylinder from
+    //AddCylinderCollider - a new handle over the same hull) with the same size, or the
     //same pointer if it's a type that can't be cloned this way - for duplicating an object so
     //its colliders can then be scaled independently of the original's.
     static rp3d::CollisionShape* CloneShape(rp3d::CollisionShape* shape);

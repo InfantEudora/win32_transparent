@@ -147,8 +147,10 @@ class Matrix3x3 {
         /// Overloaded operator to read/write element of the matrix.
         Vector3& operator[](int row);
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
         /// Return the string representation
         std::string to_string() const;
+#endif
 };
 
 // Constructor of the class Matrix3x3
@@ -387,12 +389,14 @@ RP3D_FORCE_INLINE Vector3& Matrix3x3::operator[](int row) {
     return mRows[row];
 }
 
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
 // Get the string representation
 RP3D_FORCE_INLINE std::string Matrix3x3::to_string() const {
     return "Matrix3x3(" + std::to_string(mRows[0][0]) + "," + std::to_string(mRows[0][1]) + "," + std::to_string(mRows[0][2]) + "," +
            std::to_string(mRows[1][0]) + "," + std::to_string(mRows[1][1]) + "," + std::to_string(mRows[1][2]) + "," +
            std::to_string(mRows[2][0]) + "," + std::to_string(mRows[2][1]) + "," + std::to_string(mRows[2][2]) + ")";
 }
+#endif
 
 }
 

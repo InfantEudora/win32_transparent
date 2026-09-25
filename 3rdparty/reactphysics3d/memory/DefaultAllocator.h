@@ -31,7 +31,6 @@
 #include <reactphysics3d/configuration.h>
 #include <cstdlib>
 #include <cassert>
-#include <iostream>
 #include <stdlib.h>
 
 /// ReactPhysics3D namespace

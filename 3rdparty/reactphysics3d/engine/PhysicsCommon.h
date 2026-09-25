@@ -98,8 +98,10 @@ class PhysicsCommon {
         /// Set of profilers
         Set<Profiler*> mProfilers;
 
+#ifdef IS_RP3D_DEFAULT_LOGGER_ENABLED
         /// Set of default loggers
         Set<DefaultLogger*> mDefaultLoggers;
+#endif
 
         /// Half-edge structure of a box polyhedron
         HalfEdgeStructure mBoxShapeHalfEdgeStructure;
@@ -145,8 +147,10 @@ class PhysicsCommon {
         /// Delete a height-field
         void deleteHeightField(HeightField* heightField);
 
+#ifdef IS_RP3D_DEFAULT_LOGGER_ENABLED
         /// Delete a default logger
         void deleteDefaultLogger(DefaultLogger* logger);
+#endif
 
         /// Initialize the half-edge structure of a BoxShape
         void initBoxShapeHalfEdgeStructure();
@@ -244,11 +248,13 @@ class PhysicsCommon {
         /// Destroy a height-field
         void destroyHeightField(HeightField* heightField);
 
+#ifdef IS_RP3D_DEFAULT_LOGGER_ENABLED
         /// Create and return a new default logger
         DefaultLogger* createDefaultLogger();
 
         /// Destroy a default logger
         void destroyDefaultLogger(DefaultLogger* logger);
+#endif
 
         /// Return the current logger
         static Logger* getLogger();
@@ -281,7 +287,17 @@ RP3D_FORCE_INLINE void PhysicsCommon::setLogger(Logger* logger) {
 }
 
 // Use this macro to log something
+#ifdef IS_RP3D_DEBUG_STRINGS_ENABLED
+
 #define RP3D_LOG(physicsWorldName, level, category, message, filename, lineNumber) if (reactphysics3d::PhysicsCommon::getLogger() != nullptr) PhysicsCommon::getLogger()->log(level, physicsWorldName, category, message, filename, lineNumber)
+
+#else
+
+// The log messages are built by concatenating std::string, so a disabled log call has to discard
+// its arguments unevaluated: the point is that the concatenation code is never generated.
+#define RP3D_LOG(physicsWorldName, level, category, message, filename, lineNumber) ((void)0)
+
+#endif
 
 }
 
