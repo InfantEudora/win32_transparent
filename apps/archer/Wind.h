@@ -59,7 +59,7 @@ struct WindParams{
     float eddy_max_drop = 4.0f;
 
     //--- Free to change at any time --------------------------------------------------------------
-    float speed         = 2.5f;     //mean wind in units/s. SIGNED: + blows toward +x
+    float speed         = 0.5f;     //mean wind in units/s. SIGNED: + blows toward +x
     //Peak swirl speed of a corner's bound eddy, as a fraction of |speed| (the shed ones are half
     //that). About 1 is what it takes to turn the flow back along the ground in the lee; much
     //above 1.5 the lee blows back hard enough to look like a fan.
@@ -105,7 +105,8 @@ struct WindCorner{
 struct WindEddy{
     float x = 0.0f;
     float y = 0.0f;
-    float radius = 1.0f;            //the Gaussian's sigma
+    float radius = 1.0f;            //the Gaussian's sigma, vertically
+    float stretch = 1.0f;           //and horizontally it is radius * stretch - a lee bubble is long and flat
     float strength = 0.0f;          //psi amplitude, signed; 0 at the ends of its life
 };
 
@@ -150,6 +151,8 @@ public:
 
     //Signed distance to the nearest obstacle, negative inside one. Bilinear off the grid.
     float Distance(float x, float y) const;
+    //Its gradient - the way out of the nearest surface, about unit length. Bilinear too.
+    WindVec DistanceGradient(float x, float y) const;
 
     //The corners shedding for the current wind direction.
     const std::vector<WindCorner>& Corners() const { return (params.speed >= 0.0f) ? corners_pos : corners_neg; }

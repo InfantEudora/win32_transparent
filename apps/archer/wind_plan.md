@@ -202,6 +202,82 @@ grass 0.30 - the bend goes with height squared, so tall plants need far less.
 so adding it moved no other plant. `leaf_small` is in archer.glb for step 4 - note it carries an
 UNAPPLIED node transform (scale 3, +90 deg about X).
 
+**Vine leaves** sway too, in a second mode: `material_t::wind_mode` (the last padding int, mirrored
+as `int wind_mode` in every shader) - 0 STALK bends by height above the origin, 1 LEAF by
+DISTANCE from it with more flutter and a flap, because a vine leaf hangs every which way and by
+height would hardly move. Each vine leaf kind gets its own `@vine_leaf_N` material copy in LEAF
+mode; flex 0.8, on the panel.
+
+**Both modes SWING, they do not shift** (`WindSwing` in default.vert, 2026-09-26, from the user
+seeing vine leaves look "off"). The bend is applied AFTER the object's transform, in world space,
+and the push comes from the wind - so it pointed the same way whatever the leaf did: a leaf
+pointing downwind was pushed along its own length and stretched, one pointing upwind was
+squashed, only one hanging across the wind swung. Now the part of the push along the
+origin-to-vertex line is dropped and the vertex put back at its old distance - a rotation about
+the attachment, whatever the direction. The same fixed fern fronds lying along the wind, and
+replaced the stalk mode's "tip comes down" approximation with the exact arc.
+
+---
+
+## Step 4, as built (2026-09-26): leaves on the wind
+
+`Leaves.{h,cpp}` (engine-free, `leaves_test.cpp` 11 checks in `make rules`). A swarm of 140 kept in
+the view: velocity pulled toward the wind over `drag_time` 0.30 s, a sink of 0.55 u/s, a falling
+leaf's zig-zag, a tumble that grows with how hard the air pushes. Lands on tops where the air is
+calm, lifts above 3.4 u/s, skitters in between; recycled after 6 s lying. A leaf that leaves the
+view comes back on the OPPOSITE side - whichever carried it out, that is where fresh air enters,
+and spawning upwind instead emptied the view whenever she ran downwind of the leaves. Simulated on
+the physics thread in RunSimulationTick (so pausing holds them) under wind_mutex; drawn as a pool
+of 400 Objects on ONE re-baked mesh, so one instanced draw. 0.12 ms a tick.
+
+What building it changed:
+
+- **The bound eddy is an ellipse, twice as long as tall, 1.2 drops out** (was a circle at 0.9).
+  As a circle it ended 1.4 drops downstream, and leaves carried over it came down beyond the
+  reverse flow. Reverse flow in the lee doubled (-1.16 against -0.57). `WindEddy::stretch`.
+- **A leaf only settles where the air is calm** (< 0.6 x lift). Leaves that settled on touching
+  down in the eddy's reverse flow along the ground dropped out of the eddy.
+- **A resting leaf feels the wind half a unit up** - the grid's first cell over a surface is
+  blended with the zero inside it, and half the leaves lay still in a 6.0 wind.
+- **"Caught" is measured as carried back against the wind**: 40 of 60 leaves dropped in the lee
+  with eddies, 0 without. Most then settle at the foot of the lee wall, where real leaves pile up
+  too; gusts stir them. "Still airborne in a box" was tried first and is no measure - in a calm lee
+  without eddies leaves just drift slowly and stay in the box.
+- **`leaf_small` has no texture and no colour in the export** (plain white). The four tints are
+  therefore material COLOURS (fresh, dark, yellowing, turning), with brightness and a faint
+  emissive warmth written too, which is what would carry the variation if it came back textured
+  (the lit shader ignores the colour when there is a texture). Metallic capped at 0.1, as for the
+  character. The node's unapplied scale 3 / +90 X is applied and the mesh re-centred on its bounds,
+  so it tumbles about its middle, not its stem.
+
+**The swarm lives in the view padded 150%** (user, 2026-09-26: zooming out showed the leaves in
+a box, and aiming and obstacles will zoom). By DENSITY now (0.2 per square unit, ~1600 leaves at
+the default zoom, a sixth on screen; pool 2000), so the padding does not thin them out. A zoom
+resizes the swarm without moving anyone, new leaves fade in, and leaves outside the view itself
+step every third tick (three ticks at a time) - 1200 leaves cost 0.35 ms a tick. Checked at the
+maximum zoom-out (60): leaves across the whole view at once. The PLANT grid stays at 25%: it is
+rebuilt from the camera every frame, so zooming never outruns it, and 150% would cost six times
+the bake for grass nobody sees.
+
+---
+
+## Step 5, as built (2026-09-26): streaks
+
+`Streaks.{h,cpp}` (engine-free, `streaks_test.cpp` 10 checks in `make rules`). 30 tracers, each
+the recent path of a speck of air (midpoint rule - plain Euler spirals out of an eddy), drawn as a
+ribbon: thin at both ends, faded at the tail and tip, widened across its path AND the line of
+sight so it faces the camera, soft-edged across. A dead streak tries to come back at 2% a tick,
+weighted toward gusts (`gust_bias` 0.7), so a gust front arrives as a flurry: 31% of new streaks
+under gusts that cover 17% of the air. Alpha follows the local speed against 1.6x the mean, so a
+gust draws them brighter as well as more often. A tracer dropped in the lee turns 513 degrees in
+4 s; without eddies, 8.
+
+Simulated on the RENDER thread in UpdateWind (catching up the ticks since the last frame - pure
+decoration, and the mesh is rebuilt there anyway), drawn through the custom-shader pass with
+`assets/shaders/wind_streak.*`: unlit, alpha-blended, no depth write, both faces. The alpha rides
+in normal.x and (along, across) in uv. Colour, count, alpha, width, trail length and gust bias
+on the panel; `streaks`, `streak_count`, `streak_alpha`, `streak_width` on archer_wind.
+
 ---
 
 ## Status
@@ -211,7 +287,7 @@ UNAPPLIED node transform (scale 3, +90 deg about X).
 | 1 | Field (mean flow, eddies, waves, gusts) + standalone test | **BUILT** 2026-09-26 |
 | 2 | Debug view + `archer_wind` tool | **BUILT** 2026-09-26 - panel "Wind", `archer_debug_view` `wind`, `archer_wind` (tuning + `sample`); 0.8 ms a frame in debug while shown, nothing while hidden |
 | 3 | Foliage sway (core material hook) | **BUILT** 2026-09-26 - grass_1/2, ferns, flowers |
-| 4 | Leaves | waiting on the leaf model; builds on a placeholder |
-| 5 | Streaks | |
+| 4 | Leaves | **BUILT** 2026-09-26 - plus vine leaves swaying (LEAF mode) |
+| 5 | Streaks | **BUILT** 2026-09-26 |
 | 6 | Fireflies + light group | |
 | 7 | Clouds | |

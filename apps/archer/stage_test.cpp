@@ -2481,6 +2481,168 @@ static void TestBoulders(){
     Check(f_same,"the same level gets the same rocks");
 }
 
+/*
+    The slide gallery (Stage::BuildSlideGallery) - the ramps and the slide rule on them. Each claim
+    per hill, against SLIDE_GALLERY_DEG, so a change to the slip angle moves the line the checks
+    draw rather than breaking them.
+*/
+static void PlaceOn(Stage& s, float x, float y){
+    s.pos = v2(x,y + ARCHER_HALF_H + 0.02f);
+    s.vel = v2(0.0f,0.0f);
+    s.mode = MODE_AIR;
+    s.f_on_ground = false;
+    ArcherInput idle;
+    for (int i = 0; i < 30 && !s.f_on_ground; i++){
+        StageEvents e;
+        s.Tick(idle,e);
+    }
+}
+
+static void TestSlideGallery(){
+    printf("the slide gallery\n");
+    char detail[240];
+    Stage base;
+    base.SetLevel(STAGE_LEVEL_ROPE);
+    const float gy = SLIDE_GALLERY_FLOOR_Y;
+    Check((int)base.ramps.size() == SLIDE_GALLERY_HILLS * 2 + 2,"the rope level has the gallery's ramps");
+    if ((int)base.ramps.size() < SLIDE_GALLERY_HILLS * 2 + 2){
+        return;
+    }
+
+    //Sealed: every hill ramp has its low end on the floor and its high end on a block's top edge.
+    int open = 0;
+    for (int i = 0; i < SLIDE_GALLERY_HILLS * 2 + 1; i++){
+        const StageRamp& r = base.ramps[i];
+        v2 low = (r.a.y < r.b.y) ? r.a : r.b;
+        v2 high = (r.a.y < r.b.y) ? r.b : r.a;
+        bool f_edge = false;
+        for (size_t k = 0; k < base.blocks.size() && !f_edge; k++){
+            const StageBlock& b = base.blocks[k];
+            f_edge = fabsf(b.Top() - high.y) < 0.001f &&
+                     (fabsf(b.Left() - high.x) < 0.001f || fabsf(b.Right() - high.x) < 0.001f);
+        }
+        open += (fabsf(low.y - gy) < 0.001f && f_edge) ? 0 : 1;
+    }
+    snprintf(detail,sizeof(detail),"%i open",open);
+    Check(open == 0,"every ramp is sealed: its foot on the floor, its top against a block's edge",detail);
+
+    ArcherInput idle, left, right, down_left;
+    left.move_axis = -1.0f;
+    right.move_axis = 1.0f;
+    down_left.move_axis = -1.0f;
+    down_left.f_down_held = true;
+    int still_wrong = 0, climb_wrong = 0, hops = 0;
+    int prev_ticks = 100000;
+    bool f_faster = true;
+    for (int h = 0; h < SLIDE_GALLERY_HILLS; h++){
+        const float deg = SLIDE_GALLERY_DEG[h];
+        const bool f_slips = deg > SPRING_LEAF_SLIP_DEG + 0.01f;
+        const StageRamp& up = base.ramps[h * 2];            //met from the right, rising leftward
+        const StageRamp& down = base.ramps[h * 2 + 1];      //falling leftward
+
+        //Stood still halfway down a descent: held below the slip angle, slid to the foot above it.
+        Stage s = base;
+        float xm = (down.a.x + down.b.x) * 0.5f;
+        PlaceOn(s,xm,down.SurfaceY(xm));
+        float x0 = s.pos.x;
+        int to_foot = -1;
+        for (int t = 0; t < 240; t++){
+            StageEvents e;
+            s.Tick(idle,e);
+            if (to_foot < 0 && s.pos.x <= down.a.x){
+                to_foot = t;
+            }
+        }
+        if (f_slips ? (to_foot < 0) : (fabsf(s.pos.x - x0) > 0.01f)){
+            still_wrong++;
+            printf("        %.0f deg stood still: moved %.3f, foot at tick %i\n",deg,x0 - s.pos.x,to_foot);
+        }
+        if (f_slips){
+            f_faster = f_faster && to_foot < prev_ticks;
+            prev_ticks = to_foot;
+        }
+
+        /*
+            From rest a little way up an ascent, pushing up it: climbs below the slip angle, slides
+            back down above it - the feet have no grip to climb with. Judged over the first 20
+            ticks: past that, one she slid off has reached the floor, which DOES grip, run up and
+            coasted back up the ramp on the run-up, which is its own (fair) business.
+        */
+        Stage c = base;
+        float xc = up.b.x - 0.25f * (up.b.x - up.a.x);
+        PlaceOn(c,xc,up.SurfaceY(xc));
+        float c0 = c.pos.x;
+        bool f_top = false;
+        float c20 = c0;
+        for (int t = 0; t < 240; t++){
+            StageEvents e;
+            c.Tick(left,e);
+            f_top = f_top || (c.pos.x < up.a.x - 0.5f && c.f_on_ground);
+            if (t == 19){
+                c20 = c.pos.x;
+            }
+        }
+        //Uphill is leftward on these: sliding back is x growing.
+        bool f_climb_ok = f_slips ? (c20 > c0) : f_top;
+        if (!f_climb_ok){
+            climb_wrong++;
+            printf("        %.0f deg from rest uphill: from %.2f to %.2f after 20 ticks, top %s\n",deg,c0,c20,
+                   f_top ? "reached" : "not");
+        }
+
+        //Walked down from the top, with Down held too - neither a hop nor a drop through.
+        Stage d = base;
+        PlaceOn(d,down.b.x + 0.8f,gy + SLIDE_GALLERY_HILL_H);
+        for (int t = 0; t < 120 && d.pos.x > down.a.x - 1.5f; t++){
+            StageEvents e;
+            d.Tick((h % 2) ? down_left : left,e);
+            hops += d.f_on_ground ? 0 : 1;
+        }
+    }
+    snprintf(detail,sizeof(detail),"%i of %i",still_wrong,SLIDE_GALLERY_HILLS);
+    Check(still_wrong == 0,"stood still, she holds at the slip angle and below, and slides to the foot above it",detail);
+    Check(f_faster,"and the steeper the hill, the sooner she is at its foot");
+    snprintf(detail,sizeof(detail),"%i of %i",climb_wrong,SLIDE_GALLERY_HILLS);
+    Check(climb_wrong == 0,"from rest she walks up a hill she can stand on, and slides back down one she cannot",detail);
+    snprintf(detail,sizeof(detail),"%i ticks off the ground",hops);
+    Check(hops == 0,"walking down every hill she never leaves the ground - not at its top, not at its foot, "
+                    "not with Down held",detail);
+
+    //The long run: let go at the top, and the slide levels off at SLIDE_MAX_SPEED along the slope.
+    const StageRamp& lr = base.ramps[SLIDE_GALLERY_HILLS * 2];
+    Stage l = base;
+    PlaceOn(l,lr.b.x + 0.6f,gy + 6.0f);
+    for (int t = 0; t < 8; t++){
+        StageEvents e;
+        l.Tick(left,e);
+    }
+    float vmax = 0.0f;
+    bool f_foot = false;
+    for (int t = 0; t < 300; t++){
+        StageEvents e;
+        l.Tick(idle,e);
+        vmax = fmaxf(vmax,fabsf(l.vel.x));
+        f_foot = f_foot || l.pos.x <= lr.a.x;
+    }
+    Check(f_foot,"let go at the top of the long run, she slides all the way down");
+    CheckNear(vmax,SLIDE_MAX_SPEED * cosf(SLIDE_GALLERY_LONG_DEG * 3.14159265f / 180.0f),0.05f,
+              "at SLIDE_MAX_SPEED along it, and no faster");
+
+    //The drop: off the floor's end, down its ramp and into the pit.
+    const StageRamp& dr = base.ramps[SLIDE_GALLERY_HILLS * 2 + 1];
+    Stage p = base;
+    PlaceOn(p,dr.b.x + 1.5f,gy);
+    bool f_air = false;
+    for (int t = 0; t < 200; t++){
+        StageEvents e;
+        p.Tick(t < 20 ? left : idle,e);
+        f_air = f_air || (!p.f_on_ground && p.pos.x < dr.a.x);
+    }
+    snprintf(detail,sizeof(detail),"ended at (%.2f, %.2f)",p.pos.x,p.pos.y - ARCHER_HALF_H);
+    Check(f_air && p.f_on_ground && p.pos.x < dr.a.x && fabsf(p.pos.y - ARCHER_HALF_H - (-5.5f)) < 0.01f,
+          "walked onto the drop, she slides off its end through the air into the pit",detail);
+}
+
 static void TestRange(){
     printf("the range\n");
 
@@ -3775,6 +3937,187 @@ static void TestSpringPump(){
 }
 
 /*
+    A stand-in for a person balancing with the keys: it sees her lean LATE - `delay` ticks behind,
+    about a human reaction - and answers with a full press of Up or Down or nothing, as a keyboard
+    does. Looking a little ahead along the lean rate is what a person watching it tip does.
+*/
+struct LatePlayer{
+    int delay = 10;
+    float dead_deg = 3.0f;
+    std::vector<v2> seen;       //(lean, rate), oldest first
+    float Decide(const Stage& s){
+        seen.push_back(v2(s.lean,s.lean_rate));
+        if ((int)seen.size() <= delay){
+            return 0.0f;
+        }
+        v2 then = seen[seen.size() - 1 - delay];
+        float ahead = (then.x + then.y * 0.30f) * 57.2957795f;
+        if (ahead > dead_deg){ return -1.0f; }
+        if (ahead < -dead_deg){ return 1.0f; }
+        return 0.0f;
+    }
+};
+
+//Walks her along with `move` held, balancing with a LatePlayer (or not), until she is off the
+//branch. Returns the tick she lost her balance, or -1 if she walked off an end still upright.
+static int WalkBranch(Stage& s, float move, bool f_balance, int max_ticks, float* out_lean_max = NULL){
+    LatePlayer player;
+    float lean_max = 0.0f;
+    bool f_was_on = false;
+    for (int i = 0; i < max_ticks; i++){
+        ArcherInput in;
+        in.move_axis = move;
+        if (f_balance){
+            in.aim_axis = player.Decide(s);
+        }
+        StageEvents e;
+        s.Tick(in,e);
+        if (fabsf(s.lean) > lean_max){ lean_max = fabsf(s.lean); }
+        if (e.f_lost_balance){
+            if (out_lean_max){ *out_lean_max = lean_max; }
+            return i;
+        }
+        f_was_on = f_was_on || s.branch_on >= 0;
+        if (f_was_on && s.f_on_ground && s.branch_on < 0){
+            break;
+        }
+    }
+    if (out_lean_max){ *out_lean_max = lean_max; }
+    return -1;
+}
+
+/*
+    THE BRANCH AND BALANCE (plant_mechanics_plan.md 3): she stands on it and leans; left alone she
+    goes over, walking she goes over sooner, pushing too long tips her the other way - and a player
+    reacting as late as a person does can still cross both branches.
+*/
+static void TestBranch(){
+    printf("\nthe branches and balance\n");
+    char d[220];
+    Stage s;
+    Check(s.branches.size() == 2,"the main level has two branches");
+    if (s.branches.size() < 2){
+        return;
+    }
+    const StageBranch high = s.branches[0];
+    const StageBranch low = s.branches[1];
+
+    Stage idle;
+    DropOnto(idle,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.3f);
+    Check(idle.branch_on == 1 && idle.f_on_ground,"a drop onto the low branch stands her on it");
+    int fell = -1;
+    float side = 0.0f;
+    for (int i = 0; i < 900 && fell < 0; i++){
+        StageEvents e;
+        idle.Tick(ArcherInput(),e);
+        if (e.f_lost_balance){ fell = i; side = e.fall_side; }
+    }
+    snprintf(d,sizeof(d),"fell after %d ticks, to side %+.0f",fell,side);
+    Check(fell >= 60 && fell < 360,"left alone she goes over - not at once, but within six seconds",d);
+    Settle(idle);
+    snprintf(d,sizeof(d),"ended on %.2f",idle.pos.y - ARCHER_HALF_H);
+    Check(fabsf(idle.pos.y - ARCHER_HALF_H) < 0.01f,"and falls through the branch to the ground",d);
+
+    //Walking at full speed goes over sooner than standing, on average over eight drifts - any one
+    //drift can happen to push against the walk's.
+    float top_speed = 0.0f;
+    float stand_sum = 0.0f, walk_sum = 0.0f;
+    int walk_falls = 0;
+    for (int k = 0; k < 8; k++){
+        for (int w = 0; w < 2; w++){
+            Stage t;
+            t.balance_entries = 3 * k;
+            DropOnto(t,low.a.x + 0.5f,low.a.y + 0.3f);
+            ArcherInput in;
+            in.move_axis = (float)w;
+            for (int i = 0; i < 900; i++){
+                StageEvents e;
+                t.Tick(in,e);
+                if (t.branch_on >= 0 && fabsf(t.vel.x) > top_speed){ top_speed = fabsf(t.vel.x); }
+                if (e.f_lost_balance){
+                    if (w){ walk_sum += i; walk_falls++; }else{ stand_sum += i; }
+                    break;
+                }
+                if (t.f_on_ground && t.branch_on < 0){ break; }
+            }
+        }
+    }
+    snprintf(d,sizeof(d),"on average walking fell at %.0f ticks (%d of 8), standing at %.0f",
+             walk_sum / (walk_falls > 0 ? walk_falls : 1),walk_falls,stand_sum / 8.0f);
+    Check(walk_falls == 8 && walk_sum / 8.0f < stand_sum / 8.0f,"walking along it, she goes over sooner",d);
+    snprintf(d,sizeof(d),"top speed %.2f",top_speed);
+    CheckNear(top_speed,BRANCH_WALK_SPEED,0.01f,"and walks no faster than BRANCH_WALK_SPEED on it",d);
+
+    //Up held the whole time pushes her over the far side, fast.
+    Stage push;
+    DropOnto(push,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.3f);
+    int push_fell = -1;
+    for (int i = 0; i < 600 && push_fell < 0; i++){
+        ArcherInput in;
+        in.aim_axis = 1.0f;
+        StageEvents e;
+        push.Tick(in,e);
+        if (e.f_lost_balance){ push_fell = i; side = e.fall_side; }
+    }
+    snprintf(d,sizeof(d),"fell at %d to side %+.0f",push_fell,side);
+    Check(push_fell >= 0 && push_fell < fell && side > 0.0f,"Up held too long tips her over the far side, sooner still",d);
+
+    //The late player crosses both.
+    Stage cross;
+    DropOnto(cross,low.a.x - 1.0f,low.a.y + 0.2f);     //on the left stump
+    float lean_max = 0.0f;
+    int lost = WalkBranch(cross,1.0f,true,1200,&lean_max);
+    snprintf(d,sizeof(d),"lost it at %d; ended at x %.2f on %.2f; worst lean %.1f deg",lost,cross.pos.x,
+             cross.pos.y - ARCHER_HALF_H,lean_max * 57.2957795f);
+    Check(lost < 0 && cross.pos.x + ARCHER_HALF_W > low.b.x && fabsf(cross.pos.y - ARCHER_HALF_H - low.b.y) < 0.01f,
+          "a player reacting a sixth of a second late crosses the low branch at full speed, stump to stump",d);
+    Stage cross_high;
+    DropOnto(cross_high,high.a.x - 1.0f,high.a.y + 0.2f);  //on the canopy
+    lost = WalkBranch(cross_high,1.0f,true,1200,&lean_max);
+    snprintf(d,sizeof(d),"lost it at %d; ended at x %.2f on %.2f; worst lean %.1f deg",lost,cross_high.pos.x,
+             cross_high.pos.y - ARCHER_HALF_H,lean_max * 57.2957795f);
+    Check(lost < 0 && cross_high.pos.x + ARCHER_HALF_W > high.b.x && fabsf(cross_high.pos.y - ARCHER_HALF_H - 12.4f) < 0.01f,
+          "and the high one, down from the canopy to the perch",d);
+    //Three more crossings in a row, each a different drift.
+    int crossed = 0;
+    for (int k = 0; k < 3; k++){
+        Stage again = cross;
+        again.pos = v2(low.a.x - 1.0f,low.a.y + ARCHER_HALF_H + 0.01f);
+        again.balance_entries = cross.balance_entries + 7 * (k + 1);
+        Settle(again);
+        if (WalkBranch(again,1.0f,true,1200) < 0 && again.pos.x + ARCHER_HALF_W > low.b.x){ crossed++; }
+    }
+    snprintf(d,sizeof(d),"%d of 3",crossed);
+    Check(crossed == 3,"on three other drifts too",d);
+
+    //Balancing does not tilt the bow, and Down still drops through.
+    Stage aim;
+    DropOnto(aim,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.3f);
+    float aim_before = aim.aim_deg;
+    ArcherInput up;
+    up.aim_axis = 1.0f;
+    Run(aim,10,up);
+    snprintf(d,sizeof(d),"aim %.1f -> %.1f",aim_before,aim.aim_deg);
+    Check(aim.aim_deg == aim_before,"balancing with Up and Down leaves the bow's aim where it was",d);
+    Stage drop;
+    DropOnto(drop,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.3f);
+    ArcherInput down;
+    down.f_down_held = true;
+    Run(drop,30,down);
+    Settle(drop);
+    Check(fabsf(drop.pos.y - ARCHER_HALF_H) < 0.01f,"Down drops through it, like any one-way platform");
+
+    //A hard landing is a wobble; stepping on is not.
+    Stage hard;
+    DropOnto(hard,(low.a.x + low.b.x) * 0.5f,low.a.y + ApexRise());
+    snprintf(d,sizeof(d),"landing lean rate %.2f against %.2f stepping on",fabsf(hard.lean_rate),fabsf(idle.lean_rate));
+    Stage soft;
+    DropOnto(soft,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.05f);
+    snprintf(d,sizeof(d),"lean rate after the landing %.3f; after stepping on %.3f",fabsf(hard.lean_rate),fabsf(soft.lean_rate));
+    Check(fabsf(hard.lean_rate) > fabsf(soft.lean_rate) + 0.3f,"a hard landing on it knocks her off balance more than stepping on",d);
+}
+
+/*
     The rope level's two pits - a soft landing and a hard one, by construction. See BuildRopeLevel
     for why those depths.
 */
@@ -4846,9 +5189,11 @@ int main(void){
     TestKneelPuppet();
     TestRopeLevel();
     TestRopePits();
+    TestSlideGallery();
     TestTree();
     TestSpringPlants();
     TestSpringPump();
+    TestBranch();
     TestLandingForecast();
     TestArrowForecast();
     TestRopeMesh();

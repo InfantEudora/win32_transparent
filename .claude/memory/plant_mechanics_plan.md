@@ -21,3 +21,5 @@ as pegs, rope arrows, cutting with arrows, wind).
 same declaration - unlike the view-only `DeclareVines`. Order: tree, bounce pad, leaf, branch; pegs
 anywhere. Trunk defaults to standing behind her in depth. Branch lean: toward/away from the camera,
 corrected on up/down, shown by pose + a balance arc. Check the plan's status table before starting.
+
+2026-09-26 SLIDING: pads, leaf, branches and the new static RAMPS share one surface test (StageSurface, Stage::GatherSurfaces/CollideSurfaces; highest wins). Slide gallery of fixed-angle ramps in the ROPE scene left of the shallow pit (Stage::BuildSlideGallery, TestSlideGallery). The slide rule was fixed there: no air friction on top of a slide, uphill input = 0.35 of the pull, SLIDE_MAX_SPEED 14. Open feel questions (dead stop at the foot, run-up over hills, jump direction) in plant_mechanics_plan.md "Sliding".

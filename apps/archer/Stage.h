@@ -416,8 +416,10 @@ struct StageSpringPlant{
     throws her off. Low, because a leaf is slippery and "it bends and you slide off" is the point.
 */
 #define SPRING_LEAF_SLIP_DEG        14.0f
-//How much of her run she keeps against a slide: holding uphill slows one, it does not climb a steep one.
+//What input can do on a slide, as a share of its pull: holding uphill slows one, it does not climb it.
 #define SPRING_LEAF_SLIDE_CONTROL   0.35f
+//A slide's top speed along the surface - faster than her run (9), so a long one is worth riding.
+#define SLIDE_MAX_SPEED             14.0f
 /*
     The most a fling can throw her at. A timed bounce is her jump plus the rise, and without a cap
     every bounce off a pad lands harder and so throws her higher than the last. 28 is about 9.3 of
@@ -442,6 +444,108 @@ struct StageSpringPlant{
 #define SPRING_SWING_WINDOW         10      //ticks after it lets go of her that an Up press still swings
 #define SPRING_SWING_FULL           3       //at full strength within these, fading to none at the window
 #define SPRING_SWING_GAIN           0.25f   //of what it threw her with (launch_lift), added to her rise
+
+/*
+    A THIN BRANCH she walks along and has to keep her balance on - plant_mechanics_plan.md,
+    section 3. A straight one-way line from one end to the other: landed on from above, dropped
+    through with Down, like a platform with no thickness. Rigid for now; sagging under her is later.
+
+    Declared in the rules because she stands on it and because the balance is a rule. The app draws
+    it from the same two points.
+*/
+struct StageBranch{
+    v2    a;                    //the left end
+    v2    b;                    //the right end
+    bool  Covers(float x) const { return x >= a.x && x <= b.x; }
+    float SurfaceY(float x) const { return a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x); }
+    float Slope() const { return (b.y - a.y) / (b.x - a.x); }
+};
+
+/*
+    A RAMP: a sloped floor that does not move - plant_mechanics_plan.md, "Sliding". A leaf held
+    still, which is exactly what it is for: the slide is tuned here, at fixed angles, rather than on
+    a leaf whose angle changes under her while she slides.
+
+    A straight one-way line like a branch, but GROUND rather than a beam: Down does not drop
+    through it, walking off a block onto it keeps her feet on it, and walking up it into the block
+    at its top steps her up. Past `slip_deg` she slides, by the same rule as a leaf. The level
+    seals the space under it with blocks - the low end on the floor, the high end against a face.
+*/
+struct StageRamp{
+    v2    a;                    //the left end
+    v2    b;                    //the right end
+    float slip_deg = SPRING_LEAF_SLIP_DEG;  //steeper than this and she slides - the leaf's, by default
+    bool  Covers(float x) const { return x >= a.x && x <= b.x; }
+    float SurfaceY(float x) const { return a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x); }
+    float Slope() const { return (b.y - a.y) / (b.x - a.x); }
+};
+
+/*
+    THE SLIDE GALLERY, in the rope level - Stage::BuildSlideGallery. Named here so the rules test
+    and the level agree on where each hill is without either typing a coordinate.
+*/
+#define SLIDE_GALLERY_FLOOR_Y       (-3.0f)     //the shallow pit's floor, which the gallery runs on from
+#define SLIDE_GALLERY_START_X       (-27.0f)    //the first hill's right foot
+#define SLIDE_GALLERY_HILL_H        1.5f
+#define SLIDE_GALLERY_HILLS         6
+#define SLIDE_GALLERY_LONG_DEG      25.0f       //the long run, and the drop off the floor's end
+static const float SLIDE_GALLERY_DEG[SLIDE_GALLERY_HILLS] = { 8.0f, 14.0f, 18.0f, 25.0f, 35.0f, 50.0f };
+
+/*
+    ONE SURFACE UNDER HER FEET - whatever it is. The spring plants, the branches and the ramps are
+    all a line she lands on from above, stays on while walking along it, and leaves; the landing
+    test is written once, in Stage::CollideSurfaces, over one of these per candidate. What differs
+    between the three is in the fields, not in the test: a plant's surface moves (`top_then`,
+    `vel_y`), a branch's drops her through after a fall, and a ramp holds her feet when she walks
+    onto it from a block.
+*/
+enum SurfaceKind{
+    SURFACE_NONE = -1,
+    SURFACE_PLANT = 0,
+    SURFACE_BRANCH,
+    SURFACE_RAMP
+};
+struct StageSurface{
+    int   kind = SURFACE_NONE;
+    int   index = -1;               //into spring_plants, branches or ramps
+    float top = 0.0f;               //under her now
+    float top_then = 0.0f;          //under where she started the move, as it was then
+    float vel_y = 0.0f;             //its own vertical speed under her
+    float slope = 0.0f;             //dy/dx now
+    bool  f_ground = false;         //holds feet that walk onto it from other ground (a ramp)
+};
+/*
+    --- BALANCE ----------------------------------------------------------------------------------
+    On a branch she has a LEAN, sideways - toward the camera or away from it, the axis a beam is
+    really fallen off along. An inverted pendulum: the lean grows on its own (BALANCE_TOPPLE, pulled
+    further the further over she is), a deterministic drift keeps pushing it about, and walking
+    makes the drift worse. The aim axis pushes back: Up leans her AWAY from the camera, Down toward
+    it. Push too long and she goes over the other way - there is no damping to hide an overcorrection
+    in, only a little.
+
+    DETERMINISTIC, like the aim sway: a sum of incommensurate sines, started at a different point
+    each time she steps onto a branch (balance_entries), so no two crossings drift alike and a
+    replay drifts exactly as the original did.
+
+    Units: the lean in radians (+ away from the camera), the accelerations in radians/s^2.
+*/
+#define BRANCH_WALK_SPEED           1.8f    //her top speed along a branch, twice Balance_Walking's pace
+#define BALANCE_FALL_DEG            35.0f   //leaning this far, she is off
+#define BALANCE_TOPPLE              5.0f    //how hard the lean pulls itself over, per radian of it
+#define BALANCE_DRIFT               1.2f    //the drift's strength standing still...
+#define BALANCE_WALK_DRIFT          1.6f    //...and how much a full-speed walk adds to it
+/*
+    What a full push of the aim axis can do about it. Enough to beat the worst drift (standing
+    still plus a full-speed walk) and the lean's own pull together, right up to BALANCE_FALL_DEG:
+    a lean is always recoverable by a press in time, so what loses her is reacting late or pushing
+    too long, never the numbers. At 4.0 a walk past 14 degrees was already lost whatever you did.
+*/
+#define BALANCE_CORRECT             6.0f
+#define BALANCE_DAMPING             0.6f    //per second: a little, so an overcorrection still swings
+//A landing on a branch knocks her sideways by this much lean rate per unit of landing speed.
+#define BALANCE_LAND_WOBBLE         0.05f
+//After she falls off, the branch lets her through for this long, or she would land straight back on it.
+#define BALANCE_DROP_TICKS          20
 
 //An axis-aligned box in the play plane. Centre and half extents, because every test in here wants
 //them that way and converting once at build time is cheaper than converting in the sweep.
@@ -1000,6 +1104,10 @@ struct StageEvents{
     float stomp = 0.0f;
     bool  f_swung = false;
     float swing_speed = 0.0f;
+    //Off a branch because the lean went past BALANCE_FALL_DEG, and to which side (+1 away from the
+    //camera, -1 toward it).
+    bool  f_lost_balance = false;
+    float fall_side = 0.0f;
 
     //--- The rope -------------------------------------------------------------------------------
     //The app acts on these by creating and destroying the joint that makes the swing real.
@@ -1098,6 +1206,8 @@ public:
     std::vector<StageTree>  trees;
     //Declared by the level and stepped every tick: their state is theirs, so a Reset rebuilds them.
     std::vector<StageSpringPlant> spring_plants;
+    std::vector<StageBranch> branches;
+    std::vector<StageRamp>  ramps;
 
     /*
         Makes the blocks' CURRENT geometry the level's, so that Reset puts it back instead of
@@ -1140,8 +1250,15 @@ public:
     //What a spring plant threw her up with: the part of her rise the jump cut may not take away,
     //so letting go of jump shortens the jump and never the throw.
     float launch_lift = 0.0f;
-    //Her sideways pull down a leaf too steep to stand on, units/s^2, or 0.
+    /*
+        Her sideways pull down whatever she stands on, when it is too steep to stand on - a leaf past
+        SPRING_LEAF_SLIP_DEG, a ramp past its slip_deg - units/s^2, or 0. A pad is level and a
+        branch has its balance instead.
+    */
     float SlideAccel() const;
+    int   ramp_on = -1;             //the ramp she is standing on, or -1 - kept with f_on_ground
+    //The slope under her feet in degrees, + rising to the right; 0 on flat ground or in the air.
+    float SlopeUnderFeetDeg() const;
     //--- Pumping - see SPRING_STOMP_TICKS ---
     int   stomp_ticks = 0;          //aim held down while falling, ticks running, capped
     int   spring_left = -1;         //the spring plant that last let go of her, while spring_air_ticks runs
@@ -1158,6 +1275,16 @@ public:
     float SpringBoostNow() const;
     float PredictSpringBoostPeak(const ArcherInput& in, int horizon = 40) const;
     float spring_boost_seen = 0.0f; //the most SpringBoostNow has been this bounce
+
+    //--- Balance - see BALANCE_TOPPLE ---
+    int   branch_on = -1;           //the branch she is standing on, or -1 - kept with f_on_ground
+    int   branch_drop_ticks = 0;    //counting down after a fall, while the branches let her through
+    float lean = 0.0f;              //radians, + away from the camera
+    float lean_rate = 0.0f;
+    int   balance_ticks = 0;        //on this branch, since she stepped onto it
+    int   balance_entries = 0;      //every time she has; picks where the drift starts
+    //0 upright .. 1 about to go over.
+    float BalanceDanger() const;
 
     //--- Hanging and climbing -------------------------------------------------------------------
     int   hang_block = -1;          //index into blocks, while MODE_HANG or MODE_CLIMB
@@ -1310,6 +1437,8 @@ private:
     void BuildMainLevel();
     void BuildRangeLevel();
     void BuildRopeLevel();
+    //Left of the rope level's shallow pit: ramps at fixed angles - see SLIDE_GALLERY_DEG.
+    void BuildSlideGallery();
     //Adds `s` to `scenery`, and its invisible collider to `blocks` if it has one. See StageScenery.
     void AddScenery(const StageScenery& s);
     void TickBow(const ArcherInput& in, StageEvents& events);
@@ -1317,14 +1446,20 @@ private:
     void TickArrows(StageEvents& events);
     //Every spring plant's spring, one step, with her weight on the one she is standing on.
     void TickSpringPlants();
+    //One tick of her lean while she stands on a branch, and the fall when it goes too far.
+    void TickBalance(const ArcherInput& in, float land_speed, StageEvents& events);
     /*
-        The spring plants as floors, once per move, after the blocks: a landing (from above the
-        surface where it WAS, to below where it is), riding one, and leaving one. `from` is where
-        she started the move; `f_on_block`, that the blocks already stood her on a floor. Sets
-        spring_on, and hands a fresh landing's fall to the plant.
+        Every surface that is not a block, as floors, once per move, after the blocks - see
+        StageSurface. Three cases: a landing (from above the surface where it WAS, to below where it
+        is), staying on one while walking along its slope, and leaving it. `from` is where she
+        started the move; `f_on_block`, that the blocks already stood her on a floor;
+        `f_was_grounded`, that she was on some floor before the move. The highest surface she lands
+        on wins. Sets spring_on, branch_on and ramp_on, and hands a fresh landing's fall to a plant.
     */
-    void CollideSpringPlants(const v2& from, bool f_down_held, bool f_on_block, StageEvents& events,
-                             bool& out_hit_floor);
+    void CollideSurfaces(const v2& from, bool f_down_held, bool f_on_block, bool f_was_grounded,
+                         StageEvents& events, bool& out_hit_floor);
+    //The candidate surfaces under x now (and x_from then), for CollideSurfaces.
+    void GatherSurfaces(float x, float x_from, bool f_down_held, std::vector<StageSurface>& out) const;
     /*
         One tick of an arrow's flight: gravity, then the sweep from where this step starts (the
         anchor on its first step - see ARROW_LENGTH) to `next`, against the blocks. Returns the

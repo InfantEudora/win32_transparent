@@ -150,7 +150,8 @@ void WindView::Update(const WindField& wind, int64_t tick, Camera* camera){
     if (options.f_eddies){
         const int segments = 24;
         for (const WindEddy& e : eddies){
-            if ((e.x + e.radius < rx0) || (e.x - e.radius > rx1) || (e.y + e.radius < ry0) || (e.y - e.radius > ry1)){
+            float ex = e.radius * e.stretch;
+            if ((e.x + ex < rx0) || (e.x - ex > rx1) || (e.y + e.radius < ry0) || (e.y - e.radius > ry1)){
                 continue;
             }
             float t = fabsf(e.strength) / strongest;
@@ -161,8 +162,8 @@ void WindView::Update(const WindField& wind, int64_t tick, Camera* camera){
             uint32_t c = 0xFF000000u | (b << 16) | ((b / 3) << 8) | b;
             for (int k = 0; k < segments; k++){
                 float a0 = 6.2831853f * k / segments, a1 = 6.2831853f * (k + 1) / segments;
-                Line(e.x + e.radius * cosf(a0),e.y + e.radius * sinf(a0),
-                     e.x + e.radius * cosf(a1),e.y + e.radius * sinf(a1),c);
+                Line(e.x + ex * cosf(a0),e.y + e.radius * sinf(a0),
+                     e.x + ex * cosf(a1),e.y + e.radius * sinf(a1),c);
             }
         }
         for (const WindCorner& c : wind.Corners()){

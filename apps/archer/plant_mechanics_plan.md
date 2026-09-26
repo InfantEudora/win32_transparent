@@ -195,6 +195,79 @@ early.
 Next for these: meshes (the leaf is a skinned midrib, like the rope), and her stance and slide
 animations; a crouch that meets the rebound, forecast the way the landing is.
 
+
+### Sliding, and the slide gallery (2026-09-26)
+
+The leaf slides her off, but a leaf is a bad place to TUNE a slide: its angle changes under her
+while she slides, so a slide that feels wrong could be the slide rule or the spring. So the rule is
+tuned on RAMPS - a leaf held still - at fixed angles, in a gallery of its own.
+
+**One surface list.** The pads, the leaf and the branches were each their own copy of one test (land
+from above, stay on while walking the slope, leave). They are now one `StageSurface` per candidate,
+gathered by `Stage::GatherSurfaces` and resolved by `Stage::CollideSurfaces`; what differs lives in
+the fields - a plant's surface moves (`top_then`, `vel_y`), a branch lets her through after a fall,
+a ramp is `f_ground`. The highest surface she lands on wins. Checked by diffing the whole rules
+output before and after: identical.
+
+**Ramps** (`StageRamp`, `Stage::ramps`) are ground, not beams: Down does not drop through one,
+walking off a block onto one keeps her feet on it (reaching a body-width further, since the block
+holds her box up until her centre is half a body past its edge), and walking up one into the block
+at its top steps her up. Past `slip_deg` - the leaf's 14 unless the level says otherwise - she
+slides, by `Stage::SlideAccel`, the same rule as the leaf.
+
+**The gallery**, left of the rope level's shallow pit (the rope level's left wall moved to x ~-150):
+- six hills at 8, 14, 18, 25, 35, 50 degrees, 1.5 high, each an ascent, a top with a sign, and a
+  descent; the 25 and 35 meet with no floor between (the V);
+- stairs to a block 6 high and a 25 degree LONG RUN of 12.9 down its far side;
+- a 25 degree DROP off the floor's end over a 2.5-deep pit.
+Every ramp is sealed by blocks at its ends. Drawn as slate slabs (`ar_ramp`); she turns icy blue
+while she slides (`ar_archer_slide`), standing in for the slide clip. `archer_state.slide` reports
+the ramp, the slope under her feet and the pull.
+
+**What it found, and what changed** - measured before touching the rule:
+
+| slope | before: stood still for 3 s | after |
+|---|---|---|
+| 18 | crept 0.14 | slides to the foot in 75 ticks, top 3.6 |
+| 25 | crept 0.37 | 38 ticks |
+| 35 | crept 0.64 (0.21/s) | 24 ticks |
+| 50 | slid, 1.7/s | 16 ticks |
+
+- **The slide had friction twice.** The pull already nets out the friction that holds her at the
+  slip angle; the air friction (14 u/s^2) was applied on top whenever no key was held, and cancelled
+  it on everything short of about 45 degrees. Now no friction on top of a slide.
+- **Steering beat every slide.** Input on a slide was 0.35 of the AIR accel (19 u/s^2), more than
+  the pull of any slope under 50, so she walked up 35 degrees at nearly full speed. Now pushing UP a
+  slide is 0.35 of the PULL - it slows the slide and cannot climb it; pushing down or across is
+  still the air share, because a pull just past the angle is near zero and a share of it left her
+  unable to walk down a ramp at all.
+- **A top speed**, `SLIDE_MAX_SPEED` 14 along the slope (her run is 9), since without friction on
+  top a long slide gathers speed for ever. The long run reaches it: 12.69 horizontal at 25.
+- **A hop at every ramp's foot**: her feet left a hair above the floor, gravity did not reach it,
+  she flew a tick. The surfaces' keep-on reach now also snaps her to a block she runs out onto.
+- At exactly 14 the atan put the slope a millionth over the angle - a slide with no pull, and no
+  steering; a 0.001 degree tolerance.
+
+All 600 existing rules checks, leaf and pad and branch included, pass unchanged; TestSlideGallery
+adds 9 (sealed ramps; held at and below the angle, slides above it, faster when steeper; from rest
+climbs what she can stand on and slides back down the rest; never airborne walking down any hill,
+Down held or not; the long run's top speed; off the drop into the pit).
+
+**Open, for feel - what to try in the gallery:**
+- **She stops dead at the foot of a slide.** Off the long run at 12.7 onto flat ground the run
+  friction (120 u/s^2) stops her inside a few ticks. A skid - a slide's speed bleeding off at a lower
+  rate on the flat - would carry it on.
+- **A run-up carries her over any hill short of 50**: she arrives at the foot at 9 and coasts up.
+  Physical, and possibly right; the alternative is that a slope past the angle zeroes her uphill
+  speed on contact.
+- **Jumping out of a slide** is the ordinary jump, straight up, keeping her speed along x. Off the
+  surface's normal instead would kick her away from a steep slope.
+- **Walking up a gentle slope** is at full run speed. Slower uphill is one line if wanted.
+- **Crates and arrows pass through ramps**, as they do the plants: there are no crates in the rope
+  level, and a ramp needs a rotated static rp3d box (and a segment test for arrows) when they are.
+- **The terrain** builds its shape from boxes; an oriented box in the SDF would let it melt ramps
+  too, so they need not stay blockout.
+
 ---
 
 ## 3. The thin branch and balance
@@ -224,6 +297,69 @@ it could grow with her balance: shooting from a branch is possible, and risky.
 
 **Animation.** Balance poses (arms out, a lean each way, a recovery), best as an overlay on the
 walk - the whole-body overlay built for the fall pose is the mechanism.
+
+**The clips (2026-09-26), read from `archer.glb` by posing the skeleton:**
+
+- **`Balance_Walking`** (5.7 s) is a slow walk forward, about 0.9 world units a second, with her
+  feet placed on one line. Its first frame has the feet together, which serves as the standing
+  pose. The arms are held out to her sides at shoulder height, almost static. In our side view
+  that points toward and away from the camera, so the arms are foreshortened.
+- **`LosingBalance`** (6.0 s) is on the spot with the feet apart, so its legs are unusable on a
+  branch. It starts and ends at rest. The wobble runs from 0.8 to 4.5 s: the arms windmill, and
+  the lean is mostly forward (0.15 rig units at the head) and only 0.05 sideways.
+- **The composite:**
+  - Legs from `Balance_Walking`, pinned to the distance walked.
+  - Upper body starting on its arms-out pose and blending toward `LosingBalance`'s windmill as
+    the danger rises.
+  - The sideways lean itself procedural, a roll of the hips and spine by `Stage::lean`.
+  - A fall-over clip still to come, blending into `Falling_Idle`.
+
+**Decided: the lean is sideways**, toward or away from the camera, corrected with Up/Down on the
+aim axis. The animation will be matched to the gameplay.
+
+**Step 1, rules and blockout: BUILT 2026-09-26.** The ground now runs to x 176 and the wall moved
+to 175.
+
+- **Two branches.**
+  - The high one runs from the canopy's end (133, 13.0) down to a perch at x 145..152, top 12.4.
+  - The low practice one is 2.0 up, between stumps at x 155..157 and 168..170.
+- **`StageBranch`** is a straight one-way line; Down drops through it. On it she walks at up to
+  `BRANCH_WALK_SPEED` (1.8), can't kick or kneel, and Up/Down stop tilting the bow unless she is
+  drawing. Aiming from a branch costs balance.
+- **The balance** is an inverted pendulum in `Stage::TickBalance`:
+  - `lean` is in radians, + away from the camera.
+  - The lean's own pull is `BALANCE_TOPPLE` (5).
+  - A deterministic drift of `BALANCE_DRIFT` (1.2) plus up to `BALANCE_WALK_DRIFT` (1.6) at a
+    full walk, a sum of sines started at a new point on every step-on.
+  - Up/Down push back with `BALANCE_CORRECT` (6), against a little damping (0.6/s).
+  - A landing adds a wobble in proportion to its speed.
+  - Past `BALANCE_FALL_DEG` (35) she is off. The branch lets her drop through for 20 ticks, and
+    the event carries which side she fell.
+- **`BALANCE_CORRECT` sized so a lean is always recoverable.** A full press beats the worst drift
+  plus the lean's pull right up to 35 degrees, so a fall is always a reaction problem, never the
+  numbers. At 4.0, a full-speed walk past 14 degrees was lost whatever you did.
+- **The blockout view:**
+  - The branch is a thin bark-brown slab.
+  - While she is on a branch, a gauge beside her head: a bar whose ends are the fall angle, with a
+    marker at her lean (up is away from the camera, the way Up pushes). The marker goes green to
+    red with the danger.
+  - The model rolls about her feet by the lean.
+  - `archer_state.balance` reports the branch, lean, rate and danger.
+- **stage_test (TestBranch)** checks:
+  - Left alone she goes over in about 1.2 s.
+  - Walking at full speed, she goes over sooner on average over eight drifts (64 ticks against
+    85).
+  - Up held throughout tips her over the far side.
+  - A late player (reacting 10 ticks, about 1/6 s, behind, with full key presses) crosses both
+    branches, and the low one on three other drifts too. Its worst lean is about 30 degrees.
+  - The bow's aim holds while balancing.
+  - Down drops through.
+  - A hard landing wobbles more than stepping on.
+- **In the game** the same late player crosses the low branch stump to stump (worst lean 26
+  degrees), and left alone she falls after 1.5 s.
+
+Next: step 2, the catch - past the limit she grabs the branch and hangs, and climbs back up -
+then the composite animation above, and a branch that sags under her (the spring plants' spring).
 
 ---
 
@@ -257,5 +393,5 @@ walk - the whole-body overlay built for the fall pose is the mechanism.
 |---|---|---|
 | 1 | Tree with arms | blockout BUILT 2026-09-26 (right of the main level); mesh next |
 | 2 | Bounce pad, leaf | blockout BUILT 2026-09-26 (past the tree, x 105..133); meshes and animation next |
-| 3 | Branch and balance | agreed; the lean axis decided above, open to change |
+| 3 | Branch and balance | step 1 BUILT 2026-09-26 (rules, gauge, two branches past the canopy); the catch and the animation next |
 | 4 | Pegs, rope arrows, arrow cuts, wind | ideas |

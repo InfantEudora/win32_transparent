@@ -59,6 +59,10 @@ APP_SRCS += Sign.cpp
 #its debug view. See wind_plan.md.
 APP_SRCS += Wind.cpp
 APP_SRCS += WindView.cpp
+#Leaves blown through it - engine-free too, with its own test.
+APP_SRCS += Leaves.cpp
+#And the streaks that show it moving.
+APP_SRCS += Streaks.cpp
 
 #SOUND, for the bow: the string's creak from the nock, the loose, and the arrow striking
 #something - assets/sound/*.wav, played from ApplicationArcher::UpdateSound. The jump, the
@@ -119,3 +123,11 @@ rules:
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/wind_test.exe \
 		wind_test.cpp Wind.cpp Stage.cpp
 	@./build/wind_test.exe
+#The leaves, the same way.
+	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/leaves_test.exe \
+		leaves_test.cpp Leaves.cpp Wind.cpp Stage.cpp
+	@./build/leaves_test.exe
+#And the streaks.
+	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/streaks_test.exe \
+		streaks_test.cpp Streaks.cpp Wind.cpp Stage.cpp
+	@./build/streaks_test.exe

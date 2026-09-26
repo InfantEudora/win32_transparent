@@ -63,6 +63,8 @@ void Stage::Reset(){
     scenery.clear();
     trees.clear();
     spring_plants.clear();
+    branches.clear();
+    ramps.clear();
     BuildLevel();
     BuildTrees();
     for (StageSpringPlant& p : spring_plants){
@@ -91,6 +93,7 @@ void Stage::Reset(){
     coyote_ticks = 0;
     buffer_ticks = 0;
     spring_on = -1;
+    ramp_on = -1;
     launch_lift = 0.0f;
     stomp_ticks = 0;
     spring_left = -1;
@@ -98,6 +101,12 @@ void Stage::Reset(){
     f_swung = false;
     prev_aim_axis = 0.0f;
     spring_boost_seen = 0.0f;
+    branch_on = -1;
+    branch_drop_ticks = 0;
+    lean = 0.0f;
+    lean_rate = 0.0f;
+    balance_ticks = 0;
+    balance_entries = 0;
 
     bow_mode = BOW_IDLE;
     draw_ticks = 0;
@@ -162,7 +171,7 @@ void Stage::BuildMainLevel(){
     //--- The ground, in three runs with two gaps between them ----------------------------------
     blocks.push_back({  1.00f, -2.00f, 13.00f, 2.00f, BLOCK_SOLID,  true });    //x -12 .. 14
     blocks.push_back({ 26.50f, -2.00f,  7.50f, 2.00f, BLOCK_SOLID,  true });    //x  19 .. 34
-    blocks.push_back({ 90.25f, -2.00f, 50.75f, 2.00f, BLOCK_SOLID,  true });    //x 39.5 .. 141
+    blocks.push_back({ 107.75f, -2.00f, 68.25f, 2.00f, BLOCK_SOLID, true });    //x 39.5 .. 176
 
     //--- Traversal ------------------------------------------------------------------------------
     blocks.push_back({  7.00f,  0.90f,  2.00f, 0.90f, BLOCK_SOLID,  true });    //a step, top at 1.8
@@ -256,9 +265,26 @@ void Stage::BuildMainLevel(){
     }
     blocks.push_back({ 129.00f, 12.50f, 4.00f, 0.50f, BLOCK_SOLID,  true });   //canopy, x 125..133, top 13.0
 
+    /*
+        THE BRANCHES, blocked out (plant_mechanics_plan.md, section 3): a balance walk, twice.
+
+        The high one runs from the canopy's right end down to a perch, 12 long and 0.6 down: the
+        one to cross. The low one is for practice, 2.0 up between two stumps, so falling off costs
+        a step down - she can jump onto either stump from the ground, and back onto the branch
+        from either stump.
+
+        stage_test (TestBranch) walks both with a player that reacts late, as a person does, and
+        checks that doing nothing gets her off.
+    */
+    branches.push_back({ v2(133.00f,13.00f), v2(145.00f,12.40f) });
+    blocks.push_back({ 148.50f, 12.00f,  3.50f, 0.40f, BLOCK_SOLID,  true });   //perch, x 145..152, top 12.4
+    blocks.push_back({ 156.00f,  1.00f,  1.00f, 1.00f, BLOCK_SOLID,  true });   //stump, x 155..157, top 2.0
+    blocks.push_back({ 169.00f,  1.00f,  1.00f, 1.00f, BLOCK_SOLID,  true });   //stump, x 168..170, top 2.0
+    branches.push_back({ v2(157.00f,2.00f), v2(168.00f,2.00f) });
+
     //The right-hand wall, so a run to the end stops rather than falling off the world. Tall
     //enough that a jump off the canopy cannot clear it: 13.0 + 3.2 + her 1.8 is 18.0.
-    blocks.push_back({ 140.00f, 10.00f,  1.00f, 10.00f, BLOCK_SOLID, true });
+    blocks.push_back({ 175.00f, 10.00f,  1.00f, 10.00f, BLOCK_SOLID, true });
 
     //--- Props: everything reactphysics3d owns --------------------------------------------------
     /*
@@ -561,90 +587,203 @@ void Stage::TickSpringPlants(){
 }
 
 /*
-    The spring plants as floors. See the declaration; the three cases, in the order they are asked:
+    Every surface under x that is not a block - see StageSurface. A plant's surface is where it was
+    last tick under x_from, since it moves; the others' are simply where they are. Down drops her
+    through a plant and a branch, as through a one-way platform, and so does a branch for
+    BALANCE_DROP_TICKS after a fall - she is going past it, not onto it. Never through a ramp: that
+    is ground.
+*/
+void Stage::GatherSurfaces(float x, float x_from, bool f_down_held, std::vector<StageSurface>& out) const{
+    out.clear();
+    if (!f_down_held){
+        for (size_t i = 0; i < spring_plants.size(); i++){
+            const StageSpringPlant& p = spring_plants[i];
+            if (!p.Covers(x)){
+                continue;
+            }
+            StageSurface c;
+            c.kind = SURFACE_PLANT;
+            c.index = (int)i;
+            c.top = p.SurfaceY(x);
+            c.top_then = p.SurfaceY(x_from,p.prev_q);
+            c.vel_y = p.SurfaceVelY(x);
+            c.slope = tanf(p.kind == SPRING_LEAF ? p.q : 0.0f);     //its steepness; the sign is not used
+            out.push_back(c);
+        }
+        if (branch_drop_ticks <= 0){
+            for (size_t i = 0; i < branches.size(); i++){
+                const StageBranch& br = branches[i];
+                if (!br.Covers(x)){
+                    continue;
+                }
+                StageSurface c;
+                c.kind = SURFACE_BRANCH;
+                c.index = (int)i;
+                c.top = br.SurfaceY(x);
+                c.top_then = br.SurfaceY(x_from);
+                c.slope = br.Slope();
+                out.push_back(c);
+            }
+        }
+    }
+    for (size_t i = 0; i < ramps.size(); i++){
+        const StageRamp& r = ramps[i];
+        if (!r.Covers(x)){
+            continue;
+        }
+        StageSurface c;
+        c.kind = SURFACE_RAMP;
+        c.index = (int)i;
+        c.top = r.SurfaceY(x);
+        c.top_then = r.SurfaceY(x_from);
+        c.slope = r.Slope();
+        c.f_ground = true;
+        out.push_back(c);
+    }
+}
+
+/*
+    The surfaces as floors. See the declaration; the three cases, in the order they are asked:
 
       BELOW THE SURFACE NOW, having been ABOVE where it was: she lands, or it has come up under
         her - either way she is put on top. It is the one-way platform's rule, with the surface's
         own movement taken out, so a rising cap cannot pass up through feet that were on it.
-      ABOVE IT, RIDING IT, and not moving away from it: kept on it. A leaf's slope falls away
-        under a walking foot faster than gravity pulls her down, so without this she would walk
-        off a bent leaf into the air a tick at a time.
+      ABOVE IT, ON IT, and not moving away from it: kept on it. A slope falls away under a walking
+        foot faster than gravity pulls her down, so without this she would walk down a bent leaf -
+        or a ramp - into the air a tick at a time. "On it" is RIDING it (on it last tick), or for
+        GROUND (a ramp) having been on any floor: walking off a block onto a ramp that falls away
+        from its edge is still walking. That case also reaches a body-width further, because the
+        block holds her box up until her CENTRE, which is where a surface is sampled, is half a
+        body past its edge - over a ramp that has fallen away by that much by then.
       Otherwise she is off it. Rising faster than it rises is how she leaves one - a jump, or the
         rebound outrunning her fall.
 
-    A FRESH landing hands the plant her fall: momentum about the stem, shared between her and it,
-    as two things that stick together. Her speed then becomes its speed at her feet. A STOMP -
+    THE HIGHEST SURFACE SHE IS ON WINS. Before the three were one list, the plants came first and a
+    branch was only asked about when no plant held her; nothing in any level puts one over the
+    other, so the two rules agree there.
+
+    A FRESH landing on a plant hands it her fall: momentum about the stem, shared between her and
+    it, as two things that stick together. Her speed then becomes its speed at her feet. A STOMP -
     the aim held down through the end of the fall - drives her into it harder than she fell.
 */
-void Stage::CollideSpringPlants(const v2& from, bool f_down_held, bool f_on_block, StageEvents& events,
-                                bool& out_hit_floor){
-    int was_on = spring_on;
+void Stage::CollideSurfaces(const v2& from, bool f_down_held, bool f_on_block, bool f_was_grounded,
+                            StageEvents& events, bool& out_hit_floor){
+    int was_on[3] = { spring_on, branch_on, ramp_on };
+    //Her fall as the blocks left it, before a surface takes it over - what a plant landing shares.
+    const float fall_vel_y = vel.y;
     spring_on = -1;
-    if (f_down_held){
-        return;     //drops through, as through a one-way platform
+    branch_on = -1;
+    ramp_on = -1;
+    std::vector<StageSurface> candidates;
+    GatherSurfaces(pos.x,from.x,f_down_held,candidates);
+    if (candidates.empty()){
+        return;
     }
     float feet = pos.y - ARCHER_HALF_H;
     float feet_from = from.y - ARCHER_HALF_H;
     int best = -1;
-    float best_top = 0.0f;
-    for (size_t i = 0; i < spring_plants.size(); i++){
-        const StageSpringPlant& p = spring_plants[i];
-        if (!p.Covers(pos.x)){
-            continue;
-        }
-        float top = p.SurfaceY(pos.x);
-        bool f_riding = (was_on == (int)i);
+    for (size_t i = 0; i < candidates.size(); i++){
+        const StageSurface& c = candidates[i];
+        bool f_riding = (was_on[c.kind] == c.index);
         bool f_on = false;
-        if (feet < top){
-            f_on = f_riding || feet_from >= p.SurfaceY(from.x,p.prev_q) - STAGE_EPS;
-        }else if (f_riding && !f_on_block && vel.y <= p.SurfaceVelY(pos.x) + STAGE_EPS){
-            //How far a slope can fall away under this tick's step, and a little more.
-            float snap = fabsf(tanf(p.kind == SPRING_LEAF ? p.q : 0.0f) * (pos.x - from.x)) + 0.05f;
-            f_on = (feet - top) <= snap;
+        if (feet < c.top){
+            f_on = f_riding || feet_from >= c.top_then - STAGE_EPS;
+        }else if ((f_riding || (c.f_ground && f_was_grounded)) && !f_on_block && vel.y <= c.vel_y + STAGE_EPS){
+            //How far the slope can fall away under this tick's step, and a little more.
+            float reach = fabsf(pos.x - from.x) + ((!f_riding && c.f_ground) ? ARCHER_HALF_W : 0.0f);
+            f_on = (feet - c.top) <= fabsf(c.slope) * reach + 0.05f;
         }
-        if (f_on && (best < 0 || top > best_top)){
+        if (f_on && (best < 0 || c.top > candidates[best].top)){
             best = (int)i;
-            best_top = top;
         }
     }
     if (best < 0){
         return;
     }
-    StageSpringPlant& p = spring_plants[best];
-    if (best != was_on){
+    const StageSurface& c = candidates[best];
+    pos.y = c.top + ARCHER_HALF_H + STAGE_EPS;
+    vel.y = c.vel_y;
+    out_hit_floor = true;
+    if (c.kind == SURFACE_BRANCH){
+        branch_on = c.index;
+        return;
+    }
+    if (c.kind == SURFACE_RAMP){
+        ramp_on = c.index;
+        return;
+    }
+    StageSpringPlant& p = spring_plants[c.index];
+    if (c.index != was_on[SURFACE_PLANT]){
         float lever = p.Lever(pos.x);
         float inertia = p.Inertia();
         float stomp = (float)(stomp_ticks < SPRING_STOMP_TICKS ? stomp_ticks : SPRING_STOMP_TICKS) /
                       (float)SPRING_STOMP_TICKS;
-        float into = (vel.y < 0.0f) ? vel.y * (1.0f + SPRING_STOMP_GAIN * stomp) : vel.y;
+        float into = (fall_vel_y < 0.0f) ? fall_vel_y * (1.0f + SPRING_STOMP_GAIN * stomp) : fall_vel_y;
         p.qd = (inertia * p.qd + lever * into) / (inertia + lever * lever);
         events.stomp = stomp;
         spring_boost_seen = 0.0f;       //a new bounce, and a new best for the cue to measure against
+        vel.y = p.SurfaceVelY(pos.x);
     }
-    pos.y = best_top + ARCHER_HALF_H + STAGE_EPS;
-    vel.y = p.SurfaceVelY(pos.x);
-    spring_on = best;
-    out_hit_floor = true;
+    spring_on = c.index;
 }
 
 /*
-    Down a leaf too steep to stand on: gravity along the slope, less a friction that exactly holds
-    her at SPRING_LEAF_SLIP_DEG, turned into the sideways pull the run code works in.
+    Down whatever she stands on, when it is too steep to stand on: gravity along the slope, less a
+    friction that exactly holds her at the surface's slip angle, turned into the sideways pull the
+    run code works in. A leaf slips past SPRING_LEAF_SLIP_DEG; a ramp past its own slip_deg, which
+    is the leaf's unless the level says otherwise - the ramps are where that rule is tuned.
 */
 float Stage::SlideAccel() const{
-    if (!f_on_ground || spring_on < 0 || spring_on >= (int)spring_plants.size()){
+    if (!f_on_ground){
         return 0.0f;
     }
-    const StageSpringPlant& p = spring_plants[spring_on];
-    float slope = p.SlopeDeg();
-    float steep = fabsf(slope);
-    if (p.kind != SPRING_LEAF || steep <= SPRING_LEAF_SLIP_DEG){
+    float steep = 0.0f;         //degrees, however it leans
+    float slip = 90.0f;
+    float downhill = 0.0f;      //which way along x is down it
+    if (spring_on >= 0 && spring_on < (int)spring_plants.size()){
+        const StageSpringPlant& p = spring_plants[spring_on];
+        if (p.kind != SPRING_LEAF){
+            return 0.0f;
+        }
+        float slope = p.SlopeDeg();
+        steep = fabsf(slope);
+        slip = SPRING_LEAF_SLIP_DEG;
+        //Falling away from the stem slides her out toward the tip; rising, back toward the stem.
+        downhill = (slope < 0.0f) ? p.side : -p.side;
+    }else if (ramp_on >= 0 && ramp_on < (int)ramps.size()){
+        const StageRamp& r = ramps[ramp_on];
+        float m = r.Slope();
+        steep = atanf(fabsf(m)) / STAGE_DEG2RAD;
+        slip = r.slip_deg;
+        downhill = (m > 0.0f) ? -1.0f : 1.0f;
+    }else{
+        return 0.0f;
+    }
+    //A hair of tolerance: a ramp built AT the slip angle measures a millionth over it through the
+    //atan, which switched on a slide with no pull behind it.
+    if (steep <= slip + 0.001f){
         return 0.0f;
     }
     float a = steep * STAGE_DEG2RAD;
-    float pull = ARCHER_GRAVITY * (sinf(a) - tanf(SPRING_LEAF_SLIP_DEG * STAGE_DEG2RAD) * cosf(a)) * cosf(a);
-    //Falling away from the stem slides her out toward the tip; rising, back toward the stem.
-    return ((slope < 0.0f) ? p.side : -p.side) * pull;
+    float pull = ARCHER_GRAVITY * (sinf(a) - tanf(slip * STAGE_DEG2RAD) * cosf(a)) * cosf(a);
+    return downhill * pull;
+}
+
+float Stage::SlopeUnderFeetDeg() const{
+    if (!f_on_ground){
+        return 0.0f;
+    }
+    if (spring_on >= 0 && spring_on < (int)spring_plants.size()){
+        const StageSpringPlant& p = spring_plants[spring_on];
+        return (p.kind == SPRING_LEAF) ? atanf(p.side * tanf(p.q)) / STAGE_DEG2RAD : 0.0f;
+    }
+    if (branch_on >= 0 && branch_on < (int)branches.size()){
+        return atanf(branches[branch_on].Slope()) / STAGE_DEG2RAD;
+    }
+    if (ramp_on >= 0 && ramp_on < (int)ramps.size()){
+        return atanf(ramps[ramp_on].Slope()) / STAGE_DEG2RAD;
+    }
+    return 0.0f;
 }
 
 /*
@@ -696,6 +835,72 @@ float Stage::PredictSpringBoostPeak(const ArcherInput& in, int horizon) const{
         }
     }
     return peak;
+}
+
+//--- Branches and balance -----------------------------------------------------------------------
+
+float Stage::BalanceDanger() const{
+    float d = fabsf(lean) / (BALANCE_FALL_DEG * STAGE_DEG2RAD);
+    return (d < 1.0f) ? d : 1.0f;
+}
+
+
+/*
+    The lean, one tick - see BALANCE_TOPPLE. Off a branch there is none: it is zeroed the moment
+    she leaves one, by a jump or by walking off the end, so the next branch starts her upright.
+
+    Stepping ON starts a new drift (balance_entries), and a landing knocks her by its speed, to the
+    side the drift is about to push anyway - a hard landing on a branch is a wobble to catch.
+
+    Past BALANCE_FALL_DEG she is off: in the air, falling from where she stands, the branch letting
+    her through for BALANCE_DROP_TICKS. The rules are flat, so "off to the side" is a drop through;
+    which side she went is in the event, for the view.
+*/
+void Stage::TickBalance(const ArcherInput& in, float land_speed, StageEvents& events){
+    if (branch_drop_ticks > 0){
+        branch_drop_ticks--;
+    }
+    if (!f_on_ground || branch_on < 0){
+        lean = 0.0f;
+        lean_rate = 0.0f;
+        balance_ticks = 0;
+        return;
+    }
+    const float two_pi = 6.2831853f;
+    float phase = (float)balance_entries * 2.3999632f;      //the golden angle, so entries never repeat
+    if (balance_ticks == 0){
+        balance_entries++;
+        phase = (float)balance_entries * 2.3999632f;
+        lean_rate = BALANCE_LAND_WOBBLE * land_speed * ((sinf(phase) >= 0.0f) ? 1.0f : -1.0f);
+    }
+    balance_ticks++;
+
+    float t = (float)balance_ticks * ARCHER_DT;
+    float drift = (sinf(t * two_pi / 1.7f + phase) +
+                   0.6f * sinf(t * two_pi / 2.9f + 2.1f * phase) +
+                   0.4f * sinf(t * two_pi / 4.3f + 3.3f * phase)) / 2.0f;
+    float walking = fabsf(vel.x) / BRANCH_WALK_SPEED;
+    if (walking > 1.0f){
+        walking = 1.0f;
+    }
+    float push = ClampF(in.aim_axis,-1.0f,1.0f) * BALANCE_CORRECT;
+    float accel = BALANCE_TOPPLE * sinf(lean) + drift * (BALANCE_DRIFT + BALANCE_WALK_DRIFT * walking) +
+                  push - BALANCE_DAMPING * lean_rate;
+    lean_rate += accel * ARCHER_DT;
+    lean += lean_rate * ARCHER_DT;
+
+    if (fabsf(lean) >= BALANCE_FALL_DEG * STAGE_DEG2RAD){
+        events.f_lost_balance = true;
+        events.fall_side = (lean > 0.0f) ? 1.0f : -1.0f;
+        branch_on = -1;
+        branch_drop_ticks = BALANCE_DROP_TICKS;
+        f_on_ground = false;
+        coyote_ticks = 0;
+        mode = MODE_AIR;
+        lean = 0.0f;
+        lean_rate = 0.0f;
+        balance_ticks = 0;
+    }
 }
 
 void Stage::SetLevel(int new_level){
@@ -773,7 +978,6 @@ void Stage::BuildRopeLevel(){
     blocks.push_back({   0.50f, -8.00f, 16.50f,  8.00f, BLOCK_SOLID, true });  //the floor, top at 0
     blocks.push_back({ -16.50f, -8.00f,  0.50f,  8.00f, BLOCK_LEDGE, true });  //its left lip
     blocks.push_back({ -21.00f, -9.50f,  4.00f,  6.50f, BLOCK_SOLID, true });  //the shallow pit's floor, top -3
-    blocks.push_back({ -25.50f, 22.50f,  0.50f, 25.50f, BLOCK_SOLID, true });  //left wall
     blocks.push_back({  24.00f,-17.00f,  7.00f,  2.00f, BLOCK_SOLID, true });  //the deep pit's floor, top -15
     blocks.push_back({  31.50f, 16.50f,  0.50f, 31.50f, BLOCK_SOLID, true });  //right wall
 
@@ -782,6 +986,66 @@ void Stage::BuildRopeLevel(){
     //Between the start and the rope, behind her walking line. The lower board points right, at
     //the rope; the upper one points left, where the drop is to go.
     signs.push_back({ SIGN_POST, -3.00f, 0.00f, -1.00f, 0.0f, { "DROP", "ROPE" } });
+
+    BuildSlideGallery();
+}
+
+/*
+    THE SLIDE GALLERY - plant_mechanics_plan.md, "Sliding". Left of the shallow pit, on its floor
+    (y -3), where the rope level's left wall used to stand. Everything here is fixed, so a slide
+    that feels wrong is the slide's fault and not a spring's.
+
+      THE LADDER: six hills, 8 14 18 25 35 50 degrees, each HILL_H high with a flat top to stand
+        on and a sign naming its angle - walked into from the right, so each is an ascent, a top
+        and a descent at the same angle. 14 is SPRING_LEAF_SLIP_DEG exactly. The 25 and the 35
+        meet at the foot with no floor between: the V.
+      THE LONG RUN: stairs up to a block 6 high, and 25 degrees down from its top all the way to
+        the floor - 12.9 units of it, for a slide's top speed.
+      THE DROP: past a run-out, a 25 degree ramp off the end of the floor over a shallow pit - the
+        leaf's way off, a slide that ends in the air. The pit is 2.5 deep, which a jump gets out of.
+
+    Every ramp is sealed with blocks - its low end on the floor, its high end against a face - so
+    there is no way under one but from below, through a surface that is one-way anyway.
+*/
+void Stage::BuildSlideGallery(){
+    const float gy = SLIDE_GALLERY_FLOOR_Y;
+    const float h = SLIDE_GALLERY_HILL_H;
+    const float top_w = 2.0f;
+    static const char* HILL_LABELS[SLIDE_GALLERY_HILLS] = { "8", "14", "18", "25", "35", "50" };
+    static const float HILL_GAP_AFTER[SLIDE_GALLERY_HILLS] = { 2.5f, 2.5f, 2.5f, 0.0f, 2.5f, 3.0f };
+
+    float x = SLIDE_GALLERY_START_X;        //the right foot of the next hill
+    for (int i = 0; i < SLIDE_GALLERY_HILLS; i++){
+        float run = h / tanf(SLIDE_GALLERY_DEG[i] * STAGE_DEG2RAD);
+        float top_r = x - run;
+        float top_l = top_r - top_w;
+        ramps.push_back({ v2(top_r,gy + h), v2(x,gy) });                  //up, from the right
+        blocks.push_back({ (top_l + top_r) * 0.5f, gy + h * 0.5f, top_w * 0.5f, h * 0.5f, BLOCK_SOLID, true });
+        ramps.push_back({ v2(top_l - run,gy), v2(top_l,gy + h) });        //and down, going left
+        signs.push_back({ SIGN_POST, (top_l + top_r) * 0.5f, gy + h, -1.0f, 0.0f, { HILL_LABELS[i] } });
+        x = top_l - run - HILL_GAP_AFTER[i];
+    }
+
+    //The long run: two steps of 2 (her jump is 3.2), a block 6 high, and 25 degrees down its far side.
+    blocks.push_back({ x - 2.0f,   gy + 1.0f, 2.0f, 1.0f, BLOCK_SOLID, true });
+    blocks.push_back({ x - 5.5f,   gy + 2.0f, 1.5f, 2.0f, BLOCK_SOLID, true });
+    blocks.push_back({ x - 8.5f,   gy + 3.0f, 1.5f, 3.0f, BLOCK_SOLID, true });
+    float long_top = x - 10.0f;
+    float long_foot = long_top - 6.0f / tanf(SLIDE_GALLERY_LONG_DEG * STAGE_DEG2RAD);
+    ramps.push_back({ v2(long_foot,gy), v2(long_top,gy + 6.0f) });
+    signs.push_back({ SIGN_POST, x - 2.0f, gy + 2.0f, -1.0f, 0.0f, { "LONG" } });
+
+    //The floor, from the pit to a run-out past the long run's foot, then the drop.
+    float floor_end = long_foot - 5.0f;
+    blocks.push_back({ (floor_end + SLIDE_GALLERY_START_X + 2.0f) * 0.5f, -9.5f,
+                       (SLIDE_GALLERY_START_X + 2.0f - floor_end) * 0.5f, 6.5f, BLOCK_SOLID, true });
+    float drop_len = 3.5f;
+    ramps.push_back({ v2(floor_end - drop_len,gy - drop_len * tanf(SLIDE_GALLERY_LONG_DEG * STAGE_DEG2RAD)),
+                      v2(floor_end,gy) });
+    signs.push_back({ SIGN_POST, floor_end + 1.5f, gy, -1.0f, 0.0f, { "DROP" } });
+    float pit_l = floor_end - 14.0f;
+    blocks.push_back({ (pit_l + floor_end) * 0.5f, -10.75f, (floor_end - pit_l) * 0.5f, 5.25f, BLOCK_SOLID, true });
+    blocks.push_back({ pit_l - 0.5f, 22.50f, 0.50f, 25.50f, BLOCK_SOLID, true });  //the level's left wall now
 }
 
 void Stage::BuildRangeLevel(){
@@ -938,7 +1202,11 @@ void Stage::TickBow(const ArcherInput& in, StageEvents& events){
     //pointed and a player can line up before committing to a draw.
     //Except on the rope, where the same keys climb - see ROPE_CLIMB_SPEED. The aim is simply left
     //where it was, so she comes off the rope pointing where she got on.
-    if (mode != MODE_ROPE){
+    //Nor on a branch, unless drawing: there the same keys keep her balance, and an aim that wandered
+    //with every correction would be a bow pointing anywhere by the far end. Drawing, both happen at
+    //once - aiming from a branch costs balance, which is the point of shooting from one.
+    bool f_balancing = f_on_ground && branch_on >= 0 && bow_mode != BOW_DRAWING;
+    if (mode != MODE_ROPE && !f_balancing){
         aim_deg = ClampF(aim_deg + in.aim_axis * BOW_AIM_RATE_DEG * ARCHER_DT,
                          BOW_AIM_MIN_DEG,BOW_AIM_MAX_DEG);
     }
@@ -1017,7 +1285,8 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         the kick's gate - and not mid-kick, whose plant and boot box belong to standing.
     */
     //Not on a spring plant: the kneel plants her on ground that stays put.
-    if (in.f_kneel_pressed && mode == MODE_GROUND && f_on_ground && kick_ticks == 0 && spring_on < 0){
+    if (in.f_kneel_pressed && mode == MODE_GROUND && f_on_ground && kick_ticks == 0 && spring_on < 0 &&
+        branch_on < 0 && ramp_on < 0){
         mode = MODE_KNEEL;
         kneel_phase = KNEEL_LOWERING;
         kneel_ticks = 0;
@@ -1044,6 +1313,10 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     //--- Horizontal ---------------------------------------------------------------------------
     float move_scale = (bow_mode == BOW_DRAWING) ? ARCHER_DRAW_MOVE_SCALE : 1.0f;
     float target_vx = ClampF(in.move_axis,-1.0f,1.0f) * RunSpeed() * move_scale;
+    //Along a branch, one foot in front of the other.
+    if (f_on_ground && branch_on >= 0){
+        target_vx = ClampF(in.move_axis,-1.0f,1.0f) * BRANCH_WALK_SPEED * move_scale;
+    }
     //Down a leaf too steep to hold: no grip to run or stop with, only a little control.
     float slide = SlideAccel();
     bool f_grip = f_on_ground && slide == 0.0f;
@@ -1067,19 +1340,41 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         vel.x = MoveToward(vel.x,0.0f,KICK_ROOT_FRICTION * ARCHER_DT);
     }else if (in.move_axis > 0.01f || in.move_axis < -0.01f){
         float accel = f_grip ? ARCHER_RUN_ACCEL : ARCHER_AIR_ACCEL;
+        /*
+            ON A SLIDE THE FEET HAVE NO GRIP. Pushing UP it, what she has is a share of the pull
+            itself (SPRING_LEAF_SLIDE_CONTROL): it slows the slide and can never climb it. That was a
+            share of the AIR accel, 19 u/s^2, which beat the pull of every slope up to 50 degrees -
+            measured on the slide gallery's ramps, she walked up 35 degrees at nearly full speed.
+            Pushing down it or across, the air share still: a pull only just past the slip angle is
+            near zero, and a share of it left her unable to walk down a ramp at all.
+        */
         if (slide != 0.0f){
-            accel *= SPRING_LEAF_SLIDE_CONTROL;
+            bool f_uphill = (target_vx * slide) < 0.0f;
+            accel = SPRING_LEAF_SLIDE_CONTROL * (f_uphill ? fabsf(slide) : ARCHER_AIR_ACCEL);
         }
         vel.x = MoveToward(vel.x,target_vx,accel * ARCHER_DT);
         //Facing follows the input even mid-draw. The aim angle is relative to facing, so turning
         //while drawn mirrors the shot rather than losing it, which is what a player turning to
         //deal with something behind them means.
         facing = (in.move_axis > 0.0f) ? 1.0f : -1.0f;
-    }else{
+    }else if (slide == 0.0f){
         float friction = f_grip ? ARCHER_RUN_FRICTION : ARCHER_AIR_FRICTION;
         vel.x = MoveToward(vel.x,0.0f,friction * ARCHER_DT);
     }
+    /*
+        And NO FRICTION ON TOP OF A SLIDE: the pull already nets out the friction that holds her
+        at the slip angle. With the air friction taken off it as well, the two together held her
+        still on everything short of about 45 degrees - on the gallery's ramps she crept 0.14 in
+        three seconds at 18 degrees and 0.64 at 35, when the rule says just past the slip angle she
+        creeps and steeper throws her off. What bounds a long slide instead is SLIDE_MAX_SPEED.
+    */
     vel.x += slide * ARCHER_DT;
+    if (slide != 0.0f){
+        float cap = SLIDE_MAX_SPEED * cosf(SlopeUnderFeetDeg() * STAGE_DEG2RAD);
+        if (vel.x * slide > 0.0f && fabsf(vel.x) > cap){
+            vel.x = (vel.x > 0.0f) ? cap : -cap;
+        }
+    }
 
     //--- Jump -----------------------------------------------------------------------------------
     if (in.f_jump_pressed){
@@ -1205,6 +1500,9 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         buffer_ticks--;
     }
 
+    //Her balance, on a branch - which can put her in the air again, so before the ledge probe.
+    TickBalance(in,events.f_landed ? events.land_speed : 0.0f,events);
+
     /*
         The ledge probe.
 
@@ -1290,7 +1588,9 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
     float head_drop = HeadDrop();
     //For the spring plants, which are resolved once for the whole move, and for SPRING_STEP_UP.
     v2 from = pos;
-    bool f_may_step_up = f_on_ground && spring_on >= 0;
+    //Off a spring plant, or up a ramp into the block at its top - see SPRING_STEP_UP.
+    bool f_may_step_up = f_on_ground && (spring_on >= 0 || ramp_on >= 0);
+    bool f_was_grounded = f_on_ground;
 
     for (int s = 0; s < steps; s++){
         //--- X ----------------------------------------------------------------------------------
@@ -1496,10 +1796,44 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
         which cannot be stepped through however fast either moves. A block she has just been
         stood on outranks a plant surface below her feet - the shelf, over a leaf bent under it.
     */
-    bool f_on_plant = false;
-    CollideSpringPlants(from,f_down_held,out_hit_floor,events,f_on_plant);
-    if (f_on_plant){
+    int was_ramp = ramp_on;
+    bool f_on_surface = false;
+    CollideSurfaces(from,f_down_held,out_hit_floor,f_was_grounded,events,f_on_surface);
+    if (f_on_surface){
         out_hit_floor = true;
+    }
+
+    /*
+        OFF A RAMP'S FOOT ONTO THE FLOOR. The ramp's last sample under her centre leaves her feet a
+        hair above the floor it meets, a tick of gravity does not reach it, and she flew one tick
+        at the foot of every descent - measured on the gallery's ramps, a landing each at 8, 14, 18
+        and 35 degrees. The surfaces' keep-on case, for the blocks a ramp runs out onto: the same
+        reach, down to the highest block top under her box.
+    */
+    if (!out_hit_floor && was_ramp >= 0 && was_ramp < (int)ramps.size() && f_was_grounded &&
+        vel.y <= STAGE_EPS){
+        float feet = pos.y - ARCHER_HALF_H;
+        float reach = fabsf(ramps[was_ramp].Slope()) * (fabsf(pos.x - from.x) + ARCHER_HALF_W) + 0.05f;
+        float best = -1e30f;
+        for (size_t i = 0; i < blocks.size(); i++){
+            const StageBlock& b = blocks[i];
+            if (!b.f_alive || b.Right() <= pos.x - ARCHER_HALF_W || b.Left() >= pos.x + ARCHER_HALF_W){
+                continue;
+            }
+            //Down drops her through a one-way platform here as anywhere - and only through one.
+            if (f_down_held && b.kind == BLOCK_PLATFORM){
+                continue;
+            }
+            float top = b.Top();
+            if (top <= feet + STAGE_EPS && feet - top <= reach && top > best){
+                best = top;
+            }
+        }
+        if (best > -1e29f){
+            pos.y = best + ARCHER_HALF_H + STAGE_EPS;
+            vel.y = 0.0f;
+            out_hit_floor = true;
+        }
     }
 }
 
@@ -1706,10 +2040,11 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
         f_on_ground is last tick's, because TickKick runs before TickArcher. One tick of lag on a
         gate costs nothing and keeps the ordering note at the top of Stage::Tick true.
 
-        And KNEELING: the kick is a standing move, and a knee on the floor is not a plant.
+        And KNEELING: the kick is a standing move, and a knee on the floor is not a plant. Nor is a
+        branch she is keeping her balance on: one foot in the air there is a fall.
     */
     bool f_busy = (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE || mode == MODE_KNEEL ||
-                   !f_on_ground);
+                   !f_on_ground || branch_on >= 0);
 
     if (kick_ticks == 0){
         if (in.f_kick_pressed && kick_cooldown == 0 && !f_busy){

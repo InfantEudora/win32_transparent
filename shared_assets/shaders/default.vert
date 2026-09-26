@@ -31,7 +31,7 @@ struct Material{
     float roughness;
     int f_unlit;       //see material_t in core/Material.h; was pad2
     float wind_flex;   //see material_t; was pad3 (and still is, in the mirrors that do not read it)
-    int pad4;
+    int wind_mode;     //see material_t in core/Material.h; was pad4. Only default.vert reads it
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;
     uvec2 handle_diffuse;
@@ -101,30 +101,67 @@ vec2 SampleWind(vec2 p){
 }
 
 /*
-	Bends one vertex of something that stands on its origin - a plant authored base-down.
+	Bends one vertex of something attached at its origin - see material_t::wind_mode. LEAF is the
+	first branch below; the rest of this note is STALK, a plant authored base-down.
 
 	The push grows with the SQUARE of the height above the origin, so the root stays put and the
 	tip moves most, which is how a stalk bends; the wind is read at the vertex, so a tall plant
 	whose top is in faster air bends more at the top. On top of the bend, a flutter that scales
 	with the wind speed and is phased by where the plant stands, so neighbours never sway in step,
-	and a smaller sway through the slab so a row of grass is not a row of cut-outs. A tip pushed
-	sideways also comes DOWN, keeping the blade about its length.
+	and a smaller sway through the slab so a row of grass is not a row of cut-outs.
+
+	Both modes then SWING rather than shift - see WindSwing.
 */
-vec3 WindBend(vec3 world, vec3 origin, float flex){
+
+/*
+	Turns a push into a swing about the origin: the part of the push that runs ALONG the line from
+	the origin to the vertex is dropped, and the vertex is put back at its old distance. The push
+	is in world space - it comes from the wind - so without this, which way the part pointed
+	decided what the wind did to it: a vine leaf pointing downwind was pushed along its own length
+	and STRETCHED, one pointing upwind was squashed, and only one hanging across the wind swung. A
+	fern frond lying along the wind did the same. Now everything rotates about where it is attached,
+	and an upright blade's tip comes down on the exact arc.
+*/
+vec3 WindSwing(vec3 world, vec3 origin, vec3 push){
+	vec3 r = world - origin;
+	float d = length(r);
+	if (d < 1e-5){
+		return world;
+	}
+	vec3 dir = r / d;
+	push -= dir * dot(push,dir);
+	return origin + normalize(r + push) * d;
+}
+
+vec3 WindBend(vec3 world, vec3 origin, float flex, int mode){
+	float t = wind_params.x;
+	float phase = dot(origin,vec3(1.73,0.0,2.41));
+	vec2 wind = SampleWind(world.xy);
+	float speed = length(wind);
+	/*
+		LEAF (mode 1): by distance from the stem, whatever way the leaf hangs, and mostly flutter -
+		a leaf does not lie down in the wind, it trembles and lifts. It swings with the wind, flaps
+		up and down, and twists a little through the slab; faster and harder in a stronger wind.
+	*/
+	if (mode == 1){
+		float d = length(world - origin);
+		float bend = flex * d * d;
+		float flap = sin(t * (7.0 + 0.3 * speed) + phase + d * 6.0);
+		float dx = bend * (0.6 * wind.x + speed * 0.5 * flap);
+		float dy = bend * (0.4 * wind.y + speed * 0.6 * sin(t * 9.7 + phase * 1.3 + d * 5.0));
+		float dz = bend * speed * 0.3 * sin(t * 5.1 + phase * 2.3);
+		return WindSwing(world,origin,clamp(vec3(dx,dy,dz),vec3(-0.6 * d),vec3(0.6 * d)));
+	}
+
 	float h = world.y - origin.y;
 	if (h <= 0.0){
 		return world;
 	}
-	vec2 wind = SampleWind(world.xy);
-	float speed = length(wind);
-	float t = wind_params.x;
-	float phase = dot(origin,vec3(1.73,0.0,2.41));
 	float flutter = 0.25 * sin(t * 5.3 + phase + h * 4.0) + 0.1 * sin(t * 8.9 + phase * 1.7);
 	float bend = flex * h * h;
 	float dx = clamp(bend * (wind.x + speed * flutter),-0.9 * h,0.9 * h);
 	float dz = clamp(bend * speed * 0.35 * sin(t * 3.7 + phase * 2.3),-0.5 * h,0.5 * h);
-	float dy = -min((dx * dx + dz * dz) / (2.0 * h),0.8 * h);
-	return world + vec3(dx,dy,dz);
+	return WindSwing(world,origin,vec3(dx,0.0,dz));
 }
 
 //Output
@@ -186,7 +223,7 @@ void main(){
 	Material m = materials[matindex_out];
 	//Before anything reads world_position, so the shadow and the G-buffer bend with the colour.
 	if ((wind_size.z != 0) && (m.wind_flex > 0.0)){
-		world_position.xyz = WindBend(world_position.xyz,instance_data[gl_InstanceID].mat_transformscale[3].xyz,m.wind_flex);
+		world_position.xyz = WindBend(world_position.xyz,instance_data[gl_InstanceID].mat_transformscale[3].xyz,m.wind_flex,m.wind_mode);
 	}
 	vposition = world_position.xyz;
 

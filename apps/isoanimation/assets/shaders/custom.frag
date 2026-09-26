@@ -41,7 +41,7 @@ struct Material{
     float roughness;
     int f_unlit;       //see material_t in core/Material.h; was pad2
     float wind_flex;   //see material_t in core/Material.h; was pad3. Only default.vert reads it
-    int pad4;
+    int wind_mode;     //see material_t in core/Material.h; was pad4. Only default.vert reads it
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;
     uvec2 handle_diffuse;

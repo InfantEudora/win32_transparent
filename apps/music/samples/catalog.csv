@@ -1,0 +1,1 @@
+file,category,instrument,root,comment,guess,why,status,name_instrument,name_note,name_vs_pitch,name_key,name_bpm,pitch_kind,pitch_note,pitch_cents,pitch_hz,voiced,stability_cents,key,key_r,key_margin,duration_s,channels,sample_rate,peak_db,rms_db,active_rms_db,clipped,lead_ms,tail_ms,envelope,attack_ms,decay20_ms,sustain_db,head_tail_db,centroid_hz,flatness,low_share

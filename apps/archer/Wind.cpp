@@ -452,6 +452,17 @@ float WindField::Distance(float x, float y) const {
     return IsBuilt() ? Sample(dist,x,y) : 1e9f;
 }
 
+WindVec WindField::DistanceGradient(float x, float y) const {
+    WindVec g;
+    if (IsBuilt()){
+        g.x = Sample(dist_dx,x,y);
+        g.y = Sample(dist_dy,x,y);
+    }else{
+        g.y = 1.0f;
+    }
+    return g;
+}
+
 WindVec WindField::MeanFlow(float x, float y) const {
     WindVec v;
     if (!IsBuilt()){
@@ -487,21 +498,31 @@ void WindField::CornerEddies(const WindCorner& c, int dir, int64_t tick, WindEdd
     double base = (double)tick / (double)period_ticks + (double)c.seed;
     float swirl = -(float)dir * params.eddy_strength * speed;
 
+    /*
+        The bound eddy is an ELLIPSE, twice as long as it is tall: a real recirculation bubble
+        runs 2-3 drops downstream and about one drop high. As a circle it ended 1.4 drops out, and
+        leaves carried over it came down beyond the reverse flow and settled there instead of
+        being drawn back round. Its strength is set by the VERTICAL radius, so the reverse flow
+        along the ground peaks at `swirl`, and the up- and down-draughts at its ends are gentler.
+    */
     float bound_sigma = fminf(fmaxf(0.5f * h,0.5f),2.2f);
     float breathe = 1.0f + 0.2f * sinf(3.14159265f * (float)(base - floor(base)));
-    out[0].x = c.x + dir * 0.9f * h;
+    out[0].x = c.x + dir * 1.2f * h;
     out[0].y = c.y - 0.55f * h;
     out[0].radius = bound_sigma;
+    out[0].stretch = 2.0f;
     out[0].strength = swirl * breathe * bound_sigma / WIND_GAUSS_PEAK;
 
+    //The shed ones leave from the back of the bubble.
     float shed_sigma = fminf(fmaxf(0.4f * h,0.5f),1.8f);
     for (int k = 1; k < WIND_EDDIES_PER_CORNER; k++){
         double b = base + 0.5 * (k - 1);
         float p = (float)(b - floor(b));
         float s = sinf(3.14159265f * p);
-        out[k].x = c.x + dir * h * (1.3f + 2.0f * p);
+        out[k].x = c.x + dir * h * (2.2f + 2.0f * p);
         out[k].y = c.y - h * (0.45f - 0.2f * p);
         out[k].radius = shed_sigma;
+        out[k].stretch = 1.3f;
         out[k].strength = 0.5f * swirl * s * s * shed_sigma / WIND_GAUSS_PEAK;
     }
 
@@ -511,6 +532,7 @@ void WindField::CornerEddies(const WindCorner& c, int dir, int64_t tick, WindEdd
         thin sheet of fast flow along that wall: 21 units/s in a 2.5 wind on the main level. So
         each fades out as the space around its centre drops below its own radius.
     */
+    //Measured against the vertical radius: the long axis runs along the ground by design.
     for (int k = 0; k < WIND_EDDIES_PER_CORNER; k++){
         float room = Sample(dist,out[k].x,out[k].y);
         out[k].strength *= Smooth01(0.25f * out[k].radius,out[k].radius,room);
@@ -526,18 +548,20 @@ void WindField::Eddies(int64_t tick, std::vector<WindEddy>& out) const {
     }
 }
 
-//One Gaussian blob's psi and gradient, added in. Nothing past three radii.
+//One Gaussian blob's psi and gradient, added in - elliptical, radius * stretch across. Nothing
+//past three radii.
 static inline void AddEddyPsi(const WindEddy& e, float x, float y, float& p, float& px, float& py){
     float dx = x - e.x, dy = y - e.y;
-    float is2 = 1.0f / (e.radius * e.radius);
-    float r2 = (dx * dx + dy * dy) * is2;
+    float isy2 = 1.0f / (e.radius * e.radius);
+    float isx2 = isy2 / (e.stretch * e.stretch);
+    float r2 = dx * dx * isx2 + dy * dy * isy2;
     if (r2 > 9.0f){
         return;
     }
     float g = e.strength * expf(-r2);
     p  += g;
-    px += g * (-2.0f * dx * is2);
-    py += g * (-2.0f * dy * is2);
+    px += g * (-2.0f * dx * isx2);
+    py += g * (-2.0f * dy * isy2);
 }
 
 void WindField::DetailPsi(float x, float y, int64_t tick, float& p, float& px, float& py) const {
@@ -553,7 +577,7 @@ void WindField::DetailPsi(float x, float y, int64_t tick, float& p, float& px, f
             //Cheap reject before the pair is worked out: nothing of this corner's reaches past
             //about three drops downwind or two either other way.
             float rx = (x - c.x) * dir;
-            if ((rx < -2.0f * c.drop) || (rx > 4.0f * c.drop + 6.0f) || (fabsf(y - c.y) > 2.0f * c.drop + 6.0f)){
+            if ((rx < -2.0f * c.drop) || (rx > 6.0f * c.drop + 6.0f) || (fabsf(y - c.y) > 2.0f * c.drop + 6.0f)){
                 continue;
             }
             WindEddy e[WIND_EDDIES_PER_CORNER];
@@ -677,8 +701,8 @@ void WindField::Bake(int64_t tick, float bx, float by, float step, int w, int h,
         float x1 = bx + (w - 1) * step, y1 = by + (h - 1) * step;
         size_t kept = 0;
         for (const WindEddy& e : eddies){
-            float r = 3.0f * e.radius;
-            if ((e.strength != 0.0f) && (e.x + r >= bx) && (e.x - r <= x1) && (e.y + r >= by) && (e.y - r <= y1)){
+            float rx = 3.0f * e.radius * e.stretch, ry = 3.0f * e.radius;
+            if ((e.strength != 0.0f) && (e.x + rx >= bx) && (e.x - rx <= x1) && (e.y + ry >= by) && (e.y - ry <= y1)){
                 eddies[kept++] = e;
             }
         }

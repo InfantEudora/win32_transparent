@@ -615,6 +615,8 @@ void ApplicationArcher::Init(void){
     BuildBow();
     //After BuildArcherModel too, for the loader and the character's scale - see the declaration.
     BuildFoliage();
+    //After BuildArcherModel too - the leaves are sized by model_scale.
+    BuildWindLeaves();
     BuildBoulders();
     //The back wall's pines were stood up by BuildTerrain, which runs BEFORE BuildArcherModel - at
     //a model_scale of 1, half size. Again now that the scale is known; placing is cheap, the wall's
@@ -633,6 +635,7 @@ void ApplicationArcher::Init(void){
     BuildScenery();
     //Only the line object here; the field itself is built the first time something reads it.
     wind_view.Init(main_scene);
+    BuildWindStreaks();
     BuildBackground();
     SetupLights();
     SetupCamera();
@@ -707,6 +710,9 @@ void ApplicationArcher::BuildMaterials(){
         //say it. A pale lilac toadstool.
         { "ar_spring_pad",  vec4(0.66f,0.50f,0.80f,1.0f), 0.25f, &material_spring_pad },
         { "ar_leaf",        vec4(0.38f,0.70f,0.22f,1.0f), 0.20f, &material_leaf },
+        //A ramp: slate blue-grey. Its own colour because it is its own rule - past its slip angle
+        //the feet do not hold - and it must not read as the plain ground beside it.
+        { "ar_ramp",        vec4(0.42f,0.50f,0.62f,1.0f), 0.08f, &material_ramp },
         { "ar_archer",      vec4(0.30f,0.72f,0.42f,1.0f), 0.18f, &material_archer },
         //The character herself. A plain warm off-white, because the model arrives with no textures
         //at all - see the note where it is assigned in BuildArcherModel.
@@ -714,6 +720,9 @@ void ApplicationArcher::BuildMaterials(){
         //Hanging and climbing. Distinct enough to read at a glance in a screenshot, close enough
         //in hue that it still reads as the same character rather than a different object.
         { "ar_archer_hang", vec4(0.95f,0.80f,0.25f,1.0f), 0.30f, &material_archer_hang },
+        //Sliding: an icy blue, standing in for the slide clip that does not exist yet - the colour
+        //IS the state in a screenshot, the way the hang's yellow was before its clips.
+        { "ar_archer_slide",vec4(0.45f,0.75f,1.00f,1.0f), 0.35f, &material_archer_slide },
         { "ar_crate",       vec4(0.68f,0.52f,0.30f,1.0f), 0.06f, &material_crate },
         { "ar_target",      vec4(0.90f,0.90f,0.88f,1.0f), 0.10f, &material_target },
         //A struck target goes green, so a hit is legible in a screenshot with no HUD at all -
@@ -1058,9 +1067,86 @@ void ApplicationArcher::BuildBlocks(){
         }
         spring_plant_objects.push_back(moving);
     }
+    /*
+        THE BRANCHES, as thin bark-brown slabs from end to end, turned to their slope. Only her feet
+        are ever on one, so it is no deeper than it needs to be to read.
+    */
+    for (size_t i = 0; i < stage.branches.size(); i++){
+        const StageBranch& br = stage.branches[i];
+        char name[48];
+        snprintf(name,sizeof(name),"branch_%i",(int)i);
+        float dx = br.b.x - br.a.x;
+        float dy = br.b.y - br.a.y;
+        float len = sqrtf(dx * dx + dy * dy);
+        float angle = atan2f(dy,dx);
+        const float thick = 0.16f;
+        //Its top face on the line she walks: the centre half a thickness below the midpoint, along
+        //the branch's own down.
+        vec3 mid((br.a.x + br.b.x) * 0.5f,(br.a.y + br.b.y) * 0.5f,0.0f);
+        vec3 down(sinf(angle),-cosf(angle),0.0f);
+        Object* o = plant_box(name,mid + down * (thick * 0.5f),vec3(len,thick,0.35f),material_trunk);
+        o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),angle));
+    }
+    /*
+        THE RAMPS - Stage::ramps - the branch's slab again, but ground: a block's full depth and
+        thick enough to read as a slope rather than a plank. The wedge under it is left open; the
+        rules seal it with the blocks at its ends, and a blockout does not need it filled.
+    */
+    for (size_t i = 0; i < stage.ramps.size(); i++){
+        const StageRamp& r = stage.ramps[i];
+        char name[48];
+        snprintf(name,sizeof(name),"ramp_%i",(int)i);
+        float dx = r.b.x - r.a.x;
+        float dy = r.b.y - r.a.y;
+        float len = sqrtf(dx * dx + dy * dy);
+        float angle = atan2f(dy,dx);
+        const float thick = 0.35f;
+        vec3 mid((r.a.x + r.b.x) * 0.5f,(r.a.y + r.b.y) * 0.5f,0.0f);
+        vec3 down(sinf(angle),-cosf(angle),0.0f);
+        Object* o = plant_box(name,mid + down * (thick * 0.5f),vec3(len,thick,STAGE_BLOCK_HALF_DEPTH * 2.0f),
+                              material_ramp);
+        o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),angle));
+    }
+    /*
+        THE BALANCE GAUGE, while she is on a branch: a dark upright bar beside her head and a marker
+        on it at her lean - up the bar is leaning away from the camera, the way Up pushes her. The
+        bar's ends are BALANCE_FALL_DEG, and the marker goes green to red as she nears one. It
+        stands in for the balance poses until they exist; SyncBalanceGauge places both every tick.
+    */
+    balance_bar = NULL;
+    balance_marker = NULL;
+    if (!stage.branches.empty()){
+        balance_bar = plant_box("balance_bar",vec3(0.0f,0.0f,0.3f),vec3(0.07f,1.0f,0.07f),material_ground);
+        balance_marker = plant_box("balance_marker",vec3(0.0f,0.0f,0.3f),vec3(0.22f,0.09f,0.12f),
+                                   material_spring_cue[0]);
+        balance_bar->SetVisibility(false);
+        balance_marker->SetVisibility(false);
+    }
     SyncSpringPlants();
-    debug->Info("Built %i level blocks, %i trees and %i spring plants\n",(int)block_objects.size(),
-                (int)stage.trees.size(),(int)stage.spring_plants.size());
+    debug->Info("Built %i level blocks, %i trees, %i spring plants, %i branches and %i ramps\n",
+                (int)block_objects.size(),(int)stage.trees.size(),(int)stage.spring_plants.size(),
+                (int)stage.branches.size(),(int)stage.ramps.size());
+}
+
+void ApplicationArcher::SyncBalanceGauge(){
+    if (!balance_bar || !balance_marker){
+        return;
+    }
+    bool f_show = stage.f_on_ground && stage.branch_on >= 0;
+    balance_bar->SetVisibility(f_show);
+    balance_marker->SetVisibility(f_show);
+    if (!f_show){
+        return;
+    }
+    //Behind her, level with her head, so it never covers her face or the way ahead.
+    vec3 at(stage.pos.x - stage.facing * 0.75f,stage.pos.y + 0.75f,0.3f);
+    balance_bar->SetPosition(at);
+    float share = stage.lean / (BALANCE_FALL_DEG * ARCHER_DEG2RAD);
+    share = share < -1.0f ? -1.0f : (share > 1.0f ? 1.0f : share);
+    balance_marker->SetPosition(at + vec3(0.0f,share * 0.5f,0.02f));
+    int step = (int)(stage.BalanceDanger() * (float)(SPRING_CUE_STEPS - 1) + 0.5f);
+    step = step < 0 ? 0 : (step >= SPRING_CUE_STEPS ? SPRING_CUE_STEPS - 1 : step);
+    balance_marker->SetMaterialSlot(0,material_spring_cue[step]);
 }
 
 /*
@@ -1508,6 +1594,7 @@ void ApplicationArcher::UpdateWind(){
     }else{
         renderer->ClearWindField();
     }
+    UpdateWindStreaks(tick);
 
     if (!f_show_wind){
         if (wind_view.IsVisible()){
@@ -1526,15 +1613,244 @@ void ApplicationArcher::UpdateWind(){
 //The archer.glb node for each FoliageKind, in that enum's order.
 static const char* FOLIAGE_NODES[FOLIAGE_KIND_COUNT] = { "fern_1", "fern_2", "flower", "grass_1", "grass_2" };
 
-void ApplicationArcher::ApplyFoliageWindFlex(){
-    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
-        std::string suffix = std::string("@") + FOLIAGE_NODES[k];
-        for (Material& m : renderer->materials){
-            if ((m.name.size() > suffix.size()) &&
-                (m.name.compare(m.name.size() - suffix.size(),suffix.size(),suffix) == 0)){
-                m.glsl_material.wind_flex = foliage_wind_flex[k];
+/*
+    The leaf model, and its four looks: fresh, dark, yellowing, turning.
+
+    TWO WAYS TO TINT, because the lit shader IGNORES the material colour whenever there is a
+    texture. The 2026-09-26 export of leaf_small has NO texture (and no colour - it came out plain
+    white), so the colour column is what shows. Should it come back textured, the colour stops
+    mattering and the brightness (how much light it reflects) and faint emissive warmth carry the
+    variation instead - both columns are always written, so either export works.
+*/
+#define WIND_LEAF_NODE      "leaf_small"
+static const struct { float cr, cg, cb; float brightness; float er, eg, eb, strength; } WIND_LEAF_TINT[4] = {
+    { 0.36f, 0.56f, 0.18f,   1.00f, 0.0f, 0.0f, 0.0f, 0.00f },
+    { 0.20f, 0.38f, 0.13f,   0.75f, 0.0f, 0.0f, 0.0f, 0.00f },
+    { 0.62f, 0.62f, 0.20f,   1.10f, 1.0f, 0.8f, 0.2f, 0.05f },
+    { 0.72f, 0.40f, 0.14f,   0.90f, 1.0f, 0.45f,0.1f, 0.08f },
+};
+
+/*
+    The pool of wind-blown leaves. RENDER THREAD, at Init (SetMeshData uploads).
+
+    leaf_small is re-baked the way the crate is: its node carries an UNAPPLIED transform (scale 3,
+    +90 degrees about X), which is applied here, and the mesh is re-centred on its bounds - it was
+    authored with its origin at the stem, and a leaf tumbling about its stem looks like a leaf on
+    a string. After the node's rotation it lies flat, face up, blade along +Z, which is exactly the
+    resting pose; the tumble and the rest are both rotations of that.
+*/
+void ApplicationArcher::BuildWindLeaves(){
+    std::vector<Material> materials;
+    Mesh* mesh = gltfloader.GetMeshFromNode(WIND_LEAF_NODE,&materials,false);
+    if (!mesh){
+        debug->Warn("No '%s' in %s - no leaves on the wind\n",WIND_LEAF_NODE,ARCHER_MODEL_ASSET);
+        return;
+    }
+    std::vector<vertex> verts = mesh->GetVertices();
+    if (verts.empty()){
+        debug->Warn("'%s' has no CPU copy of its vertices - no leaves on the wind\n",WIND_LEAF_NODE);
+        return;
+    }
+    quat node_rot = gltfloader.GetNodeRotation(WIND_LEAF_NODE);
+    vec3 node_scale = gltfloader.GetNodeScale(WIND_LEAF_NODE);
+    vec3 lo(1e9f,1e9f,1e9f), hi(-1e9f,-1e9f,-1e9f);
+    for (vertex& v : verts){
+        v.pos = node_rot * vec3(v.pos.x * node_scale.x,v.pos.y * node_scale.y,v.pos.z * node_scale.z);
+        v.normal = node_rot * v.normal;
+        v.tangent = node_rot * v.tangent;
+        lo = vec3(fminf(lo.x,v.pos.x),fminf(lo.y,v.pos.y),fminf(lo.z,v.pos.z));
+        hi = vec3(fmaxf(hi.x,v.pos.x),fmaxf(hi.y,v.pos.y),fmaxf(hi.z,v.pos.z));
+    }
+    vec3 centre = (lo + hi) * 0.5f;
+    for (vertex& v : verts){
+        v.pos = v.pos - centre;
+    }
+    mesh->SetMeshData(verts.data(),(int)verts.size());
+    assetmanager->AddNewAsset("ar_wind_leaf_mesh",mesh);
+    leaf_mesh = mesh;
+
+    //Four copies of its materials, one per tint - they share the texture, and so its unit.
+    for (int t = 0; t < WIND_LEAF_TINTS; t++){
+        leaf_materials[t] = materials;
+        for (Material& m : leaf_materials[t]){
+            m.name += "@wind_leaf_" + std::to_string(t);
+            m.glsl_material.color = vec4(WIND_LEAF_TINT[t].cr,WIND_LEAF_TINT[t].cg,WIND_LEAF_TINT[t].cb,1.0f);
+            m.glsl_material.brightness *= WIND_LEAF_TINT[t].brightness;
+            m.glsl_material.emissive = vec4(WIND_LEAF_TINT[t].er,WIND_LEAF_TINT[t].eg,WIND_LEAF_TINT[t].eb,
+                                            WIND_LEAF_TINT[t].strength);
+            //The export's 0.4 metallic, with no skybox to reflect, only darkens - the same fix
+            //BuildArcherModel makes for the character.
+            m.glsl_material.metallic = fminf(m.glsl_material.metallic,0.10f);
+        }
+        renderer->AddMaterials(leaf_materials[t]);
+    }
+
+    leaf_group = new Object();
+    leaf_group->name = "wind_leaves";
+    main_scene->AddObject(leaf_group);
+    for (int i = 0; i < WIND_LEAF_POOL; i++){
+        Object* o = new Object();
+        o->name = "wind_leaf." + std::to_string(i);
+        o->SetPickability(false);
+        o->SetCastsShadow(false);
+        o->SetMesh(mesh);
+        o->TakeMaterialNames(leaf_materials[i % WIND_LEAF_TINTS]);
+        o->SetVisibility(false);
+        leaf_group->AttachChild(o);
+        leaf_objects.push_back(o);
+    }
+    leaf_swarm.params.tints = WIND_LEAF_TINTS;
+    leaf_swarm.params.density = 0.1f;
+    leaf_swarm.params.pad = 1.5f;
+    leaf_swarm.params.max_count = WIND_LEAF_POOL;
+    vec3 size = hi - lo;
+    debug->Info("Wind leaves: '%s' %.3f x %.3f x %.3f after its node transform, pool of %d\n",
+                WIND_LEAF_NODE,size.x,size.y,size.z,WIND_LEAF_POOL);
+}
+
+/*
+    One tick of the leaves, and their Objects posed from it. PHYSICS THREAD, from RunSimulationTick
+    after UpdateCamera. Under wind_mutex: the render thread builds and retunes the field.
+
+    A leaf in flight is its resting pose turned about its tumble axis; one lying down is turned
+    only about +Y (its heading) and then TILTED toward the camera, since a leaf lying truly flat is
+    edge-on to a side view and all but disappears.
+*/
+void ApplicationArcher::StepWindLeaves(){
+    if (leaf_objects.empty()){
+        return;
+    }
+    int shown = 0;
+    if (f_wind_leaves){
+        std::lock_guard<std::mutex> lock(wind_mutex);
+        float x0, y0, x1, y1;
+        //The bare view: the swarm grows it by its own `pad`, and needs the unpadded one to know
+        //which leaves are on screen.
+        if (wind.IsBuilt() && WindViewRect(main_scene->camera,0.0f,x0,y0,x1,y1)){
+            leaf_swarm.params.max_count = std::min(std::max(leaf_swarm.params.max_count,0),(int)WIND_LEAF_POOL);
+            leaf_swarm.params.count = std::min(std::max(leaf_swarm.params.count,0),(int)WIND_LEAF_POOL);
+            leaf_swarm.Step(wind,(int64_t)main_scene->GetPhysicsTick(),x0,y0,x1,y1);
+            float base = model_scale * leaf_scale;
+            for (const Leaf& l : leaf_swarm.leaves){
+                Object* o = leaf_objects[shown++];
+                quat q;
+                if (l.state == LEAF_FLYING){
+                    q = quat(vec3(l.axis[0],l.axis[1],l.axis[2]),l.angle);
+                }else{
+                    q = quat(vec3(1.0f,0.0f,0.0f),l.tilt) * quat(vec3(0.0f,1.0f,0.0f),l.yaw);
+                }
+                float s = base * l.size * l.fade;
+                o->SetPosition(vec3(l.x,l.y,l.z));
+                o->SetRotation(q);
+                o->SetScale(vec3(s,s,s));
+                o->SetVisibility(true);
             }
         }
+    }
+    for (size_t i = shown; i < leaf_objects.size(); i++){
+        if (leaf_objects[i]->IsVisible()){
+            leaf_objects[i]->SetVisibility(false);
+        }
+    }
+}
+
+/*
+    The streaks' shader, mesh and object. RENDER THREAD, at Init. The mesh starts empty and the
+    object hidden; UpdateWindStreaks fills and shows it.
+*/
+void ApplicationArcher::BuildWindStreaks(){
+    streak_shader = new Shader("shaders/wind_streak.vert","shaders/wind_streak.frag");
+    streak_shader->uniform_callback = std::bind(&ApplicationArcher::SetStreakUniforms,this);
+    streak_shader_index = renderer->AddCustomShader(streak_shader);
+    streak_mesh = new Mesh();
+    streak_mesh->num_materials = 1;
+    streak_object = new Object();
+    streak_object->name = "wind_streaks";
+    streak_object->SetMesh(streak_mesh);
+    streak_object->SetPickability(false);
+    streak_object->SetCastsShadow(false);
+    streak_object->SetVisibility(false);
+    main_scene->AddObject(streak_object);
+    streak_object->UpdatePhysicsState();
+}
+
+//Called by the custom-shader pass before the draw; the pass puts all three states back after.
+void ApplicationArcher::SetStreakUniforms(){
+    //Translucent: tested against the solid scene, but writing no depth of their own, and both
+    //faces - a ribbon turned toward the camera can still show its back where it curls.
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    streak_shader->Setvec3("streak_color",streak_color);
+}
+
+void ApplicationArcher::UpdateWindStreaks(int64_t tick){
+    if (!streak_object){
+        return;
+    }
+    float x0, y0, x1, y1;
+    if (!f_wind_streaks || !WindViewRect(main_scene->camera,0.0f,x0,y0,x1,y1)){
+        streak_object->SetVisibility(false);
+        streak_last_tick = tick;
+        return;
+    }
+    //Catch up on the ticks since the last frame - none while paused, a few after a stall (capped,
+    //so a long stall does not freeze a frame running them all).
+    int64_t steps = (streak_last_tick < 0) ? 1 : tick - streak_last_tick;
+    if ((steps < 0) || (steps > 8)){
+        steps = 1;
+    }
+    for (int64_t k = steps - 1; k >= 0; k--){
+        streak_swarm.Step(wind,tick - k,x0,y0,x1,y1);
+    }
+    streak_last_tick = tick;
+
+    vec3 eye = main_scene->camera->GetPosition();
+    streak_swarm.BuildRibbons(eye.x,eye.y,eye.z,streak_ribbons);
+    if (streak_ribbons.empty()){
+        streak_object->SetVisibility(false);
+        return;
+    }
+    streak_vertices.resize(streak_ribbons.size());
+    for (size_t i = 0; i < streak_ribbons.size(); i++){
+        const StreakVertex& r = streak_ribbons[i];
+        vertex& v = streak_vertices[i];
+        v.pos = vec3(r.x,r.y,r.z);
+        v.normal = vec3(r.alpha,0.0f,0.0f);         //the alpha - see wind_streak.vert
+        v.tangent = vec3(1.0f,0.0f,0.0f);
+        v.uv = vec2(r.u,r.v);
+        v.matid = 0;
+    }
+    streak_mesh->SetMeshData(streak_vertices.data(),(int)streak_vertices.size());
+    //SetMeshData puts the mesh back to MESH_MODE_NORMAL every time, so this goes after it.
+    streak_mesh->mesh_mode = MESH_MODE_SHADER;
+    streak_mesh->custom_shader_index = streak_shader_index;
+    streak_object->SetVisibility(true);
+}
+
+json ApplicationArcher::LeafSummary(){
+    int flying = 0, resting = 0, fading = 0;
+    for (const Leaf& l : leaf_swarm.leaves){
+        flying += (l.state == LEAF_FLYING);
+        resting += (l.state == LEAF_RESTING);
+        fading += (l.state == LEAF_FADING);
+    }
+    return json{ {"on",f_wind_leaves.load()},{"model",leaf_mesh != NULL},{"count",(int)leaf_swarm.leaves.size()},
+                 {"density",leaf_swarm.params.density},{"pad",leaf_swarm.params.pad},
+                 {"flying",flying},{"resting",resting},{"fading",fading} };
+}
+
+void ApplicationArcher::SetMaterialWindFlex(const std::string& suffix, float flex){
+    for (Material& m : renderer->materials){
+        if ((m.name.size() > suffix.size()) &&
+            (m.name.compare(m.name.size() - suffix.size(),suffix.size(),suffix) == 0)){
+            m.glsl_material.wind_flex = flex;
+        }
+    }
+}
+
+void ApplicationArcher::ApplyFoliageWindFlex(){
+    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+        SetMaterialWindFlex(std::string("@") + FOLIAGE_NODES[k],foliage_wind_flex[k]);
     }
 }
 
@@ -2011,6 +2327,13 @@ void ApplicationArcher::BuildVines(){
         f_vine_leaf_from_asset[k] = (mesh != NULL);
         if (mesh){
             mesh->Retain();
+            //Their own copies, in LEAF mode - bent by distance from the stem (the leaf's origin),
+            //since a vine leaf hangs every which way. See material_t::wind_mode.
+            for (Material& m : leaf_materials[k]){
+                m.name += std::string("@") + VINE_LEAF_NODES[k];
+                m.glsl_material.wind_flex = vine_leaf_wind_flex;
+                m.glsl_material.wind_mode = 1;
+            }
             renderer->AddMaterials(leaf_materials[k]);
             leaf_to_world[k] = model_scale;
         }else{
@@ -2114,6 +2437,11 @@ void ApplicationArcher::BuildVines(){
             o->SetPosition(l.position);
             o->SetRotation(l.rotation);
             float s = l.scale * leaf_to_world[l.kind];
+            //The placeholder leaf is anchored at its stem too, so it can flutter the same way.
+            if (!f_vine_leaf_from_asset[l.kind] && (material_vine_leaf < (int)renderer->materials.size())){
+                renderer->materials[material_vine_leaf].glsl_material.wind_flex = vine_leaf_wind_flex;
+                renderer->materials[material_vine_leaf].glsl_material.wind_mode = 1;
+            }
             o->SetScale(vec3(s,s,s));
             vine_group->AttachChild(o);
             vine_leaves.push_back(o);
@@ -4280,6 +4608,8 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(block_objects,parked.block_objects);
     std::swap(plant_objects,parked.plant_objects);
     std::swap(spring_plant_objects,parked.spring_plant_objects);
+    std::swap(balance_bar,parked.balance_bar);
+    std::swap(balance_marker,parked.balance_marker);
     std::swap(blockout_group,parked.blockout_group);
     std::swap(prop_views,parked.prop_views);
     std::swap(debris,parked.debris);
@@ -4653,6 +4983,8 @@ void ApplicationArcher::NewGame(){
     }
     plant_objects.clear();
     spring_plant_objects.clear();
+    balance_bar = NULL;
+    balance_marker = NULL;
     /*
         THE TERRAIN DELIBERATELY SURVIVES A RESTART, and this is not an oversight.
 
@@ -4916,10 +5248,13 @@ void ApplicationArcher::RunSimulationTick(void){
     UpdateRopeAttachMarkers();
     SyncArrowViews();
     SyncSpringPlants();
+    SyncBalanceGauge();
     SyncAimArc();
     UpdateTargets();
     ReapFallenProps();
     UpdateCamera();
+    //After the camera, so the leaves are kept in the view this tick will draw.
+    StepWindLeaves();
     PublishSnapshot();
 }
 
@@ -6582,7 +6917,19 @@ void ApplicationArcher::SyncArcherView(){
         return;
     }
     bool f_on_wall = (stage.mode == MODE_HANG || stage.mode == MODE_CLIMB);
-    archer_object->SetMaterialSlot(0,f_on_wall ? material_archer_hang : material_archer);
+    bool f_sliding = (stage.SlideAccel() != 0.0f);
+    archer_object->SetMaterialSlot(0,f_on_wall ? material_archer_hang :
+                                     (f_sliding ? material_archer_slide : material_archer));
+    /*
+        And the model. Its slot 0 is whatever BuildArcherModel gave it - the export's own material,
+        or the flat skin - remembered the first time here, so the tint comes off to exactly that.
+    */
+    if (archer_model){
+        if (archer_model_material < 0){
+            archer_model_material = archer_model->GetMaterialSlot(0);
+        }
+        archer_model->SetMaterialSlot(0,f_sliding ? material_archer_slide : archer_model_material);
+    }
     //The box is the fallback character when there is no model, and a debug draw when there is.
     archer_object->SetVisibility(!archer_model || f_show_collider);
 }
@@ -6991,6 +7338,15 @@ void ApplicationArcher::SyncArcherAnimation(){
     }
     f_climb_posed = f_pinned;
     climb_base_posed = base_pinned;
+    /*
+        ON A BRANCH, HER LEAN - Stage::lean, sideways, + away from the camera - as a roll of the
+        whole model about her feet, until there is an animation to carry it. About the WORLD's X, the
+        axis she walks along, and outside the yaw for the rope tilt's reason: inside it the lean would
+        flip sides every time she turned round.
+    */
+    if (stage.f_on_ground && stage.branch_on >= 0 && stage.lean != 0.0f){
+        rotation = quat(vec3(1,0,0),-stage.lean) * rotation;
+    }
     archer_model->SetPosition(feet);
     archer_model->SetRotation(rotation);
     archer_model->leg_drawn_yaw = yaw;
@@ -7549,11 +7905,17 @@ void ApplicationArcher::PublishSnapshot(){
     s.spring_on = stage.spring_on;
     s.launch_lift = stage.launch_lift;
     s.slide_accel = stage.SlideAccel();
+    s.ramp_on = stage.ramp_on;
+    s.slope_deg = stage.SlopeUnderFeetDeg();
     s.spring_cue = (spring_cue_plant >= 0) ? spring_cue : -1.0f;
     s.spring_boost = stage.SpringBoostNow();
     s.spring_boost_peak = spring_cue_peak;
     s.stomp_ticks = stage.stomp_ticks;
     s.spring_air_ticks = stage.spring_air_ticks;
+    s.branch_on = (stage.f_on_ground) ? stage.branch_on : -1;
+    s.lean_deg = stage.lean * 57.2957795f;
+    s.lean_rate_deg = stage.lean_rate * 57.2957795f;
+    s.balance_danger = stage.BalanceDanger();
     s.spring_plants.resize(stage.spring_plants.size());
     for (size_t i = 0; i < stage.spring_plants.size(); i++){
         const StageSpringPlant& p = stage.spring_plants[i];
@@ -7751,6 +8113,13 @@ json ApplicationArcher::BuildStateJson(){
                         {"stomp_ticks",s.stomp_ticks},{"air_ticks",s.spring_air_ticks},
                         {"plants",list}};
         }()},
+        //The slide: the ramp she is on (-1 none), the slope under her feet in degrees (+ rising to
+        //the right, whatever it is - leaf, branch or ramp), and the pull down it (0 when it holds her).
+        {"slide",json{{"ramp",s.ramp_on},{"slope_deg",s.slope_deg},{"accel",s.slide_accel}}},
+        //Balance on a branch: which (-1 none), her lean (+ away from the camera) and its rate in
+        //degrees, and how near falling, 0..1 - what the gauge beside her shows.
+        {"balance",json{{"branch",s.branch_on},{"lean_deg",s.lean_deg},{"lean_rate_deg",s.lean_rate_deg},
+                        {"danger",s.balance_danger}}},
         {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" : "main"},
         {"archer",json{
             {"x",s.x},{"y",s.y},{"vx",s.vx},{"vy",s.vy},
@@ -7893,7 +8262,7 @@ void ApplicationArcher::RegisterMCPTools(){
         "is computed with the same integrator the arrow flies on, so a script can solve for an aim "
         "angle by bisection instead of shooting and looking. Read from a snapshot the physics thread "
         "publishes at the end of every tick, so it never disturbs the game it is measuring. The "
-        "level runs from x -12 to 141 with the ground surface at y 0; the game runs at 60 ticks a "
+        "level runs from x -12 to 176 with the ground surface at y 0; the game runs at 60 ticks a "
         "second and every duration is a tick count.",
         json{
             {"type","object"},
@@ -8139,14 +8508,16 @@ void ApplicationArcher::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("archer_place",
         "Put the archer at (x, y) and clear their movement state - which also ends the level-entry "
         "get-up if it is still playing. A DEVELOPMENT TOOL: the level "
-        "runs from x -12 to 141 with two gaps in it, and iterating on one part of it should not mean "
+        "runs from x -12 to 176 with two gaps in it, and iterating on one part of it should not mean "
         "flying the whole approach by script every time. Useful landmarks: the ground surface is "
         "y 0, the start is (-6, 0.9), the grabbable-only ledge stands at x 44..48 with its lip at "
         "4.2 (jump from x 43.1 to catch it), the cracked wall is at x 57 and the brick wall at "
         "x 49.5, and the tree stands at x 80 (arms at 2.5 right, 5.0 left, 7.5 right; stand under "
         "the first at x 81.45 and jump), the bounce pad's cap is at x 105 (top 1.2; drop onto it from "
         "(105, 5) to test it), and the leaf grows right from the shelf at x 110..118, top 7.5 (stand on "
-        "its end at (116, 8.4)). y is the archer's CENTRE, so standing on the ground is y 0.9. DO NOT PLACE INSIDE "
+        "its end at (116, 8.4)), a high branch runs from the canopy's end (133, 13.0) to a perch at x 145..152, "
+        "and a low practice branch runs at height 2.0 between stumps at x 155..157 and 168..170 (stand on "
+        "the left stump at (156, 2.9) and walk right; Up/Down keep her balance). y is the archer's CENTRE, so standing on the ground is y 0.9. DO NOT PLACE INSIDE "
         "SOLID GEOMETRY: the archer is ejected out of it on the next tick, and out of a tall block "
         "that means upward onto its roof - which looks like the placement having worked and then "
         "the archer walking over things it should have been stopped by. x 44 is inside the ledge; "
@@ -8277,7 +8648,9 @@ void ApplicationArcher::RegisterMCPTools(){
         "(units/s, signed, + blows toward +x), `eddy_strength` (a corner eddy's swirl as a fraction "
         "of the wind), `eddy_strouhal` (shedding rate), `wave_strength`, `wave_length`, "
         "`gust_strength`, `gust_width`, `gust_period` (ticks). Debug view options `arrows`, "
-        "`streamlines`, `eddies`, `arrow_spacing`. `sample`: [x, y] returns the wind there at the "
+        "`streamlines`, `eddies`, `arrow_spacing`. Leaves: `leaves` (on/off), `leaf_density` (per "
+        "square unit), `leaf_pad` (the region around the view they live in, as a fraction of it). "
+        "Streaks: `streaks` (on/off), `streak_count`, `streak_alpha`, `streak_width`. `sample`: [x, y] returns the wind there at the "
         "current tick - the total, the mean flow alone, the gust factor and the distance to the "
         "nearest block. Returns the params, the build stats and the shedding corners.",
         json{
@@ -8295,7 +8668,14 @@ void ApplicationArcher::RegisterMCPTools(){
                 {"streamlines",   {{"type","boolean"}}},
                 {"eddies",        {{"type","boolean"}}},
                 {"arrow_spacing", {{"type","number"}}},
-                {"sample",        {{"type","array"},{"items",{{"type","number"}}}}}
+                {"sample",        {{"type","array"},{"items",{{"type","number"}}}}},
+                {"leaves",        {{"type","boolean"}}},
+                {"leaf_density",  {{"type","number"}}},
+                {"leaf_pad",      {{"type","number"}}},
+                {"streaks",       {{"type","boolean"}}},
+                {"streak_count",  {{"type","integer"}}},
+                {"streak_alpha",  {{"type","number"}}},
+                {"streak_width",  {{"type","number"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -8325,6 +8705,15 @@ void ApplicationArcher::RegisterMCPTools(){
             if (args.contains("streamlines") && args["streamlines"].is_boolean()){ wind_view.options.f_streamlines = args["streamlines"].get<bool>(); }
             if (args.contains("eddies") && args["eddies"].is_boolean()){ wind_view.options.f_eddies = args["eddies"].get<bool>(); }
             num("arrow_spacing",wind_view.options.arrow_spacing);
+            if (args.contains("leaves") && args["leaves"].is_boolean()){ f_wind_leaves = args["leaves"].get<bool>(); }
+            num("leaf_density",leaf_swarm.params.density);
+            num("leaf_pad",leaf_swarm.params.pad);
+            if (args.contains("streaks") && args["streaks"].is_boolean()){ f_wind_streaks = args["streaks"].get<bool>(); }
+            if (args.contains("streak_count") && args["streak_count"].is_number()){
+                streak_swarm.params.count = std::min(std::max(args["streak_count"].get<int>(),0),200);
+            }
+            num("streak_alpha",streak_swarm.params.alpha);
+            num("streak_width",streak_swarm.params.width);
             wind.Build(blocks,wind_params);
 
             const WindStats& st = wind.Stats();
@@ -8345,7 +8734,12 @@ void ApplicationArcher::RegisterMCPTools(){
                 {"corners",corners},
                 {"view_vertices",wind_view.VertexCount()},
                 {"view_ms",wind_view_ms},
-                {"grid",{ {"w",wind_grid_w},{"h",wind_grid_h},{"bake_ms",wind_bake_ms} }}
+                {"grid",{ {"w",wind_grid_w},{"h",wind_grid_h},{"bake_ms",wind_bake_ms} }},
+                {"leaves",LeafSummary()},
+                {"streaks",{ {"on",f_wind_streaks.load()},{"count",streak_swarm.params.count},
+                             {"alive",(int)std::count_if(streak_swarm.streaks.begin(),streak_swarm.streaks.end(),
+                                                         [](const Streak& k){ return k.f_alive; })},
+                             {"vertices",(int)streak_ribbons.size()} }}
             };
             if (args.contains("sample") && args["sample"].is_array() && (args["sample"].size() >= 2)){
                 float x = args["sample"][0].get<float>(), y = args["sample"][1].get<float>();
@@ -8917,6 +9311,53 @@ void ApplicationArcher::DrawImGuiUI(void){
         }
         if (f_flex){
             ApplyFoliageWindFlex();
+        }
+        bool f_leaves = f_wind_leaves;
+        if (ImGui::Checkbox("leaves on the wind",&f_leaves)){
+            f_wind_leaves = f_leaves;
+        }
+        {
+            LeafParams& lp = leaf_swarm.params;
+            ImGui::SliderFloat("leaf density (per u^2)",&lp.density,0.0f,1.0f);
+            ImGui::SliderFloat("leaf padding",&lp.pad,0.0f,3.0f);
+            ImGui::SliderInt("leaf cap",&lp.max_count,0,WIND_LEAF_POOL);
+            ImGui::SliderFloat("leaf size",&leaf_scale,0.2f,3.0f);
+            ImGui::SliderFloat("leaf fall (u/s)",&lp.fall_speed,0.05f,3.0f);
+            ImGui::SliderFloat("leaf drag (s)",&lp.drag_time,0.02f,2.0f);
+            ImGui::SliderFloat("leaf flutter",&lp.flutter,0.0f,3.0f);
+            ImGui::SliderFloat("leaf lift (u/s)",&lp.lift_speed,0.5f,10.0f);
+            int flying = 0, resting = 0;
+            for (const Leaf& l : leaf_swarm.leaves){
+                flying += (l.state == LEAF_FLYING);
+                resting += (l.state != LEAF_FLYING);
+            }
+            ImGui::Text("%d leaves (%d flying, %d lying)",(int)leaf_swarm.leaves.size(),flying,resting);
+        }
+        bool f_streaks = f_wind_streaks;
+        if (ImGui::Checkbox("wind streaks",&f_streaks)){
+            f_wind_streaks = f_streaks;
+        }
+        {
+            StreakParams& sp = streak_swarm.params;
+            ImGui::SliderInt("streak count",&sp.count,0,200);
+            ImGui::SliderFloat("streak alpha",&sp.alpha,0.0f,1.0f);
+            ImGui::SliderFloat("streak width",&sp.width,0.01f,0.4f);
+            ImGui::SliderInt("streak trail (samples)",&sp.points,4,96);
+            ImGui::SliderFloat("streak gust bias",&sp.gust_bias,0.0f,1.0f);
+            ImGui::ColorEdit3("streak colour",&streak_color.x);
+            int alive = 0;
+            for (const Streak& k : streak_swarm.streaks){
+                alive += k.f_alive;
+            }
+            ImGui::Text("%d streaks alive, %zu ribbon vertices",alive,streak_ribbons.size());
+        }
+        if (ImGui::SliderFloat("flex vine leaves",&vine_leaf_wind_flex,0.0f,3.0f,"%.3f")){
+            for (int k = 0; k < VINE_LEAF_KIND_COUNT; k++){
+                SetMaterialWindFlex(std::string("@") + VINE_LEAF_NODES[k],vine_leaf_wind_flex);
+            }
+            if (material_vine_leaf < (int)renderer->materials.size()){
+                renderer->materials[material_vine_leaf].glsl_material.wind_flex = vine_leaf_wind_flex;
+            }
         }
         if (wind.IsBuilt()){
             const WindStats& st = wind.Stats();

@@ -71,7 +71,16 @@ struct material_t {
         MaterialBuffer are not the same between shaders").
     */
     float wind_flex = 0.0f;
-    int pad;
+    /*
+        HOW it bends, when wind_flex says it does:
+          0  STALK  by height above the origin - grass, ferns, flowers, anything authored
+                    base-down and standing up.
+          1  LEAF   by DISTANCE from the origin, whichever way the surface points, with more
+                    flutter - a leaf on a vine hangs sideways or down, and by height it would
+                    hardly move at all. Its origin must be where it is attached (the stem).
+        The last padding int, so again no offset moved; every GLSL mirror spells it too.
+    */
+    int wind_mode = 0;
     uint64_t handle_diffuse = 0;    // The texture handle for OpenGL Bindless Textures
     uint64_t handle_normal = 0;     // The texture handle for OpenGL Bindless Textures
     // Light the surface emits on its own, added to the lit result and unaffected by any light or

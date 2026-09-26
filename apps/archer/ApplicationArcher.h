@@ -16,6 +16,8 @@
 #include "Boulders.h"
 #include "Vine.h"
 #include "WindView.h"
+#include "Leaves.h"
+#include "Streaks.h"
 #include "RopeMesh.h"
 #include "DynamicChain.h"
 #include "Bow.h"
@@ -92,7 +94,8 @@
         S                                    drop through a one-way platform; let go of a ledge
         Space                   A            jump (hold for height, tap for a hop); climb up
         J                       L1           hold to draw the bow, release to loose
-        Up / Down               right stick  tilt the aim, whether or not the bow is drawn
+        Up / Down               right stick  tilt the aim, whether or not the bow is drawn; on a
+                                             branch, keep her balance (Up leans away from the camera)
         K                       B            kick - shoves props hard, breaks walls
         Down+K / Up+K           B + stick    the low push kick / the high rising kick (KICK_SPECS)
         C                       X            kneel / stand up - a toggle; kneeling she can draw
@@ -869,11 +872,17 @@ struct ArcherSnapshot{
     int   spring_on = -1;
     float launch_lift = 0.0f;
     float slide_accel = 0.0f;
+    int   ramp_on = -1;
+    float slope_deg = 0.0f;         //Stage::SlopeUnderFeetDeg
     float spring_cue = -1.0f;           //the timing cue, 0..1, or -1 while there is none
     float spring_boost = 0.0f;          //what a jump now would add, and this bounce's best
     float spring_boost_peak = 0.0f;
     int   stomp_ticks = 0;
     int   spring_air_ticks = -1;
+    int   branch_on = -1;               //Stage::branch_on while standing, else -1
+    float lean_deg = 0.0f;              //Stage::lean and its rate, degrees; + away from the camera
+    float lean_rate_deg = 0.0f;
+    float balance_danger = 0.0f;
     struct SpringPlantView{
         int   kind = 0;
         float q = 0.0f;
@@ -1285,6 +1294,8 @@ private:
     void SyncArrowViews();
     //Each spring plant's moving box, to where its spring is this tick.
     void SyncSpringPlants();
+    //The balance gauge beside her head, while she is on a branch.
+    void SyncBalanceGauge();
     void SyncAimArc();
     //Cuts the aim arc short at the first PROP it would hit - the half of "what will this arrow
     //hit" that Stage cannot answer. See the note on the definition.
@@ -1369,6 +1380,7 @@ private:
     int material_trunk = 0;
     int material_spring_pad = 0;
     int material_leaf = 0;
+    int material_ramp = 0;          //the slide gallery's ramps - see Stage::BuildSlideGallery
     //The timing cue's ramp, green (a jump now adds nothing) through yellow to red (this bounce's
     //best). See spring_cue.
     static const int SPRING_CUE_STEPS = 9;
@@ -1380,6 +1392,8 @@ private:
     //state readout - it is what makes "is he hanging or is he stuck in the wall" answerable from a
     //screenshot, which is how this app gets checked over MCP.
     int material_archer_hang = 0;
+    int material_archer_slide = 0;  //her tint while she slides - there is no slide clip yet
+    int archer_model_material = -1; //the model's own slot 0, put back when the slide tint comes off
     int material_crate = 0;
     int material_target = 0;
     int material_target_hit = 0;
@@ -1437,6 +1451,9 @@ private:
         timed a jump pressed now would be, 0..1 - Stage::SpringBoostNow over this bounce's best,
         PredictSpringBoostPeak. The colour a frame shows is what a press on the NEXT tick gets.
     */
+    //The balance gauge's two boxes, made with the branches - see SyncBalanceGauge. In plant_objects.
+    Object* balance_bar = NULL;
+    Object* balance_marker = NULL;
     int   spring_cue_plant = -1;
     float spring_cue = 0.0f;
     float spring_cue_peak = 0.0f;
@@ -1635,6 +1652,56 @@ private:
     float      foliage_wind_flex[FOLIAGE_KIND_COUNT] = { 0.035f, 0.20f, 0.06f, 0.30f, 0.30f };
     //Writes foliage_wind_flex into the renderer's copies of the plant materials. Render thread.
     void ApplyFoliageWindFlex();
+    //Every renderer material whose name ends in `suffix` - the "@<node>" copies - gets `flex`.
+    void SetMaterialWindFlex(const std::string& suffix, float flex);
+    //The vine leaves' flex, in LEAF mode (material_t::wind_mode 1) - by distance from the stem.
+    float      vine_leaf_wind_flex = 0.1f;
+
+    /*
+        LEAVES ON THE WIND (wind_plan.md step 4). The swarm is simulated on the PHYSICS thread,
+        once a tick from RunSimulationTick - so a paused game holds every leaf where it is - under
+        wind_mutex, since the render thread rebuilds the field. The pool is built once at Init
+        (WIND_LEAF_POOL of them, all one mesh, so the renderer draws them as one instanced call);
+        the swarm's count decides how many show. The swarm lives in the view padded 150% on
+        every side (user, 2026-09-26: zooming out showed the leaves in a box, and aiming and
+        obstacles will zoom), at a density - about 1600 leaves at the default zoom, of which a
+        sixth are on screen.
+    */
+    enum{ WIND_LEAF_POOL = 2000, WIND_LEAF_TINTS = 4 };
+    LeafSwarm leaf_swarm;
+    std::atomic<bool> f_wind_leaves{true};
+    Object*   leaf_group = NULL;
+    std::vector<Object*> leaf_objects;
+    Mesh*     leaf_mesh = NULL;
+    std::vector<Material> leaf_materials[WIND_LEAF_TINTS];
+    float     leaf_scale = 1.0f;            //panel; on top of model_scale and each leaf's own size
+    void BuildWindLeaves();
+    void StepWindLeaves();
+    //For archer_wind: on or off, and how many are flying, lying and fading. Hold wind_mutex.
+    json LeafSummary();
+
+    /*
+        WIND STREAKS (wind_plan.md step 5). Unlike the leaves these are simulated on the RENDER
+        thread, in UpdateWind, catching up on however many ticks passed since the last frame - they
+        are pure decoration, they rebuild a mesh every frame anyway (GL, render thread), and they
+        need no physics-thread state. Still tick-driven, so a paused game freezes them. Drawn
+        through the custom-shader pass (shaders/wind_streak.*): unlit, alpha-blended, no depth
+        write, depth-tested so terrain in front hides them.
+    */
+    StreakSwarm streak_swarm;
+    std::atomic<bool> f_wind_streaks{true};
+    Object*   streak_object = NULL;
+    Mesh*     streak_mesh = NULL;
+    Shader*   streak_shader = NULL;
+    int       streak_shader_index = -1;
+    int64_t   streak_last_tick = -1;
+    vec3      streak_color = vec3(0.90f,0.95f,1.0f);
+    std::vector<StreakVertex> streak_ribbons;
+    std::vector<vertex> streak_vertices;
+    void BuildWindStreaks();
+    //Under wind_mutex, from UpdateWind.
+    void UpdateWindStreaks(int64_t tick);
+    void SetStreakUniforms();
     //Measured every tick on the rope, -1 off it. World units.
     float   rope_joint_gap = -1.0f;         //red to blue
     float   rope_hands_off = -1.0f;         //red to the point between the yellows
@@ -1730,6 +1797,8 @@ private:
         std::vector<Object*> block_objects;
         std::vector<Object*> plant_objects;
         std::vector<Object*> spring_plant_objects;
+        Object* balance_bar = NULL;
+        Object* balance_marker = NULL;
         Object* blockout_group = NULL;
         std::vector<PropView> prop_views;
         std::vector<DebrisView> debris;
