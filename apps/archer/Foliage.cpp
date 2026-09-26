@@ -20,7 +20,7 @@ static const float FOLIAGE_EPS = 0.001f;
 //The channels a spot draws from, so no two decisions share a number.
 //The grass pass draws from channels of its own, so adding it moved none of the other plants.
 enum{ CH_ACCEPT = 0, CH_KIND, CH_Z, CH_SCALE, CH_YAW,
-      CH_GRASS_ACCEPT, CH_GRASS_Z, CH_GRASS_SCALE, CH_GRASS_YAW };
+      CH_GRASS_ACCEPT, CH_GRASS_Z, CH_GRASS_SCALE, CH_GRASS_YAW, CH_GRASS_KIND };
 
 //--- Occlusion ------------------------------------------------------------------------------------
 /*
@@ -268,15 +268,16 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
                     continue;
                 }
                 FoliagePlant plant;
-                plant.kind = FOLIAGE_GRASS;
+                //Its own channel, so which clump grows moves no clump.
+                plant.kind = (Hash01(x,y,t,CH_GRASS_KIND) < params.grass_2_share) ? FOLIAGE_GRASS_2 : FOLIAGE_GRASS;
                 plant.x = x;
                 plant.y = y;
                 plant.z = z_lo + (z_hi - z_lo) * Hash01(x,y,t,CH_GRASS_Z);
                 plant.scale = 1.0f + params.scale_jitter * (2.0f * Hash01(x,y,t,CH_GRASS_SCALE) - 1.0f);
                 plant.yaw = 2.0f * FOLIAGE_PI * Hash01(x,y,t,CH_GRASS_YAW);
                 plant.occlusion = shade;
-                float r = params.radius[FOLIAGE_GRASS] * plant.scale;
-                float h = params.height[FOLIAGE_GRASS] * plant.scale;
+                float r = params.radius[plant.kind] * plant.scale;
+                float h = params.height[plant.kind] * plant.scale;
                 if (!HasRoom(blocks,i,x,r,h,r * params.wall_clearance)){
                     continue;
                 }

@@ -56,3 +56,9 @@ block is body + grass cap (same pinned top, overhanging lip, drips) + belly if f
 own `StageBlock::z`/`depth`; grass = vertices the cap owns. See terrain_plan.md section 9.
 Gotcha: a block's cap and its own body must be a HARD min - smooth-unioning two surfaces that
 coincide on the top face lifts the whole top by k/4. Plants now grow on the terrain too.
+
+**2026-09-26 back wall + rocks:** Backdrop.{h,cpp} = a tall teal-grey CAVE back wall (not a bank - the
+user's mock set that) behind the ground bay's floor: noise ridge line, forward ridges, pines on top
+(children of terrain_back_<bay>). Boulders.{h,cpp} = rocks at inside corners only, big pushed to the back.
+Both pure, in make rules. Traps: weak multiply-xor hash gave a plateau (use lowbias32); BuildTerrain runs
+before BuildArcherModel so anything at model_scale placed there is half size. terrain_plan.md 10-11.

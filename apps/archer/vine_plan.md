@@ -206,3 +206,14 @@ The chain in `BuildRope` stays. What changes is only how it is drawn.
    to take out one of two ways: hang the MODEL by its hands (place it so the clip's measured
    grip meets the joint), or move the joint's body anchor up to the clip's grip height.
 6. **Gameplay**: rope arrow, cutting, growth - if wanted.
+
+## The cave vines (2026-09-26)
+
+Four big long vines hung into the terrain bay's cave (in front of its back wall, Backdrop.h),
+added to DeclareVines under `#if ARCHER_TEST_BAY`: two BEHIND her (z -1.1 .. -6.6 - off the wall's
+crest onto the island's step; over the island's left end onto the small stone at x -30) and two IN
+FRONT (z 2+ where they hang - from above the frame over the island's front lip onto the stone at
+x -19; onto the stone at x -14). Thickness 1.5 .. 1.8, which also lengthens the tile - 3 .. 6
+tiles for 12 .. 21 units. Resting points sit 0.2 over the top they lie on. A vine that starts
+hanging straight down needs `up = +Z`, or the frame starts parallel to the tangent. The front two
+start at y 33+: begun at 20, their tapered tops showed in mid-air at the camera's widest.

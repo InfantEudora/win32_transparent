@@ -30,7 +30,7 @@ struct Material{
     float metallic;
     float roughness;
     int f_unlit;       //see material_t in core/Material.h; was pad2
-    int pad3;
+    float wind_flex;   //see material_t; was pad3 (and still is, in the mirrors that do not read it)
     int pad4;
     //sampler2D handle_diffuse;
     //sampler2D handle_normal;
@@ -73,6 +73,59 @@ layout (std430, binding = 1) buffer MaterialBuffer{
 layout (std430, binding = 5) buffer MorphBuffer{
 	morph_vertex morph_vertices[];
 };
+
+/*
+	THE WIND - Renderer::SetWindField fills it, material_t::wind_flex says who bends. A grid of
+	world X/Y velocities with its own mapping in the header, so nothing needs a uniform for it.
+	Always bound; enabled (wind_size.z) is 0 until an app sets a field. Mirrors wind_header_t.
+*/
+layout (std430, binding = 7) readonly buffer WindBuffer{
+	vec4  wind_rect;	//x0, y0, 1/cell_x, 1/cell_y
+	ivec4 wind_size;	//width, height, enabled, unused
+	vec4  wind_params;	//time in seconds, unused x3
+	vec2  wind_grid[];
+};
+
+//Bilinear, and NO wind outside the grid rather than the edge smeared outward - the app sizes the
+//grid to what the camera sees, so outside it is also out of sight.
+vec2 SampleWind(vec2 p){
+	vec2 g = (p - wind_rect.xy) * wind_rect.zw;
+	int w = wind_size.x;
+	if ((g.x < 0.0) || (g.y < 0.0) || (g.x >= float(w - 1)) || (g.y >= float(wind_size.y - 1))){
+		return vec2(0.0);
+	}
+	ivec2 i = ivec2(g);
+	vec2 t = g - vec2(i);
+	int k = i.y * w + i.x;
+	return mix(mix(wind_grid[k],wind_grid[k + 1],t.x),mix(wind_grid[k + w],wind_grid[k + w + 1],t.x),t.y);
+}
+
+/*
+	Bends one vertex of something that stands on its origin - a plant authored base-down.
+
+	The push grows with the SQUARE of the height above the origin, so the root stays put and the
+	tip moves most, which is how a stalk bends; the wind is read at the vertex, so a tall plant
+	whose top is in faster air bends more at the top. On top of the bend, a flutter that scales
+	with the wind speed and is phased by where the plant stands, so neighbours never sway in step,
+	and a smaller sway through the slab so a row of grass is not a row of cut-outs. A tip pushed
+	sideways also comes DOWN, keeping the blade about its length.
+*/
+vec3 WindBend(vec3 world, vec3 origin, float flex){
+	float h = world.y - origin.y;
+	if (h <= 0.0){
+		return world;
+	}
+	vec2 wind = SampleWind(world.xy);
+	float speed = length(wind);
+	float t = wind_params.x;
+	float phase = dot(origin,vec3(1.73,0.0,2.41));
+	float flutter = 0.25 * sin(t * 5.3 + phase + h * 4.0) + 0.1 * sin(t * 8.9 + phase * 1.7);
+	float bend = flex * h * h;
+	float dx = clamp(bend * (wind.x + speed * flutter),-0.9 * h,0.9 * h);
+	float dz = clamp(bend * speed * 0.35 * sin(t * 3.7 + phase * 2.3),-0.5 * h,0.5 * h);
+	float dy = -min((dx * dx + dz * dz) / (2.0 * h),0.8 * h);
+	return world + vec3(dx,dy,dz);
+}
 
 //Output
 layout (location = 0) out vec3 vposition; 	//Vertex position in world space, used for lighting
@@ -127,15 +180,19 @@ void main(){
 	}
 
 	vec4 world_position = instance_data[gl_InstanceID].mat_transformscale * vec4(pos,1);
+
+	int matindex_out = instance_data[gl_InstanceID].material_slot[int(vertex_words[uint(gl_VertexID) * 12u + 11u])];
+
+	Material m = materials[matindex_out];
+	//Before anything reads world_position, so the shadow and the G-buffer bend with the colour.
+	if ((wind_size.z != 0) && (m.wind_flex > 0.0)){
+		world_position.xyz = WindBend(world_position.xyz,instance_data[gl_InstanceID].mat_transformscale[3].xyz,m.wind_flex);
+	}
 	vposition = world_position.xyz;
 
 	vnormal = (mat_rotate * normal);
 	vnormal = normalize(vnormal);
 	vshadow = mat_shadow * world_position; //Vertex postition in shadow coordinates
-
-	int matindex_out = instance_data[gl_InstanceID].material_slot[int(vertex_words[uint(gl_VertexID) * 12u + 11u])];
-
-	Material m = materials[matindex_out];
 	if ((f_normal_mapping == 1) && (m.normal_texture >= 0)){
 		vec3 T = tangent;
 		vec3 B = normalize(cross(vnormal, T));

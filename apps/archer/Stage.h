@@ -314,6 +314,135 @@ enum StageBlockKind{
 */
 #define STAGE_BLOCK_MIN_COVER       0.60f
 
+/*
+    A TREE she climbs by its arms - apps/archer/plant_mechanics_plan.md, section 1.
+
+    Declared HERE, in the rules, because the arms are gameplay: BuildTrees turns each into a
+    one-way BLOCK_PLATFORM after the level is built, so the rules test can prove a tree climbable
+    and a replay stands on the same arms. The trunk collides with nothing - it stands behind her
+    walk line and she climbs past it - so it is the app's alone to draw, from these same numbers,
+    as it will draw the tree's mesh when there is one.
+*/
+struct StageTreeArm{
+    float top = 0.0f;           //the arm's walkable top
+    float side = 1.0f;          //+1 out to the right of the trunk, -1 to the left
+    float length = 2.0f;        //from the trunk's surface to the tip
+};
+struct StageTree{
+    float x = 0.0f;             //the trunk's centre
+    float base = 0.0f;          //where it stands
+    float height = 10.0f;
+    float radius = 0.45f;
+    std::vector<StageTreeArm> arms;
+};
+//An arm is as thin as the level's other one-way platform - see the note on it in BuildMainLevel.
+#define STAGE_TREE_ARM_HALF_H       0.15f
+/*
+    The trunk's centre and half-depth through the slab: behind her, clear of her body at z 0. The
+    arms reach from its face forward across the play plane - they are blocks, and every block has
+    to cover STAGE_BLOCK_MIN_COVER of it or a crate knocked onto one falls through.
+*/
+#define STAGE_TREE_Z                -1.30f
+#define STAGE_TREE_HALF_DEPTH       0.45f
+#define STAGE_TREE_ARM_Z            -0.55f
+#define STAGE_TREE_ARM_HALF_DEPTH   1.20f
+
+/*
+    A SPRING PLANT she stands on and is thrown by - plant_mechanics_plan.md, section 2: the bounce
+    pad (a mushroom cap) and the leaf.
+
+    ONE SPRING, TWO SHAPES. Each has a single coordinate `q` and a spring pulling it back to rest:
+    the pad's is how far its cap has sunk, the leaf's the angle it is bent to about its stem. What
+    she stands on is the same for both - a one-way surface that MOVES, at the speed SurfaceVelY
+    says - so the landing, the ride and the fling are written once. The leaf adds a slope, and past
+    SPRING_LEAF_SLIP_DEG she slides down it.
+
+    TUNED BY FEEL rather than by constants, the idea taken from core/physics/SpringHinge: how far
+    her WEIGHT moves it at rest (`give`), how fast it swings with nobody on it (`hz`) and how fast
+    that swing dies (`damping`, a ratio - 0 rings forever, 1 settles without overshoot). Stiffness,
+    inertia and damping are worked out from those. Her mass is 1; everything else is relative.
+
+    SHE IS PART OF THE SPRING while she stands on it. Her weight bends it and her mass slows it - a
+    leaf with her at the tip swings far slower than an empty one - and landing hands it her fall as
+    momentum about the stem, so a landing at the tip bends a leaf harder than one by the stem. She
+    rides it at its own speed, so when it springs back faster than she can fall she leaves it with
+    that speed: the rebound hop. A jump while it rises adds the rise to the jump: the fling.
+
+    Not a block, and no rp3d body: crates and arrows pass through both. The app draws them from
+    these same numbers.
+*/
+enum SpringPlantKind{
+    SPRING_PAD = 0,         //a mushroom cap: flat, sinks straight down
+    SPRING_LEAF             //a leaf on a stem: bends about the stem, and slopes
+};
+struct StageSpringPlant{
+    int   kind = SPRING_PAD;
+    v2    root;                 //PAD: the middle of the cap's top at rest. LEAF: the stem it bends about
+    float length = 2.0f;        //PAD: the cap's width. LEAF: stem to tip
+    float side = 1.0f;          //LEAF: +1 grows out to the right, -1 to the left
+    float rest_deg = 0.0f;      //LEAF: its angle above the horizontal with nobody on it
+    float base = 0.0f;          //PAD: where its stalk stands - looks only
+    float give = 0.2f;          //her weight, at rest: PAD units sunk; LEAF degrees bent with her at the tip
+    float hz = 3.0f;            //the swing with nobody on it
+    float damping = 0.2f;       //and how fast it dies away, as a ratio
+    float travel = 1.0f;        //how far it can go either side of rest: PAD units, LEAF degrees
+
+    //--- State, stepped by Stage::TickSpringPlants ---
+    float q = 0.0f;             //PAD: the cap's height above rest, sunk is negative. LEAF: its angle, radians
+    float qd = 0.0f;            //and its rate
+    float prev_q = 0.0f;        //last tick's q - the surface she was above, for the one-way test
+
+    float Rest() const;
+    float Stiffness() const;
+    float Inertia() const;      //of the plant alone, without her
+    float Damping() const;
+    float Travel() const;       //`travel` in q's units
+    /*
+        How much of q's rate shows as vertical speed at x: 1 anywhere on a pad, the distance out
+        from the stem on a leaf. Also her LEVER on it - what her weight turns it by, and (squared)
+        her share of its inertia while she stands there.
+    */
+    float Lever(float x) const;
+    bool  Covers(float x) const;        //a pad, if any of her is over the cap; a leaf, if her centre is
+    float SurfaceY(float x, float at_q) const;
+    float SurfaceY(float x) const { return SurfaceY(x,q); }
+    float SurfaceVelY(float x) const { return Lever(x) * qd; }
+    float SlopeDeg() const;             //+ rising away from the stem; 0 on a pad
+    v2    Tip() const;                  //LEAF: where it ends
+};
+/*
+    Steeper than this and she slides down a leaf. The pull is gravity along the slope less a
+    friction that holds her at exactly this angle, so a leaf just past it creeps and a bent one
+    throws her off. Low, because a leaf is slippery and "it bends and you slide off" is the point.
+*/
+#define SPRING_LEAF_SLIP_DEG        14.0f
+//How much of her run she keeps against a slide: holding uphill slows one, it does not climb a steep one.
+#define SPRING_LEAF_SLIDE_CONTROL   0.35f
+/*
+    The most a fling can throw her at. A timed bounce is her jump plus the rise, and without a cap
+    every bounce off a pad lands harder and so throws her higher than the last. 28 is about 9.3 of
+    rise, three jumps' worth.
+*/
+#define SPRING_MAX_LAUNCH           28.0f
+//How far she steps UP off a spring plant onto a block beside it - a leaf bent below the ledge it grows
+//from would otherwise leave her walking into the ledge's face. Only while standing on one.
+#define SPRING_STEP_UP              0.40f
+/*
+    PUMPING, the swing's trick: legs driven down into the plant as she comes onto it, and swung up
+    as it throws her. Both are TIMED, like the jump: the stomp counts only the aim held down in the
+    last ticks of the fall, the swing only an Up press in the first ticks after she leaves it.
+
+    On the aim axis - the Up/Down keys and the right stick - because that is the stick a player
+    already has a thumb on, and the move keys are steering the flight. It tilts the bow as well;
+    the aim survives a landing, so that costs a re-aim at worst.
+*/
+#define SPRING_PUMP_AIM             0.5f    //how far the aim axis has to go, either way
+#define SPRING_STOMP_TICKS          10      //down held this long before touching down is a full stomp
+#define SPRING_STOMP_GAIN           0.30f   //which lands her this much harder into it
+#define SPRING_SWING_WINDOW         10      //ticks after it lets go of her that an Up press still swings
+#define SPRING_SWING_FULL           3       //at full strength within these, fading to none at the window
+#define SPRING_SWING_GAIN           0.25f   //of what it threw her with (launch_lift), added to her rise
+
 //An axis-aligned box in the play plane. Centre and half extents, because every test in here wants
 //them that way and converting once at build time is cheaper than converting in the sweep.
 struct StageBlock{
@@ -336,6 +465,9 @@ struct StageBlock{
     */
     float z = 0.0f;
     float depth = 0.0f;
+    //The tree this block is an ARM of (an index into Stage::trees), or -1 for a block the level
+    //declared. The rules treat an arm as the one-way platform it is; the app and the tests ask.
+    int   tree = -1;
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
@@ -384,7 +516,15 @@ enum StagePropKind{
     PROP_CRATE = 0,         //small, kickable, a single dynamic box
     PROP_TARGET,            //a standing board an arrow knocks down
     PROP_BRICKWALL,         //cols x rows of bricks that break apart when kicked through
-    PROP_ROPE_ANCHOR        //the fixed top of a rope; the chain hangs from here
+    PROP_ROPE_ANCHOR,       //the fixed top of a rope; the chain hangs from here
+    /*
+        A kicking dummy on a spring - apps/archer/strawman_plan.md. She walks THROUGH it and the
+        boot still finds it, so the app offers it as a non-blocking obstacle (StageObstacle::
+        f_blocks). Not a TargetVariant: a target that tips past TARGET_KNOCKED_DEG is taken out of
+        play, and this one tips that far on every good kick and comes back. y is its centre, as for
+        every prop, and it is built standing on y - h / 2.
+    */
+    PROP_STRAWMAN
 };
 
 /*
@@ -541,6 +681,9 @@ struct StageObstacle{
     float hh = 0.5f;
     int   id = -1;          //the app's handle; never interpreted here
     bool  f_pushable = false;   //false for the static ones (a brick in a standing wall)
+    //False for something she walks through that the boot still finds - the straw man. Last, so
+    //every existing brace-initialised obstacle keeps blocking.
+    bool  f_blocks = true;
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
@@ -852,6 +995,11 @@ struct StageEvents{
     bool  f_stood = false;          //finished standing back up
     bool  f_got_up = false;         //the level entry finished; the controls are hers
     bool  f_stand_blocked = false;  //asked to stand with no room overhead; stays down
+    //Pumping a spring plant: how much of a stomp the landing carried (0 none .. 1 full), and the
+    //speed a swing added.
+    float stomp = 0.0f;
+    bool  f_swung = false;
+    float swing_speed = 0.0f;
 
     //--- The rope -------------------------------------------------------------------------------
     //The app acts on these by creating and destroying the joint that makes the swing real.
@@ -931,6 +1079,9 @@ public:
     */
     void SetLevel(int new_level);
     int  GetLevel() const { return level; };
+    //Each tree's arms as one-way platforms, appended to `blocks` after the level is built.
+    void BuildTrees();
+
     //Where the archer starts and where a fall off the world puts her back. Per level.
     v2   StartPosition() const;
     //Her top speed on this level: ARCHER_RUN_SPEED, or ARCHER_RANGE_RUN_SPEED on the range.
@@ -944,6 +1095,9 @@ public:
     std::vector<StageProp>  props;
     std::vector<StageSign>  signs;
     std::vector<StageScenery> scenery;
+    std::vector<StageTree>  trees;
+    //Declared by the level and stepped every tick: their state is theirs, so a Reset rebuilds them.
+    std::vector<StageSpringPlant> spring_plants;
 
     /*
         Makes the blocks' CURRENT geometry the level's, so that Reset puts it back instead of
@@ -966,7 +1120,7 @@ public:
     */
     std::vector<StageObstacle> obstacles;
     void ClearObstacles();
-    void AddObstacle(float x, float y, float hw, float hh, int id, bool f_pushable);
+    void AddObstacle(float x, float y, float hw, float hh, int id, bool f_pushable, bool f_blocks = true);
 
     //And the rope, the same way. Also refreshed before every Tick - the links are swinging.
     std::vector<StageRopePoint> rope_points;
@@ -981,6 +1135,29 @@ public:
     bool  f_on_ground = false;
     int   coyote_ticks = 0;         //counts down after walking off an edge
     int   buffer_ticks = 0;         //counts down after a jump was pressed in the air
+    //The spring plant she is standing on, or -1 - kept in step with f_on_ground by the collision.
+    int   spring_on = -1;
+    //What a spring plant threw her up with: the part of her rise the jump cut may not take away,
+    //so letting go of jump shortens the jump and never the throw.
+    float launch_lift = 0.0f;
+    //Her sideways pull down a leaf too steep to stand on, units/s^2, or 0.
+    float SlideAccel() const;
+    //--- Pumping - see SPRING_STOMP_TICKS ---
+    int   stomp_ticks = 0;          //aim held down while falling, ticks running, capped
+    int   spring_left = -1;         //the spring plant that last let go of her, while spring_air_ticks runs
+    int   spring_air_ticks = -1;    //ticks since it did; -1 once she is down again
+    bool  f_swung = false;          //this flight's one swing has been spent
+    float prev_aim_axis = 0.0f;     //last tick's, for the Up press
+    /*
+        THE TIMING CUE. What a jump pressed now would add from a spring plant - her rise while she
+        rides one, or in the coyote ticks after it throws her - and whether that is on offer at
+        all. PredictSpringBoostPeak is the most it will add this bounce, past and future (a copy
+        ticked forward, the PredictLanding way), so now / peak is how well timed a press would be.
+    */
+    bool  SpringBoostActive() const;
+    float SpringBoostNow() const;
+    float PredictSpringBoostPeak(const ArcherInput& in, int horizon = 40) const;
+    float spring_boost_seen = 0.0f; //the most SpringBoostNow has been this bounce
 
     //--- Hanging and climbing -------------------------------------------------------------------
     int   hang_block = -1;          //index into blocks, while MODE_HANG or MODE_CLIMB
@@ -1138,6 +1315,16 @@ private:
     void TickBow(const ArcherInput& in, StageEvents& events);
     void TickArcher(const ArcherInput& in, StageEvents& events);
     void TickArrows(StageEvents& events);
+    //Every spring plant's spring, one step, with her weight on the one she is standing on.
+    void TickSpringPlants();
+    /*
+        The spring plants as floors, once per move, after the blocks: a landing (from above the
+        surface where it WAS, to below where it is), riding one, and leaving one. `from` is where
+        she started the move; `f_on_block`, that the blocks already stood her on a floor. Sets
+        spring_on, and hands a fresh landing's fall to the plant.
+    */
+    void CollideSpringPlants(const v2& from, bool f_down_held, bool f_on_block, StageEvents& events,
+                             bool& out_hit_floor);
     /*
         One tick of an arrow's flight: gravity, then the sweep from where this step starts (the
         anchor on its first step - see ARROW_LENGTH) to `next`, against the blocks. Returns the

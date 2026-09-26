@@ -459,3 +459,12 @@ which silently makes an "input is ignored" check pass.
 2026-09-24 rope test scene BUILT: STAGE_LEVEL_ROPE / scene "Rope" (one 9-unit rope, 12 links). App scenes are
 now a list (parked_levels + BuildExtraLevel). Rope climbing PROPOSED in animation_plan.md (Up/Down climb on the
 rope, grip distance + joint re-created with local anchors each tick); waiting on the user for a rope-climb clip.
+
+STRAW MAN BUILT 2026-09-26 (apps/archer/strawman_plan.md): PROP_STRAWMAN in the range at x 3, scores KICKS (1 each,
+kick_score), arrows only stick + swing it. Passable: StageObstacle::f_blocks=false (kick sweep still sees it) AND
+its mask drops ARCHER_CAT_ARCHER (every other prop's mask has it - that is how walking shoves crates). One
+core/physics/SpringHinge at the foot about Z, tuned by hz + damping ratio; k includes gravity (props' gravity is
+-18, ARCHER_PROP_GRAVITY). Kick = one tick of force at kick.y, not a velocity set. Joint pointer lives on
+PropView so it swaps with levels; DestroySprings in NewGame before the bodies go.
+MCP GOTCHA: archer_place always, and archer_hold unless "wait": false, block until ticks run - called while
+sim_pause'd they hang until the 30 s timeout. Place before pausing; hold with wait false, then sim_step.

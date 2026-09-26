@@ -81,3 +81,5 @@ delivers it. To frame a close screenshot use `archer_camera orbit` then `camera_
 camera overrides camera_set. Blocks span z -1.5..1.5, so a vine at z -1 is hidden behind a
 block's front face from a straight-on camera.
 Related: [[archer-app]], [[shell-heredoc-limit]].
+
+2026-09-26: four big CAVE vines added in the terrain bay (DeclareVines, #if ARCHER_TEST_BAY), two behind her and two in front at z 2+; hanging-start vines need up=+Z; see vine_plan.md "The cave vines".

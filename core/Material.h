@@ -53,7 +53,25 @@ struct material_t {
         cost no space and moved no offset - which is why this one did not have to go at the end.
     */
     int f_unlit = 0;
-    int pad[2];
+    /*
+        How much the wind bends this surface - 0, the default, not at all. default.vert displaces
+        each vertex by wind * wind_flex * h^2, h being its height above the object's origin, so
+        a plant authored base-down bends from the root and its tip moves most. In world units per
+        (unit/s of wind * unit^2 of height): grass wants a few tenths, a tall fern a few
+        hundredths. The wind itself is Renderer::SetWindField; with no field set this does nothing.
+
+        PER MATERIAL, so give a plant its OWN material - one that shares an atlas with the terrain
+        tiles and flexes would make the tiles sway too. A renamed copy costs no texture unit
+        (UploadMaterials binds each texture once however many materials use it).
+
+        In the first of the two padding ints left after f_unlit, so it moved no offset. EVERY GLSL
+        mirror must spell it `float wind_flex` too, even the ones that never read it: a storage
+        block has to be declared identically in every stage of a program, and default.vert's
+        float against deferred.frag's old `int pad3` failed the link ("members of storage block
+        MaterialBuffer are not the same between shaders").
+    */
+    float wind_flex = 0.0f;
+    int pad;
     uint64_t handle_diffuse = 0;    // The texture handle for OpenGL Bindless Textures
     uint64_t handle_normal = 0;     // The texture handle for OpenGL Bindless Textures
     // Light the surface emits on its own, added to the lit result and unaffected by any light or

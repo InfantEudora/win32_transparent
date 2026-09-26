@@ -38,6 +38,8 @@ enum FoliageKind{
     //lottery the other three share - it has a pass and a density of its own, because a lawn is
     //many small clumps and the lottery tops out at under one plant a unit on open ground.
     FOLIAGE_GRASS,
+    //grass_2: the second clump, drawn by the same pass - each clump picks one of the two.
+    FOLIAGE_GRASS_2,
     FOLIAGE_KIND_COUNT
 };
 
@@ -92,6 +94,7 @@ struct FoliageParams{
     float grass_open      = 7.0f;     //clumps per unit of length, in the open
     float grass_corner    = 1.0f;     //and in a fully shaded corner
     int   grass_tries     = 4;
+    float grass_2_share   = 0.5f;     //the fraction of clumps that are grass_2 rather than grass_1
 
     //How far a plant's centre keeps from a drop-off. Walls are hugged instead - see clearance.
     float edge_inset      = 0.10f;
@@ -103,8 +106,8 @@ struct FoliageParams{
 
     //Per-kind size at scale 1 (radius in the ground plane, height), measured off the meshes by
     //the app. The defaults are the archer.glb props at the character's scale, for the tests.
-    float radius[FOLIAGE_KIND_COUNT] = { 0.55f, 0.36f, 0.29f, 0.24f };
-    float height[FOLIAGE_KIND_COUNT] = { 0.64f, 0.19f, 0.55f, 0.27f };
+    float radius[FOLIAGE_KIND_COUNT] = { 0.55f, 0.36f, 0.29f, 0.24f, 0.24f };
+    float height[FOLIAGE_KIND_COUNT] = { 0.64f, 0.19f, 0.55f, 0.27f, 0.27f };
 };
 
 struct FoliagePlant{

@@ -600,6 +600,8 @@ void ApplicationArcher::Init(void){
     gltfloader.LoadGLTFFile(ARCHER_MODEL_ASSET);
     BuildCrateMesh();
     BuildStandMesh();
+    BuildStrawManMesh();
+    RegisterPlaceableProps();
     BuildBlocks();
     //After BuildBlocks, which it hides the melted half of - see the note on the declaration.
     BuildTerrain();
@@ -613,6 +615,11 @@ void ApplicationArcher::Init(void){
     BuildBow();
     //After BuildArcherModel too, for the loader and the character's scale - see the declaration.
     BuildFoliage();
+    BuildBoulders();
+    //The back wall's pines were stood up by BuildTerrain, which runs BEFORE BuildArcherModel - at
+    //a model_scale of 1, half size. Again now that the scale is known; placing is cheap, the wall's
+    //mesh is not remade.
+    PlaceAllBackdropPines();
     BuildVines();
     //After BuildProps (the chain it is laid over) and BuildArcherModel (her scale, and the loader).
     BuildRopeSkin();
@@ -624,6 +631,8 @@ void ApplicationArcher::Init(void){
     //After it, for the glyphs. The main level has none yet; this is where they would come from.
     BuildSigns();
     BuildScenery();
+    //Only the line object here; the field itself is built the first time something reads it.
+    wind_view.Init(main_scene);
     BuildBackground();
     SetupLights();
     SetupCamera();
@@ -689,6 +698,15 @@ void ApplicationArcher::BuildMaterials(){
         { "ar_platform",    vec4(0.55f,0.76f,0.92f,1.0f), 0.22f, &material_platform },
         //Breakable: cracked-brick red, the colour it will burst into.
         { "ar_breakable",   vec4(0.62f,0.28f,0.24f,1.0f), 0.10f, &material_breakable },
+        //A tree's trunk: bark brown, and dim - it is behind her and collides with nothing, so it
+        //must read as backdrop next to the arms (one-way blue) that are the rule.
+        { "ar_trunk",       vec4(0.36f,0.25f,0.16f,1.0f), 0.03f, &material_trunk },
+        //The spring plants: a toadstool-red cap and a leaf green, loud on purpose - each moves
+        //under her, and reading "this one is springy" before landing on it is the whole design.
+        //Not red: red is the timing cue's "now" (material_spring_cue), and the cap at rest must not
+        //say it. A pale lilac toadstool.
+        { "ar_spring_pad",  vec4(0.66f,0.50f,0.80f,1.0f), 0.25f, &material_spring_pad },
+        { "ar_leaf",        vec4(0.38f,0.70f,0.22f,1.0f), 0.20f, &material_leaf },
         { "ar_archer",      vec4(0.30f,0.72f,0.42f,1.0f), 0.18f, &material_archer },
         //The character herself. A plain warm off-white, because the model arrives with no textures
         //at all - see the note where it is assigned in BuildArcherModel.
@@ -726,6 +744,32 @@ void ApplicationArcher::BuildMaterials(){
     }
 
     /*
+        The timing cue's ramp: green, yellow, red, glowing brighter toward red so the best moment
+        is also the loudest. A ramp of materials rather than a tint, because an object's colour is
+        its material's; SyncSpringPlants swaps the slot every tick.
+    */
+    for (int i = 0; i < SPRING_CUE_STEPS; i++){
+        float f = (float)i / (float)(SPRING_CUE_STEPS - 1);
+        vec4 green(0.22f,0.70f,0.25f,1.0f);
+        vec4 yellow(0.98f,0.86f,0.18f,1.0f);
+        vec4 red(0.98f,0.14f,0.10f,1.0f);
+        float h = (f < 0.5f) ? f * 2.0f : (f - 0.5f) * 2.0f;
+        vec4 a = (f < 0.5f) ? green : yellow;
+        vec4 b = (f < 0.5f) ? yellow : red;
+        vec4 colour(a.x + (b.x - a.x) * h,a.y + (b.y - a.y) * h,a.z + (b.z - a.z) * h,1.0f);
+        Material m;
+        char name[32];
+        snprintf(name,sizeof(name),"ar_spring_cue_%i",i);
+        m.name = name;
+        m.glsl_material.color = colour;
+        m.glsl_material.metallic = 0.12f;
+        m.glsl_material.roughness = 0.62f;
+        m.glsl_material.emissive = vec4(colour.x,colour.y,colour.z,0.25f + 0.45f * f);
+        renderer->AddMaterial(m);
+        material_spring_cue[i] = renderer->FindMaterialIndex(m.name);
+    }
+
+    /*
         The terrain's three, in the order Terrain.cpp writes matid: grass, soil, rock.
 
         MATCHED TO THE AUTHORED TERRAIN TILES (archer.glb's terrain_tile_big and _round, material
@@ -754,11 +798,26 @@ void ApplicationArcher::BuildMaterials(){
         const char* name;
         vec4 colour;
         int* out;
+        float fill = 0.0f;      //self-lit share of its own colour - see BACKDROP_FILL
+    };
+    auto Haze = [](const vec4& c) -> vec4 {
+        const vec4 haze(0.22f,0.34f,0.35f,1.0f);     //teal-grey, the rock in the backdrop painting
+        const float t = BACKDROP_HAZE;
+        return vec4(c.x + (haze.x - c.x) * t,c.y + (haze.y - c.y) * t,c.z + (haze.z - c.z) * t,1.0f);
     };
     TerrainColour terrain[] = {
         { "ar_grass",   vec4(0.38f,0.50f,0.11f,1.0f), &material_grass },
         { "ar_soil",    vec4(0.52f,0.40f,0.19f,1.0f), &material_soil },
-        { "ar_rock",    vec4(0.47f,0.35f,0.16f,1.0f), &material_rock }
+        { "ar_rock",    vec4(0.47f,0.35f,0.16f,1.0f), &material_rock },
+        /*
+            The bank behind the terrain (Backdrop.h): the same three, BACKDROP_HAZE of the way
+            toward the painted backdrop's dark teal, so it recedes into the picture behind it
+            rather than reading as a second walkway. There is no fog to do this for it. And a FILL,
+            because most of it stands in the slab's shadow and came out black.
+        */
+        { "ar_grass_back", Haze(vec4(0.38f,0.50f,0.11f,1.0f)), &material_grass_back, BACKDROP_FILL },
+        { "ar_soil_back",  Haze(vec4(0.52f,0.40f,0.19f,1.0f)), &material_soil_back,  BACKDROP_FILL },
+        { "ar_rock_back",  Haze(vec4(0.47f,0.35f,0.16f,1.0f)), &material_rock_back,  BACKDROP_FILL }
     };
     for (size_t i = 0; i < sizeof(terrain)/sizeof(terrain[0]); i++){
         Material m;
@@ -766,7 +825,8 @@ void ApplicationArcher::BuildMaterials(){
         m.glsl_material.color = terrain[i].colour;
         m.glsl_material.metallic = 0.4f;
         m.glsl_material.roughness = 0.8f;
-        m.glsl_material.emissive = vec4(0.0f,0.0f,0.0f,0.0f);
+        const vec4& c = terrain[i].colour;
+        m.glsl_material.emissive = vec4(c.x,c.y,c.z,terrain[i].fill);
         renderer->AddMaterial(m);
         *terrain[i].out = renderer->FindMaterialIndex(m.name);
     }
@@ -949,7 +1009,92 @@ void ApplicationArcher::BuildBlocks(){
         }
         block_objects.push_back(object);
     }
-    debug->Info("Built %i level blocks\n",(int)block_objects.size());
+    /*
+        Each tree's TRUNK - Stage::trees. Not a block: it collides with nothing, rules or rp3d,
+        because she climbs past it (the arms above are the blocks). So a plain box, set back at
+        STAGE_TREE_Z so her body passes in front of it, standing until the tree has a mesh.
+    */
+    plant_objects.clear();
+    spring_plant_objects.clear();
+    auto plant_box = [&](const char* name, vec3 at, vec3 size, int material){
+        Object* o = new Object();
+        o->SetMesh(unit_mesh);
+        o->name = name;
+        o->SetPosition(at);
+        o->SetScale(size);
+        o->SetMaterialSlot(0,material);
+        blockout_group->AttachChild(o);
+        plant_objects.push_back(o);
+        return o;
+    };
+    for (size_t i = 0; i < stage.trees.size(); i++){
+        const StageTree& t = stage.trees[i];
+        char name[48];
+        snprintf(name,sizeof(name),"tree_%i_trunk",(int)i);
+        plant_box(name,vec3(t.x,t.base + t.height * 0.5f,STAGE_TREE_Z),
+                  vec3(t.radius * 2.0f,t.height,STAGE_TREE_HALF_DEPTH * 2.0f),material_trunk);
+    }
+    /*
+        The SPRING PLANTS - Stage::spring_plants - as boxes until they have meshes: a pad is a cap
+        on a stalk, a leaf a thin slab out of its stem. Only the cap and the leaf move, and they are
+        placed by SyncSpringPlants every tick from the spring; the sizes here are theirs for good.
+        The stalk stands behind her walk line, like the trunk: she stands on the cap, not on it.
+    */
+    for (size_t i = 0; i < stage.spring_plants.size(); i++){
+        const StageSpringPlant& p = stage.spring_plants[i];
+        char name[48];
+        Object* moving = NULL;
+        if (p.kind == SPRING_PAD){
+            float stalk = p.root.y - p.base;
+            snprintf(name,sizeof(name),"spring_%i_stalk",(int)i);
+            plant_box(name,vec3(p.root.x,p.base + stalk * 0.5f,STAGE_TREE_Z * 0.5f),
+                      vec3(0.45f,stalk,0.45f),material_trunk);
+            snprintf(name,sizeof(name),"spring_%i_cap",(int)i);
+            moving = plant_box(name,vec3(p.root.x,p.root.y - 0.2f,0.0f),vec3(p.length,0.4f,1.6f),
+                               material_spring_pad);
+        }else{
+            snprintf(name,sizeof(name),"spring_%i_leaf",(int)i);
+            moving = plant_box(name,vec3(p.root.x,p.root.y,0.0f),vec3(p.length,0.12f,1.4f),material_leaf);
+        }
+        spring_plant_objects.push_back(moving);
+    }
+    SyncSpringPlants();
+    debug->Info("Built %i level blocks, %i trees and %i spring plants\n",(int)block_objects.size(),
+                (int)stage.trees.size(),(int)stage.spring_plants.size());
+}
+
+/*
+    The cap sits with its top where the rules put it; the leaf turns about its stem to the rules'
+    angle, its top face through the stem so the line she stands on is the leaf's surface. Every
+    tick, and on a level switch - these move, unlike every other box in the blockout.
+*/
+void ApplicationArcher::SyncSpringPlants(){
+    for (size_t i = 0; i < stage.spring_plants.size() && i < spring_plant_objects.size(); i++){
+        const StageSpringPlant& p = stage.spring_plants[i];
+        Object* o = spring_plant_objects[i];
+        if (!o){
+            continue;
+        }
+        vec3 size = o->GetScale();
+        int material = (p.kind == SPRING_PAD) ? material_spring_pad : material_leaf;
+        if ((int)i == spring_cue_plant){
+            int step = (int)(spring_cue * (float)(SPRING_CUE_STEPS - 1) + 0.5f);
+            material = material_spring_cue[step < 0 ? 0 : (step >= SPRING_CUE_STEPS ? SPRING_CUE_STEPS - 1 : step)];
+        }
+        o->SetMaterialSlot(0,material);
+        if (p.kind == SPRING_PAD){
+            o->SetPosition(vec3(p.root.x,p.SurfaceY(p.root.x) - size.y * 0.5f,0.0f));
+            continue;
+        }
+        //Along the leaf by half its length from the stem, then down by half its thickness.
+        float c = cosf(p.q);
+        float s = sinf(p.q);
+        vec3 along(p.side * c,s,0.0f);
+        vec3 down(p.side * s,-c,0.0f);
+        vec3 at = vec3(p.root.x,p.root.y,0.0f) + along * (p.length * 0.5f) + down * (size.y * 0.5f);
+        o->SetPosition(at);
+        o->SetRotation(quat(vec3(0.0f,0.0f,1.0f),p.side * p.q));
+    }
 }
 
 #if ARCHER_TEST_BAY
@@ -977,6 +1122,8 @@ static bool IsInTerrainBay(const StageBlock& b){
 
 void ApplicationArcher::BuildTerrain(){
     terrain_objects.clear();
+    terrain_back_objects.clear();
+    backdrop_reach.clear();
     melted_blocks.clear();
 #if ARCHER_TEST_BAY
     /*
@@ -1010,6 +1157,20 @@ void ApplicationArcher::BuildTerrain(){
         object->SetMaterialSlot(2,material_rock);
         main_scene->AddObject(object);
         terrain_objects.push_back(object);
+
+        //Its bank, the same way: world-space vertices, identity transform, one slot per matid.
+        snprintf(name,sizeof(name),"terrain_back_%i",i);
+        Object* back = new Object();
+        back->name = name;
+        back->SetPosition(vec3(0.0f,0.0f,0.0f));
+        back->SetScale(vec3(1.0f,1.0f,1.0f));
+        back->SetMaterialSlot(0,material_grass_back);
+        back->SetMaterialSlot(1,material_soil_back);
+        back->SetMaterialSlot(2,material_rock_back);
+        main_scene->AddObject(back);
+        terrain_back_objects.push_back(back);
+        backdrop_reach.push_back(0.0f);
+
         RemeshTerrainBay(i);
     }
 
@@ -1034,6 +1195,8 @@ void ApplicationArcher::RemeshTerrainBay(int bay){
         return;
     }
     Object* object = terrain_objects[bay];
+    //The bank behind it first - it follows the same blocks, so the two regenerate together.
+    RemeshBackdrop(bay);
     //Every bay on the defaults. The four-way comparison those were chosen from is in the history
     //and in terrain_plan.md; Terrain.h's TerrainParams is where to argue with them.
     TerrainParams params;
@@ -1068,6 +1231,150 @@ void ApplicationArcher::RemeshTerrainBay(int bay){
     if (stats.worst_dip > 0.02f){
         debug->Err("Terrain bay %i DIPS %.4f below a top face - the archer will float there. "
                    "See the top-pinning note in Terrain.h.\n",bay,stats.worst_dip);
+    }
+#else
+    (void)bay;
+#endif
+}
+
+/*
+    The mesher's settings for the bank behind the terrain. Rounder and softer than the slab's - a
+    bank far off wants humps, not boxes with rounded edges - with more of both noises, and coarser
+    cells, because it is further away and every sample of it is spent on something seen smaller.
+*/
+static TerrainParams BackdropTerrainParams(){
+    TerrainParams p;
+    p.cell_xy     = 0.35f;
+    p.cell_z      = 0.35f;
+    p.round_r     = 0.60f;
+    p.smooth_k    = 1.00f;
+    p.noise_amp   = 0.25f;
+    p.coarse_amp  = 0.60f;
+    p.coarse_freq = 0.22f;
+    return p;
+}
+
+/*
+    The pines on one bay's back wall: children of its terrain_back object, reused in order and the
+    spares hidden - the foliage pool's arrangement, with the pool being the object's own children.
+    The object is identity, so a child's local transform is its world one. RENDER THREAD (the mesh
+    load), from RemeshBackdrop.
+*/
+void ApplicationArcher::PlaceBackdropPines(Object* wall, const std::vector<BackdropTree>& trees){
+    if (!wall){
+        return;
+    }
+    if (!pine_mesh){
+        pine_mesh = gltfloader.GetMeshFromNode("pine_tree",&pine_materials,false);
+        if (!pine_mesh){
+            debug->Err("No 'pine_tree' in %s - the back wall grows no pines\n",ARCHER_MODEL_ASSET);
+            return;
+        }
+        pine_mesh->Retain();
+        renderer->AddMaterials(pine_materials);
+    }
+    std::vector<Object*> pool(wall->children.begin(),wall->children.end());
+    for (size_t i = 0; i < trees.size(); i++){
+        const BackdropTree& t = trees[i];
+        Object* o = NULL;
+        if (i < pool.size()){
+            o = pool[i];
+        }else{
+            o = new Object();
+            o->SetPickability(false);
+            o->SetMesh(pine_mesh);
+            o->TakeMaterialNames(pine_materials);
+            wall->AttachChild(o);
+        }
+        char name[32];
+        snprintf(name,sizeof(name),"pine.%i",(int)i);
+        o->name = name;
+        o->SetPosition(vec3(t.x,t.y,t.z));
+        o->SetRotation(quat(vec3(0.0f,1.0f,0.0f),t.yaw));
+        float s = model_scale * t.scale;
+        o->SetScale(vec3(s,s,s));
+        o->SetVisibility(true);
+    }
+    for (size_t i = trees.size(); i < pool.size(); i++){
+        pool[i]->SetVisibility(false);
+    }
+}
+
+void ApplicationArcher::PlaceAllBackdropPines(){
+#if ARCHER_TEST_BAY
+    for (int bay = 0; bay < (int)terrain_back_objects.size(); bay++){
+        TerrainRegion region = TerrainBayRegion(bay);
+        BackdropParams bparams;
+        std::vector<StageBlock> bank;
+        std::vector<BackdropTree> trees;
+        BuildBackdropBlocks(stage.blocks,region.x_min,region.x_max,region.y_min,region.y_max,bparams,bank,&trees);
+        PlaceBackdropPines(terrain_back_objects[bay],trees);
+    }
+#endif
+}
+
+/*
+    The bank behind one bay (Backdrop.h). RENDER THREAD ONLY, from RemeshTerrainBay.
+
+    Built from its own blocks, never Stage::blocks - nothing collides with it. Hidden for a bay with
+    no ground, which is the upper one.
+
+    CHECKED ON THE MESH: over the ground's grass a hump is seen, and it must not come forward over
+    her walking line. BackdropParams::front_gap is meant to hold the whole surface behind the slab's
+    back face; this measures how far forward of that face it actually came, and says so if it did.
+*/
+void ApplicationArcher::RemeshBackdrop(int bay){
+#if ARCHER_TEST_BAY
+    if (bay < 0 || bay >= (int)terrain_back_objects.size() || !terrain_back_objects[bay]){
+        return;
+    }
+    Object* object = terrain_back_objects[bay];
+    TerrainRegion region = TerrainBayRegion(bay);
+    BackdropParams bparams;
+    std::vector<StageBlock> bank;
+    std::vector<int> grounds;
+    std::vector<BackdropTree> trees;
+    BuildBackdropBlocks(stage.blocks,region.x_min,region.x_max,region.y_min,region.y_max,bparams,bank,
+                        &trees,&grounds);
+    PlaceBackdropPines(object,trees);
+
+    //Its own blocks and nothing else, so an all-space region: every one of them melts.
+    TerrainRegion all;
+    all.x_min = -1e30f; all.x_max = 1e30f;
+    all.y_min = -1e30f; all.y_max = 1e30f;
+    TerrainParams params = BackdropTerrainParams();
+    TerrainStats stats;
+    std::vector<vertex> verts;
+    if (bank.empty() || !BuildTerrainVerts(bank,all,params,verts,&stats) || verts.empty()){
+        object->SetVisibility(false);
+        return;
+    }
+    Mesh* mesh = object->GetMesh();
+    if (!mesh){
+        mesh = new Mesh();
+        object->SetMesh(mesh);
+    }
+    mesh->SetMeshData(verts.data(),(int)verts.size());
+    object->SetVisibility(true);
+
+    float reach = -1e30f;
+    for (size_t v = 0; v < verts.size(); v++){
+        const vec3& p = verts[v].pos;
+        for (size_t g = 0; g < grounds.size(); g++){
+            const StageBlock& ground = stage.blocks[grounds[g]];
+            if (p.y > ground.Top() && p.x >= ground.Left() && p.x <= ground.Right()){
+                reach = fmaxf(reach,p.z - ground.Back());
+            }
+        }
+    }
+    backdrop_reach[bay] = reach;
+    debug->Info("Terrain bay %i back wall: %i columns and ridges behind %i ground block(s), %i pines, "
+                "%i tris, %zu samples, reach %.2f past the slab's back over its grass\n",
+                bay,(int)bank.size(),(int)grounds.size(),(int)trees.size(),stats.num_triangles,
+                stats.num_samples,reach);
+    if (reach > 0.0f){
+        debug->Warn("Terrain bay %i: the backdrop comes %.2f forward of the slab's back face above its "
+                    "grass - raise BackdropParams::front_gap\n",bay,reach);
     }
 #else
     (void)bay;
@@ -1130,8 +1437,9 @@ void ApplicationArcher::RegenerateTerrain(){
             RemeshTerrainBay(i);
         }
         ApplyBlockoutVisibility();
-        //The plants grow on the boxes too, so a moved box takes its garden with it.
+        //The plants grow on the boxes too, so a moved box takes its garden with it - and its rocks.
         ScatterFoliageObjects();
+        ScatterBoulderObjects();
         debug->Info("Terrain regenerated: %i of %i blocks moved, %i hidden under terrain\n",
                     moved,(int)stage.blocks.size(),(int)melted_blocks.size());
         last_regen_moved = moved;
@@ -1150,12 +1458,85 @@ void ApplicationArcher::PreRender(void){
     if (f_rope_skin_stale.exchange(false)){
         main_scene->AtTickBoundary([this](){ RebuildRopeSkinWeights(); });
     }
+    UpdateWind();
+}
+
+//--- Wind ---------------------------------------------------------------------------------------
+
+//The spacing of the grid the renderer bends plants with. Half a unit: the smallest eddy's radius,
+//so an eddy still reads in the grass, and about 5000 nodes over a normal view (~0.5 ms to bake).
+#define WIND_GRID_STEP      0.5f
+//Plants stand up to a slab's depth behind the play plane, where the camera sees further out -
+//so the grid covers a quarter more than the plane's own view.
+#define WIND_GRID_PAD       0.25f
+#define WIND_GRID_MAX       256
+
+void ApplicationArcher::UpdateWind(){
+    //Copied rather than read in place: the blocks belong to the physics thread, and the build
+    //can take long enough that holding the simulation for it would show.
+    std::vector<StageBlock> blocks;
+    int64_t tick = 0;
+    main_scene->AtTickBoundary([&](){
+        blocks = stage.blocks;
+        tick = (int64_t)main_scene->GetPhysicsTick();
+    });
+    std::lock_guard<std::mutex> lock(wind_mutex);
+    if (wind.Build(blocks,wind_params)){
+        const WindStats& st = wind.Stats();
+        debug->Info("Wind: %dx%d nodes, %d obstacles (%d end walls left out), %d iterations, %.1f ms, %d corners\n",
+                    st.nx,st.ny,st.obstacles,st.end_walls,st.iterations,st.build_ms,st.corners);
+    }
+
+    /*
+        The grid for default.vert. Its origin snaps to whole steps, so as the camera moves the
+        nodes stay where they were in the world and a plant between two of them sees the same
+        wind - otherwise every pan would shimmer the whole meadow.
+    */
+    float x0, y0, x1, y1;
+    if (WindViewRect(main_scene->camera,WIND_GRID_PAD,x0,y0,x1,y1)){
+        auto t0 = std::chrono::steady_clock::now();
+        float gx0 = floorf(x0 / WIND_GRID_STEP) * WIND_GRID_STEP;
+        float gy0 = floorf(y0 / WIND_GRID_STEP) * WIND_GRID_STEP;
+        wind_grid_w = std::min((int)ceilf((x1 - gx0) / WIND_GRID_STEP) + 1,WIND_GRID_MAX);
+        wind_grid_h = std::min((int)ceilf((y1 - gy0) / WIND_GRID_STEP) + 1,WIND_GRID_MAX);
+        wind_grid.resize(2 * wind_grid_w * wind_grid_h);
+        wind.Bake(tick,gx0,gy0,WIND_GRID_STEP,wind_grid_w,wind_grid_h,wind_grid.data());
+        //Simulation time, so a paused game holds the grass still, flutter and all.
+        renderer->SetWindField(wind_grid.data(),wind_grid_w,wind_grid_h,gx0,gy0,
+                               WIND_GRID_STEP,WIND_GRID_STEP,(float)((double)tick * ARCHER_DT));
+        wind_bake_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+    }else{
+        renderer->ClearWindField();
+    }
+
+    if (!f_show_wind){
+        if (wind_view.IsVisible()){
+            wind_view.SetVisible(false);
+        }
+        return;
+    }
+    wind_view.SetVisible(true);
+    auto t0 = std::chrono::steady_clock::now();
+    wind_view.Update(wind,tick,main_scene->camera);
+    wind_view_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
 //--- Foliage ------------------------------------------------------------------------------------
 
 //The archer.glb node for each FoliageKind, in that enum's order.
-static const char* FOLIAGE_NODES[FOLIAGE_KIND_COUNT] = { "fern_1", "fern_2", "flower", "grass_1" };
+static const char* FOLIAGE_NODES[FOLIAGE_KIND_COUNT] = { "fern_1", "fern_2", "flower", "grass_1", "grass_2" };
+
+void ApplicationArcher::ApplyFoliageWindFlex(){
+    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+        std::string suffix = std::string("@") + FOLIAGE_NODES[k];
+        for (Material& m : renderer->materials){
+            if ((m.name.size() > suffix.size()) &&
+                (m.name.compare(m.name.size() - suffix.size(),suffix.size(),suffix) == 0)){
+                m.glsl_material.wind_flex = foliage_wind_flex[k];
+            }
+        }
+    }
+}
 
 /*
     Loads the three plants and grows the first garden. RENDER THREAD - GetMeshFromNode uploads.
@@ -1176,6 +1557,13 @@ void ApplicationArcher::BuildFoliage(){
         //of a kind cannot free the mesh out from under the next one.
         mesh->Retain();
         foliage_meshes[k] = mesh;
+        //Each kind's OWN copy of its material, so it can sway: grass_1 is on the terrain tiles'
+        //atlas and grass_2 on a props atlas, and a flex on the shared material would bend those
+        //too. The copy shares the texture, and so its texture unit.
+        for (Material& m : foliage_materials[k]){
+            m.name += std::string("@") + FOLIAGE_NODES[k];
+            m.glsl_material.wind_flex = foliage_wind_flex[k];
+        }
         renderer->AddMaterials(foliage_materials[k]);
 
         //From the origin, which is where the plant stands: the props are authored base-down.
@@ -1261,9 +1649,104 @@ void ApplicationArcher::ScatterFoliageObjects(){
     for (size_t i = used; i < foliage_objects.size(); i++){
         foliage_objects[i]->SetVisibility(false);
     }
-    debug->Info("Foliage: %i ferns, %i low ferns, %i flowers, %i grass\n",foliage_counts[FOLIAGE_FERN],
+    debug->Info("Foliage: %i ferns, %i low ferns, %i flowers, %i + %i grass\n",foliage_counts[FOLIAGE_FERN],
                 foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER],
-                foliage_counts[FOLIAGE_GRASS]);
+                foliage_counts[FOLIAGE_GRASS],foliage_counts[FOLIAGE_GRASS_2]);
+}
+
+//--- Rocks ---------------------------------------------------------------------------------------
+
+//The archer.glb node for each BoulderKind, in that enum's order.
+static const char* BOULDER_NODES[BOULDER_KIND_COUNT] = { "rock_big", "rock_small" };
+
+void ApplicationArcher::BuildBoulders(){
+    for (int k = 0; k < BOULDER_KIND_COUNT; k++){
+        Mesh* mesh = gltfloader.GetMeshFromNode(BOULDER_NODES[k],&boulder_materials[k],false);
+        if (!mesh){
+            debug->Err("No mesh on node '%s' in %s - no rocks of that kind\n",BOULDER_NODES[k],ARCHER_MODEL_ASSET);
+            continue;
+        }
+        //Held here as well as by every rock drawing it - the foliage's reason.
+        mesh->Retain();
+        boulder_meshes[k] = mesh;
+        renderer->AddMaterials(boulder_materials[k]);
+        //The widest the footprint gets under any yaw, and the height - both from the origin, where
+        //it stands. What Boulders.cpp keeps rocks apart and behind her walking line by.
+        float radius = 0.0f;
+        float height = 0.0f;
+        const std::vector<vertex>& verts = mesh->GetVertices();
+        for (size_t i = 0; i < verts.size(); i++){
+            float r = sqrtf(verts[i].pos.x * verts[i].pos.x + verts[i].pos.z * verts[i].pos.z);
+            if (r > radius){ radius = r; }
+            if (verts[i].pos.y > height){ height = verts[i].pos.y; }
+        }
+        boulder_mesh_radius[k] = radius;
+        boulder_mesh_height[k] = height;
+        debug->Info("Rock '%s': radius %.3f, height %.3f at scale 1\n",BOULDER_NODES[k],radius,height);
+    }
+    boulder_group = new Object();
+    boulder_group->name = "boulders";
+    main_scene->AddObject(boulder_group);
+    ScatterBoulderObjects();
+}
+
+/*
+    Re-places the pool from `stage.blocks` as they are now. No GL. The same contexts as
+    ScatterFoliageObjects, and called beside it: a moved box takes its rocks with it.
+*/
+void ApplicationArcher::ScatterBoulderObjects(){
+    if (!boulder_group || stage.GetLevel() != STAGE_LEVEL_MAIN){
+        return;
+    }
+    BoulderParams params = boulder_params;
+    for (int k = 0; k < BOULDER_KIND_COUNT; k++){
+        params.radius[k] = boulder_mesh_radius[k] * model_scale;
+        params.height[k] = boulder_mesh_height[k] * model_scale;
+    }
+    std::vector<Boulder> rocks;
+    ScatterBoulders(stage.blocks,params,rocks);
+
+    for (int k = 0; k < BOULDER_KIND_COUNT; k++){
+        boulder_counts[k] = 0;
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < rocks.size(); i++){
+        const Boulder& b = rocks[i];
+        Mesh* mesh = boulder_meshes[b.kind];
+        if (!mesh){
+            continue;
+        }
+        if (used >= boulder_objects.size()){
+            Object* o = new Object();
+            o->SetPickability(false);
+            boulder_group->AttachChild(o);
+            boulder_objects.push_back(o);
+        }
+        Object* o = boulder_objects[used++];
+        char name[32];
+        snprintf(name,sizeof(name),"%s.%i",BOULDER_NODES[b.kind],boulder_counts[b.kind]);
+        o->name = name;
+        o->SetMesh(mesh);
+        o->TakeMaterialNames(boulder_materials[b.kind]);
+        //Big ones are big enough to be worth a shadow; the small ones are the foliage's case.
+        o->SetCastsShadow(b.kind == BOULDER_BIG);
+        o->SetPosition(vec3(b.x,b.y,b.z));
+        //Tipped about a horizontal axis, after the yaw - a small rock lying the way it landed.
+        quat yaw(vec3(0.0f,1.0f,0.0f),b.yaw);
+        quat tilt = quat().identity();
+        if (b.tilt != 0.0f){
+            tilt = quat(vec3(cosf(b.tilt_axis_yaw),0.0f,sinf(b.tilt_axis_yaw)),b.tilt);
+        }
+        o->SetRotation(tilt * yaw);
+        float s = model_scale * b.scale;
+        o->SetScale(vec3(s,s,s));
+        o->SetVisibility(true);
+        boulder_counts[b.kind]++;
+    }
+    for (size_t i = used; i < boulder_objects.size(); i++){
+        boulder_objects[i]->SetVisibility(false);
+    }
+    debug->Info("Rocks: %i big, %i small\n",boulder_counts[BOULDER_BIG],boulder_counts[BOULDER_SMALL]);
 }
 
 //--- Signs --------------------------------------------------------------------------------------
@@ -1926,6 +2409,126 @@ PropView ApplicationArcher::MakeTargetStand(const StageProp& p, int index){
     return view;
 }
 
+/*
+    The straw man's body as three boxes, in the mesh's own units (origin at the foot of the stake,
+    x across, y up) - measured off archer.glb's straw_man vertex by vertex, a slice per 1/24th of
+    its height, the way StandShape was. Scaled by model_scale when built.
+
+    THE STAKE STARTS 0.075 UP, not at 0: the foot is the hinge, on the floor, and a collider
+    reaching down to it would be resting on the floor it swings from - a contact the solver would
+    fight the joint over every tick.
+*/
+struct StrawBox{
+    vec3 centre;
+    vec3 half;
+};
+static const char* STRAW_NODE = "straw_man";
+static const StrawBox STRAW_BOXES[] = {
+    { vec3(0.000f,0.2175f,0.0f), vec3(0.025f,0.1425f,0.025f) },     //stake, 0.075 .. 0.36
+    { vec3(0.000f,0.6600f,0.0f), vec3(0.085f,0.3000f,0.084f) },     //skirt, body and head, 0.36 .. 0.96
+    { vec3(0.0125f,0.620f,0.0f), vec3(0.2285f,0.1000f,0.070f) },    //the arms, -0.216 .. 0.241
+};
+
+void ApplicationArcher::BuildStrawManMesh(){
+    straw_mesh = gltfloader.GetMeshFromNode(STRAW_NODE,&straw_materials,false);
+    if (!straw_mesh){
+        debug->Warn("No '%s' in %s - straw men are not built\n",STRAW_NODE,ARCHER_MODEL_ASSET);
+        return;
+    }
+    renderer->AddMaterials(straw_materials);
+    //Held by the asset list for the crate's reason: NewGame rebuilds every straw man.
+    assetmanager->AddNewAsset("ar_straw_man",straw_mesh);
+}
+
+/*
+    One straw man. Physics thread from NewGame, render thread from Init - no GL either way.
+
+    Stood on its origin at the feet, like the stand, facing the camera: its arms spread across the
+    screen, and the hinge turns it in the screen plane, the one plane a side view shows.
+
+    THE BODY IS FINISHED BEFORE THE SPRING IS MADE: dynamic, gravity on, mass set. SpringHinge reads
+    the mass, the inertia and whether gravity acts off the body as it stands, and a spring measured
+    against a static, weightless body would come out with k and c of zero.
+*/
+PropView ApplicationArcher::MakeStrawMan(const StageProp& p, int index){
+    PropView view;
+    view.kind = PROP_STRAWMAN;
+    view.index = index;
+    if (!straw_mesh){
+        return view;
+    }
+    const float s = model_scale;
+    char name[48];
+    snprintf(name,sizeof(name),"strawman_%i",index);
+
+    Object* o = new Object();
+    o->SetMesh(straw_mesh);
+    o->name = name;
+    o->SetPosition(vec3(p.x,p.y - p.h * 0.5f,0.0f));
+    o->SetScale(vec3(s,s,s));      //before AddPhysics, so nothing is rescaled - see Object::SetScale
+    o->TakeMaterialNames(straw_materials);
+    main_scene->AddObject(o);
+
+    view.object = o;
+    view.half_extents = vec3(p.w * 0.5f,p.h * 0.5f,PROP_DEPTH * 0.5f);
+    view.obstacle_lift = p.h * 0.5f;
+
+    Physics* body = o->AddPhysics(main_scene->physics_world);
+    if (!body){
+        return view;
+    }
+    //A prop to crates, debris and the level - a kicked crate knocks it - but NOT to the archer's
+    //kinematic body, which is in every other prop's mask so that walking shoves a crate. Leaving it
+    //out is the physical half of being passable; the rules' non-blocking obstacle is the other.
+    body->SetCollisionCategoryBits(ARCHER_CAT_PROP);
+    body->SetCollideWithMaskBits(ARCHER_MASK_PROP & ~ARCHER_CAT_ARCHER);
+    for (size_t k = 0; k < sizeof(STRAW_BOXES) / sizeof(STRAW_BOXES[0]); k++){
+        body->AddBoxCollider(STRAW_BOXES[k].half * s,STRAW_BOXES[k].centre * s,quat().identity(),1.0f);
+        body->SetBounciness(0.05f);
+        body->SetFrictionCoefficient(0.4f);
+    }
+    body->SetStatic(false);
+    body->SetGravityEnabled(true);
+    body->SetMass(STRAW_MASS);
+
+    rp3d::RigidBody* rb = body->body ? body->body->rigidbody : NULL;
+    if (!rb){
+        return view;
+    }
+    SpringHinge::Settings settings;
+    settings.pivot = o->GetPosition();
+    settings.axis = vec3(0.0f,0.0f,1.0f);
+    settings.hz = straw_hz;
+    settings.damping_ratio = straw_damping_ratio;
+    settings.f_limits = true;
+    settings.min_angle = -toradians(STRAW_LIMIT_DEG);
+    settings.max_angle = toradians(STRAW_LIMIT_DEG);
+    view.spring = new SpringHinge(main_scene->physics_world,NULL,rb,settings);
+    return view;
+}
+
+void ApplicationArcher::TickSprings(){
+    for (size_t i = 0; i < prop_views.size(); i++){
+        SpringHinge* spring = prop_views[i].spring;
+        if (!spring || prop_views[i].f_lost){
+            continue;
+        }
+        //The panel's sliders, picked up here rather than by a command: this is the physics thread,
+        //between steps, the one place a spring may be retuned - and it covers every level's.
+        if (spring->hz != straw_hz || spring->damping_ratio != straw_damping_ratio){
+            spring->Retune(straw_hz,straw_damping_ratio);
+        }
+        spring->Tick();
+    }
+}
+
+void ApplicationArcher::DestroySprings(){
+    for (size_t i = 0; i < prop_views.size(); i++){
+        delete prop_views[i].spring;
+        prop_views[i].spring = NULL;
+    }
+}
+
 void ApplicationArcher::BuildProps(){
     prop_views.clear();
     for (size_t i = 0; i < stage.props.size(); i++){
@@ -2049,6 +2652,13 @@ void ApplicationArcher::BuildProps(){
                 view.half_extents = vec3(0.60f,0.10f,PROP_DEPTH * 0.5f);
                 prop_views.push_back(view);
                 rope_anchor_object = o;
+            } break;
+
+            case PROP_STRAWMAN: {
+                PropView view = MakeStrawMan(p,(int)i);
+                if (view.object){
+                    prop_views.push_back(view);
+                }
             } break;
 
             default: break;
@@ -3668,10 +4278,14 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(stage,parked.stage);
     std::swap(archer_object,parked.archer_object);
     std::swap(block_objects,parked.block_objects);
+    std::swap(plant_objects,parked.plant_objects);
+    std::swap(spring_plant_objects,parked.spring_plant_objects);
     std::swap(blockout_group,parked.blockout_group);
     std::swap(prop_views,parked.prop_views);
     std::swap(debris,parked.debris);
     std::swap(terrain_objects,parked.terrain_objects);
+    std::swap(terrain_back_objects,parked.terrain_back_objects);
+    std::swap(backdrop_reach,parked.backdrop_reach);
     std::swap(melted_blocks,parked.melted_blocks);
     std::swap(rope_segments,parked.rope_segments);
     std::swap(rope_joint,parked.rope_joint);
@@ -3725,6 +4339,8 @@ void ApplicationArcher::RefreshViewAfterSwitch(){
         archer_model->SetPosition(vec3(stage.pos.x,stage.pos.y - ARCHER_HALF_H - model_foot_offset,0.0f));
     }
     SyncArrowViews();
+    spring_cue_plant = -1;      //the cue was the other level's; the next tick works this one's out
+    SyncSpringPlants();
     SyncAimArc();
     ClearHitPopups();
     UpdateCamera();
@@ -3850,7 +4466,17 @@ json ApplicationArcher::CaptureRecordingState(){
         {"coyote_ticks",stage.coyote_ticks},
         //How long the level had been running: the seed for anything random in it - the debris a
         //broken wall throws, the kick's shout. A replay restarts the level, which zeroes this.
-        {"level_ticks",stage.ticks}
+        {"level_ticks",stage.ticks},
+        //The spring she stands on, and every spring plant's state: a recording that starts on the
+        //pad mid-bounce has to replay from that bounce, not from a cap at rest.
+        {"spring_on",stage.spring_on},
+        {"spring_plants",[&](){
+            json list = json::array();
+            for (const StageSpringPlant& p : stage.spring_plants){
+                list.push_back(json::array({p.q,p.qd}));
+            }
+            return list;
+        }()}
     };
 }
 
@@ -3878,6 +4504,18 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
         stage.mode = MODE_GROUND;
         stage.f_on_ground = true;
         stage.coyote_ticks = state.value("coyote_ticks",0);
+        stage.spring_on = state.value("spring_on",-1);
+        if (stage.spring_on >= (int)stage.spring_plants.size()){
+            stage.spring_on = -1;
+        }
+    }
+    if (state.contains("spring_plants") && state["spring_plants"].size() == stage.spring_plants.size()){
+        for (size_t i = 0; i < stage.spring_plants.size(); i++){
+            StageSpringPlant& p = stage.spring_plants[i];
+            p.q = p.prev_q = state["spring_plants"][i][0].get<float>();
+            p.qd = state["spring_plants"][i][1].get<float>();
+        }
+        SyncSpringPlants();
     }
 }
 
@@ -3893,6 +4531,8 @@ void ApplicationArcher::PlaceArcher(v2 pos){
     stage.f_on_ground = false;
     stage.coyote_ticks = 0;
     stage.buffer_ticks = 0;
+    stage.spring_on = -1;       //or the plant she was on would go on carrying her weight
+    stage.launch_lift = 0.0f;
     stage.bow_mode = BOW_IDLE;
     stage.draw_ticks = 0;
 }
@@ -3989,6 +4629,7 @@ void ApplicationArcher::NewGame(){
     //The stands are rebuilt below with nothing in them, so the points they held go with them.
     archery_score = 0;
     archery_last_points = -1;
+    kick_score = 0;
     //A restart is a level entry too - see the note in Init. The blocks exist again by now, so she
     //is laid on the real floor.
     if (f_level_entry_getup){
@@ -4003,6 +4644,15 @@ void ApplicationArcher::NewGame(){
             block_objects[i]->Destroy();
         }
     }
+    //And the plants, which BuildBlocks makes again from the new Stage. Missing this left one more
+    //copy of every trunk standing in the level per restart.
+    for (size_t i = 0; i < plant_objects.size(); i++){
+        if (plant_objects[i]){
+            plant_objects[i]->Destroy();
+        }
+    }
+    plant_objects.clear();
+    spring_plant_objects.clear();
     /*
         THE TERRAIN DELIBERATELY SURVIVES A RESTART, and this is not an oversight.
 
@@ -4023,6 +4673,9 @@ void ApplicationArcher::NewGame(){
     //BEFORE the props go: an arrow still holding one would be following a deleted object on the
     //next tick. See ReleaseStuckArrows.
     ReleaseStuckArrows(NULL);
+    //The straw men's joints hold raw pointers to their bodies, so they go first - Destroy only
+    //marks, but DeleteDestroyedObjects below is where the bodies really leave.
+    DestroySprings();
     for (size_t i = 0; i < prop_views.size(); i++){
         if (prop_views[i].object){
             prop_views[i].object->Destroy();
@@ -4231,11 +4884,29 @@ void ApplicationArcher::RunSimulationTick(void){
         landing_forecast_us = (float)std::chrono::duration<double,std::micro>(
                                   std::chrono::steady_clock::now() - t0).count();
     }
+    /*
+        The spring plants' timing cue - see spring_cue. Off below a boost of 1 u/s: a cap she has
+        settled on still quivers, and a cue that flashed red at a millimetre of rebound would teach
+        nothing.
+    */
+    spring_cue_plant = -1;
+    spring_cue = 0.0f;
+    spring_cue_peak = 0.0f;
+    if (stage.SpringBoostActive()){
+        spring_cue_peak = stage.PredictSpringBoostPeak(intent);
+        if (spring_cue_peak > 1.0f){
+            spring_cue_plant = (stage.f_on_ground && stage.spring_on >= 0) ? stage.spring_on : stage.spring_left;
+            spring_cue = stage.SpringBoostNow() / spring_cue_peak;
+        }
+    }
     ApplyPushes(events);
     ApplyKicks(events);
     BreakBlocks(events);
     UpdateDebris();
     ResolveArrowsAgainstProps();
+    //After everything that pushes a straw man this tick, before the step - all of it is force, and
+    //rp3d sums the lot.
+    TickSprings();
     StartArrowSwooshes();
     UpdateHitPopups();
     DriveArcherBody();
@@ -4244,6 +4915,7 @@ void ApplicationArcher::RunSimulationTick(void){
     SyncBow();
     UpdateRopeAttachMarkers();
     SyncArrowViews();
+    SyncSpringPlants();
     SyncAimArc();
     UpdateTargets();
     ReapFallenProps();
@@ -4667,6 +5339,9 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
         StickArrowToProp(i,struck,v2(hit.point.x,hit.point.y));
         PlayArrowHit(hit.point.x,speed);
 
+        if (view->kind == PROP_STRAWMAN){
+            view->hits++;       //counted, not scored - a straw man scores the kick
+        }
         if (view->kind == PROP_TARGET){
             debug->Info("Arrow %i struck target at (%.2f,%.2f) doing %.1f\n",
                         i,hit.point.x,hit.point.y,speed);
@@ -4758,6 +5433,30 @@ void ApplicationArcher::ApplyKicks(const StageEvents& events){
         const KickSpec& spec = KICK_SPECS[(kick.kind >= 0 && kick.kind < KICK_KIND_COUNT) ? kick.kind : KICK_FRONT];
         PropView& hit = prop_views[kick.id];
         if (!hit.object){
+            continue;
+        }
+
+        /*
+            A STRAW MAN IS STRUCK, NOT SET MOVING. Everything below sets a velocity, which on a body
+            held by a hinge is a fight with the joint; one tick of force at the boot's height is an
+            impulse instead, and the hinge turns it into a swing - lever arm and inertia included,
+            which is the reason it is on a hinge. On its own line through the foot rather than at the
+            kick box's x, which is off to one side of it: the push is horizontal, so only the height
+            makes torque. And a point for it, whichever kick it was.
+        */
+        if (hit.kind == PROP_STRAWMAN){
+            vec3 foot = hit.object->GetWorldPosition();
+            Physics* p = hit.object->GetPhysics();
+            if (p && hit.spring){
+                float force = (spec.speed * straw_kick_punch * p->GetMass()) / GetPhysicsTimestep();
+                p->WakeUp();
+                p->AddWorldForceAt(vec3(kick.dir * force,0.0f,0.0f),vec3(foot.x,kick.y,0.0f));
+            }
+            hit.score++;
+            kick_score++;
+            SpawnHitPopup(vec3(foot.x,foot.y + hit.half_extents.y * 2.0f + 0.3f,BLOCK_DEPTH * 0.5f + 0.2f),hit.score);
+            debug->Info("Straw man %i kicked (%s at height %.2f): %i on it, %i this level\n",
+                        hit.index,spec.name,kick.y - foot.y,hit.score,kick_score);
             continue;
         }
 
@@ -5837,7 +6536,9 @@ void ApplicationArcher::RefreshObstacles(){
         //its origin rather than being centred on it - see PropView::obstacle_lift.
         vec3 pp = view.object->GetWorldPosition()
                 + (view.object->GetWorldRotation() * vec3(0.0f,1.0f,0.0f)) * view.obstacle_lift;
-        stage.AddObstacle(pp.x,pp.y,view.half_extents.x,view.half_extents.y,(int)i,f_pushable);
+        //A straw man is in the boot's way and in nobody else's: she walks through it.
+        bool f_blocks = (view.kind != PROP_STRAWMAN);
+        stage.AddObstacle(pp.x,pp.y,view.half_extents.x,view.half_extents.y,(int)i,f_pushable,f_blocks);
     }
 }
 
@@ -6845,6 +7546,22 @@ void ApplicationArcher::PublishSnapshot(){
     s.climb_pinned_time = puppet.choice.pinned_time;
     s.climb_lift_posed = climb_lift_posed;
     s.landing_forecast = landing_forecast;
+    s.spring_on = stage.spring_on;
+    s.launch_lift = stage.launch_lift;
+    s.slide_accel = stage.SlideAccel();
+    s.spring_cue = (spring_cue_plant >= 0) ? spring_cue : -1.0f;
+    s.spring_boost = stage.SpringBoostNow();
+    s.spring_boost_peak = spring_cue_peak;
+    s.stomp_ticks = stage.stomp_ticks;
+    s.spring_air_ticks = stage.spring_air_ticks;
+    s.spring_plants.resize(stage.spring_plants.size());
+    for (size_t i = 0; i < stage.spring_plants.size(); i++){
+        const StageSpringPlant& p = stage.spring_plants[i];
+        float unit = (p.kind == SPRING_LEAF) ? 57.2957795f : 1.0f;
+        s.spring_plants[i].kind = p.kind;
+        s.spring_plants[i].q = p.q * unit;
+        s.spring_plants[i].qd = p.qd * unit;
+    }
     s.fall_weight = puppet.fall_weight;
     s.air_hip_weight = air_hip_weight;
     s.landing_forecast_us = landing_forecast_us;
@@ -6884,6 +7601,27 @@ void ApplicationArcher::PublishSnapshot(){
     }
     s.archery_score = archery_score;
     s.archery_last_points = archery_last_points;
+    for (size_t i = 0; i < prop_views.size(); i++){
+        const PropView& view = prop_views[i];
+        if (view.kind != PROP_STRAWMAN || !view.object || !view.spring){
+            continue;
+        }
+        const SpringHinge* h = view.spring;
+        ArcherSnapshot::StrawView v;
+        v.x = view.object->GetWorldPosition().x;
+        v.angle_deg = todegrees(h->GetAngle());
+        v.joint_angle_deg = todegrees(h->GetJointAngle());
+        v.rate = h->GetRate();
+        v.kicks = view.score;
+        v.arrows = view.hits;
+        v.hz = h->hz;
+        v.inertia = h->inertia;
+        v.stiffness = h->stiffness;
+        v.gravity_stiffness = h->gravity_stiffness;
+        v.damping = h->damping;
+        s.strawmen.push_back(v);
+    }
+    s.kick_score = kick_score;
 
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         const Arrow& a = stage.arrows[i];
@@ -6958,6 +7696,23 @@ json ApplicationArcher::BuildStateJson(){
             {"damping",json::array({s.targets[i].linear_damping,s.targets[i].angular_damping})}
         });
     }
+    json strawmen = json::array();
+    for (size_t i = 0; i < s.strawmen.size(); i++){
+        const ArcherSnapshot::StrawView& v = s.strawmen[i];
+        strawmen.push_back(json{
+            {"x",v.x},
+            //Measured off the bodies, and as rp3d's joint reads it: the two should agree, and the
+            //limits are set assuming they do.
+            {"angle_deg",v.angle_deg},
+            {"joint_angle_deg",v.joint_angle_deg},
+            {"rate",v.rate},
+            {"kicks",v.kicks},
+            {"arrows",v.arrows},
+            //What SpringHinge made of the tuning - see core/physics/SpringHinge.h.
+            {"spring",json{{"hz",v.hz},{"inertia",v.inertia},{"k",v.stiffness},
+                           {"k_gravity",v.gravity_stiffness},{"c",v.damping}}}
+        });
+    }
     json arrows = json::array();
     for (size_t i = 0; i < s.arrows.size(); i++){
         arrows.push_back(json{
@@ -6981,6 +7736,21 @@ json ApplicationArcher::BuildStateJson(){
             {"x",s.landing_forecast.pos.x},
             {"y",s.landing_forecast.pos.y},
             {"cost_us",s.landing_forecast_us}}},
+        //The bounce pad and the leaf: which she stands on (-1 none), what a throw gave her, her pull
+        //down a steep leaf, and each spring - a pad's cap height from rest, a leaf's angle in degrees.
+        {"spring_plants",[&](){
+            json list = json::array();
+            for (const ArcherSnapshot::SpringPlantView& v : s.spring_plants){
+                list.push_back(json{{"kind",(v.kind == SPRING_LEAF) ? "leaf" : "pad"},
+                                    {"q",v.q},{"rate",v.qd}});
+            }
+            //cue: how well timed a jump now would be, 0..1 (-1 none) - what the plant's colour shows.
+            return json{{"standing_on",s.spring_on},{"launch_lift",s.launch_lift},
+                        {"slide_accel",s.slide_accel},{"cue",s.spring_cue},
+                        {"boost",s.spring_boost},{"boost_peak",s.spring_boost_peak},
+                        {"stomp_ticks",s.stomp_ticks},{"air_ticks",s.spring_air_ticks},
+                        {"plants",list}};
+        }()},
         {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" : "main"},
         {"archer",json{
             {"x",s.x},{"y",s.y},{"vx",s.vx},{"vy",s.vy},
@@ -7104,7 +7874,10 @@ json ApplicationArcher::BuildStateJson(){
         //Archery stands' points this level, and what the last arrow into one scored (0 = a leg,
         //-1 = none yet). See StandRingPoints.
         {"archery_score",s.archery_score},
-        {"archery_last_points",s.archery_last_points}
+        {"archery_last_points",s.archery_last_points},
+        //Kicks landed on straw men this level - one point each - and each straw man's swing.
+        {"kick_score",s.kick_score},
+        {"strawmen",strawmen}
     };
     return result;
 }
@@ -7120,7 +7893,7 @@ void ApplicationArcher::RegisterMCPTools(){
         "is computed with the same integrator the arrow flies on, so a script can solve for an aim "
         "angle by bisection instead of shooting and looking. Read from a snapshot the physics thread "
         "publishes at the end of every tick, so it never disturbs the game it is measuring. The "
-        "level runs from x -12 to 72 with the ground surface at y 0; the game runs at 60 ticks a "
+        "level runs from x -12 to 141 with the ground surface at y 0; the game runs at 60 ticks a "
         "second and every duration is a tick count.",
         json{
             {"type","object"},
@@ -7366,11 +8139,14 @@ void ApplicationArcher::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("archer_place",
         "Put the archer at (x, y) and clear their movement state - which also ends the level-entry "
         "get-up if it is still playing. A DEVELOPMENT TOOL: the level "
-        "runs from x -12 to 72 with two gaps in it, and iterating on one part of it should not mean "
+        "runs from x -12 to 141 with two gaps in it, and iterating on one part of it should not mean "
         "flying the whole approach by script every time. Useful landmarks: the ground surface is "
         "y 0, the start is (-6, 0.9), the grabbable-only ledge stands at x 44..48 with its lip at "
         "4.2 (jump from x 43.1 to catch it), the cracked wall is at x 57 and the brick wall at "
-        "x 49.5. y is the archer's CENTRE, so standing on the ground is y 0.9. DO NOT PLACE INSIDE "
+        "x 49.5, and the tree stands at x 80 (arms at 2.5 right, 5.0 left, 7.5 right; stand under "
+        "the first at x 81.45 and jump), the bounce pad's cap is at x 105 (top 1.2; drop onto it from "
+        "(105, 5) to test it), and the leaf grows right from the shelf at x 110..118, top 7.5 (stand on "
+        "its end at (116, 8.4)). y is the archer's CENTRE, so standing on the ground is y 0.9. DO NOT PLACE INSIDE "
         "SOLID GEOMETRY: the archer is ejected out of it on the next tick, and out of a tall block "
         "that means upward onto its roof - which looks like the placement having worked and then "
         "the archer walking over things it should have been stopped by. x 44 is inside the ledge; "
@@ -7457,13 +8233,18 @@ void ApplicationArcher::RegisterMCPTools(){
         "joint, BLUE her end (the top of her box), YELLOW her left hand, ORANGE her right - drawn a "
         "little toward the camera so they are not hidden inside the meshes. The numbers behind "
         "them are always in archer_state's animation block: rope_joint_gap, rope_hands_off, "
-        "rope_grip_s, and per hand its distance down the drawn rope and off it. Returns all three.",
+        "rope_grip_s, and per hand its distance down the drawn rope and off it. `wind`: the wind "
+        "field over what the camera sees - arrows coloured by speed (blue still, green the mean "
+        "wind, red 2.5x it), grey streamlines from the upwind edge, pink streamlines and circles "
+        "for the eddies, orange crosses on the shedding corners; tune it with archer_wind. "
+        "Returns all four.",
         json{
             {"type","object"},
             {"properties", {
                 {"collider",    {{"type","boolean"}}},
                 {"rope_links",  {{"type","boolean"}}},
-                {"rope_attach", {{"type","boolean"}}}
+                {"rope_attach", {{"type","boolean"}}},
+                {"wind",        {{"type","boolean"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -7480,8 +8261,100 @@ void ApplicationArcher::RegisterMCPTools(){
             if (args.contains("rope_attach") && args["rope_attach"].is_boolean()){
                 f_show_rope_attach = args["rope_attach"].get<bool>();
             }
+            if (args.contains("wind") && args["wind"].is_boolean()){
+                f_show_wind = args["wind"].get<bool>();
+            }
             return json{ {"collider",f_show_collider},{"rope_links",f_show_rope_links},
-                         {"rope_attach",f_show_rope_attach} };
+                         {"rope_attach",f_show_rope_attach},{"wind",f_show_wind.load()} };
+        });
+
+    /*
+        The wind field (wind_plan.md): its tuning, and a sample at a point. Builds the field if
+        nothing has yet - the debug view is not the only way in.
+    */
+    MCPServer::Get()->RegisterTool("archer_wind",
+        "The wind field over the current level. Optional tuning, each changing only itself: `speed` "
+        "(units/s, signed, + blows toward +x), `eddy_strength` (a corner eddy's swirl as a fraction "
+        "of the wind), `eddy_strouhal` (shedding rate), `wave_strength`, `wave_length`, "
+        "`gust_strength`, `gust_width`, `gust_period` (ticks). Debug view options `arrows`, "
+        "`streamlines`, `eddies`, `arrow_spacing`. `sample`: [x, y] returns the wind there at the "
+        "current tick - the total, the mean flow alone, the gust factor and the distance to the "
+        "nearest block. Returns the params, the build stats and the shedding corners.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"speed",         {{"type","number"}}},
+                {"eddy_strength", {{"type","number"}}},
+                {"eddy_strouhal", {{"type","number"}}},
+                {"wave_strength", {{"type","number"}}},
+                {"wave_length",   {{"type","number"}}},
+                {"gust_strength", {{"type","number"}}},
+                {"gust_width",    {{"type","number"}}},
+                {"gust_period",   {{"type","integer"}}},
+                {"arrows",        {{"type","boolean"}}},
+                {"streamlines",   {{"type","boolean"}}},
+                {"eddies",        {{"type","boolean"}}},
+                {"arrow_spacing", {{"type","number"}}},
+                {"sample",        {{"type","array"},{"items",{{"type","number"}}}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            std::vector<StageBlock> blocks;
+            int64_t tick = 0;
+            main_scene->AtTickBoundary([&](){
+                blocks = stage.blocks;
+                tick = (int64_t)main_scene->GetPhysicsTick();
+            });
+            std::lock_guard<std::mutex> lock(wind_mutex);
+            auto num = [&](const char* key, float& v){
+                if (args.contains(key) && args[key].is_number()){
+                    v = args[key].get<float>();
+                }
+            };
+            num("speed",wind_params.speed);
+            num("eddy_strength",wind_params.eddy_strength);
+            num("eddy_strouhal",wind_params.eddy_strouhal);
+            num("wave_strength",wind_params.wave_strength);
+            num("wave_length",wind_params.wave_length);
+            num("gust_strength",wind_params.gust_strength);
+            num("gust_width",wind_params.gust_width);
+            if (args.contains("gust_period") && args["gust_period"].is_number()){
+                wind_params.gust_period = std::max(args["gust_period"].get<int>(),30);
+            }
+            if (args.contains("arrows") && args["arrows"].is_boolean()){ wind_view.options.f_arrows = args["arrows"].get<bool>(); }
+            if (args.contains("streamlines") && args["streamlines"].is_boolean()){ wind_view.options.f_streamlines = args["streamlines"].get<bool>(); }
+            if (args.contains("eddies") && args["eddies"].is_boolean()){ wind_view.options.f_eddies = args["eddies"].get<bool>(); }
+            num("arrow_spacing",wind_view.options.arrow_spacing);
+            wind.Build(blocks,wind_params);
+
+            const WindStats& st = wind.Stats();
+            json corners = json::array();
+            for (const WindCorner& c : wind.Corners()){
+                corners.push_back({ {"x",c.x},{"y",c.y},{"drop",c.drop} });
+            }
+            json out = {
+                {"tick",tick},
+                {"params",{ {"speed",wind_params.speed},{"eddy_strength",wind_params.eddy_strength},
+                            {"eddy_strouhal",wind_params.eddy_strouhal},{"wave_strength",wind_params.wave_strength},
+                            {"wave_length",wind_params.wave_length},{"gust_strength",wind_params.gust_strength},
+                            {"gust_width",wind_params.gust_width},{"gust_period",wind_params.gust_period} }},
+                {"stats",{ {"nx",st.nx},{"ny",st.ny},{"obstacles",st.obstacles},{"end_walls",st.end_walls},
+                           {"components",st.components},{"iterations",st.iterations},{"residual",st.residual},
+                           {"build_ms",st.build_ms},{"corners",st.corners} }},
+                {"bounds",{ wind.MinX(),wind.MinY(),wind.MaxX(),wind.MaxY() }},
+                {"corners",corners},
+                {"view_vertices",wind_view.VertexCount()},
+                {"view_ms",wind_view_ms},
+                {"grid",{ {"w",wind_grid_w},{"h",wind_grid_h},{"bake_ms",wind_bake_ms} }}
+            };
+            if (args.contains("sample") && args["sample"].is_array() && (args["sample"].size() >= 2)){
+                float x = args["sample"][0].get<float>(), y = args["sample"][1].get<float>();
+                WindVec v = wind.Velocity(x,y,tick);
+                WindVec m = wind.MeanFlow(x,y);
+                out["sample"] = { {"x",x},{"y",y},{"velocity",{v.x,v.y}},{"mean",{m.x,m.y}},
+                                  {"gust",wind.GustFactor(x,tick)},{"distance",wind.Distance(x,y)} };
+            }
+            return out;
         });
 
     MCPServer::Get()->RegisterTool("archer_legs",
@@ -7754,7 +8627,43 @@ void ApplicationArcher::RegisterMCPTools(){
 //--- The debug panel ----------------------------------------------------------------------------
 #ifdef USE_IMGUI
 
+/*
+    The props in archer.glb worth placing by hand. Not the rope and vine pieces (tiles, meaningless
+    alone), not the character, and not her bow and arrows (sockets). Registered under their node
+    names, which is what the menu lists and what PlaceMenuSpawn recognises.
+*/
+static const char* ARCHER_PLACEABLE_NODES[] = {
+    "rock_big", "rock_small", "pine_tree", "tree_stump", "logs", "barrel", "wooden_crate",
+    "wooden_panel", "signpost", "post_leaves", "pillar_lamp", "post_lamp", "sunflower", "flower",
+    "fern_1", "fern_2", "grass_1", "grass_2", "leaf_small", "straw_man", "archery_target", "terrain_tile_big", "terrain_tile_round",
+};
+
+void ApplicationArcher::RegisterPlaceableProps(){
+    std::vector<std::string> names;
+    for (const char* name:ARCHER_PLACEABLE_NODES){
+        names.push_back(name);
+    }
+    //Render thread, archer.glb already loaded - Init. It Fatal()s anywhere else.
+    GetAssetsFromGLTF(names);
+}
+
+void ApplicationArcher::PlaceMenuSpawn(SimCommand& cmd){
+    //At her feet: the one place on screen that is certainly on the play plane and in view. The
+    //Inspector moves it from there.
+    cmd.flags |= SIM_CMD_FLAG_POSITION;
+    cmd.position = vec3(stage.pos.x,stage.pos.y - ARCHER_HALF_H,0.0f);
+    for (const char* name:ARCHER_PLACEABLE_NODES){
+        if (AssetIDFromName(name) == cmd.asset){
+            cmd.flags |= SIM_CMD_FLAG_SCALE;
+            cmd.scale = vec3(model_scale,model_scale,model_scale);
+            break;
+        }
+    }
+}
+
 void ApplicationArcher::DrawImGuiUI(void){
+    //Before the dockspace, so the dock is laid out under the bar rather than behind it.
+    RenderDebugMenuBar();
     RenderApplicationUI();
     Application::DrawImGuiUI();
 
@@ -7824,6 +8733,12 @@ void ApplicationArcher::DrawImGuiUI(void){
     }else{
         ImGui::Text("archery   %i points",archery_score);
     }
+    ImGui::Text("kicks     %i on straw men",kick_score);
+    //The straw man's swing. Written here like the arrow punch above; TickSprings, on the physics
+    //thread, notices a change and retunes the springs there.
+    ImGui::SliderFloat("straw hz",&straw_hz,0.3f,4.0f,"%.2f");
+    ImGui::SliderFloat("straw damping",&straw_damping_ratio,0.0f,1.0f,"%.2f");
+    ImGui::SliderFloat("straw kick",&straw_kick_punch,0.0f,3.0f,"%.2f");
 
     if (ImGui::Button("Restart")){
         //From the render thread, so it goes on the queue rather than being called here.
@@ -7906,9 +8821,9 @@ void ApplicationArcher::DrawImGuiUI(void){
             f_rescatter = true;
         }
         ImGui::SameLine();
-        ImGui::Text("%i ferns, %i low ferns, %i flowers, %i grass",foliage_counts[FOLIAGE_FERN],
+        ImGui::Text("%i ferns, %i low ferns, %i flowers, %i + %i grass",foliage_counts[FOLIAGE_FERN],
                     foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER],
-                    foliage_counts[FOLIAGE_GRASS]);
+                    foliage_counts[FOLIAGE_GRASS],foliage_counts[FOLIAGE_GRASS_2]);
         if (f_rescatter){
             f_rescatter_foliage = true;
         }
@@ -7965,6 +8880,52 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::SameLine();
         if (ImGui::SmallButton("Cut")){
             CutRopeJoint(rope_cut_request);
+        }
+    }
+
+    //The wind (wind_plan.md). Everything but the show flag is under wind_mutex, for the MCP tool.
+    if (ImGui::CollapsingHeader("Wind")){
+        bool f_show = f_show_wind;
+        if (ImGui::Checkbox("show the wind field",&f_show)){
+            f_show_wind = f_show;
+        }
+        std::lock_guard<std::mutex> lock(wind_mutex);
+        WindViewOptions& o = wind_view.options;
+        ImGui::Checkbox("arrows",&o.f_arrows);
+        ImGui::SameLine();
+        ImGui::Checkbox("streamlines",&o.f_streamlines);
+        ImGui::SameLine();
+        ImGui::Checkbox("eddies",&o.f_eddies);
+        ImGui::SliderFloat("arrow spacing",&o.arrow_spacing,0.5f,3.0f);
+        bool f_changed = false;
+        f_changed |= ImGui::SliderFloat("speed (u/s)",&wind_params.speed,-8.0f,8.0f);
+        f_changed |= ImGui::SliderFloat("eddy strength",&wind_params.eddy_strength,0.0f,2.0f);
+        f_changed |= ImGui::SliderFloat("shedding (strouhal)",&wind_params.eddy_strouhal,0.05f,0.5f);
+        f_changed |= ImGui::SliderFloat("waves",&wind_params.wave_strength,0.0f,0.5f);
+        f_changed |= ImGui::SliderFloat("wave length",&wind_params.wave_length,2.0f,30.0f);
+        f_changed |= ImGui::SliderFloat("gusts",&wind_params.gust_strength,0.0f,1.5f);
+        f_changed |= ImGui::SliderFloat("gust width",&wind_params.gust_width,2.0f,40.0f);
+        f_changed |= ImGui::SliderInt("gust period (ticks)",&wind_params.gust_period,60,2000);
+        if (f_changed){
+            wind.SetParams(wind_params);
+        }
+        //How far each plant bends - material_t::wind_flex on its own copy of its material.
+        static const char* flex_labels[FOLIAGE_KIND_COUNT] = { "flex fern", "flex low fern", "flex flower", "flex grass 1", "flex grass 2" };
+        bool f_flex = false;
+        for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+            f_flex |= ImGui::SliderFloat(flex_labels[k],&foliage_wind_flex[k],0.0f,1.0f,"%.3f");
+        }
+        if (f_flex){
+            ApplyFoliageWindFlex();
+        }
+        if (wind.IsBuilt()){
+            const WindStats& st = wind.Stats();
+            ImGui::Text("%dx%d nodes, %d obstacles (%d end walls out), %d corners",st.nx,st.ny,st.obstacles,st.end_walls,st.corners);
+            ImGui::Text("solve: %d iterations, %.1f ms; view %d vertices, %.2f ms a frame",st.iterations,st.build_ms,
+                        wind_view.VertexCount(),wind_view_ms);
+            ImGui::Text("plant grid: %dx%d, %.2f ms a frame",wind_grid_w,wind_grid_h,wind_bake_ms);
+        }else{
+            ImGui::TextDisabled("not built yet - show it, or ask archer_wind");
         }
     }
 

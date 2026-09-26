@@ -251,6 +251,7 @@ else
 CORE_SRCS_DROP += $(ROOT)/core/physics/Physics.cpp
 CORE_SRCS_DROP += $(ROOT)/core/physics/PhysicsBody.cpp
 CORE_SRCS_DROP += $(ROOT)/core/physics/PhysicsWorld.cpp
+CORE_SRCS_DROP += $(ROOT)/core/physics/SpringHinge.cpp
 #Classes that ARE a physics body rather than merely having one - there is no meaningful
 #no-physics version of any of these, so they drop whole rather than being #ifdef'd. Nothing
 #in core includes Vehicle.h or Particle.h; only apps/tank, dozer and ship use them.

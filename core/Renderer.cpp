@@ -1644,7 +1644,43 @@ bool Renderer::InitSSBO(){
 
     //Each mesh can use buffer base 5 for morph targets
 
+    //The wind, off: a header of zeros. It is bound from the start so default.vert never reads
+    //an unbound buffer, whether or not the app ever sets a field.
+    glCreateBuffers(1, (GLuint*)&wind_ssbo);
+    ClearWindField();
+
     return true;
+}
+
+void Renderer::SetWindField(const float* velocity_xy, int width, int height, float x0, float y0,
+                            float cell_x, float cell_y, float time){
+    if (!velocity_xy || (width < 2) || (height < 2) || (cell_x <= 0.0f) || (cell_y <= 0.0f)){
+        ClearWindField();
+        return;
+    }
+    wind_header_t header = {};
+    header.rect[0] = x0;
+    header.rect[1] = y0;
+    header.rect[2] = 1.0f / cell_x;
+    header.rect[3] = 1.0f / cell_y;
+    header.size[0] = width;
+    header.size[1] = height;
+    header.size[2] = 1;
+    header.params[0] = time;
+    size_t grid = sizeof(float) * 2 * (size_t)width * (size_t)height;
+    //Respecified every frame rather than sub-updated: the driver can hand back fresh storage
+    //instead of waiting for last frame's draws to finish reading the old one.
+    glNamedBufferData(wind_ssbo,sizeof(header) + grid,NULL,GL_STREAM_DRAW);
+    glNamedBufferSubData(wind_ssbo,0,sizeof(header),&header);
+    glNamedBufferSubData(wind_ssbo,sizeof(header),grid,velocity_xy);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,SSBO_WIND,wind_ssbo);
+}
+
+void Renderer::ClearWindField(){
+    //A header and one empty cell, so the grid array is never zero-length.
+    uint8_t zeros[sizeof(wind_header_t) + 2 * sizeof(float)] = {};
+    glNamedBufferData(wind_ssbo,sizeof(zeros),zeros,GL_STREAM_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,SSBO_WIND,wind_ssbo);
 }
 
 bool Renderer::SetNumAASamples(int desired){
@@ -2174,23 +2210,35 @@ void Renderer::UploadMaterials(){
         only the ones it is drawing resident - see apps/bomber's loading screen, which swaps the
         menu's two backgrounds for the game's four tile atlases on a device with five units.
     */
+    /*
+        ONE UNIT PER TEXTURE, NOT PER MATERIAL. Two materials on the same atlas share its unit -
+        which is what lets an app give a prop its own copy of a shared material (a plant that
+        sways, on the terrain's atlas) without spending a unit on the copy. Before this every
+        material bound its texture again into a unit of its own.
+    */
+    std::vector<std::pair<GLuint,int>> bound;
+    auto unit_for = [&](Texture* tex) -> int {
+        for (const std::pair<GLuint,int>& b : bound){
+            if (b.first == tex->texture_id){
+                return b.second;
+            }
+        }
+        int unit = last_texture_unit++;
+        glBindTextureUnit(unit,tex->texture_id);
+        bound.push_back(std::make_pair((GLuint)tex->texture_id,unit));
+        return unit;
+    };
     glsl_materials.clear();
     for (Material& mat:materials){
         if (mat.diff_texture && mat.diff_texture->IsResident()){
-            debug->Trace("Material has diffuse Texture: Binding to Unit %i\n",last_texture_unit);
-            mat.glsl_material.diffuse_texture = last_texture_unit;
-            glBindTextureUnit(last_texture_unit, mat.diff_texture->texture_id);
-            last_texture_unit++;
+            mat.glsl_material.diffuse_texture = unit_for(mat.diff_texture);
         }else{
             //Written every time rather than left alone: the material keeps its index from the
             //last upload otherwise, and would go on sampling whatever moved into that unit.
             mat.glsl_material.diffuse_texture = -1;
         }
         if (mat.norm_texture && mat.norm_texture->IsResident()){
-            //debug->Trace("Material has normal Texture: Binding to Unit %i\n",texture_unit);
-            mat.glsl_material.normal_texture = last_texture_unit;
-            glBindTextureUnit(last_texture_unit, mat.norm_texture->texture_id);
-            last_texture_unit++;
+            mat.glsl_material.normal_texture = unit_for(mat.norm_texture);
         }else{
             mat.glsl_material.normal_texture = -1;
         }

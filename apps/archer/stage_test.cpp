@@ -18,10 +18,13 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "Stage.h"
 #include "Puppet.h"
 #include "Foliage.h"
+#include "Backdrop.h"
+#include "Boulders.h"
 #include "Vine.h"
 #include "RopeMesh.h"
 
@@ -31,7 +34,9 @@ static int g_failures = 0;
 static void Check(bool f_ok, const char* what, const char* detail = NULL){
     g_checks++;
     if (f_ok){
-        printf("  ok    %s\n",what);
+        //STAGE_TEST_VERBOSE=1 prints the numbers behind a pass too - the margins, when tuning.
+        static const bool f_verbose = getenv("STAGE_TEST_VERBOSE") != NULL;
+        printf("  ok    %s%s%s\n",what,(f_verbose && detail) ? " - " : "",(f_verbose && detail) ? detail : "");
         return;
     }
     g_failures++;
@@ -119,6 +124,9 @@ static void TestLevel(){
         const StageBlock& b = s.blocks[i];
         if (b.kind == BLOCK_SOLID || b.kind == BLOCK_BREAKABLE){
             continue;   //ground runs and walls are not meant to be landed on from below
+        }
+        if (b.tree >= 0){
+            continue;   //a tree's arm is reached from the arm below, not the ground - TestTree climbs it
         }
         float top = b.Top();
         if (top <= feet){
@@ -2207,6 +2215,272 @@ static void TestDeterminism(){
     restarts a level with Reset and a restart that quietly went back to the main level would put
     the range's scene around the main level's rules.
 */
+/*
+    The straw man: in the way of the boot and of nothing else. Both halves against the range's
+    real prop, offered the way RefreshObstacles offers it - a non-blocking obstacle - and each half
+    against a control, so the flag is shown to be what makes the difference rather than the box
+    simply being somewhere she never reaches.
+*/
+static const StageProp* FindStrawMan(const Stage& s){
+    for (size_t i = 0; i < s.props.size(); i++){
+        if (s.props[i].kind == PROP_STRAWMAN){
+            return &s.props[i];
+        }
+    }
+    return NULL;
+}
+
+static void TestStrawMan(){
+    printf("the straw man\n");
+    char detail[200];
+
+    Stage probe;
+    probe.SetLevel(STAGE_LEVEL_RANGE);
+    const StageProp* found = FindStrawMan(probe);
+    Check(found != NULL,"the range has a straw man");
+    if (!found){
+        return;
+    }
+    const StageProp man = *found;
+    Check(man.x > probe.StartPosition().x,"to the right of where she starts");
+    CheckNear(man.y - man.h * 0.5f,0.0f,0.001f,"standing on the floor");
+
+    //--- She walks through it ---------------------------------------------------------------------
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    float past = man.x + man.w * 0.5f + ARCHER_HALF_W;
+    for (int f_blocks = 0; f_blocks < 2; f_blocks++){
+        Stage s;
+        s.SetLevel(STAGE_LEVEL_RANGE);
+        Settle(s);
+        //Long enough to be well past it at the range's slower run speed - the first version ran 60
+        //ticks, stopped at 2.97 unblocked, and so passed the control without testing it.
+        for (int i = 0; i < 240; i++){
+            s.ClearObstacles();
+            s.AddObstacle(man.x,man.y,man.w * 0.5f,man.h * 0.5f,0,true,f_blocks != 0);
+            StageEvents ev;
+            s.Tick(right,ev);
+        }
+        snprintf(detail,sizeof(detail),"at (%.2f, %.2f); its far side is %.2f",s.pos.x,s.pos.y,past);
+        if (f_blocks){
+            CheckNear(s.pos.x,man.x - man.w * 0.5f - ARCHER_HALF_W,0.02f,
+                      "control: the same box, blocking, stops her at its face",detail);
+        }else{
+            Check(s.pos.x > past,"non-blocking, she runs straight through it",detail);
+            CheckNear(s.pos.y,ARCHER_HALF_H,0.01f,"along the floor, not stood on top of it",detail);
+        }
+    }
+
+    //--- ...and the boot still finds it ------------------------------------------------------------
+    ArcherInput idle;
+    ArcherInput kick;
+    kick.f_kick_pressed = true;
+    ArcherInput face;
+    for (int from_left = 0; from_left < 2; from_left++){
+        Stage k;
+        k.SetLevel(STAGE_LEVEL_RANGE);
+        float side = from_left ? -1.0f : 1.0f;
+        //Just off its near side, within the boot's reach.
+        k.pos = v2(man.x + side * (man.w * 0.5f + ARCHER_HALF_W + 0.30f),ARCHER_HALF_H + 0.01f);
+        Settle(k);
+        face.move_axis = -side;
+        Run(k,2,face);
+        int connects = 0;
+        StageEvents::StageKick got;
+        for (int i = 0; i < KICK_TICKS + 4; i++){
+            k.ClearObstacles();
+            k.AddObstacle(man.x,man.y,man.w * 0.5f,man.h * 0.5f,5,true,false);
+            StageEvents ev;
+            k.Tick(i == 0 ? kick : idle,ev);
+            if (ev.kicks.size() > 0){
+                got = ev.kicks[0];
+            }
+            connects += (int)ev.kicks.size();
+        }
+        snprintf(detail,sizeof(detail),"%i connects from x %.2f",connects,k.pos.x);
+        Check(connects == 1,from_left ? "kicked from the left, the boot finds it once"
+                                      : "kicked from the right, the boot finds it once",detail);
+        Check(got.id == 5 && got.dir == -side,"by its id, in the direction she faces");
+    }
+}
+
+#if ARCHER_TEST_BAY
+/*
+    The bank behind the terrain (Backdrop.h), against the real bay. What matters: it follows the
+    floor and nothing standing on it, it stays behind the slab by the gap, it reaches below, and it
+    is the same bank every time.
+*/
+static void TestBackdrop(){
+    printf("the backdrop\n");
+    char detail[200];
+    Stage s;
+    BackdropParams params;
+    std::vector<StageBlock> bank;
+    std::vector<int> grounds;
+    //The two bays as the app meshes them: below and above the split.
+    BuildBackdropBlocks(s.blocks,ARCHER_TEST_BAY_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,
+                        params,bank,NULL,&grounds);
+    Check(grounds.size() == 1,"the ground bay's bank follows one block - its floor");
+    Check(!bank.empty(),"and is some humps long");
+    if (grounds.empty() || bank.empty()){
+        return;
+    }
+    const StageBlock& floor = s.blocks[grounds[0]];
+    snprintf(detail,sizeof(detail),"the floor block is %.2f .. %.2f at y %.2f",floor.Left(),floor.Right(),floor.Top());
+    Check(floor.Bottom() < 0.0f && floor.hw > 5.0f,"which is the wide slab under the bay",detail);
+
+    float left = 1e30f, right = -1e30f, lowest = 1e30f, front = -1e30f, highest = -1e30f;
+    int ridges = 0;
+    for (size_t i = 0; i < bank.size(); i++){
+        left = fminf(left,bank[i].Left());
+        right = fmaxf(right,bank[i].Right());
+        lowest = fminf(lowest,bank[i].Bottom());
+        front = fmaxf(front,bank[i].Front());
+        highest = fmaxf(highest,bank[i].Top());
+        if (bank[i].Front() > floor.Back() - params.wall_gap + 0.001f){
+            ridges++;
+        }
+    }
+    snprintf(detail,sizeof(detail),"wall %.2f .. %.2f",left,right);
+    Check(left <= floor.Left() && right >= floor.Right(),"the wall runs the floor's whole length",detail);
+    CheckNear(lowest,floor.Bottom() - params.drop_below,0.001f,"and reaches drop_below under it");
+    snprintf(detail,sizeof(detail),"highest top %.2f over a floor at %.2f",highest,floor.Top());
+    Check(highest > floor.Top() + params.wall_high * 0.6f,"and rises well above it - a cave's back wall, not a bank",detail);
+    snprintf(detail,sizeof(detail),"%i ridges",ridges);
+    Check(ridges >= 3,"ridges stand forward of the wall",detail);
+    CheckNear(front,floor.Back() - params.front_gap,0.001f,"the nearest face - a ridge's - is front_gap behind the slab's back");
+
+    //The pines: on a wall column's top, inside its footprint and its depth, well up.
+    std::vector<StageBlock> again;
+    std::vector<BackdropTree> trees, trees_again;
+    BuildBackdropBlocks(s.blocks,ARCHER_TEST_BAY_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,
+                        params,again,&trees);
+    Check(trees.size() >= 3,"pines grow on the wall's high points");
+    int stranded = 0;
+    float yaw_lo = 1e30f, yaw_hi = -1e30f, scale_lo = 1e30f, scale_hi = -1e30f;
+    for (size_t t = 0; t < trees.size(); t++){
+        const BackdropTree& tr = trees[t];
+        bool f_on = false;
+        for (size_t i = 0; i < again.size() && !f_on; i++){
+            const StageBlock& b = again[i];
+            f_on = fabsf(b.Top() - tr.y) < 0.001f && tr.x > b.Left() && tr.x < b.Right() &&
+                   tr.z > b.Back() && tr.z < b.Front();
+        }
+        stranded += (f_on && tr.y >= floor.Top() + params.tree_min_rise) ? 0 : 1;
+        yaw_lo = fminf(yaw_lo,tr.yaw); yaw_hi = fmaxf(yaw_hi,tr.yaw);
+        scale_lo = fminf(scale_lo,tr.scale); scale_hi = fmaxf(scale_hi,tr.scale);
+    }
+    snprintf(detail,sizeof(detail),"%i of %i",stranded,(int)trees.size());
+    Check(stranded == 0,"every pine stands on a wall top, inside it, tree_min_rise up",detail);
+    snprintf(detail,sizeof(detail),"%i pines, yaw %.2f .. %.2f, scale %.2f .. %.2f",
+             (int)trees.size(),yaw_lo,yaw_hi,scale_lo,scale_hi);
+    Check(trees.size() >= 3 && yaw_hi - yaw_lo > 1.0f && scale_hi - scale_lo > 0.2f,
+          "and they differ in yaw and size",detail);
+
+    std::vector<StageBlock> third;
+    BuildBackdropBlocks(s.blocks,ARCHER_TEST_BAY_X_MIN,ARCHER_TEST_BAY_X_MAX,-1e30f,ARCHER_TEST_BAY_SPLIT_Y,
+                        params,third,&trees_again);
+    bool f_same = third.size() == bank.size() && trees_again.size() == trees.size();
+    for (size_t i = 0; f_same && i < bank.size(); i++){
+        f_same = (third[i].y == bank[i].y) && (third[i].hh == bank[i].hh) && (third[i].z == bank[i].z);
+    }
+    for (size_t i = 0; f_same && i < trees.size(); i++){
+        f_same = (trees_again[i].x == trees[i].x) && (trees_again[i].yaw == trees[i].yaw);
+    }
+    Check(f_same,"the same level grows the same wall and the same pines");
+
+    std::vector<StageBlock> upper;
+    BuildBackdropBlocks(s.blocks,ARCHER_TEST_BAY_X_MIN,ARCHER_TEST_BAY_X_MAX,ARCHER_TEST_BAY_SPLIT_Y,1e30f,
+                        params,upper);
+    Check(upper.empty(),"the upper bay is all floaters, so it gets none");
+}
+#endif
+
+/*
+    The rocks (Boulders.h), against a made-up floor and wall and against the real level. What
+    matters: they are at the foot of walls and nowhere else, each cluster is one big rock with
+    small ones round it on the open side, every one is behind her walking line and on the top it
+    claims, and the same level gets the same rocks.
+*/
+static void TestBoulders(){
+    printf("the boulders\n");
+    char detail[200];
+    BoulderParams params;
+
+    //A floor with a wall standing on its middle: two corners, one each side of the wall.
+    std::vector<StageBlock> blocks;
+    blocks.push_back({ 0.0f, -1.0f, 10.0f, 1.0f, BLOCK_SOLID, true });
+    blocks.push_back({ 2.0f,  2.0f,  0.5f, 2.0f, BLOCK_SOLID, true });
+    std::vector<BoulderCorner> corners;
+    FindBoulderCorners(blocks,params,corners);
+    Check(corners.size() == 2,"a wall on a floor makes two corners");
+    bool f_left = false, f_right = false;
+    for (size_t i = 0; i < corners.size(); i++){
+        f_left  |= (corners[i].side < 0.0f && fabsf(corners[i].x - 1.5f) < 0.001f);
+        f_right |= (corners[i].side > 0.0f && fabsf(corners[i].x - 2.5f) < 0.001f);
+    }
+    Check(f_left && f_right,"at its two faces, each opening away from it");
+
+    //A step too low to count, and a one-way platform down on the floor: neither is a wall.
+    std::vector<StageBlock> low = blocks;
+    low[1].y = 0.2f; low[1].hh = 0.2f;
+    FindBoulderCorners(low,params,corners);
+    Check(corners.empty(),"a kerb under min_wall is not a corner");
+    std::vector<StageBlock> plat = blocks;
+    plat[1].kind = BLOCK_PLATFORM;
+    FindBoulderCorners(plat,params,corners);
+    Check(corners.empty(),"nor is a one-way platform");
+
+    //The real level: rocks at every kind of corner it has, all of them behaving.
+    Stage s;
+    std::vector<Boulder> rocks;
+    ScatterBoulders(s.blocks,params,rocks);
+    FindBoulderCorners(s.blocks,params,corners);
+    int bigs = 0, smalls = 0, bad_depth = 0, bad_top = 0, far_from_wall = 0;
+    for (size_t i = 0; i < rocks.size(); i++){
+        const Boulder& b = rocks[i];
+        float r = params.radius[b.kind] * b.scale;
+        (b.kind == BOULDER_BIG) ? bigs++ : smalls++;
+        if (b.z + r > params.z_front_max + 0.001f){
+            bad_depth++;
+        }
+        //Standing on a real top: some SOLID/LEDGE whose top is b.ground and spans x.
+        bool f_on = false;
+        for (size_t k = 0; k < s.blocks.size() && !f_on; k++){
+            const StageBlock& t = s.blocks[k];
+            f_on = (t.kind == BLOCK_SOLID || t.kind == BLOCK_LEDGE) && fabsf(t.Top() - b.ground) < 0.001f &&
+                   b.x > t.Left() && b.x < t.Right();
+        }
+        bad_top += f_on ? 0 : 1;
+        //Near SOME corner at that height - rocks are where they fell, not out on open floor.
+        float nearest = 1e30f;
+        for (size_t k = 0; k < corners.size(); k++){
+            if (fabsf(s.blocks[corners[k].top].Top() - b.ground) < 0.001f){
+                nearest = fminf(nearest,fabsf(b.x - corners[k].x));
+            }
+        }
+        if (nearest > params.radius[BOULDER_BIG] * params.big_scale_max * 2.0f + params.small_reach + 0.5f){
+            far_from_wall++;
+        }
+    }
+    snprintf(detail,sizeof(detail),"%i corners, %i big, %i small",(int)corners.size(),bigs,smalls);
+    Check(bigs >= 3 && smalls >= bigs * params.small_min / 2,"the level gets a few big rocks, each with small ones",detail);
+    snprintf(detail,sizeof(detail),"%i of %i",bad_depth,(int)rocks.size());
+    Check(bad_depth == 0,"every rock stays behind z_front_max, off her walking line",detail);
+    snprintf(detail,sizeof(detail),"%i of %i",bad_top,(int)rocks.size());
+    Check(bad_top == 0,"every rock stands on a top that is there",detail);
+    snprintf(detail,sizeof(detail),"%i of %i",far_from_wall,(int)rocks.size());
+    Check(far_from_wall == 0,"and every one is within a cluster's reach of a wall's foot",detail);
+
+    std::vector<Boulder> again;
+    ScatterBoulders(s.blocks,params,again);
+    bool f_same = again.size() == rocks.size();
+    for (size_t i = 0; f_same && i < rocks.size(); i++){
+        f_same = again[i].x == rocks[i].x && again[i].z == rocks[i].z && again[i].yaw == rocks[i].yaw;
+    }
+    Check(f_same,"the same level gets the same rocks");
+}
+
 static void TestRange(){
     printf("the range\n");
 
@@ -2230,6 +2504,7 @@ static void TestRange(){
     int floating = 0;
     int crates_left = 0;
     int crates_right = 0;
+    int strawmen = 0;
     int other = 0;
     float lowest_float = 1000.0f;
     v2 start = s.StartPosition();
@@ -2242,11 +2517,14 @@ static void TestRange(){
             (p.x < start.x) ? left++ : right++;
         }else if (p.kind == PROP_CRATE){
             (p.x < start.x) ? crates_left++ : crates_right++;
+        }else if (p.kind == PROP_STRAWMAN){
+            strawmen++;
         }else{
             other++;
         }
     }
-    Check(other == 0,"the only props are targets and crates");
+    Check(other == 0,"the only props are targets, crates and the straw man");
+    Check(strawmen == 1,"one straw man");
     Check(left == 2 && right == 2,"two standing targets either side of the start");
     Check(floating == 5,"an arch of five floating targets");
     char detail[96];
@@ -2480,8 +2758,9 @@ static void TestFoliage(){
         if (f_ground && p.x > -10.5f && p.x < -9.5f){ on_breakable++; }
         if (f_ground && p.x > 7.0f && p.x < 9.0f){ in_wall++; }
         //The density checks are per curve: the lottery kinds thicken into the corner, grass thins.
-        int& near = (p.kind == FOLIAGE_GRASS) ? grass_near_wall : near_wall;
-        int& open = (p.kind == FOLIAGE_GRASS) ? grass_in_open : in_open;
+        bool f_grass = (p.kind == FOLIAGE_GRASS) || (p.kind == FOLIAGE_GRASS_2);
+        int& near = f_grass ? grass_near_wall : near_wall;
+        int& open = f_grass ? grass_in_open : in_open;
         if (f_ground && p.x > 5.5f && p.x < 7.0f){ near++; }
         if (f_ground && p.x > -3.5f && p.x < 0.5f){ open++; }
     }
@@ -2969,6 +3248,530 @@ static void TestRopeLevel(){
     snprintf(d,sizeof(d),"rope ends at %.2f, her hands are at %.2f, reach %.2f",end_y,hand_y,ROPE_GRAB_REACH);
     Check(end_y - hand_y < ROPE_GRAB_REACH,"its end is within reach from standing, so climbing can start there",d);
     Check(end_y > ARCHER_HALF_H * 2.0f * 0.5f,"and hangs clear of the floor",d);
+}
+
+/*
+    One hop: jump, holding `dir` from `delay` ticks in, and report where she lands - the top she is
+    standing on once she is down again. -1000 if she never landed.
+*/
+static float Hop(Stage& s, float dir, int delay, float* land_x = NULL){
+    ArcherInput in;
+    in.f_jump_down = true;
+    in.f_jump_pressed = true;
+    in.move_axis = (delay <= 0) ? dir : 0.0f;
+    bool f_left = false;
+    for (int i = 0; i < 240; i++){
+        StageEvents e;
+        s.Tick(in,e);
+        in.f_jump_pressed = false;
+        if (i + 1 >= delay){ in.move_axis = dir; }
+        if (!s.f_on_ground){ f_left = true; }
+        if (f_left && s.f_on_ground){
+            Run(s,3,ArcherInput());     //let go and settle, so the next hop starts from rest
+            if (land_x){ *land_x = s.pos.x; }
+            return s.pos.y - ARCHER_HALF_H;
+        }
+    }
+    return -1000.0f;
+}
+
+/*
+    THE TREE (plant_mechanics_plan.md 1): its arms are one-way platforms, and it is CLIMBABLE -
+    proved hop by hop with plain inputs, so moving an arm or a slab says at once if the climb broke.
+*/
+static void TestTree(){
+    printf("\nthe tree\n");
+    char d[200];
+    Stage s;
+    Check(s.trees.size() == 1,"the main level has a tree");
+    if (s.trees.empty()){
+        return;
+    }
+    const StageTree& t = s.trees[0];
+    int arms = 0;
+    bool f_shape = true;
+    for (const StageBlock& b : s.blocks){
+        if (b.tree != 0){ continue; }
+        const StageTreeArm& a = t.arms[arms];
+        f_shape = f_shape && b.kind == BLOCK_PLATFORM && fabsf(b.Top() - a.top) < 1e-4f &&
+                  fabsf((a.side > 0.0f ? b.Left() : b.Right()) - (t.x + a.side * t.radius)) < 1e-4f &&
+                  fabsf(b.hw * 2.0f - a.length) < 1e-4f &&
+                  b.Front() >= STAGE_BLOCK_MIN_COVER && b.Back() <= -STAGE_BLOCK_MIN_COVER;
+        arms++;
+    }
+    Check(arms == (int)t.arms.size() && f_shape,
+          "every arm is a one-way platform from the trunk's face out to its tip, covering the play plane");
+
+    //Neither slab can be reached from the ground: the tree is the way up.
+    float hands = ApexRise() + ARCHER_HALF_H * 2.0f;
+    Check(5.5f > hands && 10.2f > hands,"both slabs are out of reach from the ground - even of a grab");
+
+    //The climb. From under the first arm, straight up through it.
+    const float arm_mid[3] = { t.x + t.radius + 1.0f, t.x - t.radius - 1.0f, t.x + t.radius + 1.0f };
+    s.pos = v2(arm_mid[0],ARCHER_HALF_H + 0.001f);
+    Settle(s);
+    float lx = 0.0f;
+    float top = Hop(s,0.0f,0,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,t.arms[0].top,0.01f,"straight up from the ground, through the first arm and onto it",d);
+    top = Hop(s,-1.0f,6,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,t.arms[1].top,0.01f,"a hop up and across to the second, on the other side",d);
+
+    //Branch one: off the second arm onto the low slab.
+    Stage low = s;
+    top = Hop(low,-1.0f,0,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,5.5f,0.01f,"from the second arm, a hop onto the low slab",d);
+
+    //Branch two: up to the third arm and onto the high slab.
+    top = Hop(s,1.0f,6,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,t.arms[2].top,0.01f,"back across and up to the third",d);
+    top = Hop(s,1.0f,0,&lx);
+    snprintf(d,sizeof(d),"landed on %.2f at x %.2f",top,lx);
+    CheckNear(top,10.2f,0.01f,"and from the third, up onto the high slab",d);
+
+    //Down through an arm with Down held, as on any one-way platform.
+    Stage drop;
+    drop.pos = v2(arm_mid[0],ARCHER_HALF_H + 0.001f);
+    Settle(drop);
+    Hop(drop,0.0f,0);
+    ArcherInput down;
+    down.f_down_held = true;
+    Run(drop,40,down);
+    Settle(drop);
+    snprintf(d,sizeof(d),"ended at y %.2f",drop.pos.y - ARCHER_HALF_H);
+    Check(fabsf(drop.pos.y - ARCHER_HALF_H) < 0.01f,"and Down drops back through an arm to the ground",d);
+}
+
+//--- Spring plants ------------------------------------------------------------------------------
+
+//`out` along a leaf from its stem, as an x offset.
+static float side_out(const StageSpringPlant& p, float out){
+    return p.side * out;
+}
+
+static int FindSpringPlant(const Stage& s, int kind){
+    for (size_t i = 0; i < s.spring_plants.size(); i++){
+        if (s.spring_plants[i].kind == kind){
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+//Puts her in the air with her feet at (x, feet), still, and lets her fall until she stands.
+static void DropOnto(Stage& s, float x, float feet){
+    s.pos = v2(x,feet + ARCHER_HALF_H);
+    s.vel = v2(0.0f,0.0f);
+    s.mode = MODE_AIR;
+    s.f_on_ground = false;
+    s.spring_on = -1;
+    ArcherInput idle;
+    for (int i = 0; i < 240 && !s.f_on_ground; i++){
+        StageEvents e;
+        s.Tick(idle,e);
+    }
+}
+
+/*
+    One flight from where she is: `in` held - its jump press only on the first tick - until she is
+    standing again. The highest her feet got, and the top and x she came down on.
+*/
+struct Flight{
+    float apex = -1000.0f;
+    float land = -1000.0f;
+    float land_x = 0.0f;
+    int   ticks = 0;
+};
+static Flight Fly(Stage& s, ArcherInput in, int max_ticks = 300){
+    Flight f;
+    bool f_left = false;
+    for (int i = 0; i < max_ticks; i++){
+        StageEvents e;
+        s.Tick(in,e);
+        in.f_jump_pressed = false;
+        float feet = s.pos.y - ARCHER_HALF_H;
+        if (!s.f_on_ground){
+            f_left = true;
+            if (feet > f.apex){ f.apex = feet; }
+        }
+        if (f_left && s.f_on_ground){
+            f.land = feet;
+            f.land_x = s.pos.x;
+            f.ticks = i + 1;
+            return f;
+        }
+    }
+    return f;
+}
+
+/*
+    Every moment to jump in the `window` ticks after `landed`, holding `dir`: the flight each one
+    gives. The best is the timed jump; tick 0 - the jump already waiting as she lands - the worst.
+*/
+static Flight BestJump(const Stage& landed, float dir, int window, int* out_delay, Flight* out_first){
+    Flight best;
+    for (int d = 0; d < window; d++){
+        Stage c = landed;
+        Run(c,d,ArcherInput());
+        ArcherInput jump;
+        jump.f_jump_pressed = true;
+        jump.f_jump_down = true;
+        jump.move_axis = dir;
+        Flight f = Fly(c,jump);
+        if (d == 0 && out_first){
+            *out_first = f;
+        }
+        if (f.apex > best.apex){
+            best = f;
+            if (out_delay){ *out_delay = d; }
+        }
+    }
+    return best;
+}
+
+/*
+    THE BOUNCE PAD AND THE LEAF (plant_mechanics_plan.md 2). Each claim the level makes about them
+    is played here with plain inputs: the pad sinks and throws a hop, a TIMED jump off it reaches the
+    shelf and a mistimed one does not; the leaf holds her near its stem, bends and slides her off
+    when she walks out, throws her to the canopy when bounced on in time, and lets her walk back.
+*/
+static void TestSpringPlants(){
+    printf("\nthe spring plants\n");
+    char d[220];
+    Stage s;
+    int pad = FindSpringPlant(s,SPRING_PAD);
+    int leaf = FindSpringPlant(s,SPRING_LEAF);
+    Check(pad >= 0 && leaf >= 0,"the main level has a bounce pad and a leaf");
+    if (pad < 0 || leaf < 0){
+        return;
+    }
+    const float shelf_top = 7.5f;
+    const float canopy_top = 13.0f;
+    const float plain_reach = ApexRise() + ARCHER_HALF_H * 2.0f;
+    Check(shelf_top > s.spring_plants[pad].root.y + plain_reach,
+          "the shelf is out of reach of a plain jump off the pad, even of a grab");
+
+    //--- The pad ---
+    StageSpringPlant p0 = s.spring_plants[pad];
+    DropOnto(s,p0.root.x,p0.root.y + ApexRise());
+    Check(s.spring_on == pad,"a fall onto the cap lands on the pad");
+    Stage landed = s;
+    float lowest = 0.0f;
+    bool f_rode_down = true;
+    Stage ride = s;
+    for (int i = 0; i < 30; i++){
+        Run(ride,1,ArcherInput());
+        const StageSpringPlant& p = ride.spring_plants[pad];
+        if (p.q < lowest){
+            lowest = p.q;
+            f_rode_down = f_rode_down && ride.spring_on == pad &&
+                          fabsf(ride.pos.y - ARCHER_HALF_H - p.SurfaceY(ride.pos.x)) < 0.01f;
+        }
+    }
+    snprintf(d,sizeof(d),"sank %.2f of %.2f travel",-lowest,p0.travel);
+    Check(lowest < -0.4f && lowest > -p0.travel + 0.01f,"the landing sinks the cap well down, short of bottoming out",d);
+    Check(f_rode_down,"and she rides it down, feet on the cap");
+
+    Stage hop = landed;
+    Flight rebound = Fly(hop,ArcherInput(),200);
+    snprintf(d,sizeof(d),"hop to %.2f over the cap, a plain jump rises %.2f",rebound.apex - p0.root.y,ApexRise());
+    Check(rebound.apex > p0.root.y + 0.2f && rebound.apex < p0.root.y + ApexRise(),
+          "left alone she rebounds a hop, lower than a jump",d);
+    Stage rest = landed;
+    Run(rest,400,ArcherInput());
+    snprintf(d,sizeof(d),"cap at %.3f, on it %d",rest.spring_plants[pad].q,rest.spring_on == pad ? 1 : 0);
+    CheckNear(rest.spring_plants[pad].q,-p0.give,0.01f,"and settles standing on it, sunk by its give",d);
+
+    int delay = 0;
+    Flight first;
+    Flight timed = BestJump(landed,1.0f,45,&delay,&first);
+    snprintf(d,sizeof(d),"jump %d ticks after landing: apex %.2f, came down on %.2f at x %.2f",
+             delay,timed.apex,timed.land,timed.land_x);
+    CheckNear(timed.land,shelf_top,0.01f,"a jump timed to the rebound, holding right, reaches the shelf",d);
+    Check(timed.apex - p0.root.y <= SPRING_MAX_LAUNCH * SPRING_MAX_LAUNCH / (2.0f * ARCHER_GRAVITY) + 0.1f,
+          "and no higher than SPRING_MAX_LAUNCH allows",d);
+    snprintf(d,sizeof(d),"apex %.2f",first.apex);
+    Check(first.apex < p0.root.y + ApexRise() + 0.3f,"a jump already waiting as she lands is a plain jump",d);
+
+    //The grace: the jump pressed a tick or two AFTER the rebound threw her still flings.
+    {
+        Stage late = landed;
+        int left_at = -1;
+        for (int i = 0; i < 60 && left_at < 0; i++){
+            Run(late,1,ArcherInput());
+            if (!late.f_on_ground){ left_at = i; }
+        }
+        Run(late,2,ArcherInput());
+        ArcherInput jump;
+        jump.f_jump_pressed = true;
+        jump.f_jump_down = true;
+        Flight f = Fly(late,jump);
+        snprintf(d,sizeof(d),"apex %.2f, pressed 3 ticks after she left the cap",f.apex);
+        Check(f.apex > p0.root.y + ApexRise() + 1.0f,"a jump just after the rebound throws her still flings",d);
+    }
+    //Letting go of jump shortens the jump part and never the throw.
+    {
+        Stage c = landed;
+        Run(c,delay,ArcherInput());
+        ArcherInput tap;
+        tap.f_jump_pressed = true;
+        tap.f_jump_down = true;
+        StageEvents e;
+        c.Tick(tap,e);
+        Flight f = Fly(c,ArcherInput());
+        snprintf(d,sizeof(d),"tapped: apex %.2f; held: %.2f; the rebound alone: %.2f",f.apex,timed.apex,rebound.apex);
+        Check(f.apex < timed.apex - 1.0f && f.apex > rebound.apex,"a tapped fling is lower than a held one, higher than no jump",d);
+    }
+    //The landing forecast sees the pad.
+    {
+        Stage f;
+        f.pos =v2(p0.root.x,p0.root.y + 3.0f + ARCHER_HALF_H);
+        f.vel = v2(0.0f,0.0f);
+        f.mode = MODE_AIR;
+        f.f_on_ground = false;
+        f.spring_on = -1;
+        StageLanding fc = f.PredictLanding(ArcherInput(),60);
+        int real = 0;
+        for (int i = 1; i <= 60 && !real; i++){
+            StageEvents e;
+            f.Tick(ArcherInput(),e);
+            if (e.f_landed){ real = i; }
+        }
+        snprintf(d,sizeof(d),"forecast tick %d, real %d",fc.ticks,real);
+        Check(fc.f_lands && fc.ticks == real && f.spring_on == pad,"the landing forecast lands her on the pad on the right tick",d);
+    }
+
+    //--- The leaf ---
+    StageSpringPlant l0 = s.spring_plants[leaf];
+    Stage near;
+    DropOnto(near,l0.root.x + side_out(l0,1.0f),shelf_top + 0.3f);
+    Run(near,300,ArcherInput());
+    snprintf(d,sizeof(d),"on it %d, bent to %.1f deg",near.spring_on == leaf ? 1 : 0,near.spring_plants[leaf].SlopeDeg());
+    Check(near.spring_on == leaf && near.spring_plants[leaf].SlopeDeg() > -SPRING_LEAF_SLIP_DEG,
+          "standing near the stem, the leaf holds her",d);
+
+    Stage walk;
+    DropOnto(walk,114.0f,shelf_top + 0.1f);
+    ArcherInput out;
+    out.move_axis = 0.4f;
+    bool f_slid = false;
+    float steepest = 0.0f;
+    for (int i = 0; i < 400; i++){
+        Run(walk,1,out);
+        if (walk.spring_on == leaf){
+            f_slid = f_slid || walk.SlideAccel() != 0.0f;
+            float a = walk.spring_plants[leaf].SlopeDeg();
+            if (a < steepest){ steepest = a; }
+        }
+        if (walk.f_on_ground && walk.pos.y - ARCHER_HALF_H < 0.01f){
+            break;
+        }
+    }
+    snprintf(d,sizeof(d),"steepest %.1f deg, ended at (%.2f,%.2f), slid %d",
+             steepest,walk.pos.x,walk.pos.y - ARCHER_HALF_H,f_slid ? 1 : 0);
+    Check(f_slid && fabsf(walk.pos.y - ARCHER_HALF_H) < 0.01f && walk.pos.x > l0.root.x,
+          "walked out along it, it bends under her and she slides off the end to the ground",d);
+    Run(walk,300,ArcherInput());
+    snprintf(d,sizeof(d),"at %.2f deg",walk.spring_plants[leaf].SlopeDeg());
+    CheckNear(walk.spring_plants[leaf].SlopeDeg(),l0.rest_deg,0.5f,"and springs back to rest once she is off it",d);
+
+    //Bounced on: land out along it from a hop off the shelf, and jump as it comes back up.
+    Stage bounce;
+    DropOnto(bounce,l0.root.x + side_out(l0,2.6f),shelf_top + ApexRise());
+    Check(bounce.spring_on == leaf,"a fall onto the leaf lands on it");
+    Flight lfirst;
+    int ldelay = 0;
+    Flight fling = BestJump(bounce,1.0f,50,&ldelay,&lfirst);
+    snprintf(d,sizeof(d),"jump %d ticks after landing: apex %.2f, came down on %.2f at x %.2f",
+             ldelay,fling.apex,fling.land,fling.land_x);
+    CheckNear(fling.land,canopy_top,0.01f,"a jump timed to the leaf's spring back reaches the canopy",d);
+    snprintf(d,sizeof(d),"apex %.2f",lfirst.apex);
+    Check(lfirst.apex < canopy_top,"a jump already waiting as she lands does not",d);
+    Check(shelf_top + plain_reach < canopy_top,"nor does any jump or grab from the shelf");
+
+    //And back off it onto the shelf, over the step a bent leaf leaves at its stem.
+    Stage back;
+    DropOnto(back,l0.root.x + side_out(l0,1.6f),shelf_top + 0.3f);
+    ArcherInput left;
+    left.move_axis = -1.0f;
+    Run(back,40,left);
+    snprintf(d,sizeof(d),"ended at (%.2f,%.2f)",back.pos.x,back.pos.y - ARCHER_HALF_H);
+    Check(back.f_on_ground && back.pos.x < l0.root.x - 1.0f && fabsf(back.pos.y - ARCHER_HALF_H - shelf_top) < 0.01f,
+          "walking back along it steps her up onto the shelf",d);
+}
+
+/*
+    THE TIMING CUE AND PUMPING. The cue (now / PredictSpringBoostPeak) must read full on the very
+    tick a press gives the best jump, and nothing while the cap is still going down. The stomp and
+    the swing must each add height - and only when timed: Down through the end of the fall, Up in
+    the first ticks after the release.
+*/
+static void TestSpringPump(){
+    printf("\nspring plants: the timing cue and pumping\n");
+    char d[240];
+    Stage s;
+    int pad = FindSpringPlant(s,SPRING_PAD);
+    if (pad < 0){
+        Check(false,"the main level has a bounce pad");
+        return;
+    }
+    const StageSpringPlant p0 = s.spring_plants[pad];
+    DropOnto(s,p0.root.x,p0.root.y + ApexRise());
+    Stage landed = s;
+
+    //--- The cue ---
+    float peak_at_landing = landed.PredictSpringBoostPeak(ArcherInput());
+    float seen_max = 0.0f;
+    int cue_best = -1;
+    float cue_best_frac = -1.0f;
+    bool f_dark_going_down = true;
+    Stage c = landed;
+    for (int t = 0; t < 30; t++){
+        if (c.SpringBoostActive()){
+            float peak = c.PredictSpringBoostPeak(ArcherInput());
+            float frac = (peak > 0.0f) ? c.SpringBoostNow() / peak : 0.0f;
+            if (frac > cue_best_frac + 1e-4f){
+                cue_best_frac = frac;
+                cue_best = t;
+            }
+            //On the cap only: once it has thrown her she is rising in the air, a coyote press still
+            //pays, and the cap is on its way back down by then.
+            if (c.f_on_ground && c.spring_on == pad && c.spring_plants[pad].qd < 0.0f && frac > 0.0f){
+                f_dark_going_down = false;
+            }
+            if (c.SpringBoostNow() > seen_max){
+                seen_max = c.SpringBoostNow();
+            }
+        }
+        Run(c,1,ArcherInput());
+    }
+    snprintf(d,sizeof(d),"forecast %.2f at the landing, the most seen %.2f",peak_at_landing,seen_max);
+    CheckNear(peak_at_landing,seen_max,0.01f,"at the landing, the cue already knows this bounce's best boost",d);
+    int best_delay = 0;
+    Flight first;
+    Flight best = BestJump(landed,0.0f,30,&best_delay,&first);
+    snprintf(d,sizeof(d),"the cue peaks %d ticks after landing (%.2f), the best jump is pressed at %d (apex %.2f)",
+             cue_best,cue_best_frac,best_delay,best.apex);
+    Check(cue_best_frac > 0.999f && abs(cue_best - best_delay) <= 1,"the cue reads full on the tick the best jump is pressed",d);
+    Check(f_dark_going_down,"and reads nothing while the cap is still going down");
+
+    //--- The stomp ---
+    Stage stomped;
+    {
+        ArcherInput down;
+        down.aim_axis = -1.0f;
+        stomped.pos = v2(p0.root.x,p0.root.y + ApexRise() + ARCHER_HALF_H);
+        stomped.vel = v2(0.0f,0.0f);
+        stomped.mode = MODE_AIR;
+        stomped.f_on_ground = false;
+        float stomp = 0.0f;
+        for (int i = 0; i < 240 && !stomped.f_on_ground; i++){
+            StageEvents e;
+            stomped.Tick(down,e);
+            if (e.f_landed){ stomp = e.stomp; }
+        }
+        snprintf(d,sizeof(d),"stomp %.2f",stomp);
+        Check(stomp > 0.999f,"Down held through the fall lands a full stomp",d);
+    }
+    float sink_plain = 0.0f, sink_stomp = 0.0f;
+    {
+        Stage a = landed, b = stomped;
+        for (int i = 0; i < 20; i++){
+            Run(a,1,ArcherInput());
+            Run(b,1,ArcherInput());
+            if (a.spring_plants[pad].q < sink_plain){ sink_plain = a.spring_plants[pad].q; }
+            if (b.spring_plants[pad].q < sink_stomp){ sink_stomp = b.spring_plants[pad].q; }
+        }
+    }
+    int stomp_delay = 0;
+    Flight stomp_best = BestJump(stomped,0.0f,30,&stomp_delay,NULL);
+    snprintf(d,sizeof(d),"sank %.2f against %.2f; best jump apex %.2f (at %d) against %.2f",
+             -sink_stomp,-sink_plain,stomp_best.apex,stomp_delay,best.apex);
+    Check(sink_stomp < sink_plain - 0.05f && stomp_best.apex > best.apex + 0.3f,
+          "a stomped landing sinks the cap deeper and the timed jump off it goes higher",d);
+    {
+        //Held only early in the fall, then let go: it does not count.
+        Stage early;
+        early.pos = v2(p0.root.x,p0.root.y + ApexRise() + ARCHER_HALF_H);
+        early.mode = MODE_AIR;
+        float stomp = -1.0f;
+        for (int i = 0; i < 240 && !early.f_on_ground; i++){
+            ArcherInput in;
+            in.aim_axis = (i < 8) ? -1.0f : 0.0f;
+            StageEvents e;
+            early.Tick(in,e);
+            if (e.f_landed){ stomp = e.stomp; }
+        }
+        snprintf(d,sizeof(d),"stomp %.2f",stomp);
+        Check(stomp == 0.0f,"Down let go before the end of the fall is no stomp",d);
+    }
+
+    //--- The swing ---
+    //The rebound alone, then the same with Up pressed at various ticks after she leaves the cap.
+    auto rebound_with_up = [&](int press_at, bool f_hold_from_start, bool* out_swung){
+        Stage r = landed;
+        int air = -1;
+        float apex = -100.0f;
+        bool f_swung = false;
+        for (int i = 0; i < 200; i++){
+            ArcherInput in;
+            if (f_hold_from_start || (air >= 0 && air + 1 >= press_at && press_at >= 0)){
+                in.aim_axis = 1.0f;
+            }
+            StageEvents e;
+            r.Tick(in,e);
+            f_swung = f_swung || e.f_swung;
+            if (!r.f_on_ground){
+                air++;
+                float feet = r.pos.y - ARCHER_HALF_H;
+                if (feet > apex){ apex = feet; }
+            }else if (air >= 0){
+                break;
+            }
+        }
+        if (out_swung){ *out_swung = f_swung; }
+        return apex;
+    };
+    bool f_sw = false;
+    float plain = rebound_with_up(-1,false,&f_sw);
+    float early_up = rebound_with_up(1,false,&f_sw);
+    bool f_early = f_sw;
+    float late_up = rebound_with_up(SPRING_SWING_WINDOW + 3,false,&f_sw);
+    bool f_late = f_sw;
+    float held_up = rebound_with_up(-1,true,&f_sw);
+    bool f_held = f_sw;
+    snprintf(d,sizeof(d),"rebound alone %.2f; Up at 1 tick %.2f (%d); at %d %.2f (%d); held from before %.2f (%d)",
+             plain,early_up,f_early,SPRING_SWING_WINDOW + 3,late_up,f_late,held_up,f_held);
+    Check(f_early && early_up > plain + 0.2f,"Up pressed as the pad throws her swings her higher",d);
+    Check(!f_late && fabsf(late_up - plain) < 0.01f,"pressed too late it does nothing",d);
+    Check(!f_held && fabsf(held_up - plain) < 0.01f,"and Up held since before the throw does nothing - it is a press",d);
+
+    //Both on the timed fling: stomp in, jump on the best tick, swing out.
+    {
+        Stage f = stomped;
+        Run(f,stomp_delay,ArcherInput());
+        ArcherInput jump;
+        jump.f_jump_pressed = true;
+        jump.f_jump_down = true;
+        float apex = -100.0f;
+        for (int i = 0; i < 200; i++){
+            ArcherInput in = jump;
+            in.f_jump_pressed = (i == 0);
+            in.aim_axis = (i == 1) ? 1.0f : 0.0f;
+            StageEvents e;
+            f.Tick(in,e);
+            float feet = f.pos.y - ARCHER_HALF_H;
+            if (feet > apex){ apex = feet; }
+            if (i > 2 && f.f_on_ground){ break; }
+        }
+        snprintf(d,sizeof(d),"apex %.2f; timed jump alone %.2f, with the stomp %.2f; the cap allows %.2f over the cap",
+                 apex,best.apex,stomp_best.apex,
+                 SPRING_MAX_LAUNCH * SPRING_MAX_LAUNCH / (2.0f * ARCHER_GRAVITY));
+        Check(apex >= stomp_best.apex,"stomp, timed jump and swing together go highest of all",d);
+    }
 }
 
 /*
@@ -4034,6 +4837,7 @@ int main(void){
     TestPuppet();
     TestDeterminism();
     TestRange();
+    TestStrawMan();
     TestGetUp();
     TestFoliage();
     TestVines();
@@ -4042,13 +4846,18 @@ int main(void){
     TestKneelPuppet();
     TestRopeLevel();
     TestRopePits();
+    TestTree();
+    TestSpringPlants();
+    TestSpringPump();
     TestLandingForecast();
     TestArrowForecast();
     TestRopeMesh();
     TestRopeClimb();
 #if ARCHER_TEST_BAY
     TestBayClimb();
+    TestBackdrop();
 #endif
+    TestBoulders();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

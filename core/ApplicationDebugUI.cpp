@@ -214,13 +214,27 @@ void Application::RenderDebugMenuBar(){
                 if (!assetmanager){
                     ImGui::MenuItem("-- NO ASSET MANAGER --");
                 }else{
+                    /*
+                        A filter, because the list is every asset an app holds and some hold a lot
+                        of plumbing - archer keeps a baked mesh per score popup, 99 of them. Matched
+                        anywhere in the name, ignoring case.
+                    */
+                    static char filter[64] = "";
+                    ImGui::SetNextItemWidth(200.0f);
+                    ImGui::InputTextWithHint("##asset_filter","filter",filter,sizeof(filter));
+                    ImGuiTextFilter matcher(filter);
                     for (Asset* asset:assetmanager->assets){
+                        if (!matcher.PassFilter(asset->name.c_str())){
+                            continue;
+                        }
                         if (ImGui::MenuItem(asset->name.c_str())){
                             //By id, not by name: the id IS the name, hashed, and it is what fits
                             //in a fixed payload - see AssetIDFromName in AssetManager.h.
                             SimCommand cmd;
                             cmd.type = SIM_CMD_OBJECT_SPAWN_ASSET;
                             cmd.asset = asset->id;
+                            //The app says where - see PlaceMenuSpawn.
+                            PlaceMenuSpawn(cmd);
                             SubmitUICommand(cmd);
                         }
                     }
@@ -298,6 +312,11 @@ void Application::RenderDebugMenuBar(){
             ImGui::MenuItem("Scene","",&f_show_scene_window);
             ImGui::MenuItem("Inspector","",&f_show_inspector_window);
             ImGui::MenuItem("Engine","",&f_show_engine_window);
+            ImGui::Separator();
+            //U brings it back - see f_show_ui. The menu bar goes with it, so this is one-way.
+            if (ImGui::MenuItem("Hide UI","U")){
+                f_show_ui = false;
+            }
             ImGui::EndMenu();
         }
 

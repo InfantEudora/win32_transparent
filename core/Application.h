@@ -264,6 +264,21 @@ public:
     virtual void PreRender(void){};
     virtual void DrawFrame(void);
     virtual void DrawImGuiUI(void);
+    /*
+        Whether DrawImGuiUI is called at all - U in every app (INPUT_UI_TOGGLE), or View > Hide UI.
+        Hidden means the frame goes out with no panels and no menu bar: the scene as a player would
+        see it. ImGui still runs its frame, empty, so nothing about it needs restarting. Atomic
+        because the key is read on the physics thread and the flag on the render thread.
+    */
+    std::atomic<bool> f_show_ui{true};
+    /*
+        Where an object spawned from the menu bar's Add Object > Objects From Assets goes. The menu
+        builds the spawn command and hands it here before submitting it, so an app can set
+        SIM_CMD_FLAG_POSITION / _SCALE (and the fields) to put it somewhere useful - on its play
+        plane, at its character's scale. The default leaves it alone: the origin at scale 1, as it
+        always was. RENDER THREAD, physics_mutex held (it is called from DrawImGuiUI).
+    */
+    virtual void PlaceMenuSpawn(SimCommand& cmd){ (void)cmd; };
 
     /*
         Screen-space 2D - rounded rects and text - for an app's own HUD and, later, the on-screen
@@ -632,6 +647,8 @@ protected:
     //whatever has been requested. Between those two because a replay has to be armed (and the
     //app's start state restored) BEFORE the tick it is to begin on, on a paused pass as well.
     void ServiceInputRecording();
+    //Physics thread, every pass, beside ServiceInputRecording: reads U and flips f_show_ui.
+    void ServiceUIToggle();
     void FinishRecording(uint64_t sim_tick);
     //REC / REPLAY in the corner of the window, so a hotkey that toggles something invisible says
     //that it did. Render thread, drawn with the overlay.

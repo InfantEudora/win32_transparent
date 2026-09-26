@@ -66,10 +66,14 @@ InputController::InputController(){
     //Back). An app that wants recording on the pad maps one itself - archer puts it on Back.
     AddKeyMap(VK_F9,INPUT_RECORD_TOGGLE);
     AddKeyMap(VK_F10,INPUT_REPLAY_TOGGLE);
+    //No app maps U, checked 2026-09-26 across all of apps/. An app that wants U for itself should
+    //move this rather than share it - both would fire.
+    AddKeyMap('U',INPUT_UI_TOGGLE);
 #else
     //So the actions exist, and a pad mapping added by an app has a KeyState to share.
     AddKeyMap(0,INPUT_RECORD_TOGGLE);
     AddKeyMap(0,INPUT_REPLAY_TOGGLE);
+    AddKeyMap(0,INPUT_UI_TOGGLE);
 #endif
 
     //View input and the recorder's own controls stay out of recordings - see SetRecorded.
@@ -84,6 +88,7 @@ InputController::InputController(){
     SetRecorded(INPUT_PAUSE,false);
     SetRecorded(INPUT_RECORD_TOGGLE,false);
     SetRecorded(INPUT_REPLAY_TOGGLE,false);
+    SetRecorded(INPUT_UI_TOGGLE,false);
 
     NameAction(INPUT_TURN_LEFT,"turn_left");
     NameAction(INPUT_TURN_RIGHT,"turn_right");
@@ -105,6 +110,7 @@ InputController::InputController(){
     NameAction(INPUT_SHIFT,"shift");
     NameAction(INPUT_RECORD_TOGGLE,"record");
     NameAction(INPUT_REPLAY_TOGGLE,"replay");
+    NameAction(INPUT_UI_TOGGLE,"ui_toggle");
 }
 
 //One mapping, whatever kind of hardware drives it. A second mapping for an action it already

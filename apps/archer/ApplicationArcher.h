@@ -12,13 +12,17 @@
 #include "Puppet.h"
 #include "Terrain.h"
 #include "Foliage.h"
+#include "Backdrop.h"
+#include "Boulders.h"
 #include "Vine.h"
+#include "WindView.h"
 #include "RopeMesh.h"
 #include "DynamicChain.h"
 #include "Bow.h"
 #include "TextMesh.h"
 #include "Sign.h"
 #include "SoundSystem.h"
+#include "SpringHinge.h"
 
 /*
     A side-view platformer about an archer, in 3D assets.
@@ -352,6 +356,44 @@
 #define STAND_RING_COUNT            5
 static const float STAND_RINGS[STAND_RING_COUNT]  = { 0.20f, 0.40f, 0.60f, 0.80f, 1.00f };
 static const int   STAND_POINTS[STAND_RING_COUNT] = { 10,    8,     6,     4,     2 };
+
+/*
+    --- THE STRAW MAN -------------------------------------------------------------------------------
+    A kicking dummy on a spring hinge at its foot (core/physics/SpringHinge; apps/archer/
+    strawman_plan.md). Scores the KICK, one point each; an arrow only sticks in it and sets it
+    swinging. Passable: the rules offer it as a non-blocking obstacle, and its body leaves the
+    archer's kinematic body out of its mask, so she walks through it in both.
+
+    TUNED AS A SWING, not as a spring constant: STRAW_HZ and STRAW_DAMPING_RATIO are what is seen,
+    and SpringHinge works k and c out of the body - gravity's pull over the pivot included, which on
+    an upright dummy is working against the spring. Both have sliders in the panel.
+*/
+#define STRAW_MASS                  6.0f
+#define STRAW_HZ                    1.3f
+#define STRAW_DAMPING_RATIO         0.12f    //amplitude about halves each swing (e^(-2 pi zeta))
+#define STRAW_LIMIT_DEG             65.0f    //each way; keeps a hard kick off the floor
+/*
+    The kick: an impulse of mass x KickSpec speed x this, at the height the boot lands, applied as
+    one tick of force the way an arrow's is. The hinge does the rest - the same boot higher up is
+    more lever, and the swing is whatever the inertia makes of that.
+*/
+#define STRAW_KICK_PUNCH            1.0f
+
+/*
+    --- THE BANK BEHIND THE TERRAIN -----------------------------------------------------------------
+    Backdrop.h places it, Terrain.cpp meshes it on a params set of its own (BackdropTerrainParams in
+    the .cpp: rounder, noisier and coarser than the slab's, since it is further off). HAZE is how far
+    its three colours are pulled toward the painted backdrop's teal-grey rock - the aerial perspective there is
+    no fog to give it.
+*/
+#define BACKDROP_HAZE               0.75f   //0.45 read olive; the user asked for more teal
+/*
+    And its FILL: this share of its own colour it gives off, unshadowed. Most of the bank stands in
+    the slab's shadow - the sun is in front and above - and the renderer has no per-object "receive
+    no shadows", so without it everything under the slab came out black. A far layer lit by the sky
+    is what this stands in for.
+*/
+#define BACKDROP_FILL               0.35f
 
 /*
     And until then a floating target is DAMPED, each one differently.
@@ -765,6 +807,23 @@ struct ArcherSnapshot{
     int   archery_score = 0;        //points on every stand this level
     int   archery_last_points = -1; //the last arrow into a stand; -1 before there has been one
 
+    //Straw men: the swing, and the kicks landed on each.
+    struct StrawView{
+        float x = 0.0f;
+        float angle_deg = 0.0f;         //SpringHinge::GetAngle
+        float joint_angle_deg = 0.0f;   //rp3d's own reading - should match angle_deg
+        float rate = 0.0f;              //rad/s
+        int   kicks = 0;
+        int   arrows = 0;
+        float hz = 0.0f;
+        float inertia = 0.0f;
+        float stiffness = 0.0f;
+        float gravity_stiffness = 0.0f;
+        float damping = 0.0f;
+    };
+    std::vector<StrawView> strawmen;
+    int   kick_score = 0;
+
     //Live arrows, so a miss can be diagnosed rather than guessed at.
     struct ArrowView{
         float x = 0.0f;
@@ -806,6 +865,21 @@ struct ArcherSnapshot{
     float climb_pinned_time = -1.0f;    //the rope climb's playhead as pinned this tick, -1 unpinned
     float climb_lift_posed = 0.0f;      //and the lift the model was lowered by (last tick's pin)
     StageLanding landing_forecast;      //her next landing as forecast this tick
+    //Stage::spring_on and launch_lift, and each spring plant's q and rate - pad units, leaf degrees.
+    int   spring_on = -1;
+    float launch_lift = 0.0f;
+    float slide_accel = 0.0f;
+    float spring_cue = -1.0f;           //the timing cue, 0..1, or -1 while there is none
+    float spring_boost = 0.0f;          //what a jump now would add, and this bounce's best
+    float spring_boost_peak = 0.0f;
+    int   stomp_ticks = 0;
+    int   spring_air_ticks = -1;
+    struct SpringPlantView{
+        int   kind = 0;
+        float q = 0.0f;
+        float qd = 0.0f;
+    };
+    std::vector<SpringPlantView> spring_plants;
     float fall_weight = 0.0f;           //Puppet::fall_weight, the fall pose's share
     float air_hip_weight = 0.0f;        //how much the hips are held at standing height in the air
     float landing_forecast_us = 0.0f;   //and what the forecast cost
@@ -874,7 +948,10 @@ struct PropView{
     vec3  board_centre = vec3(0.0f,0.0f,0.0f);
     vec3  board_up = vec3(0.0f,1.0f,0.0f);
     float board_radius = 0.0f;
-    int   score = 0;                //points scored on this stand
+    int   score = 0;                //points scored on this stand; kicks landed, on a straw man
+    //A straw man's spring: owned here so it moves with prop_views when levels swap, and deleted
+    //before the body it holds - see NewGame.
+    SpringHinge* spring = NULL;
 };
 
 class ApplicationArcher : public Application{
@@ -894,6 +971,11 @@ public:
     void PreRender(void) override;
 #ifdef USE_IMGUI
     void DrawImGuiUI(void) override;
+    //Add Object > Objects From Assets: at her feet on the play plane, and an archer.glb prop at
+    //model_scale - the scale everything from that file is drawn at. See Application::PlaceMenuSpawn.
+    void PlaceMenuSpawn(SimCommand& cmd) override;
+    //archer.glb's props, registered as assets by name so the menu can place them. See Init.
+    void RegisterPlaceableProps();
 #endif
     vec3* GetCameraTargetPtr() override { return &camera_target; }
 
@@ -926,6 +1008,8 @@ private:
     void BuildTerrain();
     //Remeshes one bay from `stage` as it stands, reusing its Object and Mesh. Render thread.
     void RemeshTerrainBay(int bay);
+    //The bank behind that bay (Backdrop.h), the same way. Render thread, from RemeshTerrainBay.
+    void RemeshBackdrop(int bay);
     //Reads the blocks back off their (editor-moved) objects into `stage`, keeps that layout for
     //restarts, and remeshes every bay. Render thread; takes physics_mutex. See the definition.
     void RegenerateTerrain();
@@ -942,6 +1026,14 @@ private:
     //One TARGET_STAND: the model, its cylinder-and-legs body, and the PropView that tracks it.
     //Falls back to a plain board when the model is missing. No GL - NewGame calls it too.
     PropView MakeTargetStand(const StageProp& p, int index);
+    //Loads straw_man for PROP_STRAWMAN. Render thread, beside BuildCrateMesh and for its reason.
+    void BuildStrawManMesh();
+    //One PROP_STRAWMAN: the model, its body, its SpringHinge. Nothing built if the model is missing.
+    PropView MakeStrawMan(const StageProp& p, int index);
+    //Every straw man's spring torque, once per tick before the step.
+    void TickSprings();
+    //Deletes every straw man's spring. Before the bodies go - NewGame.
+    void DestroySprings();
     void BuildProps();
     void BuildArcher();
     //Loads meshes/archer.glb: the skin, the skinned mesh and every clip in Puppet.h's table.
@@ -969,6 +1061,13 @@ private:
         authored with everything to scale with her, so one factor keeps them in proportion.
     */
     void BuildFoliage();
+    /*
+        The wind (wind_plan.md). RENDER THREAD, every frame, from PreRender: copies the blocks and
+        the tick at a tick boundary, rebuilds the field if the blocks changed (a hash check - free
+        when they have not, ~145 ms on the main level when they have), bakes the part the camera
+        sees into the grid the renderer bends plants with, and redraws the debug view if it is on.
+    */
+    void UpdateWind();
     void ScatterFoliageObjects();
     /*
         The decorative vines - see apps/archer/Vine.h and vine_plan.md. Built ONCE, render thread
@@ -1184,6 +1283,8 @@ private:
     void SyncArcherFromRope();
     void PumpRope(float move_axis);
     void SyncArrowViews();
+    //Each spring plant's moving box, to where its spring is this tick.
+    void SyncSpringPlants();
     void SyncAimArc();
     //Cuts the aim arc short at the first PROP it would hit - the half of "what will this arrow
     //hit" that Stage cannot answer. See the note on the definition.
@@ -1249,6 +1350,15 @@ private:
     //Points scored on every stand this level, and on the last hit - for the panel and archer_state.
     int archery_score = 0;
     int archery_last_points = -1;
+    //archer.glb's straw_man, drawn at model_scale; NULL if the export lacks it.
+    Mesh* straw_mesh = NULL;
+    std::vector<Material> straw_materials;
+    //Kicks landed on every straw man this level - the panel and archer_state.
+    int kick_score = 0;
+    //The straw men's swing, live - the panel's sliders. See STRAW_HZ.
+    float straw_hz = STRAW_HZ;
+    float straw_damping_ratio = STRAW_DAMPING_RATIO;
+    float straw_kick_punch = STRAW_KICK_PUNCH;
     Mesh* arrow_mesh = NULL;
     Mesh* dot_mesh = NULL;          //the aim arc's beads
 
@@ -1256,6 +1366,13 @@ private:
     int material_ledge = 0;
     int material_platform = 0;
     int material_breakable = 0;
+    int material_trunk = 0;
+    int material_spring_pad = 0;
+    int material_leaf = 0;
+    //The timing cue's ramp, green (a jump now adds nothing) through yellow to red (this bounce's
+    //best). See spring_cue.
+    static const int SPRING_CUE_STEPS = 9;
+    int material_spring_cue[SPRING_CUE_STEPS] = {};
     int material_archer = 0;
     //The character model's own colour - see the note where it is assigned.
     int material_archer_skin = 0;
@@ -1276,6 +1393,10 @@ private:
     int material_grass = 0;
     int material_soil = 0;
     int material_rock = 0;
+    //The same three for the bank behind the terrain, hazed toward the backdrop - see BACKDROP_HAZE.
+    int material_grass_back = 0;
+    int material_soil_back = 0;
+    int material_rock_back = 0;
     //The placeholder vine's two, used only for a piece archer.glb does not have yet.
     int material_vine = 0;
     int material_vine_leaf = 0;
@@ -1306,6 +1427,19 @@ private:
     DirectionalLight* sun_light = NULL;
     DirectionalLight* fill_light = NULL;        //held only so the range scene can share it
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
+    //The plants' boxes - trunks, stalks, caps, leaves - which are not blocks, so a restart destroys
+    //them from here. The moving part of each spring plant is also in spring_plant_objects, parallel
+    //to Stage::spring_plants, for SyncSpringPlants to place.
+    std::vector<Object*> plant_objects;
+    std::vector<Object*> spring_plant_objects;
+    /*
+        THE TIMING CUE, worked out each tick: which spring plant to tint (-1 none) and how well
+        timed a jump pressed now would be, 0..1 - Stage::SpringBoostNow over this bounce's best,
+        PredictSpringBoostPeak. The colour a frame shows is what a press on the NEXT tick gets.
+    */
+    int   spring_cue_plant = -1;
+    float spring_cue = 0.0f;
+    float spring_cue_peak = 0.0f;
     //The scene-tree parent of every block object, per level. Identity transform, no mesh, and it
     //must stay that way - see BuildBlocks.
     Object* blockout_group = NULL;
@@ -1316,6 +1450,13 @@ private:
     //One Object per test bay, so each can be hidden on its own and object_list names them
     //separately over MCP. Empty when ARCHER_TEST_BAY is off.
     std::vector<Object*> terrain_objects;
+    //And the bank behind each bay (Backdrop.h), one Object per bay in the same order - hidden for a
+    //bay with no ground, which is the upper one.
+    std::vector<Object*> terrain_back_objects;
+    //The finished bank's worst reach forward, over the ground's grass: how far in front of the
+    //slab's back face its surface came, measured on the mesh. At or under 0 is the promise
+    //BackdropParams::front_gap makes. Per bay, for the log and archer_state.
+    std::vector<float> backdrop_reach;
     /*
         Asks the render thread to run RegenerateTerrain on its next frame.
 
@@ -1350,6 +1491,31 @@ private:
     int   foliage_counts[FOLIAGE_KIND_COUNT] = {};
     //Asks PreRender to rescatter - the panel's sliders raise it on release, not every frame.
     std::atomic<bool> f_rescatter_foliage{false};
+
+    //--- The rocks (Boulders.h) ------------------------------------------------------------------
+    //Laid out exactly like the foliage: a mesh per kind, measured at load, and a grown-never-shrunk
+    //pool under one group, re-placed wherever the foliage is. Main level only, like the foliage.
+    Mesh* boulder_meshes[BOULDER_KIND_COUNT] = {};
+    std::vector<Material> boulder_materials[BOULDER_KIND_COUNT];
+    float boulder_mesh_radius[BOULDER_KIND_COUNT] = {};
+    float boulder_mesh_height[BOULDER_KIND_COUNT] = {};
+    Object* boulder_group = NULL;
+    std::vector<Object*> boulder_objects;
+    BoulderParams boulder_params;
+    int   boulder_counts[BOULDER_KIND_COUNT] = {};
+    //Loads rock_big / rock_small and makes the group. Render thread, Init.
+    void BuildBoulders();
+    //Re-places the pool from the blocks as they are. No GL - see ScatterFoliageObjects.
+    void ScatterBoulderObjects();
+
+    //--- The pines on the back wall --------------------------------------------------------------
+    //Placed by BuildBackdropBlocks, drawn as CHILDREN of their bay's terrain_back object - so they go
+    //with the level on a scene swap without a list of their own - reused in order on a remesh.
+    Mesh* pine_mesh = NULL;
+    std::vector<Material> pine_materials;
+    void PlaceBackdropPines(Object* wall, const std::vector<BackdropTree>& trees);
+    //Every bay's pines again, without remeshing - for once model_scale is known. See Init.
+    void PlaceAllBackdropPines();
 
     //--- The vines --------------------------------------------------------------------------------
     //One Object per trunk, its own generated mesh in world coordinates, and the leaves as Objects
@@ -1444,6 +1610,31 @@ private:
     Object* rope_marks[ROPE_MARK_COUNT] = {};
     Bone*   hand_bones[2] = {};             //left, right; found on the model once
     bool    f_show_rope_attach = false;
+
+    //The wind field, its tuning and its debug view - see UpdateWind. Built and retuned on the
+    //render thread; wind_mutex covers it against the archer_wind MCP handler, which samples it
+    //from its own thread.
+    WindField  wind;
+    WindParams wind_params;
+    WindView   wind_view;
+    std::mutex wind_mutex;
+    std::atomic<bool> f_show_wind{false};
+    float      wind_view_ms = 0.0f;         //render-thread cost of the last debug view redraw
+    //The grid handed to Renderer::SetWindField every frame - the field over what the camera
+    //sees, WIND_GRID_STEP apart - and what baking it cost.
+    std::vector<float> wind_grid;
+    int        wind_grid_w = 0, wind_grid_h = 0;
+    float      wind_bake_ms = 0.0f;
+    /*
+        How far the wind bends each plant, per FoliageKind - material_t::wind_flex, in world units
+        per (unit/s * unit^2 of height). Tall plants need far less: the bend grows with the square
+        of the height, so a fern three times the grass's height at the grass's flex would lie flat.
+        Each kind draws with its OWN copy of its material (renamed "<name>@<node>") so the atlas
+        it shares with the terrain tiles and props does not sway along with it.
+    */
+    float      foliage_wind_flex[FOLIAGE_KIND_COUNT] = { 0.035f, 0.20f, 0.06f, 0.30f, 0.30f };
+    //Writes foliage_wind_flex into the renderer's copies of the plant materials. Render thread.
+    void ApplyFoliageWindFlex();
     //Measured every tick on the rope, -1 off it. World units.
     float   rope_joint_gap = -1.0f;         //red to blue
     float   rope_hands_off = -1.0f;         //red to the point between the yellows
@@ -1537,10 +1728,14 @@ private:
         Stage   stage;
         Object* archer_object = NULL;
         std::vector<Object*> block_objects;
+        std::vector<Object*> plant_objects;
+        std::vector<Object*> spring_plant_objects;
         Object* blockout_group = NULL;
         std::vector<PropView> prop_views;
         std::vector<DebrisView> debris;
         std::vector<Object*> terrain_objects;
+        std::vector<Object*> terrain_back_objects;
+        std::vector<float> backdrop_reach;
         std::vector<int> melted_blocks;
         std::vector<Object*> rope_segments;
         rp3d::BallAndSocketJoint* rope_joint = NULL;

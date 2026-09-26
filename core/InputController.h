@@ -214,6 +214,9 @@ typedef enum{
     //SetRecorded): a replay that pressed its own stop key would end itself.
     INPUT_RECORD_TOGGLE,
     INPUT_REPLAY_TOGGLE,
+    //Hide / show the whole debug UI - U in every app, acted on by Application::ServiceUIToggle.
+    //Kept out of recordings for the same reason as the two above.
+    INPUT_UI_TOGGLE,
     INPUT_LAST
 }keycode_t;
 

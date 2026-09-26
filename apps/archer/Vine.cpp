@@ -358,4 +358,66 @@ void DeclareVines(int level, std::vector<VinePath>& out){
     c.points = { vec3(21.20f,2.45f,-1.20f), vec3(22.30f,2.05f,-1.25f), vec3(23.50f,1.88f,-1.15f),
                  vec3(24.70f,2.05f,-1.25f), vec3(25.80f,2.45f,-1.20f) };
     out.push_back(c);
+
+#if ARCHER_TEST_BAY
+    /*
+        THE CAVE - the terrain bay, in front of its back wall (Backdrop.h). Four big long vines
+        hanging into it onto the island (x -34..-18, top 11.25, z -1.5..1.5) and the stones under
+        it, two BEHIND her and two IN FRONT, so the cave has depth on both sides of her walking line.
+
+        Resting points sit 0.2 over the top they lie on: at thickness 1.5 .. 1.8 the trunk is 0.25 ..
+        0.30 in radius (the tile is 0.083 at scale 1, drawn at her 2.02), so it beds into the grass.
+        The ones in front keep to z 2 and more where they hang - past the slab's front lip (1.68)
+        and its rounding - and come back onto a top only inside its depth. Those two start at y 33+,
+        above any frame the camera shows here: begun at 20 their tapered tops hung in mid-air on
+        screen at the camera's widest. A vine that starts
+        hanging straight down takes up = +Z: the default +Y would be parallel to its tangent, and
+        the frame has nothing to start from.
+    */
+    //Behind: off the back wall's crest (its front face z -4.5), a long fall onto the island's step
+    //(x -30.5..-27.5, top 12.25), down its right face and along the island's back rim.
+    VinePath d;
+    d.seed = 4;
+    d.thickness = 1.8f;
+    d.points = { vec3(-29.20f,16.30f,-6.60f), vec3(-29.10f,16.20f,-4.90f), vec3(-29.00f,15.60f,-3.70f),
+                 vec3(-29.10f,14.30f,-2.90f), vec3(-29.00f,13.10f,-1.90f), vec3(-28.80f,12.45f,-1.20f),
+                 vec3(-27.90f,12.45f,-1.15f), vec3(-27.30f,12.05f,-1.20f), vec3(-27.10f,11.45f,-1.20f),
+                 vec3(-26.00f,11.45f,-1.25f), vec3(-24.80f,11.45f,-1.20f) };
+    out.push_back(d);
+
+    //Behind: over the island's left end, a sag under it onto the small stone (x -31..-29, top
+    //6.8), and off that stone's right edge with a free end.
+    VinePath e;
+    e.seed = 5;
+    e.thickness = 1.5f;
+    e.points = { vec3(-32.60f,11.45f,-1.15f), vec3(-33.70f,11.45f,-1.15f), vec3(-34.55f,11.00f,-1.10f),
+                 vec3(-34.50f,9.30f,-1.20f), vec3(-33.20f,7.70f,-1.35f), vec3(-31.60f,7.10f,-1.30f),
+                 vec3(-30.60f,6.98f,-1.15f), vec3(-29.50f,6.98f,-1.15f), vec3(-28.85f,6.55f,-1.10f),
+                 vec3(-28.80f,5.30f,-1.05f), vec3(-28.90f,4.30f,-1.00f) };
+    out.push_back(e);
+
+    //In front: down from out of frame, over the island's front lip, and on down onto the stone at
+    //x -20.5..-18.2 (top 4.8, front 1.2), hanging off its right edge. She walks behind all of it.
+    VinePath f;
+    f.seed = 6;
+    f.thickness = 1.8f;
+    f.up = vec3(0.0f,0.0f,1.0f);
+    f.points = { vec3(-25.40f,34.00f,2.70f), vec3(-25.10f,27.50f,2.65f), vec3(-24.80f,21.00f,2.60f), vec3(-24.20f,17.50f,2.50f), vec3(-23.60f,14.00f,2.35f),
+                 vec3(-23.00f,11.90f,1.90f), vec3(-22.30f,11.45f,1.35f), vec3(-21.50f,11.35f,2.10f),
+                 vec3(-21.10f,10.00f,2.25f), vec3(-20.70f,8.20f,2.25f), vec3(-20.20f,6.30f,2.00f),
+                 vec3(-19.80f,5.20f,1.40f), vec3(-19.40f,4.98f,0.95f), vec3(-18.70f,4.98f,1.00f),
+                 vec3(-18.00f,4.60f,1.30f), vec3(-17.90f,3.50f,1.40f) };
+    out.push_back(f);
+
+    //In front: down from out of frame onto the stone at x -15.3..-13.3 (top 7.2, front 0.8), and
+    //off its right edge.
+    VinePath g;
+    g.seed = 7;
+    g.thickness = 1.5f;
+    g.up = vec3(0.0f,0.0f,1.0f);
+    g.points = { vec3(-16.80f,33.00f,2.60f), vec3(-16.60f,26.50f,2.55f), vec3(-16.40f,20.00f,2.50f), vec3(-16.00f,14.00f,2.40f), vec3(-15.60f,9.50f,2.00f),
+                 vec3(-15.30f,7.80f,1.30f), vec3(-14.80f,7.38f,0.65f), vec3(-13.80f,7.38f,0.65f),
+                 vec3(-13.10f,6.90f,1.00f), vec3(-13.00f,5.60f,1.20f), vec3(-13.10f,4.40f,1.30f) };
+    out.push_back(g);
+#endif
 }

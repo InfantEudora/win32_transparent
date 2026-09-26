@@ -18,6 +18,17 @@ class Renderer;
 //This should have the same layout as in the shader
 #define NUM_MATERIAL_SLOTS  4
 #define NUM_MORPH_FACTOR_SLOTS	4
+//The wind field's SSBO binding - see Renderer::SetWindField. 0-6 are taken (instance data,
+//materials, lights, readback, bones / volumes, morphs, vertex pull); default.vert declares 7.
+#define SSBO_WIND               7
+
+//The wind SSBO's header, mirrored by WindBuffer in default.vert (std430: three 16-byte rows,
+//then the vec2 grid at offset 48).
+struct wind_header_t {
+    float rect[4];      //x0, y0, 1/cell_x, 1/cell_y
+    int   size[4];      //width, height, enabled, unused
+    float params[4];    //time in seconds, unused x3
+};
 
 //THE TEXTURE UNIT MAP - which pass owns which unit, and why they are packed the way they are.
 //Its own header because UIOverlay.h needs the same numbers and must not pull in all of this one.
@@ -262,6 +273,26 @@ class Renderer{
     void RenderDepthPasses(Shader* shader, int mesh_mode);
     void FinishDepthPasses();
 
+    /*
+        THE WIND FIELD - what bends materials with wind_flex > 0 (see material_t). A grid of 2D
+        velocities in world X/Y, row-major from (x0,y0), `cell_x` by `cell_y` apart, width x height
+        of them; x and y interleaved. `time` is in seconds and drives the flutter on top of the bend
+        - pass simulation time (tick * timestep) so a paused sim holds the plants still.
+
+        RENDER THREAD (it uploads). Call once per frame with the part of the field the camera can
+        see; outside the grid there is no wind. ClearWindField switches it off, which is also the
+        state every app starts in, so an app that never calls this pays nothing but one branch per
+        vertex on a flag that is always zero.
+
+        It travels in an SSBO (binding SSBO_WIND) rather than a texture ON PURPOSE: the texture
+        unit map is full on the device (11 reserved + 5 materials = 16), and the header carries the
+        grid's mapping, so no shader needs a uniform set for it - any shader that declares the
+        buffer sees the current field. default.vert is the only one that does.
+    */
+    void SetWindField(const float* velocity_xy, int width, int height, float x0, float y0,
+                      float cell_x, float cell_y, float time);
+    void ClearWindField();
+
     bool InitSSBO();
     void ResolveAA();
     void BlitBufferTarget(GLuint framebuffer_id, GLenum attachment);
@@ -344,6 +375,7 @@ class Renderer{
     GLuint lights_ssbo = -1;  //Shader Storage Buffer holding all different lights
     //GLuint readback_ssbo = -1;  //Shader Storage Buffer for reading back data
     GLuint boneinstdata_ssbo = -1;  //Shader Storage Buffer for bone data
+    GLuint wind_ssbo = -1;          //The wind field - see SetWindField. Always bound, header zero = off
 
     //Deferred stuff: Non-MSAA?
     GLuint deferred_fbo_id = -1; //Deferred FBO consisting of:

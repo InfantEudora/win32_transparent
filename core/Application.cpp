@@ -565,9 +565,12 @@ void Application::DrawFrame(){
 
     //Overlay ImGui
     //This will access and modify physics, globally... all over the place.
-    renderer->physics_mutex.lock();
-    DrawImGuiUI();
-    renderer->physics_mutex.unlock();
+    //Unless U has hidden it - see f_show_ui. The lock is skipped with it: nothing else here needs it.
+    if (f_show_ui){
+        renderer->physics_mutex.lock();
+        DrawImGuiUI();
+        renderer->physics_mutex.unlock();
+    }
 
     //Finish ImGui
     renderer->BeginGPUPass(Renderer::GPU_PASS_IMGUI);
@@ -689,6 +692,7 @@ void Application::PhysicsThreadFunction(Application* app){
             //Recording starts and stops, and replays are armed, here: after this pass's input has
             //been applied and before the tick that input belongs to. See ServiceInputRecording.
             app->ServiceInputRecording();
+            app->ServiceUIToggle();
 
             //Time spent on this pass's work
             app->tmr_physics->Restart();
@@ -1444,6 +1448,23 @@ void Application::FinishRecording(uint64_t sim_tick){
         last_recording_error = error;
     }
     recordings_saved++;
+}
+
+/*
+    U. The recording hotkeys' rule - the edge is read on every pass and acted on only with focus,
+    since raw input reports keys typed into other programs - plus one of its own: not while ImGui
+    has the keyboard, or typing a U into a text field in the panels would hide the panels.
+*/
+void Application::ServiceUIToggle(){
+    if (!main_scene || !main_scene->inputcontroller){
+        return;
+    }
+    InputController* input = main_scene->inputcontroller;
+    bool f_key = input->WasKeyPressed(INPUT_UI_TOGGLE);
+    if (f_key && input->HasFocus() && !UIWantsKeyboard()){
+        f_show_ui = !f_show_ui;
+        debug->Info("UI %s (U)\n",f_show_ui ? "shown" : "hidden");
+    }
 }
 
 void Application::ServiceInputRecording(){

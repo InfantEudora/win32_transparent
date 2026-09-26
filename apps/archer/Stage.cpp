@@ -43,8 +43,11 @@ static bool BoxOverlapsBlock(float cx, float cy, float head_drop, const StageBlo
     return BoxOverlapsRect(cx,cy,head_drop,b.Left(),b.Right(),b.Bottom(),b.Top());
 }
 
-static bool BoxOverlapsObstacle(float cx, float cy, float head_drop, const StageObstacle& o){
-    return BoxOverlapsRect(cx,cy,head_drop,o.Left(),o.Right(),o.Bottom(),o.Top());
+//Every place the archer is stopped by a prop asks this, and only those - the kick sweep tests its
+//own box against every obstacle, blocking or not, which is what lets a straw man be kicked while
+//she walks straight through it. See StageObstacle::f_blocks.
+static bool ObstacleStopsBox(float cx, float cy, float head_drop, const StageObstacle& o){
+    return o.f_blocks && BoxOverlapsRect(cx,cy,head_drop,o.Left(),o.Right(),o.Bottom(),o.Top());
 }
 
 //--- Construction -------------------------------------------------------------------------------
@@ -58,7 +61,14 @@ void Stage::Reset(){
     props.clear();
     signs.clear();
     scenery.clear();
+    trees.clear();
+    spring_plants.clear();
     BuildLevel();
+    BuildTrees();
+    for (StageSpringPlant& p : spring_plants){
+        p.q = p.prev_q = p.Rest();
+        p.qd = 0.0f;
+    }
     //An editor's moves, laid back over the code's. See KeepBlockLayout.
     if (kept_layout.size() == blocks.size()){
         for (size_t i = 0; i < blocks.size(); i++){
@@ -80,6 +90,14 @@ void Stage::Reset(){
     f_on_ground = false;
     coyote_ticks = 0;
     buffer_ticks = 0;
+    spring_on = -1;
+    launch_lift = 0.0f;
+    stomp_ticks = 0;
+    spring_left = -1;
+    spring_air_ticks = -1;
+    f_swung = false;
+    prev_aim_axis = 0.0f;
+    spring_boost_seen = 0.0f;
 
     bow_mode = BOW_IDLE;
     draw_ticks = 0;
@@ -144,7 +162,7 @@ void Stage::BuildMainLevel(){
     //--- The ground, in three runs with two gaps between them ----------------------------------
     blocks.push_back({  1.00f, -2.00f, 13.00f, 2.00f, BLOCK_SOLID,  true });    //x -12 .. 14
     blocks.push_back({ 26.50f, -2.00f,  7.50f, 2.00f, BLOCK_SOLID,  true });    //x  19 .. 34
-    blocks.push_back({ 55.75f, -2.00f, 16.25f, 2.00f, BLOCK_SOLID,  true });    //x 39.5 .. 72
+    blocks.push_back({ 90.25f, -2.00f, 50.75f, 2.00f, BLOCK_SOLID,  true });    //x 39.5 .. 141
 
     //--- Traversal ------------------------------------------------------------------------------
     blocks.push_back({  7.00f,  0.90f,  2.00f, 0.90f, BLOCK_SOLID,  true });    //a step, top at 1.8
@@ -169,8 +187,78 @@ void Stage::BuildMainLevel(){
     //which is the most interesting thing a bow can be asked to do and wants no extra code.
     blocks.push_back({ 57.00f,  1.25f,  0.50f, 1.25f, BLOCK_BREAKABLE, true });
 
-    //The right-hand wall, so a run to the end stops rather than falling off the world.
-    blocks.push_back({ 71.00f,  4.00f,  1.00f, 4.00f, BLOCK_SOLID,  true });
+    /*
+        THE TREE, blocked out (plant_mechanics_plan.md, section 1): the way UP between two slabs
+        that the ground cannot reach - 5.5 and 10.2 against feet that reach 3.20 and hands 5.00.
+
+        Three arms, right-left-right, 2.5 apart: each a hop of 2.5 against a 3.2 apex, and the
+        next arm 2.3-ish across. The second arm's tip is 1.55 from the low slab, half a unit
+        below its top; the third's is 1.55 from the high slab and 2.7 below it. stage_test climbs
+        it hop by hop, so moving any of this says at once whether it is still climbable.
+    */
+    blocks.push_back({ 73.00f,  5.00f,  3.00f, 0.50f, BLOCK_SOLID,  true });    //low slab, x 70..76, top 5.5
+    blocks.push_back({ 90.50f,  9.70f,  6.50f, 0.50f, BLOCK_SOLID,  true });    //high slab, x 84..97, top 10.2
+    {
+        StageTree tree;
+        tree.x = 80.00f;
+        tree.base = 0.00f;
+        tree.height = 11.00f;
+        tree.radius = 0.45f;
+        tree.arms.push_back({ 2.50f,  1.0f, 2.00f });
+        tree.arms.push_back({ 5.00f, -1.0f, 2.00f });
+        tree.arms.push_back({ 7.50f,  1.0f, 2.00f });
+        trees.push_back(tree);
+    }
+
+    /*
+        THE SPRING PLANTS, blocked out (plant_mechanics_plan.md, section 2), past the tree's high
+        slab: a way up that only TIMING opens, twice.
+
+        The pad at x 105, its cap 1.2 up: a plain jump off it reaches 4.4 and the shelf's top is
+        7.5, so only a jump timed to the cap's rebound (her jump plus its rise) gets there. Holding
+        right through the fling carries her the 4 units across to the shelf's end.
+
+        The leaf grows off the shelf's right end, rising 10 degrees and 4.5 long. Near the stem it
+        holds her; walked out along it, it bends under her past SPRING_LEAF_SLIP_DEG and she slides
+        off the tip to the ground. Bounced on, it throws her up to the canopy at 13.0 - out of reach
+        of a jump from the shelf (hands 12.5) or from the leaf (feet about 9.7).
+
+        stage_test (TestSpringPlants) plays each of those, so retuning a spring or moving a block
+        says at once whether the timing still opens the way and a plain jump still does not.
+    */
+    {
+        StageSpringPlant pad;
+        pad.kind = SPRING_PAD;
+        pad.root = v2(105.00f,1.20f);
+        pad.base = 0.00f;
+        pad.length = 2.40f;
+        pad.give = 0.12f;           //she sinks it this far standing on it
+        pad.hz = 5.00f;             //a quick wobble alone; about 2.6 Hz with her on it
+        pad.damping = 0.20f;
+        pad.travel = 1.10f;         //down to 0.1 above the ground, never through it
+        spring_plants.push_back(pad);
+    }
+    blocks.push_back({ 114.00f, 7.00f,  4.00f, 0.50f, BLOCK_SOLID,  true });    //shelf, x 110..118, top 7.5
+    {
+        //Its stem half a unit in from the shelf's end, level with the top: the shelf holds her there
+        //whatever the leaf does, and SPRING_STEP_UP walks her back onto it off a bent one.
+        StageSpringPlant leaf;
+        leaf.kind = SPRING_LEAF;
+        leaf.root = v2(117.50f,7.50f);
+        leaf.side = 1.0f;
+        leaf.length = 4.50f;
+        leaf.rest_deg = 10.0f;
+        leaf.give = 35.0f;          //degrees her weight bends it with her at the tip
+        leaf.hz = 2.00f;
+        leaf.damping = 0.30f;
+        leaf.travel = 60.0f;        //from 70 up to 50 down
+        spring_plants.push_back(leaf);
+    }
+    blocks.push_back({ 129.00f, 12.50f, 4.00f, 0.50f, BLOCK_SOLID,  true });   //canopy, x 125..133, top 13.0
+
+    //The right-hand wall, so a run to the end stops rather than falling off the world. Tall
+    //enough that a jump off the canopy cannot clear it: 13.0 + 3.2 + her 1.8 is 18.0.
+    blocks.push_back({ 140.00f, 10.00f,  1.00f, 10.00f, BLOCK_SOLID, true });
 
     //--- Props: everything reactphysics3d owns --------------------------------------------------
     /*
@@ -336,6 +424,280 @@ void Stage::BuildLevel(){
     }
 }
 
+/*
+    Every arm, a one-way platform from the trunk's face out to its tip, its top where the tree
+    says. Appended after the level's own blocks, so the blocks a level declares keep their indices
+    (stage_test's HighLedge and an editor's kept layout both count on them).
+*/
+void Stage::BuildTrees(){
+    for (size_t ti = 0; ti < trees.size(); ti++){
+        const StageTree& t = trees[ti];
+        for (const StageTreeArm& a : t.arms){
+            StageBlock b;
+            b.tree = (int)ti;
+            b.hw = a.length * 0.5f;
+            b.x = t.x + a.side * (t.radius + b.hw);
+            b.hh = STAGE_TREE_ARM_HALF_H;
+            b.y = a.top - b.hh;
+            b.kind = BLOCK_PLATFORM;
+            b.z = STAGE_TREE_ARM_Z;
+            b.depth = STAGE_TREE_ARM_HALF_DEPTH;
+            blocks.push_back(b);
+        }
+    }
+}
+
+//--- Spring plants ------------------------------------------------------------------------------
+
+float StageSpringPlant::Rest() const{
+    return (kind == SPRING_LEAF) ? rest_deg * STAGE_DEG2RAD : 0.0f;
+}
+
+float StageSpringPlant::Travel() const{
+    return (kind == SPRING_LEAF) ? travel * STAGE_DEG2RAD : travel;
+}
+
+/*
+    From `give`: her weight, g, held still by the spring at that much displacement. A leaf feels her
+    weight through its lever - the tip's distance out at rest - so the angle `give` names is the one
+    she bends it to standing at the tip.
+*/
+float StageSpringPlant::Stiffness() const{
+    if (kind == SPRING_LEAF){
+        float g = (give > 0.1f ? give : 0.1f) * STAGE_DEG2RAD;
+        return ARCHER_GRAVITY * length * cosf(Rest()) / g;
+    }
+    return ARCHER_GRAVITY / (give > 0.01f ? give : 0.01f);
+}
+
+//From `hz`, alone: the inertia that swings at that rate against this stiffness.
+float StageSpringPlant::Inertia() const{
+    float w = 2.0f * 3.14159265358979f * (hz > 0.1f ? hz : 0.1f);
+    return Stiffness() / (w * w);
+}
+
+//From `damping`, alone: that fraction of critical.
+float StageSpringPlant::Damping() const{
+    return 2.0f * damping * sqrtf(Stiffness() * Inertia());
+}
+
+float StageSpringPlant::Lever(float x) const{
+    if (kind == SPRING_LEAF){
+        float out = (x - root.x) * side;
+        return (out > 0.0f) ? out : 0.0f;
+    }
+    return 1.0f;
+}
+
+bool StageSpringPlant::Covers(float x) const{
+    if (kind == SPRING_LEAF){
+        float out = (x - root.x) * side;
+        return out >= 0.0f && out <= length * cosf(q);
+    }
+    return fabsf(x - root.x) < length * 0.5f + ARCHER_HALF_W;
+}
+
+/*
+    The top at x. A leaf is straight, so its surface is the line out of the stem at its angle -
+    extended past either end, which is what lets the one-way test ask where it WAS under a foot
+    that has only just come over it.
+*/
+float StageSpringPlant::SurfaceY(float x, float at_q) const{
+    if (kind == SPRING_LEAF){
+        return root.y + (x - root.x) * side * tanf(at_q);
+    }
+    return root.y + at_q;
+}
+
+float StageSpringPlant::SlopeDeg() const{
+    return (kind == SPRING_LEAF) ? q / STAGE_DEG2RAD : 0.0f;
+}
+
+v2 StageSpringPlant::Tip() const{
+    if (kind == SPRING_LEAF){
+        return v2(root.x + side * length * cosf(q),root.y + length * sinf(q));
+    }
+    return root;
+}
+
+/*
+    One step of every spring. Semi-implicit Euler, like her own motion: the rate first, then the
+    position from the new rate, which stays stable here as long as a swing is more than a few
+    ticks long - an empty pad at 5 Hz is 12 of them.
+
+    HER WEIGHT AND HER MASS go onto the one she is standing on, through her lever: a pad takes her
+    whole weight, a leaf her weight times how far out she stands, and her share of the inertia is
+    that lever squared - which is why a leaf with her at the tip swings so much slower. Only while
+    she is standing: on a rope or a ledge she is not on it, whatever spring_on last said.
+
+    At the end of its travel it STOPS dead, losing the speed - a mushroom bottoming out, a leaf
+    that cannot bend further. Without it a hard enough landing would fold the leaf through itself.
+*/
+void Stage::TickSpringPlants(){
+    for (size_t i = 0; i < spring_plants.size(); i++){
+        StageSpringPlant& p = spring_plants[i];
+        p.prev_q = p.q;
+        float inertia = p.Inertia();
+        float force = -p.Stiffness() * (p.q - p.Rest()) - p.Damping() * p.qd;
+        bool f_loaded = (spring_on == (int)i) && f_on_ground &&
+                        (mode == MODE_GROUND || mode == MODE_KNEEL);
+        if (f_loaded){
+            float lever = p.Lever(pos.x);
+            force -= ARCHER_GRAVITY * lever;
+            inertia += lever * lever;
+        }
+        p.qd += force / inertia * ARCHER_DT;
+        p.q += p.qd * ARCHER_DT;
+        float lo = p.Rest() - p.Travel();
+        float hi = p.Rest() + p.Travel();
+        if (p.q < lo){
+            p.q = lo;
+            if (p.qd < 0.0f){ p.qd = 0.0f; }
+        }else if (p.q > hi){
+            p.q = hi;
+            if (p.qd > 0.0f){ p.qd = 0.0f; }
+        }
+    }
+}
+
+/*
+    The spring plants as floors. See the declaration; the three cases, in the order they are asked:
+
+      BELOW THE SURFACE NOW, having been ABOVE where it was: she lands, or it has come up under
+        her - either way she is put on top. It is the one-way platform's rule, with the surface's
+        own movement taken out, so a rising cap cannot pass up through feet that were on it.
+      ABOVE IT, RIDING IT, and not moving away from it: kept on it. A leaf's slope falls away
+        under a walking foot faster than gravity pulls her down, so without this she would walk
+        off a bent leaf into the air a tick at a time.
+      Otherwise she is off it. Rising faster than it rises is how she leaves one - a jump, or the
+        rebound outrunning her fall.
+
+    A FRESH landing hands the plant her fall: momentum about the stem, shared between her and it,
+    as two things that stick together. Her speed then becomes its speed at her feet. A STOMP -
+    the aim held down through the end of the fall - drives her into it harder than she fell.
+*/
+void Stage::CollideSpringPlants(const v2& from, bool f_down_held, bool f_on_block, StageEvents& events,
+                                bool& out_hit_floor){
+    int was_on = spring_on;
+    spring_on = -1;
+    if (f_down_held){
+        return;     //drops through, as through a one-way platform
+    }
+    float feet = pos.y - ARCHER_HALF_H;
+    float feet_from = from.y - ARCHER_HALF_H;
+    int best = -1;
+    float best_top = 0.0f;
+    for (size_t i = 0; i < spring_plants.size(); i++){
+        const StageSpringPlant& p = spring_plants[i];
+        if (!p.Covers(pos.x)){
+            continue;
+        }
+        float top = p.SurfaceY(pos.x);
+        bool f_riding = (was_on == (int)i);
+        bool f_on = false;
+        if (feet < top){
+            f_on = f_riding || feet_from >= p.SurfaceY(from.x,p.prev_q) - STAGE_EPS;
+        }else if (f_riding && !f_on_block && vel.y <= p.SurfaceVelY(pos.x) + STAGE_EPS){
+            //How far a slope can fall away under this tick's step, and a little more.
+            float snap = fabsf(tanf(p.kind == SPRING_LEAF ? p.q : 0.0f) * (pos.x - from.x)) + 0.05f;
+            f_on = (feet - top) <= snap;
+        }
+        if (f_on && (best < 0 || top > best_top)){
+            best = (int)i;
+            best_top = top;
+        }
+    }
+    if (best < 0){
+        return;
+    }
+    StageSpringPlant& p = spring_plants[best];
+    if (best != was_on){
+        float lever = p.Lever(pos.x);
+        float inertia = p.Inertia();
+        float stomp = (float)(stomp_ticks < SPRING_STOMP_TICKS ? stomp_ticks : SPRING_STOMP_TICKS) /
+                      (float)SPRING_STOMP_TICKS;
+        float into = (vel.y < 0.0f) ? vel.y * (1.0f + SPRING_STOMP_GAIN * stomp) : vel.y;
+        p.qd = (inertia * p.qd + lever * into) / (inertia + lever * lever);
+        events.stomp = stomp;
+        spring_boost_seen = 0.0f;       //a new bounce, and a new best for the cue to measure against
+    }
+    pos.y = best_top + ARCHER_HALF_H + STAGE_EPS;
+    vel.y = p.SurfaceVelY(pos.x);
+    spring_on = best;
+    out_hit_floor = true;
+}
+
+/*
+    Down a leaf too steep to stand on: gravity along the slope, less a friction that exactly holds
+    her at SPRING_LEAF_SLIP_DEG, turned into the sideways pull the run code works in.
+*/
+float Stage::SlideAccel() const{
+    if (!f_on_ground || spring_on < 0 || spring_on >= (int)spring_plants.size()){
+        return 0.0f;
+    }
+    const StageSpringPlant& p = spring_plants[spring_on];
+    float slope = p.SlopeDeg();
+    float steep = fabsf(slope);
+    if (p.kind != SPRING_LEAF || steep <= SPRING_LEAF_SLIP_DEG){
+        return 0.0f;
+    }
+    float a = steep * STAGE_DEG2RAD;
+    float pull = ARCHER_GRAVITY * (sinf(a) - tanf(SPRING_LEAF_SLIP_DEG * STAGE_DEG2RAD) * cosf(a)) * cosf(a);
+    //Falling away from the stem slides her out toward the tip; rising, back toward the stem.
+    return ((slope < 0.0f) ? p.side : -p.side) * pull;
+}
+
+/*
+    A jump pressed now keeps whatever she is rising at (see the fling in TickArcher), so on a
+    spring plant that IS the boost: her rise while she rides it, and in the coyote ticks after it
+    throws her. Anywhere else a jump adds nothing to anything, and the cue is off.
+*/
+bool Stage::SpringBoostActive() const{
+    if (mode == MODE_GROUND && f_on_ground && spring_on >= 0){
+        return true;
+    }
+    return mode == MODE_AIR && !f_on_ground && spring_air_ticks >= 0 && coyote_ticks > 0;
+}
+
+float Stage::SpringBoostNow() const{
+    return (SpringBoostActive() && vel.y > 0.0f) ? vel.y : 0.0f;
+}
+
+/*
+    The best boost of this bounce: what it has been (spring_boost_seen) or will be, found by
+    ticking a copy on with the input held and its edges cleared, as PredictLanding does, until the
+    bounce is over. A jump in the copy would end it, which is why the press is cleared.
+*/
+float Stage::PredictSpringBoostPeak(const ArcherInput& in, int horizon) const{
+    float peak = spring_boost_seen;
+    float now = SpringBoostNow();
+    if (now > peak){
+        peak = now;
+    }
+    if (!SpringBoostActive()){
+        return peak;
+    }
+    ArcherInput held = in;
+    held.f_jump_pressed = false;
+    held.f_draw_released = false;
+    held.f_kick_pressed = false;
+    held.f_action_pressed = false;
+    held.f_kneel_pressed = false;
+    Stage ahead = *this;
+    for (int i = 0; i < horizon; i++){
+        StageEvents e;
+        ahead.Tick(held,e);
+        if (!ahead.SpringBoostActive() || e.f_landed){
+            break;
+        }
+        float b = ahead.SpringBoostNow();
+        if (b > peak){
+            peak = b;
+        }
+    }
+    return peak;
+}
+
 void Stage::SetLevel(int new_level){
     level = (new_level >= 0 && new_level < STAGE_LEVEL_COUNT) ? new_level : STAGE_LEVEL_MAIN;
     Reset();
@@ -433,6 +795,10 @@ void Stage::BuildRangeLevel(){
     props.push_back({ PROP_TARGET,   6.00f, 0.70f, 0.70f, 1.40f, 1, 1, false, TARGET_STAND });
     props.push_back({ PROP_TARGET,  12.00f, 0.80f, 0.30f, 1.60f, 1, 1 });
 
+    //A straw man a few steps right of the start - the one thing here that scores the kick rather
+    //than the arrow. 1.95 tall at her scale; the box is what the boot is swept against.
+    props.push_back({ PROP_STRAWMAN, 3.00f, 0.975f, 0.50f, 1.95f, 1, 1 });
+
     /*
         An arch of FLOATING targets over the start - five boards on a half circle of radius 5
         centred a unit above the floor, at 30, 60, 90, 120 and 150 degrees. Gravity off (see
@@ -487,7 +853,7 @@ void Stage::ClearObstacles(){
     obstacles.clear();
 }
 
-void Stage::AddObstacle(float x, float y, float hw, float hh, int id, bool f_pushable){
+void Stage::AddObstacle(float x, float y, float hw, float hh, int id, bool f_pushable, bool f_blocks){
     StageObstacle o;
     o.x = x;
     o.y = y;
@@ -495,6 +861,7 @@ void Stage::AddObstacle(float x, float y, float hw, float hh, int id, bool f_pus
     o.hh = hh;
     o.id = id;
     o.f_pushable = f_pushable;
+    o.f_blocks = f_blocks;
     obstacles.push_back(o);
 }
 
@@ -535,6 +902,10 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
         draws_cancelled++;
     }
 
+    //The springs before she moves, loaded with where she stood last tick: she then moves against
+    //where they are now, from where they were, which is what CollideSpringPlants compares.
+    TickSpringPlants();
+
     //Before the archer moves, so the boot sweeps from where they were standing when it went out.
     //At a full run those differ by 0.15 of a unit - the difference between connecting with the
     //near brick of a wall and connecting with nothing.
@@ -546,6 +917,16 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
         Loose(events);
     }
     TickArrows(events);
+
+    prev_aim_axis = in.aim_axis;
+    if (SpringBoostActive()){
+        float now = SpringBoostNow();
+        if (now > spring_boost_seen){
+            spring_boost_seen = now;
+        }
+    }else{
+        spring_boost_seen = 0.0f;
+    }
 
     ticks++;
 }
@@ -635,7 +1016,8 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         press, so that tick already brakes: from the ground only - f_on_ground is last tick's, like
         the kick's gate - and not mid-kick, whose plant and boot box belong to standing.
     */
-    if (in.f_kneel_pressed && mode == MODE_GROUND && f_on_ground && kick_ticks == 0){
+    //Not on a spring plant: the kneel plants her on ground that stays put.
+    if (in.f_kneel_pressed && mode == MODE_GROUND && f_on_ground && kick_ticks == 0 && spring_on < 0){
         mode = MODE_KNEEL;
         kneel_phase = KNEEL_LOWERING;
         kneel_ticks = 0;
@@ -646,9 +1028,25 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         return;
     }
 
+    /*
+        RIDING A SPRING PLANT: she keeps the speed it had under her last tick (CollideSpringPlants
+        gave it her), so her vel.y is not 0 on this ground. That is what lets her leave it on her
+        own - when it springs back and then slows faster than gravity slows her, she carries on.
+        What it throws her with is recorded so the jump cut leaves it alone.
+    */
+    bool f_riding = f_on_ground && spring_on >= 0;
+    if (f_riding){
+        launch_lift = (vel.y > 0.0f) ? vel.y : 0.0f;
+    }else if (f_on_ground){
+        launch_lift = 0.0f;
+    }
+
     //--- Horizontal ---------------------------------------------------------------------------
     float move_scale = (bow_mode == BOW_DRAWING) ? ARCHER_DRAW_MOVE_SCALE : 1.0f;
     float target_vx = ClampF(in.move_axis,-1.0f,1.0f) * RunSpeed() * move_scale;
+    //Down a leaf too steep to hold: no grip to run or stop with, only a little control.
+    float slide = SlideAccel();
+    bool f_grip = f_on_ground && slide == 0.0f;
 
     /*
         A KICK ON THE GROUND PLANTS THE FEET, and freezes the facing with them.
@@ -668,16 +1066,20 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     if (f_planted){
         vel.x = MoveToward(vel.x,0.0f,KICK_ROOT_FRICTION * ARCHER_DT);
     }else if (in.move_axis > 0.01f || in.move_axis < -0.01f){
-        float accel = f_on_ground ? ARCHER_RUN_ACCEL : ARCHER_AIR_ACCEL;
+        float accel = f_grip ? ARCHER_RUN_ACCEL : ARCHER_AIR_ACCEL;
+        if (slide != 0.0f){
+            accel *= SPRING_LEAF_SLIDE_CONTROL;
+        }
         vel.x = MoveToward(vel.x,target_vx,accel * ARCHER_DT);
         //Facing follows the input even mid-draw. The aim angle is relative to facing, so turning
         //while drawn mirrors the shot rather than losing it, which is what a player turning to
         //deal with something behind them means.
         facing = (in.move_axis > 0.0f) ? 1.0f : -1.0f;
     }else{
-        float friction = f_on_ground ? ARCHER_RUN_FRICTION : ARCHER_AIR_FRICTION;
+        float friction = f_grip ? ARCHER_RUN_FRICTION : ARCHER_AIR_FRICTION;
         vel.x = MoveToward(vel.x,0.0f,friction * ARCHER_DT);
     }
+    vel.x += slide * ARCHER_DT;
 
     //--- Jump -----------------------------------------------------------------------------------
     if (in.f_jump_pressed){
@@ -685,11 +1087,49 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     }
     bool f_may_jump = f_on_ground || (coyote_ticks > 0);
     if (buffer_ticks > 0 && f_may_jump){
-        vel.y = ARCHER_JUMP_SPEED;
+        /*
+            THE FLING: whatever she is already rising at is kept, and the jump goes on top. Off a
+            spring plant on its way up that is its rise; a few ticks after one threw her, it is
+            what is left of the throw (the coyote window is the timing's grace too). Anywhere else
+            it is nothing - standing, vel.y is 0, and walking off an edge it is falling.
+        */
+        float carry = (vel.y > 0.0f) ? vel.y : 0.0f;
+        vel.y = ARCHER_JUMP_SPEED + carry;
+        if (vel.y > SPRING_MAX_LAUNCH){
+            vel.y = SPRING_MAX_LAUNCH;
+        }
+        launch_lift = vel.y - ARCHER_JUMP_SPEED;
         buffer_ticks = 0;
         coyote_ticks = 0;
         f_on_ground = false;
         events.f_jumped = true;
+    }
+
+    /*
+        THE SWING: an Up press in the first ticks after a spring plant lets go of her - thrown or
+        flung - adds a share of the throw, full at first and fading out over SPRING_SWING_WINDOW.
+        A press, not a hold, so Up held since before the release does nothing: the swing is timed.
+        Once a flight, and into launch_lift so the jump cut leaves it alone.
+    */
+    bool f_up_press = in.aim_axis >= SPRING_PUMP_AIM && prev_aim_axis < SPRING_PUMP_AIM;
+    if (spring_air_ticks >= 0 && !f_on_ground){
+        spring_air_ticks++;
+        if (f_up_press && !f_swung && vel.y > 0.0f && spring_air_ticks <= SPRING_SWING_WINDOW){
+            float fade = 1.0f;
+            if (spring_air_ticks > SPRING_SWING_FULL){
+                fade = 1.0f - (float)(spring_air_ticks - SPRING_SWING_FULL) /
+                              (float)(SPRING_SWING_WINDOW - SPRING_SWING_FULL + 1);
+            }
+            float was = vel.y;
+            vel.y += SPRING_SWING_GAIN * launch_lift * fade;
+            if (vel.y > SPRING_MAX_LAUNCH){
+                vel.y = SPRING_MAX_LAUNCH;
+            }
+            launch_lift += vel.y - was;
+            f_swung = true;
+            events.f_swung = true;
+            events.swing_speed = vel.y - was;
+        }
     }
 
     /*
@@ -699,9 +1139,12 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         key stays up, so the rise does not get cut, it gets annihilated inside three ticks. A clamp
         is idempotent: the first tick after release brings the climb down to its capped value and
         every tick after that finds it already there.
+
+        It cuts the JUMP and never a spring plant's throw: launch_lift goes on top of the cap, and
+        riding one on its way up is not a jump at all.
     */
-    if (vel.y > 0.0f && !in.f_jump_down){
-        float capped = ARCHER_JUMP_SPEED * ARCHER_JUMP_CUT;
+    if (vel.y > 0.0f && !in.f_jump_down && !(f_on_ground && spring_on >= 0)){
+        float capped = ARCHER_JUMP_SPEED * ARCHER_JUMP_CUT + launch_lift;
         if (vel.y > capped){
             vel.y = capped;
         }
@@ -714,6 +1157,16 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         vel.y = -ARCHER_MAX_FALL_SPEED;
     }
 
+    //The stomp's count: the aim held down, falling, up to the tick she touches down. Let go, or
+    //start rising, and it starts again - only the end of the fall counts.
+    if (!f_on_ground && vel.y < 0.0f && in.aim_axis <= -SPRING_PUMP_AIM){
+        if (stomp_ticks < SPRING_STOMP_TICKS){
+            stomp_ticks++;
+        }
+    }else{
+        stomp_ticks = 0;
+    }
+
     //--- Move -----------------------------------------------------------------------------------
     bool f_was_on_ground = f_on_ground;
     float impact_speed = vel.y;     //captured because MoveAndCollide zeroes it on contact
@@ -721,12 +1174,22 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     bool f_hit_floor = false;
     bool f_hit_ceiling = false;
     bool f_hit_wall = false;
+    int riding = spring_on;
     MoveAndCollide(vel * ARCHER_DT,in.f_down_held,events,f_hit_floor,f_hit_ceiling,f_hit_wall);
 
     f_on_ground = f_hit_floor;
     if (f_hit_floor && !f_was_on_ground){
         events.f_landed = true;
         events.land_speed = (impact_speed < 0.0f) ? -impact_speed : impact_speed;
+    }
+    //Off a spring plant this tick - a jump, a throw, or walking off it - starts the swing's clock.
+    if (f_riding && !f_on_ground){
+        spring_left = riding;
+        spring_air_ticks = 0;
+        f_swung = false;
+    }else if (f_on_ground){
+        spring_left = -1;
+        spring_air_ticks = -1;
     }
     if (f_hit_ceiling){
         events.f_bumped_head = true;
@@ -825,6 +1288,9 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
     //The box's missing top while kneeling. Everything below places the box by its FEET or, against
     //a ceiling, by its top - which is ARCHER_HALF_H - head_drop above pos.
     float head_drop = HeadDrop();
+    //For the spring plants, which are resolved once for the whole move, and for SPRING_STEP_UP.
+    v2 from = pos;
+    bool f_may_step_up = f_on_ground && spring_on >= 0;
 
     for (int s = 0; s < steps; s++){
         //--- X ----------------------------------------------------------------------------------
@@ -840,6 +1306,24 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                 }
                 if (!BoxOverlapsBlock(pos.x,pos.y,head_drop,b)){
                     continue;
+                }
+                //Off a spring plant, a low enough face is a step up rather than a wall - if there
+                //is room to stand on top of it.
+                float rise = b.Top() - (pos.y - ARCHER_HALF_H);
+                if (f_may_step_up && rise > 0.0f && rise <= SPRING_STEP_UP){
+                    float up_y = b.Top() + ARCHER_HALF_H + STAGE_EPS;
+                    bool f_room = true;
+                    for (size_t j = 0; j < blocks.size() && f_room; j++){
+                        const StageBlock& o = blocks[j];
+                        if (j != i && o.f_alive && o.kind != BLOCK_PLATFORM &&
+                            BoxOverlapsBlock(pos.x,up_y,head_drop,o)){
+                            f_room = false;
+                        }
+                    }
+                    if (f_room){
+                        pos.y = up_y;
+                        continue;
+                    }
                 }
                 pos.x = (step.x > 0.0f) ? (b.Left() - ARCHER_HALF_W - STAGE_EPS)
                                         : (b.Right() + ARCHER_HALF_W + STAGE_EPS);
@@ -867,7 +1351,7 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
         {
             for (size_t i = 0; i < obstacles.size(); i++){
                 const StageObstacle& o = obstacles[i];
-                if (!BoxOverlapsObstacle(pos.x,pos.y,head_drop,o)){
+                if (!ObstacleStopsBox(pos.x,pos.y,head_drop,o)){
                     continue;
                 }
                 /*
@@ -985,7 +1469,7 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
             float prev_top = prev_bottom + ARCHER_HALF_H * 2.0f - head_drop;
             for (size_t i = 0; i < obstacles.size(); i++){
                 const StageObstacle& o = obstacles[i];
-                if (!BoxOverlapsObstacle(pos.x,pos.y,head_drop,o)){
+                if (!ObstacleStopsBox(pos.x,pos.y,head_drop,o)){
                     continue;
                 }
                 if (step.y < 0.0f){
@@ -1004,6 +1488,18 @@ void Stage::MoveAndCollide(const v2& delta, bool f_down_held, StageEvents& event
                 vel.y = 0.0f;
             }
         }
+    }
+
+    /*
+        The spring plants, once for the whole move rather than per sub-step: each is tested from
+        where she started against where the surface WAS to where she ended against where it IS,
+        which cannot be stepped through however fast either moves. A block she has just been
+        stood on outranks a plant surface below her feet - the shelf, over a leaf bent under it.
+    */
+    bool f_on_plant = false;
+    CollideSpringPlants(from,f_down_held,out_hit_floor,events,f_on_plant);
+    if (f_on_plant){
+        out_hit_floor = true;
     }
 }
 
@@ -1331,7 +1827,7 @@ bool Stage::CanStandUp() const{
         }
     }
     for (size_t i = 0; i < obstacles.size(); i++){
-        if (BoxOverlapsObstacle(pos.x,pos.y,0.0f,obstacles[i])){
+        if (ObstacleStopsBox(pos.x,pos.y,0.0f,obstacles[i])){
             return false;
         }
     }

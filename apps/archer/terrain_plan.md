@@ -385,3 +385,47 @@ reference - "THE SHAPE, THROUGH THE SLAB" in `Terrain.h`, and the fields of `Ter
   cost at generation, and dip stayed 0.0000 in both bays.
 - **Plants grow on the terrain now**, and on the tiles' colliders, within each block's own depth.
   `grass_1` is its own pass with the opposite density curve to the ferns - thickest in the open.
+
+## 10. The back wall (2026-09-26)
+
+A depth layer, and the look is a CAVE: under and behind the slab the camera saw the painted
+backdrop, so the level read as a shelf floating in front of a picture. The user's own mock (a
+block pulled up behind the island, a pine on it) set the target. `Backdrop.{h,cpp}` (engine-free,
+in `make rules`) derives it from the bay's GROUND - blocks with nothing under them and nothing
+holding them up, so the floor and not the walls, hills or floaters (the upper bay gets none):
+
+- **The wall:** 2-wide columns from 16 under the floor up to a ridge line off smooth 1D value
+  noise (2 .. 19 above the floor, wavelength 11), overlapping so the smooth union makes one face.
+  Front 3.0 behind the slab's back.
+- **The ridges:** narrow buttresses one every ~3 units by hash, 1..5 below the wall where they
+  stand, front 1.3 behind the slab's back - nearer than the wall, which is what gives the face
+  light and shadow.
+- **The pines:** `pine_tree` on wall columns 3+ above the floor with no neighbour 1.5 higher,
+  3 apart, size 0.7..1.4 and yaw by hash - children of `terrain_back_<bay>`, reused on a remesh.
+
+Meshed by the same mesher on rounder, noisier, coarser params (`BackdropTerrainParams`), never a
+collider. Gotchas, each found by looking:
+
+- **Behind the walking line, measured.** `RemeshBackdrop` measures the finished mesh over the
+  ground's grass (reach -0.54 = 0.54 behind the slab's back) and warns if > 0.
+- **Teal and filled.** `BACKDROP_HAZE` 0.75 toward teal-grey (0.45 toward dark teal read olive);
+  `BACKDROP_FILL` 0.35 emissive, because the slab shadows most of it and there is no per-object
+  "receive no shadows" - without the fill it came out black.
+- **Deep on purpose.** At 6 below, its bottom edge showed above the painted ground and it read
+  as floating; 16 keeps the edge off screen at normal zoom.
+- **The hash.** A single multiply-xor of (seed, index, purpose) gave small signed lattice
+  indices values within a few percent of each other - a plateau of a ridge line and a tree lottery
+  that said no. Both modules fold each input through lowbias32 now.
+- **model_scale.** BuildTerrain runs before BuildArcherModel, so the pines were first stood at a
+  scale of 1; `PlaceAllBackdropPines` re-places them once it is known (the stands' old trap).
+- Regenerates with the bay (Regenerate terrain); swapped with the level like `terrain_objects`.
+
+## 11. The rocks (2026-09-26)
+
+`Boulders.{h,cpp}` (engine-free, in `make rules`): NOT the plants' density. Rocks lie where they
+fell - an INSIDE CORNER, a wall face rising 0.8+ out of a SOLID/LEDGE top (not a platform, not a
+breakable), with 1.5 of open, uncovered top beside it. Per corner (70%): one `rock_big` pushed
+into the corner and to the back, 3..6 `rock_small` round its base on the open side. All behind
+z -0.15, off her walking line; a big rock may hang half its footprint past the platform's back
+edge, or the 1.3 of a default slab held every one to the same small size. Main level: 12 corners,
+8 big, 18 small. App: `ScatterBoulderObjects`, pooled under `boulders`, beside the foliage.

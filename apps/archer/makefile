@@ -44,6 +44,10 @@ APP_SRCS += Terrain.cpp
 APP_SRCS += Bow.cpp
 #Where the ferns and flowers grow on the blockout. Engine-free, so `rules` tests it too.
 APP_SRCS += Foliage.cpp
+#The bank behind the terrain - see Backdrop.h.
+APP_SRCS += Backdrop.cpp
+#Where the rocks lie - see Boulders.h.
+APP_SRCS += Boulders.cpp
 #The vines: a trunk bent along a core/Spline, leaves along it. Engine-free apart from core's maths
 #and the two spline files, which `rules` compiles in beside it. See vine_plan.md.
 APP_SRCS += Vine.cpp
@@ -51,6 +55,10 @@ APP_SRCS += Vine.cpp
 APP_SRCS += RopeMesh.cpp
 #Text on props - a signpost's boards - placed by empties authored on the model. See Sign.h.
 APP_SRCS += Sign.cpp
+#The wind over the level, derived from the blockout - engine-free, so `rules` tests it too - and
+#its debug view. See wind_plan.md.
+APP_SRCS += Wind.cpp
+APP_SRCS += WindView.cpp
 
 #SOUND, for the bow: the string's creak from the nock, the loose, and the arrow striking
 #something - assets/sound/*.wav, played from ApplicationArcher::UpdateSound. The jump, the
@@ -103,6 +111,11 @@ include $(ROOT)/engine.mk
 rules:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
-		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Vine.cpp RopeMesh.cpp \
+		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp \
 		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe
+#The wind's checks, as their own exe so they need nothing from stage_test.cpp. -O2 because the
+#main level's flow solve takes seconds unoptimised, and its two timings are printed.
+	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/wind_test.exe \
+		wind_test.cpp Wind.cpp Stage.cpp
+	@./build/wind_test.exe
