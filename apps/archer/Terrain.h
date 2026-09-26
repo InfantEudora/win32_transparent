@@ -43,6 +43,23 @@
     It does push one UP in an inside corner, and the archer's feet then sink a little into the
     fillet at the foot of a wall - which looks like grass and is why the measurement below reports
     a rise and a dip as two different numbers rather than one absolute error.
+
+    --- THE SHAPE, THROUGH THE SLAB ---------------------------------------------------------------
+    A block used to be one rounded box extruded to one depth for the whole level. Now each block is
+    THREE PIECES, at its own depth and z (StageBlock::z, HalfDepth()):
+      - the BODY: the rounded box above, its front and back set in by body_inset_z;
+      - the CAP: a slab of grass over the top, THE SAME TOP - pinned the same way - that
+        overhangs the body by cap_lip_z at the front and back and cap_lip_x at the sides, and
+        hangs down in drips where a low-frequency noise says so. Only its underside moves, so the
+        drips cannot reach the top;
+      - the ROOT, for a floating block only: a rounded belly under the collider's bottom.
+    A block's own cap and body are joined with a HARD min, because a smooth union of two surfaces
+    that coincide on the top face would lift the whole top by k/4. Blocks are then smooth-unioned
+    with each other exactly as before, so the fillet at the foot of a wall is still there.
+
+    The top is exact where she and the plants are: across the collider in x, and within the
+    block's depth in z. Beyond the depth, in the lip, the noise is let back in, so the grass edge
+    wobbles rather than ruling a straight line along the front.
 */
 
 /*
@@ -55,26 +72,56 @@
 */
 struct TerrainParams{
     //--- the grid -------------------------------------------------------------------------------
-    //Spacing in the play plane, and through the slab. cell_z is deliberately coarser: the field
-    //barely varies in z, so a finer z spends vertices tessellating the flat front and back faces
-    //of a slab the camera is looking straight at.
+    //Spacing in the play plane, and through the slab. cell_z used to be twice as coarse, when a
+    //block was an extrusion and the field did not vary in z; now the front lip, the drips and the
+    //coarse noise all live in z, and at 0.5 there were only eight samples through a slab.
     float cell_xy      = 0.25f;
-    float cell_z       = 0.50f;
-    //Half the slab's thickness. Matches BLOCK_DEPTH/2 in ApplicationArcher.h; the terrain has to
-    //be as deep as the boxes it replaces or the level gets visibly thinner where it melts.
-    float depth        = 1.50f;
+    float cell_z       = 0.25f;
 
-    //--- the shape ------------------------------------------------------------------------------
-    //Corner rounding on each block. Clamped per block to 0.9 * hh so the top stays exact even on
-    //a block thinner than 2r - see the header note.
+    //--- the body -------------------------------------------------------------------------------
+    //Corner rounding on each block's body. Clamped per block to 0.9 * hh so the top stays exact
+    //even on a block thinner than 2r - see the header note.
     float round_r      = 0.20f;
     //Smooth-union radius between blocks. This is the one that decides whether the level reads as
     //welded boxes or as ground, and the one that dissolves thin features if it is too big.
     float smooth_k     = 0.35f;
+    //How far the body's front and back stand in from the block's depth, so the grass cap
+    //overhangs them - the lip the authored tiles have. The body's rounding grows it back out by
+    //round_r, so at 0.2 the earth face is exactly at the block's depth.
+    float body_inset_z = 0.20f;
+
+    //--- the grass cap --------------------------------------------------------------------------
+    //A slab over each block's top, the same top: see "THE SHAPE, THROUGH THE SLAB" above.
+    float cap_thickness = 0.28f;    //at its thinnest, between drips
+    float cap_round    = 0.12f;
+    float cap_lip_x    = 0.10f;     //overhang past the collider at the sides, before the rounding
+    float cap_lip_z    = 0.18f;     //and at the front and back, where the camera sees it
+    float drip_amp     = 0.35f;     //how much further a drip hangs below the cap's thinnest
+    float drip_freq    = 1.10f;     //drips per world unit, near enough
+
+    //--- the root -------------------------------------------------------------------------------
+    //A floating block - nothing sits under it, but it is over something - gets a rounded belly
+    //below its collider, like the tiles' tapering undersides. Visual only, and below the
+    //collider's bottom, so it can never be stood on or bumped into.
+    float root_scale   = 0.50f;     //depth of the belly as a fraction of the block's half-width
+    float root_max     = 1.20f;
+    float root_k       = 0.35f;     //how softly it blends into the body
 
     //--- the noise ------------------------------------------------------------------------------
+    //Two octaves. The fine one is the old one; the coarse one is what makes a face read as rock
+    //rather than as a rounded box, and it is kept off the middle of the slab - see coarse_z0.
     float noise_amp    = 0.15f;     //world units of displacement
     float noise_freq   = 0.60f;     //cycles per world unit
+    float coarse_amp   = 0.35f;
+    float coarse_freq  = 0.30f;
+    /*
+        The coarse octave fades in between these distances from the walk line (z 0). A side face
+        she walks into is at z 0; a coarse bump there would show her standing in the rock or a
+        gap between her and it, both at 0.3 of a unit. The front and back of the slab, which the
+        camera looks at, take it all.
+    */
+    float coarse_z0    = 0.40f;
+    float coarse_z1    = 1.10f;
     //How far below a block's top the noise reaches full strength. Zero AT the top, because noise
     //is the one term that can push a surface down through a collider, and a landing surface is
     //exactly where that must not happen.
@@ -82,10 +129,9 @@ struct TerrainParams{
 
     //--- the materials --------------------------------------------------------------------------
     //Slot 0 is grass, 1 is soil, 2 is rock - matching the order ApplicationArcher::BuildMaterials
-    //assigns them in. Four slots is all an Object has (NUM_MATERIAL_SLOTS), which is exactly
-    //enough and is why this is a classification rather than a texture.
-    float grass_ny     = 0.70f;     //normal.y above this is a top surface...
-    float grass_depth  = 0.40f;     //...and within this of a block top, it is grass
+    //assigns them in. Grass is WHATEVER THE CAP OWNS: a vertex nearer a cap than any body. The
+    //rest is earth, told apart by slope.
+    float cap_eps      = 0.03f;     //a tie on the top face, where both are at zero, goes to grass
     float rock_ny      = 0.25f;     //normal.y below this is a cliff face
 };
 

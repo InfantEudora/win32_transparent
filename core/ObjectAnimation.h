@@ -174,7 +174,24 @@ class ObjectAnimation{
     ObjectAnimationKeyFrame* FindKeyframeAtTime(float time);
     ObjectAnimationKeyFrame* GetFirstKeyframe();
     ObjectAnimationKeyFrame* GetLastKeyframe();
+    /*
+        The first keyframe AT OR AFTER `time` - a ceiling, not the nearest, so it reads up to a
+        whole keyframe interval early. For measurements that want an authored key exactly; a pose
+        wants Sample.
+    */
     ObjectAnimationKeyFrame* GetClosestKeyframe(float time);
+    /*
+        The track at `time`, BLENDED between the keyframes either side of it: rotation slerped,
+        position and shape keys lerped. Before the first key or past the last, that key. False for
+        an empty track.
+
+        What every pose is sampled with. It used to be GetClosestKeyframe, which holds each key
+        until the next: exports are keyed at 30 fps and apps tick at up to 60, so every clip moved
+        in 30 fps steps, every other tick showed the same pose - stepping a paused simulation a
+        tick at a time looked like nothing happening half the time - and root motion arrived in
+        pairs of one empty tick and one double one.
+    */
+    bool Sample(float time, ObjectAnimationKeyFrame& out);
     void AddKeyframe(ObjectAnimationKeyFrame* keyframe);
 };
 

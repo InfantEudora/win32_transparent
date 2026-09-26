@@ -145,6 +145,20 @@ public:
     */
     float LoudestAt(const char* handle_name, float window = 0.01f);
 
+    /*
+        HOLDS every sound where it is (true), or lets them all carry on (false) - for keeping sound
+        in SIMULATED time while an app's simulation is paused: hold on a pass that does not tick,
+        let go on one that does, and a single step plays a single tick of every sound, the way a
+        video editor scrubs a frame. Without it a sound started on a stepped tick plays out in
+        wall-clock time while the picture waits for the next step - a swoosh timed to peak on an
+        impact finishes long before the arrow arrives.
+
+        A held voice still COUNTS AS PLAYING (FinishedPlaying, GetNumPlaying, and the reclaiming
+        of one-shots), since it has not finished: it has stopped, and it will go on. That is the
+        difference from Pause, which is its owner's decision. Cheap enough to call every pass.
+    */
+    void SetPaused(bool paused);
+
     //All of these do nothing, harmlessly, for a handle whose voice is gone - see soundhandle_t.
     void Stop(soundhandle_t handle);        //ends it and returns the voice to the pool
     void Pause(soundhandle_t handle);
@@ -182,6 +196,7 @@ private:
         bool f_active = false;                  //sound and ref are initialised
         soundhandle_t owner = SOUND_INVALID_HANDLE;
         bool f_keep = false;
+        bool f_held = false;                    //stopped by SetPaused, and to be restarted by it
         uint64_t started = 0;                   //play counter at start, so "oldest" is answerable
     };
 

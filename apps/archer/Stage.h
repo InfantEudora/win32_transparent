@@ -300,6 +300,20 @@ enum StageBlockKind{
     BLOCK_BREAKABLE
 };
 
+/*
+    How deep a block is through the slab when it does not say: half of it, either side of the
+    archer's walk line at z 0. The boxes, the terrain and the plants all read HalfDepth() rather
+    than this, so a block that sets its own depth is that deep everywhere at once.
+*/
+#define STAGE_BLOCK_HALF_DEPTH      1.50f
+/*
+    Every block must still cover the play plane this far either side of z 0, whatever depth and
+    offset it is given. The rules are 2D and never look, but the crates, targets and debris are
+    rp3d bodies standing at z 0 and PROP_DEPTH deep, and a block slid back far enough would let
+    them fall through a floor the archer is standing on. stage_test holds every level to it.
+*/
+#define STAGE_BLOCK_MIN_COVER       0.60f
+
 //An axis-aligned box in the play plane. Centre and half extents, because every test in here wants
 //them that way and converting once at build time is cheaper than converting in the sweep.
 struct StageBlock{
@@ -313,11 +327,23 @@ struct StageBlock{
     //draws no box for it outside the F2 blockout view, and it neither melts nor grows plants.
     //The rules never read it; to Stage it is an ordinary block of its kind.
     bool  f_invisible = false;
+    /*
+        Through the slab: the centre, and the half-depth (0 is STAGE_BLOCK_HALF_DEPTH). LOOKS ONLY -
+        the rules are 2D and sweep the archer against x and y alone - but it is the level's shape,
+        so it lives with the rest of it: a stone set back, a thin slab, a deep one. See
+        STAGE_BLOCK_MIN_COVER for how far either may go. Last, so every brace-initialised block
+        keeps its meaning.
+    */
+    float z = 0.0f;
+    float depth = 0.0f;
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
     float Bottom() const { return y - hh; };
     float Top()    const { return y + hh; };
+    float HalfDepth() const { return (depth > 0.0f) ? depth : STAGE_BLOCK_HALF_DEPTH; };
+    float Front()  const { return z + HalfDepth(); };
+    float Back()   const { return z - HalfDepth(); };
 };
 
 /*
@@ -629,6 +655,48 @@ struct StageObstacle{
 #define KICK_ROOT_FRICTION          40.0f
 
 /*
+    --- THE THREE KICKS ---------------------------------------------------------------------------
+    K alone is Kick_Front, the kick everything above was measured on. Down+K and Up+K are the other
+    two front kicks in the export, and each is its own move: its own length, its own active window
+    and box, and what it IMPARTS - because a kick that lands low and heavy and one that snaps out
+    high are not the same kick with a different picture on it.
+
+    THE DIRECTION IS READ OFF THE AIM AXIS, not off the arrow keys by name. Up and Down already
+    are the aim, on the keys and on the right stick alike, so reading the axis gives the pad the
+    same three kicks (B with the stick tilted) and a scripted hold of "up" or "aim_down" asks for
+    them too, with nothing added to the input map. Decided ONCE, on the press: a kick that has
+    started is that kick to the end, whatever the stick does meanwhile.
+
+    EVERY ROW IS SET BY ITS CLIP, the KICK_TICKS arrangement: the length is the clip's, the window
+    covers the strike ApplicationArcher::MeasureKickClip finds, and the app warns with the numbers
+    to type when a re-export moves either. The box and the impact are fitted to where and how fast
+    that boot lands - the measurements are beside the table in Stage.cpp. KICK_FRONT's row IS the
+    defines above, so the rules test and the retiming history in animation_plan.md keep meaning
+    what they say.
+*/
+enum KickKind{
+    KICK_FRONT = 0,         //K        Kick_Front
+    KICK_FRONT_2,           //Down+K   Kick_Front_2
+    KICK_FRONT_3,           //Up+K     Kick_Front_3
+    KICK_KIND_COUNT
+};
+struct KickSpec{
+    const char* name;       //for the log and the panel
+    int   ticks;            //the whole move, KICK_TICKS for this kick
+    int   active_from;      //the boot is live from this tick...
+    int   active_to;        //...through this one
+    float reach;            //past the body's leading edge, KICK_REACH
+    float half_height;      //KICK_HALF_HEIGHT
+    float y_offset;         //the box's centre from pos.y, KICK_Y_OFFSET
+    float speed;            //what it imparts along the facing, KICK_SPEED
+    float lift;             //and upward, KICK_LIFT
+};
+extern const KickSpec KICK_SPECS[KICK_KIND_COUNT];
+//How far the aim axis has to be pushed for Down+K or Up+K. Half, so a key (which is all of it)
+//always counts and a stick resting a little off-centre never does.
+#define KICK_SELECT_AIM             0.5f
+
+/*
     --- KNEELING ---------------------------------------------------------------------------------
     C kneels, C again stands - a stance she gets into and out of, not a hold (animation_plan.md,
     Step 2). Kneeling she cannot run, jump, kick or take a rope, and she keeps her facing; she CAN
@@ -801,6 +869,7 @@ struct StageEvents{
     */
     struct StageKick{
         int   id = -1;
+        int   kind = KICK_FRONT;    //which kick, so the app imparts that kick's speed and lift
         float dir = 1.0f;
         float x = 0.0f;         //where the boot landed, for debris and for deciding which
         float y = 0.0f;         //bricks of a wall are nearest it
@@ -882,7 +951,7 @@ public:
         regenerated to match - without it, the first restart would snap every box back while the
         terrain stayed where they had been moved to.
 
-        Geometry only: x, y, hw and hh. Kind and f_alive still come from BuildLevel, so a restart
+        Geometry only: x, y, hw, hh, z and depth. Kind and f_alive still come from BuildLevel, so a restart
         still brings a broken wall back. Ignored if the block count no longer matches, which is
         BuildLevel having been edited since - the code is newer than the edit.
     */
@@ -922,6 +991,8 @@ public:
     //The kick, counted UP from 1 so that 0 means "not kicking" - see KICK_ACTIVE_FROM/TO.
     int   kick_ticks = 0;
     int   kick_cooldown = 0;
+    int   kick_kind = KICK_FRONT;   //KickKind of the kick running, or of the last one
+    const KickSpec& Kick() const { return KICK_SPECS[kick_kind]; }
 
     //--- Kneeling -------------------------------------------------------------------------------
     int   kneel_phase = KNEEL_LOWERING; //meaningful only while MODE_KNEEL

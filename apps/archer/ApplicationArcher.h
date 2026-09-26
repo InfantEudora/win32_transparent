@@ -90,6 +90,7 @@
         J                       L1           hold to draw the bow, release to loose
         Up / Down               right stick  tilt the aim, whether or not the bow is drawn
         K                       B            kick - shoves props hard, breaks walls
+        Down+K / Up+K           B + stick    the low push kick / the high rising kick (KICK_SPECS)
         C                       X            kneel / stand up - a toggle; kneeling she can draw
         E                       Y            action - take the rope             (later slice)
         L                       R1           knife                             (later slice)
@@ -703,6 +704,8 @@ struct ArcherSnapshot{
     int   mode = MODE_AIR;
     bool  f_on_ground = false;
     int   coyote_ticks = 0;
+    int   kick_ticks = 0;           //Stage::kick_ticks: 0 not kicking, else 1..that kick's length
+    int   kick_kind = 0;            //KickKind of the kick running, or of the last one
 
     int   bow_mode = BOW_IDLE;
     int   draw_ticks = 0;
@@ -1016,7 +1019,8 @@ private:
     */
     void MeasureAirClips();
     //When the boot connects in Kick_Front, found by watching which foot reaches furthest from the
-    //hips. Checked against KICK_ACTIVE_FROM/TO rather than setting them - see Puppet::kick_strike.
+    //hips - for each of the three kicks. Checked against its KICK_SPECS row rather than setting it,
+    //and logs where the boot is at the strike beside the row's box - see Puppet::kick_strike.
     void MeasureKickClip();
     //The kneel set against the rules: both transitions' lengths against KNEEL_DOWN/UP_TICKS, and
     //her kneeling height against KNEEL_HALF_H. Warns with the number to type, like the kick.
@@ -1384,20 +1388,33 @@ private:
     bool f_was_nocked = false;
     //Master gain for the lot, 0..1, on the panel.
     float sound_volume = 0.8f;
-    //Which tick of the kick (Stage::kick_ticks, 1..KICK_TICKS) the swing's whoosh plays on. On
-    //the panel, because the clip has no events and this is found by ear. 11 is where the swing
-    //sat inside the old combined kick.wav as it was tuned by ear, so the timing carried over.
+    /*
+        Which tick of the kick (Stage::kick_ticks, 1..KICK_TICKS) the swing's whoosh plays on. On
+        the panel, because the clip has no events and this is found by ear. 11 is where the swing
+        sat inside the old combined kick.wav as it was tuned by ear, so the timing carried over.
+
+        TUNED ON KICK_FRONT, and so are the shout's ticks below: the other two kicks play both
+        shifted by how much later their boot lands (UpdateSound), so each sound keeps its place
+        against the strike rather than against the key press.
+    */
     int   kick_swing_tick = 11;
     /*
         Her shout on a kick - some kicks, not all, and not always on the same tick, because the
         same yell on the same frame every time is the thing that makes a sound effect read as one.
         Chosen on the kick's first tick; see UpdateSound. On the panel, found by ear like the swing.
         The defaults put the loud part of kick_hyaa.wav, about 7 ticks in, around the strike.
+
+        ONE OF THREE SHOUTS, drawn with the chance. from/to were found by ear on kick_hyaa, so the
+        other two are moved by how much earlier or later their own loud part comes
+        (SoundSystem::LoudestAt, measured at load) and every shout peaks on the same tick.
     */
-    float kick_hyaa_chance = 0.4f;
-    int   kick_hyaa_from = 10;      //earliest kick tick it can start on
-    int   kick_hyaa_to = 16;        //latest
-    int   kick_hyaa_tick = 0;       //this kick's, or 0 when this one is quiet
+    float kick_shout_chance = 0.4f;
+    int   kick_shout_from = 10;     //earliest kick tick it can start on
+    int   kick_shout_to = 16;       //latest
+    int   kick_shout_tick = 0;      //this kick's, or 0 when this one is quiet
+    int   kick_shout = 0;           //which of KICK_SHOUTS this kick's is
+    static constexpr int KICK_SHOUT_COUNT = 3;
+    float kick_shout_peak[KICK_SHOUT_COUNT] = {};   //seconds into each file its loud part is
 
     //--- The rope ---------------------------------------------------------------------------------
     std::vector<Object*> rope_segments;         //top link first

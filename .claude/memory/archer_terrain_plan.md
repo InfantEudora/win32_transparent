@@ -48,3 +48,11 @@ deriving the field from the boxes removes the objection instead of working aroun
 surface check over an analytic sphere - a wrong table row cannot survive it). Field changes go in
 Terrain.cpp and are verified by `TerrainStats::worst_dip`, which must stay 0. Related:
 [[archer-app]], [[engine-forward-is-minus-z]], [[comment-density-ceiling]].
+
+**2026-09-26: the bay is a level now, and blocks have a shape through the slab.** The four test
+variants were replaced by a real layout (mound, hill, three stepping stones up to the island, two
+unreachable floaters; stage_test's TestBayClimb plays the climb and searches every jump). Each
+block is body + grass cap (same pinned top, overhanging lip, drips) + belly if floating, at its
+own `StageBlock::z`/`depth`; grass = vertices the cap owns. See terrain_plan.md section 9.
+Gotcha: a block's cap and its own body must be a HARD min - smooth-unioning two surfaces that
+coincide on the top face lifts the whole top by k/4. Plants now grow on the terrain too.

@@ -34,6 +34,10 @@ enum FoliageKind{
     FOLIAGE_FERN = 0,       //fern_1: the tall, broad one - wants shade
     FOLIAGE_FERN_LOW,       //fern_2: ground cover, 0.08 tall - goes anywhere, fills the gaps
     FOLIAGE_FLOWER,         //flower: wants the open
+    //grass_1: a small clump of blades, the ones cut off the terrain tiles. NOT drawn in the
+    //lottery the other three share - it has a pass and a density of its own, because a lawn is
+    //many small clumps and the lottery tops out at under one plant a unit on open ground.
+    FOLIAGE_GRASS,
     FOLIAGE_KIND_COUNT
 };
 
@@ -69,11 +73,25 @@ struct FoliageParams{
     //than being limited to one plant per step.
     int   tries_per_step  = 3;
 
-    //Depth: the slab runs z -1.5 .. 1.5. Biased toward the back (bias > 1) so the plants stand
-    //behind the archer, who walks at z 0, rather than over her feet.
+    /*
+        Depth, as it would be on a block of the default depth at z 0 (STAGE_BLOCK_HALF_DEPTH, the
+        slab -1.5 .. 1.5): a block with its own depth or z keeps the same two margins from its own
+        back and front, so plants stay on its flat top however it is set. Biased toward the back
+        (bias > 1) so the plants stand behind the archer, who walks at z 0, rather than over her
+        feet.
+    */
     float z_back          = -1.35f;
     float z_front         = 1.20f;
     float z_bias          = 1.6f;
+
+    /*
+        The grass pass - see FOLIAGE_GRASS. The OPPOSITE curve to the others': thickest in the
+        open, thinning into the shade, where the ferns take over. Spread evenly through the depth
+        rather than biased back, because a clump this low hides nothing of her.
+    */
+    float grass_open      = 7.0f;     //clumps per unit of length, in the open
+    float grass_corner    = 1.0f;     //and in a fully shaded corner
+    int   grass_tries     = 4;
 
     //How far a plant's centre keeps from a drop-off. Walls are hugged instead - see clearance.
     float edge_inset      = 0.10f;
@@ -85,8 +103,8 @@ struct FoliageParams{
 
     //Per-kind size at scale 1 (radius in the ground plane, height), measured off the meshes by
     //the app. The defaults are the archer.glb props at the character's scale, for the tests.
-    float radius[FOLIAGE_KIND_COUNT] = { 0.55f, 0.36f, 0.29f };
-    float height[FOLIAGE_KIND_COUNT] = { 0.64f, 0.19f, 0.55f };
+    float radius[FOLIAGE_KIND_COUNT] = { 0.55f, 0.36f, 0.29f, 0.24f };
+    float height[FOLIAGE_KIND_COUNT] = { 0.64f, 0.19f, 0.55f, 0.27f };
 };
 
 struct FoliagePlant{

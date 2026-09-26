@@ -66,6 +66,8 @@ void Stage::Reset(){
             blocks[i].y  = kept_layout[i].y;
             blocks[i].hw = kept_layout[i].hw;
             blocks[i].hh = kept_layout[i].hh;
+            blocks[i].z  = kept_layout[i].z;
+            blocks[i].depth = kept_layout[i].depth;
         }
     }
 
@@ -91,6 +93,7 @@ void Stage::Reset(){
     grab_cooldown = 0;
     kick_ticks = 0;
     kick_cooldown = 0;
+    kick_kind = KICK_FRONT;
     kneel_phase = KNEEL_LOWERING;
     kneel_ticks = 0;
     getup_ticks = 0;
@@ -245,8 +248,14 @@ void Stage::BuildMainLevel(){
         like terrain. Both are under 3.0 tall, so she can cross either way on foot and nothing down
         here can pen her in.
     */
-    blocks.push_back({ -35.00f,  0.40f, 2.50f, 0.40f, BLOCK_SOLID, true });         //mound, top 0.8
-    blocks.push_back({ -14.50f,  1.20f, 1.50f, 1.20f, BLOCK_SOLID, true });         //hill,  x -16..-13, top 2.4
+    /*
+        THE LAST TWO NUMBERS ON EACH OF THESE ARE z AND HALF-DEPTH (StageBlock::z, depth), and
+        they are looks only - set back a little or thinned, so the pieces stop reading as one
+        slab cut out with a biscuit cutter. Every one still covers STAGE_BLOCK_MIN_COVER either
+        side of the walk line, which stage_test checks.
+    */
+    blocks.push_back({ -35.00f,  0.40f, 2.50f, 0.40f, BLOCK_SOLID, true, false, -0.25f, 1.20f }); //mound, top 0.8
+    blocks.push_back({ -14.50f,  1.20f, 1.50f, 1.20f, BLOCK_SOLID, true, false,  0.00f, 1.30f }); //hill,  x -16..-13, top 2.4
 
     /*
         The upper bay: an island floating clear of everything below - its underside at 9.75, far
@@ -254,8 +263,8 @@ void Stage::BuildMainLevel(){
         so the island has a top, a bump and an underside to look at.
     */
     blocks.push_back({ -26.00f, 10.50f, 8.00f, 0.75f, BLOCK_SOLID, true });         //slab,  top 11.25
-    blocks.push_back({ -29.00f, 11.75f, 1.50f, 0.50f, BLOCK_SOLID, true });         //hill,  top 12.25
-    blocks.push_back({ -21.00f,  9.00f, 0.40f, 1.00f, BLOCK_SOLID, true });         //spike, bottom 8
+    blocks.push_back({ -29.00f, 11.75f, 1.50f, 0.50f, BLOCK_SOLID, true, false, -0.30f, 1.10f }); //hill,  top 12.25
+    blocks.push_back({ -21.00f,  9.00f, 0.40f, 1.00f, BLOCK_SOLID, true, false,  0.10f, 0.80f }); //spike, bottom 8
 
     /*
         THE WAY UP: the hill, then three stones, zig-zagging up the island's right end - 2.4 a rise,
@@ -276,9 +285,9 @@ void Stage::BuildMainLevel(){
         Stone one's centre is below ARCHER_TEST_BAY_SPLIT_Y, so it melts with the ground bay rather
         than the island's; it is floating either way.
     */
-    blocks.push_back({ -19.35f,  4.40f, 1.15f, 0.40f, BLOCK_SOLID, true });         //stone one,   top 4.8
-    blocks.push_back({ -14.30f,  6.80f, 1.00f, 0.40f, BLOCK_SOLID, true });         //stone two,   top 7.2
-    blocks.push_back({ -12.90f,  9.20f, 0.90f, 0.40f, BLOCK_SOLID, true });         //stone three, top 9.6
+    blocks.push_back({ -19.35f,  4.40f, 1.15f, 0.40f, BLOCK_SOLID, true, false,  0.15f, 1.05f }); //stone one,   top 4.8
+    blocks.push_back({ -14.30f,  6.80f, 1.00f, 0.40f, BLOCK_SOLID, true, false, -0.20f, 1.00f }); //stone two,   top 7.2
+    blocks.push_back({ -12.90f,  9.20f, 0.90f, 0.40f, BLOCK_SOLID, true, false,  0.10f, 0.90f }); //stone three, top 9.6
 
     /*
         Two floaters to look at and never stand on. The first hangs under the middle of the island,
@@ -287,8 +296,8 @@ void Stage::BuildMainLevel(){
         end, with a ceiling at 9.75 flattening every arc. The second is above the island,
         its underside past the 15.45 a jump from the island's hill reaches.
     */
-    blocks.push_back({ -30.00f,  6.50f, 1.00f, 0.30f, BLOCK_SOLID, true });         //under the island, top 6.8
-    blocks.push_back({ -23.00f, 16.10f, 1.20f, 0.30f, BLOCK_SOLID, true });         //over it, bottom 15.8
+    blocks.push_back({ -30.00f,  6.50f, 1.00f, 0.30f, BLOCK_SOLID, true, false, -0.35f, 1.00f }); //under the island, top 6.8
+    blocks.push_back({ -23.00f, 16.10f, 1.20f, 0.30f, BLOCK_SOLID, true, false, -0.40f, 1.10f }); //over it, bottom 15.8
 #endif
 
     /*
@@ -1125,20 +1134,51 @@ void Stage::TickRope(const ArcherInput& in, StageEvents& events){
 //--- The kick -------------------------------------------------------------------------------------
 
 /*
+    See THE THREE KICKS in Stage.h. The first row is the defines, so it cannot drift from them; the
+    other two were MEASURED 2026-09-26 by MeasureKickClip and checked by eye, frame by frame:
+
+      Kick_Front    a snap front kick. Boot out at tick 22, at y +0.20, 11.0/s at its fastest.
+
+      Kick_Front_2  a stepping PUSH kick: she shuffles in for thirty ticks and drives a straight
+                    leg out at hip height. The boot lands at tick 46 of 78, LOWER than Kick_Front's
+                    (y 0.00) and FASTER (14.3/s, 1.3x). So its box sits lower by the same 0.20
+                    and it shoves harder and flatter - speed 1.3x, lift about half: it drives a
+                    crate along the floor rather than punting it.
+
+      Kick_Front_3  a HIGH rising kick: she leans back, the leg swings up past her head (ticks
+                    26..33) and drives out at chest height, furthest at tick 36 of 68. So its box is
+                    taller, reaching head height, and live from 31 to cover the leg coming up
+                    through as well as the drive; and it LIFTS - most of the lift of the three and
+                    the least shove. It reaches the top crate of a stack, which the other two do
+                    not.
+
+    Every box keeps Kick_Front's reach: all three boots land within 0.12 of each other there
+    (1.14, 1.03, 1.02 past her edge), which is less than the difference that would show.
+*/
+const KickSpec KICK_SPECS[KICK_KIND_COUNT] = {
+    //                 ticks        from              to              reach       half_height       y_offset       speed       lift
+    { "Kick_Front",    KICK_TICKS,  KICK_ACTIVE_FROM, KICK_ACTIVE_TO, KICK_REACH, KICK_HALF_HEIGHT, KICK_Y_OFFSET, KICK_SPEED, KICK_LIFT },
+    { "Kick_Front_2",  78,          44,               48,             KICK_REACH, 0.50f,            -0.45f,        17.0f,      2.5f },
+    { "Kick_Front_3",  68,          31,               37,             KICK_REACH, 0.70f,            0.10f,         9.0f,       8.0f },
+};
+
+/*
     The box the boot sweeps.
 
-    In front of the archer, low, and reaching KICK_REACH past the body's leading edge. A separate
-    function because three things want it and they must not drift apart: the sweep below, the rules
-    test, and the debug draw the app puts on screen while tuning.
+    In front of the archer and reaching the kick's `reach` past the body's leading edge, at the
+    height its boot lands. A separate function because three things want it and they must not
+    drift apart: the sweep below, the rules test, and the debug draw the app puts on screen while
+    tuning.
 */
 void Stage::KickBox(float& out_left, float& out_right, float& out_bottom, float& out_top) const{
+    const KickSpec& k = Kick();
     float lead = (facing > 0.0f) ? (pos.x + ARCHER_HALF_W) : (pos.x - ARCHER_HALF_W);
-    float far_edge = lead + facing * KICK_REACH;
+    float far_edge = lead + facing * k.reach;
     out_left  = (lead < far_edge) ? lead : far_edge;
     out_right = (lead < far_edge) ? far_edge : lead;
-    float centre_y = pos.y + KICK_Y_OFFSET;
-    out_bottom = centre_y - KICK_HALF_HEIGHT;
-    out_top    = centre_y + KICK_HALF_HEIGHT;
+    float centre_y = pos.y + k.y_offset;
+    out_bottom = centre_y - k.half_height;
+    out_top    = centre_y + k.half_height;
 }
 
 /*
@@ -1178,6 +1218,13 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
     if (kick_ticks == 0){
         if (in.f_kick_pressed && kick_cooldown == 0 && !f_busy){
             kick_ticks = 1;
+            //Which kick is chosen here and nowhere else - see THE THREE KICKS in Stage.h.
+            kick_kind = KICK_FRONT;
+            if (in.aim_axis <= -KICK_SELECT_AIM){
+                kick_kind = KICK_FRONT_2;
+            }else if (in.aim_axis >= KICK_SELECT_AIM){
+                kick_kind = KICK_FRONT_3;
+            }
             events.f_kick_started = true;
         }
         return;
@@ -1199,14 +1246,15 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
         return;
     }
 
+    const KickSpec& spec = Kick();
     kick_ticks++;
-    if (kick_ticks > KICK_TICKS){
+    if (kick_ticks > spec.ticks){
         kick_ticks = 0;
         kick_cooldown = KICK_COOLDOWN;
         return;
     }
     //Wind-up and recovery: the move is running but the boot is not live.
-    if (kick_ticks < KICK_ACTIVE_FROM || kick_ticks > KICK_ACTIVE_TO){
+    if (kick_ticks < spec.active_from || kick_ticks > spec.active_to){
         return;
     }
 
@@ -1241,6 +1289,7 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
         }
         StageEvents::StageKick kick;
         kick.id = o.id;
+        kick.kind = kick_kind;
         kick.dir = facing;
         kick.x = (left + right) * 0.5f;
         kick.y = (bottom + top) * 0.5f;
@@ -1251,7 +1300,7 @@ void Stage::TickKick(const ArcherInput& in, StageEvents& events){
     //One connect per kick. Without this the boot stays live for the whole window and hits the same
     //crate five times, which is five impulses and a crate that leaves the level.
     if (events.f_kick_connected){
-        kick_ticks = KICK_ACTIVE_TO + 1;
+        kick_ticks = spec.active_to + 1;
     }
 }
 

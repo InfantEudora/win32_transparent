@@ -20,7 +20,7 @@ Seven sounds, wired four ways, all in `ApplicationArcher::UpdateSound` and its n
 | a rules EVENT, with a value | `arrow_leave` (volume by draw power), `arrow_hit` (by speed and distance from her), `kick_land` (on `f_kick_connected`), `nice_shot` (a 10 on a stand) | `UpdateSound`, `PlayArrowHit`, `RegisterTargetHit` |
 | a STATE EDGE, with a stop | `bow_tension` starts on the nock, is cut when the string goes | `UpdateSound`, off `Stage::IsNocked` |
 | a TICK INTO A MOVE | `kick_swing` on tick 11 of the kick | `UpdateSound`, off `stage.kick_ticks` |
-| RANDOM chance and timing | `kick_hyaa`, on 40% of kicks, starting on tick 10..16 | `UpdateSound`, `Hash01` of the kick's tick |
+| RANDOM chance and timing | one of `kick_hyaa` / `kick_hija` / `kick_hoowa`, on 40% of kicks, starting on tick 10..16 (each shout moved to put its loud part where `kick_hyaa`'s is, and all kick sounds moved with Down+K / Up+K's later strike) | `UpdateSound`, `Hash01` of the kick's tick |
 
 Plus three panel sliders for the kick alone, and verification by the `sounds_playing` count over MCP,
 which says that *something* started and never what.

@@ -132,6 +132,8 @@ const ArcherClipInfo ARCHER_CLIPS[CLIP_COUNT] = {
         can have it safely because it pivots on the spot (0.005 units of travel).
     */
     { "Kick_FrontSpin",      false, false,  true,  false, false },
+    { "Kick_Front_2",        false, false,  false, false, false },
+    { "Kick_Front_3",        false, false,  false, false, false },
     //Set dressing. It travels and spins 320 degrees, so it keeps both on the bone and plays exactly
     //as animated - the same treatment, and for the same reason, as Twirl.
     { "Walk_ToHandstand",    false, false,  false, false, false },
@@ -195,6 +197,8 @@ bool Puppet::IsDrawPose(int clip){
 
 const int PUPPET_LOCOMOTION[PUPPET_LOCOMOTION_COUNT] = { CLIP_WALK, CLIP_RUN_SLOW, CLIP_RUN_FAST };
 
+const int PUPPET_KICK_CLIP[KICK_KIND_COUNT] = { CLIP_KICK, CLIP_KICK_2, CLIP_KICK_3 };
+
 void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.ground_speed = fabsf(stage.vel.x);
     //Signed along FACING rather than along +X, so "backing up" is a negative number whichever way
@@ -224,7 +228,8 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.action_phase = 0.0f;
     if (stage.kick_ticks > 0){
         out.action = ACTION_KICK;
-        out.action_phase = (float)stage.kick_ticks / (float)KICK_TICKS;
+        out.kick_kind = stage.kick_kind;
+        out.action_phase = (float)stage.kick_ticks / (float)stage.Kick().ticks;
     }else if (stage.mode == MODE_CLIMB){
         out.action = ACTION_CLIMB;
         //climb_ticks counts DOWN, so the phase is its complement.
@@ -316,7 +321,8 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         live.
     */
     if (in.action == ACTION_KICK){
-        out.clip = CLIP_KICK;
+        int kind = (in.kick_kind >= 0 && in.kick_kind < KICK_KIND_COUNT) ? in.kick_kind : KICK_FRONT;
+        out.clip = PUPPET_KICK_CLIP[kind];
         /*
             THE ONE PLACE WHERE THE CLIP WON. Everywhere else in this file the rules set a window
             and the clip is stretched to fill it; the kick could not be, because a kick with no
@@ -328,9 +334,9 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
             live, the app warns with the number to type, and until that number is typed this is
             what keeps the move the length the rules think it is.
         */
-        float window = (float)KICK_TICKS * ARCHER_DT;
-        if (clip_duration[CLIP_KICK] > 0.01f && window > 0.0f){
-            out.wanted_rate = clip_duration[CLIP_KICK] / window;
+        float window = (float)KICK_SPECS[kind].ticks * ARCHER_DT;
+        if (clip_duration[out.clip] > 0.01f && window > 0.0f){
+            out.wanted_rate = clip_duration[out.clip] / window;
             out.rate = out.wanted_rate;
             if (out.rate > PUPPET_ACTION_RATE_MAX){ out.rate = PUPPET_ACTION_RATE_MAX; }
         }

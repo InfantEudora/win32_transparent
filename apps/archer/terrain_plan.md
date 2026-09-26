@@ -361,3 +361,27 @@ Recorded because they are real, not because they are blocking:
   matter enough to do anything cleverer.
 - **No frustum culling today** (`Renderer::CullObjects`), so a full-level terrain mesh is always
   submitted. Irrelevant at 100k vertices; worth remembering if the level grows a lot.
+
+---
+
+## 9. The shape through the slab (2026-09-26)
+
+Built to bring the marching cubes toward the authored tiles (`terrain_tile_big`, `_round`). It
+supersedes the materials table in §1 and the "flat slab faces" downside above; the code is the
+reference - "THE SHAPE, THROUGH THE SLAB" in `Terrain.h`, and the fields of `TerrainParams`.
+
+- **Per-block depth.** `StageBlock::z` and `depth` (half-depth; 0 is `STAGE_BLOCK_HALF_DEPTH`).
+  Looks only - the rules are 2D - but every block must still cover `STAGE_BLOCK_MIN_COVER` either
+  side of z 0 for the rp3d props, and `stage_test` holds every level to it. The blockout boxes are
+  drawn at it, and Regenerate reads it back, so scaling a box in z in the Inspector reshapes it.
+- **Three pieces per block.** A body (the old rounded box, front and back set in), a grass cap
+  over the same pinned top that overhangs the body and hangs in drips, and a belly under any
+  floating block. Cap and own body are a hard min; blocks are smooth-unioned as before.
+- **Grass is what the cap owns**, not a slope test, so the lip and the drips are green the way the
+  tiles are painted. Soil went back to an earth tone for what little faces partly up.
+- **Two noise octaves.** The coarse one is kept off the middle of the slab, where she walks into
+  side faces, and both stay off every top within the block's depth - the lip beyond it wobbles.
+- **`cell_z` 0.25.** Sample count went from about 74k to 179k in the ground bay; still a single
+  cost at generation, and dip stayed 0.0000 in both bays.
+- **Plants grow on the terrain now**, and on the tiles' colliders, within each block's own depth.
+  `grass_1` is its own pass with the opposite density curve to the ferns - thickest in the open.

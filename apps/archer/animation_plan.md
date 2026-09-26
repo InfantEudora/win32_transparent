@@ -67,6 +67,8 @@ rig height  0.8911 units in bind pose  ->  scaled 2.020x to stand ARCHER_MODEL_H
 | `Laying_StandingUp` | 3.50 | no | in place | — | the level entry, played whole |
 | `Running_ToStop` | 0.93 | no | 0.42/s | 0.85/s | plants at 0.267s |
 | `Kick_FrontSpin` | 1.13 | no | in place | — | the old `Kick_Front`; a real pivot |
+| `Kick_Front_2` | 1.30 | no | a shuffle in, in place | — | Down+K, the low push kick: strike at tick 46 of 78, boot at y 0.00, 14.3/s. Row in `KICK_SPECS` (2026-09-26) |
+| `Kick_Front_3` | 1.13 | no | in place | — | Up+K, the high rising kick: leg up past her head, strike at tick 36 of 68. Row in `KICK_SPECS` (2026-09-26) |
 | `Walk_ToHandstand` | 4.00 | no | 0.33/s | 0.67/s | set dressing |
 
 (`Twirl` travels 0.879 units while spinning a full turn that nets -3.6 deg - see the yaw rule below.)
@@ -120,6 +122,7 @@ The state machine lives in `Object` (`core/Object.h:302-347`, `Object::ApplyAnim
 | Retarget to a third clip mid-blend | Yes, since 2026-09-22 | `TransitionToAnimation` keeps the nearer side |
 | Parametric blending (blend space) | Yes, since 2026-09-22 | `Object::SetBlendPair`, `Puppet::Choose` |
 | Phase / foot sync between clips | Yes, measured per clip | `Object::blend_phase_offset`, `Puppet::clip_phase` |
+| Blending between keyframes | Yes, since 2026-09-26 - before, each key was held until the next, so 30 fps exports moved in 30 fps steps at a 60 tick rate and half of all single steps showed no change | `ObjectAnimation::Sample` |
 | Clip trimming at load | Yes | `Animation::Trim`, `ArcherClipInfo::trim_start/end` |
 | A playhead pinned to gameplay | Yes, app-side | `PuppetChoice::pinned_time` (the draw, both climbs) |
 | Layers after the base pose | Yes, **app-side** — upper body, loose legs, aim | `ArcherModel::ApplyAnimation`; not yet lifted into `Object` |
@@ -1495,6 +1498,7 @@ sight, and several are too fast to animate.
 | rules | ticks | seconds | the clip | note |
 |---|---|---|---|---|
 | `KICK_TICKS` | **66** | **1.10** | `Kick_Front` trimmed is 1.100s | **DONE 2026-09-22**, and done three times — the rules moved to the clip, then followed it through two trims. Plays at 1.00x |
+| `KICK_SPECS` Down+K / Up+K | 78 / 68 | 1.30 / 1.13 | `Kick_Front_2` / `Kick_Front_3`, untrimmed | **DONE 2026-09-26** — each its own length, window (44..48, 31..37), box and impact, set from `MeasureKickClip`. Both play at 1.00x |
 | `LEDGE_CLIMB_TICKS` | **60** | **1.00** | `Climb` from the grab is 1.767s | **DONE 2026-09-25** — was 18 ticks, which showed only the clip's run-up. Trimmed to the grab, pinned to the rules, played at 1.77x; see *The ledge climb* below |
 | `BOW_DRAW_TICKS` | 36 | 0.60 | none yet | fine as is — that is a real draw |
 

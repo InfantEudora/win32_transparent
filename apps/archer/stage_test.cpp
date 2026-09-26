@@ -1127,6 +1127,113 @@ static void TestKick(){
     Run(plant,3,face_left);
     Check(plant.facing > 0.0f,"and the facing is frozen while it plays out",detail);
 
+    //--- The three kicks ---------------------------------------------------------------------------
+    /*
+        K, Down+K and Up+K, read off the aim axis on the press - see THE THREE KICKS in Stage.h.
+        Kick_Front's row must BE the defines, or everything above tested a kick nobody plays.
+    */
+    Check(KICK_SPECS[KICK_FRONT].ticks == KICK_TICKS &&
+          KICK_SPECS[KICK_FRONT].active_from == KICK_ACTIVE_FROM &&
+          KICK_SPECS[KICK_FRONT].active_to == KICK_ACTIVE_TO &&
+          KICK_SPECS[KICK_FRONT].speed == KICK_SPEED && KICK_SPECS[KICK_FRONT].lift == KICK_LIFT,
+          "K's kick is the KICK_* defines");
+    {
+        const float axis[KICK_KIND_COUNT] = { 0.0f, -1.0f, 1.0f };
+        const char* picks[KICK_KIND_COUNT] = { "K alone throws Kick_Front", "Down+K throws Kick_Front_2",
+                                               "Up+K throws Kick_Front_3" };
+        for (int kind = 0; kind < KICK_KIND_COUNT; kind++){
+            const KickSpec& spec = KICK_SPECS[kind];
+            Check(spec.active_from >= 1 && spec.active_from <= spec.active_to && spec.active_to <= spec.ticks,
+                  "its window is inside its move",spec.name);
+
+            //The direction is let go of on the very next tick: the kick must stay the one chosen.
+            Stage k;
+            Settle(k);
+            ArcherInput press = kick;
+            press.aim_axis = axis[kind];
+            StageEvents e;
+            k.Tick(press,e);
+            Check(e.f_kick_started && k.kick_kind == kind,picks[kind]);
+            int lasted = (k.kick_ticks > 0) ? 1 : 0;
+            bool f_kept = true;
+            for (int i = 0; i < 200 && k.kick_ticks > 0; i++){
+                StageEvents e2;
+                k.Tick(idle,e2);
+                if (k.kick_ticks > 0){
+                    lasted++;
+                    f_kept = f_kept && (k.kick_kind == kind);
+                }
+            }
+            snprintf(detail,sizeof(detail),"lasted %i ticks, its row says %i",lasted,spec.ticks);
+            Check(lasted == spec.ticks,"and runs its own length",detail);
+            Check(f_kept,"and stays that kick after the direction is let go",spec.name);
+
+            //Connects inside its own window, and says which kick it was.
+            Stage c;
+            Settle(c);
+            Run(c,2,face_right);
+            float x = c.pos.x + ARCHER_HALF_W + 0.35f;
+            int hit_at = -1;
+            int hit_kind = -1;
+            for (int i = 0; i < spec.ticks + 4 && hit_at < 0; i++){
+                c.ClearObstacles();
+                c.AddObstacle(x,0.40f,0.40f,0.40f,9,true);
+                StageEvents ce;
+                int before = c.kick_ticks;          //read first: a connect jumps it past the window
+                c.Tick(i == 0 ? press : idle,ce);
+                if (ce.kicks.size() > 0){
+                    hit_at = before + 1;
+                    hit_kind = ce.kicks[0].kind;
+                }
+            }
+            snprintf(detail,sizeof(detail),"%s connected on tick %i, window %i..%i",
+                     spec.name,hit_at,spec.active_from,spec.active_to);
+            Check(hit_at == spec.active_from,"connects with a crate on the first tick of its window",detail);
+            Check(hit_kind == kind,"and reports which kick it was",spec.name);
+        }
+
+        /*
+            THE BOXES ARE WHERE THE BOOTS ARE. Something at head height - a crate on a stack, a
+            board on a ledge - is only reached by the high kick; something at the ankle is stepped
+            over by it and caught by the other two. Heights are from the body's centre, pos.y.
+        */
+        const float probe_y[2] = { 0.75f, -0.80f };     //head, ankle
+        const bool  reached[2][KICK_KIND_COUNT] = { { false, false, true },     //head
+                                                    { true,  true,  false } };  //ankle
+        const char* where[2] = { "at head height", "at the ankle" };
+        for (int p2 = 0; p2 < 2; p2++){
+            for (int kind = 0; kind < KICK_KIND_COUNT; kind++){
+                Stage h;
+                Settle(h);
+                Run(h,2,face_right);
+                ArcherInput press = kick;
+                press.aim_axis = axis[kind];
+                float x = h.pos.x + ARCHER_HALF_W + 0.35f;
+                bool f_hit = false;
+                for (int i = 0; i < KICK_SPECS[kind].ticks + 4 && !f_hit; i++){
+                    h.ClearObstacles();
+                    h.AddObstacle(x,h.pos.y + probe_y[p2],0.15f,0.08f,9,true);
+                    StageEvents he;
+                    h.Tick(i == 0 ? press : idle,he);
+                    f_hit = he.kicks.size() > 0;
+                }
+                snprintf(detail,sizeof(detail),"%s %s something %s",KICK_SPECS[kind].name,
+                         f_hit ? "hit" : "missed",where[p2]);
+                Check(f_hit == reached[p2][kind],reached[p2][kind] ? "reaches what its boot reaches"
+                                                                   : "and misses what its boot does not",detail);
+            }
+        }
+
+        //Half a push on the stick is not a direction: a stick resting off-centre must not pick one.
+        Stage half;
+        Settle(half);
+        ArcherInput nudge = kick;
+        nudge.aim_axis = -KICK_SELECT_AIM * 0.8f;
+        StageEvents he;
+        half.Tick(nudge,he);
+        Check(half.kick_kind == KICK_FRONT,"a stick barely tilted still throws K's kick");
+    }
+
     //--- Hanging cannot kick -------------------------------------------------------------------------
     Stage h;
     const StageBlock& ledge = HighLedge(h);
@@ -1914,6 +2021,16 @@ static void TestPuppet(){
     c = p.Choose(in);
     Check(c.clip == CLIP_KICK,"a kick plays the kick clip");
     CheckNear(c.wanted_rate,2.0f,0.001f,"at the rate that fits it into KICK_TICKS");
+    //And the other two play their own clip, fitted to their own length rather than to K's.
+    for (int kind = KICK_FRONT_2; kind < KICK_KIND_COUNT; kind++){
+        int clip = PUPPET_KICK_CLIP[kind];
+        p.clip_duration[clip] = (float)KICK_SPECS[kind].ticks * ARCHER_DT;
+        in.kick_kind = kind;
+        c = p.Choose(in);
+        Check(c.clip == clip,"Down+K and Up+K play their own clip",ARCHER_CLIPS[clip].name);
+        CheckNear(c.wanted_rate,1.0f,0.001f,"at the rate that fits it into its own KICK_SPECS row");
+    }
+    in.kick_kind = KICK_FRONT;
     in.action = ACTION_NONE;
 
     /*
@@ -2353,6 +2470,7 @@ static void TestFoliage(){
 
     int under_box = 0, on_box = 0, on_platform = 0, on_breakable = 0, in_wall = 0;
     int near_wall = 0, in_open = 0;
+    int grass_near_wall = 0, grass_in_open = 0;
     for (size_t i = 0; i < plants.size(); i++){
         const FoliagePlant& p = plants[i];
         bool f_ground = fabsf(p.y - 0.0f) < 0.001f;
@@ -2361,8 +2479,11 @@ static void TestFoliage(){
         if (fabsf(p.y - 3.1f) < 0.001f){ on_platform++; }
         if (f_ground && p.x > -10.5f && p.x < -9.5f){ on_breakable++; }
         if (f_ground && p.x > 7.0f && p.x < 9.0f){ in_wall++; }
-        if (f_ground && p.x > 5.5f && p.x < 7.0f){ near_wall++; }
-        if (f_ground && p.x > -3.5f && p.x < 0.5f){ in_open++; }
+        //The density checks are per curve: the lottery kinds thicken into the corner, grass thins.
+        int& near = (p.kind == FOLIAGE_GRASS) ? grass_near_wall : near_wall;
+        int& open = (p.kind == FOLIAGE_GRASS) ? grass_in_open : in_open;
+        if (f_ground && p.x > 5.5f && p.x < 7.0f){ near++; }
+        if (f_ground && p.x > -3.5f && p.x < 0.5f){ open++; }
     }
     Check(under_box == 0,"nothing grows on the floor underneath a box standing on it");
     Check(on_box > 0,"the box's own top grows instead");
@@ -2374,6 +2495,20 @@ static void TestFoliage(){
     float per_open = in_open / 4.0f;
     snprintf(d,sizeof(d),"%.1f per unit at the wall's foot, %.1f in the open",per_corner,per_open);
     Check(per_corner > 2.0f * per_open,"plants are at least twice as dense in the corner",d);
+    float grass_corner = grass_near_wall / 1.5f;
+    float grass_open = grass_in_open / 4.0f;
+    snprintf(d,sizeof(d),"grass: %.1f per unit at the wall's foot, %.1f in the open",grass_corner,grass_open);
+    Check(grass_open > 1.5f * grass_corner && grass_open > 2.0f,
+          "grass the other way round: thickest in the open, thinning into the corner",d);
+    //Every plant within its own block's depth, with the scatter's margins. The test blocks are all
+    //the default depth, so this is the default slab.
+    bool f_in_depth = true;
+    for (size_t i = 0; i < plants.size(); i++){
+        if (plants[i].z < params.z_back - 0.001f || plants[i].z > params.z_front + 0.001f){
+            f_in_depth = false;
+        }
+    }
+    Check(f_in_depth,"every plant stands within its block's depth");
 
     std::vector<FoliagePlant> again;
     ScatterFoliage(blocks,grows,params,again);
@@ -3744,6 +3879,23 @@ static void BayRiseStep(Stage& s, float dir, float x_at, float top){
 static void TestBayClimb(){
     printf("\nthe terrain bay\n");
     char d[160];
+
+    //--- Depth: every block in every level still covers the play plane ---------------------------
+    {
+        bool f_covers = true;
+        for (int level = 0; level < STAGE_LEVEL_COUNT; level++){
+            Stage l;
+            l.SetLevel(level);
+            for (size_t i = 0; i < l.blocks.size(); i++){
+                const StageBlock& b = l.blocks[i];
+                if (fabsf(b.z) + STAGE_BLOCK_MIN_COVER > b.HalfDepth() + 1e-4f){
+                    snprintf(d,sizeof(d),"level %i block %i: z %.2f, half-depth %.2f",level,(int)i,b.z,b.HalfDepth());
+                    f_covers = false;
+                }
+            }
+        }
+        Check(f_covers,"every block keeps STAGE_BLOCK_MIN_COVER of depth either side of z 0",f_covers ? NULL : d);
+    }
 
     //--- The route ----------------------------------------------------------------------------
     Stage s;

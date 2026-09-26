@@ -79,6 +79,8 @@ enum ArcherClip{
     CLIP_ROPE,              //Hanging_Rope           gripping a rope, both hands overhead
     CLIP_STOP,              //Running_ToStop         plant and settle out of a run
     CLIP_KICK_SPIN,         //Kick_FrontSpin         the spinning kick; a real pivot
+    CLIP_KICK_2,            //Kick_Front_2           Down+K - see KICK_FRONT_2 in Stage.h
+    CLIP_KICK_3,            //Kick_Front_3           Up+K - see KICK_FRONT_3
     CLIP_HANDSTAND,         //Walk_ToHandstand       set dressing; preview only
     CLIP_JUMP_IN_PLACE,     //Jumping_InPlace        a whole standing jump; preview only
     CLIP_JUMP_FORWARD,      //Jump_Forward           a whole travelling jump; not wired
@@ -387,6 +389,7 @@ struct ArcherAnimParams{
     int   mode = MODE_GROUND;       //ArcherMode
     int   action = 0;               //ArcherAction
     float action_phase = 0.0f;      //0..1 through whatever `action` is, for one-shot clips
+    int   kick_kind = 0;            //KickKind, while action is ACTION_KICK
     float aim_deg = 0.0f;
     float draw_power = 0.0f;        //0..1
     int   kneel_phase = -1;         //KneelPhase while mode is MODE_KNEEL, else -1
@@ -416,6 +419,9 @@ enum ArcherAction{
 
 //Reads the rules into the seam. Pure; the rules are not touched.
 void DescribeArcher(const Stage& stage, ArcherAnimParams& out);
+
+//The clip each KickKind plays, in KickKind order.
+extern const int PUPPET_KICK_CLIP[KICK_KIND_COUNT];
 
 //--- The answer ---------------------------------------------------------------------------------
 struct PuppetChoice{
@@ -666,17 +672,17 @@ public:
     float stop_plant = 0.0f;
 
     /*
-        WHEN THE BOOT ACTUALLY CONNECTS in Kick_Front, in seconds - the frame where a foot is
-        furthest from the hips. MEASURED at load, and the only way to keep the rules' active window
-        pointed at the right moment of the clip.
+        WHEN THE BOOT ACTUALLY CONNECTS in each kick's clip, in seconds, by KickKind - the frame
+        where a foot is furthest from the hips. MEASURED at load, and the only way to keep the
+        rules' active windows pointed at the right moment of each clip.
 
-        The rules cannot read it: KICK_ACTIVE_FROM and KICK_ACTIVE_TO are compile-time constants in
-        Stage.h, which names no engine type and has never seen a .glb. So this does not SET the
-        window, it CHECKS it - the app logs the clip's strike beside the window the rules use, and a
-        re-export that moves the impact shows up as a number that no longer lines up rather than as
-        a kick that connects before the leg has moved.
+        The rules cannot read it: KICK_SPECS is a compile-time table in Stage.h, which names no
+        engine type and has never seen a .glb. So this does not SET a window, it CHECKS it - the
+        app logs each clip's strike beside the window the rules use, and a re-export that moves the
+        impact shows up as a number that no longer lines up rather than as a kick that connects
+        before the leg has moved.
     */
-    float kick_strike = 0.0f;
+    float kick_strike[KICK_KIND_COUNT] = {};
 
     //The uniform scale the model is drawn at. A clip's speed in WORLD units is its measured speed
     //times this, which is why the two have to be known together - a rig authored half-size walks

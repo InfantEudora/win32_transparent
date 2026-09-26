@@ -76,6 +76,10 @@ bool SoundSystem::VoiceIsPlaying(const SoundVoice* voice){
     if (!voice || !voice->f_active){
         return false;
     }
+    //Held by SetPaused: stopped, not finished - see the declaration.
+    if (voice->f_held){
+        return true;
+    }
     //ma_sound_is_playing takes a non-const pointer, but only reads a flag.
     return ma_sound_is_playing((ma_sound*)&voice->sound) == MA_TRUE;
 }
@@ -88,6 +92,7 @@ void SoundSystem::ReleaseVoice(SoundVoice* voice){
         voice->f_active = false;
     }
     voice->owner = SOUND_INVALID_HANDLE;
+    voice->f_held = false;
     voice->f_keep = false;
 }
 
@@ -337,6 +342,26 @@ void SoundSystem::Stop(soundhandle_t handle){
     }
     //Released here and not merely stopped: this is the call that gives a kept voice back.
     ReleaseVoice(voice);
+}
+
+void SoundSystem::SetPaused(bool paused){
+    if (!f_initialised){
+        return;
+    }
+    for (int i = 0; i < NUM_SOUND_VOICES; i++){
+        SoundVoice* v = &voices[i];
+        if (!v->f_active){
+            continue;
+        }
+        if (paused && !v->f_held && ma_sound_is_playing(&v->sound) == MA_TRUE){
+            //ma_sound_stop keeps the cursor, which is what makes this a hold rather than an end.
+            ma_sound_stop(&v->sound);
+            v->f_held = true;
+        }else if (!paused && v->f_held){
+            ma_sound_start(&v->sound);
+            v->f_held = false;
+        }
+    }
 }
 
 void SoundSystem::Pause(soundhandle_t handle){

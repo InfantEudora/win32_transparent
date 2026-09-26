@@ -31,7 +31,8 @@ static Debugger* debug = new Debugger("ApplicationArcher",DEBUG_ALL);
     light on its near face and throws a shadow with a visible edge, where a flat quad reads as a
     sprite. The camera looks straight down -Z, so none of this depth is ever in the way.
 */
-#define BLOCK_DEPTH                 3.00f
+//The default a block is drawn at; a block that sets StageBlock::depth is drawn at its own.
+#define BLOCK_DEPTH                 (2.0f * STAGE_BLOCK_HALF_DEPTH)
 #define PROP_DEPTH                  0.80f
 #define ARCHER_DEPTH                0.70f
 #define ARROW_DEPTH                 0.06f
@@ -275,11 +276,11 @@ void ArcherModel::ApplyOverlay(){
         if (!bone){
             continue;
         }
-        ObjectAnimationKeyFrame* key = track->GetClosestKeyframe(overlay_time);
-        if (!key || !key->f_rotation){
+        ObjectAnimationKeyFrame key;
+        if (!track->Sample(overlay_time,key) || !key.f_rotation){
             continue;
         }
-        quat r = quat::slerp(bone->GetRotation(),key->rotation,overlay_weight);
+        quat r = quat::slerp(bone->GetRotation(),key.rotation,overlay_weight);
         r.normalize();
         bone->SetRotation(r);
     }
@@ -343,7 +344,7 @@ void ArcherModel::RestoreBasePose(){
 
     Reads the clip's keyframes directly and never touches its playhead (Animation::time_index), so
     the base can be playing the very same clip - the standing draw is exactly that - without the
-    two interfering. The keyframe lookup is GetClosestKeyframe, the same one the base uses.
+    two interfering. Sampled with ObjectAnimation::Sample, the same blend the base uses.
 
     --- BLENDED IN MODEL SPACE, NOT BONE-LOCAL (Unreal's "mesh space rotation blend") ------------
     An archer stands SIDE-ON: in Standing_DrawArrow her hips face sideways, and every upper-body
@@ -372,13 +373,13 @@ void ArcherModel::LayerClipModel(Animation* clip, float time, std::unordered_map
         if (!track->target){
             continue;
         }
-        ObjectAnimationKeyFrame* key = track->GetClosestKeyframe(time);
-        if (key){
-            if (key->f_rotation){
-                clip_local[track->target] = key->rotation;
+        ObjectAnimationKeyFrame key;
+        if (track->Sample(time,key)){
+            if (key.f_rotation){
+                clip_local[track->target] = key.rotation;
             }
-            if (key->f_position){
-                out_pos[track->target] = key->position;
+            if (key.f_position){
+                out_pos[track->target] = key.position;
             }
         }
     }
@@ -733,15 +734,16 @@ void ApplicationArcher::BuildMaterials(){
         the terrain is meant to look like the art now, and the gameplay colours above are the
         blockout's, which the art will replace anyway.
 
-        MEASURED, NOT PICKED: every tile triangle bucketed by its face normal exactly as
-        Terrain.cpp buckets a vertex (rock below ny 0.25, grass above 0.70, soil between), the
-        texture averaged over it and weighted by area. The engine does no sRGB conversion, so that
-        average IS the flat colour that matches. What it found:
-          - tops:  olive grass;
-          - slopes: grass as well - the tiles' grass lip hangs over their edges, so soil is the
-            same green a shade warmer, and the grass-to-soil line vanishes the way it does on them;
-          - sides and undersides: a warm orange-brown earth, grey stones averaged in. That is
-            "rock" here, which is every vertical face, so the cliffs are earth now and not grey.
+        MEASURED, NOT PICKED: every tile triangle bucketed by its face normal (rock below ny 0.25,
+        grass above 0.70, soil between), the texture averaged over it and weighted by area. The
+        engine does no sRGB conversion, so that average IS the flat colour that matches. It found
+        olive grass on the tops and on the slopes - the tiles' grass lip hangs over their edges -
+        and a warm orange-brown earth, grey stones averaged in, on the sides and undersides.
+
+        Terrain.cpp now paints grass by what its cap owns rather than by slope (see "THE SHAPE,
+        THROUGH THE SLAB" in Terrain.h), so the lip is the grass and SOIL IS EARTH AGAIN: the
+        same earth as a face, lifted a little, because it only ever faces partly up - the top of
+        a fillet or a belly's shoulder - and catches more sun than a cliff does.
 
         AND THE TILES' LIGHTING TERMS, not the table's: metallic 0.4, roughness 0.8, no emissive.
         The same colour under a different metallic renders a different brightness in this app (no
@@ -755,7 +757,7 @@ void ApplicationArcher::BuildMaterials(){
     };
     TerrainColour terrain[] = {
         { "ar_grass",   vec4(0.38f,0.50f,0.11f,1.0f), &material_grass },
-        { "ar_soil",    vec4(0.42f,0.49f,0.14f,1.0f), &material_soil },
+        { "ar_soil",    vec4(0.52f,0.40f,0.19f,1.0f), &material_soil },
         { "ar_rock",    vec4(0.47f,0.35f,0.16f,1.0f), &material_rock }
     };
     for (size_t i = 0; i < sizeof(terrain)/sizeof(terrain[0]); i++){
@@ -914,7 +916,9 @@ void ApplicationArcher::BuildBlocks(){
 
         char name[48];
         snprintf(name,sizeof(name),"block_%i",(int)i);
-        vec3 size(b.hw * 2.0f,b.hh * 2.0f,BLOCK_DEPTH);
+        //Its own depth and z, so the blockout view shows the terrain's pieces standing where the
+        //terrain puts them - see StageBlock::z.
+        vec3 size(b.hw * 2.0f,b.hh * 2.0f,b.HalfDepth() * 2.0f);
 
         /*
             A one-way platform gets NO rigid body, on purpose.
@@ -928,13 +932,13 @@ void ApplicationArcher::BuildBlocks(){
         bool f_collides = (b.kind != BLOCK_PLATFORM);
         Object* object = NULL;
         if (f_collides){
-            object = MakePlanarBody(unit_mesh,name,vec3(b.x,b.y,0.0f),size,material,
+            object = MakePlanarBody(unit_mesh,name,vec3(b.x,b.y,b.z),size,material,
                                     ARCHER_CAT_LEVEL,ARCHER_MASK_LEVEL,0.0f,true,blockout_group);
         }else{
             object = new Object();
             object->SetMesh(unit_mesh);
             object->name = name;
-            object->SetPosition(vec3(b.x,b.y,0.0f));
+            object->SetPosition(vec3(b.x,b.y,b.z));
             object->SetScale(size);
             object->SetMaterialSlot(0,material);
             blockout_group->AttachChild(object);
@@ -1101,13 +1105,23 @@ void ApplicationArcher::RegenerateTerrain(){
             vec3 s = object->GetScale();
             float hw = fabsf(s.x) * 0.5f;
             float hh = fabsf(s.y) * 0.5f;
-            if (b.x != p.x || b.y != p.y || b.hw != hw || b.hh != hh){
+            //Depth and z too: scaling or sliding a box through the slab is how a piece is set back
+            //or thinned in the editor. The rules never read either, so this cannot move collision.
+            float hd = fabsf(s.z) * 0.5f;
+            if (b.x != p.x || b.y != p.y || b.hw != hw || b.hh != hh ||
+                b.z != p.z || b.HalfDepth() != hd){
                 moved++;
             }
             b.x = p.x;
             b.y = p.y;
             b.hw = hw;
             b.hh = hh;
+            b.z = p.z;
+            b.depth = hd;
+            if (fabsf(b.z) + STAGE_BLOCK_MIN_COVER > hd){
+                debug->Warn("block_%i no longer covers the play plane (z %.2f, half-depth %.2f) - "
+                            "crates at z 0 can fall through it\n",(int)i,b.z,hd);
+            }
         }
         stage.KeepBlockLayout();
         //The terrain belongs to the main level's test bay; on the range this still keeps the
@@ -1141,7 +1155,7 @@ void ApplicationArcher::PreRender(void){
 //--- Foliage ------------------------------------------------------------------------------------
 
 //The archer.glb node for each FoliageKind, in that enum's order.
-static const char* FOLIAGE_NODES[FOLIAGE_KIND_COUNT] = { "fern_1", "fern_2", "flower" };
+static const char* FOLIAGE_NODES[FOLIAGE_KIND_COUNT] = { "fern_1", "fern_2", "flower", "grass_1" };
 
 /*
     Loads the three plants and grows the first garden. RENDER THREAD - GetMeshFromNode uploads.
@@ -1193,27 +1207,17 @@ void ApplicationArcher::BuildFoliage(){
     Called with physics_mutex held (RegenerateTerrain, PreRender) or before the threads start
     (Init) - it reads the Stage the tick writes and re-points Objects the render thread draws.
 
-    THE TERRAIN BAYS ARE MASKED OUT, by the same test that hides their boxes: the marching-cubes
-    surface there is not the box's top, so a plant placed on the box would float or sink.
+    EVERY BLOCK GROWS, THE TERRAIN'S AND THE TILES' INCLUDED. Both used to be masked out; neither
+    needs to be. The terrain's top is pinned to the box's across its width and within its depth
+    (see "THE SHAPE, THROUGH THE SLAB" in Terrain.h), which is exactly where the scatter puts
+    plants - the fillet at the foot of a wall rises a little, and a plant there sits a little into
+    the grass, which reads as grass. A tile's collider top is the tile's grass by construction.
 */
 void ApplicationArcher::ScatterFoliageObjects(){
     if (!foliage_group || stage.GetLevel() != STAGE_LEVEL_MAIN){
         return;
     }
     std::vector<bool> grows(stage.blocks.size(),true);
-    /*
-        Nor on a scenery collider: the terrain tiles carry their own grass blades for now. Once the
-        blades are an asset of their own and grown like the ferns, this is the line to drop - the
-        collider's top is the tile's grass by construction, so plants would stand on it exactly.
-    */
-    for (size_t i = 0; i < stage.blocks.size(); i++){
-        grows[i] = !stage.blocks[i].f_invisible;
-    }
-#if ARCHER_TEST_BAY
-    for (size_t i = 0; i < stage.blocks.size(); i++){
-        grows[i] = grows[i] && !IsInTerrainBay(stage.blocks[i]);
-    }
-#endif
     FoliageParams params = foliage_params;
     for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
         params.radius[k] = foliage_mesh_radius[k] * foliage_scale;
@@ -1257,8 +1261,9 @@ void ApplicationArcher::ScatterFoliageObjects(){
     for (size_t i = used; i < foliage_objects.size(); i++){
         foliage_objects[i]->SetVisibility(false);
     }
-    debug->Info("Foliage: %i ferns, %i low ferns, %i flowers\n",foliage_counts[FOLIAGE_FERN],
-                foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER]);
+    debug->Info("Foliage: %i ferns, %i low ferns, %i flowers, %i grass\n",foliage_counts[FOLIAGE_FERN],
+                foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER],
+                foliage_counts[FOLIAGE_GRASS]);
 }
 
 //--- Signs --------------------------------------------------------------------------------------
@@ -2474,7 +2479,9 @@ void ApplicationArcher::MeasureClipPhases(){
         each keyframe's value repeated across the samples leading up to it. Taking the sample index
         where the extreme first appears therefore reports a time up to one whole keyframe interval
         EARLY, which at 30fps is 0.033s. Asking at the keyframe times instead makes the answer
-        exact, and costs fewer samples than the grid did.
+        exact, and costs fewer samples than the grid did. (Poses have been sampled BLENDED since
+        2026-09-26 - ObjectAnimation::Sample - and at a keyframe's own time the blend is that key,
+        so this still holds.)
     */
     for (int i = 0; i < PUPPET_LOCOMOTION_COUNT; i++){
         int index = PUPPET_LOCOMOTION[i];
@@ -2662,69 +2669,127 @@ void ApplicationArcher::MeasureAirClips(){
 
     BOTH FEET, and taking whichever reaches further, because nothing here knows which leg was
     authored to do the kicking and a re-export could swap it.
+
+    ALL THREE KICKS, one KICK_SPECS row each. Besides the strike it reports where the boot IS at
+    the strike - its height against the body's centre and how far it is past her leading edge,
+    which are the row's y_offset and reach - and the boot's top speed on the way there, which is
+    what the row's speed and lift were weighed against. Only the timing is checked with a warning;
+    the box and the impact are the feel, and are logged beside the numbers in use to be judged.
 */
 void ApplicationArcher::MeasureKickClip(){
-    Animation* clip = archer_clips[CLIP_KICK];
-    if (!clip || !clip->root_track || clip->duration <= 0.0f || !archer_model){
-        return;
-    }
-    Bone* hip = archer_model->FindBone(ARCHER_MODEL_ROOT_BONE);
-    Bone* toe[2] = { archer_model->FindBone("mixamorig:LeftToeBase"),
-                     archer_model->FindBone("mixamorig:RightToeBase") };
+    Bone* hip = archer_model ? archer_model->FindBone(ARCHER_MODEL_ROOT_BONE) : NULL;
+    Bone* toe[2] = { archer_model ? archer_model->FindBone("mixamorig:LeftToeBase") : NULL,
+                     archer_model ? archer_model->FindBone("mixamorig:RightToeBase") : NULL };
     if (!hip || !toe[0] || !toe[1]){
         return;
     }
-    float furthest = 0.0f;
-    float furthest_at = 0.0f;
-    bool f_first = true;
-    for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
-        clip->SampleRootMotion(key->time,key->time);    //zero-width: poses, reports no motion
-        clip->ApplyInterval(key->time);
-        vec3 h = hip->GetWorldPosition();
-        for (int i = 0; i < 2; i++){
-            vec3 t = toe[i]->GetWorldPosition();
-            float dx = t.x - h.x;
-            float dz = t.z - h.z;
-            float reach = sqrtf(dx * dx + dz * dz);
-            if (f_first || reach > furthest){
-                furthest = reach;
-                furthest_at = key->time;
-                f_first = false;
+    for (int kind = 0; kind < KICK_KIND_COUNT; kind++){
+        const KickSpec& spec = KICK_SPECS[kind];
+        int clip_index = PUPPET_KICK_CLIP[kind];
+        Animation* clip = archer_clips[clip_index];
+        if (!clip || !clip->root_track || clip->duration <= 0.0f){
+            debug->Warn("No %s clip - that kick will play whatever was playing\n",spec.name);
+            continue;
+        }
+        float furthest = 0.0f;
+        float furthest_at = 0.0f;
+        int   kicking = 0;          //which toe did it
+        bool f_first = true;
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+            clip->SampleRootMotion(key->time,key->time);    //zero-width: poses, reports no motion
+            clip->ApplyInterval(key->time);
+            vec3 h = hip->GetWorldPosition();
+            for (int i = 0; i < 2; i++){
+                vec3 t = toe[i]->GetWorldPosition();
+                float dx = t.x - h.x;
+                float dz = t.z - h.z;
+                float reach = sqrtf(dx * dx + dz * dz);
+                if (f_first || reach > furthest){
+                    furthest = reach;
+                    furthest_at = key->time;
+                    kicking = i;
+                    f_first = false;
+                }
             }
         }
-    }
-    puppet.kick_strike = furthest_at;
-    /*
-        And the check the rules cannot make for themselves. KICK_ACTIVE_FROM/TO are ticks into the
-        move; at a playback rate of 1.0 those are ticks into the CLIP too, so the strike should sit
-        between them. Printed either way, because the interesting case is when it stops doing so.
-    */
-    float strike_tick = puppet.kick_strike * ARCHER_TPS;
-    debug->Info("Clip %-22s %.3fs long; the boot connects at %.3fs (tick %.1f of %d), and the "
-                "rules' active window is ticks %d..%d%s\n",
-                ARCHER_CLIPS[CLIP_KICK].name,clip->duration,puppet.kick_strike,strike_tick,
-                (int)(clip->duration * ARCHER_TPS),KICK_ACTIVE_FROM,KICK_ACTIVE_TO,
-                (strike_tick >= (float)KICK_ACTIVE_FROM && strike_tick <= (float)KICK_ACTIVE_TO)
-                    ? "" : "  <-- THE WINDOW DOES NOT COVER THE STRIKE");
+        puppet.kick_strike[kind] = furthest_at;
 
-    /*
-        AND WHETHER KICK_TICKS STILL MATCHES THE CLIP AT ALL.
+        /*
+            The boot at the strike, in the rules' terms. The model's origin is model_foot_offset
+            under the body's bottom (see MeasureLedgeHang), so the body's centre - pos.y - is
+            ARCHER_HALF_H above that. Reach is measured from the model's origin, which is her
+            centre line, less ARCHER_HALF_W to put it past her leading edge where the box starts.
 
-        This is the one number a re-export cannot fix for itself. Everything else in this app
-        re-measures at load, but KICK_TICKS lives in Stage.h, which names no engine type and has
-        never seen a .glb - so trimming frames off the end of the clip does NOT shorten the move,
-        it makes the Puppet stretch what is left to fill the window it no longer fills. The
-        symptom is a kick in slow motion, which looks like a rate bug and is not one.
+            And its top speed over the wind-up: the kicking toe's speed relative to her origin,
+            keyframe to keyframe, up to the strike.
+        */
+        vec3 origin = archer_model->GetWorldPosition();
+        float top_speed = 0.0f;
+        vec3 prev;
+        float prev_t = 0.0f;
+        bool f_have_prev = false;
+        for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
+            if (key->time > furthest_at + 0.0001f){
+                break;
+            }
+            clip->SampleRootMotion(key->time,key->time);
+            clip->ApplyInterval(key->time);
+            vec3 t = toe[kicking]->GetWorldPosition() - origin;
+            if (f_have_prev && key->time > prev_t){
+                vec3 d = t - prev;
+                float v = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z) / (key->time - prev_t);
+                if (v > top_speed){
+                    top_speed = v;
+                }
+            }
+            prev = t;
+            prev_t = key->time;
+            f_have_prev = true;
+        }
+        clip->SampleRootMotion(furthest_at,furthest_at);
+        clip->ApplyInterval(furthest_at);
+        vec3 boot = toe[kicking]->GetWorldPosition() - origin;
+        float boot_y = boot.y - model_foot_offset - ARCHER_HALF_H;
+        float boot_reach = sqrtf(boot.x * boot.x + boot.z * boot.z) - ARCHER_HALF_W;
 
-        So the app prints the number to type. It cannot apply it, but it can stop it being a thing
-        anyone has to notice for themselves.
-    */
-    int clip_ticks = (int)(clip->duration * ARCHER_TPS + 0.5f);
-    if (clip_ticks < KICK_TICKS - 1 || clip_ticks > KICK_TICKS + 1){
-        debug->Warn("Kick_Front is %d ticks but KICK_TICKS is %d, so it will play at %.2fx. "
-                    "Set KICK_TICKS to %d in Stage.h.\n",
-                    clip_ticks,KICK_TICKS,
-                    clip->duration / ((float)KICK_TICKS * ARCHER_DT),clip_ticks);
+        /*
+            And the check the rules cannot make for themselves. The active window is in ticks into
+            the move; at a playback rate of 1.0 those are ticks into the CLIP too, so the strike
+            should sit inside it. Printed either way, because the interesting case is when it stops
+            doing so.
+        */
+        float strike_tick = furthest_at * ARCHER_TPS;
+        debug->Info("Clip %-22s %.3fs long; the boot connects at %.3fs (tick %.1f of %d), and the "
+                    "rules' active window is ticks %d..%d%s\n",
+                    spec.name,clip->duration,furthest_at,strike_tick,
+                    (int)(clip->duration * ARCHER_TPS),spec.active_from,spec.active_to,
+                    (strike_tick >= (float)spec.active_from && strike_tick <= (float)spec.active_to)
+                        ? "" : "  <-- THE WINDOW DOES NOT COVER THE STRIKE");
+        debug->Info("     %-22s boot at y %+.2f, %.2f past her edge, %.1f/s at most - box centred "
+                    "y %+.2f +-%.2f reaching %.2f, imparts %.1f along and %.1f up\n",
+                    spec.name,boot_y,boot_reach,top_speed,spec.y_offset,spec.half_height,
+                    spec.reach,spec.speed,spec.lift);
+
+        /*
+            AND WHETHER THE ROW'S LENGTH STILL MATCHES THE CLIP AT ALL.
+
+            This is the one number a re-export cannot fix for itself. Everything else in this app
+            re-measures at load, but KICK_SPECS lives in Stage.h, which names no engine type and
+            has never seen a .glb - so trimming frames off the end of the clip does NOT shorten the
+            move, it makes the Puppet stretch what is left to fill the window it no longer fills.
+            The symptom is a kick in slow motion, which looks like a rate bug and is not one.
+
+            So the app prints the number to type. It cannot apply it, but it can stop it being a
+            thing anyone has to notice for themselves. KICK_FRONT's row is KICK_TICKS.
+        */
+        int clip_ticks = (int)(clip->duration * ARCHER_TPS + 0.5f);
+        if (clip_ticks < spec.ticks - 1 || clip_ticks > spec.ticks + 1){
+            debug->Warn("%s is %d ticks but its KICK_SPECS row says %d, so it will play at %.2fx. "
+                        "Set it to %d in Stage.cpp%s.\n",
+                        spec.name,clip_ticks,spec.ticks,
+                        clip->duration / ((float)spec.ticks * ARCHER_DT),clip_ticks,
+                        (kind == KICK_FRONT) ? " (KICK_TICKS in Stage.h)" : "");
+        }
     }
 }
 
@@ -3998,6 +4063,18 @@ void ApplicationArcher::UpdateView(void){
     if (!main_scene){
         return;
     }
+#ifdef USE_SOUND
+    /*
+        Sound keeps SIMULATED time: held on a paused pass that does not tick, let go on one that
+        does - so stepping plays one tick of every sound per step and a swoosh still peaks on the
+        step its arrow strikes. UpdateView runs on every pass and after the tick, and a paused loop
+        still passes once a tick-length, so each step lets out about one tick of sound. See
+        SoundSystem::SetPaused.
+    */
+    if (soundsystem){
+        soundsystem->SetPaused(main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass());
+    }
+#endif
     InputController* input = main_scene->inputcontroller;
     /*
         F1 the engine panels, F2 the blockout back on top of the terrain.
@@ -4258,7 +4335,12 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
     Everything here is compiled out with USE_SOUND=0, and soundsystem stays NULL, which is what
     every caller checks.
 */
+//Her shouts on a kick, by the name each is played under. kick_hyaa is first: the shout ticks were
+//tuned on it, and the others are timed against its loud part.
+static const char* KICK_SHOUTS[] = { "kick_hyaa", "kick_hija", "kick_hoowa" };
+
 void ApplicationArcher::SetupSound(){
+    static_assert(sizeof(KICK_SHOUTS) / sizeof(KICK_SHOUTS[0]) == KICK_SHOUT_COUNT,"one name per shout");
 #ifdef USE_SOUND
     soundsystem = new SoundSystem();
     soundsystem->Initialise();
@@ -4272,7 +4354,15 @@ void ApplicationArcher::SetupSound(){
                 arrow_swoosh_peak,arrow_swoosh_peak * ARCHER_TPS);
     soundsystem->AppendFile("sound/kick_swing.wav","kick_swing");
     soundsystem->AppendFile("sound/kick_land.wav","kick_land");
-    soundsystem->AppendFile("sound/kick_hyaa.wav","kick_hyaa");
+    //Her three shouts, and where each one's loud part is - see kick_shout_peak.
+    for (int i = 0; i < KICK_SHOUT_COUNT; i++){
+        char path[64];
+        snprintf(path,sizeof(path),"sound/%s.wav",KICK_SHOUTS[i]);
+        soundsystem->AppendFile(path,KICK_SHOUTS[i]);
+        kick_shout_peak[i] = soundsystem->LoudestAt(KICK_SHOUTS[i]);
+        debug->Info("%s peaks %.3fs in (%.1f ticks)\n",KICK_SHOUTS[i],kick_shout_peak[i],
+                    kick_shout_peak[i] * ARCHER_TPS);
+    }
     soundsystem->AppendFile("sound/speech/nice_shot.wav","nice_shot");
 #endif
 }
@@ -4314,33 +4404,45 @@ void ApplicationArcher::UpdateSound(const StageEvents& events){
 
             The LAND is the boot hitting something, so it is on the connect and nothing else: a
             kick at thin air has nothing to land on. f_kick_connected fires once per kick, inside
-            the KICK_ACTIVE window, which is timing enough.
+            the kick's active window, which is timing enough.
+
+            The swing tick was found on Kick_Front, so the other kicks play it shifted by how much
+            later (or earlier) their boot lands - the middle of each one's window against
+            Kick_Front's. Never before tick 1, which is the press.
         */
-        if (stage.kick_ticks == kick_swing_tick){
+        const KickSpec& kick = stage.Kick();
+        int strike_shift = ((kick.active_from + kick.active_to) - (KICK_ACTIVE_FROM + KICK_ACTIVE_TO)) / 2;
+        if (stage.kick_ticks == std::max(kick_swing_tick + strike_shift,1)){
             soundsystem->Play("kick_swing",false,0.8f * sound_volume);
         }
         if (events.f_kick_connected){
             soundsystem->Play("kick_land",false,0.8f * sound_volume);
         }
         /*
-            And her shout, on SOME kicks and on a tick that wanders: whether, and when, is drawn
-            once as the kick starts. Hashed from the level's tick, the SpawnDebris arrangement -
-            a recorded session shouts on exactly the same kicks when it is played back, and
-            nothing here draws from the engine's shared RRandom stream, which a sound has no
-            business perturbing.
+            And her shout, on SOME kicks and on a tick that wanders: whether, which one, and when,
+            is drawn once as the kick starts. Hashed from the level's tick, the SpawnDebris
+            arrangement - a recorded session shouts the same shouts on exactly the same kicks when
+            it is played back, and nothing here draws from the engine's shared RRandom stream,
+            which a sound has no business perturbing.
+
+            Moved by the same strike shift as the swing, and by where this shout's loud part is
+            against kick_hyaa's, which the from/to sliders were tuned on.
         */
         if (events.f_kick_started){
             uint64_t tick = stage.ticks;
-            kick_hyaa_tick = 0;
-            if (Hash01(0.0f,0.0f,(int)tick,1) < kick_hyaa_chance){
-                int span = std::max(kick_hyaa_to - kick_hyaa_from,0) + 1;
+            kick_shout_tick = 0;
+            if (Hash01(0.0f,0.0f,(int)tick,1) < kick_shout_chance){
+                int span = std::max(kick_shout_to - kick_shout_from,0) + 1;
                 int pick = (int)(Hash01(0.0f,0.0f,(int)tick,2) * (float)span);
+                kick_shout = std::min((int)(Hash01(0.0f,0.0f,(int)tick,3) * (float)KICK_SHOUT_COUNT),
+                                      KICK_SHOUT_COUNT - 1);
+                int peak_shift = (int)lroundf((kick_shout_peak[0] - kick_shout_peak[kick_shout]) * ARCHER_TPS);
                 //Tick 1 is this one, already past, so the earliest a shout can be is 2.
-                kick_hyaa_tick = std::max(kick_hyaa_from + std::min(pick,span - 1),2);
+                kick_shout_tick = std::max(kick_shout_from + std::min(pick,span - 1) + strike_shift + peak_shift,2);
             }
         }
-        if (kick_hyaa_tick > 0 && stage.kick_ticks == kick_hyaa_tick){
-            soundsystem->Play("kick_hyaa",false,0.8f * sound_volume);
+        if (kick_shout_tick > 0 && stage.kick_ticks == kick_shout_tick){
+            soundsystem->Play(KICK_SHOUTS[kick_shout],false,0.8f * sound_volume);
         }
     }
 #endif
@@ -4652,6 +4754,8 @@ void ApplicationArcher::ApplyKicks(const StageEvents& events){
         if (kick.id < 0 || kick.id >= (int)prop_views.size()){
             continue;
         }
+        //Whichever of the three kicks it was - each lands with its own weight, see KICK_SPECS.
+        const KickSpec& spec = KICK_SPECS[(kick.kind >= 0 && kick.kind < KICK_KIND_COUNT) ? kick.kind : KICK_FRONT];
         PropView& hit = prop_views[kick.id];
         if (!hit.object){
             continue;
@@ -4713,19 +4817,21 @@ void ApplicationArcher::ApplyKicks(const StageEvents& events){
             float scale = f_stand ? STAND_KICK_SCALE : 1.0f;
 
             vec3 v = p->GetVelocity();
-            float want = kick.dir * KICK_SPEED * falloff * scale;
+            float want = kick.dir * spec.speed * falloff * scale;
             if ((kick.dir > 0.0f && v.x < want) || (kick.dir < 0.0f && v.x > want)){
                 v.x = want;
             }
-            float lift = KICK_LIFT * falloff * scale;
+            float lift = spec.lift * falloff * scale;
             if (v.y < lift){
                 v.y = lift;
             }
             p->WakeUp();
             p->SetVelocity(vec3(v.x,v.y,0.0f));
             if (f_stand){
-                //Kicked towards +X, the top goes +X: a turn about Z the negative way.
-                p->SetAngularVelocity(vec3(0.0f,0.0f,-kick.dir * STAND_KICK_SPIN * falloff));
+                //Kicked towards +X, the top goes +X: a turn about Z the negative way. Tuned on
+                //Kick_Front, so the other kicks spin it in proportion to how hard they shove.
+                float spin = STAND_KICK_SPIN * (spec.speed / KICK_SPEED);
+                p->SetAngularVelocity(vec3(0.0f,0.0f,-kick.dir * spin * falloff));
             }
         }
     }
@@ -6685,6 +6791,8 @@ void ApplicationArcher::PublishSnapshot(){
     s.mode = stage.mode;
     s.f_on_ground = stage.f_on_ground;
     s.coyote_ticks = stage.coyote_ticks;
+    s.kick_ticks = stage.kick_ticks;
+    s.kick_kind = stage.kick_kind;
     s.bow_mode = stage.bow_mode;
     s.draw_ticks = stage.draw_ticks;
     s.draw_power = stage.DrawPower();
@@ -6883,7 +6991,14 @@ json ApplicationArcher::BuildStateJson(){
                      (s.kneel_phase == KNEEL_HELD) ? json("held") :
                      (s.kneel_phase == KNEEL_RISING) ? json("rising") : json(nullptr)},
             {"body_height",s.body_height},
-            {"coyote_ticks",s.coyote_ticks}
+            {"coyote_ticks",s.coyote_ticks},
+            //Which of the three kicks, and how far through it: null when she is not kicking.
+            {"kick",(s.kick_ticks > 0) ? json{
+                {"name",KICK_SPECS[s.kick_kind].name},
+                {"ticks",s.kick_ticks},
+                {"of",KICK_SPECS[s.kick_kind].ticks},
+                {"active_from",KICK_SPECS[s.kick_kind].active_from},
+                {"active_to",KICK_SPECS[s.kick_kind].active_to}} : json(nullptr)}
         }},
         {"bow",json{
             {"drawing",s.bow_mode == BOW_DRAWING},
@@ -7203,7 +7318,9 @@ void ApplicationArcher::RegisterMCPTools(){
         "ledge, 'action' and 'knife' are wired but not yet used. Several of these can be layered by "
         "calling with wait false and then holding the next one. Actions: left, right, down, jump, "
         "draw, kick, kneel (a toggle: any hold is one press), action, knife, and the arrow keys "
-        "'up' / 'aim_down' - which tilt the aim, and on the rope CLIMB it.",
+        "'up' / 'aim_down' - which tilt the aim, and on the rope CLIMB it. Held while 'kick' is "
+        "pressed they choose the kick: 'aim_down' the low push kick (Kick_Front_2), 'up' the high "
+        "kick (Kick_Front_3); archer_state's archer.kick says which one is running.",
         json{
             {"type","object"},
             {"properties", {
@@ -7724,13 +7841,16 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::SliderFloat("volume",&sound_volume,0.0f,1.0f,"%.2f");
         ImGui::SliderInt("kick swing tick",&kick_swing_tick,1,KICK_TICKS);
         ImGui::SetItemTooltip("Which tick of the %d-tick kick the swing plays on. The boot connects "
-                              "at tick %.0f, and the land sound plays then if it hits something.",
-                              KICK_TICKS,puppet.kick_strike * ARCHER_TPS);
-        ImGui::SliderFloat("kick shout chance",&kick_hyaa_chance,0.0f,1.0f,"%.2f");
-        ImGui::SliderInt("kick shout from",&kick_hyaa_from,2,KICK_TICKS);
-        ImGui::SliderInt("kick shout to",&kick_hyaa_to,2,KICK_TICKS);
+                              "at tick %.0f, and the land sound plays then if it hits something. "
+                              "Set on K's kick; Down+K and Up+K move it with their own strike.",
+                              KICK_TICKS,puppet.kick_strike[KICK_FRONT] * ARCHER_TPS);
+        ImGui::SliderFloat("kick shout chance",&kick_shout_chance,0.0f,1.0f,"%.2f");
+        ImGui::SliderInt("kick shout from",&kick_shout_from,2,KICK_TICKS);
+        ImGui::SliderInt("kick shout to",&kick_shout_to,2,KICK_TICKS);
         ImGui::SetItemTooltip("The shout starts on a random tick between these two, on the "
-                              "fraction of kicks the chance says. Its loud part is about 7 ticks in.");
+                              "fraction of kicks the chance says. Its loud part is about 7 ticks in. "
+                              "Set on K's kick with kick_hyaa; the other kicks and shouts are "
+                              "shifted to keep the loud part on the strike.");
     }
 
     /*
@@ -7786,8 +7906,9 @@ void ApplicationArcher::DrawImGuiUI(void){
             f_rescatter = true;
         }
         ImGui::SameLine();
-        ImGui::Text("%i ferns, %i low ferns, %i flowers",foliage_counts[FOLIAGE_FERN],
-                    foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER]);
+        ImGui::Text("%i ferns, %i low ferns, %i flowers, %i grass",foliage_counts[FOLIAGE_FERN],
+                    foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER],
+                    foliage_counts[FOLIAGE_GRASS]);
         if (f_rescatter){
             f_rescatter_foliage = true;
         }
@@ -8008,7 +8129,9 @@ void ApplicationArcher::DrawImGuiUI(void){
                        "into the swing to build it, then let go with E to keep the speed or with "
                        "Space to add height.  K kicks: it punts a crate far "
                        "harder than walking into one does, and brings down the brick wall or the "
-                       "cracked wall.  Jump at a ledge too high to land on and you CATCH it: Space "
+                       "cracked wall.  Down+K is a low stepping push kick that drives a crate along "
+                       "the floor; Up+K a high kick that lifts it and reaches the top of a stack.  "
+                       "Jump at a ledge too high to land on and you CATCH it: Space "
                        "then climbs up, S lets go, and holding away from it refuses the grab.  "
                        "S also drops through a platform.  Home (or Start) restarts, F1 shows the engine panels.");
 

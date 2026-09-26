@@ -18,7 +18,9 @@ static const float FOLIAGE_EPS = 0.001f;
 //Hash01 is in PlaceHash.h, shared with the vines - see there for why it is a hash, not a stream.
 
 //The channels a spot draws from, so no two decisions share a number.
-enum{ CH_ACCEPT = 0, CH_KIND, CH_Z, CH_SCALE, CH_YAW };
+//The grass pass draws from channels of its own, so adding it moved none of the other plants.
+enum{ CH_ACCEPT = 0, CH_KIND, CH_Z, CH_SCALE, CH_YAW,
+      CH_GRASS_ACCEPT, CH_GRASS_Z, CH_GRASS_SCALE, CH_GRASS_YAW };
 
 //--- Occlusion ------------------------------------------------------------------------------------
 /*
@@ -129,19 +131,43 @@ static bool HasRoom(const std::vector<StageBlock>& blocks, size_t self, float x,
 
 static int ChooseKind(float shade, float u){
     //Ferns in the shade, flowers in the open, the low fern evenly everywhere to fill in between.
-    float w[FOLIAGE_KIND_COUNT];
+    //Grass is not in this draw - see FOLIAGE_GRASS.
+    const int kinds = FOLIAGE_FLOWER + 1;
+    float w[kinds];
     w[FOLIAGE_FERN]     = 0.15f + 1.2f * shade;
     w[FOLIAGE_FERN_LOW] = 0.45f;
     w[FOLIAGE_FLOWER]   = 0.05f + 0.9f * (1.0f - shade) * (1.0f - shade);
     float total = w[0] + w[1] + w[2];
     float pick = u * total;
-    for (int k = 0; k < FOLIAGE_KIND_COUNT; k++){
+    for (int k = 0; k < kinds; k++){
         if (pick < w[k]){
             return k;
         }
         pick -= w[k];
     }
-    return FOLIAGE_KIND_COUNT - 1;
+    return FOLIAGE_FLOWER;
+}
+
+/*
+    Whether `plant` keeps its distance from everything placed so far, on this block or its
+    neighbours. A few hundred plants, so the plain loop is cheaper than anything cleverer would be.
+*/
+static bool IsClear(const std::vector<FoliagePlant>& out, const FoliagePlant& plant, float r,
+                    const FoliageParams& params){
+    for (size_t q = 0; q < out.size(); q++){
+        const FoliagePlant& o = out[q];
+        if (fabsf(o.y - plant.y) > 0.5f){
+            continue;   //a different storey
+        }
+        float ro = params.radius[o.kind] * o.scale;
+        float need = params.spacing * ((r > ro) ? r : ro);
+        float dx = o.x - plant.x;
+        float dz = o.z - plant.z;
+        if (dx * dx + dz * dz < need * need){
+            return false;
+        }
+    }
+    return true;
 }
 
 void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<bool>& grows,
@@ -161,6 +187,12 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
         float y = b.Top();
         float x0 = b.Left() + params.edge_inset;
         float x1 = b.Right() - params.edge_inset;
+        //This block's own depth, with the margins z_back/z_front keep on a default one.
+        float z_lo = b.Back() + (params.z_back + STAGE_BLOCK_HALF_DEPTH);
+        float z_hi = b.Front() - (STAGE_BLOCK_HALF_DEPTH - params.z_front);
+        if (z_hi <= z_lo){
+            continue;       //too thin through the slab to stand anything on
+        }
         for (float x = x0; x <= x1; x += step){
             /*
                 "Fully in a corner" is HALF the sky blocked, not all of it - a wall on one side
@@ -186,7 +218,7 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
                 plant.x = x;
                 plant.y = y;
                 float uz = powf(Hash01(x,y,t,CH_Z),params.z_bias);
-                plant.z = params.z_back + (params.z_front - params.z_back) * uz;
+                plant.z = z_lo + (z_hi - z_lo) * uz;
                 plant.scale = 1.0f + params.scale_jitter * (2.0f * Hash01(x,y,t,CH_SCALE) - 1.0f);
                 plant.yaw = 2.0f * FOLIAGE_PI * Hash01(x,y,t,CH_YAW);
                 plant.occlusion = shade;
@@ -196,23 +228,59 @@ void ScatterFoliage(const std::vector<StageBlock>& blocks, const std::vector<boo
                 if (!HasRoom(blocks,i,x,r,h,r * params.wall_clearance)){
                     continue;
                 }
-                //Spacing against everything placed so far, on this block or its neighbours. A few
-                //hundred plants, so the plain loop is cheaper than anything cleverer would be.
-                bool f_clear = true;
-                for (size_t q = 0; q < out.size() && f_clear; q++){
-                    const FoliagePlant& o = out[q];
-                    if (fabsf(o.y - y) > 0.5f){
-                        continue;   //a different storey
-                    }
-                    float ro = params.radius[o.kind] * o.scale;
-                    float need = params.spacing * ((r > ro) ? r : ro);
-                    float dx = o.x - x;
-                    float dz = o.z - plant.z;
-                    if (dx * dx + dz * dz < need * need){
-                        f_clear = false;
-                    }
+                if (IsClear(out,plant,r,params)){
+                    out.push_back(plant);
                 }
-                if (f_clear){
+            }
+        }
+    }
+
+    /*
+        THE GRASS, AFTER EVERYTHING ELSE, so it fills in around the ferns and flowers rather than
+        claiming their spots first - the spacing test then keeps it out from under them. The same
+        walk and the same shade, with the density curve turned round.
+    */
+    int grass_tries = (params.grass_tries > 0) ? params.grass_tries : 1;
+    for (size_t i = 0; i < blocks.size(); i++){
+        const StageBlock& b = blocks[i];
+        if (i >= grows.size() || !grows[i] || !b.f_alive){
+            continue;
+        }
+        if (b.kind != BLOCK_SOLID && b.kind != BLOCK_LEDGE){
+            continue;
+        }
+        float y = b.Top();
+        float z_lo = b.Back() + (params.z_back + STAGE_BLOCK_HALF_DEPTH);
+        float z_hi = b.Front() - (STAGE_BLOCK_HALF_DEPTH - params.z_front);
+        if (z_hi <= z_lo){
+            continue;
+        }
+        for (float x = b.Left() + params.edge_inset; x <= b.Right() - params.edge_inset; x += step){
+            float shade = FoliageOcclusion(blocks,x,y,params) * 2.0f;
+            if (shade > 1.0f){ shade = 1.0f; }
+            if (params.ao_gamma > 0.0f && shade > 0.0f){
+                shade = powf(shade,params.ao_gamma);
+            }
+            float density = params.grass_open + (params.grass_corner - params.grass_open) * shade;
+            float p = density * step / (float)grass_tries;
+            for (int t = 0; t < grass_tries; t++){
+                if (Hash01(x,y,t,CH_GRASS_ACCEPT) >= p){
+                    continue;
+                }
+                FoliagePlant plant;
+                plant.kind = FOLIAGE_GRASS;
+                plant.x = x;
+                plant.y = y;
+                plant.z = z_lo + (z_hi - z_lo) * Hash01(x,y,t,CH_GRASS_Z);
+                plant.scale = 1.0f + params.scale_jitter * (2.0f * Hash01(x,y,t,CH_GRASS_SCALE) - 1.0f);
+                plant.yaw = 2.0f * FOLIAGE_PI * Hash01(x,y,t,CH_GRASS_YAW);
+                plant.occlusion = shade;
+                float r = params.radius[FOLIAGE_GRASS] * plant.scale;
+                float h = params.height[FOLIAGE_GRASS] * plant.scale;
+                if (!HasRoom(blocks,i,x,r,h,r * params.wall_clearance)){
+                    continue;
+                }
+                if (IsClear(out,plant,r,params)){
                     out.push_back(plant);
                 }
             }

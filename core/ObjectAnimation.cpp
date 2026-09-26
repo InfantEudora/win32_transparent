@@ -87,10 +87,11 @@ void Animation::ApplyIntervalOnto(ObjectAnimation* object_animation, Object* tar
     }
     //debug->Info("Animation: Applying target %s at interval %.3f\n",target->name.c_str(),interval);
 
-    ObjectAnimationKeyFrame* keyframe = object_animation->GetClosestKeyframe(interval);
-    if (!keyframe){
+    ObjectAnimationKeyFrame sampled;
+    if (!object_animation->Sample(interval,sampled)){
         return;
     }
+    ObjectAnimationKeyFrame* keyframe = &sampled;
     if (keyframe->f_rotation){
         //Set rotation forces the bone into a specific rotation, ignoring existing rotation.
         if (target->animation_mask < 1.0f){
@@ -140,8 +141,12 @@ void Animation::Lerp(Animation* target,float this_interval, float target_interva
             continue;
         }
 
-        ObjectAnimationKeyFrame* start_keyframe = this_object_animation->GetClosestKeyframe(this_interval);
-        ObjectAnimationKeyFrame* end_keyframe = target_object_animation->GetClosestKeyframe(target_interval);
+        ObjectAnimationKeyFrame start_sampled;
+        ObjectAnimationKeyFrame end_sampled;
+        ObjectAnimationKeyFrame* start_keyframe =
+            this_object_animation->Sample(this_interval,start_sampled) ? &start_sampled : NULL;
+        ObjectAnimationKeyFrame* end_keyframe =
+            target_object_animation->Sample(target_interval,end_sampled) ? &end_sampled : NULL;
 
         if (!start_keyframe){
             debug->Err("Failed to get start_keyframe for %s at %.3f\n",name.c_str(),this_interval);
@@ -242,6 +247,45 @@ ObjectAnimationKeyFrame* ObjectAnimation::GetClosestKeyframe(float time){
     }
     //Nothing? Return the last one.
     return keyframes.back();
+}
+
+bool ObjectAnimation::Sample(float time, ObjectAnimationKeyFrame& out){
+    if (keyframes.empty()){
+        return false;
+    }
+    ObjectAnimationKeyFrame* before = NULL;
+    ObjectAnimationKeyFrame* after = NULL;
+    for (ObjectAnimationKeyFrame* keyframe : keyframes){
+        if (keyframe->time >= time){
+            after = keyframe;
+            break;
+        }
+        before = keyframe;
+    }
+    //Past either end: that end's key, as it is.
+    if (!after || !before || after->time <= before->time){
+        out = after ? *after : *before;
+        return true;
+    }
+    float f = (time - before->time) / (after->time - before->time);
+    //The flags and anything not blended are the later key's, which is what the ceiling returned.
+    out = *after;
+    out.time = time;
+    if (before->f_rotation && after->f_rotation){
+        out.rotation = quat::slerp(before->rotation,after->rotation,f);
+        out.rotation.normalize();
+    }
+    if (before->f_position && after->f_position){
+        out.position = before->position.lerp(after->position,f);
+    }
+    if (before->f_shapekeys && after->f_shapekeys &&
+        before->shapekey_weights.size() == after->shapekey_weights.size()){
+        for (size_t i = 0; i < out.shapekey_weights.size(); i++){
+            out.shapekey_weights[i] = before->shapekey_weights[i] +
+                                      (after->shapekey_weights[i] - before->shapekey_weights[i]) * f;
+        }
+    }
+    return true;
 }
 
 ObjectAnimationKeyFrame* ObjectAnimation::GetFirstKeyframe(){
@@ -404,10 +448,11 @@ RootPose Animation::ComputeRootPose(float time){
     if (!bone){
         return out;
     }
-    ObjectAnimationKeyFrame* keyframe = root_track->GetClosestKeyframe(time);
-    if (!keyframe){
+    ObjectAnimationKeyFrame sampled;
+    if (!root_track->Sample(time,sampled)){
         return out;
     }
+    ObjectAnimationKeyFrame* keyframe = &sampled;
 
     out.authored_position = keyframe->f_position ? keyframe->position : bone->reference_position;
 
