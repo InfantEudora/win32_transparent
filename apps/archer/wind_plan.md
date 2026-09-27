@@ -280,6 +280,40 @@ on the panel; `streaks`, `streak_count`, `streak_alpha`, `streak_width` on arche
 
 ---
 
+## Step 6, as built (2026-09-26): fireflies
+
+`Fireflies.{h,cpp}` (engine-free, `fireflies_test.cpp` 11 checks in `make rules`). 40 flies, each
+living at a HOME - the foliage plants, handed over by ScatterFoliageObjects, weighted 0.2 + 2 x
+the plant's occlusion score, so they gather in the shaded corners (seen in-app: a cluster at the
+foot of the cliff). Each steers for a slow Lissajous loop around its home (1-2 units above it),
+drifts with 15% of the wind, is pushed out of blocks, and fades away and re-homes when its home
+leaves the view (padded 50%).
+
+The flash is a Photinus-like burst: 1-3 quick flashes (70 ms rise, 220 ms glow-down, 0.4 s
+apart) every ~5 s, and an ember between. The brightest flash at a moment, not their sum - summed
+and capped, a burst of three was one plateau. **Pulse coupling**: a fly starting a burst pulls
+the clocks of flies within 3.5 units forward, if they are in the second half of their period, by
+a share of what they have left. A cluster's order parameter goes 0.06 -> 0.87 in a minute coupled
+(0.20 uncoupled); periods jittered +-0.35 s keep it from ever being perfect.
+
+Drawn like the streaks (render thread, catch-up ticks, custom pass): a camera-facing quad per fly
+with a hot core and a DRAWN halo (`assets/shaders/firefly.*`, exp(-3.2 r^2) - the engine has no
+bloom, and at exp(-5 r^2) a flash read as a dot). **Three point lights as one group**
+(`Fireflies::LightGroup`): one per third of the view, at the glow-weighted centre of its flies,
+brightness = gain x sqrt(summed glow) - the sqrt because a point light's brightness is applied
+twice in default.frag - smoothed faster up than down so a flash swells. No shadows. Count, sync,
+period, glow size, halo and light gain on the panel; `fireflies`, `firefly_count`, `firefly_sync`,
+`firefly_light_gain`, `firefly_glow_size` on archer_wind.
+
+**Also fixed that day, in the field:** the forced floor under a bottomless pit was a row forced
+solid, not a plane in the distance field, so the distance jumped from ~1.5 to 0 in its last
+half-unit and the wall ramp made 10 u/s along the main level's gap floor (6.5x the wind; found
+when the default speed went to 0.5 and "no jets" tripped). Now `d = min(d, y - y0)`. And an eddy's
+ellipse is shortened toward a circle until the points one long radius either side are clear. The
+checks now pin their own wind (`TestWind()`, 2.5) - the default is a tuning choice.
+
+---
+
 ## Status
 
 | # | Step | State |
@@ -289,5 +323,5 @@ on the panel; `streaks`, `streak_count`, `streak_alpha`, `streak_width` on arche
 | 3 | Foliage sway (core material hook) | **BUILT** 2026-09-26 - grass_1/2, ferns, flowers |
 | 4 | Leaves | **BUILT** 2026-09-26 - plus vine leaves swaying (LEAF mode) |
 | 5 | Streaks | **BUILT** 2026-09-26 |
-| 6 | Fireflies + light group | |
+| 6 | Fireflies + light group | **BUILT** 2026-09-26 |
 | 7 | Clouds | |

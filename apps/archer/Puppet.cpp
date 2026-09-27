@@ -215,6 +215,7 @@ void DescribeArcher(const Stage& stage, ArcherAnimParams& out){
     out.rope_climb   = (stage.mode == MODE_ROPE) ? stage.rope_climb : 0;
     out.rope_climbed = (stage.mode == MODE_ROPE) ? stage.rope_climbed : 0.0f;
     out.rope_pump = (stage.mode == MODE_ROPE) ? stage.rope_pump : 0.0f;
+    out.f_free_hang = (stage.mode == MODE_HANG && stage.hang_branch >= 0);
 
     /*
         The action, and its phase.
@@ -379,8 +380,9 @@ PuppetChoice Puppet::Choose(const ArcherAnimParams& in) const{
         her own tilt comes off the body the solver is swinging - a view quantity the rules never
         see and never should. See the roll in ApplicationArcher::SyncArcherAnimation.
     */
+    //A branch is the third: hung from like the rope, both hands over the top, feet loose.
     if (in.mode == MODE_HANG){
-        out.clip = CLIP_HANG;
+        out.clip = in.f_free_hang ? CLIP_ROPE : CLIP_HANG;
         return out;
     }
     if (in.mode == MODE_ROPE){

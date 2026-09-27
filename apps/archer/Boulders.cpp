@@ -110,23 +110,23 @@ void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams&
         const float back = A.Back();
         const float depth_span = 2.0f - params.back_overhang;
         float s = params.big_scale_min + (params.big_scale_max - params.big_scale_min) * HashUnit(seed,level,1u);
-        float R = params.radius[BOULDER_BIG] * s;
+        float R = params.radius[BOULDER_BIG_1] * s;
         if (back + depth_span * R > params.z_front_max){
             R = (params.z_front_max - back) / depth_span;
-            s = R / params.radius[BOULDER_BIG];
+            s = R / params.radius[BOULDER_BIG_1];
         }
         if (s < params.big_scale_min * 0.5f){
             continue;       //this platform is too shallow behind her for a big rock
         }
         Boulder big;
-        big.kind = BOULDER_BIG;
+        big.kind = BOULDER_BIG_1;
         big.scale = s;
         //Slightly INTO the wall: the terrain's fillet fills the foot of a wall, and a rock standing
         //clear of it leaves a gap that reads as the rock floating.
         big.x = c.x + c.side * R * 0.85f;
         big.z = back + (1.0f - params.back_overhang) * R;
         big.ground = A.Top();
-        big.y = A.Top() - params.sink * params.height[BOULDER_BIG] * s;
+        big.y = A.Top() - params.sink * params.height[BOULDER_BIG_1] * s;
         big.yaw = 6.2831853f * HashUnit(seed,level,2u);
         out.push_back(big);
 
@@ -141,7 +141,7 @@ void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams&
             uint32_t t = 16u + (uint32_t)tries * 8u;
             float ss = params.small_scale_min
                      + (params.small_scale_max - params.small_scale_min) * HashUnit(seed,level,t);
-            float r = params.radius[BOULDER_SMALL] * ss;
+            float r = params.radius[BOULDER_SMALL_1] * ss;
             float x = big.x + c.side * (R * 0.2f + HashUnit(seed,level,t + 1u) * (R + params.small_reach));
             //Up to half of it past the back edge, like the big one - a band from the back edge to
             //z_front_max holds nothing much bigger than a pebble otherwise.
@@ -162,7 +162,7 @@ void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams&
             bool f_clear = true;
             for (size_t k = first_small; k < out.size(); k++){
                 float dx = x - out[k].x, dz = z - out[k].z;
-                float rk = params.radius[BOULDER_SMALL] * out[k].scale;
+                float rk = params.radius[BOULDER_SMALL_1] * out[k].scale;
                 if (sqrtf(dx * dx + dz * dz) < (r + rk) * 0.9f){
                     f_clear = false;
                     break;
@@ -172,12 +172,12 @@ void ScatterBoulders(const std::vector<StageBlock>& blocks, const BoulderParams&
                 continue;
             }
             Boulder b;
-            b.kind = BOULDER_SMALL;
+            b.kind = BOULDER_SMALL_1;
             b.scale = ss;
             b.x = x;
             b.z = z;
             b.ground = A.Top();
-            b.y = A.Top() - params.sink * params.height[BOULDER_SMALL] * ss;
+            b.y = A.Top() - params.sink * params.height[BOULDER_SMALL_1] * ss;
             b.yaw = 6.2831853f * HashUnit(seed,level,t + 3u);
             b.tilt = (params.small_tilt_deg * 3.14159265f / 180.0f) * HashUnit(seed,level,t + 4u);
             b.tilt_axis_yaw = 6.2831853f * HashUnit(seed,level,t + 5u);

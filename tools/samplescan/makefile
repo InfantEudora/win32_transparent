@@ -18,6 +18,7 @@ PROJECT := samplescan
 
 TOOL_SRCS += samplescan.cpp
 TOOL_SRCS += analyse.cpp
+TOOL_SRCS += export.cpp
 TOOL_SRCS += samplescan_ma.cpp
 
 include $(ROOT)/tools/tools.mk

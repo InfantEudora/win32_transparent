@@ -14,4 +14,8 @@ Direction discussed (not yet agreed in detail): hybrid - recorded textures (hum,
 
 Step done: apps/music/ (not an app yet, just readme + samples/unsorted/) and tools/samplescan (own miniaudio build WITH decoders, wav/flac/mp3; YIN pitch, key profile, envelope; writes samples/catalog.csv, keeps the 4 human columns on re-scan). User has pre-mixed ambience examples and said they can find the separate stems.
 
+Tuning round 2026-09-26 against the user's ears: 5 files confirmed by ear and recorded in catalog.csv comment/root columns ("by ear: ..."); `stinger` is a hand-assigned category (user agreed). Findings: tremolo/reverb swells rise 6-16 dB vs real tongued notes 31-40, so same-pitch splits need >=18 dB; attack SPEED does not separate real material (tried, removed). Library leans A minor / E minor.
+
+Bench BUILT 2026-09-26: apps/music (exe music_nophysics.exe), MusicEngine (pure DSP: beds w/ loop+key crossfade, pitched beds follow key, voices = random walk on scale, tension notes with suspense, bar-quantised key changes) + MusicPlayer (ma_data_source on SoundSystem::PlayStream, try_lock hand-off) + JSON score assets/music/jungle.json. Samples exported by `make samples` (wavs gitignored). Verify with music_render + samplescan --file (key line). Run on --mcp-port 8767 (engine-wide flag added) and drive via curl; archer/other sessions use 8765.
+
 **How to apply:** tune samplescan's GuessCategory thresholds on the real library once it lands, not on synthetic tones; ask the user to listen - Claude cannot judge whether it sounds right.

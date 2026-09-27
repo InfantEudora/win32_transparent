@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 /*
     Everything samplescan measures about one audio file, from the audio alone.
@@ -28,15 +29,26 @@ struct SampleAnalysis{
 
     double lead_ms = 0;                 //silence before the sound starts
     double tail_ms = 0;                 //silence after it ends
-    double attack_ms = 0;               //sound start to within 1 dB of the envelope peak
+    double attack_ms = 0;               //sound start to its first peak (within the first 3 s)
     double decay20_ms = -1;             //envelope peak to 20 dB below it; -1 if it never gets there
     double sustain_db = 0;              //median active level, relative to the envelope peak
     double head_tail_db = 0;            //last 200 ms against the first 200 ms: near 0 on a loop
     std::string envelope;               //short / decaying / sustained / swell
 
     double centroid_hz = 0;             //brightness
-    double flatness = 0;                //0 = pure tone, 1 = white noise
+    double noisiness = 0;               //spectral flatness within octaves: ~0 a tone, ~0.5 noise
     double low_share = 0;               //fraction of energy below 200 Hz
+
+    int onsets = 0;                     //note or hit starts, from the envelope
+    std::vector<double> onset_s;        //when each one is
+    std::vector<double> onset_rise_db;  //and how far the level rose into it
+    double onset_rate = 0;              //per second of active sound
+    double bpm = 0;                     //strongest beat period between 60 and 180 bpm
+    double beat_strength = 0;           //0 = no pulse at all, towards 1 = a metronome
+
+    int note_count = 0;                 //pitched segments, from the pitch track and the onsets
+    std::string notes;                  //"E5 G5 A5 ..." in order, capped
+    std::string pitch_classes;          //the distinct notes used, "A C D E G"
 
     double voiced = 0;                  //fraction of analysed frames with a clear period
     double pitch_hz = 0;                //median over voiced frames

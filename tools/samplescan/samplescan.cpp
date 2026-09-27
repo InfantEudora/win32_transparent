@@ -20,6 +20,7 @@
     the real library once it is here.
 */
 #include "analyse.h"
+#include "export.h"
 
 #include <algorithm>
 #include <cctype>
@@ -60,7 +61,8 @@ std::string Lower(std::string s){
     packs usually put the instrument in the folder and just the note in the file.
 */
 struct NameHints{
-    std::string instruments;    //every keyword found, joined with '+'
+    std::string instruments;    //every source or form word found, joined with '+'
+    std::string moods;          //every mood word found - "creepy+horror"
     std::string note;           //"C4" as written in the name
     int note_midi = -1;
     std::string key;            //"A minor"
@@ -79,6 +81,16 @@ const char* kInstrumentWords[] = {
     "rain", "water", "stream", "wind", "leaves", "leaf", "forest", "jungle",
     "bird", "insect", "cricket", "cicada", "frog",
     "ambience", "ambient", "atmos", "atmosphere", "texture", "noise", "riser", "swell", "hit", "impact",
+    "loop", "transition", "stinger", "whoosh",
+};
+
+//Words that say how a sample FEELS. The music system will be asked for suspense, not for
+//"sounds like a violin", and a pack's own name for its mood is the best first answer to that.
+const char* kMoodWords[] = {
+    "creepy", "eerie", "eery", "scary", "scare", "spooky", "horror", "halloween", "suspense", "tense",
+    "dark", "ominous", "mysterious", "mystery", "haunting", "sad", "melancholic",
+    "calm", "peaceful", "relaxing", "dreamy", "gentle", "soft", "meditation",
+    "happy", "comedy", "funny", "playful", "epic", "dramatic", "heroic", "tribal", "magical",
 };
 
 std::vector<std::string> Words(const std::string& s){
@@ -116,15 +128,17 @@ NameHints ReadName(const std::string& rel_path){
         //tried on their own.
         std::string letters;
         for (char c : w) if (std::isalpha((unsigned char)c)) letters += c; else break;
-        for (const char* kw : kInstrumentWords){
-            const std::string k = kw;
-            if (w == k || w == k + "s" || w == k + "es" || letters == k || letters == k + "s"){
-                if (h.instruments.find(k) == std::string::npos){
-                    if (!h.instruments.empty()) h.instruments += "+";
-                    h.instruments += k;
-                }
+        auto collect = [&](const char* const* list, size_t count, std::string& into){
+            for (size_t i = 0; i < count; i++){
+                const std::string k = list[i];
+                if (!(w == k || w == k + "s" || w == k + "es" || letters == k || letters == k + "s")) continue;
+                if (("+" + into + "+").find("+" + k + "+") != std::string::npos) continue;     //already listed
+                if (!into.empty()) into += "+";
+                into += k;
             }
-        }
+        };
+        collect(kInstrumentWords, sizeof kInstrumentWords / sizeof *kInstrumentWords, h.instruments);
+        collect(kMoodWords, sizeof kMoodWords / sizeof *kMoodWords, h.moods);
 
         //A note: letter, optional accidental, one octave digit. "C4", "c#3", "Bb2", "Fs1".
         if (h.note.empty() && w.size() >= 2 && w.size() <= 3 && PitchClass(w[0]) >= 0 && std::isdigit((unsigned char)w.back())){
@@ -180,67 +194,105 @@ NameHints ReadName(const std::string& rel_path){
       hum             low and held but with no clear pitch
       texture         unpitched and held - wind, rain, leaves, whispers, insects
       hit             unpitched and short - a knock, a shaker, a twig
+      rhythm          a pulse - drums, a percussion loop
       phrase          several notes - a melody, an arpeggio, a chord change
       mix             long, busy material with no single role - a finished ambience
 */
-//Sources that are textures however they measure. Used only to settle hum-versus-texture, which
-//the audio genuinely cannot: a dark wind recording and an unpitched rumble have the same numbers.
+/*
+    Name words that settle what the audio cannot. Only ever as a tie-break, and each for one
+    specific confusion seen on the first real library:
+
+      texture words: a dark wind and an unpitched rumble measure the same, and a WHISTLING wind
+        is genuinely pitched - "creepy wind gust" came back a 23-note phrase. Not applied when
+        the name also names a melodic instrument, so "flute rain loop" stays a flute.
+      drum words: slow atmospheric drums have too few hits in five seconds to show a pulse.
+*/
 const char* kTextureWords[] = {"wind", "rain", "water", "stream", "leaves", "leaf", "whisper", "breath",
                                "insect", "cricket", "cicada", "forest", "jungle", "noise", "texture"};
+const char* kMelodicWords[] = {"kalimba", "marimba", "xylophone", "vibraphone", "glockenspiel", "celesta", "bell",
+                               "chime", "piano", "rhodes", "harp", "guitar", "koto", "sitar", "mbira", "flute",
+                               "panflute", "shakuhachi", "ocarina", "whistle", "choir", "voice", "string",
+                               "violin", "cello", "organ", "synth", "pad"};
+const char* kDrumWords[] = {"drum", "perc", "percussion", "shaker", "rattle"};
 
-bool NamesTexture(const NameHints& h){
-    for (const char* w : kTextureWords){
-        const std::string k = w;
-        //Whole '+'-separated entries, not substrings.
-        const std::string list = "+" + h.instruments + "+";
-        if (list.find("+" + k + "+") != std::string::npos) return true;
-    }
+//Octave-band flatness above which a sound counts as noise even if YIN found a period in it -
+//breath and wind can hold a faint whistle. See noisiness in analyse.h.
+const double kNoisy = 0.35;
+
+template <size_t N>
+bool NamesAny(const NameHints& h, const char* const (&words)[N]){
+    //Whole '+'-separated entries, not substrings.
+    const std::string list = "+" + h.instruments + "+";
+    for (const char* w : words) if (list.find("+" + std::string(w) + "+") != std::string::npos) return true;
     return false;
+}
+bool NamesTexture(const NameHints& h){ return NamesAny(h, kTextureWords) && !NamesAny(h, kMelodicWords); }
+
+/*
+    Could this play end to end, round and round, without a click or a gap? No silence at either
+    end, and the last 200 ms within 3 dB of the first. It does not listen to the seam - a level
+    match is necessary, not sufficient - but it finds the candidates worth listening to.
+*/
+bool Loopable(const SampleAnalysis& a){
+    return a.f_ok && a.duration_s >= 2.0 && a.lead_ms <= 50 && a.tail_ms <= 50 && std::fabs(a.head_tail_db) <= 3.0;
 }
 
 std::string GuessCategory(const SampleAnalysis& a, const NameHints& h, std::string& why){
-    char buf[160];
+    char buf[200];
+    const double active_s = a.duration_s - (a.lead_ms + a.tail_ms) / 1000.0;
     if (a.pitch_kind == "single"){
         const bool f_held = a.envelope == "sustained" || a.envelope == "swell";
-        if (f_held && a.pitch_hz < 110.0){
-            snprintf(buf, sizeof buf, "one held pitch at %.0f Hz", a.pitch_hz);
+        //Long counts as well as low: eight seconds of one held note is a bed to lay things
+        //over, whatever its register - which is the role "drone" names.
+        if (f_held && (a.pitch_hz < 110.0 || active_s >= 8.0)){
+            snprintf(buf, sizeof buf, "one pitch held %.0f s at %.0f Hz", active_s, a.pitch_hz);
             why = buf;
             return "drone";
         }
-        snprintf(buf, sizeof buf, "one pitch (%.0f%% voiced, +-%.0f c), %s", a.voiced * 100, a.stability_cents, a.envelope.c_str());
+        snprintf(buf, sizeof buf, "one pitch (%.0f%% voiced, +-%.0f c), %s, %d note%s", a.voiced * 100, a.stability_cents,
+                 a.envelope.c_str(), a.note_count, a.note_count == 1 ? "" : "s");
         why = buf;
         return f_held ? "note_sustained" : "note_struck";
     }
-    if (a.pitch_kind == "none" || a.flatness > 0.3){
+    //A pulse, and not a melody: drums, shakers, a loop. Checked before the noise tests because
+    //a drum loop is unpitched too, and "texture" would bury the one thing that matters about it.
+    if (a.onsets >= 8 && a.beat_strength >= 0.3 && a.voiced < 0.6){
+        snprintf(buf, sizeof buf, "%d onsets, pulse %.0f bpm (strength %.2f)", a.onsets, a.bpm, a.beat_strength);
+        why = buf;
+        return "rhythm";
+    }
+    if (a.onsets >= 3 && NamesAny(h, kDrumWords)){
+        snprintf(buf, sizeof buf, "%d onsets, name says %s", a.onsets, h.instruments.c_str());
+        why = buf;
+        return "rhythm";
+    }
+    if (a.envelope != "short" && NamesTexture(h)){
+        snprintf(buf, sizeof buf, "name says %s; %.0f%% voiced%s", h.instruments.c_str(), a.voiced * 100,
+                 a.notes.find('~') != std::string::npos ? ", gliding" : "");
+        why = buf;
+        return "texture";
+    }
+    if (a.pitch_kind == "none" || a.noisiness > kNoisy){
         if (a.envelope == "short" || (a.envelope == "decaying" && a.duration_s < 2.0)){
             why = "no pitch, " + a.envelope;
             return "hit";
-        }
-        if (a.low_share > 0.6 && NamesTexture(h)){
-            snprintf(buf, sizeof buf, "no pitch, low (%.0f%% under 200 Hz), name says %s", a.low_share * 100, h.instruments.c_str());
-            why = buf;
-            return "texture";
         }
         if (a.low_share > 0.6){
             snprintf(buf, sizeof buf, "no pitch, %.0f%% of energy under 200 Hz", a.low_share * 100);
             why = buf;
             return "hum";
         }
-        if (a.duration_s > 30.0 && a.key_r > 0.7){
-            snprintf(buf, sizeof buf, "long, noisy but key-like (r %.2f)", a.key_r);
-            why = buf;
-            return "mix";
-        }
-        snprintf(buf, sizeof buf, "no pitch, flatness %.2f, %s", a.flatness, a.envelope.c_str());
+        snprintf(buf, sizeof buf, "no pitch, noisiness %.2f, %s", a.noisiness, a.envelope.c_str());
         why = buf;
         return "texture";
     }
     //Pitched, but not one pitch.
     if (a.duration_s > 30.0){
-        why = "long, several pitches";
+        snprintf(buf, sizeof buf, "long, %d notes over %s", a.note_count, a.pitch_classes.c_str());
+        why = buf;
         return "mix";
     }
-    snprintf(buf, sizeof buf, "several pitches (%.0f%% voiced, +-%.0f c)", a.voiced * 100, a.stability_cents);
+    snprintf(buf, sizeof buf, "%d notes over %s (%.0f%% voiced)", a.note_count, a.pitch_classes.c_str(), a.voiced * 100);
     why = buf;
     return "phrase";
 }
@@ -334,7 +386,16 @@ void PrintDetail(const std::string& name, const SampleAnalysis& a, const NameHin
     printf("  silence     lead %.0f ms, tail %.0f ms\n", a.lead_ms, a.tail_ms);
     printf("  envelope    %s: attack %.0f ms, decay-20dB %.0f ms, sustain %.1f dB, tail-vs-head %.1f dB\n",
            a.envelope.c_str(), a.attack_ms, a.decay20_ms, a.sustain_db, a.head_tail_db);
-    printf("  spectrum    centroid %.0f Hz, flatness %.3f, under 200 Hz %.0f%%\n", a.centroid_hz, a.flatness, a.low_share * 100);
+    printf("  spectrum    centroid %.0f Hz, noisiness %.3f, under 200 Hz %.0f%%\n", a.centroid_hz, a.noisiness, a.low_share * 100);
+    printf("  rhythm      %d onsets (%.1f/s), pulse %.0f bpm at strength %.2f\n", a.onsets, a.onset_rate, a.bpm, a.beat_strength);
+    if (!a.onset_s.empty()){
+        printf("  onsets     ");
+        for (size_t i = 0; i < a.onset_s.size() && i < 40; i++){
+            printf(" %.2fs+%.0f", a.onset_s[i], a.onset_rise_db[i]);
+        }
+        printf(a.onset_s.size() > 40 ? " ...\n" : "\n");
+    }
+    printf("  notes       %d: %s  [%s]\n", a.note_count, a.notes.c_str(), a.pitch_classes.c_str());
     if (a.pitch_kind != "none"){
         const int n = (int)std::lround(a.pitch_midi);
         printf("  pitch       %s: %s %+.0f c (%.2f Hz), %.0f%% voiced, +-%.0f c\n", a.pitch_kind.c_str(), NoteName(n).c_str(),
@@ -342,7 +403,9 @@ void PrintDetail(const std::string& name, const SampleAnalysis& a, const NameHin
     }
     else printf("  pitch       none (%.0f%% voiced)\n", a.voiced * 100);
     printf("  key         %s (r %.2f, margin %.2f)\n", a.key.c_str(), a.key_r, a.key_margin);
-    printf("  name says   instrument '%s', note '%s', key '%s', bpm %d\n", h.instruments.c_str(), h.note.c_str(), h.key.c_str(), h.bpm);
+    printf("  name says   instrument '%s', mood '%s', note '%s', key '%s', bpm %d\n", h.instruments.c_str(), h.moods.c_str(),
+           h.note.c_str(), h.key.c_str(), h.bpm);
+    printf("  loopable    %s\n", Loopable(a) ? "yes" : "no");
     printf("  guess       %s - %s\n", guess.c_str(), why.c_str());
 }
 
@@ -405,11 +468,11 @@ int ScanFolder(const fs::path& root){
     }
     out << "file";
     for (int h = 0; h < kNumHuman; h++) out << "," << kHumanColumns[h];
-    out << ",guess,why,status,name_instrument,name_note,name_vs_pitch,name_key,name_bpm"
+    out << ",guess,why,status,loopable,name_instrument,name_mood,name_note,name_vs_pitch,name_key,name_bpm"
            ",pitch_kind,pitch_note,pitch_cents,pitch_hz,voiced,stability_cents,key,key_r,key_margin"
            ",duration_s,channels,sample_rate,peak_db,rms_db,active_rms_db,clipped"
            ",lead_ms,tail_ms,envelope,attack_ms,decay20_ms,sustain_db,head_tail_db"
-           ",centroid_hz,flatness,low_share\n";
+           ",centroid_hz,noisiness,low_share,onsets,onset_rate,bpm,beat_strength,note_count,notes,pitch_classes\n";
 
     for (const Row& r : rows){
         const SampleAnalysis& a = r.a;
@@ -417,7 +480,8 @@ int ScanFolder(const fs::path& root){
         auto kept = previous.find(r.file);
         for (int h = 0; h < kNumHuman; h++) out << "," << CsvField(kept != previous.end() ? kept->second[h] : "");
         out << "," << r.guess << "," << CsvField(r.why) << "," << CsvField(r.status)
-            << "," << r.hints.instruments << "," << CsvField(r.hints.note);
+            << "," << (a.f_ok && Loopable(a) ? "yes" : "")
+            << "," << r.hints.instruments << "," << r.hints.moods << "," << CsvField(r.hints.note);
 
         const bool f_single = a.f_ok && a.pitch_kind == "single";
         const int pitch_n = f_single ? (int)std::lround(a.pitch_midi) : 0;
@@ -427,7 +491,7 @@ int ScanFolder(const fs::path& root){
         out << "," << CsvField(r.hints.key) << "," << (r.hints.bpm ? std::to_string(r.hints.bpm) : "");
 
         if (!a.f_ok){
-            out << std::string(26, ',') << "\n";
+            out << std::string(33, ',') << "\n";
             continue;
         }
         out << "," << a.pitch_kind
@@ -441,7 +505,10 @@ int ScanFolder(const fs::path& root){
             << "," << Num(a.peak_db, 1) << "," << Num(a.rms_db, 1) << "," << Num(a.active_rms_db, 1) << "," << a.clipped
             << "," << Num(a.lead_ms, 0) << "," << Num(a.tail_ms, 0) << "," << a.envelope
             << "," << Num(a.attack_ms, 0) << "," << Num(a.decay20_ms, 0) << "," << Num(a.sustain_db, 1) << "," << Num(a.head_tail_db, 1)
-            << "," << Num(a.centroid_hz, 0) << "," << Num(a.flatness, 3) << "," << Num(a.low_share, 2)
+            << "," << Num(a.centroid_hz, 0) << "," << Num(a.noisiness, 3) << "," << Num(a.low_share, 2)
+            << "," << a.onsets << "," << Num(a.onset_rate, 2)
+            << "," << (a.beat_strength > 0 ? Num(a.bpm, 1) : "") << "," << Num(a.beat_strength, 2)
+            << "," << a.note_count << "," << CsvField(a.notes) << "," << CsvField(a.pitch_classes)
             << "\n";
     }
 
@@ -455,9 +522,20 @@ int ScanFolder(const fs::path& root){
 int main(int argc, char** argv){
     if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")){
         printf("samplescan [folder]         catalogue every audio file under folder (default ../../apps/music/samples)\n"
-               "samplescan --file <audio>   measure one file and print every field\n");
+               "samplescan --file <audio>   measure one file and print every field\n"
+               "samplescan --export <audio> <out.wav>        write it as the PCM16 wav the engine loads\n"
+               "samplescan --export-trim <audio> <out.wav>   the same, with the silence cut off both ends\n");
         return 0;
     }
     if (argc >= 3 && std::string(argv[1]) == "--file") return ScanOne(fs::u8path(argv[2]));
+    if (argc >= 4 && (std::string(argv[1]) == "--export" || std::string(argv[1]) == "--export-trim")){
+        std::string error;
+        printf("%s -> %s\n", argv[2], argv[3]);
+        if (!ExportWav(fs::u8path(argv[2]).wstring(), fs::u8path(argv[3]).wstring(), std::string(argv[1]) == "--export-trim", error)){
+            fprintf(stderr, "samplescan: %s: %s\n", argv[2], error.c_str());
+            return 1;
+        }
+        return 0;
+    }
     return ScanFolder(fs::u8path(argc >= 2 ? argv[1] : "../../apps/music/samples"));
 }

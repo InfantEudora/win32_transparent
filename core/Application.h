@@ -437,6 +437,11 @@ public:
     //MoveWindow, which leaves a minimised window minimised).
     bool f_start_minimized = false;
 
+    //The port the MCP server's HTTP transport binds: 8765, unless started with --mcp-port N.
+    //Read by Start() from the command line, so every app takes the flag with no code of its own -
+    //see the note there on why two apps otherwise cannot both be driven at once.
+    int mcp_port = 8765;
+
     /*
         THE SHADER STAGES AN APP IS DRAWN WITH, so that an app names them once instead of spelling
         out four asset names at three call sites in its Init().

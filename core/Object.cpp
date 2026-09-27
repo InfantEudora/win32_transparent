@@ -712,13 +712,16 @@ bool Object::AttachChild(Object* newchild){
     newchild->parent = this;
 
     //Catches the "body first, parent second" ordering. Not raised under an identity parent chain,
-    //where local and world agree - see IsIdentityChain.
+    //where local and world agree - see IsIdentityChain. Physics builds only, like IsIdentityChain
+    //itself: with USE_PHYSICS=0 there is no rigid body to have put in the wrong place.
+#ifdef USE_PHYSICS
     if (newchild->physics && !IsIdentityChain(this)){
         debug->Err("Object '%s' (id=%i) has a rigid body AND a parent '%s' (id=%i). "
                 "Put the body on the parent and leave "
              "this child visual-only, or detach it with DetachChildToWorld.\n",
              newchild->name.c_str(),newchild->id,name.c_str(),id);
     }
+#endif
 
 
     //Either we alway need to traverse a tree to find renderable objects from root.

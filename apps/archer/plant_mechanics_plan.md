@@ -322,7 +322,8 @@ to 175.
 
 - **Two branches.**
   - The high one runs from the canopy's end (133, 13.0) down to a perch at x 145..152, top 12.4.
-  - The low practice one is 2.0 up, between stumps at x 155..157 and 168..170.
+  - The low practice one is 2.6 up (raised from 2.0 for the catch, below), between stumps at
+    x 155..157 and 168..170.
 - **`StageBranch`** is a straight one-way line; Down drops through it. On it she walks at up to
   `BRANCH_WALK_SPEED` (1.8), can't kick or kneel, and Up/Down stop tilting the bow unless she is
   drawing. Aiming from a branch costs balance.
@@ -333,8 +334,8 @@ to 175.
     full walk, a sum of sines started at a new point on every step-on.
   - Up/Down push back with `BALANCE_CORRECT` (6), against a little damping (0.6/s).
   - A landing adds a wobble in proportion to its speed.
-  - Past `BALANCE_FALL_DEG` (35) she is off. The branch lets her drop through for 20 ticks, and
-    the event carries which side she fell.
+  - Past `BALANCE_FALL_DEG` (35) she goes over, and the event carries which side she fell.
+    (Step 1 dropped her through; step 2 turned that into the catch.)
 - **`BALANCE_CORRECT` sized so a lean is always recoverable.** A full press beats the worst drift
   plus the lean's pull right up to 35 degrees, so a fall is always a reaction problem, never the
   numbers. At 4.0, a full-speed walk past 14 degrees was lost whatever you did.
@@ -358,8 +359,39 @@ to 175.
 - **In the game** the same late player crosses the low branch stump to stump (worst lean 26
   degrees), and left alone she falls after 1.5 s.
 
-Next: step 2, the catch - past the limit she grabs the branch and hangs, and climbs back up -
-then the composite animation above, and a branch that sags under her (the spring plants' spring).
+**Step 2, the catch: BUILT 2026-09-26.** Going over is not a fall.
+
+- **The catch.** Past the limit she grabs the branch and hangs below it. It's the ledge's
+  `MODE_HANG`, with `Stage::hang_branch` remembered in place of a block. Her hands sit
+  `BRANCH_HANG_DROP` (the ledge's 0.31) below the line, held `BRANCH_HANG_INSET` (0.4) inside
+  either end.
+- **From the hang.** Jump climbs back up: the ledge's `MODE_CLIMB`, path and all, since the rise
+  is the same, carried `LEDGE_CLIMB_INSET` along the branch the way she faces. She stands balancing
+  again from upright, on a fresh drift. Down lets go.
+- **Caught in the air too,** like a ledge: falling, her hands within the ledge's band of the line,
+  Down not held. A drop through with Down starts the grab cooldown, so she doesn't catch it again
+  on the way past.
+- **The animation.** A branch hang plays `Hanging_Rope` (`ArcherAnimParams::f_free_hang`): both
+  hands over the top, feet loose. There's no wall to brace on, so not `Hanging_Braced`. The climb
+  plays `Climb`, which reads well enough as a pull-up over it.
+- **Room to hang.** The hang needs her height plus the drop under the branch, 2.11. At 2.0 the low
+  branch put her feet 0.11 into the ground, so it went up to 2.6. stage_test now checks every
+  branch in every level has that room along its whole length.
+- **Tests.** TestBranchCatch covers: pushed over, she hangs and stays still; Jump climbs back to
+  standing on it, upright, and balancing resumes; Down lets go to the ground without a re-catch; a
+  jump that comes up short of a 4.2 branch catches it, but not with Down held; a tap of Down drops
+  through without a catch. In the game, the hang holds her feet 0.49 clear of the ground and the
+  climb ends standing on the branch at 2.60.
+- **`BALANCE_DROP_TICKS` and `branch_drop_ticks` are gone:** nothing drops her through any more.
+- **No jumping off a branch** (added after playing it: she could hop across instead of balancing).
+  Jumping ONTO one is fine. On one, a press does nothing and isn't buffered, so a press just
+  before touching down doesn't fire on touchdown either. Walking off a branch's end gives no
+  coyote grace. From the stump or ledge at its end she jumps as ever. The hang's Jump still
+  climbs. stage_test checks all four.
+
+Next: the composite animation above (and a proper branch hang and pull-up, when those clips
+exist), shimmying along while hanging, and a branch that sags under her (the spring plants'
+spring).
 
 ---
 
@@ -393,5 +425,5 @@ then the composite animation above, and a branch that sags under her (the spring
 |---|---|---|
 | 1 | Tree with arms | blockout BUILT 2026-09-26 (right of the main level); mesh next |
 | 2 | Bounce pad, leaf | blockout BUILT 2026-09-26 (past the tree, x 105..133); meshes and animation next |
-| 3 | Branch and balance | step 1 BUILT 2026-09-26 (rules, gauge, two branches past the canopy); the catch and the animation next |
+| 3 | Branch and balance | steps 1-2 BUILT 2026-09-26 (rules, gauge, two branches past the canopy, the catch and climb back up); the animation next |
 | 4 | Pegs, rope arrows, arrow cuts, wind | ideas |

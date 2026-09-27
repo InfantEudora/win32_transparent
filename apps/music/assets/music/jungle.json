@@ -1,0 +1,32 @@
+{
+    "name": "jungle",
+    "root": "A",
+    "mode": "pentatonic_minor",
+    "bpm": 60,
+    "tension_max": 0.35,
+
+    "beds": [
+        {"name": "jungle",       "sample": "sound/jungle.wav",           "gain_calm": 0.55, "gain_tense": 0.15, "root": "C#4", "degree": 3},
+        {"name": "wind",         "sample": "sound/desert_wind.wav",      "gain_calm": 0.25, "gain_tense": 0.50},
+        {"name": "flute loop",   "sample": "sound/flute_rain_loop.wav",  "gain_calm": 0.25, "gain_tense": 0.00, "root": "A3", "degree": 0},
+        {"name": "eery drone",   "sample": "sound/eery_E4.wav",          "gain_calm": 0.08, "gain_tense": 0.35, "root": "E4", "degree": 7},
+        {"name": "violin drone", "sample": "sound/violin_B3.wav",        "gain_calm": 0.10, "gain_tense": 0.22, "root": "B3", "degree": 0},
+        {"name": "low strings",  "sample": "sound/suspense_strings.wav", "gain_calm": 0.00, "gain_tense": 0.45, "root": "E1", "degree": 7}
+    ],
+
+    "voices": [
+        {"name": "kalimba",      "sample": "sound/kalimba_G3.wav",   "root": "G3",  "low": "D3",  "high": "G4",
+         "density_calm": 0.35, "density_tense": 0.15, "gain": 0.45, "spread": 0.4},
+        {"name": "kalimba low",  "sample": "sound/kalimba_Fs3.wav",  "root": "F#3", "low": "A2",  "high": "E3",
+         "density_calm": 0.12, "density_tense": 0.08, "gain": 0.40, "spread": 0.2, "offbeat": 0.1},
+        {"name": "pan flute",    "sample": "sound/panflute_Gs3.wav", "root": "G#3", "low": "E3",  "high": "E4",
+         "density_calm": 0.08, "density_tense": 0.12, "gain": 0.35, "length_beats": 3, "release_s": 0.8, "offbeat": 0.0},
+        {"name": "high flute",   "sample": "sound/flute_Fs5.wav",    "root": "F#5", "low": "C#5", "high": "A5",
+         "density_calm": 0.03, "density_tense": 0.08, "gain": 0.25, "length_beats": 6, "release_s": 1.5, "offbeat": 0.0}
+    ],
+
+    "stingers": [
+        {"name": "scare 1", "sample": "sound/scare_1.wav", "gain": 0.7},
+        {"name": "scare 2", "sample": "sound/scare_2.wav", "gain": 0.7}
+    ]
+}

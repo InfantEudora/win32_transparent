@@ -15,3 +15,10 @@ __pycache__/
 
 #Per-app build output (apps/<name>/build/) and the shared core objects.
 build/
+
+#The music bench's wavs are GENERATED from apps/music/samples by `make samples` in apps/music -
+#22 MB of PCM16 that the library already holds as a third of that in mp3.
+apps/music/assets/sound/*.wav
+/apps/music/samples
+/apps/music/renders
+*.rec

@@ -88,9 +88,10 @@ void SoundSystem::ReleaseVoice(SoundVoice* voice){
     if (voice->f_active){
         //Order matters: the sound reads through the ref, so the sound goes first.
         ma_sound_uninit(&voice->sound);
-        ma_audio_buffer_ref_uninit(&voice->ref);
+        if (!voice->f_stream) ma_audio_buffer_ref_uninit(&voice->ref);
         voice->f_active = false;
     }
+    voice->f_stream = false;
     voice->owner = SOUND_INVALID_HANDLE;
     voice->f_held = false;
     voice->f_keep = false;
@@ -333,6 +334,44 @@ soundhandle_t SoundSystem::Play(const char* handle_name, bool looping, float gai
     voice->f_keep = ((flags & SOUND_KEEP) != 0);
     voice->started = play_counter++;
     return voice->owner;
+}
+
+soundhandle_t SoundSystem::PlayStream(ma_data_source* source, float gain){
+    if (!f_initialised || !source){
+        return SOUND_INVALID_HANDLE;
+    }
+    SoundVoice* voice = AcquireVoice();
+    if (!voice){
+        debug->Err("No free sound voice for a stream: all %i are SOUND_KEEP voices\n",NUM_SOUND_VOICES);
+        return SOUND_INVALID_HANDLE;
+    }
+    ReleaseVoice(voice);
+
+    //The same flags as Play, for the same reason: nothing here is positional.
+    ma_result result = ma_sound_init_from_data_source(&engine, source, MA_SOUND_FLAG_NO_SPATIALIZATION,
+                                                      NULL, &voice->sound);
+    if (result != MA_SUCCESS){
+        debug->Err("ma_sound_init_from_data_source failed for a stream (%s)\n",ma_result_description(result));
+        return SOUND_INVALID_HANDLE;
+    }
+    voice->f_active = true;
+    voice->f_stream = true;
+    ma_sound_set_volume(&voice->sound,gain);
+
+    result = ma_sound_start(&voice->sound);
+    if (result != MA_SUCCESS){
+        debug->Err("ma_sound_start failed for a stream (%s)\n",ma_result_description(result));
+        ReleaseVoice(voice);
+        return SOUND_INVALID_HANDLE;
+    }
+    voice->owner = next_handle++;
+    voice->f_keep = true;
+    voice->started = play_counter++;
+    return voice->owner;
+}
+
+uint32_t SoundSystem::GetSampleRate(){
+    return f_initialised ? ma_engine_get_sample_rate(&engine) : 0;
 }
 
 void SoundSystem::Stop(soundhandle_t handle){

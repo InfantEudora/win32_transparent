@@ -19,6 +19,17 @@ static void Check(bool f_ok, const char* what){
     }
 }
 
+/*
+    The wind these checks were written against. PINNED, not the default: the default is a tuning
+    choice (it went 2.5 -> 0.5 on 2026-09-26) and at 0.5 a leaf's own flutter outruns the wind,
+    which failed checks that were about something else entirely.
+*/
+static WindParams TestWind(){
+    WindParams p;
+    p.speed = 2.5f;
+    return p;
+}
+
 static StageBlock Box(float left, float bottom, float right, float top){
     StageBlock b;
     b.x = 0.5f * (left + right);
@@ -41,7 +52,7 @@ static const float VX0 = -40.0f, VY0 = -1.0f, VX1 = 40.0f, VY1 = 20.0f;
 
 static void TestCarried(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     p.gust_strength = 0.0f;
     w.Build(StepLevel(),p);
     LeafSwarm s;
@@ -71,7 +82,7 @@ static void TestCarried(){
 
 static void TestSettle(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     p.speed = 0.0f;
     w.Build(StepLevel(),p);
     LeafSwarm s;
@@ -102,7 +113,7 @@ static void TestSettle(){
 
 static void TestLift(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     p.speed = 0.0f;
     w.Build(StepLevel(),p);
     LeafSwarm s;
@@ -139,7 +150,7 @@ static void TestLift(){
 */
 static int CountCarriedBack(float eddy_strength){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     p.gust_strength = 0.0f;
     p.wave_strength = 0.0f;
     p.eddy_strength = eddy_strength;
@@ -180,7 +191,7 @@ static void TestEddy(){
 
 static void TestRecycle(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     w.Build(StepLevel(),p);
     LeafSwarm s;
     s.params.count = 100;
@@ -217,7 +228,7 @@ static void TestRecycle(){
 */
 static void TestZoom(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     w.Build(StepLevel(),p);
     LeafSwarm s;
     s.params.density = 0.15f;
@@ -269,7 +280,7 @@ static void TestZoom(){
 
 static void TestDeterministic(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     w.Build(StepLevel(),p);
     LeafSwarm a, b;
     for (int64_t tick = 0; tick < 600; tick++){
@@ -287,7 +298,7 @@ static void TestDeterministic(){
 static void TestMainLevelCost(){
     Stage st;
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     w.Build(st.blocks,p);
     //As the app runs it: a normal view, padded 1.5, at the app's density.
     LeafSwarm s;

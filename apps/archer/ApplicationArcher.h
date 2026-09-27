@@ -18,6 +18,7 @@
 #include "WindView.h"
 #include "Leaves.h"
 #include "Streaks.h"
+#include "Fireflies.h"
 #include "RopeMesh.h"
 #include "DynamicChain.h"
 #include "Bow.h"
@@ -883,6 +884,7 @@ struct ArcherSnapshot{
     float lean_deg = 0.0f;              //Stage::lean and its rate, degrees; + away from the camera
     float lean_rate_deg = 0.0f;
     float balance_danger = 0.0f;
+    int   hang_branch = -1;             //the branch she hangs from or is climbing onto, else -1
     struct SpringPlantView{
         int   kind = 0;
         float q = 0.0f;
@@ -1702,6 +1704,38 @@ private:
     //Under wind_mutex, from UpdateWind.
     void UpdateWindStreaks(int64_t tick);
     void SetStreakUniforms();
+
+    /*
+        FIREFLIES (wind_plan.md step 6). Homes come from the foliage scatter (ScatterFoliageObjects
+        hands them over under wind_mutex), so they live on the main level where the plants are and
+        most where the plants grew in shade. Simulated and drawn like the streaks - render thread,
+        in UpdateWind, catching up the ticks - through shaders/firefly.* (a hot core and a drawn
+        halo, since the engine has no bloom). FIREFLY_LIGHTS real point lights are ONE group: each
+        stands for the flies in its third of the view, at their glow-weighted centre, brightening
+        with their flashes (Fireflies::LightGroup), smoothed so a flash swells rather than blinks.
+    */
+    enum{ FIREFLY_LIGHTS = 3 };
+    FireflySwarm firefly_swarm;
+    std::atomic<bool> f_fireflies{true};
+    Object*   firefly_object = NULL;
+    Mesh*     firefly_mesh = NULL;
+    Shader*   firefly_shader = NULL;
+    int       firefly_shader_index = -1;
+    int64_t   firefly_last_tick = -1;
+    PointLight* firefly_lights[FIREFLY_LIGHTS] = {};
+    float     firefly_light_level[FIREFLY_LIGHTS] = {};     //smoothed intensity per light
+    float     firefly_light_gain = 1.2f;                    //panel
+    float     firefly_glow_size = 0.9f;                     //panel; the quad across at full flash
+    float     firefly_halo = 0.75f;                         //panel; the halo's strength
+    std::vector<FireflyVertex> firefly_quads;
+    std::vector<vertex> firefly_vertices;
+    std::vector<FireflyLight> firefly_group;
+    void BuildFireflies();
+    //Under wind_mutex, from UpdateWind.
+    void UpdateFireflies(int64_t tick);
+    void SetFireflyUniforms();
+    //For archer_wind. Hold wind_mutex.
+    json FireflySummary();
     //Measured every tick on the rope, -1 off it. World units.
     float   rope_joint_gap = -1.0f;         //red to blue
     float   rope_hands_off = -1.0f;         //red to the point between the yellows

@@ -139,6 +139,21 @@ public:
                        float start_seconds = 0.0f);
 
     /*
+        Plays audio that is MADE rather than loaded: any miniaudio data source the caller owns -
+        music being generated, a synthesiser - on a kept voice, until Stop.
+
+        The caller owns `source` and must keep it alive until Stop has returned; the voice reads
+        it on miniaudio's mixer thread, so the source's read callback has to be safe to call from
+        there. Its format is whatever it reports - use GetSampleRate to produce at the device's
+        own rate and skip a resample. Always SOUND_KEEP: a generated stream stolen for a
+        footstep would fall silent and never come back.
+    */
+    soundhandle_t PlayStream(ma_data_source* source, float gain = 1.0f);
+
+    //The device's sample rate, 0 before a successful Initialise.
+    uint32_t GetSampleRate();
+
+    /*
         Where a registered sound is loudest: the start, in seconds, of its loudest `window` (RMS
         over every channel). For lining a sound's moment up with a game's - measured off the file
         rather than typed, so a re-cut sound re-measures itself. -1 for a name not registered.
@@ -197,6 +212,7 @@ private:
         soundhandle_t owner = SOUND_INVALID_HANDLE;
         bool f_keep = false;
         bool f_held = false;                    //stopped by SetPaused, and to be restarted by it
+        bool f_stream = false;                  //reads a caller's data source; `ref` is unused
         uint64_t started = 0;                   //play counter at start, so "oldest" is answerable
     };
 

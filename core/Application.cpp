@@ -109,6 +109,36 @@ static bool HasCommandLineFlag(const char* flag){
     return false;
 }
 
+/*
+    The value after `flag` on the command line, as "--flag value" or "--flag=value". The same
+    whole-argument rule as HasCommandLineFlag, so "--mcp-port" does not match "--mcp-portal".
+*/
+static bool CommandLineValue(const char* flag, std::string& out){
+#ifdef _WIN32
+    const char* line = GetCommandLineA();
+    size_t len = strlen(flag);
+    for (const char* p = line ? strstr(line,flag) : NULL; p; p = strstr(p + 1,flag)){
+        bool f_starts = (p == line) || isspace((unsigned char)p[-1]);
+        const char* v = p + len;
+        if (!f_starts || !(*v == '=' || isspace((unsigned char)*v))){
+            continue;
+        }
+        v++;
+        while (isspace((unsigned char)*v)) v++;
+        const char* end = v;
+        while (*end && !isspace((unsigned char)*end)) end++;
+        if (end == v){
+            return false;
+        }
+        out.assign(v,end);
+        return true;
+    }
+#else
+    (void)flag; (void)out;
+#endif
+    return false;
+}
+
 void Application::Start(void){
     //Create a main window
     //The app's own name in the title bar - see Application::app_name, which a subclass sets in
@@ -150,6 +180,27 @@ void Application::Start(void){
 #endif
     if (f_start_minimized){
         debug->Info("Started minimised and unfocused (--minimized)\n");
+    }
+
+    /*
+        --mcp-port N: bind the MCP server somewhere other than 8765.
+
+        Every app binds the same port by default, and a second one started while the first runs
+        comes up looking perfectly healthy while its server silently fails to bind - so a tool
+        call meant for it lands in the FIRST app. That made "one app at a time" a hard rule, and
+        it is exactly the rule that gets broken when a person is playing one game and an agent
+        wants to drive another. With this, the agent starts its app on a port of its own and
+        both carry on.
+    */
+    std::string port;
+    if (CommandLineValue("--mcp-port",port)){
+        int p = atoi(port.c_str());
+        if (p > 0 && p < 65536){
+            mcp_port = p;
+            debug->Info("MCP server will use port %i (--mcp-port)\n",mcp_port);
+        }else{
+            debug->Warn("--mcp-port '%s' is not a port number - keeping %i\n",port.c_str(),mcp_port);
+        }
     }
 
     //Keyboard and mouse acquisition onto its own thread, before anything starts reading input.

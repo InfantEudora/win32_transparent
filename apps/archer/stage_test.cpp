@@ -2440,7 +2440,7 @@ static void TestBoulders(){
     for (size_t i = 0; i < rocks.size(); i++){
         const Boulder& b = rocks[i];
         float r = params.radius[b.kind] * b.scale;
-        (b.kind == BOULDER_BIG) ? bigs++ : smalls++;
+        (b.kind == BOULDER_BIG_1) ? bigs++ : smalls++;
         if (b.z + r > params.z_front_max + 0.001f){
             bad_depth++;
         }
@@ -2459,7 +2459,7 @@ static void TestBoulders(){
                 nearest = fminf(nearest,fabsf(b.x - corners[k].x));
             }
         }
-        if (nearest > params.radius[BOULDER_BIG] * params.big_scale_max * 2.0f + params.small_reach + 0.5f){
+        if (nearest > params.radius[BOULDER_BIG_1] * params.big_scale_max * 2.0f + params.small_reach + 0.5f){
             far_from_wall++;
         }
     }
@@ -4007,16 +4007,19 @@ static void TestBranch(){
     Check(idle.branch_on == 1 && idle.f_on_ground,"a drop onto the low branch stands her on it");
     int fell = -1;
     float side = 0.0f;
+    bool f_caught = false;
     for (int i = 0; i < 900 && fell < 0; i++){
         StageEvents e;
         idle.Tick(ArcherInput(),e);
-        if (e.f_lost_balance){ fell = i; side = e.fall_side; }
+        if (e.f_lost_balance){ fell = i; side = e.fall_side; f_caught = e.f_caught_branch; }
     }
     snprintf(d,sizeof(d),"fell after %d ticks, to side %+.0f",fell,side);
     Check(fell >= 60 && fell < 360,"left alone she goes over - not at once, but within six seconds",d);
-    Settle(idle);
-    snprintf(d,sizeof(d),"ended on %.2f",idle.pos.y - ARCHER_HALF_H);
-    Check(fabsf(idle.pos.y - ARCHER_HALF_H) < 0.01f,"and falls through the branch to the ground",d);
+    snprintf(d,sizeof(d),"mode %d, branch %d, hands %.3f below the line (want %.3f), caught %d",idle.mode,
+             idle.hang_branch,low.a.y - (idle.pos.y + ARCHER_HALF_H),BRANCH_HANG_DROP,f_caught ? 1 : 0);
+    Check(f_caught && idle.mode == MODE_HANG && idle.hang_branch == 1 &&
+          fabsf(low.a.y - (idle.pos.y + ARCHER_HALF_H) - BRANCH_HANG_DROP) < 0.001f,
+          "and catches the branch as she goes, hanging below it",d);
 
     //Walking at full speed goes over sooner than standing, on average over eight drifts - any one
     //drift can happen to push against the walk's.
@@ -4115,6 +4118,209 @@ static void TestBranch(){
     DropOnto(soft,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.05f);
     snprintf(d,sizeof(d),"lean rate after the landing %.3f; after stepping on %.3f",fabsf(hard.lean_rate),fabsf(soft.lean_rate));
     Check(fabsf(hard.lean_rate) > fabsf(soft.lean_rate) + 0.3f,"a hard landing on it knocks her off balance more than stepping on",d);
+}
+
+/*
+    THE CATCH (plant_mechanics_plan.md 3, step 2): going over hangs her from the branch. From the
+    hang Jump climbs her back up onto it - balancing again, from upright - and Down lets go. A branch
+    is caught in the air like a ledge, and a drop through one with Down is not caught on the way.
+*/
+static void TestBranchCatch(){
+    printf("\nthe branches: the catch\n");
+    char d[220];
+    Stage s;
+    if (s.branches.size() < 2){
+        Check(false,"the main level has two branches");
+        return;
+    }
+    const StageBranch low = s.branches[1];
+
+    //Every branch in every level has room to hang under it, the whole way along: the hanging body
+    //box, at every point she could catch it, clear of every block.
+    for (int level = 0; level < STAGE_LEVEL_COUNT; level++){
+        Stage lv;
+        lv.SetLevel(level);
+        for (size_t i = 0; i < lv.branches.size(); i++){
+            const StageBranch& br = lv.branches[i];
+            float worst = 1e9f;
+            for (float x = br.a.x + BRANCH_HANG_INSET; x <= br.b.x - BRANCH_HANG_INSET + 1e-4f; x += 0.05f){
+                float top = br.SurfaceY(x) - BRANCH_HANG_DROP;       //the hanging box's top
+                float bottom = top - ARCHER_HALF_H * 2.0f;
+                for (const StageBlock& b : lv.blocks){
+                    if (!b.f_alive || b.kind == BLOCK_PLATFORM || x + ARCHER_HALF_W <= b.Left() || x - ARCHER_HALF_W >= b.Right()){
+                        continue;
+                    }
+                    if (b.Bottom() >= top){
+                        continue;       //above the hang, not under it
+                    }
+                    float clear = bottom - b.Top();
+                    if (clear < worst){ worst = clear; }
+                }
+            }
+            snprintf(d,sizeof(d),"level %d branch %d: the hanging feet clear the blocks below by %.2f",level,(int)i,worst);
+            Check(worst >= 0.0f,"there is room to hang under the branch, the whole way along",d);
+        }
+    }
+
+    //Over she goes, pushed: Up held until she catches.
+    Stage h;
+    DropOnto(h,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.3f);
+    ArcherInput up;
+    up.aim_axis = 1.0f;
+    for (int i = 0; i < 200 && h.mode != MODE_HANG; i++){
+        Run(h,1,up);
+    }
+    Check(h.mode == MODE_HANG && h.hang_branch == 1,"pushed over, she hangs from the branch");
+    float hang_x = h.pos.x;
+    float hang_y = h.pos.y;
+    Run(h,120,ArcherInput());
+    snprintf(d,sizeof(d),"moved (%.3f, %.3f)",h.pos.x - hang_x,h.pos.y - hang_y);
+    Check(h.mode == MODE_HANG && fabsf(h.pos.x - hang_x) < 1e-4f && fabsf(h.pos.y - hang_y) < 1e-4f,
+          "and stays hanging, still, for as long as nothing is pressed",d);
+
+    //Jump: back up, standing on it, balancing again.
+    Stage c = h;
+    ArcherInput jump;
+    jump.f_jump_pressed = true;
+    jump.f_jump_down = true;
+    StageEvents e;
+    c.Tick(jump,e);
+    Check(c.mode == MODE_CLIMB,"Jump starts the climb back up");
+    bool f_climbed = false;
+    for (int i = 0; i < LEDGE_CLIMB_TICKS + 5 && !f_climbed; i++){
+        StageEvents ce;
+        c.Tick(ArcherInput(),ce);
+        f_climbed = ce.f_climbed;
+    }
+    snprintf(d,sizeof(d),"mode %d, on branch %d, feet %.3f on a %.3f line, x %.2f from %.2f, lean %.2f",c.mode,
+             c.branch_on,c.pos.y - ARCHER_HALF_H,low.SurfaceY(c.pos.x),c.pos.x,hang_x,c.lean);
+    Check(f_climbed && c.mode == MODE_GROUND && c.branch_on == 1 &&
+          fabsf(c.pos.y - ARCHER_HALF_H - low.SurfaceY(c.pos.x)) < 0.01f && fabsf(c.lean) < 1e-4f,
+          "and she stands on it again, upright",d);
+    Run(c,2,ArcherInput());
+    snprintf(d,sizeof(d),"on branch %d, balance ticks %d, lean rate %.3f",c.branch_on,c.balance_ticks,c.lean_rate);
+    Check(c.branch_on == 1 && c.balance_ticks > 0,"balancing again - the lean runs from there",d);
+
+    //Down: lets go, to the ground below, and is not caught again on the way.
+    Stage let = h;
+    ArcherInput down;
+    down.f_down_held = true;
+    Run(let,1,down);
+    bool f_recaught = false;
+    for (int i = 0; i < 120 && !let.f_on_ground; i++){
+        StageEvents le;
+        let.Tick(ArcherInput(),le);
+        f_recaught = f_recaught || le.f_caught_branch;
+    }
+    snprintf(d,sizeof(d),"ended on %.2f, caught again %d",let.pos.y - ARCHER_HALF_H,f_recaught ? 1 : 0);
+    Check(!f_recaught && let.f_on_ground && fabsf(let.pos.y - ARCHER_HALF_H) < 0.01f,"Down lets go, to the ground",d);
+
+    //Caught in the air: a branch at 4.2 over open ground, above her feet's reach and under her hands'.
+    Stage air;
+    air.branches.push_back({ v2(10.0f,4.2f), v2(13.5f,4.2f) });
+    int test_branch = (int)air.branches.size() - 1;
+    DropOnto(air,11.75f,0.1f);
+    bool f_air_caught = false;
+    ArcherInput hop;
+    hop.f_jump_pressed = true;
+    hop.f_jump_down = true;
+    for (int i = 0; i < 90 && !f_air_caught; i++){
+        StageEvents ae;
+        air.Tick(hop,ae);
+        hop.f_jump_pressed = false;
+        f_air_caught = ae.f_caught_branch;
+    }
+    snprintf(d,sizeof(d),"caught %d, branch %d, hands %.3f below the line",f_air_caught ? 1 : 0,air.hang_branch,
+             4.2f - (air.pos.y + ARCHER_HALF_H));
+    Check(f_air_caught && air.mode == MODE_HANG && air.hang_branch == test_branch,
+          "a jump that comes up short of a branch catches it, as it would a ledge",d);
+    Stage miss;
+    miss.branches.push_back({ v2(10.0f,4.2f), v2(13.5f,4.2f) });
+    DropOnto(miss,11.75f,0.1f);
+    ArcherInput hop_down = jump;
+    hop_down.f_down_held = true;
+    bool f_miss_caught = false;
+    for (int i = 0; i < 90; i++){
+        StageEvents me;
+        miss.Tick(hop_down,me);
+        hop_down.f_jump_pressed = false;
+        f_miss_caught = f_miss_caught || me.f_caught_branch;
+    }
+    Check(!f_miss_caught,"not with Down held");
+
+    //No jumping off a branch: a press on it, a press buffered just before landing on it, and a
+    //press in the grace ticks after walking off its end all do nothing.
+    {
+        Stage j;
+        DropOnto(j,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.3f);
+        StageEvents je;
+        j.Tick(jump,je);
+        bool f_jumped = je.f_jumped;
+        Run(j,10,ArcherInput());
+        snprintf(d,sizeof(d),"jumped %d, on branch %d, feet %.2f",f_jumped ? 1 : 0,j.branch_on,j.pos.y - ARCHER_HALF_H);
+        Check(!f_jumped && j.branch_on == 1,"Jump does nothing while she balances on a branch",d);
+
+        Stage b;
+        b.pos = v2((low.a.x + low.b.x) * 0.5f,low.a.y + 1.5f + ARCHER_HALF_H);
+        b.mode = MODE_AIR;
+        bool f_buffered_jump = false;
+        bool f_pressed = false;
+        for (int i = 0; i < 60 && !(b.f_on_ground && i > 20); i++){
+            ArcherInput in;
+            //Pressed a few ticks before touching down, inside the jump buffer.
+            if (!f_pressed && b.pos.y - ARCHER_HALF_H - low.a.y < 0.5f){
+                in.f_jump_pressed = true;
+                in.f_jump_down = true;
+                f_pressed = true;
+            }
+            StageEvents be;
+            b.Tick(in,be);
+            f_buffered_jump = f_buffered_jump || be.f_jumped;
+        }
+        snprintf(d,sizeof(d),"pressed %d, jumped %d, on branch %d",f_pressed ? 1 : 0,f_buffered_jump ? 1 : 0,b.branch_on);
+        Check(f_pressed && !f_buffered_jump && b.branch_on == 1,"nor does one pressed just before landing on it",d);
+
+        //Off the end of a branch that ends in the air - the test one at 4.2 - then Jump at once.
+        Stage end;
+        end.branches.push_back({ v2(10.0f,4.2f), v2(13.5f,4.2f) });
+        DropOnto(end,12.8f,4.5f);
+        ArcherInput right;
+        right.move_axis = 1.0f;
+        bool f_end_jump = false;
+        bool f_off = false;
+        for (int i = 0; i < 60 && !f_off; i++){
+            StageEvents ee;
+            end.Tick(right,ee);
+            f_off = !end.f_on_ground;
+        }
+        ArcherInput jr = jump;
+        jr.move_axis = 1.0f;
+        StageEvents ee;
+        end.Tick(jr,ee);
+        f_end_jump = ee.f_jumped;
+        snprintf(d,sizeof(d),"walked off %d, jumped %d",f_off ? 1 : 0,f_end_jump ? 1 : 0);
+        Check(f_off && !f_end_jump,"nor one in the grace ticks after walking off its end",d);
+
+        //And off it, onto the stump, she jumps as ever.
+        Stage stump;
+        DropOnto(stump,low.b.x + 1.0f,low.b.y + 0.2f);
+        StageEvents se;
+        stump.Tick(jump,se);
+        Check(se.f_jumped,"while from the stump at its end she jumps as ever");
+    }
+
+    //Standing on it, Down drops through - and is not caught on the way past.
+    Stage drop;
+    DropOnto(drop,(low.a.x + low.b.x) * 0.5f,low.a.y + 0.3f);
+    Run(drop,1,down);
+    bool f_drop_caught = false;
+    for (int i = 0; i < 120 && !(drop.f_on_ground && drop.branch_on < 0); i++){
+        StageEvents de;
+        drop.Tick(ArcherInput(),de);
+        f_drop_caught = f_drop_caught || de.f_caught_branch;
+    }
+    snprintf(d,sizeof(d),"caught %d, ended on %.2f",f_drop_caught ? 1 : 0,drop.pos.y - ARCHER_HALF_H);
+    Check(!f_drop_caught && fabsf(drop.pos.y - ARCHER_HALF_H) < 0.01f,"a tap of Down drops through it without catching it again",d);
 }
 
 /*
@@ -5194,6 +5400,7 @@ int main(void){
     TestSpringPlants();
     TestSpringPump();
     TestBranch();
+    TestBranchCatch();
     TestLandingForecast();
     TestArrowForecast();
     TestRopeMesh();

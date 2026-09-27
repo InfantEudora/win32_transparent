@@ -102,7 +102,7 @@ void Stage::Reset(){
     prev_aim_axis = 0.0f;
     spring_boost_seen = 0.0f;
     branch_on = -1;
-    branch_drop_ticks = 0;
+    hang_branch = -1;
     lean = 0.0f;
     lean_rate = 0.0f;
     balance_ticks = 0;
@@ -269,18 +269,21 @@ void Stage::BuildMainLevel(){
         THE BRANCHES, blocked out (plant_mechanics_plan.md, section 3): a balance walk, twice.
 
         The high one runs from the canopy's right end down to a perch, 12 long and 0.6 down: the
-        one to cross. The low one is for practice, 2.0 up between two stumps, so falling off costs
-        a step down - she can jump onto either stump from the ground, and back onto the branch
-        from either stump.
+        one to cross. The low one is for practice, 2.6 up between two stumps, so going over costs
+        little - she can jump onto either stump or the branch itself from the ground (3.2 of rise).
+
+        NO LOWER THAN 2.6, because going over HANGS her from it (BRANCH_HANG_DROP), and the hang
+        needs her height plus the drop under it: 2.11. At 2.0 her feet went 0.11 into the ground.
+        stage_test checks every branch has that room.
 
         stage_test (TestBranch) walks both with a player that reacts late, as a person does, and
         checks that doing nothing gets her off.
     */
     branches.push_back({ v2(133.00f,13.00f), v2(145.00f,12.40f) });
     blocks.push_back({ 148.50f, 12.00f,  3.50f, 0.40f, BLOCK_SOLID,  true });   //perch, x 145..152, top 12.4
-    blocks.push_back({ 156.00f,  1.00f,  1.00f, 1.00f, BLOCK_SOLID,  true });   //stump, x 155..157, top 2.0
-    blocks.push_back({ 169.00f,  1.00f,  1.00f, 1.00f, BLOCK_SOLID,  true });   //stump, x 168..170, top 2.0
-    branches.push_back({ v2(157.00f,2.00f), v2(168.00f,2.00f) });
+    blocks.push_back({ 156.00f,  1.30f,  1.00f, 1.30f, BLOCK_SOLID,  true });   //stump, x 155..157, top 2.6
+    blocks.push_back({ 169.00f,  1.30f,  1.00f, 1.30f, BLOCK_SOLID,  true });   //stump, x 168..170, top 2.6
+    branches.push_back({ v2(157.00f,2.60f), v2(168.00f,2.60f) });
 
     //The right-hand wall, so a run to the end stops rather than falling off the world. Tall
     //enough that a jump off the canopy cannot clear it: 13.0 + 3.2 + her 1.8 is 18.0.
@@ -589,9 +592,8 @@ void Stage::TickSpringPlants(){
 /*
     Every surface under x that is not a block - see StageSurface. A plant's surface is where it was
     last tick under x_from, since it moves; the others' are simply where they are. Down drops her
-    through a plant and a branch, as through a one-way platform, and so does a branch for
-    BALANCE_DROP_TICKS after a fall - she is going past it, not onto it. Never through a ramp: that
-    is ground.
+    through a plant and a branch, as through a one-way platform. Never through a ramp: that is
+    ground.
 */
 void Stage::GatherSurfaces(float x, float x_from, bool f_down_held, std::vector<StageSurface>& out) const{
     out.clear();
@@ -610,20 +612,18 @@ void Stage::GatherSurfaces(float x, float x_from, bool f_down_held, std::vector<
             c.slope = tanf(p.kind == SPRING_LEAF ? p.q : 0.0f);     //its steepness; the sign is not used
             out.push_back(c);
         }
-        if (branch_drop_ticks <= 0){
-            for (size_t i = 0; i < branches.size(); i++){
-                const StageBranch& br = branches[i];
-                if (!br.Covers(x)){
-                    continue;
-                }
-                StageSurface c;
-                c.kind = SURFACE_BRANCH;
-                c.index = (int)i;
-                c.top = br.SurfaceY(x);
-                c.top_then = br.SurfaceY(x_from);
-                c.slope = br.Slope();
-                out.push_back(c);
+        for (size_t i = 0; i < branches.size(); i++){
+            const StageBranch& br = branches[i];
+            if (!br.Covers(x)){
+                continue;
             }
+            StageSurface c;
+            c.kind = SURFACE_BRANCH;
+            c.index = (int)i;
+            c.top = br.SurfaceY(x);
+            c.top_then = br.SurfaceY(x_from);
+            c.slope = br.Slope();
+            out.push_back(c);
         }
     }
     for (size_t i = 0; i < ramps.size(); i++){
@@ -669,6 +669,11 @@ void Stage::GatherSurfaces(float x, float x_from, bool f_down_held, std::vector<
 void Stage::CollideSurfaces(const v2& from, bool f_down_held, bool f_on_block, bool f_was_grounded,
                             StageEvents& events, bool& out_hit_floor){
     int was_on[3] = { spring_on, branch_on, ramp_on };
+    //Dropping through the branch she stood on: long enough not to catch it again on the way past,
+    //her hands crossing it a quarter of a second later.
+    if (f_down_held && was_on[SURFACE_BRANCH] >= 0){
+        grab_cooldown = LEDGE_RELEASE_COOLDOWN * 2;
+    }
     //Her fall as the blocks left it, before a surface takes it over - what a plant landing shares.
     const float fall_vel_y = vel.y;
     spring_on = -1;
@@ -852,14 +857,10 @@ float Stage::BalanceDanger() const{
     Stepping ON starts a new drift (balance_entries), and a landing knocks her by its speed, to the
     side the drift is about to push anyway - a hard landing on a branch is a wobble to catch.
 
-    Past BALANCE_FALL_DEG she is off: in the air, falling from where she stands, the branch letting
-    her through for BALANCE_DROP_TICKS. The rules are flat, so "off to the side" is a drop through;
-    which side she went is in the event, for the view.
+    Past BALANCE_FALL_DEG she goes over - and catches the branch as she does, hanging below it
+    (see BRANCH_HANG_DROP). Which side she went is in the event, for the view.
 */
 void Stage::TickBalance(const ArcherInput& in, float land_speed, StageEvents& events){
-    if (branch_drop_ticks > 0){
-        branch_drop_ticks--;
-    }
     if (!f_on_ground || branch_on < 0){
         lean = 0.0f;
         lean_rate = 0.0f;
@@ -892,15 +893,83 @@ void Stage::TickBalance(const ArcherInput& in, float land_speed, StageEvents& ev
     if (fabsf(lean) >= BALANCE_FALL_DEG * STAGE_DEG2RAD){
         events.f_lost_balance = true;
         events.fall_side = (lean > 0.0f) ? 1.0f : -1.0f;
-        branch_on = -1;
-        branch_drop_ticks = BALANCE_DROP_TICKS;
-        f_on_ground = false;
-        coyote_ticks = 0;
-        mode = MODE_AIR;
-        lean = 0.0f;
-        lean_rate = 0.0f;
-        balance_ticks = 0;
+        EnterBranchHang(branch_on,events);
     }
+}
+
+/*
+    The air catch - FindGrabbableLedge's rule for a branch: falling (or all but), her hands within
+    the ledge's band of the line, and far enough inside its ends for both hands. From above she
+    lands on it long before her hands come near, so in practice this is a jump that comes up
+    short of standing on one.
+*/
+int Stage::FindCatchableBranch() const{
+    if (f_on_ground || vel.y > LEDGE_GRAB_MAX_RISE || grab_cooldown > 0){
+        return -1;
+    }
+    float hands = pos.y + ARCHER_HALF_H;
+    for (size_t i = 0; i < branches.size(); i++){
+        const StageBranch& br = branches[i];
+        if (pos.x < br.a.x + BRANCH_HANG_INSET || pos.x > br.b.x - BRANCH_HANG_INSET){
+            continue;
+        }
+        float lip = br.SurfaceY(pos.x) - hands;
+        if (lip <= LEDGE_GRAB_BAND_UP && lip >= -LEDGE_GRAB_BAND_DOWN){
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+//Hands on the branch, body below it, still - the hang is a pose, as EnterHang's is.
+void Stage::EnterBranchHang(int branch, StageEvents& events){
+    if (branch < 0 || branch >= (int)branches.size()){
+        return;
+    }
+    const StageBranch& br = branches[branch];
+    mode = MODE_HANG;
+    hang_block = -1;
+    hang_branch = branch;
+    pos.x = ClampF(pos.x,br.a.x + BRANCH_HANG_INSET,br.b.x - BRANCH_HANG_INSET);
+    pos.y = br.SurfaceY(pos.x) - ARCHER_HALF_H - BRANCH_HANG_DROP;
+    vel = v2(0.0f,0.0f);
+    f_on_ground = false;
+    branch_on = -1;
+    coyote_ticks = 0;
+    buffer_ticks = 0;
+    bow_mode = BOW_IDLE;
+    draw_ticks = 0;
+    lean = 0.0f;
+    lean_rate = 0.0f;
+    balance_ticks = 0;
+    events.f_caught_branch = true;
+}
+
+/*
+    Hanging from a branch. Jump pulls her up onto it, LEDGE_CLIMB_INSET along it the way she faces
+    - the ledge's climb, path and all, since the rise from this hang to standing is the same - and
+    she is balancing again the moment she stands. Down lets go.
+*/
+void Stage::TickBranchHang(const ArcherInput& in, StageEvents& events){
+    if (hang_branch < 0 || hang_branch >= (int)branches.size()){
+        ReleaseHang(events);
+        return;
+    }
+    const StageBranch& br = branches[hang_branch];
+    if (in.f_jump_pressed){
+        mode = MODE_CLIMB;
+        climb_ticks = LEDGE_CLIMB_TICKS;
+        climb_from = pos;
+        float x = ClampF(pos.x + facing * LEDGE_CLIMB_INSET,br.a.x + ARCHER_HALF_W,br.b.x - ARCHER_HALF_W);
+        climb_to = v2(x,br.SurfaceY(x) + ARCHER_HALF_H + STAGE_EPS);
+        return;
+    }
+    if (in.f_down_held){
+        ReleaseHang(events);
+        return;
+    }
+    pos.y = br.SurfaceY(pos.x) - ARCHER_HALF_H - BRANCH_HANG_DROP;
+    vel = v2(0.0f,0.0f);
 }
 
 void Stage::SetLevel(int new_level){
@@ -1380,7 +1449,19 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     if (in.f_jump_pressed){
         buffer_ticks = ARCHER_JUMP_BUFFER_TICKS;
     }
-    bool f_may_jump = f_on_ground || (coyote_ticks > 0);
+    /*
+        NO JUMP OFF A BRANCH. Her feet are one in front of the other on something as thick as a
+        wrist; there is nothing to push off, and a jump would be a way out of the balance - hop
+        across instead of walking it. Landing ON one is fine. So on a branch a press does nothing
+        and is not kept for later either (a press made just before touching down would otherwise
+        fire on touchdown), and the coyote grace is not given for walking off one's end (see the
+        grace timers below). Off it again - onto a stump, a ledge - she jumps as ever.
+    */
+    bool f_balancing = f_on_ground && branch_on >= 0;
+    if (f_balancing){
+        buffer_ticks = 0;
+    }
+    bool f_may_jump = !f_balancing && (f_on_ground || coyote_ticks > 0);
     if (buffer_ticks > 0 && f_may_jump){
         /*
             THE FLING: whatever she is already rising at is kept, and the jump goes on top. Off a
@@ -1491,8 +1572,9 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
     }
 
     //--- Grace timers ---------------------------------------------------------------------------
+    //None from a branch: the grace is a jump from where she just was, and there is no jump there.
     if (f_on_ground){
-        coyote_ticks = ARCHER_COYOTE_TICKS;
+        coyote_ticks = (branch_on >= 0) ? 0 : ARCHER_COYOTE_TICKS;
     }else if (coyote_ticks > 0){
         coyote_ticks--;
     }
@@ -1500,8 +1582,11 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
         buffer_ticks--;
     }
 
-    //Her balance, on a branch - which can put her in the air again, so before the ledge probe.
+    //Her balance, on a branch. Going over hangs her from it, which ends the tick as a catch does.
     TickBalance(in,events.f_landed ? events.land_speed : 0.0f,events);
+    if (mode == MODE_HANG){
+        return;
+    }
 
     /*
         The ledge probe.
@@ -1545,6 +1630,12 @@ void Stage::TickArcher(const ArcherInput& in, StageEvents& events){
                               (side > 0.0f && in.move_axis > 0.5f);
         if (block >= 0 && !f_holding_away){
             EnterHang(block,side,events);
+            return;
+        }
+        //A branch, the same way - unless Down is held, which is how a drop through one says so.
+        int branch = FindCatchableBranch();
+        if (branch >= 0 && !in.f_down_held){
+            EnterBranchHang(branch,events);
             return;
         }
     }
@@ -2412,6 +2503,7 @@ void Stage::EnterHang(int block, float side, StageEvents& events){
 void Stage::ReleaseHang(StageEvents& events){
     mode = MODE_AIR;
     hang_block = -1;
+    hang_branch = -1;
     vel = v2(0.0f,0.0f);
     //Without this, the drop re-grabs the same lip on the next tick and the archer is welded to it.
     grab_cooldown = LEDGE_RELEASE_COOLDOWN;
@@ -2419,6 +2511,10 @@ void Stage::ReleaseHang(StageEvents& events){
 }
 
 void Stage::TickHang(const ArcherInput& in, StageEvents& events){
+    if (hang_branch >= 0){
+        TickBranchHang(in,events);
+        return;
+    }
     //The ledge could have been removed underneath us - a BREAKABLE one will be, once the
     //kick-and-break slice can destroy the thing you are hanging from.
     if (hang_block < 0 || hang_block >= (int)blocks.size() || !blocks[hang_block].f_alive){
@@ -2499,6 +2595,14 @@ void Stage::TickClimb(const ArcherInput& in, StageEvents& events){
         mode = MODE_GROUND;
         f_on_ground = true;
         hang_block = -1;
+        //Up onto a branch: standing on it, and balancing again from upright.
+        if (hang_branch >= 0){
+            branch_on = hang_branch;
+            hang_branch = -1;
+            lean = 0.0f;
+            lean_rate = 0.0f;
+            balance_ticks = 0;
+        }
         //Landing on top of the thing you just climbed is not a fresh chance to grab it.
         grab_cooldown = LEDGE_RELEASE_COOLDOWN;
         events.f_climbed = true;

@@ -168,10 +168,23 @@ the `*_hold`/`*_run` tools works, because a scripted hold counts as live input w
 The person can restore the window from the taskbar to watch; that was checked too - it comes up
 at 1440x810 with no second resize, and vsync takes the frame rate back over.
 
-**Only one app at a time.** They all bind the same port, and a second app starts perfectly well
+**One app per port.** They all bind 8765 by default, and a second app starts perfectly well
 while its server silently fails to bind - so `screenshot` then returns the FIRST app's window and
 nothing looks wrong. A screenshot showing the wrong game is this, every time. `netstat -ano | grep
 8765` names the process actually holding it.
+
+**`--mcp-port N` moves an app to a port of its own** (every app, no per-app code), so an agent can
+drive one app while the person plays another instead of stopping theirs:
+
+```bash
+./build/music_nophysics.exe --minimized --mcp-port 8767 2>stderr.log &
+```
+
+The log confirms it (`MCP server listening on http://127.0.0.1:8767/mcp`). The session's native
+MCP tools are wired to 8765, so an app on another port is driven over plain HTTP - `curl -s -X
+POST http://127.0.0.1:8767/mcp -H "Content-Type: application/json" -d
+'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}'`.
+Skip 8766, which is the lock broker's.
 
 **Use `127.0.0.1`, never `localhost`.** The server binds IPv4 only, deliberately; where `localhost`
 resolves to `::1` first, every call pays a failed IPv6 connect — measured at 2,058 ms against

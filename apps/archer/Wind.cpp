@@ -195,11 +195,15 @@ void WindField::BuildDistance(const std::vector<StageBlock>& obstacles){
             for (const StageBlock& b : obstacles){
                 d = fminf(d,BoxDistance(x,y,b));
             }
-            //The bottom row is ground whatever is there - a pit with no floor gets one, which
-            //is what the air above it would feel anyway.
-            if (j == 0){
-                d = fminf(d,0.0f);
-            }
+            /*
+                The bottom row is ground whatever is there - a pit with no floor gets one, which is
+                what the air above it would feel anyway. As a PLANE in the distance field, not just
+                a row forced solid: forcing only the row left the distance jumping from ~1.5 to 0 in
+                the last half-unit over a pit's floor, and the wall ramp turned that jump into 10
+                units/s along the floor of the main level's gap (the terrain's rule: a field that is
+                sampled for its gradient must be continuous).
+            */
+            d = fminf(d,y - y0);
             dist[Index(i,j)] = d;
             solid[Index(i,j)] = (d <= 0.0f) ? 1 : 0;
         }
@@ -532,7 +536,25 @@ void WindField::CornerEddies(const WindCorner& c, int dir, int64_t tick, WindEdd
         thin sheet of fast flow along that wall: 21 units/s in a 2.5 wind on the main level. So
         each fades out as the space around its centre drops below its own radius.
     */
-    //Measured against the vertical radius: the long axis runs along the ground by design.
+    /*
+        And ROOM ALONG IT. The long axis runs along the ground by design, but in a pit narrower
+        than the ellipse it runs into the far wall - the main level's 4.5-wide gap put 6.5x the
+        wind along the pit floor. So each is shortened toward a circle until the points one long
+        radius ahead of and behind its centre are clear, before the height check below.
+    */
+    for (int k = 0; k < WIND_EDDIES_PER_CORNER; k++){
+        float r = out[k].radius;
+        while (out[k].stretch > 1.0f){
+            float reach = r * out[k].stretch;
+            if ((Sample(dist,out[k].x + reach,out[k].y) > 0.25f * r) &&
+                (Sample(dist,out[k].x - reach,out[k].y) > 0.25f * r)){
+                break;
+            }
+            out[k].stretch = fmaxf(out[k].stretch - 0.25f,1.0f);
+        }
+    }
+
+    //Measured against the vertical radius.
     for (int k = 0; k < WIND_EDDIES_PER_CORNER; k++){
         float room = Sample(dist,out[k].x,out[k].y);
         out[k].strength *= Smooth01(0.25f * out[k].radius,out[k].radius,room);

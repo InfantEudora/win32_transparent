@@ -1,6 +1,6 @@
 ---
 name: wind-system-plan
-description: "archer wind: 2D stream-function field built from the blocks (Wind.{h,cpp}) + debug view (WindView, archer_wind MCP) BUILT 2026-09-26; foliage + vine-leaf sway and drifting leaves (Leaves.cpp, 150% padded, by density) + streaks (Streaks.cpp) BUILT; next fireflies; leaves/grass lead the look, she is NOT pushed; plan in apps/archer/wind_plan.md"
+description: "archer wind: 2D stream-function field built from the blocks (Wind.{h,cpp}) + debug view (WindView, archer_wind MCP) BUILT 2026-09-26; foliage + vine-leaf sway and drifting leaves (Leaves.cpp, 150% padded, by density) + streaks + fireflies with a 3-light group BUILT; only clouds (step 7) left; leaves/grass lead the look, she is NOT pushed; plan in apps/archer/wind_plan.md"
 metadata:
   node_type: memory
   type: project
@@ -40,6 +40,12 @@ Leaves respawn on the side OPPOSITE the one they left by.
 STREAKS BUILT 2026-09-26: Streaks.{h,cpp} + streaks_test; render-thread sim in UpdateWind, custom
 shader assets/shaders/wind_streak.*, alpha in normal.x. Leaf swarm now density-based over the view
 padded 150% (user asked; the plant grid stays 25% since it is rebuilt every frame).
+
+FIREFLIES BUILT 2026-09-26: Fireflies.{h,cpp} + fireflies_test; homes = foliage plants weighted by
+occlusion; pulse-coupled flashing (sync); render-thread sim + custom shader firefly.*; 3 PointLights
+via LightGroup (brightness = gain*sqrt(glow), since point brightness is applied twice). Pit floor is
+now a plane in the distance field (was a jet). Wind default speed is 0.5 (user's tuning) - tests pin
+2.5 via TestWind().
 
 **Why:** the user wants visuals that tie into gameplay later; a deterministic field can move into
 Stage when the balance mechanic needs it.

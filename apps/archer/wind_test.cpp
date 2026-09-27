@@ -124,7 +124,8 @@ static void TestWalls(){
     }
     printf("  worst flow INTO a surface, 0.05 off it, away from corners: %.3f (speed 2.5)\n",worst);
     //0.05 off a wall is a twentieth of the way up the ramp, where the eddies' own flow is not quite
-    //zero yet: measured 0.151, 6% of the wind. The check is that it stays at that scale.
+    //zero yet: measured 0.151 (6% of the wind) at first, 0.030 since the eddies are fitted to the
+    //room along them. The check is that it stays at that scale.
     Check(worst < 0.08f * 2.5f,"nothing blows into a surface");
 }
 

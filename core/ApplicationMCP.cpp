@@ -295,7 +295,7 @@ json Application::ReloadShadersAndWait(const std::string& name_filter, int timeo
 
 void Application::StartMCPServer(){
     MCPServer::Get()->Start();
-    MCPServer::Get()->StartHttp(8765);
+    MCPServer::Get()->StartHttp(mcp_port);      //8765 unless --mcp-port - see Application::Start
 }
 
 json Application::MaybeAttachScreenshot(json result, bool include_screenshot, bool include_ui){

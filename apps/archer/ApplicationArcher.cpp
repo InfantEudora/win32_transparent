@@ -601,7 +601,9 @@ void ApplicationArcher::Init(void){
     BuildCrateMesh();
     BuildStandMesh();
     BuildStrawManMesh();
+    #ifdef USE_IMGUI
     RegisterPlaceableProps();
+    #endif
     BuildBlocks();
     //After BuildBlocks, which it hides the melted half of - see the note on the declaration.
     BuildTerrain();
@@ -636,6 +638,7 @@ void ApplicationArcher::Init(void){
     //Only the line object here; the field itself is built the first time something reads it.
     wind_view.Init(main_scene);
     BuildWindStreaks();
+    BuildFireflies();
     BuildBackground();
     SetupLights();
     SetupCamera();
@@ -1595,6 +1598,7 @@ void ApplicationArcher::UpdateWind(){
         renderer->ClearWindField();
     }
     UpdateWindStreaks(tick);
+    UpdateFireflies(tick);
 
     if (!f_show_wind){
         if (wind_view.IsVisible()){
@@ -1827,6 +1831,128 @@ void ApplicationArcher::UpdateWindStreaks(int64_t tick){
     streak_object->SetVisibility(true);
 }
 
+//The fireflies' shader, mesh and object, and their light group. RENDER THREAD, at Init.
+void ApplicationArcher::BuildFireflies(){
+    firefly_shader = new Shader("shaders/firefly.vert","shaders/firefly.frag");
+    firefly_shader->uniform_callback = std::bind(&ApplicationArcher::SetFireflyUniforms,this);
+    firefly_shader_index = renderer->AddCustomShader(firefly_shader);
+    firefly_mesh = new Mesh();
+    firefly_mesh->num_materials = 1;
+    firefly_object = new Object();
+    firefly_object->name = "fireflies";
+    firefly_object->SetMesh(firefly_mesh);
+    firefly_object->SetPickability(false);
+    firefly_object->SetCastsShadow(false);
+    firefly_object->SetVisibility(false);
+    main_scene->AddObject(firefly_object);
+    firefly_object->UpdatePhysicsState();
+
+    for (int i = 0; i < FIREFLY_LIGHTS; i++){
+        PointLight* light = new PointLight();
+        light->name = "firefly_light." + std::to_string(i);
+        light->color = vec3(0.72f,1.0f,0.35f);
+        light->brightness = 0.0f;
+        //A glow, not a lamp: no shadow, which point lights could only get from the occluder field
+        //anyway, and a soft source.
+        light->f_casts_shadow = false;
+        light->SetPickability(false);
+        main_scene->AddObject(light);
+        firefly_lights[i] = light;
+    }
+}
+
+void ApplicationArcher::SetFireflyUniforms(){
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    firefly_shader->Setfloat("halo_strength",firefly_halo);
+}
+
+void ApplicationArcher::UpdateFireflies(int64_t tick){
+    if (!firefly_object){
+        return;
+    }
+    float x0, y0, x1, y1;
+    if (!f_fireflies || !WindViewRect(main_scene->camera,0.0f,x0,y0,x1,y1)){
+        firefly_object->SetVisibility(false);
+        for (int i = 0; i < FIREFLY_LIGHTS; i++){
+            firefly_lights[i]->brightness = 0.0f;
+            firefly_light_level[i] = 0.0f;
+        }
+        firefly_last_tick = tick;
+        return;
+    }
+    int64_t steps = (firefly_last_tick < 0) ? 1 : tick - firefly_last_tick;
+    if ((steps < 0) || (steps > 8)){
+        steps = 1;
+    }
+    for (int64_t k = steps - 1; k >= 0; k--){
+        firefly_swarm.Step(wind,tick - k,x0,y0,x1,y1);
+    }
+    firefly_last_tick = tick;
+
+    /*
+        The light group. A light's brightness goes in as the SQUARE ROOT of its flies' glow: a
+        point light's brightness is applied twice in default.frag (a long-standing quirk every
+        light is tuned around), so this makes what reaches the ground go with the glow itself.
+        Smoothed both ways, faster up than down, so a flash swells and fades rather than blinking
+        the ground. Only while something steps - a paused game holds the lights with the flies.
+    */
+    if (steps > 0){
+        firefly_swarm.LightGroup(FIREFLY_LIGHTS,x0,y0,x1,y1,firefly_group);
+        for (int i = 0; i < FIREFLY_LIGHTS; i++){
+            const FireflyLight& g = firefly_group[i];
+            float& level = firefly_light_level[i];
+            level += (g.intensity - level) * ((g.intensity > level) ? 0.25f : 0.06f);
+            PointLight* light = firefly_lights[i];
+            if (g.intensity > 0.0f){
+                vec3 at = light->GetPosition();
+                vec3 want(g.x,g.y,g.z);
+                //A light that was dark jumps to its flies; a lit one glides after them.
+                light->SetPosition((light->brightness <= 0.001f) ? want : at + (want - at) * 0.2f);
+            }
+            light->brightness = firefly_light_gain * sqrtf(fmaxf(level,0.0f));
+        }
+    }
+
+    vec3 eye = main_scene->camera->GetPosition();
+    firefly_swarm.BuildGlows(eye.x,eye.y,eye.z,firefly_glow_size,firefly_quads);
+    if (firefly_quads.empty()){
+        firefly_object->SetVisibility(false);
+        return;
+    }
+    firefly_vertices.resize(firefly_quads.size());
+    for (size_t i = 0; i < firefly_quads.size(); i++){
+        const FireflyVertex& q = firefly_quads[i];
+        vertex& v = firefly_vertices[i];
+        v.pos = vec3(q.x,q.y,q.z);
+        v.normal = vec3(q.brightness,0.0f,0.0f);     //the glow - see firefly.vert
+        v.tangent = vec3(1.0f,0.0f,0.0f);
+        v.uv = vec2(q.u,q.v);
+        v.matid = 0;
+    }
+    firefly_mesh->SetMeshData(firefly_vertices.data(),(int)firefly_vertices.size());
+    firefly_mesh->mesh_mode = MESH_MODE_SHADER;
+    firefly_mesh->custom_shader_index = firefly_shader_index;
+    firefly_object->SetVisibility(true);
+}
+
+json ApplicationArcher::FireflySummary(){
+    int home = 0, bright = 0;
+    for (const Firefly& f : firefly_swarm.flies){
+        home += (f.home >= 0);
+        bright += (f.brightness > 0.5f);
+    }
+    json lights = json::array();
+    for (int i = 0; i < FIREFLY_LIGHTS; i++){
+        if (firefly_lights[i]){
+            vec3 p = firefly_lights[i]->GetPosition();
+            lights.push_back({ {"x",p.x},{"y",p.y},{"z",p.z},{"brightness",firefly_lights[i]->brightness} });
+        }
+    }
+    return json{ {"on",f_fireflies.load()},{"count",firefly_swarm.params.count},{"at_home",home},
+                 {"flashing",bright},{"sync",firefly_swarm.params.sync},{"lights",lights} };
+}
+
 json ApplicationArcher::LeafSummary(){
     int flying = 0, resting = 0, fading = 0;
     for (const Leaf& l : leaf_swarm.leaves){
@@ -1965,6 +2091,21 @@ void ApplicationArcher::ScatterFoliageObjects(){
     for (size_t i = used; i < foliage_objects.size(); i++){
         foliage_objects[i]->SetVisibility(false);
     }
+    //The fireflies live where the plants are, most where they grew in the shade.
+    {
+        std::vector<FireflyHome> homes;
+        homes.reserve(plants.size());
+        for (const FoliagePlant& p : plants){
+            FireflyHome h;
+            h.x = p.x;
+            h.y = p.y;
+            h.z = p.z;
+            h.weight = 0.2f + 2.0f * p.occlusion;
+            homes.push_back(h);
+        }
+        std::lock_guard<std::mutex> lock(wind_mutex);
+        firefly_swarm.SetHomes(homes);
+    }
     debug->Info("Foliage: %i ferns, %i low ferns, %i flowers, %i + %i grass\n",foliage_counts[FOLIAGE_FERN],
                 foliage_counts[FOLIAGE_FERN_LOW],foliage_counts[FOLIAGE_FLOWER],
                 foliage_counts[FOLIAGE_GRASS],foliage_counts[FOLIAGE_GRASS_2]);
@@ -1973,7 +2114,7 @@ void ApplicationArcher::ScatterFoliageObjects(){
 //--- Rocks ---------------------------------------------------------------------------------------
 
 //The archer.glb node for each BoulderKind, in that enum's order.
-static const char* BOULDER_NODES[BOULDER_KIND_COUNT] = { "rock_big", "rock_small" };
+static const char* BOULDER_NODES[BOULDER_KIND_COUNT] = { "rock_big_1","rock_big_2", "rock_small_1" };
 
 void ApplicationArcher::BuildBoulders(){
     for (int k = 0; k < BOULDER_KIND_COUNT; k++){
@@ -2045,7 +2186,7 @@ void ApplicationArcher::ScatterBoulderObjects(){
         o->SetMesh(mesh);
         o->TakeMaterialNames(boulder_materials[b.kind]);
         //Big ones are big enough to be worth a shadow; the small ones are the foliage's case.
-        o->SetCastsShadow(b.kind == BOULDER_BIG);
+        o->SetCastsShadow(b.kind == BOULDER_BIG_1);
         o->SetPosition(vec3(b.x,b.y,b.z));
         //Tipped about a horizontal axis, after the yaw - a small rock lying the way it landed.
         quat yaw(vec3(0.0f,1.0f,0.0f),b.yaw);
@@ -2062,7 +2203,7 @@ void ApplicationArcher::ScatterBoulderObjects(){
     for (size_t i = used; i < boulder_objects.size(); i++){
         boulder_objects[i]->SetVisibility(false);
     }
-    debug->Info("Rocks: %i big, %i small\n",boulder_counts[BOULDER_BIG],boulder_counts[BOULDER_SMALL]);
+    debug->Info("Rocks: %i big, %i small\n",boulder_counts[BOULDER_BIG_1],boulder_counts[BOULDER_SMALL_1]);
 }
 
 //--- Signs --------------------------------------------------------------------------------------
@@ -4856,6 +4997,7 @@ void ApplicationArcher::PlaceArcher(v2 pos){
     stage.mode = MODE_AIR;      //which is also what ends a get-up early
     stage.getup_ticks = 0;
     stage.hang_block = -1;
+    stage.hang_branch = -1;
     stage.climb_ticks = 0;
     stage.grab_cooldown = 0;
     stage.f_on_ground = false;
@@ -7916,6 +8058,7 @@ void ApplicationArcher::PublishSnapshot(){
     s.lean_deg = stage.lean * 57.2957795f;
     s.lean_rate_deg = stage.lean_rate * 57.2957795f;
     s.balance_danger = stage.BalanceDanger();
+    s.hang_branch = (stage.mode == MODE_HANG || stage.mode == MODE_CLIMB) ? stage.hang_branch : -1;
     s.spring_plants.resize(stage.spring_plants.size());
     for (size_t i = 0; i < stage.spring_plants.size(); i++){
         const StageSpringPlant& p = stage.spring_plants[i];
@@ -8119,7 +8262,7 @@ json ApplicationArcher::BuildStateJson(){
         //Balance on a branch: which (-1 none), her lean (+ away from the camera) and its rate in
         //degrees, and how near falling, 0..1 - what the gauge beside her shows.
         {"balance",json{{"branch",s.branch_on},{"lean_deg",s.lean_deg},{"lean_rate_deg",s.lean_rate_deg},
-                        {"danger",s.balance_danger}}},
+                        {"danger",s.balance_danger},{"hanging_from",s.hang_branch}}},
         {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" : "main"},
         {"archer",json{
             {"x",s.x},{"y",s.y},{"vx",s.vx},{"vy",s.vy},
@@ -8516,8 +8659,8 @@ void ApplicationArcher::RegisterMCPTools(){
         "the first at x 81.45 and jump), the bounce pad's cap is at x 105 (top 1.2; drop onto it from "
         "(105, 5) to test it), and the leaf grows right from the shelf at x 110..118, top 7.5 (stand on "
         "its end at (116, 8.4)), a high branch runs from the canopy's end (133, 13.0) to a perch at x 145..152, "
-        "and a low practice branch runs at height 2.0 between stumps at x 155..157 and 168..170 (stand on "
-        "the left stump at (156, 2.9) and walk right; Up/Down keep her balance). y is the archer's CENTRE, so standing on the ground is y 0.9. DO NOT PLACE INSIDE "
+        "and a low practice branch runs at height 2.6 between stumps at x 155..157 and 168..170 (stand on "
+        "the left stump at (156, 3.5) and walk right; Up/Down keep her balance, and going over hangs her from it: Jump climbs back up, Down lets go). y is the archer's CENTRE, so standing on the ground is y 0.9. DO NOT PLACE INSIDE "
         "SOLID GEOMETRY: the archer is ejected out of it on the next tick, and out of a tall block "
         "that means upward onto its roof - which looks like the placement having worked and then "
         "the archer walking over things it should have been stopped by. x 44 is inside the ledge; "
@@ -8650,7 +8793,9 @@ void ApplicationArcher::RegisterMCPTools(){
         "`gust_strength`, `gust_width`, `gust_period` (ticks). Debug view options `arrows`, "
         "`streamlines`, `eddies`, `arrow_spacing`. Leaves: `leaves` (on/off), `leaf_density` (per "
         "square unit), `leaf_pad` (the region around the view they live in, as a fraction of it). "
-        "Streaks: `streaks` (on/off), `streak_count`, `streak_alpha`, `streak_width`. `sample`: [x, y] returns the wind there at the "
+        "Streaks: `streaks` (on/off), `streak_count`, `streak_alpha`, `streak_width`. Fireflies: "
+        "`fireflies` (on/off), `firefly_count`, `firefly_sync` (0..1, how hard a flash pulls "
+        "neighbours into step), `firefly_light_gain`, `firefly_glow_size`. `sample`: [x, y] returns the wind there at the "
         "current tick - the total, the mean flow alone, the gust factor and the distance to the "
         "nearest block. Returns the params, the build stats and the shedding corners.",
         json{
@@ -8675,7 +8820,12 @@ void ApplicationArcher::RegisterMCPTools(){
                 {"streaks",       {{"type","boolean"}}},
                 {"streak_count",  {{"type","integer"}}},
                 {"streak_alpha",  {{"type","number"}}},
-                {"streak_width",  {{"type","number"}}}
+                {"streak_width",  {{"type","number"}}},
+                {"fireflies",     {{"type","boolean"}}},
+                {"firefly_count", {{"type","integer"}}},
+                {"firefly_sync",  {{"type","number"}}},
+                {"firefly_light_gain",{{"type","number"}}},
+                {"firefly_glow_size",{{"type","number"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -8714,6 +8864,13 @@ void ApplicationArcher::RegisterMCPTools(){
             }
             num("streak_alpha",streak_swarm.params.alpha);
             num("streak_width",streak_swarm.params.width);
+            if (args.contains("fireflies") && args["fireflies"].is_boolean()){ f_fireflies = args["fireflies"].get<bool>(); }
+            if (args.contains("firefly_count") && args["firefly_count"].is_number()){
+                firefly_swarm.params.count = std::min(std::max(args["firefly_count"].get<int>(),0),200);
+            }
+            num("firefly_sync",firefly_swarm.params.sync);
+            num("firefly_light_gain",firefly_light_gain);
+            num("firefly_glow_size",firefly_glow_size);
             wind.Build(blocks,wind_params);
 
             const WindStats& st = wind.Stats();
@@ -8739,7 +8896,8 @@ void ApplicationArcher::RegisterMCPTools(){
                 {"streaks",{ {"on",f_wind_streaks.load()},{"count",streak_swarm.params.count},
                              {"alive",(int)std::count_if(streak_swarm.streaks.begin(),streak_swarm.streaks.end(),
                                                          [](const Streak& k){ return k.f_alive; })},
-                             {"vertices",(int)streak_ribbons.size()} }}
+                             {"vertices",(int)streak_ribbons.size()} }},
+                {"fireflies",FireflySummary()}
             };
             if (args.contains("sample") && args["sample"].is_array() && (args["sample"].size() >= 2)){
                 float x = args["sample"][0].get<float>(), y = args["sample"][1].get<float>();
@@ -9350,6 +9508,25 @@ void ApplicationArcher::DrawImGuiUI(void){
                 alive += k.f_alive;
             }
             ImGui::Text("%d streaks alive, %zu ribbon vertices",alive,streak_ribbons.size());
+        }
+        bool f_flies = f_fireflies;
+        if (ImGui::Checkbox("fireflies",&f_flies)){
+            f_fireflies = f_flies;
+        }
+        {
+            FireflyParams& fp = firefly_swarm.params;
+            ImGui::SliderInt("firefly count",&fp.count,0,200);
+            ImGui::SliderFloat("firefly sync",&fp.sync,0.0f,1.0f);
+            ImGui::SliderFloat("firefly period (s)",&fp.period,1.0f,12.0f);
+            ImGui::SliderFloat("firefly glow size",&firefly_glow_size,0.1f,2.0f);
+            ImGui::SliderFloat("firefly halo",&firefly_halo,0.0f,1.5f);
+            ImGui::SliderFloat("firefly light gain",&firefly_light_gain,0.0f,6.0f);
+            int lit = 0;
+            for (const Firefly& f : firefly_swarm.flies){
+                lit += (f.home >= 0);
+            }
+            ImGui::Text("%d fireflies at home; lights %.2f %.2f %.2f",lit,firefly_lights[0] ? firefly_lights[0]->brightness : 0.0f,
+                        firefly_lights[1] ? firefly_lights[1]->brightness : 0.0f,firefly_lights[2] ? firefly_lights[2]->brightness : 0.0f);
         }
         if (ImGui::SliderFloat("flex vine leaves",&vine_leaf_wind_flex,0.0f,3.0f,"%.3f")){
             for (int k = 0; k < VINE_LEAF_KIND_COUNT; k++){

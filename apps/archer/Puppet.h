@@ -405,6 +405,8 @@ struct ArcherAnimParams{
     */
     int   land_in_ticks = -1;
     float land_speed = 0.0f;
+    //Hanging from a branch rather than a ledge: nothing to brace the feet on, so the rope's grip.
+    bool  f_free_hang = false;
 };
 
 //What she is doing with her ARMS, which is a separate question from what her legs are doing - and

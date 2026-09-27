@@ -63,6 +63,8 @@ APP_SRCS += WindView.cpp
 APP_SRCS += Leaves.cpp
 #And the streaks that show it moving.
 APP_SRCS += Streaks.cpp
+#Fireflies living in the plants, and their group of lights.
+APP_SRCS += Fireflies.cpp
 
 #SOUND, for the bow: the string's creak from the nock, the loose, and the arrow striking
 #something - assets/sound/*.wav, played from ApplicationArcher::UpdateSound. The jump, the
@@ -131,3 +133,7 @@ rules:
 	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/streaks_test.exe \
 		streaks_test.cpp Streaks.cpp Wind.cpp Stage.cpp
 	@./build/streaks_test.exe
+#And the fireflies.
+	$(CXX) -std=c++17 -Wall -O2 -I$(ROOT)/core -I$(ROOT)/core/types -o build/fireflies_test.exe \
+		fireflies_test.cpp Fireflies.cpp Wind.cpp Stage.cpp
+	@./build/fireflies_test.exe

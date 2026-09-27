@@ -17,6 +17,17 @@ static void Check(bool f_ok, const char* what){
     }
 }
 
+/*
+    The wind these checks were written against. PINNED, not the default: the default is a tuning
+    choice (it went 2.5 -> 0.5 on 2026-09-26) and at 0.5 a leaf's own flutter outruns the wind,
+    which failed checks that were about something else entirely.
+*/
+static WindParams TestWind(){
+    WindParams p;
+    p.speed = 2.5f;
+    return p;
+}
+
 static StageBlock Box(float left, float bottom, float right, float top){
     StageBlock b;
     b.x = 0.5f * (left + right);
@@ -47,7 +58,7 @@ static void Plant(StreakSwarm& s, int i, float x, float y){
 
 static void TestTracer(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     p.gust_strength = 0.0f;
     p.wave_strength = 0.0f;
     w.Build(StepLevel(),p);
@@ -69,7 +80,7 @@ static void TestTracer(){
 //Total turning of a tracer's heading over its first `ticks`, in radians.
 static float Turning(float eddy_strength, float x, float y, int ticks){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     p.gust_strength = 0.0f;
     p.wave_strength = 0.0f;
     p.eddy_strength = eddy_strength;
@@ -112,7 +123,7 @@ static void TestCurl(){
 
 static void TestGustBias(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     //Gusts every 15 s, so they cover a minority of the air - with them every 4 s they covered two
     //thirds of it, and no bias could put 1.5x that share of streaks under them.
     p.gust_strength = 0.8f;
@@ -148,7 +159,7 @@ static void TestGustBias(){
 
 static void TestRibbons(){
     WindField w;
-    WindParams p;
+    WindParams p = TestWind();
     w.Build(StepLevel(),p);
     StreakSwarm s;
     s.params.count = 40;

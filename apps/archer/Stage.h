@@ -496,8 +496,8 @@ static const float SLIDE_GALLERY_DEG[SLIDE_GALLERY_HILLS] = { 8.0f, 14.0f, 18.0f
     all a line she lands on from above, stays on while walking along it, and leaves; the landing
     test is written once, in Stage::CollideSurfaces, over one of these per candidate. What differs
     between the three is in the fields, not in the test: a plant's surface moves (`top_then`,
-    `vel_y`), a branch's drops her through after a fall, and a ramp holds her feet when she walks
-    onto it from a block.
+    `vel_y`), a branch has her balance on it, and a ramp holds her feet when she walks onto it from
+    a block.
 */
 enum SurfaceKind{
     SURFACE_NONE = -1,
@@ -544,8 +544,17 @@ struct StageSurface{
 #define BALANCE_DAMPING             0.6f    //per second: a little, so an overcorrection still swings
 //A landing on a branch knocks her sideways by this much lean rate per unit of landing speed.
 #define BALANCE_LAND_WOBBLE         0.05f
-//After she falls off, the branch lets her through for this long, or she would land straight back on it.
-#define BALANCE_DROP_TICKS          20
+/*
+    THE CATCH: going over is not a fall. Past BALANCE_FALL_DEG she grabs the branch and hangs from
+    it - MODE_HANG, the ledge's hang, with the branch remembered instead of a block - and from there
+    Jump climbs back up onto it (the ledge's climb, along the branch) and Down lets go. A branch is
+    caught in the air too, the way a ledge is: falling past it with her hands at it, Down not held.
+
+    She hangs as far below the line as she hangs below a lip, and is held that far inside either
+    end so both hands are on it.
+*/
+#define BRANCH_HANG_DROP            LEDGE_HANG_DROP
+#define BRANCH_HANG_INSET           0.40f
 
 //An axis-aligned box in the play plane. Centre and half extents, because every test in here wants
 //them that way and converting once at build time is cheaper than converting in the sweep.
@@ -1108,6 +1117,7 @@ struct StageEvents{
     //camera, -1 toward it).
     bool  f_lost_balance = false;
     float fall_side = 0.0f;
+    bool  f_caught_branch = false;  //grabbed one to hang from - going over, or in the air
 
     //--- The rope -------------------------------------------------------------------------------
     //The app acts on these by creating and destroying the joint that makes the swing real.
@@ -1278,7 +1288,6 @@ public:
 
     //--- Balance - see BALANCE_TOPPLE ---
     int   branch_on = -1;           //the branch she is standing on, or -1 - kept with f_on_ground
-    int   branch_drop_ticks = 0;    //counting down after a fall, while the branches let her through
     float lean = 0.0f;              //radians, + away from the camera
     float lean_rate = 0.0f;
     int   balance_ticks = 0;        //on this branch, since she stepped onto it
@@ -1288,6 +1297,8 @@ public:
 
     //--- Hanging and climbing -------------------------------------------------------------------
     int   hang_block = -1;          //index into blocks, while MODE_HANG or MODE_CLIMB
+    //Or into branches, when it is a branch she hangs from or climbs onto - hang_block is then -1.
+    int   hang_branch = -1;
     //Which SIDE of that block the archer is on: -1 hanging off its left corner, +1 its right.
     //Not derived from `facing`, because the climb needs it after facing may have changed.
     float hang_side = -1.0f;
@@ -1475,6 +1486,11 @@ private:
     int   FindGrabbableLedge(float& out_side) const;
     void  EnterHang(int block, float side, StageEvents& events);
     void  ReleaseHang(StageEvents& events);
+    //A branch she could catch right now in the air, or -1 - see BRANCH_HANG_DROP.
+    int   FindCatchableBranch() const;
+    void  EnterBranchHang(int branch, StageEvents& events);
+    //MODE_HANG's branch half: hold, climb back up, or let go.
+    void  TickBranchHang(const ArcherInput& in, StageEvents& events);
     void  TickHang(const ArcherInput& in, StageEvents& events);
     void  TickClimb(const ArcherInput& in, StageEvents& events);
 

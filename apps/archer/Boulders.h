@@ -31,8 +31,9 @@
     between the platform's back and that line is shrunk until it does.
 */
 enum BoulderKind{
-    BOULDER_BIG = 0,        //rock_big
-    BOULDER_SMALL,          //rock_small
+    BOULDER_BIG_1 = 0,        //rock_big
+    BOULDER_BIG_2,        //rock_big
+    BOULDER_SMALL_1,          //rock_small
     BOULDER_KIND_COUNT
 };
 
@@ -66,7 +67,7 @@ struct BoulderParams{
 };
 
 struct Boulder{
-    int   kind = BOULDER_BIG;
+    int   kind = BOULDER_BIG_1;
     float x = 0.0f, y = 0.0f, z = 0.0f;     //y is the base, already sunk
     float yaw = 0.0f;                       //radians about +Y
     float tilt = 0.0f;                      //radians about the axis below
