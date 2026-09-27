@@ -187,6 +187,18 @@
 //The master volume - value[0] = 0..1. The panel's slider, for the tools: an agent replaying a
 //recording at someone's desk wants it silent, and the cue log does not change with it.
 #define ARCHER_CMD_SOUND_VOLUME     SIM_CMD_LAST+5
+//Put her at a zone's arrival spot - value[0] = the zone's index in the live level's Stage::zones.
+//A command rather than ARCHER_CMD_PLACE with the spot, because the zones are the physics thread's:
+//the panel and archer_zone name one, and the handler looks up where it is.
+#define ARCHER_CMD_ZONE             SIM_CMD_LAST+6
+//The cue panel's play button - value[0] = the cue's index in CueSystem::CueNames. See Audition.
+#define ARCHER_CMD_CUE_AUDITION     SIM_CMD_LAST+7
+/*
+    Hold her vitals for tuning - value[0] = exertion, value[1] = fear, each 0..1, or below 0 to
+    let it go back to what she is doing. Held past a restart, until let go: it is a bench for
+    listening to the breath and the heartbeat at one level, not part of the game.
+*/
+#define ARCHER_CMD_VITALS           SIM_CMD_LAST+8
 
 /*
     Collision filtering.
@@ -794,6 +806,11 @@ struct ArcherSnapshot{
     //every other field here means something different on each, and a script that switched scenes
     //should be able to tell it landed without a screenshot.
     int   level = STAGE_LEVEL_MAIN;
+    //The zone she is in (Stage::CurrentZone), by name - empty in none. What the HUD shows.
+    std::string zone;
+    //Every zone of the live level, by name, in Stage::zones order - what archer_zone lists and
+    //resolves a name against before sending ARCHER_CMD_ZONE.
+    std::vector<std::string> zone_names;
     float x = 0.0f;
     float y = 0.0f;
     float vx = 0.0f;
@@ -958,11 +975,13 @@ struct ArcherSnapshot{
     int   arrows_on_props = 0;
     int   sounds_playing = -1;          //audible voices; -1 with no sound system
     float shake_trauma = 0.0f;          //the camera shake, and where it has the view this tick
+    StageVitals vitals;                 //her body, as of the last tick
     float shake_dx = 0.0f;
     float shake_dy = 0.0f;
     std::vector<SoundVoiceInfo> voices; //and what each one is - SoundSystem::ListVoices
     float sound_volume = 0.0f;
     int   anim_source = ANIM_FROM_GAME;
+    int   heart_beat_age = 1000;        //ticks since her last heartbeat, for the HUD's pulse
 };
 
 //A chunk of a broken wall, and when to reap it.
@@ -1088,6 +1107,8 @@ private:
     //Recomputes which blocks the terrain covers and applies f_show_blockout to them. NO GL, so
     //unlike BuildTerrain this is safe from NewGame on the physics thread. See the definition.
     void ApplyBlockoutVisibility();
+    //Each zone's outline, for the blockout view. From BuildBlocks. See the definition.
+    void BuildZoneOutlines();
     //Show or hide the blockout boxes the terrain replaced. See the definition.
     void SetBlockoutVisible(bool f_visible);
     //Loads the crate out of archer.glb into crate_mesh, falling back to the box. Render thread;
@@ -1249,11 +1270,32 @@ private:
     //ResolveArrowsAgainstProps, which is the only place those are found.
     void SignalArrowHit(float x, float speed);
     //A `footstep` signal each time a foot plants in the locomotion clip on screen - see the
-    //definition. The last tick's playhead, as a phase from the left plant, and whose it was.
-    void SignalFootsteps();
+    //definition - returning how many did this tick. The last tick's playhead, as a phase from the
+    //left plant, and whose it was.
+    int   SignalFootsteps();
     bool  f_step_valid = false;
     float step_prev_rel = 0.0f;
     Animation* step_prev_lead = NULL;
+    /*
+        Her breathing and her heartbeat: the clocks that turn Stage::vitals into `breath_in`,
+        `breath_out` and `heartbeat` signals - see the definition and vitals_plan.md. The view's,
+        not the rules', because only sound reads them; in the recording state all the same, so a
+        replay breathes where the original did. `steps` is this tick's footsteps.
+    */
+    void  SignalBody(const StageEvents& events, int steps);
+    float breath_phase = 0.0f;          //0 at an in-breath .. 1 when the next one is due
+    int   breath_out_ticks = 0;         //counting down to this breath's out-breath; 0 none pending
+    float heart_phase = 0.0f;           //0 at a beat .. 1 at the next
+    int   heart_beat_age = 1000;        //ticks since the last beat
+    //ARCHER_CMD_VITALS: exertion and fear held at these, or below 0 for free. Physics thread.
+    float vitals_hold[2] = { -1.0f, -1.0f };
+    /*
+        The last VITALS_HISTORY ticks of exertion, fear and heart rate, for the panel's graphs: a
+        ring written by the tick (physics thread) and read by DrawImGuiUI under physics_mutex.
+    */
+    static constexpr int VITALS_HISTORY = 1200;     //20 seconds
+    float vitals_history[3][VITALS_HISTORY] = {};
+    int   vitals_history_head = 0;
     /*
         THE INCOMING SWOOSH's forecast: for every arrow in flight, Stage::PredictArrowImpact says
         when it strikes a block and a raycast along the path it hands back says whether a prop
@@ -1282,6 +1324,43 @@ private:
     std::string cue_table_path;                 //resolved, for the poll; empty in a packed build
     int64_t cue_table_mtime = 0;
     std::chrono::steady_clock::time_point cue_table_polled;
+
+    /*
+        THE CUE PANEL - cue_plan.md step 5. Every cue's delay, jitter, chance and gain on a slider,
+        a button to hear it (ARCHER_CMD_CUE_AUDITION), and Save, which writes the numbers back
+        into the file. It edits the file's TEXT, not a re-serialised table: the file is laid out
+        and commented by hand, so a change rewrites one number (or adds one field to its row) and
+        leaves every other character where it was.
+
+        A slider change is live the moment it is let go of: the edited text goes to the physics
+        thread through cue_panel_apply, and PollCueTable loads it as it would the file. Unsaved,
+        the game plays the edit and the file does not have it; Revert puts the file's back.
+        RENDER THREAD for everything but cue_panel_apply, which is the handoff.
+    */
+    void DrawCuePanel();
+    //Reads the file into cue_panel_text if nothing is unsaved, or if `f_force`. Render thread.
+    void CuePanelLoad(bool f_force);
+    std::string cue_panel_text;         //what the sliders edit
+    std::string cue_panel_disk;         //the file as last read or saved
+    json        cue_panel_table;        //cue_panel_text, parsed
+    int64_t     cue_panel_mtime = 0;
+    bool        f_cue_panel_loaded = false;
+    bool        f_cue_panel_disk_changed = false;   //the file moved under unsaved edits
+    int         cue_panel_poll = 0;
+    std::string cue_panel_status;
+    std::mutex  cue_panel_mutex;
+    std::string cue_panel_apply;        //text for the physics thread to load; empty when none
+    /*
+        Her vitals on the panel: graphs of the last twenty seconds and the holds that pin exertion
+        or fear for tuning (ARCHER_CMD_VITALS). The holds' UI state is the render thread's.
+    */
+    void DrawVitalsPanel();
+    bool  f_ui_hold[2] = { false, false };
+    float ui_hold_value[2] = { 0.6f, 0.6f };
+    //Top right, over the game: her heart rate, pulsing with each beat, and her exertion. From the
+    //snapshot. Render thread, from DrawOverlay while a level is live.
+    void DrawVitalsHud();
+    bool f_show_vitals_hud = true;
     //The other half of the arrow hit test - the half that knows about rigid bodies. See the
     //handshake note on Stage::arrows.
     void ResolveArrowsAgainstProps();
@@ -1301,8 +1380,11 @@ private:
     void ApplyPushes(const StageEvents& events);
     //And boot whatever Stage says was kicked - far harder, and it frees a brick wall to collapse.
     void ApplyKicks(const StageEvents& events);
-    //Take a broken block's collider out of the world and burst it into chunks.
+    //Take a broken block's collider out of the world and burst it into chunks - a kicked wall, or
+    //a crumble stone gone.
     void BreakBlocks(const StageEvents& events);
+    //A crumble stone's warning colour and shake while it runs out of time. See the definition.
+    void ShakeCrumbles(const StageEvents& events);
     void SpawnDebris(const vec3& centre, const vec3& half_extents, const vec3& impulse_dir, int material);
     void UpdateDebris();
 
@@ -1487,6 +1569,9 @@ private:
     int material_ledge = 0;
     int material_platform = 0;
     int material_breakable = 0;
+    int material_zone = 0;          //a zone's outline, in the blockout view only
+    int material_crumble = 0;       //a crumble stone, whole
+    int material_crumble_warn = 0;  //and shaking, once she has stood on it
     int material_trunk = 0;
     int material_spring_pad = 0;
     int material_leaf = 0;
@@ -1551,6 +1636,9 @@ private:
     DirectionalLight* sun_light = NULL;
     DirectionalLight* fill_light = NULL;        //held only so the range scene can share it
     std::vector<Object*> block_objects;         //parallel to Stage::blocks
+    //Four bars per zone, children of blockout_group; NewGame destroys them and BuildBlocks remakes
+    //them, as it does the blocks. Shown only in the blockout view (F2) - see BuildZoneOutlines.
+    std::vector<Object*> zone_outline_objects;
     //The plants' boxes - trunks, stalks, caps, leaves - which are not blocks, so a restart destroys
     //them from here. The moving part of each spring plant is also in spring_plant_objects, parallel
     //to Stage::spring_plants, for SyncSpringPlants to place.
@@ -1687,6 +1775,7 @@ private:
     //`kick` scopes open and close on.
     bool f_was_nocked = false;
     bool f_was_kicking = false;
+    bool f_was_airborne = false;        //the `airborne` scope's edge
     /*
         Master gain for the lot, 0..1, on the panel. The master bus's gain, set every pass in
         UpdateView - so, unlike before the cues, moving the slider turns down what is ALREADY
@@ -1922,6 +2011,7 @@ private:
         Stage   stage;
         Object* archer_object = NULL;
         std::vector<Object*> block_objects;
+        std::vector<Object*> zone_outline_objects;
         std::vector<Object*> plant_objects;
         std::vector<Object*> spring_plant_objects;
         Object* balance_bar = NULL;
@@ -1990,6 +2080,10 @@ private:
     void UpdateTitle(InputController* input);
     //The title coming up and going down: its click rect and the panels. Physics thread.
     void EnterTitle();
+
+    //The zone she is in, at the top of the screen. Render thread, from DrawOverlay.
+    void DrawZoneLabel();
+    bool f_show_zone_label = true;
 
     //T: where the cursor meets the play plane, lifted clear of any block, as an ARCHER_CMD_PLACE.
     //Physics thread, from UpdateView.

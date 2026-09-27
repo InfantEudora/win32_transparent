@@ -639,6 +639,13 @@ void CueSystem::EndScope(const std::string& name, int instance){
     pending.push_back(p);
 }
 
+void CueSystem::Audition(const std::string& cue){
+    Pending p;
+    p.kind = 3;
+    p.name = cue;
+    pending.push_back(p);
+}
+
 bool CueSystem::IsScopeOpen(const std::string& name, int instance) const{
     for (const Scope& s : scopes){
         if (s.name == name && s.instance == instance){
@@ -782,8 +789,13 @@ void CueSystem::Tick(uint64_t tick){
                     Trigger(c,e.payload,e.instance,s.serial);
                 }
             }
-        }else{
+        }else if (e.kind == 2){
             EndScopeNow(e.name,e.instance);
+        }else{
+            const Cue* c = FindCue(e.name);
+            if (c){
+                AuditionNow(*c);
+            }
         }
     }
 
@@ -1143,6 +1155,42 @@ void CueSystem::Fire(Waiting& w){
     }
 }
 
+//See Audition. Outside Fire on purpose: nothing here may reach the history, the groups or the
+//scopes, which is what keeps a press on a panel out of what a replay decides.
+void CueSystem::AuditionNow(const Cue& cue){
+    float gain = cue.gain;
+    for (const Curve& c : cue.gain_by){
+        float loudest = std::max(c.out0,c.out1);
+        gain *= (loudest < c.lo) ? c.lo : ((loudest > c.hi) ? c.hi : loudest);
+    }
+    if (!cue.sounds.empty()){
+        const std::string& sound = cue.sounds[(size_t)auditions % cue.sounds.size()];
+        auditions++;
+        CueLogEntry e;
+        e.tick = now;
+        e.cue = cue.name;
+        e.what = "play";
+        e.sound = sound;
+        e.gain = gain;
+        e.pitch = cue.pitch;
+        e.note = "audition";
+        log.Add(e);
+        if (output){
+            CuePlay play;
+            play.gain = gain;
+            play.pitch = cue.pitch;
+            play.bus = cue.bus_id;
+            output->Play(sound.c_str(),play);
+        }
+    }
+    Waiting w;
+    w.cue = cue.name;
+    w.gain = gain;
+    for (int i = 0; i < (int)cue.actions.size(); i++){
+        FireAction(cue,i,w);
+    }
+}
+
 void CueSystem::FireAction(const Cue& cue, int action, const Waiting& w){
     if (action < 0 || action >= (int)cue.actions.size()){
         return;
@@ -1247,6 +1295,18 @@ void CueSystem::EndScopeNow(const std::string& name, int instance){
 }
 
 void CueSystem::Reset(){
+    /*
+        A MARKER IN THE LOG, first. A restart is where one run ends and the next begins, and a log
+        read across one mixes them: a replay's lines come after its own restart, so a tool that
+        keeps only what follows the last `reset` cannot pick up a stray line from whatever ran
+        before it (tools/cue_replay.py does exactly that). Logged at the clock as it stood - the
+        restart is what resets the game's clock, after this.
+    */
+    CueLogEntry marker;
+    marker.tick = now;
+    marker.cue = "level";
+    marker.what = "reset";
+    log.Add(marker);
     pending.clear();
     //Newest first, so a scope opened inside another ends before it.
     while (!scopes.empty()){

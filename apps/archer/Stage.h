@@ -297,8 +297,24 @@ enum StageBlockKind{
     BLOCK_SOLID = 0,
     BLOCK_LEDGE,
     BLOCK_PLATFORM,
-    BLOCK_BREAKABLE
+    BLOCK_BREAKABLE,
+    /*
+        A rock that gives way under her - bridge_crumble_plan.md section 2. Solid like any block
+        until she stands on it; then it SHAKES for CRUMBLE_SHAKE_TICKS, still holding her, and is
+        gone - whether or not she is still on it. Gone until the level restarts. See StageBlock::
+        crumble_ticks and Stage::TickCrumbles.
+
+        Nothing grows on it or heaps against it, the terrain does not melt it and the wind does not
+        see it: it is a thing that is about to not be there.
+    */
+    BLOCK_CRUMBLE
 };
+/*
+    How long a crumble block holds once she has stood on it: 24 ticks, 0.4 s - long enough to land
+    and jump again without hurrying, too short to stop and think. The stepping stones' route check
+    holds the crossing to it.
+*/
+#define CRUMBLE_SHAKE_TICKS         24
 
 /*
     How deep a block is through the slab when it does not say: half of it, either side of the
@@ -581,6 +597,9 @@ struct StageBlock{
     //The tree this block is an ARM of (an index into Stage::trees), or -1 for a block the level
     //declared. The rules treat an arm as the one-way platform it is; the app and the tests ask.
     int   tree = -1;
+    //BLOCK_CRUMBLE: -1 whole, else the ticks it has been shaking since she stood on it; at
+    //CRUMBLE_SHAKE_TICKS it goes (f_alive clears). A restart rebuilds the block, whole.
+    int   crumble_ticks = -1;
 
     float Left()   const { return x - hw; };
     float Right()  const { return x + hw; };
@@ -589,6 +608,39 @@ struct StageBlock{
     float HalfDepth() const { return (depth > 0.0f) ? depth : STAGE_BLOCK_HALF_DEPTH; };
     float Front()  const { return z + HalfDepth(); };
     float Back()   const { return z - HalfDepth(); };
+};
+
+/*
+    A ZONE: a named stretch of the level that knows when she is in it - cue_plan.md section 8, and
+    bridge_crumble_plan.md section 1, which is where it was first built.
+
+    THE CUE PLAN'S SHAPE, deliberately, so there is one zone type rather than two: a rectangle like
+    a StageBlock (centre and half extents), a name and an id, reporting `entered` and `left` off her
+    body box. What that section adds later - `stayed`, how-often, flags and conditions, the narrator
+    - grows on this rather than beside it. Collides with nothing; the rules only test overlap.
+
+    `arrive` is where a teleport to the zone puts her FEET: a spot in it that is standable, which
+    the rules test proves by dropping her there. It is what the panel's zone buttons and archer_zone
+    use, so every mechanism area is one click away.
+
+    Declared by the level, in BuildMainLevel and friends, beside what it covers.
+*/
+struct StageZone{
+    float x = 0.0f;
+    float y = 0.0f;
+    float hw = 1.0f;
+    float hh = 1.0f;
+    std::string name;
+    int   id = -1;              //its index in Stage::zones - stable for the level's lifetime
+    v2    arrive;               //feet, for a teleport; see above
+
+    float Left()   const { return x - hw; };
+    float Right()  const { return x + hw; };
+    float Bottom() const { return y - hh; };
+    float Top()    const { return y + hh; };
+    bool  Overlaps(float l, float r, float b, float t) const {
+        return (r > Left()) && (l < Right()) && (t > Bottom()) && (b < Top());
+    }
 };
 
 /*
@@ -1170,6 +1222,91 @@ struct StageEvents{
         int   block = -1;           //index into blocks; BREAKABLE is the interesting case
     };
     std::vector<ArrowHit> arrow_hits;
+
+    //Zones her body box began or stopped overlapping this tick, by id - see StageZone. A restart
+    //clears what she was in, so the first tick after one enters the zone she stands in.
+    std::vector<int> zones_entered;
+    std::vector<int> zones_left;
+
+    //BLOCK_CRUMBLE blocks that began to shake this tick (she stood on them), and that went. A gone
+    //one has f_alive clear already, as a kicked wall does; the app takes its collider away and
+    //drops its rubble, as for broken_blocks.
+    std::vector<int> crumbles_started;
+    std::vector<int> crumbled_blocks;
+};
+
+/*
+    --- VITALS -----------------------------------------------------------------------------------
+    Her body as two slowly moving LEVELS - apps/archer/vitals_plan.md. EXERTION, 0 rested .. 1
+    spent, from what she is doing; FEAR, 0 calm .. 1 terrified, from how far she could fall; and
+    the HEART RATE, which trails both.
+
+    Rules state although today only the cues read it (her breathing and her heartbeat, which the
+    app clocks off these): both will change how she behaves, and anything that does is Stage's.
+    Levels, not resources - nothing spends them. Health and power, when they come, are the other
+    kind and live beside these.
+
+    Each eases toward a TARGET the tick works out, rising at one rate and falling at a slower one;
+    a TAU is the seconds to get about two thirds of the way. The feel is almost all in the taus:
+    she should still be breathing hard well after a climb, and her heart pounding for a second or
+    two after a near miss, when the danger is already over.
+*/
+#define VITALS_EXERTION_RISE_TAU    3.0f
+#define VITALS_EXERTION_FALL_TAU    8.0f    //standing still; see VITALS_WALK_RECOVERY
+//Walking neither winds her nor lets her get her breath back properly: it recovers at this share
+//of the standing rate, scaled down from there by how fast she walks.
+#define VITALS_WALK_RECOVERY        0.35f
+//On the ground, her speed as a share of RunSpeed() -> the target: nothing up to a walk, then
+//rising to VITALS_RUN_TARGET at full speed.
+#define VITALS_RUN_FROM             0.40f
+#define VITALS_RUN_TARGET           0.85f
+#define VITALS_HANG_TARGET          0.55f   //holding on is work...
+#define VITALS_HANG_RISE_TAU        6.0f    //...that tells slowly
+#define VITALS_CLIMB_TARGET         0.90f   //a mantle, or climbing the rope
+#define VITALS_ROPE_TARGET          0.45f   //holding on to it without climbing
+//Bursts on top of the target, per effort: three quick jumps wind her where one does not.
+#define VITALS_JUMP_EFFORT          0.05f
+#define VITALS_KICK_EFFORT          0.07f
+
+#define VITALS_FEAR_RISE_TAU        0.35f
+#define VITALS_FEAR_FALL_TAU        5.0f
+/*
+    How far down she could fall -> fear: nothing up to the first, all of it at the second. In
+    units below her feet. A jump rises 3.2, so a drop she could jump back up is nothing to her.
+*/
+#define VITALS_DROP_FROM            3.5f
+#define VITALS_DROP_TO              12.0f
+//Standing within this of where the floor ends counts that drop, fading to nothing at the reach,
+//and at most this share of the drop's fear right at the lip - she is on the floor, not over it.
+#define VITALS_EDGE_REACH           0.9f
+#define VITALS_EDGE_SHARE           0.6f
+//In the air: the speed she will land at, from the drop below and how fast she is already
+//falling (energy, so rising counts too) -> fear. From a little under the landing shake to well
+//past the hard landing. A jump off flat ground lands at ARCHER_JUMP_SPEED, below the first.
+#define VITALS_IMPACT_FROM          20.0f
+#define VITALS_IMPACT_TO            34.0f
+#define VITALS_BALANCE_SHARE        0.8f    //of BalanceDanger, on a branch
+//Bursts: going over the side of a branch, and a landing hard enough to hurt.
+#define VITALS_LOST_BALANCE_FEAR    0.35f
+#define VITALS_HARD_LANDING         25.0f
+#define VITALS_HARD_LANDING_FEAR    0.25f
+//What a column with no floor under it at all reads as: past VITALS_DROP_TO, so it is all fear.
+#define VITALS_NO_FLOOR             100.0f
+
+#define VITALS_REST_BPM             65.0f
+#define VITALS_EXERTION_BPM         60.0f   //added at exertion 1
+#define VITALS_FEAR_BPM             60.0f   //added at fear 1: 125, near the heartbeat file's 130
+#define VITALS_MAX_BPM              165.0f
+#define VITALS_HEART_RISE_TAU       1.5f
+#define VITALS_HEART_FALL_TAU       6.0f
+
+struct StageVitals{
+    float exertion = 0.0f;
+    float fear = 0.0f;
+    float heart_rate = VITALS_REST_BPM;
+    //This tick's targets, what the two levels are easing toward - for the debug view and the tests.
+    float exertion_target = 0.0f;
+    float fear_target = 0.0f;
 };
 
 /*
@@ -1218,6 +1355,18 @@ public:
     std::vector<StageSpringPlant> spring_plants;
     std::vector<StageBranch> branches;
     std::vector<StageRamp>  ramps;
+    std::vector<StageZone>  zones;
+
+    //--- Zones ------------------------------------------------------------------------------------
+    //Whether she is in zone i as of the last tick. Sized to `zones` by Reset, and all clear then.
+    std::vector<uint8_t> zone_inside;
+    /*
+        The zone she is in, for the HUD and archer_state: the SMALLEST of those her body overlaps,
+        so a narrow area inside a wide one names the narrow one. -1 when she is in none.
+    */
+    int  CurrentZone() const;
+    //By name, or -1.
+    int  FindZone(const char* name) const;
 
     /*
         Makes the blocks' CURRENT geometry the level's, so that Reset puts it back instead of
@@ -1294,6 +1443,14 @@ public:
     int   balance_entries = 0;      //every time she has; picks where the drift starts
     //0 upright .. 1 about to go over.
     float BalanceDanger() const;
+
+    //--- Vitals - see VITALS ---
+    StageVitals vitals;
+    //How far below `y` the highest floor under x is - any live block's top, one-way ones included -
+    //or VITALS_NO_FLOOR when there is none. The surfaces (pads, branches, ramps) are not floors here.
+    float DropBelow(float x, float y) const;
+    //The fear a drop of `drop` units is worth on its own, 0..1 - see VITALS_DROP_FROM.
+    static float DropFear(float drop);
 
     //--- Hanging and climbing -------------------------------------------------------------------
     int   hang_block = -1;          //index into blocks, while MODE_HANG or MODE_CLIMB
@@ -1452,6 +1609,17 @@ private:
     void BuildSlideGallery();
     //Adds `s` to `scenery`, and its invisible collider to `blocks` if it has one. See StageScenery.
     void AddScenery(const StageScenery& s);
+    //Declares a zone by its edges rather than its centre, which is how a level is read, and
+    //with the spot a teleport to it lands her feet on. See StageZone.
+    void AddZone(const char* name, float left, float right, float bottom, float top, v2 arrive);
+    //Which zones her body overlaps now, against last tick: the entered and left events. Last in
+    //Tick, once she has moved.
+    void TickZones(StageEvents& events);
+    //The crumble blocks: start the one she stands on, count the shaking ones, drop the done. After
+    //she moves, so the tick she lands is the tick it starts.
+    void TickCrumbles(StageEvents& events);
+    //Whether she is standing on block `b` - on the ground, feet at its top, over it.
+    bool StandingOn(const StageBlock& b) const;
     void TickBow(const ArcherInput& in, StageEvents& events);
     void TickArcher(const ArcherInput& in, StageEvents& events);
     void TickArrows(StageEvents& events);
@@ -1459,6 +1627,8 @@ private:
     void TickSpringPlants();
     //One tick of her lean while she stands on a branch, and the fall when it goes too far.
     void TickBalance(const ArcherInput& in, float land_speed, StageEvents& events);
+    //The vitals, one tick, off where she ended it and what this tick's events say she did.
+    void TickVitals(const StageEvents& events);
     /*
         Every surface that is not a block, as floors, once per move, after the blocks - see
         StageSurface. Three cases: a landing (from above the surface where it WAS, to below where it

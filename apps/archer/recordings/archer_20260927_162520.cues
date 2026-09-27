@@ -14,3 +14,5 @@
      396  footstep       play  footstep_3     gain 1.000
      408  footstep       play  footstep_1     gain 1.000
      419  footstep       play  footstep_2     gain 1.000
+     472  breath_in      play  breathe_in_1   gain 0.524
+     500  breath_out     play  breathe_out_2  gain 0.502

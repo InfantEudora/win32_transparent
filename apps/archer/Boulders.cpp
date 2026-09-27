@@ -36,7 +36,8 @@ static bool IsSurface(const StageBlock& b){
 }
 
 static bool IsWall(const StageBlock& b){
-    return b.f_alive && b.kind != BLOCK_PLATFORM && b.kind != BLOCK_BREAKABLE;
+    //Nor a crumble stone: a rock heaped against something about to fall away reads wrong too.
+    return b.f_alive && b.kind != BLOCK_PLATFORM && b.kind != BLOCK_BREAKABLE && b.kind != BLOCK_CRUMBLE;
 }
 
 void FindBoulderCorners(const std::vector<StageBlock>& blocks, const BoulderParams& params,

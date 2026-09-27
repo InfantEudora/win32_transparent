@@ -19,6 +19,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+#include <algorithm>
 
 #include "Stage.h"
 #include "Puppet.h"
@@ -27,6 +28,7 @@
 #include "Boulders.h"
 #include "Vine.h"
 #include "RopeMesh.h"
+#include "RouteCheck.h"
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -781,7 +783,10 @@ static void TestLedge(){
     */
     const StageBlock* low = NULL;
     for (size_t i = 0; i < probe.blocks.size(); i++){
-        if (probe.blocks[i].kind == BLOCK_LEDGE && probe.blocks[i].Top() <= ApexRise()){
+        //One standing UP out of the floor, that she jumps onto: not a rim level with the ground,
+        //like the stepping stones' far side, whose top is 0 and whose lip is caught from a pit.
+        if (probe.blocks[i].kind == BLOCK_LEDGE && probe.blocks[i].Top() <= ApexRise() &&
+            probe.blocks[i].Top() > 0.5f){
             low = &probe.blocks[i];
         }
     }
@@ -5388,6 +5393,552 @@ static void TestBayClimb(){
 }
 #endif
 
+/*
+    THE ZONES (bridge_crumble_plan.md section 1, cue_plan.md section 8). What matters: every level
+    is covered with no gaps and no overlaps, so she is always in exactly one and the HUD always
+    names it; every zone's arrival spot is ground she lands on inside that zone; and crossing from
+    one to the next reports one left and one entered, once each.
+*/
+static void TestZones(){
+    printf("\nthe zones\n");
+    char d[220];
+    const int levels[] = { STAGE_LEVEL_MAIN, STAGE_LEVEL_RANGE, STAGE_LEVEL_ROPE };
+    const char* level_names[] = { "main", "range", "rope" };
+    for (int li = 0; li < 3; li++){
+        Stage s;
+        s.SetLevel(levels[li]);
+        snprintf(d,sizeof(d),"%s: %i",level_names[li],(int)s.zones.size());
+        Check(!s.zones.empty(),"every level declares zones",d);
+        //Side by side: sorted by their left edges, each starts where the last ended.
+        std::vector<StageZone> z = s.zones;
+        std::sort(z.begin(),z.end(),[](const StageZone& a, const StageZone& b){ return a.Left() < b.Left(); });
+        int gaps = 0, overlaps = 0;
+        for (size_t i = 1; i < z.size(); i++){
+            float step = z[i].Left() - z[i - 1].Right();
+            gaps += (step > 0.001f) ? 1 : 0;
+            overlaps += (step < -0.001f) ? 1 : 0;
+        }
+        snprintf(d,sizeof(d),"%s: %i gaps, %i overlaps",level_names[li],gaps,overlaps);
+        Check(gaps == 0 && overlaps == 0,"the zones sit side by side",d);
+        int bad = 0;
+        std::string which;
+        for (size_t i = 0; i < s.zones.size(); i++){
+            Stage t = s;
+            const StageZone& zone = s.zones[i];
+            DropOnto(t,zone.arrive.x,zone.arrive.y);
+            bool f_ok = t.f_on_ground && t.CurrentZone() == zone.id &&
+                        fabsf(t.pos.y - ARCHER_HALF_H - zone.arrive.y) < 0.6f;
+            if (!f_ok){
+                bad++;
+                which += " '" + zone.name + "'";
+            }
+        }
+        snprintf(d,sizeof(d),"%s:%s",level_names[li],bad ? which.c_str() : " all");
+        Check(bad == 0,"every zone's arrival spot is ground inside it",d);
+    }
+
+    //Across the old end of the level into the test ground's first piece: one left, one entered.
+    Stage s;
+    int branches = s.FindZone("Branches");
+    int ground = s.FindZone("Stepping stones");
+    Check(branches >= 0 && ground >= 0,"the main level has the branches and the stepping stones");
+    DropOnto(s,172.0f,0.3f);
+    Check(s.CurrentZone() == branches,"standing at 172 she is among the branches");
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    int entered = 0, left = 0, wrong = 0;
+    for (int i = 0; i < 90; i++){
+        StageEvents e;
+        s.Tick(right,e);
+        for (int id : e.zones_entered){ entered += (id == ground) ? 1 : 0; wrong += (id != ground) ? 1 : 0; }
+        for (int id : e.zones_left){ left += (id == branches) ? 1 : 0; wrong += (id != branches) ? 1 : 0; }
+    }
+    snprintf(d,sizeof(d),"entered %i, left %i, others %i, at x %.1f",entered,left,wrong,s.pos.x);
+    Check(entered == 1 && left == 1 && wrong == 0,"running across the edge leaves one zone and enters the next, once each",d);
+    Check(s.CurrentZone() == ground && s.pos.x > 185.0f,"and the level no longer ends at 176",d);
+    //From past the stones' pit, on to the new end wall.
+    DropOnto(s,230.0f,0.3f);
+    Run(s,600,right);
+    snprintf(d,sizeof(d),"stopped at x %.2f",s.pos.x);
+    Check(s.pos.x < 264.0f && s.pos.x > 260.0f,"the end wall stops her at the test ground's end",d);
+
+    //A restart forgets what she was in, so its first ticks enter the start zone again.
+    s.Reset();
+    int start = s.FindZone("Start");
+    bool f_reentered = false;
+    for (int i = 0; i < 5 && !f_reentered; i++){
+        StageEvents e;
+        s.Tick(ArcherInput(),e);
+        for (int id : e.zones_entered){ f_reentered |= (id == start); }
+    }
+    Check(f_reentered,"a restart enters the start zone again");
+}
+
+//The level's crumble stones, in block order - which is left to right in the pit.
+static std::vector<int> CrumbleStones(const Stage& s){
+    std::vector<int> out;
+    for (size_t i = 0; i < s.blocks.size(); i++){
+        if (s.blocks[i].kind == BLOCK_CRUMBLE){
+            out.push_back((int)i);
+        }
+    }
+    return out;
+}
+
+/*
+    THE CRUMBLING STONES (bridge_crumble_plan.md section 2). A stone holds her, shakes for
+    CRUMBLE_SHAKE_TICKS, and goes, with its two events once each; stepping off early does not save
+    it; one nobody touches stays whole; a gone one stays gone until a restart, which brings it back;
+    and an arrow stuck in one falls when it goes.
+*/
+static void TestCrumble(){
+    printf("\nthe crumbling stones\n");
+    char d[220];
+    Stage s;
+    std::vector<int> stones = CrumbleStones(s);
+    snprintf(d,sizeof(d),"%i",(int)stones.size());
+    Check(stones.size() == 4,"the stepping stones' pit has four crumble stones",d);
+    if (stones.size() < 4){
+        return;
+    }
+
+    //Onto stone one, counting events by hand - DropOnto throws them away.
+    Stage a = s;
+    const int s0 = stones[0];
+    a.pos = v2(a.blocks[s0].x,a.blocks[s0].Top() + 0.3f + ARCHER_HALF_H);
+    a.vel = v2(0.0f,0.0f);
+    a.mode = MODE_AIR;
+    a.f_on_ground = false;
+    int started = 0, gone = 0, landed_at = -1, gone_at = -1, fell_at = -1;
+    bool f_held = true;
+    for (int t = 0; t < 200; t++){
+        StageEvents e;
+        a.Tick(ArcherInput(),e);
+        for (int b : e.crumbles_started){ started += (b == s0) ? 1 : 0; }
+        for (int b : e.crumbled_blocks){ gone += (b == s0) ? 1 : 0; }
+        if (landed_at < 0 && a.f_on_ground){ landed_at = t; }
+        if (gone_at < 0 && !a.blocks[s0].f_alive){ gone_at = t; }
+        if (landed_at >= 0 && gone_at < 0 && !a.f_on_ground){ f_held = false; }
+        if (gone_at >= 0 && fell_at < 0 && !a.f_on_ground){ fell_at = t; }
+    }
+    snprintf(d,sizeof(d),"landed tick %i, gone tick %i, fell tick %i, started %i, gone %i",
+             landed_at,gone_at,fell_at,started,gone);
+    Check(started == 1 && gone == 1,"a stone she lands on starts once and goes once",d);
+    Check(gone_at - landed_at == CRUMBLE_SHAKE_TICKS,"it goes CRUMBLE_SHAKE_TICKS after she landed",d);
+    Check(f_held,"and holds her the whole time it shakes",d);
+    Check(fell_at >= gone_at && fell_at <= gone_at + 1,"then she drops the tick it goes",d);
+    snprintf(d,sizeof(d),"feet %.2f",a.pos.y - ARCHER_HALF_H);
+    Check(a.f_on_ground && fabsf(a.pos.y - ARCHER_HALF_H - (-4.0f)) < 0.02f,"into the pit, onto its floor",d);
+
+    //Stepping off early does not save it.
+    Stage b = s;
+    const int s1 = stones[1];
+    DropOnto(b,b.blocks[s1].x,b.blocks[s1].Top() + 0.3f);
+    Run(b,4,ArcherInput());
+    DropOnto(b,230.0f,0.3f);
+    Run(b,CRUMBLE_SHAKE_TICKS,ArcherInput());
+    snprintf(d,sizeof(d),"stone two alive %i, stone three alive %i, whole %i",b.blocks[s1].f_alive ? 1 : 0,
+             b.blocks[stones[2]].f_alive ? 1 : 0,b.blocks[stones[2]].crumble_ticks < 0 ? 1 : 0);
+    Check(!b.blocks[s1].f_alive,"leaving a shaking stone does not stop it going",d);
+    Check(b.blocks[stones[2]].f_alive && b.blocks[stones[2]].crumble_ticks < 0,
+          "and a stone nobody stood on is still whole",d);
+
+    //Gone stays gone - a long while later, and through her standing about - until a restart.
+    Run(b,2000,ArcherInput());
+    Check(!b.blocks[s1].f_alive,"a gone stone stays gone");
+    b.Reset();
+    bool f_back = true;
+    for (int i : CrumbleStones(b)){
+        f_back = f_back && b.blocks[i].f_alive && b.blocks[i].crumble_ticks < 0;
+    }
+    Check(f_back,"and a restart brings every stone back whole");
+
+    //An arrow stuck in a stone's face falls when the stone goes.
+    Stage c = s;
+    const int s3 = stones[3];
+    c.arrows[0].f_live = true;
+    c.StickArrow(0,v2(c.blocks[s3].Left(),c.blocks[s3].y));
+    float stuck_y = c.arrows[0].pos.y;
+    DropOnto(c,c.blocks[s3].x,c.blocks[s3].Top() + 0.3f);
+    Run(c,CRUMBLE_SHAKE_TICKS + 10,ArcherInput());
+    snprintf(d,sizeof(d),"stuck %i, y %.2f from %.2f",c.arrows[0].f_stuck ? 1 : 0,c.arrows[0].pos.y,stuck_y);
+    Check(!c.blocks[s3].f_alive && c.arrows[0].pos.y < stuck_y - 0.1f,"an arrow stuck in a stone falls when it goes",d);
+}
+
+/*
+    ROUTE CHECKS (bridge_crumble_plan.md section 6): each designed way through the level, played
+    against the rules by RouteCheck. Passable, with every timed leg leaving a player at least
+    ROUTE_MIN_WINDOW ticks to be early or late in - and the solved keys, replayed from the start,
+    arrive where the solve said. That last one is what makes a route writable as a recording.
+*/
+#define ROUTE_MIN_WINDOW    4
+
+static void CheckRoute(const char* name, const Stage& start, const std::vector<RouteLeg>& legs,
+                       const std::function<bool(const Stage&)>& arrived){
+    char d[320];
+    RouteResult r = SolveRoute(start,legs);
+    if (!r.f_passable){
+        snprintf(d,sizeof(d),"stuck at '%s'",r.failed_leg.c_str());
+        Check(false,name,d);
+        return;
+    }
+    std::string legs_text;
+    for (const RouteLegResult& l : r.legs){
+        char one[96];
+        snprintf(one,sizeof(one),"%s%s %i%s",legs_text.empty() ? "" : ", ",l.name.c_str(),l.window,
+                 l.f_timed ? "" : "*");
+        legs_text += one;
+    }
+    snprintf(d,sizeof(d),"%.1f s; windows %s (* not timed)",r.timeline.size() / (float)ARCHER_TPS,legs_text.c_str());
+    Check(r.narrowest_window >= ROUTE_MIN_WINDOW,name,d);
+    Stage end = PlayRoute(start,r.timeline);
+    Check(arrived(end),"   and its keys, played from the start, arrive");
+}
+
+static void TestRoutes(){
+    printf("\nroute checks\n");
+    Stage probe;
+    const int pad = FindSpringPlant(probe,SPRING_PAD);
+    const int leaf = FindSpringPlant(probe,SPRING_LEAF);
+    if (pad < 0 || leaf < 0){
+        Check(false,"the main level has the pad and the leaf");
+        return;
+    }
+    auto on_top = [](float top, float x0, float x1){
+        return [=](const Stage& s){
+            return s.f_on_ground && fabsf(s.pos.y - ARCHER_HALF_H - top) < 0.02f && s.pos.x > x0 && s.pos.x < x1;
+        };
+    };
+    auto on_plant = [](int plant){
+        return [=](const Stage& s){ return s.f_on_ground && s.spring_on == plant; };
+    };
+
+    //--- Pad to canopy: onto the pad, one pumping bounce, the shelf, the leaf, the canopy ---
+    //The start the 2026-09-27 recording (archer_pad_leaf_route.rec) uses: standing at x 100.
+    Stage start;
+    DropOnto(start,100.0f,0.3f);
+    Run(start,30,ArcherInput());
+    std::vector<RouteLeg> legs;
+    {
+        RouteLeg l;
+        l.name = "onto the pad";
+        l.goal = on_plant(pad);
+        l.wait_max = 20;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    {
+        //Straight up and down again, kept for how deep it sinks the cap - the next bounce's power.
+        RouteLeg l;
+        l.name = "pump";
+        l.goal = on_plant(pad);
+        l.score = [pad](const Stage& landed){
+            Stage c = landed;
+            float lowest = 0.0f;
+            for (int i = 0; i < 30; i++){
+                StageEvents e;
+                c.Tick(ArcherInput(),e);
+                lowest = fminf(lowest,c.spring_plants[pad].q);
+            }
+            return -lowest;
+        };
+        l.air_max = 0;
+        l.f_try_stomp = true;
+        legs.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "shelf";
+        l.goal = on_top(7.5f,110.0f,118.0f);
+        legs.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "leaf";
+        l.goal = on_plant(leaf);
+        l.walk = 1;
+        l.wait_max = 90;
+        l.air_max = 40;
+        l.air_step = 2;
+        legs.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "canopy";
+        l.goal = on_top(13.0f,125.0f,133.0f);
+        l.wait_max = 50;
+        l.air_min = 10;
+        l.air_step = 5;
+        legs.push_back(l);
+    }
+    CheckRoute("pad to canopy is passable",start,legs,on_top(13.0f,125.0f,133.0f));
+
+    //--- The stepping stones: hop by hop across the pit, never standing on one too long ---
+    std::vector<int> stones = CrumbleStones(probe);
+    if (stones.size() < 4){
+        Check(false,"the stepping stones' pit has its stones");
+        return;
+    }
+    Stage rim;
+    DropOnto(rim,193.0f,0.3f);
+    Run(rim,30,ArcherInput());
+    const float far_rim = 214.0f;
+    std::vector<RouteLeg> hops;
+    for (size_t k = 0; k < stones.size(); k++){
+        const StageBlock blk = probe.blocks[stones[k]];
+        RouteLeg l;
+        l.name = "stone " + std::to_string(k + 1);
+        l.goal = on_top(blk.Top(),blk.Left() - ARCHER_HALF_W,blk.Right() + ARCHER_HALF_W);
+        l.walk = 1;
+        l.wait_max = 30;
+        l.air_max = 40;
+        l.air_step = 2;
+        hops.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "far rim";
+        l.goal = on_top(0.0f,far_rim,264.0f);
+        l.walk = 1;
+        l.wait_max = 30;
+        l.air_max = 40;
+        l.air_step = 2;
+        hops.push_back(l);
+    }
+    CheckRoute("the stepping stones are crossable",rim,hops,on_top(0.0f,far_rim,264.0f));
+
+    //--- The detour: every stone gone, down into the pit and up its far wall by the ledge ---
+    Stage bare = rim;
+    for (int i : stones){
+        bare.blocks[i].f_alive = false;
+    }
+    std::vector<RouteLeg> detour;
+    {
+        RouteLeg l;
+        l.name = "into the pit";
+        l.goal = on_top(-4.0f,196.0f,far_rim);
+        l.walk = 1;
+        l.wait_max = 20;
+        l.air_max = 40;
+        l.air_step = 4;
+        l.f_timed = false;          //a fall, not a timing
+        detour.push_back(l);
+    }
+    {
+        RouteLeg l;
+        l.name = "catch and climb";
+        l.goal = on_top(0.0f,far_rim,264.0f);
+        l.walk = 1;
+        l.wait_max = 90;
+        l.air_max = 60;
+        l.air_step = 4;
+        l.f_climb = true;
+        detour.push_back(l);
+    }
+    CheckRoute("with every stone gone, the pit's far ledge is the way on",bare,detour,on_top(0.0f,far_rim,264.0f));
+}
+
+/*
+    The vitals - vitals_plan.md. On a layout of their own rather than a level's, so every height is
+    the test's: a floor with its top at 0 ending at a pit 15 deep, a step down of 2 at its far end,
+    a low ledge standing on that step and a pillar of the same height standing in the pit.
+*/
+static void VitalsLayout(Stage& s){
+    s.Reset();
+    s.blocks.clear();
+    s.props.clear();
+    s.signs.clear();
+    s.scenery.clear();
+    s.trees.clear();
+    s.spring_plants.clear();
+    s.branches.clear();
+    s.ramps.clear();
+    s.zones.clear();
+    s.zone_inside.clear();
+    s.ClearObstacles();
+    s.ClearRopePoints();
+    auto add = [&](float left, float right, float bottom, float top, int kind){
+        StageBlock b;
+        b.x = (left + right) * 0.5f;
+        b.y = (bottom + top) * 0.5f;
+        b.hw = (right - left) * 0.5f;
+        b.hh = (top - bottom) * 0.5f;
+        b.kind = kind;
+        s.blocks.push_back(b);
+    };
+    add(-120.0f,-60.0f,-3.0f,-2.0f,BLOCK_SOLID);    //the step, 2 below the floor
+    add(-60.0f,0.0f,-1.0f,0.0f,BLOCK_SOLID);        //the floor, ending at the pit
+    add(0.0f,40.0f,-16.0f,-15.0f,BLOCK_SOLID);      //the pit's floor
+    add(-100.0f,-98.0f,-2.0f,2.2f,BLOCK_LEDGE);     //a low ledge on the step: its lip 4.2 up
+    add(10.0f,12.0f,-15.0f,2.2f,BLOCK_LEDGE);       //the same lip, over 17 units of pit
+}
+
+static void VitalsStandAt(Stage& s, float x, float floor_top){
+    s.pos = v2(x,floor_top + ARCHER_HALF_H + 0.01f);
+    s.vel = v2(0.0f,0.0f);
+    s.mode = MODE_AIR;
+    s.f_on_ground = false;
+    Settle(s);
+    s.vitals = StageVitals();
+}
+
+//Drops her against a lip's left face, holding into it, until she catches it. Returns whether she did.
+static bool VitalsHangFrom(Stage& s, float face_x, float lip){
+    //A little above where she would hang, against the face: falling, her hands cross the lip.
+    s.pos = v2(face_x - ARCHER_HALF_W - 0.05f,lip - LEDGE_HANG_DROP - ARCHER_HALF_H + 0.4f);
+    s.vel = v2(0.0f,0.0f);
+    s.mode = MODE_AIR;
+    s.f_on_ground = false;
+    s.facing = 1.0f;
+    ArcherInput into;
+    into.move_axis = 1.0f;
+    for (int i = 0; i < 90 && s.mode != MODE_HANG; i++){
+        StageEvents ev;
+        s.Tick(into,ev);
+    }
+    return s.mode == MODE_HANG;
+}
+
+static void TestVitals(){
+    printf("vitals\n");
+    char detail[200];
+    ArcherInput idle;
+    Stage s;
+    VitalsLayout(s);
+
+    //--- Fear ---
+    VitalsStandAt(s,-30.0f,0.0f);
+    Run(s,120,idle);
+    snprintf(detail,sizeof(detail),"fear %.3f, target %.3f",s.vitals.fear,s.vitals.fear_target);
+    Check(s.f_on_ground && s.vitals.fear_target == 0.0f && s.vitals.fear == 0.0f,
+          "the middle of a floor is no fear, however far the pit is",detail);
+
+    VitalsStandAt(s,-59.8f,0.0f);
+    Run(s,120,idle);
+    snprintf(detail,sizeof(detail),"at x %.2f, fear target %.3f",s.pos.x,s.vitals.fear_target);
+    Check(s.f_on_ground && s.vitals.fear_target == 0.0f,"nor is the lip of a step down she could jump back up",detail);
+
+    VitalsStandAt(s,-0.2f,0.0f);
+    Run(s,60,idle);
+    snprintf(detail,sizeof(detail),"at x %.2f, fear %.3f, target %.3f",s.pos.x,s.vitals.fear,s.vitals.fear_target);
+    Check(s.f_on_ground && s.vitals.fear_target > 0.25f && s.vitals.fear_target <= VITALS_EDGE_SHARE,
+          "the lip of the pit is, up to VITALS_EDGE_SHARE of the drop's",detail);
+    Check(s.vitals.fear > 0.9f * s.vitals.fear_target,"and she gets there within a second",detail);
+    float lip_fear = s.vitals.fear_target;
+    VitalsStandAt(s,-0.7f,0.0f);
+    Run(s,10,idle);
+    snprintf(detail,sizeof(detail),"target %.3f at x %.2f, %.3f at the lip",s.vitals.fear_target,s.pos.x,lip_fear);
+    Check(s.vitals.fear_target < lip_fear,"a step back from it is less",detail);
+
+    Stage low = s, high = s;
+    bool f_low = VitalsHangFrom(low,-100.0f,2.2f);
+    bool f_high = VitalsHangFrom(high,10.0f,2.2f);
+    snprintf(detail,sizeof(detail),"low: mode %i at (%.2f,%.2f); high: mode %i at (%.2f,%.2f)",
+             low.mode,low.pos.x,low.pos.y,high.mode,high.pos.x,high.pos.y);
+    Check(f_low && f_high,"she catches both lips",detail);
+    Run(low,120,idle);
+    Run(high,120,idle);
+    snprintf(detail,sizeof(detail),"over the pit %.3f, over the step %.3f",high.vitals.fear,low.vitals.fear);
+    Check(high.vitals.fear > 0.8f && low.vitals.fear < 0.1f,
+          "hanging over the pit is fear; hanging the same lip over a floor is not",detail);
+
+    //The tail: out of danger, the fear lingers, and is gone in the end.
+    float hung = high.vitals.fear;
+    VitalsStandAt(high,-30.0f,0.0f);
+    high.vitals.fear = hung;
+    Run(high,60,idle);
+    float after_1s = high.vitals.fear;
+    Run(high,540,idle);
+    snprintf(detail,sizeof(detail),"%.3f hanging, %.3f a second later, %.3f ten seconds later",hung,after_1s,high.vitals.fear);
+    Check(after_1s > 0.6f * hung && high.vitals.fear < 0.2f * hung,
+          "fear lingers a second after the danger, and fades",detail);
+
+    //Falling: the landing it is heading for, before it lands.
+    Stage fall = s;
+    fall.pos = v2(20.0f,2.0f);
+    fall.vel = v2(0.0f,0.0f);
+    fall.mode = MODE_AIR;
+    fall.f_on_ground = false;
+    fall.vitals = StageVitals();
+    float fear_before_landing = 0.0f;
+    bool  f_hard = false;
+    for (int i = 0; i < 120 && !fall.f_on_ground; i++){
+        StageEvents ev;
+        fall.Tick(idle,ev);
+        if (!fall.f_on_ground){
+            fear_before_landing = fall.vitals.fear;
+        }
+        f_hard = f_hard || (ev.f_landed && ev.land_speed >= VITALS_HARD_LANDING);
+    }
+    snprintf(detail,sizeof(detail),"fear %.3f in the air, %.3f landed",fear_before_landing,fall.vitals.fear);
+    Check(fear_before_landing > 0.5f,"a long fall is frightening before it lands",detail);
+    Check(f_hard && fall.vitals.fear > fear_before_landing,"and the hard landing adds to it",detail);
+
+    Stage hop = s;
+    VitalsStandAt(hop,-30.0f,0.0f);
+    ArcherInput jump;
+    jump.f_jump_down = jump.f_jump_pressed = true;
+    ArcherInput held;
+    held.f_jump_down = true;
+    StageEvents jev;
+    hop.Tick(jump,jev);
+    float hop_fear = 0.0f;
+    for (int i = 0; i < 120 && !hop.f_on_ground; i++){
+        StageEvents ev;
+        hop.Tick(held,ev);
+        hop_fear = fmaxf(hop_fear,hop.vitals.fear_target);
+    }
+    snprintf(detail,sizeof(detail),"the most fear it aimed at: %.3f",hop_fear);
+    Check(jev.f_jumped && hop_fear == 0.0f,"a jump on flat ground is none",detail);
+
+    //--- Exertion ---
+    Stage run = s;
+    VitalsStandAt(run,-58.0f,0.0f);
+    ArcherInput right;
+    right.move_axis = 1.0f;
+    Run(run,150,right);
+    float ran = run.vitals.exertion;
+    float bpm_ran = run.vitals.heart_rate;
+    snprintf(detail,sizeof(detail),"exertion %.3f, %.0f bpm after 2.5 s of sprint",ran,bpm_ran);
+    Check(ran > 0.3f,"a sprint winds her",detail);
+    Check(bpm_ran > VITALS_REST_BPM + 10.0f,"and raises her heart rate",detail);
+
+    Stage stand = run, walk = run;
+    ArcherInput stroll;
+    stroll.move_axis = 0.3f;
+    Run(stand,180,idle);
+    Run(walk,180,stroll);
+    snprintf(detail,sizeof(detail),"from %.3f: %.3f standing, %.3f walking",ran,stand.vitals.exertion,walk.vitals.exertion);
+    Check(stand.vitals.exertion < ran && walk.vitals.exertion > stand.vitals.exertion,
+          "standing gets her breath back; walking barely does",detail);
+    Check(stand.vitals.exertion > 0.5f * ran,"and not all at once",detail);
+    Run(stand,1200,idle);
+    snprintf(detail,sizeof(detail),"exertion %.3f, %.1f bpm",stand.vitals.exertion,stand.vitals.heart_rate);
+    Check(stand.vitals.exertion < 0.05f && stand.vitals.heart_rate < VITALS_REST_BPM + 5.0f,
+          "twenty seconds' rest and she is rested, heart and all",detail);
+
+    Stage jumps = s;
+    VitalsStandAt(jumps,-30.0f,0.0f);
+    for (int n = 0; n < 3; n++){
+        StageEvents ev;
+        jumps.Tick(jump,ev);
+        for (int i = 0; i < 120 && !jumps.f_on_ground; i++){
+            StageEvents e;
+            jumps.Tick(held,e);
+        }
+        Run(jumps,2,idle);
+    }
+    snprintf(detail,sizeof(detail),"exertion %.3f",jumps.vitals.exertion);
+    Check(jumps.vitals.exertion > 2.0f * VITALS_JUMP_EFFORT,"three jumps in a row tell",detail);
+
+    //Reset clears them, and the level they are for never sees any of this layout's numbers.
+    s.vitals.exertion = s.vitals.fear = 0.7f;
+    s.Reset();
+    Check(s.vitals.exertion == 0.0f && s.vitals.fear == 0.0f && s.vitals.heart_rate == VITALS_REST_BPM,
+          "a restart puts her body back at rest");
+}
+
 int main(void){
     printf("--- archer stage rules ---\n");
     printf("derived from the constants: apex %.2f, airtime %.1f ticks, gap reach %.2f\n\n",
@@ -5430,6 +5981,10 @@ int main(void){
     TestBackdrop();
 #endif
     TestBoulders();
+    TestZones();
+    TestCrumble();
+    TestRoutes();
+    TestVitals();
 
     printf("\n%i checks, %i failures\n",g_checks,g_failures);
     return g_failures ? 1 : 0;

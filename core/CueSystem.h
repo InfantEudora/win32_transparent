@@ -212,6 +212,15 @@ public:
 
     //For panels and tools.
     std::vector<std::string> CueNames() const;
+    /*
+        A panel's PLAY button: the cue's sound and actions, at the next Tick, as if its trigger had
+        come and every draw said yes - no condition, chance, delay, jitter, group, gap or scope, and
+        every gain_by curve at its loudest, so what is heard is the row at full strength. Each press
+        takes the next of its sounds in turn, so every variant can be heard. Logged as a play with
+        the note "audition"; it touches no history, so it cannot change what a replay decides. A
+        looping cue plays once.
+    */
+    void Audition(const std::string& cue);
     //Where a sound some cue plays is loudest, in seconds, as measured when the table loaded; -1
     //for one no cue plays. For a game that has to look that far ahead - the archer forecasts an
     //arrow's flight exactly as far as the swoosh's lead - without asking the sound system itself.
@@ -302,7 +311,7 @@ private:
     };
     //An event waiting for Tick.
     struct Pending{
-        int         kind = 0;               //0 signal, 1 begin, 2 end
+        int         kind = 0;               //0 signal, 1 begin, 2 end, 3 audition
         std::string name;
         int         instance = 0;
         CuePayload  payload;
@@ -344,6 +353,7 @@ private:
     float listener_x = 0.0f;
     uint64_t now = 0;
     uint64_t next_serial = 1;
+    int      auditions = 0;                 //Audition's turn through a cue's sounds
 
     std::vector<Cue> cues;
     std::map<std::string,int> cue_index;
@@ -372,6 +382,7 @@ private:
     void Fire(Waiting& w);
     void FireAction(const Cue& cue, int action, const Waiting& w);
     void EndScopeNow(const std::string& name, int instance);
+    void AuditionNow(const Cue& cue);
     void StopPlaying(Playing& p);
     void UpdateDucks();
     void Retire();

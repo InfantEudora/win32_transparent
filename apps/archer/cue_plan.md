@@ -603,6 +603,31 @@ force-added), so their baselines need them added with `git add -f`.
 - Not done: a roll in the shake (a little rotation reads well for big hits), and hitstop, which is
   an effect for the rules (section 2), not an action.
 
+### Jump and landing sounds (2026-09-27)
+
+- **`jump_takeoff`** on `jumped`. **`jump_voice`** - `jump_huh_1`, `jump_huh_2`, `jump_ha_1` - works
+  the way the kick shout does: 40% of jumps, 0..2 ticks of jitter, `align: peak` with the
+  latest-peaking file (`huh_1`, 9.6 ticks in) first so the others only ever move later.
+- **`jump_landing` is a forecast**, like the swoosh: the file builds 0.13 s to its thud, so it starts
+  on the new `landing_ahead` signal (`Stage::PredictLanding`, every tick of a flight that will
+  LAND rather than catch a ledge) and the thud falls on the contact tick. Once per `airborne` scope
+  (every stretch in MODE_AIR). Nothing under speed 5; 0.35..1.0 by 25.
+- **`land_grunt`** on `landed` from 25, the hard landing's threshold.
+- **The `her` voice group** now exists, holding kick_shout, jump_voice, land_grunt and nice_shot:
+  one line at a time, a second one skipped. No gap yet.
+- **Checked**: ten jumps on the slab - a takeoff on every one, the voice on three, each landing's
+  thud started 7 ticks early from 0.013 s in; a drop from 16 - thud at 1519, touchdown, grunt,
+  shake and rumble all at 1526. Against the baselines: only additions (24 takeoffs, 30 landings,
+  13 voice lines, 1 grunt), nothing removed and no kick shout lost to the group.
+- **And a fix to the proof itself**: one line from the PREVIOUS recording - a flight still in the
+  air when it ended - landed in the next one's log, between the tool clearing the log and the
+  replay restarting the level. `CueSystem::Reset` now logs a `reset` marker and
+  `tools/cue_replay.py` keeps only what follows the replay's own restart. Baselines rewritten and
+  checked three times in a row, all seven identical. (One earlier check run reported one
+  recording different; it was not reproduced in three runs since and may have been the test
+  window being closed during it - worth knowing if a flaky difference ever turns up.)
+- `breathing_1.wav` is in the folder and on no cue yet.
+
 (What was step 8, "audio follows the pause", is done already: `SoundSystem::SetPaused` holds every
 voice on a pass that does not tick, so a paused game is silent and `sim_step` plays one tick.)
 

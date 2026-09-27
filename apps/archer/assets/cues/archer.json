@@ -15,13 +15,31 @@
     "footstep_2":   "sound/footstep_2.wav",
     "footstep_3":   "sound/footstep_3.wav",
     "footstep_4":   "sound/footstep_4.wav",
-    "nice_shot":    "sound/speech/nice_shot.wav"
+    "jump_takeoff": "sound/jump_takeoff.wav",
+    "jump_landing": "sound/jump_landing.wav",
+    "jump_huh_1":   "sound/jump_huh_1.wav",
+    "jump_huh_2":   "sound/jump_huh_2.wav",
+    "jump_ha_1":    "sound/jump_ha_1.wav",
+    "jump_hardlanding_grunt": "sound/jump_hardlanding_grunt.wav",
+    "nice_shot":    "sound/speech/nice_shot.wav",
+    "breathe_in_1":  "sound/breathe_in_normal_1.wav",
+    "breathe_in_2":  "sound/breathe_in_normal_2.wav",
+    "breathe_out_1": "sound/breathe_out_normal_1.wav",
+    "breathe_out_2": "sound/breathe_out_normal_2.wav",
+    "breathe_out_3": "sound/breathe_out_normal_3.wav",
+    "heartbeat_1":  "sound/heartbeat_1.wav",
+    "heartbeat_2":  "sound/heartbeat_2.wav"
+  },
+
+  "groups": {
+    "her": { "comment": "Her voice, breathing included: one sound at a time. PRIORITY decides who gives way (vitals_plan.md section 6): 2 a grunt of pain, 1 a shout or a line, 0 a breath. A higher one cuts a lower one (busy interrupt); an equal or lower one arriving while she speaks is skipped - so a breath never plays over a huh, and a kick in the air right after a jump's huh stays quiet. gap is ticks of silence after a line, if she ever comments too much." }
   },
 
   "buses": {
     "effects":  { "comment": "everything that is not her voice or, later, the narrator and the music" },
     "voice":    { "comment": "her lines" },
-    "ambience": { "comment": "loops of the place - the range, wind and birds; nothing on it yet" }
+    "ambience": { "comment": "loops of the place - the range, wind and birds; nothing on it yet" },
+    "body":     { "comment": "her heartbeat - not her voice, so it overlaps everything, and has its own fader" }
   },
 
   "cues": {
@@ -61,7 +79,27 @@
       "comment": "Her shout, on some kicks, on a tick that wanders: kick ticks 10..16, found by ear on kick_hyaa, the others moved so their loud parts land where its does. Never the same shout twice running. (Until 2026-09-27 this had seed 0 and no_repeat false, which reproduced the old hand-wired draws for the step 3 proof.)",
       "begin": "kick", "sounds": ["kick_hyaa", "kick_hija", "kick_hoowa"], "chance": 0.4,
       "delay": 9, "jitter": 6, "delay_from": "strike_shift", "align": "peak",
-      "gain": 0.8, "bus": "voice"
+      "gain": 0.8, "group": "her", "priority": 1, "busy": "interrupt", "bus": "voice"
+    },
+    "jump_takeoff": {
+      "comment": "The push off the ground, on the tick she leaves it.",
+      "signal": "jumped", "sounds": "jump_takeoff", "gain": 1.0, "bus": "effects"
+    },
+    "jump_voice": {
+      "comment": "Her effort on a jump, the way she shouts on a kick: on some jumps (chance), on a tick that wanders a little (jitter), and each file moved so its loud part lands where jump_huh_1's does - which is why that one is first, being the latest to peak (9.6 ticks in; huh_2 7.2, ha 6.6). The loud part comes about a sixth of a second into the rise.",
+      "signal": "jumped", "sounds": ["jump_huh_1", "jump_huh_2", "jump_ha_1"], "chance": 0.4,
+      "jitter": 2, "align": "peak", "gain": 0.7, "group": "her", "priority": 1, "busy": "interrupt", "bus": "voice"
+    },
+    "jump_landing": {
+      "comment": "Feet meeting the ground. The file builds for 0.13 s to its thud, so it starts that far AHEAD of the touchdown on the landing forecast (landing_ahead, like the arrow's swoosh) and the thud lands on the contact tick. Once per flight. Nothing under 5, which is a step off a kerb, not a landing (PUPPET_LAND_VEL); louder the harder she comes down, full at 25, where the hard landing starts.",
+      "signal": "landing_ahead", "forecast": "in", "scope": "airborne", "once": true,
+      "when": [ ["speed", ">=", 5] ], "sounds": "jump_landing", "bus": "effects",
+      "gain_by": [ { "value": "speed", "in": [5, 25], "out": [0.35, 1.0] } ]
+    },
+    "land_grunt": {
+      "comment": "A hard landing - 25 and over, where the animation's hard landing starts (PUPPET_HARD_LAND_VEL) - knocks a grunt out of her, just after the impact rather than on it.",
+      "signal": "landed", "when": [ ["speed", ">=", 25] ], "sounds": "jump_hardlanding_grunt",
+      "gain": 0.7, "group": "her", "priority": 2, "busy": "interrupt", "bus": "voice"
     },
     "footstep": {
       "comment": "A foot planting in the walk or run on screen (ApplicationArcher::SignalFootsteps - measured toe plants, so it stays on the foot at any speed). One of four, never the same twice running; softer at a walk than a sprint (9 is ARCHER_RUN_SPEED). The files are quiet already, about 20 dB under the kick, so gain 1 is not loud. gap 4 guards against a double step at a clip handover.",
@@ -71,7 +109,26 @@
     },
     "nice_shot": {
       "comment": "The centre ring of a stand, and only that: she says so.",
-      "signal": "stand_hit", "when": [ ["points", "==", 10] ], "sounds": "nice_shot", "gain": 0.8, "bus": "voice"
+      "signal": "stand_hit", "when": [ ["points", "==", 10] ], "sounds": "nice_shot", "gain": 0.8, "group": "her", "priority": 1, "busy": "interrupt", "bus": "voice"
+    },
+
+    "breath_in": {
+      "comment": "Her breathing (vitals_plan.md): ApplicationArcher::SignalBody clocks one breath at a time off her exertion - every 4 s rested to 1.35 s spent, on her footsteps while she runs, restarted by a jump or a kick. Silent until she has worked a little (0.15; a walk never gets there, a jog does in a few seconds), then louder the harder she breathes. The lowest priority in her group: any line she says cuts it, and it waits for none.",
+      "signal": "breath_in", "when": [ ["exertion", ">=", 0.15] ],
+      "sounds": ["breathe_in_1", "breathe_in_2"], "group": "her", "priority": 0, "bus": "voice",
+      "gain_by": [ { "value": "exertion", "in": [0.15, 0.8], "out": [0.3, 1.0] } ]
+    },
+    "breath_out": {
+      "comment": "The second half of the breath, 28 ticks after breath_in - past the longest in-breath, so it never finds her busy with her own.",
+      "signal": "breath_out", "when": [ ["exertion", ">=", 0.15] ],
+      "sounds": ["breathe_out_1", "breathe_out_2", "breathe_out_3"], "group": "her", "priority": 0, "bus": "voice",
+      "gain_by": [ { "value": "exertion", "in": [0.15, 0.8], "out": [0.3, 1.0] } ]
+    },
+    "heartbeat": {
+      "comment": "Her heart, at her heart rate (ApplicationArcher::SignalBody). HEARD FROM FEAR: pound is her fear, or the far end of her exertion (past 0.8), so a racing heart after a sprint is not heard until she is spent. The two files alternate. The lub to dub is 0.28 s, so past about 130 bpm a beat runs into the next - that is her heart at its most afraid. Not in her group: it overlaps everything.",
+      "signal": "heartbeat", "when": [ ["pound", ">=", 0.2] ],
+      "sounds": ["heartbeat_1", "heartbeat_2"], "bus": "body",
+      "gain_by": [ { "value": "pound", "in": [0.2, 1.0], "out": [0.25, 1.0] } ]
     },
 
     "land_shake": {

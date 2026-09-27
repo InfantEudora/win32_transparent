@@ -87,8 +87,9 @@ static std::string joined(const std::vector<std::string>& lines) {
 static std::vector<std::string> plays(CueSystem& cs, const char* what = "play") {
     std::vector<std::string> out;
     for (const std::string& l : cs.log.Lines()) {
-        char tick[32], cue[64], w[16], snd[64];
-        if (sscanf(l.c_str(), "%31s %63s %15s %63s", tick, cue, w, snd) == 4 && std::string(w) == what)
+        char tick[32], cue[64], w[16], snd[64] = "";
+        //Three columns is a line with no sound, a `reset`; four and more everything else.
+        if (sscanf(l.c_str(), "%31s %63s %15s %63s", tick, cue, w, snd) >= 3 && std::string(w) == what)
             out.push_back(std::string(tick) + " " + cue + " " + snd);
     }
     return out;
@@ -487,6 +488,7 @@ static void rule_checks() {
     cs.Signal("g");
     cs.Tick(10);
     check(plays(cs).size() == 1, "after a restart to tick 10 a gapped cue plays at once");
+    check(plays(cs, "reset").size() == 1, "a restart leaves a reset marker in the log");
 
     // Reload keeps history and the table's new numbers apply.
     std::string error;
@@ -547,12 +549,57 @@ static void sound_checks() {
           "a narrator line ducks the effects bus in the real mix", buf);
 }
 
+// --- the panel's play button ------------------------------------------------------------------
+
+static void audition_checks() {
+    printf("audition\n");
+    FakeOutput out;
+    CueSystem cs;
+    cs.Init(60.0f, &out);
+    std::vector<std::string> acted;
+    cs.SetActionHandler("shake", [&](const CueAction& a) {
+        char b[64];
+        snprintf(b, sizeof(b), "shake %.3f", a.gain);
+        acted.push_back(b);
+    });
+    load(cs, R"({"sounds":{"a":"a.wav","b":"b.wav","c":"c.wav"},"groups":{"her":{}},
+                 "cues":{"shout":{"signal":"k","sounds":["a","b","c"],"chance":0.01,"delay":30,
+                                  "when":[["x","==",99]],"group":"her","gain":0.8,
+                                  "gain_by":[{"value":"power","in":[0,1],"out":[0.5,0.9]}]},
+                         "thud":{"signal":"t","sounds":"a","gain":0.5,
+                                 "actions":[{"kind":"shake","amount":1,"offset":20}]}}})");
+    cs.Audition("shout");
+    cs.Tick(1);
+    std::vector<std::string> p = plays(cs);
+    check(p.size() == 1 && p[0] == "1 shout a", "plays on the next tick, past its chance, delay and condition", joined(p));
+    check(!out.calls.empty() && out.calls.back().find("gain 0.720") != std::string::npos,
+          "at its gain times each curve at its loudest", out.calls.empty() ? "" : out.calls.back());
+    cs.log.Clear();
+    cs.Audition("shout");
+    cs.Tick(2);
+    cs.Audition("shout");
+    cs.Tick(3);
+    p = plays(cs);
+    check(p.size() == 2 && p[0] == "2 shout b" && p[1] == "3 shout c",
+          "each press takes the next variant, and a group does not hold it back", joined(p));
+    check(cs.CaptureHistory()["cues"].empty() && cs.CaptureHistory()["groups"].empty(),
+          "and it leaves no history a replay could read", cs.CaptureHistory().dump());
+    cs.Audition("thud");
+    cs.Tick(4);
+    check(acted.size() == 1 && acted[0] == "shake 0.500", "its actions fire at once, at the cue's gain", joined(acted));
+    cs.log.Clear();
+    cs.Audition("nothing");
+    cs.Tick(5);
+    check(cs.log.Lines().empty(), "a name the table does not have does nothing");
+}
+
 int main() {
     table_checks();
     trigger_checks();
     parity_checks();
     rule_checks();
     sound_checks();
+    audition_checks();
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

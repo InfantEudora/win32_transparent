@@ -187,6 +187,26 @@ void WindField::BuildDistance(const std::vector<StageBlock>& obstacles){
     //Clamped a hair INSIDE, or a node level with the end block would sit exactly on its side face
     //and read as surface rather than solid.
     const float inset = 1e-3f;
+    /*
+        EACH COLUMN'S GROUND GOES ON DOWN below its lowest block. A block is a slab of what is under
+        it, not a shelf with air beneath: the main level's ground runs are 4 deep, and when a pit's
+        floor at -4 pulled y0 down to -7 (2026-09-27, the stepping stones) that left a 3-unit channel
+        open under the whole level, the ground became one floating obstacle, and the flow squeezed
+        under the tree's slab went from 1.7 to 2.4 - wind_test's "no jets". So: below the lowest
+        bottom in a column it is ground to the floor plane. A column with no block at all - a gap
+        with no floor - keeps only the plane below, as it always had.
+    */
+    std::vector<float> column_floor(nx);
+    for (int i = 0; i < nx; i++){
+        float x = fminf(fmaxf(x0 + i * cell,level_x0 + inset),level_x1 - inset);
+        float lowest = 1e9f;
+        for (const StageBlock& b : obstacles){
+            if (x >= b.Left() && x <= b.Right()){
+                lowest = fminf(lowest,b.Bottom());
+            }
+        }
+        column_floor[i] = (lowest < 1e8f) ? lowest : y0;
+    }
     for (int j = 0; j < ny; j++){
         float y = y0 + j * cell;
         for (int i = 0; i < nx; i++){
@@ -195,6 +215,8 @@ void WindField::BuildDistance(const std::vector<StageBlock>& obstacles){
             for (const StageBlock& b : obstacles){
                 d = fminf(d,BoxDistance(x,y,b));
             }
+            //Under the column's lowest block: ground, measured to that block's bottom.
+            d = fminf(d,y - column_floor[i]);
             /*
                 The bottom row is ground whatever is there - a pit with no floor gets one, which is
                 what the air above it would feel anyway. As a PLANE in the distance field, not just

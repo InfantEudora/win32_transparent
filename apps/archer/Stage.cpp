@@ -65,8 +65,11 @@ void Stage::Reset(){
     spring_plants.clear();
     branches.clear();
     ramps.clear();
+    zones.clear();
     BuildLevel();
     BuildTrees();
+    //In none of them yet: the first tick finds the one she lands in and reports it entered.
+    zone_inside.assign(zones.size(),0);
     for (StageSpringPlant& p : spring_plants){
         p.q = p.prev_q = p.Rest();
         p.qd = 0.0f;
@@ -107,6 +110,7 @@ void Stage::Reset(){
     lean_rate = 0.0f;
     balance_ticks = 0;
     balance_entries = 0;
+    vitals = StageVitals();
 
     bow_mode = BOW_IDLE;
     draw_ticks = 0;
@@ -171,7 +175,9 @@ void Stage::BuildMainLevel(){
     //--- The ground, in three runs with two gaps between them ----------------------------------
     blocks.push_back({  1.00f, -2.00f, 13.00f, 2.00f, BLOCK_SOLID,  true });    //x -12 .. 14
     blocks.push_back({ 26.50f, -2.00f,  7.50f, 2.00f, BLOCK_SOLID,  true });    //x  19 .. 34
-    blocks.push_back({ 107.75f, -2.00f, 68.25f, 2.00f, BLOCK_SOLID, true });    //x 39.5 .. 176
+    //Out past the old end wall at 176 since 2026-09-27, to the stepping stones' pit - the test
+    //ground, below, carries the level on from the pit's far side.
+    blocks.push_back({ 117.75f, -2.00f, 78.25f, 2.00f, BLOCK_SOLID, true });    //x 39.5 .. 196
 
     //--- Traversal ------------------------------------------------------------------------------
     blocks.push_back({  7.00f,  0.90f,  2.00f, 0.90f, BLOCK_SOLID,  true });    //a step, top at 1.8
@@ -285,9 +291,55 @@ void Stage::BuildMainLevel(){
     blocks.push_back({ 169.00f,  1.30f,  1.00f, 1.30f, BLOCK_SOLID,  true });   //stump, x 168..170, top 2.6
     branches.push_back({ v2(157.00f,2.60f), v2(168.00f,2.60f) });
 
+    /*
+        THE TEST GROUND, x 176..264: flat and empty, past where the level used to end. It is where
+        bridge_crumble_plan.md's pieces are blocked out - the bridges, the stepping stones, the
+        chase - each added here as it is built, so nothing else in the level has to move for them.
+    */
+
+    /*
+        THE STEPPING STONES (bridge_crumble_plan.md section 2): a pit 18 wide and 4 deep, x 196..214,
+        with four crumble stones across it level with the ground. Each hop is short - 2.4 to 2.9 of
+        gap against a running jump's 6.5 - so the stones ask for rhythm, not reach: a stone holds for
+        CRUMBLE_SHAKE_TICKS after she lands, so she has to keep going.
+
+        THE DETOUR is the pit itself. Its floor is 4 below the rim, too high to jump out of (3.2)
+        but inside the grab window (hands reach 5.0), and the far rim is a LEDGE - so a fall is a
+        walk to the far wall, a jump, a catch and a climb. The near rim is plain SOLID: the way out
+        is onward. stage_test proves both routes, the stones and the pit with every stone gone.
+    */
+    blocks.push_back({ 205.00f, -6.00f,  9.00f, 2.00f, BLOCK_SOLID,   true });   //the pit's floor, x 196..214, top -4
+    blocks.push_back({ 240.00f, -2.00f, 26.00f, 2.00f, BLOCK_LEDGE,   true });   //the far rim and on, x 214..266
+    blocks.push_back({ 199.50f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone one,   x 198.9..200.1, top 0
+    blocks.push_back({ 203.50f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone two
+    blocks.push_back({ 207.50f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone three
+    blocks.push_back({ 211.00f, -0.30f,  0.60f, 0.30f, BLOCK_CRUMBLE, true });   //stone four,  x 210.4..211.6
+
     //The right-hand wall, so a run to the end stops rather than falling off the world. Tall
-    //enough that a jump off the canopy cannot clear it: 13.0 + 3.2 + her 1.8 is 18.0.
-    blocks.push_back({ 175.00f, 10.00f,  1.00f, 10.00f, BLOCK_SOLID, true });
+    //enough that a jump off the canopy cannot clear it: 13.0 + 3.2 + her 1.8 is 18.0. At 175
+    //until the test ground went in beyond it.
+    blocks.push_back({ 265.00f, 10.00f,  1.00f, 10.00f, BLOCK_SOLID, true });
+
+    /*
+        --- Zones: the level's areas, by what is in them ----------------------------------------------
+
+        Side by side, covering the level from the terrain bay to the end wall, so she is always in
+        exactly one and the HUD always has a name to show. Tall enough for everything above the
+        ground - the canopy's 13, the island in the bay, a jump off either. Each `arrive` is a spot
+        on the ground at the zone's left end, clear of props and blocks, where a teleport lands her
+        with the area in front of her; stage_test drops her on every one.
+    */
+    const float zb = -6.0f, zt = 30.0f;
+    AddZone("Terrain bay",      ARCHER_TEST_BAY_X_MIN, ARCHER_TEST_BAY_X_MAX, zb, zt, v2(-24.00f,0.30f));
+    AddZone("Start",            ARCHER_TEST_BAY_X_MAX,  14.0f, zb, zt, v2( -6.00f,0.30f));
+    AddZone("Gaps and rope",     14.0f,  39.5f, zb, zt, v2( 21.00f,0.30f));
+    AddZone("Ledges and walls",  39.5f,  66.0f, zb, zt, v2( 41.50f,0.30f));
+    AddZone("Tree",              66.0f, 100.0f, zb, zt, v2( 77.50f,0.30f));
+    AddZone("Spring plants",    100.0f, 134.0f, zb, zt, v2(101.00f,0.30f));
+    AddZone("Branches",         134.0f, 176.0f, zb, zt, v2(153.00f,0.30f));
+    //The test ground, a zone per piece as each is built and the rest still "Test ground".
+    AddZone("Stepping stones",  176.0f, 218.0f, zb, zt, v2(192.00f,0.30f));
+    AddZone("Test ground",      218.0f, 264.0f, zb, zt, v2(222.00f,0.30f));
 
     //--- Props: everything reactphysics3d owns --------------------------------------------------
     /*
@@ -1056,6 +1108,8 @@ void Stage::BuildRopeLevel(){
     //the rope; the upper one points left, where the drop is to go.
     signs.push_back({ SIGN_POST, -3.00f, 0.00f, -1.00f, 0.0f, { "DROP", "ROPE" } });
 
+    //The rope and both pits right of the floor's lip; the gallery adds its own, left of it.
+    AddZone("Rope", -17.0f, 31.0f, -20.0f, 48.0f, v2(-6.00f,0.30f));
     BuildSlideGallery();
 }
 
@@ -1115,6 +1169,10 @@ void Stage::BuildSlideGallery(){
     float pit_l = floor_end - 14.0f;
     blocks.push_back({ (pit_l + floor_end) * 0.5f, -10.75f, (floor_end - pit_l) * 0.5f, 5.25f, BLOCK_SOLID, true });
     blocks.push_back({ pit_l - 0.5f, 22.50f, 0.50f, 25.50f, BLOCK_SOLID, true });  //the level's left wall now
+
+    //Its zone: from the left wall to the floor's lip, the shallow pit included - arriving on the
+    //pit's floor faces her up the first, gentlest hill.
+    AddZone("Slide gallery", pit_l, -17.0f, -20.0f, 20.0f, v2(-21.00f,-2.70f));
 }
 
 void Stage::BuildRangeLevel(){
@@ -1178,6 +1236,9 @@ void Stage::BuildRangeLevel(){
             }
         }
     }
+
+    //One zone, wall to wall: the range is one room.
+    AddZone("Range", -17.0f, 17.0f, -4.0f, 48.0f, v2(0.00f,0.30f));
 }
 
 //--- The props, as the rules see them -----------------------------------------------------------
@@ -1261,7 +1322,257 @@ void Stage::Tick(const ArcherInput& in_raw, StageEvents& events){
         spring_boost_seen = 0.0f;
     }
 
+    //Once she has moved: a stone starts on the tick she lands on it.
+    TickCrumbles(events);
+    //Last, off where she ended the tick - a zone is about where she IS.
+    TickZones(events);
+    //And her body, off the same, and off what this tick's events say she did.
+    TickVitals(events);
+
     ticks++;
+}
+
+//--- Crumbling rocks -------------------------------------------------------------------------------
+
+bool Stage::StandingOn(const StageBlock& b) const{
+    if (!f_on_ground || !b.f_alive || spring_on >= 0){
+        return false;
+    }
+    float feet = pos.y - ARCHER_HALF_H;
+    return fabsf(feet - b.Top()) < 0.02f &&
+           pos.x + ARCHER_HALF_W > b.Left() && pos.x - ARCHER_HALF_W < b.Right();
+}
+
+/*
+    bridge_crumble_plan.md section 2. Whole until she stands on it; then shaking - still holding
+    her - for CRUMBLE_SHAKE_TICKS; then gone. ONCE STARTED IT GOES: stepping off does not stop it,
+    which is what makes a row of them a run rather than a walk.
+
+    Gone is f_alive cleared, which every sweep already skips, and an event, as for a kicked wall -
+    the app has a collider to switch off and rubble to drop. An arrow stuck in it has nothing to
+    hold it now, so it is let go and falls.
+*/
+void Stage::TickCrumbles(StageEvents& events){
+    for (size_t i = 0; i < blocks.size(); i++){
+        StageBlock& b = blocks[i];
+        if (!b.f_alive || b.kind != BLOCK_CRUMBLE){
+            continue;
+        }
+        if (b.crumble_ticks < 0){
+            if (StandingOn(b)){
+                b.crumble_ticks = 0;
+                events.crumbles_started.push_back((int)i);
+            }
+            continue;
+        }
+        b.crumble_ticks++;
+        if (b.crumble_ticks < CRUMBLE_SHAKE_TICKS){
+            continue;
+        }
+        b.f_alive = false;
+        events.crumbled_blocks.push_back((int)i);
+        //A hair round it, because an arrow sticks at the surface it hit, not inside.
+        const float m = 0.05f;
+        for (int a = 0; a < ARROW_MAX_LIVE; a++){
+            Arrow& arrow = arrows[a];
+            if (arrow.f_live && arrow.f_stuck &&
+                arrow.pos.x > b.Left() - m && arrow.pos.x < b.Right() + m &&
+                arrow.pos.y > b.Bottom() - m && arrow.pos.y < b.Top() + m){
+                arrow.f_stuck = false;
+                arrow.vel = v2(0.0f,0.0f);
+                //Its first sweep from where it hangs, not from where it flew in from.
+                arrow.prev_pos = arrow.pos;
+            }
+        }
+    }
+}
+
+//--- Zones -----------------------------------------------------------------------------------------
+
+void Stage::AddZone(const char* name, float left, float right, float bottom, float top, v2 arrive){
+    StageZone z;
+    z.x = (left + right) * 0.5f;
+    z.y = (bottom + top) * 0.5f;
+    z.hw = (right - left) * 0.5f;
+    z.hh = (top - bottom) * 0.5f;
+    z.name = name;
+    z.id = (int)zones.size();
+    z.arrive = arrive;
+    zones.push_back(z);
+}
+
+/*
+    Her body box against every zone, and the change since last tick. The standing box whatever she
+    is doing - kneeling or hanging moves her a little, and a zone's edge flickering in and out as
+    she kneels on it would be two events for nothing.
+*/
+void Stage::TickZones(StageEvents& events){
+    if (zone_inside.size() != zones.size()){
+        zone_inside.assign(zones.size(),0);
+    }
+    const float l = pos.x - ARCHER_HALF_W, r = pos.x + ARCHER_HALF_W;
+    const float b = pos.y - ARCHER_HALF_H, t = pos.y + ARCHER_HALF_H;
+    for (size_t i = 0; i < zones.size(); i++){
+        uint8_t now = zones[i].Overlaps(l,r,b,t) ? 1 : 0;
+        if (now && !zone_inside[i]){
+            events.zones_entered.push_back((int)i);
+        }else if (!now && zone_inside[i]){
+            events.zones_left.push_back((int)i);
+        }
+        zone_inside[i] = now;
+    }
+}
+
+int Stage::CurrentZone() const{
+    int best = -1;
+    float best_area = 0.0f;
+    for (size_t i = 0; i < zones.size() && i < zone_inside.size(); i++){
+        if (!zone_inside[i]){
+            continue;
+        }
+        float area = zones[i].hw * zones[i].hh;
+        if (best < 0 || area < best_area){
+            best = (int)i;
+            best_area = area;
+        }
+    }
+    return best;
+}
+
+int Stage::FindZone(const char* name) const{
+    for (size_t i = 0; i < zones.size(); i++){
+        if (zones[i].name == name){
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+//--- Vitals ------------------------------------------------------------------------------------
+
+float Stage::DropBelow(float x, float y) const{
+    bool  f_found = false;
+    float top = 0.0f;
+    for (const StageBlock& b : blocks){
+        if (!b.f_alive || x < b.Left() || x > b.Right() || b.Top() > y + STAGE_EPS * 50.0f){
+            continue;
+        }
+        if (!f_found || b.Top() > top){
+            top = b.Top();
+            f_found = true;
+        }
+    }
+    return f_found ? (y - top) : VITALS_NO_FLOOR;
+}
+
+float Stage::DropFear(float drop){
+    return ClampF((drop - VITALS_DROP_FROM) / (VITALS_DROP_TO - VITALS_DROP_FROM),0.0f,1.0f);
+}
+
+//Eases `value` toward `target` over one tick, with the time constant for whichever way it goes.
+static float EaseToward(float value, float target, float rise_tau, float fall_tau){
+    float tau = (target > value) ? rise_tau : fall_tau;
+    return value + (target - value) * (1.0f - expf(-ARCHER_DT / tau));
+}
+
+void Stage::TickVitals(const StageEvents& events){
+    StageVitals& v = vitals;
+    float feet = pos.y - ARCHER_HALF_H;
+
+    //--- Exertion: what she is doing ---
+    float target = v.exertion;          //in the air, and anything not listed, it holds
+    float rise_tau = VITALS_EXERTION_RISE_TAU;
+    float fall_tau = VITALS_EXERTION_FALL_TAU;
+    switch (mode){
+    case MODE_GROUND:{
+        float share = fabsf(vel.x) / RunSpeed();
+        if (share <= VITALS_RUN_FROM){
+            target = 0.0f;
+            //Standing recovers at the full rate; a walk at its top only VITALS_WALK_RECOVERY of it.
+            float recovery = 1.0f - (1.0f - VITALS_WALK_RECOVERY) * (share / VITALS_RUN_FROM);
+            fall_tau /= recovery;
+        }else{
+            target = VITALS_RUN_TARGET * ClampF((share - VITALS_RUN_FROM) / (1.0f - VITALS_RUN_FROM),0.0f,1.0f);
+            //Slowing from a sprint to a jog is not a rest.
+            fall_tau /= VITALS_WALK_RECOVERY;
+        }
+        break;
+    }
+    case MODE_HANG:
+        target = VITALS_HANG_TARGET;
+        rise_tau = VITALS_HANG_RISE_TAU;
+        fall_tau /= VITALS_WALK_RECOVERY;
+        break;
+    case MODE_CLIMB:
+        target = VITALS_CLIMB_TARGET;
+        break;
+    case MODE_ROPE:
+        target = (rope_climb != 0) ? VITALS_CLIMB_TARGET : VITALS_ROPE_TARGET;
+        fall_tau /= VITALS_WALK_RECOVERY;
+        break;
+    case MODE_KNEEL:
+    case MODE_GETUP:
+        target = 0.0f;
+        break;
+    default:
+        break;
+    }
+    v.exertion_target = target;
+    v.exertion = EaseToward(v.exertion,target,rise_tau,fall_tau);
+    if (events.f_jumped){
+        v.exertion += VITALS_JUMP_EFFORT;
+    }
+    if (events.f_kick_started){
+        v.exertion += VITALS_KICK_EFFORT;
+    }
+    v.exertion = ClampF(v.exertion,0.0f,1.0f);
+
+    //--- Fear: how far she could fall ---
+    float fear = 0.0f;
+    if (mode == MODE_AIR){
+        //The speed she lands at, from what she has now and the drop still under her - energy, so
+        //a rise counts as much as a fall. Not a forecast: over a gap she is afraid of the gap.
+        float drop = DropBelow(pos.x,feet);
+        float impact = sqrtf(vel.y * vel.y + 2.0f * ARCHER_GRAVITY * ((drop > 0.0f) ? drop : 0.0f));
+        fear = ClampF((impact - VITALS_IMPACT_FROM) / (VITALS_IMPACT_TO - VITALS_IMPACT_FROM),0.0f,1.0f);
+    }else if (mode == MODE_HANG || mode == MODE_CLIMB || mode == MODE_ROPE){
+        fear = DropFear(DropBelow(pos.x,feet));
+    }else if (f_on_ground && spring_on < 0 && branch_on < 0 && ramp_on < 0){
+        /*
+            On a floor: the nearest place either side where it ends, within VITALS_EDGE_REACH, and
+            the drop past it. A step down is nothing (DropFear starts past a jump's height); the
+            middle of a floor is nothing however high it is. Pads, branches and ramps are skipped:
+            a branch has its balance instead, and neither is a block the column scan could see.
+        */
+        const float step = 0.1f;
+        for (float side = -1.0f; side <= 1.0f; side += 2.0f){
+            for (float d = 0.0f; d <= VITALS_EDGE_REACH + STAGE_EPS; d += step){
+                float drop = DropBelow(pos.x + side * d,feet);
+                if (drop > VITALS_DROP_FROM){
+                    float edge = VITALS_EDGE_SHARE * (1.0f - d / VITALS_EDGE_REACH) * DropFear(drop);
+                    fear = fmaxf(fear,edge);
+                    break;
+                }
+            }
+        }
+    }
+    if (branch_on >= 0){
+        fear = fmaxf(fear,VITALS_BALANCE_SHARE * BalanceDanger());
+    }
+    v.fear_target = fear;
+    v.fear = EaseToward(v.fear,fear,VITALS_FEAR_RISE_TAU,VITALS_FEAR_FALL_TAU);
+    if (events.f_lost_balance){
+        v.fear += VITALS_LOST_BALANCE_FEAR;
+    }
+    if (events.f_landed && events.land_speed >= VITALS_HARD_LANDING){
+        v.fear += VITALS_HARD_LANDING_FEAR;
+    }
+    v.fear = ClampF(v.fear,0.0f,1.0f);
+
+    //--- The heart, trailing both ---
+    float bpm = VITALS_REST_BPM + VITALS_EXERTION_BPM * v.exertion + VITALS_FEAR_BPM * v.fear;
+    bpm = fminf(bpm,VITALS_MAX_BPM);
+    v.heart_rate = EaseToward(v.heart_rate,bpm,VITALS_HEART_RISE_TAU,VITALS_HEART_FALL_TAU);
 }
 
 void Stage::TickBow(const ArcherInput& in, StageEvents& events){

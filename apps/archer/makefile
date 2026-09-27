@@ -117,7 +117,7 @@ include $(ROOT)/engine.mk
 rules:
 	@mkdir -p build
 	$(CXX) -std=c++17 -Wall -g -I$(ROOT)/core -I$(ROOT)/core/types -o build/stage_test.exe \
-		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp \
+		stage_test.cpp Stage.cpp Puppet.cpp Foliage.cpp Backdrop.cpp Boulders.cpp Vine.cpp RopeMesh.cpp RouteCheck.cpp \
 		$(ROOT)/core/Spline.cpp $(ROOT)/core/SplineDeform.cpp $(ROOT)/core/types/type_helpers.cpp
 	@./build/stage_test.exe
 #The wind's checks, as their own exe so they need nothing from stage_test.cpp. -O2 because the

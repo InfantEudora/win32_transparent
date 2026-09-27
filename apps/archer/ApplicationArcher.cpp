@@ -779,6 +779,10 @@ void ApplicationArcher::BuildMaterials(){
         { "ar_platform",    vec4(0.55f,0.76f,0.92f,1.0f), 0.22f, &material_platform },
         //Breakable: cracked-brick red, the colour it will burst into.
         { "ar_breakable",   vec4(0.62f,0.28f,0.24f,1.0f), 0.10f, &material_breakable },
+        //Crumble: a pale sandstone, loose-looking next to the ground's dark slate - and, once she
+        //has stood on it, a hot orange, the colour of "get off" (ShakeCrumbles).
+        { "ar_crumble",     vec4(0.72f,0.64f,0.48f,1.0f), 0.08f, &material_crumble },
+        { "ar_crumble_warn",vec4(0.95f,0.45f,0.12f,1.0f), 0.40f, &material_crumble_warn },
         //A tree's trunk: bark brown, and dim - it is behind her and collides with nothing, so it
         //must read as backdrop next to the arms (one-way blue) that are the rule.
         { "ar_trunk",       vec4(0.36f,0.25f,0.16f,1.0f), 0.03f, &material_trunk },
@@ -813,7 +817,10 @@ void ApplicationArcher::BuildMaterials(){
         //The placeholder vine: an olive stem and a leaf green a step brighter than the grass, so a
         //vine lying on grass still reads as a separate thing.
         { "ar_vine",        vec4(0.36f,0.42f,0.20f,1.0f), 0.04f, &material_vine },
-        { "ar_vine_leaf",   vec4(0.30f,0.55f,0.24f,1.0f), 0.06f, &material_vine_leaf }
+        { "ar_vine_leaf",   vec4(0.30f,0.55f,0.24f,1.0f), 0.06f, &material_vine_leaf },
+        //A zone's outline in the blockout view: a bright amber that nothing in the level uses, and
+        //glowing, so an edge reads as a marking laid over the level rather than as part of it.
+        { "ar_zone",        vec4(1.00f,0.70f,0.15f,1.0f), 0.80f, &material_zone }
     };
     for (size_t i = 0; i < sizeof(table)/sizeof(table[0]); i++){
         Material m;
@@ -1058,6 +1065,7 @@ void ApplicationArcher::BuildBlocks(){
             case BLOCK_LEDGE:     material = material_ledge;     break;
             case BLOCK_PLATFORM:  material = material_platform;  break;
             case BLOCK_BREAKABLE: material = material_breakable; break;
+            case BLOCK_CRUMBLE:   material = material_crumble;   break;
             default: break;
         }
 
@@ -1096,6 +1104,7 @@ void ApplicationArcher::BuildBlocks(){
         }
         block_objects.push_back(object);
     }
+    BuildZoneOutlines();
     /*
         Each tree's TRUNK - Stage::trees. Not a block: it collides with nothing, rules or rp3d,
         because she climbs past it (the arms above are the blocks). So a plain box, set back at
@@ -2704,8 +2713,52 @@ void ApplicationArcher::BuildVines(){
     NO GL IN HERE, which is what makes it safe to call from NewGame on the physics thread. Compare
     BuildTerrain, which is render-thread only for exactly that reason.
 */
+/*
+    Each zone as an outline - four thin bars round its rectangle, a little in front of the blocks so
+    none of them hides an edge. The blockout view's, per cue_plan.md section 8: it is how a zone is
+    placed and checked by eye. Collide with nothing; drawn only while the blockout is (F2).
+
+    Children of blockout_group, made by BuildBlocks - so NewGame destroys them beside the blocks,
+    from zone_outline_objects, and BuildBlocks makes them again.
+*/
+void ApplicationArcher::BuildZoneOutlines(){
+    zone_outline_objects.clear();
+    if (!blockout_group){
+        return;
+    }
+    const float bar = 0.12f;
+    const float z = STAGE_BLOCK_HALF_DEPTH + 0.10f;
+    for (const StageZone& zone : stage.zones){
+        struct Bar{ float x, y, w, h; };
+        const Bar bars[4] = {
+            { zone.x,        zone.Top(),    zone.hw * 2.0f, bar },
+            { zone.x,        zone.Bottom(), zone.hw * 2.0f, bar },
+            { zone.Left(),   zone.y,        bar,            zone.hh * 2.0f },
+            { zone.Right(),  zone.y,        bar,            zone.hh * 2.0f },
+        };
+        for (int i = 0; i < 4; i++){
+            Object* o = new Object();
+            o->SetMesh(unit_mesh);
+            char name[64];
+            snprintf(name,sizeof(name),"zone_%i_%s",zone.id,zone.name.c_str());
+            o->name = name;
+            o->SetPosition(vec3(bars[i].x,bars[i].y,z));
+            o->SetScale(vec3(bars[i].w,bars[i].h,bar));
+            o->SetMaterialSlot(0,material_zone);
+            o->SetCastsShadow(false);
+            o->SetPickability(false);
+            o->SetVisibility(f_show_blockout);
+            blockout_group->AttachChild(o);
+            zone_outline_objects.push_back(o);
+        }
+    }
+}
+
 void ApplicationArcher::ApplyBlockoutVisibility(){
     melted_blocks.clear();
+    for (Object* o : zone_outline_objects){
+        o->SetVisibility(f_show_blockout);
+    }
     //A scenery collider is hidden the way a melted box is, bay or no bay: its model is its look.
     for (size_t i = 0;i < stage.blocks.size() && i < block_objects.size();i++){
         if (stage.blocks[i].f_invisible && block_objects[i]){
@@ -4815,6 +4868,8 @@ void ApplicationArcher::DrawOverlay(void){
         return;
     }
     if (!f_loading && !(title_scene && (main_scene == title_scene))){
+        DrawZoneLabel();
+        DrawVitalsHud();
         return;
     }
     const float w = (float)main_window->width;
@@ -4854,6 +4909,99 @@ void ApplicationArcher::DrawOverlay(void){
     float breath = 0.5f + 0.5f * cosf((float)(phase * 2.0 * 3.14159265358979));
     uint8_t alpha = (uint8_t)(140.0f + 115.0f * breath);
     overlay->AddText(text,vec2(cx,baseline),size,UIColor(242,232,204,alpha),UI_ALIGN_CENTER);
+}
+
+/*
+    The zone she is in, as a small label at the top of the screen - the first thing a zone is used
+    for (bridge_crumble_plan.md, step 1). RENDER THREAD, from DrawOverlay while a level is live.
+
+    From the snapshot, like everything else the render thread shows of the rules. Top centre,
+    below where ImGui's menu bar sits, so neither covers the other with the panels up; the same
+    dark band as the title's text, so it reads over sky and grass alike. Off with the panel's
+    "zone label" box, for a clean screenshot.
+*/
+void ApplicationArcher::DrawZoneLabel(){
+    if (!f_show_zone_label){
+        return;
+    }
+    std::string zone;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        zone = snapshot.zone;
+    }
+    if (zone.empty()){
+        return;
+    }
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float size = clamp(h * 0.024f,12.0f,30.0f);
+    const float cx = w * 0.5f;
+    const float top = 26.0f;
+    const float baseline = top + size * 1.15f;
+    vec2 extent = overlay->MeasureText(zone.c_str(),size);
+    const float pad = size * 0.7f;
+    overlay->AddRect(vec2(cx - extent.x * 0.5f - pad,top),vec2(cx + extent.x * 0.5f + pad,top + size * 1.6f),
+                     size * 0.5f,TITLE_BAND);
+    overlay->AddText(zone.c_str(),vec2(cx,baseline),size,TITLE_TEXT,UI_ALIGN_CENTER);
+}
+
+/*
+    Her heart rate and her exertion, in a small card at the top right - vitals_plan.md. The dot
+    swells and brightens on each beat and fades until the next, so the rate can be read without
+    the number; the bar is her exertion, going from the moss to amber as she tires. RENDER
+    THREAD, from DrawOverlay while a level is live, off the snapshot like the zone label; the
+    same dark band, so it reads over sky and grass alike. Off with the panel's "HUD" box.
+*/
+#define VITALS_HUD_HEART    UIColor(214, 64, 58,255)
+#define VITALS_HUD_TIRED    UIColor(232,150, 58,235)
+void ApplicationArcher::DrawVitalsHud(){
+    if (!f_show_vitals_hud){
+        return;
+    }
+    StageVitals v;
+    int age = 1000;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        v = snapshot.vitals;
+        age = snapshot.heart_beat_age;
+    }
+    const float w = (float)main_window->width;
+    const float h = (float)main_window->height;
+    const float size = clamp(h * 0.022f,12.0f,28.0f);
+    const float pad = size * 0.6f;
+    const float right = w - 26.0f;
+    const float left = right - size * 7.5f;
+    const float top = 26.0f;
+    const float line1 = top + pad + size * 0.85f;
+    const float line2 = line1 + size * 1.25f;
+    overlay->AddRect(vec2(left,top),vec2(right,line2 + pad),size * 0.5f,TITLE_BAND);
+
+    //The beat: up to a third bigger on it, back over about a tenth of a second.
+    float pulse = expf(-(float)age / 6.0f);
+    float r = size * 0.32f * (1.0f + 0.35f * pulse);
+    vec2 dot(left + pad + size * 0.35f,line1 - size * 0.33f);
+    uint32_t heart = VITALS_HUD_HEART;
+    heart = (heart & 0x00FFFFFFu) | ((uint32_t)(150.0f + 105.0f * pulse) << 24);
+    overlay->AddRect(vec2(dot.x - r,dot.y - r),vec2(dot.x + r,dot.y + r),r,heart);
+    char bpm[32];
+    snprintf(bpm,sizeof(bpm),"%.0f bpm",v.heart_rate);
+    overlay->AddText(bpm,vec2(left + pad + size * 1.0f,line1),size,TITLE_TEXT);
+
+    const float label_size = size * 0.72f;
+    const char* label = "exertion";
+    overlay->AddText(label,vec2(left + pad,line2),label_size,TITLE_TEXT_DIM);
+    float bar_left = left + pad + overlay->MeasureText(label,label_size).x + size * 0.4f;
+    float bar_right = right - pad;
+    float bar_h = size * 0.34f;
+    float bar_y = line2 - label_size * 0.33f;
+    vec2 bar_min(bar_left,bar_y - bar_h * 0.5f);
+    vec2 bar_max(bar_right,bar_y + bar_h * 0.5f);
+    overlay->AddRect(bar_min,bar_max,bar_h * 0.5f,TITLE_BAR_BACK);
+    float e = clamp(v.exertion,0.0f,1.0f);
+    if (e > 0.01f){
+        overlay->AddRect(bar_min,vec2(bar_left + (bar_right - bar_left) * e,bar_max.y),bar_h * 0.5f,
+                         (e > 0.6f) ? VITALS_HUD_TIRED : TITLE_BAR_FILL);
+    }
 }
 
 /*
@@ -5112,6 +5260,7 @@ void ApplicationArcher::SwapLevel(ArcherLevel& parked){
     std::swap(stage,parked.stage);
     std::swap(archer_object,parked.archer_object);
     std::swap(block_objects,parked.block_objects);
+    std::swap(zone_outline_objects,parked.zone_outline_objects);
     std::swap(plant_objects,parked.plant_objects);
     std::swap(spring_plant_objects,parked.spring_plant_objects);
     std::swap(balance_bar,parked.balance_bar);
@@ -5353,6 +5502,10 @@ json ApplicationArcher::CaptureRecordingState(){
         //What the cues remember past a tick - each one's last pick and firing, each group's last
         //line - so a replay avoids the same repeats and honours the same gaps the original did.
         {"cue_history",cues.CaptureHistory()},
+        //Her body, and the clocks her breath and heartbeat run on: a recording that starts winded
+        //replays winded, breathing where the original did.
+        {"vitals",json::array({stage.vitals.exertion,stage.vitals.fear,stage.vitals.heart_rate})},
+        {"body_clocks",json::array({breath_phase,breath_out_ticks,heart_phase})},
         //The spring she stands on, and every spring plant's state: a recording that starts on the
         //pad mid-bounce has to replay from that bounce, not from a cap at rest.
         {"spring_on",stage.spring_on},
@@ -5384,6 +5537,19 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
     //every replay of it, which is all a comparison needs.
     auto history = state.find("cue_history");
     cues.RestoreHistory(history != state.end() ? *history : json());
+    //A file from before the vitals starts her rested, as a restart does.
+    auto vitals = state.find("vitals");
+    if (vitals != state.end() && vitals->is_array() && vitals->size() == 3){
+        stage.vitals.exertion = (*vitals)[0].is_number() ? (*vitals)[0].get<float>() : 0.0f;
+        stage.vitals.fear = (*vitals)[1].is_number() ? (*vitals)[1].get<float>() : 0.0f;
+        stage.vitals.heart_rate = (*vitals)[2].is_number() ? (*vitals)[2].get<float>() : VITALS_REST_BPM;
+    }
+    auto clocks = state.find("body_clocks");
+    if (clocks != state.end() && clocks->is_array() && clocks->size() == 3){
+        breath_phase = (*clocks)[0].is_number() ? (*clocks)[0].get<float>() : 0.0f;
+        breath_out_ticks = (*clocks)[1].is_number() ? (*clocks)[1].get<int>() : 0;
+        heart_phase = (*clocks)[2].is_number() ? (*clocks)[2].get<float>() : 0.0f;
+    }
     PlaceArcher(v2(state.value("x",stage.pos.x),state.value("y",stage.pos.y)));
     stage.vel = v2(state.value("vx",0.0f),state.value("vy",0.0f));
     stage.facing = (state.value("facing",stage.facing) < 0.0f) ? -1.0f : 1.0f;
@@ -5537,6 +5703,24 @@ void ApplicationArcher::RegisterCommandHandlers(){
             return OBJECTID_INVALID;
         });
 
+    main_scene->RegisterCommandHandler(ARCHER_CMD_CUE_AUDITION,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::vector<std::string> names = cues.CueNames();
+            int i = (int)cmd.value[0];
+            if (i >= 0 && i < (int)names.size()){
+                cues.Audition(names[i]);
+            }
+            return OBJECTID_INVALID;
+        });
+
+    main_scene->RegisterCommandHandler(ARCHER_CMD_VITALS,
+        [this](const SimCommand& cmd) -> objectid_t {
+            for (int k = 0; k < 2; k++){
+                vitals_hold[k] = (cmd.value[k] < 0.0f) ? -1.0f : clamp(cmd.value[k],0.0f,1.0f);
+            }
+            return OBJECTID_INVALID;
+        });
+
     main_scene->RegisterCommandHandler(ARCHER_CMD_PLACE,
         [this](const SimCommand& cmd) -> objectid_t {
             //Off the rope first, as RestoreRecordingState does: placed with the joint still in
@@ -5545,6 +5729,23 @@ void ApplicationArcher::RegisterCommandHandlers(){
                 DetachArcherFromRope(false);
             }
             PlaceArcher(v2(cmd.value[0],cmd.value[1]));
+            return OBJECTID_INVALID;
+        });
+
+    //To a zone's arrival spot: ARCHER_CMD_PLACE's body, from the live level's own list - see the
+    //define. An index out of range is a stale one from another level, and does nothing.
+    main_scene->RegisterCommandHandler(ARCHER_CMD_ZONE,
+        [this](const SimCommand& cmd) -> objectid_t {
+            int index = (int)cmd.value[0];
+            if (index < 0 || index >= (int)stage.zones.size()){
+                return OBJECTID_INVALID;
+            }
+            if (stage.mode == MODE_ROPE){
+                DetachArcherFromRope(false);
+            }
+            const StageZone& zone = stage.zones[index];
+            PlaceArcher(v2(zone.arrive.x,zone.arrive.y + ARCHER_HALF_H + 0.01f));
+            debug->Info("To zone '%s' at (%.2f, %.2f)\n",zone.name.c_str(),zone.arrive.x,zone.arrive.y);
             return OBJECTID_INVALID;
         });
 
@@ -5596,8 +5797,13 @@ void ApplicationArcher::NewGame(){
     cues.Reset();
     f_was_nocked = false;
     f_was_kicking = false;
+    f_was_airborne = false;
     f_step_valid = false;
     shake_trauma = 0.0f;
+    breath_phase = 0.0f;
+    breath_out_ticks = 0;
+    heart_phase = 0.0f;
+    heart_beat_age = 1000;
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         arrow_in_flight[i] = false;
     }
@@ -5619,6 +5825,12 @@ void ApplicationArcher::NewGame(){
             block_objects[i]->Destroy();
         }
     }
+    //The zone outlines, the same way - BuildBlocks makes them again, and without this every
+    //restart left another set standing in the blockout view.
+    for (Object* o : zone_outline_objects){
+        o->Destroy();
+    }
+    zone_outline_objects.clear();
     //And the plants, which BuildBlocks makes again from the new Stage. Missing this left one more
     //copy of every trunk standing in the level per restart.
     for (size_t i = 0; i < plant_objects.size(); i++){
@@ -5870,6 +6082,18 @@ void ApplicationArcher::RunSimulationTick(void){
 
     StageEvents events;
     stage.Tick(intent,events);
+    //ARCHER_CMD_VITALS: a hold wins over whatever the tick made of them. The heart follows from
+    //the next tick, as it would from a real change.
+    if (vitals_hold[0] >= 0.0f){
+        stage.vitals.exertion = vitals_hold[0];
+    }
+    if (vitals_hold[1] >= 0.0f){
+        stage.vitals.fear = vitals_hold[1];
+    }
+    vitals_history[0][vitals_history_head] = stage.vitals.exertion;
+    vitals_history[1][vitals_history_head] = stage.vitals.fear;
+    vitals_history[2][vitals_history_head] = stage.vitals.heart_rate;
+    vitals_history_head = (vitals_history_head + 1) % VITALS_HISTORY;
 
     HandleEvents(events);
     SignalCues(events);
@@ -5900,6 +6124,18 @@ void ApplicationArcher::RunSimulationTick(void){
                                   std::chrono::steady_clock::now() - t0).count();
     }
     /*
+        And the same forecast for the cues, every tick of a flight: `landing_ahead`, with `in` the
+        ticks until touchdown, the speed it will land at and where. A landing sound that builds to
+        its thud starts early on it (a `forecast` cue, like the arrow's swoosh) so the thud lands
+        on the contact tick rather than a sound's lead after it. Only for a real LANDING - a ledge
+        the rules will catch first is no landing, and gets no thud.
+    */
+    if (landing_forecast.f_lands && !landing_forecast.f_caught && landing_forecast.ticks > 0){
+        cues.Signal("landing_ahead",CuePayload().Set("in",(float)landing_forecast.ticks)
+                                                .Set("speed",landing_forecast.speed)
+                                                .Set("x",landing_forecast.pos.x));
+    }
+    /*
         The spring plants' timing cue - see spring_cue. Off below a boost of 1 u/s: a cap she has
         settled on still quivers, and a cue that flashed red at a millimetre of rebound would teach
         nothing.
@@ -5916,6 +6152,7 @@ void ApplicationArcher::RunSimulationTick(void){
     }
     ApplyPushes(events);
     ApplyKicks(events);
+    ShakeCrumbles(events);
     BreakBlocks(events);
     UpdateDebris();
     ResolveArrowsAgainstProps();
@@ -5923,7 +6160,7 @@ void ApplicationArcher::RunSimulationTick(void){
     //rp3d sums the lot.
     TickSprings();
     ForecastArrowImpacts();
-    SignalFootsteps();
+    SignalBody(events,SignalFootsteps());
     /*
         THE CUES FIRE HERE, once, after everything that can signal has - the rules' events, the
         props' hits and scores, the arrows' forecasts - so what the log says happened in a tick,
@@ -6098,6 +6335,21 @@ void ApplicationArcher::SetupSound(){
 }
 
 void ApplicationArcher::PollCueTable(){
+    //The cue panel's edit, let go of on a slider or reverted: loaded as the file would be, and
+    //before the file's own poll, which would otherwise load the file over it only if it changed.
+    std::string edited;
+    {
+        std::lock_guard<std::mutex> lock(cue_panel_mutex);
+        edited.swap(cue_panel_apply);
+    }
+    if (!edited.empty()){
+        std::string error;
+        if (cues.LoadTableText(edited,error,std::string(ARCHER_CUE_TABLE) + " (panel)")){
+            arrow_swoosh_peak = cues.PeakOf("arrow_swoosh");
+        }else{
+            debug->Err("Cue panel edit NOT loaded, keeping the last good table: %s\n",error.c_str());
+        }
+    }
     if (cue_table_path.empty()){
         return;
     }
@@ -6139,12 +6391,20 @@ void ApplicationArcher::PollCueTable(){
                            kick's boot lands than K's kick's, which the table's timings were set on.
       signal `kick_connected`   in the kick, once, when the boot finds something: dir, x
       signal `jumped`      x
+      scope `airborne`     every stretch in the air, however it began
+      signal `landing_ahead`   in (ticks to touchdown), speed, x - every tick of a flight that
+                           will LAND (not catch a ledge); after the landing forecast below
       signal `landed`      speed (how hard she came down), x
       signal `block_broken`   count, x - once a tick, however many bricks went
+      signal `crumble_started` x - a crumble stone she landed on, starting its shake
+      signal `crumble_fell`   x - and that stone going, CRUMBLE_SHAKE_TICKS later
       signal `arrow_hit`   x, speed - level hits here, prop hits from ResolveArrowsAgainstProps
       signal `stand_hit`   points (RegisterTargetHit)
       scope `arrow`        one per flight, instance = the arrow's slot (ForecastArrowImpacts)
       signal `arrow_impact`   in (ticks until the strike), x, speed - every tick of the flight
+      signal `footstep`    foot, speed, x (SignalFootsteps)
+      signal `breath_in`, `breath_out`   exertion, fear (SignalBody)
+      signal `heartbeat`   pound (how loud it should be, 0..1), fear, exertion, bpm (SignalBody)
 */
 void ApplicationArcher::SignalCues(const StageEvents& events){
     bool f_nocked = stage.IsNocked();
@@ -6183,6 +6443,20 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
         cues.Signal("kick_connected",CuePayload().Set("dir",dir).Set("x",x));
     }
 
+    /*
+        The `airborne` scope: every stretch in MODE_AIR, however it began - a jump, a step off an
+        edge, a rope let go. It is what the landing's forecast is once per, and it closes on
+        whatever ends the flight - a landing, a ledge caught, the rope grabbed.
+    */
+    bool f_airborne = (stage.mode == MODE_AIR);
+    if (!f_airborne && f_was_airborne){
+        cues.EndScope("airborne");
+    }
+    if (f_airborne && !f_was_airborne){
+        cues.BeginScope("airborne");
+    }
+    f_was_airborne = f_airborne;
+
     //Leaving the ground and coming back to it. `speed` is how hard she came down - a routine
     //jump lands at about 18.7, a drop of 5.5 units at 25 (see PUPPET_HARD_LAND_VEL), stepping
     //off a kerb well under 5.
@@ -6197,6 +6471,18 @@ void ApplicationArcher::SignalCues(const StageEvents& events){
         int b = events.broken_blocks[0];
         float x = (b >= 0 && b < (int)stage.blocks.size()) ? stage.blocks[b].x : stage.pos.x;
         cues.Signal("block_broken",CuePayload().Set("count",(float)events.broken_blocks.size()).Set("x",x));
+    }
+    //The crumbling stones, one signal per stone: its warning, then its fall. No cue rows yet - the
+    //rattle and the crumble are bridge_crumble_plan.md step 7.
+    for (int b : events.crumbles_started){
+        if (b >= 0 && b < (int)stage.blocks.size()){
+            cues.Signal("crumble_started",CuePayload().Set("x",stage.blocks[b].x));
+        }
+    }
+    for (int b : events.crumbled_blocks){
+        if (b >= 0 && b < (int)stage.blocks.size()){
+            cues.Signal("crumble_fell",CuePayload().Set("x",stage.blocks[b].x));
+        }
     }
 
     //The level's strikes. The props' come from ResolveArrowsAgainstProps, which finds them.
@@ -6230,7 +6516,7 @@ void ApplicationArcher::SignalArrowHit(float x, float speed){
     The engine advances it only on ticks that run, by the simulation's step, so steps replay to
     the tick. Payload: foot (0 left, 1 right), speed (|vel.x|) and x.
 */
-void ApplicationArcher::SignalFootsteps(){
+int ApplicationArcher::SignalFootsteps(){
     Animation* lead = archer_model ? archer_model->current_animation : NULL;
     if (lead && archer_model->blend_animation && archer_model->blend_factor > 0.5f){
         lead = archer_model->blend_animation;
@@ -6243,8 +6529,9 @@ void ApplicationArcher::SignalFootsteps(){
     }
     if (clip < 0 || lead->duration <= 0.0f || stage.mode != MODE_GROUND || !stage.f_on_ground){
         f_step_valid = false;
-        return;
+        return 0;
     }
+    int steps = 0;
     auto wrap = [](float p){ return p - floorf(p); };
     float rel = wrap(lead->time_index / lead->duration - puppet.clip_phase[clip]);
     //Where the right foot plants, in the same left-relative phase.
@@ -6264,6 +6551,7 @@ void ApplicationArcher::SignalFootsteps(){
                     cues.Signal("footstep",CuePayload().Set("foot",(float)foot)
                                                        .Set("speed",fabsf(stage.vel.x))
                                                        .Set("x",stage.pos.x));
+                    steps++;
                 }
             }
         }
@@ -6271,6 +6559,78 @@ void ApplicationArcher::SignalFootsteps(){
     step_prev_rel = rel;
     step_prev_lead = lead;
     f_step_valid = true;
+    return steps;
+}
+
+/*
+    Her breathing and her heartbeat, off Stage::vitals - vitals_plan.md. The RATES are the rules';
+    these two clocks only turn them into signals, one per half-breath and one per beat, never a
+    loop, so the rate can change between any two. How loud each is, and whether it is heard at
+    all, is the table's: at rest both are signalled and the table keeps them silent.
+
+    THE BREATH is a pair: `breath_in` on the cycle, `breath_out` BREATH_OUT_TICKS later - fixed,
+    not a share of the cycle, because the files are a fixed length and a slow breath is a longer
+    pause after the out-breath, not a slower in-breath. The cycle runs from BREATH_REST_SECONDS
+    rested to BREATH_SPENT_SECONDS spent, by the square root of exertion: breathing quickens early
+    in an effort and then less and less, and linear left a five-second sprint breathing once every
+    2.4 s.
+
+    RUNNING, THE BREATH WAITS FOR A FOOT: from BREATH_STEP_EARLY of the cycle the next footstep
+    takes it, and past BREATH_STEP_LATE it goes anyway - so she breathes on every second or third
+    step, as runners do, without counting steps.
+
+    AN EFFORT IS A BREATH OUT. A jump or a kick drops an out-breath still pending - the "huh", heard
+    or not, was it - and the gasp back in comes BREATH_AFTER_EFFORT_TICKS later, or sooner if one
+    was due anyway. Never later: restarting the whole cycle instead meant that someone jumping
+    every two seconds never breathed at all. The effort, not the voice line: the view never needs
+    to know whether the cues played one.
+
+    THE HEART beats at heart_rate. `pound` is how loud it should be: fear, or the far end of
+    exertion (spent, the pulse is in her ears) - see BODY_POUND_EXERTION.
+*/
+#define BREATH_REST_SECONDS         4.0f
+#define BREATH_SPENT_SECONDS        1.35f
+//Past the longest in-breath (0.44 s), so her own out-breath never finds her voice still busy.
+#define BREATH_OUT_TICKS            28
+#define BREATH_STEP_EARLY           0.8f
+#define BREATH_STEP_LATE            1.25f
+#define BREATH_AFTER_EFFORT_TICKS   30
+//Exertion past this pounds too, reaching all of it at 1.
+#define BODY_POUND_EXERTION         0.8f
+
+void ApplicationArcher::SignalBody(const StageEvents& events, int steps){
+    const StageVitals& v = stage.vitals;
+
+    heart_phase += v.heart_rate / 60.0f * ARCHER_DT;
+    heart_beat_age = std::min(heart_beat_age + 1,1000);
+    if (heart_phase >= 1.0f){
+        heart_phase -= floorf(heart_phase);
+        heart_beat_age = 0;
+        float spent = (v.exertion - BODY_POUND_EXERTION) / (1.0f - BODY_POUND_EXERTION);
+        float pound = fminf(fmaxf(fmaxf(v.fear,spent),0.0f),1.0f);
+        cues.Signal("heartbeat",CuePayload().Set("pound",pound).Set("fear",v.fear)
+                                            .Set("exertion",v.exertion).Set("bpm",v.heart_rate));
+    }
+
+    float period = BREATH_REST_SECONDS + (BREATH_SPENT_SECONDS - BREATH_REST_SECONDS) * sqrtf(v.exertion);
+    breath_phase += ARCHER_DT / period;
+    if (events.f_jumped || events.f_kick_started){
+        breath_phase = fmaxf(breath_phase,1.0f - (BREATH_AFTER_EFFORT_TICKS * ARCHER_DT) / period);
+        breath_out_ticks = 0;
+    }
+    CuePayload breath = CuePayload().Set("exertion",v.exertion).Set("fear",v.fear);
+    if (breath_out_ticks > 0 && --breath_out_ticks == 0){
+        cues.Signal("breath_out",breath);
+    }
+    bool f_running = stage.mode == MODE_GROUND && stage.f_on_ground &&
+                     fabsf(stage.vel.x) > VITALS_RUN_FROM * stage.RunSpeed();
+    bool f_due = f_running ? ((breath_phase >= BREATH_STEP_EARLY && steps > 0) || breath_phase >= BREATH_STEP_LATE)
+                           : (breath_phase >= 1.0f);
+    if (f_due){
+        breath_phase = 0.0f;
+        breath_out_ticks = BREATH_OUT_TICKS;
+        cues.Signal("breath_in",breath);
+    }
 }
 
 /*
@@ -6662,7 +7022,65 @@ void ApplicationArcher::ApplyKicks(const StageEvents& events){
     rules cannot reach: a static collider still standing in the physics world, which crates and
     debris would pile against forever, and nothing on screen to say it broke.
 */
+/*
+    The crumble stones' warning, in the blockout: a stone she has stood on turns the warning colour
+    and shakes until it goes. PHYSICS THREAD, from the tick, before BreakBlocks.
+
+    THE SHAKE MOVES THE STONE'S BODY, not its object - every body writes its pose into its object
+    each tick (Object::UpdatePhysicsState), so an offset set on the object would be gone before it
+    was drawn. The body is static and rp3d's alone: the rules collide her against the block where it
+    stands, so the shake is seen, and felt by anything resting on the stone, and changes nothing
+    she does. It grows as the stone runs out of time, sampled from the level tick so a replay
+    shakes alike.
+*/
+void ApplicationArcher::ShakeCrumbles(const StageEvents& events){
+    for (int index : events.crumbles_started){
+        if (index >= 0 && index < (int)block_objects.size() && block_objects[index]){
+            block_objects[index]->SetMaterialSlot(0,material_crumble_warn);
+        }
+    }
+    for (size_t i = 0; i < stage.blocks.size() && i < block_objects.size(); i++){
+        const StageBlock& b = stage.blocks[i];
+        if (b.kind != BLOCK_CRUMBLE || !b.f_alive || b.crumble_ticks < 0 || !block_objects[i]){
+            continue;
+        }
+        Physics* p = block_objects[i]->GetPhysics();
+        if (!p){
+            continue;
+        }
+        float t = (float)b.crumble_ticks / (float)CRUMBLE_SHAKE_TICKS;
+        float amp = 0.015f + 0.05f * t;
+        //Two incommensurate rates per axis, offset by the block, so neighbours do not shake in step.
+        float k = (float)stage.ticks + (float)i * 7.3f;
+        float dx = amp * sinf(k * 2.1f) * cosf(k * 0.77f);
+        float dy = amp * 0.6f * sinf(k * 1.63f + 1.1f);
+        p->SetBodyWorldPosition(vec3(b.x + dx,b.y + dy,b.z));
+    }
+}
+
 void ApplicationArcher::BreakBlocks(const StageEvents& events){
+    /*
+        A crumbled stone the same way as a kicked wall - collider off, box hidden, rubble - with the
+        rubble DROPPED rather than thrown: nothing hit it, it gave way. In its own stone colour.
+    */
+    for (int index : events.crumbled_blocks){
+        if (index < 0 || index >= (int)block_objects.size() || !block_objects[index]){
+            continue;
+        }
+        Object* object = block_objects[index];
+        const StageBlock& block = stage.blocks[index];
+        Physics* p = object->GetPhysics();
+        if (p){
+            p->SetActive(false);
+        }
+        object->SetVisibility(false);
+        //From where the block IS, not where the shake last put its body.
+        vec3 centre(block.x,block.y,block.z);
+        vec3 size = object->GetScale();
+        SpawnDebris(centre,vec3(size.x * 0.5f,size.y * 0.5f,size.z * 0.5f),vec3(0.0f,-0.7f,0.0f),material_crumble);
+        debug->Info("Crumbled block %i at (%.2f,%.2f), level tick %llu\n",index,block.x,block.y,
+                    (unsigned long long)stage.ticks);
+    }
     for (size_t i = 0; i < events.broken_blocks.size(); i++){
         int index = events.broken_blocks[i];
         if (index < 0 || index >= (int)block_objects.size() || !block_objects[index]){
@@ -8682,6 +9100,13 @@ void ApplicationArcher::PublishSnapshot(){
     s.tick = main_scene->GetPhysicsTick();
     s.stage_ticks = stage.ticks;
     s.level = stage.GetLevel();
+    {
+        int z = stage.CurrentZone();
+        s.zone = (z >= 0) ? stage.zones[z].name : std::string();
+        for (const StageZone& zone : stage.zones){
+            s.zone_names.push_back(zone.name);
+        }
+    }
     s.x = stage.pos.x;
     s.y = stage.pos.y;
     s.vx = stage.vel.x;
@@ -8778,6 +9203,8 @@ void ApplicationArcher::PublishSnapshot(){
     //Here, on the physics thread, which is the one that starts them - not in the MCP handler.
     s.sounds_playing = soundsystem ? soundsystem->GetNumPlaying() : -1;
     s.shake_trauma = shake_trauma;
+    s.vitals = stage.vitals;
+    s.heart_beat_age = heart_beat_age;
     {
         vec3 shake = ShakeOffset();
         s.shake_dx = shake.x;
@@ -8983,6 +9410,8 @@ json ApplicationArcher::BuildStateJson(){
         {"balance",json{{"branch",s.branch_on},{"lean_deg",s.lean_deg},{"lean_rate_deg",s.lean_rate_deg},
                         {"danger",s.balance_danger},{"hanging_from",s.hang_branch}}},
         {"level",(s.level == STAGE_LEVEL_RANGE) ? "range" : (s.level == STAGE_LEVEL_ROPE) ? "rope" : "main"},
+        //The zone she is in - see archer_zone for the list and for going to one.
+        {"zone",s.zone},
         {"archer",json{
             {"x",s.x},{"y",s.y},{"vx",s.vx},{"vy",s.vy},
             {"facing",(s.facing > 0.0f) ? "right" : "left"},
@@ -9105,6 +9534,11 @@ json ApplicationArcher::BuildStateJson(){
         //The camera shake: trauma 0..1 (it decays over camera_tuning.shake_ticks) and how far it
         //has the view moved this tick, in world units. What shakes is the cue table's.
         {"shake",{ {"trauma",s.shake_trauma}, {"dx",s.shake_dx}, {"dy",s.shake_dy} }},
+        //Her body - Stage::vitals, vitals_plan.md: exertion and fear 0..1 and what each is easing
+        //toward this tick, and the heart rate in beats a minute. What they sound like is the cues'.
+        {"vitals",{ {"exertion",s.vitals.exertion}, {"exertion_target",s.vitals.exertion_target},
+                    {"fear",s.vitals.fear}, {"fear_target",s.vitals.fear_target},
+                    {"heart_rate",s.vitals.heart_rate} }},
         //Archery stands' points this level, and what the last arrow into one scored (0 = a leg,
         //-1 = none yet). See StandRingPoints.
         {"archery_score",s.archery_score},
@@ -9127,7 +9561,7 @@ void ApplicationArcher::RegisterMCPTools(){
         "is computed with the same integrator the arrow flies on, so a script can solve for an aim "
         "angle by bisection instead of shooting and looking. Read from a snapshot the physics thread "
         "publishes at the end of every tick, so it never disturbs the game it is measuring. The "
-        "level runs from x -12 to 176 with the ground surface at y 0; the game runs at 60 ticks a "
+        "level runs from x -12 to 264 (the test ground, x 176..264, is past the branches) with the ground surface at y 0; the game runs at 60 ticks a "
         "second and every duration is a tick count.",
         json{
             {"type","object"},
@@ -9380,7 +9814,7 @@ void ApplicationArcher::RegisterMCPTools(){
     MCPServer::Get()->RegisterTool("archer_place",
         "Put the archer at (x, y) and clear their movement state - which also ends the level-entry "
         "get-up if it is still playing. A DEVELOPMENT TOOL: the level "
-        "runs from x -12 to 176 with two gaps in it, and iterating on one part of it should not mean "
+        "runs from x -12 to 264 with two gaps in it (archer_zone jumps to each area by name), and iterating on one part of it should not mean "
         "flying the whole approach by script every time. Useful landmarks: the ground surface is "
         "y 0, the start is (-6, 0.9), the grabbable-only ledge stands at x 44..48 with its lip at "
         "4.2 (jump from x 43.1 to catch it), the cracked wall is at x 57 and the brick wall at "
@@ -9413,6 +9847,73 @@ void ApplicationArcher::RegisterMCPTools(){
             cmd.value[1] = args.value("y",0.9f);
             main_scene->SubmitCommand(cmd);
             WaitTicks(3);
+            return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
+        });
+
+    /*
+        The zones: list the live level's, or go to one by name. From the snapshot, like every tool
+        here - the name is resolved against the list it published, and the jump is a command the
+        physics thread resolves against its own, so a restart in between cannot send her to a
+        zone that has moved.
+    */
+    MCPServer::Get()->RegisterTool("archer_zone",
+        "The live level's ZONES - its named areas: the main level's terrain bay, start, gaps and "
+        "rope, ledges and walls, tree, spring plants, branches and test ground; the range; the rope "
+        "level's rope and slide gallery. With no name, lists them and says which she is in (also in "
+        "archer_state as 'zone'). With a name (not case-sensitive, a unique prefix is enough), puts "
+        "her standing at that zone's arrival spot - the quick way to a mechanism to test it. Only "
+        "the live level's: scene_set first to reach another level's.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"name", {{"type","string"},{"description","zone to go to; omit to list them"}}},
+                {"include_screenshot", {{"type","boolean"},{"description","also return a PNG, default false"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            std::vector<std::string> names;
+            std::string current;
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                names = snapshot.zone_names;
+                current = snapshot.zone;
+            }
+            std::string want = args.value("name",std::string(""));
+            if (want.empty()){
+                return json{ {"zones",names}, {"zone",current} };
+            }
+            auto lower = [](std::string t){
+                for (char& c : t){ c = (char)tolower((unsigned char)c); }
+                return t;
+            };
+            std::string w = lower(want);
+            int found = -1;
+            int matches = 0;
+            for (size_t i = 0; i < names.size(); i++){
+                std::string n = lower(names[i]);
+                if (n == w){
+                    found = (int)i;
+                    matches = 1;
+                    break;
+                }
+                if (n.compare(0,w.size(),w) == 0){
+                    found = (int)i;
+                    matches++;
+                }
+            }
+            if (matches != 1){
+                return json{ {"error",(matches == 0 ? "no zone '" : "more than one zone starts with '") + want + "'"},
+                             {"zones",names} };
+            }
+            SimCommand cmd;
+            cmd.type = ARCHER_CMD_ZONE;
+            cmd.value[0] = (float)found;
+            main_scene->SubmitCommand(cmd);
+            //Long enough to have landed: the spot is 0.3 above the ground.
+            WaitTicks(12);
             return MaybeAttachScreenshot(BuildStateJson(),args.value("include_screenshot",false));
         });
 
@@ -10021,11 +10522,365 @@ void ApplicationArcher::PlaceMenuSpawn(SimCommand& cmd){
     }
 }
 
+//--- The cue panel -------------------------------------------------------------------------------
+
+//A number as the table would be written by hand: whole for ticks, at most three places otherwise.
+static std::string CueNumberText(float v, bool f_whole){
+    char b[32];
+    if (f_whole){
+        snprintf(b,sizeof(b),"%ld",lroundf(v));
+        return b;
+    }
+    snprintf(b,sizeof(b),"%.3f",v);
+    std::string t = b;
+    while (!t.empty() && t.back() == '0'){
+        t.pop_back();
+    }
+    if (!t.empty() && t.back() == '.'){
+        t.pop_back();
+    }
+    return t.empty() ? std::string("0") : t;
+}
+
+/*
+    Sets one number of one cue in the table's TEXT: the row is found as a key of the "cues" object
+    whose value is an object, and the field among that row's own keys (not inside its curves or
+    actions). An existing number is replaced where it stands; a missing field is added at the end
+    of the row. Everything else in the file - layout, comments, order - is left as it was. False,
+    and the text untouched, when the row or a number there cannot be found.
+*/
+static bool PatchCueNumber(std::string& text, const std::string& cue, const char* field, const std::string& number){
+    size_t cues_at = text.find("\"cues\"");
+    if (cues_at == std::string::npos){
+        return false;
+    }
+    const std::string key = "\"" + cue + "\"";
+    size_t open = std::string::npos;
+    for (size_t at = text.find(key,cues_at + 1); at != std::string::npos; at = text.find(key,at + 1)){
+        size_t k = at + key.size();
+        while (k < text.size() && isspace((unsigned char)text[k])) k++;
+        if (k >= text.size() || text[k] != ':'){
+            continue;
+        }
+        k++;
+        while (k < text.size() && isspace((unsigned char)text[k])) k++;
+        if (k < text.size() && text[k] == '{'){
+            open = k;
+            break;
+        }
+    }
+    if (open == std::string::npos){
+        return false;
+    }
+    const size_t field_len = strlen(field);
+    int depth = 0;
+    size_t value_at = std::string::npos;
+    size_t close = std::string::npos;
+    for (size_t i = open; i < text.size(); i++){
+        char c = text[i];
+        if (c == '"'){
+            size_t end = i + 1;
+            while (end < text.size() && text[end] != '"'){
+                end += (text[end] == '\\') ? 2 : 1;
+            }
+            if (depth == 1 && value_at == std::string::npos && end - i - 1 == field_len &&
+                text.compare(i + 1,field_len,field) == 0){
+                size_t k = end + 1;
+                while (k < text.size() && isspace((unsigned char)text[k])) k++;
+                if (k < text.size() && text[k] == ':'){
+                    k++;
+                    while (k < text.size() && isspace((unsigned char)text[k])) k++;
+                    value_at = k;
+                }
+            }
+            i = end;
+            continue;
+        }
+        if (c == '{' || c == '['){
+            depth++;
+        }else if (c == '}' || c == ']'){
+            depth--;
+            if (depth == 0){
+                close = i;
+                break;
+            }
+        }
+    }
+    if (close == std::string::npos){
+        return false;
+    }
+    if (value_at != std::string::npos){
+        size_t end = value_at;
+        while (end < text.size() && text[end] != 0 && strchr("-+.0123456789eE",text[end])){
+            end++;
+        }
+        if (end == value_at){
+            return false;       //not a number: a hand edit this cannot read, left alone
+        }
+        text.replace(value_at,end - value_at,number);
+        return true;
+    }
+    size_t last = close;
+    while (last > open + 1 && isspace((unsigned char)text[last - 1])){
+        last--;
+    }
+    std::string add = std::string((last == open + 1) ? "" : ", ") + "\"" + field + "\": " + number;
+    text.insert(last,add);
+    return true;
+}
+
+void ApplicationArcher::CuePanelLoad(bool f_force){
+    if (cue_table_path.empty()){
+        cue_panel_status = "no file to edit - the table is baked into this build";
+        f_cue_panel_loaded = true;
+        return;
+    }
+    std::string text;
+    FILE* f = fopen(cue_table_path.c_str(),"rb");
+    if (f){
+        char buffer[4096];
+        size_t n;
+        while ((n = fread(buffer,1,sizeof(buffer),f)) > 0){
+            text.append(buffer,n);
+        }
+        fclose(f);
+    }else{
+        cue_panel_status = "cannot read " + cue_table_path;
+        f_cue_panel_loaded = true;
+        return;
+    }
+    struct _stat64 st;
+    if (_stat64(cue_table_path.c_str(),&st) == 0){
+        cue_panel_mtime = (int64_t)st.st_mtime;
+    }
+    bool f_dirty = f_cue_panel_loaded && cue_panel_text != cue_panel_disk;
+    if (f_dirty && !f_force){
+        f_cue_panel_disk_changed = (text != cue_panel_disk);
+        return;
+    }
+    cue_panel_text = text;
+    cue_panel_disk = text;
+    cue_panel_table = json::parse(cue_panel_text,nullptr,false);
+    f_cue_panel_disk_changed = false;
+    f_cue_panel_loaded = true;
+}
+
+/*
+    See the declaration. RENDER THREAD with physics_mutex held (from DrawImGuiUI), which is what
+    lets it read the live table's names for the play button's index; the play itself, and a slider
+    let go of, reach the game through the command queue and cue_panel_apply.
+
+    A slider edits the text on every frame of the drag, so the number shown is the number in the
+    text, and hands the text to the game only when it is let go of - loading a table re-measures
+    its sounds, which is fine once and a stutter every frame of a drag.
+*/
+void ApplicationArcher::DrawCuePanel(){
+    if (!ImGui::Begin("Cues")){
+        ImGui::End();
+        return;
+    }
+    //The file, read once and then watched about once a second - a hand edit shows up here too.
+    if (!f_cue_panel_loaded){
+        CuePanelLoad(false);
+    }else if (++cue_panel_poll >= 60){
+        cue_panel_poll = 0;
+        struct _stat64 st;
+        if (!cue_table_path.empty() && _stat64(cue_table_path.c_str(),&st) == 0 &&
+            (int64_t)st.st_mtime != cue_panel_mtime){
+            CuePanelLoad(false);
+        }
+    }
+    bool f_dirty = cue_panel_text != cue_panel_disk;
+    bool f_send = false;
+
+    ImGui::TextDisabled("%s",ARCHER_CUE_TABLE);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!f_dirty);
+    if (ImGui::Button("Save")){
+        FILE* f = fopen(cue_table_path.c_str(),"wb");
+        if (f && fwrite(cue_panel_text.data(),1,cue_panel_text.size(),f) == cue_panel_text.size()){
+            cue_panel_disk = cue_panel_text;
+            f_cue_panel_disk_changed = false;
+            cue_panel_status = "saved";
+        }else{
+            cue_panel_status = "could not write " + cue_table_path;
+        }
+        if (f){
+            fclose(f);
+        }
+        struct _stat64 st;
+        if (_stat64(cue_table_path.c_str(),&st) == 0){
+            cue_panel_mtime = (int64_t)st.st_mtime;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert")){
+        CuePanelLoad(true);
+        f_send = true;
+        cue_panel_status = "reverted to the file";
+    }
+    ImGui::EndDisabled();
+    if (!cue_panel_status.empty()){
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s",cue_panel_status.c_str());
+    }
+    if (f_dirty){
+        ImGui::TextColored(ImVec4(0.95f,0.8f,0.35f,1.0f),"unsaved - the game is playing the edit");
+    }
+    if (f_cue_panel_disk_changed){
+        ImGui::TextColored(ImVec4(1.0f,0.45f,0.4f,1.0f),"the file changed on disk: Save overwrites it, Revert takes it");
+    }
+    ImGui::Separator();
+
+    if (!cue_panel_table.is_object() || !cue_panel_table.contains("cues") || !cue_panel_table["cues"].is_object()){
+        ImGui::TextWrapped("The table does not parse - fix the file; the game keeps the last good one.");
+        ImGui::End();
+        return;
+    }
+    std::vector<std::string> live = cues.CueNames();
+    std::string edit_cue;
+    const char* edit_field = NULL;
+    std::string edit_number;
+    const json& rows = cue_panel_table["cues"];
+    for (auto it = rows.begin(); it != rows.end(); ++it){
+        const std::string& name = it.key();
+        const json& row = it.value();
+        if (!row.is_object()){
+            continue;
+        }
+        ImGui::PushID(name.c_str());
+        int live_index = (int)(std::find(live.begin(),live.end(),name) - live.begin());
+        ImGui::BeginDisabled(live_index >= (int)live.size());
+        if (ImGui::SmallButton("play")){
+            SimCommand cmd;
+            cmd.type = ARCHER_CMD_CUE_AUDITION;
+            cmd.value[0] = (float)live_index;
+            SubmitUICommand(cmd);
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Plays it now at full strength - past its trigger, chance, delay and "
+                              "group - and each press the next of its sounds.");
+        ImGui::SameLine();
+        bool f_open = ImGui::TreeNode("##row","%s",name.c_str());
+        //What it is hung on, dimmed beside the name.
+        const char* kinds[3] = { "signal", "begin", "end" };
+        for (const char* kind : kinds){
+            auto on = row.find(kind);
+            if (on != row.end() && on->is_string()){
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s %s",kind,on->get<std::string>().c_str());
+            }
+        }
+        if (f_open){
+            auto number = [&](const char* field, float fallback){
+                auto f = row.find(field);
+                return (f != row.end() && f->is_number()) ? f->get<float>() : fallback;
+            };
+            int delay = (int)lroundf(number("delay",0.0f));
+            int jitter = (int)lroundf(number("jitter",0.0f));
+            float chance = number("chance",1.0f);
+            float gain = number("gain",1.0f);
+            if (ImGui::SliderInt("delay",&delay,0,120,"%d ticks")){
+                edit_cue = name; edit_field = "delay"; edit_number = CueNumberText((float)delay,true);
+            }
+            f_send = f_send || ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::SliderInt("jitter",&jitter,0,60,"+0..%d ticks")){
+                edit_cue = name; edit_field = "jitter"; edit_number = CueNumberText((float)jitter,true);
+            }
+            f_send = f_send || ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::SliderFloat("chance",&chance,0.0f,1.0f,"%.2f")){
+                edit_cue = name; edit_field = "chance"; edit_number = CueNumberText(chance,false);
+            }
+            f_send = f_send || ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::SliderFloat("gain",&gain,0.0f,2.0f,"%.2f")){
+                edit_cue = name; edit_field = "gain"; edit_number = CueNumberText(gain,false);
+            }
+            f_send = f_send || ImGui::IsItemDeactivatedAfterEdit();
+            auto sounds = row.find("sounds");
+            if (sounds != row.end()){
+                ImGui::TextDisabled("sounds %s",sounds->dump().c_str());
+            }
+            auto comment = row.find("comment");
+            if (comment != row.end() && comment->is_string()){
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s",comment->get<std::string>().c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    //After the loop: the rows above are references into the table this replaces.
+    if (edit_field){
+        std::string text = cue_panel_text;
+        if (PatchCueNumber(text,edit_cue,edit_field,edit_number)){
+            json parsed = json::parse(text,nullptr,false);
+            if (!parsed.is_discarded()){
+                cue_panel_text = text;
+                cue_panel_table = parsed;
+                cue_panel_status.clear();
+            }
+        }else{
+            cue_panel_status = "cannot find " + edit_cue + "'s " + edit_field + " in the file";
+        }
+    }
+    if (f_send){
+        std::lock_guard<std::mutex> lock(cue_panel_mutex);
+        cue_panel_apply = cue_panel_text;
+    }
+    ImGui::End();
+}
+
+/*
+    See the declaration. RENDER THREAD with physics_mutex held, so the Stage and the ring are read
+    directly; a hold goes on the queue.
+*/
+void ApplicationArcher::DrawVitalsPanel(){
+    if (!ImGui::CollapsingHeader("Vitals",ImGuiTreeNodeFlags_DefaultOpen)){
+        return;
+    }
+    const StageVitals& v = stage.vitals;
+    ImGui::Text("exertion %.2f (to %.2f)   fear %.2f (to %.2f)   heart %.0f bpm",
+                v.exertion,v.exertion_target,v.fear,v.fear_target,v.heart_rate);
+    ImGui::SameLine();
+    ImGui::Checkbox("HUD",&f_show_vitals_hud);
+    char overlay_text[32];
+    snprintf(overlay_text,sizeof(overlay_text),"exertion %.2f",v.exertion);
+    ImGui::PlotLines("##exertion",vitals_history[0],VITALS_HISTORY,vitals_history_head,overlay_text,
+                     0.0f,1.0f,ImVec2(-1.0f,44.0f));
+    snprintf(overlay_text,sizeof(overlay_text),"fear %.2f",v.fear);
+    ImGui::PlotLines("##fear",vitals_history[1],VITALS_HISTORY,vitals_history_head,overlay_text,
+                     0.0f,1.0f,ImVec2(-1.0f,44.0f));
+    snprintf(overlay_text,sizeof(overlay_text),"heart %.0f bpm",v.heart_rate);
+    ImGui::PlotLines("##heart",vitals_history[2],VITALS_HISTORY,vitals_history_head,overlay_text,
+                     VITALS_REST_BPM - 10.0f,VITALS_MAX_BPM + 5.0f,ImVec2(-1.0f,44.0f));
+    ImGui::TextDisabled("the last %d seconds",VITALS_HISTORY / (int)ARCHER_TPS);
+
+    //The holds: pin a level to listen to the breath or the heartbeat at it.
+    bool f_changed = false;
+    const char* names[2] = { "hold exertion", "hold fear" };
+    for (int k = 0; k < 2; k++){
+        ImGui::PushID(k);
+        f_changed = ImGui::Checkbox(names[k],&f_ui_hold[k]) || f_changed;
+        ImGui::SameLine();
+        f_changed = (ImGui::SliderFloat("##value",&ui_hold_value[k],0.0f,1.0f,"%.2f") && f_ui_hold[k]) || f_changed;
+        ImGui::PopID();
+    }
+    if (f_changed){
+        SimCommand cmd;
+        cmd.type = ARCHER_CMD_VITALS;
+        cmd.value[0] = f_ui_hold[0] ? ui_hold_value[0] : -1.0f;
+        cmd.value[1] = f_ui_hold[1] ? ui_hold_value[1] : -1.0f;
+        SubmitUICommand(cmd);
+    }
+}
+
 void ApplicationArcher::DrawImGuiUI(void){
     //Before the dockspace, so the dock is laid out under the bar rather than behind it.
     RenderDebugMenuBar();
     RenderApplicationUI();
     Application::DrawImGuiUI();
+    DrawCuePanel();
 
     //Runs on the RENDER thread with physics_mutex held, so the live Stage can be read directly.
     //It must never wait on the physics thread - see the threading note in ApplicationArcher.h.
@@ -10111,20 +10966,54 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::Checkbox("level entry get-up",&f_level_entry_getup);
     ImGui::SetItemTooltip("Start each level lying down and getting up, controls locked for 3.5 s. "
                           "Takes effect at the next restart.");
+
+    /*
+        THE ZONES, as buttons: one per area of the live level, each putting her at its arrival
+        spot - the way to get to a mechanism to test it without playing the level up to it. Read
+        straight from the Stage, which this lock allows; the jump goes on the queue like Restart.
+        The label's box is here too, for a screenshot without it.
+    */
+    if (ImGui::CollapsingHeader("Zones",ImGuiTreeNodeFlags_DefaultOpen)){
+        int current = stage.CurrentZone();
+        ImGui::Text("in: %s",(current >= 0) ? stage.zones[current].name.c_str() : "none");
+        ImGui::SameLine();
+        ImGui::Checkbox("zone label",&f_show_zone_label);
+        float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        for (size_t i = 0; i < stage.zones.size(); i++){
+            const StageZone& zone = stage.zones[i];
+            if (ImGui::Button(zone.name.c_str())){
+                SimCommand cmd;
+                cmd.type = ARCHER_CMD_ZONE;
+                cmd.value[0] = (float)i;
+                SubmitUICommand(cmd);
+            }
+            ImGui::SetItemTooltip("To (%.1f, %.1f)",zone.arrive.x,zone.arrive.y);
+            //Wrap the row: the next button on this line only if it fits.
+            if (i + 1 < stage.zones.size()){
+                float next = ImGui::CalcTextSize(stage.zones[i + 1].name.c_str()).x +
+                             ImGui::GetStyle().FramePadding.x * 2.0f;
+                if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next < right_edge){
+                    ImGui::SameLine();
+                }
+            }
+        }
+    }
     //The master bus, set from this every pass in UpdateView - so it turns down what is playing too.
     if (soundsystem){
         ImGui::SliderFloat("volume",&sound_volume,0.0f,1.0f,"%.2f");
     }
     /*
-        What each sound is hung on, when and how loud, is the cue table's now - the kick's swing
-        tick and shout chance used to be sliders here. Edit the file and save: it reloads within a
-        second, paused or not. The cue panel with a slider per cue is step 5 of cue_plan.md.
+        What each sound is hung on, when and how loud, is the cue table's - the Cues panel has a
+        slider per cue and saves back to the file, and a hand edit of the file reloads within a
+        second, paused or not.
     */
     ImGui::TextDisabled("cues: %s (%d)",cues.File().empty() ? "not loaded" : cues.File().c_str(),
                         (int)cues.CueNames().size());
-    ImGui::SetItemTooltip("Every sound's timing, chance and gain is in this file. Save it and it "
-                          "reloads within a second; a table that fails to parse is logged and the "
-                          "last good one kept. cue_log over MCP says what fired.");
+    ImGui::SetItemTooltip("Every sound's timing, chance and gain is in this file - on sliders in "
+                          "the Cues panel. Save it and it reloads within a second; a table that "
+                          "fails to parse is logged and the last good one kept. cue_log over MCP "
+                          "says what fired.");
+    DrawVitalsPanel();
 
     /*
         --- The terrain -----------------------------------------------------------------------

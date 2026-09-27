@@ -84,6 +84,12 @@ def main():
             continue
         time.sleep(0.5)     # the replay's last tick, and anything it fired, lands first
         lines = [l + "\n" for l in call("cue_log", {})["lines"]]
+        # Only what follows the replay's OWN restart (CueSystem::Reset logs a `reset` line): between
+        # clearing the log and the replay restarting the level, whatever ran before it - a flight
+        # still in the air at the end of the last recording - can still log a line or two.
+        resets = [i for i, l in enumerate(lines) if len(l.split()) >= 3 and l.split()[2] == "reset"]
+        if resets:
+            lines = lines[resets[-1] + 1:]
         path = os.path.join(folder, name + ".cues")
         if args.write:
             with open(path, "w", newline="\n") as f:
