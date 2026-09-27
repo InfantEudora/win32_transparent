@@ -1,0 +1,98 @@
+{
+  "comment": "How the archer sounds. Format: core/CueSystem.h. Events: ApplicationArcher::SignalCues. Edited while the game runs, it reloads within a second. Moved here from hand-wired code on 2026-09-27 (cue_plan.md step 3) and checked against recordings/*.cues with tools/cue_replay.py - after a deliberate change, re-baseline with --write.",
+
+  "sounds": {
+    "bow_tension":  "sound/bow_tension.wav",
+    "arrow_leave":  "sound/arrow_leave.wav",
+    "arrow_hit":    "sound/arrow_hitting.wav",
+    "arrow_swoosh": "sound/arrow_swoosh.wav",
+    "kick_swing":   "sound/kick_swing.wav",
+    "kick_land":    "sound/kick_land.wav",
+    "kick_hyaa":    "sound/kick_hyaa.wav",
+    "kick_hija":    "sound/kick_hija.wav",
+    "kick_hoowa":   "sound/kick_hoowa.wav",
+    "footstep_1":   "sound/footstep_1.wav",
+    "footstep_2":   "sound/footstep_2.wav",
+    "footstep_3":   "sound/footstep_3.wav",
+    "footstep_4":   "sound/footstep_4.wav",
+    "nice_shot":    "sound/speech/nice_shot.wav"
+  },
+
+  "buses": {
+    "effects":  { "comment": "everything that is not her voice or, later, the narrator and the music" },
+    "voice":    { "comment": "her lines" },
+    "ambience": { "comment": "loops of the place - the range, wind and birds; nothing on it yet" }
+  },
+
+  "cues": {
+    "bow_tension": {
+      "comment": "The creak starts on the NOCK, not the press - the first ticks of a draw are her reaching back to the quiver with the string slack. Cut the moment the string goes, by whatever ends the draw.",
+      "begin": "nocked", "sounds": "bow_tension", "gain": 0.7, "on_end": "stop", "bus": "effects"
+    },
+    "arrow_leave": {
+      "comment": "Louder the harder the draw: a half-drawn lob leaves the string with far less in it.",
+      "signal": "shot", "sounds": "arrow_leave", "bus": "effects",
+      "gain_by": [ { "value": "power", "in": [0, 1], "out": [0.55, 1.0] } ]
+    },
+    "arrow_swoosh": {
+      "comment": "Timed so its loudest moment lands on the impact the flight forecasts; started partway in when the impact is nearer than its lead. Once per flight.",
+      "signal": "arrow_impact", "forecast": "in", "scope": "arrow", "once": true,
+      "sounds": "arrow_swoosh", "bus": "effects",
+      "gain_by": [ { "value": "speed", "in": [0, 46], "out": [0.35, 1.0] },
+                   { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+    "arrow_hit": {
+      "comment": "By speed, so a spent arrow dropping onto the grass is a tap and a full-draw shot into a crate is a thud; and by distance from her - on screen (12) is full volume, fading to a floor of 0.15. 46 is ARROW_SPEED_MAX. PANNED by where it lands against her: the view is about 32 units wide, so the screen's edge is 16 away, and 0.6 there keeps an off-screen hit in both ears rather than in one.",
+      "signal": "arrow_hit", "sounds": "arrow_hit", "bus": "effects",
+      "gain_by": [ { "value": "speed", "in": [0, 46], "out": [0.35, 1.0] },
+                   { "value": "distance", "in": [12, 40], "out": [1, 0], "min": 0.15 } ],
+      "pan_by": { "value": "dx", "in": [-16, 16], "out": [-0.6, 0.6] }
+    },
+    "kick_swing": {
+      "comment": "The leg going out, heard whether or not it finds anything: kick tick 11 on K's kick (delay 10 from tick 1), and the other kicks moved with their own strike (strike_shift).",
+      "begin": "kick", "sounds": "kick_swing", "delay": 10, "delay_from": "strike_shift", "gain": 0.8, "bus": "effects"
+    },
+    "kick_land": {
+      "comment": "The boot hitting something - on the connect and nothing else. Rings on after the kick.",
+      "signal": "kick_connected", "scope": "kick", "sounds": "kick_land", "gain": 0.8, "bus": "effects"
+    },
+    "kick_shout": {
+      "comment": "Her shout, on some kicks, on a tick that wanders: kick ticks 10..16, found by ear on kick_hyaa, the others moved so their loud parts land where its does. Never the same shout twice running. (Until 2026-09-27 this had seed 0 and no_repeat false, which reproduced the old hand-wired draws for the step 3 proof.)",
+      "begin": "kick", "sounds": ["kick_hyaa", "kick_hija", "kick_hoowa"], "chance": 0.4,
+      "delay": 9, "jitter": 6, "delay_from": "strike_shift", "align": "peak",
+      "gain": 0.8, "bus": "voice"
+    },
+    "footstep": {
+      "comment": "A foot planting in the walk or run on screen (ApplicationArcher::SignalFootsteps - measured toe plants, so it stays on the foot at any speed). One of four, never the same twice running; softer at a walk than a sprint (9 is ARCHER_RUN_SPEED). The files are quiet already, about 20 dB under the kick, so gain 1 is not loud. gap 4 guards against a double step at a clip handover.",
+      "signal": "footstep", "sounds": ["footstep_1", "footstep_2", "footstep_3", "footstep_4"],
+      "gain": 1.0, "gap": 4, "bus": "effects",
+      "gain_by": [ { "value": "speed", "in": [1, 9], "out": [0.6, 1.0] } ]
+    },
+    "nice_shot": {
+      "comment": "The centre ring of a stand, and only that: she says so.",
+      "signal": "stand_hit", "when": [ ["points", "==", 10] ], "sounds": "nice_shot", "gain": 0.8, "bus": "voice"
+    },
+
+    "land_shake": {
+      "comment": "FEEL, not sound (cue_plan.md step 4). A drop shakes the view down and thumps the pad; an ordinary jump does not - it lands at about 18.7, so this starts at 20 and is full by 34, the fastest she can fall. Mostly vertical. shake: amount is trauma added (0..1, the view moves by its square), axes [across, up]; rumble: low and high motor 0..1. Both scaled by gain_by. The camera's shake sliders say how big a full shake is.",
+      "signal": "landed", "when": [ ["speed", ">=", 20] ],
+      "gain_by": [ { "value": "speed", "in": [20, 34], "out": [0.4, 1.0] } ],
+      "actions": [ { "kind": "shake", "amount": 0.7, "axes": [0.25, 1.0] },
+                   { "kind": "rumble", "low": 0.6, "high": 0.2 } ]
+    },
+    "kick_shake": {
+      "comment": "The boot finding something: a short jolt along the kick, and a sharp buzz in the light motor.",
+      "signal": "kick_connected", "scope": "kick",
+      "actions": [ { "kind": "shake", "amount": 0.45, "axes": [1.0, 0.35] },
+                   { "kind": "rumble", "low": 0.2, "high": 0.6 } ]
+    },
+    "wall_shake": {
+      "comment": "A wall coming apart - the biggest thing she can do to the level, so the biggest shake. More bricks, more of it.",
+      "signal": "block_broken",
+      "gain_by": [ { "value": "count", "in": [1, 6], "out": [0.7, 1.0] } ],
+      "actions": [ { "kind": "shake", "amount": 0.8, "axes": [0.7, 1.0] },
+                   { "kind": "rumble", "low": 0.9, "high": 0.5 } ]
+    }
+  }
+}

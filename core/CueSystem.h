@@ -145,6 +145,12 @@ struct CueAction{
     std::string kind;
     std::string cue;
     uint64_t    tick = 0;
+    /*
+        The cue's GAIN - its `gain` times its `gain_by` curves, exactly what a sound of the same cue
+        would be played at. An action scales itself by it, so "shake harder the harder she lands"
+        is a curve in the table, written the way a sound's loudness is, and not a rule in code.
+    */
+    float       gain = 1.0f;
     CuePayload  payload;    //the trigger's
     json        params;     //the action's object from the table, kind and offset included
 };
@@ -206,6 +212,10 @@ public:
 
     //For panels and tools.
     std::vector<std::string> CueNames() const;
+    //Where a sound some cue plays is loudest, in seconds, as measured when the table loaded; -1
+    //for one no cue plays. For a game that has to look that far ahead - the archer forecasts an
+    //arrow's flight exactly as far as the swoosh's lead - without asking the sound system itself.
+    float PeakOf(const std::string& sound) const;
     int NumWaiting() const { return (int)waiting.size(); };
     int NumPlaying() const { return (int)playing.size(); };
 
@@ -308,6 +318,7 @@ private:
         CuePayload  payload;
         uint64_t    scope_serial = 0;       //0 is the level
         int         action = -1;            //>= 0: this is that action of the cue, not the cue
+        float       gain = 1.0f;            //for an action: the gain its cue fired with
         uint64_t    queued_in_group = 0;    //non-zero: a line queued behind its group, until this
     };
     //A sound this system started and is still counting.

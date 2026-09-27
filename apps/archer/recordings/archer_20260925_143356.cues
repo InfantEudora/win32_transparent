@@ -1,2 +1,5 @@
+     105  kick_shout     skip                  (chance)
      115  kick_swing     play  kick_swing     gain 0.800
      124  kick_land      play  kick_land      gain 0.800
+     124  kick_shake     act   shake          gain 1.000
+     124  kick_shake     act   rumble         gain 1.000

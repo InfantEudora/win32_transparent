@@ -53,7 +53,9 @@ struct FakeOutput : public CueOutput {
     std::map<int, float> bus_gain;
     std::map<std::string, int> bus_id;
     uint32_t next = 1;
-    void RegisterSound(const char* name, const char*) override {
+    // A file with "missing" in its name fails to load, the way a wav that is not there does.
+    void RegisterSound(const char* name, const char* file) override {
+        if (strstr(file, "missing")) return;
         if (!length.count(name)) { length[name] = 0.5f; peak[name] = 0.1f; }
     }
     float LoudestAt(const char* n) override { return peak.count(n) ? peak[n] : -1.0f; }
@@ -115,6 +117,15 @@ static void table_checks() {
           error.find("nothere") != std::string::npos, "an unknown sound is an error", error);
     check(!cs.LoadTableText(R"({"sounds":{"s":"f.wav"},"cues":{"a":{"signal":"x","sounds":"s","group":"g"}}})", error, "t"),
           "an undeclared group is an error", error);
+    {
+        CueSystem c2;
+        c2.Init(60.0f, &out);
+        bool ok = load(c2, R"({"sounds":{"gone":"missing.wav","here":"f.wav"},
+                               "cues":{"a":{"signal":"x","sounds":"gone"},"b":{"signal":"y","sounds":"here"}}})");
+        c2.Signal("y");
+        c2.Tick(1);
+        check(ok && plays(c2).size() == 1, "a declared sound whose file will not load is silent, not fatal");
+    }
     check(load(cs, R"({"sounds":{"s":"f.wav"},"cues":{"a":{"signal":"x","sounds":"s"}}})"), "a minimal table loads");
     std::string before = error;
     check(!cs.LoadTableText("{}", error, "t") && cs.CueNames().size() == 1, "a failed reload keeps the table in use", error);
@@ -175,6 +186,17 @@ static void trigger_checks() {
     l = cs.log.Lines();
     check(plays(cs).empty() && l.size() == 1 && l[0].find("skip") != std::string::npos &&
           l[0].find("scope ended") != std::string::npos, "a waiting cue is dropped when its scope ends", joined(l));
+
+    // Ending on the very tick the swing is due: the kick is over by then, so no swing.
+    cs.log.Clear();
+    cs.BeginScope("kick", 0, CuePayload().Set("strike_shift", 0));
+    cs.Tick(250);
+    for (uint64_t t = 251; t < 260; t++) cs.Tick(t);
+    cs.EndScope("kick");
+    cs.Tick(260);
+    l = cs.log.Lines();
+    check(plays(cs).empty() && l.size() == 1 && l[0].find("260") != std::string::npos && l[0].find("scope ended") != std::string::npos,
+          "a scope ending on the tick its cue is due drops it", joined(l));
 
     cs.log.Clear();
     cs.BeginScope("kick", 0, CuePayload().Set("strike_shift", 2));
@@ -352,7 +374,8 @@ static void rule_checks() {
         "patient": { "signal": "q", "sounds": "line2", "group": "her", "busy": "queue", "max_wait": 200 },
         "urgent":  { "signal": "u", "sounds": "big", "group": "her", "busy": "interrupt", "priority": 5 },
         "story":   { "signal": "n", "sounds": "line1", "group": "narrator", "bus": "voice" },
-        "shaken":  { "signal": "s", "actions": [{ "kind": "shake", "amount": 0.5 }, { "kind": "shake", "offset": 3 }] }
+        "shaken":  { "signal": "s", "gain_by": [{ "value": "hard", "in": [0, 1], "out": [0, 1] }],
+                     "actions": [{ "kind": "shake", "amount": 0.5 }, { "kind": "shake", "offset": 3 }] }
       }
     })");
 
@@ -431,12 +454,13 @@ static void rule_checks() {
     std::vector<std::string> acts;
     cs.SetActionHandler("shake", [&](const CueAction& a) {
         acts.push_back(std::to_string(a.tick) + " " + a.params.value("kind", std::string()) + " " +
-                       std::to_string(a.params.value("amount", 0.0f)).substr(0, 4));
+                       std::to_string(a.params.value("amount", 0.0f)).substr(0, 4) + " x" +
+                       std::to_string(a.gain).substr(0, 4));
     });
-    cs.Signal("s");
+    cs.Signal("s", CuePayload().Set("hard", 0.25f));
     for (uint64_t t = 5000; t < 5010; t++) cs.Tick(t);
-    check(acts.size() == 2 && acts[0] == "5000 shake 0.50" && acts[1] == "5003 shake 0.00",
-          "actions reach their handler, offset ones on their tick", joined(acts));
+    check(acts.size() == 2 && acts[0] == "5000 shake 0.50 x0.25" && acts[1] == "5003 shake 0.00 x0.25",
+          "actions reach their handler with the cue's gain, offset ones on their tick", joined(acts));
 
     // History: capture, change it, restore - the next no_repeat pick avoids the restored one.
     json h = cs.CaptureHistory();

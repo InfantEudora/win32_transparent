@@ -13,6 +13,11 @@
 #include "MCPServer.h"
 #endif
 #include "PlaceHash.h"
+#ifdef USE_SOUND
+//Only here, and only with sound: it is the one file that names both the cues and SoundSystem.
+#include "CueSoundOutput.h"
+#endif
+#include <sys/stat.h>
 
 #include <math.h>
 #include <string.h>
@@ -3643,29 +3648,40 @@ void ApplicationArcher::MeasureClipPhases(){
         2026-09-26 - ObjectAnimation::Sample - and at a keyframe's own time the blend is that key,
         so this still holds.)
     */
+    //The right toe too, for the footsteps - the same pose, read at the same keyframes.
+    Bone* right_toe = archer_model->FindBone(ARCHER_MODEL_RIGHT_TOE_BONE);
     for (int i = 0; i < PUPPET_LOCOMOTION_COUNT; i++){
         int index = PUPPET_LOCOMOTION[i];
         Animation* clip = archer_clips[index];
         if (!clip || !clip->root_track || clip->duration <= 0.0f){
             continue;
         }
-        float lowest = 0.0f;
-        float lowest_at = 0.0f;
+        float lowest = 0.0f, lowest_right = 0.0f;
+        float lowest_at = 0.0f, lowest_right_at = 0.0f;
         bool f_first = true;
         for (ObjectAnimationKeyFrame* key : clip->root_track->keyframes){
             //Zero-width window: poses the root bone without reporting the sample as motion.
             clip->SampleRootMotion(key->time,key->time);
             clip->ApplyInterval(key->time);
             float y = toe->GetWorldPosition().y;
+            float y_right = right_toe ? right_toe->GetWorldPosition().y : 0.0f;
             if (f_first || y < lowest){
                 lowest = y;
                 lowest_at = key->time;
-                f_first = false;
             }
+            if (f_first || y_right < lowest_right){
+                lowest_right = y_right;
+                lowest_right_at = key->time;
+            }
+            f_first = false;
         }
         puppet.clip_phase[index] = lowest_at / clip->duration;
-        debug->Info("Clip %-20s plants the left foot at phase %.2f (toe at %.3f)\n",
-                    ARCHER_CLIPS[index].name,puppet.clip_phase[index],lowest);
+        //Without the bone, half a cycle on is the best guess there is, and it is said so.
+        puppet.clip_phase_right[index] = right_toe ? lowest_right_at / clip->duration
+                                                   : fmodf(puppet.clip_phase[index] + 0.5f,1.0f);
+        debug->Info("Clip %-20s plants the left foot at phase %.2f (toe at %.3f), the right at %.2f%s\n",
+                    ARCHER_CLIPS[index].name,puppet.clip_phase[index],lowest,
+                    puppet.clip_phase_right[index],right_toe ? "" : " (no right toe bone - guessed)");
     }
 }
 
@@ -4494,13 +4510,9 @@ void ApplicationArcher::RegisterTargetHit(PropView& view, const vec3& point){
             archery_score += points;
             SpawnHitPopup(popup_at,points);
         }
-        //The centre ring, and only that: she says so. On the physics thread inside the tick, like
-        //the hit sound itself, so it lands on the tick the arrow does.
-#ifdef USE_SOUND
-        if (soundsystem && points == STAND_POINTS[0]){
-            PlayCue("nice_shot","nice_shot",0.8f);
-        }
-#endif
+        //Every stand hit, with its points - the table decides which deserve a word (nice_shot
+        //says only the centre ring does). Inside the tick, like the hit, so it lands with it.
+        cues.Signal("stand_hit",CuePayload().Set("points",(float)points));
         debug->Info("Stand %i: %i points (%i on it, %i this level)\n",
                     view.index,points,view.score,archery_score);
     }else{
@@ -5260,6 +5272,10 @@ void ApplicationArcher::SetupInput(){
     input->AddKeyMap(GAMEPAD_KEY_BACK,INPUT_ARCHER_MENU);
     //Not recorded: a replay that sent her to the title would stop playing the level it recorded.
     input->SetRecorded(INPUT_ARCHER_MENU,false);
+    //T, the teleport. Not recorded either: it goes where the cursor is, which a recording does not
+    //keep, so a replayed T would put her somewhere else. A run that uses it replays from after it.
+    input->AddKeyMap('T',INPUT_ARCHER_TELEPORT);
+    input->SetRecorded(INPUT_ARCHER_TELEPORT,false);
 
     /*
         The title's continue. Space and A are also the jump, and Start the restart, which is fine:
@@ -5300,6 +5316,7 @@ void ApplicationArcher::SetupInput(){
     input->NameAction(INPUT_ARCHER_AIM,"aim");
     input->NameAction(INPUT_ARCHER_CONTINUE,"continue");
     input->NameAction(INPUT_ARCHER_MENU,"menu");
+    input->NameAction(INPUT_ARCHER_TELEPORT,"teleport");
 }
 
 /*
@@ -5333,6 +5350,9 @@ json ApplicationArcher::CaptureRecordingState(){
         //How long the level had been running: the seed for anything random in it - the debris a
         //broken wall throws, the kick's shout. A replay restarts the level, which zeroes this.
         {"level_ticks",stage.ticks},
+        //What the cues remember past a tick - each one's last pick and firing, each group's last
+        //line - so a replay avoids the same repeats and honours the same gaps the original did.
+        {"cue_history",cues.CaptureHistory()},
         //The spring she stands on, and every spring plant's state: a recording that starts on the
         //pad mid-bounce has to replay from that bounce, not from a cap at rest.
         {"spring_on",stage.spring_on},
@@ -5360,6 +5380,10 @@ void ApplicationArcher::RestoreRecordingState(const json& state){
     if (state.contains("level_ticks")){
         stage.ticks = state.value("level_ticks",(uint64_t)0);
     }
+    //A file from before the cues has none, and replays as a fresh session would - the same for
+    //every replay of it, which is all a comparison needs.
+    auto history = state.find("cue_history");
+    cues.RestoreHistory(history != state.end() ? *history : json());
     PlaceArcher(v2(state.value("x",stage.pos.x),state.value("y",stage.pos.y)));
     stage.vel = v2(state.value("vx",0.0f),state.value("vy",0.0f));
     stage.facing = (state.value("facing",stage.facing) < 0.0f) ? -1.0f : 1.0f;
@@ -5402,6 +5426,65 @@ void ApplicationArcher::PlaceArcher(v2 pos){
     stage.launch_lift = 0.0f;
     stage.bow_mode = BOW_IDLE;
     stage.draw_ticks = 0;
+}
+
+/*
+    Where the mouse cursor meets the play plane (z = 0), her feet there - lifted clear of anything
+    solid. PHYSICS THREAD, from UpdateView; the placing itself is ARCHER_CMD_PLACE, the same command
+    archer_place sends, so the key and the tool cannot come to mean different things.
+
+    LIFTED, because archer_place's warning is the whole problem with a cursor: a point inside a
+    block ejects her on the next tick, and out of a tall one that is upward onto its roof - which
+    looks like the teleport having worked and then her walking over what should have stopped her.
+    So a body that would overlap a block is stood on that block's top instead, and again for
+    whatever that puts her into. One-way platforms do not count: she can stand inside one, and
+    pressing T just under one's top would otherwise pop her up onto it every time. A tree's arms
+    are the same.
+
+    In the air is fine - she falls from there, which is usually what a test wants.
+*/
+void ApplicationArcher::TeleportToCursor(InputController* input){
+    if (!input || !main_scene || !main_scene->camera){
+        return;
+    }
+    int2 px = input->GetRelativeMousePosition();
+    ray r = main_scene->camera->GetPixelRay(px);
+    plane play;
+    play.pos = vec3(0.0f,0.0f,0.0f);
+    play.normal = vec3(0.0f,0.0f,1.0f);
+    vec3 at;
+    if (!r.intersects_plane(play,at)){
+        return;
+    }
+    float x = at.x;
+    float feet = at.y;
+    //A handful of passes is enough for any stack in these levels; the cap is only so a malformed
+    //level cannot hang the physics thread.
+    for (int pass = 0; pass < 8; pass++){
+        bool f_moved = false;
+        for (const StageBlock& b : stage.blocks){
+            //A tree's arms are one-way platforms to the rules whatever their kind says.
+            if (!b.f_alive || b.kind == BLOCK_PLATFORM || b.tree >= 0){
+                continue;
+            }
+            bool f_overlap = (x + ARCHER_HALF_W > b.Left()) && (x - ARCHER_HALF_W < b.Right()) &&
+                             (feet + 2.0f * ARCHER_HALF_H > b.Bottom()) && (feet < b.Top());
+            if (f_overlap){
+                feet = b.Top();
+                f_moved = true;
+            }
+        }
+        if (!f_moved){
+            break;
+        }
+    }
+    SimCommand cmd;
+    cmd.type = ARCHER_CMD_PLACE;
+    //A hair above whatever she stands on, so the first tick lands her rather than starting inside.
+    cmd.value[0] = x;
+    cmd.value[1] = feet + ARCHER_HALF_H + 0.01f;
+    main_scene->SubmitCommand(cmd);
+    debug->Info("Teleport (T) to (%.2f, %.2f)\n",x,feet);
 }
 
 void ApplicationArcher::RegisterCommandHandlers(){
@@ -5456,6 +5539,11 @@ void ApplicationArcher::RegisterCommandHandlers(){
 
     main_scene->RegisterCommandHandler(ARCHER_CMD_PLACE,
         [this](const SimCommand& cmd) -> objectid_t {
+            //Off the rope first, as RestoreRecordingState does: placed with the joint still in
+            //place, she is dragged straight back to where she was hanging.
+            if (stage.mode == MODE_ROPE){
+                DetachArcherFromRope(false);
+            }
             PlaceArcher(v2(cmd.value[0],cmd.value[1]));
             return OBJECTID_INVALID;
         });
@@ -5499,6 +5587,20 @@ void ApplicationArcher::RegisterCommandHandlers(){
 
 void ApplicationArcher::NewGame(){
     stage.Reset();
+    /*
+        The level is the outermost scope, so a restart ends every scope the cues had open - the
+        creak is cut, a kick's planned shout is dropped - by each cue's own rule. The edges the
+        scopes were opened on start again from nothing, since the Stage they were read off is new.
+        History is kept: a restart is not a new session.
+    */
+    cues.Reset();
+    f_was_nocked = false;
+    f_was_kicking = false;
+    f_step_valid = false;
+    shake_trauma = 0.0f;
+    for (int i = 0; i < ARROW_MAX_LIVE; i++){
+        arrow_in_flight[i] = false;
+    }
     //The stands are rebuilt below with nothing in them, so the points they held go with them.
     archery_score = 0;
     archery_last_points = -1;
@@ -5605,8 +5707,15 @@ void ApplicationArcher::UpdateView(void){
     if (soundsystem){
         soundsystem->SetPaused((main_scene == title_scene) ||
                                (main_scene->IsPhysicsPaused() && !main_scene->IsTickingThisPass()));
+        //The panel's volume is the master bus, so it turns down what is already playing too. On
+        //every pass, so the slider answers while paused; only when it moved.
+        if (soundsystem->GetBusGain(SOUND_BUS_MASTER) != sound_volume){
+            soundsystem->SetBusGain(SOUND_BUS_MASTER,sound_volume);
+        }
     }
 #endif
+    //Here rather than in the tick, so a table saved while the game is paused is picked up too.
+    PollCueTable();
     InputController* input = main_scene->inputcontroller;
     //The title screen waits for its click and nothing else: no camera, no picking, no toggles.
     if (main_scene == title_scene){
@@ -5622,6 +5731,16 @@ void ApplicationArcher::UpdateView(void){
     if (f_menu && input->IsInputLive() && title_scene){
         RequestActiveScene(title_scene);
         debug->Info("To the title screen from '%s'\n",main_scene->name.c_str());
+    }
+    /*
+        T: to the cursor. HasFocus rather than IsInputLive, because it is cursor-driven - the rule
+        for those, see the note on IsInputLive - and no scripted hold means it; archer_place is the
+        scripted form. Not while a panel has the keyboard, or typing a T into a text field would
+        throw her across the level.
+    */
+    bool f_teleport = input->WasKeyPressed(INPUT_ARCHER_TELEPORT);
+    if (f_teleport && input->HasFocus() && !UIWantsKeyboard()){
+        TeleportToCursor(input);
     }
     /*
         F1 the engine panels, F2 the blockout back on top of the terrain.
@@ -5753,7 +5872,7 @@ void ApplicationArcher::RunSimulationTick(void){
     stage.Tick(intent,events);
 
     HandleEvents(events);
-    UpdateSound(events);
+    SignalCues(events);
     //The rope handoff, in both directions. Immediately after the tick that decided it, so the
     //joint exists (or is gone) before anything else this tick reads the body.
     if (events.f_grabbed_rope){
@@ -5803,7 +5922,18 @@ void ApplicationArcher::RunSimulationTick(void){
     //After everything that pushes a straw man this tick, before the step - all of it is force, and
     //rp3d sums the lot.
     TickSprings();
-    StartArrowSwooshes();
+    ForecastArrowImpacts();
+    SignalFootsteps();
+    /*
+        THE CUES FIRE HERE, once, after everything that can signal has - the rules' events, the
+        props' hits and scores, the arrows' forecasts - so what the log says happened in a tick,
+        and in which order, does not depend on which part of the game found it first. The clock is
+        the LEVEL's, which a replay restores, so a replay decides exactly what the original did.
+    */
+    cues.SetListener(stage.pos.x);
+    //The shake decays BEFORE the cues fire, so a shake added this tick starts at its full strength.
+    shake_trauma = fmaxf(0.0f,shake_trauma - 1.0f / fmaxf(camera_tuning.shake_ticks,1.0f));
+    cues.Tick(stage.ticks);
     UpdateHitPopups();
     DriveArcherBody();
     SyncArcherView();
@@ -5898,204 +6028,275 @@ void ApplicationArcher::GatherInput(ArcherInput& out){
 //--- Sound --------------------------------------------------------------------------------------
 
 /*
-    The bow's three sounds, named after what they MEAN rather than after the file - SoundSystem's
-    intended use, so a second hit sound later is a second file under a name that already exists
-    in the code, not a rename. A file that will not load leaves its sound silent and says so in
-    the log; nothing else depends on it.
+    The sound device, the cue table and the output between them.
 
-    Everything here is compiled out with USE_SOUND=0, and soundsystem stays NULL, which is what
-    every caller checks.
+    WHAT THE GAME SOUNDS LIKE IS NOT IN THIS FILE. It is assets/cues/archer.json, which says for
+    each event what plays, how loud, when and what stops it (cue_plan.md; the format is in
+    core/CueSystem.h). This file only reports what happened - SignalCues and friends.
+
+    The cues DECIDE in every build and every situation, and log what they decided: with sound, the
+    table's sounds are registered and played through a CueSoundOutput; with USE_SOUND=0 or with
+    no device, the cues get no output at all, and still decide and log exactly the same - which is
+    what lets a replay be checked on a machine that makes no noise.
 */
-//Her shouts on a kick, by the name each is played under. kick_hyaa is first: the shout ticks were
-//tuned on it, and the others are timed against its loud part.
-static const char* KICK_SHOUTS[] = { "kick_hyaa", "kick_hija", "kick_hoowa" };
-
 void ApplicationArcher::SetupSound(){
-    static_assert(sizeof(KICK_SHOUTS) / sizeof(KICK_SHOUTS[0]) == KICK_SHOUT_COUNT,"one name per shout");
 #ifdef USE_SOUND
     soundsystem = new SoundSystem();
     soundsystem->Initialise();
-    soundsystem->AppendFile("sound/bow_tension.wav","bow_tension");
-    soundsystem->AppendFile("sound/arrow_leave.wav","arrow_leave");
-    soundsystem->AppendFile("sound/arrow_hitting.wav","arrow_hit");
-    soundsystem->AppendFile("sound/arrow_swoosh.wav","arrow_swoosh");
-    //The swoosh builds to the impact; how far in it peaks is how early it has to start.
-    arrow_swoosh_peak = soundsystem->LoudestAt("arrow_swoosh");
-    debug->Info("arrow_swoosh peaks %.3fs in - started that long before a forecast impact (%.1f ticks)\n",
-                arrow_swoosh_peak,arrow_swoosh_peak * ARCHER_TPS);
-    soundsystem->AppendFile("sound/kick_swing.wav","kick_swing");
-    soundsystem->AppendFile("sound/kick_land.wav","kick_land");
-    //Her three shouts, and where each one's loud part is - see kick_shout_peak.
-    for (int i = 0; i < KICK_SHOUT_COUNT; i++){
-        char path[64];
-        snprintf(path,sizeof(path),"sound/%s.wav",KICK_SHOUTS[i]);
-        soundsystem->AppendFile(path,KICK_SHOUTS[i]);
-        kick_shout_peak[i] = soundsystem->LoudestAt(KICK_SHOUTS[i]);
-        debug->Info("%s peaks %.3fs in (%.1f ticks)\n",KICK_SHOUTS[i],kick_shout_peak[i],
-                    kick_shout_peak[i] * ARCHER_TPS);
+    //Only a working device gets an output. A table checked against a device that has nothing
+    //registered would refuse every sound in it, and the cues would not even decide.
+    if (soundsystem->f_initialised){
+        cue_output = new CueSoundOutput(soundsystem);
     }
-    soundsystem->AppendFile("sound/speech/nice_shot.wav","nice_shot");
 #endif
+    cues.Init(ARCHER_TPS,cue_output);
+    /*
+        The table's non-sound actions. Each is scaled by the cue's gain, which is the table's
+        gain_by curves - so how hard a landing shakes is written beside how loud it sounds.
+          shake   amount (trauma added, 0..1), axes [across, up]
+          rumble  low, high (the heavy and light motor, 0..1)
+        Physics thread, inside cues.Tick, like everything else a cue does.
+    */
+    //Read by type, never with json::value: in this build a wrong type there is an abort, and a
+    //typo in a table being tuned must not be able to take the game down.
+    auto num = [](const json& o, const char* key, float fallback) -> float {
+        auto it = o.find(key);
+        return (it != o.end() && it->is_number()) ? it->get<float>() : fallback;
+    };
+    cues.SetActionHandler("shake",[this,num](const CueAction& a){
+        float ax = 0.5f, ay = 1.0f;
+        auto axes = a.params.find("axes");
+        if (axes != a.params.end() && axes->is_array() && axes->size() == 2 &&
+            (*axes)[0].is_number() && (*axes)[1].is_number()){
+            ax = (*axes)[0].get<float>();
+            ay = (*axes)[1].get<float>();
+        }
+        AddShake(num(a.params,"amount",0.3f) * a.gain,ax,ay);
+    });
+    cues.SetActionHandler("rumble",[this,num](const CueAction& a){
+        Rumble(num(a.params,"low",0.0f) * a.gain,num(a.params,"high",0.0f) * a.gain);
+    });
+    std::string error;
+    if (!cues.LoadTable(ARCHER_CUE_TABLE,error)){
+        debug->Err("Cue table: %s - the game will be silent until it loads\n",error.c_str());
+    }
+    //For the poll. A packed build has no file to watch, and needs none.
+    if (ResolveAssetPath(ARCHER_CUE_TABLE,cue_table_path)){
+        //_stat64 by name: MinGW's `stat` is an inline alias for a symbol this static link lacks.
+        struct _stat64 st;
+        cue_table_mtime = (_stat64(cue_table_path.c_str(),&st) == 0) ? (int64_t)st.st_mtime : 0;
+    }else{
+        cue_table_path.clear();
+    }
+    cue_table_polled = std::chrono::steady_clock::now();
+    //The swoosh builds to the impact; how far in it peaks is how far ahead the flight has to be
+    //forecast. The cue does the timing itself - this is only the horizon, and it is the table's
+    //measurement, so nothing here asks the sound system anything.
+    arrow_swoosh_peak = cues.PeakOf("arrow_swoosh");
+    debug->Info("arrow_swoosh peaks %.3fs in - flights are forecast %.1f ticks ahead\n",
+                arrow_swoosh_peak,arrow_swoosh_peak * ARCHER_TPS);
+}
+
+void ApplicationArcher::PollCueTable(){
+    if (cue_table_path.empty()){
+        return;
+    }
+    auto t = std::chrono::steady_clock::now();
+    if (t - cue_table_polled < std::chrono::seconds(1)){
+        return;
+    }
+    cue_table_polled = t;
+    struct _stat64 st;
+    if (_stat64(cue_table_path.c_str(),&st) != 0 || (int64_t)st.st_mtime == cue_table_mtime){
+        return;
+    }
+    cue_table_mtime = (int64_t)st.st_mtime;
+    std::string error;
+    if (cues.Reload(error)){
+        arrow_swoosh_peak = cues.PeakOf("arrow_swoosh");    //a re-cut swoosh re-measures itself
+        debug->Info("Cue table reloaded: %s\n",cues.File().c_str());
+    }else{
+        debug->Err("Cue table NOT reloaded, keeping the last good one: %s\n",error.c_str());
+    }
 }
 
 /*
-    Once per tick, straight after the rules - physics thread, so each sound lands on the tick of the
-    thing it is the sound of, and a paused or single-stepped game is exactly as quiet or as loud as
-    what it is doing.
+    Once per tick, straight after the rules - physics thread, so each event is told on the tick
+    of the thing it reports. The cues act on all of it at the END of the tick (RunSimulationTick),
+    after the props and the arrows' forecasts have added theirs.
 
-    THE CREAK STARTS ON THE NOCK, NOT ON THE PRESS. The first BOW_NOCK_TICKS of a draw are her
-    reaching back to the quiver with the string slack; it is the arrow going on that puts the bow
-    under load. The pull from there to full draw is only 13 ticks against a 1.05 s creak, so the
-    sound runs on into the hold, which is right - a held bow is still a bent one.
+    What is reported, and what the table can hang a cue on:
 
-    AND IT IS CUT THE MOMENT THE STRING GOES, by whatever ends the draw: a loose, a release before
-    the nock (which never started it), a ledge grab, a restart. Read off the nock's edge rather
-    than off each of those, so a new way to end a draw cannot leave a creak playing over it.
+      scope `nocked`       the arrow on the string - from the NOCK, not the press, so the first
+                           ticks of a draw (her reaching back to the quiver with the string slack)
+                           are not part of it. Ended by whatever ends the draw: a loose, a release
+                           before the nock, a ledge grab, a restart. Read off the nock's EDGE
+                           rather than off each of those, so a new way to end a draw cannot leave
+                           a creak playing over it.
+      signal `shot`        power 0..1
+      scope `kick`         from the press to the kick's last tick, cut short if it loses the
+                           ground. Carries `strike_shift`: how many ticks later (or earlier) this
+                           kick's boot lands than K's kick's, which the table's timings were set on.
+      signal `kick_connected`   in the kick, once, when the boot finds something: dir, x
+      signal `jumped`      x
+      signal `landed`      speed (how hard she came down), x
+      signal `block_broken`   count, x - once a tick, however many bricks went
+      signal `arrow_hit`   x, speed - level hits here, prop hits from ResolveArrowsAgainstProps
+      signal `stand_hit`   points (RegisterTargetHit)
+      scope `arrow`        one per flight, instance = the arrow's slot (ForecastArrowImpacts)
+      signal `arrow_impact`   in (ticks until the strike), x, speed - every tick of the flight
 */
-void ApplicationArcher::UpdateSound(const StageEvents& events){
+void ApplicationArcher::SignalCues(const StageEvents& events){
     bool f_nocked = stage.IsNocked();
-#ifdef USE_SOUND
-    if (soundsystem){
-        if (f_nocked && !f_was_nocked){
-            snd_bow_tension = PlayCue("bow_tension","bow_tension",0.7f);
-        }
-        if (!f_nocked && f_was_nocked){
-            StopCue("bow_tension","bow_tension",snd_bow_tension);     //inert if it already finished
-            snd_bow_tension = SOUND_INVALID_HANDLE;
-        }
-        //Louder the harder the draw: a half-drawn lob leaves the string with far less in it.
-        if (events.f_shot){
-            PlayCue("arrow_leave","arrow_leave",0.55f + 0.45f * events.shot_power);
-        }
-        /*
-            The kick is two sounds. The SWING is the leg going out, heard whether or not it finds
-            anything, so it is on a TICK of the move - the clip has no events, and the only kick
-            event that always fires is the start, too early. kick_ticks counts up by one per tick
-            and is zeroed if the kick is cut short, so this fires at most once per kick.
-
-            The LAND is the boot hitting something, so it is on the connect and nothing else: a
-            kick at thin air has nothing to land on. f_kick_connected fires once per kick, inside
-            the kick's active window, which is timing enough.
-
-            The swing tick was found on Kick_Front, so the other kicks play it shifted by how much
-            later (or earlier) their boot lands - the middle of each one's window against
-            Kick_Front's. Never before tick 1, which is the press.
-        */
-        const KickSpec& kick = stage.Kick();
-        int strike_shift = ((kick.active_from + kick.active_to) - (KICK_ACTIVE_FROM + KICK_ACTIVE_TO)) / 2;
-        if (stage.kick_ticks == std::max(kick_swing_tick + strike_shift,1)){
-            PlayCue("kick_swing","kick_swing",0.8f);
-        }
-        if (events.f_kick_connected){
-            PlayCue("kick_land","kick_land",0.8f);
-        }
-        /*
-            And her shout, on SOME kicks and on a tick that wanders: whether, which one, and when,
-            is drawn once as the kick starts. Hashed from the level's tick, the SpawnDebris
-            arrangement - a recorded session shouts the same shouts on exactly the same kicks when
-            it is played back, and nothing here draws from the engine's shared RRandom stream,
-            which a sound has no business perturbing.
-
-            Moved by the same strike shift as the swing, and by where this shout's loud part is
-            against kick_hyaa's, which the from/to sliders were tuned on.
-        */
-        if (events.f_kick_started){
-            uint64_t tick = stage.ticks;
-            kick_shout_tick = 0;
-            if (Hash01(0.0f,0.0f,(int)tick,1) < kick_shout_chance){
-                int span = std::max(kick_shout_to - kick_shout_from,0) + 1;
-                int pick = (int)(Hash01(0.0f,0.0f,(int)tick,2) * (float)span);
-                kick_shout = std::min((int)(Hash01(0.0f,0.0f,(int)tick,3) * (float)KICK_SHOUT_COUNT),
-                                      KICK_SHOUT_COUNT - 1);
-                int peak_shift = (int)lroundf((kick_shout_peak[0] - kick_shout_peak[kick_shout]) * ARCHER_TPS);
-                //Tick 1 is this one, already past, so the earliest a shout can be is 2.
-                kick_shout_tick = std::max(kick_shout_from + std::min(pick,span - 1) + strike_shift + peak_shift,2);
-            }
-        }
-        if (kick_shout_tick > 0 && stage.kick_ticks == kick_shout_tick){
-            PlayCue("kick_shout",KICK_SHOUTS[kick_shout],0.8f);
-        }
+    if (!f_nocked && f_was_nocked){
+        cues.EndScope("nocked");
     }
-#endif
-    //The level's strikes. The props' come from ResolveArrowsAgainstProps, which finds them.
-    for (size_t i = 0; i < events.arrow_hits.size(); i++){
-        PlayArrowHit(events.arrow_hits[i].point.x,events.arrow_hits[i].speed);
+    if (f_nocked && !f_was_nocked){
+        cues.BeginScope("nocked");
     }
     f_was_nocked = f_nocked;
+
+    if (events.f_shot){
+        cues.Signal("shot",CuePayload().Set("power",events.shot_power));
+    }
+
+    /*
+        The kick's scope. Its timings were found on Kick_Front, so each kick says how much later
+        its boot lands - the middle of its active window against Kick_Front's - and the table
+        counts from there. Ends on the tick kick_ticks goes back to 0, which is also a kick cut
+        short: the cues drop what it had planned from that tick on.
+    */
+    bool f_kicking = stage.kick_ticks > 0;
+    if (!f_kicking && f_was_kicking){
+        cues.EndScope("kick");
+    }
+    if (events.f_kick_started){
+        const KickSpec& kick = stage.Kick();
+        int strike_shift = ((kick.active_from + kick.active_to) - (KICK_ACTIVE_FROM + KICK_ACTIVE_TO)) / 2;
+        cues.BeginScope("kick",0,CuePayload().Set("strike_shift",(float)strike_shift));
+    }
+    f_was_kicking = f_kicking;
+    //`dir` which way the boot went (+1 right), for a shake along it; `x` where it landed.
+    if (events.f_kick_connected){
+        float dir = events.kicks.empty() ? stage.facing : events.kicks[0].dir;
+        float x = events.kicks.empty() ? stage.pos.x : events.kicks[0].x;
+        cues.Signal("kick_connected",CuePayload().Set("dir",dir).Set("x",x));
+    }
+
+    //Leaving the ground and coming back to it. `speed` is how hard she came down - a routine
+    //jump lands at about 18.7, a drop of 5.5 units at 25 (see PUPPET_HARD_LAND_VEL), stepping
+    //off a kerb well under 5.
+    if (events.f_jumped){
+        cues.Signal("jumped",CuePayload().Set("x",stage.pos.x));
+    }
+    if (events.f_landed){
+        cues.Signal("landed",CuePayload().Set("speed",events.land_speed).Set("x",stage.pos.x));
+    }
+    //A wall coming apart: once a tick however many bricks went, with how many and where the first was.
+    if (!events.broken_blocks.empty()){
+        int b = events.broken_blocks[0];
+        float x = (b >= 0 && b < (int)stage.blocks.size()) ? stage.blocks[b].x : stage.pos.x;
+        cues.Signal("block_broken",CuePayload().Set("count",(float)events.broken_blocks.size()).Set("x",x));
+    }
+
+    //The level's strikes. The props' come from ResolveArrowsAgainstProps, which finds them.
+    for (size_t i = 0; i < events.arrow_hits.size(); i++){
+        SignalArrowHit(events.arrow_hits[i].point.x,events.arrow_hits[i].speed);
+    }
+}
+
+void ApplicationArcher::SignalArrowHit(float x, float speed){
+    cues.Signal("arrow_hit",CuePayload().Set("x",x).Set("speed",speed));
 }
 
 /*
-    One arrow going into something.
+    A footstep is a foot PLANTING IN THE CLIP ON SCREEN - not a timer and not a distance walked.
+    The walk and the runs are one blend space with their footfalls phase-locked (SetBlendPair), and
+    each clip's two plants are measured at load (MeasureClipPhases), so a step is simply the
+    playhead crossing one. That keeps the sound on the foot it belongs to at any speed, through
+    the rate stretch, and across the blend from a walk into a run.
 
-    By speed, so a spent arrow dropping onto the grass is a tap and a full-draw shot into a crate is
-    a thud. And by DISTANCE FROM HER, the one piece of placing a flat, unpanned sound system can do:
-    the view is about 32 units wide, so anything within 12 of her is on screen and at full volume,
-    fading to a floor of 0.15 by 40 - a shot lobbed over the cracked wall is still heard landing,
-    just not as though it landed at her feet.
+    ONLY THE LEADING CLIP'S steps fire (the plan's rule for markers): the blend pair's heavier
+    side. Both sides plant together - that is what the phase lock is for - so firing from both
+    would step twice.
+
+    THE PHASE IS TAKEN RELATIVE TO THE LEFT PLANT, which is what the phase lock holds equal
+    between the two clips of the blend, so when the lead passes from the walk to the run the
+    phase carries on continuously and no step is doubled or lost at the handover. A lead that
+    arrives some other way - a crossfade in from a landing - starts the count afresh rather than
+    reading a jump in the playhead as a crossing.
+
+    Read before SyncArcherAnimation, so the playhead is the one the pose on screen was made from.
+    The engine advances it only on ticks that run, by the simulation's step, so steps replay to
+    the tick. Payload: foot (0 left, 1 right), speed (|vel.x|) and x.
 */
-float ApplicationArcher::ArrowSoundGain(float x, float speed){
-    float by_speed = 0.35f + 0.65f * clamp(speed / ARROW_SPEED_MAX,0.0f,1.0f);
-    float by_distance = clamp(1.0f - (fabsf(x - stage.pos.x) - 12.0f) / 28.0f,0.15f,1.0f);
-    return by_speed * by_distance;
-}
-
-/*
-    See the declaration. The log line is written BEFORE the play, and whether or not the play
-    succeeds: it records what the game decided, and a voice that could not be had is the sound
-    system's business, not a different decision.
-*/
-soundhandle_t ApplicationArcher::PlayCue(const char* cue, const char* sound, float gain, float from){
-    CueLogEntry e;
-    e.tick = stage.ticks;
-    e.cue = cue;
-    e.what = "play";
-    e.sound = sound;
-    e.gain = gain;
-    e.from = from;
-    cue_log.Add(e);
-#ifdef USE_SOUND
-    if (soundsystem){
-        return soundsystem->Play(sound,false,gain * sound_volume,SOUND_ONESHOT,from);
+void ApplicationArcher::SignalFootsteps(){
+    Animation* lead = archer_model ? archer_model->current_animation : NULL;
+    if (lead && archer_model->blend_animation && archer_model->blend_factor > 0.5f){
+        lead = archer_model->blend_animation;
     }
-#endif
-    return SOUND_INVALID_HANDLE;
-}
-
-void ApplicationArcher::StopCue(const char* cue, const char* sound, soundhandle_t handle){
-    CueLogEntry e;
-    e.tick = stage.ticks;
-    e.cue = cue;
-    e.what = "stop";
-    e.sound = sound;
-    cue_log.Add(e);
-#ifdef USE_SOUND
-    if (soundsystem){
-        soundsystem->Stop(handle);
+    int clip = -1;
+    for (int i = 0; lead && i < PUPPET_LOCOMOTION_COUNT; i++){
+        if (archer_clips[PUPPET_LOCOMOTION[i]] == lead){
+            clip = PUPPET_LOCOMOTION[i];
+        }
     }
-#else
-    (void)handle;
-#endif
+    if (clip < 0 || lead->duration <= 0.0f || stage.mode != MODE_GROUND || !stage.f_on_ground){
+        f_step_valid = false;
+        return;
+    }
+    auto wrap = [](float p){ return p - floorf(p); };
+    float rel = wrap(lead->time_index / lead->duration - puppet.clip_phase[clip]);
+    //Where the right foot plants, in the same left-relative phase.
+    float right = wrap(puppet.clip_phase_right[clip] - puppet.clip_phase[clip]);
+    bool f_same_run = f_step_valid && (lead == step_prev_lead ||
+                                       step_prev_lead == archer_model->current_animation ||
+                                       step_prev_lead == archer_model->blend_animation);
+    if (f_same_run){
+        //Forward only, and never more than half a cycle in a tick: anything else is a playhead
+        //that was set rather than played, which is no step.
+        float moved = wrap(rel - step_prev_rel);
+        if (moved > 0.0f && moved < 0.5f){
+            const float plants[2] = { 0.0f, right };
+            for (int foot = 0; foot < 2; foot++){
+                float to_plant = wrap(plants[foot] - step_prev_rel);
+                if (to_plant > 0.0f && to_plant <= moved){
+                    cues.Signal("footstep",CuePayload().Set("foot",(float)foot)
+                                                       .Set("speed",fabsf(stage.vel.x))
+                                                       .Set("x",stage.pos.x));
+                }
+            }
+        }
+    }
+    step_prev_rel = rel;
+    step_prev_lead = lead;
+    f_step_valid = true;
 }
 
 /*
     See the declaration. After ResolveArrowsAgainstProps, so an arrow that struck a prop this tick
-    is already stuck and has nothing to forecast.
+    is already stuck, its flight is over, and it has nothing to forecast.
 */
-void ApplicationArcher::StartArrowSwooshes(){
-#ifdef USE_SOUND
-    if (!soundsystem || arrow_swoosh_peak <= 0.0f){
-        return;
-    }
+void ApplicationArcher::ForecastArrowImpacts(){
     int horizon = (int)ceilf(arrow_swoosh_peak * ARCHER_TPS) + 1;
     PhysicsWorld* world = main_scene ? main_scene->physics_world : NULL;
     rp3d::RigidBody* exclude = archer_object ? archer_object->GetRigidBody() : NULL;
     for (int i = 0; i < ARROW_MAX_LIVE; i++){
         const Arrow& a = stage.arrows[i];
-        if (!a.f_live || a.f_stuck){
-            arrow_swooshed[i] = false;      //the slot is free for the next flight
+        bool f_flying = a.f_live && !a.f_stuck;
+        if (!f_flying){
+            if (arrow_in_flight[i]){
+                cues.EndScope("arrow",i);
+                arrow_in_flight[i] = false;
+            }
             continue;
         }
-        if (arrow_swooshed[i]){
+        if (!arrow_in_flight[i]){
+            cues.BeginScope("arrow",i);
+            arrow_in_flight[i] = true;
+        }
+        //No swoosh loaded, nothing to forecast for. The flight is still a scope.
+        if (arrow_swoosh_peak <= 0.0f){
             continue;
         }
         StageArrowImpact f = stage.PredictArrowImpact(i,horizon,&arrow_path);
@@ -6126,29 +6327,9 @@ void ApplicationArcher::StartArrowSwooshes(){
         if (ticks < 0){
             continue;
         }
-        float lead = (float)ticks * ARCHER_DT;
-        if (lead > arrow_swoosh_peak){
-            continue;       //not yet
-        }
         float speed = sqrtf(a.vel.x * a.vel.x + a.vel.y * a.vel.y);
-        PlayCue("arrow_swoosh","arrow_swoosh",ArrowSoundGain(x,speed),arrow_swoosh_peak - lead);
-        arrow_swooshed[i] = true;
-        debug->Info("Arrow %i swoosh: strikes at level tick %llu (%i from now), started %.3fs in\n",i,
-                    (unsigned long long)(stage.ticks + ticks),ticks,arrow_swoosh_peak - lead);
+        cues.Signal("arrow_impact",CuePayload().Set("in",(float)ticks).Set("x",x).Set("speed",speed),i);
     }
-#endif
-}
-
-void ApplicationArcher::PlayArrowHit(float x, float speed){
-#ifdef USE_SOUND
-    if (!soundsystem){
-        return;
-    }
-    PlayCue("arrow_hit","arrow_hit",ArrowSoundGain(x,speed));
-#else
-    (void)x;
-    (void)speed;
-#endif
 }
 
 void ApplicationArcher::HandleEvents(const StageEvents& events){
@@ -6274,7 +6455,7 @@ void ApplicationArcher::ResolveArrowsAgainstProps(){
         //...and pinned to the thing it went into, so it rides a crate that is kicked and goes down
         //with a target that topples instead of hanging in the air where the target used to be.
         StickArrowToProp(i,struck,v2(hit.point.x,hit.point.y));
-        PlayArrowHit(hit.point.x,speed);
+        SignalArrowHit(hit.point.x,speed);
 
         if (view->kind == PROP_STRAWMAN){
             view->hits++;       //counted, not scored - a straw man scores the kick
@@ -8268,6 +8449,7 @@ void ApplicationArcher::UpdateCamera(){
     float aspect = (renderer && renderer->height > 0) ? (float)renderer->width / (float)renderer->height
                                                       : 16.0f / 9.0f;
     float half_w = half_h * aspect;
+    camera_half_h = half_h;     //what a shake is sized against
 
     float lead = 0.0f;
     if (stage.vel.x > 0.5f || stage.vel.x < -0.5f){
@@ -8303,6 +8485,61 @@ void ApplicationArcher::UpdateCamera(){
     PlaceCamera();
 }
 
+//--- Shake and rumble: the cue table's non-sound actions -----------------------------------------
+
+/*
+    See the declaration. Trauma adds and is capped at 1; the axes are blended by how much each
+    shake brought, so a landing's vertical jolt on top of a kick's sideways one comes out as both.
+*/
+void ApplicationArcher::AddShake(float amount, float axis_x, float axis_y){
+    if (amount <= 0.0f){
+        return;
+    }
+    float before = shake_trauma;
+    shake_trauma = fminf(shake_trauma + amount,1.0f);
+    float added = shake_trauma - before;
+    float total = before + added;
+    if (total > 0.0f){
+        shake_axis_x = (shake_axis_x * before + fabsf(axis_x) * added) / total;
+        shake_axis_y = (shake_axis_y * before + fabsf(axis_y) * added) / total;
+    }
+}
+
+/*
+    Where the shake has the view on this tick. SMOOTH NOISE, not random numbers: a value per
+    noise step, eased between with a smoothstep, so the view wobbles at `shake_hz` rather than
+    teleporting every frame - and it is the level's tick that is sampled, so the same shake on the
+    same tick is the same wobble in every replay. CueHash01 is the hash, a different key per axis.
+    Zero in the orbit camera, which is a debugging view, and when the player has turned it off.
+*/
+vec3 ApplicationArcher::ShakeOffset() const{
+    const ArcherCameraTuning& tune = camera_tuning;
+    if (shake_trauma <= 0.0f || tune.shake_scale <= 0.0f || camera_mode != ARCHER_CAM_SIDE){
+        return vec3(0.0f,0.0f,0.0f);
+    }
+    float t = (float)stage.ticks * tune.shake_hz / ARCHER_TPS;
+    float i = floorf(t);
+    float f = t - i;
+    f = f * f * (3.0f - 2.0f * f);
+    auto noise = [&](uint32_t axis) -> float {
+        float a = CueHash01(0x5A4Bu,axis,(uint64_t)i,7);
+        float b = CueHash01(0x5A4Bu,axis,(uint64_t)i + 1,7);
+        return (a + (b - a) * f) * 2.0f - 1.0f;
+    };
+    float size = shake_trauma * shake_trauma * tune.shake_max * camera_half_h * tune.shake_scale;
+    return vec3(noise(0) * shake_axis_x * size,noise(1) * shake_axis_y * size,0.0f);
+}
+
+void ApplicationArcher::Rumble(float low, float high){
+    InputController* input = main_scene ? main_scene->inputcontroller : NULL;
+    if (!input || !input->HasFocus()){
+        return;
+    }
+    //The motors take 0..65000; the pad's own poll decays them, so the strength is also how long.
+    input->lmotor = std::max(input->lmotor,(int)(clamp(low,0.0f,1.0f) * 65000.0f));
+    input->rmotor = std::max(input->rmotor,(int)(clamp(high,0.0f,1.0f) * 65000.0f));
+}
+
 /*
     Everything that hangs off where the camera is.
 
@@ -8315,8 +8552,11 @@ void ApplicationArcher::PlaceCamera(){
     if (camera && camera_mode == ARCHER_CAM_SIDE){
         //Height in proportion to distance, so the zoom keeps one pitch - see CAMERA_HEIGHT.
         float height = CAMERA_HEIGHT * camera_distance / CAMERA_DISTANCE;
-        camera->SetPosition(vec3(camera_target.x,camera_target.y + height,camera_distance));
-        camera->SetLookAt(camera_target);
+        //The shake moves the camera and what it looks at together - a slide of the view, never a
+        //turn - and moves nothing else: the backdrop and the sun below stay on camera_target.
+        vec3 shake = ShakeOffset();
+        camera->SetPosition(vec3(camera_target.x + shake.x,camera_target.y + height + shake.y,camera_distance));
+        camera->SetLookAt(camera_target + shake);
         camera->CalculateLookatMatrix();
     }
 
@@ -8537,6 +8777,12 @@ void ApplicationArcher::PublishSnapshot(){
     }
     //Here, on the physics thread, which is the one that starts them - not in the MCP handler.
     s.sounds_playing = soundsystem ? soundsystem->GetNumPlaying() : -1;
+    s.shake_trauma = shake_trauma;
+    {
+        vec3 shake = ShakeOffset();
+        s.shake_dx = shake.x;
+        s.shake_dy = shake.y;
+    }
 #ifdef USE_SOUND
     if (soundsystem){
         soundsystem->ListVoices(s.voices);
@@ -8856,6 +9102,9 @@ json ApplicationArcher::BuildStateJson(){
         //How many sounds are audible, as of the last tick - the only way to tell over MCP that a
         //sound fired, since a successful Play logs nothing. -1 with no sound system.
         {"sounds_playing",s.sounds_playing},
+        //The camera shake: trauma 0..1 (it decays over camera_tuning.shake_ticks) and how far it
+        //has the view moved this tick, in world units. What shakes is the cue table's.
+        {"shake",{ {"trauma",s.shake_trauma}, {"dx",s.shake_dx}, {"dy",s.shake_dy} }},
         //Archery stands' points this level, and what the last arrow into one scored (0 = a leg,
         //-1 = none yet). See StandRingPoints.
         {"archery_score",s.archery_score},
@@ -9168,7 +9417,7 @@ void ApplicationArcher::RegisterMCPTools(){
         });
 
     /*
-        The game's reactions as they were decided - see CueLog and cue_plan.md. This is how a
+        The game's reactions as the cues decided them - see CueLog and cue_plan.md. This is how a
         replay is compared with another: clear, replay, read, and diff the lines. They are
         CueLog's own lock's, not the simulation's, so this reads them directly.
     */
@@ -9188,10 +9437,10 @@ void ApplicationArcher::RegisterMCPTools(){
         },
         [this](const json& args) -> json {
             int last = (int)clamp(args.value("last",0.0f),0.0f,(float)CueLog::CAPACITY);
-            std::vector<std::string> lines = cue_log.Lines((size_t)last);
-            uint64_t total = cue_log.Total();
+            std::vector<std::string> lines = cues.log.Lines((size_t)last);
+            uint64_t total = cues.log.Total();
             if (args.value("clear",false)){
-                cue_log.Clear();
+                cues.log.Clear();
             }
             return json{ {"total",total}, {"lines",lines} };
         });
@@ -9240,7 +9489,11 @@ void ApplicationArcher::RegisterMCPTools(){
         "same numbers: 'distance' (the side camera's zoom, 5..60, default 26), 'follow_x' / "
         "'follow_y' (per-tick ease, 0.01..1, default 0.10), 'lead' (how far ahead of a sprint, as a "
         "fraction of the half-width, default 0.21), 'keep_in' (her body box stays inside this "
-        "fraction of the view, default 0.70). Returns the values in force.",
+        "fraction of the view, default 0.70). The camera SHAKE (what shakes is the cue table's; these "
+        "are what a shake is): 'shake_scale' (0 off .. 2, default 1 - the player's setting), "
+        "'shake_max' (how far a full shake moves the view, as a fraction of its half-height, default "
+        "0.04), 'shake_ticks' (from full to nothing, default 24), 'shake_hz' (default 14). "
+        "archer_state's 'shake' says what it is doing. Returns the values in force.",
         json{
             {"type","object"},
             {"properties", {
@@ -9249,7 +9502,11 @@ void ApplicationArcher::RegisterMCPTools(){
                 {"follow_x", {{"type","number"}}},
                 {"follow_y", {{"type","number"}}},
                 {"lead", {{"type","number"}}},
-                {"keep_in", {{"type","number"}}}
+                {"keep_in", {{"type","number"}}},
+                {"shake_scale", {{"type","number"}}},
+                {"shake_max", {{"type","number"}}},
+                {"shake_ticks", {{"type","number"}}},
+                {"shake_hz", {{"type","number"}}}
             }}
         },
         [this](const json& args) -> json {
@@ -9275,10 +9532,16 @@ void ApplicationArcher::RegisterMCPTools(){
             if (args.contains("follow_y")){ camera_tuning.follow_y = clamp(args.value("follow_y",0.1f),0.01f,1.0f); }
             if (args.contains("lead")){     camera_tuning.lead = clamp(args.value("lead",0.21f),0.0f,1.0f); }
             if (args.contains("keep_in")){  camera_tuning.keep_in = clamp(args.value("keep_in",0.7f),0.1f,1.0f); }
+            if (args.contains("shake_scale")){ camera_tuning.shake_scale = clamp(args.value("shake_scale",1.0f),0.0f,2.0f); }
+            if (args.contains("shake_max")){   camera_tuning.shake_max = clamp(args.value("shake_max",0.04f),0.0f,0.5f); }
+            if (args.contains("shake_ticks")){ camera_tuning.shake_ticks = clamp(args.value("shake_ticks",24.0f),1.0f,240.0f); }
+            if (args.contains("shake_hz")){    camera_tuning.shake_hz = clamp(args.value("shake_hz",14.0f),0.5f,30.0f); }
             return json{ {"mode",(camera_mode == ARCHER_CAM_ORBIT) ? "orbit" : "side"},
                          {"distance",camera_distance},
                          {"follow_x",camera_tuning.follow_x},{"follow_y",camera_tuning.follow_y},
-                         {"lead",camera_tuning.lead},{"keep_in",camera_tuning.keep_in} };
+                         {"lead",camera_tuning.lead},{"keep_in",camera_tuning.keep_in},
+                         {"shake_scale",camera_tuning.shake_scale},{"shake_max",camera_tuning.shake_max},
+                         {"shake_ticks",camera_tuning.shake_ticks},{"shake_hz",camera_tuning.shake_hz} };
         });
 
     /*
@@ -9848,22 +10111,20 @@ void ApplicationArcher::DrawImGuiUI(void){
     ImGui::Checkbox("level entry get-up",&f_level_entry_getup);
     ImGui::SetItemTooltip("Start each level lying down and getting up, controls locked for 3.5 s. "
                           "Takes effect at the next restart.");
-    //Read by the sounds as they start, so a change is heard from the next one on.
+    //The master bus, set from this every pass in UpdateView - so it turns down what is playing too.
     if (soundsystem){
         ImGui::SliderFloat("volume",&sound_volume,0.0f,1.0f,"%.2f");
-        ImGui::SliderInt("kick swing tick",&kick_swing_tick,1,KICK_TICKS);
-        ImGui::SetItemTooltip("Which tick of the %d-tick kick the swing plays on. The boot connects "
-                              "at tick %.0f, and the land sound plays then if it hits something. "
-                              "Set on K's kick; Down+K and Up+K move it with their own strike.",
-                              KICK_TICKS,puppet.kick_strike[KICK_FRONT] * ARCHER_TPS);
-        ImGui::SliderFloat("kick shout chance",&kick_shout_chance,0.0f,1.0f,"%.2f");
-        ImGui::SliderInt("kick shout from",&kick_shout_from,2,KICK_TICKS);
-        ImGui::SliderInt("kick shout to",&kick_shout_to,2,KICK_TICKS);
-        ImGui::SetItemTooltip("The shout starts on a random tick between these two, on the "
-                              "fraction of kicks the chance says. Its loud part is about 7 ticks in. "
-                              "Set on K's kick with kick_hyaa; the other kicks and shouts are "
-                              "shifted to keep the loud part on the strike.");
     }
+    /*
+        What each sound is hung on, when and how loud, is the cue table's now - the kick's swing
+        tick and shout chance used to be sliders here. Edit the file and save: it reloads within a
+        second, paused or not. The cue panel with a slider per cue is step 5 of cue_plan.md.
+    */
+    ImGui::TextDisabled("cues: %s (%d)",cues.File().empty() ? "not loaded" : cues.File().c_str(),
+                        (int)cues.CueNames().size());
+    ImGui::SetItemTooltip("Every sound's timing, chance and gain is in this file. Save it and it "
+                          "reloads within a second; a table that fails to parse is logged and the "
+                          "last good one kept. cue_log over MCP says what fired.");
 
     /*
         --- The terrain -----------------------------------------------------------------------
@@ -10138,6 +10399,15 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::SliderFloat("follow up/down",&camera_tuning.follow_y,0.01f,1.0f,"%.3f");
         ImGui::SliderFloat("lead",&camera_tuning.lead,0.0f,0.6f,"%.2f");
         ImGui::SliderFloat("keep in frame",&camera_tuning.keep_in,0.2f,1.0f,"%.2f");
+        //What shakes is the cue table's (the `shake` actions); these are what a shake is.
+        ImGui::SliderFloat("shake",&camera_tuning.shake_scale,0.0f,2.0f,"%.2f");
+        ImGui::SetItemTooltip("The player's setting: 0 turns camera shake off, 1 is as the cue table "
+                              "wrote it. Trauma now %.2f.",shake_trauma);
+        ImGui::SliderFloat("shake size",&camera_tuning.shake_max,0.0f,0.2f,"%.3f");
+        ImGui::SetItemTooltip("How far a full shake moves the view, as a fraction of its half-height.");
+        ImGui::SliderFloat("shake ticks",&camera_tuning.shake_ticks,4.0f,90.0f,"%.0f");
+        ImGui::SetItemTooltip("How long a full shake takes to die away.");
+        ImGui::SliderFloat("shake hz",&camera_tuning.shake_hz,2.0f,30.0f,"%.1f");
         if (ImGui::SmallButton("reset follow")){
             camera_tuning = ArcherCameraTuning();
         }

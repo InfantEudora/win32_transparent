@@ -4,8 +4,9 @@ What the game does, and everything that answers it: sounds, voice lines and narr
 camera shake, rumble, particles, music and authored moments, all hung off one layer. Written
 2026-09-25, after the kick had been given four sounds by hand in four different ways. Revised
 2026-09-27 after a pass over the game and the engine: the plan had been written as a SOUND
-system, and it is really an event layer that sound happens to need most. **Agreed; steps 0, 1 and
-2 done (2026-09-27), step 3 next.**
+system, and it is really an event layer that sound happens to need most. **Agreed; steps 0 to 4
+done (2026-09-27) - the archer's sounds, footsteps, camera shake and rumble run on the cue table.
+Step 5 (the cue panel) next.**
 
 The short argument: every reaction so far answers the same three questions - *when does it fire,
 what does it do, and what stops it* - and each one answered them in its own code. A **cue** is one
@@ -399,13 +400,15 @@ reported before the solver runs), the animation markers, and the zones.
 3. **Move the eight existing sounds onto cues** with no change in what is heard, and prove it by
    diffing the step 1 logs against the new ones (swing on the strike; land on connect; shout 40%
    on 10..16 by its peak; the swoosh on its forecast; `nice_shot` on the 10). Buses for effects,
-   voice and ambience set up here, and arrow sounds panned by their x.
+   voice and ambience set up here, and arrow sounds panned by their x. **Done 2026-09-27** - see
+   "The move" below.
 4. **Shake and rumble**, as the first non-sound actions - cheap, and the proof that one row can
    drive several outputs before anything larger is built on it. Landings, kick connects, broken
-   walls.
+   walls. **Done 2026-09-27** - see "Shake and rumble" below.
 5. **The cue panel**, replacing the kick sliders.
 6. **The missing events** in section 11, each with a rules test.
-7. **Animation markers**, then footsteps on them.
+7. **Animation markers**, then footsteps on them. **Footsteps done early, 2026-09-27**, on the
+   one marker that already existed - see "Footsteps" below; general markers are still to do.
 8. **Zones, flags and counters** in `Stage`: the rectangle, enter/leave/stay, how-often, conditions,
    drawing and editing; then the narrator group, ducking and subtitles.
 9. **The cutscene mode** - the level-entry get-up rebuilt as the first one.
@@ -443,8 +446,9 @@ level tick restored by the replay is what makes the hashed shout draws repeat. T
 to fail: a baseline edited by one tick came back `DIFFERENT` with the line named. Not covered by
 any recording: `kick_hyaa` (the draw never picked it) and a creak cut by anything but a loose.
 
-`archer_20260925_140425.rec` and `archer_20260927_133347.rec` are not in git (`*.rec` is ignored;
-the other three were force-added), so their baselines need them added with `git add -f`.
+`archer_20260925_140425.rec`, `archer_20260927_133347.rec` and (since the footsteps and the
+shake) `archer_20260927_162520.rec` and `archer_20260927_165729.rec` are not in git (`*.rec` is ignored; the other three were
+force-added), so their baselines need them added with `git add -f`.
 
 ### The cue system (step 2)
 
@@ -495,6 +499,109 @@ the other three were force-added), so their baselines need them added with `git 
   effects bus, and the hum on it measures 0.354 before and 0.088 under it.
 - Archer builds and links with the new core object; it does not call it yet. No other app was
   built.
+
+### The move (step 3)
+
+- **`assets/cues/archer.json`** is what the archer sounds like now: the ten files, three buses
+  (effects, voice, ambience - nothing on the last yet) and the eight cues, each with a comment
+  saying why its numbers are what they are. It reloads within a second of being saved, paused
+  or not (`PollCueTable`, a mtime poll from `UpdateView`); a table that fails to parse is logged
+  and the last good one kept. Checked: three saves to the running game, three reloads.
+- **`ApplicationArcher` only reports.** `SignalCues` straight after the rules (the `nocked` and
+  `kick` scopes off their edges, `shot`, `kick_connected`, level `arrow_hit`s), the props' hits and
+  `stand_hit` from where they are found, and `ForecastArrowImpacts` - one `arrow` scope per flight,
+  `arrow_impact` with `in` every tick of it. `cues.Tick(stage.ticks)` fires them all at the end of
+  `RunSimulationTick`. Gone: `UpdateSound`, `PlayCue`/`StopCue`, `ArrowSoundGain`,
+  `StartArrowSwooshes`, the kick-shout state and the three kick sliders (the panel names the
+  table instead). `NewGame` resets the cues; the recording state carries `cue_history`.
+- **The volume slider is the master bus**, set from `UpdateView` every pass - so it now turns down
+  what is already playing, which it did not before.
+- **No device, or USE_SOUND=0: the cues still decide and log**, with no output. A declared sound
+  whose file will not load is silent with a warning rather than taking the table down.
+- **Two engine fixes found on the way.** `CueSystem` now holds back a cue due on the tick its scope
+  ends, since the thing the scope stands for is over by then - the old `kick_ticks == N` test never
+  played one. And `LoadTable` falls back to `LoadFile` when there is no loose file, so a packed
+  build finds its baked table.
+- **The proof.** `tools/cue_replay.py` against the five step-1 baselines, on the parity table:
+  **every play and stop identical**, on all five. The only new lines were three `skip (chance)`,
+  a shout's draw saying no, which the hand-wired code never wrote - so the tool now leaves skip
+  lines out of a comparison unless `--with-skips`. Then, muted, a live shot's `arrow_hit` was seen
+  playing on the device, on the effects bus, at the gain the log gave it.
+- **Then the audible change, separately**: `arrow_swoosh` and `arrow_hit` panned by `dx`, 0.6 at the
+  screen's edge (16 units). The check against the old baselines differed in exactly the 12 arrow
+  lines, each identical once its `pan` is taken out. The baselines were rewritten from that (they
+  are the cue system's own now, skip lines included) and two further runs matched them with
+  `--with-skips`.
+- **The shout's old-draw emulation is gone** (2026-09-27, after the move was heard and approved):
+  no `seed`, `no_repeat` on, so it is keyed off its own name and never the same shout twice
+  running. The last thing the archer asked the sound system directly - where the swoosh peaks,
+  for the forecast's horizon - is `CueSystem::PeakOf` now, so nothing in the app touches a
+  sound but through the cues.
+- Not tried: a ship (`make ship`) build of archer, which is where the baked-table fallback matters.
+
+### Footsteps (the start of step 7)
+
+- **A footstep is a foot planting in the clip on screen**, not a timer and not a distance walked.
+  `MeasureClipPhases` already posed the model at every keyframe of the walk and the two runs to
+  find where the LEFT toe is lowest (for the blend's phase lock); it now finds the RIGHT one too,
+  `Puppet::clip_phase_right`. Measured rather than assumed half a cycle on, and rightly: the right
+  foot plants 0.50, 0.56 and 0.53 of a cycle after the left in Walking, Running_Slow and
+  Running_Fast.
+- **`SignalFootsteps`**, each tick before the animation is synced: the LEADING clip of the blend pair
+  (the heavier side - both sides plant together, so firing from both would double every step),
+  its playhead as a phase from its left plant - which is what the phase lock holds equal between
+  the two clips, so a walk handing over to a run neither doubles nor loses a step - and a
+  `footstep` signal (foot, speed, x) for each plant it crossed. Only on the ground, only in a
+  locomotion clip, only forward, never more than half a cycle in a tick (anything else is a
+  playhead that was set, not played).
+- **The `footstep` cue**: one of `footstep_1..4`, never the same twice running, gain 0.6 at a walk
+  rising to 1.0 at a sprint, `gap 4` against a double step at a handover, on the effects bus.
+- **Checked**: on the flat slab past x 100, a walk steps every 21-27 ticks (the two feet's
+  uneven halves), a jog every 15-18, a sprint every 11-13, and nothing while she stands. In the
+  older recordings she runs only in short bursts between running jumps - a per-tick trace of
+  `140425` showed 18 ticks on the ground between jumps, half a cycle of the fast run, and exactly
+  the one plant in it that fired. `recordings/archer_20260927_162520` is new for this: walk, jog,
+  sprint on the slab, 16 steps. All six baselines rewritten and replayed twice, identical with
+  skip lines included.
+- **The four files are uneven**: `footstep_3` is about 2.5 times as loud as `footstep_1` (RMS 0.029
+  against 0.011), so one step in four stands out. A per-sound gain in the table, or levelling the
+  files, would even it; neither is done.
+- Not yet: surfaces (grass, wood, stone), the stop's scuff and the turn-around (Running_ToStop and
+  the turn are not locomotion clips, so they are silent), landings (`jump_landing.wav` is there,
+  unused), and a small pitch jitter per step, which the table cannot express yet.
+
+### Shake and rumble (step 4)
+
+- **An action gets its cue's gain.** `CueAction::gain` is the cue's `gain` times its `gain_by`
+  curves - exactly what a sound of that cue would play at - and the log's `act` lines print it.
+  So "shake harder the harder she lands" is a curve in the table, not a rule in code.
+- **`shake`** (`amount` = trauma added, `axes` = [across, up]) is `ApplicationArcher::AddShake`. One
+  trauma value, capped at 1, decaying over `shake_ticks` (24) every tick; the view moves by trauma
+  squared times smooth value noise (`CueHash01` of the level's tick, smoothstepped, `shake_hz` 14),
+  weighted by the axes, sized as `shake_max` (0.04) of the view's half-height so it is the same size
+  at any zoom. Applied in `PlaceCamera` to the camera and its look-at together - a slide, never a
+  turn - and never to `camera_target`, which the sun and the follow read. None in the orbit camera.
+  `shake_scale` is the player's setting, 0 off. All four on the camera panel and `archer_camera`;
+  `archer_state.shake` reports trauma and the offset.
+- **`rumble`** (`low`, `high`, 0..1 per motor) sets `InputController::lmotor/rmotor`, which the pad's
+  poll decays by itself - so the strength is also the length. ONLY WHILE THE WINDOW HAS FOCUS: an
+  agent's minimised run must not buzz the pad in someone else's hands.
+- **New signals**, for these and for the sounds to come: `jumped` (x), `landed` (speed, x - a
+  routine jump lands at about 18.7, a 5.5-unit drop at 25, the fastest fall 34), `block_broken`
+  (count, x; once a tick), and `kick_connected` now carries `dir` and `x`.
+- **The rows**: `land_shake` (from speed 20, so a routine jump does not shake; 0.4..1.0 by 34;
+  mostly vertical; heavy motor), `kick_shake` (along the kick, light motor), `wall_shake` (the
+  biggest, more with more bricks). A kick that breaks the wall fires both on one tick and the
+  trauma adds up to the cap.
+- **Checked**: a 3-unit drop does not shake; a 13-unit one lands at gain 0.636, adds 0.445 trauma,
+  moves the view mostly down (dy -0.070 against dx -0.009) and dies away at 1/24 a tick. Paused at
+  trauma 0.404, the camera stood exactly the reported offset from where shake 0 put it (dx -0.0103,
+  dy -0.0263, dz 0), and returned to the same place when shake came back on. Against the baselines
+  the only change was added `act` lines - the two kick connects and four spring-launched landings.
+  `recordings/archer_20260927_165729` is new: a kick into the cracked wall. Seven baselines,
+  replayed twice, identical with skips.
+- Not done: a roll in the shake (a little rotation reads well for big hits), and hitstop, which is
+  an effect for the rules (section 2), not an action.
 
 (What was step 8, "audio follows the pause", is done already: `SoundSystem::SetPaused` holds every
 voice on a pass that does not tick, so a paused game is silent and `sim_step` plays one tick.)

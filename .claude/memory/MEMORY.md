@@ -58,5 +58,5 @@
 - [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change for one app, do not build/run the other apps to check them; the user updates them separately
 - [Adaptive music plan](adaptive_music_plan.md) — key/suspense-driven ambient music; apps/music bench BUILT (JSON score with sections, music_* + library_* MCP, offline render checked with samplescan), run it on --mcp-port 8767
 - [Lock claim before build](lock_claim_before_build.md) — never fire a build/run in the same parallel step as its #build/#port claim; a refused claim does not stop it (slipped 2026-09-26)
-- [Cue plan](cue_plan.md) — archer event layer AGREED 2026-09-27 (apps/archer/cue_plan.md); steps 0 (SoundSystem buses/pan/offline render), 1 (CueLog + baselines, tools/cue_replay.py) and 2 (core/CueSystem + tools/cue_test.cpp) DONE; step 3 migrate archer next
+- [Cue plan](cue_plan.md) — archer event layer AGREED 2026-09-27 (apps/archer/cue_plan.md); steps 0-4 DONE (SoundSystem buses/pan, CueLog + tools/cue_replay.py baselines, core/CueSystem + tools/cue_test.cpp, archer's sounds + footsteps + shake/rumble on assets/cues/archer.json); step 5 cue panel next
 - [Archer grey slab is blockout](archer_level_grey_blockout.md) — the flat grey ground running right in archer's world is the undressed blockout half, not a bug; judge visuals on the left

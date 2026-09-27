@@ -26,7 +26,7 @@
 #include "TextMesh.h"
 #include "Sign.h"
 #include "SoundSystem.h"
-#include "CueLog.h"
+#include "CueSystem.h"
 #include "SpringHinge.h"
 
 /*
@@ -105,6 +105,8 @@
         E                       Y            action - take the rope             (later slice)
         L                       R1           knife                             (later slice)
         Home                    Start        restart
+        Escape                  Back         to the title; on the title, exit
+        T                                    put her at the mouse cursor (a testing aid)
         F1                                   the engine's ImGui panels
 
     Aim is on Up/Down and drop-through is on S rather than Down, which is the one arrangement that
@@ -159,6 +161,8 @@
     is F9 alone now, because a dev feature should not sit on a button the game needs.
 */
 #define INPUT_ARCHER_MENU           INPUT_LAST+18
+//T: put her at the mouse cursor, for testing - the key form of archer_place. See TeleportToCursor.
+#define INPUT_ARCHER_TELEPORT       INPUT_LAST+19
 
 //Our own simulation commands, numbered from SIM_CMD_LAST. Both are intent arriving from OUTSIDE
 //the simulation - a key, an MCP call, later a replay - which is what the command queue is for:
@@ -467,6 +471,7 @@ static const int   STAND_POINTS[STAND_RING_COUNT] = { 10,    8,     6,     4,   
 //ankle because it is the last thing to leave the ground and the first to touch it, so its minimum
 //is a sharper marker than the ankle's.
 #define ARCHER_MODEL_TOE_BONE       "mixamorig:LeftToeBase"
+#define ARCHER_MODEL_RIGHT_TOE_BONE "mixamorig:RightToeBase"   //the other plant, for footsteps
 
 /*
     How tall the model is drawn, in world units.
@@ -758,6 +763,17 @@ struct ArcherCameraTuning{
     float follow_y = 0.10f;
     float lead = 0.21f;
     float keep_in = 0.70f;
+    /*
+        THE SHAKE (ApplicationArcher::ShakeOffset). What shakes how hard is the cue table's; these are
+        what a shake IS. `shake_scale` is the player's setting - 0 is off, for anyone who does not
+        want it. `shake_max` is how far a full shake moves the view, as a fraction of the view's
+        half-height, so it looks the same size at any zoom. It lasts `shake_ticks` from full to
+        nothing, and wobbles `shake_hz` times a second.
+    */
+    float shake_scale = 1.0f;
+    float shake_max = 0.04f;
+    float shake_ticks = 24.0f;
+    float shake_hz = 14.0f;
 };
 
 /*
@@ -941,6 +957,9 @@ struct ArcherSnapshot{
     //up until that prop is kicked.
     int   arrows_on_props = 0;
     int   sounds_playing = -1;          //audible voices; -1 with no sound system
+    float shake_trauma = 0.0f;          //the camera shake, and where it has the view this tick
+    float shake_dx = 0.0f;
+    float shake_dy = 0.0f;
     std::vector<SoundVoiceInfo> voices; //and what each one is - SoundSystem::ListVoices
     float sound_volume = 0.0f;
     int   anim_source = ANIM_FROM_GAME;
@@ -1219,42 +1238,50 @@ private:
     void GatherInput(ArcherInput& out);
     void HandleEvents(const StageEvents& events);
     /*
-        The bow's sounds, once per tick after the rules have run - see the definition. The loose
-        and the level hits come off `events`; the creak off the nock's EDGE, which is state rather
-        than an event, and so is the one sound this has to remember something to play.
+        THE GAME'S HALF OF THE CUE LAYER: what happened this tick, told to `cues` as signals and
+        scopes - see the definition for the list. What each one SOUNDS like is not here, it is
+        assets/cues/archer.json (cue_plan.md). Straight after the rules, like the old hand-wired
+        sounds; the cues themselves fire at the end of the tick (RunSimulationTick), once
+        everything that can signal has run.
     */
-    void UpdateSound(const StageEvents& events);
+    void SignalCues(const StageEvents& events);
+    //One arrow strike, at `x` and `speed`. Level hits come through SignalCues, prop hits from
+    //ResolveArrowsAgainstProps, which is the only place those are found.
+    void SignalArrowHit(float x, float speed);
+    //A `footstep` signal each time a foot plants in the locomotion clip on screen - see the
+    //definition. The last tick's playhead, as a phase from the left plant, and whose it was.
+    void SignalFootsteps();
+    bool  f_step_valid = false;
+    float step_prev_rel = 0.0f;
+    Animation* step_prev_lead = NULL;
     /*
-        EVERY sound the game plays or stops goes through these two, which write the decision to
-        cue_log first. That log is the baseline the cue layer is proved against (cue_plan.md, step
-        1): the same recording replayed before and after the move must print the same lines.
-        `cue` names the reaction, `sound` the file's name; `gain` is the cue's own, and
-        sound_volume is applied here, after the log, because the master volume is not the cue's
-        decision. Logged whether or not a sound system exists to play it.
+        THE INCOMING SWOOSH's forecast: for every arrow in flight, Stage::PredictArrowImpact says
+        when it strikes a block and a raycast along the path it hands back says whether a prop
+        comes first. That goes to the cues every tick as `arrow_impact` with `in` = ticks until the
+        strike, and the arrow_swoosh row decides when that is near enough to start (its `forecast`).
+        Each flight is an `arrow` scope, so the swoosh is once per flight. The hit itself stays on
+        the real strike, so a forecast a moving prop proves wrong costs a near miss, never an
+        early thud.
     */
-    soundhandle_t PlayCue(const char* cue, const char* sound, float gain, float from = 0.0f);
-    void StopCue(const char* cue, const char* sound, soundhandle_t handle);
-    CueLog cue_log;
-    //One arrow strike, at `point` and `speed`. Level hits come through UpdateSound, prop hits
-    //from ResolveArrowsAgainstProps, which is the only place those are found.
-    void PlayArrowHit(float x, float speed);
-    //How loud an arrow sound is, by its speed and by how far from her it happens - see PlayArrowHit.
-    //The cue's gain: sound_volume is not in it, PlayCue applies that.
-    float ArrowSoundGain(float x, float speed);
-    /*
-        THE INCOMING SWOOSH, timed so its loudest moment lands on the impact: for every arrow in
-        flight, Stage::PredictArrowImpact says when it strikes a block, a raycast along the path it
-        hands back says whether a prop comes first, and once that is within the swoosh's lead the
-        sound starts - partway in, if the impact is nearer than the whole lead, so the peak still
-        lands on it. Once per flight. The hit itself stays on the real strike (PlayArrowHit), so a
-        forecast a moving prop proves wrong costs a near miss, never an early thud.
-    */
-    void StartArrowSwooshes();
+    void ForecastArrowImpacts();
     float arrow_swoosh_peak = -1.0f;            //seconds into arrow_swoosh.wav it is loudest; -1 unloaded
-    bool  arrow_swooshed[ARROW_MAX_LIVE] = {};  //this flight's swoosh has been started
+    bool  arrow_in_flight[ARROW_MAX_LIVE] = {}; //the slot's `arrow` scope is open
     std::vector<v2> arrow_path;                 //scratch for the forecast's path
-    //Loads the three wavs. Survivable: a missing file leaves that one sound silent.
+    //The sound device, the cue table, and the output between them. Survivable throughout: a
+    //missing file leaves its sound silent, a bad table leaves the cues it had (none at start).
     void SetupSound();
+    /*
+        The cue table follows its file: UpdateView looks at the file's modification time once a
+        second, on every pass whether or not the game is paused, and reloads it when it changed.
+        A poll rather than core's FileWatcher, which has no include guard and is already pulled
+        in through MCPServer.h - and a second a poll costs nothing, where tuning by ear is saving
+        the file and listening again. A table that fails to parse is logged and the old one kept.
+    */
+    void PollCueTable();
+    static constexpr const char* ARCHER_CUE_TABLE = "cues/archer.json";
+    std::string cue_table_path;                 //resolved, for the poll; empty in a packed build
+    int64_t cue_table_mtime = 0;
+    std::chrono::steady_clock::time_point cue_table_polled;
     //The other half of the arrow hit test - the half that knows about rigid bodies. See the
     //handshake note on Stage::arrows.
     void ResolveArrowsAgainstProps();
@@ -1357,6 +1384,33 @@ private:
     //hit" that Stage cannot answer. See the note on the definition.
     int  TruncateArcAgainstProps(v2* points, int count);
     void UpdateCamera();
+    /*
+        CAMERA SHAKE, the cue table's `shake` action. TRAUMA, not a random offset per shake: each
+        shake adds to one value that decays every tick, and the view moves by trauma SQUARED times
+        smooth noise - squared so a small knock is a tremble and a big one a jolt, noise so it
+        wobbles instead of jittering. `shake_axes` is how much of it is across and how much up and
+        down (a landing is mostly vertical, a kick mostly along the kick), blended by how much
+        each shake contributed.
+
+        Everything runs off the level's tick: trauma decays in the tick and the noise is sampled at
+        stage.ticks, so a shake replays exactly, holds still under sim_pause and moves one tick per
+        sim_step. And it is applied in PlaceCamera to the CAMERA only - never to camera_target,
+        which the sun is snapped to (its shadows would crawl) and the follow reads (it would soak
+        the shake up or fight it).
+    */
+    void AddShake(float amount, float axis_x, float axis_y);
+    vec3 ShakeOffset() const;
+    float shake_trauma = 0.0f;
+    float shake_axis_x = 0.5f;
+    float shake_axis_y = 1.0f;
+    float camera_half_h = 9.0f;             //the view's half-height, from UpdateCamera, for the scale
+    /*
+        The pad's motors, the table's `rumble` action - low is the heavy motor, high the light one,
+        each 0..1. InputController decays them by itself. ONLY WHILE THIS WINDOW HAS FOCUS: an agent
+        running the game minimised must not buzz the pad in the hands of someone playing
+        something else.
+    */
+    void Rumble(float low, float high);
     //Puts the camera where camera_target and camera_distance say, and drags the backdrop
     //and the sun along with it. Called from the tick AND from UpdateView, which is why it is
     //its own function - a zoom has to show while the simulation is paused. In ARCHER_CAM_ORBIT it
@@ -1621,39 +1675,24 @@ private:
     //--- Sound ------------------------------------------------------------------------------------
     //NULL in a USE_SOUND=0 build, and every caller copes - see SetupSound.
     SoundSystem* soundsystem = NULL;
-    //The creak that is playing, so a loose or a cancel can cut it. 0 when there is none.
-    soundhandle_t snd_bow_tension = SOUND_INVALID_HANDLE;
-    //Last tick's Stage::IsNocked, for the edge the creak starts on.
+    /*
+        The cue layer: how the game answers what happens in it. Decides and logs in every build;
+        plays through `cue_output`, which is a CueSoundOutput over `soundsystem` in a sound build
+        and NULL otherwise. Physics thread only - SignalCues, the tick, NewGame, the recording
+        state and UpdateView's poll all run there.
+    */
+    CueSystem cues;
+    CueOutput* cue_output = NULL;
+    //Last tick's Stage::IsNocked and whether a kick was running, for the edges the `nocked` and
+    //`kick` scopes open and close on.
     bool f_was_nocked = false;
-    //Master gain for the lot, 0..1, on the panel.
+    bool f_was_kicking = false;
+    /*
+        Master gain for the lot, 0..1, on the panel. The master bus's gain, set every pass in
+        UpdateView - so, unlike before the cues, moving the slider turns down what is ALREADY
+        playing too. Not in the cue log: it is the player's setting, not a cue's decision.
+    */
     float sound_volume = 0.8f;
-    /*
-        Which tick of the kick (Stage::kick_ticks, 1..KICK_TICKS) the swing's whoosh plays on. On
-        the panel, because the clip has no events and this is found by ear. 11 is where the swing
-        sat inside the old combined kick.wav as it was tuned by ear, so the timing carried over.
-
-        TUNED ON KICK_FRONT, and so are the shout's ticks below: the other two kicks play both
-        shifted by how much later their boot lands (UpdateSound), so each sound keeps its place
-        against the strike rather than against the key press.
-    */
-    int   kick_swing_tick = 11;
-    /*
-        Her shout on a kick - some kicks, not all, and not always on the same tick, because the
-        same yell on the same frame every time is the thing that makes a sound effect read as one.
-        Chosen on the kick's first tick; see UpdateSound. On the panel, found by ear like the swing.
-        The defaults put the loud part of kick_hyaa.wav, about 7 ticks in, around the strike.
-
-        ONE OF THREE SHOUTS, drawn with the chance. from/to were found by ear on kick_hyaa, so the
-        other two are moved by how much earlier or later their own loud part comes
-        (SoundSystem::LoudestAt, measured at load) and every shout peaks on the same tick.
-    */
-    float kick_shout_chance = 0.4f;
-    int   kick_shout_from = 10;     //earliest kick tick it can start on
-    int   kick_shout_to = 16;       //latest
-    int   kick_shout_tick = 0;      //this kick's, or 0 when this one is quiet
-    int   kick_shout = 0;           //which of KICK_SHOUTS this kick's is
-    static constexpr int KICK_SHOUT_COUNT = 3;
-    float kick_shout_peak[KICK_SHOUT_COUNT] = {};   //seconds into each file its loud part is
 
     //--- The rope ---------------------------------------------------------------------------------
     std::vector<Object*> rope_segments;         //top link first
@@ -1951,6 +1990,10 @@ private:
     void UpdateTitle(InputController* input);
     //The title coming up and going down: its click rect and the panels. Physics thread.
     void EnterTitle();
+
+    //T: where the cursor meets the play plane, lifted clear of any block, as an ARCHER_CMD_PLACE.
+    //Physics thread, from UpdateView.
+    void TeleportToCursor(InputController* input);
     void LeaveTitle();
 
     //Loading progress, written and read on the render thread only - Init draws its own frames.

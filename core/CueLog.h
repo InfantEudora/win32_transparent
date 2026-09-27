@@ -86,6 +86,11 @@ public:
         snprintf(buf,sizeof(buf),"%8llu  %-14s %-5s %-14s",(unsigned long long)e.tick,
                  e.cue.c_str(),e.what.c_str(),e.sound.c_str());
         std::string s(buf);
+        //An action has a gain too - the cue's, which it scales itself by (a shake's strength).
+        if (e.what == "act"){
+            snprintf(buf,sizeof(buf)," gain %.3f",e.gain);
+            s += buf;
+        }
         if (e.what == "play"){
             snprintf(buf,sizeof(buf)," gain %.3f",e.gain);
             s += buf;

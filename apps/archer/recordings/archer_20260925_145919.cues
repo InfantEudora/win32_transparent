@@ -1,6 +1,6 @@
      880  bow_tension    play  bow_tension    gain 0.700
     1079  bow_tension    stop  bow_tension
     1079  arrow_leave    play  arrow_leave    gain 1.000
-    1079  arrow_swoosh   play  arrow_swoosh   gain 1.000 from 0.110
-    1088  arrow_hit      play  arrow_hit      gain 1.000
+    1079  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.32 from 0.110
+    1088  arrow_hit      play  arrow_hit      gain 1.000 pan +0.32
     1088  nice_shot      play  nice_shot      gain 0.800

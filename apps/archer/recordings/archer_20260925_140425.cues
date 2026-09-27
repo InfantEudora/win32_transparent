@@ -1,29 +1,34 @@
      137  bow_tension    play  bow_tension    gain 0.700
      205  bow_tension    stop  bow_tension
      205  arrow_leave    play  arrow_leave    gain 1.000
-     205  arrow_swoosh   play  arrow_swoosh   gain 1.000 from 0.193
-     209  arrow_hit      play  arrow_hit      gain 1.000
+     205  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.17 from 0.193
+     209  arrow_hit      play  arrow_hit      gain 1.000 pan +0.17
      249  bow_tension    play  bow_tension    gain 0.700
      287  bow_tension    stop  bow_tension
      287  arrow_leave    play  arrow_leave    gain 1.000
-     287  arrow_swoosh   play  arrow_swoosh   gain 1.000 from 0.193
-     291  arrow_hit      play  arrow_hit      gain 1.000
+     287  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.17 from 0.193
+     291  arrow_hit      play  arrow_hit      gain 1.000 pan +0.17
+     315  footstep       play  footstep_3     gain 1.000
      527  bow_tension    play  bow_tension    gain 0.700
      592  bow_tension    stop  bow_tension
      592  arrow_leave    play  arrow_leave    gain 1.000
-     592  arrow_swoosh   play  arrow_swoosh   gain 0.980 from 0.027
-     606  arrow_hit      play  arrow_hit      gain 0.980
+     592  arrow_swoosh   play  arrow_swoosh   gain 0.980 pan +0.47 from 0.027
+     606  arrow_hit      play  arrow_hit      gain 0.980 pan +0.47
      693  bow_tension    play  bow_tension    gain 0.700
      727  bow_tension    stop  bow_tension
      727  arrow_leave    play  arrow_leave    gain 1.000
-     727  arrow_swoosh   play  arrow_swoosh   gain 1.000 from 0.110
-     736  arrow_hit      play  arrow_hit      gain 1.000
+     727  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.30 from 0.110
+     736  arrow_hit      play  arrow_hit      gain 1.000 pan +0.30
      736  nice_shot      play  nice_shot      gain 0.800
      920  bow_tension    play  bow_tension    gain 0.700
      960  bow_tension    stop  bow_tension
      960  arrow_leave    play  arrow_leave    gain 1.000
-     960  arrow_swoosh   play  arrow_swoosh   gain 1.000 from 0.110
-     969  arrow_hit      play  arrow_hit      gain 1.000
+     960  arrow_swoosh   play  arrow_swoosh   gain 1.000 pan +0.30 from 0.110
+     969  arrow_hit      play  arrow_hit      gain 1.000 pan +0.30
      969  nice_shot      play  nice_shot      gain 0.800
+    1137  footstep       play  footstep_4     gain 1.000
+    1350  kick_shout     skip                  (chance)
     1360  kick_swing     play  kick_swing     gain 0.800
     1369  kick_land      play  kick_land      gain 0.800
+    1369  kick_shake     act   shake          gain 1.000
+    1369  kick_shake     act   rumble         gain 1.000

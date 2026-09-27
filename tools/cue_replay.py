@@ -18,6 +18,12 @@ person's session on 8765 is left alone:
     ./build/archer.exe --minimized --mcp-port 8768 2>stderr.log &
 
 It is muted for the run (archer_sound volume 0), which does not change the log - see CueLog.h.
+
+SKIP LINES ARE LEFT OUT of the comparison by default: a skip is the cue system saying why it
+did NOT play something (a chance that said no, a gap, a busy group), which is for someone tuning
+a cue to read, not something heard - and the hand-wired code the first baselines came from had
+no such lines at all. --with-skips compares them too, once every baseline was written by the
+cues.
 Each replay restores its recording's start state, including the level tick every random draw is
 hashed from, so two runs of one recording print identical lines; a difference is a real change.
 Windows Python; nothing beyond the standard library.
@@ -32,7 +38,14 @@ def main():
     ap.add_argument("--app", default="archer", help="the app folder under apps/, default archer")
     ap.add_argument("--port", type=int, default=8768, help="the app's MCP port, default 8768")
     ap.add_argument("--write", action="store_true", help="write the baselines instead of checking")
+    ap.add_argument("--with-skips", action="store_true", help="compare skip lines too")
     args = ap.parse_args()
+
+    def compared(lines):
+        if args.with_skips:
+            return lines
+        # The third column is the decision: play, stop, act, skip.
+        return [l for l in lines if len(l.split()) < 3 or l.split()[2] != "skip"]
 
     folder = os.path.join(ROOT, "apps", args.app, "recordings")
     names = args.recordings
@@ -82,13 +95,15 @@ def main():
             failures += 1
             continue
         with open(path) as f:
-            baseline = f.readlines()
-        if lines == baseline:
-            print("%-28s same (%d lines)" % (name, len(lines)))
+            baseline = compared(f.readlines())
+        run = compared(lines)
+        if run == baseline:
+            skipped = len(lines) - len(run)
+            print("%-28s same (%d lines%s)" % (name, len(run), ", %d skips not compared" % skipped if skipped else ""))
         else:
             failures += 1
             print("%-28s DIFFERENT" % name)
-            sys.stdout.writelines(difflib.unified_diff(baseline, lines, name + ".cues", "this run"))
+            sys.stdout.writelines(difflib.unified_diff(baseline, run, name + ".cues", "this run"))
     print("%s (%d of %d different)" % ("FAILED" if failures else "ALL SAME", failures, len(names)))
     sys.exit(1 if failures else 0)
 

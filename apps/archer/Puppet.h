@@ -529,6 +529,13 @@ public:
         re-authored to line them up.
     */
     float clip_phase[CLIP_COUNT] = {};
+    /*
+        And where the RIGHT foot is planted, measured the same way off the other toe. Not assumed to
+        be half a cycle on: a gait is not quite symmetric, and a footstep heard a few frames off the
+        foot it belongs to is exactly the kind of wrong nobody can name. The phase sync above only
+        needs the left; the footsteps need both (ApplicationArcher::SignalFootsteps).
+    */
+    float clip_phase_right[CLIP_COUNT] = {};
 
     //Net yaw each clip turns her through, in DEGREES, measured at load. Reported rather than acted
     //on: it is what says whether a clip's f_turns column is set right. A cycle reads near zero

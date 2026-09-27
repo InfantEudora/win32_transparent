@@ -69,11 +69,28 @@ void CueSystem::Init(float ticks_per_second, CueOutput* out){
     output = out;
 }
 
+/*
+    FRESH FROM DISK FIRST, the packed copy second. A table is reloaded while it is being tuned, so
+    the first read must not come from LoadFile's cache, which would hand back the bytes of the
+    first load forever. But a shipped build has no loose file at all - the table is baked into
+    the executable, possibly compressed - and only LoadFile knows how to find it there. So a disk
+    read that fails falls back to LoadFile; in a loose build where the file is simply missing,
+    that fails too, logs the name, and the error says so.
+*/
 bool CueSystem::LoadTable(const char* asset_name, std::string& error){
     std::string text;
-    if (!asset_name || !ReadFileToString(asset_name,text)){
-        error = std::string("no cue table named ") + (asset_name ? asset_name : "(null)");
+    if (!asset_name){
+        error = "no cue table named";
         return false;
+    }
+    if (!ReadFileToString(asset_name,text)){
+        size_t size = 0;
+        uint8_t* bytes = ::LoadFile(asset_name,&size);
+        if (!bytes){
+            error = std::string("no cue table named ") + asset_name;
+            return false;
+        }
+        text.assign((const char*)bytes,size);
     }
     if (!LoadTableText(text,error,asset_name)){
         return false;
@@ -217,6 +234,7 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
     }
 
     //Sounds first, so the cues below can be checked against what is actually registered.
+    std::set<std::string> declared;
     auto js = j.find("sounds");
     if (js != j.end()){
         if (!js->is_object()){
@@ -231,6 +249,7 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
             if (output){
                 output->RegisterSound(it.key().c_str(),it->get<std::string>().c_str());
             }
+            declared.insert(it.key());
         }
     }
 
@@ -492,9 +511,21 @@ bool CueSystem::Parse(const json& j, const std::string& where, std::string& erro
                 return false;
             }
         }
+        /*
+            A NAME NOBODY DECLARED is a typo, and an error. A name the table declared whose FILE
+            would not load is only that one sound missing: it is silent, the log says so, and the
+            rest of the table works - which is how the game treated a missing wav before the cues,
+            and a missing file should not silence everything else.
+        */
         for (const std::string& n : c.sounds){
             if (output && !peaks.count(n)){
                 float len = output->LengthOf(n.c_str());
+                if (len < 0.0f && declared.count(n)){
+                    debug->Warn("%s: sound '%s' did not load - it will be silent\n",at.c_str(),n.c_str());
+                    lengths[n] = 0.0f;
+                    peaks[n] = 0.0f;
+                    continue;
+                }
                 if (len < 0.0f){
                     error = at + ": no sound named '" + n + "' - declare it under \"sounds\" or register it first";
                     return false;
@@ -637,6 +668,11 @@ std::vector<std::string> CueSystem::CueNames() const{
     return out;
 }
 
+float CueSystem::PeakOf(const std::string& sound) const{
+    auto it = peaks.find(sound);
+    return (it == peaks.end()) ? -1.0f : it->second;
+}
+
 const CueSystem::Cue* CueSystem::FindCue(const std::string& name) const{
     auto it = cue_index.find(name);
     return (it == cue_index.end()) ? NULL : &cues[it->second];
@@ -675,7 +711,11 @@ const CueSystem::Scope* CueSystem::FindScopeBySerial(uint64_t serial) const{
     In a fixed order, and the order is part of what makes a replay print the same log:
 
       1. sounds whose length has run out are retired, and following sounds read their parameter;
-      2. what was decided EARLIER and is due now fires, oldest decision first;
+      2. what was decided EARLIER and is due now fires, oldest decision first - EXCEPT what belongs
+         to a scope that ends this tick. A scope ending on tick T means the thing it stands for is
+         already over on T: the kick's last counted tick was T-1, so a swing planned for T is a
+         swing after the kick, and the old hand-wired code (which tested "kick tick == N") never
+         played one. Those stay waiting, and step 3 drops them;
       3. this tick's events are acted on in the order they were signalled - so a cue with no delay
          fires now, after anything that was already waiting for this tick;
       4. the ducks ease one tick toward where the speaking groups want them.
@@ -684,9 +724,18 @@ void CueSystem::Tick(uint64_t tick){
     now = tick;
     Retire();
 
+    std::vector<uint64_t> ending;
+    for (const Pending& e : pending){
+        const Scope* s = (e.kind == 2) ? FindScope(e.name,e.instance) : NULL;
+        if (s){
+            ending.push_back(s->serial);
+        }
+    }
     std::vector<Waiting> due;
     for (size_t i = 0; i < waiting.size();){
-        if (waiting[i].due <= now){
+        bool f_ending = waiting[i].scope_serial != 0 &&
+                        std::find(ending.begin(),ending.end(),waiting[i].scope_serial) != ending.end();
+        if (waiting[i].due <= now && !f_ending){
             due.push_back(waiting[i]);
             waiting.erase(waiting.begin() + (long)i);
         }else{
@@ -1017,11 +1066,13 @@ void CueSystem::Fire(Waiting& w){
         }
     }
 
+    //Worked out whether or not there is a sound: the cue's actions are scaled by it too.
+    float cue_gain = cue.gain;
+    for (const Curve& c : cue.gain_by){
+        cue_gain *= Eval(c,Value(c.value,w.payload));
+    }
     if (!sound.empty()){
-        float gain = cue.gain;
-        for (const Curve& c : cue.gain_by){
-            gain *= Eval(c,Value(c.value,w.payload));
-        }
+        float gain = cue_gain;
         float pan = cue.pan_by.f_set ? Eval(cue.pan_by,Value(cue.pan_by.value,w.payload)) : 0.0f;
         pan = (pan < -1.0f) ? -1.0f : ((pan > 1.0f) ? 1.0f : pan);
         //A following sound STARTS where its parameter says, rather than a tick late.
@@ -1073,6 +1124,7 @@ void CueSystem::Fire(Waiting& w){
     ch.last_fired = (int64_t)now;
     ch.last_pick = w.pick;
 
+    w.gain = cue_gain;
     for (int i = 0; i < (int)cue.actions.size(); i++){
         int offset = 0;
         const json& a = cue.actions[i];
@@ -1100,6 +1152,7 @@ void CueSystem::FireAction(const Cue& cue, int action, const Waiting& w){
     a.kind = a.params.value("kind",std::string());
     a.cue = cue.name;
     a.tick = now;
+    a.gain = w.gain;
     a.payload = w.payload;
 
     CueLogEntry e;
@@ -1107,6 +1160,7 @@ void CueSystem::FireAction(const Cue& cue, int action, const Waiting& w){
     e.cue = cue.name;
     e.what = "act";
     e.sound = a.kind;
+    e.gain = a.gain;
     auto h = handlers.find(a.kind);
     if (h == handlers.end()){
         e.note = "no handler";
