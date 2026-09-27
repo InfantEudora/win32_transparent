@@ -63,3 +63,4 @@
 - [Vitals plan](vitals_plan.md) — archer exertion + fear -> breathing + heartbeat BUILT 2026-09-27 (apps/archer/vitals_plan.md); Stage::vitals, SignalBody clocks, breaths lowest in the `her` group; sound only for now
 - [lockd lease lapses in long runs](lockd_lease_expires_in_long_runs.md) — 900 s leases expire during long replays; another agent takes the files mid-task; claim with a longer ttl or re-claim
 - [Archer grey slab is blockout](archer_level_grey_blockout.md) — the flat grey ground running right in archer's world is the undressed blockout half, not a bug; judge visuals on the left
+- [Background work](background_work.md) — core/BackgroundWork.h worker + LatestResult<T>, first used by archer wind 2026-09-27; async results must not reach the sim mid-run (user: a simple lock around sim-read areas)

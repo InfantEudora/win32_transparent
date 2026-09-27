@@ -75,6 +75,32 @@ static void TestMeanFlow(){
     Check(fabsf(b.x + face.x) < 0.02f && fabsf(b.y - face.y) < 0.02f,"and mirrors about a symmetric step");
 }
 
+/*
+    The app decides whether to send the blocks to the worker by KeyFor alone, and archer_wind waits
+    for BuiltKey to match it - so the two must agree with what Build itself treats as a change.
+*/
+static void TestKey(){
+    WindField w;
+    WindParams p = Calm(2.5f);
+    std::vector<StageBlock> blocks = StepLevel();
+    Check(w.BuiltKey() == 0,"an unbuilt field has no key");
+    w.Build(blocks,p);
+    Check(WindField::KeyFor(blocks,p) == w.BuiltKey(),"KeyFor is the key Build built for");
+    WindParams tuned = p;
+    tuned.speed = -1.0f;
+    tuned.gust_strength = 1.0f;
+    Check(WindField::KeyFor(blocks,tuned) == w.BuiltKey(),"the free params do not change the key");
+    WindParams finer = p;
+    finer.cell = 0.25f;
+    Check(WindField::KeyFor(blocks,finer) != w.BuiltKey(),"a rebuild param does");
+    std::vector<StageBlock> kicked = blocks;
+    kicked[1].kind = BLOCK_BREAKABLE;
+    Check(WindField::KeyFor(kicked,p) == w.BuiltKey(),"a live breakable wall blows like a solid one");
+    kicked[1].f_alive = false;
+    Check(WindField::KeyFor(kicked,p) != w.BuiltKey(),"and kicking it over changes the key");
+    Check(!w.Build(blocks,tuned) && w.Params().SameFree(tuned),"a free-param change is a retune, not a build");
+}
+
 static void TestCorners(){
     WindField w;
     WindParams p = Calm(2.5f);
@@ -329,6 +355,7 @@ static void TestMainLevel(){
 int main(){
     printf("wind_test\n");
     TestMeanFlow();
+    TestKey();
     TestCorners();
     TestWalls();
     TestDivergence();

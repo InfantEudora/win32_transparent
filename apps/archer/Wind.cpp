@@ -79,12 +79,12 @@ static void Ramp(float q, float& r, float& dr){
 
 //--- Build ---------------------------------------------------------------------------------------
 
-bool WindField::Build(const std::vector<StageBlock>& blocks, const WindParams& in){
-    auto t_start = std::chrono::steady_clock::now();
-
-    std::vector<StageBlock> candidates, obstacles;
+//The blocks the wind sees, with the level's end walls left out; returns how many were.
+static int SelectObstacles(const std::vector<StageBlock>& blocks, std::vector<StageBlock>& obstacles){
+    std::vector<StageBlock> candidates;
     float ex0 = 1e9f, ex1 = -1e9f;
     int end_walls = 0;
+    obstacles.clear();
     for (const StageBlock& b : blocks){
         if (BlocksWind(b)){
             candidates.push_back(b);
@@ -107,14 +107,31 @@ bool WindField::Build(const std::vector<StageBlock>& blocks, const WindParams& i
         }
         obstacles.push_back(b);
     }
+    return end_walls;
+}
 
+static uint64_t HashObstacles(const std::vector<StageBlock>& obstacles, const WindParams& in){
     uint64_t h = 1469598103934665603ull;
     for (const StageBlock& b : obstacles){
         float f[4] = {b.x,b.y,b.hw,b.hh};
         h = HashBytes(h,f,sizeof(f));
     }
     float g[6] = {in.cell,in.margin_x,in.lid_above,in.wall_ramp,in.eddy_min_drop,in.eddy_max_drop};
-    h = HashBytes(h,g,sizeof(g));
+    return HashBytes(h,g,sizeof(g));
+}
+
+uint64_t WindField::KeyFor(const std::vector<StageBlock>& blocks, const WindParams& params){
+    std::vector<StageBlock> obstacles;
+    SelectObstacles(blocks,obstacles);
+    return HashObstacles(obstacles,params);
+}
+
+bool WindField::Build(const std::vector<StageBlock>& blocks, const WindParams& in){
+    auto t_start = std::chrono::steady_clock::now();
+
+    std::vector<StageBlock> obstacles;
+    int end_walls = SelectObstacles(blocks,obstacles);
+    uint64_t h = HashObstacles(obstacles,in);
     if (IsBuilt() && (h == built_hash)){
         SetParams(in);
         return false;

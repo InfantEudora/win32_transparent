@@ -3,6 +3,7 @@
 //core/Window.h no longer pulls ImGui into every translation unit - see the note at the top of it.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui.h"
+#include "imgui_internal.h"     //FindWindowByName, to dock the Cues panel beside Archer's
 #endif
 
 #include "Debug.h"
@@ -692,11 +693,11 @@ void ApplicationArcher::Init(void){
     LoadingStep(step++,LOADING_STEPS,"the rope course");
     rope_scene = BuildExtraLevel(STAGE_LEVEL_ROPE,"Rope");
     /*
-        The wind field, which used to be solved on the first frame PreRender drew - a fifth of a
-        second with the level already on screen and nothing moving. Here it is one more line on
-        the loading screen instead. After the extra levels, which leave the main level live, so the
-        field is solved for the world's blocks and baked for the world's camera; Wind::Build then
-        finds nothing changed on the first real frame and costs nothing.
+        The wind field's first request. The solve runs on the background worker, so this only
+        sends it off: it goes on through the rest of loading and the title, and is adopted by the
+        first PreRender of the world (or a few ticks into it, if the title was skipped at once).
+        Until then the grass stands still. After the extra levels, which leave the main level live,
+        so the request is for the world's blocks.
     */
     LoadingStep(step++,LOADING_STEPS,"wind");
     UpdateWind();
@@ -1654,20 +1655,59 @@ void ApplicationArcher::PreRender(void){
 #define WIND_GRID_MAX       256
 
 void ApplicationArcher::UpdateWind(){
-    //Copied rather than read in place: the blocks belong to the physics thread, and the build
-    //can take long enough that holding the simulation for it would show.
+    //Copied rather than read in place: the blocks belong to the physics thread, and they go to
+    //the worker, which must hold nothing live.
     std::vector<StageBlock> blocks;
     int64_t tick = 0;
     main_scene->AtTickBoundary([&](){
         blocks = stage.blocks;
         tick = (int64_t)main_scene->GetPhysicsTick();
     });
-    std::lock_guard<std::mutex> lock(wind_mutex);
-    if (wind.Build(blocks,wind_params)){
-        const WindStats& st = wind.Stats();
-        debug->Info("Wind: %dx%d nodes, %d obstacles (%d end walls left out), %d iterations, %.1f ms, %d corners\n",
-                    st.nx,st.ny,st.obstacles,st.end_walls,st.iterations,st.build_ms,st.corners);
+    WindParams params;
+    {
+        std::lock_guard<std::mutex> lock(wind_mutex);
+        params = wind_params;
     }
+
+    /*
+        A new layout goes to the worker; until it comes back everything keeps blowing with the old
+        field, which is the right answer for a wall that has just been kicked over - the wind
+        catching up a dozen ticks later reads as the air settling. Only the looks read the wind
+        today. Once the simulation does (the balance mechanic), THIS is the adoption it must not
+        see mid-run - see core/BackgroundWork.h rule 5.
+    */
+    uint64_t key = WindField::KeyFor(blocks,params);
+    if (key != wind_requested_key){
+        wind_requested_key = key;
+        wind_requested_tick = tick;
+        wind_field.Request([blocks = std::move(blocks),params](){
+            WindField f;
+            f.Build(blocks,params);
+            return f;
+        });
+    }
+    if (wind_field.Adopt()){
+        std::shared_ptr<const WindField> built = wind_field.Get();
+        const WindStats& st = built->Stats();
+        debug->Info("Wind: %dx%d nodes, %d obstacles (%d end walls left out), %d iterations, %.1f ms, %d corners, "
+                    "in use %d ticks after it was asked for\n",st.nx,st.ny,st.obstacles,st.end_walls,st.iterations,
+                    st.build_ms,st.corners,(int)(tick - wind_requested_tick));
+    }
+    /*
+        The free params (speed, gusts, eddies...) change without a rebuild, but a published field is
+        never changed in place - someone may be reading it. So a retune is a copy. About a megabyte
+        on the main level, so a fraction of a millisecond, and only on frames a slider moves or a
+        build lands that was started with older tuning.
+    */
+    std::shared_ptr<const WindField> held = wind_field.Get();
+    if (!held->Params().SameFree(params)){
+        std::shared_ptr<WindField> retuned = std::make_shared<WindField>(*held);
+        retuned->SetParams(params);
+        wind_field.Set(retuned);
+        held = retuned;
+    }
+    const WindField& wind = *held;
+    std::lock_guard<std::mutex> lock(wind_mutex);
 
     /*
         The grid for default.vert. Its origin snaps to whole steps, so as the camera moves the
@@ -1690,8 +1730,8 @@ void ApplicationArcher::UpdateWind(){
     }else{
         renderer->ClearWindField();
     }
-    UpdateWindStreaks(tick);
-    UpdateFireflies(tick);
+    UpdateWindStreaks(wind,tick);
+    UpdateFireflies(wind,tick);
 
     if (!f_show_wind){
         if (wind_view.IsVisible()){
@@ -1807,7 +1847,8 @@ void ApplicationArcher::BuildWindLeaves(){
 
 /*
     One tick of the leaves, and their Objects posed from it. PHYSICS THREAD, from RunSimulationTick
-    after UpdateCamera. Under wind_mutex: the render thread builds and retunes the field.
+    after UpdateCamera. Under wind_mutex, for the swarm's tuning; the field is the one published
+    when the tick started, held for all of it.
 
     A leaf in flight is its resting pose turned about its tumble axis; one lying down is turned
     only about +Y (its heading) and then TILTED toward the camera, since a leaf lying truly flat is
@@ -1819,6 +1860,8 @@ void ApplicationArcher::StepWindLeaves(){
     }
     int shown = 0;
     if (f_wind_leaves){
+        std::shared_ptr<const WindField> held = wind_field.Get();
+        const WindField& wind = *held;
         std::lock_guard<std::mutex> lock(wind_mutex);
         float x0, y0, x1, y1;
         //The bare view: the swarm grows it by its own `pad`, and needs the unpadded one to know
@@ -1880,7 +1923,7 @@ void ApplicationArcher::SetStreakUniforms(){
     streak_shader->Setvec3("streak_color",streak_color);
 }
 
-void ApplicationArcher::UpdateWindStreaks(int64_t tick){
+void ApplicationArcher::UpdateWindStreaks(const WindField& wind, int64_t tick){
     if (!streak_object){
         return;
     }
@@ -1960,7 +2003,7 @@ void ApplicationArcher::SetFireflyUniforms(){
     firefly_shader->Setfloat("halo_strength",firefly_halo);
 }
 
-void ApplicationArcher::UpdateFireflies(int64_t tick){
+void ApplicationArcher::UpdateFireflies(const WindField& wind, int64_t tick){
     if (!firefly_object){
         return;
     }
@@ -9946,6 +9989,80 @@ void ApplicationArcher::RegisterMCPTools(){
             return json{ {"total",total}, {"lines",lines} };
         });
 
+    MCPServer::Get()->RegisterTool("cue_play",
+        "The cue panel's play button: plays a cue of the table now, at full strength - past its "
+        "trigger, condition, chance, delay, group and gap, every gain_by curve at its loudest - and "
+        "each call the next of its sounds. Its actions (shake, rumble) fire too. Logged as a play "
+        "with the note 'audition'; it leaves no history, so it cannot change a replay. With no "
+        "'cue', lists the table's cues.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"cue", {{"type","string"},{"description","the cue's name, as in the table"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            std::vector<std::string> names;
+            main_scene->AtTickBoundary([&](){ names = cues.CueNames(); });
+            if (!args.contains("cue") || !args["cue"].is_string()){
+                return json{ {"cues",names} };
+            }
+            std::string cue = args["cue"].get<std::string>();
+            auto it = std::find(names.begin(),names.end(),cue);
+            if (it == names.end()){
+                return json{ {"error","no cue named '" + cue + "'"}, {"cues",names} };
+            }
+            SimCommand cmd;
+            cmd.type = ARCHER_CMD_CUE_AUDITION;
+            cmd.value[0] = (float)(it - names.begin());
+            main_scene->SubmitCommand(cmd);
+            WaitTicks(2);
+            return json{ {"played",cue}, {"log",cues.log.Lines(4)} };
+        });
+
+    MCPServer::Get()->RegisterTool("archer_vitals",
+        "Her body - vitals_plan.md: exertion and fear 0..1, what each is easing toward, and the "
+        "heart rate. Pass 'exertion' or 'fear' to HOLD it there (the panel's hold boxes), so the "
+        "breathing and the heartbeat can be heard at one level; below 0 lets it go. A hold outlasts "
+        "a restart until it is let go.",
+        json{
+            {"type","object"},
+            {"properties", {
+                {"exertion", {{"type","number"},{"description","hold exertion at 0..1; below 0 lets it go"}}},
+                {"fear", {{"type","number"},{"description","hold fear at 0..1; below 0 lets it go"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            if (!main_scene){
+                return json{ {"error","no scene"} };
+            }
+            float hold[2] = { -1.0f, -1.0f };
+            main_scene->AtTickBoundary([&](){ hold[0] = vitals_hold[0]; hold[1] = vitals_hold[1]; });
+            if (args.contains("exertion") || args.contains("fear")){
+                SimCommand cmd;
+                cmd.type = ARCHER_CMD_VITALS;
+                cmd.value[0] = args.contains("exertion") ? args.value("exertion",-1.0f) : hold[0];
+                cmd.value[1] = args.contains("fear") ? args.value("fear",-1.0f) : hold[1];
+                main_scene->SubmitCommand(cmd);
+                WaitTicks(2);
+                hold[0] = cmd.value[0] < 0.0f ? -1.0f : cmd.value[0];
+                hold[1] = cmd.value[1] < 0.0f ? -1.0f : cmd.value[1];
+            }
+            ArcherSnapshot s;
+            {
+                std::lock_guard<std::mutex> lock(snapshot_mutex);
+                s = snapshot;
+            }
+            auto held = [](float v) -> json { return (v < 0.0f) ? json(nullptr) : json(v); };
+            return json{ {"exertion",s.vitals.exertion}, {"exertion_target",s.vitals.exertion_target},
+                         {"fear",s.vitals.fear}, {"fear_target",s.vitals.fear_target},
+                         {"heart_rate",s.vitals.heart_rate},
+                         {"held",{ {"exertion",held(hold[0])}, {"fear",held(hold[1])} }} };
+        });
+
     MCPServer::Get()->RegisterTool("archer_sound",
         "The master volume, and every sound playing as of the last tick: name, bus, gain, pitch, "
         "pan, how far in and how long. Pass 'volume' to set the master (0..1, the panel's slider) - "
@@ -10144,7 +10261,7 @@ void ApplicationArcher::RegisterMCPTools(){
                 blocks = stage.blocks;
                 tick = (int64_t)main_scene->GetPhysicsTick();
             });
-            std::lock_guard<std::mutex> lock(wind_mutex);
+            std::unique_lock<std::mutex> lock(wind_mutex);
             auto num = [&](const char* key, float& v){
                 if (args.contains(key) && args[key].is_number()){
                     v = args[key].get<float>();
@@ -10180,7 +10297,26 @@ void ApplicationArcher::RegisterMCPTools(){
             num("firefly_sync",firefly_swarm.params.sync);
             num("firefly_light_gain",firefly_light_gain);
             num("firefly_glow_size",firefly_glow_size);
-            wind.Build(blocks,wind_params);
+            WindParams params = wind_params;
+            lock.unlock();
+
+            /*
+                UpdateWind, on the render thread, is what requests, adopts and retunes - so wait for
+                it to publish a field for these blocks with this tuning, and the reply describes what
+                was asked for rather than what was there before. Unlocked while waiting, since
+                UpdateWind needs wind_mutex to see the new tuning. It does not come while the title
+                is up (PreRender does no world work there), hence the limit and `current`.
+            */
+            uint64_t key = WindField::KeyFor(blocks,params);
+            auto is_current = [&](const WindField& f){ return (f.BuiltKey() == key) && f.Params().SameFree(params); };
+            std::shared_ptr<const WindField> held = wind_field.Get();
+            auto t_give_up = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            while (!is_current(*held) && (std::chrono::steady_clock::now() < t_give_up)){
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                held = wind_field.Get();
+            }
+            const WindField& wind = *held;
+            lock.lock();
 
             const WindStats& st = wind.Stats();
             json corners = json::array();
@@ -10189,6 +10325,8 @@ void ApplicationArcher::RegisterMCPTools(){
             }
             json out = {
                 {"tick",tick},
+                {"current",is_current(wind)},       //false: timed out, and this is the field still in use
+                {"building",wind_field.IsBusy()},
                 {"params",{ {"speed",wind_params.speed},{"eddy_strength",wind_params.eddy_strength},
                             {"eddy_strouhal",wind_params.eddy_strouhal},{"wave_strength",wind_params.wave_strength},
                             {"wave_length",wind_params.wave_length},{"gust_strength",wind_params.gust_strength},
@@ -10675,10 +10813,24 @@ void ApplicationArcher::CuePanelLoad(bool f_force){
     its sounds, which is fine once and a stutter every frame of a drag.
 */
 void ApplicationArcher::DrawCuePanel(){
+    /*
+        A tab beside the Archer panel. With no imgui.ini entry a new window floats at ImGui's
+        default spot, and one first made in a --minimized start fits itself to a viewport of
+        nothing - a title bar 30 pixels wide, reading "C". So it is docked whenever it is floating
+        at a size nobody would have chosen; floated deliberately, at a real size, it stays put.
+    */
+    ImGuiWindow* archer_window = ImGui::FindWindowByName("Archer");
+    ImGuiWindow* cues_window = ImGui::FindWindowByName("Cues");
+    bool f_misplaced = !cues_window || (cues_window->DockId == 0 && cues_window->Size.x < 120.0f);
+    if (f_misplaced && archer_window && archer_window->DockId != 0){
+        ImGui::SetNextWindowDockID(archer_window->DockId,ImGuiCond_Always);
+    }
+    ImGui::SetNextWindowSize(ImVec2(380.0f,560.0f),ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Cues")){
         ImGui::End();
         return;
     }
+    DrawVitalsPanel();
     //The file, read once and then watched about once a second - a hand edit shows up here too.
     if (!f_cue_panel_loaded){
         CuePanelLoad(false);
@@ -10840,10 +10992,11 @@ void ApplicationArcher::DrawVitalsPanel(){
         return;
     }
     const StageVitals& v = stage.vitals;
-    ImGui::Text("exertion %.2f (to %.2f)   fear %.2f (to %.2f)   heart %.0f bpm",
-                v.exertion,v.exertion_target,v.fear,v.fear_target,v.heart_rate);
+    ImGui::Text("exertion %.2f, easing to %.2f",v.exertion,v.exertion_target);
     ImGui::SameLine();
     ImGui::Checkbox("HUD",&f_show_vitals_hud);
+    ImGui::SetItemTooltip("Her heart rate and exertion at the top right of the game, panels or not.");
+    ImGui::Text("fear     %.2f, easing to %.2f   heart %.0f bpm",v.fear,v.fear_target,v.heart_rate);
     char overlay_text[32];
     snprintf(overlay_text,sizeof(overlay_text),"exertion %.2f",v.exertion);
     ImGui::PlotLines("##exertion",vitals_history[0],VITALS_HISTORY,vitals_history_head,overlay_text,
@@ -10856,13 +11009,27 @@ void ApplicationArcher::DrawVitalsPanel(){
                      VITALS_REST_BPM - 10.0f,VITALS_MAX_BPM + 5.0f,ImVec2(-1.0f,44.0f));
     ImGui::TextDisabled("the last %d seconds",VITALS_HISTORY / (int)ARCHER_TPS);
 
-    //The holds: pin a level to listen to the breath or the heartbeat at it.
+    /*
+        The holds: pin a level to listen to the breath or the heartbeat at it. The boxes follow the
+        live hold, so one set over MCP (archer_vitals) shows here too.
+    */
+    if (ui_hold_quiet > 0){
+        ui_hold_quiet--;
+    }else{
+        for (int k = 0; k < 2; k++){
+            f_ui_hold[k] = vitals_hold[k] >= 0.0f;
+            if (f_ui_hold[k]){
+                ui_hold_value[k] = vitals_hold[k];
+            }
+        }
+    }
     bool f_changed = false;
     const char* names[2] = { "hold exertion", "hold fear" };
     for (int k = 0; k < 2; k++){
         ImGui::PushID(k);
         f_changed = ImGui::Checkbox(names[k],&f_ui_hold[k]) || f_changed;
         ImGui::SameLine();
+        ImGui::SetNextItemWidth(-FLT_MIN);
         f_changed = (ImGui::SliderFloat("##value",&ui_hold_value[k],0.0f,1.0f,"%.2f") && f_ui_hold[k]) || f_changed;
         ImGui::PopID();
     }
@@ -10872,6 +11039,7 @@ void ApplicationArcher::DrawVitalsPanel(){
         cmd.value[0] = f_ui_hold[0] ? ui_hold_value[0] : -1.0f;
         cmd.value[1] = f_ui_hold[1] ? ui_hold_value[1] : -1.0f;
         SubmitUICommand(cmd);
+        ui_hold_quiet = 10;
     }
 }
 
@@ -10880,7 +11048,6 @@ void ApplicationArcher::DrawImGuiUI(void){
     RenderDebugMenuBar();
     RenderApplicationUI();
     Application::DrawImGuiUI();
-    DrawCuePanel();
 
     //Runs on the RENDER thread with physics_mutex held, so the live Stage can be read directly.
     //It must never wait on the physics thread - see the threading note in ApplicationArcher.h.
@@ -11013,7 +11180,6 @@ void ApplicationArcher::DrawImGuiUI(void){
                           "the Cues panel. Save it and it reloads within a second; a table that "
                           "fails to parse is logged and the last good one kept. cue_log over MCP "
                           "says what fired.");
-    DrawVitalsPanel();
 
     /*
         --- The terrain -----------------------------------------------------------------------
@@ -11144,18 +11310,15 @@ void ApplicationArcher::DrawImGuiUI(void){
         ImGui::SameLine();
         ImGui::Checkbox("eddies",&o.f_eddies);
         ImGui::SliderFloat("arrow spacing",&o.arrow_spacing,0.5f,3.0f);
-        bool f_changed = false;
-        f_changed |= ImGui::SliderFloat("speed (u/s)",&wind_params.speed,-8.0f,8.0f);
-        f_changed |= ImGui::SliderFloat("eddy strength",&wind_params.eddy_strength,0.0f,2.0f);
-        f_changed |= ImGui::SliderFloat("shedding (strouhal)",&wind_params.eddy_strouhal,0.05f,0.5f);
-        f_changed |= ImGui::SliderFloat("waves",&wind_params.wave_strength,0.0f,0.5f);
-        f_changed |= ImGui::SliderFloat("wave length",&wind_params.wave_length,2.0f,30.0f);
-        f_changed |= ImGui::SliderFloat("gusts",&wind_params.gust_strength,0.0f,1.5f);
-        f_changed |= ImGui::SliderFloat("gust width",&wind_params.gust_width,2.0f,40.0f);
-        f_changed |= ImGui::SliderInt("gust period (ticks)",&wind_params.gust_period,60,2000);
-        if (f_changed){
-            wind.SetParams(wind_params);
-        }
+        //UpdateWind picks these up next frame and retunes a copy of the field.
+        ImGui::SliderFloat("speed (u/s)",&wind_params.speed,-8.0f,8.0f);
+        ImGui::SliderFloat("eddy strength",&wind_params.eddy_strength,0.0f,2.0f);
+        ImGui::SliderFloat("shedding (strouhal)",&wind_params.eddy_strouhal,0.05f,0.5f);
+        ImGui::SliderFloat("waves",&wind_params.wave_strength,0.0f,0.5f);
+        ImGui::SliderFloat("wave length",&wind_params.wave_length,2.0f,30.0f);
+        ImGui::SliderFloat("gusts",&wind_params.gust_strength,0.0f,1.5f);
+        ImGui::SliderFloat("gust width",&wind_params.gust_width,2.0f,40.0f);
+        ImGui::SliderInt("gust period (ticks)",&wind_params.gust_period,60,2000);
         //How far each plant bends - material_t::wind_flex on its own copy of its material.
         static const char* flex_labels[FOLIAGE_KIND_COUNT] = { "flex fern", "flex low fern", "flex flower", "flex grass 1", "flex grass 2" };
         bool f_flex = false;
@@ -11231,14 +11394,16 @@ void ApplicationArcher::DrawImGuiUI(void){
                 renderer->materials[material_vine_leaf].glsl_material.wind_flex = vine_leaf_wind_flex;
             }
         }
-        if (wind.IsBuilt()){
-            const WindStats& st = wind.Stats();
+        std::shared_ptr<const WindField> held = wind_field.Get();
+        bool f_building = wind_field.IsBusy();
+        if (held->IsBuilt()){
+            const WindStats& st = held->Stats();
             ImGui::Text("%dx%d nodes, %d obstacles (%d end walls out), %d corners",st.nx,st.ny,st.obstacles,st.end_walls,st.corners);
-            ImGui::Text("solve: %d iterations, %.1f ms; view %d vertices, %.2f ms a frame",st.iterations,st.build_ms,
-                        wind_view.VertexCount(),wind_view_ms);
+            ImGui::Text("solve: %d iterations, %.1f ms on the worker%s; view %d vertices, %.2f ms a frame",st.iterations,
+                        st.build_ms,f_building ? " (rebuilding)" : "",wind_view.VertexCount(),wind_view_ms);
             ImGui::Text("plant grid: %dx%d, %.2f ms a frame",wind_grid_w,wind_grid_h,wind_bake_ms);
         }else{
-            ImGui::TextDisabled("not built yet - show it, or ask archer_wind");
+            ImGui::TextDisabled(f_building ? "being built on the worker" : "not built - no obstacles");
         }
     }
 
@@ -11419,5 +11584,7 @@ void ApplicationArcher::DrawImGuiUI(void){
                        "S also drops through a platform.  Home (or Start) restarts, F1 shows the engine panels.");
 
     ImGui::End();
+    //After the Archer window, so the first frame can find the node it docks beside.
+    DrawCuePanel();
 }
 #endif

@@ -4,9 +4,9 @@ What the game does, and everything that answers it: sounds, voice lines and narr
 camera shake, rumble, particles, music and authored moments, all hung off one layer. Written
 2026-09-25, after the kick had been given four sounds by hand in four different ways. Revised
 2026-09-27 after a pass over the game and the engine: the plan had been written as a SOUND
-system, and it is really an event layer that sound happens to need most. **Agreed; steps 0 to 4
-done (2026-09-27) - the archer's sounds, footsteps, camera shake and rumble run on the cue table.
-Step 5 (the cue panel) next.**
+system, and it is really an event layer that sound happens to need most. **Agreed; steps 0 to 5
+done (2026-09-27) - the archer's sounds, footsteps, camera shake and rumble run on the cue table,
+and the Cues panel tunes it. Step 6 (the missing events) next.**
 
 The short argument: every reaction so far answers the same three questions - *when does it fire,
 what does it do, and what stops it* - and each one answered them in its own code. A **cue** is one
@@ -405,7 +405,7 @@ reported before the solver runs), the animation markers, and the zones.
 4. **Shake and rumble**, as the first non-sound actions - cheap, and the proof that one row can
    drive several outputs before anything larger is built on it. Landings, kick connects, broken
    walls. **Done 2026-09-27** - see "Shake and rumble" below.
-5. **The cue panel**, replacing the kick sliders.
+5. **The cue panel**, replacing the kick sliders. **Done 2026-09-27** - see "The cue panel" below.
 6. **The missing events** in section 11, each with a rules test.
 7. **Animation markers**, then footsteps on them. **Footsteps done early, 2026-09-27**, on the
    one marker that already existed - see "Footsteps" below; general markers are still to do.
@@ -626,7 +626,30 @@ force-added), so their baselines need them added with `git add -f`.
   checked three times in a row, all seven identical. (One earlier check run reported one
   recording different; it was not reproduced in three runs since and may have been the test
   window being closed during it - worth knowing if a flaky difference ever turns up.)
-- `breathing_1.wav` is in the folder and on no cue yet.
+- `breathing_1.wav` stayed off the table: the breaths became their own in and out files, on the
+  vitals' breath cues - `vitals_plan.md`.
+
+### The cue panel (2026-09-27)
+
+- **A "Cues" tab beside the Archer panel** (`ApplicationArcher::DrawCuePanel`): every row of
+  `archer.json` with its trigger beside its name, and, opened, its delay, jitter, chance and gain on
+  sliders, its sounds and its comment. The vitals' graphs and holds are at its top.
+- **It edits the file's TEXT.** `PatchCueNumber` replaces the one number where it stands, or adds
+  the field at the end of its row, and leaves every other character of the hand-laid file alone.
+  Checked offline against the real table: four patches, the diff exactly those four numbers, the
+  table still parsing, a curve's own `gain_by` never mistaken for the row's.
+- **Live on letting go**: the edited text is handed to the physics thread and loaded as the file
+  would be (`PollCueTable`), so the game plays the edit before it is saved. **Save** writes it;
+  **Revert** takes the file back; a hand edit of the file while nothing is unsaved shows up in the
+  panel within a second, and one under unsaved edits is flagged rather than lost.
+- **Play** beside every row: `CueSystem::Audition`, new in core - the row at full strength (every
+  gain_by curve at its loudest), past its trigger, condition, chance, delay and group, the next of
+  its sounds on each press, its actions too. It touches no history, so it cannot change what a
+  replay decides. Also over MCP as `cue_play`. `tools/cue_test.cpp` has 6 checks on it (42 now).
+- **Checked**: the play button's path over MCP (jump_voice's three sounds in turn, land_shake's
+  shake and rumble, an unknown name refused) and the panel on screen. The sliders' live reload was
+  NOT driven by a click here - a minimised window takes none - so the first drag of one is the
+  first real test of that path. The seven baselines are unchanged.
 
 (What was step 8, "audio follows the pause", is done already: `SoundSystem::SetPaused` holds every
 voice on a pass that does not tick, so a paused game is silent and `sim_step` plays one tick.)

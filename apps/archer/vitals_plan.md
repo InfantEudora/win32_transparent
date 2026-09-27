@@ -226,8 +226,19 @@ question. Two files alternate, which keeps the beat from sounding looped.
   breaths cut by her shouts (`stop` lines), with no other line moved, so the priorities changed
   nothing else. Re-written, and two check runs after it identical.
 
-**Not built yet**: the sim command that pins a value for tuning, the duck (above), and the graphs
-(cue plan step 5). The breaths' and heartbeat's levels against the rest of the mix want ears.
+**Then, the same day:**
+
+- **The HUD**: a small card at the top right of the game, panels or not (`DrawVitalsHud`) - her
+  heart rate with a dot that swells on each beat and fades until the next, and her exertion as a
+  bar going from the moss to amber past 0.6. Off with the panel's HUD box.
+- **Graphs** of exertion, fear and heart rate over the last 20 seconds, at the top of the Cues tab.
+- **Holds**: ARCHER_CMD_VITALS pins exertion or fear at a value, from the panel's hold boxes or
+  `archer_vitals` over MCP, so the breath and the heartbeat can be listened to at one level. Held
+  past a restart until let go. Checked: exertion 0.9 and fear 0.8 held took her heart to 161 bpm,
+  with full-strength breaths and a heartbeat every 23 ticks.
+
+**Not built yet**: the duck (above). The breaths' and heartbeat's levels against the rest of the
+mix want ears.
 
 ## Open
 

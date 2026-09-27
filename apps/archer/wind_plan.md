@@ -162,10 +162,16 @@ exe). What the building changed from the design above:
   in a 2.5 wind). Each is now scaled by the distance at its centre against its radius.
 
 Measured, main level: 24 obstacles, 387x88 nodes at 0.5, 571 SOR iterations, **~145 ms to
-build** (the solve is nearly all of it; the range is 5 ms, the rope level 16). `Build` returns at
-once when the blocks have not changed, so a restart costs nothing, but a level switch or "Regenerate
-terrain" stalls whoever calls it for that long - worth a nested coarse-to-fine solve, or a worker
-thread, if it shows. `Velocity()` is ~1.1 us a sample. Fastest wind anywhere: 3.1x the mean, in a
+build** (the solve is nearly all of it; the range is 5 ms, the rope level 16). By 2026-09-27 the
+level had grown to 637x96 and 29 obstacles: ~430 ms, and kicking the breakable wall over stalled
+both the render thread (which built under wind_mutex) and the physics thread (whose leaves wait on
+it). **Since 2026-09-27 the build runs on the background worker** (`core/BackgroundWork.h`):
+UpdateWind sends the blocks off when `WindField::KeyFor` changes and adopts the finished field a
+frame later, so the old field blows until then - the wall's new wind arrives ~10-20 ticks after the
+kick, and the kick no longer shows in the tick or the frame time (measured: worst sim_step 48 ms
+with the rebuild in flight, 49 without). A published field is never changed in place - a retune of
+the free params is a copy. A warm start of the solve from the previous psi is the next step if the
+delay ever shows. `Velocity()` is ~1.1 us a sample. Fastest wind anywhere: 3.1x the mean, in a
 slot under a floating block, where potential flow is genuinely fast. Divergence is 2% of the
 velocity gradient; flow into a wall 0.05 off it is 6% of the wind, away from corners.
 

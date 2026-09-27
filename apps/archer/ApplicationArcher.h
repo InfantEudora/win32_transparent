@@ -9,6 +9,7 @@
 #include <string>
 
 #include "Application.h"
+#include "BackgroundWork.h"
 #include "Stage.h"
 #include "Puppet.h"
 #include "Terrain.h"
@@ -1156,9 +1157,10 @@ private:
     void BuildFoliage();
     /*
         The wind (wind_plan.md). RENDER THREAD, every frame, from PreRender: copies the blocks and
-        the tick at a tick boundary, rebuilds the field if the blocks changed (a hash check - free
-        when they have not, ~145 ms on the main level when they have), bakes the part the camera
-        sees into the grid the renderer bends plants with, and redraws the debug view if it is on.
+        the tick at a tick boundary, asks the worker for a new field if the blocks changed (a hash
+        check; the build itself is ~230 ms on the main level, off every frame-critical thread),
+        adopts one that has finished, bakes the part the camera sees into the grid the renderer
+        bends plants with, and redraws the debug view if it is on.
     */
     void UpdateWind();
     void ScatterFoliageObjects();
@@ -1357,6 +1359,9 @@ private:
     void DrawVitalsPanel();
     bool  f_ui_hold[2] = { false, false };
     float ui_hold_value[2] = { 0.6f, 0.6f };
+    //Frames left before the boxes follow the live hold again: a hold sent from here reaches the
+    //game a tick later, and following it before then would flick the box back for a frame.
+    int   ui_hold_quiet = 0;
     //Top right, over the game: her heart rate, pulsing with each beat, and her exertion. From the
     //snapshot. Render thread, from DrawOverlay while a level is live.
     void DrawVitalsHud();
@@ -1812,10 +1817,16 @@ private:
     Bone*   hand_bones[2] = {};             //left, right; found on the model once
     bool    f_show_rope_attach = false;
 
-    //The wind field, its tuning and its debug view - see UpdateWind. Built and retuned on the
-    //render thread; wind_mutex covers it against the archer_wind MCP handler, which samples it
-    //from its own thread.
-    WindField  wind;
+    /*
+        The wind field - see UpdateWind. Solved on the background worker and published whole, so
+        any thread reads it by taking wind_field.Get() once and keeping that for the tick or frame
+        it reads in; the render thread requests, adopts and retunes. wind_mutex no longer covers
+        the field itself, only the tuning, the view and the swarms (against the archer_wind MCP
+        handler and the physics thread's leaves).
+    */
+    LatestResult<WindField> wind_field;
+    uint64_t   wind_requested_key = 0;      //WindField::KeyFor of the last blocks sent to the worker
+    int64_t    wind_requested_tick = 0;     //and the tick they were sent at - for the latency in the log
     WindParams wind_params;
     WindView   wind_view;
     std::mutex wind_mutex;
@@ -1883,8 +1894,8 @@ private:
     std::vector<StreakVertex> streak_ribbons;
     std::vector<vertex> streak_vertices;
     void BuildWindStreaks();
-    //Under wind_mutex, from UpdateWind.
-    void UpdateWindStreaks(int64_t tick);
+    //Under wind_mutex, from UpdateWind, with the field it holds.
+    void UpdateWindStreaks(const WindField& wind, int64_t tick);
     void SetStreakUniforms();
 
     /*
@@ -1913,8 +1924,8 @@ private:
     std::vector<vertex> firefly_vertices;
     std::vector<FireflyLight> firefly_group;
     void BuildFireflies();
-    //Under wind_mutex, from UpdateWind.
-    void UpdateFireflies(int64_t tick);
+    //Under wind_mutex, from UpdateWind, with the field it holds.
+    void UpdateFireflies(const WindField& wind, int64_t tick);
     void SetFireflyUniforms();
     //For archer_wind. Hold wind_mutex.
     json FireflySummary();

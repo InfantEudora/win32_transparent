@@ -34,7 +34,8 @@
     Nothing here has state beyond what Build computed. The eddies' phases and the gust schedule are
     worked out from the tick (and a hash of the corner or gust index), so the same level at the
     same tick blows the same way - a restart, a replay, a test. Velocity() is const and safe to
-    call from any thread, as long as nothing calls Build() at the same time.
+    call from any thread, as long as nothing calls Build() at the same time. The app never does:
+    it builds a FRESH field on the background worker and publishes it whole (UpdateWind).
 
     --- WHAT BLOCKS THE WIND ----------------------------------------------------------------------
     SOLID, LEDGE and live BREAKABLE blocks, invisible ones included (they stand for scenery). NOT
@@ -72,6 +73,13 @@ struct WindParams{
     float gust_strength = 0.6f;     //a gust's peak extra, as a fraction of the field
     float gust_width    = 14.0f;    //length of a gust along x
     int   gust_period   = 480;      //ticks between gusts, on average
+
+    //The free half alone - what decides whether a built field needs retuning rather than rebuilding.
+    bool SameFree(const WindParams& o) const {
+        return (speed == o.speed) && (eddy_strength == o.eddy_strength) && (eddy_strouhal == o.eddy_strouhal) &&
+               (wave_strength == o.wave_strength) && (wave_length == o.wave_length) &&
+               (gust_strength == o.gust_strength) && (gust_width == o.gust_width) && (gust_period == o.gust_period);
+    }
 };
 
 //The turbulence: this many travelling sine waves in psi - see WindField::Waves.
@@ -130,6 +138,13 @@ public:
     */
     bool Build(const std::vector<StageBlock>& blocks, const WindParams& params);
     bool IsBuilt() const { return nx > 0; }
+    /*
+        What Build compares to decide there is nothing to do - the obstacles and the rebuild
+        params - without building anything. BuiltKey is the one the field was built for (0 before
+        the first Build), so KeyFor(blocks,params) != BuiltKey() means "these blocks need a build".
+    */
+    static uint64_t KeyFor(const std::vector<StageBlock>& blocks, const WindParams& params);
+    uint64_t BuiltKey() const { return built_hash; }
 
     //The free params only. Changing a rebuild param here is ignored; call Build.
     void SetParams(const WindParams& params);
